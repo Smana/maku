@@ -179,7 +179,7 @@ py-key-value-aio==0.4.4
 py==1.11.0
 pyarrow==23.0.1
 pyasn1-modules==0.4.2
-pyasn1==0.6.4
+pyasn1==0.6.5
 pycodestyle==2.14.0
 pycparser==2.23
 pydantic-core==2.46.5
