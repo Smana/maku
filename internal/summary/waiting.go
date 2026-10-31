@@ -64,13 +64,29 @@ func MergeHow(repo string, n int) string {
 		repo, n, n, repo)
 }
 
+// ApproveHow is how pull request n is merged when a maintainer's approval returns it to the gate
+// (human path AM3): approve the head read, by its commit, since an approval sent without one binds
+// to whatever the head is when it arrives (#301). The merger merges that head.
+func ApproveHow(repo string, n int) string {
+	if repo == "" {
+		return fmt.Sprintf("a maintainer approves PR #%d: approve the head you read on the PR page; the merger merges that head", n)
+	}
+	return fmt.Sprintf("a maintainer approves PR #%d: approve the head you read on the PR page, or run `gh api repos/%s/pulls/%d/reviews -f commit_id=<sha> -f event=APPROVE`; the merger merges that head",
+		n, repo, n)
+}
+
 // Merge is the need of a task that waits for a maintainer's merge: AwaitingHuman with a pull
 // request. Whoever owns the room, the maintainer, sees it; GitHub still decides who may merge.
+// When the facts say an approval returns the hand-off, it says approve, as the issue comment does.
 func Merge(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
 	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || f.PR.Number <= 0 || !policy.Allowed(sub, policy.Close) {
 		return Need{}, false
 	}
-	return Need{Kind: "merge", ID: fmt.Sprint(f.PR.Number), What: MergeHow(repoOf(f), f.PR.Number), URL: f.PR.URL}, true
+	n := Need{Kind: "merge", ID: fmt.Sprint(f.PR.Number), What: MergeHow(repoOf(f), f.PR.Number), URL: f.PR.URL}
+	if f.MergeByApproval {
+		n.What, n.Approve = ApproveHow(repoOf(f), f.PR.Number), true
+	}
+	return n, true
 }
 
 // Answer is the need of a task the scoper bounced (scoper design SC8): its issue's author answers

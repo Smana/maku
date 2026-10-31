@@ -133,6 +133,9 @@ type Need struct {
 	// Author is an answer need's issue author, a validated GitHub login: the part views build their
 	// own sentence from. Absent for every other kind.
 	Author string `json:"author,omitempty"`
+	// Approve marks a merge need a maintainer's approval settles (TaskFacts.MergeByApproval): the
+	// views say approve, not bypass. Absent for every other need.
+	Approve bool `json:"approve,omitempty"`
 }
 
 // Action is something the viewer can do now.

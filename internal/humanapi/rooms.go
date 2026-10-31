@@ -320,14 +320,21 @@ func prURLOf(repo string, n int) string {
 }
 
 // prNeed is the summary's merge need for sub, from the projected task: the Room status holds the
-// PR's number, not its facts, so the URL is built from the room's repository.
-func prNeed(room *v1alpha1.Room, sub policy.Subject) (summary.Need, bool) {
+// PR's number, not its facts, so the URL is built from the room's repository. Whether an approval
+// returns the hand-off is in the facts only, read once a PR waits.
+func prNeed(room *v1alpha1.Room, sub policy.Subject, facts factsFn) (summary.Need, bool) {
 	t := room.Status.Task
 	if t == nil || t.PR <= 0 {
 		return summary.Need{}, false
 	}
 	pr := &envelope.PRFact{Number: int(t.PR), URL: prURLOf(room.Spec.Repository, int(t.PR))}
-	return summary.Merge(&envelope.TaskFacts{Phase: t.Phase, PR: pr}, sub)
+	f := &envelope.TaskFacts{Phase: t.Phase, PR: pr}
+	if t.Phase == "AwaitingHuman" {
+		if tf := facts(); tf != nil {
+			f.MergeByApproval = tf.MergeByApproval
+		}
+	}
+	return summary.Merge(f, sub)
 }
 
 // liveApprovals are the approvals of room that sub could decide in the web UI and whose deadline
@@ -366,7 +373,7 @@ func needs(room *v1alpha1.Room, sub, web policy.Subject, expired int, facts fact
 	if _, ok := held(room, sub, "", facts); ok {
 		n++
 	}
-	if _, ok := prNeed(room, sub); ok {
+	if _, ok := prNeed(room, sub, facts); ok {
 		n++
 	}
 	if _, ok := answer(room, sub, facts); ok {
@@ -392,7 +399,7 @@ func firstNeed(room *v1alpha1.Room, sub policy.Subject, url string, live []store
 	if n, ok := held(room, sub, url, facts); ok {
 		return &n
 	}
-	if n, ok := prNeed(room, sub); ok {
+	if n, ok := prNeed(room, sub, facts); ok {
 		return &n
 	}
 	if n, ok := answer(room, sub, facts); ok {
