@@ -125,3 +125,22 @@ func TestTheIssueTitleIsCarried(t *testing.T) {
 		t.Fatalf("%+v", s.Status.Issue)
 	}
 }
+
+// With approveToMerge, an agent pull request's one action is a maintainer's approval of the head
+// they read (AM3, #301): the need says so, with the commit_id form, and no bypass or --admin.
+func TestAMergeNeedAnApprovalReturnsSaysApprove(t *testing.T) {
+	f := envelope.TaskFacts{Phase: "AwaitingHuman", MergeByApproval: true, PR: &envelope.PRFact{Number: 2267, URL: prURL}}
+	got := taskView(f, owner()).NeedsYou
+	if len(got) != 1 || got[0].Kind != "merge" || !got[0].Approve {
+		t.Fatalf("%+v", got)
+	}
+	w := got[0].What
+	for _, s := range []string{"a maintainer approves PR #2267", "commit_id=<sha>", "gh api repos/Smana/cloud-native-ref/pulls/2267/reviews"} {
+		if !strings.Contains(w, s) {
+			t.Fatalf("want %q in %q", s, w)
+		}
+	}
+	if strings.Contains(w, "bypass") || strings.Contains(w, "--admin") {
+		t.Fatalf("the bypass text on an approve-to-merge PR: %q", w)
+	}
+}

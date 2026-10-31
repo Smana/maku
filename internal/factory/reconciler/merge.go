@@ -331,10 +331,17 @@ var byHandReasons = map[string]bool{"not_agent_authored": true, "gate_path": tru
 // for an agents pull request an approval can merge; the bypass instructions for an adopted one and
 // for the by-hand reasons, which no approval returns.
 func (r *Reconciler) handOff(t *v1alpha1.Task, reason string, adopted bool) narrate.Event {
-	if r.repo(t).Merge.ApproveToMerge && !adopted && !byHandReasons[reason] {
+	if !adopted && r.approvalReturns(t, reason) {
 		return narrate.WaitingForApproval(t, reason)
 	}
 	return narrate.WaitingForHuman(t, reason)
+}
+
+// approvalReturns is whether a maintainer's approval returns t's hand-off for reason to the gate
+// (AM2, AM3): approveToMerge on, an agents class, and a reason no human must fix on the pull
+// request. The hand-off comment and the room's facts both read it, so they never disagree.
+func (r *Reconciler) approvalReturns(t *v1alpha1.Task, reason string) bool {
+	return r.repo(t).Merge.ApproveToMerge && !gateOf(r.repo(t), t.Spec.PredictedClass).Adopted() && !byHandReasons[reason]
 }
 
 // approvalReturn is AM2's return: a maintainer's APPROVED review of the hand-off head, submitted

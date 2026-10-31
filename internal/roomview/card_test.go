@@ -330,6 +330,12 @@ func TestCardPortedFromRenderSummary(t *testing.T) {
 			`{"room":"r","url":"u","status":{"phase":"AwaitingHuman"},` +
 				`"needsYou":[{"kind":"merge","id":"2267","what":"merge PR #2267: tick bypass","url":"https://github.com/Smana/a/pull/2267"}],"notes":{"items":[]}}`, cardNow,
 			[]string{`1. a maintainer with admin on Smana/a merges PR #2267: the ruleset blocks a plain merge, so tick "bypass rules" on the PR page, or run gh pr merge 2267 --squash --admin --repo Smana/a → https://github.com/Smana/a/pull/2267`}, nil},
+		// With approveToMerge, the one action is an approval of the head the maintainer read (#301).
+		{"a merge an approval returns says approve",
+			`{"room":"r","url":"u","status":{"phase":"AwaitingHuman"},` +
+				`"needsYou":[{"kind":"merge","id":"2267","what":"x","url":"https://github.com/Smana/a/pull/2267","approve":true}],"notes":{"items":[]}}`, cardNow,
+			[]string{`1. a maintainer approves PR #2267: approve the head you read on the PR page, or run gh api repos/Smana/a/pulls/2267/reviews -f commit_id=<sha> -f event=APPROVE; the merger merges that head → https://github.com/Smana/a/pull/2267`},
+			[]string{"bypass", "--admin"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := card1(t, body(t, tc.body), textOpts(tc.now))

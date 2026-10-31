@@ -290,6 +290,13 @@ func (c *card) mergeLine(n summary.Need) (string, bool) {
 		return "", false
 	}
 	repo := repoOf(n.URL)
+	if n.Approve { // an approval returns the hand-off (AM3): approve the head read, by its commit (#301)
+		s := "a maintainer approves PR #" + n.ID + ": approve the head you read on the PR page"
+		if repo != "" {
+			s += ", or run " + c.command("gh api repos/"+repo+"/pulls/"+n.ID+"/reviews -f commit_id=<sha> -f event=APPROVE")
+		}
+		return s + "; the merger merges that head", true
+	}
 	s := "a maintainer with admin on "
 	if repo != "" {
 		s += c.span(repo) + " "
