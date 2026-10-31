@@ -92,6 +92,11 @@ Store tests use testcontainers, so they need a running Docker daemon.
 CI also runs CodeQL on every PR and weekly, and OpenSSF Scorecard weekly on `main`. Report
 vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 
+## Support this work
+
+One person maintains Maku and pays for the AWS, GCP and model-API time its live tests need;
+[sponsoring it](https://github.com/sponsors/Smana) helps cover that.
+
 ## License
 
 Apache-2.0
