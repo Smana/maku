@@ -115,6 +115,11 @@ func TestRoomRowNeedIsTheFirstNeed(t *testing.T) {
 		{name: "a PR waits for the caller's merge", h: admin("boss"),
 			task: &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 7},
 			want: &summary.Need{Kind: "merge", ID: "7", URL: "https://github.com/Smana/a/pull/7"}},
+		// The room's facts say an approval returns the hand-off (AM3): the row's need says approve.
+		{name: "a PR an approval returns", h: admin("boss"),
+			task:  &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 7},
+			facts: &envelope.TaskFacts{Phase: "AwaitingHuman", MergeByApproval: true, PR: &envelope.PRFact{Number: 7}},
+			want:  &summary.Need{Kind: "merge", ID: "7", URL: "https://github.com/Smana/a/pull/7", Approve: true}},
 		{name: "an approval the caller may not decide", pending: 1, h: header("dev1"),
 			approvals: []store.Approval{approval("01J9A", "make test", future)}},
 		{name: "nothing waits", h: admin("boss")},
@@ -152,7 +157,7 @@ func TestRoomRowNeedIsTheFirstNeed(t *testing.T) {
 						t.Fatalf("a %s need says nothing: %+v", w.Kind, got)
 					}
 				}
-				if got.Kind != w.Kind || got.ID != w.ID || got.What != w.What || got.URL != w.URL || !got.Deadline.Equal(w.Deadline) {
+				if got.Kind != w.Kind || got.ID != w.ID || got.What != w.What || got.URL != w.URL || !got.Deadline.Equal(w.Deadline) || got.Approve != w.Approve {
 					t.Fatalf("need = %+v, want %+v", *got, w)
 				}
 			}

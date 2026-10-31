@@ -525,3 +525,38 @@ func TestFactsCarryTheOrigin(t *testing.T) {
 		t.Fatalf("%+v", f)
 	}
 }
+
+// The room's merge need follows the gate's own hand-off (AM3): with approveToMerge, an agent pull
+// request an approval returns says "approve", as the issue comment does; a by-hand reason, the
+// switch off, or no wait for a merge says nothing, and the room keeps the bypass text.
+func TestFactsSayWhetherAnApprovalReturnsTheHandOff(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		on     bool
+		phase  string
+		reason string
+		want   bool
+	}{
+		{"an agent PR an approval returns", true, v1alpha1.PhaseAwaitingHuman, "class_unarmed", true},
+		{"the switch off", false, v1alpha1.PhaseAwaitingHuman, "class_unarmed", false},
+		{"a by-hand reason", true, v1alpha1.PhaseAwaitingHuman, "human_commit_in_pr", false},
+		{"not waiting for a merge", true, v1alpha1.PhaseAwaitingCI, "class_unarmed", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := mergeRig(t, c.phase)
+			g.r.Cfg.Merge.ApproveToMerge = c.on
+			task := awaiting()
+			task.Status.Phase, task.Status.Reason = c.phase, c.reason
+			if got := g.r.factsFor(task).MergeByApproval; got != c.want {
+				t.Fatalf("mergeByApproval %t, want %t", got, c.want)
+			}
+			// The issue comment says the same: approve exactly when the facts do.
+			if c.phase == v1alpha1.PhaseAwaitingHuman {
+				approve := strings.Contains(g.r.handOff(task, c.reason, false).Body, "approve this pull request")
+				if approve != c.want {
+					t.Fatalf("the hand-off comment says approve=%t, the facts %t", approve, c.want)
+				}
+			}
+		})
+	}
+}

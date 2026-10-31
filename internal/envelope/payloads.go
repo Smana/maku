@@ -145,6 +145,10 @@ type TaskFacts struct {
 	// Origin is the room of the investigate task this task's issue was published from (RunLore
 	// agent-to-agent RA10), a C2 id; the webhook tracker repeats it on every event of the room.
 	Origin string `json:"origin,omitempty"`
+	// MergeByApproval is the gate's hand-off of an AwaitingHuman pull request (human path AM3): a
+	// maintainer's approval of the head returns it to the gate, which merges it. False is the
+	// bypass: the switch off, an adopted class, or a reason no approval returns.
+	MergeByApproval bool `json:"mergeByApproval,omitempty"`
 }
 
 // MaxRuns bounds TaskFacts.Runs.

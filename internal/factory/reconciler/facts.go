@@ -186,7 +186,15 @@ func (r *Reconciler) factsDue(t *v1alpha1.Task) bool {
 		return false
 	}
 	l := t.Status.Facts
-	return l == nil || !l.Posted || l.Hash != factsKey(factsOf(t))
+	return l == nil || !l.Posted || l.Hash != factsKey(r.factsFor(t))
+}
+
+// factsFor is factsOf with what only the reconciler's config knows: whether an approval returns
+// an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says.
+func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
+	f := factsOf(t)
+	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(t, t.Status.Reason)
+	return f
 }
 
 // postFacts writes the task's facts into its room. New facts take roomSeq + 1, persisted before
@@ -198,7 +206,7 @@ func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 	if !r.factsDue(t) {
 		return nil
 	}
-	f := factsOf(t)
+	f := r.factsFor(t)
 	h := factsKey(f)
 	if l := t.Status.Facts; l == nil || l.Hash != h {
 		prevSeq, prevLedger := t.Status.RoomSeq, t.Status.Facts
