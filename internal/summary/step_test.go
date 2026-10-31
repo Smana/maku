@@ -24,6 +24,7 @@ func TestStepFor(t *testing.T) {
 		{"approval wins over a held PR", with(func(i *StepIn) { i.Approvals = true }), StepApprove, "approve here", room},
 		{"approval alone", StepIn{Phase: "Implementing", Approvals: true, RoomURL: room}, StepApprove, "approve here", room},
 		{"held PR", held, StepPR, "review and merge or close PR #7", pr},
+		{"held PR an approval returns", with(func(i *StepIn) { i.MergeByApproval = true }), StepPR, "review, then approve the current commit or close PR #7", pr},
 		{"held PR, caller may not close", with(func(i *StepIn) { i.CanClose = false }), "", "", ""},
 		{"awaiting human, no PR", with(func(i *StepIn) { i.PR = 0 }), "", "", ""},
 		{"CI wait", with(func(i *StepIn) { i.Phase = "AwaitingCI" }), "", "", ""},
@@ -38,7 +39,7 @@ func TestStepFor(t *testing.T) {
 		switch {
 		case c.kind == "" && s != nil:
 			t.Errorf("%s: got %+v, want none", c.name, s)
-		case c.kind != "" && (s == nil || *s != Step{Kind: c.kind, Label: c.label, URL: c.url}):
+		case c.kind != "" && (s == nil || *s != Step{Kind: c.kind, Label: c.label, URL: c.url, Approve: c.in.MergeByApproval}):
 			t.Errorf("%s: got %+v", c.name, s)
 		}
 	}
@@ -57,6 +58,7 @@ func TestViewStepFollowsTheCaller(t *testing.T) {
 		kind string
 	}{
 		{"merge for an owner", State{Facts: &envelope.TaskFacts{Phase: "AwaitingHuman", PR: pr}}, owner, StepPR},
+		{"approve for an owner", State{Facts: &envelope.TaskFacts{Phase: "AwaitingHuman", MergeByApproval: true, PR: pr}}, owner, StepPR},
 		{"no merge for a watcher", State{Facts: &envelope.TaskFacts{Phase: "AwaitingHuman", PR: pr}}, watcher, ""},
 		{"answer for an owner", State{Facts: &envelope.TaskFacts{Phase: "Escalated", Reason: "needs_author", Issue: issue}}, owner, StepAnswer},
 		{"no answer for a watcher", State{Facts: &envelope.TaskFacts{Phase: "Escalated", Reason: "needs_author", Issue: issue}}, watcher, ""},
@@ -65,6 +67,10 @@ func TestViewStepFollowsTheCaller(t *testing.T) {
 		got := View(tc.st, "r", "https://rooms.example/r/r", tc.sub, 0, now).Step
 		if (got == nil) != (tc.kind == "") || got != nil && got.Kind != tc.kind {
 			t.Errorf("%s: step = %+v, want %q", tc.name, got, tc.kind)
+		}
+		// The step follows the merge need: approve exactly when the facts say an approval returns it.
+		if got != nil && tc.st.Facts != nil && got.Approve != tc.st.Facts.MergeByApproval {
+			t.Errorf("%s: step = %+v, approve want %t", tc.name, got, tc.st.Facts.MergeByApproval)
 		}
 	}
 }

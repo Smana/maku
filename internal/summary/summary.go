@@ -462,6 +462,7 @@ func viewStep(s Summary, reason, roomURL string, canDecide bool) *Step {
 			in.Approvals = canDecide
 		case "merge", "answer":
 			in.CanClose = true
+			in.MergeByApproval = in.MergeByApproval || n.Approve
 		}
 	}
 	return StepFor(in)

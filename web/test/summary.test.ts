@@ -106,6 +106,17 @@ describe("needsItems", () => {
     expect(block.textContent).not.toMatch(/Review and decide/);
   });
 
+  // A backticked command in a merge need is set as code, never shown with its backticks.
+  it("renders a merge need's backticked command as code", () => {
+    const s = base();
+    s.needsYou = [{ kind: "merge", id: "7", url: "https://github.com/o/r/pull/7",
+      what: "a maintainer approves PR #7: approve the head you read on the PR page, or run `gh api repos/o/r/pulls/7/reviews -f commit_id=<sha> -f event=APPROVE`; the merger merges that head" }];
+    const block = needs(s);
+    expect(block.textContent).not.toContain("`");
+    expect(block.querySelector("code")?.textContent).toBe("gh api repos/o/r/pulls/7/reviews -f commit_id=<sha> -f event=APPROVE");
+    expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
+  });
+
   // The approvals come from the live log, as cards (needs.test.ts): the summary's are skipped.
   it("skips approvals, and is empty when nothing needs you", () => {
     expect(needsItems(base())).toHaveLength(0);

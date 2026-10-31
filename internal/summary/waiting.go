@@ -182,6 +182,18 @@ func reasons() map[string]string {
 	}
 }
 
+// approvalReasons is the prose of the reasons whose words differ when a maintainer's approval
+// returns the hand-off (TaskFacts.MergeByApproval): no one merges by hand, the merger App does.
+func approvalReasons() map[string]string {
+	return map[string]string{
+		"class_unarmed": "the factory does not merge this class on its own: it merges once a maintainer approves the current commit",
+	}
+}
+
+// ApprovalReason is r's prose when an approval returns the hand-off, "" when r reads the same
+// either way. The factory's WaitingForApproval reads it, so the issue comment and the room agree.
+func ApprovalReason(r string) string { return approvalReasons()[r] }
+
 // Reasons lists the wait reasons the summary has prose for, so the factory's narration can be
 // held to them (a test in internal/factory/narrate).
 func Reasons() []string {
@@ -195,8 +207,12 @@ func Reasons() []string {
 
 const escalatedNext = "a maintainer comments `/factory retry` on the issue to run it again, or pushes to the branch"
 
-// nextStep is the next step a reason has of its own; "" leaves it to the phase's default.
-func nextStep(reason string) string {
+// approveNext is an AwaitingHuman pull request's next step when a maintainer's approval returns it.
+const approveNext = "a maintainer reviews, then approves the current commit or closes the pull request on GitHub; the merger App merges that commit"
+
+// nextStep is the next step a reason has of its own; "" leaves it to the phase's default. byApproval
+// is TaskFacts.MergeByApproval: a step that would merge by hand says approve instead.
+func nextStep(reason string, byApproval bool) string {
 	switch reason {
 	case "waiting_daily_budget":
 		return "nothing to do: it resumes after 00:00 UTC"
@@ -211,6 +227,9 @@ func nextStep(reason string) string {
 	case "holdout_pending":
 		return "nothing to do: the task goes on when the class's holdout checks report; a check that never reports keeps it waiting until merge.awaitingCIFor, if set (agent-platform #182)"
 	case "ci_wait_expired":
+		if byApproval {
+			return "a maintainer takes it from here: check the workflow of the checks named in the pull request comment, then approve the current commit or re-run them"
+		}
 		return "a maintainer takes it from here: check the workflow of the checks named in the pull request comment, then merge it or re-run them"
 	case "verdict_stale":
 		return "a maintainer reviews the current head, or the factory asks for a new review"
@@ -238,6 +257,9 @@ func waiting(f *envelope.TaskFacts) (reason, next string) {
 		return "", ""
 	}
 	why := reasons()[f.Reason]
+	if s := ApprovalReason(f.Reason); s != "" && f.MergeByApproval {
+		why = s
+	}
 	if why == "" {
 		why = holds()[f.Reason]
 	}
@@ -247,7 +269,7 @@ func waiting(f *envelope.TaskFacts) (reason, next string) {
 			why = string(r[:maxReason]) + "…"
 		}
 	}
-	next = nextStep(f.Reason)
+	next = nextStep(f.Reason, f.MergeByApproval)
 	switch f.Phase {
 	case "Queued":
 		if why == "" {
@@ -272,6 +294,9 @@ func waiting(f *envelope.TaskFacts) (reason, next string) {
 		}
 		if next == "" {
 			next = "a maintainer reviews and merges or closes the pull request on GitHub"
+			if f.MergeByApproval {
+				next = approveNext
+			}
 			if f.PR == nil {
 				next = "a maintainer looks at the task's issue"
 			}
