@@ -300,11 +300,17 @@ func answer(room *v1alpha1.Room, sub policy.Subject, facts factsFn) (summary.Nee
 }
 
 // rowStep is the row's step for the caller: a merge or an answer needs the right to close, as
-// the summary's needs do; a sealed room has none.
-func rowStep(room *v1alpha1.Room, sub policy.Subject, row roomRow, repo string, approvals bool) *summary.Step {
+// the summary's needs do; a sealed room has none. Whether an approval returns the hand-off is in
+// the facts only, read once a PR waits, as prNeed reads it.
+func rowStep(room *v1alpha1.Room, sub policy.Subject, row roomRow, repo string, approvals bool, facts factsFn) *summary.Step {
 	in := summary.StepIn{Phase: row.Task, Reason: row.Reason, PR: row.PR, PRURL: prURLOf(repo, row.PR), Issue: row.Issue,
 		Approvals: approvals, CanClose: policy.Allowed(sub, policy.Close), RoomURL: row.URL,
 		Sealed: room.Status.Phase == "Closed" || room.Status.Phase == "Sealed"}
+	if row.Task == "AwaitingHuman" && row.PR > 0 {
+		if tf := facts(); tf != nil {
+			in.MergeByApproval = tf.MergeByApproval
+		}
+	}
 	if repo != "" && row.Issue > 0 {
 		in.IssueURL = fmt.Sprintf("https://github.com/%s/issues/%d", repo, row.Issue)
 	}
@@ -501,7 +507,7 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 			row.Reason = waitReason(facts)
 		}
 		row.Need = firstNeed(room, sub, row.URL, live, facts)
-		row.Step = rowStep(room, sub, row, repo, len(live) > 0)
+		row.Step = rowStep(room, sub, row, repo, len(live) > 0, facts)
 		ins = append(ins, s.statusIn(room, row, web, live, expired))
 		if row.State == summary.StateFailed {
 			failed[row.ID] = roomctrl.ForkSeq(room)

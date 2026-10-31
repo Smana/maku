@@ -36,9 +36,11 @@ export interface Summary {
   };
   // A hold (N3): a factory task waits on the viewer's hold on this room; id is its wait reason.
   runs?: { id: string; role: string }[]; // the task's run history, oldest first
-  needsYou: { kind: "approval" | "hold" | "merge"; id: string; what: string; deadline?: string; url: string }[];
+  // approve: a merge need a maintainer's approval settles (approveToMerge); absent otherwise.
+  needsYou: { kind: "approval" | "hold" | "merge"; id: string; what: string; deadline?: string; url: string; approve?: boolean }[];
   // The one thing to do for the room and where: "pr" and "answer" are on GitHub, "approve" on this page.
-  step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string };
+  // approve: the pr step is an approval of the current commit, not a merge by hand.
+  step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
   actions: { kind: string; what: string; cli?: string }[];
   notes: { untrusted: true; items: { at: string; run: string; text: string }[] };
   cursor: string;
@@ -103,6 +105,13 @@ export function focusApproval(id: string): boolean {
   return true;
 }
 
+// inlineCode sets text with its backticked spans as <code>, every part as text: a need's what
+// names a command (`gh api …`) that must not show its backticks.
+export function inlineCode(text: string): Node[] {
+  return text.split(/`([^`]+)`/).flatMap<Node>((part, n) =>
+    n % 2 ? [el("code", { textContent: part })] : part ? [document.createTextNode(part)] : []);
+}
+
 // needsItems is the summary's merges and holds, one list item each; the approvals come
 // from the live log instead (needs.ts), so the summary's approval entries are skipped.
 export function needsItems(s: Summary): HTMLLIElement[] {
@@ -111,7 +120,7 @@ export function needsItems(s: Summary): HTMLLIElement[] {
     if (n.kind === "hold") out.push(el("li", { textContent: `Hold: ${n.what}` })); // the page is the room: nothing to link to
     if (n.kind === "merge") { // the PR is on GitHub: link out, https only
       const li = el("li");
-      li.append(`Merge: ${n.what} · `, safeLink("open the PR", n.url));
+      li.append("Merge: ", ...inlineCode(n.what), " · ", safeLink("open the PR", n.url));
       out.push(li);
     }
   }

@@ -604,7 +604,11 @@ func WaitingForHuman(t *v1alpha1.Task, reason string) Event {
 // WaitingForApproval is WaitingForHuman on a repository with approveToMerge (human path AM3): the
 // one action is a review, and the merger does the merge. The by-hand reasons keep WaitingForHuman.
 func WaitingForApproval(t *v1alpha1.Task, reason string) Event {
-	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, Reason(reason))
+	why := summ.ApprovalReason(reason) // no one merges by hand here: the room's reason says the same
+	if why == "" {
+		why = Reason(reason)
+	}
+	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, why)
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
 		body += "\n\nTo merge: approve this pull request (a GitHub review by a maintainer). The merger merges the approved head within a minute, or says why not."
 	}

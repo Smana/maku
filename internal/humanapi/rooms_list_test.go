@@ -264,11 +264,17 @@ func TestRoomRowStep(t *testing.T) {
 		pending   int32
 		phase     string
 		approvals []store.Approval
+		facts     *envelope.TaskFacts
 		h         http.Header
 		want      *summary.Step
 	}{
 		{name: "a PR held for an owner", task: pr, h: admin("boss"),
 			want: &summary.Step{Kind: summary.StepPR, Label: "review and merge or close PR #7", URL: "https://github.com/Smana/a/pull/7"}},
+		// The room's facts say an approval returns the hand-off (AM3): the step says approve, not merge.
+		{name: "a PR an approval returns", task: pr, h: admin("boss"),
+			facts: &envelope.TaskFacts{Phase: "AwaitingHuman", MergeByApproval: true, PR: &envelope.PRFact{Number: 7}},
+			want: &summary.Step{Kind: summary.StepPR, Label: "review, then approve the current commit or close PR #7",
+				URL: "https://github.com/Smana/a/pull/7", Approve: true}},
 		{name: "a PR held, a watcher cannot close it", task: pr, h: header("dev1")},
 		{name: "a sealed room", task: pr, phase: "Sealed", h: admin("boss")},
 		{name: "an approval wins", task: pr, pending: 1, approvals: []store.Approval{approval}, h: admin("boss"),
@@ -286,6 +292,10 @@ func TestRoomRowStep(t *testing.T) {
 				s.Rooms = roomClient(t, a)
 				s.PublicURL = "https://rooms.test"
 				v.approvals = tc.approvals
+				if tc.facts != nil {
+					v.evs = append(v.evs, envelope.Event{V: 1, Seq: int64(len(v.evs) + 1), RoomID: roomID, Type: envelope.StateChanged,
+						TS: time.Now(), Payload: envelope.TaskStatePayload(*tc.facts)})
+				}
 			})
 			rows := rowsFor(t, e, "", tc.h)
 			if len(rows) != 1 {

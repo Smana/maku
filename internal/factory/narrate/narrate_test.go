@@ -577,6 +577,11 @@ func TestTheHandOffNamesTheOneAction(t *testing.T) {
 	if got := WaitingForApproval(tk, "class_unarmed").Body; !strings.Contains(got, "To merge: approve this pull request") || strings.Contains(got, "--admin") {
 		t.Fatalf("%q", got)
 	}
+	// The reason says approve too: under approveToMerge no maintainer merges by hand.
+	if got := WaitingForApproval(tk, "class_unarmed").Body; strings.Contains(got, "reviews and merges it") ||
+		!strings.Contains(got, "it merges once a maintainer approves the current commit") {
+		t.Fatalf("%q", got)
+	}
 	if got := WaitingForHuman(tk, "gate_path").Body; !strings.Contains(got, "--admin") {
 		t.Fatalf("%q", got)
 	}

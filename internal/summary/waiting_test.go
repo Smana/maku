@@ -144,3 +144,25 @@ func TestAMergeNeedAnApprovalReturnsSaysApprove(t *testing.T) {
 		t.Fatalf("the bypass text on an approve-to-merge PR: %q", w)
 	}
 }
+
+// Under approveToMerge the NEXT box says what the "Needs you" line says: review, then approve the
+// current commit or close the pull request, and the merger App merges that commit. Without the
+// switch, the class_unarmed text stays the merge by hand.
+func TestTheNextStepUnderApproveToMergeSaysApprove(t *testing.T) {
+	f := envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "class_unarmed", MergeByApproval: true, PR: &envelope.PRFact{Number: 2267, URL: prURL}}
+	st := taskView(f, owner()).Status
+	for _, s := range []string{st.Reason, st.Next} {
+		if !strings.Contains(s, "approve") || strings.Contains(s, "reviews and merges") {
+			t.Fatalf("reason %q next %q", st.Reason, st.Next)
+		}
+	}
+	if !strings.Contains(st.Next, "approves the current commit or closes the pull request") || !strings.Contains(st.Next, "the merger App merges that commit") {
+		t.Fatalf("next %q", st.Next)
+	}
+	f.MergeByApproval = false
+	st = taskView(f, owner()).Status
+	if st.Reason != "the factory does not merge this class: a maintainer reviews and merges it" ||
+		st.Next != "a maintainer reviews and merges or closes the pull request on GitHub" {
+		t.Fatalf("without approveToMerge: reason %q next %q", st.Reason, st.Next)
+	}
+}

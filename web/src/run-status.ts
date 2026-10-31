@@ -16,7 +16,7 @@ export interface StatusIn {
   runRole?: string; runStartedAt?: string; runPresent?: boolean;
   pr?: number; issue?: number;
   mine?: number; others?: number; // live approvals the viewer may decide, and those only others may
-  step?: { kind: string; label?: string } | null;
+  step?: { kind: string; label?: string; approve?: boolean } | null; // approve: an approval settles the PR
   now?: number; // ms since the epoch
 }
 
@@ -52,6 +52,7 @@ export function statusLine(i: StatusIn): RunStatus {
   if (mine === 1) return s("waiting-you", "⏳", "Waiting for you — approve a pending action");
   if (mine > 1) return s("waiting-you", "⏳", `Waiting for you — decide ${mine} approvals`);
   if (others > 0) return s("waiting-other", "⏳", "Waiting for another approver");
+  if (i.step?.kind === "pr" && pr > 0 && i.step.approve) return s("waiting-pr", "⏳", `Waiting — review and approve PR #${pr}`);
   if (i.step?.kind === "pr" && pr > 0) return s("waiting-pr", "⏳", `Waiting — review and merge PR #${pr}`);
   if (i.step?.kind === "answer" && issue > 0) return s("waiting", "⏳", `Waiting — answer the question on issue #${issue}`);
   if (i.phase === "Escalated") return s("waiting", "⏳", "Waiting — a maintainer decides");

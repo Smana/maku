@@ -143,6 +143,8 @@ func StatusLine(in StatusIn) RunStatus {
 		return s(KindWaitingYou, "⏳", fmt.Sprintf("Waiting for you — decide %d approvals", in.Mine))
 	case in.Others > 0:
 		return s(KindWaitingOther, "⏳", "Waiting for another approver")
+	case in.Step != nil && in.Step.Kind == StepPR && in.PR > 0 && in.Step.Approve:
+		return s(KindWaitingPR, "⏳", fmt.Sprintf("Waiting — review and approve PR #%d", in.PR))
 	case in.Step != nil && in.Step.Kind == StepPR && in.PR > 0:
 		return s(KindWaitingPR, "⏳", fmt.Sprintf("Waiting — review and merge PR #%d", in.PR))
 	case in.Step != nil && in.Step.Kind == StepAnswer && in.Issue > 0:

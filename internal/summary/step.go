@@ -7,7 +7,7 @@ import "fmt"
 // Step kinds: where a human acts on a room that waits for them.
 const (
 	StepApprove = "approve" // the room page: gates and high-cost runs are decided there
-	StepPR      = "pr"      // GitHub: merge or close the pull request; nothing is done in the room
+	StepPR      = "pr"      // GitHub: merge (or approve, under approveToMerge) or close the pull request; nothing is done in the room
 	StepAnswer  = "answer"  // GitHub: the issue's question is answered on the issue
 )
 
@@ -17,6 +17,9 @@ type Step struct {
 	Kind  string `json:"kind"`
 	Label string `json:"label"`
 	URL   string `json:"url,omitempty"`
+	// Approve marks a pr step a maintainer's approval settles (TaskFacts.MergeByApproval): the
+	// views say approve, not merge. Absent for every other step.
+	Approve bool `json:"approve,omitempty"`
 }
 
 // StepIn is what StepFor reads: the task's facts as the room row or the summary holds them, and
@@ -32,6 +35,8 @@ type StepIn struct {
 	Approvals bool // the caller may decide and one is live
 	CanClose  bool // the caller may close the room's task (policy.Close): merge or answer need it
 	RoomURL   string
+	// MergeByApproval is the facts' word that a maintainer's approval returns the hand-off (AM3).
+	MergeByApproval bool
 }
 
 // StepFor is the step of a room, nil when nothing waits for this caller. A live approval comes
@@ -39,12 +44,16 @@ type StepIn struct {
 // for a merge or a close on GitHub, whatever the reason (shadow_would_arm, policy_pending,
 // class_unarmed, maintainer_approved, changes_requested, ...), and an Escalated needs_author task
 // waits for an answer on its issue: both only for a caller who may close, as Merge and Answer.
+// Under approveToMerge the pull request's step is an approval of its current commit, which the
+// merger App then merges, as Merge's need says.
 func StepFor(in StepIn) *Step {
 	switch {
 	case in.Sealed:
 		return nil
 	case in.Approvals:
 		return &Step{Kind: StepApprove, Label: "approve here", URL: in.RoomURL}
+	case in.CanClose && in.Phase == "AwaitingHuman" && in.PR > 0 && in.MergeByApproval:
+		return &Step{Kind: StepPR, Label: fmt.Sprintf("review, then approve the current commit or close PR #%d", in.PR), URL: in.PRURL, Approve: true}
 	case in.CanClose && in.Phase == "AwaitingHuman" && in.PR > 0:
 		return &Step{Kind: StepPR, Label: fmt.Sprintf("review and merge or close PR #%d", in.PR), URL: in.PRURL}
 	case in.CanClose && in.Phase == "Escalated" && in.Reason == "needs_author" && in.Issue > 0:
