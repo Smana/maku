@@ -49,7 +49,7 @@ Themes without a dependency run in parallel worktrees.
 | T3 Gate and intake | H-3, S-6, S-7, F-5, F-6 | — | `2026-11-01-audit-t3-gate-intake-plan.md` |
 | T4 Money | H-4 | — | `2026-11-01-audit-t4-meter-plan.md` |
 | T5 Shutdown and ownership | F-7, F-8, F-10 | — | `2026-11-01-audit-t5-shutdown-plan.md` |
-| T6 Factory API TLS | S-1 | — | `2026-11-01-audit-t6-factory-tls-plan.md` |
+| T6 Factory API TLS | S-1 | T5 (`api.Server`'s `listen`/`serve` split) | `2026-11-01-audit-t6-factory-tls-plan.md` |
 | T7 Charts and RBAC | H-5, S-2, S-3, S-4, S-5 | T6 | `2026-11-01-audit-t7-charts-plan.md` |
 | T8 UI | U-1, U-2, U-3 | — | `2026-11-01-audit-t8-ui-plan.md` |
 | T9 Structure | A-1, A-2 | T2, T3, T4, T5 | `2026-11-01-audit-t9-structure-plan.md` |
@@ -148,6 +148,32 @@ notes state the upgrade step; the roadmap row "TLS on the factory's run-request 
 | S-12 | `shadow-merge-tally.sh` captures each search into a variable under `set -e` before `jq -s` | `scripts/shadow-merge-tally_test.sh` gains a failing-search case expecting a non-zero exit |
 | A-3 | `AGENTS.md`: the 13 missing packages and `cmd/maku-run-controller` in the map, the runwatch seam row (configurable kind), rows for runctl and migrategroup, the gate table's 14 steps and both charts under `chart:check`; `CONTRIBUTING.md`'s step count; `docs/architecture.md`'s binaries, images and ports; `README.md`'s status line | `hack/docs.sh` passes; review |
 
+## Revisions from planning
+
+Writing the plans against the code changed these fixes. Where a theme's table above disagrees with
+this section, this section wins; each plan's "Spec deviations" carries the evidence.
+
+| Finding | Revision | Why |
+|---|---|---|
+| H-1 | `ClaimBridge`'s takeover `UPDATE` also gains `AND NOT sealed`; the store test is the one that fails first | The takeover path ignored the seal too; hello already mapped `ErrSealed` to 410 |
+| S-9 | A separate per-principal *read* budget on `Server` (10/s, burst 20), not `Actor.limited`; the fold cache stores a `summary.State.Clone` and skips the read when `LastSeq` has not moved | `Server.Actor` may be nil, and sharing the act budget would let page refreshes refuse a viewer's next act; `State.Add` mutates in place |
+| H-2 / D2 | `awaitingCIFor` becomes `*Duration`, defaulted in `Parse` (there is no `ApplyDefaults`); `mainSignal` and the webhook's `room.merged` learn `merged_unverified` | An explicit `0` must stay distinguishable from unset |
+| F-2 | The cap at 16 stays; "drain before the first status write" is dropped | Draining first breaks the invariant that nothing posts before its status write lands; the cap alone ends the wedge |
+| F-3 | `RecentComments` also returns `PermanentError` | It is the first call to fail on a deleted issue |
+| F-11 | `RevertPR` takes the reverted PR's number to find `revert-<n>-` | The adoption lookup needs it |
+| F-5 | Counting every label event only; the "retry generation + 1 on AlreadyExists" is dropped; the test asserts the Task, not a comment | Counting all events makes generations unique; the retry could start a second Task for one label; intake never comments on a Task it creates |
+| H-3 | The fixtures and `docs/factory.md`, which promised 100 files, move to 300 | They stated the wrong cap |
+| S-7 | Validation requires the `solo`, `pair` and `trio` templates | Those are the templates `Matrix` picks |
+| H-4 | The deployed `meter.query` (`sum by (ar_agent, gen_ai_request_model, gen_ai_token_type)`) sums across pods, so the query must keep `pod`; the series key is the full label set; the meter warns at startup on a query without `pod`. **The query change lands in ai-native-ref with, or before, the image bump** | Per-series state cannot separate pods the query has already summed |
+| F-7 | The RunLore intake server's `Start` gets the same fix; both drains go from 5 s to 15 s, under the manager's 20 s | Same bug, found while planning |
+| F-10 | The 503 starts at the 73rd event (8 working + 64 queued); a refused event's id is forgotten so Slack's retry is not dropped as a duplicate | Dedup would otherwise swallow the retry |
+| S-1 | The factory serves through `tls.NewListener` over T5's listener; `api.tls.secretName` defaults to empty, plaintext stays the chart default; a test-only `tlsreloadtest` writes key pairs | Builds on T5's split; TLS is opt-in by D6 |
+| S-2 | The policy allows exactly the three suspend annotation keys, not a prefix, and also freezes labels, finalizers and owner references; an envtest case proves it (envtest 1.36.2 enforces VAP) | The meter's and the revoke annotations share the `agents.ogenki.io/` prefix: a prefix rule would let the broker forge a revoke |
+| S-3 | `hack/quickstart/up.sh` creates the CA-only Secret | The quickstart must keep working |
+| U-1 | `maku run` drops `tester` too; one `runRoles` list feeds both selects and a test compares it with `startrun.go` | The CLI offered the same refused role |
+| A-1 | The whole ledger surface moves, not the six symbols; names drop the `Ledger` prefix | The six alone leave the import; revive flags the stutter |
+| A-2 | `bridgeapi` reads no kind; the readers are `roomctrl`, `suspend`, `runrequest`, factory `runs`, the reconciler, the meter and `runwatch`, migrated one green commit each | Found by grep |
+
 ## Out of scope
 
 - The audit's Low findings, parked in the audit file.
@@ -172,5 +198,5 @@ notes state the upgrade step; the roadmap row "TLS on the factory's run-request 
 | Question | Default taken here |
 |---|---|
 | The exact GraphQL error strings for F-1, and the head-branch naming of `revertPullRequest` for F-11 | Recorded from live calls against a disposable PR before either match is coded |
-| Does the envtest API server enforce `ValidatingAdmissionPolicy` (S-2)? | If yes, a Go envtest case; if not, the render assertion alone and a manual check in the PR |
+| The H-4 query change in ai-native-ref (`pod` kept in `meter.query`) | Merged with, or before, the image bump that carries T4 |
 | `broker.factoryPodLabels` default (S-4) | `app.kubernetes.io/name: agent-factory`, the factory chart's selector label |
