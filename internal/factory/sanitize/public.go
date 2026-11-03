@@ -112,7 +112,10 @@ func closingRun(s string, from, n int) int {
 	return -1
 }
 
-// codeSpanLive wraps every autolink, mention and reference of t in a code span.
+// codeSpanLive wraps every autolink, mention and reference of t in a code span. A span opened
+// right after an odd run of backslashes would have its backtick escaped, leaving the match live
+// (S-6: `\@smana`), so such a run gains one backslash and escapes itself instead. An even run
+// already does.
 func codeSpanLive(t string) string {
 	var b strings.Builder
 	last := 0
@@ -121,7 +124,11 @@ func codeSpanLive(t string) string {
 		if m[2] >= 0 { // a mention or #n: the character before it stays outside
 			start = m[2]
 		}
-		b.WriteString(t[last:start])
+		before := t[last:start]
+		b.WriteString(before)
+		if run := len(before) - len(strings.TrimRight(before, `\`)); run%2 == 1 {
+			b.WriteByte('\\')
+		}
 		b.WriteString("`" + t[start:end] + "`")
 		last = end
 	}

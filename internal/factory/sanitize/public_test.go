@@ -95,3 +95,53 @@ func TestPublicDefusesMentionsAndReferences(t *testing.T) {
 		t.Errorf("a heading and a plain # are left alone: %q", out)
 	}
 }
+
+// live is the text GitHub reads for mentions, references and bare links: each text node outside a
+// code span, as goldmark parses the output.
+func live(out string) []string {
+	src := []byte(out)
+	var texts []string
+	doc := goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser().Parse(gmtext.NewReader(src))
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n := n.(type) {
+		case *ast.CodeSpan:
+			return ast.WalkSkipChildren, nil
+		case *ast.Text:
+			texts = append(texts, string(n.Segment.Value(src)))
+		}
+		return ast.WalkContinue, nil
+	})
+	return texts
+}
+
+// S-6: a backslash before the code span Public opens would escape its backtick and leave what it
+// wraps live. An odd run of backslashes gains one, so the run escapes itself; an even run already
+// does, and gains none.
+func TestPublicSpansSurviveABackslash(t *testing.T) {
+	for in, inert := range map[string]string{
+		`\@smana`:                 "@smana",
+		`\#12`:                    "#12",
+		`\\@smana`:                "@smana",
+		`\\\#12`:                  "#12",
+		`see \Smana/x#7`:          "Smana/x#7",
+		`\https://evil.example/x`: "https://evil.example/x",
+	} {
+		t.Run(in, func(t *testing.T) {
+			out, _ := Public(in)
+			if !strings.Contains(out, "`"+inert+"`") {
+				t.Fatalf("%q: %s is not in a code span: %q", in, inert, out)
+			}
+			for _, text := range live(out) {
+				if strings.Contains(text, inert) {
+					t.Fatalf("%q: %s is live in %q", in, inert, out)
+				}
+			}
+			if l := links(out); len(l) != 0 {
+				t.Fatalf("%q: %v survived in %q", in, l, out)
+			}
+		})
+	}
+}
