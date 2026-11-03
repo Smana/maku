@@ -79,3 +79,28 @@ func TestTheMonitorReadsAnUnverifiedAutoMerge(t *testing.T) {
 		}
 	}
 }
+
+// D3 through MainState: a listing that reached the check cap carries forge.CheckListTruncated,
+// which reads PENDING whatever verifyChecks holds, so watched checks past the cap are never read
+// as green; a failure read anywhere still wins, and verifying does not end merged_verified.
+func TestMainStateReadsACappedListingAsPending(t *testing.T) {
+	marker := forge.Check{Name: forge.CheckListTruncated, State: "PENDING"}
+	other := forge.Check{Name: "unwatched job", State: "SUCCESS"}
+	if got := MainState([]forge.Check{other, marker}, required); got != "PENDING" {
+		t.Fatalf("a capped listing with no watched name = %s, want PENDING", got)
+	}
+	if got := MainState([]forge.Check{marker, {Name: required[0], State: "FAILURE"}}, required); got != "FAILURE" {
+		t.Fatalf("a failure on a capped listing = %s, want FAILURE", got)
+	}
+	g := mergeRig(t, v1alpha1.PhaseVerifying)
+	g.patch(t, func(tk *v1alpha1.Task) {
+		merged := metav1.NewTime(now)
+		ref := tk.Status.PullRequest
+		ref.MergeCommitSHA, ref.AutoMerged, ref.MergedAt = "m1", true, &merged
+	})
+	g.f.SetCommitChecks("m1", other, marker)
+	g.r.Now = func() time.Time { return now.Add(31 * time.Minute) }
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseVerifying {
+		t.Fatalf("%s %s: a capped listing does not verify", tk.Status.Phase, tk.Status.Reason)
+	}
+}

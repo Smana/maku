@@ -11,7 +11,7 @@ import (
 )
 
 // #182: a wait verdict past merge.awaitingCIFor hands the task to a human, naming what never
-// reported; inside the bound, or with no bound (0, the default), it keeps waiting.
+// reported; inside the bound, or with no bound (written 0s), it keeps waiting.
 func TestAwaitingCIIsBounded(t *testing.T) {
 	for name, c := range map[string]struct {
 		bound, since  time.Duration

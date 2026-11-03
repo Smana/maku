@@ -882,10 +882,15 @@ func (r *Reconciler) mergedAt(pr forge.PR) metav1.Time {
 
 // MainState is §6.4's watch of main's CI on the merge commit: FAILURE if a watched check that ran
 // failed, PENDING while one that ran is still running, else SUCCESS. A watched check that never
-// ran is not failing: a path-filtered push workflow never reports on a docs merge.
+// ran is not failing: a path-filtered push workflow never reports on a docs merge. The marker of a
+// truncated listing (D3) reads PENDING whatever is watched; a failure still wins.
 func MainState(runs []forge.Check, watched []string) string {
 	state := "SUCCESS"
 	for _, c := range runs {
+		if c.Name == forge.CheckListTruncated {
+			state = "PENDING"
+			continue
+		}
 		if !slices.Contains(watched, c.Name) {
 			continue
 		}

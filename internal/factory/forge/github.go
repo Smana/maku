@@ -929,10 +929,15 @@ func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, err
 // maxCheckPages bounds CommitChecks: ten pages of 100 check runs (D3).
 const maxCheckPages = 10
 
+// CheckListTruncated names the marker check CommitChecks appends, State "PENDING", when the
+// listing reached maxCheckPages: checks past the cap were never read, so the commit cannot read
+// green through MainState whatever names it watches.
+const CheckListTruncated = "maku: check listing truncated"
+
 // CommitChecks are the check runs on one commit: main's CI after a merge, where no pull request
 // carries the verdict anymore. Every page is read, up to maxCheckPages (D3). A listing still going
-// at the cap returns each run it read that is not FAILURE as PENDING: the commit reads as still
-// running, never green, while a failure read anywhere stays a failure.
+// at the cap returns each run it read that is not FAILURE as PENDING, plus the CheckListTruncated
+// marker: the commit reads as still running, never green, while a failure read stays a failure.
 func (g *GitHub) CommitChecks(ctx context.Context, sha string) ([]Check, error) {
 	var out []Check
 	opt := &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}}
@@ -955,7 +960,7 @@ func (g *GitHub) CommitChecks(ctx context.Context, sha string) ([]Check, error) 
 					out[i].State = "PENDING"
 				}
 			}
-			return out, nil
+			return append(out, Check{Name: CheckListTruncated, State: "PENDING"}), nil
 		}
 		opt.Page = resp.NextPage
 	}

@@ -369,17 +369,17 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 	// failure on page 2, and "endless" lists full pages of green runs past any cap (D3).
 	mux.HandleFunc("GET /repos/Smana/demo/commits/{sha}/check-runs", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		sha := r.PathValue("sha")
-		if sha != "paged" && sha != "endless" {
+		if sha != "paged" && sha != "endless" && sha != "endlessred" {
 			_, _ = io.WriteString(w, `{"total_count":1,"check_runs":[{"name":"Pre-commit checks","status":"completed","conclusion":"success"}]}`)
 			return
 		}
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		page = max(page, 1)
-		if sha == "endless" || page == 1 {
+		if sha == "endless" || sha == "endlessred" || page == 1 {
 			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/Smana/demo/commits/%s/check-runs?per_page=100&page=%d>; rel="next"`, g.srv.URL, sha, page+1))
 		}
 		n, conclusion := 100, "success"
-		if sha == "paged" && page == 2 {
+		if (sha == "paged" || sha == "endlessred") && page == 2 {
 			n, conclusion = 1, "failure"
 		}
 		runs := make([]string, 0, n)
@@ -1849,12 +1849,28 @@ func TestCommitChecksReadsEveryPageUpToTheCap(t *testing.T) {
 	if err != nil || len(runs) != 101 || runs[100].State != "FAILURE" {
 		t.Fatalf("%d runs, %v: the failure on page 2 is read", len(runs), err)
 	}
-	if runs, err = r.g.CommitChecks(t.Context(), "endless"); err != nil || len(runs) != 1000 {
+	if runs, err = r.g.CommitChecks(t.Context(), "endless"); err != nil || len(runs) != 1001 {
 		t.Fatalf("%d runs, %v: ten pages, then the cap", len(runs), err)
 	}
-	for _, c := range runs {
+	for _, c := range runs[:len(runs)-1] {
 		if c.State != "PENDING" {
 			t.Fatalf("a capped listing is never green: %+v", c)
 		}
+	}
+}
+
+// D3: the cap adds the CheckListTruncated marker (PENDING), so the unread tail cannot read green
+// through a watched name; a failure read before the cap stays a failure.
+func TestCommitChecksCapMarksTheListingAndKeepsFailures(t *testing.T) {
+	r := newRig(t)
+	runs, err := r.g.CommitChecks(t.Context(), "endless")
+	if err != nil || len(runs) != 1001 || runs[1000].Name != CheckListTruncated || runs[1000].State != "PENDING" {
+		t.Fatalf("%d runs, %v: the capped listing ends with the marker", len(runs), err)
+	}
+	if runs, err = r.g.CommitChecks(t.Context(), "endlessred"); err != nil || len(runs) != 902 { // page 2 holds the one failure
+		t.Fatalf("%d runs, %v", len(runs), err)
+	}
+	if runs[901].Name != CheckListTruncated || runs[100].State != "FAILURE" {
+		t.Fatalf("a failure on a capped listing stays FAILURE: %+v", runs[100])
 	}
 }
