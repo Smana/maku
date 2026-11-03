@@ -122,16 +122,29 @@ func live(out string) []string {
 // does, and gains none.
 func TestPublicSpansSurviveABackslash(t *testing.T) {
 	for in, inert := range map[string]string{
-		`\@smana`:                 "@smana",
-		`\#12`:                    "#12",
-		`\\@smana`:                "@smana",
-		`\\\#12`:                  "#12",
-		`see \Smana/x#7`:          "Smana/x#7",
-		`\https://evil.example/x`: "https://evil.example/x",
+		`\@smana`:                       "@smana",
+		`\#12`:                          "#12",
+		`\\@smana`:                      "@smana",
+		`\\\#12`:                        "#12",
+		`see \Smana/x#7`:                "Smana/x#7",
+		`\https://evil.example/x`:       "https://evil.example/x",
+		`[a](\@smana)`:                  "@smana",
+		`[a](\\@smana)`:                 "@smana",
+		`[a](x,@smana)`:                 "@smana",
+		`[a](@smana,b)`:                 "@smana",
+		`[a](x#1,#12,b)`:                "#12",
+		`[a](x,Smana/x#7)`:              "Smana/x#7",
+		`[a](x,https://evil.example/y)`: "https://evil.example/y",
 	} {
 		t.Run(in, func(t *testing.T) {
 			out, _ := Public(in)
-			if !strings.Contains(out, "`"+inert+"`") {
+			// A link destination is one code span holding more than the match: it only has to
+			// contain it, and the live scan below proves it is not read outside a span.
+			if strings.HasPrefix(in, "[") {
+				if !strings.Contains(out, inert) {
+					t.Fatalf("%q: %s is gone from %q", in, inert, out)
+				}
+			} else if !strings.Contains(out, "`"+inert+"`") {
 				t.Fatalf("%q: %s is not in a code span: %q", in, inert, out)
 			}
 			for _, text := range live(out) {

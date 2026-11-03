@@ -35,14 +35,30 @@ func Public(s string) (string, Report) {
 			b.WriteString(seg.text)
 			continue
 		}
-		t := mdLink.ReplaceAllString(seg.text, "$1 (`$2`)")
-		// A destination the pattern did not take (a nested bracket, a title) is no link either:
-		// "](" is what makes one.
-		t = strings.ReplaceAll(t, "](", "] (")
-		t = codeSpanLive(t)
-		b.WriteString(t)
+		b.WriteString(inertLinks(seg.text))
 	}
 	return b.String(), rep
+}
+
+// inertLinks turns each inline link of t into its text and its URL in a code span, and wraps what is
+// live in the rest. The URL span is written after the live scan and never rescanned: scanning it
+// would put backticks inside it, and they would pair with the span's own (`[a](\@smana)`).
+func inertLinks(t string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range mdLink.FindAllStringSubmatchIndex(t, -1) {
+		b.WriteString(defuseText(t[last:m[0]] + t[m[2]:m[3]] + " ("))
+		b.WriteString("`" + t[m[4]:m[5]] + "`")
+		last = m[1] - 1 // the closing ")" starts the next run
+	}
+	b.WriteString(defuseText(t[last:]))
+	return b.String()
+}
+
+// defuseText handles a run outside every link destination: a destination the pattern did not take
+// (a nested bracket, a title) is no link either, "](" is what makes one; then the live text.
+func defuseText(t string) string {
+	return codeSpanLive(strings.ReplaceAll(t, "](", "] ("))
 }
 
 type segment struct {
