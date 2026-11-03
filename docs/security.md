@@ -133,6 +133,12 @@ cloud-native-ref.
 | Bridge | Mounts `room-broker-ca` read-only at `/etc/room-broker-ca`; loads `$BROKER_CA_FILE` (default `/etc/room-broker-ca/ca.crt`) as its only root. It refuses to start if the file is missing or `BROKER_URL` is not `https://` |
 | Operators | Call `:8443` with `https://` and `--cacert` on the same CA |
 
+The broker forwards each human's ZITADEL bearer token to the factory's `:8082` on a run request,
+so that hop is TLS too once the factory chart sets `api.tls.secretName`: the same reloading loader
+(`internal/tlsreload`), TLS 1.3 minimum, the broker trusting `factoryCAFile`. The broker refuses
+an `http://` `factoryURL` at start unless `factoryInsecure: true` says the operator accepts
+plaintext, the same rule as the bridge's `BROKER_URL`.
+
 `:8080` stays behind oauth2-proxy and `:8090` behind the `agent-router` Gateway, unchanged.
 
 ## Redaction

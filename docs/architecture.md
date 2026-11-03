@@ -13,7 +13,7 @@ the `agents` namespace is one the pod opens.
 
 | Component | Runs | Does |
 |---|---|---|
-| `maku-factory` | Deployment `agent-factory` in `agent-system`, two replicas, one leading; chart `charts/maku-factory` | Reconciles the `Task` CRD, polls maintainer-labelled issues, answers `POST /v1/runs` on `:8082` (plaintext inside the mesh), meters each run, narrates on the issue, runs the merge gate |
+| `maku-factory` | Deployment `agent-factory` in `agent-system`, two replicas, one leading; chart `charts/maku-factory` | Reconciles the `Task` CRD, polls maintainer-labelled issues, answers `POST /v1/runs` on `:8082` (TLS 1.3 with `api.tls`), meters each run, narrates on the issue, runs the merge gate |
 | `maku-broker` | Deployment `room-broker` (an identity that keeps its pre-maku name, see [naming](naming.md#technical-names)) in `agent-system`, from an `App` claim; two replicas with a PDB | The log of record, the Room controller, the `:8443`, `:8080`, `:8090` and `:9090` listeners, the retention job (`maku-broker retention`) |
 | `maku-bridge` | Native sidecar `room-bridge` (`restartPolicy: Always`) after `identity-proxy`, in every run pod with `spec.roomRef` | Mirrors the harness into the room; carries steering, interrupts and decisions back over one SSE stream |
 | `maku-harness` | The run container of the `AgentRun` pod | The agent itself; it opens the pull request with `gh pr create` and the provenance footer (`images/maku-harness/pr_footer.py`). In the test-first flow it also runs the tester's red check and signed contract push, and holds an implementer to the contract with the `pre-commit` hook and `test-contract hold` ([README](../images/maku-harness/README.md#the-test-first-tester)) |
@@ -294,7 +294,7 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 | `:8443` | maku-broker | The bridge in each run pod; system callers (the factory) |
 | `:8090` | maku-broker | The agents' `room_*` tools through the agent gateway (agent-router) |
 | `:9090` | maku-broker | Metrics and probes |
-| `:8082` | maku-factory | `POST /v1/runs`, plaintext inside the mesh: the broker's `start_run` |
+| `:8082` | maku-factory | `POST /v1/runs`, TLS 1.3 when `api.tls` is set (`internal/tlsreload`): the broker's `start_run` |
 | `:8080` | maku-factory | `POST /intake/runlore` |
 | `:9090` | maku-factory | Metrics and probes |
 | `:9090` | maku-run-controller | Metrics |

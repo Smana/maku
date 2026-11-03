@@ -197,7 +197,7 @@ The factory (SP3), by the same stages. Its wiring is `internal/app/factory.go`; 
 | Out | `internal/factory/forge`, `internal/factory/narrate` | GitHub as the factory App (`internal/factory/forge/forgetest`: its test-only fake); narration, at least once |
 | Out | `internal/factory/rooms` | the broker's system API over TLS |
 | Ops | `internal/factory/meter`, `internal/factory/fmetrics`, `internal/factory/tracing` | the run meter; the §7 metrics; one root span per task |
-| API | `internal/factory/api` | the run-request API, `POST /v1/runs` (the chart's `api` port, `:8082`) |
+| API | `internal/factory/api` | the run-request API, `POST /v1/runs` (the chart's `api` port, `:8082`; TLS 1.3 with `api.tls`) |
 
 ## Seams
 
@@ -239,6 +239,8 @@ outside demand. Keeping the seams clean now makes that decision cheap.
   a test fix.
 - **No secret on argv.** Tokens, keys and DSNs come from mounted files or the environment,
   never flags or a child process's arguments: `/proc/<pid>/cmdline` is world-readable.
-- **TLS on `:8443`.** The broker serves it with a reloading `GetCertificate`; the bridge
-  verifies against `BROKER_CA_FILE` and refuses a non-`https://` `BROKER_URL`. Never
-  `InsecureSkipVerify`, tests included (use `httptest.NewTLSServer`'s client).
+- **TLS on `:8443`.** The broker serves it with a reloading `GetCertificate` (`internal/tlsreload`);
+  the bridge verifies against `BROKER_CA_FILE` and refuses a non-`https://` `BROKER_URL`. The
+  factory's `:8082` serves the same loader when `api.tls` is set, and the broker refuses an
+  `http://` `factoryURL` unless `factoryInsecure: true`. Never `InsecureSkipVerify`, tests
+  included (use `httptest.NewTLSServer`'s client, or `tlsreloadtest.WritePair` and a root pool).
