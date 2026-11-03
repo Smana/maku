@@ -615,12 +615,13 @@ describe("the room page", () => {
     it("heads the lead, between the strip and the chat", () => {
       const p = page();
       p.join(snapshot({ role: "owner" }), 0, requested(1, "01M4A"));
-      const kids = [...p.app.children];
       const panel = p.app.querySelector("section.needs")!;
-      // Only the reconnecting banner, hidden while live, sits between the strip and the panel.
-      expect(kids.indexOf(panel)).toBe(kids.indexOf(p.app.querySelector("header")!) + 2);
-      expect(kids[kids.indexOf(panel) - 1].className).toBe("banner");
-      expect(kids.indexOf(panel)).toBeLessThan(kids.indexOf(p.app.querySelector("main")!));
+      const body = panel.parentElement!;
+      const kids = [...p.app.children];
+      // Only the reconnecting banner, hidden while live, sits between the strip and the room body.
+      expect(kids.indexOf(body)).toBe(kids.indexOf(p.app.querySelector("header")!) + 2);
+      expect(kids[kids.indexOf(body) - 1].className).toBe("banner");
+      expect([...body.children].indexOf(panel)).toBeLessThan([...body.children].indexOf(p.app.querySelector("main")!));
       expect(panel.querySelector("#approval-01M4A .approval-command")?.textContent).toBe("git push");
     });
 
@@ -739,6 +740,74 @@ describe("the room page", () => {
       await tick();
       expect(p.app.querySelector('[data-block="notes"]')).toBe(first);
       expect(p.app.querySelector("h1")).toBe(h1); // nor the strip, whose PR link may hold the focus
+    });
+  });
+
+  describe("the rail", () => {
+    const node = (o: object) => ({ run: "r-i", persona: "implementer", role: "implementer", round: 1, fromSeq: 1, toSeq: 0,
+      startedAt: "2026-10-06T10:00:00Z", tools: { ok: 0, failed: 0 }, ...o });
+    const sumWith = (flow?: object) => ({ apiVersion: "summary/v1", room: "3kq7x2ma", url: "u",
+      status: { phase: "Implementing", run: null, budget: null, pr: null, issue: null, lastVerdict: null },
+      needsYou: [], actions: [], notes: { untrusted: true, items: [] }, cursor: "seq:0", ...(flow ? { flow } : {}) });
+    const withFlow = async (flow?: object) => {
+      const get = vi.fn(async () => new Response(JSON.stringify(sumWith(flow)), { status: 200 })) as unknown as typeof fetch;
+      const p = page(get);
+      p.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      return { p, get };
+    };
+    const flow = { nodes: [node({})], ghosts: ["reviewer"] };
+
+    it("a summary with a flow shows the rail", async () => {
+      const { p } = await withFlow(flow);
+      expect(p.app.querySelector<HTMLElement>(".room-body.has-rail aside.rail")!.hidden).toBe(false);
+      expect(p.app.querySelectorAll(".rail-dots .rail-dot")).toHaveLength(2);
+    });
+
+    it("a summary without a flow hides it", async () => {
+      const { p } = await withFlow();
+      expect(p.app.querySelector(".room-body.has-rail")).toBeNull();
+      expect(p.app.querySelector<HTMLElement>("aside.rail")!.hidden).toBe(true);
+    });
+
+    it("the ticker ages the live node", async () => {
+      vi.setSystemTime(Date.parse("2026-10-06T10:00:30Z"));
+      const { p } = await withFlow(flow);
+      const detail = () => p.app.querySelector(".rail-node[data-state=live] .rail-detail")!.textContent;
+      const before = detail();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(detail()).not.toBe(before);
+    });
+
+    it("a tool result counts live", async () => {
+      const { p } = await withFlow(flow);
+      const f = event(1, "tool_result", { status: "ok" });
+      p.last().recv({ ...f, event: { ...f.event, runId: "r-i" } });
+      p.app.querySelector(".rail-node[data-run=r-i] button")!.dispatchEvent(new FocusEvent("focus"));
+      expect(p.app.querySelector(".rail-card")!.textContent).toContain("tool calls 1 ok");
+    });
+
+    it("a judge verdict refetches", async () => {
+      const { p, get } = await withFlow(flow);
+      p.last().recv(event(1, "message", { kind: "judge_verdict", text: "x" }));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    it("dots open the drawer", async () => {
+      const { p } = await withFlow(flow);
+      p.app.querySelector<HTMLElement>(".rail-dots")!.click();
+      expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(true);
+      p.app.querySelector<HTMLElement>(".rail-close")!.click();
+      expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(false);
+    });
+
+    it("the conversation keeps its place", async () => {
+      const { p } = await withFlow(flow);
+      const main = p.app.querySelector("main")!;
+      expect(main.querySelector(".view-chat")).not.toBeNull();
+      expect(main.querySelector("details.raw-events")).not.toBeNull();
+      expect(main.parentElement!.classList.contains("room-body")).toBe(true);
     });
   });
 });

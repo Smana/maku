@@ -16,6 +16,8 @@ import { PendingActs } from "./pending";
 import { RoomState } from "./room-state";
 import { mountViews } from "./roomview";
 import type { Dashboard } from "./dashboards";
+import { mountRail } from "./rail";
+import { tone } from "./flow";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -90,7 +92,49 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   mountThemeButton(meta, theme);
   meta.append(status);
   footer.append(session, composerEl, meta);
-  app.replaceChildren(sandbox, header, banner, needsPanel, lead, skeleton, main, forkPanel, footer);
+  // The rail beside the conversation, not in main: mountViews wipes main's children.
+  const rail = mountRail({ select: () => {} }); // Task 9 wires the run view
+  const dots = document.createElement("button");
+  dots.type = "button";
+  dots.className = "rail-dots";
+  dots.setAttribute("aria-label", "Show the task path");
+  dots.hidden = true;
+  const drawerClose = document.createElement("button");
+  drawerClose.type = "button";
+  drawerClose.className = "rail-close";
+  drawerClose.textContent = "Close";
+  rail.el.prepend(drawerClose);
+  dots.onclick = () => { rail.el.classList.add("open"); drawerClose.focus(); };
+  drawerClose.onclick = () => { rail.el.classList.remove("open"); dots.focus(); };
+  const roomBody = document.createElement("div");
+  roomBody.className = "room-body";
+  roomBody.append(dots, needsPanel, lead, skeleton, main, forkPanel, rail.el);
+  app.replaceChildren(sandbox, header, banner, roomBody, footer);
+  const showRail = (sum: Summary) => {
+    const f = sum.flow;
+    rail.set(f, sum.status.phase, Date.now());
+    roomBody.classList.toggle("has-rail", !!f);
+    dots.hidden = !f;
+    if (!f) rail.el.classList.remove("open");
+    dots.replaceChildren(...[...f?.nodes.map((n) => [n.role, n.endedAt ? "done" : "live"]) ?? [], ...(f?.ghosts ?? []).map((g) => [g, "ghost"])].map(([who, st]) => {
+      const d = document.createElement("span");
+      d.className = "rail-dot";
+      d.dataset.tone = tone(who);
+      d.dataset.state = st;
+      return d;
+    }));
+  };
+  // Header and dock heights place the sticky rail between them.
+  if (typeof ResizeObserver !== "undefined") {
+    const size = () => {
+      app.style.setProperty("--header-h", `${header.offsetHeight}px`);
+      app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
+    };
+    const ro = new ResizeObserver(size);
+    ro.observe(header);
+    ro.observe(footer);
+    size();
+  }
   const views = mountViews(main, (seq) => fork.open(seq), () => snap?.you.principal);
   const state = new RoomState();
   let you: Snapshot["you"] | undefined;
@@ -157,7 +201,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // its own once the page has left app (a re-mount or the "no such room" page replaced it).
   const ticker = setInterval(() => {
     if (!app.contains(header)) clearInterval(ticker);
-    else { needsPanelView.refresh(); refreshStrip(); }
+    else { needsPanelView.refresh(); refreshStrip(); rail.tick(Date.now()); }
   }, 1000);
   // The summary loads on mount, then at most once a second while events it folds arrive
   // (R27). A failed fetch shows its text on the error line and leaves the stream alone.
@@ -183,6 +227,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         controls?.setSummary(sum);
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
+        showRail(sum);
         shown = key;
       }
       summaryError.hidden = true;
@@ -243,6 +288,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     },
     onEvent: (e) => {
       views.apply(e);
+      rail.live(e);
       if (changesSummary(e)) scheduleSummary();
       state.apply(e);
       needsPanelView.refresh();
