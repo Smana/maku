@@ -18,11 +18,13 @@ task check      # exit 0, or it is not done
 | `tidy` | `go mod tidy -diff` | `go.mod` or `go.sum` drift |
 | `lint` | `hack/lint.sh` | any golangci-lint issue under [`.golangci.yaml`](.golangci.yaml), gofmt and goimports included |
 | `vuln` | `go run …/govulncheck@v1.8.0 ./...` | a known vulnerability reachable from our code, stdlib included |
-| `test` | `go test -race -count=1 ./...` | a failing test or a data race; never cached |
+| `test` | `go test -race -count=1 ./...`, envtest's API server from `setup-envtest` 1.36.x | a failing test or a data race; never cached |
 | `crd:check` | `crd:gen`, then `git diff --exit-code -- config/crd api charts` | a committed CRD, deepcopy or the chart's CRD copy that differs from what the types generate |
-| `chart:check` | `helm lint --strict`, `charts/maku-factory/tests/render.sh` | the factory chart losing a property the platform relies on |
+| `chart:check` | `helm lint --strict` and `tests/render.sh` for `charts/maku-factory` and `charts/maku` | either chart losing a property the platform relies on, or the maku chart rendering a config its component's loader refuses |
+| `quickstart:check` | `hack/quickstart/check.sh`, offline: `bash -n`, shellcheck, `lib_test.sh` | the quickstart scripts, their manifests and the maku chart disagreeing on a name they share |
 | `migrations` | `atlas migrate validate --dir file://internal/store/migrations`, offline | an `atlas.sum` that no longer matches the migrations: re-hash with `atlas migrate hash` |
-| `docs` | `hack/docs.sh` | a reader page with a per-row status tag, or a dead relative link or anchor |
+| `docs` | `hack/docs_test.sh`, `hack/docs.sh` | a reader page with a per-row status tag, or a dead relative link or anchor |
+| `names` | `hack/names_test.sh`, `hack/names.sh` | an artifact, API group or metric name from before the maku rebrand outside the historical docs |
 | `scripts` | `scripts/*_test.sh` | an operator script, such as `shadow-merge-tally.sh`, no longer reading GitHub's shapes as its test fakes them |
 | `ui:test` | `npm ci`, `tsc --noEmit`, `vitest run` in `web/` | a type error or a failing UI test |
 | `ui:check` | `web/`'s build into `internal/humanapi/ui/dist/` | a committed bundle that differs from what `web/` builds, or a built file not committed |
@@ -148,7 +150,7 @@ flowchart LR
 
 | Stage | Package | Contract |
 |---|---|---|
-| Entry | `cmd/maku-broker` | `serve` and `retention` subcommands |
+| Entry | `cmd/maku-broker` | `serve`, `retention`, `migrate` (the schema, the chart's init container) and `migrate-group` (the maku rebrand's group move) subcommands |
 | Entry | `cmd/maku-bridge` | the sidecar binary |
 | Entry | `cmd/maku-slack`, `internal/slackapp` | the factory's Slack App: intake from a thread, webhooks to the thread (docs/slack.md) |
 | Entry | `cmd/maku`, `internal/maku` | the human CLI and its client; `maku mcp`, the stdio relay to `/mcp` |
@@ -157,9 +159,11 @@ flowchart LR
 | Entry | `internal/config` | the broker's config file: strict decode, defaults, validation |
 | Entry | `internal/logging` | a binary's `*slog.Logger`: JSON or text, level by env |
 | Entry | `internal/version` | build version stamped by `-ldflags` |
+| Entry | `cmd/maku-run-controller` | the run controller binary, on clusters without cloud-native-ref's Crossplane runtime; its wiring is `app.RunController` |
 | Ingress | `internal/bridge` | harness adapter over loopback, event mapping, status, uploader, SSE consumer |
 | Ingress | `internal/wire` | bridge and browser frames: the types both ends of a connection share |
 | Ingress | `internal/authn` | offline JWT verification for runs, system callers and humans; principal mapping |
+| Ingress | `internal/sponsored` | what the broker and the factory must agree on for a sponsored principal: the names neither may give one, the shape of the git ref it may send |
 | Log | `internal/envelope` | C4 v1 event types, payload builders, validation, limits |
 | Log | `internal/redact` | gitleaks detection over every JSON string of a payload |
 | Log | `internal/store` + `migrations/` | append, range, cursors, seal; the only package that speaks SQL |
@@ -167,6 +171,7 @@ flowchart LR
 | Rooms | `internal/runwatch` | `AgentRun` informer: liveness, membership, run events, end reason |
 | Rooms | `internal/roomctrl` | `Room` reconciler: row, seq 1, finalizer, status projection |
 | Rooms | `internal/suspend` | the suspend trigger: a suspendable run waiting on an approval in an idle attended room is suspended, and resumed once nothing waits, through its claim's annotations |
+| Runs | `internal/runctl` | the run controller: `maku.ogenki.io` AgentRuns reconciled into the pod, ServiceAccount, ConfigMaps and CiliumNetworkPolicy that cloud-native-ref's composition builds, minus the gateway, octo-sts, traces, Kueue and suspend |
 | API | `internal/bridgeapi` | `:8443`: hello, events, SSE stream, system API, approvals |
 | API | `internal/tlsreload` | a server key pair from two mounted files, TLS 1.3 minimum, re-read when cert-manager renews it: `:8443` and the factory's run-request API serve it (D7); `tlsreload/tlsreloadtest`, its test-only pair writer |
 | API | `internal/mcp` | `:8090` MCP server, the `room_*` tools |
@@ -174,13 +179,16 @@ flowchart LR
 | API | `internal/github`, `internal/verdictpost` | the factory App client; the leader's verdict comments |
 | API | `internal/brief`, `internal/runrequest` | fenced brief; manifest and factory run requesters |
 | API | `internal/prpattern` | a repository's pull-request URL patterns, compiled once per repository in a bounded cache |
+| API | `internal/webhook` | the broker's outbound events (F6): id-only payloads, signed as Standard Webhooks sign them; the broker and the Slack App use it |
 | Viewers | `internal/fanout` | LISTEN/NOTIFY hub: coalesced per-room reads, a 1 s poll while the listener is down |
 | Viewers | `internal/policy` | the §1 permission matrix |
 | Viewers | `internal/summary` | the pure fold of a room's log into `summary/v1`, the one object the room page and `maku status` render |
+| Viewers | `internal/roomview` | the factory's four room views as `maku` renders them; the one place that makes untrusted text inert |
 | Viewers | `internal/ghidentity`, `internal/repoaccess` | D7: a member's GitHub login from their ZITADEL link; whether it may read a room's repository, cached, failing closed |
 | Viewers | `internal/humanapi` + `ui/dist/` | `:8080` WebSocket, room list, actions, embedded UI; `POST /mcp`, the humans' MCP server |
 | Viewers | `web/` | TypeScript UI and its vitest suite |
 | Ops | `internal/metrics` | the §9 metric set and the Prometheus exporter maku-broker serves |
+| Ops | `internal/migrategroup` | `maku-broker migrate-group`: copies Rooms and Tasks from one API group to another, behind a guard annotation, the maku rebrand's one-shot |
 
 The factory (SP3), by the same stages. Its wiring is `internal/app/factory.go`; its chart,
 `charts/maku-factory`, ships the `Task` CRD.
@@ -191,9 +199,16 @@ The factory (SP3), by the same stages. Its wiring is `internal/app/factory.go`; 
 | Entry | `internal/factory/config` | the factory's config file: strict decode, defaults, validation, its hash |
 | Intake | `internal/factory/intake` | the issue poller: maintainer labels, snapshots, dedup, stop labels |
 | Intake | `internal/factory/sanitize`, `internal/factory/taskid` | untrusted text defused to a fixpoint; C2 task names and ids |
+| Intake | `internal/factory/fence` | the single-owner fence: a repository is acted on only by the factory its default branch's `.github/agent-factory.yaml` names |
+| Intake | `internal/factory/finding` | what both RunLore intakes write the same way: the task text, the public stub issue, the label charset that keeps attacker-influenced identifiers inert |
 | Tasks | `api/factory/v1alpha1` | `Task` types and deepcopy; CRD generated into `config/crd/` |
 | Tasks | `internal/factory/triage`, `internal/factory/reconciler` | template, tier and budget; the `Task` state machine |
 | Tasks | `internal/factory/runs`, `internal/factory/killswitch` | the `AgentRun` claim; the stop object |
+| Tasks | `internal/factory/steering` | a task class's steering note, read on the default branch at triage; an agent pull request that changes one is refused |
+| Tasks | `internal/factory/ledger` | the budget ledger: one ConfigMap per UTC day, its resourceVersion the transaction; admission reserves a run's ceiling, the run's end releases it, the meter owns the spent and settled columns; `api`, `intake`, `meter` and `reconciler` import it |
+| Gate | `internal/factory/filefence`, `internal/factory/mdlinks`, `internal/factory/semverdiff` | a class's file conditions on a diff, one implementation for the gate and the adopt poller; Markdown link targets as the links-only shape reads them; whether a diff is a dependency bump of one kind |
+| Gate | `internal/factory/decision` | the per-decision record: the values each declared row read, so the tally can replay a cap |
+| Gate | `internal/factory/fluxwatch` | Flux's objects for the post-merge monitor (MC7): uncached, read-only, `unstructured` |
 | Out | `internal/factory/forge`, `internal/factory/narrate` | GitHub as the factory App (`internal/factory/forge/forgetest`: its test-only fake); narration, at least once |
 | Out | `internal/factory/rooms` | the broker's system API over TLS |
 | Ops | `internal/factory/meter`, `internal/factory/fmetrics`, `internal/factory/tracing` | the run meter; the §7 metrics; one root span per task |
@@ -212,12 +227,14 @@ Packages that do touch the platform name their seam:
 | Package | Seam |
 |---|---|
 | `internal/authn` | issuers, subject patterns and the system allowlist are config; the audiences `room-broker` and `rooms-system` are constants in `internal/authn/jwt.go` |
-| `internal/runwatch` | the `AgentRun` GVK, its `agents` namespace, the `xplane-run-` claim-name prefix and the `agents.ogenki.io/revoked` annotation; a `RunSource` interface would replace them in a spin-out |
+| `internal/runwatch` | the run kind (`runwatch.Kind`: group, namespace, claim-name prefix) is config, the broker's and the factory's `runs:`, built in `internal/app` and passed to each consumer; unset, `runwatch.DefaultKind`, cloud-native-ref's `cloud.ogenki.io`, `agents`, `xplane-run-`. The `agents.ogenki.io/revoked` annotation and the three suspend annotations are constants; a `RunSource` interface would replace them in a spin-out |
 | `internal/runrequest` | the rendered claim reuses runwatch's seam plus the claim's spec fields; the factory is SP3's `POST /v1/runs`, at the configured `factoryURL` |
+| `internal/runctl` | the `maku.ogenki.io` `AgentRun` CRD (typed, `api/v1alpha1`), Cilium's `CiliumNetworkPolicy` and the run pod's layout (the bridge as a native sidecar, the broker CA at `/etc/room-broker-ca`); the runs namespace, name prefix, RuntimeClass, images, Secrets, broker URL, labels and CA Secret are config, and the egress profiles have built-in defaults (github, pypi, npm, golang, crates) |
+| `internal/migrategroup` | the kinds it moves (`Room`, `Task`), the version `v1alpha1` and the guard annotation `v1alpha1.AnnotationMigrating`; the two groups come from `--from` and `--to`. Removed once every cluster has migrated |
 | `internal/roomctrl` | the `Room` CRD group |
 | `internal/bridgeapi` | principal allowlists come from config |
 | `internal/bridge` | the OpenHands agent-server loopback API and its event kinds; a harness adapter interface would replace them for another harness |
-| `internal/factory/runs` | the `AgentRun` claim SP1's XRD accepts: its GVK, namespace and claim prefix (runwatch's), the `agents.ogenki.io/*` labels and annotations, the principal `system:factory` and the Kueue queues `factory` and `interactive`; the reconciler reaches it through its `RunClient` interface only |
+| `internal/factory/runs` | the `AgentRun` claim SP1's XRD accepts: its run kind (runwatch's `Kind`, from the factory's `runs:` config), the `agents.ogenki.io/*` labels and annotations, the principal `system:factory` and the Kueue queues `factory` and `interactive`; the reconciler reaches it through its `RunClient` interface only |
 | `internal/factory/config` | every deployment fact is config: repository, maintainers, the App logins, the rooms UI and broker URLs, the broker CA and token paths, the meter's URL and query, tiers and the trace collector. The vocabularies it checks against are constants: SP1's roles, C5's logical model names, the tiers and the Task CRD's template enum |
 | `internal/github` | GitHub's REST API and App auth; the API URL and the App's key directory are the caller's, the token scope (`pull_requests: write`, one repository; GitHub adds `metadata: read`, which the D7 reads use) is a constant |
 
