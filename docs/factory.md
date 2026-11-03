@@ -337,7 +337,7 @@ every maintainer.
 | `budget-principal` | The factory's daily budget in dollars is spent |
 | `budget-fleet` | The agent gateway's fleet-wide token budget is spent |
 | `failed` or another run phase, lowercased | The run ended without a more specific reason from the room or the meter |
-| `budget-task` | The task cap has no room for another whole run |
+| `budget-task` | The task cap has no room for another whole run. Under `budgets.enforceTask`, `/factory retry` is answered and not taken: the cap is part of the task's spec, so raise it on a new task |
 | `budget-person` | [Per-person caps](#per-person-caps): the day of the person the next run is charged to is spent; the comment names them. A maintainer's `/factory retry` charges the retrier instead |
 | `ci_red` | CI stayed red after `merge.fixRuns` fix runs; the comment names the failing checks |
 | `secret_scan_red` | The secret scan (`merge.leakScanCheck`) found a live credential. Next step: a maintainer revokes the key and closes the pull request; the factory does not retry |

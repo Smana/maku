@@ -504,6 +504,13 @@ func Retrying(t *v1alpha1.Task, by, after string) Event {
 	return Event{Key: fmt.Sprintf("retry-%d", t.Status.Retries), Body: body}
 }
 
+// TaskCapHolds answers a /factory retry of a task escalated at its cap (F-4): Queued would only
+// escalate it again, so the retry is not taken. Keyed by the command: each is answered once.
+func TaskCapHolds(t *v1alpha1.Task, command int64) Event {
+	return Event{Key: fmt.Sprintf("retry-refused-%d", command), Body: fmt.Sprintf("Agent factory task `%s` was not retried: %s, "+
+		"and the task's cap is part of its spec: raise it on a new task.", t.Name, Reason("budget-task"))}
+}
+
 // Resuming says the factory resumes a run its sandbox lost, on its own, n of limit (disruption
 // design §4). A reviewer's new run uses no review round.
 func Resuming(t *v1alpha1.Task, runID, role string, n, limit int) Event {
@@ -799,7 +806,11 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 	} else { // a retry can still spend: this is the total so far
 		b.WriteString(usageLine + " so far: " + Tokens(t.Status.Usage.Tokens) + ".")
 	}
-	return Event{Key: fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs)), Body: b.String()}
+	key := fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs))
+	if phase == v1alpha1.PhaseEscalated {
+		key += fmt.Sprintf("-%d", t.Status.Retries) // F-4: a retry that escalates again before a run is a new escalation
+	}
+	return Event{Key: key, Body: b.String()}
 }
 
 // MergedUnverified is the end of an auto-merge whose merge commit got no result from main's CI
