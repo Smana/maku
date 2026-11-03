@@ -203,8 +203,8 @@ func (s SplitFact) validate() error {
 		switch {
 		case p.Index < 1 || p.Index > s.Of:
 			return fmt.Errorf("part[%d] index is between 1 and %d", i, s.Of)
-		case p.Issue < 0:
-			return fmt.Errorf("part[%d] issue is not negative", i)
+		case p.Issue < 1:
+			return fmt.Errorf("part[%d] issue is at least 1", i)
 		case !ValidID(p.Room):
 			return fmt.Errorf("part[%d] room is a room id", i)
 		case !validPartOutcome(p.Outcome):
@@ -218,8 +218,8 @@ func (p ParentFact) validate() error {
 	switch {
 	case !ValidID(p.Room):
 		return errors.New("parent room is a room id")
-	case p.Issue < 0:
-		return errors.New("parent issue is not negative")
+	case p.Issue < 1:
+		return errors.New("parent issue is at least 1")
 	case p.Of < MinChildren || p.Of > MaxChildren:
 		return fmt.Errorf("parent is of %d to %d parts, got %d", MinChildren, MaxChildren, p.Of)
 	case p.Index < 1 || p.Index > p.Of:

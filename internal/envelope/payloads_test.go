@@ -74,6 +74,8 @@ func TestTaskFactsValidate(t *testing.T) {
 		"part outcome unknown":     {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{{Index: 1, Issue: 1, Room: "k2mqx7ba", Outcome: "merged"}}}}, "part"},
 		"more parts than of": {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{
 			{Index: 1, Issue: 1, Room: "k2mqx7ba"}, {Index: 2, Issue: 2, Room: "k2mqx7bb"}, {Index: 2, Issue: 3, Room: "k2mqx7bc"}}}}, "part"},
+		"part issue 0":         {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{{Index: 1, Issue: 0, Room: "k2mqx7ba"}}}}, "part"},
+		"parent issue 0":       {TaskFacts{Phase: "Queued", Parent: &ParentFact{Room: "k2mqx7ba", Issue: 0, Index: 1, Of: 2}}, "parent"},
 		"parent index past of": {TaskFacts{Phase: "Queued", Parent: &ParentFact{Room: "k2mqx7ba", Issue: 1, Index: 3, Of: 2}}, "parent"},
 	} {
 		err := tc.f.Validate()
