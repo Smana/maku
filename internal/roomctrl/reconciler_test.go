@@ -748,3 +748,41 @@ func TestAMigratingRoomIsLeftAlone(t *testing.T) {
 			ms.ensured, len(ms.drafts), got.Finalizers, got.Status)
 	}
 }
+
+// Audit R-2: a reconcile whose status, the task's included, is what the Room already holds sends
+// no patch. Task is a pointer rebuilt from the log at each reconcile, so == never held for a room
+// with a task, and every such room was patched at every 15 s resync.
+func TestAnUnchangedStatusIsNotPatched(t *testing.T) {
+	facts := envelope.TaskFacts{Phase: "AwaitingHuman",
+		Issue: &envelope.IssueFact{Number: 1, URL: "https://github.com/o/r/issues/1", Title: "fix it", Author: "dev1", LabelledBy: "dev1"},
+		PR:    &envelope.PRFact{Number: 1, URL: "https://github.com/o/r/pull/1", Author: "bot", Reviewers: []string{"dev2"}}}
+	for _, tc := range []struct {
+		name   string
+		events []seqPayload
+	}{
+		{"a room with no task", nil},
+		{"a room with a task", []seqPayload{taskEvent(2, facts)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			patches := 0
+			c := fake.NewClientBuilder().WithScheme(scheme()).WithRESTMapper(mapper()).
+				WithObjects(newRoom()).WithStatusSubresource(&v1alpha1.Room{}).
+				WithInterceptorFuncs(interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl client.Client, sub string,
+					obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
+					patches++
+					return cl.SubResource(sub).Patch(ctx, obj, p, opts...)
+				}}).Build()
+			ms := newStore(nil)
+			ms.taskEvents = tc.events
+			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+			for i := range 2 {
+				if _, err := r.Reconcile(t.Context(), request()); err != nil {
+					t.Fatalf("reconcile %d: %v", i+1, err)
+				}
+			}
+			if patches != 1 {
+				t.Fatalf("%d status patches over two reconciles of an unchanged room, want 1", patches)
+			}
+		})
+	}
+}

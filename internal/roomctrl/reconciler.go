@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -219,9 +220,10 @@ func (r *Reconciler) open(ctx context.Context, room *v1alpha1.Room) error {
 }
 
 // patchStatus writes want when it differs. A merge patch of the status
-// subresource cannot conflict with a spec or finalizer write.
+// subresource cannot conflict with a spec or finalizer write. Semantic, not ==:
+// Task is a pointer that taskStatus rebuilds from the log each time (audit R-2).
 func (r *Reconciler) patchStatus(ctx context.Context, room *v1alpha1.Room, want v1alpha1.RoomStatus) error {
-	if room.Status == want {
+	if equality.Semantic.DeepEqual(room.Status, want) {
 		return nil
 	}
 	base := room.DeepCopy()
