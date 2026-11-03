@@ -19,8 +19,9 @@ type Series struct {
 	Value       int64
 }
 
-// SeriesSource is a Source that also reads the query series by series, so the meter keeps one
-// baseline per series (D10) rather than one per run's sum. VM implements it.
+// SeriesSource is a Source that also reads the query series by series. With Meter.PerReplica, the
+// meter keeps one baseline per series (D10) rather than one per run's sum; without it, the series
+// are summed per run and read as RunUsage would. VM implements it.
 type SeriesSource interface {
 	RunSeries(ctx context.Context) ([]Series, error)
 }

@@ -438,7 +438,7 @@ prices both caps stay in tokens.
 |---|---|
 | `meter.prices.<model>: {input, cacheRead, cacheWrite?, output, source?, checkedAt?}` | USD per million tokens, keyed by the model that served the tokens (`glm-5.3`, `claude-opus-5-5`) when `meter.query` groups by `gen_ai_request_model`, else by the tier's logical model. `cacheWrite` defaults to `input`. Each price must be positive. `source` (an `https://` URL) and `checkedAt` (`YYYY-MM-DD`) say where and when the row was read: checked when set, never priced |
 | `tiers.<tier>.runUSD`, `tiers.<tier>.taskUSD` | The tier's caps in USD; `taskUSD` may not be below `runUSD`. Keyed by logical model, a tier with either set and no price for its model fails the rollout: an unpriced run would cost $0 |
-| `meter.query` | Must group by `gen_ai_token_type` (`input`, `cached_input`, `cache_creation_input`, `output`), or no run can be priced and every run is capped in tokens. Grouped by `gen_ai_request_model` too, each model is priced at its own rate. Should keep the gateway replica apart, in a `by (...)` clause naming `pod` (or `instance`): the meter then keeps one baseline per returned series, so a replica whose scrape drops out for a tick adds nothing and, on its return, only what it grew, and a replica's counter that falls restarted and adds its new value. A query summing the replicas loads with a startup warning and keeps the per-run reading, which under-counts a replica that drops out for a tick, until the query keeps `pod` |
+| `meter.query` | Must group by `gen_ai_token_type` (`input`, `cached_input`, `cache_creation_input`, `output`), or no run can be priced and every run is capped in tokens. Grouped by `gen_ai_request_model` too, each model is priced at its own rate. Should keep the gateway replica apart, in a `by (...)` clause naming `pod` (or `instance`): the meter then keeps one baseline per returned series, so a replica whose scrape drops out for a tick adds nothing and, on its return, only what it grew, and a replica's counter that falls restarted and adds its new value. A query summing the replicas loads with a startup warning and keeps the per-run reading: a stale replica's return charges its counter again (an over-count that can revoke a run under budget), and a replica restart loses that tick's growth, until the query keeps `pod` |
 
 Grouping by served model is what makes a logical name safe to price: the same claim's
 `agent-default` is GLM-5.3 on one gateway listener and Claude Opus on another, about ten times
@@ -508,7 +508,7 @@ the entries it learned, for a write its predecessor lost. That write carries the
 write's ledger to the same end, and a new leader does so for the days its first read of the run
 showed, today's, and, in the first ten minutes of a day, the day before
 ([#166](https://github.com/Smana/maku/issues/166)). A run is charged once across a
-failover, a ledger that cannot be read, a failed write, landed or not, and midnight, with four
+failover, a ledger that cannot be read, a failed write, landed or not, and midnight, with five
 bounded exceptions:
 
 - A gateway counter reset before a new leader's first reading, once the counters have passed what
@@ -521,6 +521,9 @@ bounded exceptions:
 - On a per-replica query, a new leader whose first reading of a run misses a stale gateway replica counts that replica's
   whole counter when it returns: it cannot tell a returning replica from a new one on a run it
   has never read. An over-count bounded by that replica's share of the run.
+- On a summed query, a gateway replica that is stale for a tick is charged its whole counter again
+  when it returns, and a replica's restart loses that tick's growth: an over-count that can revoke a
+  run under budget (H-4), and an under-count. Only a `meter.query` that keeps `pod` fixes it.
 
 The meter deletes the ledgers after 35 days, and the token ledgers `agent-factory-ledger-<YYYYMMDD>`
 they replaced the same way. A run the meter first sees ended, with its usage annotated, is taken as

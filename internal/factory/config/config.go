@@ -946,16 +946,18 @@ func (m Meter) ByModel() bool { return strings.Contains(m.Query, "gen_ai_request
 // replicaBy matches a by (...) clause of the meter's query.
 var replicaBy = regexp.MustCompile(`\bby\s*\(([^)]*)\)`)
 
-// ByReplica is true when a by (...) clause of the meter's query names pod or instance, as a whole
-// word: the label that tells the gateway's replicas apart. The meter folds one baseline per series
+// ByReplica is true when the FIRST by (...) clause of the meter's query, the outermost aggregation,
+// names pod or instance, as a whole word (an inner clause under a summing outer one yields one series): the label that tells the gateway's replicas apart. The meter folds one baseline per series
 // (D10) only then, since a series is exact only as one replica's counter; a without clause, a
 // matcher or a longer name (agent-pods) does not keep the replicas apart.
 func (m Meter) ByReplica() bool {
-	for _, c := range replicaBy.FindAllStringSubmatch(m.Query, -1) {
-		for _, l := range strings.FieldsFunc(c[1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
-			if l == "pod" || l == "instance" {
-				return true
-			}
+	c := replicaBy.FindStringSubmatch(m.Query)
+	if c == nil {
+		return false
+	}
+	for _, l := range strings.FieldsFunc(c[1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		if l == "pod" || l == "instance" {
+			return true
 		}
 	}
 	return false
@@ -1123,8 +1125,8 @@ func Parse(raw []byte) (*Config, error) {
 		}
 	}
 	if !c.Meter.ByReplica() {
-		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, which under-counts "+
-			"a replica whose scrape drops out for a tick, until the query keeps the replica label in its grouping, "+
+		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, so a stale replica's return charges "+
+			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
 	sum := sha256.Sum256(j)

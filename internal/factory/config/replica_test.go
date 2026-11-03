@@ -48,6 +48,7 @@ func TestByReplicaReadsTheByClause(t *testing.T) {
 		"without pod":         {`sum without (pod) (x)`, false},
 		"a namespace name":    {`sum by (ar_agent) (x{namespace="agent-pods"})`, false},
 		"a pod matcher":       {`sum by (ar_agent) (x{pod="x"})`, false},
+		"a nested clause":     {`sum by (a, b) (max by (a, b, pod) (x))`, false},
 		"a longer label name": {`sum by (ar_agent, podname) (x)`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
