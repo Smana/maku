@@ -10,9 +10,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
+	"github.com/Smana/maku/internal/factory/ledger"
 )
 
 // v2 per-person caps D4 (G1): a labeller whose day is spent is refused at intake: a comment naming
@@ -33,8 +33,8 @@ func TestALabellerPastTheirDayIsRefusedAtIntake(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()
 			labelled(f, 7, "Smana")
-			l := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: api.LedgerPrefix + t0.Format(api.LedgerDayLayout), Namespace: "agent-system"}}
-			if err := api.SetLedgerSpentColumn(l, map[string]int64{"github:smana": c.spent}); err != nil {
+			l := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ledger.Prefix + t0.Format(ledger.DayLayout), Namespace: "agent-system"}}
+			if err := ledger.SetSpentColumn(l, map[string]int64{"github:smana": c.spent}); err != nil {
 				t.Fatal(err)
 			}
 			p, k := poller(t, f, l)

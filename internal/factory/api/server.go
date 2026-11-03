@@ -21,7 +21,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/tlsreload"
@@ -142,48 +142,6 @@ var (
 
 	prURL = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$`)
 )
-
-// Ledger layout (R50). One ConfigMap per UTC day, agent-factory-ledger-usd-<YYYYMMDD>, in the
-// factory's namespace: the apiserver's resourceVersion is the transaction, so two replicas
-// cannot take one slot. Every amount is micro-USD (truthful costs TC6). Exported so the meter
-// reads and writes the same encoding: admission owns the reservations, the meter owns the spend.
-const (
-	LedgerPrefix = "agent-factory-ledger-usd-"
-	// LegacyLedgerPrefix names the token ledgers the USD ones replaced (#155): nothing reads or
-	// writes them; the meter's pruner deletes them once they are older than its retention.
-	LegacyLedgerPrefix = "agent-factory-ledger-"
-	// LedgerSpent is one JSON map, principal → micro-USD. It is a map rather than one key per
-	// principal because principal ids carry ":", which no ConfigMap key may hold. The meter
-	// owns this column; admission only reads it.
-	LedgerSpent = "spent"
-	// LedgerReserved prefixes one key per admitted run — reserved.<runId>, whose C2 id is
-	// key-safe — holding {principal, person, room, maxMicroUSD}. Release drops the entry when the
-	// run ends or its claim goes (#55); the spend it made stays: deleting a run refunds nothing.
-	LedgerReserved = "reserved."
-	// LedgerSettled prefixes one key per metered run, settled.<runId>: the micro-USD charged to
-	// that run that day, written by the meter in the same write as spent. Per key, spent is the
-	// sum of settled over the runs charged to it; summed over the retained days, it is how much
-	// of a run any meter has charged, so a new leader charges neither twice nor less (TC6). One
-	// exception: on the day a lifted run (R10) is first charged, its settled entry also holds the
-	// lift, which spent never counted, so settled exceeds that run's share of spent by it.
-	LedgerSettled = "settled."
-	// LedgerDayLayout labels the ledger with the UTC day it counts.
-	LedgerDayLayout = "20060102"
-	// LedgerAttempts bounds the conflict-retry loop: steady contention of that depth is
-	// failure, not patience.
-	LedgerAttempts = 5
-)
-
-// Reservation is one ledger entry: what the run may spend, in micro-USD, on whose behalf and on
-// which room. Person is the second key the same entry charges (v2 per-person caps D3): the person
-// who caused the run, beside the fleet as Principal. One key per run is what makes both
-// reservations one write: no run ever holds one without the other.
-type Reservation struct {
-	Principal   string `json:"principal"`
-	Person      string `json:"person,omitempty"`
-	Room        string `json:"room,omitempty"`
-	MaxMicroUSD int64  `json:"maxMicroUSD"`
-}
 
 // NeedLeaderElection is false: every replica serves intake.
 func (s *Server) NeedLeaderElection() bool { return false }
@@ -453,7 +411,7 @@ func (s *Server) keyedRun(p authn.Principal, key string, all []runs.Run) (id str
 }
 
 func keyedID(at time.Time, principal, key string) string {
-	sum := sha256.Sum256([]byte(at.UTC().Format(LedgerDayLayout) + "\x00" + principal + "\x00" + key))
+	sum := sha256.Sum256([]byte(at.UTC().Format(ledger.DayLayout) + "\x00" + principal + "\x00" + key))
 	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:5]))
 }
 
@@ -639,28 +597,28 @@ func (s *Server) person(ctx context.Context, p authn.Principal, repository strin
 	return who, nil
 }
 
-// reserve is R50's admission on the day's ledger (Reserve), its refusals said in HTTP. A run
+// reserve is R50's admission on the day's ledger (ledger.Reserve), its refusals said in HTTP. A run
 // charged to a person reserves the fleet and the person in one entry (D2, D3). A run request caps
 // in tokens, so it reserves its maxTokens at the reference rate until F4 brings max_cost (TC7).
 func (s *Server) reserve(ctx context.Context, p authn.Principal, person, id string, in RunRequest) (int, string) {
 	b := s.Cfg.Budgets
-	mine := Reservation{Principal: p.ID, Room: in.RoomRef, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens)}
+	mine := ledger.Reservation{Principal: p.ID, Room: in.RoomRef, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens)}
 	if person != "" {
 		mine.Principal, mine.Person = runs.PrincipalFactory, person
 	}
-	over, err := Reserve(ctx, s.Rooms, s.Namespace, s.Now(), id, mine, b.DailyMicroUSD(mine.Principal), b.DailyMicroUSD(person), b.EnforcePrincipal)
+	over, err := ledger.Reserve(ctx, s.Rooms, s.Namespace, s.Now(), id, mine, b.DailyMicroUSD(mine.Principal), b.DailyMicroUSD(person), b.EnforcePrincipal)
 	switch {
-	case errors.Is(err, ErrPersonOverBudget):
+	case errors.Is(err, ledger.ErrPersonOverBudget):
 		return http.StatusTooManyRequests, reasonPersonOver
-	case errors.Is(err, ErrOverBudget):
+	case errors.Is(err, ledger.ErrOverBudget):
 		return http.StatusTooManyRequests, "over_budget"
-	case errors.Is(err, ErrRunBusy):
+	case errors.Is(err, ledger.ErrRunBusy):
 		return http.StatusConflict, "run_busy"
-	case errors.Is(err, ErrRoomBusy):
+	case errors.Is(err, ledger.ErrRoomBusy):
 		return http.StatusConflict, "room_busy"
-	case errors.Is(err, ErrLedgerBusy):
+	case errors.Is(err, ledger.ErrBusy):
 		return http.StatusServiceUnavailable, "ledger_busy"
-	case errors.Is(err, ErrMeterBlind):
+	case errors.Is(err, ledger.ErrMeterBlind):
 		return http.StatusServiceUnavailable, "meter_blind"
 	case err != nil:
 		return http.StatusServiceUnavailable, "ledger_unavailable"
@@ -671,207 +629,18 @@ func (s *Server) reserve(ctx context.Context, p authn.Principal, person, id stri
 	return 0, ""
 }
 
-// Reserve's refusals. Any other error is the ledger unread or unwritten.
-var (
-	ErrOverBudget = errors.New("ledger: over the daily budget")
-	// ErrPersonOverBudget is the person's day, not the fleet's (D4): checked first, so a refusal
-	// names whose cap it is.
-	ErrPersonOverBudget = errors.New("ledger: over the person's daily budget")
-	ErrRunBusy          = errors.New("ledger: the run id holds another reservation")
-	ErrRoomBusy         = errors.New("ledger: a reservation holds the room")
-	ErrLedgerBusy       = errors.New("ledger: busy")
-)
-
-// Reserve is R50's atomic admission, shared by the API and the factory's Queued (#78): read the
-// UTC day of now's ledger, check spent + reserved + maxMicroUSD against limit and that no
-// reservation holds mine.Room, then write reserved.<id> — the Update conflicts against a
-// concurrent writer's, and the retry re-reads and re-checks, so exactly one admission per slot
-// lands whatever the interleaving. Unless enforce (R3's shadow), an over day is reported as over,
-// written, and never refused; room exclusion stays exact. An enforced cap also refuses while the
-// meter is blind (#54): its spend column is then stale. Release drops the entry when the run ends.
-//
-// mine.Person, when set, is checked against personLimit in the same read and charged by the same
-// write (D3). over names the key whose day the run does not fit, the person's first; "" fits.
-func Reserve(ctx context.Context, c client.Client, ns string, now time.Time, id string, mine Reservation,
-	limit, personLimit int64, enforce bool) (over string, err error) {
-	if enforce {
-		switch blind, err := meterBlind(ctx, c, ns, now); {
-		case err != nil:
-			return "", err
-		case blind:
-			return "", ErrMeterBlind
-		}
-	}
-	name := LedgerPrefix + now.UTC().Format(LedgerDayLayout)
-	key := types.NamespacedName{Namespace: ns, Name: name}
-	for range LedgerAttempts {
-		cm := &corev1.ConfigMap{}
-		err := c.Get(ctx, key, cm)
-		existed := true
-		if apierrors.IsNotFound(err) {
-			cm = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
-			existed = false
-		} else if err != nil {
-			return "", fmt.Errorf("ledger %s: %w", name, err)
-		}
-		spent, err := LedgerSpentColumn(cm)
-		if err != nil {
-			return "", err
-		}
-		reserved, err := ledgerReservations(cm)
-		if err != nil {
-			return "", err
-		}
-		// R48: the run id is the retry's identity. Our own equal entry means we already
-		// landed this admission: pass without reserving twice. A different value under this
-		// id is another run's slot, and overwriting it would unreserve theirs: refuse.
-		if prev, ok := reserved[id]; ok {
-			if prev == mine {
-				return "", nil
-			}
-			return "", ErrRunBusy
-		}
-		over = ""
-		switch {
-		case mine.Person != "" && OverDaily(dayUsed(spent, reserved, mine.Person), mine.MaxMicroUSD, personLimit):
-			over = mine.Person
-			if enforce {
-				return over, ErrPersonOverBudget
-			}
-		case OverDaily(dayUsed(spent, reserved, mine.Principal), mine.MaxMicroUSD, limit):
-			over = mine.Principal
-			if enforce {
-				return over, ErrOverBudget
-			}
-		}
-		if mine.Room != "" {
-			for _, v := range reserved {
-				if v.Room == mine.Room {
-					return over, ErrRoomBusy
-				}
-			}
-		}
-		if cm.Data == nil {
-			cm.Data = map[string]string{}
-		}
-		b, err := json.Marshal(mine)
-		if err != nil {
-			return "", fmt.Errorf("ledger %s: %w", name, err)
-		}
-		cm.Data[LedgerReserved+id] = string(b)
-		if existed {
-			err = c.Update(ctx, cm)
-		} else {
-			err = c.Create(ctx, cm) // a concurrent Create conflicts; the loop re-reads
-		}
-		switch {
-		case err == nil:
-			return over, nil
-		case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):
-			continue // re-read and re-check (R50)
-		default:
-			return "", fmt.Errorf("ledger %s: %w", name, err)
-		}
-	}
-	// Conflicts at this depth mean steady contention, not a lost slot: fail open never.
-	return "", ErrLedgerBusy
-}
-
 // dropReservation undoes reserve when the run creation itself failed. Best effort: a leaked
 // entry costs one day of budget, while a delete that fights a concurrent replica could drop
 // another admission's reservation instead.
 func (s *Server) dropReservation(ctx context.Context, id string) {
-	key := types.NamespacedName{Namespace: s.Namespace, Name: LedgerPrefix + s.Now().UTC().Format(LedgerDayLayout)}
+	key := types.NamespacedName{Namespace: s.Namespace, Name: ledger.Prefix + s.Now().UTC().Format(ledger.DayLayout)}
 	cm := &corev1.ConfigMap{}
 	if err := s.Rooms.Get(ctx, key, cm); err != nil {
 		return
 	}
-	if _, ok := cm.Data[LedgerReserved+id]; !ok {
+	if _, ok := cm.Data[ledger.Reserved+id]; !ok {
 		return
 	}
-	delete(cm.Data, LedgerReserved+id)
+	delete(cm.Data, ledger.Reserved+id)
 	_ = s.Rooms.Update(ctx, cm)
-}
-
-// OverDaily is the daily cap's one decision (R50), in micro-USD (TC7): a run that may spend
-// maxMicroUSD does not fit beside what the principal's day already holds. The API's admission and
-// the factory's Queued (N2) both decide on it.
-func OverDaily(usedMicroUSD, maxMicroUSD, limit int64) bool { return usedMicroUSD+maxMicroUSD > limit }
-
-// dayUsed is what principal holds of its day, in micro-USD: the meter's settled spend plus its
-// admitted runs' reservations, as their principal or their person.
-func dayUsed(spent map[string]int64, reserved map[string]Reservation, principal string) int64 {
-	used := spent[principal]
-	for _, v := range reserved {
-		if v.Principal == principal || v.Person == principal {
-			used += v.MaxMicroUSD
-		}
-	}
-	return used
-}
-
-// DayUsed reads principal's use of the UTC day of now from that day's ledger, in micro-USD, as
-// admission does: a missing ledger is a day with nothing used. c must read ConfigMaps live: the
-// factory's cached watch sees the stop object only.
-func DayUsed(ctx context.Context, c client.Reader, ns, principal string, now time.Time) (int64, error) {
-	cm := &corev1.ConfigMap{}
-	err := c.Get(ctx, types.NamespacedName{Namespace: ns, Name: LedgerPrefix + now.UTC().Format(LedgerDayLayout)}, cm)
-	switch {
-	case apierrors.IsNotFound(err):
-		return 0, nil
-	case err != nil:
-		return 0, fmt.Errorf("ledger: %w", err)
-	}
-	spent, err := LedgerSpentColumn(cm)
-	if err != nil {
-		return 0, err
-	}
-	reserved, err := ledgerReservations(cm)
-	if err != nil {
-		return 0, err
-	}
-	return dayUsed(spent, reserved, principal), nil
-}
-
-// LedgerSpentColumn reads a ledger's spent map, nil when the column is empty. Exported with
-// the layout constants above so admission and the meter parse and write one encoding.
-func LedgerSpentColumn(cm *corev1.ConfigMap) (map[string]int64, error) {
-	raw, ok := cm.Data[LedgerSpent]
-	if !ok || raw == "" {
-		return nil, nil
-	}
-	var m map[string]int64
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		return nil, fmt.Errorf("ledger %s: %w", cm.Name, err)
-	}
-	return m, nil
-}
-
-// SetLedgerSpentColumn writes the spent map as the ledger's one JSON column.
-func SetLedgerSpentColumn(cm *corev1.ConfigMap, spent map[string]int64) error {
-	b, err := json.Marshal(spent)
-	if err != nil {
-		return fmt.Errorf("ledger %s spent: %w", cm.Name, err)
-	}
-	if cm.Data == nil {
-		cm.Data = map[string]string{}
-	}
-	cm.Data[LedgerSpent] = string(b)
-	return nil
-}
-
-func ledgerReservations(cm *corev1.ConfigMap) (map[string]Reservation, error) {
-	m := map[string]Reservation{}
-	for k, raw := range cm.Data {
-		id, ok := strings.CutPrefix(k, LedgerReserved)
-		if !ok {
-			continue
-		}
-		var r Reservation
-		if err := json.Unmarshal([]byte(raw), &r); err != nil {
-			return nil, fmt.Errorf("ledger %s reservation %s: %w", cm.Name, id, err)
-		}
-		m[id] = r
-	}
-	return m, nil
 }

@@ -15,6 +15,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/taskid"
 )
@@ -59,7 +60,7 @@ func idemServer(t *testing.T, c *claims, clock func() time.Time) http.Handler {
 		// The meter beats as the clock moves: these tests are about the key, not the meter.
 		s.Now = func() time.Time {
 			at := clock()
-			if err := StampMeter(context.Background(), cl, "agent-system", at, time.Hour); err != nil {
+			if err := ledger.StampMeter(context.Background(), cl, "agent-system", at, time.Hour); err != nil {
 				t.Error(err)
 			}
 			return at
@@ -101,7 +102,7 @@ func TestRetryTakesNoSecondReservation(t *testing.T) {
 	h := s.Handler()
 	postKey(h, "alice", "k1", base())
 	postKey(h, "alice", "k1", base())
-	used, err := DayUsed(context.Background(), cl, "agent-system", "human:291", now)
+	used, err := ledger.DayUsed(context.Background(), cl, "agent-system", "human:291", now)
 	if err != nil || used != 3_400_000 {
 		t.Fatalf("used %d err %v: one reservation of the default 2 M tokens at $1.70 per M expected", used, err)
 	}
@@ -208,7 +209,7 @@ func TestAKeyedReplayIsNotRefusedByTheBlindMeter(t *testing.T) {
 	if first.Code != http.StatusCreated {
 		t.Fatalf("%d %s", first.Code, first.Body)
 	}
-	if err := StampMeter(t.Context(), cl, "agent-system", now.Add(-time.Hour), 5*time.Minute); err != nil {
+	if err := ledger.StampMeter(t.Context(), cl, "agent-system", now.Add(-time.Hour), 5*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	again := postKey(h, "alice", "k1", base())

@@ -19,9 +19,9 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -173,8 +173,8 @@ func (r *Reconciler) reserveFactoryDay(ctx context.Context, t *v1alpha1.Task, li
 	// F4, ledger ruling I1: a sponsored principal's day is a bound, not a shadow, whatever
 	// budgets.enforcePrincipal says, and whatever the fleet's own day.
 	enforce := r.Cfg.Budgets.EnforcePrincipal || r.sponsored(t)
-	return api.Reserve(ctx, r.Ledger, r.Namespace, r.Now(), runID(t.Name, len(t.Status.Runs)),
-		api.Reservation{Principal: runs.PrincipalFactory, Person: person, MaxMicroUSD: runMicroUSD(t.Spec.Budget)}, limit,
+	return ledger.Reserve(ctx, r.Ledger, r.Namespace, r.Now(), runID(t.Name, len(t.Status.Runs)),
+		ledger.Reservation{Principal: runs.PrincipalFactory, Person: person, MaxMicroUSD: runMicroUSD(t.Spec.Budget)}, limit,
 		r.Cfg.Budgets.DailyMicroUSD(person), enforce)
 }
 
@@ -402,7 +402,7 @@ func (r *Reconciler) release(ctx context.Context, ids ...string) {
 	if r.Ledger == nil || len(ids) == 0 {
 		return
 	}
-	if err := api.Release(ctx, r.Ledger, r.Namespace, r.Now(), ids...); err != nil {
+	if err := ledger.Release(ctx, r.Ledger, r.Namespace, r.Now(), ids...); err != nil {
 		r.log().Warn("reservation not released; the meter will", "run.ids", ids, "err", err)
 	}
 }

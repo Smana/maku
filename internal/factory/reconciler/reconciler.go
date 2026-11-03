@@ -26,12 +26,12 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -1000,13 +1000,13 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	if limit > 0 {
 		over, err := r.reserveFactoryDay(ctx, t, limit)
 		switch {
-		case errors.Is(err, api.ErrPersonOverBudget): // D4/D5: the person's day, not the fleet's: refused, not queued
+		case errors.Is(err, ledger.ErrPersonOverBudget): // D4/D5: the person's day, not the fleet's: refused, not queued
 			record(ctx, func(ctx context.Context) { r.Metrics.Revoked(ctx, "budget-person") })
 			return r.end(ctx, t, v1alpha1.PhaseEscalated, "budget-person")
-		case errors.Is(err, api.ErrOverBudget):
+		case errors.Is(err, ledger.ErrOverBudget):
 			t.Status.Reason = "waiting_daily_budget" // no new factory run until 00:00 UTC
 			return nil
-		case errors.Is(err, api.ErrMeterBlind): // an enforced cap the meter cannot feed holds (#54)
+		case errors.Is(err, ledger.ErrMeterBlind): // an enforced cap the meter cannot feed holds (#54)
 			t.Status.Reason = "waiting_meter_blind"
 			return nil
 		case err != nil && (r.Cfg.Budgets.EnforcePrincipal || sponsored):

@@ -42,6 +42,7 @@ import (
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/intake"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -346,7 +347,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Ledger: live, Tasks: mgr.GetClient(), Namespace: ns},
 		&killswitch.Sweeper{Reader: mgr.GetClient(), Namespace: ns, Runs: rc, Every: 15 * time.Second,
 			Release: func(ctx context.Context, r runs.Run) error {
-				return api.Release(ctx, live, ns, time.Now(), r.ID) // admission reads today's ledger only
+				return ledger.Release(ctx, live, ns, time.Now(), r.ID) // admission reads today's ledger only
 			},
 			OnSweep: func(revoked []runs.Run) {
 				for _, r := range revoked {

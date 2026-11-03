@@ -18,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/taskid"
 )
@@ -28,12 +28,12 @@ func reservedIDs(t *testing.T, c client.Client, day string) map[string]bool {
 	t.Helper()
 	var cm corev1.ConfigMap
 	if err := c.Get(context.Background(),
-		types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + day}, &cm); err != nil {
+		types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + day}, &cm); err != nil {
 		t.Fatal(err)
 	}
 	ids := map[string]bool{}
 	for k := range cm.Data {
-		if id, ok := strings.CutPrefix(k, api.LedgerReserved); ok {
+		if id, ok := strings.CutPrefix(k, ledger.Reserved); ok {
 			ids[id] = true
 		}
 	}
@@ -74,9 +74,9 @@ func TestABlindMeterIsSeenAndItsOvershootRecorded(t *testing.T) {
 		t.Fatalf("a seeing tick: %v %v %d", err, succeeded, errs)
 	}
 	admit := func() error {
-		_, err := api.Reserve(t.Context(), c, "agent-system", clock, "bbbbbbbb",
-			api.Reservation{Principal: "human:291", MaxMicroUSD: 1}, 5_000_000, 0, true)
-		if rerr := api.Release(t.Context(), c, "agent-system", clock, "bbbbbbbb"); rerr != nil {
+		_, err := ledger.Reserve(t.Context(), c, "agent-system", clock, "bbbbbbbb",
+			ledger.Reservation{Principal: "human:291", MaxMicroUSD: 1}, 5_000_000, 0, true)
+		if rerr := ledger.Release(t.Context(), c, "agent-system", clock, "bbbbbbbb"); rerr != nil {
 			t.Fatal(rerr)
 		}
 		return err
@@ -99,11 +99,11 @@ func TestABlindMeterIsSeenAndItsOvershootRecorded(t *testing.T) {
 		t.Fatalf("still within the blind interval: %v", err)
 	}
 	clock = clock.Add(time.Second)
-	if err := admit(); !errors.Is(err, api.ErrMeterBlind) {
+	if err := admit(); !errors.Is(err, ledger.ErrMeterBlind) {
 		t.Fatalf("past it, an enforced admission is refused: %v", err)
 	}
-	if _, err := api.Reserve(t.Context(), c, "agent-system", clock, "cccccccc",
-		api.Reservation{Principal: "human:291", MaxMicroUSD: 1}, 5_000_000, 0, false); err != nil {
+	if _, err := ledger.Reserve(t.Context(), c, "agent-system", clock, "cccccccc",
+		ledger.Reservation{Principal: "human:291", MaxMicroUSD: 1}, 5_000_000, 0, false); err != nil {
 		t.Fatalf("in shadow a blind meter holds nothing: %v", err)
 	}
 	src.down = false
@@ -273,7 +273,7 @@ func TestAnUnreadTaskListReleasesNoUnclaimedReservation(t *testing.T) {
 func TestAnUnstampedTickIsNoSuccess(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(cmScheme()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, o client.Object, opts ...client.CreateOption) error {
-			if o.GetName() == api.MeterHeartbeat {
+			if o.GetName() == ledger.MeterHeartbeat {
 				return errors.New("apiserver down")
 			}
 			return cl.Create(ctx, o, opts...)

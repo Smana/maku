@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package api
+package ledger
 
 import (
 	"maps"
@@ -23,20 +23,20 @@ func TestLedgerDay(t *testing.T) {
 		prefix, day string
 		ok          bool
 	}{
-		"agent-factory-ledger-usd-20261022": {LedgerPrefix, "20261022", true},
-		"agent-factory-ledger-20261022":     {LegacyLedgerPrefix, "20261022", true},
-		"agent-factory-ledger-20251301":     {LegacyLedgerPrefix, "", false},
-		"agent-factory-meter":               {LegacyLedgerPrefix, "", false},
+		"agent-factory-ledger-usd-20261022": {Prefix, "20261022", true},
+		"agent-factory-ledger-20261022":     {LegacyPrefix, "20261022", true},
+		"agent-factory-ledger-20251301":     {LegacyPrefix, "", false},
+		"agent-factory-meter":               {LegacyPrefix, "", false},
 	} {
-		if day, ok := LedgerDay(name, c.prefix); day != c.day || ok != c.ok {
+		if day, ok := Day(name, c.prefix); day != c.day || ok != c.ok {
 			t.Errorf("%s: %q %v, want %q %v", name, day, ok, c.day, c.ok)
 		}
 	}
-	if _, ok := LedgerDay("agent-factory-ledger-usd-20261022", LegacyLedgerPrefix); ok {
+	if _, ok := Day("agent-factory-ledger-usd-20261022", LegacyPrefix); ok {
 		t.Error("a USD ledger is no token ledger")
 	}
-	if LedgerPrefix+"20261022" != "agent-factory-ledger-usd-20261022" {
-		t.Errorf("the name is %s", LedgerPrefix+"20261022")
+	if Prefix+"20261022" != "agent-factory-ledger-usd-20261022" {
+		t.Errorf("the name is %s", Prefix+"20261022")
 	}
 }
 
@@ -44,13 +44,13 @@ func TestLedgerDay(t *testing.T) {
 // all a run was charged. A token ledger, another ConfigMap and a name that is no day add nothing.
 func TestSettledByRunSumsTheUSDDayLedgers(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(
-		configMap(LedgerPrefix+"20260926", map[string]string{LedgerSettled + "aaaaaaaa": "1200000",
-			LedgerSpent: `{"system:factory":1200000}`}),
-		configMap(LedgerPrefix+"20260927", map[string]string{LedgerSettled + "aaaaaaaa": "300000",
-			LedgerSettled + "bbbbbbbb": "7", LedgerReserved + "cccccccc": `{"principal":"system:factory","maxMicroUSD":2550000}`}),
-		configMap(LegacyLedgerPrefix+"20260927", map[string]string{LedgerSettled + "aaaaaaaa": "999"}),
-		configMap(MeterHeartbeat, map[string]string{LedgerSettled + "aaaaaaaa": "999"}),
-		configMap(LedgerPrefix+"notaday", map[string]string{LedgerSettled + "aaaaaaaa": "999"}),
+		configMap(Prefix+"20260926", map[string]string{Settled + "aaaaaaaa": "1200000",
+			Spent: `{"system:factory":1200000}`}),
+		configMap(Prefix+"20260927", map[string]string{Settled + "aaaaaaaa": "300000",
+			Settled + "bbbbbbbb": "7", Reserved + "cccccccc": `{"principal":"system:factory","maxMicroUSD":2550000}`}),
+		configMap(LegacyPrefix+"20260927", map[string]string{Settled + "aaaaaaaa": "999"}),
+		configMap(MeterHeartbeat, map[string]string{Settled + "aaaaaaaa": "999"}),
+		configMap(Prefix+"notaday", map[string]string{Settled + "aaaaaaaa": "999"}),
 	).Build()
 	got, err := SettledByRun(t.Context(), c, "agent-system")
 	if err != nil {
@@ -60,7 +60,7 @@ func TestSettledByRunSumsTheUSDDayLedgers(t *testing.T) {
 		t.Fatalf("%v, want %v", got, want)
 	}
 	bad := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(
-		configMap(LedgerPrefix+"20260927", map[string]string{LedgerSettled + "aaaaaaaa": "1.5"})).Build()
+		configMap(Prefix+"20260927", map[string]string{Settled + "aaaaaaaa": "1.5"})).Build()
 	if _, err := SettledByRun(t.Context(), bad, "agent-system"); err == nil || !strings.Contains(err.Error(), "not a micro-USD amount") {
 		t.Fatalf("an amount that does not parse fails the read: %v", err)
 	}
@@ -68,15 +68,15 @@ func TestSettledByRunSumsTheUSDDayLedgers(t *testing.T) {
 
 // The meter adds a tick's charges to what the day already holds for each run.
 func TestAddSettledAccumulates(t *testing.T) {
-	cm := configMap(LedgerPrefix+"20260927", map[string]string{LedgerSettled + "aaaaaaaa": "100"})
+	cm := configMap(Prefix+"20260927", map[string]string{Settled + "aaaaaaaa": "100"})
 	if err := AddSettled(cm, map[string]int64{"aaaaaaaa": 50, "bbbbbbbb": 7}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := SettledColumn(cm); !maps.Equal(got, map[string]int64{"aaaaaaaa": 150, "bbbbbbbb": 7}) {
 		t.Fatalf("%v", got)
 	}
-	empty := configMap(LedgerPrefix+"20260927", nil)
-	if err := AddSettled(empty, map[string]int64{"aaaaaaaa": 1}); err != nil || empty.Data[LedgerSettled+"aaaaaaaa"] != "1" {
+	empty := configMap(Prefix+"20260927", nil)
+	if err := AddSettled(empty, map[string]int64{"aaaaaaaa": 1}); err != nil || empty.Data[Settled+"aaaaaaaa"] != "1" {
 		t.Fatalf("a new day's first entry: %v %v", err, empty.Data)
 	}
 }

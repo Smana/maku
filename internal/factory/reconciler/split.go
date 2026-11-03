@@ -18,10 +18,10 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/triage"
@@ -162,7 +162,7 @@ func (r *Reconciler) daySpent(ctx context.Context, t *v1alpha1.Task, person stri
 	if !b.PerPerson.Enabled || r.Ledger == nil {
 		return false, nil
 	}
-	used, err := api.DayUsed(ctx, r.Ledger, r.Namespace, person, r.Now())
+	used, err := ledger.DayUsed(ctx, r.Ledger, r.Namespace, person, r.Now())
 	if err != nil {
 		return false, err // no answer is no refusal: the command waits for the next pass
 	}

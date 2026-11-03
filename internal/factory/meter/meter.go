@@ -30,9 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/taskid"
 )
@@ -468,7 +468,7 @@ func (m *Meter) learn(ctx context.Context, all []runs.Run) error {
 	var days map[string]map[string]int64
 	if m.Ledger != nil {
 		var err error
-		days, err = api.SettledByRunDay(ctx, m.Ledger, m.Namespace)
+		days, err = ledger.SettledByRunDay(ctx, m.Ledger, m.Namespace)
 		if err != nil {
 			return fmt.Errorf("meter: %w", err)
 		}
@@ -484,7 +484,7 @@ func (m *Meter) learn(ctx context.Context, all []runs.Run) error {
 		m.accounts = map[string]account{}
 	}
 	now := m.now().UTC()
-	today, yesterday := now.Format(api.LedgerDayLayout), now.Add(-24*time.Hour).Format(api.LedgerDayLayout)
+	today, yesterday := now.Format(ledger.DayLayout), now.Add(-24*time.Hour).Format(ledger.DayLayout)
 	recent := now.Sub(now.Truncate(24*time.Hour)) < fenceYesterday
 	for _, id := range need {
 		a := m.accounts[id]
@@ -519,14 +519,14 @@ func (m *Meter) resolve(ctx context.Context) error {
 		entries, ok := read[a.doubt]
 		if !ok {
 			cm := &corev1.ConfigMap{}
-			switch err := m.Ledger.Get(ctx, types.NamespacedName{Namespace: m.Namespace, Name: api.LedgerPrefix + a.doubt}, cm); {
+			switch err := m.Ledger.Get(ctx, types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + a.doubt}, cm); {
 			case apierrors.IsNotFound(err):
 				cm = &corev1.ConfigMap{} // the write that would have created it never landed
 			case err != nil:
 				return fmt.Errorf("meter: read the %s ledger: %w", a.doubt, err)
 			}
 			var err error
-			if entries, err = api.SettledColumn(cm); err != nil {
+			if entries, err = ledger.SettledColumn(cm); err != nil {
 				return fmt.Errorf("meter: %w", err)
 			}
 			read[a.doubt] = entries
@@ -561,7 +561,7 @@ func (m *Meter) measure(r runs.Run, v int64, priced bool) int64 {
 	if a.known && !a.measured {
 		a.base, a.measured = max(0, a.settled-v), true
 		if runs.Terminal(r.Phase) && r.Tokens > 0 &&
-			(a.settled == 0 || r.Created.UTC().Format(api.LedgerDayLayout) < m.retainedFrom()) {
+			(a.settled == 0 || r.Created.UTC().Format(ledger.DayLayout) < m.retainedFrom()) {
 			a.lift = max(0, v-a.settled)
 		}
 	}
@@ -718,7 +718,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 		}
 	}
 	defer m.forget(ctx, all)
-	day := m.now().UTC().Format(api.LedgerDayLayout)
+	day := m.now().UTC().Format(ledger.DayLayout)
 	// What a failed write landed, and what earlier meters settled, before any run is charged.
 	learnErr := errors.Join(m.resolve(ctx), m.learn(ctx, all))
 	totals := make(map[string]int64, len(all))
@@ -850,7 +850,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 	at := m.now()
 	var stamp error
 	if m.Ledger != nil {
-		stamp = api.StampMeter(ctx, m.Ledger, m.Namespace, at, BlindTicks*m.Every)
+		stamp = ledger.StampMeter(ctx, m.Ledger, m.Namespace, at, BlindTicks*m.Every)
 		errs = append(errs, stamp, m.release(ctx, all), m.prune(ctx, day))
 	}
 	if stamp == nil && m.OnSucceeded != nil {
@@ -866,11 +866,11 @@ func (m *Meter) readSpent(ctx context.Context, day string) map[string]int64 {
 		return nil
 	}
 	cm := &corev1.ConfigMap{}
-	key := types.NamespacedName{Namespace: m.Namespace, Name: api.LedgerPrefix + day}
+	key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + day}
 	if err := m.Ledger.Get(ctx, key, cm); err != nil {
 		return nil
 	}
-	spent, err := api.LedgerSpentColumn(cm)
+	spent, err := ledger.SpentColumn(cm)
 	if err != nil {
 		return nil
 	}
@@ -903,12 +903,12 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 		}
 		return m.mem, nil
 	}
-	key := types.NamespacedName{Namespace: m.Namespace, Name: api.LedgerPrefix + day}
+	key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + day}
 	fenced, err := m.fence(ctx, day, inc)
 	if err != nil {
 		return nil, err
 	}
-	for range api.LedgerAttempts {
+	for range ledger.Attempts {
 		cm := &corev1.ConfigMap{}
 		err := m.Ledger.Get(ctx, key, cm)
 		existed := true
@@ -918,11 +918,11 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 		} else if err != nil {
 			return nil, fmt.Errorf("meter: read the %s ledger: %w", day, err)
 		}
-		spent, err := api.LedgerSpentColumn(cm)
+		spent, err := ledger.SpentColumn(cm)
 		if err != nil {
 			return nil, fmt.Errorf("meter: the %s ledger: %w", day, err)
 		}
-		was, err := api.SettledColumn(cm)
+		was, err := ledger.SettledColumn(cm)
 		if err != nil {
 			return nil, fmt.Errorf("meter: the %s ledger: %w", day, err)
 		}
@@ -946,10 +946,10 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 		for p, n := range add {
 			spent[p] += n
 		}
-		if err := api.SetLedgerSpentColumn(cm, spent); err != nil {
+		if err := ledger.SetSpentColumn(cm, spent); err != nil {
 			return nil, fmt.Errorf("meter: %w", err)
 		}
-		if err := api.AddSettled(cm, addInc); err != nil {
+		if err := ledger.AddSettled(cm, addInc); err != nil {
 			return nil, fmt.Errorf("meter: %w", err)
 		}
 		if existed {
@@ -959,7 +959,7 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 		}
 		switch {
 		case err == nil:
-			if after, err := api.SettledColumn(cm); err != nil { // the object the write returned
+			if after, err := ledger.SettledColumn(cm); err != nil { // the object the write returned
 				m.log().Warn("meter: the written ledger does not parse, the settled gauge keeps its last reading", "day", day, "err", err)
 			} else {
 				for id := range inc {
@@ -1124,9 +1124,9 @@ func (m *Meter) fence(ctx context.Context, day string, inc map[string]int64) (ma
 	}
 	late := map[string]int64{}
 	for d := range days {
-		key := types.NamespacedName{Namespace: m.Namespace, Name: api.LedgerPrefix + d}
+		key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + d}
 		var entries map[string]int64
-		for attempt := range api.LedgerAttempts {
+		for attempt := range ledger.Attempts {
 			cm := &corev1.ConfigMap{}
 			existed := true
 			if err := m.Ledger.Get(ctx, key, cm); apierrors.IsNotFound(err) {
@@ -1139,7 +1139,7 @@ func (m *Meter) fence(ctx context.Context, day string, inc map[string]int64) (ma
 				return nil, fmt.Errorf("meter: read the %s ledger: %w", d, err)
 			}
 			var err error
-			if entries, err = api.SettledColumn(cm); err != nil {
+			if entries, err = ledger.SettledColumn(cm); err != nil {
 				return nil, fmt.Errorf("meter: the %s ledger: %w", d, err)
 			}
 			if cm.Annotations == nil {
@@ -1157,7 +1157,7 @@ func (m *Meter) fence(ctx context.Context, day string, inc map[string]int64) (ma
 			if !apierrors.IsConflict(err) && !apierrors.IsAlreadyExists(err) {
 				return nil, fmt.Errorf("meter: fence the %s ledger: %w", d, err)
 			}
-			if attempt == api.LedgerAttempts-1 {
+			if attempt == ledger.Attempts-1 {
 				return nil, fmt.Errorf("meter: the %s ledger stayed busy", d)
 			}
 		}
@@ -1451,9 +1451,9 @@ func (m *Meter) dropReservations(ctx context.Context, all []runs.Run) error {
 		if ended := runs.Terminal(r.Phase) || r.Deleting; !ended || m.dropped[r.ID] {
 			continue
 		}
-		err := api.Release(ctx, m.Ledger, m.Namespace, r.Created, r.ID)
+		err := ledger.Release(ctx, m.Ledger, m.Namespace, r.Created, r.ID)
 		if !sameDay(r.Created, now) && err == nil {
-			err = api.Release(ctx, m.Ledger, m.Namespace, now, r.ID)
+			err = ledger.Release(ctx, m.Ledger, m.Namespace, now, r.ID)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("meter: run %s: %w", r.ID, err))
@@ -1472,7 +1472,7 @@ func (m *Meter) dropReservations(ctx context.Context, all []runs.Run) error {
 // new leader starts it again — later, never sooner.
 func (m *Meter) releaseOrphans(ctx context.Context, all []runs.Run) error {
 	now := m.now()
-	key := types.NamespacedName{Namespace: m.Namespace, Name: api.LedgerPrefix + now.UTC().Format(api.LedgerDayLayout)}
+	key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout)}
 	cm := &corev1.ConfigMap{}
 	if err := m.Ledger.Get(ctx, key, cm); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -1502,7 +1502,7 @@ func (m *Meter) releaseOrphans(ctx context.Context, all []runs.Run) error {
 	unclaimed := map[string]time.Time{}
 	var due []string
 	for k := range cm.Data {
-		id, ok := strings.CutPrefix(k, api.LedgerReserved)
+		id, ok := strings.CutPrefix(k, ledger.Reserved)
 		if !ok || claimed[id] {
 			continue
 		}
@@ -1519,7 +1519,7 @@ func (m *Meter) releaseOrphans(ctx context.Context, all []runs.Run) error {
 	if len(due) == 0 {
 		return nil
 	}
-	if err := api.Release(ctx, m.Ledger, m.Namespace, now, due...); err != nil {
+	if err := ledger.Release(ctx, m.Ledger, m.Namespace, now, due...); err != nil {
 		return fmt.Errorf("meter: release unclaimed reservations: %w", err)
 	}
 	m.log().Info("unclaimed reservations released", "runs", due)
@@ -1530,12 +1530,12 @@ func (m *Meter) releaseOrphans(ctx context.Context, all []runs.Run) error {
 }
 
 func sameDay(a, b time.Time) bool {
-	return a.UTC().Format(api.LedgerDayLayout) == b.UTC().Format(api.LedgerDayLayout)
+	return a.UTC().Format(ledger.DayLayout) == b.UTC().Format(ledger.DayLayout)
 }
 
 // retainedFrom is the oldest UTC day whose ledger prune keeps: every older one is deleted.
 func (m *Meter) retainedFrom() string {
-	return m.now().UTC().Add(-ledgerRetention).Format(api.LedgerDayLayout)
+	return m.now().UTC().Add(-ledgerRetention).Format(ledger.DayLayout)
 }
 
 // prune deletes the day ledgers older than ledgerRetention, the USD ones and the token ones they
@@ -1553,9 +1553,9 @@ func (m *Meter) prune(ctx context.Context, day string) error {
 	var errs []error
 	for i := range cms.Items {
 		cm := &cms.Items[i]
-		dated, ok := api.LedgerDay(cm.Name, api.LedgerPrefix)
+		dated, ok := ledger.Day(cm.Name, ledger.Prefix)
 		if !ok {
-			dated, ok = api.LedgerDay(cm.Name, api.LegacyLedgerPrefix)
+			dated, ok = ledger.Day(cm.Name, ledger.LegacyPrefix)
 		}
 		// A name that is not a day is not a ledger to us; the layout is ordered: so are the strings.
 		if !ok || dated >= cutoff {

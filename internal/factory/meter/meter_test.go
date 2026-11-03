@@ -23,8 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -317,17 +317,17 @@ func cmScheme() *runtime.Scheme {
 func ledgerDay(t *testing.T, day string, spent map[string]int64, reserved map[string]string) *corev1.ConfigMap {
 	t.Helper()
 	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Name: api.LedgerPrefix + day, Namespace: "agent-system"}}
+		Name: ledger.Prefix + day, Namespace: "agent-system"}}
 	data := map[string]string{}
 	if spent != nil {
 		b, err := json.Marshal(spent)
 		if err != nil {
 			t.Fatal(err)
 		}
-		data[api.LedgerSpent] = string(b)
+		data[ledger.Spent] = string(b)
 	}
 	for id, v := range reserved {
-		data[api.LedgerReserved+id] = v
+		data[ledger.Reserved+id] = v
 	}
 	if len(data) > 0 {
 		cm.Data = data
@@ -340,14 +340,14 @@ func spentOf(t *testing.T, c client.Client, day string) (map[string]int64, bool)
 	t.Helper()
 	var cm corev1.ConfigMap
 	err := c.Get(context.Background(),
-		types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + day}, &cm)
+		types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + day}, &cm)
 	if apierrors.IsNotFound(err) {
 		return nil, false
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, ok := cm.Data[api.LedgerSpent]
+	raw, ok := cm.Data[ledger.Spent]
 	if !ok || raw == "" {
 		return nil, true
 	}
@@ -361,7 +361,7 @@ func spentOf(t *testing.T, c client.Client, day string) (map[string]int64, bool)
 // settledIn adds settled.<runId> entries to a day ledger: what earlier ticks charged each run.
 func settledIn(t *testing.T, cm *corev1.ConfigMap, settled map[string]int64) *corev1.ConfigMap {
 	t.Helper()
-	if err := api.AddSettled(cm, settled); err != nil {
+	if err := ledger.AddSettled(cm, settled); err != nil {
 		t.Fatal(err)
 	}
 	return cm
@@ -482,13 +482,13 @@ func TestTerminalRunLosesItsReservation(t *testing.T) {
 	}
 	var cm corev1.ConfigMap
 	if err := c.Get(context.Background(),
-		types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + "20260927"}, &cm); err != nil {
+		types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + "20260927"}, &cm); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cm.Data[api.LedgerReserved+"dddddddd"]; ok {
+	if _, ok := cm.Data[ledger.Reserved+"dddddddd"]; ok {
 		t.Error("the terminal run's reservation is dropped")
 	}
-	if _, ok := cm.Data[api.LedgerReserved+"aaaaaaaa"]; !ok {
+	if _, ok := cm.Data[ledger.Reserved+"aaaaaaaa"]; !ok {
 		t.Error("a live run keeps its reservation")
 	}
 }
@@ -506,10 +506,10 @@ func TestLedgersOlderThan35DaysAreDeleted(t *testing.T) {
 		ledgerDay(t, "20260822", map[string]int64{"human:291": 1}, nil), // 36 days: gone
 		ledgerDay(t, "20260823", map[string]int64{"human:291": 1}, nil), // 35 days: kept
 		ledgerDay(t, "20260927", nil, nil),
-		cm(api.LedgerPrefix+"20251301"),       // not a day
-		cm(api.LegacyLedgerPrefix+"20260822"), // a token ledger, 36 days: gone
-		cm(api.LegacyLedgerPrefix+"20260823"), // 35 days: kept
-		cm(api.LegacyLedgerPrefix+"20251301"), // not a day
+		cm(ledger.Prefix+"20251301"),       // not a day
+		cm(ledger.LegacyPrefix+"20260822"), // a token ledger, 36 days: gone
+		cm(ledger.LegacyPrefix+"20260823"), // 35 days: kept
+		cm(ledger.LegacyPrefix+"20251301"), // not a day
 	).Build()
 	m := &Meter{Runs: st, Source: source{}, Ledger: c, Namespace: "agent-system",
 		Now: func() time.Time { return now }}
@@ -517,9 +517,9 @@ func TestLedgersOlderThan35DaysAreDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]bool{
-		api.LedgerPrefix + "20260822": false, api.LedgerPrefix + "20260823": true, api.LedgerPrefix + "20260927": true,
-		api.LedgerPrefix + "20251301": true, api.LegacyLedgerPrefix + "20260822": false,
-		api.LegacyLedgerPrefix + "20260823": true, api.LegacyLedgerPrefix + "20251301": true,
+		ledger.Prefix + "20260822": false, ledger.Prefix + "20260823": true, ledger.Prefix + "20260927": true,
+		ledger.Prefix + "20251301": true, ledger.LegacyPrefix + "20260822": false,
+		ledger.LegacyPrefix + "20260823": true, ledger.LegacyPrefix + "20251301": true,
 	} {
 		var got corev1.ConfigMap
 		err := c.Get(context.Background(), types.NamespacedName{Namespace: "agent-system", Name: name}, &got)

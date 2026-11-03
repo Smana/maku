@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package api
+package ledger
 
 import (
 	"context"
@@ -20,9 +20,9 @@ import (
 // id — an absent ledger or entry is already released, and a conflict re-reads — so a replay after
 // a crash, or a second releaser, drops nothing twice and never another run's entry.
 func Release(ctx context.Context, c client.Client, ns string, day time.Time, ids ...string) error {
-	name := LedgerPrefix + day.UTC().Format(LedgerDayLayout)
+	name := Prefix + day.UTC().Format(DayLayout)
 	key := types.NamespacedName{Namespace: ns, Name: name}
-	for range LedgerAttempts {
+	for range Attempts {
 		cm := &corev1.ConfigMap{}
 		err := c.Get(ctx, key, cm)
 		if apierrors.IsNotFound(err) {
@@ -33,8 +33,8 @@ func Release(ctx context.Context, c client.Client, ns string, day time.Time, ids
 		}
 		held := false
 		for _, id := range ids {
-			if _, ok := cm.Data[LedgerReserved+id]; ok {
-				delete(cm.Data, LedgerReserved+id)
+			if _, ok := cm.Data[Reserved+id]; ok {
+				delete(cm.Data, Reserved+id)
 				held = true
 			}
 		}
@@ -50,7 +50,7 @@ func Release(ctx context.Context, c client.Client, ns string, day time.Time, ids
 			return fmt.Errorf("ledger %s: release %v: %w", name, ids, err)
 		}
 	}
-	return fmt.Errorf("ledger %s: %w: %v kept", name, ErrLedgerBusy, ids)
+	return fmt.Errorf("ledger %s: %w: %v kept", name, ErrBusy, ids)
 }
 
 // The meter's heartbeat (#54). Every replica admits but only the leader meters, so the meter's
