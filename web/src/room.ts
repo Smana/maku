@@ -16,9 +16,8 @@ import { PendingActs } from "./pending";
 import { RoomState } from "./room-state";
 import { mountViews } from "./roomview";
 import type { Dashboard } from "./dashboards";
-import { mountRail } from "./rail";
+import { mountRailPane } from "./railpane";
 import { mountRunView, mountScrollIndex } from "./runview";
-import { tone } from "./flow";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -94,40 +93,10 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   meta.append(status);
   footer.append(session, composerEl, meta);
   // The rail beside the conversation, not in main: mountViews wipes main's children.
-  const rail = mountRail({ select: (run) => { rail.el.classList.remove("open"); void runView.select(run); } });
-  const dots = document.createElement("button");
-  dots.type = "button";
-  dots.className = "rail-dots";
-  dots.setAttribute("aria-label", "Show the task path");
-  dots.hidden = true;
-  const drawerClose = document.createElement("button");
-  drawerClose.type = "button";
-  drawerClose.className = "rail-close";
-  drawerClose.textContent = "Close";
-  rail.el.prepend(drawerClose);
-  dots.onclick = () => { rail.el.classList.add("open"); drawerClose.focus(); };
-  drawerClose.onclick = () => { rail.el.classList.remove("open"); dots.focus(); };
-  rail.el.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && rail.el.classList.contains("open")) { rail.el.classList.remove("open"); dots.focus(); }
-  });
-  const roomBody = document.createElement("div");
-  roomBody.className = "room-body";
-  roomBody.append(dots, needsPanel, lead, skeleton, main, forkPanel, rail.el);
+  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, skeleton, main, forkPanel);
+  const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
-  const showRail = (sum: Summary) => {
-    const f = sum.flow;
-    rail.set(f, sum.status.phase, Date.now());
-    roomBody.classList.toggle("has-rail", !!f);
-    dots.hidden = !f;
-    if (!f) rail.el.classList.remove("open");
-    dots.replaceChildren(...[...f?.nodes.map((n) => [n.role, n.endedAt ? "done" : "live"]) ?? [], ...(f?.ghosts ?? []).map((g) => [g, "ghost"])].map(([who, st]) => {
-      const d = document.createElement("span");
-      d.className = "rail-dot";
-      d.dataset.tone = tone(who);
-      d.dataset.state = st;
-      return d;
-    }));
-  };
+  const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now());
   // Header and dock heights place the sticky rail between them.
   let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {

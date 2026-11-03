@@ -128,7 +128,7 @@ chat and raw views, the controls and the composer.
 - `http://127.0.0.1:4180/preview/preview.html` (add `?live` to replay the session at reading pace)
 - `http://127.0.0.1:4180/preview/full.html` (add `?theme=dark` for the dark palette)
 
-The built files stay out of git. Buttons on the full page send nothing.
+`full.html` takes `?finished`, `?split` or `?part` to show the rail's Replay, a split task or a part's room (default: a task in flight); the demo shows the rail as it replays. The built files stay out of git. Buttons on the full page send nothing.
 
 ### Screenshots with Chromium
 
