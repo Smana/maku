@@ -13,9 +13,10 @@ import (
 const foldCacheRooms = 256
 
 // foldCache keeps each recently read room's summary fold, so a summary folds only what the log
-// appended since (audit S-9). The log is append-only and retention deletes whole rooms, whose ids
-// never come back, so a fold through seq N stays the fold of events 1..N. Readers get clones:
-// Add writes in place. The zero value is ready; max 0 means foldCacheRooms.
+// appended since (audit S-9). The log is append-only, so a fold through seq N stays the fold of
+// events 1..N, but only for the Room it was folded for: nothing stops a purged room's id coming
+// back, so a fold is kept with its Room's UID and another UID is a miss. Readers get clones: Add
+// writes in place. The zero value is ready; max 0 means foldCacheRooms.
 type foldCache struct {
 	mu    sync.Mutex
 	max   int
@@ -24,16 +25,17 @@ type foldCache struct {
 }
 
 type foldEntry struct {
+	uid  string // the Room CR's UID the fold belongs to
 	st   summary.State
 	used uint64 // the tick of its last get or put: the smallest is evicted first
 }
 
-// get is a clone of room's fold, and whether one is kept.
-func (c *foldCache) get(room string) (summary.State, bool) {
+// get is a clone of the fold of room, the Room with that uid, and whether one is kept.
+func (c *foldCache) get(room, uid string) (summary.State, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.rooms[room]
-	if !ok {
+	if !ok || e.uid != uid {
 		return summary.State{}, false
 	}
 	c.tick++
@@ -41,9 +43,10 @@ func (c *foldCache) get(room string) (summary.State, bool) {
 	return e.st.Clone(), true
 }
 
-// put keeps a clone of st as room's fold unless the kept one has folded further, then evicts the
-// room read longest ago past the bound.
-func (c *foldCache) put(room string, st summary.State) {
+// put keeps a clone of st as the fold of room, the Room with that uid. A kept fold of the same
+// Room that has folded further stays; one of another Room is replaced. Past the bound it evicts
+// the room read longest ago.
+func (c *foldCache) put(room, uid string, st summary.State) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.rooms == nil {
@@ -51,13 +54,13 @@ func (c *foldCache) put(room string, st summary.State) {
 	}
 	c.tick++
 	if e, ok := c.rooms[room]; ok {
-		if st.LastSeq >= e.st.LastSeq {
-			e.st = st.Clone()
+		if e.uid != uid || st.LastSeq >= e.st.LastSeq {
+			e.uid, e.st = uid, st.Clone()
 		}
 		e.used = c.tick
 		return
 	}
-	c.rooms[room] = &foldEntry{st: st.Clone(), used: c.tick}
+	c.rooms[room] = &foldEntry{uid: uid, st: st.Clone(), used: c.tick}
 	limit := c.max
 	if limit <= 0 {
 		limit = foldCacheRooms

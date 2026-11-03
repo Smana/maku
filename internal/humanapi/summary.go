@@ -40,15 +40,16 @@ func (s *Server) roomSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // summaryOf is the room's summary/v1 as p sees it, notes after after: readRoom's refusals, or
-// errLogUnreadable. The fold goes on from the room's cached one (audit S-9): the log is
-// append-only, so only the events past the cached seq are read, and none when the row's last seq
+// errLogUnreadable. The fold goes on from the cached one of this Room, id and UID (audit S-9): the
+// log is append-only, so only the events past the cached seq are read, and none when the row's last seq
 // is not past it.
 func (s *Server) summaryOf(ctx context.Context, id string, p authn.Principal, after int64) (summary.Summary, error) {
 	room, row, sub, err := s.readRoom(ctx, id, p)
 	if err != nil {
 		return summary.Summary{}, err
 	}
-	fold, _ := s.folds.get(id)
+	uid := string(room.UID)
+	fold, _ := s.folds.get(id, uid)
 	if fold.LastSeq < row.LastSeq {
 		// Each page is folded, then dropped: the read holds one page, whatever the log's length.
 		for last := fold.LastSeq; ; {
@@ -63,7 +64,7 @@ func (s *Server) summaryOf(ctx context.Context, id string, p authn.Principal, af
 			}
 			last = page[len(page)-1].Seq
 		}
-		s.folds.put(id, fold)
+		s.folds.put(id, uid, fold)
 	}
 	view := summary.View(fold, id, s.PublicURL+"/r/"+id, sub, after, s.now())
 	if fold.Sealed == "" { // a sealed room takes no next run

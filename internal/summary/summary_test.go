@@ -552,32 +552,44 @@ func TestTheRunsModelAndEffort(t *testing.T) {
 }
 
 // A clone folds on apart from its original: Add writes the approvals, the agents, the notes and the
-// run models in place, and the broker's fold cache hands one clone to each reader (audit S-9).
+// run models of both runs in place, and the broker's fold cache hands one clone to each reader
+// (audit S-9).
 func TestACloneFoldsApart(t *testing.T) {
 	sys := envelope.Actor{Kind: envelope.ActorSystem, ID: "system:room-broker"}
-	running := ev(2, envelope.StateChanged, sys, map[string]any{"kind": "run_phase", "phase": "Running", "model": "agent-default"})
-	running.Origin = envelope.OriginBroker
+	running := func(seq int64, run string) envelope.Event {
+		e := ev(seq, envelope.StateChanged, sys, map[string]any{"kind": "run_phase", "phase": "Running", "model": "agent-default"})
+		e.RunID, e.Origin = run, envelope.OriginBroker
+		return e
+	}
 	prefix := []envelope.Event{
 		approvalRequested(1, "01A", "push", time.Time{}),
-		running,
-		ev(3, envelope.Participant, sys, envelope.ParticipantPayload{Principal: "agent:cf4ato2x", Change: "joined", Role: "implementer"}),
-		note(4, "n4"),
+		running(2, "aaaaaaaa"),
+		running(3, "bbbbbbbb"), // the latest run; aaaaaaaa is the one before
+		ev(4, envelope.Participant, sys, envelope.ParticipantPayload{Principal: "agent:cf4ato2x", Change: "joined", Role: "implementer"}),
+		note(5, "n5"),
 	}
 	base, want := summary.Fold(prefix), summary.Fold(prefix)
-	effort := ev(8, envelope.StateChanged, envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:cf4ato2x"},
-		map[string]any{"kind": "harness_status", "status": "running", "previous": "", "effort": "high"})
-	effort.Origin = envelope.OriginHarness
+	if base.LLM == nil || base.PrevLLM == nil {
+		t.Fatalf("the prefix must leave two runs: %+v", base)
+	}
+	effort := func(seq int64, run string) envelope.Event {
+		e := ev(seq, envelope.StateChanged, envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + run},
+			map[string]any{"kind": "harness_status", "status": "running", "previous": "", "effort": "high"})
+		e.RunID, e.Origin = run, envelope.OriginHarness
+		return e
+	}
 	c := base.Clone()
 	c.Add([]envelope.Event{
-		ev(5, envelope.ApprovalDecided, sys, envelope.ApprovalDecidedPayload{ApprovalID: "01A", Decision: "approved"}),
-		ev(6, envelope.Participant, sys, envelope.ParticipantPayload{Principal: "agent:cf4ato2x", Change: "left", Role: "implementer"}),
-		note(7, "n7"),
-		effort,
+		ev(6, envelope.ApprovalDecided, sys, envelope.ApprovalDecidedPayload{ApprovalID: "01A", Decision: "approved"}),
+		ev(7, envelope.Participant, sys, envelope.ParticipantPayload{Principal: "agent:cf4ato2x", Change: "left", Role: "implementer"}),
+		note(8, "n8"),
+		effort(9, "aaaaaaaa"), // a late word of the earlier run
+		effort(10, "bbbbbbbb"),
 	})
 	if !reflect.DeepEqual(base, want) {
 		t.Fatalf("folding the clone changed the original:\ngot  %+v\nwant %+v", base, want)
 	}
-	if len(c.Pending) != 0 || len(c.Agents) != 0 || len(c.Notes) != 2 || c.LLM.Effort != "high" {
+	if len(c.Pending) != 0 || len(c.Agents) != 0 || len(c.Notes) != 2 || c.LLM.Effort != "high" || c.PrevLLM.Effort != "high" {
 		t.Fatalf("the clone did not fold on: %+v", c)
 	}
 }
