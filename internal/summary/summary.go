@@ -69,6 +69,7 @@ type State struct {
 	// LLM is the model and effort of the latest run the log told them of; PrevLLM, the run's before
 	// it. The model is the broker's run_phase{Running, model}, the effort the run's harness_status.
 	LLM, PrevLLM *RunModel
+	flow         flowState
 }
 
 // RunModel is what a run runs on: Model is its claim's spec.model, from the broker's
@@ -232,19 +233,18 @@ func (st *State) Add(evs []envelope.Event) {
 			}
 		case envelope.Participant:
 			var p envelope.ParticipantPayload
-			if json.Unmarshal(ev.Payload, &p) != nil || !strings.HasPrefix(p.Principal, "agent:") {
-				continue
-			}
-			switch p.Change { // role_changed neither starts nor ends a run
-			case "joined":
-				st.Agents[p.Principal] = true
-			case "left":
-				delete(st.Agents, p.Principal)
+			if json.Unmarshal(ev.Payload, &p) == nil && strings.HasPrefix(p.Principal, "agent:") {
+				switch p.Change { // role_changed neither starts nor ends a run
+				case "joined":
+					st.Agents[p.Principal] = true
+				case "left":
+					delete(st.Agents, p.Principal)
+				}
 			}
 		case envelope.Message:
 			var m envelope.MessagePayload
 			if json.Unmarshal(ev.Payload, &m) != nil {
-				continue
+				break
 			}
 			switch m.Kind {
 			case envelope.KindProgress:
@@ -258,6 +258,7 @@ func (st *State) Add(evs []envelope.Event) {
 				st.Verdict = &Verdict{By: ev.Actor.Role, Verdict: m.Verdict, At: ev.TS}
 			}
 		}
+		foldFlow(st, ev) // after the switch: a forked_from has reset st, and st.Facts is the new task facts
 	}
 }
 
