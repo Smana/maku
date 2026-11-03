@@ -976,8 +976,9 @@ func (r *Reconciler) revert(ctx context.Context, t *v1alpha1.Task, why string) e
 		if ref.AutoMerged { // an approved merge keeps its two labels (AM1)
 			r.label(ctx, pr, AutoMergedLabel(t.Spec.PredictedClass)) // a second chance: its revert is read against it
 		}
-		if rv, err = r.merger(ctx).RevertPR(ctx, ref.NodeID, fmt.Sprintf("Revert %q", pr.Title),
-			fmt.Sprintf("Reverts #%d (agent factory task `%s`): %s.", ref.Number, t.Name, narrate.Reason(why))); err != nil {
+		if rv, err = r.merger(ctx).RevertPR(ctx, forge.RevertOf{Number: ref.Number, NodeID: ref.NodeID,
+			Title: fmt.Sprintf("Revert %q", pr.Title), By: r.repo(t).Merge.MergerLogin,
+			Body: fmt.Sprintf("Reverts #%d (agent factory task `%s`): %s.", ref.Number, t.Name, narrate.Reason(why))}); err != nil {
 			return err
 		}
 		base := t.DeepCopy()

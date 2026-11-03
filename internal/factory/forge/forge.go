@@ -334,6 +334,15 @@ type Revert struct {
 	NodeID string
 }
 
+// RevertOf is what RevertPR reverts: the merged pull request (GitHub names the revert's branch
+// revert-<Number>-<head>) and the merger App's login, the only author whose open revert is adopted.
+type RevertOf struct {
+	Number      int
+	NodeID      string
+	Title, Body string
+	By          string
+}
+
 // LabelledPull is one pull request carrying a label, as the merge breaker's ledger reads it
 // (v2 D1): its state, once merged when, and its labels (the first 30: a drill revert, AM6).
 type LabelledPull struct {
@@ -464,6 +473,9 @@ type PRSummary struct {
 	// deleted one's), read from the head's repository against the base's.
 	BaseRef         string
 	CrossRepository bool
+	// NodeID and URL are the pull request's GraphQL id and page: an adopted revert needs no second read.
+	NodeID string
+	URL    string
 }
 
 // Merger is GitHub through the merger App (owner, 2026-09-27; R16): the only identity that reads
@@ -494,7 +506,7 @@ type Merger interface {
 	Merge(ctx context.Context, nodeID, head string) error
 	EnableAutoMerge(ctx context.Context, nodeID, expectedHeadSHA string) error
 	DisableAutoMerge(ctx context.Context, nodeID string) error
-	RevertPR(ctx context.Context, nodeID, title, body string) (Revert, error)
+	RevertPR(ctx context.Context, of RevertOf) (Revert, error)
 	// AddLabels and PullsWithLabel are the merge breaker's ledger on GitHub (v2 D1): the merger
 	// labels what it merged and the reverts it opened, so the breaker's state survives a rebuild
 	// that loses every Task, and only the merger's key writes it. It needs issues: write, GitHub's

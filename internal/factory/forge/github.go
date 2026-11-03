@@ -1075,8 +1075,21 @@ func (g *GitHub) DisableAutoMerge(ctx context.Context, nodeID string) error {
 }
 
 // RevertPR produces the revert PR GitHub's own button would (§6.4); its revert-<n>-<head> branch is
-// created by the merger App, which is why only that App bypasses agent-merge (R16).
-func (g *GitHub) RevertPR(ctx context.Context, nodeID, title, body string) (Revert, error) {
+// created by the merger App, which is why only that App bypasses agent-merge (R16). A revert already
+// open on such a branch by of.By is the one a previous call opened and lost the answer of (F-11):
+// it is returned, never doubled, since a second revert would count twice against the breaker. The
+// list is one page of 100 open pull requests, newest first, where a revert just opened is.
+func (g *GitHub) RevertPR(ctx context.Context, of RevertOf) (Revert, error) {
+	open, err := g.OpenPullRequests(ctx)
+	if err != nil {
+		return Revert{}, err
+	}
+	branch := fmt.Sprintf("revert-%d-", of.Number)
+	for _, p := range open {
+		if strings.HasPrefix(p.HeadRef, branch) && !p.CrossRepository && SameLogin(p.Author, of.By) {
+			return Revert{Number: p.Number, URL: p.URL, NodeID: p.NodeID}, nil
+		}
+	}
 	var m struct {
 		RevertPullRequest struct {
 			RevertPullRequest struct {
@@ -1086,8 +1099,8 @@ func (g *GitHub) RevertPR(ctx context.Context, nodeID, title, body string) (Reve
 			}
 		} `graphql:"revertPullRequest(input: $input)"`
 	}
-	t, b := githubv4.String(title), githubv4.String(body)
-	err := g.v4.Mutate(ctx, &m, githubv4.RevertPullRequestInput{PullRequestID: githubv4.ID(nodeID), Title: &t, Body: &b}, nil)
+	t, b := githubv4.String(of.Title), githubv4.String(of.Body)
+	err = g.v4.Mutate(ctx, &m, githubv4.RevertPullRequestInput{PullRequestID: githubv4.ID(of.NodeID), Title: &t, Body: &b}, nil)
 	g.mark(err)
 	r := m.RevertPullRequest.RevertPullRequest
 	return Revert{Number: r.Number, URL: r.URL, NodeID: r.ID}, wrap("open a revert", err)
@@ -1218,7 +1231,8 @@ func (g *GitHub) OpenPullRequests(ctx context.Context) ([]PRSummary, error) {
 	for _, p := range prs {
 		out = append(out, PRSummary{Number: p.GetNumber(), Author: p.GetUser().GetLogin(), Created: p.GetCreatedAt().Time,
 			HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA(), BaseRef: p.GetBase().GetRef(),
-			CrossRepository: p.GetHead().GetRepo() == nil || !strings.EqualFold(p.GetHead().GetRepo().GetFullName(), p.GetBase().GetRepo().GetFullName())})
+			CrossRepository: p.GetHead().GetRepo() == nil || !strings.EqualFold(p.GetHead().GetRepo().GetFullName(), p.GetBase().GetRepo().GetFullName()),
+			NodeID:          p.GetNodeID(), URL: p.GetHTMLURL()})
 	}
 	return out, nil
 }

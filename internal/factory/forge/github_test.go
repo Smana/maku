@@ -127,6 +127,10 @@ type fakeGitHub struct {
 	bodies []string // the POST /graphql bodies, in order
 	// mergeReply: every mergePullRequest answers 200 with it (F-1).
 	mergeReply string
+	open       []string                         // the open pull requests GET /pulls lists (state=open, no head filter)
+	revertN    int                              // revertPullRequest calls
+	loseRevert bool                             // the next revertPullRequest opens the revert, then answers 502
+	revertHead string                           // the branch revertPullRequest opens; "" opens none in the list
 	mint       func(w http.ResponseWriter) bool // overrides the mint reply when it returns true
 	// TW4: the scope the next mint must request; every other request gets GitHub's refusal.
 	// perms records each minted body's scope, in order, so a test can pin it per connection.
@@ -135,6 +139,32 @@ type fakeGitHub struct {
 	// fence is .github/agent-factory.yaml on the default branch: "" is absent, "!" a 500.
 	fence string
 	steer map[string]string // default-branch steering notes by path; "!" fails the read
+}
+
+// openPull is one open pull request as GET /pulls lists it, on this repository.
+func openPull(n int, nodeID, author, head string) string {
+	return fmt.Sprintf(`{"number":%d,"node_id":%q,"html_url":"https://github.com/Smana/demo/pull/%d","user":{"login":%q},`+
+		`"head":{"ref":%q,"sha":"h%d","repo":{"full_name":"Smana/demo"}},"base":{"ref":"main","repo":{"full_name":"Smana/demo"}}}`,
+		n, nodeID, n, author, head, n)
+}
+
+func (g *fakeGitHub) addOpen(p string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.open = append(g.open, p)
+}
+
+// loseRevertAnswer makes the next revertPullRequest open its pull request on head, then fail (F-11).
+func (g *fakeGitHub) loseRevertAnswer(head string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.loseRevert, g.revertHead = true, head
+}
+
+func (g *fakeGitHub) revertCalls() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.revertN
 }
 
 func (g *fakeGitHub) setWantPerms(p map[string]string) {
@@ -228,6 +258,18 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			}
 			return
 		case strings.Contains(string(b), "revertPullRequest"):
+			g.mu.Lock()
+			g.revertN++
+			lose := g.loseRevert
+			g.loseRevert = false
+			if g.revertHead != "" { // GitHub opened it, whatever becomes of the answer
+				g.open = append(g.open, openPull(13, "PR_rev", "ogenki-agent-merger[bot]", g.revertHead))
+			}
+			g.mu.Unlock()
+			if lose {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			_, _ = io.WriteString(w, `{"data":{"revertPullRequest":{"revertPullRequest":{"id":"PR_rev","number":13,"url":"https://github.com/Smana/demo/pull/13"}}}}`)
 			return
 		case strings.Contains(string(b), "enablePullRequestAutoMerge"):
@@ -398,6 +440,13 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		_, _ = fmt.Fprintf(w, `{"total_count":5000,"check_runs":[%s]}`, strings.Join(runs, ","))
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/pulls", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query(); q.Get("head") == "" && q.Get("state") == "open" {
+			g.mu.Lock()
+			body := "[" + strings.Join(g.open, ",") + "]"
+			g.mu.Unlock()
+			_, _ = io.WriteString(w, body)
+			return
+		}
 		if r.URL.Query().Get("head") != "Smana:agent/3buqdlot" {
 			_, _ = io.WriteString(w, `[]`)
 			return
@@ -1122,13 +1171,46 @@ func TestChecksAndMutations(t *testing.T) {
 	if !strings.Contains(bodies[1], "SQUASH") || !strings.Contains(bodies[1], `"expectedHeadOid":"abc123"`) {
 		t.Fatalf("squash auto-merge of the decided head only: %s", bodies[1])
 	}
-	rv, err := r.g.RevertPR(ctx, "PR_1", `Revert "docs: fix a link"`, "reverts #12")
+	rv, err := r.g.RevertPR(ctx, RevertOf{Number: 12, NodeID: "PR_1", Title: `Revert "docs: fix a link"`, Body: "reverts #12",
+		By: "ogenki-agent-merger[bot]"})
 	if err != nil || rv.Number != 13 || rv.NodeID != "PR_rev" {
 		t.Fatalf("%+v %v", rv, err)
 	}
 	runs, err := r.g.CommitChecks(ctx, "abc123")
 	if err != nil || len(runs) != 1 || runs[0].State != "SUCCESS" {
 		t.Fatalf("%+v %v", runs, err)
+	}
+}
+
+// F-11: revertPullRequest's answer lost after GitHub opened the revert (a timeout, a 502): the
+// retry finds the merger's open pull request on GitHub's revert-<n>- branch, as recorded live in
+// testdata/revert-naming.json, and returns it; no second revert is opened. A maintainer's own
+// revert of the same pull request (GitHub's button, same branch name) is not the merger's.
+func TestARevertWhoseAnswerWasLostIsNotOpenedTwice(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "revert-naming.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var named struct {
+		Reverted    int    `json:"reverted"`
+		HeadRefName string `json:"headRefName"`
+	}
+	if err := json.Unmarshal(raw, &named); err != nil {
+		t.Fatal(err)
+	}
+	r := newRig(t)
+	r.gh.addOpen(openPull(14, "PR_14", "Smana", named.HeadRefName))
+	r.gh.loseRevertAnswer(named.HeadRefName)
+	of := RevertOf{Number: named.Reverted, NodeID: "PR_1", Title: `Revert "docs: fix a link"`, Body: "reverts", By: "ogenki-agent-merger[bot]"}
+	if _, err := r.g.RevertPR(t.Context(), of); err == nil {
+		t.Fatal("a lost answer is an error")
+	}
+	rv, err := r.g.RevertPR(t.Context(), of)
+	if err != nil || rv.Number != 13 || rv.NodeID != "PR_rev" || rv.URL != "https://github.com/Smana/demo/pull/13" {
+		t.Fatalf("%+v %v", rv, err)
+	}
+	if n := r.gh.revertCalls(); n != 1 {
+		t.Fatalf("%d revertPullRequest calls: the retry opened a second revert", n)
 	}
 }
 

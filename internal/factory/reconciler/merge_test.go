@@ -1092,9 +1092,9 @@ type racingMerger struct {
 	race func(op string)
 }
 
-func (m racingMerger) RevertPR(ctx context.Context, nodeID, title, body string) (forge.Revert, error) {
+func (m racingMerger) RevertPR(ctx context.Context, of forge.RevertOf) (forge.Revert, error) {
 	m.race("revert")
-	return m.Merger.RevertPR(ctx, nodeID, title, body)
+	return m.Merger.RevertPR(ctx, of)
 }
 
 func (m racingMerger) EnableAutoMerge(ctx context.Context, nodeID, head string) error {
