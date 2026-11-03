@@ -131,6 +131,20 @@ describe("needsItems", () => {
     expect([...items[0].querySelectorAll("code")].map((c) => c.textContent)).toEqual(["factory/ready", "/factory retry"]);
   });
 
+  // U-3: the approve-to-merge fixture. Under merge.approveToMerge the need is an approval of the
+  // current commit, so it says Approve, as the step and the status line do (#308, #310). Its what
+  // is summary.ApproveHow's.
+  const approveToMerge: Summary["needsYou"][number] = { kind: "merge", id: "7", url: "https://github.com/o/r/pull/7", approve: true,
+    what: "a maintainer approves PR #7: approve the head you read on the PR page, or run `gh api repos/o/r/pulls/7/reviews -f commit_id=<sha> -f event=APPROVE`; the merger merges that head" };
+  it("labels an approve-to-merge need Approve, not Merge", () => {
+    const s = base();
+    s.needsYou = [approveToMerge];
+    const block = needs(s);
+    expect(block.textContent).toMatch(/^Approve: a maintainer approves PR #7/);
+    expect(block.textContent).not.toContain("Merge:");
+    expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
+  });
+
   // The approvals come from the live log, as cards (needs.test.ts): the summary's are skipped.
   it("skips approvals, and is empty when nothing needs you", () => {
     expect(needsItems(base())).toHaveLength(0);

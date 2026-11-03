@@ -129,7 +129,8 @@ export function needsItems(s: Summary): HTMLLIElement[] {
   const out: HTMLLIElement[] = [];
   for (const n of s.needsYou) {
     if (n.kind === "hold") out.push(el("li", { textContent: `Hold: ${n.what}` })); // the page is the room: nothing to link to
-    if (n.kind === "merge") out.push(linkedNeed("Merge", n.what, safeLink("open the PR", n.url)));
+    // approve: under approveToMerge an approval of the current commit merges it (#308, #310).
+    if (n.kind === "merge") out.push(linkedNeed(n.approve ? "Approve" : "Merge", n.what, safeLink("open the PR", n.url)));
     if (n.kind === "answer") out.push(linkedNeed("Answer", n.what, safeLink("open the issue", n.url)));
   }
   return out;
