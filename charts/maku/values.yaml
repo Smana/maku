@@ -40,7 +40,15 @@ broker:
   # Optional: the factory's system-API tokens. Empty = no systemIssuer in the config.
   systemIssuer: {}
   systemPrincipals: {}
+  # The factory's run API: https://agent-factory.<namespace>.svc:8082 once the factory chart sets
+  # api.tls.secretName. The broker forwards each human's bearer token there, so an http:// URL is
+  # refused, here and at start, unless factoryInsecure is true (S-1, D6).
   factoryURL: ""
+  factoryInsecure: false
+  # The Secret (key ca.crt) of the CA that signs the factory's api certificate, mounted at
+  # /etc/room-broker/factory-ca and read on every run request. Empty: the system roots.
+  factoryCA:
+    secretName: ""
   # oidc mode: the https URL humans reach the broker at. local mode: http://localhost:<the port you
   # forward>, default http://localhost:8080; the broker answers that port only.
   publicURL: ""
