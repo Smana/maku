@@ -210,7 +210,9 @@ func TestFlowView(t *testing.T) {
 		{"a model the log holds is a model name, else the served one", func() []envelope.Event {
 			a := frun("a", "implementer", "implementer", 0)
 			a.Provenance = &envelope.ProvenanceFact{ServedModels: []string{"glm-5.3"}}
-			evs := fruns(envelope.TaskFacts{Phase: "Implementing"}, a, frun("b", "reviewer", "reviewer", 0))
+			b := frun("b", "reviewer", "reviewer", 0)
+			b.Provenance = &envelope.ProvenanceFact{ServedModels: []string{"<b>served</b>"}}
+			evs := fruns(envelope.TaskFacts{Phase: "Implementing"}, a, b)
 			return append(evs,
 				fphase(50, "a", map[string]any{"phase": "Running", "model": "<img src=x>"}),
 				fphase(51, "b", map[string]any{"phase": "Running", "model": "bad model\n"}))
@@ -219,6 +221,13 @@ func TestFlowView(t *testing.T) {
 				t.Fatalf("models = %q, %q", fl.Nodes[0].Model, fl.Nodes[1].Model)
 			}
 		}},
+		{"a role that is no persona name draws as unknown",
+			fruns(envelope.TaskFacts{Phase: "Implementing"}, frun("a", "impl`[x](https://evil.example) <b>", "", 0)),
+			func(t *testing.T, fl *Flow) {
+				if fl.Nodes[0].Persona != "unknown" {
+					t.Fatalf("persona = %q", fl.Nodes[0].Persona)
+				}
+			}},
 		{"a judge's last verdict is one of three", []envelope.Event{fjoin(1, "a", "implementer"), fjudge(2, "a", "met"),
 			fjoin(3, "b", "implementer"), fjudge(4, "b", "<script>")},
 			func(t *testing.T, fl *Flow) {

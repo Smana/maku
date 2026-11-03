@@ -328,7 +328,7 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 	if rf != nil {
 		n.Run, n.Role, n.Persona, j.trigger = rf.ID, rf.Role, rf.Persona, rf.Trigger
 		n.StartedAt, n.EndedAt, n.Outcome, n.Verdict, n.MicroUSD = rf.StartedAt, rf.EndedAt, rf.Outcome, rf.Verdict, rf.MicroUSD
-		if p := rf.Provenance; p != nil && len(p.ServedModels) > 0 {
+		if p := rf.Provenance; p != nil && len(p.ServedModels) > 0 && envelope.ValidModel(p.ServedModels[0]) {
 			n.Model = p.ServedModels[0]
 		}
 	}
@@ -363,6 +363,9 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 		if n.Role == "triager" && j.scoped {
 			n.Persona = "scoper"
 		}
+	}
+	if !envelope.ValidPersona(n.Persona) {
+		n.Persona = "unknown" // the fold reads facts unvalidated, and the role has no persona's bound
 	}
 	return j
 }

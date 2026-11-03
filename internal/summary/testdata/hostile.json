@@ -323,7 +323,7 @@
       "nodes": [
         {
           "run": "c1",
-          "persona": "impl`[x](https://evil.example)\u202e\u200b <b>",
+          "persona": "unknown",
           "role": "impl`[x](https://evil.example)\u202e\u200b <b>",
           "round": 1,
           "startedAt": "2026-10-07T17:00:00Z",
