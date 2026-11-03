@@ -78,29 +78,36 @@ crds="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --include
 [[ $crds == "AgentRun,Room" ]] || { echo "FAIL: crds/ holds \"$crds\", want AgentRun,Room" >&2; fail=1; }
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'the broker runs on the default runtime: kubectl port-forward cannot reach a runsc pod'
 
-# production-shaped render: no migrate, no tokenreview binding
-p="$(helm template ap . -n agent-system "${imgs[@]}" \
-     --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys \
-     --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com \
-     --set broker.human.issuer=https://idp.example.com --set broker.human.jwksURL=https://idp.example.com/keys \
-     --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com \
-     --set broker.human.groups.admin=a --set broker.human.groups.member=m \
-     --set runs.group=cloud.ogenki.io --set runs.namePrefix=xplane-run- \
-     --set broker.tls.secretName=broker-cert --set apiServerPorts='{6443}' --set clusterDomain=corp.local)"
+# production-shaped render (cloud-native-ref): no migrate, no tokenreview binding, and no run
+# controller: there Crossplane's composition runs the cloud.ogenki.io AgentRuns (S-5)
+prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
+      --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com
+      --set broker.human.issuer=https://idp.example.com --set broker.human.jwksURL=https://idp.example.com/keys
+      --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com
+      --set broker.human.groups.admin=a --set broker.human.groups.member=m
+      --set runs.namePrefix=xplane-run- --set broker.tls.secretName=broker-cert
+      --set 'apiServerPorts={6443}' --set clusterDomain=corp.local)
+p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
 ynone 'select(.kind=="ClusterRoleBinding")' 'jwks mode binds no auth-delegator'
 ynone 'select(.kind=="RuntimeClass")' 'production renders no RuntimeClass: the cluster-scoped gvisor may already exist'
 ynone 'select(.kind=="Deployment") | .spec.template.spec.initContainers | select(. != null)' 'no owner Secret, no migrate'
+ynone 'select(.metadata.labels."app.kubernetes.io/name" == "run-controller")' 'runController.enabled=false renders no run controller object'
 check 'xplane-run-' 'the production prefix flows through'
 check 'cloud.ogenki.io' 'the production group flows through'
 ykind Service 'select(.metadata.name=="room-broker") | (.spec.ports | map(.port) | sort | join(",")) == "8080,8443,9090"' 'oidc mode exposes :8080'
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.enabled == true' 'the default keeps the :8090 room tools on, as every existing deployment runs it'
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-cert" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.secretName, clusterDomain'
-ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-cert"' 'the CA Role follows broker.tls.secretName'
-ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "cloud.ogenki.io"' 'controller RBAC follows runs.group'
-ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "6443")' 'controller CNP follows apiServerPorts'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "agent-factory")' 'the production render has no factory object'
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'production: the broker runs on the default runtime'
+
+# the run controller under production values: it follows runs.namePrefix, broker.tls, clusterDomain
+# and apiServerPorts; its group is maku.ogenki.io, the only one it reconciles
+ctl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}")"
+out="$ctl"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-cert" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.secretName, clusterDomain'
+ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-cert"' 'the CA Role follows broker.tls.secretName'
+ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "maku.ogenki.io"' 'controller RBAC names the group the controller reconciles'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "6443")' 'controller CNP follows apiServerPorts'
 
 # two DSNs, two roles, one pod: each container reads the Secret meant for it, through the variable
 # its subcommand reads, and the broker never sees the owner's credential
@@ -151,6 +158,7 @@ bad 'factory: this chart has no factory' --set factory.enabled=false
 bad 'broker.runtimeClassName: the broker runs on the default runtime' --set broker.runtimeClassName=gvisor
 bad 'broker.publicURL "https://rooms.example" in local mode' --set broker.publicURL=https://rooms.example
 bad 'broker.publicURL "http://0.0.0.0:8080" in local mode' --set broker.publicURL=http://0.0.0.0:8080
+bad 'runs.group "cloud.ogenki.io" with runController.enabled' --set runs.group=cloud.ogenki.io
 
 # S-1, D6: the factory's CA and the insecure opt-out reach the broker's config; http alone is refused
 fca="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
@@ -174,7 +182,7 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$f
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fca" >"$tmp/factory-ca.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fins" >"$tmp/factory-insecure.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
-yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$p" >"$tmp/rc-production.yaml"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1

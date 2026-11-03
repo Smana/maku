@@ -59,6 +59,9 @@ capabilities: {drop: [ALL]}
 {{- if not .Values.apiServerPorts -}}
 {{- fail "apiServerPorts is empty: every CiliumNetworkPolicy that reaches the apiserver would render no port" -}}
 {{- end -}}
+{{- if and .Values.runController.enabled (ne .Values.runs.group "maku.ogenki.io") -}}
+{{- fail (printf "runs.group %q with runController.enabled: the run controller reconciles maku.ogenki.io AgentRuns only; set runController.enabled=false where another controller runs %s AgentRuns (cloud-native-ref's Crossplane composition)" .Values.runs.group .Values.runs.group) -}}
+{{- end -}}
 {{- $dsn := ne ($b.database.brokerSecret | default "") "" -}}
 {{- range $b.extraEnv -}}{{- if eq .name "ROOMS_DATABASE_URL" -}}{{- $dsn = true -}}{{- end -}}{{- end -}}
 {{- if not $dsn -}}
