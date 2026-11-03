@@ -13,6 +13,18 @@ mergerSecret: agent-factory-merger
 brokerCASecret: openbao-ca
 # Audience of the projected token for the broker's system API.
 roomsAudience: rooms-system
+# The cluster's DNS domain, for the run-request API certificate's names.
+clusterDomain: cluster.local
+# TLS on the run-request API (S-1, D6). secretName set: the Secret (tls.crt, tls.key) is mounted
+# at /etc/agent-factory-api-tls, config.api.tls is written to read it, and the Service port is
+# named https; point the broker's factoryURL at https://agent-factory.<namespace>.svc:8082 and its
+# broker.factoryCA at the issuing CA. A cert-manager Certificate is rendered for it only when
+# issuerRef.name is set; otherwise bring the Secret yourself. Empty: plaintext, and the broker
+# needs factoryInsecure: true to call it.
+api:
+  tls:
+    secretName: ""
+    issuerRef: {kind: ClusterIssuer, name: ""}
 oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake
 # v2 D4: the ZITADEL reader ({"pat", "githubIdpId"}) that resolves an API caller to their GitHub

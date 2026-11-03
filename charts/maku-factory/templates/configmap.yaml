@@ -1,3 +1,12 @@
+{{- $cfg := deepCopy .Values.config -}}
+{{- if .Values.api.tls.secretName -}}
+{{- $api := deepCopy (get $cfg "api" | default dict) -}}
+{{- if hasKey $api "tls" -}}
+{{- fail "config.api.tls and api.tls.secretName: set api.tls.secretName alone; the chart writes config.api.tls to read the mounted pair" -}}
+{{- end -}}
+{{- $_ := set $api "tls" (dict "certFile" "/etc/agent-factory-api-tls/tls.crt" "keyFile" "/etc/agent-factory-api-tls/tls.key") -}}
+{{- $_ := set $cfg "api" $api -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,4 +14,4 @@ metadata:
   labels: {{- include "agent-factory.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml .Values.config | nindent 4 }}
+    {{- toYaml $cfg | nindent 4 }}

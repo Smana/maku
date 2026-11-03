@@ -98,6 +98,34 @@ yq -e 'select(.kind == "ClusterRoleBinding") | (.roleRef.name == "agent-factory-
   || { echo "FAIL: the Flux ClusterRoleBinding binds the factory's ServiceAccount" >&2; fail=1; }
 # defaultMode renders as 0400 or 0440 (yq keeps the octal spelling); only the group-readable one is allowed.
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[].secret.defaultMode | select(. == "0400" or . == "400")' "a 0400 Secret is root-only: the factory runs as 65532"
+# S-1, D6: TLS on the run-request API is off by default: no Certificate, no pair, no config.api.tls
+ynone 'select(.kind == "Certificate")' "no Certificate unless api.tls.issuerRef.name"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "api-tls")' "no API pair unless api.tls.secretName"
+ynone 'select(.kind == "ConfigMap") | .data."config.yaml" | from_yaml | .api.tls | select(. != null)' "plaintext by default: no config.api.tls"
+# api.tls on: the pair mounted, config.api.tls pointed at it, the Certificate, the port named https
+base="$out"
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set api.tls.secretName=agent-factory-api-tls --set api.tls.issuerRef.name=openbao)"
+ykind Certificate '.spec.secretName == "agent-factory-api-tls"' "the Certificate writes api.tls.secretName"
+ykind Certificate '.spec.dnsNames | contains(["agent-factory.agent-system.svc", "agent-factory.agent-system.svc.cluster.local"])' "the Certificate names the factory Service"
+ykind Certificate '(.spec.issuerRef.name == "openbao" and .spec.issuerRef.kind == "ClusterIssuer")' "the Certificate's issuer is api.tls.issuerRef"
+ykind Deployment "$(vol api-tls).secret | (.secretName == \"agent-factory-api-tls\" and .defaultMode == \"0440\")" "the API's pair, readable through fsGroup"
+ykind Deployment "$(mnt api-tls) | (.mountPath == \"/etc/agent-factory-api-tls\" and .readOnly == true)" "the pair mounted read-only"
+ykind ConfigMap '.data."config.yaml" | from_yaml | (.api.tls.certFile == "/etc/agent-factory-api-tls/tls.crt" and .api.tls.keyFile == "/etc/agent-factory-api-tls/tls.key")' "config.api.tls reads the mounted pair"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .repository == "Smana/cloud-native-ref"' "the rest of the config is still rendered verbatim"
+ykind Service '.spec.ports[] | select(.port == 8082) | .name == "https"' "the API's Service port is named https"
+out="$base"
+# refuse 'message' --set ...: the render must fail, naming message
+refuse() {
+  local want="$1" err; shift
+  if err="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref "$@" 2>&1 >/dev/null)"; then
+    echo "FAIL: $* must not render" >&2; fail=1
+  elif ! grep -qF -- "$want" <<<"$err"; then
+    echo "FAIL: $* failed, but not with \"$want\": $err" >&2; fail=1
+  fi
+}
+refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao
+refuse 'config.api.tls and api.tls.secretName' --set api.tls.secretName=agent-factory-api-tls --set config.api.tls.certFile=/c
 for bad in "" "v0.0.0" "latest"; do
   if helm template agent-factory . --namespace agent-system --set image.tag="$bad" >/dev/null 2>&1; then
     echo "FAIL: image.tag '$bad' must not render: only <version>@sha256:<digest>" >&2; fail=1
