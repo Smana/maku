@@ -62,6 +62,10 @@ export function mountRunView(roomMain: HTMLElement, o: {
     through = Math.max(through, e.seq);
     if (capped()) say(`Showing the first ${maxRunEvents.toLocaleString("en-US")} events of this run`);
   };
+  // The live feed follows the run's seq range, whoever wrote the event, and ends at its toSeq.
+  const feed = (n: FlowNode, e: RoomEvent) => {
+    if (n.fromSeq > 0 && !(n.toSeq > 0 && e.seq > n.toSeq) && e.seq > through && !capped()) put(e);
+  };
   const close = () => {
     view?.el.remove();
     view = undefined;
@@ -139,14 +143,14 @@ export function mountRunView(roomMain: HTMLElement, o: {
       loading = false;
       const held = waiting;
       waiting = [];
-      for (const e of held) api.apply(e);
+      // Against n as loaded: a refetch that closed the run meanwhile must not drop what it held.
+      for (const e of held) feed(n, e);
     },
     apply(e) {
-      if (!chosen || e.runId !== chosen) return;
-      const n = nodes.find((x) => x.run === chosen);
-      if (!n || n.toSeq > 0 || n.fromSeq <= 0) return;
+      const n = chosen ? nodes.find((x) => x.run === chosen) : undefined;
+      if (!n) return;
       if (loading) { waiting.push(e); return; }
-      if (e.seq > through && !capped()) put(e);
+      feed(n, e);
     },
   };
   return api;
@@ -157,7 +161,7 @@ export function mountRunView(roomMain: HTMLElement, o: {
 export function mountScrollIndex(chat: HTMLElement, o: {
   nodes: () => FlowNode[]; mark: (run: string | undefined) => void;
   observe?: (cb: IntersectionObserverCallback) => { observe(el: Element): void; disconnect(): void };
-}): { refresh(): void } {
+}): { refresh(): void; disconnect(): void } {
   const visible = new Map<Element, number>();
   const seen = new WeakSet<Element>();
   // jsdom has no IntersectionObserver: the room page's own tests run without one.
@@ -181,5 +185,8 @@ export function mountScrollIndex(chat: HTMLElement, o: {
   };
   let timer: ReturnType<typeof setTimeout> | undefined;
   scan();
-  return { refresh() { timer ??= setTimeout(scan, 200); } };
+  return {
+    refresh() { timer ??= setTimeout(scan, 200); },
+    disconnect() { clearTimeout(timer); io.disconnect(); },
+  };
 }

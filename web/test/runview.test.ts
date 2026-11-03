@@ -80,14 +80,37 @@ describe("the run view", () => {
     expect(main.querySelector(".run-view-note")!.textContent).toBe("Showing the first 2,000 events of this run");
   });
 
-  it("live events of the chosen run", async () => {
+  it("live events in the chosen run's range, whoever wrote them", async () => {
     const { rv, seqs } = setup(log(150));
     rv.set([node("r-1", 100, 0)]);
     await rv.select("r-1");
+    const human: RoomEvent = { ...ev(152), runId: undefined, actor: { kind: "human", id: "human:a" } };
     rv.apply(ev(151));
-    rv.apply(ev(152, "r-2"));
+    rv.apply(human);
+    expect(seqs().slice(-2)).toEqual([151, 152]);
+  });
+
+  it("no live events past a closed run's toSeq", async () => {
+    const { rv, seqs } = setup(log(150));
+    rv.set([node("r-1", 100, 0)]);
+    await rv.select("r-1");
+    rv.set([node("r-1", 100, 151)]);
+    rv.apply(ev(151));
+    rv.apply(ev(152));
     expect(seqs().slice(-1)).toEqual([151]);
-    expect(seqs()).not.toContain(152);
+  });
+
+  it("a run that ends during its load keeps the events it held", async () => {
+    let release: (v: RoomEvent[]) => void = () => {};
+    const load = vi.fn(() => new Promise<RoomEvent[]>((r) => { release = r; }));
+    const { rv, seqs } = setup(load);
+    rv.set([node("r-1", 100, 0)]);
+    const done = rv.select("r-1");
+    rv.apply(ev(151));
+    rv.set([node("r-1", 100, 150)]);
+    release(Array.from({ length: 51 }, (_, i) => ev(100 + i)));
+    await done;
+    expect(seqs().slice(-1)).toEqual([151]);
   });
 
   it("a run with no range in the log says so and loads nothing", async () => {
@@ -138,5 +161,14 @@ describe("the scroll index", () => {
     cb([{ target: row, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
     expect(mark).toHaveBeenLastCalledWith("b");
     chat.remove();
+  });
+
+  it("disconnect stops the observer", () => {
+    const disconnect = vi.fn();
+    const index = mountScrollIndex(document.createElement("div"), {
+      nodes: () => [], mark: () => {}, observe: () => ({ observe: () => {}, disconnect }),
+    });
+    index.disconnect();
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 });
