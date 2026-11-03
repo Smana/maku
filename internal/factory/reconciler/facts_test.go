@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/wire"
 )
@@ -558,5 +560,114 @@ func TestFactsSayWhetherAnApprovalReturnsTheHandOff(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPersonaOf(t *testing.T) {
+	for _, tc := range []struct{ template, role, want string }{
+		{"pair", "triager", "scoper"},
+		{"investigate", "triager", "triager"},
+		{"pair", "implementer", "implementer"},
+		{"pair", "reviewer", "reviewer"},
+		{"pair", "tester", "tester"},
+	} {
+		t.Run(tc.template+"/"+tc.role, func(t *testing.T) {
+			task := issueTask("3buqdlot", 7, "x")
+			task.Spec.Template = tc.template
+			if got := personaOf(task, v1alpha1.RunRecord{Role: tc.role}); got != tc.want {
+				t.Fatalf("persona %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFactsOfCarriesPersonas(t *testing.T) {
+	task := awaiting()
+	task.Spec.Template = "pair"
+	task.Status.Runs = runsOf(3)
+	for i, role := range []string{"triager", "implementer", "reviewer"} {
+		task.Status.Runs[i].Role = role
+	}
+	f := factsOf(task)
+	var got []string
+	for _, r := range f.Runs {
+		got = append(got, r.Persona)
+	}
+	if want := []string{"scoper", "implementer", "reviewer"}; !slices.Equal(got, want) {
+		t.Fatalf("personas %v, want %v", got, want)
+	}
+	if f.Run.Persona != "reviewer" {
+		t.Fatalf("run persona %q, want reviewer", f.Run.Persona)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlanOf(t *testing.T) {
+	for _, tc := range []struct {
+		name, template string
+		scope, testRst bool
+		want           []string
+	}{
+		{"investigate", "investigate", false, false, []string{"triager"}},
+		{"pair", "pair", false, false, []string{"implementer", "reviewer"}},
+		{"pair with scope", "pair", true, false, []string{"scoper", "implementer", "reviewer"}},
+		{"pair with scope and test-first", "pair", true, true, []string{"scoper", "tester", "implementer", "reviewer"}},
+		{"solo", "solo", false, false, []string{"implementer"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := issueTask("3buqdlot", 7, "x")
+			task.Status.Phase = v1alpha1.PhaseImplementing
+			g := newRig(t, task)
+			g.r.Cfg.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
+			task.Spec.Template, task.Spec.PredictedClass = tc.template, "scripts"
+			if tc.scope {
+				task.Spec.ScopeMode = string(config.ScopeScoper)
+			}
+			g.r.Cfg.Classes["scripts"] = config.Class{TestFirst: tc.testRst}
+			got := g.r.planOf(task)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("plan %v, want %v", got, tc.want)
+			}
+			f := g.r.factsFor(task)
+			if err := f.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestFactsOfCarriesTheSplit(t *testing.T) {
+	task := awaiting()
+	task.Status.Split = &v1alpha1.SplitStatus{State: SplitApproved, Of: 3, Children: []v1alpha1.SplitChild{
+		{Index: 1, Issue: 52, Task: "k2mqx7ba", Outcome: "landed"}, {Index: 2, Issue: 53, Task: "p4zt6wce"}}}
+	f := factsOf(task)
+	want := &envelope.SplitFact{Of: 3, Parts: []envelope.PartFact{{Index: 1, Issue: 52, Room: "k2mqx7ba", Outcome: "landed"},
+		{Index: 2, Issue: 53, Room: "p4zt6wce"}}}
+	if !reflect.DeepEqual(f.Split, want) {
+		t.Fatalf("split %+v, want %+v", f.Split, want)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{SplitProposed, SplitDeclined, "ignored"} {
+		task.Status.Split.State = state
+		if factsOf(task).Split != nil {
+			t.Fatalf("a %s split is in the facts", state)
+		}
+	}
+}
+
+func TestFactsOfCarriesTheParent(t *testing.T) {
+	task := awaiting()
+	task.Spec.Parent = &v1alpha1.Parent{Task: "m3pq6xzb", Issue: 50, Index: 2, Of: 3}
+	f := factsOf(task)
+	want := &envelope.ParentFact{Room: "m3pq6xzb", Issue: 50, Index: 2, Of: 3}
+	if !reflect.DeepEqual(f.Parent, want) {
+		t.Fatalf("parent %+v, want %+v", f.Parent, want)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

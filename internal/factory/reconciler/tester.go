@@ -24,14 +24,18 @@ import (
 // tester ran yet, or the last one was lost and resumes. Records, not a status field, say the stage ran:
 // a /factory retry after the tester's end does not run it twice.
 func (r *Reconciler) testerDue(t *v1alpha1.Task) bool {
-	if !r.repo(t).TestFirstFor(t.Spec.PredictedClass) || t.Spec.DataClass != "public" || t.Status.Contract != nil ||
-		!slices.Contains(r.Cfg.Templates[t.Spec.Template].Roles, "implementer") {
+	if !r.testFirst(t) || t.Spec.DataClass != "public" || t.Status.Contract != nil {
 		return false
 	}
 	if len(t.Status.Runs) > 0 && current(t).Role == "tester" {
 		return nextTrigger(t) == "resume"
 	}
 	return !slices.ContainsFunc(t.Status.Runs, func(x v1alpha1.RunRecord) bool { return x.Role == "tester" })
+}
+
+// testFirst: the task's class writes its tests first and its template has an implementer to follow.
+func (r *Reconciler) testFirst(t *v1alpha1.Task) bool {
+	return r.repo(t).TestFirstFor(t.Spec.PredictedClass) && slices.Contains(r.Cfg.Templates[t.Spec.Template].Roles, "implementer")
 }
 
 // testerRun: the task's current run is its tester's.

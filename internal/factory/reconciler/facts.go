@@ -17,6 +17,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 )
@@ -31,6 +32,7 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	fact := func(i int) envelope.RunFact {
 		r := t.Status.Runs[i]
 		rf := runFact(r)
+		rf.Persona = personaOf(t, r)
 		if r.Finished != nil {
 			return rf
 		}
@@ -61,6 +63,10 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 			f.Runs = append(f.Runs, fact(i))
 		}
 	}
+	if sp := t.Status.Split; sp != nil && sp.State == SplitApproved {
+		f.Split = splitFact(sp)
+	}
+	f.Parent = parentFact(t.Spec.Parent)
 	// Known limit: a task mixing priced and unpriced runs shows the priced dollars only, while its token cap binds.
 	if u, limit := t.Status.Usage.CostMicroUSD, t.Spec.Budget.TaskMicroUSD; u > 0 || limit > 0 {
 		f.Spend = &envelope.SpendFact{UsedMicroUSD: dollars(u), LimitMicroUSD: dollars(limit)}
@@ -193,6 +199,7 @@ func (r *Reconciler) factsDue(t *v1alpha1.Task) bool {
 // an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says.
 func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 	f := factsOf(t)
+	f.Plan = r.planOf(t)
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(t, t.Status.Reason)
 	return f
 }
@@ -238,3 +245,52 @@ func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 // dollars is a micro-USD amount clamped to the envelope's bound: a task past it still posts its facts,
 // read as the cap.
 func dollars(v int64) int64 { return min(max(v, 0), envelope.MaxMicroUSD) }
+
+// personaOf is what a run is for. The triager role is the scoper on every template but investigate,
+// where it triages; the role itself stays what the run may do.
+func personaOf(t *v1alpha1.Task, r v1alpha1.RunRecord) string {
+	if r.Role == "triager" && t.Spec.Template != "investigate" {
+		return "scoper"
+	}
+	return r.Role
+}
+
+// planOf is the personas the task is expected to run, in order, for the room's stage strip.
+func (r *Reconciler) planOf(t *v1alpha1.Task) []string {
+	if r.Cfg.Investigates(t.Spec.Template) {
+		return []string{"triager"}
+	}
+	var plan []string
+	add := func(p string) {
+		if !slices.Contains(plan, p) && len(plan) < envelope.MaxPlan {
+			plan = append(plan, p)
+		}
+	}
+	if t.Spec.ScopeMode == string(config.ScopeScoper) {
+		add("scoper")
+	}
+	if r.testFirst(t) {
+		add("tester")
+	}
+	for _, role := range r.Cfg.Templates[t.Spec.Template].Roles {
+		add(role)
+	}
+	return plan
+}
+
+// splitFact is an approved split's parts, each with the room of its child task.
+func splitFact(s *v1alpha1.SplitStatus) *envelope.SplitFact {
+	f := &envelope.SplitFact{Of: int(s.Of)}
+	for _, c := range s.Children {
+		f.Parts = append(f.Parts, envelope.PartFact{Index: int(c.Index), Issue: c.Issue, Room: c.Task, Outcome: c.Outcome})
+	}
+	return f
+}
+
+// parentFact is the split parent a part belongs to; nil for a task that is no part.
+func parentFact(p *v1alpha1.Parent) *envelope.ParentFact {
+	if p == nil {
+		return nil
+	}
+	return &envelope.ParentFact{Room: p.Task, Issue: p.Issue, Index: int(p.Index), Of: int(p.Of)}
+}
