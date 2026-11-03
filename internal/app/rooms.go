@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/runrequest"
+	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 )
 
@@ -45,7 +46,7 @@ type humanLog interface {
 func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Client, ns string, roomLog humanLog, red humanapi.Redactor,
 	hub humanapi.Hub, runs humanapi.Runs, gh gitHubUsers, add func(manager.Runnable) error, m *metrics.Set, log *slog.Logger,
 ) (*humanapi.Server, error) {
-	actor, err := humanActor(cfg.Human, roomLog, red, runs, rooms, runRequester(cfg.FactoryURL, cfg.FactoryCAFile), m)
+	actor, err := humanActor(cfg.Human, roomLog, red, runs, rooms, runRequester(cfg.FactoryURL, cfg.FactoryCAFile, cfg.Runs), m)
 	if err != nil {
 		return nil, err
 	}
@@ -90,10 +91,10 @@ func humanActor(h config.HumanConfig, roomLog humanapi.ActLog, red humanapi.Reda
 }
 
 // runRequester is SP3's factory at factoryURL, trusting caFile's CA (read at each call), or
-// before SP3 (unset) the manifest renderer (ruling P14).
-func runRequester(factoryURL, caFile string) runrequest.Requester {
+// before SP3 (unset) the manifest renderer (ruling P14), rendering claims of kind.
+func runRequester(factoryURL, caFile string, kind runwatch.Kind) runrequest.Requester {
 	if factoryURL == "" {
-		return runrequest.Manifest{}
+		return runrequest.Manifest{Kind: kind}
 	}
 	return runrequest.Factory{URL: factoryURL, CAFile: caFile}
 }

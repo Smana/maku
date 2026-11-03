@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/runrequest"
+	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
 )
@@ -91,7 +92,7 @@ func forkFixture(t *testing.T, funcs *interceptor.Funcs) (*Actor, *actLog, *v1al
 	req := &fakeRequester{}
 	a.Requester = requesterFunc(func(ctx context.Context, r runrequest.Request) (runrequest.Result, error) {
 		_, _ = req.Request(ctx, r)
-		return runrequest.Manifest{}.Request(ctx, r)
+		return runrequest.Manifest{Kind: runwatch.DefaultKind}.Request(ctx, r)
 	})
 	return a, log, room, req
 }

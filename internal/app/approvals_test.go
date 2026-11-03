@@ -27,6 +27,7 @@ import (
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/runrequest"
+	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/wire"
 )
 
@@ -240,7 +241,7 @@ func humanActorForMetrics(t *testing.T, m *metrics.Set) *humanapi.Actor {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := humanActor(config.HumanConfig{}, &fakeActLog{}, red, fakeRuns{}, fake.NewClientBuilder().Build(), runrequest.Manifest{}, m)
+	a, err := humanActor(config.HumanConfig{}, &fakeActLog{}, red, fakeRuns{}, fake.NewClientBuilder().Build(), runrequest.Manifest{Kind: runwatch.DefaultKind}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
