@@ -90,6 +90,7 @@ stateDiagram-v2
   AutoMerging --> Done: a maintainer merged
   AutoMerging --> Closed: pull request closed
   Verifying --> Done: main green for merge.verifyFor
+  Verifying --> Done: no result within twice merge.verifyFor
   Verifying --> Reverted: main red, factory/revert
   Done --> Reverted: factory/revert in the window
   AwaitingHuman --> Queued: Request changes
@@ -336,7 +337,7 @@ every maintainer.
 | `budget-principal` | The factory's daily budget in dollars is spent |
 | `budget-fleet` | The agent gateway's fleet-wide token budget is spent |
 | `failed` or another run phase, lowercased | The run ended without a more specific reason from the room or the meter |
-| `budget-task` | The task cap has no room for another whole run |
+| `budget-task` | The task cap has no room for another whole run. Under `budgets.enforceTask`, `/factory retry` is answered and not taken: the cap is part of the task's spec, so raise it on a new task |
 | `budget-person` | [Per-person caps](#per-person-caps): the day of the person the next run is charged to is spent; the comment names them. A maintainer's `/factory retry` charges the retrier instead |
 | `ci_red` | CI stayed red after `merge.fixRuns` fix runs; the comment names the failing checks |
 | `secret_scan_red` | The secret scan (`merge.leakScanCheck`) found a live credential. Next step: a maintainer revokes the key and closes the pull request; the factory does not retry |
@@ -349,7 +350,7 @@ A task ends with one of these:
 
 | Phase | Reasons |
 |---|---|
-| `Done` | `children_merged` (a split's last part merged), `merged` (by a maintainer), `merged_verified` (auto-merged, main green for `merge.verifyFor`), `proposal_ready` (a triager's proposal: label its issue `factory/publish`, read the new issue the factory files, then label that one `factory/ready`) |
+| `Done` | `children_merged` (a split's last part merged), `merged` (by a maintainer), `merged_verified` (auto-merged, main green for `merge.verifyFor`), `merged_unverified` (auto-merged, main's CI gave no result within twice `merge.verifyFor`, a check cancelled or never finished; the comment names the merge commit, and `factory/revert` still reverts it within `merge.revertWindow`), `proposal_ready` (a triager's proposal: label its issue `factory/publish`, read the new issue the factory files, then label that one `factory/ready`) |
 | `NoOp` | `no_pr` (the run opened no pull request), `no_action` (the triager found nothing to change). Add detail and re-apply `factory/ready` |
 | `Rejected` | `text_too_long` (over `caps.maxTextBytes`), `daily_task_cap` (`caps.tasksPerDay`). Fix it and re-apply `factory/ready` |
 | `Closed` | `pr_closed`, `stale`, `child_dropped` (a part's issue closed unmerged, or a part reverted) |
@@ -362,7 +363,11 @@ The factory App comments on the task's issue, or on its pull request when it has
 start (id, branch, budget, the room link, how to stop it), the pull request, each revision, CI fix
 and resume, each hand-off with its reason and the merge command, and the end with the tokens used.
 Each comment carries a hidden marker and is posted at least once and never twice, from an outbox
-written with the transition that caused it. Comments hold the factory's own words and ids, never
+written with the transition that caused it. The
+outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged
+`narration_dropped`. A comment GitHub refuses for good (its issue deleted,
+issues turned off, or the issue locked) is dropped and logged the same way, and the comments after
+it still post. Comments hold the factory's own words and ids, never
 text a user wrote. The task's room gets the issue snapshot as its first `task_state` message, then
 the task's facts (phase, reason, current run, the run history with each run's outcome, end and
 dollars, token budget, dollar spend, issue and pull request), which the room page and `maku status`
@@ -758,11 +763,11 @@ policy-bot's own matching. `allowedFiles` patterns must start with `^` and end w
 entry passes only when every run of that name was posted by GitHub Actions with the raw conclusion
 `SUCCESS`: a skipped or neutral job (an `if:` or `paths:` filter) refuses as `holdout_red`, since
 it checked nothing. A holdout check that is not reported yet, or still running, holds the task as
-`holdout_pending`; one that never reports leaves the task waiting (issue #182).
+`holdout_pending`; one that never reports holds it for `merge.awaitingCIFor` (24h unless set, `0s` for no bound), then hands it off as `ci_wait_expired` (issue #182).
 
 When every check holds on a live class, the merger App merges the decided head; GitHub refuses
 the merge if the head moved, and the new head is decided again. The task then watches
-`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. A
+`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. No result within twice `merge.verifyFor` (a check cancelled, as `cancel-in-progress` does on main, or never finished) ends `Done` `merged_unverified`. A
 maintainer's `factory/revert` within `merge.revertWindow` reverts too. The revert pull request
 auto-merges only while the `revert` class is live; otherwise a maintainer merges it.
 
@@ -1037,7 +1042,7 @@ classes:
       verification: {within: 6h}   # optional: wait for an internal principal's verdict on the fix (see below)
       followUpWindow: 72h    # how long later merges are read for a fix of this one; the verdict is final after it
 merge:
-  awaitingCIFor: 6h          # bound AwaitingCI on a wait verdict; 0, the default, is no bound
+  awaitingCIFor: 6h          # bound AwaitingCI on a wait verdict; 24h when omitted, 0s is no bound
   breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}   # maxFollowUps 0 counts none; recoverAfter 0 never recovers early
 ```
 
@@ -1052,7 +1057,7 @@ Without it every read is refused and the signal ends `inconclusive`. `merge.brea
 
 | Signal | Reads | Regression | Healthy |
 |---|---|---|---|
-| Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge's was already watched by the task, so it counts healthy | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
+| Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge that ended `merged_verified` was already watched by the task, so it counts healthy; one that ended `merged_unverified` is read like any other merge | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
 | Detector (oracle) | Each scheduled run of the class's oracle workflow after the merge, oldest first, through the probe's readers | A run reports gone a target this merge wrote | `oracleRuns` clean runs. A run that failed or whose findings are refused: `inconclusive` |
 | Flux | The `source` GitRepository (`get`), and the Kustomizations and HelmReleases of that source (`list`), on the factory's cluster | A Kustomization or HelmRelease of the source turned not Ready from the blame start (the source's fetch of the merge commit, or the merge's own time when the source was first seen already at a later commit) until `within` after the source was first seen holding it | The source holds the merge, `within` has passed since it applied it, nothing turned not Ready in the window. A source that never holds the merge within `within`, or is suspended: `inconclusive` |
 | RunLore's verification | `status.monitor.verification`, recorded by [`POST /v1/tasks/{task}/verification`](api.md#post-v1taskstaskverification). Only for a merge whose `spec.origin` names a task of an internal principal with `verification: true` | `persisting` | `resolved`. No verdict `within` after the merge: `inconclusive` |
@@ -1357,7 +1362,7 @@ Each `repositories` entry:
 | `triggerLabel` | The start label, `factory/ready` | Required |
 | `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` never declared | Required |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin`, `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor`, `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
+| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin`, `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `schedules` | `[{name, cron, class, text, dataClass?, probe?, probeAuthor?}]`; `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
 
 `api.repositories`, the run-request API's allowlist, is the entries' names.

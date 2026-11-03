@@ -63,6 +63,8 @@ const (
 	defaultAdminGroup  = "agents-admin"
 	defaultMemberGroup = "agents-member"
 	defaultProbeAuthor = "renovate[bot]"
+	// D2: a wait verdict in AwaitingCI is bounded unless the config writes 0s.
+	defaultAwaitingCIFor = 24 * time.Hour
 )
 
 // Duration is a time.Duration written as a string such as "30s".
@@ -386,9 +388,10 @@ type Merge struct {
 	VerifyFor    Duration `json:"verifyFor"`    // 30m of main's CI after an auto-merge
 	RevertWindow Duration `json:"revertWindow"` // 7 days for a maintainer's factory/revert
 	// AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
-	// a human is told which checks never reported. 0 is no bound, the behaviour before it.
-	AwaitingCIFor Duration `json:"awaitingCIFor,omitempty"`
-	Breaker       Breaker  `json:"breaker"`
+	// a human is told which checks never reported. Omitted, Parse sets 24h (D2); 0s is no bound.
+	// Read it through AwaitingCIBound.
+	AwaitingCIFor *Duration `json:"awaitingCIFor,omitempty"`
+	Breaker       Breaker   `json:"breaker"`
 	// ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
 	// agents pull request (human path AM1). Off, the approval hands off to a human merge.
 	ApproveToMerge bool `json:"approveToMerge,omitempty"`
@@ -1105,6 +1108,9 @@ func Parse(raw []byte) (*Config, error) {
 		c.API.Groups.Member = defaultMemberGroup
 	}
 	for i := range c.Repositories {
+		if m := &c.Repositories[i].Merge; m.AwaitingCIFor == nil {
+			m.AwaitingCIFor = &Duration{Duration: defaultAwaitingCIFor} // D2: an unbounded wait holds a slot forever
+		}
 		for j := range c.Repositories[i].Schedules {
 			if s := &c.Repositories[i].Schedules[j]; s.ProbeAuthor == "" {
 				s.ProbeAuthor = defaultProbeAuthor
@@ -1588,7 +1594,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if r.Merge.RevertWindow.Duration <= 0 {
 		bad("merge.revertWindow must be positive")
 	}
-	if r.Merge.AwaitingCIFor.Duration < 0 {
+	if r.Merge.AwaitingCIBound() < 0 {
 		bad("merge.awaitingCIFor must be 0 (no bound) or positive")
 	}
 	if b := r.Merge.Breaker; b.Window < 1 || b.MaxReverts < 1 || b.MaxReverts > b.Window {
@@ -1906,4 +1912,13 @@ func (c *Config) validateTriageTemplates(bad func(string, ...any)) {
 	if roles := c.Templates["investigate"].Roles; !slices.Equal(roles, []string{"triager"}) {
 		bad("templates.investigate.roles must be [triager] while runlore or api.internalPrincipals is set: its tasks read internal data and must not write (R38), got %v", roles)
 	}
+}
+
+// AwaitingCIBound is AwaitingCIFor as a bound: 0 is none, whether written 0s or left nil on a
+// Config built without Parse.
+func (m Merge) AwaitingCIBound() time.Duration {
+	if m.AwaitingCIFor == nil {
+		return 0
+	}
+	return m.AwaitingCIFor.Duration
 }

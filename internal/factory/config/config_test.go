@@ -194,22 +194,26 @@ func TestLoadReadsTheFile(t *testing.T) {
 	}
 }
 
-// awaitingCIFor off, written as 0 or left out, loads as no bound (#182).
-func TestAwaitingCIForZeroOrOmittedIsOff(t *testing.T) {
-	for name, raw := range map[string]string{
-		"omitted": good,
-		"zero":    strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 0s", 1),
+// D2: awaitingCIFor left out bounds the wait at a day; written 0s keeps no bound; written, it is read.
+func TestAwaitingCIForDefaultsToADay(t *testing.T) {
+	for name, c := range map[string]struct {
+		raw  string
+		want time.Duration
+	}{
+		"omitted": {good, 24 * time.Hour},
+		"zero":    {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 0s", 1), 0},
+		"set":     {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 6h", 1), 6 * time.Hour},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if name == "zero" && raw == good {
+			if name != "omitted" && c.raw == good {
 				t.Fatal("the edit did not apply")
 			}
-			c, err := Parse([]byte(raw))
+			cfg, err := Parse([]byte(c.raw))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if d := c.Repos()[0].Merge.AwaitingCIFor.Duration; d != 0 {
-				t.Fatalf("awaitingCIFor = %v", d)
+			if d := cfg.Repos()[0].Merge.AwaitingCIBound(); d != c.want {
+				t.Fatalf("awaitingCIFor = %v, want %v", d, c.want)
 			}
 		})
 	}

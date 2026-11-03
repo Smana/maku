@@ -308,12 +308,13 @@ func cmpOpen(s string) string {
 }
 
 // mainSignal is main's CI on the merge commit. An auto-merge's was watched by verifying, which
-// reached Done "merged_verified": healthy. Any other merge reads the commit's checks: red is a
+// reached Done "merged_verified": healthy; one done "merged_unverified" (D1) was never seen green,
+// and is read like any other merge. Any other merge reads the commit's checks: red is a
 // regression at once, green once verifyFor has passed is healthy, and a check still pending after
 // twice that is inconclusive; otherwise it stays open.
 func (r *Reconciler) mainSignal(ctx context.Context, t *v1alpha1.Task) (string, error) {
 	ref, m := t.Status.PullRequest, t.Status.Monitor
-	if ref.AutoMerged {
+	if ref.AutoMerged && t.Status.Reason != "merged_unverified" {
 		return "healthy", nil
 	}
 	rc := r.repo(t)

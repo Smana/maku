@@ -356,6 +356,13 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 	if !ok {
 		return r.expireEscalation(ctx, t)
 	}
+	if t.Status.Reason == "budget-task" && !runFits(t) && (r.Cfg.Budgets.EnforceTask || t.Sponsored() != "") {
+		// F-4: Queued would only escalate it again. The command is answered and handled; the
+		// escalation's clock keeps running, and Retries counts only retries that can run.
+		markHandled(t, c.ID)
+		narrateLater(t, narrate.TaskCapHolds(t, c.ID))
+		return nil
+	}
 	markHandled(t, c.ID)
 	r.leaveSplit(ctx, t, SplitDeclined) // SL4 (b): the task runs whole on its scope
 	if t.Status.Reason == ReasonNeedsAuthor && t.Status.Scope != nil {

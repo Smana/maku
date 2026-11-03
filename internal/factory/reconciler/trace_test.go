@@ -257,7 +257,7 @@ func TestABlackHoledCollectorNeverStallsTheWorker(t *testing.T) {
 		t.Fatalf("one reconcile took %s (err %v): the worker must not wait on the collector", took, err)
 	}
 	tk := g.reconcile(t, "3buqdlot", 0)
-	if tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Trace.Exported || tk.Status.Trace.ExportAbandoned || res.RequeueAfter != spanRetry {
+	if tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Trace.Exported || tk.Status.Trace.ExportAbandoned || (res.RequeueAfter <= 0 || res.RequeueAfter > spanRetry) {
 		t.Fatalf("%s %+v, requeue %s: retried later", tk.Status.Phase, tk.Status.Trace, res.RequeueAfter)
 	}
 	g.r.Now = func() time.Time { return now.Add(spanGiveUp) }
@@ -347,5 +347,25 @@ func TestAGivenUpSpanIsCountedOnce(t *testing.T) {
 	}
 	if n := strings.Count(strings.Join(g.metrics.recorded, "|"), "trace_export_abandoned"); n != 1 {
 		t.Fatalf("counted %d times: %q", n, g.metrics.recorded)
+	}
+}
+
+// F-9: a span the collector refuses is retried on its own clock and holds nothing else back: the
+// ended task's room closes in the same pass, and the requeue is no later than the span's retry.
+func TestAnUnexportedSpanDoesNotHoldTheRoomOpen(t *testing.T) {
+	tk := endedTask(v1alpha1.PhaseDone)
+	tk.Status.Trace = &v1alpha1.TraceRef{TraceID: strings.Repeat("a", 32), SpanID: strings.Repeat("b", 16)}
+	g := newRig(t, tk)
+	withRoom(t, g)
+	g.r.Trace = &fakeSink{down: true}
+	res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !roomGone(t, g) {
+		t.Fatal("the room waits on the collector")
+	}
+	if res.RequeueAfter <= 0 || res.RequeueAfter > spanRetry {
+		t.Fatalf("requeue %s: the span is retried within spanRetry", res.RequeueAfter)
 	}
 }

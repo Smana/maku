@@ -5,12 +5,14 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -182,5 +184,73 @@ func TestNothingIsPostedBeforeItsTransitionIsWritten(t *testing.T) {
 	if all := strings.Join(g.f.Comments(7), "\n"); tk.Status.Phase != v1alpha1.PhaseAwaitingCI ||
 		strings.Contains(all, "no pull request") || !strings.Contains(all, "#12") {
 		t.Fatalf("%s %q", tk.Status.Phase, g.f.Comments(7))
+	}
+}
+
+// F-2: a monitor pass that finds 9 follow-ups queues 18 comments (the merge's and the control
+// issue's copy of each), over the CRD's 16. The status write must still be accepted, the outbox at
+// 16, or the task wedges: every write refused, so the outbox is never drained.
+func TestAMonitorPassWithManyFollowUpsStillWrites(t *testing.T) {
+	g := monitorRig(t)
+	// The API server enforces status.outbox's maxItems; the fake client does not, so this does.
+	g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+		if tk, ok := o.(*v1alpha1.Task); ok && len(tk.Status.Outbox) > 16 {
+			return apierrors.NewInvalid(schema.GroupKind{Group: v1alpha1.GroupVersion.Group, Kind: "Task"}, tk.Name,
+				field.ErrorList{field.TooMany(field.NewPath("status", "outbox"), len(tk.Status.Outbox), 16)})
+		}
+		return cl.SubResource(sub).Update(ctx, o, opts...)
+	}})
+	g.r.Forge = &flakyForge{Fake: g.f, down: true} // nothing posts: the outbox stays as the write left it
+	var ps []forge.MergedPull
+	for n := 20; n < 29; n++ {
+		ps = append(ps, later(n, "Smana", "fix", FollowUpOfLabel(12)))
+	}
+	g.f.SetMerged(ps...)
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); apierrors.IsInvalid(err) {
+		t.Fatalf("the status write is refused: %v", err)
+	}
+	tk := g.reconcile(t, "3buqdlot", 0)
+	if tk.Status.Monitor == nil || len(tk.Status.Monitor.FollowUps) != 9 || len(tk.Status.Outbox) != 16 {
+		t.Fatalf("monitor %+v, outbox of %d", tk.Status.Monitor, len(tk.Status.Outbox))
+	}
+}
+
+// goneForge is GitHub with issue gone deleted: every read or write of it is refused for good (F-3).
+type goneForge struct {
+	*forgetest.Fake
+	gone int
+}
+
+func (f *goneForge) RecentComments(ctx context.Context, n int) ([]forge.Comment, error) {
+	if n == f.gone {
+		return nil, &forge.PermanentError{Status: 404, Err: errors.New("forge: list comments: 404 Not Found")}
+	}
+	return f.Fake.RecentComments(ctx, n)
+}
+
+func (f *goneForge) Comment(ctx context.Context, n int, body string) error {
+	if n == f.gone {
+		return &forge.PermanentError{Status: 404, Err: errors.New("forge: comment: 404 Not Found")}
+	}
+	return f.Fake.Comment(ctx, n, body)
+}
+
+// F-3: a comment GitHub refuses for good (here its issue was deleted) is dropped and recorded; the
+// comments after it still post, the outbox empties and the ended task's room closes.
+func TestANarrationRefusedForGoodIsDropped(t *testing.T) {
+	tk := endedTask(v1alpha1.PhaseDone)
+	tk.Status.Outbox = []v1alpha1.Narration{{Key: "to-the-deleted-issue", Number: 9, Body: "lost"}, {Key: "to-the-issue", Number: 7, Body: "kept"}}
+	g := newRig(t, tk)
+	withRoom(t, g)
+	g.r.Forge = &goneForge{Fake: g.f, gone: 9}
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil {
+		t.Fatalf("a permanent refusal is not retried: %v", err)
+	}
+	got := g.reconcile(t, "3buqdlot", 0)
+	if len(got.Status.Outbox) != 0 || !contains(g.f.Comments(7), "kept") || !slices.Contains(got.Status.Narrated, "to-the-deleted-issue") {
+		t.Fatalf("outbox %+v, narrated %v, comments %q", got.Status.Outbox, got.Status.Narrated, g.f.Comments(7))
+	}
+	if !roomGone(t, g) {
+		t.Fatal("the room waits on a comment GitHub will never take")
 	}
 }

@@ -59,7 +59,7 @@ func (Absent) EnableAutoMerge(context.Context, string, string) error { return Er
 func (Absent) DisableAutoMerge(context.Context, string) error { return ErrNoMerger }
 
 // RevertPR implements the Merger's RevertPR and fails closed.
-func (Absent) RevertPR(context.Context, string, string, string) (Revert, error) {
+func (Absent) RevertPR(context.Context, RevertOf) (Revert, error) {
 	return Revert{}, ErrNoMerger
 }
 

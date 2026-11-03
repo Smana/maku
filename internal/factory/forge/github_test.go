@@ -124,8 +124,14 @@ type fakeGitHub struct {
 	ttl    time.Duration
 	now    func() time.Time
 	calls  []string
-	bodies []string                         // the POST /graphql bodies, in order
-	mint   func(w http.ResponseWriter) bool // overrides the mint reply when it returns true
+	bodies []string // the POST /graphql bodies, in order
+	// mergeReply: every mergePullRequest answers 200 with it (F-1).
+	mergeReply string
+	open       []string                         // the open pull requests GET /pulls lists (state=open, no head filter)
+	revertN    int                              // revertPullRequest calls
+	loseRevert bool                             // the next revertPullRequest opens the revert, then answers 502
+	revertHead string                           // the branch revertPullRequest opens; "" opens none in the list
+	mint       func(w http.ResponseWriter) bool // overrides the mint reply when it returns true
 	// TW4: the scope the next mint must request; every other request gets GitHub's refusal.
 	// perms records each minted body's scope, in order, so a test can pin it per connection.
 	wantPerms map[string]string
@@ -133,6 +139,32 @@ type fakeGitHub struct {
 	// fence is .github/agent-factory.yaml on the default branch: "" is absent, "!" a 500.
 	fence string
 	steer map[string]string // default-branch steering notes by path; "!" fails the read
+}
+
+// openPull is one open pull request as GET /pulls lists it, on this repository.
+func openPull(n int, nodeID, author, head string) string {
+	return fmt.Sprintf(`{"number":%d,"node_id":%q,"html_url":"https://github.com/Smana/demo/pull/%d","user":{"login":%q},`+
+		`"head":{"ref":%q,"sha":"h%d","repo":{"full_name":"Smana/demo"}},"base":{"ref":"main","repo":{"full_name":"Smana/demo"}}}`,
+		n, nodeID, n, author, head, n)
+}
+
+func (g *fakeGitHub) addOpen(p string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.open = append(g.open, p)
+}
+
+// loseRevertAnswer makes the next revertPullRequest open its pull request on head, then fail (F-11).
+func (g *fakeGitHub) loseRevertAnswer(head string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.loseRevert, g.revertHead = true, head
+}
+
+func (g *fakeGitHub) revertCalls() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.revertN
 }
 
 func (g *fakeGitHub) setWantPerms(p map[string]string) {
@@ -204,6 +236,13 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			_, _ = io.WriteString(w, rollupJSON)
 			return
 		case strings.Contains(string(b), "mergePullRequest(input"):
+			g.mu.Lock()
+			reply := g.mergeReply
+			g.mu.Unlock()
+			if reply != "" {
+				_, _ = io.WriteString(w, reply)
+				return
+			}
 			switch {
 			case strings.Contains(string(b), `"expectedHeadOid":"def456"`):
 				w.WriteHeader(http.StatusConflict) // GitHub checks the head at merge time (R52)
@@ -219,6 +258,18 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			}
 			return
 		case strings.Contains(string(b), "revertPullRequest"):
+			g.mu.Lock()
+			g.revertN++
+			lose := g.loseRevert
+			g.loseRevert = false
+			if g.revertHead != "" { // GitHub opened it, whatever becomes of the answer
+				g.open = append(g.open, openPull(13, "PR_rev", "ogenki-agent-merger[bot]", g.revertHead))
+			}
+			g.mu.Unlock()
+			if lose {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			_, _ = io.WriteString(w, `{"data":{"revertPullRequest":{"revertPullRequest":{"id":"PR_rev","number":13,"url":"https://github.com/Smana/demo/pull/13"}}}}`)
 			return
 		case strings.Contains(string(b), "enablePullRequestAutoMerge"):
@@ -365,10 +416,37 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		}
 		_, _ = io.WriteString(w, `[{"number":7},{"number":12,"pull_request":{"url":"x"}}]`)
 	}))
-	mux.HandleFunc("GET /repos/Smana/demo/commits/{sha}/check-runs", g.authed(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"total_count":1,"check_runs":[{"name":"Pre-commit checks","status":"completed","conclusion":"success"}]}`)
+	// Main's check runs: one green run for any commit, but "paged" lists 100 green runs and a
+	// failure on page 2, and "endless" lists full pages of green runs past any cap (D3).
+	mux.HandleFunc("GET /repos/Smana/demo/commits/{sha}/check-runs", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		sha := r.PathValue("sha")
+		if sha != "paged" && sha != "endless" && sha != "endlessred" {
+			_, _ = io.WriteString(w, `{"total_count":1,"check_runs":[{"name":"Pre-commit checks","status":"completed","conclusion":"success"}]}`)
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page = max(page, 1)
+		if sha == "endless" || sha == "endlessred" || page == 1 {
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/Smana/demo/commits/%s/check-runs?per_page=100&page=%d>; rel="next"`, g.srv.URL, sha, page+1))
+		}
+		n, conclusion := 100, "success"
+		if (sha == "paged" || sha == "endlessred") && page == 2 {
+			n, conclusion = 1, "failure"
+		}
+		runs := make([]string, 0, n)
+		for i := range n {
+			runs = append(runs, fmt.Sprintf(`{"id":%d,"name":"job %d-%d","status":"completed","conclusion":%q}`, page*1000+i, page, i, conclusion))
+		}
+		_, _ = fmt.Fprintf(w, `{"total_count":5000,"check_runs":[%s]}`, strings.Join(runs, ","))
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/pulls", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query(); q.Get("head") == "" && q.Get("state") == "open" {
+			g.mu.Lock()
+			body := "[" + strings.Join(g.open, ",") + "]"
+			g.mu.Unlock()
+			_, _ = io.WriteString(w, body)
+			return
+		}
 		if r.URL.Query().Get("head") != "Smana:agent/3buqdlot" {
 			_, _ = io.WriteString(w, `[]`)
 			return
@@ -420,6 +498,27 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, `{"id":3101,"number":31}`)
 	}))
+	// GitHub's refusals of a comment: for good (deleted, issues off, locked) or not (403 otherwise, 5xx).
+	mux.HandleFunc("POST /repos/Smana/demo/issues/{n}/comments", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		refusal := map[string]struct {
+			code    int
+			message string
+		}{
+			"404": {http.StatusNotFound, "Not Found"},
+			"410": {http.StatusGone, "Issues are disabled for this repo"},
+			"423": {http.StatusForbidden, "Unable to create comment because issue is locked."},
+			"403": {http.StatusForbidden, "Resource not accessible by integration"},
+			"502": {http.StatusBadGateway, "Server Error"},
+		}[r.PathValue("n")]
+		if refusal.code == 0 {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"id":2}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(refusal.code)
+		_, _ = fmt.Fprintf(w, `{"message":%q}`, refusal.message)
+	}))
 	mux.HandleFunc("PATCH /repos/Smana/demo/issues/{n}", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		var in map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&in)
@@ -433,6 +532,12 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		_, _ = io.WriteString(w, `{"number":7,"state":"closed"}`)
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/issues/{n}/comments", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("n") == "404" { // a deleted issue
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+			return
+		}
 		total := map[string]int{"7": 1, "9": 130, "10": 180, "11": 60, "13": 2}[r.PathValue("n")]
 		q := r.URL.Query()
 		per, _ := strconv.Atoi(q.Get("per_page"))
@@ -1072,13 +1177,46 @@ func TestChecksAndMutations(t *testing.T) {
 	if !strings.Contains(bodies[1], "SQUASH") || !strings.Contains(bodies[1], `"expectedHeadOid":"abc123"`) {
 		t.Fatalf("squash auto-merge of the decided head only: %s", bodies[1])
 	}
-	rv, err := r.g.RevertPR(ctx, "PR_1", `Revert "docs: fix a link"`, "reverts #12")
+	rv, err := r.g.RevertPR(ctx, RevertOf{Number: 12, NodeID: "PR_1", Title: `Revert "docs: fix a link"`, Body: "reverts #12",
+		By: "ogenki-agent-merger[bot]"})
 	if err != nil || rv.Number != 13 || rv.NodeID != "PR_rev" {
 		t.Fatalf("%+v %v", rv, err)
 	}
 	runs, err := r.g.CommitChecks(ctx, "abc123")
 	if err != nil || len(runs) != 1 || runs[0].State != "SUCCESS" {
 		t.Fatalf("%+v %v", runs, err)
+	}
+}
+
+// F-11: revertPullRequest's answer lost after GitHub opened the revert (a timeout, a 502): the
+// retry finds the merger's open pull request on GitHub's revert-<n>- branch, as recorded live in
+// testdata/revert-naming.json, and returns it; no second revert is opened. A maintainer's own
+// revert of the same pull request (GitHub's button, same branch name) is not the merger's.
+func TestARevertWhoseAnswerWasLostIsNotOpenedTwice(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "revert-naming.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var named struct {
+		Reverted    int    `json:"reverted"`
+		HeadRefName string `json:"headRefName"`
+	}
+	if err := json.Unmarshal(raw, &named); err != nil {
+		t.Fatal(err)
+	}
+	r := newRig(t)
+	r.gh.addOpen(openPull(14, "PR_14", "Smana", named.HeadRefName))
+	r.gh.loseRevertAnswer(named.HeadRefName)
+	of := RevertOf{Number: named.Reverted, NodeID: "PR_1", Title: `Revert "docs: fix a link"`, Body: "reverts", By: "ogenki-agent-merger[bot]"}
+	if _, err := r.g.RevertPR(t.Context(), of); err == nil {
+		t.Fatal("a lost answer is an error")
+	}
+	rv, err := r.g.RevertPR(t.Context(), of)
+	if err != nil || rv.Number != 13 || rv.NodeID != "PR_rev" || rv.URL != "https://github.com/Smana/demo/pull/13" {
+		t.Fatalf("%+v %v", rv, err)
+	}
+	if n := r.gh.revertCalls(); n != 1 {
+		t.Fatalf("%d revertPullRequest calls: the retry opened a second revert", n)
 	}
 }
 
@@ -1110,6 +1248,40 @@ func TestMergeChecksTheHeadAtMergeTime(t *testing.T) {
 	}
 	if err := r.g.Merge(ctx, "PR_1", ""); err == nil {
 		t.Fatal("a merge without the decided head would merge whatever landed since")
+	}
+}
+
+// setMergeReply makes every mergePullRequest answer 200 with body, as GitHub answers a refusal (F-1).
+func (g *fakeGitHub) setMergeReply(body string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.mergeReply = body
+}
+
+// F-1: mergePullRequest answers its refusals 200 with errors[], recorded live in testdata: each
+// reads as its sentinel. A message that is not one of GitHub's refusals stays a plain error.
+func TestMergeRefusalsInGraphQLErrorsAreTheSentinels(t *testing.T) {
+	for file, want := range map[string]error{
+		"merge-head-moved.json":    ErrHeadMoved,
+		"merge-not-mergeable.json": ErrNotMergeable,
+		"merge-unknown.json":       nil,
+	} {
+		t.Run(file, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join("testdata", file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := newRig(t)
+			r.gh.setMergeReply(string(body))
+			err = r.g.Merge(t.Context(), "PR_1", "abc123")
+			sentinel := errors.Is(err, ErrHeadMoved) || errors.Is(err, ErrNotMergeable)
+			switch {
+			case want == nil && (err == nil || sentinel):
+				t.Fatalf("an unknown refusal is a plain error: %v", err)
+			case want != nil && !errors.Is(err, want):
+				t.Fatalf("want %v, got %v", want, err)
+			}
+		})
 	}
 }
 
@@ -1838,5 +2010,63 @@ func TestDiffRefusesAListingAtGitHubsFileCap(t *testing.T) {
 	// c1...wide carries no merge base: reaching that check proves the count let 299 files through.
 	if _, err := r.g.Diff(t.Context(), "c1", "wide"); errors.Is(err, ErrDiffTooLarge) || err == nil || !strings.Contains(err.Error(), "merge base") {
 		t.Fatalf("299 files: %v, want the merge-base check, not ErrDiffTooLarge", err)
+	}
+}
+
+// D3 (H-2): main's checks are read to the last page, up to ten pages of 100: a failure on page 2
+// is seen, and a listing still going at the cap reads as running, never as green.
+func TestCommitChecksReadsEveryPageUpToTheCap(t *testing.T) {
+	r := newRig(t)
+	runs, err := r.g.CommitChecks(t.Context(), "paged")
+	if err != nil || len(runs) != 101 || runs[100].State != "FAILURE" {
+		t.Fatalf("%d runs, %v: the failure on page 2 is read", len(runs), err)
+	}
+	if runs, err = r.g.CommitChecks(t.Context(), "endless"); err != nil || len(runs) != 1001 {
+		t.Fatalf("%d runs, %v: ten pages, then the cap", len(runs), err)
+	}
+	for _, c := range runs[:len(runs)-1] {
+		if c.State != "PENDING" {
+			t.Fatalf("a capped listing is never green: %+v", c)
+		}
+	}
+}
+
+// D3: the cap adds the CheckListTruncated marker (PENDING), so the unread tail cannot read green
+// through a watched name; a failure read before the cap stays a failure.
+func TestCommitChecksCapMarksTheListingAndKeepsFailures(t *testing.T) {
+	r := newRig(t)
+	runs, err := r.g.CommitChecks(t.Context(), "endless")
+	if err != nil || len(runs) != 1001 || runs[1000].Name != CheckListTruncated || runs[1000].State != "PENDING" {
+		t.Fatalf("%d runs, %v: the capped listing ends with the marker", len(runs), err)
+	}
+	if runs, err = r.g.CommitChecks(t.Context(), "endlessred"); err != nil || len(runs) != 902 { // page 2 holds the one failure
+		t.Fatalf("%d runs, %v", len(runs), err)
+	}
+	if runs[901].Name != CheckListTruncated || runs[100].State != "FAILURE" {
+		t.Fatalf("a failure on a capped listing stays FAILURE: %+v", runs[100])
+	}
+}
+
+// F-3: GitHub refusing a comment for good (the issue deleted, issues turned off, the issue locked)
+// is a *PermanentError, on the marker read as on the post; a 403 that is no lock, or a 5xx, is not.
+func TestACommentRefusedForGoodIsPermanent(t *testing.T) {
+	r := newRig(t)
+	for name, c := range map[string]struct {
+		n         int
+		permanent bool
+	}{
+		"deleted": {404, true}, "issues off": {410, true}, "locked": {423, true},
+		"forbidden otherwise": {403, false}, "a server error": {502, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var pe *PermanentError
+			if err := r.g.Comment(t.Context(), c.n, "hello"); err == nil || errors.As(err, &pe) != c.permanent {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+	var pe *PermanentError
+	if _, err := r.g.RecentComments(t.Context(), 404); !errors.As(err, &pe) || pe.Status != http.StatusNotFound {
+		t.Fatalf("the marker read of a deleted issue: %v", err)
 	}
 }

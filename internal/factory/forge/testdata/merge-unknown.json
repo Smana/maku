@@ -1,0 +1,1 @@
+{"data": {"mergePullRequest": null}, "errors": [{"type": "FORBIDDEN", "path": ["mergePullRequest"], "locations": [{"line": 1, "column": 44}], "message": "Resource not accessible by integration"}]}

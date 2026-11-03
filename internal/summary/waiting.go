@@ -225,7 +225,7 @@ func nextStep(reason string, byApproval bool) string {
 	case "release_age_pending":
 		return "nothing to do: the task goes on when the release age check passes"
 	case "holdout_pending":
-		return "nothing to do: the task goes on when the class's holdout checks report; a check that never reports keeps it waiting until merge.awaitingCIFor, if set (agent-platform #182)"
+		return "nothing to do: the task goes on when the class's holdout checks report; a check that never reports keeps it waiting until merge.awaitingCIFor, 24h unless set (agent-platform #182)"
 	case "ci_wait_expired":
 		if byApproval {
 			return "a maintainer takes it from here: check the workflow of the checks named in the pull request comment, then approve the current commit or re-run them"

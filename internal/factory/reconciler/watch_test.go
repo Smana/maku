@@ -1086,3 +1086,48 @@ func TestARoomTailGoesOnPastAReadThatKeepsNothing(t *testing.T) {
 		t.Fatalf("tail %v complete=%v err=%v: want the handoff at seq %d", evs, complete, err, eventsCap+1)
 	}
 }
+
+// F-4: a retry that escalates again before any new run (here at the task cap) is a new
+// escalation: its comment is posted, not deduplicated against the first one's key.
+func TestARetryThatEscalatesAgainIsNarrated(t *testing.T) {
+	tk := escalatedTask(false)
+	tk.Spec.Budget.TaskTokens = 3_000_000
+	tk.Status.Runs[0].Tokens, tk.Status.Usage.Tokens = 1_500_001, 1_500_001
+	tk.Status.Narrated = []string{narrate.Ended(tk, v1alpha1.PhaseEscalated, "agent_stuck").Key} // the first escalation, posted
+	g := newRig(t, tk, roomOf("3buqdlot"))
+	g.r.Cfg.Budgets.EnforceTask = true
+	g.f.SetComments(7, retryBy(77, "Smana", time.Minute))
+	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Retries != 1 {
+		t.Fatalf("%s %d", got.Status.Phase, got.Status.Retries)
+	}
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" {
+		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	}
+	if n := strings.Count(strings.Join(g.f.Comments(7), "\n"), "no room left for another full run"); n != 1 {
+		t.Fatalf("the second escalation is narrated once: %q", g.f.Comments(7))
+	}
+}
+
+// F-4: under budgets.enforceTask the cap is part of the task's spec, so a /factory retry of a
+// budget-task escalation is answered and not taken: no retry counted, the escalation stands.
+func TestARetryCannotLiftTheTaskCap(t *testing.T) {
+	tk := escalatedTask(false)
+	tk.Status.Reason = "budget-task"
+	tk.Spec.Budget.TaskTokens = 3_000_000
+	tk.Status.Runs[0].Tokens, tk.Status.Usage.Tokens = 1_500_001, 1_500_001
+	g := newRig(t, tk, roomOf("3buqdlot"))
+	g.r.Cfg.Budgets.EnforceTask = true
+	g.f.SetComments(7, retryBy(77, "Smana", time.Minute))
+	got := g.reconcile(t, "3buqdlot", 2)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" || got.Status.Retries != 0 ||
+		!slices.Equal(got.Status.Handled, []int64{77}) {
+		t.Fatalf("%s %s %d %v", got.Status.Phase, got.Status.Reason, got.Status.Retries, got.Status.Handled)
+	}
+	if n := strings.Count(strings.Join(g.f.Comments(7), "\n"), "the task's cap is part of its spec: raise it on a new task"); n != 1 {
+		t.Fatalf("the retry is answered once: %q", g.f.Comments(7))
+	}
+	if slices.Contains(g.metrics.recorded, "intervention retry") {
+		t.Fatal("a refused retry is no intervention")
+	}
+}
