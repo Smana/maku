@@ -365,8 +365,28 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		}
 		_, _ = io.WriteString(w, `[{"number":7},{"number":12,"pull_request":{"url":"x"}}]`)
 	}))
-	mux.HandleFunc("GET /repos/Smana/demo/commits/{sha}/check-runs", g.authed(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"total_count":1,"check_runs":[{"name":"Pre-commit checks","status":"completed","conclusion":"success"}]}`)
+	// Main's check runs: one green run for any commit, but "paged" lists 100 green runs and a
+	// failure on page 2, and "endless" lists full pages of green runs past any cap (D3).
+	mux.HandleFunc("GET /repos/Smana/demo/commits/{sha}/check-runs", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		sha := r.PathValue("sha")
+		if sha != "paged" && sha != "endless" {
+			_, _ = io.WriteString(w, `{"total_count":1,"check_runs":[{"name":"Pre-commit checks","status":"completed","conclusion":"success"}]}`)
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page = max(page, 1)
+		if sha == "endless" || page == 1 {
+			w.Header().Set("Link", fmt.Sprintf(`<%s/repos/Smana/demo/commits/%s/check-runs?per_page=100&page=%d>; rel="next"`, g.srv.URL, sha, page+1))
+		}
+		n, conclusion := 100, "success"
+		if sha == "paged" && page == 2 {
+			n, conclusion = 1, "failure"
+		}
+		runs := make([]string, 0, n)
+		for i := range n {
+			runs = append(runs, fmt.Sprintf(`{"id":%d,"name":"job %d-%d","status":"completed","conclusion":%q}`, page*1000+i, page, i, conclusion))
+		}
+		_, _ = fmt.Fprintf(w, `{"total_count":5000,"check_runs":[%s]}`, strings.Join(runs, ","))
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/pulls", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("head") != "Smana:agent/3buqdlot" {
@@ -1818,5 +1838,23 @@ func TestChangedFilesListsTheCompare(t *testing.T) {
 	}
 	if _, err := r.g.Diff(t.Context(), "c1", "many"); !errors.Is(err, ErrDiffTooLarge) {
 		t.Fatalf("Diff reads the same compare: %v", err)
+	}
+}
+
+// D3 (H-2): main's checks are read to the last page, up to ten pages of 100: a failure on page 2
+// is seen, and a listing still going at the cap reads as running, never as green.
+func TestCommitChecksReadsEveryPageUpToTheCap(t *testing.T) {
+	r := newRig(t)
+	runs, err := r.g.CommitChecks(t.Context(), "paged")
+	if err != nil || len(runs) != 101 || runs[100].State != "FAILURE" {
+		t.Fatalf("%d runs, %v: the failure on page 2 is read", len(runs), err)
+	}
+	if runs, err = r.g.CommitChecks(t.Context(), "endless"); err != nil || len(runs) != 1000 {
+		t.Fatalf("%d runs, %v: ten pages, then the cap", len(runs), err)
+	}
+	for _, c := range runs {
+		if c.State != "PENDING" {
+			t.Fatalf("a capped listing is never green: %+v", c)
+		}
 	}
 }

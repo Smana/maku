@@ -268,6 +268,7 @@ func reasons() map[string]string {
 		"main_red":                  "main's CI went red after the merge",
 		"revert_requested":          "a maintainer asked for a revert",
 		"merged_verified":           "merged, and main stayed green for 30 minutes",
+		"merged_unverified":         "merged, and main's CI on the merge commit gave no result within twice merge.verifyFor (a check was cancelled or never finished)",
 		"gate_path":                 "it touches a gate path, so an agent can never merge it; a human must re-author the change",
 		"steering_path":             "it changes a steering note, which only a maintainer on the default branch may do",
 		"class_mismatch":            "the diff is not the class the triage predicted",
@@ -795,6 +796,20 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 		b.WriteString(usageLine + " so far: " + Tokens(t.Status.Usage.Tokens) + ".")
 	}
 	return Event{Key: fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs)), Body: b.String()}
+}
+
+// MergedUnverified is the end of an auto-merge whose merge commit got no result from main's CI
+// within twice merge.verifyFor (D1): it names the commit, and until when a maintainer's
+// factory/revert still reverts it. It is Ended's event (its key, its token line), so it settles.
+func MergedUnverified(t *v1alpha1.Task, revertUntil time.Time) Event {
+	e := Ended(t, v1alpha1.PhaseDone, "merged_unverified")
+	ref := t.Status.PullRequest
+	note := fmt.Sprintf(" Merge commit `%s`: main's CI gave it no result, so nothing shows it green or red. "+
+		"Label #%d `factory/revert` before %s to revert it.", ref.MergeCommitSHA, ref.Number, revertUntil.UTC().Format("2006-01-02 15:04 UTC"))
+	if i := strings.LastIndex(e.Body, usageLine); i >= 0 {
+		e.Body = e.Body[:i] + note + e.Body[i:]
+	}
+	return e
 }
 
 const (

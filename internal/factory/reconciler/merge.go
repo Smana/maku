@@ -182,7 +182,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	switch d.Verdict {
 	case "wait":
-		if b := r.repo(t).Merge.AwaitingCIFor.Duration; b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
+		if b := r.repo(t).Merge.AwaitingCIBound(); b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
 			// #182: a check that never reports (a typo in a holdout, a workflow not set up) must not
 			// hold the task silently. Nothing merged: the hand-off says what is missing.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
@@ -901,23 +901,32 @@ func MainState(runs []forge.Check, watched []string) string {
 
 // verifying watches main's CI on the merge commit for merge.verifyFor (§6.4). Red, or a
 // maintainer's factory/revert, reverts; not red for the whole window, with nothing still running,
-// is done.
+// is done. A check cancelled on main (cancel-in-progress) or one that never finishes gives no
+// verdict: past twice verifyFor the merge is done unverified (D1), which frees the task's slot and
+// leaves the revert to a maintainer's factory/revert within revertWindow.
 func (r *Reconciler) verifying(ctx context.Context, t *v1alpha1.Task) error {
 	if t.Annotations[v1alpha1.AnnotationRevert] != "" {
 		return r.revert(ctx, t, "revert_requested")
 	}
-	ref := t.Status.PullRequest
+	ref, mg := t.Status.PullRequest, r.repo(t).Merge
 	runs, err := r.merger(ctx).CommitChecks(ctx, ref.MergeCommitSHA)
 	if err != nil {
 		return err
 	}
-	switch MainState(runs, r.repo(t).Merge.VerifyChecks) {
+	switch MainState(runs, mg.VerifyChecks) {
 	case "FAILURE":
 		return r.revert(ctx, t, "main_red")
 	case "SUCCESS":
-		if ref.MergedAt != nil && r.Now().Sub(ref.MergedAt.Time) >= r.repo(t).Merge.VerifyFor.Duration {
+		if ref.MergedAt != nil && r.Now().Sub(ref.MergedAt.Time) >= mg.VerifyFor.Duration {
 			return r.end(ctx, t, v1alpha1.PhaseDone, "merged_verified")
 		}
+	}
+	since := ref.MergedAt
+	if since == nil {
+		since = t.Status.PhaseSince // a status without MergedAt still has the phase's clock
+	}
+	if since != nil && r.Now().Sub(since.Time) >= 2*mg.VerifyFor.Duration {
+		r.finish(ctx, t, v1alpha1.PhaseDone, "merged_unverified", narrate.MergedUnverified(t, since.Add(mg.RevertWindow.Duration)))
 	}
 	return nil
 }

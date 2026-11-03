@@ -926,20 +926,39 @@ func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, err
 	return out, nil
 }
 
+// maxCheckPages bounds CommitChecks: ten pages of 100 check runs (D3).
+const maxCheckPages = 10
+
 // CommitChecks are the check runs on one commit: main's CI after a merge, where no pull request
-// carries the verdict anymore.
+// carries the verdict anymore. Every page is read, up to maxCheckPages (D3). A listing still going
+// at the cap returns each run it read that is not FAILURE as PENDING: the commit reads as still
+// running, never green, while a failure read anywhere stays a failure.
 func (g *GitHub) CommitChecks(ctx context.Context, sha string) ([]Check, error) {
-	res, _, err := g.rest.Checks.ListCheckRunsForRef(ctx, g.owner, g.name, sha, &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}})
-	g.mark(err)
-	if err != nil {
-		return nil, wrap("list check runs", err)
+	var out []Check
+	opt := &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	for page := 1; ; page++ {
+		res, resp, err := g.rest.Checks.ListCheckRunsForRef(ctx, g.owner, g.name, sha, opt)
+		g.mark(err)
+		if err != nil {
+			return nil, wrap("list check runs", err)
+		}
+		for _, cr := range res.CheckRuns {
+			out = append(out, Check{ID: cr.GetID(), Name: cr.GetName(), State: checkState(strings.ToUpper(cr.GetStatus()), strings.ToUpper(cr.GetConclusion())),
+				Conclusion: strings.ToUpper(cr.GetConclusion())})
+		}
+		if resp.NextPage == 0 {
+			return out, nil
+		}
+		if page == maxCheckPages {
+			for i := range out {
+				if out[i].State != "FAILURE" {
+					out[i].State = "PENDING"
+				}
+			}
+			return out, nil
+		}
+		opt.Page = resp.NextPage
 	}
-	out := make([]Check, 0, len(res.CheckRuns))
-	for _, cr := range res.CheckRuns {
-		out = append(out, Check{ID: cr.GetID(), Name: cr.GetName(), State: checkState(strings.ToUpper(cr.GetStatus()), strings.ToUpper(cr.GetConclusion())),
-			Conclusion: strings.ToUpper(cr.GetConclusion())})
-	}
-	return out, nil
 }
 
 // IsAncestor reports whether ancestor is sha or one of its ancestors: GitHub's compare of
