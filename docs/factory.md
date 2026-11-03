@@ -1510,7 +1510,7 @@ A task with a `spec.maxMicroUSD` (an api task) is never offered a split: see [sp
 
 Both endpoints serve on every replica.
 
-**`POST /v1/runs`**, on `api.listen` (the chart's `api` port, 8082, plaintext inside the mesh; the broker's `:8443` is the TLS listener): a person's or an allowlisted
+**`POST /v1/runs`**, on `api.listen` (the chart's `api` port, 8082, TLS 1.3 when `api.tls` is set (`internal/tlsreload`)): a person's or an allowlisted
 system's run request. Source: `internal/factory/api/server.go`.
 
 | | |
