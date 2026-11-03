@@ -943,6 +943,27 @@ var modelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // the claim's logical model.
 func (m Meter) ByModel() bool { return strings.Contains(m.Query, "gen_ai_request_model") }
 
+// replicaBy matches a by (...) clause of the meter's query.
+var replicaBy = regexp.MustCompile(`\bby\s*\(([^)]*)\)`)
+
+// ByReplica is true when the meter's query has exactly one by (...) clause and it names pod or
+// instance, as a whole word: the label that tells the gateway's replicas apart. The meter folds one
+// baseline per series (D10) only then, since a series is exact only as one replica's counter. A
+// second clause (an inner or outer aggregation that may sum the replicas again), a without clause,
+// a matcher or a longer name (agent-pods) does not keep the replicas apart.
+func (m Meter) ByReplica() bool {
+	cs := replicaBy.FindAllStringSubmatch(m.Query, -1)
+	if len(cs) != 1 {
+		return false
+	}
+	for _, l := range strings.FieldsFunc(cs[0][1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		if l == "pod" || l == "instance" {
+			return true
+		}
+	}
+	return false
+}
+
 // models are C5's logical names: the only names a tier's model or a template's reviewerModel may
 // take, since both reach internal tasks too.
 func models() []string {
@@ -1103,6 +1124,11 @@ func Parse(raw []byte) (*Config, error) {
 				c.Warnings = append(c.Warnings, fmt.Sprintf("class %s of %s is live without holdoutChecks: refused from the next minor (TO5)", name, r.Name))
 			}
 		}
+	}
+	if !c.Meter.ByReplica() {
+		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, so a stale replica's return charges "+
+			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
+			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])

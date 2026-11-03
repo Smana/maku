@@ -146,11 +146,11 @@ func TestCostFollowsTheGatewaySeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage, err := parseUsage(raw)
+	series, err := parseSeries(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := usage["cf4ato2x"]
+	u := sumUsage(series)["cf4ato2x"]
 	if u.Input != 1_000_000 || u.CacheRead != 800_000 || u.CacheWrite != 50_000 || u.Output != 100_000 || !u.Typed {
 		t.Fatalf("usage %+v", u)
 	}

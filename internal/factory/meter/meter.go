@@ -235,6 +235,10 @@ const endSettle = 2 * time.Minute
 type Meter struct {
 	Runs   Store
 	Source Source
+	// PerReplica is true when the Source's query keeps each gateway replica a series of its own
+	// (config.Meter.ByReplica): only then is a series a replica's counter, and fold keeps one
+	// baseline per series (D10). Unset, the per-run reading is taken as it comes.
+	PerReplica bool
 	// Throttle maps gateway 429s to runs; nil: no 429 mapping (VL implements it).
 	Throttle Throttled
 	// Budgets are the daily ceilings; enforced only when EnforcePrincipal (R3's shadow first).
@@ -328,6 +332,9 @@ type Meter struct {
 	fell     map[string]bool             // runs whose fallback was reported
 	ledger   map[string]*runLedger       // per run: its settled entries as the ledgers last showed them
 	named    map[string]bool             // run and model pairs whose missing price, or input without cache, was reported
+
+	// series is per run: each series' last reading and the total fold gave it (D10).
+	series map[string]map[string]seriesTotal
 }
 
 type reading struct {
@@ -388,7 +395,9 @@ func (m *Meter) log() *slog.Logger {
 // total is a run's monotonic usage (R12). The gateway counter restarts when a data-plane pod does,
 // so the raw value is never the total: the total is the high-water mark (the annotation, which
 // SP1 never lets drop, or this meter's own last total) plus the increases since the last reading.
-// A drop re-baselines and adds nothing, so a reset can hide at most one tick of usage.
+// A drop re-baselines and adds nothing, so a reset can hide at most one tick of usage. That is the
+// per-run reading of a summed query; a per-replica one (PerReplica) is folded series by series
+// first (fold), so a drop there is one replica's restart, counted whole, never the run's.
 func (m *Meter) total(r runs.Run, raw int64, seen bool) int64 {
 	if m.last == nil {
 		m.last = map[string]reading{}
@@ -614,6 +623,11 @@ func (m *Meter) forget(ctx context.Context, all []runs.Run) {
 			delete(m.last, id)
 		}
 	}
+	for id := range m.series {
+		if !live[id] {
+			delete(m.series, id)
+		}
+	}
 	for id, a := range m.accounts {
 		if !live[id] && a.doubt == "" { // a write in doubt is resolved first: it may have landed
 			delete(m.accounts, id)
@@ -684,7 +698,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 		m.OnCharges(m.chargeInfo(all))
 	}
 	defer m.publishSettled(all)
-	used, err := m.Source.RunUsage(ctx)
+	used, err := m.usage(ctx)
 	if err != nil {
 		if m.OnUsageError != nil {
 			m.OnUsageError(ctx)
