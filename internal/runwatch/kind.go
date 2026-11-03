@@ -38,10 +38,7 @@ var current atomic.Pointer[state]
 
 func init() { current.Store(newState(DefaultKind)) }
 
-func newState(k Kind) *state {
-	return &state{kind: k, subject: regexp.MustCompile("^system:serviceaccount:" +
-		regexp.QuoteMeta(k.Namespace) + ":" + regexp.QuoteMeta(k.NamePrefix) + "([a-z2-7]{8})$")}
-}
+func newState(k Kind) *state { return &state{kind: k, subject: k.RunSubject()} }
 
 // WithDefaults fills each empty field from DefaultKind.
 func (k Kind) WithDefaults() Kind {
@@ -80,6 +77,22 @@ func ValidatePrefix(p string) error {
 	return nil
 }
 
+// GVK is k's AgentRun kind (C3).
+func (k Kind) GVK() schema.GroupVersionKind {
+	return schema.GroupVersionKind{Group: k.Group, Version: "v1alpha1", Kind: "AgentRun"}
+}
+
+// ClaimName is the name of run id's claim under k: <prefix><C2 id>.
+func (k Kind) ClaimName(id string) string { return k.NamePrefix + id }
+
+// RunSubject matches a run's ServiceAccount token subject under k, capturing the run id: the
+// ServiceAccount is named exactly like the run, on both runtimes. It compiles on each call, so a
+// caller that matches many subjects keeps the result.
+func (k Kind) RunSubject() *regexp.Regexp {
+	return regexp.MustCompile("^system:serviceaccount:" + regexp.QuoteMeta(k.Namespace) + ":" +
+		regexp.QuoteMeta(k.NamePrefix) + "([a-z2-7]{8})$")
+}
+
 // Configure sets the kind every reader uses, its empty fields defaulted. Call it once at
 // startup, before a watch or a client reads a run. A refused kind leaves the current one.
 func Configure(k Kind) error {
@@ -100,10 +113,8 @@ func Namespace() string { return Current().Namespace }
 // ClaimPrefix starts every run's name: <prefix><C2 id>.
 func ClaimPrefix() string { return Current().NamePrefix }
 
-// GVK is the AgentRun's kind (C3).
-func GVK() schema.GroupVersionKind {
-	return schema.GroupVersionKind{Group: Current().Group, Version: "v1alpha1", Kind: "AgentRun"}
-}
+// GVK is the configured kind's AgentRun kind (C3).
+func GVK() schema.GroupVersionKind { return Current().GVK() }
 
 // RunSubject matches a run's ServiceAccount token subject, capturing the run id: the
 // ServiceAccount is named exactly like the run, on both runtimes.
