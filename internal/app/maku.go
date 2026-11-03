@@ -71,7 +71,7 @@ const makuUsage = `usage: maku <command>
                                   a room of your own from events 1..SEQ, with an optional run; the
                                   fork asks before risky actions (attended) unless you pass --approvals
                                   unattended and its source is unattended too
-  run --repo owner/name --task TEXT [--role implementer|tester|triager]
+  run --repo owner/name --task TEXT [--role implementer|triager]
                                   quickstart only (a local broker): create a room, queue TEXT as the run's
                                   task, start the run, apply its claim with your kubectl, follow it to the end
 maku never steers, interrupts, moves the driver token or decides (ruling P18): use the web UI`

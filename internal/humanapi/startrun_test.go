@@ -19,6 +19,7 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/maku"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/runwatch"
@@ -420,5 +421,15 @@ func TestAQueuedTokenNeverReachesTheBrief(t *testing.T) {
 	f := startAs(a, room, "human:own", 2, Action{Role: "implementer"})
 	if f.Rejected != "" || strings.Contains(string(f.Result), token) || !strings.Contains(string(f.Result), "use [REDACTED:github-pat]") {
 		t.Fatalf("%+v %s", f, f.Result)
+	}
+}
+
+// U-1: maku run offers only roles start_run takes; one it refused would fail after the room is
+// already made.
+func TestQuickstartRolesAreRunRoles(t *testing.T) {
+	for _, r := range maku.QuickstartRoles {
+		if !runRoles[r] {
+			t.Errorf("maku run offers %q, which start_run refuses", r)
+		}
 	}
 }

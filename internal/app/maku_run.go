@@ -17,7 +17,7 @@ import (
 	"github.com/Smana/maku/internal/maku"
 )
 
-const runUsage = "run --repo owner/name --task TEXT [--role implementer|tester|triager]"
+const runUsage = "run --repo owner/name --task TEXT [--role implementer|triager]"
 
 // runRepo is the broker's own repository form (humanapi's repositoryRE).
 var runRepo = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
@@ -28,7 +28,7 @@ func (r Maku) quickstartRun(ctx context.Context, cfg maku.Config, c maku.Client,
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	repo := fs.String("repo", "", "the repository, owner/name: the one your PAT can write")
 	task := fs.String("task", "", "what the run should do")
-	role := fs.String("role", "implementer", "implementer, tester or triager")
+	role := fs.String("role", "implementer", "implementer or triager")
 	pos, err := flags(fs, args)
 	if err != nil || len(pos) != 0 || !runRepo.MatchString(*repo) || strings.TrimSpace(*task) == "" {
 		return fmt.Errorf("%s: %w", runUsage, errors.Join(err, errors.New("--repo owner/name --task TEXT")))
