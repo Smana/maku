@@ -171,7 +171,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	idle := now.Add(-10 * time.Minute)
 	t.Run("an attended room's waiting run gets exactly the two annotations", func(t *testing.T) {
 		c, r := build(t, map[string]string{"agents.ogenki.io/usage-tokens": "12"})
-		s := &Suspender{Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room("attended"), idle, []runwatch.Run{r}); err != nil {
 			t.Fatal(err)
 		}
@@ -182,7 +182,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	})
 	t.Run("the default profile is attended", func(t *testing.T) {
 		c, r := build(t, nil)
-		s := &Suspender{Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room(""), idle, []runwatch.Run{r}); err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	})
 	t.Run("an unattended room is never touched", func(t *testing.T) {
 		c, r := build(t, nil)
-		s := &Suspender{Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room("unattended"), idle, []runwatch.Run{r}); err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +202,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	})
 	t.Run("another run's approval does not suspend this one", func(t *testing.T) {
 		c, r := build(t, nil)
-		s := &Suspender{Client: c, Approvals: waitingOn("aaaaaaaa"), After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: waitingOn("aaaaaaaa"), After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room("attended"), idle, []runwatch.Run{r}); err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	t.Run("a decided approval resumes the run", func(t *testing.T) {
 		c, r := build(t, map[string]string{runwatch.OperatingModeAnnotation: ModeSuspended, runwatch.RemainingSecondsAnnotation: "600"})
 		r.Phase, r.OperatingMode, r.RemainingSeconds = "Suspended", ModeSuspended, "600"
-		s := &Suspender{Client: c, Approvals: fakeApprovals{}, After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: fakeApprovals{}, After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room("attended"), idle, []runwatch.Run{r}); err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +225,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	t.Run("a stale read writes nothing", func(t *testing.T) {
 		c, r := build(t, nil)
 		r.ResourceVersion = "1"
-		s := &Suspender{Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room("attended"), idle, []runwatch.Run{r}); !apierrors.IsConflict(err) {
 			t.Fatalf("a run changed since the watch read it is decided again at the next resync: %v", err)
 		}
@@ -236,7 +236,7 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 	t.Run("an unreadable approval list touches nothing", func(t *testing.T) {
 		c, r := build(t, nil)
 		boom := errors.New("down")
-		s := &Suspender{Client: c, Approvals: fakeApprovals{err: boom}, After: 5 * time.Minute, Now: func() time.Time { return now }}
+		s := &Suspender{Kind: runwatch.DefaultKind, Client: c, Approvals: fakeApprovals{err: boom}, After: 5 * time.Minute, Now: func() time.Time { return now }}
 		if err := s.Room(t.Context(), room("attended"), idle, []runwatch.Run{r}); !errors.Is(err, boom) {
 			t.Fatalf("%v", err)
 		}
@@ -244,4 +244,35 @@ func TestRoomSuspendsAndResumes(t *testing.T) {
 			t.Fatalf("annotations %v", got)
 		}
 	})
+}
+
+// D9: the claim patched is one of the Suspender's kind, wherever the default kind points.
+func TestRoomPatchesTheClaimOfItsKind(t *testing.T) {
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	m := meta.NewDefaultRESTMapper(nil)
+	m.Add(native.GVK(), meta.RESTScopeNamespace)
+	claim := &unstructured.Unstructured{}
+	claim.SetGroupVersionKind(native.GVK())
+	claim.SetNamespace(native.Namespace)
+	claim.SetName(native.ClaimName("7f3cq2xz"))
+	_ = unstructured.SetNestedField(claim.Object, true, "spec", "suspendable")
+	c := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithRESTMapper(m).WithObjects(claim).Build()
+	key := types.NamespacedName{Namespace: native.Namespace, Name: native.ClaimName("7f3cq2xz")}
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(native.GVK())
+	if err := c.Get(t.Context(), key, u); err != nil {
+		t.Fatal(err)
+	}
+	r := running()
+	r.ResourceVersion = u.GetResourceVersion()
+	s := &Suspender{Kind: native, Client: c, Approvals: waitingOn("7f3cq2xz"), After: 5 * time.Minute, Now: func() time.Time { return now }}
+	if err := s.Room(t.Context(), room("attended"), now.Add(-10*time.Minute), []runwatch.Run{r}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(t.Context(), key, u); err != nil {
+		t.Fatal(err)
+	}
+	if got := u.GetAnnotations()[runwatch.OperatingModeAnnotation]; got != ModeSuspended {
+		t.Fatalf("mode %q on the native claim", got)
+	}
 }

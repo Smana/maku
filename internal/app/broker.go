@@ -455,12 +455,13 @@ func countLiveRuns(w *runwatch.Watcher, m *metrics.Set) {
 }
 
 // withSuspend turns on the room controller's suspend trigger when the config does (v2
-// suspend). Off, the field stays a nil interface, never a typed nil.
+// suspend). Off, the field stays a nil interface, never a typed nil. The trigger patches claims of
+// the room controller's kind.
 func withSuspend(rc *roomctrl.Reconciler, cfg config.SuspendConfig, c client.Client, a *meteredLog, log *slog.Logger) {
 	if !cfg.Enabled {
 		return
 	}
-	rc.Suspend = &suspend.Suspender{Client: c, Approvals: a, After: cfg.After.Duration, Log: log}
+	rc.Suspend = &suspend.Suspender{Kind: rc.Kind, Client: c, Approvals: a, After: cfg.After.Duration, Log: log}
 	log.Info("the suspend trigger is on", "after", cfg.After.Duration)
 }
 

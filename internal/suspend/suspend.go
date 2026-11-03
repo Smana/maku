@@ -88,6 +88,8 @@ type patcher interface {
 
 // Suspender applies Decide to a room's runs.
 type Suspender struct {
+	// Kind is the runs kind, required: the claims patched are its.
+	Kind      runwatch.Kind
 	Client    patcher
 	Approvals approvals
 	// After is how long a room stays idle, with a run waiting, before the run is suspended.
@@ -140,9 +142,9 @@ func (s *Suspender) patch(ctx context.Context, run runwatch.Run, ann map[string]
 		return err
 	}
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(runwatch.GVK())
-	u.SetNamespace(runwatch.Namespace())
-	u.SetName(runwatch.ClaimPrefix() + run.ID)
+	u.SetGroupVersionKind(s.Kind.GVK())
+	u.SetNamespace(s.Kind.Namespace)
+	u.SetName(s.Kind.ClaimName(run.ID))
 	return s.Client.Patch(ctx, u, client.RawPatch(types.MergePatchType, body))
 }
 
