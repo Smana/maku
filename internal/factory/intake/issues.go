@@ -241,22 +241,20 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 	return errors.Join(append(errs, publishErr)...)
 }
 
-// Generation counts maintainers' labels (R4). ok is false when the latest label is not a
-// maintainer's: that is the label currently on the issue, and it starts nothing (§1).
+// Generation is the latest label's place among every label event of the trigger label, whoever
+// labelled (R4, F-5): GitHub never deletes an event, so each label keeps its generation and a
+// later one is always higher. Counting maintainers' labels only, a maintainer removed from the
+// config lowered the count, and a fresh label collided with an earlier label's task. ok is false
+// when the latest label is not a maintainer's: that is the label currently on the issue, and it
+// starts nothing (§1).
 func Generation(evs []forge.LabelEvent, isMaintainer func(string) bool) (int, forge.LabelEvent, bool) {
 	if len(evs) == 0 {
 		return 0, forge.LabelEvent{}, false
 	}
 	evs = slices.Clone(evs)
 	slices.SortStableFunc(evs, func(a, b forge.LabelEvent) int { return a.At.Compare(b.At) })
-	gen := 0
-	for _, e := range evs {
-		if isMaintainer(e.Actor) {
-			gen++
-		}
-	}
 	last := evs[len(evs)-1]
-	return gen, last, isMaintainer(last.Actor)
+	return len(evs), last, isMaintainer(last.Actor)
 }
 
 // Snapshot is the text the task keeps, sanitised (G2), and the sha256 of the issue as the
