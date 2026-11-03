@@ -248,6 +248,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), &t)
 	}
 	if !equality.Semantic.DeepEqual(*before, t.Status) {
+		r.capOutbox(&t)
 		if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
 			r.mon.forget(t.Name) // the pass was not recorded: its retry must not wait out the throttle
 			return ctrl.Result{}, errors.Join(err, uerr)
@@ -593,6 +594,20 @@ func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
 		t.Status.Outbox = nil
 	}
 	return nil
+}
+
+// maxOutbox is status.outbox's CRD maxItems: a status write carrying more is refused whole.
+const maxOutbox = 16
+
+// capOutbox keeps the outbox within maxOutbox before the pass's status write (F-2): past it every
+// write is refused, and drain, which posts only a written outbox, never runs, so the task wedges.
+// The oldest entries go first, an ending's comment last: it carries the outcome and the token total.
+func (r *Reconciler) capOutbox(t *v1alpha1.Task) {
+	for len(t.Status.Outbox) > maxOutbox {
+		i := max(slices.IndexFunc(t.Status.Outbox, func(o v1alpha1.Narration) bool { return !narrate.Closing(o.Key) }), 0)
+		r.log().Warn("narration_dropped", "task.id", t.Name, "key", t.Status.Outbox[i].Key, "why", "outbox_full")
+		t.Status.Outbox = slices.Delete(t.Status.Outbox, i, i+1)
+	}
 }
 
 // target is where a task narrates: its issue, else its PR (R28), else nowhere.

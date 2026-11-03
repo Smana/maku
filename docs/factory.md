@@ -363,7 +363,9 @@ The factory App comments on the task's issue, or on its pull request when it has
 start (id, branch, budget, the room link, how to stop it), the pull request, each revision, CI fix
 and resume, each hand-off with its reason and the merge command, and the end with the tokens used.
 Each comment carries a hidden marker and is posted at least once and never twice, from an outbox
-written with the transition that caused it. Comments hold the factory's own words and ids, never
+written with the transition that caused it. The
+outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged
+`narration_dropped`. Comments hold the factory's own words and ids, never
 text a user wrote. The task's room gets the issue snapshot as its first `task_state` message, then
 the task's facts (phase, reason, current run, the run history with each run's outcome, end and
 dollars, token budget, dollar spend, issue and pull request), which the room page and `maku status`
