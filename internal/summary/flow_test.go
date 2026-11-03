@@ -221,6 +221,23 @@ func TestFlowView(t *testing.T) {
 				t.Fatalf("models = %q, %q", fl.Nodes[0].Model, fl.Nodes[1].Model)
 			}
 		}},
+		{"a node names every served model that is a model name, and its effort", func() []envelope.Event {
+			a := frun("a", "implementer", "implementer", 0)
+			a.Provenance = &envelope.ProvenanceFact{ServedModels: []string{"glm-5.3", "<b>x</b>", "kimi-k3", "m4", "m5", "m6", "m7", "m8", "m9", "m10"}}
+			b := frun("b", "reviewer", "reviewer", 0)
+			evs := fruns(envelope.TaskFacts{Phase: "Implementing"}, a, b)
+			return append(evs, fstatus(50, "a", "xhigh", envelope.OriginHarness))
+		}(), func(t *testing.T, fl *Flow) {
+			if got := fl.Nodes[0].Models; !slices.Equal(got, []string{"glm-5.3", "kimi-k3", "m4", "m5", "m6", "m7", "m8", "m9"}) {
+				t.Fatalf("models = %q", got)
+			}
+			if fl.Nodes[0].Effort != "xhigh" {
+				t.Fatalf("effort = %q", fl.Nodes[0].Effort)
+			}
+			if b := fl.Nodes[1]; b.Models != nil || b.Effort != "" {
+				t.Fatalf("a run with no provenance or status: %+v", b)
+			}
+		}},
 		{"a role that is no persona name draws as unknown",
 			fruns(envelope.TaskFacts{Phase: "Implementing"}, frun("a", "impl`[x](https://evil.example) <b>", "", 0)),
 			func(t *testing.T, fl *Flow) {

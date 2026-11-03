@@ -110,6 +110,7 @@
           "fromSeq": 4,
           "toSeq": 0,
           "model": "agent-default",
+          "effort": "high",
           "tools": {
             "ok": 0,
             "failed": 0

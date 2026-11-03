@@ -33,6 +33,10 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 		r := t.Status.Runs[i]
 		rf := runFact(r)
 		rf.Persona = personaOf(t, r)
+		if p := r.Provenance; !p.IsZero() {
+			rf.Provenance = &envelope.ProvenanceFact{FactoryVersion: p.FactoryVersion, CompositionRevision: p.CompositionRevision,
+				HarnessImage: p.HarnessImage, ServedModels: slices.Clone(p.ServedModels)}
+		}
 		if r.Finished != nil {
 			return rf
 		}
@@ -53,11 +57,6 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	}
 	if len(t.Status.Runs) > 0 {
 		rf := fact(len(t.Status.Runs) - 1)
-		run := current(t)
-		if p := run.Provenance; !p.IsZero() {
-			rf.Provenance = &envelope.ProvenanceFact{FactoryVersion: p.FactoryVersion, CompositionRevision: p.CompositionRevision,
-				HarnessImage: p.HarnessImage, ServedModels: slices.Clone(p.ServedModels)}
-		}
 		f.Run = &rf
 		for i := max(0, len(t.Status.Runs)-envelope.MaxRuns); i < len(t.Status.Runs); i++ {
 			f.Runs = append(f.Runs, fact(i))
@@ -88,7 +87,7 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	return f
 }
 
-// runFact is a run record as the room's facts carry it, without provenance (only the current run has it).
+// runFact is a run record as the room's facts carry it, without provenance (factsOf adds it).
 // Times are as the CRD stores them, so the hash of a task read back matches the one posted.
 func runFact(r v1alpha1.RunRecord) envelope.RunFact {
 	f := envelope.RunFact{ID: r.ID, Role: r.Role, Trigger: r.Trigger, Verdict: r.Verdict, MicroUSD: dollars(r.CostMicroUSD), Outcome: outcomeOf(r)}

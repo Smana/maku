@@ -41,6 +41,12 @@ func fphase(seq int64, run string, fields map[string]any) envelope.Event {
 	return fev(seq, run, envelope.StateChanged, fSys, envelope.StatePayload("run_phase", fields))
 }
 
+func fstatus(seq int64, run, effort string, origin envelope.Origin) envelope.Event {
+	ev := fev(seq, run, envelope.StateChanged, fSys, envelope.StatePayload(envelope.HarnessStatus, map[string]any{"status": "running", "effort": effort}))
+	ev.Origin = origin
+	return ev
+}
+
 func ftask(seq int64, phase string) envelope.Event {
 	return fev(seq, "", envelope.StateChanged, fSys, envelope.TaskStatePayload(envelope.TaskFacts{Phase: phase}))
 }
@@ -66,6 +72,15 @@ func TestFoldFlow(t *testing.T) {
 			func(t *testing.T, f flowState) {
 				if g := f.runs[0]; g.from != 5 || g.to != 10 || g.last != 10 || g.role != "implementer" {
 					t.Fatalf("run = %+v", g)
+				}
+			}},
+		{"a run's effort is its harness's last valid report", []envelope.Event{fjoin(1, r, "implementer"),
+			fstatus(2, r, "low", envelope.OriginHarness), fstatus(3, r, "high", envelope.OriginHarness),
+			fstatus(4, r, "<b>", envelope.OriginHarness), fstatus(5, r, "max", envelope.OriginClient),
+			fjoin(6, "bbbb2222", "reviewer"), fstatus(7, "bbbb2222", "medium", envelope.OriginHarness)},
+			func(t *testing.T, f flowState) {
+				if f.runs[0].effort != "high" || f.runs[1].effort != "medium" {
+					t.Fatalf("efforts = %q, %q", f.runs[0].effort, f.runs[1].effort)
 				}
 			}},
 		{"a live run", []envelope.Event{fjoin(5, r, "implementer"), ftool(9, r, "ok")},

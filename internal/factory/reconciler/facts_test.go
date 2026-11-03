@@ -5,6 +5,7 @@ package reconciler
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"reflect"
@@ -669,5 +670,53 @@ func TestFactsOfCarriesTheParent(t *testing.T) {
 	}
 	if err := f.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Every run of the history carries what it ran on, not only the current one: the flow's nodes name
+// each run's models.
+func TestFactsOfCarriesEachRunsServedModels(t *testing.T) {
+	task := awaiting()
+	task.Status.Runs = runsOf(3)
+	finish(&task.Status.Runs[0], "Succeeded", 1, "")
+	finish(&task.Status.Runs[1], "Succeeded", 1, "")
+	task.Status.Runs[0].Provenance.ServedModels = []string{"glm-5.3"}
+	task.Status.Runs[1].Provenance.ServedModels = []string{"kimi-k3", "qwen-4"}
+	f := factsOf(task)
+	if p := f.Runs[0].Provenance; p == nil || !slices.Equal(p.ServedModels, []string{"glm-5.3"}) {
+		t.Fatalf("run 0: %+v", f.Runs[0].Provenance)
+	}
+	if p := f.Runs[1].Provenance; p == nil || !slices.Equal(p.ServedModels, []string{"kimi-k3", "qwen-4"}) {
+		t.Fatalf("run 1: %+v", f.Runs[1].Provenance)
+	}
+	if f.Runs[2].Provenance != nil || f.Run.Provenance != nil {
+		t.Fatalf("a run without provenance has none: %+v %+v", f.Runs[2], f.Run)
+	}
+	task.Status.Runs[2].Provenance.ServedModels = []string{"glm-5.3"}
+	if f = factsOf(task); f.Run.Provenance == nil || !slices.Equal(f.Run.Provenance.ServedModels, f.Runs[2].Provenance.ServedModels) {
+		t.Fatalf("the current run is the last of the history: %+v", f)
+	}
+}
+
+// 20 runs with a full provenance each stay within the broker's body bound for facts (R10).
+func TestFactsWithTwentyFullProvenancesFitTheBrokerBody(t *testing.T) {
+	task := awaiting()
+	task.Status.Runs = runsOf(envelope.MaxRuns)
+	var models []string
+	for i := range 8 {
+		models = append(models, fmt.Sprintf("%02d%s", i, strings.Repeat("m", 62)))
+	}
+	for i := range task.Status.Runs {
+		task.Status.Runs[i].Provenance = v1alpha1.RunProvenance{FactoryVersion: strings.Repeat("v", 64),
+			CompositionRevision: strings.Repeat("c", 253), HarnessImage: strings.Repeat("h", 320), ServedModels: models}
+	}
+	f := factsOf(task)
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	b := envelope.TaskStatePayload(f)
+	t.Logf("payload %d bytes", len(b))
+	if len(b) > 2*envelope.MaxHumanMessage {
+		t.Fatalf("payload %d bytes", len(b))
 	}
 }

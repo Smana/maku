@@ -54,6 +54,7 @@ type requestedRun struct{ run, by string }
 
 type flowRun struct {
 	id, role, model, startedBy string
+	effort                     string // the harness's last reported reasoning effort, an envelope.Efforts value
 	reason                     string // run_phase's terminal reason, as the log holds it
 	handoff                    string // its handoff summary's first line, at most 120 runes
 	from, to, last             int64
@@ -83,6 +84,7 @@ func foldFlow(st *State, ev envelope.Event) {
 			Reason string `json:"reason"`
 			Model  string `json:"model"`
 			RunID  string `json:"runId"`
+			Effort string `json:"effort"`
 		}
 		_ = json.Unmarshal(ev.Payload, &k) // a malformed payload still counts as the run's last event
 		switch k.Kind {
@@ -100,7 +102,12 @@ func foldFlow(st *State, ev envelope.Event) {
 			}
 			return
 		}
-		if r := f.run(ev.RunID); r != nil && k.Kind == "run_phase" {
+		if r := f.run(ev.RunID); r != nil && k.Kind == envelope.HarnessStatus {
+			// As summary.go reads it: the harness's own report, an enum; the last one wins.
+			if ev.Origin == envelope.OriginHarness && envelope.ValidEffort(k.Effort) {
+				r.effort = k.Effort
+			}
+		} else if r != nil && k.Kind == "run_phase" {
 			if k.Phase == "Running" && k.Model != "" {
 				r.model = k.Model
 			}
@@ -204,7 +211,8 @@ type Flow struct {
 }
 
 // FlowNode is one run on the path. ToSeq and EndedAt are zero while the run is live; Edge names
-// the edge into it, from structured fields only.
+// the edge into it, from structured fields only. Models are every model that served the run, from
+// its facts; Effort is the reasoning effort its harness last reported.
 type FlowNode struct {
 	Run       string     `json:"run"`
 	Persona   string     `json:"persona"`
@@ -218,6 +226,8 @@ type FlowNode struct {
 	Verdict   string     `json:"verdict,omitempty"`
 	MicroUSD  int64      `json:"microUSD,omitempty"`
 	Model     string     `json:"model,omitempty"`
+	Models    []string   `json:"models,omitempty"`
+	Effort    string     `json:"effort,omitempty"`
 	Judge     *JudgeMark `json:"judge,omitempty"`
 	Tools     ToolCount  `json:"tools"`
 	Edge      string     `json:"edge,omitempty"`
@@ -226,6 +236,9 @@ type FlowNode struct {
 	// Handoff is the agent's own words, redacted at append: the page labels it as their claim.
 	Handoff string `json:"handoff,omitempty"`
 }
+
+// maxFlowModels bounds a node's served models: the Task CRD's own bound.
+const maxFlowModels = 8
 
 // maxFlowReason bounds a node's end reason, in bytes: the log's text, rendered as is.
 const maxFlowReason = 64
@@ -328,8 +341,15 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 	if rf != nil {
 		n.Run, n.Role, n.Persona, j.trigger = rf.ID, rf.Role, rf.Persona, rf.Trigger
 		n.StartedAt, n.EndedAt, n.Outcome, n.Verdict, n.MicroUSD = rf.StartedAt, rf.EndedAt, rf.Outcome, rf.Verdict, rf.MicroUSD
-		if p := rf.Provenance; p != nil && len(p.ServedModels) > 0 && envelope.ValidModel(p.ServedModels[0]) {
-			n.Model = p.ServedModels[0]
+		if p := rf.Provenance; p != nil {
+			for _, m := range p.ServedModels {
+				if envelope.ValidModel(m) && len(n.Models) < maxFlowModels {
+					n.Models = append(n.Models, m)
+				}
+			}
+			if len(p.ServedModels) > 0 && envelope.ValidModel(p.ServedModels[0]) {
+				n.Model = p.ServedModels[0]
+			}
 		}
 	}
 	if r != nil {
@@ -354,6 +374,7 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 			}
 			n.Judge = &jm
 		}
+		n.Effort = r.effort
 		n.Tools, n.StartedBy, n.Reason, n.Handoff = r.tools, r.startedBy, plainReason(r.reason), r.handoff
 		j.scoped, j.split = r.scoped, r.split
 	}
