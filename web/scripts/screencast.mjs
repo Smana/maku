@@ -22,7 +22,9 @@ const { chromium } = createRequire(join(modules, "noop.js"))("playwright");
 
 const out = resolve(process.argv[2] ?? "maku-room.webp");
 const web = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const frameMs = 120;
+const defaultFrameMs = 120;
+const replayFrameMs = 50; // the rail's fades and edge draws last 150-400 ms
+const replayMaxMs = 20_000; // Replay's own cap
 const listMs = 12_000; // past one 10 s refresh of the room list
 const demoMaxMs = 60_000; // the approval card is held on screen, whatever the speed
 const holdMs = 3_000; // the ending (the Next box, the rail's last state) stays on screen
@@ -42,7 +44,7 @@ async function waitFor(url) {
   throw new Error(`no server at ${url}`);
 }
 
-async function record(page, ms, frames, dir, done = async () => false, follow = false) {
+async function record(page, ms, frames, dir, done = async () => false, follow = false, frameMs = defaultFrameMs) {
   const end = Date.now() + ms;
   let last = Date.now();
   while (Date.now() < end && !(await done())) {
@@ -80,6 +82,17 @@ try {
   const finished = async () => /(\d+) \/ \1 events/.test(await page.locator(".page-dock .status").innerText());
   await record(page, demoMaxMs, frames, dir, finished, true);
   await page.evaluate(() => window.scrollTo(0, 0)); // the ending reads from the Next box down
+  await record(page, holdMs, frames, dir);
+
+  // A finished task replays its rail: the diagram drawn node by node.
+  await page.goto("http://127.0.0.1:4181/preview/full.html?finished&theme=light");
+  const replay = page.locator(".rail-replay", { hasText: "Replay" });
+  await replay.waitFor();
+  await record(page, 1_000, frames, dir);
+  await replay.click();
+  const replayed = async () => replay.isVisible();
+  await page.waitForTimeout(200);
+  await record(page, replayMaxMs, frames, dir, replayed, false, replayFrameMs);
   await record(page, holdMs, frames, dir);
   await browser.close();
 
