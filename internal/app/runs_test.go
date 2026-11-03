@@ -90,12 +90,12 @@ func TestWireRuns(t *testing.T) {
 	defer cancel()
 	inf := controllertest.NewFakeInformer() // not synced: its first list is still arriving
 	informers := &informertest.FakeInformers{
-		InformersByGVK: map[schema.GroupVersionKind]toolscache.SharedIndexInformer{runwatch.GVK(): inf}}
+		InformersByGVK: map[schema.GroupVersionKind]toolscache.SharedIndexInformer{runwatch.DefaultKind.GVK(): inf}}
 	store := &fakeRunLog{keys: map[string]string{}}
 	open := fakeOpen{swept: make(chan struct{}, 10)}
 	var runnables []manager.Runnable
 	add := func(r manager.Runnable) error { runnables = append(runnables, r); return nil }
-	rw, err := wireRuns(ctx, informers, add, slog.New(slog.DiscardHandler), open, &runwatch.Events{Store: store},
+	rw, err := wireRuns(ctx, runwatch.DefaultKind, informers, add, slog.New(slog.DiscardHandler), open, &runwatch.Events{Store: store},
 		func(time.Duration) (<-chan time.Time, func()) { return nil, func() {} })
 	if err != nil {
 		t.Fatal(err)
@@ -154,11 +154,11 @@ func TestWireRuns(t *testing.T) {
 		t.Fatal("the leader did not stop with its context")
 	}
 
-	if _, err := wireRuns(ctx, &informertest.FakeInformers{Error: errors.New("boom")}, add, slog.New(slog.DiscardHandler),
+	if _, err := wireRuns(ctx, runwatch.DefaultKind, &informertest.FakeInformers{Error: errors.New("boom")}, add, slog.New(slog.DiscardHandler),
 		open, &runwatch.Events{Store: store}, nil); err == nil {
 		t.Fatal("an informer that cannot be had fails startup")
 	}
-	if _, err := wireRuns(ctx, &informertest.FakeInformers{}, func(manager.Runnable) error { return errors.New("started") },
+	if _, err := wireRuns(ctx, runwatch.DefaultKind, &informertest.FakeInformers{}, func(manager.Runnable) error { return errors.New("started") },
 		slog.New(slog.DiscardHandler), open, &runwatch.Events{Store: store}, nil); err == nil {
 		t.Fatal("a leader the manager refuses fails startup")
 	}
@@ -188,7 +188,7 @@ func TestRoomObserver(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			watch := runwatch.New()
+			watch := runwatch.New(runwatch.DefaultKind)
 			if c.run != "" {
 				watch.Upsert(t.Context(), runClaim("7f3cq2xz", "3kq7x2ma", c.run))
 			}
@@ -212,9 +212,14 @@ func expired(ctx context.Context) context.Context {
 }
 
 func TestManagerOptions(t *testing.T) {
-	for _, ns := range []string{"agent-system", "rooms-test"} {
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	for _, tc := range []struct {
+		ns string
+		rk runwatch.Kind // the runs kind: the loop below has its own kind
+	}{{"agent-system", runwatch.DefaultKind}, {"rooms-test", native}} {
+		ns, rk := tc.ns, tc.rk
 		t.Run(ns, func(t *testing.T) {
-			o := managerOptions(ns)
+			o := managerOptions(ns, rk)
 			if !o.LeaderElection || o.LeaderElectionID != "room-broker" || o.LeaderElectionNamespace != ns ||
 				!o.LeaderElectionReleaseOnCancel {
 				t.Fatalf("leader election: %+v", o)
@@ -229,7 +234,7 @@ func TestManagerOptions(t *testing.T) {
 				t.Fatal("unstructured reads (the finalizer's run list) must reach the API server")
 			}
 			// RBAC grants exactly these namespaces: a cluster-wide informer is refused.
-			want := map[string][]string{"Room": {ns}, runwatch.GVK().Kind: {runwatch.Namespace()}}
+			want := map[string][]string{"Room": {ns}, rk.GVK().Kind: {rk.Namespace}}
 			if len(o.Cache.ByObject) != len(want) || o.Cache.DefaultNamespaces != nil {
 				t.Fatalf("cached kinds: %v, default namespaces %v", o.Cache.ByObject, o.Cache.DefaultNamespaces)
 			}
@@ -237,7 +242,7 @@ func TestManagerOptions(t *testing.T) {
 				kind := "Room"
 				if u, ok := obj.(*unstructured.Unstructured); ok {
 					kind = u.GroupVersionKind().Kind
-					if u.GroupVersionKind() != runwatch.GVK() {
+					if u.GroupVersionKind() != rk.GVK() {
 						t.Fatalf("watches %v, want the AgentRun GVK", u.GroupVersionKind())
 					}
 				} else if _, ok := obj.(*v1alpha1.Room); !ok {
@@ -314,7 +319,7 @@ func TestCountLiveRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	countLiveRuns(w, m)
 	w.Upsert(t.Context(), runClaim("7f3cq2xz", "3kq7x2ma", "Running"))
 	if body := scrape(t, exp.Handler()); !strings.Contains(body, "maku_rooms_participants{kind=\"run\"} 1\n") {
@@ -330,7 +335,7 @@ func TestCountLiveRuns(t *testing.T) {
 // the watch has not synced and cannot tell; it drops the run once the watch knows it ended or was
 // deleted.
 func TestRunInfoReadsTheWatch(t *testing.T) {
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	withModel := runClaim("aaaaaaaa", "3kq7x2ma", "Running")
 	_ = unstructured.SetNestedField(withModel.Object, "agent-default", "spec", "model")
 	w.Upsert(t.Context(), withModel)

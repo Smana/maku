@@ -145,7 +145,7 @@ func TestALateSyncedTransitionIsNotTheEnd(t *testing.T) {
 
 func TestWatcherFiresGoneOnceForTerminalRevokedOrDeleted(t *testing.T) {
 	ctx := t.Context()
-	w := New()
+	w := New(DefaultKind)
 	var gone, changed []string
 	w.OnGone(func(_ context.Context, r Run) { gone = append(gone, r.ID) })
 	w.OnChange(func(_ context.Context, r Run) { changed = append(changed, r.ID+":"+r.Phase) })
@@ -180,7 +180,7 @@ func TestWatcherFiresGoneOnceForTerminalRevokedOrDeleted(t *testing.T) {
 // log's I/O (OnChange).
 func TestGoneFiresBeforeChange(t *testing.T) {
 	ctx := t.Context()
-	w := New()
+	w := New(DefaultKind)
 	var order []string
 	w.OnChange(func(context.Context, Run) { order = append(order, "change") })
 	w.OnGone(func(context.Context, Run) { order = append(order, "gone") })
@@ -193,7 +193,7 @@ func TestGoneFiresBeforeChange(t *testing.T) {
 // OnRemove reports what the watch knew, not the (possibly stale) deleted object.
 func TestOnRemoveGetsTheLastKnownState(t *testing.T) {
 	ctx := t.Context()
-	w := New()
+	w := New(DefaultKind)
 	var removed []Run
 	w.OnRemove(func(_ context.Context, r Run) { removed = append(removed, r) })
 	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
@@ -393,7 +393,7 @@ func TestObserve(t *testing.T) {
 // Review M15: a claim deleted mid-run still ends in the log, once.
 func TestADeletedRunEndsOnce(t *testing.T) {
 	ctx := t.Context()
-	w := New()
+	w := New(DefaultKind)
 	var removed []string
 	w.OnRemove(func(_ context.Context, r Run) { removed = append(removed, r.ID) })
 	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
@@ -425,7 +425,7 @@ func TestRegisterFeedsTheWatcherFromTheInformer(t *testing.T) {
 	// An informer not synced yet: the watch is not populated until its handler is.
 	inf := controllertest.NewFakeInformer()
 	informers := &informertest.FakeInformers{InformersByGVK: map[schema.GroupVersionKind]toolscache.SharedIndexInformer{GVK(): inf}}
-	w := New()
+	w := New(DefaultKind)
 	synced, err := Register(ctx, informers, w)
 	if err != nil {
 		t.Fatal(err)
@@ -457,8 +457,28 @@ func TestRegisterFeedsTheWatcherFromTheInformer(t *testing.T) {
 		t.Fatalf("gone = %v", gone)
 	}
 
-	if _, err := Register(ctx, &informertest.FakeInformers{Error: errBoom}, New()); !errors.Is(err, errBoom) {
+	if _, err := Register(ctx, &informertest.FakeInformers{Error: errBoom}, New(DefaultKind)); !errors.Is(err, errBoom) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// D9: a watcher reads its own kind: it registers on that kind's informer and takes only that
+// kind's claims.
+func TestAWatcherReadsItsOwnKind(t *testing.T) {
+	native := Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	inf := controllertest.NewFakeInformer()
+	informers := &informertest.FakeInformers{InformersByGVK: map[schema.GroupVersionKind]toolscache.SharedIndexInformer{native.GVK(): inf}}
+	w := New(native)
+	if _, err := Register(t.Context(), informers, w); err != nil {
+		t.Fatal(err)
+	}
+	inf.Add(kindClaim("maku.ogenki.io/v1alpha1", "runs", "run-abcdefgh"))
+	inf.Add(kindClaim("cloud.ogenki.io/v1alpha1", "agents", "xplane-run-7f3cq2xz"))
+	if _, ok := w.Get("abcdefgh"); !ok {
+		t.Fatal("the native run is not watched: Register took another kind's informer")
+	}
+	if _, ok := w.Get("7f3cq2xz"); ok {
+		t.Fatal("another kind's claim was taken")
 	}
 }
 
@@ -467,7 +487,7 @@ var errBoom = errors.New("boom")
 // A missed delete reaches the handler as a tombstone around the last known object.
 func TestHandlerUnwrapsATombstone(t *testing.T) {
 	ctx := t.Context()
-	w := New()
+	w := New(DefaultKind)
 	h := handler(ctx, w)
 	h.OnAdd(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""), false)
 	h.OnAdd("not an object", false)
@@ -490,7 +510,7 @@ func TestReadsTheTaskURL(t *testing.T) {
 }
 
 func TestLiveTellsUnknownFromDead(t *testing.T) {
-	w := New()
+	w := New(DefaultKind)
 	synced := false
 	w.SetSynced(func() bool { return synced })
 	if _, live, known := w.Live("nosuchrn"); live || known {
@@ -510,7 +530,7 @@ func TestLiveTellsUnknownFromDead(t *testing.T) {
 // whatever the updates and resyncs, and leaves once, whatever ends it.
 func TestOnLiveCountsEachLiveRunOnce(t *testing.T) {
 	ctx := t.Context()
-	w := New()
+	w := New(DefaultKind)
 	var n int64
 	w.OnLive(func(_ context.Context, d int64) {
 		if n += d; n < 0 {

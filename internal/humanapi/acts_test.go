@@ -351,7 +351,7 @@ func fixture(driver string) (*Actor, *actLog, *v1alpha1.Room) {
 	room := &v1alpha1.Room{ObjectMeta: metav1.ObjectMeta{Name: "3kq7x2ma", Namespace: "agent-system"},
 		Spec: v1alpha1.RoomSpec{Owner: "human:own", Driver: "system:factory", DataClass: "public", Repository: "Smana/cloud-native-ref",
 			Members: []v1alpha1.Member{{Principal: "human:col", Role: "collaborator"}, {Principal: "human:two", Role: "collaborator"}}}}
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(context.Background(), &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "xplane-run-7f3cq2xz", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},
@@ -512,7 +512,7 @@ func TestActsRedactBeforeAppend(t *testing.T) {
 
 func TestSteeringNeedsARunningRun(t *testing.T) {
 	a, _, room := fixture("human:own")
-	a.Runs = runwatch.New()
+	a.Runs = runwatch.New(runwatch.DefaultKind)
 	e7 := int64(7)
 	for _, action := range []Action{{Kind: "message", Text: "now", Delivery: "steering"}, {Kind: "interrupt"},
 		{Kind: "promote_queued", Ref: 1}} {

@@ -212,7 +212,7 @@ func TestCreateEnsuresRowOpenEventAndFinalizer(t *testing.T) {
 	c := build(newRoom())
 	ms := newStore(nil)
 	var observed string
-	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt),
+	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt),
 		Observe: func(_ string, st v1alpha1.RoomStatus, _ time.Time) { observed = st.Phase }}
 	res, err := r.Reconcile(t.Context(), request())
 	if err != nil {
@@ -244,7 +244,7 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	t.Run("a second reconcile writes nothing", func(t *testing.T) {
 		c := build(newRoom())
 		ms := newStore(nil)
-		r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+		r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 		for range 2 {
 			if _, err := r.Reconcile(t.Context(), request()); err != nil {
 				t.Fatal(err)
@@ -257,7 +257,7 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	t.Run("a lost status write reopens nothing", func(t *testing.T) {
 		c := build(newRoom())
 		ms := newStore(nil)
-		r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+		r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 		if _, err := r.Reconcile(t.Context(), request()); err != nil {
 			t.Fatal(err)
 		}
@@ -284,7 +284,7 @@ func TestPurgedLogIsNeverResurrected(t *testing.T) {
 	room.Status = v1alpha1.RoomStatus{Phase: "Closed", LastSeq: 42, Driver: "human:1"}
 	c := build(room)
 	ms := newStore(nil) // no row: retention purged it
-	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 	if _, err := r.Reconcile(t.Context(), request()); err != nil {
 		t.Fatalf("a purged log is not a reconcile error: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestStatusProjection(t *testing.T) {
 			room := newRoom()
 			room.Generation = tc.gen
 			c := build(room)
-			w := runwatch.New()
+			w := runwatch.New(runwatch.DefaultKind)
 			for _, u := range tc.runs {
 				w.Upsert(t.Context(), u)
 			}
@@ -343,7 +343,7 @@ func (f *fakeSuspender) Room(_ context.Context, room *v1alpha1.Room, idleSince t
 // v2 suspend: every resync hands the trigger the room, when its log last moved and its
 // runs; a closed room's runs are left alone, and a run that moved meanwhile is retried soon.
 func TestReconcileRunsTheSuspendTrigger(t *testing.T) {
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(t.Context(), agentRun("7f3cq2xz", roomID, "Running", false))
 	last := deletedAt.Add(-time.Hour)
 	for _, tc := range []struct {
@@ -376,7 +376,7 @@ func TestReconcileRunsTheSuspendTrigger(t *testing.T) {
 func TestSealedRoomStillReconciles(t *testing.T) {
 	c := build(newRoom())
 	ms := newStore(nil, store.RoomState{ID: roomID, Sealed: true, LastSeq: 100})
-	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 	if _, err := r.Reconcile(t.Context(), request()); err != nil {
 		t.Fatalf("a sealed room is not a reconcile error: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestSealedRoomStillReconciles(t *testing.T) {
 }
 
 func TestMissingRoomIsNotAnError(t *testing.T) {
-	r := &Reconciler{Client: build(), Store: newStore(nil), Runs: runwatch.New()}
+	r := &Reconciler{Client: build(), Store: newStore(nil), Runs: runwatch.New(runwatch.DefaultKind)}
 	if _, err := r.Reconcile(t.Context(), request()); err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ func TestAGoneRoomIsForgotten(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var forgot []string
-			r := &Reconciler{Client: build(c.objs...), Store: newStore(nil), Runs: runwatch.New(),
+			r := &Reconciler{Client: build(c.objs...), Store: newStore(nil), Runs: runwatch.New(runwatch.DefaultKind),
 				Forget: func(room string) { forgot = append(forgot, room) }}
 			if _, err := r.Reconcile(t.Context(), request()); err != nil {
 				t.Fatal(err)
@@ -420,7 +420,7 @@ func TestAGoneRoomIsForgotten(t *testing.T) {
 func TestInvalidRetentionIsTerminal(t *testing.T) {
 	room := newRoom()
 	room.Spec.Retention = "0d"
-	r := &Reconciler{Client: build(room), Store: newStore(nil), Runs: runwatch.New()}
+	r := &Reconciler{Client: build(room), Store: newStore(nil), Runs: runwatch.New(runwatch.DefaultKind)}
 	_, err := r.Reconcile(t.Context(), request())
 	if !errors.Is(err, reconcile.TerminalError(nil)) {
 		t.Fatalf("err = %v, want a terminal error", err)
@@ -432,7 +432,7 @@ func TestConflictRequeuesWithoutError(t *testing.T) {
 		WithInterceptorFuncs(interceptor.Funcs{Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
 			return apierrors.NewConflict(schema.GroupResource{Group: "maku.ogenki.io", Resource: "rooms"}, roomID, nil)
 		}}).Build()
-	r := &Reconciler{Client: c, Store: newStore(nil), Runs: runwatch.New()}
+	r := &Reconciler{Client: c, Store: newStore(nil), Runs: runwatch.New(runwatch.DefaultKind)}
 	res, err := r.Reconcile(t.Context(), request())
 	if err != nil || res.RequeueAfter <= 0 {
 		t.Fatalf("result %+v, err %v; want a quiet requeue", res, err)
@@ -444,7 +444,7 @@ func TestConflictRequeuesWithoutError(t *testing.T) {
 func TestSetupRefusesMissingDependencies(t *testing.T) {
 	var ops []string
 	complete := func() *Reconciler {
-		return &Reconciler{Client: build(), Store: newStore(&ops), Runs: runwatch.New(), Ends: fakeEnds{&ops}}
+		return &Reconciler{Client: build(), Store: newStore(&ops), Runs: runwatch.New(runwatch.DefaultKind), Ends: fakeEnds{&ops}}
 	}
 	for _, tc := range []struct {
 		field string
@@ -471,7 +471,7 @@ func TestDeleteListsRunsThroughTheAPIReader(t *testing.T) {
 	c := build(deletingRoom()) // the cache has not seen the run yet
 	api := build(agentRun("7f3cq2xz", roomID, "Running", true))
 	var ops []string
-	r := &Reconciler{Client: c, APIReader: api, Store: newStore(&ops, store.RoomState{ID: roomID}), Runs: runwatch.New(),
+	r := &Reconciler{Client: c, APIReader: api, Store: newStore(&ops, store.RoomState{ID: roomID}), Runs: runwatch.New(runwatch.DefaultKind),
 		Ends: fakeEnds{&ops}, Now: clock(deletedAt.Add(10 * time.Second))}
 	res, err := r.Reconcile(t.Context(), request())
 	if err != nil || res.RequeueAfter <= 0 || len(ops) != 0 {
@@ -486,7 +486,7 @@ func TestDeleteWaitsForLiveRunsTheWatcherDoesNotKnow(t *testing.T) {
 	c := build(deletingRoom(), run)
 	var ops []string
 	ms := newStore(&ops, store.RoomState{ID: roomID})
-	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Ends: fakeEnds{&ops}, Now: clock(deletedAt.Add(10 * time.Second))}
+	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Ends: fakeEnds{&ops}, Now: clock(deletedAt.Add(10 * time.Second))}
 	res, err := r.Reconcile(t.Context(), request())
 	if err != nil {
 		t.Fatal(err)
@@ -508,7 +508,7 @@ func TestDeleteSealsAfterTheTimeoutAndSaysWhy(t *testing.T) {
 	c := build(deletingRoom(), agentRun("7f3cq2xz", roomID, "Running", true))
 	var ops []string
 	var logs bytes.Buffer
-	r := &Reconciler{Client: c, Store: newStore(&ops, store.RoomState{ID: roomID}), Runs: runwatch.New(),
+	r := &Reconciler{Client: c, Store: newStore(&ops, store.RoomState{ID: roomID}), Runs: runwatch.New(runwatch.DefaultKind),
 		Ends: fakeEnds{&ops}, Now: clock(deletedAt.Add(sealTimeout + time.Second)),
 		Log: slog.New(slog.NewTextHandler(&logs, nil))}
 	if _, err := r.Reconcile(t.Context(), request()); err != nil {
@@ -532,7 +532,7 @@ func TestDeleteRecordsRunEndsBeforeTheSeal(t *testing.T) {
 	gone := agentRun("aaaabbbb", roomID, "Running", false)
 	other := agentRun("ccccdddd", "zzzzzzzz", "Running", true)
 	c := build(deletingRoom(), ended, other)
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(t.Context(), gone)
 	var ops []string
 	r := &Reconciler{Client: c, Store: newStore(&ops, store.RoomState{ID: roomID}), Runs: w, Ends: fakeEnds{&ops},
@@ -555,7 +555,7 @@ func TestDeleteDeletesRunsThenSeals(t *testing.T) {
 	c := build(deletingRoom(), run)
 	var ops []string
 	ms := newStore(&ops, store.RoomState{ID: roomID})
-	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Ends: fakeEnds{&ops}, Now: clock(deletedAt.Add(time.Second))}
+	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Ends: fakeEnds{&ops}, Now: clock(deletedAt.Add(time.Second))}
 	res, err := r.Reconcile(t.Context(), request())
 	if err != nil || res.RequeueAfter <= 0 {
 		t.Fatalf("result %+v, err %v: the Pending run was live when listed", res, err)
@@ -580,7 +580,7 @@ func TestDeleteDeletesRunsThenSeals(t *testing.T) {
 func TestDeleteWithoutALogRowReleases(t *testing.T) {
 	c := build(deletingRoom())
 	var ops []string
-	r := &Reconciler{Client: c, Store: newStore(&ops), Runs: runwatch.New(), Ends: fakeEnds{&ops}, Now: clock(deletedAt)}
+	r := &Reconciler{Client: c, Store: newStore(&ops), Runs: runwatch.New(runwatch.DefaultKind), Ends: fakeEnds{&ops}, Now: clock(deletedAt)}
 	if _, err := r.Reconcile(t.Context(), request()); err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestTaskStatus(t *testing.T) {
 			c := build(room)
 			ms := newStore(nil)
 			ms.taskEvents = tc.events
-			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 			if _, err := r.Reconcile(t.Context(), request()); err != nil {
 				t.Fatal(err)
 			}
@@ -699,7 +699,7 @@ func TestAForkProjectsOnlyItsOwnFacts(t *testing.T) {
 			c := build(room)
 			ms := newStore(nil)
 			ms.taskEvents = tc.events
-			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 			if _, err := r.Reconcile(t.Context(), request()); err != nil {
 				t.Fatal(err)
 			}
@@ -734,7 +734,7 @@ func TestAMigratingRoomIsLeftAlone(t *testing.T) {
 	room.Annotations = map[string]string{v1alpha1.AnnotationMigrating: "true"}
 	c := build(room)
 	ms := newStore(nil)
-	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+	r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 	res, err := r.Reconcile(t.Context(), request())
 	if err != nil {
 		t.Fatal(err)
@@ -774,7 +774,7 @@ func TestAnUnchangedStatusIsNotPatched(t *testing.T) {
 				}}).Build()
 			ms := newStore(nil)
 			ms.taskEvents = tc.events
-			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(), Now: clock(deletedAt)}
+			r := &Reconciler{Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
 			for i := range 2 {
 				if _, err := r.Reconcile(t.Context(), request()); err != nil {
 					t.Fatalf("reconcile %d: %v", i+1, err)

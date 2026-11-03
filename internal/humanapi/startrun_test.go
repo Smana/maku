@@ -50,7 +50,7 @@ func (f *fakeRequester) calls() []runrequest.Request {
 // idleFixture is fixture with no Running run, the room's driver human:own.
 func idleFixture() (*Actor, *actLog, *v1alpha1.Room) {
 	a, log, room := fixture("human:own")
-	a.Runs = runwatch.New()
+	a.Runs = runwatch.New(runwatch.DefaultKind)
 	return a, log, room
 }
 
@@ -359,7 +359,7 @@ func TestARequestedRunHoldsTheRoom(t *testing.T) {
 		t.Fatalf("a second start while the first has not joined: %+v, %d requests", f, len(req.calls()))
 	}
 	// The watch knows it, ended: the room is free again.
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(context.Background(), &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "xplane-run-bbbbbbbb", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},
@@ -372,7 +372,7 @@ func TestARequestedRunHoldsTheRoom(t *testing.T) {
 		t.Fatalf("an ended run frees the room: %+v", f)
 	}
 	// A join frees it too, whatever the watch knows: here it knows neither run.
-	a.Runs = runwatch.New()
+	a.Runs = runwatch.New(runwatch.DefaultKind)
 	if f := startAs(a, room, "human:own", 4, Action{Role: "implementer"}); f.Rejected != "room_busy" {
 		t.Fatalf("unjoined requests hold the room: %+v", f)
 	}

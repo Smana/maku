@@ -259,7 +259,7 @@ func newServer(t *testing.T) (*Server, *memLog, *runwatch.Watcher) {
 		t.Fatal(err)
 	}
 	log := newMemLog()
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	hub := fanout.New(log, nil, nil)
 	hub.PollEvery = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
