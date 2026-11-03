@@ -68,6 +68,10 @@ ykind PodDisruptionBudget '.spec.unhealthyPodEvictionPolicy == "AlwaysAllow"' "a
 ykind Deployment "$(vol merger).secret | (.secretName == \"agent-factory-merger\" and .defaultMode == \"0440\" and .optional == true)" "the merger key is optional (#57)"
 ykind Deployment "$(vol intake).secret | (.secretName == \"agent-factory-intake\" and .defaultMode == \"0440\" and .optional == true)" "the intake token is optional (#57)"
 ykind Role '.rules[] | select(.resources[] == "agentruns") | has("verbs")' "AgentRun RBAC"
+# H-5: the AgentRun Role and its binding sit where the binary looks (config.runs, runwatch.Kind);
+# unset, runwatch.DefaultKind's: cloud-native-ref's group in agents.
+ykind Role 'select(.metadata.namespace == "agents") | .rules[] | select(.resources[] == "agentruns") | .apiGroups[0] == "cloud.ogenki.io"' "default AgentRun Role: cloud.ogenki.io in agents"
+ykind RoleBinding 'select(.metadata.namespace == "agents") | (.roleRef.name == "agent-factory" and .subjects[0].namespace == "agent-system")' "default AgentRun RoleBinding in agents"
 # Review C1: a 0400 root-owned key is unreadable to uid 65532; the group bit plus fsGroup is not.
 ykind Deployment "$pod.securityContext.fsGroup == 65532" "the pod's fsGroup owns the mounted Secrets"
 ykind Deployment "$(vol github).secret | (.secretName == \"agent-factory-github\" and .defaultMode == \"0440\")" "the App key readable by the group only"
@@ -126,6 +130,12 @@ refuse() {
 }
 refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao
 refuse 'config.api.tls and api.tls.secretName' --set api.tls.secretName=agent-factory-api-tls --set config.api.tls.certFile=/c
+# H-5: config.runs moves the Role and its binding; nothing stays behind in agents.
+out=$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set config.runs.group=maku.ogenki.io --set config.runs.namespace=runs2)
+ykind Role 'select(.metadata.namespace == "runs2") | .rules[] | select(.resources[] == "agentruns") | .apiGroups[0] == "maku.ogenki.io"' "H-5: the AgentRun Role takes config.runs.group"
+ykind RoleBinding 'select(.metadata.namespace == "runs2") | (.roleRef.name == "agent-factory" and .subjects[0].namespace == "agent-system")' "H-5: the AgentRun RoleBinding sits in config.runs.namespace"
+ynone 'select(.metadata.namespace == "agents")' "H-5: nothing left in agents once config.runs.namespace moves the runs"
 for bad in "" "v0.0.0" "latest"; do
   if helm template agent-factory . --namespace agent-system --set image.tag="$bad" >/dev/null 2>&1; then
     echo "FAIL: image.tag '$bad' must not render: only <version>@sha256:<digest>" >&2; fail=1

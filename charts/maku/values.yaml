@@ -49,6 +49,11 @@ broker:
   # /etc/room-broker/factory-ca and read on every run request. Empty: the system roots.
   factoryCA:
     secretName: ""
+  # The factory's pods, for the broker CNP's two factory flows (only when factoryURL is set):
+  # ingress to :8443 from them, egress to factoryURL's port on them. Their namespace is the
+  # release's unless these labels set io.kubernetes.pod.namespace.
+  factoryPodLabels:
+    app.kubernetes.io/name: agent-factory
   # oidc mode: the https URL humans reach the broker at. local mode: http://localhost:<the port you
   # forward>, default http://localhost:8080; the broker answers that port only.
   publicURL: ""
@@ -64,6 +69,10 @@ broker:
     # The Secret mounted at /etc/room-broker/tls (tls.crt, tls.key). A Certificate is rendered
     # for it only when issuerRef.name is set; otherwise bring the Secret yourself.
     secretName: room-broker-tls
+    # The run controller's copy of the broker's CA: a Secret in the release namespace holding
+    # ca.crt only (an ExternalSecret, a trust-manager Bundle, or the quickstart's up.sh). Never
+    # secretName: that Secret also holds the broker's tls.key.
+    caSecretName: room-broker-ca
     issuerRef: {kind: ClusterIssuer, name: ""}
   # Escape hatches for oidc mode's files, ROOMS_MCP_KEY and the IdP's network flows.
   # Secrets only through valueFrom.secretKeyRef, never a plaintext value.

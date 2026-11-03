@@ -2,7 +2,7 @@
 
 Deploys the agent factory: two replicas of the `maku-factory` controller (Deployment `agent-factory`) behind a
 PodDisruptionBudget, RBAC in two namespaces (a Role in the release namespace and a Role in
-`agents`, `templates/rbac.yaml`), and the `Task` CRD (`crds/`). It ships as
+`config.runs.namespace`, default `agents`, `templates/rbac.yaml`), and the `Task` CRD (`crds/`). It ships as
 `oci://ghcr.io/smana/charts/maku-factory`, at the version of the release tag.
 
 Install it only after the secrets below exist in the release namespace. The factory's behaviour
@@ -65,7 +65,7 @@ deletes `Room`s, takes the leader lease and records events. Its one ConfigMap ru
 `agent-factory-ledger-usd-<UTC day>`, whose names carry the date; the meter also deletes the token
 ledgers they replaced, `agent-factory-ledger-<UTC day>`, once 35 days old. The namespace is the bound, so the
 factory can touch every ConfigMap in it, its own config included: keep no ConfigMap there it must
-not touch. In `agents`, a second Role manages `AgentRun`s. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
+not touch. In `config.runs.namespace` (default `agents`), a second Role manages the `AgentRun`s of `config.runs.group` (default `cloud.ogenki.io`): the values the binary reads, so the two cannot disagree. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
 
 ## Config
 

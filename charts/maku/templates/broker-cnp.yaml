@@ -1,3 +1,13 @@
+{{- /* S-4: the factory's flows, keyed on factoryURL. Cilium matches L4 after service translation,
+so the port is factoryURL's own, which must be the factory pod's (its chart maps 8082 to 8082). */}}
+{{- $factory := dict -}}
+{{- with .Values.broker.factoryURL -}}
+{{- $u := urlParse . -}}
+{{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- $labels := merge (deepCopy $.Values.broker.factoryPodLabels) (dict "io.kubernetes.pod.namespace" $.Release.Namespace) -}}
+{{- $factory = dict "port" $port "labels" $labels -}}
+{{- end -}}
 # Default deny; one allow per flow.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -21,6 +31,13 @@ spec:
     - fromEntities: [host]
       toPorts:
         - ports: [{port: "9090", protocol: TCP}]
+    {{- with $factory }}
+    # The factory's system API calls (its rooms-system token).
+    - fromEndpoints:
+        - matchLabels: {{- toYaml .labels | nindent 12 }}
+      toPorts:
+        - ports: [{port: "8443", protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraIngress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -49,6 +66,13 @@ spec:
             - {key: {{ .Values.broker.database.podLabel }}, operator: Exists}
       toPorts:
         - ports: [{port: "5432", protocol: TCP}]
+    {{- with $factory }}
+    # start_run: POST /v1/runs to factoryURL.
+    - toEndpoints:
+        - matchLabels: {{- toYaml .labels | nindent 12 }}
+      toPorts:
+        - ports: [{port: {{ .port | quote }}, protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

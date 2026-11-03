@@ -59,6 +59,18 @@ capabilities: {drop: [ALL]}
 {{- if not .Values.apiServerPorts -}}
 {{- fail "apiServerPorts is empty: every CiliumNetworkPolicy that reaches the apiserver would render no port" -}}
 {{- end -}}
+{{- if and .Values.runController.enabled (ne .Values.runs.group "maku.ogenki.io") -}}
+{{- fail (printf "runs.group %q with runController.enabled: the run controller reconciles maku.ogenki.io AgentRuns only; set runController.enabled=false where another controller runs %s AgentRuns (cloud-native-ref's Crossplane composition)" .Values.runs.group .Values.runs.group) -}}
+{{- end -}}
+{{- if and .Values.runController.enabled (eq ($b.tls.caSecretName | default "") $b.tls.secretName) -}}
+{{- fail "broker.tls.caSecretName must not be broker.tls.secretName: the run controller needs ca.crt only, never the broker's tls.key" -}}
+{{- end -}}
+{{- if and .Values.runController.enabled (eq .Release.Namespace .Values.runs.namespace) -}}
+{{- fail (printf "runs.namespace %q is the release namespace: with runController.enabled the controller could create a pod there that mounts the broker's tls.key; install into another namespace or set runs.namespace elsewhere" .Values.runs.namespace) -}}
+{{- end -}}
+{{- if not $b.tls.secretName -}}
+{{- fail "broker.tls.secretName is required: the broker mounts its key pair from it" -}}
+{{- end -}}
 {{- $dsn := ne ($b.database.brokerSecret | default "") "" -}}
 {{- range $b.extraEnv -}}{{- if eq .name "ROOMS_DATABASE_URL" -}}{{- $dsn = true -}}{{- end -}}{{- end -}}
 {{- if not $dsn -}}

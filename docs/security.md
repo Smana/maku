@@ -97,8 +97,14 @@ The permission matrix, enforced by the broker (`internal/policy`, tested row by 
   the update, the membership briefly has no record; retrying the act with the same `clientSeq`
   heals it (the update is then a no-op, and the append writes or replays the record). The CR
   change is also in the Kubernetes audit log. A sealed room refuses the invite before the update.
-- **The broker never creates `AgentRun`s**: its RBAC is `get`, `list`, `watch`, `delete` on
-  `agentruns` in `agents`; CRUD on `rooms` in `agent-system`; leases; no cluster-admin.
+- **The broker never creates `AgentRun`s**: its RBAC is `get`, `list`, `watch`, `delete` and `patch`
+  on `agentruns` in `agents`; CRUD on `rooms` in `agent-system`; leases; no cluster-admin. The `patch`
+  is the suspend trigger's, and RBAC cannot bound it to fields: the maku chart's
+  `ValidatingAdmissionPolicy` `room-broker-<namespace>-agentruns` refuses any update by the broker's
+  ServiceAccount that changes more than the three suspend annotations
+  (`agents.ogenki.io/operating-mode`, `agents.ogenki.io/remaining-seconds`,
+  `agents.ogenki.io/resumed-at`): no spec, label, finalizer, owner or other annotation, the meter's
+  included. An install without the chart needs the same policy for the same bound.
 
 ### A sponsored principal's bounds
 
