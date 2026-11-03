@@ -18,7 +18,7 @@ import (
 // touches the log, and an unreadable room is as missing as one that does not exist.
 func (s *Server) roomSummary(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowed(w, r, p) {
 		return
 	}
 	var after int64
@@ -40,25 +40,31 @@ func (s *Server) roomSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // summaryOf is the room's summary/v1 as p sees it, notes after after: readRoom's refusals, or
-// errLogUnreadable.
+// errLogUnreadable. The fold goes on from the cached one of this Room, id and UID (audit S-9): the
+// log is append-only, so only the events past the cached seq are read, and none when the row's last seq
+// is not past it.
 func (s *Server) summaryOf(ctx context.Context, id string, p authn.Principal, after int64) (summary.Summary, error) {
-	room, _, sub, err := s.readRoom(ctx, id, p)
+	room, row, sub, err := s.readRoom(ctx, id, p)
 	if err != nil {
 		return summary.Summary{}, err
 	}
-	// Each page is folded, then dropped: the read holds one page, whatever the log's length.
-	var fold summary.State
-	for last := int64(0); ; {
-		page, err := s.Log.Range(ctx, id, last, pageSize)
-		if err != nil {
-			s.log().Warn("summary: log unreadable", "room", id, "err", err)
-			return summary.Summary{}, errLogUnreadable
+	uid := string(room.UID)
+	fold, _ := s.folds.get(id, uid)
+	if fold.LastSeq < row.LastSeq {
+		// Each page is folded, then dropped: the read holds one page, whatever the log's length.
+		for last := fold.LastSeq; ; {
+			page, err := s.Log.Range(ctx, id, last, pageSize)
+			if err != nil {
+				s.log().Warn("summary: log unreadable", "room", id, "err", err)
+				return summary.Summary{}, errLogUnreadable
+			}
+			fold.Add(page)
+			if len(page) < pageSize {
+				break
+			}
+			last = page[len(page)-1].Seq
 		}
-		fold.Add(page)
-		if len(page) < pageSize {
-			break
-		}
-		last = page[len(page)-1].Seq
+		s.folds.put(id, uid, fold)
 	}
 	view := summary.View(fold, id, s.PublicURL+"/r/"+id, sub, after, s.now())
 	if fold.Sealed == "" { // a sealed room takes no next run

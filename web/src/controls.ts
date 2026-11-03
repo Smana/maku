@@ -195,6 +195,11 @@ function hiddenWithin(e: HTMLElement, root: HTMLElement): boolean {
 }
 const confirmFor = 10_000;
 
+// runRoles are the roles a human starts a run as: the broker's runRoles
+// (internal/humanapi/startrun.go), which roles.test.ts reads to keep the two equal. The tester
+// is the factory's alone (tester F3).
+export const runRoles = ["implementer", "reviewer", "triager"];
+
 function group(cls: string, title: string): HTMLElement {
   const s = el("section", { className: `group ${cls}` });
   s.append(el("h2", { textContent: title }));
@@ -216,7 +221,7 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
   // Run: start a run as a role. The PR URL shows for a reviewer only; egress is advanced.
   const run = group("group-run", "Run");
   const hand = el("form", { className: "hand" });
-  const role = select("role", "Start a run as", [["implementer", "implementer"], ["reviewer", "reviewer"], ["tester", "tester"], ["triager", "triager"]]);
+  const role = select("role", "Start a run as", runRoles.map((r): [string, string] => [r, r]));
   const prUrl = named(el("input", { name: "prUrl", type: "url" }), "Pull request URL (reviewer only)");
   const prLabel = labelled("Pull request URL", prUrl);
   const egress = named(el("input", { name: "egress" }), "Egress profiles (comma-separated)");

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
@@ -199,21 +200,37 @@ func (s *Server) Handler() http.Handler {
 	return mux
 }
 
-// Start serves on api.listen until ctx ends, then drains.
+// apiDrain bounds Start's shutdown: under the manager's 20 s GracefulShutdownTimeout
+// (internal/app's managerDrain) and the pod's 30 s grace, and long enough for a handler past its
+// Task's create to file the issue.
+const apiDrain = 15 * time.Second
+
+// Start serves on api.listen until ctx ends, then drains for at most apiDrain, and returns only
+// once the drain has (F-7): the manager waits on Start, so a handler between its Task's create
+// and its issue finishes before the process exits.
 func (s *Server) Start(ctx context.Context) error {
-	srv := &http.Server{Addr: s.Cfg.API.Listen, Handler: s.Handler(),
-		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
-		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
-	go func() {
-		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second) // the drain outlives the root ctx (bridgeapi's idiom)
-		defer cancel()
-		_ = srv.Shutdown(sctx)
-	}()
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	ln, err := s.listen(ctx)
+	if err != nil {
 		return err
 	}
-	return nil
+	return serve(ctx, s.httpServer(), ln, apiDrain)
+}
+
+// listen binds api.listen.
+func (s *Server) listen(ctx context.Context) (net.Listener, error) {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", s.Cfg.API.Listen)
+	if err != nil {
+		return nil, fmt.Errorf("api: listen %s: %w", s.Cfg.API.Listen, err)
+	}
+	return ln, nil
+}
+
+// httpServer is the API's listener with its five bounds.
+func (s *Server) httpServer() *http.Server {
+	return &http.Server{Handler: s.Handler(),
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
 }
 
 func reply(w http.ResponseWriter, code int, v any) {

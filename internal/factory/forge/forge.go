@@ -26,9 +26,10 @@ var ErrEventsTruncated = errors.New("forge: label events past the page cap are u
 // never listed, so the list read is not known to be the whole pull request.
 var ErrCommitsTruncated = errors.New("forge: a pull request's commits past GitHub's 250 are unread")
 
-// ErrDiffTooLarge is Diff reaching a full page of files: the files past it are unseen, so the
-// diff cannot be judged. The merge path hands such a pull request to a human (patch_too_large).
-var ErrDiffTooLarge = errors.New("forge: a diff of a full page of files, the rest unread")
+// ErrDiffTooLarge is a compare listing as many files as GitHub lists (maxChangedFiles, 300), or
+// more commits than one page: the files past it are unseen, so the diff cannot be judged. The
+// merge path hands such a pull request to a human (patch_too_large).
+var ErrDiffTooLarge = errors.New("forge: a diff past what one compare lists, the rest unread")
 
 // ErrNotDescendant is ChangedFiles on a head that GitHub does not call ahead of the base (behind,
 // diverged, identical): the compare's file list says nothing about what changed since the base.

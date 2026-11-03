@@ -27,6 +27,8 @@ const (
 // (ruling SBB, F15). A run that ended frees it at once. live may call the Kubernetes API,
 // so it runs outside any transaction, and the takeover that follows is a
 // compare-and-swap on the holder it asked about.
+// A sealed room refuses every claim with ErrSealed, also one sealed while live runs:
+// the swap requires the room unsealed, and the retry that follows reads the seal.
 func (s *Store) ClaimBridge(ctx context.Context, roomID, runID string, live func(ctx context.Context, runID string) bool) (string, bool, error) {
 	var holder string
 	for range claimAttempts {
@@ -46,7 +48,7 @@ func (s *Store) ClaimBridge(ctx context.Context, roomID, runID string, live func
 			return holder, false, nil
 		}
 		tag, err := s.pool.Exec(ctx, `UPDATE rooms SET bridge_run = $3
-			WHERE room_id = $1 AND bridge_run = $2`, roomID, holder, runID)
+			WHERE room_id = $1 AND bridge_run = $2 AND NOT sealed`, roomID, holder, runID)
 		if err != nil {
 			return "", false, fmt.Errorf("store: claim the bridge of room %s: %w", roomID, err)
 		}
@@ -59,6 +61,7 @@ func (s *Store) ClaimBridge(ctx context.Context, roomID, runID string, live func
 
 // claimFree takes the lease when nobody else holds it. Otherwise it returns the
 // other holder, with took false and the row lock already released.
+// A sealed room hands out no lease at all, its holder's included (audit H-1): ErrSealed.
 func (s *Store) claimFree(ctx context.Context, roomID, runID string) (string, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -66,12 +69,16 @@ func (s *Store) claimFree(ctx context.Context, roomID, runID string) (string, bo
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var holder *string
-	err = tx.QueryRow(ctx, `SELECT bridge_run FROM rooms WHERE room_id = $1 FOR UPDATE`, roomID).Scan(&holder)
+	var sealed bool
+	err = tx.QueryRow(ctx, `SELECT bridge_run, sealed FROM rooms WHERE room_id = $1 FOR UPDATE`, roomID).Scan(&holder, &sealed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, ErrNoRoom
 	}
 	if err != nil {
 		return "", false, err
+	}
+	if sealed {
+		return "", false, ErrSealed
 	}
 	// SBB: freshness never frees a lease; only live(holder) == false does (ClaimBridge).
 	if holder != nil && *holder != runID {

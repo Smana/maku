@@ -420,7 +420,7 @@ func firstNeed(room *v1alpha1.Room, sub policy.Subject, url string, live []store
 // an error may tell that it exists. X-Rooms-Access says why, about the caller.
 func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowed(w, r, p) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)

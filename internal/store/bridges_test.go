@@ -137,3 +137,58 @@ func TestNULIsADataError(t *testing.T) {
 		t.Fatalf("want a class-22 error, got %v", err)
 	}
 }
+
+// bridgeRun is the room's lease holder as stored, "" for none.
+func bridgeRun(t *testing.T, s *Store) string {
+	t.Helper()
+	var holder string
+	if err := s.pool.QueryRow(context.Background(), `SELECT coalesce(bridge_run, '') FROM rooms WHERE room_id = $1`, room).Scan(&holder); err != nil {
+		t.Fatal(err)
+	}
+	return holder
+}
+
+// Audit H-1: a sealed room hands out no bridge lease, so its hello answers 410 and no harness is
+// released into a room that records nothing. The lease, held or not, stays as the seal left it.
+func TestASealedRoomHandsOutNoBridgeLease(t *testing.T) {
+	seal := func(t *testing.T, s *Store) {
+		t.Helper()
+		if err := s.CloseRoom(context.Background(), room, "closed by human:own"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name       string
+		holder     string // claims the lease before the seal; "" for none
+		sealFirst  bool   // seal before the claim; else while the claim asks the holder's liveness
+		run        string
+		wantHolder string // bridge_run after the refused claim
+	}{
+		{"a room nobody holds", "", true, "aaaaaaaa", ""},
+		{"the holder claims again", "7f3cq2xz", true, "7f3cq2xz", "7f3cq2xz"},
+		{"another run, the holder ended", "7f3cq2xz", true, "aaaaaaaa", "7f3cq2xz"},
+		{"sealed while the holder's liveness is asked", "7f3cq2xz", false, "aaaaaaaa", "7f3cq2xz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _, _ := open(t)
+			ctx := context.Background()
+			if tc.holder != "" {
+				if _, ok, err := s.ClaimBridge(ctx, room, tc.holder, alive); err != nil || !ok {
+					t.Fatalf("the holder claims: %v %v", ok, err)
+				}
+			}
+			live := ended
+			if tc.sealFirst {
+				seal(t, s)
+			} else {
+				live = func(context.Context, string) bool { seal(t, s); return false }
+			}
+			if _, took, err := s.ClaimBridge(ctx, room, tc.run, live); took || !errors.Is(err, ErrSealed) {
+				t.Fatalf("claim on a sealed room: took=%v err=%v, want ErrSealed", took, err)
+			}
+			if got := bridgeRun(t, s); got != tc.wantHolder {
+				t.Fatalf("bridge_run = %q, want %q", got, tc.wantHolder)
+			}
+		})
+	}
+}

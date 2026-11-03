@@ -305,7 +305,7 @@ returns it.
 
 A holdout's workflow file must be a gate path (policy-bot's gate paths cover it), otherwise a pull
 request can edit the workflow and post SUCCESS itself; the host's gate-coverage check enforces it.
-A diff of 100 files or more is `patch_too_large` without being read.
+A compare that lists 300 files or more, GitHub's cap, is `patch_too_large` without being read.
 
 The gate compares GitHub logins (`agentsLogin`, `factoryLogin`, `merge.policyBotLogin`,
 `merge.mergerLogin`) case-insensitively, as GitHub does.
@@ -443,7 +443,7 @@ prices both caps stay in tokens.
 |---|---|
 | `meter.prices.<model>: {input, cacheRead, cacheWrite?, output, source?, checkedAt?}` | USD per million tokens, keyed by the model that served the tokens (`glm-5.3`, `claude-opus-5-5`) when `meter.query` groups by `gen_ai_request_model`, else by the tier's logical model. `cacheWrite` defaults to `input`. Each price must be positive. `source` (an `https://` URL) and `checkedAt` (`YYYY-MM-DD`) say where and when the row was read: checked when set, never priced |
 | `tiers.<tier>.runUSD`, `tiers.<tier>.taskUSD` | The tier's caps in USD; `taskUSD` may not be below `runUSD`. Keyed by logical model, a tier with either set and no price for its model fails the rollout: an unpriced run would cost $0 |
-| `meter.query` | Must group by `gen_ai_token_type` (`input`, `cached_input`, `cache_creation_input`, `output`), or no run can be priced and every run is capped in tokens. Grouped by `gen_ai_request_model` too, each model is priced at its own rate |
+| `meter.query` | Must group by `gen_ai_token_type` (`input`, `cached_input`, `cache_creation_input`, `output`), or no run can be priced and every run is capped in tokens. Grouped by `gen_ai_request_model` too, each model is priced at its own rate. Should keep the gateway replica apart, in a `by (...)` clause naming `pod` (or `instance`): the meter then keeps one baseline per returned series, so a replica whose scrape drops out for a tick adds nothing and, on its return, only what it grew, and a replica's counter that falls restarted and adds its new value. A query summing the replicas loads with a startup warning and keeps the per-run reading: a stale replica's return charges its counter again (an over-count that can revoke a run under budget), and a replica restart loses that tick's growth, until the query keeps `pod` |
 
 Grouping by served model is what makes a logical name safe to price: the same claim's
 `agent-default` is GLM-5.3 on one gateway listener and Claude Opus on another, about ten times
@@ -513,7 +513,7 @@ the entries it learned, for a write its predecessor lost. That write carries the
 write's ledger to the same end, and a new leader does so for the days its first read of the run
 showed, today's, and, in the first ten minutes of a day, the day before
 ([#166](https://github.com/Smana/maku/issues/166)). A run is charged once across a
-failover, a ledger that cannot be read, a failed write, landed or not, and midnight, with three
+failover, a ledger that cannot be read, a failed write, landed or not, and midnight, with five
 bounded exceptions:
 
 - A gateway counter reset before a new leader's first reading, once the counters have passed what
@@ -523,6 +523,12 @@ bounded exceptions:
 - A lifted run's late spend not yet in a ledger at a failover (the leader's write was lost, or it
   died before its next tick) is not charged: an under-count bounded by the reading lag at a run's
   end.
+- On a per-replica query, a new leader whose first reading of a run misses a stale gateway replica counts that replica's
+  whole counter when it returns: it cannot tell a returning replica from a new one on a run it
+  has never read. An over-count bounded by that replica's share of the run.
+- On a summed query, a gateway replica that is stale for a tick is charged its whole counter again
+  when it returns, and a replica's restart loses that tick's growth: an over-count that can revoke a
+  run under budget (H-4), and an under-count. Only a `meter.query` that keeps `pod` fixes it.
 
 The meter deletes the ledgers after 35 days, and the token ledgers `agent-factory-ledger-<YYYYMMDD>`
 they replaced the same way. A run the meter first sees ended, with its usage annotated, is taken as
@@ -864,7 +870,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
 decision that did not read the diff prints `files=-/3 lines=-/20` (the caps always print). `-` is
 not `0`: a replay must not count a diff nobody read as an empty one, so it counts such a record as
-unreplayable. A `patch_too_large` from a diff over GitHub's page of files prints `-` too. The
+unreplayable. A `patch_too_large` from a compare at GitHub's 300-file cap prints `-` too. The
 record is **its own `agent-factory-decision` line, beside the event marker, not fields in it**: a
 recorded deviation from AM8's single marker (R-m11), which leaves the would-arm marker and the
 tally's regex for it unchanged. The same facts go to the log as `merge decision` with `rows=`.
@@ -1335,7 +1341,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `defaults` | `template`, `tier`, `dataClass`, `predictedClass` | `dataClass` and `predictedClass` required; `template` and `tier` are read by nothing, optional, checked only when set |
 | `triage` | `classifierURL`, `controlPercent` (0–100) | `controlPercent` required; `classifierURL` unset: no classifier call, every task takes the static `standard` tier |
 | `tiers` | Exactly `light`, `standard`, `frontier`; see [Triage](#triage-tiers-templates-classes) | `runUSD`, `taskUSD` from the token caps when `meter.prices` is set |
-| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role | Required; `reviewerModel` unset: the other tier's model |
+| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role. `solo`, `pair` and `trio` are required: triage chooses them by class and tier. Once `runlore` or `api.internalPrincipals` is set, `investigate` is required as `{roles: [triager]}` | Required; `reviewerModel` unset: the other tier's model |
 | `caps` | `activeTasks`, `concurrentRuns`, `tasksPerDay`, `maxTextBytes` (≤ 14336), `awaitingHumanWIP`, `maxPendingMinutes` (5–480), `escalatedHours` | `maxPendingMinutes` 30, `escalatedHours` 168 |
 | `budgets` | `enforceTask`, `enforcePrincipal`, `factoryDailyUSD`, `humanDailyUSD` ([daily budgets](#daily-budgets)), `perPerson: {enabled, dailyUSD}` ([per-person caps](#per-person-caps)), each day positive. The token days `factoryDaily`, `humanDaily` and `perPerson.dailyTokens` load in this release only, ignored, each named in a startup warning | `enforceTask` true, `factoryDailyUSD` 42.50, `humanDailyUSD` 8.50, `perPerson.enabled` false, `perPerson.dailyUSD` `humanDailyUSD` |
 | `resume` | `maxPerTask` (1–5) | 2 |

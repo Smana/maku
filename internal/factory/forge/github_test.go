@@ -700,6 +700,12 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			_, _ = io.WriteString(w, `{"status":"ahead","total_commits":150,"files":[]}`)
 		case "c1...diverged":
 			_, _ = io.WriteString(w, `{"status":"diverged","files":[{"filename":"a.py"}]}`)
+		case "c1...wide": // one under GitHub's cap: the whole list, and no merge base, so Diff stops there
+			var fs []string
+			for i := range 299 {
+				fs = append(fs, fmt.Sprintf(`{"filename":"f%03d.py"}`, i))
+			}
+			_, _ = io.WriteString(w, `{"status":"ahead","files":[`+strings.Join(fs, ",")+`]}`)
 		case "c1...big":
 			var fs []string
 			for i := range 300 {
@@ -716,9 +722,9 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			_, _ = io.WriteString(w, `{"files":[]}`)
 		case "main...nobase": // a compare without a merge base cannot say which side is the PR's.
 			_, _ = io.WriteString(w, `{"files":[{"filename":"docs/b.md","status":"modified"}]}`)
-		default: // mid...new: exactly one page, so more changed files are unread.
+		default: // mid...new: GitHub's cap of 300 files, so more changed files are unread.
 			var fs []string
-			for i := range 100 {
+			for i := range 300 {
 				fs = append(fs, fmt.Sprintf(`{"filename":"f%03d.md","status":"modified"}`, i))
 			}
 			_, _ = io.WriteString(w, `{"files":[`+strings.Join(fs, `,`)+`]}`)
@@ -1307,8 +1313,8 @@ func TestFilesReadsBothSidesOfADiff(t *testing.T) {
 	if _, err := r.g.Diff(ctx, "old", "mid"); err == nil || !strings.Contains(err.Error(), "big.png") {
 		t.Errorf("an unfetchable file must be an error, not a skip: %v", err)
 	}
-	if _, err := r.g.Diff(ctx, "mid", "new"); err == nil || !strings.Contains(err.Error(), "page") {
-		t.Errorf("a truncated compare must be an error: %v", err)
+	if _, err := r.g.Diff(ctx, "mid", "new"); !errors.Is(err, ErrDiffTooLarge) {
+		t.Errorf("a truncated compare must be ErrDiffTooLarge: %v", err)
 	}
 }
 
@@ -1990,6 +1996,20 @@ func TestChangedFilesListsTheCompare(t *testing.T) {
 	}
 	if _, err := r.g.Diff(t.Context(), "c1", "many"); !errors.Is(err, ErrDiffTooLarge) {
 		t.Fatalf("Diff reads the same compare: %v", err)
+	}
+}
+
+// H-3: a compare lists at most maxChangedFiles (300) files, so a listing that long may hide more,
+// whatever the class's maxPatchFiles allows: Diff refuses it, as ChangedFiles does. One fewer is
+// the whole list, and Diff goes on to read it.
+func TestDiffRefusesAListingAtGitHubsFileCap(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.g.Diff(t.Context(), "c1", "big"); !errors.Is(err, ErrDiffTooLarge) {
+		t.Fatalf("300 files: %v, want ErrDiffTooLarge", err)
+	}
+	// c1...wide carries no merge base: reaching that check proves the count let 299 files through.
+	if _, err := r.g.Diff(t.Context(), "c1", "wide"); errors.Is(err, ErrDiffTooLarge) || err == nil || !strings.Contains(err.Error(), "merge base") {
+		t.Fatalf("299 files: %v, want the merge-base check, not ErrDiffTooLarge", err)
 	}
 }
 

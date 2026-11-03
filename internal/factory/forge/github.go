@@ -1251,8 +1251,9 @@ func (g *GitHub) Diff(ctx context.Context, base, head string) (Diff, error) {
 	if cmp.GetTotalCommits() > comparePage { // the files are on a later page: the diff cannot be judged
 		return Diff{}, fmt.Errorf("%w: %d commits between %s and %s, the files are unread", ErrDiffTooLarge, cmp.GetTotalCommits(), base, head)
 	}
-	if len(cmp.Files) == 100 { // one page exactly: unseen files must not let a diff pass as links-only
-		return Diff{}, fmt.Errorf("%w: 100 files differ between %s and %s, the links-only test cannot see them all", ErrDiffTooLarge, base, head)
+	if len(cmp.Files) >= maxChangedFiles { // GitHub's cap: unseen files must not let a diff pass a class's checks
+		return Diff{}, fmt.Errorf("%w: %d files differ between %s and %s, as many as a compare lists: the diff cannot be judged whole",
+			ErrDiffTooLarge, len(cmp.Files), base, head)
 	}
 	// The file list is three-dot: changed since the merge base. Reading the base side at base's
 	// tip instead would fold in whatever landed there since the branch was cut

@@ -143,7 +143,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		diff, ferr := r.merger(ctx).Diff(ctx, "main", pr.HeadSHA)
 		switch {
 		case errors.Is(ferr, forge.ErrDiffTooLarge):
-			// A full page of files is over any class's maxPatchFiles: hand it off, as the gate does.
+			// A compare at GitHub's 300-file cap may hide files: hand it off, as the gate does.
 			d = ArmDecision{Verdict: "human", Reason: "patch_too_large", Rows: d.Rows}
 		case ferr != nil:
 			return ferr

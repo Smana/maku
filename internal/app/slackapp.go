@@ -36,6 +36,9 @@ import (
 const (
 	slackTimeout = 15 * time.Second
 	slackDrain   = 10 * time.Second
+	// slackEventsDrain bounds the wait for events already answered 200; with slackDrain it stays
+	// under the pod's 30 s grace.
+	slackEventsDrain = 15 * time.Second
 )
 
 // slackRunning is a started App: the three bound addresses and Wait, which returns once the
@@ -144,6 +147,15 @@ func startSlackApp(ctx context.Context, log *slog.Logger, args []string, getenv 
 
 	return &slackRunning{Events: events.Addr(), Webhooks: hooks.Addr(), Ops: opsLn.Addr(), Wait: func() error {
 		front.Wait()
+		// events already answered 200 get slackEventsDrain to finish; Slack does not resend them
+		wctx, wcancel := context.WithTimeout(context.WithoutCancel(ctx), slackEventsDrain)
+		werr := a.Wait(wctx)
+		wcancel()
+		if werr != nil {
+			mu.Lock()
+			errs = append(errs, werr)
+			mu.Unlock()
+		}
 		stopOps() // :9090 stops last, so the drain's final counts are scraped and /readyz says 503 meanwhile
 		bak.Wait()
 		cancelRun()

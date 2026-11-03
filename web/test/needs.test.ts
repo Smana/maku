@@ -52,6 +52,16 @@ describe("the needs-you panel", () => {
     needs.setSummary(sum([])); needs.refresh();
     expect(root.hidden).toBe(true);
   });
+  // U-2: the answer a bounced task waits for is listed, linked to the issue, and counted in the pill.
+  it("lists an answer need from the summary and counts it", () => {
+    const { root, needs } = mount();
+    needs.setSummary(sum([{ kind: "answer", id: "3", what: "@alice answers the scoper's question by editing issue #3",
+      url: "https://github.com/o/r/issues/3", author: "alice" }]));
+    expect([...root.querySelectorAll("li")].map((l) => l.textContent))
+      .toEqual(["Answer: @alice answers the scoper's question by editing issue #3 · open the issue"]);
+    expect(needs.count()).toBe(1);
+    expect(root.hidden).toBe(false);
+  });
   it("renders read-only for a watcher who may not decide", () => {
     const state = new RoomState(); state.reset({ driver: "human:a", driverEpoch: 1, approvals: [approval] }, 20);
     const root = document.createElement("section");
