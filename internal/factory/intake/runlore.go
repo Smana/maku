@@ -78,6 +78,10 @@ type RunLore struct {
 // unconfiguredWarnEvery rate-limits the missing-token warning: Alertmanager retries every finding.
 const unconfiguredWarnEvery = time.Minute
 
+// fileTimeout bounds filing a finding's issue and linking its Task, past the request's own
+// context (F-8), as the run-request API's internal intake bounds them.
+const fileTimeout = 30 * time.Second
+
 // NeedLeaderElection is false: every replica serves intake, and the task's name is the key, so a
 // replay racing across replicas loses on AlreadyExists and opens no second issue (SC-9).
 func (h *RunLore) NeedLeaderElection() bool { return false }
@@ -234,13 +238,17 @@ func (h *RunLore) intake(ctx context.Context, f Finding) (int, any, error) {
 	// The issue is public: alert, resource, verdict and the room, never the finding (R33); the
 	// identifiers reach it through finding.LabelSafe (TW6).
 	title, body := findingfmt.StubIssue(f.AlertName, f.ResourceRef, f.Severity, f.Verdict, f.Confidence, name, h.Cfg.RoomsURL)
-	iss, err := h.Forge.CreateIssue(ctx, title, body, []string{"factory/proposed"})
+	// Past the Task, a caller that hangs up must not orphan it: filing and linking outlive ctx
+	// (F-8), as api/internal.go's intake does.
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fileTimeout)
+	defer cancel()
+	iss, err := h.Forge.CreateIssue(fctx, title, body, []string{"factory/proposed"})
 	if err != nil {
 		return 0, nil, err
 	}
 	n := iss.Number
 	patch, _ := json.Marshal(map[string]any{"spec": map[string]any{"issue": n}})
-	if err := h.Client.Patch(ctx, &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.Namespace}},
+	if err := h.Client.Patch(fctx, &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.Namespace}},
 		client.RawPatch(types.MergePatchType, patch)); err != nil {
 		return 0, nil, err
 	}
