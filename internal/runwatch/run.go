@@ -74,9 +74,6 @@ func Terminal(phase string) bool {
 // Live is the broker's check on every bridge request (S4): not terminal, not revoked.
 func (r Run) Live() bool { return !Terminal(r.Phase) && r.Revoked == "" }
 
-// FromUnstructured reads u under the configured kind (Current).
-func FromUnstructured(u *unstructured.Unstructured) (Run, bool) { return Current().FromUnstructured(u) }
-
 // FromUnstructured reads exactly the C3 fields SP2 relies on. ok is false for a claim that is not
 // one of k's runs: not named <prefix><C2 id>, or outside k's namespace.
 func (k Kind) FromUnstructured(u *unstructured.Unstructured) (Run, bool) {

@@ -147,10 +147,6 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
-	// Before anything watches or creates a run: every reader takes the kind from here.
-	if err := runwatch.Configure(cfg.Runs); err != nil {
-		return fmt.Errorf("broker config: runs: %w", err)
-	}
 	tlsCfg, err := tlsreload.Config(cfg.TLS.CertFile, cfg.TLS.KeyFile, log)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)

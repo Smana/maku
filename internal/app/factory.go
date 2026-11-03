@@ -137,10 +137,6 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return err
 	}
 	warnIgnored(log, cfg)
-	// Before anything watches or creates a run: every reader takes the kind from here.
-	if err := runwatch.Configure(cfg.Runs); err != nil {
-		return fmt.Errorf("factory config: runs: %w", err)
-	}
 	exp, err := metrics.NewExporter(metrics.FactoryBuildInfo, version.Version)
 	if err != nil {
 		return err

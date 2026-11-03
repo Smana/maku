@@ -150,7 +150,7 @@ func (f fakeEnds) ObserveDeleted(_ context.Context, r runwatch.Run) error {
 // resolves an object's scope through its RESTMapper (review M3).
 func mapper() meta.RESTMapper {
 	m := meta.NewDefaultRESTMapper(nil)
-	m.Add(runwatch.GVK(), meta.RESTScopeNamespace)
+	m.Add(runwatch.DefaultKind.GVK(), meta.RESTScopeNamespace)
 	m.Add(v1alpha1.GroupVersion.WithKind("Room"), meta.RESTScopeNamespace)
 	return m
 }
@@ -165,9 +165,9 @@ func scheme() *runtime.Scheme {
 // claim whose composed resources are still being torn down is.
 func agentRun(id, room, phase string, hold bool) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(runwatch.GVK())
-	u.SetName(runwatch.ClaimPrefix() + id)
-	u.SetNamespace(runwatch.Namespace())
+	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
+	u.SetName(runwatch.DefaultKind.NamePrefix + id)
+	u.SetNamespace(runwatch.DefaultKind.Namespace)
 	_ = unstructured.SetNestedField(u.Object, room, "spec", "roomRef")
 	if phase != "" {
 		_ = unstructured.SetNestedField(u.Object, phase, "status", "phase")
@@ -496,7 +496,7 @@ func TestDeleteWaitsForLiveRunsTheWatcherDoesNotKnow(t *testing.T) {
 		t.Fatalf("result %+v, ops %v: a live run must hold the seal", res, ops)
 	}
 	var left unstructured.Unstructured
-	left.SetGroupVersionKind(runwatch.GVK())
+	left.SetGroupVersionKind(runwatch.DefaultKind.GVK())
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(run), &left); err != nil || left.GetDeletionTimestamp() == nil {
 		t.Fatalf("the live run was not deleted: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestDeleteRecordsRunEndsBeforeTheSeal(t *testing.T) {
 		t.Fatalf("ops = %v, want %v", ops, want)
 	}
 	var kept unstructured.Unstructured
-	kept.SetGroupVersionKind(runwatch.GVK())
+	kept.SetGroupVersionKind(runwatch.DefaultKind.GVK())
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(other), &kept); err != nil || kept.GetDeletionTimestamp() != nil {
 		t.Fatalf("another room's run was touched: %v", err)
 	}
@@ -589,7 +589,7 @@ func TestDeleteDeletesRunsThenSeals(t *testing.T) {
 		t.Fatalf("result %+v, err %v: the Pending run was live when listed", res, err)
 	}
 	var left unstructured.Unstructured
-	left.SetGroupVersionKind(runwatch.GVK())
+	left.SetGroupVersionKind(runwatch.DefaultKind.GVK())
 	if err := c.Get(t.Context(), client.ObjectKeyFromObject(run), &left); !apierrors.IsNotFound(err) {
 		t.Fatal("the room's run was not deleted")
 	}

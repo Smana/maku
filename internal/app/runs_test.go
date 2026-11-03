@@ -75,11 +75,11 @@ func (f fakeOpen) Unfinished(context.Context, string, int64, int64) ([]envelope.
 
 func runClaim(id, room, phase string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": runwatch.ClaimPrefix() + id, "namespace": runwatch.Namespace()},
+		"metadata": map[string]any{"name": runwatch.DefaultKind.NamePrefix + id, "namespace": runwatch.DefaultKind.Namespace},
 		"spec":     map[string]any{"roomRef": room, "role": "implementer"},
 		"status":   map[string]any{"phase": phase},
 	}}
-	u.SetGroupVersionKind(runwatch.GVK())
+	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
 	return u
 }
 

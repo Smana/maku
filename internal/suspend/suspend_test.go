@@ -119,15 +119,15 @@ func (f fakeApprovals) OpenApprovals(context.Context, string) ([]store.Approval,
 
 func mapper() meta.RESTMapper {
 	m := meta.NewDefaultRESTMapper(nil)
-	m.Add(runwatch.GVK(), meta.RESTScopeNamespace)
+	m.Add(runwatch.DefaultKind.GVK(), meta.RESTScopeNamespace)
 	return m
 }
 
 func agentRun(id string, ann map[string]string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(runwatch.GVK())
-	u.SetName(runwatch.ClaimPrefix() + id)
-	u.SetNamespace(runwatch.Namespace())
+	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
+	u.SetName(runwatch.DefaultKind.NamePrefix + id)
+	u.SetNamespace(runwatch.DefaultKind.Namespace)
 	u.SetAnnotations(ann)
 	_ = unstructured.SetNestedField(u.Object, true, "spec", "suspendable")
 	return u
@@ -141,8 +141,8 @@ func room(profile string) *v1alpha1.Room {
 func annotations(t *testing.T, c client.Client, id string) map[string]string {
 	t.Helper()
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(runwatch.GVK())
-	if err := c.Get(t.Context(), types.NamespacedName{Namespace: runwatch.Namespace(), Name: runwatch.ClaimPrefix() + id}, u); err != nil {
+	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
+	if err := c.Get(t.Context(), types.NamespacedName{Namespace: runwatch.DefaultKind.Namespace, Name: runwatch.DefaultKind.NamePrefix + id}, u); err != nil {
 		t.Fatal(err)
 	}
 	return u.GetAnnotations()
@@ -154,8 +154,8 @@ func build(t *testing.T, ann map[string]string) (client.Client, runwatch.Run) {
 	c := fake.NewClientBuilder().WithScheme(runtime.NewScheme()).WithRESTMapper(mapper()).
 		WithObjects(agentRun("7f3cq2xz", ann)).Build()
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(runwatch.GVK())
-	if err := c.Get(t.Context(), types.NamespacedName{Namespace: runwatch.Namespace(), Name: "xplane-run-7f3cq2xz"}, u); err != nil {
+	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
+	if err := c.Get(t.Context(), types.NamespacedName{Namespace: runwatch.DefaultKind.Namespace, Name: "xplane-run-7f3cq2xz"}, u); err != nil {
 		t.Fatal(err)
 	}
 	r := running()
