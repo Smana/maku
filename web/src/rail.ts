@@ -7,7 +7,7 @@
 import type { RoomEvent } from "./conn";
 import { idTail } from "./chat";
 import { el } from "./controls";
-import { chip, detail, ghostMerge, personaLabel, rows, terminal, tone, type Row } from "./flow";
+import { chip, detail, ghostMerge, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
 import { replay } from "./replay";
 import type { Flow, FlowNode } from "./summary";
@@ -30,10 +30,20 @@ export interface Rail {
   live(e: RoomEvent): void;
   mark(run: string | undefined): void;
   chosen(run: string | undefined): void;
+  // The page is leaving: end a running replay without applying a held refetch.
+  dispose(): void;
 }
 
 // rows() never folds a one-node round, so a path can run past this.
 const maxRows = 8;
+
+// A room id is a C2 id; nothing else reaches an href.
+const roomId = /^[a-z2-7]{8}$/;
+
+function roomLink(room: string | undefined, text: string): HTMLElement {
+  if (!room || !roomId.test(room)) return el("span", { textContent: text });
+  return el("a", { href: `/r/${room}`, textContent: text });
+}
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -109,7 +119,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
   const buttons = new Map<string, HTMLButtonElement>();
 
   // While a replay runs, a refetch is held here and applied when it ends.
-  let running: { skip(): void; next(): void } | undefined;
+  let running: { skip(): void; next(): void; stop(): void } | undefined;
   let held: { f: Flow | undefined; phase: string; now: number } | undefined;
 
   let prev: { runs: Set<string>; edges: Set<string>; judges: Map<string, number>; done: Set<string> } | undefined;
@@ -284,6 +294,22 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       items.push(li);
       prev = li.dataset.run;
     });
+    if (flow.split) {
+      const ol = el("ol", { className: "rail-parts" });
+      for (const p of parts(flow.split)) {
+        const li = el("li", { className: "rail-part" });
+        li.dataset.state = p.state;
+        li.append(roomLink(p.room, `#${p.issue ?? "?"} ${p.state}`));
+        ol.append(li);
+      }
+      const scoper = items.find((li) => li.classList.contains("rail-node") && nodeOf(li.dataset.run!)?.persona === "scoper");
+      if (scoper) scoper.append(ol);
+    }
+    if (flow.parent) {
+      const li = el("li", { className: "rail-parent" });
+      li.append(roomLink(flow.parent.room, `part ${flow.parent.index} of ${flow.parent.of} of #${flow.parent.issue}`));
+      items.unshift(li);
+    }
     path.replaceChildren(...items);
 
     const ms: HTMLLIElement[] = (flow.milestones ?? []).map((m) => {
@@ -386,6 +412,12 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     chosen(run) {
       picked = run;
       applyMarks();
+    },
+    dispose() {
+      running?.stop();
+      running = undefined;
+      held = undefined;
+      sync();
     },
   };
 }

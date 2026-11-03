@@ -46,6 +46,13 @@ describe("frames and beats", () => {
     expect(fs.map((x) => x.milestones?.length ?? 0)).toEqual([0, 0, 0, 1]);
   });
 
+  it("a fact-only node at seq 0 cannot make a later frame show fewer milestones", () => {
+    const f: Flow = { ...flow, nodes: [node(1, "scoper"), node(2), { ...node(3, "reviewer"), fromSeq: 0 }], milestones: [{ phase: "AwaitingCI", at: "x", seq: 15 }] };
+    const counts = frames(f).map((x) => x.milestones?.length ?? 0);
+    expect(counts).toEqual([0, 0, 1, 1]);
+    expect(counts).toEqual([...counts].sort());
+  });
+
   it("beats are 1200 per node, 400 per milestone", () => {
     expect(beats(flow)).toEqual([1200, 1200, 1200, 400, 400]);
   });
@@ -138,6 +145,18 @@ describe("rail replay button", () => {
     expect(nodesShown(rail)).toBe(1);
     btn("Skip")!.click();
     expect(nodesShown(rail)).toBe(4);
+  });
+
+  it("dispose ends a running replay, drops its timers and never applies a held refetch", () => {
+    const { rail, t, btn } = mount();
+    rail.set(flow, "Merged", 0);
+    btn("Replay")!.click();
+    t.fire();
+    rail.set({ ...flow, nodes: [...flow.nodes, node(4, "merger")] }, "Merged", 0);
+    rail.dispose();
+    expect(t.pending()).toBe(0);
+    expect(nodesShown(rail)).toBe(1);
+    expect(btn("Skip")).toBeUndefined();
   });
 
   it("under reduced motion Next steps one frame at a time", () => {

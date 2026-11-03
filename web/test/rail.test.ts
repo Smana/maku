@@ -243,3 +243,36 @@ describe("rail", () => {
     });
   });
 });
+
+describe("split", () => {
+  const split: Flow = {
+    ...flow, nodes: [scoper], ghosts: [],
+    split: { of: 3, parts: [{ index: 1, issue: 11, room: "aaaaaaaa", outcome: "landed" }, { index: 2, issue: 12, room: "bbbbbbbb" }] },
+  };
+
+  it("split chips link each part", () => {
+    const { rail } = mount();
+    rail.set(split, "Implementing", now);
+    const lis = [...rail.el.querySelectorAll<HTMLElement>("ol.rail-parts > li.rail-part")];
+    expect(lis.map((l) => l.dataset.state)).toEqual(["done", "running", "queued"]);
+    expect(lis.map((l) => l.querySelector("a")?.getAttribute("href") ?? null)).toEqual(["/r/aaaaaaaa", "/r/bbbbbbbb", null]);
+    expect(lis[2].textContent).toContain("#?");
+    expect(rail.el.querySelector('li.rail-node[data-run="r-s"] ol.rail-parts')).not.toBeNull();
+  });
+
+  it("a room id that is not a C2 id gets no link", () => {
+    const { rail } = mount();
+    rail.set({ ...split, split: { of: 1, parts: [{ index: 1, issue: 11, room: "javascript:x" }] } }, "Implementing", now);
+    expect(rail.el.querySelector("li.rail-part a")).toBeNull();
+  });
+
+  it("the parent node", () => {
+    const { rail } = mount();
+    rail.set({ ...flow, parent: { room: "cccccccc", issue: 50, index: 2, of: 3 } }, "Implementing", now);
+    const first = rail.el.querySelector(".rail-path")!.firstElementChild as HTMLElement;
+    expect(first.className).toContain("rail-parent");
+    expect(first.textContent).toBe("part 2 of 3 of #50");
+    expect(first.querySelector("a")!.getAttribute("href")).toBe("/r/cccccccc");
+  });
+});
+

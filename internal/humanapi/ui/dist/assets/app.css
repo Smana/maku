@@ -821,6 +821,12 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left; font: inherit;
   color: var(--muted-foreground); background: transparent; border: 1px dashed var(--border); border-radius: 6px; cursor: pointer;
 }
+.rail-parts { list-style: none; margin: 4px 0 0; padding: 0 0 0 12px; display: grid; gap: 2px; font-size: 13px; }
+.rail-part, .rail-parent { color: var(--muted-foreground); }
+.rail-part a, .rail-parent a { color: var(--muted-foreground); }
+.rail-part[data-state="running"] { color: var(--foreground); }
+.rail-part[data-state="queued"] { opacity: 0.6; }
+.rail-parent { padding: 0 0 6px 4px; font-size: 13px; }
 .rail-milestones { display: grid; gap: 4px; margin-top: 8px; }
 .rail-milestone { display: flex; gap: 6px; align-items: center; color: var(--muted-foreground); }
 .rail-milestone::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }

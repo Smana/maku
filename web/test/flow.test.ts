@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chip, detail, ghostMerge, ghostsAfter, personaLabel, rows, tone } from "../src/flow";
+import { chip, detail, ghostMerge, ghostsAfter, parts, personaLabel, rows, tone } from "../src/flow";
 import type { Flow, FlowNode } from "../src/summary";
 
 const node = (o: Partial<FlowNode> = {}): FlowNode => ({
@@ -74,4 +74,17 @@ describe("ghosts", () => {
     expect(ghostsAfter(plan, [node({ persona: "implementer" }), node({ persona: "scoper" })])).toEqual(["reviewer"]);
   });
   it("ghostsAfter no runs", () => expect(ghostsAfter(plan, [])).toEqual(plan));
+});
+
+describe("parts", () => {
+  it("reads each chip's state, the newest unfinished part running and the rest queued", () => {
+    expect(parts({ of: 3, parts: [{ index: 1, issue: 11, room: "aaaaaaaa", outcome: "landed" }, { index: 2, issue: 12, room: "bbbbbbbb" }] }).map((p) => p.state))
+      .toEqual(["done", "running", "queued"]);
+  });
+  it.each([["dropped", "dropped"], ["reverted", "reverted"]])("outcome %s is %s", (outcome, state) => {
+    expect(parts({ of: 1, parts: [{ index: 1, issue: 11, room: "aaaaaaaa", outcome }] })[0].state).toBe(state);
+  });
+  it("a queued part has no issue or room yet", () => {
+    expect(parts({ of: 2 })).toEqual([{ index: 1, state: "queued" }, { index: 2, state: "queued" }]);
+  });
 });

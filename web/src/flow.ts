@@ -95,3 +95,19 @@ export function ghostsAfter(plan: string[], nodes: FlowNode[]): string[] {
   }
   return plan.slice(cursor);
 }
+
+export type PartState = "done" | "dropped" | "reverted" | "running" | "queued";
+
+// Parts open one at a time, so a part with no outcome is the one running; indices past the
+// opened ones are not opened yet.
+export function parts(split: NonNullable<Flow["split"]>): { index: number; issue?: number; room?: string; state: PartState }[] {
+  const byIndex = new Map((split.parts ?? []).map((p) => [p.index, p]));
+  const out: { index: number; issue?: number; room?: string; state: PartState }[] = [];
+  for (let index = 1; index <= split.of; index++) {
+    const p = byIndex.get(index);
+    if (!p) { out.push({ index, state: "queued" }); continue; }
+    const state: PartState = p.outcome === "landed" ? "done" : p.outcome === "dropped" ? "dropped" : p.outcome === "reverted" ? "reverted" : "running";
+    out.push({ index, issue: p.issue, room: p.room, state });
+  }
+  return out;
+}
