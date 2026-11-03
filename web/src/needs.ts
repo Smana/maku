@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The needs-you panel sits in the room's lead, under the title strip: one card per
-// pending approval, command first, decided right there, then the summary's merges and
-// holds. It is the page's one decide path (approvals are web-only); a card leaves when
+// pending approval, command first, decided right there, then the summary's merges,
+// answers and holds. It is the page's one decide path (approvals are web-only); a card leaves when
 // the log decides it (approval_decided), whoever decided, so a decide that lost the race
 // (already_decided) leaves no dead button. Every string here may be agent-written: all
 // of it enters the DOM as text.
@@ -99,7 +99,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
         const text = row ? `see the call #${row.dataset.seq ?? "?"}` : "see the call";
         if (l.textContent !== text) l.textContent = text;
       }
-      // A viewer who decides nothing here and has no merge or hold reads the cards as
+      // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
       // someone else's turn.
       const heading = panel.count() > 0 ? "Needs you" : "Waiting for an approver";
       if (title.textContent !== heading) title.textContent = heading;
@@ -111,7 +111,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       others = items.length;
       panel.refresh();
     },
-    // count is what needs this viewer: the approvals it may decide, then merges and holds.
+    // count is what needs this viewer: the approvals it may decide, then merges, answers and holds.
     count(): number { return panel.approvalCounts().mine + others; },
     // approvalCounts: the pending approvals, and those this viewer may decide.
     approvalCounts(): { total: number; mine: number } {

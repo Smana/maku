@@ -117,6 +117,20 @@ describe("needsItems", () => {
     expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
   });
 
+  // U-2: a task the scoper bounced waits on its issue's author; the room's owner sees it,
+  // linked to the issue, each backticked command set as code.
+  it("renders an answer need with its instruction and the issue link", () => {
+    const s = base();
+    s.needsYou = [{ kind: "answer", id: "3", url: "https://github.com/o/r/issues/3", author: "alice",
+      what: "@alice answers the scoper's question by editing issue #3, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption" }];
+    const items = needsItems(s);
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toMatch(/^Answer: @alice answers the scoper's question by editing issue #3/);
+    expect(items[0].querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/issues/3");
+    expect(items[0].querySelector("a")?.textContent).toBe("open the issue");
+    expect([...items[0].querySelectorAll("code")].map((c) => c.textContent)).toEqual(["factory/ready", "/factory retry"]);
+  });
+
   // The approvals come from the live log, as cards (needs.test.ts): the summary's are skipped.
   it("skips approvals, and is empty when nothing needs you", () => {
     expect(needsItems(base())).toHaveLength(0);
@@ -136,11 +150,13 @@ describe("needsItems", () => {
 
   it("links only https URLs", () => {
     const s = base();
-    s.needsYou = [{ kind: "merge", id: "7", what: "merge PR #7", url: "javascript:alert(1)" }];
+    s.needsYou = [{ kind: "merge", id: "7", what: "merge PR #7", url: "javascript:alert(1)" },
+      { kind: "answer", id: "3", what: "answer on issue #3", url: "http://github.com/o/r/issues/3" }];
     const r = needs(s);
     const hrefs = [...r.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(hrefs.some((h) => h?.startsWith("javascript:") || h?.startsWith("http:"))).toBe(false);
     expect(r.textContent).toContain("javascript:alert(1)");
+    expect(r.textContent).toContain("http://github.com/o/r/issues/3");
   });
 });
 
