@@ -78,7 +78,7 @@ export function rows(nodes: FlowNode[], max: number): Row[] {
 }
 
 // The phases that close a task's path (internal/summary terminalPhase).
-const terminal = new Set(["Merged", "Done", "Reverted", "Escalated", "Closed", "Stopped", "NoOp", "Rejected"]);
+export const terminal = new Set(["Merged", "Done", "Reverted", "Escalated", "Closed", "Stopped", "NoOp", "Rejected"]);
 
 // ghostMerge is whether the rail draws a ghost merge step: the task is not over and nothing merged.
 export function ghostMerge(f: Flow, phase: string): boolean {

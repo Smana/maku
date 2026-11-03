@@ -880,3 +880,7 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .run-view-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .run-view-title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .run-view-note { margin: 0 0 8px; color: var(--muted-foreground); }
+.rail-replays { display: flex; gap: 6px; margin-bottom: 8px; }
+.rail-replays[hidden], .rail-replay[hidden] { display: none; }
+.rail-replay { font: inherit; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.rail-replay:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
