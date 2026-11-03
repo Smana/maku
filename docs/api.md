@@ -347,6 +347,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /`, `GET /r/{id}`, `GET /assets/{file...}` | The embedded UI, under a strict Content Security Policy. `/assets/` serves nested files (`/assets/svg/…`, `/assets/fonts/…`); a directory, `/assets` or `/assets/` is a `404`, never a listing. A room's page keeps its newest 5 000 events; older ones leave the page, never the log. A `401` from the API, or one behind a refused WebSocket upgrade, sends the page to `/oauth2/start?rd=<the page>` |
 | `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no GitHub link on their ZITADEL user), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe` |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
+| `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
 | `POST /api/rooms` | `{"dataClass": "public", "repository": "Smana/cloud-native-ref"}` → `201 {"id": "…"}`: a new room owned and driven by the caller, any agents member, on a `repository` they can read (room access). `400` for another data class, a missing or malformed repository, an unknown field or a principal the Room CRD would refuse, `404` for a repository the caller cannot read or the factory App cannot see (missing, or the App not installed), `409` when a Room of the generated id exists, `429` past the caller's action budget (10/s, burst 20, shared with acts), `500` when the Room is refused for any other reason, such as the broker lacking `create` on rooms (logged at WARN), `503` when the API server is unreachable, overloaded or times out, or `access_unverified` when the caller's access cannot be checked. The `SameSite=Strict` cookie and the `Origin` check stop a cross-site post |
@@ -381,6 +382,24 @@ keeps only the notes after `seq` N; pass back the number of the previous answer'
 
 A sealed room has no `reason`, `next`, `needsYou` or `actions`. A fork's summary starts at its `forked_from`: the
 source's task, approvals, verdict and notes are not the fork's.
+
+### `GET /api/rooms/{id}/events`
+
+A page of the room's log, as stored, in `seq` order: what the run view reads for one run's range
+(`fromSeq`, `toSeq` of a [`flow`](#get-apiroomsidsummary) node). A room read, with the same room
+access and role check as `GET /v1/ws`, whose replay filters nothing per viewer either. Query:
+
+| Param | Holds |
+|---|---|
+| `after` | Default `0`: only events with a `seq` above it; pass back the last `seq` of the previous page |
+| `limit` | Default and maximum `500`, at least `1` |
+
+| Status | When |
+|---|---|
+| `200` | `{"events": [...]}`, each an event envelope; `[]` past the end of the log. A page shorter than `limit` is the last |
+| `400` | `after` is not a non-negative integer, or `limit` is not an integer from 1 to 500 |
+| `404` | No such room, or one the caller may not read: the same `no such room` |
+| `503` | `access_unverified`, or the rooms or the log are unavailable (`room log unreadable`). Retry |
 
 ### The coarse state
 
