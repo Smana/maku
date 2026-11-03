@@ -38,6 +38,7 @@ import (
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 // RunClient is the AgentRun API as the reconciler uses it (runs.Client).
@@ -164,8 +165,10 @@ type Reconciler struct {
 	Clients func(repository string) (TaskForge, forge.Merger, bool)
 	// Owned is v2 D7's fence: the merge gate hands a repository this factory does not own to a
 	// human. nil owns nothing.
-	Owned   func(repository string) bool
-	Runs    RunClient
+	Owned func(repository string) bool
+	Runs  RunClient
+	// Kind is the runs kind, required: SetupWithManager watches its AgentRuns.
+	Kind    runwatch.Kind
 	Rooms   RoomLog
 	Triage  triage.Triager
 	Metrics metrics
@@ -187,8 +190,11 @@ type Reconciler struct {
 
 // SetupWithManager watches Tasks and the AgentRuns that carry a task label.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.Kind.Validate(); err != nil {
+		return fmt.Errorf("reconciler: the runs kind: %w", err)
+	}
 	run := &unstructured.Unstructured{}
-	run.SetGroupVersionKind(runs.GVK())
+	run.SetGroupVersionKind(r.Kind.GVK())
 	return ctrl.NewControllerManagedBy(mgr).For(&v1alpha1.Task{}).
 		Watches(run, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
 			id := o.GetLabels()[runs.LabelTask]

@@ -472,7 +472,7 @@ func TestEnvtestAReviewerClaimCarriesItsBriefBesideThePullRequest(t *testing.T) 
 	e.modelSecret(t)
 	const pr = "https://github.com/o/r/pull/12"
 	claim := func(name, role, text, url string) *unstructured.Unstructured {
-		u := runs.Build(runs.Spec{RunID: name[len("run-"):], Role: role, Repository: "o/r", BaseRef: "main",
+		u := runs.Build(runwatch.DefaultKind, runs.Spec{RunID: name[len("run-"):], Role: role, Repository: "o/r", BaseRef: "main",
 			Branch: "agent/3buqdlot", TaskText: text, TaskURL: url, Principal: runs.PrincipalFactory, DataClass: "public",
 			Model: "agent-default", MaxTokens: 1000, MaxMinutes: 30})
 		u.SetGroupVersionKind(v1alpha1.GroupVersion.WithKind("AgentRun"))

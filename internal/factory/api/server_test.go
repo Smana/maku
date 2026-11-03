@@ -29,6 +29,7 @@ import (
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/policy"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 type byToken map[string]authn.Principal
@@ -483,9 +484,9 @@ func TestDeleteDoesNotRefund(t *testing.T) {
 // attempt's reservation kept, not dropped as a create failure.
 func TestTheRetryOfAWholeAdmissionAnswers201Again(t *testing.T) {
 	s := scheme()
-	runs.Scheme(s)
+	runs.Scheme(s, runwatch.DefaultKind)
 	c := fake.NewClientBuilder().WithScheme(s).Build()
-	h := mkServer(t, runs.Client{C: c}, c, false, false, "7f3cq2xz", 5_000_000).Handler()
+	h := mkServer(t, runs.Client{C: c, Kind: runwatch.DefaultKind}, c, false, false, "7f3cq2xz", 5_000_000).Handler()
 	if w := post(h, "alice", base()); w.Code != http.StatusCreated {
 		t.Fatalf("the first attempt: %d %s", w.Code, w.Body)
 	}

@@ -168,7 +168,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	mgr, err := newFactoryManager(log, ns)
+	mgr, err := newFactoryManager(log, ns, cfg.Runs)
 	if err != nil {
 		return err
 	}
@@ -206,13 +206,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	rc := runs.Client{C: mgr.GetClient()}
+	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs}
 	perms := conns.permissions(cfg.API.Access)
 	var c7 triage.Classifier // nil while triage.classifierURL is unset: no HTTP client, no call
 	if cfg.Triage.ClassifierURL != "" {
 		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
 	}
-	rec := &reconciler.Reconciler{Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
+	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
 		CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage: triage.Classify{Cfg: cfg, C: c7,
 			Clients: conns.class},
@@ -464,11 +464,11 @@ func elected(mgr manager.Manager) func() bool {
 }
 
 // factoryManagerOptions caches Tasks, Rooms and the stop object in the factory's namespace and
-// AgentRuns in theirs only: the chart's Roles grant exactly that. Unstructured reads stay
+// kind's AgentRuns in theirs only: the chart's Roles grant exactly that. Unstructured reads stay
 // uncached, so a stop's run list sees the API server (ruling SN), not the watch.
-func factoryManagerOptions(ns string) ctrl.Options {
+func factoryManagerOptions(ns string, kind runwatch.Kind) ctrl.Options {
 	runObj := &unstructured.Unstructured{}
-	runObj.SetGroupVersionKind(runs.GVK())
+	runObj.SetGroupVersionKind(kind.GVK())
 	drain := managerDrain
 	here := map[string]cache.Config{ns: {}}
 	return ctrl.Options{
@@ -481,14 +481,14 @@ func factoryManagerOptions(ns string) ctrl.Options {
 			&v1alpha1.Room{}:  {Namespaces: here},
 			&corev1.ConfigMap{}: {Namespaces: here,
 				Field: fields.OneTermEqualSelector("metadata.name", killswitch.ConfigMap)},
-			runObj: {Namespaces: map[string]cache.Config{runs.Namespace(): {}}},
+			runObj: {Namespaces: map[string]cache.Config{kind.Namespace: {}}},
 		}},
 		Client: client.Options{Cache: &client.CacheOptions{Unstructured: false}},
 	}
 }
 
 // newFactoryManager builds the manager on factoryManagerOptions, logging through log.
-func newFactoryManager(log *slog.Logger, ns string) (ctrl.Manager, error) {
+func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Manager, error) {
 	lr := logr.FromSlogHandler(log.Handler())
 	// controller-runtime and client-go's leader election log through these globals.
 	ctrl.SetLogger(lr)
@@ -503,8 +503,8 @@ func newFactoryManager(log *slog.Logger, ns string) (ctrl.Manager, error) {
 			return nil, err
 		}
 	}
-	runs.Scheme(scheme)
-	opts := factoryManagerOptions(ns)
+	runs.Scheme(scheme, kind)
+	opts := factoryManagerOptions(ns, kind)
 	opts.Scheme, opts.Logger = scheme, lr
 	mgr, err := ctrl.NewManager(restCfg, opts)
 	if err != nil {
