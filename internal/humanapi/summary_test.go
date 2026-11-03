@@ -356,3 +356,35 @@ func TestSummaryCarriesTheQueue(t *testing.T) {
 		t.Fatalf("%d %s", code, body)
 	}
 }
+
+// Audit S-9: the room list and a summary spend a per-principal read budget, 10 a second, burst 20,
+// per replica. It is apart from acts, so a page that refreshes never refuses its viewer's next act.
+func TestRoomReadsAreRateLimited(t *testing.T) {
+	for _, path := range []string{"/api/rooms", "/api/rooms/" + roomID + "/summary"} {
+		t.Run(path, func(t *testing.T) {
+			e := setup(t, abc(t))
+			for i := range 20 {
+				if code, body := get(t, e, path, admin("boss")); code != http.StatusOK {
+					t.Fatalf("read %d of the burst: %d %s", i+1, code, body)
+				}
+			}
+			limited := false
+			for range 20 {
+				code, body := get(t, e, path, admin("boss"))
+				if code == http.StatusTooManyRequests {
+					if body != "rate_limited\n" {
+						t.Fatalf("429 body %q", body)
+					}
+					limited = true
+					break
+				}
+			}
+			if !limited {
+				t.Fatal("40 reads at once were all served")
+			}
+			if code, body := get(t, e, path, admin("other")); code != http.StatusOK {
+				t.Fatalf("the budget is per principal: %d %s", code, body)
+			}
+		})
+	}
+}

@@ -170,8 +170,9 @@ type Server struct {
 	sockets sync.WaitGroup // one per tracked connection: the drain waits on it
 	closing bool
 
-	mcpMu     sync.Mutex
-	mcpLimits map[string]*rate.Limiter // /mcp requests per principal, per replica
+	limitMu    sync.Mutex
+	mcpLimits  map[string]*rate.Limiter // /mcp requests per principal, per replica
+	readLimits map[string]*rate.Limiter // room list and summary reads per principal, per replica
 }
 
 // Routes is the :8080 handler.
@@ -373,6 +374,33 @@ func (s *Server) rejected(ctx context.Context, reason string) {
 	if s.Metrics != nil {
 		s.Metrics.Rejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 	}
+}
+
+// readAllowed takes one of p's room reads, GET /api/rooms or a summary: 10 a second, burst 20,
+// per replica (audit S-9). The budget is apart from acts, so a page that refreshes never refuses its
+// viewer's next act. A refusal answers 429 rate_limited and is counted.
+func (s *Server) readAllowed(w http.ResponseWriter, r *http.Request, p authn.Principal) bool {
+	if s.take(&s.readLimits, p.ID) {
+		return true
+	}
+	s.rejected(r.Context(), rejectRateLimited)
+	http.Error(w, rejectRateLimited, http.StatusTooManyRequests)
+	return false
+}
+
+// take takes one request from principal's limiter in limits, made at 10 a second, burst 20.
+func (s *Server) take(limits *map[string]*rate.Limiter, principal string) bool {
+	s.limitMu.Lock()
+	defer s.limitMu.Unlock()
+	if *limits == nil {
+		*limits = map[string]*rate.Limiter{}
+	}
+	l, ok := (*limits)[principal]
+	if !ok {
+		l = rate.NewLimiter(10, 20)
+		(*limits)[principal] = l
+	}
+	return l.Allow()
 }
 
 // room reads a Room CR of this namespace; found is false for none.

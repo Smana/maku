@@ -18,7 +18,7 @@ import (
 // touches the log, and an unreadable room is as missing as one that does not exist.
 func (s *Server) roomSummary(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowed(w, r, p) {
 		return
 	}
 	var after int64
