@@ -4,11 +4,14 @@ package slackapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -73,7 +76,9 @@ func TestAFullEventQueueAnswers503(t *testing.T) {
 		t.Fatal("the refused event's id is still marked seen: Slack's retry would be dropped as a duplicate")
 	}
 	close(gate.release)
-	rig.app.Wait()
+	if err := rig.app.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
 	if st := react("Ev-after-wait"); st != http.StatusServiceUnavailable {
 		t.Fatalf("an event after Wait: %d, want 503", st)
 	}
@@ -103,7 +108,7 @@ func TestWaitFinishesTheEventInFlight(t *testing.T) {
 	cancel()       // SIGTERM: the request's context goes
 
 	waited := make(chan struct{})
-	go func() { rig.app.Wait(); close(waited) }()
+	go func() { _ = rig.app.Wait(context.Background()); close(waited) }()
 	select {
 	case <-waited:
 		t.Fatal("Wait returned with an event in flight")
@@ -117,4 +122,48 @@ func TestWaitFinishesTheEventInFlight(t *testing.T) {
 	if !strings.Contains(rig.lastPost().text, "Filed #42") {
 		t.Fatalf("the reply was not posted before Wait returned: %q", rig.lastPost().text)
 	}
+}
+
+// F-10: Wait is bounded by its context; past it, it names how many events are left.
+func TestWaitReturnsAtItsDeadlineAndCountsTheUnfinished(t *testing.T) {
+	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+	var logs syncBuffer
+	rig.app.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	gate := &gatedSlack{fakeSlack: rig.slack, entered: make(chan struct{}, 2), release: make(chan struct{})}
+	rig.app.Slack, rig.app.Async = gate, nil
+	if st := rig.postEvents(rig.eventBody("Ev-stuck", checkMark), true).Code; st != http.StatusOK {
+		t.Fatalf("events: %d", st)
+	}
+	<-gate.entered
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := rig.app.Wait(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Wait: %v, want DeadlineExceeded", err)
+	}
+	if got := logs.String(); !strings.Contains(got, "events=1") {
+		t.Fatalf("the unfinished count was not logged: %q", got)
+	}
+	close(gate.release)
+	if err := rig.app.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait after release: %v", err)
+	}
+}
+
+// syncBuffer is a log sink a worker and the test can both write.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

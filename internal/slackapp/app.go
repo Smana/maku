@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Smana/maku/internal/webhook"
@@ -90,6 +91,7 @@ type App struct {
 	draining bool        // Wait has run: queue is closed
 	queue    chan func() // eventQueue slots, fed by enqueue, drained by eventWorkers
 	workers  sync.WaitGroup
+	pending  atomic.Int64 // events taken by a worker's queue and not yet finished
 }
 
 // seen is a bounded set of ids: Slack's event_id and a delivery's webhook-id (R26).
@@ -194,10 +196,12 @@ func (a *App) enqueue(f func()) bool {
 	if a.draining {
 		return false
 	}
+	a.pending.Add(1)
 	select {
 	case a.queue <- f:
 		return true
 	default:
+		a.pending.Add(-1)
 		return false
 	}
 }
@@ -209,15 +213,18 @@ func (a *App) startWorkers() {
 		a.workers.Go(func() {
 			for f := range a.queue {
 				f()
+				a.pending.Add(-1)
 			}
 		})
 	}
 }
 
-// Wait stops taking events and returns once every queued and running one has finished: each
-// was answered 200, so Slack will not send it again (F-10). Each event is bounded by
-// handleTimeout. Safe to call more than once.
-func (a *App) Wait() {
+// Wait stops taking events and returns once every queued and running one has finished, or
+// ctx ends first: then it logs how many were left and returns the context's error, wrapped.
+// Each of those was answered 200, so Slack will not resend it (F-10); the bound is the caller's,
+// since 72 events at handleTimeout over eight workers can outlast a pod's grace period. Safe to
+// call more than once.
+func (a *App) Wait(ctx context.Context) error {
 	a.poolOnce.Do(a.startWorkers)
 	a.poolMu.Lock()
 	if !a.draining {
@@ -225,7 +232,16 @@ func (a *App) Wait() {
 		close(a.queue)
 	}
 	a.poolMu.Unlock()
-	a.workers.Wait()
+	done := make(chan struct{})
+	go func() { a.workers.Wait(); close(done) }()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		n := a.pending.Load()
+		a.log().ErrorContext(context.WithoutCancel(ctx), "slack events unfinished at shutdown", "events", n)
+		return fmt.Errorf("wait for %d slack events: %w", n, ctx.Err())
+	}
 }
 
 // slackText is user text made inert in a Slack message: Slack's three escapes, so a <!channel>,
