@@ -782,3 +782,55 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .run-status[data-kind="finished"], .run-status[data-kind="done"] { border-left-color: var(--success); }
 .run-status[data-kind="failed"] { border-left-color: var(--destructive); }
 .run-status-icon { flex: none; }
+
+/* The run rail (rail.ts): a node's lane colour comes from data-tone, a plan step's from
+   data-state=ghost; role text never reaches a class. Past runs dim so the live one leads. */
+.rail { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.rail[hidden] { display: none; }
+.rail-path, .rail-milestones { list-style: none; margin: 0; padding: 0; }
+.rail-node { position: relative; --lane: var(--flow-writer); }
+.rail-node[data-tone="judge"] { --lane: var(--flow-judge); }
+.rail-node[data-state="ghost"] { --lane: var(--flow-plan); }
+.rail-node[data-state="ghost"] > .rail-button { opacity: 0.6; }
+.rail-node[data-state="done"] > .rail-button { opacity: 0.72; }
+.rail-button {
+  display: grid; gap: 2px; width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left;
+  font: inherit; color: var(--foreground); background: var(--card); cursor: pointer;
+  border: 1px solid var(--border); border-left: 3px solid var(--lane); border-radius: 6px;
+}
+.rail-button:hover { box-shadow: var(--shadow-border-hover); }
+.rail-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.rail-button[aria-current="true"] { border-color: var(--lane); }
+.rail-button[aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
+.rail-node[data-state="ghost"] .rail-button { background: transparent; border-style: dashed; cursor: default; }
+.rail-line { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.rail-line .glyph { flex: none; width: 18px; height: 18px; color: var(--lane); }
+.rail-persona { font-weight: 500; min-width: 0; }
+.rail-chip { margin-left: auto; white-space: nowrap; color: var(--muted-foreground); }
+.rail-chip[data-kind="ok"] { color: var(--success-text); }
+.rail-chip[data-kind="changes"], .rail-chip[data-kind="fail"] { color: var(--destructive-text); }
+.rail-chip[data-kind="live"] { color: var(--lane); }
+.rail-judge { color: var(--flow-judge); white-space: nowrap; }
+.rail-detail { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.rail-edge { display: flex; align-items: center; gap: 6px; padding-left: 4px; }
+.rail-edge svg { flex: none; }
+.rail-stroke { fill: none; stroke: var(--border); stroke-width: 2; }
+.rail-edge[data-state="ghost"] .rail-stroke { stroke: var(--flow-plan); stroke-dasharray: 3 3; opacity: 0.6; }
+.rail-edge-label { color: var(--muted-foreground); }
+.rail-round > button {
+  width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left; font: inherit;
+  color: var(--muted-foreground); background: transparent; border: 1px dashed var(--border); border-radius: 6px; cursor: pointer;
+}
+.rail-milestones { display: grid; gap: 4px; margin-top: 8px; }
+.rail-milestone { display: flex; gap: 6px; align-items: center; color: var(--muted-foreground); }
+.rail-milestone::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
+.rail-milestone[data-state="ghost"] { color: var(--flow-plan); opacity: 0.6; }
+.rail-milestone[data-state="ghost"]::before { background: transparent; border: 1px dashed var(--flow-plan); }
+.rail-card {
+  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; padding: 8px; display: grid; gap: 2px;
+  background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-border); border-radius: 6px;
+}
+.rail-card[hidden] { display: none; }
+.rail-card p { margin: 0; }
+.rail-card .hint { margin-left: 8px; color: var(--muted-foreground); }
+.rail-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
