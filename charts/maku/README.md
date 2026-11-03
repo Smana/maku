@@ -41,5 +41,6 @@ helm template ap charts/maku -n maku -f charts/maku/values-quickstart.yaml \
 | `createRuntimeClass` | Off by default (the RuntimeClass name is cluster-scoped); on in the quickstart |
 | Broker runtime | The broker pod never takes a runtimeClassName (refused at render): kubectl port-forward cannot reach a runsc pod |
 | `apiServerPorts` | `[443, 6443]`: the ports the egress policy opens to the apiserver |
+| `AgentRun` admission | A cluster-scoped `ValidatingAdmissionPolicy` and binding, `room-broker-<release namespace>-agentruns` (Kubernetes 1.30+): an update by the broker's ServiceAccount may change the three suspend annotations of an AgentRun and nothing else |
 
 Checks: `task chart:check`. The laptop install is the [quickstart](../../docs/quickstart.md).

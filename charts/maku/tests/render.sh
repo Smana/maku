@@ -153,6 +153,17 @@ out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set brok
   --set 'broker.factoryPodLabels.io\.kubernetes\.pod\.namespace=agent-system')"
 ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "agent-system" and .toPorts[0].ports[0].port == "443")' 'an https factoryURL without a port is 443; factoryPodLabels may name the namespace'
 
+# the AgentRun admission policy (S-2, D4): the broker's updates may touch the suspend annotations only.
+# CEL is proven in charts/maku/tests/admission (envtest); here, its shape and binding.
+out="$q"
+ykind ValidatingAdmissionPolicy '(.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules[0] | (.apiGroups[0] == "maku.ogenki.io" and (.operations | join(",")) == "UPDATE" and (.resources | join(",")) == "agentruns")))' 'the policy holds every AgentRun update, failing closed'
+ykind ValidatingAdmissionPolicy '.spec.matchConditions[0].expression | test("^request.userInfo.username == .system:serviceaccount:maku:room-broker.$")' "the policy applies to the broker's ServiceAccount only"
+KEYS="['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']" \
+  ykind ValidatingAdmissionPolicy '.spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
+ykind ValidatingAdmissionPolicyBinding '(.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
+out="$p"
+ykind ValidatingAdmissionPolicy '(.metadata.name == "room-broker-agent-system-agentruns" and .spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io")' "the policy follows runs.group and the release namespace"
+
 # a misconfiguration is a helm error, for the intended reason: each case names its message
 bad() { # bad 'expected message' --set ...
   local want="$1" err; shift
