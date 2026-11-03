@@ -133,6 +133,9 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       el("p", { textContent: n.endedAt ? `end ${stamp(n.endedAt)}` : "still running" }),
       el("p", { textContent: `tool calls ${t.ok} ok · ${t.failed} failed` }),
     ];
+    const names = [...(n.model ? [`${n.model} (asked)`] : []), ...(n.models ?? []).filter((m) => m !== n.model)];
+    if (n.effort) names.push(`effort ${n.effort}`);
+    if (names.length) lines.push(el("p", { textContent: `Models: ${names.join(" · ")}` }));
     if (n.reason) lines.push(el("p", { textContent: n.reason }));
     if (n.startedBy) lines.push(el("p", { textContent: `started by ${idTail(n.startedBy)}` }));
     const first = n.handoff?.split("\n")[0].trim();

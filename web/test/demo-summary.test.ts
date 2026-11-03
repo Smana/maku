@@ -64,6 +64,17 @@ describe("summaryAt", () => {
       expect(f.nodes[1].edge).toBe("PR #214");
       expect(f.ghosts).toEqual([]);
     });
+    it("names each node's model and effort from the events shown", () => {
+      const f = flowAt((e) => e.seq === 93);
+      expect(f.nodes.map((n) => [n.model, n.models, n.effort])).toEqual([["glm-5.3", ["glm-5.3"], "high"], ["claude-sonnet-4.5", ["claude-sonnet-4.5"], "medium"]]);
+      expect(flowAt((e) => e.seq === 8).nodes[0].effort).toBeUndefined();
+    });
+    it("takes the served models from the recorded runs once done", () => {
+      const withRuns = { ...final, runs: [{ id: "w4hn8c2r", role: "implementer", provenance: { servedModels: ["claude-haiku-4.5", "glm-5.3"] } }] };
+      const f = summaryAt(withRuns, events, events.length, true).flow!;
+      expect(f.nodes[0].models).toEqual(["claude-haiku-4.5", "glm-5.3"]);
+      expect(f.nodes[1].models).toEqual(["claude-sonnet-4.5"]);
+    });
     it("carries the reviewer's verdict, and no milestone, until the replay is done", () => {
       const f = flowAt((e) => e.seq === 93);
       expect(f.nodes[1]).toMatchObject({ verdict: "approve", toSeq: 93 });

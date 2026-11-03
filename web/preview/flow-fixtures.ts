@@ -15,20 +15,20 @@ const none = { ok: 0, failed: 0 };
 
 const scoper: FlowNode = {
   run: "scopera2", persona: "scoper", role: "triager", round: 1, startedAt: "2026-10-04T13:20:00Z", endedAt: "2026-10-04T13:31:00Z",
-  fromSeq: 0, toSeq: 0, outcome: "succeeded", microUSD: 40_000, model: "glm-5.3", tools: none,
+  fromSeq: 0, toSeq: 0, outcome: "succeeded", microUSD: 40_000, model: "glm-5.3", models: ["glm-5.3"], tools: none,
 };
 // A node's edge names the edge into it, from the node before.
 const tester: FlowNode = {
   run: "testerb3", persona: "tester", role: "tester", round: 1, startedAt: "2026-10-04T13:32:00Z", endedAt: "2026-10-04T13:48:00Z",
-  fromSeq: 0, toSeq: 0, outcome: "succeeded", tools: none, edge: "plan",
+  fromSeq: 0, toSeq: 0, outcome: "succeeded", model: "glm-5.3", models: ["glm-5.3"], tools: none, edge: "plan",
 };
 const implementer: FlowNode = {
   run: "ikely2yk", persona: "implementer", role: "implementer", round: 1, startedAt: "2026-10-04T13:59:58.050000Z",
-  fromSeq: 4, toSeq: 0, judge: { count: 2, last: "not_yet" }, tools: { ok: 3, failed: 1 }, edge: "failing test",
+  fromSeq: 4, toSeq: 0, model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"], effort: "high", judge: { count: 2, last: "not_yet" }, tools: { ok: 3, failed: 1 }, edge: "failing test",
 };
 const reviewer: FlowNode = {
   run: "reviewc4", persona: "reviewer", role: "reviewer", round: 1, startedAt: "2026-10-04T14:09:00Z", endedAt: "2026-10-04T14:14:00Z",
-  fromSeq: 0, toSeq: 0, outcome: "succeeded", verdict: "approve", tools: none, edge: "PR #41",
+  fromSeq: 0, toSeq: 0, outcome: "succeeded", verdict: "approve", model: "claude-sonnet-4.5", models: ["claude-sonnet-4.5"], tools: none, edge: "PR #41",
 };
 
 const plan = ["scoper", "tester", "implementer", "reviewer"];

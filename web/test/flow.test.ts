@@ -35,6 +35,12 @@ describe("detail", () => {
   const now = Date.parse("2026-10-08T11:00:00Z");
   it("joins duration, cost and model", () =>
     expect(detail(node({ microUSD: 820000, model: "glm-5.3" }), now)).toBe("14 m · $0.82 · glm-5.3"));
+  it("shows one model and counts the others", () => {
+    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"] }), now)).toBe("14 m · $0.82 · glm-5.3 +1");
+    expect(detail(node({ model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 m · glm-5.3");
+    expect(detail(node({ models: ["a", "b", "c"] }), now)).toBe("14 m · a +2");
+    expect(detail(node({ model: "asked", models: ["a", "b"] }), now)).toBe("14 m · asked +2");
+  });
   it("leaves a missing part out with its dot", () => {
     expect(detail(node({ model: "glm-5.3" }), now)).toBe("14 m · glm-5.3");
     expect(detail(node({ startedAt: undefined, microUSD: 10000 }), now)).toBe("$0.01");

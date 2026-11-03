@@ -49,7 +49,11 @@ export function detail(n: FlowNode, now: number): string {
     if (!Number.isNaN(end)) parts.push(duration(end - start));
   }
   if (n.microUSD) parts.push(`$${(n.microUSD / 1e6).toFixed(2)}`);
-  if (n.model) parts.push(n.model);
+  const shown = n.model ?? n.models?.[0];
+  if (shown) {
+    const more = (n.models ?? []).filter((m) => m !== shown).length;
+    parts.push(more ? `${shown} +${more}` : shown);
+  }
   return parts.join(" · ");
 }
 

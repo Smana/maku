@@ -19,11 +19,15 @@ function flowAt(final: Summary, shown: RoomEvent[], done: boolean): Flow {
   const nodes = new Map<string, FlowNode>();
   const roles = new Map<string, string>();
   const outcomes = new Map<string, string>();
+  const asked = new Map<string, string>();
+  const efforts = new Map<string, string>();
   for (const e of shown) {
     const p = e.payload;
     const id = e.runId;
     if (e.type === "state_changed" && id && p.kind === "run_requested") roles.set(id, p.role);
     if (e.type === "state_changed" && id && p.kind === "run_phase" && (p.phase === "Succeeded" || p.phase === "Failed")) outcomes.set(id, String(p.phase).toLowerCase());
+    if (e.type === "state_changed" && id && p.kind === "run_phase" && p.phase === "Running" && p.model) asked.set(id, p.model);
+    if (e.type === "state_changed" && id && p.kind === "harness_status" && p.effort) efforts.set(id, p.effort);
     if (e.type === "participant" && id && p.change === "joined" && !nodes.has(id)) {
       const role = roles.get(id) ?? String(p.role);
       nodes.set(id, { run: id, persona: role, role, round: 1, startedAt: e.ts, fromSeq: e.seq, toSeq: 0, tools: { ok: 0, failed: 0 },
@@ -34,6 +38,15 @@ function flowAt(final: Summary, shown: RoomEvent[], done: boolean): Flow {
     if (e.type === "participant" && p.change === "left") { n.endedAt = e.ts; n.toSeq = e.seq; n.outcome = outcomes.get(n.run); }
     if (e.type === "tool_result") n.tools[p.status === "ok" ? "ok" : "failed"]++;
     if (e.type === "message" && p.kind === "review_verdict") n.verdict = p.verdict;
+  }
+  const served = new Map(final.runs?.map((r) => [r.id, r.provenance?.servedModels]));
+  for (const n of nodes.values()) {
+    const model = asked.get(n.run), effort = efforts.get(n.run);
+    if (model) n.model = model;
+    if (effort) n.effort = effort;
+    const models = done ? served.get(n.run) : undefined;
+    if (models?.length) n.models = models;
+    else if (model) n.models = [model];
   }
   const list = [...nodes.values()];
   const flow: Flow = { plan, nodes: list, ghosts: ghostsAfter(plan, list) };

@@ -139,6 +139,23 @@ describe("rail", () => {
     expect(card(rail).textContent).toContain("started by ana");
   });
 
+  describe("the models line", () => {
+    const line = (o: Partial<FlowNode>) => {
+      const { rail } = mount();
+      rail.set({ nodes: [node(o)] }, "Implementing", now);
+      rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.dispatchEvent(new MouseEvent("mouseenter"));
+      return card(rail).textContent!;
+    };
+    it("marks the asked model among the served ones, then the effort", () =>
+      expect(line({ model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"], effort: "high" })).toContain("Models: glm-5.3 (asked) · claude-haiku-4.5 · effort high"));
+    it("lists an asked model that did not serve first", () =>
+      expect(line({ model: "glm-5.3", models: ["claude-haiku-4.5"] })).toContain("Models: glm-5.3 (asked) · claude-haiku-4.5"));
+    it("lists served models alone, without an asked mark", () =>
+      expect(line({ models: ["a", "b"] })).toContain("Models: a · b"));
+    it("shows effort alone", () => expect(line({ effort: "low" })).toContain("Models: effort low"));
+    it("is absent without models or effort", () => expect(line({})).not.toContain("Models"));
+  });
+
   it("the card", () => {
     const { rail } = mount();
     const n = node({ endedAt: "2026-11-03T10:15:00Z", outcome: "failed", reason: "tests red", handoff: "fixed the parser\nand more", tools: { ok: 5, failed: 2 } });

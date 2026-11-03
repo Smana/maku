@@ -15,7 +15,7 @@ export interface RunModel { run: string; model?: string; effort?: string }
 export interface FlowNode {
   run: string; persona: string; role: string; round: number;
   startedAt?: string; endedAt?: string; fromSeq: number; toSeq: number; outcome?: string;
-  verdict?: string; microUSD?: number; model?: string; judge?: { count: number; last: string };
+  verdict?: string; microUSD?: number; model?: string; models?: string[]; effort?: string; judge?: { count: number; last: string };
   tools: { ok: number; failed: number }; edge?: string; startedBy?: string; reason?: string; handoff?: string;
 }
 export interface Milestone { phase: string; at: string; seq: number }
@@ -50,7 +50,7 @@ export interface Summary {
     lastRunModel?: RunModel;
   };
   // A hold (N3): a factory task waits on the viewer's hold on this room; id is its wait reason.
-  runs?: { id: string; role: string }[]; // the task's run history, oldest first
+  runs?: { id: string; role: string; provenance?: { servedModels?: string[] } }[]; // the task's run history, oldest first
   // approve: a merge need a maintainer's approval settles (approveToMerge); absent otherwise.
   needsYou: { kind: "approval" | "hold" | "merge"; id: string; what: string; deadline?: string; url: string; approve?: boolean }[];
   // The one thing to do for the room and where: "pr" and "answer" are on GitHub, "approve" on this page.
