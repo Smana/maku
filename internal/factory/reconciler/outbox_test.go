@@ -5,6 +5,7 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,5 +212,45 @@ func TestAMonitorPassWithManyFollowUpsStillWrites(t *testing.T) {
 	tk := g.reconcile(t, "3buqdlot", 0)
 	if tk.Status.Monitor == nil || len(tk.Status.Monitor.FollowUps) != 9 || len(tk.Status.Outbox) != 16 {
 		t.Fatalf("monitor %+v, outbox of %d", tk.Status.Monitor, len(tk.Status.Outbox))
+	}
+}
+
+// goneForge is GitHub with issue gone deleted: every read or write of it is refused for good (F-3).
+type goneForge struct {
+	*forgetest.Fake
+	gone int
+}
+
+func (f *goneForge) RecentComments(ctx context.Context, n int) ([]forge.Comment, error) {
+	if n == f.gone {
+		return nil, &forge.PermanentError{Status: 404, Err: errors.New("forge: list comments: 404 Not Found")}
+	}
+	return f.Fake.RecentComments(ctx, n)
+}
+
+func (f *goneForge) Comment(ctx context.Context, n int, body string) error {
+	if n == f.gone {
+		return &forge.PermanentError{Status: 404, Err: errors.New("forge: comment: 404 Not Found")}
+	}
+	return f.Fake.Comment(ctx, n, body)
+}
+
+// F-3: a comment GitHub refuses for good (here its issue was deleted) is dropped and recorded; the
+// comments after it still post, the outbox empties and the ended task's room closes.
+func TestANarrationRefusedForGoodIsDropped(t *testing.T) {
+	tk := endedTask(v1alpha1.PhaseDone)
+	tk.Status.Outbox = []v1alpha1.Narration{{Key: "to-the-deleted-issue", Number: 9, Body: "lost"}, {Key: "to-the-issue", Number: 7, Body: "kept"}}
+	g := newRig(t, tk)
+	withRoom(t, g)
+	g.r.Forge = &goneForge{Fake: g.f, gone: 9}
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil {
+		t.Fatalf("a permanent refusal is not retried: %v", err)
+	}
+	got := g.reconcile(t, "3buqdlot", 0)
+	if len(got.Status.Outbox) != 0 || !contains(g.f.Comments(7), "kept") || !slices.Contains(got.Status.Narrated, "to-the-deleted-issue") {
+		t.Fatalf("outbox %+v, narrated %v, comments %q", got.Status.Outbox, got.Status.Narrated, g.f.Comments(7))
+	}
+	if !roomGone(t, g) {
+		t.Fatal("the room waits on a comment GitHub will never take")
 	}
 }

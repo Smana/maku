@@ -578,14 +578,22 @@ func narrateOn(t *v1alpha1.Task, n int, e narrate.Event) {
 }
 
 // drain posts the outbox in order and stops at the first failure, which the next reconcile
-// retries. A post that landed but failed is found by its marker then, not posted twice.
+// retries. A post that landed but failed is found by its marker then, not posted twice. A post
+// GitHub refuses for good (F-3) is dropped: it would hold back every later one and the room's close.
 func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
 	for len(t.Status.Outbox) > 0 {
 		o := t.Status.Outbox[0]
 		if narrate.Closing(o.Key) && r.settling(t) {
 			break // its token total is final only once the usage settles (#42); settle requeues
 		}
-		if err := r.narrator(ctx).Post(ctx, t, o.Number, narrate.Event{Key: o.Key, Body: o.Body}); err != nil {
+		err := r.narrator(ctx).Post(ctx, t, o.Number, narrate.Event{Key: o.Key, Body: o.Body})
+		var pe *forge.PermanentError
+		switch {
+		case errors.As(err, &pe):
+			// Error, not Warn: a mis-scoped App token reads as a refusal too, and must be seen.
+			r.log().Error("narration_dropped", "task.id", t.Name, "key", o.Key, "number", o.Number, "why", "refused", "status", pe.Status)
+			narrate.Abandon(t, o.Key)
+		case err != nil:
 			return err
 		}
 		t.Status.Outbox = t.Status.Outbox[1:]

@@ -440,6 +440,27 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, `{"id":3101,"number":31}`)
 	}))
+	// GitHub's refusals of a comment: for good (deleted, issues off, locked) or not (403 otherwise, 5xx).
+	mux.HandleFunc("POST /repos/Smana/demo/issues/{n}/comments", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		refusal := map[string]struct {
+			code    int
+			message string
+		}{
+			"404": {http.StatusNotFound, "Not Found"},
+			"410": {http.StatusGone, "Issues are disabled for this repo"},
+			"423": {http.StatusForbidden, "Unable to create comment because issue is locked."},
+			"403": {http.StatusForbidden, "Resource not accessible by integration"},
+			"502": {http.StatusBadGateway, "Server Error"},
+		}[r.PathValue("n")]
+		if refusal.code == 0 {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"id":2}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(refusal.code)
+		_, _ = fmt.Fprintf(w, `{"message":%q}`, refusal.message)
+	}))
 	mux.HandleFunc("PATCH /repos/Smana/demo/issues/{n}", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		var in map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&in)
@@ -453,6 +474,12 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		_, _ = io.WriteString(w, `{"number":7,"state":"closed"}`)
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/issues/{n}/comments", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("n") == "404" { // a deleted issue
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+			return
+		}
 		total := map[string]int{"7": 1, "9": 130, "10": 180, "11": 60, "13": 2}[r.PathValue("n")]
 		q := r.URL.Query()
 		per, _ := strconv.Atoi(q.Get("per_page"))
@@ -1872,5 +1899,29 @@ func TestCommitChecksCapMarksTheListingAndKeepsFailures(t *testing.T) {
 	}
 	if runs[901].Name != CheckListTruncated || runs[100].State != "FAILURE" {
 		t.Fatalf("a failure on a capped listing stays FAILURE: %+v", runs[100])
+	}
+}
+
+// F-3: GitHub refusing a comment for good (the issue deleted, issues turned off, the issue locked)
+// is a *PermanentError, on the marker read as on the post; a 403 that is no lock, or a 5xx, is not.
+func TestACommentRefusedForGoodIsPermanent(t *testing.T) {
+	r := newRig(t)
+	for name, c := range map[string]struct {
+		n         int
+		permanent bool
+	}{
+		"deleted": {404, true}, "issues off": {410, true}, "locked": {423, true},
+		"forbidden otherwise": {403, false}, "a server error": {502, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var pe *PermanentError
+			if err := r.g.Comment(t.Context(), c.n, "hello"); err == nil || errors.As(err, &pe) != c.permanent {
+				t.Fatalf("%v", err)
+			}
+		})
+	}
+	var pe *PermanentError
+	if _, err := r.g.RecentComments(t.Context(), 404); !errors.As(err, &pe) || pe.Status != http.StatusNotFound {
+		t.Fatalf("the marker read of a deleted issue: %v", err)
 	}
 }

@@ -55,6 +55,18 @@ var ErrNotAFile = errors.New("forge: the path is not a readable file")
 // so the caller narrows since and reads again.
 var ErrMergedTruncated = errors.New("forge: a window of 100 merged pull requests, the rest unread")
 
+// PermanentError is GitHub refusing a write for good: the issue or pull request is gone (404, 410)
+// or locked (a 403 saying so). A retry gets the same answer, so the caller drops the write (F-3).
+type PermanentError struct {
+	Status int
+	Err    error
+}
+
+func (e *PermanentError) Error() string { return fmt.Sprintf("%v (permanent, %d)", e.Err, e.Status) }
+
+// Unwrap returns the refusal as the client reported it.
+func (e *PermanentError) Unwrap() error { return e.Err }
+
 // Item is an open issue or pull request carrying a label.
 type Item struct {
 	Number      int

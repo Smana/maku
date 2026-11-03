@@ -365,7 +365,9 @@ and resume, each hand-off with its reason and the merge command, and the end wit
 Each comment carries a hidden marker and is posted at least once and never twice, from an outbox
 written with the transition that caused it. The
 outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged
-`narration_dropped`. Comments hold the factory's own words and ids, never
+`narration_dropped`. A comment GitHub refuses for good (its issue deleted,
+issues turned off, or the issue locked) is dropped and logged the same way, and the comments after
+it still post. Comments hold the factory's own words and ids, never
 text a user wrote. The task's room gets the issue snapshot as its first `task_state` message, then
 the task's facts (phase, reason, current run, the run history with each run's outcome, end and
 dollars, token budget, dollar spend, issue and pull request), which the room page and `maku status`

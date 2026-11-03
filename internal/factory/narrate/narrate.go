@@ -106,6 +106,10 @@ func record(t *v1alpha1.Task, key string) {
 	}
 }
 
+// Abandon records key as narrated without a post: the forge refused it for good (F-3), and a
+// narration that fires again must not queue a post that can only be refused again.
+func Abandon(t *v1alpha1.Task, key string) { record(t, key) }
+
 // roomPoster is the broker's system API as narration uses it (rooms.Client).
 type roomPoster interface {
 	TaskState(ctx context.Context, room, text string, clientSeq int64) error

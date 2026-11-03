@@ -181,7 +181,7 @@ func (g *GitHub) LabelEvents(ctx context.Context, number int, label string) ([]L
 func (g *GitHub) Comment(ctx context.Context, number int, body string) error {
 	_, _, err := g.rest.Issues.CreateComment(ctx, g.owner, g.name, number, github.IssueCommentRequest{Body: body})
 	g.mark(err)
-	return wrap("comment", err)
+	return permanent("comment", err)
 }
 
 // recentComments is how many of an issue's newest comments RecentComments returns.
@@ -197,7 +197,7 @@ func (g *GitHub) RecentComments(ctx context.Context, number int) ([]Comment, err
 			&github.IssueListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100, Page: n}})
 		g.mark(err)
 		if err != nil {
-			return nil, nil, wrap("list comments", err)
+			return nil, nil, permanent("list comments", err)
 		}
 		return cs, resp, nil
 	}
@@ -1327,6 +1327,21 @@ func (g *GitHub) DefaultBranchFile(ctx context.Context, path string) (text, sha 
 		return "", fc.GetSHA(), false, fmt.Errorf("forge: %s is %d bytes and not readable through the contents API: %w", path, fc.GetSize(), ErrNotAFile)
 	}
 	return text, fc.GetSHA(), true, nil
+}
+
+// permanent is wrap, except that a refusal GitHub will repeat forever is a *PermanentError: the
+// issue gone (404, 410) or locked (a 403 whose message says so; a rate limit's 403 is go-github's
+// own RateLimitError or AbuseRateLimitError, never an ErrorResponse).
+func permanent(what string, err error) error {
+	var er *github.ErrorResponse
+	if errors.As(err, &er) && er.Response != nil {
+		switch code := er.Response.StatusCode; {
+		case code == http.StatusNotFound, code == http.StatusGone,
+			code == http.StatusForbidden && strings.Contains(strings.ToLower(er.Message), "locked"):
+			return &PermanentError{Status: code, Err: wrap(what, err)}
+		}
+	}
+	return wrap(what, err)
 }
 
 func wrap(what string, err error) error {
