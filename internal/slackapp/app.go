@@ -33,6 +33,10 @@ const (
 	maxWebhookBody = 64 << 10
 	seenCap        = 4096
 	maxShown       = 300
+	// eventWorkers handle Slack events after their 200; eventQueue events wait for one. Past
+	// both, an event answers 503 and Slack retries it (F-10).
+	eventWorkers = 8
+	eventQueue   = 64
 )
 
 // The ids that reach a ref, a key or a URL are checked against Slack's and the factory's shapes
@@ -71,7 +75,7 @@ type App struct {
 	BotUserID   string
 	RoomsURL    string
 	Channels    map[string]Channel
-	Async       func(func()) // runs an event's handling after the 200; nil means go f()
+	Async       func(func()) // runs an event's handling after the 200 (tests); nil means the App's workers
 	Now         func() time.Time
 	Metrics     Recorder
 	Logger      *slog.Logger
@@ -80,6 +84,12 @@ type App struct {
 	answered           seen       // the ✅ refusals said, by draft, user and reason: each is said once
 	retried            throttle   // the ✅ passing failures said, by draft, user and reason: once per retryEvery
 	editMu             sync.Mutex // one draft edit at a time, so two quick replies do not branch the draft
+
+	poolOnce sync.Once
+	poolMu   sync.Mutex  // guards draining and every send on queue
+	draining bool        // Wait has run: queue is closed
+	queue    chan func() // eventQueue slots, fed by enqueue, drained by eventWorkers
+	workers  sync.WaitGroup
 }
 
 // seen is a bounded set of ids: Slack's event_id and a delivery's webhook-id (R26).
@@ -171,12 +181,51 @@ func (a *App) log() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
-func (a *App) run(f func()) {
+// enqueue hands f to a worker and reports whether it was taken: false when eventQueue events
+// already wait, or Wait has run. Async, when set, runs f itself.
+func (a *App) enqueue(f func()) bool {
 	if a.Async != nil {
 		a.Async(f)
-		return
+		return true
 	}
-	go f()
+	a.poolOnce.Do(a.startWorkers)
+	a.poolMu.Lock()
+	defer a.poolMu.Unlock()
+	if a.draining {
+		return false
+	}
+	select {
+	case a.queue <- f:
+		return true
+	default:
+		return false
+	}
+}
+
+// startWorkers starts the eventWorkers that drain queue until Wait closes it.
+func (a *App) startWorkers() {
+	a.queue = make(chan func(), eventQueue)
+	for range eventWorkers {
+		a.workers.Go(func() {
+			for f := range a.queue {
+				f()
+			}
+		})
+	}
+}
+
+// Wait stops taking events and returns once every queued and running one has finished: each
+// was answered 200, so Slack will not send it again (F-10). Each event is bounded by
+// handleTimeout. Safe to call more than once.
+func (a *App) Wait() {
+	a.poolOnce.Do(a.startWorkers)
+	a.poolMu.Lock()
+	if !a.draining {
+		a.draining = true
+		close(a.queue)
+	}
+	a.poolMu.Unlock()
+	a.workers.Wait()
 }
 
 // slackText is user text made inert in a Slack message: Slack's three escapes, so a <!channel>,
@@ -247,12 +296,19 @@ func (a *App) Events() http.Handler {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
-			w.WriteHeader(http.StatusOK)
-			a.run(func() {
+			if !a.enqueue(func() {
 				hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), handleTimeout)
 				defer cancel()
 				a.count(hctx, "events", a.handle(hctx, env))
-			})
+			}) {
+				// Full or draining: Slack retries a non-2xx, so the event is not lost, and its id
+				// is forgotten so that retry is handled rather than read as a duplicate.
+				a.events.forget(env.EventID)
+				a.count(ctx, "events", "busy")
+				http.Error(w, "busy", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
 		default:
 			a.count(ctx, "events", "ignored")
 			w.WriteHeader(http.StatusOK)

@@ -144,6 +144,7 @@ func startSlackApp(ctx context.Context, log *slog.Logger, args []string, getenv 
 
 	return &slackRunning{Events: events.Addr(), Webhooks: hooks.Addr(), Ops: opsLn.Addr(), Wait: func() error {
 		front.Wait()
+		a.Wait()  // events answered 200 finish: Slack never sends them again (F-10)
 		stopOps() // :9090 stops last, so the drain's final counts are scraped and /readyz says 503 meanwhile
 		bak.Wait()
 		cancelRun()
