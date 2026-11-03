@@ -47,8 +47,14 @@ func inertLinks(t string) string {
 	var b strings.Builder
 	last := 0
 	for _, m := range mdLink.FindAllStringSubmatchIndex(t, -1) {
-		b.WriteString(defuseText(t[last:m[0]] + t[m[2]:m[3]] + " ("))
-		b.WriteString("`" + t[m[4]:m[5]] + "`")
+		before := t[last:m[0]]
+		if run := len(before) - len(strings.TrimRight(before, `\`)); run%2 == 1 {
+			continue // an escaped "[" opens no link: it stays text, its "](" defused below
+		}
+		b.WriteString(defuseText(before + t[m[2]:m[3]] + " ("))
+		if m[4] < m[5] { // an empty destination gets no span: "``" would pair with the next run
+			b.WriteString("`" + t[m[4]:m[5]] + "`")
+		}
 		last = m[1] - 1 // the closing ")" starts the next run
 	}
 	b.WriteString(defuseText(t[last:]))

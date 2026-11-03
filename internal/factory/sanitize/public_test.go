@@ -121,40 +121,60 @@ func live(out string) []string {
 // wraps live. An odd run of backslashes gains one, so the run escapes itself; an even run already
 // does, and gains none.
 func TestPublicSpansSurviveABackslash(t *testing.T) {
-	for in, inert := range map[string]string{
-		`\@smana`:                       "@smana",
-		`\#12`:                          "#12",
-		`\\@smana`:                      "@smana",
-		`\\\#12`:                        "#12",
-		`see \Smana/x#7`:                "Smana/x#7",
-		`\https://evil.example/x`:       "https://evil.example/x",
-		`[a](\@smana)`:                  "@smana",
-		`[a](\\@smana)`:                 "@smana",
-		`[a](x,@smana)`:                 "@smana",
-		`[a](@smana,b)`:                 "@smana",
-		`[a](x#1,#12,b)`:                "#12",
-		`[a](x,Smana/x#7)`:              "Smana/x#7",
-		`[a](x,https://evil.example/y)`: "https://evil.example/y",
+	bt := "`"
+	// span is the exact code span that must hold inert; a link destination holds more than the match.
+	for _, c := range []struct{ in, inert, span string }{
+		{`\@smana`, "@smana", ""},
+		{`\#12`, "#12", ""},
+		{`\\@smana`, "@smana", ""},
+		{`\\\#12`, "#12", ""},
+		{`see \Smana/x#7`, "Smana/x#7", ""},
+		{`\https://evil.example/x`, "https://evil.example/x", ""},
+		{`[a](\@smana)`, "@smana", "`\\@smana`"},
+		{`[a](\\@smana)`, "@smana", "`\\\\@smana`"},
+		{`[a](x,@smana)`, "@smana", "`x,@smana`"},
+		{`[a](@smana,b)`, "@smana", "`@smana,b`"},
+		{`[a](x#1,#12,b)`, "#12", "`x#1,#12,b`"},
+		{`[a](x,Smana/x#7)`, "Smana/x#7", "`x,Smana/x#7`"},
+		{`[a](x,https://evil.example/y)`, "https://evil.example/y", "`x,https://evil.example/y`"},
+		// an escaped "[" opens no link
+		{`\[` + bt + `](https://evil.example/y)`, "https://evil.example/y", "`https://evil.example/y)`"},
+		{`\[` + bt + `](@smana)`, "@smana", ""},
+		{`\[\` + bt + `](@smana)`, "@smana", ""},
+		{`\[` + bt + `](x) @smana`, "@smana", ""},
+		{`\\[` + bt + `](@smana)`, "@smana", "`@smana`"},
+		// an empty destination writes no span to pair with the next run
+		{`[a]() ` + bt + bt + `@smana` + bt + bt, "@smana", ""},
+		{`[a]() ` + bt + bt + `https://evil.example/x` + bt + bt, "https://evil.example/x", ""},
+		{`[a]() ` + bt + bt + `[x](https://evil.example/y)` + bt + bt, "https://evil.example/y", "``[x](https://evil.example/y)``"},
+		{`[a]() ` + bt + ` ` + bt + bt + ` ` + bt + ` @smana`, "@smana", ""},
 	} {
-		t.Run(in, func(t *testing.T) {
-			out, _ := Public(in)
-			// A link destination is one code span holding more than the match: it only has to
-			// contain it, and the live scan below proves it is not read outside a span.
-			if strings.HasPrefix(in, "[") {
-				if !strings.Contains(out, inert) {
-					t.Fatalf("%q: %s is gone from %q", in, inert, out)
-				}
-			} else if !strings.Contains(out, "`"+inert+"`") {
-				t.Fatalf("%q: %s is not in a code span: %q", in, inert, out)
+		t.Run(c.in, func(t *testing.T) {
+			out, _ := Public(c.in)
+			span := c.span
+			if span == "" {
+				span = bt + c.inert + bt
+			}
+			if !strings.Contains(out, span) {
+				t.Fatalf("%q: %s is not in the code span %s: %q", c.in, c.inert, span, out)
 			}
 			for _, text := range live(out) {
-				if strings.Contains(text, inert) {
-					t.Fatalf("%q: %s is live in %q", in, inert, out)
+				if strings.Contains(text, c.inert) {
+					t.Fatalf("%q: %s is live in %q", c.in, c.inert, out)
 				}
 			}
 			if l := links(out); len(l) != 0 {
-				t.Fatalf("%q: %v survived in %q", in, l, out)
+				t.Fatalf("%q: %v survived in %q", c.in, l, out)
 			}
 		})
+	}
+}
+
+// An empty link destination leaves no span at all.
+func TestPublicEmptyDestination(t *testing.T) {
+	for _, in := range []string{`[a]()`, `[a]( "t")`} {
+		if out, _ := Public(in); out != "a ()" {
+			t.Fatalf("%q: got %q, want %q", in, out, "a ()")
+		}
 	}
 }
