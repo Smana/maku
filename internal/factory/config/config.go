@@ -943,6 +943,13 @@ var modelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // the claim's logical model.
 func (m Meter) ByModel() bool { return strings.Contains(m.Query, "gen_ai_request_model") }
 
+// ByReplica is true when the meter's query names the label that tells the gateway's replicas
+// apart, pod or instance: the meter keeps one baseline per series (D10), which is exact only when
+// a series is one replica's counter.
+func (m Meter) ByReplica() bool {
+	return strings.Contains(m.Query, "pod") || strings.Contains(m.Query, "instance")
+}
+
 // models are C5's logical names: the only names a tier's model or a template's reviewerModel may
 // take, since both reach internal tasks too.
 func models() []string {
@@ -1103,6 +1110,11 @@ func Parse(raw []byte) (*Config, error) {
 				c.Warnings = append(c.Warnings, fmt.Sprintf("class %s of %s is live without holdoutChecks: refused from the next minor (TO5)", name, r.Name))
 			}
 		}
+	}
+	if !c.Meter.ByReplica() {
+		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: keep the replica label in its grouping, "+
+			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod), or a replica whose scrape drops out for a tick "+
+			"is charged again when it returns (D10)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])

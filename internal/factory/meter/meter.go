@@ -328,6 +328,9 @@ type Meter struct {
 	fell     map[string]bool             // runs whose fallback was reported
 	ledger   map[string]*runLedger       // per run: its settled entries as the ledgers last showed them
 	named    map[string]bool             // run and model pairs whose missing price, or input without cache, was reported
+
+	// series is per run: each series' last reading and the total fold gave it (D10).
+	series map[string]map[string]seriesTotal
 }
 
 type reading struct {
@@ -614,6 +617,11 @@ func (m *Meter) forget(ctx context.Context, all []runs.Run) {
 			delete(m.last, id)
 		}
 	}
+	for id := range m.series {
+		if !live[id] {
+			delete(m.series, id)
+		}
+	}
 	for id, a := range m.accounts {
 		if !live[id] && a.doubt == "" { // a write in doubt is resolved first: it may have landed
 			delete(m.accounts, id)
@@ -684,7 +692,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 		m.OnCharges(m.chargeInfo(all))
 	}
 	defer m.publishSettled(all)
-	used, err := m.Source.RunUsage(ctx)
+	used, err := m.usage(ctx)
 	if err != nil {
 		if m.OnUsageError != nil {
 			m.OnUsageError(ctx)
