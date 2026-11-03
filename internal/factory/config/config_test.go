@@ -472,6 +472,12 @@ func TestBadConfigsFail(t *testing.T) {
 		"no meter throttle query": {`throttleQuery: '_time:2m kubernetes.pod_labels.gateway.envoyproxy.io/owning-gateway-name:"agent-router" | unpack_json | log.response_code:429 AND log.response_flags:~"RL" | stats by (log.x_ar_agent) count() hits'`,
 			"throttleQuery: ''", "meter.throttleQuery is required"},
 		// §4: what the run-request API binds, admits and authenticates against.
+		// S-1, D6: TLS on the run-request API is the whole pair or nothing.
+		"api tls without its key": {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {certFile: /etc/agent-factory-api-tls/tls.crt}\n",
+			"api.tls needs certFile and keyFile both"},
+		"api tls without its cert": {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {keyFile: /etc/agent-factory-api-tls/tls.key}\n",
+			"api.tls needs certFile and keyFile both"},
+		"an empty api tls":              {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {}\n", "api.tls needs certFile and keyFile both"},
 		"no api listen":                 {`listen: ":8443"`, `listen: ''`, "api.listen is required"},
 		"no api issuer":                 {"humanIssuer: https://auth.ogenki.io", "humanIssuer: ''", "api.humanIssuer is required"},
 		"no api jwks":                   {"humanJWKS: https://auth.ogenki.io/oauth/v2/keys", "humanJWKS: ''", "api.humanJWKS is required"},
@@ -716,5 +722,20 @@ func TestParseRefusesTheMetricsSwitch(t *testing.T) {
 		if _, err := Parse([]byte(raw)); err == nil {
 			t.Fatalf("parsed %q", raw)
 		}
+	}
+}
+
+// S-1, D6: api.tls is optional; set, it carries the pair the API serves.
+func TestAPITLSIsOptional(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil || c.API.TLS != nil {
+		t.Fatalf("absent: %+v %v", c.API.TLS, err)
+	}
+	raw := strings.Replace(good, `  listen: ":8443"`+"\n",
+		`  listen: ":8443"`+"\n  tls: {certFile: /etc/agent-factory-api-tls/tls.crt, keyFile: /etc/agent-factory-api-tls/tls.key}\n", 1)
+	c, err = Parse([]byte(raw))
+	if err != nil || c.API.TLS == nil || c.API.TLS.CertFile != "/etc/agent-factory-api-tls/tls.crt" ||
+		c.API.TLS.KeyFile != "/etc/agent-factory-api-tls/tls.key" {
+		t.Fatalf("set: %+v %v", c.API.TLS, err)
 	}
 }
