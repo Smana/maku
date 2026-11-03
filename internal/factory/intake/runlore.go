@@ -8,9 +8,9 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -78,28 +78,37 @@ type RunLore struct {
 // unconfiguredWarnEvery rate-limits the missing-token warning: Alertmanager retries every finding.
 const unconfiguredWarnEvery = time.Minute
 
+// fileTimeout bounds filing a finding's issue and linking its Task, past the request's own
+// context (F-8), as the run-request API's internal intake bounds them.
+const fileTimeout = 30 * time.Second
+
 // NeedLeaderElection is false: every replica serves intake, and the task's name is the key, so a
 // replay racing across replicas loses on AlreadyExists and opens no second issue (SC-9).
 func (h *RunLore) NeedLeaderElection() bool { return false }
 
-// Start serves POST /intake/runlore on runlore.listen until ctx ends, then drains, in the
-// run-request API server's shape (internal/factory/api).
+// runloreDrain bounds Start's shutdown, as the run-request API's: under the manager's 20 s
+// GracefulShutdownTimeout and the pod's 30 s grace.
+const runloreDrain = 15 * time.Second
+
+// Start serves POST /intake/runlore on runlore.listen until ctx ends, then drains for at most
+// runloreDrain, and returns only once the drain has, in the run-request API server's shape
+// (internal/factory/api): a finding past its Task's create files its issue before the exit.
 func (h *RunLore) Start(ctx context.Context) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", h.Cfg.RunLore.Listen)
+	if err != nil {
+		return fmt.Errorf("runlore: listen %s: %w", h.Cfg.RunLore.Listen, err)
+	}
+	return serve(ctx, h.httpServer(), ln, runloreDrain)
+}
+
+// httpServer is the intake's listener with its five bounds.
+func (h *RunLore) httpServer() *http.Server {
 	mux := http.NewServeMux()
 	mux.Handle("POST /intake/runlore", h)
-	srv := &http.Server{Addr: h.Cfg.RunLore.Listen, Handler: mux,
+	return &http.Server{Handler: mux,
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
 		WriteTimeout: 30 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
-	go func() {
-		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second) // the drain outlives the root ctx (bridgeapi's idiom)
-		defer cancel()
-		_ = srv.Shutdown(sctx)
-	}()
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
 }
 
 // unconfigured makes a misprovisioned intake visible: an intake error counter on every refusal and
@@ -229,13 +238,17 @@ func (h *RunLore) intake(ctx context.Context, f Finding) (int, any, error) {
 	// The issue is public: alert, resource, verdict and the room, never the finding (R33); the
 	// identifiers reach it through finding.LabelSafe (TW6).
 	title, body := findingfmt.StubIssue(f.AlertName, f.ResourceRef, f.Severity, f.Verdict, f.Confidence, name, h.Cfg.RoomsURL)
-	iss, err := h.Forge.CreateIssue(ctx, title, body, []string{"factory/proposed"})
+	// Past the Task, a caller that hangs up must not orphan it: filing and linking outlive ctx
+	// (F-8), as api/internal.go's intake does.
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fileTimeout)
+	defer cancel()
+	iss, err := h.Forge.CreateIssue(fctx, title, body, []string{"factory/proposed"})
 	if err != nil {
 		return 0, nil, err
 	}
 	n := iss.Number
 	patch, _ := json.Marshal(map[string]any{"spec": map[string]any{"issue": n}})
-	if err := h.Client.Patch(ctx, &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.Namespace}},
+	if err := h.Client.Patch(fctx, &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.Namespace}},
 		client.RawPatch(types.MergePatchType, patch)); err != nil {
 		return 0, nil, err
 	}
