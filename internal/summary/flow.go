@@ -43,8 +43,10 @@ type Milestone struct {
 type flowState struct {
 	runs      []flowRun // first-seen order, the last envelope.MaxRuns
 	phases    []Milestone
-	requested map[string]string // run id -> who asked for it, before the run joins
+	requested []requestedRun // first-seen order, at most envelope.MaxRuns: runs asked for, not yet joined
 }
+
+type requestedRun struct{ run, by string }
 
 type flowRun struct {
 	id, role, model, startedBy string
@@ -78,9 +80,7 @@ func foldFlow(st *State, ev envelope.Event) {
 			Model  string `json:"model"`
 			RunID  string `json:"runId"`
 		}
-		if json.Unmarshal(ev.Payload, &k) != nil {
-			return
-		}
+		_ = json.Unmarshal(ev.Payload, &k) // a malformed payload still counts as the run's last event
 		switch k.Kind {
 		case "task":
 			if st.Facts != nil && milestonePhases[st.Facts.Phase] && !f.hasPhase(st.Facts.Phase) {
@@ -89,15 +89,14 @@ func foldFlow(st *State, ev envelope.Event) {
 			return
 		case "run_requested":
 			if ev.Actor.Kind == envelope.ActorHuman && k.RunID != "" {
-				if f.requested == nil {
-					f.requested = map[string]string{}
+				f.requested = append(f.requested, requestedRun{k.RunID, ev.Actor.ID})
+				if len(f.requested) > envelope.MaxRuns {
+					f.requested = f.requested[len(f.requested)-envelope.MaxRuns:]
 				}
-				f.requested[k.RunID] = ev.Actor.ID
 			}
 			return
 		}
 		if r := f.run(ev.RunID); r != nil && k.Kind == "run_phase" {
-			r.last = max(r.last, ev.Seq)
 			if k.Phase == "Running" && k.Model != "" {
 				r.model = k.Model
 			}
@@ -105,7 +104,6 @@ func foldFlow(st *State, ev envelope.Event) {
 				r.reason = k.Reason
 			}
 		}
-		return
 	}
 
 	if ev.Type == envelope.Participant {
@@ -122,7 +120,7 @@ func foldFlow(st *State, ev envelope.Event) {
 			if f.run(id) != nil {
 				return
 			}
-			f.runs = append(f.runs, flowRun{id: id, role: p.Role, startedBy: f.requested[id], from: ev.Seq, last: ev.Seq, at: ev.TS})
+			f.runs = append(f.runs, flowRun{id: id, role: p.Role, startedBy: f.takeRequested(id), from: ev.Seq, last: ev.Seq, at: ev.TS})
 			if len(f.runs) > envelope.MaxRuns {
 				f.runs = f.runs[len(f.runs)-envelope.MaxRuns:]
 			}
@@ -168,6 +166,17 @@ func foldFlow(st *State, ev envelope.Event) {
 		}
 		r.handoff, r.scoped, r.split = line, h.Scope != nil, h.Split != nil
 	}
+}
+
+// takeRequested returns who asked for run id, and forgets the request.
+func (f *flowState) takeRequested(id string) string {
+	for i, q := range f.requested {
+		if q.run == id {
+			f.requested = append(f.requested[:i], f.requested[i+1:]...)
+			return q.by
+		}
+	}
+	return ""
 }
 
 func (f *flowState) hasPhase(p string) bool {

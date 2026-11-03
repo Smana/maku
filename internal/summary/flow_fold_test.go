@@ -150,6 +150,33 @@ func TestFoldFlow(t *testing.T) {
 				t.Fatalf("runs = %d, first %q", len(f.runs), f.runs[0].id)
 			}
 		}},
+		{"last is any event of the run", []envelope.Event{fjoin(5, r, "x"),
+			fev(7, r, envelope.StateChanged, fSys, envelope.StatePayload(envelope.HarnessStatus, map[string]any{"effort": "high"}))},
+			func(t *testing.T, f flowState) {
+				if f.runs[0].last != 7 {
+					t.Fatalf("last = %d", f.runs[0].last)
+				}
+			}},
+		{"requests that never join stay bounded", func() []envelope.Event {
+			var evs []envelope.Event
+			for i := range envelope.MaxRuns + 5 {
+				evs = append(evs, fev(int64(i+1), "", envelope.StateChanged, human,
+					envelope.StatePayload("run_requested", map[string]any{"runId": fmt.Sprintf("req%05d", i)})))
+			}
+			return evs
+		}(), func(t *testing.T, f flowState) {
+			if len(f.requested) != envelope.MaxRuns || f.requested[0].run != "req00005" {
+				t.Fatalf("requested = %d, first %+v", len(f.requested), f.requested[0])
+			}
+		}},
+		{"a joined run's request is forgotten", []envelope.Event{
+			fev(1, "", envelope.StateChanged, human, envelope.StatePayload("run_requested", map[string]any{"runId": r})),
+			fjoin(2, r, "x")},
+			func(t *testing.T, f flowState) {
+				if len(f.requested) != 0 || f.runs[0].startedBy != "github:ana" {
+					t.Fatalf("requested = %v", f.requested)
+				}
+			}},
 		{"an event of no run", []envelope.Event{fjoin(1, r, "x"),
 			fev(2, "", envelope.Message, envelope.Actor{Kind: envelope.ActorHuman, ID: "human:a"}, envelope.MessagePayload{Kind: envelope.KindChat, Text: "hi"})},
 			func(t *testing.T, f flowState) {
