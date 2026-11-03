@@ -141,6 +141,18 @@ out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set runC
   --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'unsandboxed: the broker still has no runtimeClassName'
 
+# the factory's two flows (S-4) open only with factoryURL: ingress to :8443 from its pods, egress to
+# factoryURL's port on them, in the release namespace unless broker.factoryPodLabels names one
+out="$q"
+ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.ingress[] | select(.fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory")' 'no factory ingress without factoryURL'
+ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory")' 'no factory egress without factoryURL'
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.factoryURL=https://agent-factory.x.svc.cluster.local:8082)"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.ingress[] | select(.fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.fromEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "x" and .toPorts[0].ports[0].port == "8443")' 'the factory reaches :8443 from its pods in the release namespace'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "x" and .toPorts[0].ports[0].port == "8082")' "the broker reaches factoryURL's port on the factory pods"
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.factoryURL=https://factory.example \
+  --set 'broker.factoryPodLabels.io\.kubernetes\.pod\.namespace=agent-system')"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "agent-system" and .toPorts[0].ports[0].port == "443")' 'an https factoryURL without a port is 443; factoryPodLabels may name the namespace'
+
 # a misconfiguration is a helm error, for the intended reason: each case names its message
 bad() { # bad 'expected message' --set ...
   local want="$1" err; shift

@@ -49,6 +49,11 @@ broker:
   # /etc/room-broker/factory-ca and read on every run request. Empty: the system roots.
   factoryCA:
     secretName: ""
+  # The factory's pods, for the broker CNP's two factory flows (only when factoryURL is set):
+  # ingress to :8443 from them, egress to factoryURL's port on them. Their namespace is the
+  # release's unless these labels set io.kubernetes.pod.namespace.
+  factoryPodLabels:
+    app.kubernetes.io/name: agent-factory
   # oidc mode: the https URL humans reach the broker at. local mode: http://localhost:<the port you
   # forward>, default http://localhost:8080; the broker answers that port only.
   publicURL: ""
