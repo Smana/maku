@@ -304,7 +304,7 @@ returns it.
 
 A holdout's workflow file must be a gate path (policy-bot's gate paths cover it), otherwise a pull
 request can edit the workflow and post SUCCESS itself; the host's gate-coverage check enforces it.
-A diff of 100 files or more is `patch_too_large` without being read.
+A compare that lists 300 files or more, GitHub's cap, is `patch_too_large` without being read.
 
 The gate compares GitHub logins (`agentsLogin`, `factoryLogin`, `merge.policyBotLogin`,
 `merge.mergerLogin`) case-insensitively, as GitHub does.
@@ -865,7 +865,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
 decision that did not read the diff prints `files=-/3 lines=-/20` (the caps always print). `-` is
 not `0`: a replay must not count a diff nobody read as an empty one, so it counts such a record as
-unreplayable. A `patch_too_large` from a diff over GitHub's page of files prints `-` too. The
+unreplayable. A `patch_too_large` from a compare at GitHub's 300-file cap prints `-` too. The
 record is **its own `agent-factory-decision` line, beside the event marker, not fields in it**: a
 recorded deviation from AM8's single marker (R-m11), which leaves the would-arm marker and the
 tally's regex for it unchanged. The same facts go to the log as `merge decision` with `rows=`.
@@ -1336,7 +1336,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `defaults` | `template`, `tier`, `dataClass`, `predictedClass` | `dataClass` and `predictedClass` required; `template` and `tier` are read by nothing, optional, checked only when set |
 | `triage` | `classifierURL`, `controlPercent` (0–100) | `controlPercent` required; `classifierURL` unset: no classifier call, every task takes the static `standard` tier |
 | `tiers` | Exactly `light`, `standard`, `frontier`; see [Triage](#triage-tiers-templates-classes) | `runUSD`, `taskUSD` from the token caps when `meter.prices` is set |
-| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role | Required; `reviewerModel` unset: the other tier's model |
+| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role. `solo`, `pair` and `trio` are required: triage chooses them by class and tier. Once `runlore` or `api.internalPrincipals` is set, `investigate` is required as `{roles: [triager]}` | Required; `reviewerModel` unset: the other tier's model |
 | `caps` | `activeTasks`, `concurrentRuns`, `tasksPerDay`, `maxTextBytes` (≤ 14336), `awaitingHumanWIP`, `maxPendingMinutes` (5–480), `escalatedHours` | `maxPendingMinutes` 30, `escalatedHours` 168 |
 | `budgets` | `enforceTask`, `enforcePrincipal`, `factoryDailyUSD`, `humanDailyUSD` ([daily budgets](#daily-budgets)), `perPerson: {enabled, dailyUSD}` ([per-person caps](#per-person-caps)), each day positive. The token days `factoryDaily`, `humanDaily` and `perPerson.dailyTokens` load in this release only, ignored, each named in a startup warning | `enforceTask` true, `factoryDailyUSD` 42.50, `humanDailyUSD` 8.50, `perPerson.enabled` false, `perPerson.dailyUSD` `humanDailyUSD` |
 | `resume` | `maxPerTask` (1–5) | 2 |

@@ -1319,6 +1319,7 @@ func (c *Config) Validate() error {
 			bad("template %s: only an implementer writes, so every template but a lone triager has one", name)
 		}
 	}
+	c.validateTriageTemplates(bad)
 	// Nothing reads defaults.template or defaults.tier: checked only when set.
 	if _, ok := c.Templates[c.Defaults.Template]; c.Defaults.Template != "" && !ok {
 		bad("defaults.template %q is not a template", c.Defaults.Template)
@@ -1871,5 +1872,25 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		if row.On() && c.Runs.Group != runwatch.DefaultKind.Group {
 			bad("loops.%s: the loop policy needs cloud-native-ref's AgentRun (runs.group %s): this runtime's has no spec.loop", name, runwatch.DefaultKind.Group)
 		}
+	}
+}
+
+// validateTriageTemplates (S-7): every template triage can choose is defined. solo, pair and trio
+// are chosen by a task's class and tier (triage.Matrix, an oracle class's solo); a missing one is
+// a team with no roles, which no reviewer ever joins. investigate is chosen for a RunLore finding
+// and an internal principal's api task: wherever one can arrive it must be the lone triager,
+// since the reconciler starts the triager only for a [triager] template and an implementer
+// otherwise, on internal data (R38).
+func (c *Config) validateTriageTemplates(bad func(string, ...any)) {
+	for _, name := range []string{"solo", "pair", "trio"} {
+		if _, ok := c.Templates[name]; !ok {
+			bad("templates.%s is missing: triage chooses it by class and tier", name)
+		}
+	}
+	if c.RunLore == (RunLore{}) && len(c.API.InternalPrincipals) == 0 {
+		return // no investigate task can arrive
+	}
+	if roles := c.Templates["investigate"].Roles; !slices.Equal(roles, []string{"triager"}) {
+		bad("templates.investigate.roles must be [triager] while runlore or api.internalPrincipals is set: its tasks read internal data and must not write (R38), got %v", roles)
 	}
 }
