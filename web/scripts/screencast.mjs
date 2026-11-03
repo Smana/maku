@@ -118,6 +118,9 @@ try {
   await page.waitForTimeout(200);
   await paints(page, replayMaxMs, frames, dir, replayed);
   await record(page, holdMs, frames, dir);
+  // The card names every model that served a step.
+  await page.locator('.rail-node[data-persona="implementer"] .rail-button, .rail-node:has(.rail-persona:text-is("implementer")) .rail-button').first().hover();
+  await record(page, holdMs, frames, dir);
   await browser.close();
 
   for (const f of frames) execFileSync("sips", ["--resampleWidth", "960", f.file], { stdio: "ignore" });

@@ -16,7 +16,7 @@ Maku is the product, the repository, the module and the CLI (`maku`); its compon
 - **On the record:** every run streams into a room that nobody can rewrite, the agent included.
 
 <a href="https://blog.ogenki.io/maku/">
-  <img alt="A 44-second screencast in light mode: the room list refreshing on its own every 10 seconds, then the live demo replaying a factory run: the agent's commands and a failing test, a human steering it, the push held for approval, and the room ending on its Next box, the reviewer approved and a maintainer merges the pull request" src="docs/assets/maku-room.webp" width="800">
+  <img alt="An 81-second screencast in light mode: the room list refreshing on its own every 10 seconds, then the live demo replaying a factory run: the agent's commands and a failing test, a human steering it, the push held for approval, while the rail on the right draws each step, the implementer and then the reviewer with their models, and the room ending on its Next box. Last, a finished task's rail replays: scoper, tester, implementer and reviewer light up in turn with the edges between them, the milestones fill to Done, and the implementer's card lists every model that served it" src="docs/assets/maku-room.webp" width="800">
 </a>
 
 **[Watch a run in the live demo →](https://blog.ogenki.io/maku/)** · [How it works](#how-it-works) · [What's a room?](#whats-a-room)
