@@ -32,7 +32,8 @@ describe("flow fixtures", () => {
   });
   it("split and part carry their links", () => {
     expect(flowFixture("split").flow.split).toMatchObject({ of: 3, parts: [{ index: 1, issue: 52, room: "k2mqx7ba", outcome: "landed" }, { index: 2, issue: 53, room: "p4zt6wce" }] });
-    expect(flowFixture("split").flow.nodes[0].edge).toBe("split");
+    expect(flowFixture("split").flow.nodes[0].edge).toBeUndefined();
+    expect(flowFixture("part").flow.nodes[0].edge).toBeUndefined();
     expect(flowFixture("part").flow.parent).toEqual({ room: "m3pq6xzb", issue: 50, index: 2, of: 3 });
   });
   it("picks the fixture by query param", () => {

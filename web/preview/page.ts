@@ -81,6 +81,17 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, main, forkPanel);
   const { rail } = pane;
   app.replaceChildren(header, pane.body, footer);
+  // The sticky rail sits between the header and the dock, as room.ts measures them.
+  if (typeof ResizeObserver !== "undefined") {
+    const size = () => {
+      app.style.setProperty("--header-h", `${header.offsetHeight}px`);
+      app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
+    };
+    const ro = new ResizeObserver(size);
+    ro.observe(header);
+    ro.observe(footer);
+    size();
+  }
   const now = o.now ?? Date.now;
 
   const say = (text: string) => { notice.textContent = text; };

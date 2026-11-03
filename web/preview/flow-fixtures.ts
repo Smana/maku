@@ -51,12 +51,12 @@ export function flowFixture(name: FlowName): FlowFixture {
     case "finished":
       return { phase: "Done", flow: flow([scoper, tester, ended(implementer), reviewer], { milestones }) };
     case "split": {
-      const s: FlowNode = { ...scoper, fromSeq: 4, toSeq: 27, edge: "split", handoff: "Too big for one pull request: three parts" };
+      const s: FlowNode = { ...scoper, fromSeq: 4, toSeq: 27, handoff:"Too big for one pull request: three parts" };
       return { phase: "Done", flow: { plan: ["scoper"], nodes: [s], ghosts: [], split: { of: 3, parts: [
         { index: 1, issue: 52, room: "k2mqx7ba", outcome: "landed" }, { index: 2, issue: 53, room: "p4zt6wce" }] } } };
     }
     case "part":
-      return { phase: "Implementing", flow: { ...flow([implementer]), plan: ["implementer", "reviewer"], ghosts: ["reviewer"], parent: { room: "m3pq6xzb", issue: 50, index: 2, of: 3 } } };
+      return { phase: "Implementing", flow: { ...flow([{ ...implementer, edge: undefined }]), plan: ["implementer", "reviewer"], ghosts: ["reviewer"], parent: { room: "m3pq6xzb", issue: 50, index: 2, of: 3 } } };
     default:
       return { phase: "Implementing", flow: flow([scoper, tester, implementer]) };
   }
