@@ -33,7 +33,7 @@ func Random() string {
 	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:]))
 }
 
-// IssueKey is an issue task's key; gen counts maintainers' factory/ready labels on the issue (R4).
+// IssueKey is an issue task's key; gen counts every factory/ready label event on the issue (R4).
 func IssueKey(repo string, number, gen int) string {
 	return fmt.Sprintf("github:issue:%s#%d:gen%d", repo, number, gen)
 }
