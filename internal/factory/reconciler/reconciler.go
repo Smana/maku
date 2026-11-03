@@ -276,8 +276,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 		}
 	}
+	// A span the collector refused is retried every spanRetry (ST2). It is folded into the terminal
+	// block's requeue: an early return here kept an ended task's room open, and its revert watch,
+	// settle and monitor on the span's clock, for as long as the collector was down (F-9).
+	var spanWait time.Duration
 	if err == nil && r.spanDue(&t) {
-		return ctrl.Result{RequeueAfter: spanRetry}, nil
+		spanWait = spanRetry
 	}
 	if v1alpha1.TerminalPhase(t.Status.Phase) {
 		// #56: the room closes once everything the task owes it has landed. Re-evaluated on the
@@ -298,19 +302,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		// The revert watch polls: a revert PR merges, closes or stalls on GitHub's clock, not ours.
 		if err == nil && (r.revertable(&t) || r.revertPending(&t)) {
-			return ctrl.Result{RequeueAfter: r.Cfg.Poll.Tasks.Duration}, nil
+			return ctrl.Result{RequeueAfter: soonest(r.Cfg.Poll.Tasks.Duration, spanWait)}, nil
 		}
 		if err == nil && r.settling(&t) {
 			wait := r.settleLeft(&t) // for the settle, at its window, unless a merge under watch is due sooner
 			if r.monitorDue(&t) {
 				wait = min(wait, monitorEvery)
 			}
-			return ctrl.Result{RequeueAfter: wait}, nil
+			return ctrl.Result{RequeueAfter: soonest(wait, spanWait)}, nil
 		}
 		if err == nil && r.monitorDue(&t) && (closeLeft <= 0 || closeLeft > monitorEvery) {
-			return ctrl.Result{RequeueAfter: monitorEvery}, nil // a merge under watch is read on its own clock
+			return ctrl.Result{RequeueAfter: soonest(monitorEvery, spanWait)}, nil // a merge under watch is read on its own clock
 		}
-		return ctrl.Result{RequeueAfter: closeLeft}, err // closeLeft: the revert window or a driving person (#56)
+		return ctrl.Result{RequeueAfter: soonest(closeLeft, spanWait)}, err // closeLeft: the revert window or a driving person (#56)
 	}
 	if err != nil {
 		return ctrl.Result{}, err
@@ -693,6 +697,17 @@ func (r *Reconciler) settleLeft(t *v1alpha1.Task) time.Duration {
 		return r.Cfg.Poll.Tasks.Duration
 	}
 	return max(r.settleWindow()-r.Now().Sub(t.Status.PhaseSince.Time), time.Second)
+}
+
+// soonest is the nearer of two requeues, where 0 means none.
+func soonest(a, b time.Duration) time.Duration {
+	switch {
+	case a <= 0:
+		return b
+	case b <= 0:
+		return a
+	}
+	return min(a, b)
 }
 
 // spanDue: the task has ended and its root span is still to export (R46).
