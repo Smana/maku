@@ -30,6 +30,7 @@ export function chip(n: FlowNode): { text: string; kind: ChipKind } {
     case "revoked": case "budget_exhausted": return { text: "stopped", kind: "stop" };
   }
   if (!n.endedAt) return { text: "running", kind: "live" };
+  if (n.judge?.last === "met") return { text: "✓", kind: "ok" };
   return { text: "ended", kind: "" };
 }
 
@@ -78,11 +79,13 @@ export function rows(nodes: FlowNode[], max: number): Row[] {
 }
 
 // The phases that close a task's path (internal/summary terminalPhase).
-export const terminal = new Set(["Merged", "Done", "Reverted", "Escalated", "Closed", "Stopped", "NoOp", "Rejected"]);
+export const terminal = new Set(["Merged", "Done", "Reverted", "Escalated", "Closed", "Stopped", "NoOp", "Rejected", "Sealed"]);
 
-// ghostMerge is whether the rail draws a ghost merge step: the task is not over and nothing merged.
+// ghostMerge is whether the rail draws a ghost merge step: a plan that can reach a merge (not a
+// manual room's, nor an investigation's triager alone), the task not over and nothing merged.
 export function ghostMerge(f: Flow, phase: string): boolean {
-  return !terminal.has(phase) && !f.milestones?.some((m) => m.phase === "Merged");
+  const plan = f.plan ?? [];
+  return plan.length > 0 && !(plan.length === 1 && plan[0] === "triager") && !terminal.has(phase) && !f.milestones?.some((m) => m.phase === "Merged");
 }
 
 // ghostsAfter mirrors the broker's cursor (internal/summary flow.go): each node advances past the

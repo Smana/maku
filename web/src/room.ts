@@ -94,7 +94,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   meta.append(status);
   footer.append(session, composerEl, meta);
   // The rail beside the conversation, not in main: mountViews wipes main's children.
-  const rail = mountRail({ select: (run) => void runView.select(run) });
+  const rail = mountRail({ select: (run) => { rail.el.classList.remove("open"); void runView.select(run); } });
   const dots = document.createElement("button");
   dots.type = "button";
   dots.className = "rail-dots";

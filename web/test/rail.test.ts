@@ -192,6 +192,13 @@ describe("rail", () => {
     expect(card(rail).hidden).toBe(false);
   });
 
+  it("a flow with no plan draws no ghost merge", () => {
+    const { plan: _plan, ...noPlan } = flow;
+    const rail = mountRail({ select: () => {} });
+    rail.set(noPlan, "Implementing", now);
+    expect(rail.el.querySelector('.rail-milestone[data-state="ghost"]')).toBeNull();
+  });
+
   it("absent flow hides the rail", () => {
     const { rail } = mount();
     rail.set(flow, "AwaitingCI", now);

@@ -41,6 +41,7 @@ export function mountRunView(roomMain: HTMLElement, o: {
   load: (after: number, limit: number) => Promise<RoomEvent[]>;
   views: (el: HTMLElement) => Views;
   chosen: (run: string | undefined) => void;
+  max?: number;
 }): RunView {
   let nodes: FlowNode[] = [];
   let restore = hashRun();
@@ -54,13 +55,14 @@ export function mountRunView(roomMain: HTMLElement, o: {
   let count = 0;
   let waiting: RoomEvent[] = [];
 
-  const capped = () => count >= maxRunEvents;
+  const max = o.max ?? maxRunEvents;
+  const capped = () => count >= max;
   const say = (text: string) => { if (view) { view.note.textContent = text; view.note.hidden = !text; } };
   const put = (e: RoomEvent) => {
     view?.views.apply(e);
     count++;
     through = Math.max(through, e.seq);
-    if (capped()) say(`Showing the first ${maxRunEvents.toLocaleString("en-US")} events of this run`);
+    if (capped()) say(`Showing the first ${max.toLocaleString("en-US")} events of this run`);
   };
   // The live feed follows the run's seq range, whoever wrote the event, and ends at its toSeq.
   const feed = (n: FlowNode, e: RoomEvent) => {
@@ -160,18 +162,18 @@ export function mountRunView(roomMain: HTMLElement, o: {
 // rows added since; it is coalesced, since it runs on every event of a replay.
 export function mountScrollIndex(chat: HTMLElement, o: {
   nodes: () => FlowNode[]; mark: (run: string | undefined) => void;
-  observe?: (cb: IntersectionObserverCallback) => { observe(el: Element): void; disconnect(): void };
+  observe?: (cb: IntersectionObserverCallback) => { observe(el: Element): void; unobserve(el: Element): void; disconnect(): void };
 }): { refresh(): void; disconnect(): void } {
   const visible = new Map<Element, number>();
   const seen = new WeakSet<Element>();
   // jsdom has no IntersectionObserver: the room page's own tests run without one.
-  const make = o.observe ?? ((cb) => typeof IntersectionObserver === "undefined" ? { observe() {}, disconnect() {} } : new IntersectionObserver(cb));
+  const make = o.observe ?? ((cb) => typeof IntersectionObserver === "undefined" ? { observe() {}, unobserve() {}, disconnect() {} } : new IntersectionObserver(cb));
   const io = make((entries) => {
     for (const en of entries) {
       const seq = Number((en.target as HTMLElement).dataset.seq);
       if (en.isIntersecting && seq > 0) visible.set(en.target, seq); else visible.delete(en.target);
     }
-    for (const el of visible.keys()) if (!el.isConnected) visible.delete(el);
+    for (const el of visible.keys()) if (!el.isConnected) { visible.delete(el); io.unobserve(el); }
     const top = visible.size ? Math.min(...visible.values()) : 0;
     o.mark(top ? nodeAt(o.nodes(), top) : undefined);
   });

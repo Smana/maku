@@ -26,6 +26,8 @@ describe("chip", () => {
     ["budget", { outcome: "budget_exhausted" }, "stopped", "stop"],
     ["live", { endedAt: undefined }, "running", "live"],
     ["ended, no outcome", {}, "ended", ""],
+    ["ended, judge met", { judge: { count: 1, last: "met" } }, "✓", "ok"],
+    ["live, judge met", { endedAt: undefined, judge: { count: 1, last: "met" } }, "running", "live"],
   ])("%s", (_n, o, text, kind) => expect(chip(node(o))).toEqual({ text, kind }));
 });
 
@@ -58,9 +60,13 @@ describe("rows", () => {
 
 describe("ghosts", () => {
   const plan = ["scoper", "tester", "implementer", "reviewer"];
-  const f = (milestones: Flow["milestones"]): Flow => ({ nodes: [], milestones });
+  const f = (milestones: Flow["milestones"], p: string[] | undefined = plan): Flow => ({ nodes: [], milestones, plan: p });
   it("ghostMerge", () => {
     expect(ghostMerge(f(undefined), "Reviewing")).toBe(true);
+    expect(ghostMerge({ nodes: [] }, "Reviewing")).toBe(false);
+    expect(ghostMerge(f(undefined, []), "Reviewing")).toBe(false);
+    expect(ghostMerge(f(undefined, ["triager"]), "Reviewing")).toBe(false);
+    expect(ghostMerge(f(undefined), "Sealed")).toBe(false);
     expect(ghostMerge(f([{ phase: "Merged", at: "t", seq: 1 }]), "Reviewing")).toBe(false);
     expect(ghostMerge(f(undefined), "Done")).toBe(false);
   });

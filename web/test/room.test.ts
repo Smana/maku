@@ -750,7 +750,7 @@ describe("the room page", () => {
       status: { phase: "Implementing", run: null, budget: null, pr: null, issue: null, lastVerdict: null },
       needsYou: [], actions: [], notes: { untrusted: true, items: [] }, cursor: "seq:0", ...(flow ? { flow } : {}) });
     const withFlow = async (flow?: object) => {
-      const get = vi.fn(async () => new Response(JSON.stringify(sumWith(flow)), { status: 200 })) as unknown as typeof fetch;
+      const get = vi.fn(async () => ({ ok: true, status: 200, json: async () => sumWith(flow) })) as unknown as typeof fetch;
       const p = page(get);
       p.join(snapshot(), 0);
       await vi.advanceTimersByTimeAsync(0);
@@ -800,6 +800,14 @@ describe("the room page", () => {
       expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(true);
       p.app.querySelector<HTMLElement>(".rail-close")!.click();
       expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(false);
+    });
+
+    it("choosing a node closes the drawer", async () => {
+      const { p } = await withFlow(flow);
+      p.app.querySelector<HTMLElement>(".rail-dots")!.click();
+      p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.click();
+      expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(false);
+      history.replaceState(null, "", "/");
     });
 
     it("Escape closes the drawer and returns to the dots", async () => {

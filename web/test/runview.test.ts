@@ -18,11 +18,11 @@ const log = (last: number) => vi.fn(async (after: number, limit: number) => {
   return out;
 });
 
-function setup(load = log(200)) {
+function setup(load = log(200), max?: number) {
   const main = document.createElement("main");
   mountViews(main);
   const chosen = vi.fn();
-  const rv = mountRunView(main, { load, views: (el) => mountViews(el), chosen });
+  const rv = mountRunView(main, { load, views: (el) => mountViews(el), chosen, max });
   const seqs = () => [...main.querySelectorAll<HTMLElement>(".run-view .view-chat [data-seq]")].map((r) => Number(r.dataset.seq));
   return { main, rv, load, chosen, seqs };
 }
@@ -71,14 +71,16 @@ describe("the run view", () => {
     expect(chosen).toHaveBeenLastCalledWith(undefined);
   });
 
-  it("stops at 2000", async () => {
-    const { main, rv, load, seqs } = setup(log(2600));
-    rv.set([node("r-1", 1, 2600)]);
+  it("stops at the cap", async () => {
+    const { main, rv, load, seqs } = setup(log(1300), 1000);
+    rv.set([node("r-1", 1, 1300)]);
     await rv.select("r-1");
-    expect(load).toHaveBeenCalledTimes(4);
-    expect(seqs()).toHaveLength(maxRunEvents);
-    expect(main.querySelector(".run-view-note")!.textContent).toBe("Showing the first 2,000 events of this run");
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(seqs()).toHaveLength(1000);
+    expect(main.querySelector(".run-view-note")!.textContent).toBe("Showing the first 1,000 events of this run");
   });
+
+  it("the default cap is 2000", () => expect(maxRunEvents).toBe(2000));
 
   it("live events in the chosen run's range, whoever wrote them", async () => {
     const { rv, seqs } = setup(log(150));
@@ -154,7 +156,7 @@ describe("the scroll index", () => {
     mountScrollIndex(chat, {
       nodes: () => [node("a", 90, 110), node("b", 111, 0)],
       mark,
-      observe: (c) => { cb = c; return { observe: (el) => observed.push(el), disconnect: () => {} }; },
+      observe: (c) => { cb = c; return { observe: (el) => observed.push(el), unobserve: () => {}, disconnect: () => {} }; },
     });
     expect(observed).toHaveLength(3);
     const row = chat.querySelector('[data-seq="120"]')!;
@@ -163,10 +165,28 @@ describe("the scroll index", () => {
     chat.remove();
   });
 
+  it("a detached row is unobserved", () => {
+    const chat = document.createElement("div");
+    chat.innerHTML = '<div data-seq="5"></div>';
+    document.body.append(chat);
+    let cb: IntersectionObserverCallback = () => {};
+    const unobserve = vi.fn();
+    mountScrollIndex(chat, {
+      nodes: () => [node("a", 1, 0)], mark: () => {},
+      observe: (c) => { cb = c; return { observe: () => {}, unobserve, disconnect: () => {} }; },
+    });
+    const row = chat.querySelector('[data-seq="5"]')!;
+    cb([{ target: row, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
+    row.remove();
+    cb([], {} as IntersectionObserver);
+    expect(unobserve).toHaveBeenCalledWith(row);
+    chat.remove();
+  });
+
   it("disconnect stops the observer", () => {
     const disconnect = vi.fn();
     const index = mountScrollIndex(document.createElement("div"), {
-      nodes: () => [], mark: () => {}, observe: () => ({ observe: () => {}, disconnect }),
+      nodes: () => [], mark: () => {}, observe: () => ({ observe: () => {}, unobserve: () => {}, disconnect }),
     });
     index.disconnect();
     expect(disconnect).toHaveBeenCalledOnce();
