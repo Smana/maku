@@ -7,7 +7,7 @@
 //   PLAYWRIGHT_MODULES=/path/to/node_modules node web/scripts/screencast.mjs docs/assets/maku-room.webp
 //
 // Recorded at 1280×900, so the room page keeps its rail beside the conversation (it folds to
-// dots below 1100 px), and scaled to 960×675 by the device pixel ratio.
+// dots below 1100 px), and every frame scaled to 960 px wide (macOS sips).
 
 import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -23,7 +23,6 @@ const { chromium } = createRequire(join(modules, "noop.js"))("playwright");
 const out = resolve(process.argv[2] ?? "maku-room.webp");
 const web = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultFrameMs = 120;
-const replayFrameMs = 50; // the rail's fades and edge draws last 150-400 ms
 const replayMaxMs = 20_000; // Replay's own cap
 const listMs = 12_000; // past one 10 s refresh of the room list
 const demoMaxMs = 60_000; // the approval card is held on screen, whatever the speed
@@ -62,6 +61,28 @@ async function record(page, ms, frames, dir, done = async () => false, follow = 
 
 // SCREENCAST_FRAMES=DIR keeps the PNG frames there, to look at before committing the WebP.
 const kept = process.env.SCREENCAST_FRAMES;
+// Chrome's own screencast: a frame per paint, at its paint time, so short transitions stay
+// smooth where a screenshot loop (one shot per ~100 ms) stutters.
+async function paints(page, ms, frames, dir, done) {
+  const cdp = await page.context().newCDPSession(page);
+  const shot = [];
+  cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
+    const file = join(dir, `p${String(frames.length + shot.length).padStart(5, "0")}.jpg`);
+    writeFileSync(file, Buffer.from(data, "base64"));
+    shot.push({ file, at: metadata.timestamp * 1000 });
+    void cdp.send("Page.screencastFrameAck", { sessionId });
+  });
+  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1 });
+  const end = Date.now() + ms;
+  while (Date.now() < end && !(await done())) await new Promise((r) => setTimeout(r, 100));
+  await cdp.send("Page.stopScreencast");
+  await cdp.detach();
+  for (let i = 0; i < shot.length; i++) {
+    const next = shot[i + 1]?.at ?? shot[i].at + 40;
+    frames.push({ file: shot[i].file, ms: Math.max(16, Math.round(next - shot[i].at)) });
+  }
+}
+
 const dir = kept ? resolve(kept) : mkdtempSync(join(tmpdir(), "maku-screencast-"));
 if (kept) mkdirSync(dir, { recursive: true });
 const demoSite = join(dir, "demo-site");
@@ -71,8 +92,11 @@ const servers = [serve(4181), serve(4182, demoSite)];
 try {
   await waitFor("http://127.0.0.1:4181/preview/list.html");
   await waitFor("http://127.0.0.1:4182/");
-  const browser = await chromium.launch(process.env.CHROME_CHANNEL ? { channel: process.env.CHROME_CHANNEL } : {});
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 0.75, colorScheme: "light" });
+  // No viewport emulation: the screencast captures the real window, so screenshots must too.
+  // 988 = a 900 px page plus headless Chrome's 88 px of window frame: frames scale to 960×675.
+  const launch = { args: ["--window-size=1280,988"], ...(process.env.CHROME_CHANNEL ? { channel: process.env.CHROME_CHANNEL } : {}) };
+  const browser = await chromium.launch(launch);
+  const page = await browser.newPage({ viewport: null, colorScheme: "light" });
   const frames = [];
 
   await page.goto("http://127.0.0.1:4181/preview/list.html?theme=light");
@@ -92,10 +116,11 @@ try {
   await replay.click();
   const replayed = async () => replay.isVisible();
   await page.waitForTimeout(200);
-  await record(page, replayMaxMs, frames, dir, replayed, false, replayFrameMs);
+  await paints(page, replayMaxMs, frames, dir, replayed);
   await record(page, holdMs, frames, dir);
   await browser.close();
 
+  for (const f of frames) execFileSync("sips", ["--resampleWidth", "960", f.file], { stdio: "ignore" });
   const args = ["-loop", "0", "-lossy", "-q", "70", "-m", "4"];
   for (const f of frames) args.push("-d", String(f.ms), f.file);
   args.push("-o", out);
