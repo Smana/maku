@@ -45,6 +45,11 @@ type actLog struct {
 	reasons []string // ChangeDriver's reasons
 	seen    map[string]int
 	closed  string
+	// closedRoom is the room the last CloseRoom sealed, closeBounded whether its ctx had a
+	// deadline; closeErr fails every CloseRoom.
+	closedRoom   string
+	closeBounded bool
+	closeErr     error
 	// onRoom moves the room after Room has taken its snapshot, as another
 	// replica would between an act's read and its write.
 	onRoom     func(*store.RoomState)
@@ -209,10 +214,18 @@ func (l *actLog) DriverSeen(_ context.Context, _, principal string, acted bool) 
 	return nil
 }
 
-func (l *actLog) CloseRoom(_ context.Context, _, reason string) error {
+// CloseRoom is the store's: a spent ctx fails it before anything is sealed, as pool.Begin does.
+func (l *actLog) CloseRoom(ctx context.Context, roomID, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.closed = reason
+	if l.closeErr != nil {
+		return l.closeErr
+	}
+	_, l.closeBounded = ctx.Deadline()
+	l.closed, l.closedRoom = reason, roomID
 	return nil
 }
 

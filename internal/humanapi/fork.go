@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,6 +30,10 @@ const ForkedFrom = roomctrl.ForkedFrom
 
 // maxNote bounds a fork's note, which its forked_from event carries.
 const maxNote = 1 << 10
+
+// forkCleanupWait bounds closing the log of a fork whose Room was refused. The act's own
+// context may be what failed the Create (a timeout), and the close must still land.
+const forkCleanupWait = 10 * time.Second
 
 // fork branches the room at act.Seq into a new room the forker owns and drives
 // (§5): the log prefix with its seqs, then state_changed{forked_from} with the
@@ -109,8 +114,14 @@ func (a *Actor) fork(ctx context.Context, p authn.Principal, owner bool, room *v
 		if a.Logger != nil {
 			a.Logger.WarnContext(ctx, "forked room not created", "room", id, "repository", child.Spec.Repository, "err", err)
 		}
-		// A row no Room projects is never closed, so retention would never purge it.
-		_ = a.Log.CloseRoom(ctx, id, "fork failed: no Room")
+		// A row no Room projects is never closed, so retention would never purge it. The act's
+		// context may be spent (audit R-1): the close runs on its own, bounded one.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forkCleanupWait)
+		cerr := a.Log.CloseRoom(cctx, id, "fork failed: no Room")
+		cancel()
+		if cerr != nil && a.Logger != nil {
+			a.Logger.ErrorContext(ctx, "forked room's log not closed: retention will not purge it", "room", id)
+		}
 		if apierrors.IsAlreadyExists(err) {
 			return fail(rejectConflict)
 		}

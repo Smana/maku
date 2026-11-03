@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,12 @@ import (
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/summary"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func logEvent(seq int64, typ envelope.Type, actor envelope.Actor, payload any) envelope.Event {
@@ -354,5 +361,146 @@ func TestSummaryCarriesTheQueue(t *testing.T) {
 	}
 	if code != 200 || json.Unmarshal([]byte(body), &s) != nil || !s.Queued.Untrusted || len(s.Queued.Items) != 1 || s.Queued.Items[0].Text != "use the v2 flag" {
 		t.Fatalf("%d %s", code, body)
+	}
+}
+
+// Audit S-9: the room list and a summary spend a per-principal read budget, 10 a second, burst 20,
+// per replica. It is apart from acts, so a page that refreshes never refuses its viewer's next act.
+func TestRoomReadsAreRateLimited(t *testing.T) {
+	for _, path := range []string{"/api/rooms", "/api/rooms/" + roomID + "/summary"} {
+		t.Run(path, func(t *testing.T) {
+			e := setup(t, abc(t))
+			for i := range 20 {
+				if code, body := get(t, e, path, admin("boss")); code != http.StatusOK {
+					t.Fatalf("read %d of the burst: %d %s", i+1, code, body)
+				}
+			}
+			limited := false
+			for range 20 {
+				code, body := get(t, e, path, admin("boss"))
+				if code == http.StatusTooManyRequests {
+					if body != "rate_limited\n" {
+						t.Fatalf("429 body %q", body)
+					}
+					limited = true
+					break
+				}
+			}
+			if !limited {
+				t.Fatal("40 reads at once were all served")
+			}
+			if code, body := get(t, e, path, admin("other")); code != http.StatusOK {
+				t.Fatalf("the budget is per principal: %d %s", code, body)
+			}
+		})
+	}
+}
+
+// rangeLog is the Server's log, recording the after of each event page it reads. The hub reads
+// memLog directly, so its polls are not counted.
+type rangeLog struct {
+	*memLog
+	readMu sync.Mutex
+	afters []int64
+}
+
+func (l *rangeLog) Range(ctx context.Context, room string, after int64, limit int) ([]envelope.Event, error) {
+	l.readMu.Lock()
+	l.afters = append(l.afters, after)
+	l.readMu.Unlock()
+	return l.memLog.Range(ctx, room, after, limit)
+}
+
+func (l *rangeLog) reads() []int64 {
+	l.readMu.Lock()
+	defer l.readMu.Unlock()
+	return slices.Clone(l.afters)
+}
+
+// Audit S-9: a summary folds only what the log appended since the room's last fold, and the
+// summary of an unchanged room reads no event page at all.
+func TestSummaryFoldsOnlyNewEvents(t *testing.T) {
+	var rl *rangeLog
+	e := setup(t, abc(t), func(s *Server, _ *fanout.Hub, v *hubView) {
+		rl = &rangeLog{memLog: v.memLog}
+		s.Log = rl
+	})
+	factsLog(e.log)
+	for _, step := range []struct {
+		name      string
+		appended  []envelope.Event
+		wantReads []int64
+		wantNotes int
+	}{
+		{"the first summary folds the whole log", nil, []int64{0}, 2},
+		{"an unchanged room reads no page", nil, []int64{0}, 2},
+		{"one append is read from the cached seq", []envelope.Event{progress(5, "merged")}, []int64{0, 4}, 3},
+	} {
+		e.log.mu.Lock()
+		e.log.evs = append(e.log.evs, step.appended...)
+		e.log.mu.Unlock()
+		s := summaryOf(t, e, roomID, "", admin("boss"))
+		if got := rl.reads(); !slices.Equal(got, step.wantReads) || len(s.Notes.Items) != step.wantNotes {
+			t.Fatalf("%s: pages read after %v, %d notes; want %v, %d", step.name, got, len(s.Notes.Items), step.wantReads, step.wantNotes)
+		}
+	}
+}
+
+// A Room re-created under the same id is another room: its summary folds its own log from the
+// start, whether that log is shorter than the old room's fold or has passed it.
+func TestSummaryOfARecreatedRoomFoldsItsOwnLog(t *testing.T) {
+	var rooms client.Client // the Server's Rooms, with the writes the fake reader hides
+	e := setup(t, abc(t), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		sch := runtime.NewScheme()
+		if err := v1alpha1.AddToScheme(sch); err != nil {
+			t.Fatal(err)
+		}
+		rooms = fake.NewClientBuilder().WithScheme(sch).WithObjects(&v1alpha1.Room{
+			ObjectMeta: metav1.ObjectMeta{Name: roomID, Namespace: namespace},
+			Spec:       v1alpha1.RoomSpec{Owner: "human:own", Driver: "system:factory", DataClass: "public", Repository: "Smana/maku"},
+			Status:     v1alpha1.RoomStatus{Phase: "Active", LastSeq: 10, Driver: "system:factory"}}).Build()
+		s.Rooms = rooms
+	})
+	factsLog(e.log)
+	notes := func() []string {
+		var out []string
+		for _, n := range summaryOf(t, e, roomID, "", admin("boss")).Notes.Items {
+			out = append(out, n.Text)
+		}
+		return out
+	}
+	recreate := func(uid types.UID, evs ...envelope.Event) {
+		t.Helper()
+		ctx := context.Background()
+		var old v1alpha1.Room
+		if err := rooms.Get(ctx, client.ObjectKey{Namespace: namespace, Name: roomID}, &old); err != nil {
+			t.Fatal(err)
+		}
+		fresh := &v1alpha1.Room{ObjectMeta: metav1.ObjectMeta{Name: roomID, Namespace: namespace, UID: uid},
+			Spec: old.Spec, Status: old.Status}
+		if err := rooms.Delete(ctx, &old); err != nil {
+			t.Fatal(err)
+		}
+		if err := rooms.Create(ctx, fresh); err != nil {
+			t.Fatal(err)
+		}
+		e.log.mu.Lock()
+		e.log.evs = evs
+		e.log.mu.Unlock()
+	}
+	if got := notes(); !slices.Equal(got, []string{"planning", "checks pass"}) {
+		t.Fatalf("the first room: notes %v", got)
+	}
+	recreate("uid-2", progress(1, "shorter"))
+	if got := notes(); !slices.Equal(got, []string{"shorter"}) {
+		t.Fatalf("a shorter log of a re-created room: notes %v", got)
+	}
+	var longer []envelope.Event
+	for i, txt := range []string{"a", "b", "c", "d"} {
+		longer = append(longer, progress(int64(i+1), txt))
+	}
+	recreate("uid-3", longer...)
+	if got := notes(); !slices.Equal(got, []string{"a", "b", "c", "d"}) {
+		t.Fatalf("a log past the cached seq of a re-created room: notes %v", got)
 	}
 }
