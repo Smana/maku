@@ -9,6 +9,8 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 # shellcheck source=hack/quickstart/versions.env
 . hack/quickstart/versions.env
+# shellcheck source=hack/quickstart/lib.sh
+. hack/quickstart/lib.sh
 
 case "$(uname -m)" in
   x86_64 | amd64) arch=x86_64 ;;
@@ -31,10 +33,5 @@ curl -fsSLo "$tmp/gvisor.tar.bz2" "$base/gvisor.tar.bz2"
 curl -fsSLo "$tmp/gvisor.tar.bz2.sha512" "$base/gvisor.tar.bz2.sha512"
 (cd "$tmp" && sha512sum -c gvisor.tar.bz2.sha512)
 
-rm -rf "$dir"
-mkdir -p "$dir"
-tar -xjf "$tmp/gvisor.tar.bz2" -C "$dir"
-chmod +x "$dir/runsc" "$dir/containerd-shim-runsc-v1"
-[[ -d $dir/gvisor-bin ]] || { echo "gvisor-bin/ missing from the tarball" >&2; exit 1; }
-echo "$want" >"$stamp"
+qs_install_gvisor "$tmp/gvisor.tar.bz2" "$dir" "$want"
 echo "runsc ${want} ready in $dir"
