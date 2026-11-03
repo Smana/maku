@@ -9,6 +9,8 @@ case "$*" in
   # A later pull request carries factory/follow-up-of:#<n>: only fixture "followup" has one, of #100.
   *'label:"factory/follow-up-of:#100"'*) [ "${TALLY_FIXTURE:-}" = followup ] && echo '[{"number":900}]' || echo '[]' ;;
   *'label:"factory/follow-up-of:#'*) echo '[]' ;;
-  *'label:"factory/merged:'*) cat "$d/prs${TALLY_FIXTURE:+-$TALLY_FIXTURE}.json" ;;
+  # Fixture "searchfail": the auto-merged search fails as gh does on a 502; the merged one answers.
+  *'label:"factory/auto-merged:'*) [ "${TALLY_FIXTURE:-}" = searchfail ] && { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }; echo '[]' ;;
+  *'label:"factory/merged:'*) [ "${TALLY_FIXTURE:-}" = searchfail ] && TALLY_FIXTURE=; cat "$d/prs${TALLY_FIXTURE:+-$TALLY_FIXTURE}.json" ;;
   *) echo '[]' ;;
 esac

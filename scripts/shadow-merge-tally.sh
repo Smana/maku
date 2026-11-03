@@ -86,7 +86,11 @@ if [ -n "$outcomes" ]; then
     "$gh" pr list -R "$repo" --state merged --limit "$limit" --json number,mergedAt,labels,comments \
       --search "label:\"$1:$class\" merged:>=$since"
   }
-  prs=$(jq -s 'add | unique_by(.number)' <(merged_with factory/merged) <(merged_with factory/auto-merged))
+  # Each search into a variable first: under set -e a failed gh then stops the tally. Read through
+  # a process substitution, its failure was lost and the tally counted half the merges (S-12).
+  merged=$(merged_with factory/merged)
+  auto=$(merged_with factory/auto-merged)
+  prs=$(printf '%s\n%s\n' "$merged" "$auto" | jq -s 'add | unique_by(.number)')
   # The follow-up label sits on the later fixing pull request, not on a merge of the class: one
   # quoted search per merge (L11) says which merges were followed up.
   followed="{}"
