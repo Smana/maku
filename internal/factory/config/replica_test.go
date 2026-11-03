@@ -41,15 +41,18 @@ func TestByReplicaReadsTheByClause(t *testing.T) {
 		query string
 		want  bool
 	}{
-		"by pod":              {`sum by (ar_agent, gen_ai_token_type, pod) (x)`, true},
-		"by instance":         {`sum by (ar_agent, instance) (x)`, true},
-		"by pod alone":        {`sum by(pod)(x)`, true},
-		"summed":              {`sum by (ar_agent) (x)`, false},
-		"without pod":         {`sum without (pod) (x)`, false},
-		"a namespace name":    {`sum by (ar_agent) (x{namespace="agent-pods"})`, false},
-		"a pod matcher":       {`sum by (ar_agent) (x{pod="x"})`, false},
-		"a nested clause":     {`sum by (a, b) (max by (a, b, pod) (x))`, false},
-		"a longer label name": {`sum by (ar_agent, podname) (x)`, false},
+		"by pod":                          {`sum by (ar_agent, gen_ai_token_type, pod) (x)`, true},
+		"by instance":                     {`sum by (ar_agent, instance) (x)`, true},
+		"by pod alone":                    {`sum by(pod)(x)`, true},
+		"summed":                          {`sum by (ar_agent) (x)`, false},
+		"without pod":                     {`sum without (pod) (x)`, false},
+		"a namespace name":                {`sum by (ar_agent) (x{namespace="agent-pods"})`, false},
+		"a pod matcher":                   {`sum by (ar_agent) (x{pod="x"})`, false},
+		"a nested clause":                 {`sum by (a, b) (max by (a, b, pod) (x))`, false},
+		"a trailing by over a nested one": {`sum(max by (a, pod) (x)) by (a)`, false},
+		"a by inside a matcher":           {`sum(x{l="by (pod)"}) by (a)`, false},
+		"a trailing by pod":               {`sum(x) by (a, pod)`, true},
+		"a longer label name":             {`sum by (ar_agent, podname) (x)`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := (Meter{Query: c.query}).ByReplica(); got != c.want {

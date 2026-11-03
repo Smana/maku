@@ -946,16 +946,17 @@ func (m Meter) ByModel() bool { return strings.Contains(m.Query, "gen_ai_request
 // replicaBy matches a by (...) clause of the meter's query.
 var replicaBy = regexp.MustCompile(`\bby\s*\(([^)]*)\)`)
 
-// ByReplica is true when the FIRST by (...) clause of the meter's query, the outermost aggregation,
-// names pod or instance, as a whole word (an inner clause under a summing outer one yields one series): the label that tells the gateway's replicas apart. The meter folds one baseline per series
-// (D10) only then, since a series is exact only as one replica's counter; a without clause, a
-// matcher or a longer name (agent-pods) does not keep the replicas apart.
+// ByReplica is true when the meter's query has exactly one by (...) clause and it names pod or
+// instance, as a whole word: the label that tells the gateway's replicas apart. The meter folds one
+// baseline per series (D10) only then, since a series is exact only as one replica's counter. A
+// second clause (an inner or outer aggregation that may sum the replicas again), a without clause,
+// a matcher or a longer name (agent-pods) does not keep the replicas apart.
 func (m Meter) ByReplica() bool {
-	c := replicaBy.FindStringSubmatch(m.Query)
-	if c == nil {
+	cs := replicaBy.FindAllStringSubmatch(m.Query, -1)
+	if len(cs) != 1 {
 		return false
 	}
-	for _, l := range strings.FieldsFunc(c[1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+	for _, l := range strings.FieldsFunc(cs[0][1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
 		if l == "pod" || l == "instance" {
 			return true
 		}
