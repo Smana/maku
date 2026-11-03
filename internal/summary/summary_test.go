@@ -550,3 +550,34 @@ func TestTheRunsModelAndEffort(t *testing.T) {
 		})
 	}
 }
+
+// A clone folds on apart from its original: Add writes the approvals, the agents, the notes and the
+// run models in place, and the broker's fold cache hands one clone to each reader (audit S-9).
+func TestACloneFoldsApart(t *testing.T) {
+	sys := envelope.Actor{Kind: envelope.ActorSystem, ID: "system:room-broker"}
+	running := ev(2, envelope.StateChanged, sys, map[string]any{"kind": "run_phase", "phase": "Running", "model": "agent-default"})
+	running.Origin = envelope.OriginBroker
+	prefix := []envelope.Event{
+		approvalRequested(1, "01A", "push", time.Time{}),
+		running,
+		ev(3, envelope.Participant, sys, envelope.ParticipantPayload{Principal: "agent:cf4ato2x", Change: "joined", Role: "implementer"}),
+		note(4, "n4"),
+	}
+	base, want := summary.Fold(prefix), summary.Fold(prefix)
+	effort := ev(8, envelope.StateChanged, envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:cf4ato2x"},
+		map[string]any{"kind": "harness_status", "status": "running", "previous": "", "effort": "high"})
+	effort.Origin = envelope.OriginHarness
+	c := base.Clone()
+	c.Add([]envelope.Event{
+		ev(5, envelope.ApprovalDecided, sys, envelope.ApprovalDecidedPayload{ApprovalID: "01A", Decision: "approved"}),
+		ev(6, envelope.Participant, sys, envelope.ParticipantPayload{Principal: "agent:cf4ato2x", Change: "left", Role: "implementer"}),
+		note(7, "n7"),
+		effort,
+	})
+	if !reflect.DeepEqual(base, want) {
+		t.Fatalf("folding the clone changed the original:\ngot  %+v\nwant %+v", base, want)
+	}
+	if len(c.Pending) != 0 || len(c.Agents) != 0 || len(c.Notes) != 2 || c.LLM.Effort != "high" {
+		t.Fatalf("the clone did not fold on: %+v", c)
+	}
+}

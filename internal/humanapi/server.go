@@ -173,6 +173,8 @@ type Server struct {
 	limitMu    sync.Mutex
 	mcpLimits  map[string]*rate.Limiter // /mcp requests per principal, per replica
 	readLimits map[string]*rate.Limiter // room list and summary reads per principal, per replica
+
+	folds foldCache // each recently read room's summary fold (audit S-9)
 }
 
 // Routes is the :8080 handler.

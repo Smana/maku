@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -386,5 +387,55 @@ func TestRoomReadsAreRateLimited(t *testing.T) {
 				t.Fatalf("the budget is per principal: %d %s", code, body)
 			}
 		})
+	}
+}
+
+// rangeLog is the Server's log, recording the after of each event page it reads. The hub reads
+// memLog directly, so its polls are not counted.
+type rangeLog struct {
+	*memLog
+	readMu sync.Mutex
+	afters []int64
+}
+
+func (l *rangeLog) Range(ctx context.Context, room string, after int64, limit int) ([]envelope.Event, error) {
+	l.readMu.Lock()
+	l.afters = append(l.afters, after)
+	l.readMu.Unlock()
+	return l.memLog.Range(ctx, room, after, limit)
+}
+
+func (l *rangeLog) reads() []int64 {
+	l.readMu.Lock()
+	defer l.readMu.Unlock()
+	return slices.Clone(l.afters)
+}
+
+// Audit S-9: a summary folds only what the log appended since the room's last fold, and the
+// summary of an unchanged room reads no event page at all.
+func TestSummaryFoldsOnlyNewEvents(t *testing.T) {
+	var rl *rangeLog
+	e := setup(t, abc(t), func(s *Server, _ *fanout.Hub, v *hubView) {
+		rl = &rangeLog{memLog: v.memLog}
+		s.Log = rl
+	})
+	factsLog(e.log)
+	for _, step := range []struct {
+		name      string
+		appended  []envelope.Event
+		wantReads []int64
+		wantNotes int
+	}{
+		{"the first summary folds the whole log", nil, []int64{0}, 2},
+		{"an unchanged room reads no page", nil, []int64{0}, 2},
+		{"one append is read from the cached seq", []envelope.Event{progress(5, "merged")}, []int64{0, 4}, 3},
+	} {
+		e.log.mu.Lock()
+		e.log.evs = append(e.log.evs, step.appended...)
+		e.log.mu.Unlock()
+		s := summaryOf(t, e, roomID, "", admin("boss"))
+		if got := rl.reads(); !slices.Equal(got, step.wantReads) || len(s.Notes.Items) != step.wantNotes {
+			t.Fatalf("%s: pages read after %v, %d notes; want %v, %d", step.name, got, len(s.Notes.Items), step.wantReads, step.wantNotes)
+		}
 	}
 }
