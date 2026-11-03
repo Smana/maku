@@ -23,6 +23,10 @@
 :root {
   color-scheme: light;
 
+  --flow-writer: #0e7490; /* the run rail: a writer's lane */
+  --flow-judge: #6d28d9; /* a judge's lane */
+  --flow-plan: #b45309; /* a plan step no run has reached */
+
   --background: #ffffff;
   --foreground: #0a0a0f; /* Ink */
   --card: #ffffff;
@@ -83,6 +87,10 @@
 
 .dark {
   color-scheme: dark;
+
+  --flow-writer: #22d3ee;
+  --flow-judge: #a78bfa;
+  --flow-plan: #f5a524;
 
   --background: #0a0a0f; /* Ink */
   --foreground: #f3f2fa; /* Paper */

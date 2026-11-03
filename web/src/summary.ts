@@ -12,6 +12,21 @@ import { approvalAnchor, el } from "./controls";
 
 export interface RunModel { run: string; model?: string; effort?: string }
 
+export interface FlowNode {
+  run: string; persona: string; role: string; round: number;
+  startedAt?: string; endedAt?: string; fromSeq: number; toSeq: number; outcome?: string;
+  verdict?: string; microUSD?: number; model?: string; judge?: { count: number; last: string };
+  tools: { ok: number; failed: number }; edge?: string; startedBy?: string; reason?: string; handoff?: string;
+}
+export interface Milestone { phase: string; at: string; seq: number }
+export interface SplitPart { index: number; issue: number; room: string; outcome?: string }
+// The task's path as the rail draws it (internal/summary Flow). Role is the log's text and may be
+// any string: key nothing on it without a fallback.
+export interface Flow {
+  plan?: string[]; nodes: FlowNode[]; ghosts?: string[]; milestones?: Milestone[];
+  split?: { of: number; parts?: SplitPart[] }; parent?: { room: string; issue: number; index: number; of: number };
+}
+
 export interface Summary {
   apiVersion: "summary/v1";
   room: string;
@@ -43,6 +58,7 @@ export interface Summary {
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
   actions: { kind: string; what: string; cli?: string }[];
   notes: { untrusted: true; items: { at: string; run: string; text: string }[] };
+  flow?: Flow;
   cursor: string;
 }
 
@@ -64,8 +80,9 @@ export async function fetchSummary(id: string, get: typeof fetch = fetch): Promi
 export function changesSummary(e: RoomEvent): boolean {
   const kind = e.payload?.kind;
   switch (e.type) {
-    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit";
-    case "message": return kind === "progress" || kind === "review_verdict";
+    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase";
+    case "message": return kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
+    case "handoff": case "participant": return true;
     case "approval_requested": case "approval_decided": return true;
   }
   return false;
