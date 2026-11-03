@@ -833,6 +833,18 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-card[hidden] { display: none; }
 .rail-card p { margin: 0; }
 .rail-card .hint { margin-left: 8px; color: var(--muted-foreground); }
+@media (prefers-reduced-motion: no-preference) {
+  .rail-node.enter { animation: rail-enter 150ms ease-out; }
+  .rail-stroke.draw { stroke-dasharray: var(--len); animation: rail-draw 400ms ease-out; }
+  .rail-judge.tick { display: inline-block; animation: rail-tick 200ms ease-out; }
+  .rail-milestone.fill::before { animation: rail-fill 300ms ease-out; }
+  .rail-node[data-state="live"] > .rail-button { animation: rail-breathe 2.4s ease-in-out infinite; }
+  @keyframes rail-enter { from { opacity: 0; transform: scale(0.96); } }
+  @keyframes rail-draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+  @keyframes rail-tick { 50% { transform: scale(1.4); } }
+  @keyframes rail-fill { from { transform: scale(0); } }
+  @keyframes rail-breathe { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--lane) 35%, transparent); } }
+}
 .rail-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
 
 /* The room body: the conversation, and the rail beside it from 1100 px up. Below that the rail is

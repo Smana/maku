@@ -29,6 +29,15 @@ const NS = "http://www.w3.org/2000/svg";
 
 let cards = 0;
 
+// A ghost's index shifts when an earlier one goes live; its persona is what stays.
+const stable = (run: string) => run.replace(/^plan-\d+-/, "plan-");
+
+// Without animationend the class would stay and a re-render would replay it.
+function animate(e: Element, cls: string): void {
+  e.classList.add(cls);
+  e.addEventListener("animationend", (ev) => { if (ev.target === e) e.classList.remove(cls); });
+}
+
 function edge(from: string, to: string, label: string | undefined, ghost: boolean): HTMLLIElement {
   const li = el("li", { className: "rail-edge" });
   li.dataset.from = from;
@@ -82,6 +91,8 @@ export function mountRail(h: RailHandlers): Rail {
   const tools = new Map<string, { ok: number; failed: number }>();
   const ages = new Map<string, HTMLElement>();
   const buttons = new Map<string, HTMLButtonElement>();
+
+  let prev: { runs: Set<string>; edges: Set<string>; judges: Map<string, number>; done: Set<string> } | undefined;
 
   const nodeOf = (run: string) => flow?.nodes.find((n) => n.run === run);
 
@@ -177,6 +188,43 @@ export function mountRail(h: RailHandlers): Rail {
     return li;
   }
 
+  // Compares the fresh DOM with the previous set; the first set has nothing to compare with.
+  function motion(): void {
+    const runs = new Set<string>();
+    const edges = new Set<string>();
+    const judges = new Map<string, number>();
+    const done = new Set<string>();
+    const last = prev;
+    for (const li of path.querySelectorAll<HTMLElement>("li.rail-node")) {
+      const k = stable(li.dataset.run!);
+      runs.add(k);
+      const c = nodeOf(li.dataset.run!)?.judge?.count ?? 0;
+      judges.set(k, c);
+      if (!last) continue;
+      if (!last.runs.has(k)) animate(li, "enter");
+      else if (c > (last.judges.get(k) ?? 0)) {
+        const mark = li.querySelector(".rail-judge");
+        if (mark) animate(mark, "tick");
+      }
+    }
+    for (const li of path.querySelectorAll<HTMLElement>("li.rail-edge")) {
+      const k = `${stable(li.dataset.from!)}→${stable(li.dataset.to!)}`;
+      edges.add(k);
+      if (!last || last.edges.has(k)) continue;
+      const p = li.querySelector<SVGPathElement>("path.rail-stroke");
+      if (!p) continue;
+      const len = typeof p.getTotalLength === "function" ? p.getTotalLength() : 40;
+      p.style.setProperty("--len", String(len));
+      animate(p, "draw");
+    }
+    for (const li of milestones.querySelectorAll<HTMLElement>("li.rail-milestone")) {
+      if (li.dataset.state !== "done") continue;
+      done.add(li.dataset.phase!);
+      if (last && !last.done.has(li.dataset.phase!)) animate(li, "fill");
+    }
+    prev = { runs, edges, judges, done };
+  }
+
   function applyMarks(): void {
     for (const [run, b] of buttons) {
       if (run === current) b.setAttribute("aria-current", "true");
@@ -232,6 +280,7 @@ export function mountRail(h: RailHandlers): Rail {
     }
     milestones.replaceChildren(...ms);
     applyMarks();
+    motion();
     if (focused) buttons.get(focused)?.focus();
   }
 

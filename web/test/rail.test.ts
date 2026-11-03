@@ -199,4 +199,47 @@ describe("rail", () => {
     rail.set(undefined, "Closed", now);
     expect(rail.el.hidden).toBe(true);
   });
+
+  describe("motion", () => {
+    const judge = node({ run: "r-j", persona: "reviewer", role: "reviewer", fromSeq: 60, edge: "review", judge: { count: 1, last: "approve" } });
+    const a: Flow = { nodes: [scoper, implementer, judge], ghosts: [], milestones: [{ phase: "AwaitingCI", at: "2026-11-03T10:10:00Z", seq: 90 }] };
+    const extra = node({ run: "r-x", persona: "fixer", role: "implementer", fromSeq: 90, edge: "fix" });
+    const b: Flow = {
+      nodes: [scoper, implementer, { ...judge, judge: { count: 2, last: "approve" } }, extra], ghosts: [],
+      milestones: [...a.milestones!, { phase: "Merged", at: "2026-11-03T10:15:00Z", seq: 99 }],
+    };
+    const count = (rail: { el: HTMLElement }, c: string) => rail.el.querySelectorAll(`.${c}`).length;
+
+    it("marks what changed", () => {
+      const { rail } = mount();
+      rail.set(a, "AwaitingCI", now);
+      rail.set(b, "Merged", now);
+      expect(["enter", "draw", "tick", "fill"].map((c) => count(rail, c))).toEqual([1, 1, 1, 1]);
+      expect(nodeOf(rail, "r-x").classList.contains("enter")).toBe(true);
+      expect((rail.el.querySelector("path.draw") as SVGElement).style.getPropertyValue("--len")).not.toBe("");
+    });
+
+    it("first paint animates nothing", () => {
+      const { rail } = mount();
+      rail.set(b, "Merged", now);
+      for (const c of ["enter", "draw", "tick", "fill"]) expect(count(rail, c)).toBe(0);
+    });
+
+    it("a ghost that turned live enters", () => {
+      const { rail } = mount();
+      rail.set({ nodes: [scoper], ghosts: ["implementer"] }, "Implementing", now);
+      rail.set({ nodes: [scoper, implementer], ghosts: [] }, "Implementing", now);
+      expect(count(rail, "enter")).toBe(1);
+    });
+
+    it("classes leave on animationend", () => {
+      const { rail } = mount();
+      rail.set(a, "AwaitingCI", now);
+      rail.set(b, "Merged", now);
+      for (const c of ["enter", "draw", "tick", "fill"]) {
+        rail.el.querySelector(`.${c}`)!.dispatchEvent(new Event("animationend"));
+        expect(count(rail, c)).toBe(0);
+      }
+    });
+  });
 });
