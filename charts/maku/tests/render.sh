@@ -70,6 +70,7 @@ ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-contro
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | ((.resourceNames | join(",")) == "agent-model,agent-git" and (.verbs | join(",")) == "get")' 'get on the model and git Secrets by name'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.metadata.namespace == null and (.rules[0].resourceNames | join(",")) == "room-broker-ca" and (.rules[0].verbs | join(",")) == "get")' 'get on the CA-only Secret by name, in the release namespace'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "room-broker-tls")' 'no Role reads the broker key pair (S-3)'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | select(.resourceNames == null)' 'no Role grants Secrets without resourceNames (S-3)'
 ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.endpointSelector.matchLabels."app.kubernetes.io/name" == "run-controller" and (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "443,6443"))' 'controller CNP: apiserver on apiServerPorts, own selector'
 ykind RuntimeClass '(.handler == "runsc" and .metadata.name == "gvisor")' 'RuntimeClass gvisor'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "agent-factory")' 'the quickstart renders no factory object'
@@ -162,6 +163,8 @@ bad 'broker.publicURL "https://rooms.example" in local mode' --set broker.public
 bad 'broker.publicURL "http://0.0.0.0:8080" in local mode' --set broker.publicURL=http://0.0.0.0:8080
 bad 'runs.group "cloud.ogenki.io" with runController.enabled' --set runs.group=cloud.ogenki.io
 bad 'broker.tls.caSecretName must not be broker.tls.secretName' --set broker.tls.caSecretName=room-broker-tls
+bad 'runs.namespace "x" is the release namespace' --set runs.namespace=x
+bad 'broker.tls.secretName is required' --set broker.tls.secretName=
 
 # S-1, D6: the factory's CA and the insecure opt-out reach the broker's config; http alone is refused
 fca="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \

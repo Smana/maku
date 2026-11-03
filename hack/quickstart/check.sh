@@ -65,6 +65,8 @@ done
 ca_secret=$(yq '.broker.tls.caSecretName' "$vals")
 grep -qF "\"metadata\": {\"name\": \"$ca_secret\"}" "$qs/up.sh" || bad "up.sh does not create the CA Secret $ca_secret"
 [[ $(yq '.broker.caSecret' - <<<"$cfg") == "$ca_secret" ]] || bad "the run controller does not read the CA from $ca_secret"
+! grep -F -- 'room-broker-ca' "$qs/up.sh" | grep -q 'tls\.key' || bad "up.sh copies tls.key into the CA Secret"
+[[ $(grep -c '"data": {"ca.crt": .data."tls.crt"}' "$qs/up.sh") == 1 ]] || bad "up.sh does not build the CA Secret data from tls.crt alone"
 [[ $(yq ".. | select(has(\"namespace\")) | .namespace" - <<<"$cfg" | head -1) == "$runs_ns" ]] || bad "run-controller namespace is not $runs_ns"
 grep -q "create namespace $runs_ns " "$qs/up.sh" || bad "up.sh does not create namespace $runs_ns"
 [[ $(q Namespace 'length') == 0 ]] || bad "chart renders a Namespace despite createRunsNamespace=false"
