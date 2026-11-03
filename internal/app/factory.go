@@ -334,7 +334,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		// MC10: off unless a class adopts; leader-only, through the Scheduler's connections.
 		&intake.Adopter{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
-		&meter.Meter{Runs: rc, Source: vm, Every: cfg.Poll.Meter.Duration, OnRevoke: m.RunRevoked, Log: log,
+		&meter.Meter{Runs: rc, Source: vm, PerReplica: cfg.Meter.ByReplica(), Every: cfg.Poll.Meter.Duration, OnRevoke: m.RunRevoked, Log: log,
 			OnCharge: m.Charged, OnCharges: m.RunCharges,
 			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: m.RunCost, OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },

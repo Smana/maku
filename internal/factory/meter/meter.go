@@ -235,6 +235,10 @@ const endSettle = 2 * time.Minute
 type Meter struct {
 	Runs   Store
 	Source Source
+	// PerReplica is true when the Source's query keeps each gateway replica a series of its own
+	// (config.Meter.ByReplica): only then is a series a replica's counter, and fold keeps one
+	// baseline per series (D10). Unset, the per-run reading is taken as it comes.
+	PerReplica bool
 	// Throttle maps gateway 429s to runs; nil: no 429 mapping (VL implements it).
 	Throttle Throttled
 	// Budgets are the daily ceilings; enforced only when EnforcePrincipal (R3's shadow first).
@@ -391,7 +395,9 @@ func (m *Meter) log() *slog.Logger {
 // total is a run's monotonic usage (R12). The gateway counter restarts when a data-plane pod does,
 // so the raw value is never the total: the total is the high-water mark (the annotation, which
 // SP1 never lets drop, or this meter's own last total) plus the increases since the last reading.
-// A drop re-baselines and adds nothing, so a reset can hide at most one tick of usage.
+// A drop re-baselines and adds nothing, so a reset can hide at most one tick of usage. That is the
+// per-run reading of a summed query; a per-replica one (PerReplica) is folded series by series
+// first (fold), so a drop there is one replica's restart, counted whole, never the run's.
 func (m *Meter) total(r runs.Run, raw int64, seen bool) int64 {
 	if m.last == nil {
 		m.last = map[string]reading{}

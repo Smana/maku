@@ -78,7 +78,7 @@ func TestEachReplicaIsCountedOnce(t *testing.T) {
 				replies = append(replies, replicaReply(pods))
 			}
 			st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{{ID: "aaaaaaaa", Phase: "Running"}}}
-			m := &Meter{Runs: st, Source: vmReplies(t, replies...)}
+			m := &Meter{Runs: st, Source: vmReplies(t, replies...), PerReplica: true}
 			for i, want := range c.usage {
 				if err := m.Tick(t.Context()); err != nil {
 					t.Fatal(err)
@@ -91,5 +91,30 @@ func TestEachReplicaIsCountedOnce(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// H-4, D10: a summed query is not folded: its per-run reading is taken as it comes, as before, so
+// one stale tick or restart never charges the other replicas' counters again. The same readings
+// the folded case would split by replica give the old totals.
+func TestASummedQueryKeepsThePerRunReading(t *testing.T) {
+	readings := []int64{1000, 700, 1150}
+	want := []int64{1000, 1000, 1450} // a drop re-baselines and adds nothing
+	var replies []string
+	for _, n := range readings {
+		replies = append(replies, replicaReply(map[string]int64{"sum": n}))
+	}
+	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{{ID: "aaaaaaaa", Phase: "Running"}}}
+	m := &Meter{Runs: st, Source: vmReplies(t, replies...)} // PerReplica unset
+	for i, w := range want {
+		if err := m.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if u := st.patches["aaaaaaaa"][runs.AnnUsage]; u != "" {
+			st.runs[0].Tokens, _ = strconv.ParseInt(u, 10, 64)
+		}
+		if st.runs[0].Tokens != w {
+			t.Fatalf("tick %d: usage %d, want %d", i+1, st.runs[0].Tokens, w)
+		}
 	}
 }

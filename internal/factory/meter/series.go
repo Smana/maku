@@ -91,11 +91,13 @@ func (m *Meter) fold(series []Series) []Series {
 	return out
 }
 
-// usage is this tick's reading of each run. A SeriesSource is read series by series and each kept
-// monotonic on its own first (fold); any other Source's per-run sums are taken as they come.
+// usage is this tick's reading of each run. With PerReplica, a SeriesSource is read series by
+// series and each kept monotonic on its own first (fold). Otherwise, a summed query's or any other
+// Source's per-run reading is taken as it comes: folding a sum would charge every other replica
+// again whenever one drops out or restarts.
 func (m *Meter) usage(ctx context.Context) (map[string]Usage, error) {
 	src, ok := m.Source.(SeriesSource)
-	if !ok {
+	if !ok || !m.PerReplica {
 		return m.Source.RunUsage(ctx)
 	}
 	series, err := src.RunSeries(ctx)

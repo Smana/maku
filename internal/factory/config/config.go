@@ -943,11 +943,22 @@ var modelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // the claim's logical model.
 func (m Meter) ByModel() bool { return strings.Contains(m.Query, "gen_ai_request_model") }
 
-// ByReplica is true when the meter's query names the label that tells the gateway's replicas
-// apart, pod or instance: the meter keeps one baseline per series (D10), which is exact only when
-// a series is one replica's counter.
+// replicaBy matches a by (...) clause of the meter's query.
+var replicaBy = regexp.MustCompile(`\bby\s*\(([^)]*)\)`)
+
+// ByReplica is true when a by (...) clause of the meter's query names pod or instance, as a whole
+// word: the label that tells the gateway's replicas apart. The meter folds one baseline per series
+// (D10) only then, since a series is exact only as one replica's counter; a without clause, a
+// matcher or a longer name (agent-pods) does not keep the replicas apart.
 func (m Meter) ByReplica() bool {
-	return strings.Contains(m.Query, "pod") || strings.Contains(m.Query, "instance")
+	for _, c := range replicaBy.FindAllStringSubmatch(m.Query, -1) {
+		for _, l := range strings.FieldsFunc(c[1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+			if l == "pod" || l == "instance" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // models are C5's logical names: the only names a tier's model or a template's reviewerModel may
@@ -1112,9 +1123,9 @@ func Parse(raw []byte) (*Config, error) {
 		}
 	}
 	if !c.Meter.ByReplica() {
-		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: keep the replica label in its grouping, "+
-			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod), or a replica whose scrape drops out for a tick "+
-			"is charged again when it returns (D10)")
+		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, which under-counts "+
+			"a replica whose scrape drops out for a tick, until the query keeps the replica label in its grouping, "+
+			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])

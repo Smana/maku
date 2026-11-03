@@ -33,3 +33,27 @@ func TestAMeterQuerySummingTheReplicasWarns(t *testing.T) {
 		})
 	}
 }
+
+// A query keeps the replicas apart only through a by (...) clause naming pod or instance as a
+// whole word.
+func TestByReplicaReadsTheByClause(t *testing.T) {
+	for name, c := range map[string]struct {
+		query string
+		want  bool
+	}{
+		"by pod":              {`sum by (ar_agent, gen_ai_token_type, pod) (x)`, true},
+		"by instance":         {`sum by (ar_agent, instance) (x)`, true},
+		"by pod alone":        {`sum by(pod)(x)`, true},
+		"summed":              {`sum by (ar_agent) (x)`, false},
+		"without pod":         {`sum without (pod) (x)`, false},
+		"a namespace name":    {`sum by (ar_agent) (x{namespace="agent-pods"})`, false},
+		"a pod matcher":       {`sum by (ar_agent) (x{pod="x"})`, false},
+		"a longer label name": {`sum by (ar_agent, podname) (x)`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := (Meter{Query: c.query}).ByReplica(); got != c.want {
+				t.Fatalf("ByReplica(%q) = %v, want %v", c.query, got, c.want)
+			}
+		})
+	}
+}

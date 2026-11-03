@@ -16,7 +16,8 @@ import (
 	"github.com/Smana/maku/internal/runwatch"
 )
 
-// maxVMReply bounds a query reply: one series per live or recent run, a few hundred bytes each.
+// maxVMReply bounds a query reply: one series per live or recent run, or per replica and token type
+// and model of each when the query keeps them apart, a few hundred bytes each.
 const maxVMReply = 4 << 20
 
 // maxReading is the largest count taken as a reading: far above any run's cap (5 M, C3), and
