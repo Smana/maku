@@ -289,6 +289,72 @@
         }
       ]
     },
+    "flow": {
+      "nodes": [
+        {
+          "run": "c1",
+          "persona": "implementer",
+          "role": "implementer",
+          "round": 1,
+          "startedAt": "2026-10-07T17:00:00Z",
+          "endedAt": "2026-10-07T17:40:00Z",
+          "fromSeq": 0,
+          "toSeq": 0,
+          "outcome": "succeeded",
+          "microUSD": 180000,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          }
+        },
+        {
+          "run": "c2",
+          "persona": "reviewer",
+          "role": "reviewer",
+          "round": 1,
+          "startedAt": "2026-10-07T17:45:00Z",
+          "endedAt": "2026-10-07T17:55:00Z",
+          "fromSeq": 0,
+          "toSeq": 0,
+          "outcome": "succeeded",
+          "verdict": "approve",
+          "microUSD": 30000,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          },
+          "edge": "PR #2239"
+        },
+        {
+          "run": "c3",
+          "persona": "implementer",
+          "role": "implementer",
+          "round": 2,
+          "startedAt": "2026-10-07T19:11:42Z",
+          "fromSeq": 0,
+          "toSeq": 0,
+          "microUSD": 100000,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          },
+          "edge": "changes requested"
+        },
+        {
+          "run": "cf4ato2x",
+          "persona": "implementer",
+          "role": "implementer",
+          "round": 2,
+          "startedAt": "2026-10-07T19:11:50Z",
+          "fromSeq": 4,
+          "toSeq": 0,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          }
+        }
+      ]
+    },
     "cursor": "seq:7"
   }
 }

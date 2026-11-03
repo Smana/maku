@@ -196,6 +196,8 @@ type Summary struct {
 		Untrusted bool         `json:"untrusted"`
 		Items     []QueuedNote `json:"items"`
 	} `json:"queued,omitzero"`
+	// Flow is the task's path: absent in a room without a task until its second run.
+	Flow   *Flow  `json:"flow,omitempty"`
 	Cursor string `json:"cursor"`
 }
 
@@ -392,6 +394,7 @@ func View(st State, room, url string, sub policy.Subject, after int64, now time.
 	s.Status.LastJudge = st.Judge
 	s.Status.ReasonCode = ReasonCode(st.Facts)
 	s.Status.RunModel, s.Status.LastRunModel = runModels(st)
+	s.Flow = flowView(st)
 	s.NeedsYou, s.Actions = []Need{}, []Action{}
 	s.Notes.Untrusted, s.Notes.Items = true, []Note{}
 	for _, n := range st.Notes {
