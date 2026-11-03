@@ -10,11 +10,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -100,10 +103,32 @@ func (Manifest) Request(_ context.Context, r Request) (Result, error) {
 	return Result{RunID: id, Via: "manifest", Manifest: b}, nil
 }
 
-// Factory is SP3's run API at URL. HC nil means the audited egress client.
+// Factory is SP3's run API at URL. HC, when set, is the client (tests). Otherwise each call
+// builds the audited egress client, trusting the PEM CA in CAFile, read at that call so a rotated
+// CA needs no restart (S-1), or the system roots when CAFile is empty.
 type Factory struct {
-	URL string
-	HC  *http.Client
+	URL    string
+	CAFile string
+	HC     *http.Client
+}
+
+// client is f's HTTP client for one call.
+func (f Factory) client() (*http.Client, error) {
+	if f.HC != nil {
+		return f.HC, nil
+	}
+	if f.CAFile == "" {
+		return httpx.New(factoryTimeout, nil), nil
+	}
+	raw, err := os.ReadFile(filepath.Clean(f.CAFile))
+	if err != nil {
+		return nil, fmt.Errorf("runrequest: factoryCAFile: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("runrequest: factoryCAFile %s holds no PEM certificate", f.CAFile)
+	}
+	return httpx.New(factoryTimeout, roots), nil
 }
 
 // Request posts r to the factory as the human it names, with their own token.
@@ -128,9 +153,12 @@ func (f Factory) Request(ctx context.Context, r Request) (Result, error) {
 	// SP3's contract: the same key answers the same runId, so a retried act
 	// never creates a second run (docs/integration.md).
 	req.Header.Set("Idempotency-Key", r.IdempotencyKey)
-	hc := f.HC
-	if hc == nil {
-		hc = httpx.New(factoryTimeout, nil)
+	hc, err := f.client()
+	if err != nil {
+		return Result{}, err
+	}
+	if f.HC == nil {
+		defer hc.CloseIdleConnections() // a client per call: its connection goes with it
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

@@ -31,7 +31,6 @@ import (
 	"github.com/Smana/maku/internal/config"
 	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/fanout"
-	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/humanapi/ui"
 	"github.com/Smana/maku/internal/metrics"
@@ -222,7 +221,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		api.SlackLinks, api.SlackLinkReader = st, fconfig.PrincipalFactory
 	}
 	if len(cfg.Human.MCP.Sponsored) > 0 { // the factory's URL is the config's, never a request's
-		humans.Tasks = runrequest.Factory{URL: cfg.FactoryURL, HC: httpx.New(factoryTimeout, nil)}
+		humans.Tasks = runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 	}
 	// :8090 is the agents' listener and the config names it (I8). Absent it starts, as every existing
 	// deployment expects, and ROOMS_MCP_KEY alone decides whether calls are accepted; an explicit
