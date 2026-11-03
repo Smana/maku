@@ -33,9 +33,10 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 		r := t.Status.Runs[i]
 		rf := runFact(r)
 		rf.Persona = personaOf(t, r)
-		if p := r.Provenance; !p.IsZero() {
-			rf.Provenance = &envelope.ProvenanceFact{FactoryVersion: p.FactoryVersion, CompositionRevision: p.CompositionRevision,
-				HarnessImage: p.HarnessImage, ServedModels: slices.Clone(p.ServedModels)}
+		// The history keeps the models only: 20 runs of full provenance would pass the broker's body
+		// bound for facts, which refuses for good.
+		if len(r.Provenance.ServedModels) > 0 {
+			rf.Provenance = &envelope.ProvenanceFact{ServedModels: slices.Clone(r.Provenance.ServedModels)}
 		}
 		if r.Finished != nil {
 			return rf
@@ -57,6 +58,10 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	}
 	if len(t.Status.Runs) > 0 {
 		rf := fact(len(t.Status.Runs) - 1)
+		if p := current(t).Provenance; !p.IsZero() {
+			rf.Provenance = &envelope.ProvenanceFact{FactoryVersion: p.FactoryVersion, CompositionRevision: p.CompositionRevision,
+				HarnessImage: p.HarnessImage, ServedModels: slices.Clone(p.ServedModels)}
+		}
 		f.Run = &rf
 		for i := max(0, len(t.Status.Runs)-envelope.MaxRuns); i < len(t.Status.Runs); i++ {
 			f.Runs = append(f.Runs, fact(i))

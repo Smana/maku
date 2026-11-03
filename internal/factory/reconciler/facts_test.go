@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -698,25 +699,54 @@ func TestFactsOfCarriesEachRunsServedModels(t *testing.T) {
 	}
 }
 
-// 20 runs with a full provenance each stay within the broker's body bound for facts (R10).
-func TestFactsWithTwentyFullProvenancesFitTheBrokerBody(t *testing.T) {
+// The facts of a task at its realistic worst fit the broker's body bound for task facts: past it the
+// broker refuses with a 400 for good and the task's room never takes its last facts. The bound is
+// bridgeapi's maxMessageBytes, 2 * envelope.MaxHumanMessage, repeated here (it is unexported).
+func TestFactsAtTheirWorstFitTheBrokerBody(t *testing.T) {
 	task := awaiting()
+	task.Spec.Issue, task.Spec.Repository = 1_000_000, strings.Repeat("o", 39)+"/"+strings.Repeat("r", 100)
+	task.Spec.Text = "# " + strings.Repeat("t", 400)
+	task.Spec.IssueAuthor = strings.Repeat("a", 39)
+	task.Spec.Source.RequestedBy = "github:" + strings.Repeat("l", 39)
+	task.Spec.Parent = &v1alpha1.Parent{Task: "p4zt6wce", Issue: 1_000_000, Index: 5, Of: 5}
+	task.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1_000_000, URL: "https://github.com/o/r/pull/1000000",
+		Author: strings.Repeat("a", 39), Reviewers: slices.Repeat([]string{strings.Repeat("v", 39)}, 8)}
+	task.Status.Reason = strings.Repeat("r", 64)
 	task.Status.Runs = runsOf(envelope.MaxRuns)
 	var models []string
 	for i := range 8 {
 		models = append(models, fmt.Sprintf("%02d%s", i, strings.Repeat("m", 62)))
 	}
 	for i := range task.Status.Runs {
-		task.Status.Runs[i].Provenance = v1alpha1.RunProvenance{FactoryVersion: strings.Repeat("v", 64),
+		r := &task.Status.Runs[i]
+		r.Trigger, r.Role = "resume", "implementer"
+		finish(r, "BudgetExhausted", envelope.MaxMicroUSD, strings.Repeat("v", envelope.MaxVerdict))
+		r.Provenance = v1alpha1.RunProvenance{FactoryVersion: strings.Repeat("v", 64),
 			CompositionRevision: strings.Repeat("c", 253), HarnessImage: strings.Repeat("h", 320), ServedModels: models}
 	}
 	f := factsOf(task)
+	f.Plan = slices.Repeat([]string{strings.Repeat("p", 32)}, envelope.MaxPlan)
+	f.Split = &envelope.SplitFact{Of: 5}
+	for i := range 5 {
+		f.Split.Parts = append(f.Split.Parts, envelope.PartFact{Index: i + 1, Issue: 1_000_000, Room: "k2mqx7ba", Outcome: "landed"})
+	}
+	if f.Run == nil || f.Run.Provenance == nil || len(f.Run.Provenance.HarnessImage) != 320 || len(f.Runs[0].Provenance.HarnessImage) != 0 {
+		t.Fatalf("the current run keeps its full provenance, the history only its models: %+v", f)
+	}
 	if err := f.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	b := envelope.TaskStatePayload(f)
-	t.Logf("payload %d bytes", len(b))
-	if len(b) > 2*envelope.MaxHumanMessage {
-		t.Fatalf("payload %d bytes", len(b))
+	// What the factory client posts: {"clientSeq", "facts"}, the facts as the state payload's fields.
+	body, err := json.Marshal(struct {
+		ClientSeq int64              `json:"clientSeq"`
+		Facts     envelope.TaskFacts `json:"facts"`
+	}{1 << 40, f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit, margin = 2 * envelope.MaxHumanMessage, 4 << 10
+	t.Logf("body %d of %d bytes", len(body), limit)
+	if len(body) > limit-margin {
+		t.Fatalf("body %d bytes leaves under %d of the broker's %d", len(body), margin, limit)
 	}
 }
