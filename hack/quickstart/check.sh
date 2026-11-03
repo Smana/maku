@@ -61,6 +61,10 @@ for k in modelSecret gitSecret; do
   s=$(yq ".. | select(has(\"$k\")) | .$k" - <<<"$cfg")
   grep -q "qs_secret agents $s " "$qs/up.sh" || bad "up.sh does not create $k ($s)"
 done
+# The run controller's CA Secret: up.sh creates the one the chart names, holding ca.crt only (S-3)
+ca_secret=$(yq '.broker.tls.caSecretName' "$vals")
+grep -qF "\"metadata\": {\"name\": \"$ca_secret\"}" "$qs/up.sh" || bad "up.sh does not create the CA Secret $ca_secret"
+[[ $(yq '.broker.caSecret' - <<<"$cfg") == "$ca_secret" ]] || bad "the run controller does not read the CA from $ca_secret"
 [[ $(yq ".. | select(has(\"namespace\")) | .namespace" - <<<"$cfg" | head -1) == "$runs_ns" ]] || bad "run-controller namespace is not $runs_ns"
 grep -q "create namespace $runs_ns " "$qs/up.sh" || bad "up.sh does not create namespace $runs_ns"
 [[ $(q Namespace 'length') == 0 ]] || bad "chart renders a Namespace despite createRunsNamespace=false"

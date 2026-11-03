@@ -62,6 +62,9 @@ capabilities: {drop: [ALL]}
 {{- if and .Values.runController.enabled (ne .Values.runs.group "maku.ogenki.io") -}}
 {{- fail (printf "runs.group %q with runController.enabled: the run controller reconciles maku.ogenki.io AgentRuns only; set runController.enabled=false where another controller runs %s AgentRuns (cloud-native-ref's Crossplane composition)" .Values.runs.group .Values.runs.group) -}}
 {{- end -}}
+{{- if and .Values.runController.enabled (eq ($b.tls.caSecretName | default "") $b.tls.secretName) -}}
+{{- fail "broker.tls.caSecretName must not be broker.tls.secretName: the run controller needs ca.crt only, never the broker's tls.key" -}}
+{{- end -}}
 {{- $dsn := ne ($b.database.brokerSecret | default "") "" -}}
 {{- range $b.extraEnv -}}{{- if eq .name "ROOMS_DATABASE_URL" -}}{{- $dsn = true -}}{{- end -}}{{- end -}}
 {{- if not $dsn -}}
