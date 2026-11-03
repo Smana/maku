@@ -863,3 +863,8 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
     padding-top: 8px;
   }
 }
+
+/* A run's own view (runview.ts), in place of the room's conversation. */
+.run-view-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.run-view-title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.run-view-note { margin: 0 0 8px; color: var(--muted-foreground); }

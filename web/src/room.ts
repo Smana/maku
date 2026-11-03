@@ -4,7 +4,7 @@
 // the chat and raw views, and the dock (the session's controls behind a toggle, the
 // composer, the connection), all fed by one RoomConnection.
 
-import { api } from "./api";
+import { api, fetchEvents } from "./api";
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
@@ -17,6 +17,7 @@ import { RoomState } from "./room-state";
 import { mountViews } from "./roomview";
 import type { Dashboard } from "./dashboards";
 import { mountRail } from "./rail";
+import { mountRunView, mountScrollIndex } from "./runview";
 import { tone } from "./flow";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
@@ -93,7 +94,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   meta.append(status);
   footer.append(session, composerEl, meta);
   // The rail beside the conversation, not in main: mountViews wipes main's children.
-  const rail = mountRail({ select: () => {} }); // Task 9 wires the run view
+  const rail = mountRail({ select: (run) => void runView.select(run) });
   const dots = document.createElement("button");
   dots.type = "button";
   dots.className = "rail-dots";
@@ -106,6 +107,9 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   rail.el.prepend(drawerClose);
   dots.onclick = () => { rail.el.classList.add("open"); drawerClose.focus(); };
   drawerClose.onclick = () => { rail.el.classList.remove("open"); dots.focus(); };
+  rail.el.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && rail.el.classList.contains("open")) { rail.el.classList.remove("open"); dots.focus(); }
+  });
   const roomBody = document.createElement("div");
   roomBody.className = "room-body";
   roomBody.append(dots, needsPanel, lead, skeleton, main, forkPanel, rail.el);
@@ -125,17 +129,25 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     }));
   };
   // Header and dock heights place the sticky rail between them.
+  let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {
     const size = () => {
       app.style.setProperty("--header-h", `${header.offsetHeight}px`);
       app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
     };
-    const ro = new ResizeObserver(size);
+    ro = new ResizeObserver(size);
     ro.observe(header);
     ro.observe(footer);
     size();
   }
   const views = mountViews(main, (seq) => fork.open(seq), () => snap?.you.principal);
+  const runView = mountRunView(main, {
+    load: (after, limit) => fetchEvents(id, after, limit, o.get),
+    views: (el) => mountViews(el, (seq) => fork.open(seq), () => snap?.you.principal),
+    chosen: (run) => rail.chosen(run),
+  });
+  const scrollIndex = mountScrollIndex(main.querySelector<HTMLElement>(".view-chat")!,
+    { nodes: () => summary?.flow?.nodes ?? [], mark: (run) => rail.mark(run) });
   const state = new RoomState();
   let you: Snapshot["you"] | undefined;
   const sender = {
@@ -200,7 +212,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // mounted page, rewriting them in place every second. It stops with the page, and on
   // its own once the page has left app (a re-mount or the "no such room" page replaced it).
   const ticker = setInterval(() => {
-    if (!app.contains(header)) clearInterval(ticker);
+    if (!app.contains(header)) { clearInterval(ticker); ro?.disconnect(); }
     else { needsPanelView.refresh(); refreshStrip(); rail.tick(Date.now()); }
   }, 1000);
   // The summary loads on mount, then at most once a second while events it folds arrive
@@ -228,6 +240,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
         showRail(sum);
+        runView.set(sum.flow?.nodes ?? []);
         shown = key;
       }
       summaryError.hidden = true;
@@ -247,6 +260,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     if (landed) return;
     let id = "";
     try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    if (id.startsWith("run=")) return; // the run view's, not an approval
     if (id) landed = focusApproval(id.replace(/^approval-/, ""));
   };
   const onHash = () => { landed = false; land(); };
@@ -289,6 +303,8 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     onEvent: (e) => {
       views.apply(e);
       rail.live(e);
+      runView.apply(e);
+      scrollIndex.refresh();
       if (changesSummary(e)) scheduleSummary();
       state.apply(e);
       needsPanelView.refresh();
@@ -336,6 +352,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       removeEventListener("hashchange", onHash);
       clearTimeout(refreshTimer);
       clearInterval(ticker);
+      ro?.disconnect();
       const back = document.createElement("a");
       back.href = "/";
       back.textContent = "See the rooms you can read";

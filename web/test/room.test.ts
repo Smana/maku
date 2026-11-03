@@ -802,6 +802,33 @@ describe("the room page", () => {
       expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(false);
     });
 
+    it("Escape closes the drawer and returns to the dots", async () => {
+      const { p } = await withFlow(flow);
+      document.body.append(p.app);
+      const dots = p.app.querySelector<HTMLElement>(".rail-dots")!;
+      dots.hidden = false;
+      dots.click();
+      const rail = p.app.querySelector<HTMLElement>("aside.rail")!;
+      rail.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(rail.classList.contains("open")).toBe(false);
+      expect(document.activeElement).toBe(dots);
+      p.app.remove();
+    });
+
+    it("a node opens its run's view from the room's log", async () => {
+      const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/events")
+        ? { events: [event(1, "message", { text: "hi" }).event] } : sumWith(flow)), { status: 200 })) as unknown as typeof fetch;
+      const p = page(get);
+      p.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get).toHaveBeenCalledWith(expect.stringContaining("/api/rooms/3kq7x2ma/events?after=0&limit=500"), expect.anything());
+      expect(p.app.querySelector("main .run-view .view-chat [data-seq='1']")).not.toBeNull();
+      expect(p.app.querySelector(".rail-node[data-run=r-i] button")!.getAttribute("aria-pressed")).toBe("true");
+      history.replaceState(null, "", "/");
+    });
+
     it("the conversation keeps its place", async () => {
       const { p } = await withFlow(flow);
       const main = p.app.querySelector("main")!;
