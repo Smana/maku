@@ -985,11 +985,24 @@ func (g *GitHub) IsAncestor(ctx context.Context, ancestor, sha string) (bool, er
 	}
 }
 
+// mergeRefusals are GitHub's own words for the refusals mergePullRequest answers 200 with errors[]
+// (F-1), as recorded live in testdata/merge-*.json. The GraphQL client keeps only the first error's
+// message; it is matched by prefix against these, never searched, so text a message happens to
+// carry cannot pass for a refusal.
+var mergeRefusals = []struct {
+	message string
+	err     error
+}{
+	{"Head branch was modified", ErrHeadMoved},
+	{"Pull Request has merge conflicts", ErrNotMergeable},
+}
+
 // Merge merges the pull request now, at the decided head (external review R02, ruling R52):
 // mergePullRequest with expectedHeadOid checks the head at merge time, so a push that lands
 // after the decision refuses the merge instead of merging on the old decision — which is what
 // enablePullRequestAutoMerge's enable-time-only check failed to guarantee. GitHub answers a
-// moved head with 409 and a disallowed merge with 405; the sentinels are what the reconciler
+// moved head or a disallowed merge with 409 or 405, or with 200 and an errors[] message (F-1,
+// testdata/merge-*.json); the sentinels are what the reconciler
 // decides on. squash always: the factory's one commit per task is the history.
 func (g *GitHub) Merge(ctx context.Context, nodeID, head string) error {
 	if head == "" {
@@ -1015,6 +1028,16 @@ func (g *GitHub) Merge(ctx context.Context, nodeID, head string) error {
 			return fmt.Errorf("forge: merge: %w", ErrHeadMoved)
 		case http.StatusMethodNotAllowed:
 			return fmt.Errorf("forge: merge: %w", ErrNotMergeable)
+		}
+	}
+	// F-1: most refusals come back 200 with errors[]. Only an error that is not the transport's
+	// (*url.Error carries statusRT's status and any network failure) is GitHub's message.
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		for _, m := range mergeRefusals {
+			if strings.HasPrefix(err.Error(), m.message) {
+				return fmt.Errorf("forge: merge: %w", m.err)
+			}
 		}
 	}
 	return wrap("merge", err)

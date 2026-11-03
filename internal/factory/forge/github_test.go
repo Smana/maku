@@ -124,8 +124,10 @@ type fakeGitHub struct {
 	ttl    time.Duration
 	now    func() time.Time
 	calls  []string
-	bodies []string                         // the POST /graphql bodies, in order
-	mint   func(w http.ResponseWriter) bool // overrides the mint reply when it returns true
+	bodies []string // the POST /graphql bodies, in order
+	// mergeReply: every mergePullRequest answers 200 with it (F-1).
+	mergeReply string
+	mint       func(w http.ResponseWriter) bool // overrides the mint reply when it returns true
 	// TW4: the scope the next mint must request; every other request gets GitHub's refusal.
 	// perms records each minted body's scope, in order, so a test can pin it per connection.
 	wantPerms map[string]string
@@ -204,6 +206,13 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			_, _ = io.WriteString(w, rollupJSON)
 			return
 		case strings.Contains(string(b), "mergePullRequest(input"):
+			g.mu.Lock()
+			reply := g.mergeReply
+			g.mu.Unlock()
+			if reply != "" {
+				_, _ = io.WriteString(w, reply)
+				return
+			}
 			switch {
 			case strings.Contains(string(b), `"expectedHeadOid":"def456"`):
 				w.WriteHeader(http.StatusConflict) // GitHub checks the head at merge time (R52)
@@ -1151,6 +1160,40 @@ func TestMergeChecksTheHeadAtMergeTime(t *testing.T) {
 	}
 	if err := r.g.Merge(ctx, "PR_1", ""); err == nil {
 		t.Fatal("a merge without the decided head would merge whatever landed since")
+	}
+}
+
+// setMergeReply makes every mergePullRequest answer 200 with body, as GitHub answers a refusal (F-1).
+func (g *fakeGitHub) setMergeReply(body string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.mergeReply = body
+}
+
+// F-1: mergePullRequest answers its refusals 200 with errors[], recorded live in testdata: each
+// reads as its sentinel. A message that is not one of GitHub's refusals stays a plain error.
+func TestMergeRefusalsInGraphQLErrorsAreTheSentinels(t *testing.T) {
+	for file, want := range map[string]error{
+		"merge-head-moved.json":    ErrHeadMoved,
+		"merge-not-mergeable.json": ErrNotMergeable,
+		"merge-unknown.json":       nil,
+	} {
+		t.Run(file, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join("testdata", file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := newRig(t)
+			r.gh.setMergeReply(string(body))
+			err = r.g.Merge(t.Context(), "PR_1", "abc123")
+			sentinel := errors.Is(err, ErrHeadMoved) || errors.Is(err, ErrNotMergeable)
+			switch {
+			case want == nil && (err == nil || sentinel):
+				t.Fatalf("an unknown refusal is a plain error: %v", err)
+			case want != nil && !errors.Is(err, want):
+				t.Fatalf("want %v, got %v", want, err)
+			}
+		})
 	}
 }
 
