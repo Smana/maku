@@ -77,6 +77,7 @@ and is empty when no approval profile is set.
 | `403` | `run_has_no_room` | The run has no `roomRef` |
 | `429` | `rate_limited` | Over the run's limits, shared with its batches |
 | `409` | `room_busy` | Another run holds the room's lease, and its run is live. The broker also appends `state_changed{kind: limit, reason: concurrent_run}` |
+| `410` | `sealed` | The room is closed: its log takes no more events. The bridge never releases its harness, and the pod fails |
 | `503` | `no_room` | The room's row does not exist yet: its `Room` has not been reconciled |
 | `503` | `log_unavailable` | The database is unreachable |
 
