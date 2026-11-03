@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
@@ -32,6 +33,7 @@ import (
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/policy"
+	"github.com/Smana/maku/internal/tlsreload"
 )
 
 // Authenticating maps a request to its caller. Task 5.1's Authenticator satisfies it; the
@@ -216,12 +218,25 @@ func (s *Server) Start(ctx context.Context) error {
 	return serve(ctx, s.httpServer(), ln, apiDrain)
 }
 
-// listen binds api.listen.
+// listen binds api.listen. With api.tls it serves TLS 1.3 from that pair, re-read when
+// cert-manager renews it (S-1, D6): the broker forwards each human's bearer token here, so it
+// never crosses the cluster network in the clear. A pair that does not load fails the start.
 func (s *Server) listen(ctx context.Context) (net.Listener, error) {
+	var tlsCfg *tls.Config
+	if t := s.Cfg.API.TLS; t != nil {
+		c, err := tlsreload.Config(t.CertFile, t.KeyFile, s.Log)
+		if err != nil {
+			return nil, fmt.Errorf("api: api.tls: %w", err)
+		}
+		tlsCfg = c
+	}
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.Cfg.API.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("api: listen %s: %w", s.Cfg.API.Listen, err)
+	}
+	if tlsCfg != nil {
+		return tls.NewListener(ln, tlsCfg), nil
 	}
 	return ln, nil
 }

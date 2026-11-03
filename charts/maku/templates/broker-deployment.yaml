@@ -86,6 +86,9 @@ spec:
             - {name: config, mountPath: /etc/room-broker/config, readOnly: true}
             - {name: tls, mountPath: /etc/room-broker/tls, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+            {{- if $b.factoryCA.secretName }}
+            - {name: factory-ca, mountPath: /etc/room-broker/factory-ca, readOnly: true}
+            {{- end }}
             {{- with $b.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -96,6 +99,10 @@ spec:
           secret: {secretName: {{ $b.tls.secretName }}}
         - name: tmp
           emptyDir: {}
+        {{- if $b.factoryCA.secretName }}
+        - name: factory-ca
+          secret: {secretName: {{ $b.factoryCA.secretName }}, items: [{key: ca.crt, path: ca.crt}]}
+        {{- end }}
         {{- with $b.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

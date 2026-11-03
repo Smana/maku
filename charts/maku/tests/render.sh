@@ -152,14 +152,30 @@ bad 'broker.runtimeClassName: the broker runs on the default runtime' --set brok
 bad 'broker.publicURL "https://rooms.example" in local mode' --set broker.publicURL=https://rooms.example
 bad 'broker.publicURL "http://0.0.0.0:8080" in local mode' --set broker.publicURL=http://0.0.0.0:8080
 
+# S-1, D6: the factory's CA and the insecure opt-out reach the broker's config; http alone is refused
+fca="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
+  --set broker.factoryURL=https://agent-factory.x.svc:8082 --set broker.factoryCA.secretName=agent-factory-api-tls)"
+out="$fca"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.factoryURL == "https://agent-factory.x.svc:8082" and .factoryCAFile == "/etc/room-broker/factory-ca/ca.crt" and (has("factoryInsecure") | not))' 'factoryCA.secretName writes factoryCAFile'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-ca") | (.secret.secretName == "agent-factory-api-tls" and .secret.items[0].key == "ca.crt")' 'the factory CA Secret, ca.crt only'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].volumeMounts[] | select(.name=="factory-ca") | (.mountPath == "/etc/room-broker/factory-ca" and .readOnly == true)' 'the factory CA mounted where factoryCAFile reads it'
+fins="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
+  --set broker.factoryURL=http://agent-factory.x.svc:8082 --set broker.factoryInsecure=true)"
+out="$fins"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.factoryInsecure == true and (has("factoryCAFile") | not))' 'factoryInsecure reaches the config'
+ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-ca")' 'no factory CA Secret, no mount'
+bad 'broker.factoryURL "http://agent-factory.x.svc:8082" is http' --set broker.factoryURL=http://agent-factory.x.svc:8082
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$p" >"$tmp/production.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fwd" >"$tmp/forwarded.yaml"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fca" >"$tmp/factory-ca.yaml"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fins" >"$tmp/factory-insecure.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$p" >"$tmp/rc-production.yaml"
-go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" || fail=1
+go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
 go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" || fail=1

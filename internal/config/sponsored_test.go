@@ -13,7 +13,7 @@ func TestLoadMCPSponsored(t *testing.T) {
 	with := func(factory bool, mcp string) string {
 		doc := maku + "  mcp:\n" + mcp
 		if factory {
-			doc = "factoryURL: http://factory.example:8080\n" + doc
+			doc = "factoryURL: https://factory.example:8080\n" + doc
 		}
 		return doc
 	}
@@ -42,7 +42,7 @@ func TestLoadMCPSponsoredReservedNames(t *testing.T) {
 	maku := strings.Replace(valid, "  projectIDFile:", "  roomctlClientIDFile: /etc/room-broker/roomctl/client-id\n  projectIDFile:", 1)
 	maku = strings.Replace(maku, "systemPrincipals:\n", "systemPrincipals:\n  system:serviceaccount:x:y: system:slack-app\n", 1)
 	for _, name := range []string{"policy", "factory", "room-broker", "slack-app"} {
-		doc := "factoryURL: http://factory.example:8080\n" + maku +
+		doc := "factoryURL: https://factory.example:8080\n" + maku +
 			"  mcp:\n    enabled: true\n    sponsored:\n      - {name: " + name + ", clientIDFile: /x}\n"
 		if _, err := Load(write(t, doc)); err == nil || !strings.Contains(err.Error(), `"`+name+`" is reserved`) {
 			t.Errorf("%s: %v", name, err)

@@ -64,4 +64,7 @@ capabilities: {drop: [ALL]}
 {{- if not $dsn -}}
 {{- fail "no database: set broker.database.brokerSecret, or ROOMS_DATABASE_URL in broker.extraEnv" -}}
 {{- end -}}
+{{- if and $b.factoryURL (hasPrefix "http://" $b.factoryURL) (not $b.factoryInsecure) -}}
+{{- fail (printf "broker.factoryURL %q is http: the broker forwards human tokens to it; serve the factory chart's api.tls and use https, or set broker.factoryInsecure: true" $b.factoryURL) -}}
+{{- end -}}
 {{- end -}}

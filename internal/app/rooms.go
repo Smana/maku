@@ -27,8 +27,7 @@ import (
 
 const (
 	// leaseEvery paces the driver lease sweep: a lapse is 2 or 15 minutes (§2).
-	leaseEvery     = 30 * time.Second
-	factoryTimeout = 15 * time.Second
+	leaseEvery = 30 * time.Second
 )
 
 // humanLog is the store the human side reads and writes: acts, the room list
@@ -46,7 +45,7 @@ type humanLog interface {
 func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Client, ns string, roomLog humanLog, red humanapi.Redactor,
 	hub humanapi.Hub, runs humanapi.Runs, gh gitHubUsers, add func(manager.Runnable) error, m *metrics.Set, log *slog.Logger,
 ) (*humanapi.Server, error) {
-	actor, err := humanActor(cfg.Human, roomLog, red, runs, rooms, runRequester(cfg.FactoryURL), m)
+	actor, err := humanActor(cfg.Human, roomLog, red, runs, rooms, runRequester(cfg.FactoryURL, cfg.FactoryCAFile), m)
 	if err != nil {
 		return nil, err
 	}
@@ -90,13 +89,13 @@ func humanActor(h config.HumanConfig, roomLog humanapi.ActLog, red humanapi.Reda
 		OnDecided: func(d time.Duration) { m.DecisionSeconds.Record(context.Background(), d.Seconds()) }}, nil
 }
 
-// runRequester is SP3's factory at factoryURL, or before SP3 (unset) the
-// manifest renderer (ruling P14).
-func runRequester(factoryURL string) runrequest.Requester {
+// runRequester is SP3's factory at factoryURL, trusting caFile's CA (read at each call), or
+// before SP3 (unset) the manifest renderer (ruling P14).
+func runRequester(factoryURL, caFile string) runrequest.Requester {
 	if factoryURL == "" {
 		return runrequest.Manifest{}
 	}
-	return runrequest.Factory{URL: factoryURL, HC: httpx.New(factoryTimeout, nil)}
+	return runrequest.Factory{URL: factoryURL, CAFile: caFile}
 }
 
 // leaseLog is what the lease sweep reads and moves.

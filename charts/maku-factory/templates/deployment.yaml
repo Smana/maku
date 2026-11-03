@@ -60,6 +60,9 @@ spec:
             - {name: intake, mountPath: /etc/agent-factory-intake, readOnly: true}
             - {name: zitadel-reader, mountPath: /etc/agent-factory-zitadel-reader, readOnly: true}
             - {name: sponsored, mountPath: /etc/agent-factory-sponsored, readOnly: true}
+            {{- if .Values.api.tls.secretName }}
+            - {name: api-tls, mountPath: /etc/agent-factory-api-tls, readOnly: true}
+            {{- end }}
       volumes:
         - name: config
           configMap: {name: agent-factory-config}
@@ -91,3 +94,8 @@ spec:
           # optional: without it no sponsored client id or project id reads, and every sponsored
           # token is refused; 0440 with fsGroup, as the other secrets.
           secret: {secretName: {{ .Values.sponsoredSecret }}, defaultMode: 0440, optional: true}
+        {{- if .Values.api.tls.secretName }}
+        - name: api-tls
+          # S-1: the run-request API's pair, re-read on renewal; 0440 with fsGroup, as the other secrets.
+          secret: {secretName: {{ .Values.api.tls.secretName }}, defaultMode: 0440, items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]}
+        {{- end }}

@@ -81,9 +81,12 @@ func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, err
 	req.Header.Set("Authorization", "Bearer "+r.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", r.IdempotencyKey)
-	hc := f.HC
-	if hc == nil {
-		hc = httpx.New(factoryTimeout, nil)
+	hc, err := f.client()
+	if err != nil {
+		return TaskResult{}, err
+	}
+	if f.HC == nil {
+		defer hc.CloseIdleConnections() // a client per call: its connection goes with it
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

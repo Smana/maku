@@ -214,12 +214,12 @@ func TestHumanActorRefusesMissingParts(t *testing.T) {
 }
 
 func TestRunRequester(t *testing.T) {
-	if _, ok := runRequester("").(runrequest.Manifest); !ok {
+	if _, ok := runRequester("", "").(runrequest.Manifest); !ok {
 		t.Fatal("before SP3 the claim is rendered")
 	}
-	f, ok := runRequester("https://factory.example").(runrequest.Factory)
-	if !ok || f.URL != "https://factory.example" || f.HC == nil {
-		t.Fatalf("%+v", f)
+	f, ok := runRequester("https://factory.example", "/etc/room-broker/factory-ca/ca.crt").(runrequest.Factory)
+	if !ok || f.URL != "https://factory.example" || f.CAFile != "/etc/room-broker/factory-ca/ca.crt" || f.HC != nil {
+		t.Fatalf("the CA is read at each call, so no client is built at start: %+v", f)
 	}
 }
 

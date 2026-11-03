@@ -638,10 +638,13 @@ type Groups struct {
 // API is the run-request API's configuration (§4): what it binds, which repositories it
 // accepts (OD-6), and how it authenticates callers (Task 5.1's Authenticator).
 type API struct {
-	Listen       string   `json:"listen"`
-	Repositories []string `json:"repositories"` // OD-6: cloud-native-ref only
-	HumanIssuer  string   `json:"humanIssuer"`
-	HumanJWKS    string   `json:"humanJWKS"`
+	Listen string `json:"listen"`
+	// TLS serves the API over TLS 1.3 from this pair, re-read when it is renewed (S-1, D6): the
+	// broker forwards each human's bearer token here. Absent, the API serves plaintext.
+	TLS          *ServerTLS `json:"tls,omitempty"`
+	Repositories []string   `json:"repositories"` // OD-6: cloud-native-ref only
+	HumanIssuer  string     `json:"humanIssuer"`
+	HumanJWKS    string     `json:"humanJWKS"`
 	// Files holding the rooms-proxy and maku client ids (from agents-secrets).
 	ClientIDFiles []string `json:"clientIDFiles"`
 	// ProjectIDFile holds the ZITADEL project id a sponsored token's aud must hold, as the broker's
@@ -666,6 +669,13 @@ type API struct {
 	// InternalPrincipals are sponsored principals allowed internal data (RunLore agent-to-agent
 	// RA2): empty ships, and POST /v1/tasks stays a 404 while this and Sponsored are both empty (D4).
 	InternalPrincipals []InternalPrincipal `json:"internalPrincipals,omitempty"`
+}
+
+// ServerTLS is a listener's key pair: two mounted files, re-read on renewal. Both are set, or the
+// block is absent.
+type ServerTLS struct {
+	CertFile string `json:"certFile"`
+	KeyFile  string `json:"keyFile"`
 }
 
 // Access is api.access (v2 D4).
@@ -1388,6 +1398,9 @@ func (c *Config) Validate() error {
 		if f.value == "" {
 			bad("%s is required", f.key)
 		}
+	}
+	if t := c.API.TLS; t != nil && (t.CertFile == "" || t.KeyFile == "") {
+		bad("api.tls needs certFile and keyFile both: set both, or drop the block to serve plaintext")
 	}
 	if c.API.Groups.Admin == "" {
 		bad("api.groups.admin is required")

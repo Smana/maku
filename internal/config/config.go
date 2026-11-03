@@ -223,8 +223,14 @@ type Config struct {
 	// RoomTools is the agents' :8090 listener (I8). Absent, it starts; explicit false is the opt-out.
 	RoomTools  *RoomToolsConfig `json:"roomTools,omitempty"`
 	FactoryURL string           `json:"factoryURL,omitempty"`
-	TLS        TLSConfig        `json:"tls"`
-	Suspend    SuspendConfig    `json:"suspend,omitzero"`
+	// FactoryCAFile is the PEM CA that signs the factory's api certificate, read on every run
+	// request so a rotation needs no restart (S-1). Empty: the system roots.
+	FactoryCAFile string `json:"factoryCAFile,omitempty"`
+	// FactoryInsecure admits an http:// factoryURL. The broker forwards each human's bearer token
+	// there, so plaintext is an explicit opt-out, never a default (D6).
+	FactoryInsecure bool          `json:"factoryInsecure,omitempty"`
+	TLS             TLSConfig     `json:"tls"`
+	Suspend         SuspendConfig `json:"suspend,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Webhooks are the subscribers to room events (factory interfaces F6).
@@ -424,6 +430,7 @@ func (c *Config) Validate() error {
 	if len(c.Human.MCP.Sponsored) > 0 && c.FactoryURL == "" {
 		errs = append(errs, errors.New("human.mcp.sponsored needs factoryURL: run_create posts to the factory's POST /v1/tasks"))
 	}
+	errs = append(errs, checkFactoryURL(c.FactoryURL, c.FactoryInsecure)...)
 	if c.Human.EffectiveMode() == HumanModeLocal {
 		// The one place publicURL may be http: a port-forward carries no TLS. It is exactly what a
 		// browser sends as Origin, which the Origin check compares verbatim.
@@ -443,6 +450,25 @@ func (c *Config) Validate() error {
 		errs = append(errs, w.validate(i, seen)...)
 	}
 	return errors.Join(errs...)
+}
+
+// checkFactoryURL is D6: the broker forwards each human's bearer token to the factory, so its URL
+// is https, or http under an explicit factoryInsecure, as the bridge refuses a non-https
+// BROKER_URL. Unset is fine: start_run then renders a manifest.
+func checkFactoryURL(raw string, insecure bool) []error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil || u.Host == "" || u.User != nil:
+		return []error{errors.New("factoryURL: must be an absolute https URL with no userinfo")}
+	case u.Scheme == "https", u.Scheme == "http" && insecure:
+		return nil
+	case u.Scheme == "http":
+		return []error{errors.New("factoryURL: http:// sends human tokens in the clear: serve the factory's api.tls and use https, or set factoryInsecure: true")}
+	}
+	return []error{fmt.Errorf("factoryURL: scheme %q is not https", u.Scheme)}
 }
 
 // runIssuerMatchesKind refuses a runs kind no runIssuers pattern recognises: its bridge tokens

@@ -545,7 +545,7 @@ func TestLoadSlackLink(t *testing.T) {
 	if c, err := Load(write(t, valid)); err != nil || c.Human.SlackLink != nil {
 		t.Fatalf("off by default: %+v %v", c.Human.SlackLink, err)
 	}
-	c, err := Load(write(t, valid+slackLink+"factoryURL: http://agent-factory.agent-system.svc.cluster.local:8080\n"))
+	c, err := Load(write(t, valid+slackLink+"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"))
 	if err != nil || c.Human.SlackLink == nil || c.Human.SlackLink.Principal != "slack-app" || c.Human.SlackLink.TeamID != "T01ABC" {
 		t.Fatalf("%+v %v", c.Human.SlackLink, err)
 	}
@@ -556,7 +556,7 @@ func TestLoadSlackLink(t *testing.T) {
 		"no GitHub check":         {strings.Replace(slackLink, access, "", 1), "human.slackLink needs human.access"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Load(write(t, valid+c.body+"factoryURL: http://agent-factory.agent-system.svc.cluster.local:8080\n"))
+			_, err := Load(write(t, valid+c.body+"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"))
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("got %v, want %q", err, c.want)
 			}
@@ -570,5 +570,34 @@ func TestLoadRefusesTheMetricsSwitch(t *testing.T) {
 		if _, err := Load(write(t, body)); err == nil {
 			t.Fatalf("loaded %q", body)
 		}
+	}
+}
+
+// D6: the broker forwards each human's bearer token to factoryURL, so it is https, or http under
+// an explicit factoryInsecure. A broker given http:// alone refuses to start, naming the key.
+func TestFactoryURLIsHTTPSUnlessInsecure(t *testing.T) {
+	for name, c := range map[string]struct{ body, err string }{
+		"unset":                  {"", ""},
+		"https":                  {"factoryURL: https://agent-factory.agent-system.svc:8082\n", ""},
+		"https with its CA":      {"factoryURL: https://agent-factory.agent-system.svc:8082\nfactoryCAFile: /etc/room-broker/factory-ca/ca.crt\n", ""},
+		"http":                   {"factoryURL: http://agent-factory.agent-system.svc:8082\n", "factoryURL: http:// sends human tokens in the clear"},
+		"http, insecure opt-out": {"factoryURL: http://agent-factory.agent-system.svc:8082\nfactoryInsecure: true\n", ""},
+		"another scheme":         {"factoryURL: ftp://agent-factory.agent-system.svc:8082\n", `factoryURL: scheme "ftp" is not https`},
+		"no host":                {"factoryURL: https:///v1\n", "factoryURL: must be an absolute https URL"},
+		"userinfo":               {"factoryURL: https://u:p@agent-factory.agent-system.svc:8082\n", "factoryURL: must be an absolute https URL"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(write(t, valid+c.body))
+			switch {
+			case c.err == "" && err != nil:
+				t.Fatalf("refused: %v", err)
+			case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
+				t.Fatalf("err = %v, want one naming %q", err, c.err)
+			case name == "https with its CA" && cfg.FactoryCAFile != "/etc/room-broker/factory-ca/ca.crt":
+				t.Fatalf("factoryCAFile = %q", cfg.FactoryCAFile)
+			case name == "http, insecure opt-out" && !cfg.FactoryInsecure:
+				t.Fatal("factoryInsecure not read")
+			}
+		})
 	}
 }
