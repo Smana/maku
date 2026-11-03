@@ -18,7 +18,7 @@ import (
 )
 
 func TestManifestIsAValidClaim(t *testing.T) {
-	res, err := Manifest{}.Request(t.Context(), Request{Role: "implementer", Repository: "Smana/cloud-native-ref",
+	res, err := Manifest{Kind: runwatch.DefaultKind}.Request(t.Context(), Request{Role: "implementer", Repository: "Smana/cloud-native-ref",
 		BaseRef: "4be1c9d", Branch: "agent/3kq7x2ma", TaskText: "brief", DataClass: "public", RoomRef: "3kq7x2ma",
 		Principal: "human:291", EgressProfiles: []string{"pypi"}})
 	if err != nil || res.Via != "manifest" || !regexp.MustCompile(`^[a-z2-7]{8}$`).MatchString(res.RunID) {
@@ -36,7 +36,7 @@ func TestManifestIsAValidClaim(t *testing.T) {
 	if !strings.Contains(string(res.Manifest), `"egress":{"profiles":["pypi"]}`) || !strings.Contains(string(res.Manifest), `"task":{"text":"brief"}`) {
 		t.Fatalf("egress and task: %s", res.Manifest)
 	}
-	plain, _ := Manifest{}.Request(t.Context(), Request{Role: "reviewer", TaskURL: "https://github.com/x/y/pull/1"})
+	plain, _ := Manifest{Kind: runwatch.DefaultKind}.Request(t.Context(), Request{Role: "reviewer", TaskURL: "https://github.com/x/y/pull/1"})
 	if strings.Contains(string(plain.Manifest), "egress") || !strings.Contains(string(plain.Manifest), `"task":{"url":"https://github.com/x/y/pull/1"}`) {
 		t.Fatalf("no egress unless asked; a URL task: %s", plain.Manifest)
 	}
@@ -116,23 +116,20 @@ func TestFactoryRefusals(t *testing.T) {
 // owner applying both creates one run; another act gets another run.
 func TestManifestDedupesOnTheKey(t *testing.T) {
 	r := Request{Role: "implementer", IdempotencyKey: "3kq7x2ma:human:291:s1:7"}
-	a, _ := Manifest{}.Request(t.Context(), r)
-	b, _ := Manifest{}.Request(t.Context(), r)
+	a, _ := Manifest{Kind: runwatch.DefaultKind}.Request(t.Context(), r)
+	b, _ := Manifest{Kind: runwatch.DefaultKind}.Request(t.Context(), r)
 	r.IdempotencyKey = "3kq7x2ma:human:291:s1:8"
-	c, _ := Manifest{}.Request(t.Context(), r)
+	c, _ := Manifest{Kind: runwatch.DefaultKind}.Request(t.Context(), r)
 	if a.RunID != b.RunID || a.RunID == c.RunID || !regexp.MustCompile(`^[a-z2-7]{8}$`).MatchString(a.RunID) {
 		t.Fatalf("%s %s %s", a.RunID, b.RunID, c.RunID)
 	}
 }
 
-// One rendered manifest is a run to either runtime's reader (adoption 3a, R2).
+// One rendered manifest is a run to either runtime's reader (adoption 3a, R2), each kind given
+// per instance: there is no process-wide kind to set (D9). Without a kind it refuses.
 func TestManifestReadsBackUnderBothKinds(t *testing.T) {
-	t.Cleanup(func() { _ = runwatch.Configure(runwatch.DefaultKind) })
-	for _, k := range []runwatch.Kind{runwatch.DefaultKind, {Group: "maku.ogenki.io", NamePrefix: "run-"}} {
-		if err := runwatch.Configure(k); err != nil {
-			t.Fatal(err)
-		}
-		res, err := Manifest{}.Request(t.Context(), Request{Role: "implementer", Repository: "o/r",
+	for _, k := range []runwatch.Kind{runwatch.DefaultKind, {Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "run-"}} {
+		res, err := Manifest{Kind: k}.Request(t.Context(), Request{Role: "implementer", Repository: "o/r",
 			BaseRef: "4be1c9d", Branch: "agent/abcdefgh", TaskText: "t", DataClass: "public", RoomRef: "abcdefgh",
 			Principal: "human:a"})
 		if err != nil {
@@ -142,11 +139,14 @@ func TestManifestReadsBackUnderBothKinds(t *testing.T) {
 		if err := u.UnmarshalJSON(res.Manifest); err != nil {
 			t.Fatal(err)
 		}
-		if u.GroupVersionKind() != runwatch.GVK() {
+		if u.GroupVersionKind() != k.GVK() {
 			t.Errorf("%s: gvk %v", k.Group, u.GroupVersionKind())
 		}
-		if r, ok := runwatch.FromUnstructured(u); !ok || r.ID != res.RunID || r.Room != "abcdefgh" {
+		if r, ok := k.FromUnstructured(u); !ok || r.ID != res.RunID || r.Room != "abcdefgh" {
 			t.Errorf("%s: read back ok=%v %+v", k.Group, ok, r)
 		}
+	}
+	if _, err := (Manifest{}).Request(t.Context(), Request{Role: "implementer"}); err == nil {
+		t.Error("a manifest without its runs kind must refuse")
 	}
 }

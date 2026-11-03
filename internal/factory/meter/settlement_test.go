@@ -15,7 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -23,10 +23,10 @@ import (
 func settledOf(t *testing.T, c client.Client, day string) map[string]int64 {
 	t.Helper()
 	var cm corev1.ConfigMap
-	if err := c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + day}, &cm); err != nil {
+	if err := c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + day}, &cm); err != nil {
 		t.Fatal(err)
 	}
-	s, err := api.SettledColumn(&cm)
+	s, err := ledger.SettledColumn(&cm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,13 +57,13 @@ func TestATickChargesBothKeysAndTheRunInOneWrite(t *testing.T) {
 	writes := 0
 	c := fake.NewClientBuilder().WithScheme(cmScheme()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-			if obj.GetName() == api.LedgerPrefix+"20261022" {
+			if obj.GetName() == ledger.Prefix+"20261022" {
 				writes++
 			}
 			return cl.Create(ctx, obj, opts...)
 		},
 		Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-			if obj.GetName() == api.LedgerPrefix+"20261022" {
+			if obj.GetName() == ledger.Prefix+"20261022" {
 				writes++
 			}
 			return cl.Update(ctx, obj, opts...)
@@ -308,7 +308,7 @@ func TestARunInFlightOnTheSwitchDayIsChargedOnceItEnds(t *testing.T) {
 	fail := true
 	c := fake.NewClientBuilder().WithScheme(cmScheme()).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-			if fail && obj.GetName() == api.LedgerPrefix+"20261022" {
+			if fail && obj.GetName() == ledger.Prefix+"20261022" {
 				return errors.New("configmap busy")
 			}
 			return cl.Create(ctx, obj, opts...)
@@ -390,7 +390,7 @@ func TestTheOldestRetainedDayBoundsR10(t *testing.T) {
 // when *landed: a timeout after the commit.
 func flaky(fail, landed *bool, objs ...client.Object) client.WithWatch {
 	write := func(obj client.Object, do func() error) error {
-		if obj.GetName() != api.LedgerPrefix+"20261022" || !*fail {
+		if obj.GetName() != ledger.Prefix+"20261022" || !*fail {
 			return do()
 		}
 		if *landed {
@@ -545,7 +545,7 @@ func TestAWriteThatLandsDespiteAnErrorIsChargedOnce(t *testing.T) {
 		WithInterceptorFuncs(interceptor.Funcs{
 			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
 				err := cl.Update(ctx, obj, opts...)
-				if lie && err == nil && obj.GetName() == api.LedgerPrefix+"20261022" {
+				if lie && err == nil && obj.GetName() == ledger.Prefix+"20261022" {
 					lie = false
 					return errors.New("context deadline exceeded")
 				}
@@ -577,7 +577,7 @@ func TestAnExistingDaysChargeAndSettledAreOneUpdate(t *testing.T) {
 		WithObjects(ledgerDay(t, "20261022", map[string]int64{"github:bob": 5}, nil)).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Update: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-				if cm, ok := obj.(*corev1.ConfigMap); ok && cm.Name == api.LedgerPrefix+"20261022" {
+				if cm, ok := obj.(*corev1.ConfigMap); ok && cm.Name == ledger.Prefix+"20261022" {
 					writes = append(writes, cm.DeepCopy())
 				}
 				return cl.Update(ctx, obj, opts...)
@@ -590,11 +590,11 @@ func TestAnExistingDaysChargeAndSettledAreOneUpdate(t *testing.T) {
 	if len(writes) != 1 {
 		t.Fatalf("%d ledger updates, want one", len(writes))
 	}
-	spent, err := api.LedgerSpentColumn(writes[0])
+	spent, err := ledger.SpentColumn(writes[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	settled, err := api.SettledColumn(writes[0])
+	settled, err := ledger.SettledColumn(writes[0])
 	if err != nil {
 		t.Fatal(err)
 	}

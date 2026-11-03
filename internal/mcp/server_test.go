@@ -40,7 +40,7 @@ func claim(id, role, room, phase string, annotations map[string]any) *unstructur
 }
 
 func watcher(t *testing.T, role string) *runwatch.Watcher {
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(t.Context(), claim("7f3cq2xz", role, "3kq7x2ma", "Running", nil))
 	return w
 }
@@ -135,7 +135,7 @@ func call(t *testing.T, s *Server, identity, name string) (map[string]any, strin
 
 func TestOnlyTheRouterWithTheKeyAndAVerifiedRun(t *testing.T) {
 	c := newClock()
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(t.Context(), claim("7f3cq2xz", "reviewer", "3kq7x2ma", "Running", nil))
 	w.Upsert(t.Context(), claim("done2345", "reviewer", "3kq7x2ma", "Succeeded", nil))
 	w.Upsert(t.Context(), claim("revokedx", "reviewer", "3kq7x2ma", "Running", map[string]any{runwatch.RevokedAnnotation: "owner"}))

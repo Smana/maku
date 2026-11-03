@@ -147,10 +147,6 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
-	// Before anything watches or creates a run: every reader takes the kind from here.
-	if err := runwatch.Configure(cfg.Runs); err != nil {
-		return fmt.Errorf("broker config: runs: %w", err)
-	}
 	tlsCfg, err := tlsreload.Config(cfg.TLS.CertFile, cfg.TLS.KeyFile, log)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
@@ -179,17 +175,17 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		return fmt.Errorf("room-broker: %w", err)
 	}
 
-	mgr, err := newManager(log, ns)
+	mgr, err := newManager(log, ns, cfg.Runs)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
 	events := &runwatch.Events{Store: logStore, Redactor: red}
-	rw, err := wireRuns(ctx, mgr.GetCache(), mgr.Add, log, st, events, nil)
+	rw, err := wireRuns(ctx, cfg.Runs, mgr.GetCache(), mgr.Add, log, st, events, nil)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
 	m.TrackRuns(runInfoWatch(rw.watch))
-	rc := &roomctrl.Reconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Store: logStore,
+	rc := &roomctrl.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Store: logStore,
 		Runs: rw.watch, Ends: events, Log: log, Forget: m.ForgetRoom, Observe: roomObserver(m, rw.watch)}
 	withSuspend(rc, cfg.Suspend, mgr.GetClient(), logStore, log)
 	if err := rc.SetupWithManager(mgr); err != nil {
@@ -369,13 +365,13 @@ func roomObserver(m *metrics.Set, runs roomRuns) func(string, v1alpha1.RoomStatu
 	}
 }
 
-// managerOptions watches Rooms in the broker's namespace and AgentRuns in theirs
+// managerOptions watches Rooms in the broker's namespace and kind's AgentRuns in theirs
 // only: the RBAC (Task 1.18) grants exactly that, so a cluster-wide informer
 // would be refused. Unstructured reads stay uncached, so the finalizer's run
 // list and deletes see the API server, not the watch.
-func managerOptions(ns string) ctrl.Options {
+func managerOptions(ns string, kind runwatch.Kind) ctrl.Options {
 	runObj := &unstructured.Unstructured{}
-	runObj.SetGroupVersionKind(runwatch.GVK())
+	runObj.SetGroupVersionKind(kind.GVK())
 	drain := managerDrain
 	return ctrl.Options{
 		LeaderElection: true, LeaderElectionID: "room-broker", LeaderElectionNamespace: ns,
@@ -384,14 +380,14 @@ func managerOptions(ns string) ctrl.Options {
 		Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
 			&v1alpha1.Room{}: {Namespaces: map[string]cache.Config{ns: {}}},
-			runObj:           {Namespaces: map[string]cache.Config{runwatch.Namespace(): {}}},
+			runObj:           {Namespaces: map[string]cache.Config{kind.Namespace: {}}},
 		}},
 		Client: client.Options{Cache: &client.CacheOptions{Unstructured: false}},
 	}
 }
 
 // newManager builds the manager on managerOptions, logging through log.
-func newManager(log *slog.Logger, ns string) (ctrl.Manager, error) {
+func newManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Manager, error) {
 	lr := logr.FromSlogHandler(log.Handler())
 	// controller-runtime and client-go's leader election log through these globals.
 	ctrl.SetLogger(lr)
@@ -407,7 +403,7 @@ func newManager(log *slog.Logger, ns string) (ctrl.Manager, error) {
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	opts := managerOptions(ns)
+	opts := managerOptions(ns, kind)
 	opts.Scheme, opts.Logger = scheme, lr
 	mgr, err := ctrl.NewManager(restCfg, opts)
 	if err != nil {
@@ -455,12 +451,13 @@ func countLiveRuns(w *runwatch.Watcher, m *metrics.Set) {
 }
 
 // withSuspend turns on the room controller's suspend trigger when the config does (v2
-// suspend). Off, the field stays a nil interface, never a typed nil.
+// suspend). Off, the field stays a nil interface, never a typed nil. The trigger patches claims of
+// the room controller's kind.
 func withSuspend(rc *roomctrl.Reconciler, cfg config.SuspendConfig, c client.Client, a *meteredLog, log *slog.Logger) {
 	if !cfg.Enabled {
 		return
 	}
-	rc.Suspend = &suspend.Suspender{Client: c, Approvals: a, After: cfg.After.Duration, Log: log}
+	rc.Suspend = &suspend.Suspender{Kind: rc.Kind, Client: c, Approvals: a, After: cfg.After.Duration, Log: log}
 	log.Info("the suspend trigger is on", "after", cfg.After.Duration)
 }
 

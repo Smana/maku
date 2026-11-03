@@ -25,11 +25,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
@@ -414,7 +414,7 @@ func (p *IssuePoller) personSpent(ctx context.Context, n int, last forge.LabelEv
 		now = p.Now
 	}
 	person := v1alpha1.Person(last.Actor)
-	used, err := api.DayUsed(ctx, p.Ledger, p.Namespace, person, now())
+	used, err := ledger.DayUsed(ctx, p.Ledger, p.Namespace, person, now())
 	if err != nil {
 		return false, err // no answer is no refusal: the label waits for the next poll
 	}

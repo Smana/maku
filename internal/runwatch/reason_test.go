@@ -38,7 +38,7 @@ func TestARevocationReasonIsRedactedAndCut(t *testing.T) {
 	}
 	pat := githubPAT(t)
 	annotation := "stopped by the owner, token=" + pat + " " + strings.Repeat("x", 256<<10)
-	r, _ := FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "BudgetExhausted", annotation))
+	r, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "BudgetExhausted", annotation))
 	redacted := "stopped by the owner, token=[REDACTED:github-pat] "
 	redacted += strings.Repeat("x", 64-len(redacted))
 	cases := []struct {

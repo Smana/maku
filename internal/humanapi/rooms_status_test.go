@@ -102,9 +102,9 @@ func TestRoomRowStatusIsTheStatusLine(t *testing.T) {
 				s.Now = func() time.Time { return now }
 				v.approvals, v.evs = tc.approvals, tc.evs
 				if tc.run != nil {
-					runs := runwatch.New()
+					runs := runwatch.New(runwatch.DefaultKind)
 					runs.Upsert(t.Context(), &unstructured.Unstructured{Object: map[string]any{
-						"metadata": map[string]any{"name": runwatch.ClaimPrefix() + "7f3cq2xz", "namespace": runwatch.Namespace()},
+						"metadata": map[string]any{"name": runwatch.DefaultKind.NamePrefix + "7f3cq2xz", "namespace": runwatch.DefaultKind.Namespace},
 						"spec":     map[string]any{"roomRef": roomID, "role": "implementer"},
 						"status":   tc.run}})
 					s.Runs = runs

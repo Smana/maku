@@ -641,14 +641,15 @@ func TestDrainsFitTheGrace(t *testing.T) {
 
 // v2 suspend: the trigger exists only when the config turns it on.
 func TestWithSuspend(t *testing.T) {
-	rc := &roomctrl.Reconciler{}
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	rc := &roomctrl.Reconciler{Kind: native}
 	withSuspend(rc, config.SuspendConfig{After: config.Duration{Duration: 5 * time.Minute}}, nil, &meteredLog{}, slog.New(slog.DiscardHandler))
 	if rc.Suspend != nil {
 		t.Fatalf("off: %v", rc.Suspend)
 	}
 	withSuspend(rc, config.SuspendConfig{Enabled: true, After: config.Duration{Duration: 7 * time.Minute}}, nil, &meteredLog{},
 		slog.New(slog.DiscardHandler))
-	if s, ok := rc.Suspend.(*suspend.Suspender); !ok || s.After != 7*time.Minute {
+	if s, ok := rc.Suspend.(*suspend.Suspender); !ok || s.After != 7*time.Minute || s.Kind != native {
 		t.Fatalf("on: %#v", rc.Suspend)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 // searchRig is a rig whose review class (the rig's default) has search switched on at triage.
@@ -33,7 +34,7 @@ func TestASearchRowReachesTheImplementersClaimAlone(t *testing.T) {
 	if !s.Search || s.Loop != nil {
 		t.Fatalf("claim search %v loop %+v, want search alone", s.Search, s.Loop)
 	}
-	loop, _, _ := unstructured.NestedMap(runs.Build(s).Object, "spec", "loop")
+	loop, _, _ := unstructured.NestedMap(runs.Build(runwatch.DefaultKind, s).Object, "spec", "loop")
 	if !reflect.DeepEqual(loop, map[string]any{"search": true}) {
 		t.Fatalf("spec.loop %v, want {search: true}", loop)
 	}
@@ -43,7 +44,7 @@ func TestASearchRowReachesTheImplementersClaimAlone(t *testing.T) {
 func TestSearchJoinsTheLoopOnImplementerClaimsOnly(t *testing.T) {
 	steps := int32(40)
 	g, tk := searchRig(t, config.Loop{Search: true, StallSteps: &steps})
-	loop, _, _ := unstructured.NestedMap(runs.Build(g.runs.specs[rid(0)]).Object, "spec", "loop")
+	loop, _, _ := unstructured.NestedMap(runs.Build(runwatch.DefaultKind, g.runs.specs[rid(0)]).Object, "spec", "loop")
 	if loop["search"] != true || loop["stallSteps"] != int64(40) {
 		t.Fatalf("spec.loop %v", loop)
 	}
@@ -66,7 +67,7 @@ func TestNoSearchRowIsTodaysClaim(t *testing.T) {
 	if tk.Spec.Search || g.runs.specs[rid(0)].Search {
 		t.Fatal("search on with no row")
 	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(runs.Build(g.runs.specs[rid(0)]).Object, "spec", "loop"); found {
+	if _, found, _ := unstructured.NestedFieldNoCopy(runs.Build(runwatch.DefaultKind, g.runs.specs[rid(0)]).Object, "spec", "loop"); found {
 		t.Fatal("spec.loop written with no row")
 	}
 }

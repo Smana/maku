@@ -82,21 +82,27 @@ func task(r Request) map[string]string {
 	return map[string]string{"text": r.TaskText}
 }
 
-// Manifest renders the AgentRun claim for the owner to create (ruling P14), on
-// runwatch's seam: its GVK and namespace, and the name prefix it parses.
-type Manifest struct{}
+// Manifest renders the AgentRun claim for the owner to create (ruling P14), of Kind: its GVK and
+// namespace, and the name prefix runwatch parses.
+type Manifest struct {
+	// Kind is the runs kind, required: the claim rendered is one of its runs.
+	Kind runwatch.Kind
+}
 
 // Request renders r as a claim, its run id derived from r's idempotency key.
-func (Manifest) Request(_ context.Context, r Request) (Result, error) {
+func (m Manifest) Request(_ context.Context, r Request) (Result, error) {
+	if err := m.Kind.Validate(); err != nil {
+		return Result{}, fmt.Errorf("runrequest: the manifest needs the runs kind: %w", err)
+	}
 	id := idFor(r.IdempotencyKey)
 	spec := map[string]any{"role": r.Role, "repository": r.Repository, "baseRef": r.BaseRef, "branch": r.Branch,
 		"principal": r.Principal, "dataClass": r.DataClass, "roomRef": r.RoomRef, "task": task(r)}
 	if len(r.EgressProfiles) > 0 {
 		spec["egress"] = map[string]any{"profiles": r.EgressProfiles}
 	}
-	gvk := runwatch.GVK()
+	gvk := m.Kind.GVK()
 	b, err := json.Marshal(map[string]any{"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
-		"metadata": map[string]string{"name": runwatch.ClaimPrefix() + id, "namespace": runwatch.Namespace()}, "spec": spec})
+		"metadata": map[string]string{"name": m.Kind.ClaimName(id), "namespace": m.Kind.Namespace}, "spec": spec})
 	if err != nil {
 		return Result{}, fmt.Errorf("runrequest: render: %w", err)
 	}

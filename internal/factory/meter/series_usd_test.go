@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -47,11 +47,11 @@ func usdEnv(t *testing.T) (func() (int64, int64), func(*scripted, bool) *Meter, 
 	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{glmRun("aaaaaaaa", now)}}
 	read := func() (int64, int64) {
 		var cm corev1.ConfigMap
-		if err := c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + "20261022"}, &cm); err != nil {
+		if err := c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + "20261022"}, &cm); err != nil {
 			t.Fatal(err)
 		}
-		sp, _ := api.LedgerSpentColumn(&cm)
-		se, _ := api.SettledColumn(&cm)
+		sp, _ := ledger.SpentColumn(&cm)
+		se, _ := ledger.SettledColumn(&cm)
 		return se["aaaaaaaa"], sp["github:alice"]
 	}
 	mk := func(s *scripted, per bool) *Meter {

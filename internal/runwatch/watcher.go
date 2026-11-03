@@ -21,6 +21,7 @@ import (
 // Remove (the informer's handler goroutine): one at a time, so a slow callback
 // delays the watch rather than spawning work without bound.
 type Watcher struct {
+	kind    Kind // the runs it reads: claims of any other kind are not runs to it
 	mu      sync.RWMutex
 	runs    map[string]Run
 	gone    []func(context.Context, Run)
@@ -31,8 +32,8 @@ type Watcher struct {
 	live   []func(context.Context, int64)
 }
 
-// New returns an empty Watcher.
-func New() *Watcher { return &Watcher{runs: map[string]Run{}} }
+// New returns an empty Watcher of k's runs.
+func New(k Kind) *Watcher { return &Watcher{kind: k, runs: map[string]Run{}} }
 
 // OnGone registers f for a run that stops being live (terminal, revoked or
 // deleted). It fires once per run.
@@ -87,7 +88,7 @@ func (w *Watcher) OnRemove(f func(context.Context, Run)) {
 
 // Upsert records the claim's current state. A claim that is not a run is ignored.
 func (w *Watcher) Upsert(ctx context.Context, u *unstructured.Unstructured) {
-	cur, ok := FromUnstructured(u)
+	cur, ok := w.kind.FromUnstructured(u)
 	if !ok {
 		return
 	}
@@ -111,7 +112,7 @@ func (w *Watcher) Upsert(ctx context.Context, u *unstructured.Unstructured) {
 
 // Remove forgets a deleted claim, firing OnGone if it was still live, then OnRemove.
 func (w *Watcher) Remove(ctx context.Context, u *unstructured.Unstructured) {
-	r, ok := FromUnstructured(u)
+	r, ok := w.kind.FromUnstructured(u)
 	if !ok {
 		return
 	}
@@ -193,7 +194,7 @@ type informerSource interface {
 	GetInformer(ctx context.Context, obj client.Object, opts ...cache.InformerGetOption) (cache.Informer, error)
 }
 
-// Register attaches the watcher to the cache's informer for AgentRuns. ctx is
+// Register attaches the watcher to the cache's informer for its kind's AgentRuns. ctx is
 // handed to every callback, so it must live as long as the informer does.
 //
 // synced reports once this handler has been delivered the informer's first list,
@@ -203,7 +204,7 @@ type informerSource interface {
 // synced"). Anything that reads the Watcher as complete waits on synced.
 func Register(ctx context.Context, c informerSource, w *Watcher) (synced func() bool, err error) {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(GVK())
+	u.SetGroupVersionKind(w.kind.GVK())
 	inf, err := c.GetInformer(ctx, u)
 	if err != nil {
 		return nil, fmt.Errorf("runwatch: agentrun informer: %w", err)

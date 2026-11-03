@@ -39,9 +39,9 @@ func TestCoarseState(t *testing.T) {
 		t.Fatalf("an idle room with no run on its way waits for its owner: list %q, summary %q", l, s)
 	}
 
-	runs := runwatch.New()
+	runs := runwatch.New(runwatch.DefaultKind)
 	runs.Upsert(t.Context(), &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": runwatch.ClaimPrefix() + "7f3cq2xz", "namespace": runwatch.Namespace()},
+		"metadata": map[string]any{"name": runwatch.DefaultKind.NamePrefix + "7f3cq2xz", "namespace": runwatch.DefaultKind.Namespace},
 		"spec":     map[string]any{"roomRef": roomID, "role": "implementer"},
 		"status":   map[string]any{"phase": "Pending"}}})
 	e.srv.Runs = runs

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package api
+package ledger
 
 import (
 	"context"
@@ -13,15 +13,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// LedgerDay is the UTC day name carries after prefix, and whether name is prefix followed by a
-// day at all. LegacyLedgerPrefix is a prefix of LedgerPrefix, so a USD ledger read against it
-// yields "usd-<day>", which is no day: test LedgerPrefix first.
-func LedgerDay(name, prefix string) (string, bool) {
+// Day is the UTC day name carries after prefix, and whether name is prefix followed by a
+// day at all. LegacyPrefix is a prefix of Prefix, so a USD ledger read against it
+// yields "usd-<day>", which is no day: test Prefix first.
+func Day(name, prefix string) (string, bool) {
 	day, ok := strings.CutPrefix(name, prefix)
 	if !ok {
 		return "", false
 	}
-	if _, err := time.Parse(LedgerDayLayout, day); err != nil {
+	if _, err := time.Parse(DayLayout, day); err != nil {
 		return "", false
 	}
 	return day, true
@@ -32,7 +32,7 @@ func LedgerDay(name, prefix string) (string, bool) {
 func SettledColumn(cm *corev1.ConfigMap) (map[string]int64, error) {
 	var m map[string]int64
 	for k, raw := range cm.Data {
-		id, ok := strings.CutPrefix(k, LedgerSettled)
+		id, ok := strings.CutPrefix(k, Settled)
 		if !ok {
 			continue
 		}
@@ -59,7 +59,7 @@ func AddSettled(cm *corev1.ConfigMap, inc map[string]int64) error {
 		cm.Data = map[string]string{}
 	}
 	for id, n := range inc {
-		cm.Data[LedgerSettled+id] = strconv.FormatInt(have[id]+n, 10)
+		cm.Data[Settled+id] = strconv.FormatInt(have[id]+n, 10)
 	}
 	return nil
 }
@@ -90,7 +90,7 @@ func SettledByRunDay(ctx context.Context, c client.Reader, ns string) (map[strin
 	}
 	out := map[string]map[string]int64{}
 	for i := range cms.Items {
-		day, ok := LedgerDay(cms.Items[i].Name, LedgerPrefix)
+		day, ok := Day(cms.Items[i].Name, Prefix)
 		if !ok {
 			continue
 		}

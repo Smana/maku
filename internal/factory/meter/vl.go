@@ -24,6 +24,9 @@ type Throttled interface {
 // VL asks VictoriaLogs which runs agent-router answered with a rate-limit 429 lately (R13).
 // The query groups by the verified identity header (x_ar_agent), never a client-supplied one.
 type VL struct {
+	// Kind is the runs kind, required: a row is a run's only when its verified identity is one
+	// of Kind's run subjects.
+	Kind       runwatch.Kind
 	URL, Query string
 	// HC is the meter's egress: one from httpx.New. nil is an error at use, never a
 	// hand-rolled client: the audited bounds (timeout, redirect cap) are the point.
@@ -36,6 +39,10 @@ func (v VL) RecentlyThrottled(ctx context.Context) (map[string]bool, error) {
 	if v.HC == nil {
 		return nil, errors.New("meter: an HTTP client from httpx.New is required")
 	}
+	if err := v.Kind.Validate(); err != nil {
+		return nil, fmt.Errorf("meter: the runs kind is required: %w", err)
+	}
+	subject := v.Kind.RunSubject()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		v.URL+"/select/logsql/query?query="+url.QueryEscape(v.Query), nil)
 	if err != nil {
@@ -56,7 +63,7 @@ func (v VL) RecentlyThrottled(ctx context.Context) (map[string]bool, error) {
 		if json.Unmarshal(sc.Bytes(), &row) != nil {
 			continue
 		}
-		if m := runwatch.RunSubject().FindStringSubmatch(row["log.x_ar_agent"]); m != nil {
+		if m := subject.FindStringSubmatch(row["log.x_ar_agent"]); m != nil {
 			out[m[1]] = true
 		}
 	}

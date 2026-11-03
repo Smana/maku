@@ -12,9 +12,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/meter"
 )
 
@@ -22,7 +22,7 @@ import (
 // always sees unless a test says otherwise (#54).
 func seeingMeter(t *testing.T, c client.Client) {
 	t.Helper()
-	if err := api.StampMeter(t.Context(), c, "agent-system", now, 1000*time.Hour); err != nil {
+	if err := ledger.StampMeter(t.Context(), c, "agent-system", now, 1000*time.Hour); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -194,7 +194,7 @@ func TestABlindMeterHoldsQueuedOnlyWhenEnforced(t *testing.T) {
 	for _, enforce := range []bool{true, false} {
 		g := newRig(t, issueTask("3buqdlot", 7, "x"))
 		g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 25, HumanDailyUSD: 5, EnforcePrincipal: enforce}
-		if err := api.StampMeter(t.Context(), g.r.Ledger, "agent-system", now.Add(-time.Hour), 5*time.Minute); err != nil {
+		if err := ledger.StampMeter(t.Context(), g.r.Ledger, "agent-system", now.Add(-time.Hour), 5*time.Minute); err != nil {
 			t.Fatal(err)
 		}
 		tk := g.reconcile(t, "3buqdlot", 3)

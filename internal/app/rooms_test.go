@@ -28,6 +28,7 @@ import (
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/runrequest"
+	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
 )
@@ -92,7 +93,7 @@ func TestHumanSide(t *testing.T) {
 	}
 	_, m := newMetrics(t)
 	log := slog.New(slog.DiscardHandler)
-	cfg := config.Config{Human: config.HumanConfig{Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"}}}
+	cfg := config.Config{Runs: runwatch.DefaultKind, Human: config.HumanConfig{Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"}}}
 	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
 	rooms := fake.NewClientBuilder().Build()
 	hub := fanout.New(fakeRoomLog{}, nil, log)
@@ -102,7 +103,7 @@ func TestHumanSide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Actor == nil || s.Actor.Redactor != red || s.Actor.Requester != (runrequest.Manifest{}) || s.Namespace != "agent-system" {
+	if s.Actor == nil || s.Actor.Redactor != red || s.Actor.Requester != (runrequest.Manifest{Kind: runwatch.DefaultKind}) || s.Namespace != "agent-system" {
 		t.Fatalf("server %+v, actor %+v", s, s.Actor)
 	}
 	if s.Identity != nil || s.Access != nil {
@@ -145,12 +146,12 @@ func TestHumanActorIsWired(t *testing.T) {
 	roomLog := &fakeActLog{}
 	h := config.HumanConfig{Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"}}
 	rooms := fake.NewClientBuilder().Build()
-	actor, err := humanActor(h, roomLog, red, fakeRuns{}, rooms, runrequest.Manifest{}, m)
+	actor, err := humanActor(h, roomLog, red, fakeRuns{}, rooms, runrequest.Manifest{Kind: runwatch.DefaultKind}, m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if actor.Groups != (policy.Groups{Admin: "agents-admin", Member: "agents-member"}) || actor.Rooms != rooms ||
-		actor.Requester != (runrequest.Manifest{}) {
+		actor.Requester != (runrequest.Manifest{Kind: runwatch.DefaultKind}) {
 		t.Fatalf("%+v", actor)
 	}
 	room := &v1alpha1.Room{ObjectMeta: metav1.ObjectMeta{Name: "3kq7x2ma", Namespace: "agent-system"},
@@ -191,20 +192,20 @@ func TestHumanActorRefusesMissingParts(t *testing.T) {
 	rooms := fake.NewClientBuilder().Build()
 	for name, build := range map[string]func() (*humanapi.Actor, error){
 		"log": func() (*humanapi.Actor, error) {
-			return humanActor(h, nil, red, fakeRuns{}, rooms, runrequest.Manifest{}, m)
+			return humanActor(h, nil, red, fakeRuns{}, rooms, runrequest.Manifest{Kind: runwatch.DefaultKind}, m)
 		},
 		"redactor": func() (*humanapi.Actor, error) {
-			return humanActor(h, &fakeActLog{}, nil, fakeRuns{}, rooms, runrequest.Manifest{}, m)
+			return humanActor(h, &fakeActLog{}, nil, fakeRuns{}, rooms, runrequest.Manifest{Kind: runwatch.DefaultKind}, m)
 		},
 		"runs": func() (*humanapi.Actor, error) {
-			return humanActor(h, &fakeActLog{}, red, nil, rooms, runrequest.Manifest{}, m)
+			return humanActor(h, &fakeActLog{}, red, nil, rooms, runrequest.Manifest{Kind: runwatch.DefaultKind}, m)
 		},
 		"rooms": func() (*humanapi.Actor, error) {
-			return humanActor(h, &fakeActLog{}, red, fakeRuns{}, nil, runrequest.Manifest{}, m)
+			return humanActor(h, &fakeActLog{}, red, fakeRuns{}, nil, runrequest.Manifest{Kind: runwatch.DefaultKind}, m)
 		},
 		"requester": func() (*humanapi.Actor, error) { return humanActor(h, &fakeActLog{}, red, fakeRuns{}, rooms, nil, m) },
 		"metrics": func() (*humanapi.Actor, error) {
-			return humanActor(h, &fakeActLog{}, red, fakeRuns{}, rooms, runrequest.Manifest{}, nil)
+			return humanActor(h, &fakeActLog{}, red, fakeRuns{}, rooms, runrequest.Manifest{Kind: runwatch.DefaultKind}, nil)
 		},
 	} {
 		if a, err := build(); a != nil || err == nil || !strings.Contains(err.Error(), name+" is required") {
@@ -214,10 +215,11 @@ func TestHumanActorRefusesMissingParts(t *testing.T) {
 }
 
 func TestRunRequester(t *testing.T) {
-	if _, ok := runRequester("", "").(runrequest.Manifest); !ok {
-		t.Fatal("before SP3 the claim is rendered")
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	if m, ok := runRequester("", "", native).(runrequest.Manifest); !ok || m.Kind != native {
+		t.Fatalf("before SP3 the claim is rendered, of the config's kind: %#v", m)
 	}
-	f, ok := runRequester("https://factory.example", "/etc/room-broker/factory-ca/ca.crt").(runrequest.Factory)
+	f, ok := runRequester("https://factory.example", "/etc/room-broker/factory-ca/ca.crt", native).(runrequest.Factory)
 	if !ok || f.URL != "https://factory.example" || f.CAFile != "/etc/room-broker/factory-ca/ca.crt" || f.HC != nil {
 		t.Fatalf("the CA is read at each call, so no client is built at start: %+v", f)
 	}

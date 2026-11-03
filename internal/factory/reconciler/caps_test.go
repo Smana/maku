@@ -25,6 +25,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/runs"
 )
@@ -217,13 +218,13 @@ func TestARequestChangesPastTheCapIsQueuedNotAnnounced(t *testing.T) {
 // factoryLedger is today's R50 ledger (now's UTC day) with system:factory's spend, as the meter
 // settles it, and reservations keyed by run id.
 func factoryLedger(spent int64, reserved map[string]int64) *corev1.ConfigMap {
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: api.LedgerPrefix + now.UTC().Format(api.LedgerDayLayout),
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout),
 		Namespace: "agent-system"}, Data: map[string]string{}}
-	if err := api.SetLedgerSpentColumn(cm, map[string]int64{runs.PrincipalFactory: spent}); err != nil {
+	if err := ledger.SetSpentColumn(cm, map[string]int64{runs.PrincipalFactory: spent}); err != nil {
 		panic(err)
 	}
 	for id, n := range reserved {
-		cm.Data[api.LedgerReserved+id] = fmt.Sprintf(`{"principal":%q,"maxMicroUSD":%d}`, runs.PrincipalFactory, n)
+		cm.Data[ledger.Reserved+id] = fmt.Sprintf(`{"principal":%q,"maxMicroUSD":%d}`, runs.PrincipalFactory, n)
 	}
 	return cm
 }
@@ -330,18 +331,18 @@ func TestQueuedAndTheAPIDecideTheDayAlike(t *testing.T) {
 // ledgerOf reads today's ledger: system:factory's use and its reservations by run id.
 func ledgerOf(t *testing.T, g *rig) (int64, []string) {
 	t.Helper()
-	used, err := api.DayUsed(t.Context(), g.r.Ledger, "agent-system", runs.PrincipalFactory, g.r.Now())
+	used, err := ledger.DayUsed(t.Context(), g.r.Ledger, "agent-system", runs.PrincipalFactory, g.r.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var cm corev1.ConfigMap
 	if err := g.r.Ledger.Get(t.Context(), client.ObjectKey{Namespace: "agent-system",
-		Name: api.LedgerPrefix + g.r.Now().UTC().Format(api.LedgerDayLayout)}, &cm); err != nil {
+		Name: ledger.Prefix + g.r.Now().UTC().Format(ledger.DayLayout)}, &cm); err != nil {
 		t.Fatal(err)
 	}
 	var ids []string
 	for k := range cm.Data {
-		if id, ok := strings.CutPrefix(k, api.LedgerReserved); ok {
+		if id, ok := strings.CutPrefix(k, ledger.Reserved); ok {
 			ids = append(ids, id)
 		}
 	}

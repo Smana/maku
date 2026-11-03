@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 
 	"github.com/Smana/maku/internal/httpx"
@@ -27,14 +28,16 @@ const maxReading = 1 << 53
 // VM runs the meter's one instant query against VictoriaMetrics (R12): the expression of SP4
 // PR 2's agent_router:run_tokens:total over the raw series, until that rule exists.
 type VM struct {
-	base  *url.URL
-	query string
-	hc    *http.Client
+	base    *url.URL
+	query   string
+	subject *regexp.Regexp // the run subjects of the runs kind: a series of any other is no reading
+	hc      *http.Client
 }
 
 // NewVM is the source at rawURL (meter.url): http or https with a host, since vmsingle serves
-// plain http in the cluster. hc comes from httpx.New.
-func NewVM(rawURL, query string, hc *http.Client) (*VM, error) {
+// plain http in the cluster. kind is the runs kind whose run subjects it reads; hc comes from
+// httpx.New.
+func NewVM(rawURL, query string, kind runwatch.Kind, hc *http.Client) (*VM, error) {
 	u, err := url.Parse(rawURL)
 	switch {
 	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
@@ -42,10 +45,12 @@ func NewVM(rawURL, query string, hc *http.Client) (*VM, error) {
 		return nil, errors.New("meter: meter.url must be http(s)://<host>[/path], without credentials or query")
 	case query == "":
 		return nil, errors.New("meter: meter.query is required")
+	case kind.Validate() != nil:
+		return nil, fmt.Errorf("meter: the runs kind is required: %w", kind.Validate())
 	case hc == nil:
 		return nil, errors.New("meter: an HTTP client from httpx.New is required")
 	}
-	return &VM{base: u, query: query, hc: hc}, nil
+	return &VM{base: u, query: query, subject: kind.RunSubject(), hc: hc}, nil
 }
 
 // RunUsage is each run's raw counters, by run id: RunSeries summed by run, stateless. A series
@@ -82,11 +87,12 @@ func (v *VM) RunSeries(ctx context.Context) ([]Series, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("meter: query: status %d", resp.StatusCode)
 	}
-	return parseSeries(raw)
+	return parseSeries(raw, v.subject)
 }
 
-// parseSeries reads the body of an api/v1/query reply into the runs' series.
-func parseSeries(raw []byte) ([]Series, error) {
+// parseSeries reads the body of an api/v1/query reply into the runs' series. subject captures a
+// run's id from its ar_agent label.
+func parseSeries(raw []byte, subject *regexp.Regexp) ([]Series, error) {
 	var body struct {
 		Status string `json:"status"`
 		Data   struct {
@@ -105,7 +111,7 @@ func parseSeries(raw []byte) ([]Series, error) {
 	}
 	var out []Series
 	for _, s := range body.Data.Result {
-		m := runwatch.RunSubject().FindStringSubmatch(s.Metric["ar_agent"])
+		m := subject.FindStringSubmatch(s.Metric["ar_agent"])
 		if m == nil {
 			continue
 		}

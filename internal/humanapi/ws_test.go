@@ -301,7 +301,7 @@ func setup(t *testing.T, opts ...option) env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := runwatch.New()
+	runs := runwatch.New(runwatch.DefaultKind)
 	subs := &countingHub{Hub: hub}
 	srv := &Server{Humans: headerAuth{}, Groups: groups, WebClient: func() string { return "web" },
 		Rooms: fake.NewClientBuilder().WithScheme(s).WithObjects(room, elsewhere).Build(), Namespace: namespace,
@@ -1253,7 +1253,7 @@ func (f authFunc) Authenticate(r *http.Request) (authn.Principal, error) { retur
 
 func TestSnapshotRuns(t *testing.T) {
 	e := setup(t)
-	runs := runwatch.New()
+	runs := runwatch.New(runwatch.DefaultKind)
 	e.srv.Runs = runs
 	for _, r := range []struct{ id, room, role string }{{"7f3cq2xz", roomID, "implementer"}, {"2abcdefg", roomID, "reviewer"}, {"9zzzzzzz", "4kq7x2ma", "x"}} {
 		runs.Upsert(t.Context(), agentRun(r.id, r.room, r.role))
@@ -1268,7 +1268,7 @@ func TestSnapshotRuns(t *testing.T) {
 
 func TestSnapshotRunsSayUnsandboxed(t *testing.T) {
 	e := setup(t)
-	runs := runwatch.New()
+	runs := runwatch.New(runwatch.DefaultKind)
 	e.srv.Runs = runs
 	u := agentRun("7f3cq2xz", roomID, "implementer")
 	if err := unstructured.SetNestedSlice(u.Object, []any{map[string]any{"type": "Unsandboxed", "status": "True"}}, "status", "conditions"); err != nil {
@@ -1356,7 +1356,7 @@ func TestSnapshotApprovals(t *testing.T) {
 
 func agentRun(id, room, role string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": runwatch.ClaimPrefix() + id, "namespace": runwatch.Namespace()},
+		"metadata": map[string]any{"name": runwatch.DefaultKind.NamePrefix + id, "namespace": runwatch.DefaultKind.Namespace},
 		"spec":     map[string]any{"roomRef": room, "role": role},
 		"status":   map[string]any{"phase": "Running"},
 	}}

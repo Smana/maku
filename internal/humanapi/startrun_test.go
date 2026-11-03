@@ -50,7 +50,7 @@ func (f *fakeRequester) calls() []runrequest.Request {
 // idleFixture is fixture with no Running run, the room's driver human:own.
 func idleFixture() (*Actor, *actLog, *v1alpha1.Room) {
 	a, log, room := fixture("human:own")
-	a.Runs = runwatch.New()
+	a.Runs = runwatch.New(runwatch.DefaultKind)
 	return a, log, room
 }
 
@@ -92,7 +92,7 @@ func TestStartRunRendersTheClaim(t *testing.T) {
 	req := &fakeRequester{}
 	a.Requester = requesterFunc(func(ctx context.Context, r runrequest.Request) (runrequest.Result, error) {
 		_, _ = req.Request(ctx, r)
-		return runrequest.Manifest{}.Request(ctx, r)
+		return runrequest.Manifest{Kind: runwatch.DefaultKind}.Request(ctx, r)
 	})
 	refs := seed(t, a, log, room)
 	f := startAs(a, room, "human:own", 1, Action{Role: "implementer", EgressProfiles: []string{"pypi"}})
@@ -278,7 +278,7 @@ func TestStartRunRefusals(t *testing.T) {
 // for a later one.
 func TestABriefConsumesOnlyWhatItQuotes(t *testing.T) {
 	a, log, room := idleFixture()
-	a.Requester = runrequest.Manifest{}
+	a.Requester = runrequest.Manifest{Kind: runwatch.DefaultKind}
 	for i := range 20 {
 		if f := act(a, room, "human:col", int64(i+1), nil, Action{Kind: "message", Text: strings.Repeat("x", 1000), Delivery: "queued"}); f.Rejected != "" {
 			t.Fatal(f)
@@ -335,7 +335,7 @@ func TestARetriedStartRunRequestsOneRun(t *testing.T) {
 	a, log, room = idleFixture()
 	var names []string
 	a.Requester = requesterFunc(func(ctx context.Context, r runrequest.Request) (runrequest.Result, error) {
-		res, err := runrequest.Manifest{}.Request(ctx, r)
+		res, err := runrequest.Manifest{Kind: runwatch.DefaultKind}.Request(ctx, r)
 		names = append(names, res.RunID)
 		return res, err
 	})
@@ -359,7 +359,7 @@ func TestARequestedRunHoldsTheRoom(t *testing.T) {
 		t.Fatalf("a second start while the first has not joined: %+v, %d requests", f, len(req.calls()))
 	}
 	// The watch knows it, ended: the room is free again.
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(context.Background(), &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "xplane-run-bbbbbbbb", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},
@@ -372,7 +372,7 @@ func TestARequestedRunHoldsTheRoom(t *testing.T) {
 		t.Fatalf("an ended run frees the room: %+v", f)
 	}
 	// A join frees it too, whatever the watch knows: here it knows neither run.
-	a.Runs = runwatch.New()
+	a.Runs = runwatch.New(runwatch.DefaultKind)
 	if f := startAs(a, room, "human:own", 4, Action{Role: "implementer"}); f.Rejected != "room_busy" {
 		t.Fatalf("unjoined requests hold the room: %+v", f)
 	}
@@ -410,7 +410,7 @@ func TestAQueuedTokenNeverReachesTheBrief(t *testing.T) {
 	}
 	a, log, room := idleFixture()
 	a.Redactor = red
-	a.Requester = runrequest.Manifest{}
+	a.Requester = runrequest.Manifest{Kind: runwatch.DefaultKind}
 	token := "ghp_" + rand.Text()[:26] + "Ab12CdE34f"
 	if f := act(a, room, "human:col", 1, nil, Action{Kind: "message", Text: "use " + token, Delivery: "queued"}); f.Rejected != "" {
 		t.Fatal(f)
