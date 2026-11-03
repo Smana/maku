@@ -15,6 +15,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 // replicaReply is an api/v1/query reply in the shape a query grouped by (ar_agent, pod) returns:
@@ -41,7 +42,7 @@ func vmReplies(t *testing.T, replies ...string) *VM {
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	v, err := NewVM(srv.URL, "Q", httpx.New(5*time.Second, nil))
+	v, err := NewVM(srv.URL, "Q", runwatch.DefaultKind, httpx.New(5*time.Second, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

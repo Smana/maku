@@ -26,6 +26,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 type store struct {
@@ -547,17 +548,17 @@ func TestRecentlyThrottled(t *testing.T) {
 	}))
 	defer srv.Close()
 	ctx := context.Background()
-	got, err := VL{URL: srv.URL, Query: "q", HC: srv.Client()}.RecentlyThrottled(ctx)
+	got, err := VL{Kind: runwatch.DefaultKind, URL: srv.URL, Query: "q", HC: srv.Client()}.RecentlyThrottled(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || !got["7f3cq2xz"] {
 		t.Fatalf("%v", got)
 	}
-	if _, err := (VL{URL: srv.URL, Query: "boom", HC: srv.Client()}).RecentlyThrottled(ctx); err == nil {
+	if _, err := (VL{Kind: runwatch.DefaultKind, URL: srv.URL, Query: "boom", HC: srv.Client()}).RecentlyThrottled(ctx); err == nil {
 		t.Error("a failed query is an error, not an empty map")
 	}
-	if _, err := (VL{URL: srv.URL, Query: "q"}).RecentlyThrottled(ctx); err == nil {
+	if _, err := (VL{Kind: runwatch.DefaultKind, URL: srv.URL, Query: "q"}).RecentlyThrottled(ctx); err == nil {
 		t.Error("the audited httpx client is required, never a hand-rolled one")
 	}
 }

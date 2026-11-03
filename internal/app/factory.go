@@ -160,7 +160,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	vm, err := meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, httpx.New(vmTimeout, nil))
+	vm, err := meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs, httpx.New(vmTimeout, nil))
 	if err != nil {
 		return err
 	}
@@ -340,7 +340,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: m.RunCost, OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
-			Throttle: meter.VL{URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)},
+			Throttle: meter.VL{Kind: cfg.Runs, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)},
 			Budgets:  cfg.Budgets, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,
