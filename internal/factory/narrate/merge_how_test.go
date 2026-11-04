@@ -21,7 +21,7 @@ var waitReasons = []string{
 	"release_age_pending", "release_age_red", "push_unrecorded", "changes_requested", "fork_pull_request",
 	"not_adopted_author", "branch_not_allowed", "adoption_unread", "ci_cancelled", "adopted_head_moved", "adopt_ref_invalid",
 	"approval_stale", "contract_invalid", "contract_too_large", "contract_check_unset", "contract_disputed", "contract_modified", "contract_unread", "contract_push_unrecorded",
-	"waiting_daily_budget", "waiting_room_log", "waiting_broker_permission", "holdout_pending", "split_proposed", "budget-family",
+	"label_missing", "label_not_adopted", "waiting_daily_budget", "waiting_room_log", "waiting_broker_permission", "holdout_pending", "split_proposed", "budget-family",
 }
 
 // The summary repeats the narration's prose (it may not import the factory): a reason added to
@@ -68,5 +68,21 @@ func TestWouldArmAdoptedNamesWhatIsDeclared(t *testing.T) {
 	if strings.Contains(bare, "files and sizes") || strings.Contains(bare, "release-age") ||
 		!strings.Contains(full, "files and sizes") || !strings.Contains(full, "release-age check") {
 		t.Fatalf("bare %q full %q", bare, full)
+	}
+}
+
+// The shadow comment names what the class's shape checked: a semver bump keeps its words, an added
+// entry does not claim to be one.
+func TestWouldArmAdoptedNamesTheShape(t *testing.T) {
+	tk := &v1alpha1.Task{}
+	for shape, c := range map[string]struct{ has, hasNot string }{
+		"semver-patch": {"the diff a semver bump", "added entry"},
+		"semver-minor": {"the diff a semver bump", "added entry"},
+		"added-entry":  {"the diff one added entry with only appended lines in the class's companion files, its required label applied by a login the class adopts", "semver"},
+	} {
+		body := WouldArmAdopted(tk, config.Class{DiffShape: shape, AllowedFiles: []string{"x"}, RequiredLabel: "ready-to-merge"}, "c", "h", false, false).Body
+		if !strings.Contains(body, c.has) || strings.Contains(body, c.hasNot) {
+			t.Errorf("%s: %q", shape, body)
+		}
 	}
 }

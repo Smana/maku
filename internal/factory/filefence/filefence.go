@@ -47,9 +47,9 @@ func Paths(stats []forge.FileStat) []string {
 }
 
 // AllowedFiles matches whole paths: policy-bot's match is unanchored, so the pattern is anchored
-// here. "" when every path is allowed.
+// here. A class's companionFiles are allowed too (K10). "" when every path is allowed.
 func AllowedFiles(cl config.Class, stats []forge.FileStat) string {
-	res := Compile(cl.AllowedFiles, true)
+	res := Compile(append(slices.Clone(cl.AllowedFiles), cl.CompanionFiles...), true)
 	for _, p := range Paths(stats) {
 		if !MatchesAny(res, p) {
 			return "file_not_allowed"

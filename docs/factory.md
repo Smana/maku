@@ -769,7 +769,7 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | 5 | The class is `live` or `shadow` | `class_unarmed` |
 | 6 | The template's reviewer approved, the room reported the head, and every approval is of that head | `no_approving_verdict`, `head_unreported`, `verdict_stale` |
 | 7 | The head's `Agent-Run` trailer names one of the task's runs | `foreign_trailer` |
-| 8 | The class's declared conditions, in this order: `allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines` (GitHub's counts), `diffShape` (`links-only`: link targets only, each staying relative, on its https host, or moving to web.archive.org; built into `docs-links` and `revert`), or `semver-patch` and `semver-minor` for an [adopted class](#adopted-classes) (computed from the diff), `holdoutChecks` (SUCCESS from GitHub Actions), `oracle` (the task's `spec.findings` no longer link targets in the head, and every finding was a link target on the base and none is on the head, and no target moved but to the exact snapshot its finding gave) | `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `class_mismatch`, `holdout_red`, `oracle_finding_open`, `oracle_unrequested`; a pending holdout waits as `holdout_pending` |
+| 8 | The class's declared conditions, in this order: `allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines` (GitHub's counts), `diffShape` (`links-only`: link targets only, each staying relative, on its https host, or moving to web.archive.org; built into `docs-links` and `revert`), or `semver-patch`, `semver-minor` and `added-entry` for an [adopted class](#adopted-classes) (computed from the diff; `companionFiles` extends the files an `added-entry` may touch), `holdoutChecks` (SUCCESS from GitHub Actions), `oracle` (the task's `spec.findings` no longer link targets in the head, and every finding was a link target on the base and none is on the head, and no target moved but to the exact snapshot its finding gave) | `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `class_mismatch`, `holdout_red`, `oracle_finding_open`, `oracle_unrequested`; a pending holdout waits as `holdout_pending` |
 | 9 | A `live` class: its breaker has not tripped | `class_paused` |
 | 10 | A `live` class: under `merge.autoMergesPerDay` today, and under the class's `maxPerDay` | `auto_merge_cap` |
 | 11 | The class is `live` | `shadow_would_arm`: the decision is posted, nothing is merged |
@@ -956,18 +956,39 @@ classes:
   deps-minor: {shadow: true, author: {adopt: {logins: ["renovate[bot]"], branches: ["^renovate/"]}}, diffShape: semver-minor, modifyOnly: true, allowedFiles: ['…']}
 ```
 
+A catalog repository adopts the pull requests of a bot that adds one entry file, with the `added-entry`
+shape. This is RunLore's knowledge base: `runlore[bot]` adds `incidents/<slug>-<8 hex>.md`, appends
+to `index.md` and `log.md`, and labels the pull request `ready-to-merge`. Its validator is the
+holdout check `validate`, the job `validate` of the workflow "Validate KB"
+(`.github/workflows/validate-kb.yml`, which runs `lore validate-kb`):
+
+```yaml
+classes:
+  kb-entries:
+    shadow: true
+    author: {adopt: {logins: ["runlore[bot]"], branches: ["^runlore/kb-"]}}
+    diffShape: added-entry
+    allowedFiles: ['^incidents/[^/]+\.md$']
+    companionFiles: ['^index\.md$', '^log\.md$']
+    requiredLabel: ready-to-merge
+    holdoutChecks: [validate]
+```
+
 | Key | Holds |
 |---|---|
 | `author.adopt.logins` | The adopted authors. Each ends in `[bot]` (a human login is refused at start) |
 | `author.adopt.branches` | Head branch prefixes: `^` and a literal prefix, as `^renovate/`. The leading `^` is required, and any other regexp character is refused (the prefix is matched as written) |
-| `diffShape` | `semver-patch` or `semver-minor`, required with `author.adopt` and with `modifyOnly: true`. `semver-minor` is `shadow` only: the config refuses it `live` |
+| `diffShape` | `semver-patch` or `semver-minor` (`added-entry` has its own row), required with `author.adopt`; a semver shape needs `modifyOnly: true`. `semver-minor` is `shadow` only: the config refuses it `live` |
+| `diffShape: added-entry` | One new catalog entry and appends to its companion files, required with `author.adopt` and `modifyOnly: false`. It needs `allowedFiles` (where entries go), `holdoutChecks` (the validator: the factory runs no command and reads only the diff) and `requiredLabel`. `semver-minor`'s `shadow`-only rule does not apply to it |
+| `companionFiles` | Anchored patterns (`^` and `$`, as `allowedFiles`) of the files an `added-entry` pull request may append to beside its entry. Needs `diffShape: added-entry`; `allowedFiles` in the fence admits them too |
+| `requiredLabel` | A label (1 to 50 characters) the pull request must carry, applied by an adopted login. Needs `author.adopt` |
 | `releaseAgeCheck` | The commit status that holds the release age, posted by an adopted login (Renovate's `renovate/stability-days`). Needs `author.adopt` |
 
 **The poller.** A leader-only loop, once a minute, off unless a class adopts and is `shadow` or
 `live` (a class that is off adopts nothing). On a repository the factory owns, it lists the open
 pull requests and adopts one only when it is into `main`, from the same repository (never a fork),
-by an adopted login on an adopted branch, and its diff, computed by the factory, matches the shape of a class and keeps that class's file conditions (`allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines`: the gate's own functions), so a pull request outside the fence is never bound to the class, whatever its shape. A list that
-fails or fills its page, or a diff that cannot be read, adopts nothing and is retried. At most 10
+by an adopted login on an adopted branch, carrying the class's `requiredLabel` when it has one (checked before the diff is read, so a pull request without it is neither diffed nor judged, and one labelled later is seen at the same head), and its diff, computed by the factory, matches the shape of a class and keeps that class's file conditions (`allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines`: the gate's own functions), so a pull request outside the fence is never bound to the class, whatever its shape. A list that
+fails or fills its page, or a diff that cannot be read, adopts nothing and is retried. The list is one page of 100 open pull requests: a repository with 100 or more open pull requests adopts nothing until some close. At most 10
 adopted Tasks are open per repository and class, the rest wait for one to end. The Task is named from its key,
 `adopt:<repository>#<number>`, so there is never a second Task for one key, across a restart or after
 the first ended. Adopted Tasks fill none of the factory's caps (`caps.tasksPerDay`, `caps.activeTasks`,
@@ -988,7 +1009,21 @@ labels or title. `semver-patch` and `semver-minor` (package `semverdiff`) are st
   appears or disappears, a pre-release or build suffix, a changed trailing newline, an unchanged file.
   A lockfile fails by construction.
 
-**The gate in author mode.** Rows 4 to 7 change for an adopted class, the rest read as for any class:
+`added-entry` (package `entrydiff`) is the shape of a catalog entry's pull request. It holds when:
+
+- exactly one file is `added`, its path matches `allowedFiles`, it is absent on the base, and on the
+  head it is non-empty valid UTF-8 whose line count equals the stat's additions;
+- every other file is `modified`, matches `companionFiles`, deletes no line, adds 1 to 10 lines,
+  and keeps the base's lines in order (an append, or lines inserted);
+- no file is renamed;
+- the entry and each added line hold no control character but tab and newline and no Unicode format
+  character (zero-width, bidi), and no path holds a control or format character, newline included.
+
+The shape reads the diff only. What the entry says is the holdout check's job (`validate`), and the
+fence bounds where it goes. A symlink to a one-line target still passes the shape (its text is the
+target's): `runlore[bot]` as the only adopted author and the required `validate` check cover it.
+
+**The gate in author mode.** Rows 4 to 7 change for an adopted class, and the label row adds to row 4's evidence, the rest read as for any class:
 
 | Check | If it fails |
 |---|---|
@@ -998,6 +1033,7 @@ labels or title. `semver-patch` and `semver-minor` (package `semverdiff`) are st
 | Every commit's author is an adopted login, and every push to the branch was one's | `human_commit_in_pr`, `push_unrecorded` (`adoption_unread`: the decision ran without the read) |
 | `diffShape` holds on the diff the factory computed at the pinned head | `class_mismatch` |
 | `releaseAgeCheck` is `SUCCESS`, posted by an adopted login | `release_age_pending` waits; `release_age_red` |
+| `requiredLabel`, when the class declares one, is on the pull request, and its newest `labeled` event is an adopted login's (a list of events cut at its page reads as unproven) | `label_missing`, `label_not_adopted` |
 
 The veto is a repository member's or collaborator's: a review counts only when GitHub's
 `authorAssociation` is `OWNER`, `MEMBER` or `COLLABORATOR`, so a stranger's review (anyone can submit
@@ -1026,7 +1062,13 @@ GitHub refuses it if Renovate pushed since. A read error of the commit authors o
 | `human_commit_in_pr`, `ci_red`, `release_age_red`, `push_unrecorded`, `policy_pending`, `policy_absent`, `ci_cancelled`, `ci_wait_expired` | Hands off to `AwaitingHuman`, and **re-enters on a new head**: Renovate's rebase or a fresh push is decided again whole, up to 3 times (`maxGateReentries`, counted) |
 | `auto_merge_cap`, `class_paused` | Same: re-enters on a new head, counted. A `live` class only: a `shadow` class records `shadow_would_arm` through them (AM4) |
 | `shadow_would_arm` | The shadow decision: returns to `AwaitingCI` on Renovate's next head (`adopted_head_moved`), not counted, since it is no hand-off |
-| Every other reason: `class_unarmed`, `class_mismatch`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
+| Every other reason: `class_unarmed`, `class_mismatch`, `holdout_red`, `label_missing`, `label_not_adopted`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
+
+Known limit: `label_missing` is terminal. RunLore's refresh of an entry removes `ready-to-merge` and
+pushes; an adopted entry that was already handed off stays handed off, and labelling it again does
+not revive it. A maintainer merges it, or closes it and RunLore files a new one. The label is also
+not bound to a head: a label applied to head A stands on head B, so the gate keeps checking who
+applied it, and relies on RunLore's removal on push.
 
 `push_unrecorded` is GitHub not having recorded the push of the head yet (its events lag a push):
 the Task waits for it at most 10 minutes, then hands off. A push made during a long CI wait gets no

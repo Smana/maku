@@ -64,6 +64,8 @@ type Adoption struct {
 	Read          bool
 	CommitAuthors []string
 	Pushed        pushCheck
+	// LabelledBy is the newest actor of the class's required label: "" when unread or truncated.
+	LabelledBy string
 }
 
 // ArmDecision is the verdict and why. Verdict ∈ arm | shadow | wait | ci_red | ci_cancelled | escalate | human.
@@ -484,6 +486,14 @@ func adoptEvidence(in ArmInputs, cl config.Class) string {
 		return "push_unrecorded" // awaitingCI waits for it a while before it hands off
 	default:
 		return "human_commit_in_pr"
+	}
+	if l := cl.RequiredLabel; l != "" {
+		switch {
+		case !slices.Contains(in.PR.Labels, l):
+			return "label_missing"
+		case !slices.ContainsFunc(logins, func(a string) bool { return in.Adoption.LabelledBy != "" && forge.SameLogin(in.Adoption.LabelledBy, a) }):
+			return "label_not_adopted" // RK3: machine evidence; a maintainer who judges it merges it
+		}
 	}
 	return ""
 }

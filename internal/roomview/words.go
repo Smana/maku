@@ -87,6 +87,8 @@ var reasonPhrases = map[string]string{
 	"push_unrecorded":           "GitHub has not recorded the push",
 	"release_age_pending":       "the release is too new",
 	"release_age_red":           "the release age check failed",
+	"label_missing":             "the required label is missing",
+	"label_not_adopted":         "the wrong login applied the label",
 	"resume_budget":             "no budget to resume the task",
 	"review_rounds_exhausted":   "the reviewer still wants changes",
 	"run_unschedulable":         "the cluster never admitted the run",

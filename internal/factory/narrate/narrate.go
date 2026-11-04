@@ -266,6 +266,8 @@ func reasons() map[string]string {
 		"adopt_ref_invalid":         "the adopted pull request's reference could not be read, so it was not adopted",
 		"not_adopted_author":        "it is not authored by a login this class adopts",
 		"branch_not_allowed":        "its branch is not one this class adopts",
+		"label_missing":             "it does not carry the label its class requires",
+		"label_not_adopted":         "its required label was not applied by a login the class adopts",
 		"release_age_pending":       "the release age check has not passed yet",
 		"release_age_red":           "the release age check failed, or was not posted by the login this class adopts",
 		"ci_pending":                "CI has not finished",
@@ -604,11 +606,18 @@ func WouldArm(t *v1alpha1.Task, class, head string, paused, capped bool) Event {
 
 // WouldArmAdopted is WouldArm for an adopted pull request (R46): the same key, so the same marker
 // the shadow tally reads, and no claim of a verdict, since no agent reviewed Renovate's change. It
-// names a file fence, sizes and a release age only when the class declares them.
+// names a file fence, sizes and a release age only when the class declares them, and the added-entry
+// shape by what it checks rather than as a semver bump.
 func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paused, capped bool) Event {
 	e := WouldArm(t, class, head, paused, capped)
 	what := "the diff a semver bump"
-	if len(cl.AllowedFiles) > 0 || len(cl.ProtectedFiles) > 0 || cl.ModifyOnly || cl.MaxPatchFiles > 0 || cl.MaxModifiedLines > 0 {
+	if cl.DiffShape == "added-entry" {
+		// What the shape checks, not a bump: one added entry, additions only to the companions, and the label.
+		what = "the diff one added entry with only appended lines in the class's companion files"
+		if cl.RequiredLabel != "" {
+			what += ", its required label applied by a login the class adopts"
+		}
+	} else if len(cl.AllowedFiles) > 0 || len(cl.ProtectedFiles) > 0 || cl.ModifyOnly || cl.MaxPatchFiles > 0 || cl.MaxModifiedLines > 0 {
 		what += " within the class's files and sizes"
 	}
 	age := ""
