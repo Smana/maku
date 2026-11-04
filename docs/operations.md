@@ -394,9 +394,20 @@ An issue the factory filed from a proposal carries no label: the maintainer appl
 `/intake/runlore`) is optional: leave it out and the intake and its port are not started. Watch
 `maku_factory_monitor_verifications_total{verdict="none"}`: a verdict that never arrives.
 
-**Roll the broker first.** The broker decodes task facts strictly: the factory posts `origin` in
-them only for a fix started from a published issue, and an older broker refuses such facts. Upgrade
-the broker, then the factory.
+**Starting the fix from the label.** `publishStarts: true` on an internal principal makes `factory/publish` also start the
+fix, charged to the maintainer who labelled (see [`factory/publish`](factory.md#internal-principals)). It is off by default. The
+factory labels the issue it files `class:<c>`, the class inferred from the proposal's `## Files` (`review` when none fits), so each
+`class:<c>` label must exist on the repository, as `factory/ready` does. A `class:` label a maintainer applies takes precedence.
+
+**Roll the broker first.** The broker decodes task facts strictly: the factory posts `origin` and `monitor` in
+them, and an older broker refuses such facts. Upgrade the broker, then the factory.
+
+**`room.monitor_verdict`.** A subscriber receives it only when its `events` list names it (see [webhooks](#webhooks)). Switch
+RunLore and its subscriber off together. A delivery gives up after four failed tries (about 6 minutes) and the cursor moves on, so
+never leave RunLore down past about 6 minutes with the subscriber on: a verdict lost that way reads as an unverified entry at the
+end of RunLore's window. With both off together the cursor stays, and the room is replayed when they are back, closed rooms included.
+Known limit: a class whose `followUpWindow` is over 24 h can lose its verdict at `roomCloseCap`; the exact case is in
+[the post-merge monitor](factory.md#the-post-merge-monitor).
 
 ### Webhooks
 
