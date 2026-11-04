@@ -153,10 +153,10 @@ func (c Class) ReadsDiff(name string) bool {
 		c.MaxPatchFiles > 0 || c.MaxModifiedLines > 0 || c.DiffShape != "" || c.Oracle != nil
 }
 
-// validateClass reports one class's problems.
 // ValidateClass reports one class's problems, for a class read from outside this config.
 func ValidateClass(name string, cl Class, bad func(string, ...any)) { validateClass(name, cl, bad) }
 
+// validateClass reports one class's problems.
 func validateClass(name string, cl Class, bad func(string, ...any)) {
 	if cl.Live && cl.Shadow {
 		bad("class %s: live and shadow never together (R32)", name)
