@@ -787,8 +787,10 @@ func TestEmitterSendsTheVerdictOnceAcrossARestart(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		rig.ctx, rig.cancel = ctx, cancel
-		em := *rig.em
-		rig.em = &em
+		old := rig.em
+		rig.em = &Emitter{Subs: old.Subs, Events: old.Events, Rooms: old.Rooms, State: old.State, Metrics: old.Metrics,
+			Logger: old.Logger, Now: old.Now, Sleep: old.Sleep, SweepEvery: old.SweepEvery, MinBackoff: old.MinBackoff,
+			FactoryPrincipal: old.FactoryPrincipal, LaggingLimit: old.LaggingLimit}
 		rig.start()
 	}
 	restart()
