@@ -312,6 +312,16 @@ type Client struct {
 	Kind runwatch.Kind
 }
 
+// check refuses a Client whose Kind is not a valid runs kind, the zero Kind included: its claims
+// would carry no group, namespace or name prefix, and a caller that forgot to wire the configured
+// kind would silently read and write some other kind's runs.
+func (c Client) check(op string) error {
+	if err := c.Kind.Validate(); err != nil {
+		return fmt.Errorf("%s run: runs kind: %w", op, err)
+	}
+	return nil
+}
+
 func (c Client) empty() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(c.Kind.GVK())
@@ -329,6 +339,9 @@ func (c Client) named(id string) *unstructured.Unstructured {
 // An AlreadyExists for the same run (R48's replay, checked against the claim's CREATE-only
 // values) is success, not an error: the caller's own first attempt landed.
 func (c Client) Create(ctx context.Context, s Spec) error {
+	if err := c.check("create"); err != nil {
+		return err
+	}
 	if err := s.Validate(); err != nil {
 		return fmt.Errorf("create run %s: %w", s.RunID, err)
 	}
@@ -373,6 +386,9 @@ func validID(op, id string) error {
 
 // Get reads run id; found is false when it does not exist.
 func (c Client) Get(ctx context.Context, id string) (Run, bool, error) {
+	if err := c.check("get"); err != nil {
+		return Run{}, false, err
+	}
 	if err := validID("get", id); err != nil {
 		return Run{}, false, err
 	}
@@ -390,6 +406,9 @@ func (c Client) Get(ctx context.Context, id string) (Run, bool, error) {
 
 // List reads every run in the kind's namespace (Kind.Namespace).
 func (c Client) List(ctx context.Context) ([]Run, error) {
+	if err := c.check("list"); err != nil {
+		return nil, err
+	}
 	l := &unstructured.UnstructuredList{}
 	l.SetGroupVersionKind(c.Kind.GVK().GroupVersion().WithKind("AgentRunList"))
 	if err := c.C.List(ctx, l, client.InNamespace(c.Kind.Namespace)); err != nil {
@@ -408,6 +427,9 @@ func (c Client) List(ctx context.Context) ([]Run, error) {
 // anything else from the factory's ServiceAccount. It refuses the CREATE-only keys itself, so
 // that rule is never their only guard.
 func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) error {
+	if err := c.check("annotate"); err != nil {
+		return err
+	}
 	if err := validID("annotate", id); err != nil {
 		return err
 	}
@@ -428,6 +450,9 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 
 // Delete deletes run id; a run already gone is not an error.
 func (c Client) Delete(ctx context.Context, id string) error {
+	if err := c.check("delete"); err != nil {
+		return err
+	}
 	if err := validID("delete", id); err != nil {
 		return err
 	}
