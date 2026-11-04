@@ -748,6 +748,9 @@ type InternalPrincipal struct {
 	DailyTasks    int     `json:"dailyTasks"`
 	// Verification admits POST /v1/tasks/{task}/verification for this principal (RA11).
 	Verification bool `json:"verification,omitempty"`
+	// PublishStarts lets a maintainer's factory/publish on the stub of this principal's api task
+	// also start the fix task (K6).
+	PublishStarts bool `json:"publishStarts,omitempty"`
 }
 
 // InternalBy is principal's internal declaration, nil when the config declares none.
@@ -758,6 +761,16 @@ func (c *Config) InternalBy(principal string) *InternalPrincipal {
 		}
 	}
 	return nil
+}
+
+// PublishStarts reports whether factory/publish on the stub of a kind task requested by
+// requestedBy also starts the fix: only an api task of an internal principal declaring it (K6, K9).
+func (c *Config) PublishStarts(kind, requestedBy string) bool {
+	if kind != "api" {
+		return false
+	}
+	ip := c.InternalBy(requestedBy)
+	return ip != nil && ip.PublishStarts
 }
 
 // PrincipalBy is the bounds of principal, sponsored or internal: every charge and cap reads it, so

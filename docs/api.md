@@ -699,25 +699,31 @@ ids and closed codes only: never room text, a title, a branch or a message.
 | `room.verdict_posted` | GitHub accepted the verdict comment | `pr` |
 | `room.merged` | The task enters `Merged`, or its facts carry reason `merged` (a human merge), `merged_verified` or `merged_unverified`, once | `pr` |
 | `room.reverted` | The task enters `Reverted` | `pr` |
+| `room.monitor_verdict` | The [post-merge monitor](factory.md#the-post-merge-monitor)'s verdict reaches the task facts of a room that names an `origin`, once | `repo`, `pr`, `verdict` |
 | `room.budget_reached` | A task phase or a run end names a budget reason | `limit` |
 | `room.ended` | The task's first coarse end: `done`, `failed` or `stopped` | `state` |
 
 A task event fires on a change of phase only: the factory rewrites a phase's facts (budget, run,
-pull request) without a new event. `repo` is on `task_received` and `task_triaged` only.
+pull request) without a new event. `repo` is on `task_received`, `task_triaged` and `room.monitor_verdict` only.
 `verdict_posted` is sent once GitHub accepted the comment, not when it was attempted.
 
 `origin` is on **every** event of a room whose task was started from an issue the factory published
 (see [`factory/publish`](factory.md#internal-principals)): the room id of the investigate task. It is
 absent on any other room's events.
 
-`reason`, `limit` and `state` are clipped to closed lists (`webhook.Reasons`, `webhook.Limits`,
-`webhook.States`); anything else is sent as `other`. The factory's room escalations `foreign_room`,
+`room.monitor_verdict` goes out once per room, and only for a room whose task facts name an `origin`: a verdict is final once set, so a
+`regression` decided inside the window is sent at once. Delivery is at least once with a stable `webhook-id`. A subscriber receives it
+only when its `events` list names it.
+
+`reason`, `limit`, `state` and `verdict` are clipped to closed lists (`webhook.Reasons`, `webhook.Limits`,
+`webhook.States`, and the monitor's three verdicts); anything else is sent as `other`. The factory's room escalations `foreign_room`,
 `room_log_unreadable` and `rooms_crd_outdated` are listed.
 
 | Field | Values |
 |---|---|
 | `limit` | `budget-run`, `budget-task`, `budget-principal`, `budget-fleet`, `budget-person`, `budget-family` |
 | `state` | `queued`, `running`, `waiting`, `done`, `failed`, `stopped` |
+| `verdict` | `healthy`, `regression`, `inconclusive` |
 | `reason` | The wait reasons of [the summary](#get-apiroomsidsummary), plus `approval`, `manual`, `revoked`, `deleted`, `principal_unknown`, `budget-run`, `budget-principal`, `budget-fleet`, `budget-person`, `foreign_room`, `room_log_unreadable`, `rooms_crd_outdated` |
 
 Example body:

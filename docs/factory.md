@@ -678,7 +678,8 @@ An entry holds a sponsored principal's keys (`name`, `clientIDFile`, `sponsor`, 
 |---|---|
 | `minConfidence` | In (0, 1]: a finding below it is `202 below_threshold` |
 | `dailyTasks` | At least 1: tasks of the principal created this UTC day, any kind, so the retiring `/intake/runlore`'s count while both run |
-| `verification` | Reserved for the verdict endpoint; no effect yet |
+| `verification` | Admits [`POST /v1/tasks/{task}/verification`](api.md#post-v1taskstaskverification) for this principal |
+| `publishStarts` | Default false. `factory/publish` on the stub of this principal's `api` task also starts the fix, see [`factory/publish`](#internal-principals) |
 
 The name `runlore` is allowed on an internal principal only. Names and client id files are unique
 across `api.sponsored`, `api.internalPrincipals` and `api.systemPrincipals`.
@@ -702,9 +703,14 @@ sequenceDiagram
   Note over F: investigate: the triager's proposal stays in the room
   M->>F: label the stub factory/publish
   F->>F: sanitise as public text, redact, CheckDraft
-  F->>M: new issue (no label), status.published recorded
-  M->>F: label the new issue factory/ready
-  F->>F: fix task with spec.origin = the investigate task
+  F->>F: infer the class from the proposal's ## Files
+  F->>M: new issue (no trigger label, class:<c>), status.published recorded
+  alt publishStarts
+    F->>F: fix task, generation 0, charged to the publisher
+  else
+    M->>F: label the new issue factory/ready
+    F->>F: fix task with spec.origin = the investigate task
+  end
 ```
 
 **`factory/publish`.** The issue poller (leader only) reads it on the stub issue of an `investigate`
@@ -717,7 +723,26 @@ A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`) is a co
 the label removed; nothing is created. The factory files the issue **once per task**, with no trigger label (only a marker,
 `factory/published-from:<task>`, which grants nothing and lets a retry after a crash find the issue
 instead of filing a second): the maintainer reads it on GitHub and starts it with `factory/ready`, which is the second, money
-spending decision.
+spending decision. With `publishStarts` on the principal, `factory/publish` is that decision too (see below).
+
+**`## Files` and the inferred class.** The triager's brief asks for a fourth section, `## Files`: each
+repository path the change touches, one `` - `path` `` per line, at most 10. The factory reads that
+section from the proposal (it ends at the next `## ` heading or the footer's `---` line). A line of any other form, a path with a `..`
+segment, a leading `/`, a path over 200 bytes, or more than 10 lines, empties the list. `filefence.Infer` then names the class: among the
+classes that declare `allowedFiles` and are neither `review`, `revert`, adopted nor oracle-backed, the one whose `allowedFiles` admit
+every path and whose `protectedFiles` admit none. None, several, or no path: `review`. The filed issue carries the label
+`class:<c>` and `status.published.class` records it; a retry re-reads the filed body and adds the label if it is missing. The fix task
+of the published issue (`spec.origin` set) takes it as `spec.predictedClass`, and triage keeps it when the repository declares that
+class and it is not `revert`; a `class:` label a maintainer applies to the issue still takes precedence. Otherwise the class is `review`.
+
+**With `publishStarts`.** For an `api` task of an internal principal that declares it, the same label also starts the fix, as
+`factory/ready` would: generation 0, `spec.origin` the investigate task, `spec.predictedClass` the inferred class, `requestedBy`
+the publisher, who is charged. The start skips intake's advisory day check, so the reservation at queueing binds (see
+[security](security.md#internal-principals-and-publishing)). Nothing starts when any Task exists on the issue, when the
+issue is closed, when it was edited since it was filed, or when its text is withheld: the issue stays filed and `factory/ready`
+remains the way to start it. The invariant is one Task and one charge per issue: when `factory/ready` and a publish retry land in the
+same poll, the publish start wins (generation 0, charged to the publisher), and `factory/ready` is answered `task_active` on a later
+poll. A closed issue starts nothing. The comment on the stub says the fix started, which task and class, and who pays.
 
 **`spec.origin`.** The poller sets it on a new `factory/ready` task only when a task of the same
 repository carries the label `agents.ogenki.io/published-issue: <n>` **and** its
@@ -1101,6 +1126,15 @@ window ends. The comment ends `<!-- agent-factory … event=monitor-<n> verdict=
 what it read, with `follow_ups=N`. A regression, and each follow-up found, are also posted on the
 control issue (under their own keys), when it lives on the task's repository.
 `maku_factory_monitor_verdicts_total{class,verdict,repository}` counts each verdict once.
+
+**An origin task's verdict reaches the room.** For a task with `spec.origin`, the verdict is in the task facts (`monitor`) and
+the broker sends it as [`room.monitor_verdict`](api.md#webhooks). A sealed log takes no facts, so the room stays open while
+the task's monitor is due and has no verdict; the reconciler looks again after `monitorEvery`. A task without an origin closes its room
+as before. Known limit: that wait has no `roomCloseCap` test, so for a class window over 24 h the room stays open past the cap
+until the verdict is decided, and `roomCloseCap` (24 h from the task's end) is not what ends it. The cap acts after the verdict is
+set: if its facts are still unposted at that pass because the post was answered `ErrNoRoute`, `ErrNoRoom`, `ErrNotPermitted` or
+`ErrSealed`, the room closes at the cap with `facts_due` and the verdict is never sent. `alert-rules` (2 h) is not exposed to
+this; a maintainer's `class:` label naming a longer window is.
 
 **The labels** the merger writes (it asks for `issues: write` while any class is `live` or has a
 `monitor`):

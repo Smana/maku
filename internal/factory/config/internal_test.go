@@ -72,3 +72,37 @@ func TestInternalAndSponsoredNamesAreUnique(t *testing.T) {
 		t.Fatalf("both lists side by side: %v", err)
 	}
 }
+
+// K6, K9: publishStarts is an internal principal's key; a sponsored principal's entry refuses it.
+func TestPublishStartsConfig(t *testing.T) {
+	on := strings.Replace(runloreBlock, "verification: true\n", "verification: true\n      publishStarts: true\n", 1)
+	cfg, err := Parse([]byte(withSponsored(slackApp + on)))
+	if err != nil {
+		t.Fatalf("publishStarts on an internal principal: %v", err)
+	}
+	for _, c := range []struct {
+		kind, by string
+		want     bool
+	}{
+		{"api", "system:runlore", true},
+		{"runlore", "system:runlore", false},
+		{"api", "system:slack-app", false},
+	} {
+		if got := cfg.PublishStarts(c.kind, c.by); got != c.want {
+			t.Errorf("PublishStarts(%q, %q) = %v, want %v", c.kind, c.by, got, c.want)
+		}
+	}
+
+	off, err := Parse([]byte(withSponsored(slackApp + runloreBlock)))
+	if err != nil {
+		t.Fatalf("unchanged block: %v", err)
+	}
+	if off.PublishStarts("api", "system:runlore") {
+		t.Error("publishStarts defaults to false")
+	}
+
+	bad := strings.Replace(slackApp, "maxCostUSD: 5\n", "maxCostUSD: 5\n      publishStarts: true\n", 1)
+	if _, err := Parse([]byte(withSponsored(bad + runloreBlock))); err == nil || !strings.Contains(err.Error(), `unknown field "publishStarts"`) {
+		t.Errorf("a sponsored principal's publishStarts: %v", err)
+	}
+}

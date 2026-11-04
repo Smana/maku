@@ -856,6 +856,12 @@ spec:
                     description: The maintainer login whose label asked for it, lowercased.
                     maxLength: 64
                     type: string
+                  class:
+                    description: |-
+                      The class inferred from the proposal's paths at publish (K4), which the fix task's
+                      spec.predictedClass copies.
+                    maxLength: 64
+                    type: string
                   evidence:
                     description: The verdict evidence of the fix task named by EvidenceFor,
                       internal like this task (R11).

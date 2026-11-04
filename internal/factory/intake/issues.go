@@ -227,12 +227,16 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(append(errs, fmt.Errorf("intake: %w", err))...)
 	}
-	if err := p.publishes(ctx); err != nil { // before factory/ready: the maintainer reads the filed issue, then starts it
+	started, err := p.publishes(ctx)
+	if err != nil { // before factory/ready: the maintainer reads the filed issue, then starts it
 		errs = append(errs, err)
 	}
 	for _, it := range items {
 		if it.PullRequest {
 			continue // factory/ready starts work from issues only
+		}
+		if started[it.Number] {
+			continue // a publish started its fix this pass: the cache may not hold it yet, the next poll answers the label
 		}
 		if err := p.one(ctx, it.Number); err != nil {
 			errs = append(errs, fmt.Errorf("#%d: %w", it.Number, err))
@@ -273,6 +277,18 @@ func snapshot(i forge.Issue, clean func(string) (string, sanitize.Report)) (stri
 		text = strings.ToValidUTF8(text[:maxSnapshot], "")
 	}
 	return text, hex.EncodeToString(sum[:]), rep
+}
+
+// issueTask is the Task of issue n's snapshot, requested by requestedBy.
+func (p *IssuePoller) issueTask(n int, key, requestedBy string, iss forge.Issue, text, sum string) *v1alpha1.Task {
+	return &v1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: taskid.Name(key), Namespace: p.Namespace, Labels: map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}},
+		Spec: v1alpha1.TaskSpec{
+			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", p.repo().Name, n), Key: key,
+				RequestedBy: requestedBy, Trust: "untrusted", ContentSHA256: sum},
+			Repository: p.repo().Name, Issue: n, IssueAuthor: iss.Author, Text: text, DataClass: p.Cfg.Defaults.DataClass,
+		},
+	}
 }
 
 func (p *IssuePoller) one(ctx context.Context, n int) error {
@@ -337,14 +353,7 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 			return err
 		}
 	}
-	t := &v1alpha1.Task{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.Namespace, Labels: map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}},
-		Spec: v1alpha1.TaskSpec{
-			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", p.repo().Name, n), Key: key,
-				RequestedBy: "github:" + last.Actor, Trust: "untrusted", ContentSHA256: sum},
-			Repository: p.repo().Name, Issue: n, IssueAuthor: iss.Author, Text: text, DataClass: p.Cfg.Defaults.DataClass,
-		},
-	}
+	t := p.issueTask(n, key, "github:"+last.Actor, iss, text, sum)
 	parent, err := p.childOf(ctx, n, iss)
 	if err != nil {
 		return err
@@ -353,10 +362,11 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 		t.Spec.Parent = parent
 		t.Labels[v1alpha1.LabelParent] = parent.Task
 	}
-	if origin, err := p.originOf(ctx, n); err != nil {
+	if o, err := p.originOf(ctx, n); err != nil {
 		return err
-	} else if origin != "" {
-		t.Spec.Origin = origin // RA9: the factory's own record, never the issue's text
+	} else if o != nil {
+		// RA9: the factory's own record, never the issue's text; K5: the class it inferred.
+		t.Spec.Origin, t.Spec.PredictedClass = o.Name, o.Status.Published.Class
 	}
 	if err := p.Client.Create(ctx, t); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("create task %s: %w", name, err) // AlreadyExists is the dedup (S2)

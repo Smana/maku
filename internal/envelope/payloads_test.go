@@ -213,3 +213,14 @@ func TestTaskFactsOrigin(t *testing.T) {
 		t.Fatalf("an unset origin is omitted: %s", b)
 	}
 }
+
+func TestTaskFactsMonitor(t *testing.T) {
+	for _, v := range MonitorVerdicts() {
+		if err := (TaskFacts{Phase: "Done", Monitor: v}).Validate(); err != nil {
+			t.Fatalf("%s: %v", v, err)
+		}
+	}
+	if err := (TaskFacts{Phase: "Done", Monitor: "fixed"}).Validate(); err == nil || !strings.Contains(err.Error(), "monitor") {
+		t.Fatalf("an unknown verdict: %v", err)
+	}
+}

@@ -221,11 +221,16 @@ The proposal is the triager run's own handoff, never another writer's. It is hel
 template, made inert (`sanitize.Public`: no link, raw HTML, image or hidden character survives; URLs,
 addresses, @mentions and issue references are kept in code spans, so none pings or links), and scanned by the redactor; a hit publishes nothing. The
 factory files it once, with no trigger label, and records it on the task. An origin is that record, never
-issue text.
+issue text. The fix reads the public issue only (R38 holds): the investigate task's internal text never reaches it.
+
+With `publishStarts` the label is also the money-spending decision: the fix starts at once, and `requestedBy` and the charge are the
+publisher's. The start skips intake's advisory day check, so the reservation at queueing binds: a person whose day is spent ends the
+Task `Escalated` with `budget-person`, and a later `factory/ready` on the issue supersedes it. Only the fleet's own limit waits as
+`waiting_daily_budget`. The label's actor is checked as for `factory/ready`: a maintainer with write access.
 
 ## Webhooks
 
-An event carries ids and closed codes only, never room text: `reason`, `limit` and `state` are
+An event carries ids and closed codes only, never room text: `reason`, `limit`, `state` and `verdict` are
 clipped to fixed lists, and any other value is sent as `other`. A message is never decoded to build
 an event.
 

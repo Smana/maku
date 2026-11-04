@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -156,6 +157,9 @@ type TaskFacts struct {
 	Split *SplitFact `json:"split,omitempty"`
 	// Parent is set on a part's room: the task it was split from.
 	Parent *ParentFact `json:"parent,omitempty"`
+	// Monitor is the post-merge monitor's verdict (one of MonitorVerdicts), set only for a task with
+	// an origin. A verdict is final once set; the webhook tracker sends it once as room.monitor_verdict.
+	Monitor string `json:"monitor,omitempty"`
 }
 
 // MaxPlan bounds TaskFacts.Plan.
@@ -227,6 +231,9 @@ func (p ParentFact) validate() error {
 	}
 	return nil
 }
+
+// MonitorVerdicts are the values TaskFacts.Monitor may hold.
+func MonitorVerdicts() []string { return []string{"healthy", "regression", "inconclusive"} }
 
 // MaxRuns bounds TaskFacts.Runs.
 const MaxRuns = 20
@@ -366,6 +373,8 @@ func (f TaskFacts) Validate() error {
 		return errors.New("task facts: the PR URL is a github.com pull request")
 	case f.Origin != "" && !ValidID(f.Origin):
 		return errors.New("task facts: the origin is a room id")
+	case f.Monitor != "" && !slices.Contains(MonitorVerdicts(), f.Monitor):
+		return errors.New("task facts: the monitor verdict is healthy, regression or inconclusive")
 	case len(f.Plan) > MaxPlan:
 		return fmt.Errorf("task facts: plan is at most %d, got %d", MaxPlan, len(f.Plan))
 	}
