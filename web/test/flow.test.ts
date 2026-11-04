@@ -91,6 +91,9 @@ describe("ghosts", () => {
     expect(ghostMerge(f(undefined), "Sealed")).toBe(false);
     expect(ghostMerge(f([{ phase: "Merged", at: "t", seq: 1 }]), "Reviewing")).toBe(false);
     expect(ghostMerge(f(undefined), "Done")).toBe(false);
+    expect(ghostMerge(f([{ phase: "AutoMerging", at: "t", seq: 1 }]), "AutoMerging")).toBe(true);
+    expect(ghostMerge(f(undefined), "Verifying")).toBe(false);
+    expect(ghostMerge(f([{ phase: "Verifying", at: "t", seq: 1 }]), "Reverted")).toBe(false);
   });
   it("ghostsAfter the matched steps", () => {
     expect(ghostsAfter(plan, [node({ persona: "scoper" }), node({ persona: "tester" })])).toEqual(["implementer", "reviewer"]);

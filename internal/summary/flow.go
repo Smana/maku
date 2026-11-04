@@ -252,6 +252,12 @@ func terminalPhase(p string) bool {
 	return false
 }
 
+// pathDone reports whether no run is ahead of a task: its phase closes the path, or the merge is
+// behind it. The factory sets Verifying once an auto-merge landed; it never sets Merged.
+func pathDone(f *envelope.TaskFacts) bool {
+	return terminalPhase(f.Phase) || f.Phase == "Verifying"
+}
+
 // triggerEdges are the edges a run's trigger names.
 func triggerEdges() map[string]string {
 	return map[string]string{"ci": "CI red", "human": "changes requested", "retry": "retry", "resume": "resumed"}
@@ -327,7 +333,7 @@ func flowView(st State) *Flow {
 		}
 		fl.Nodes = append(fl.Nodes, n)
 	}
-	if st.Facts != nil && !terminalPhase(st.Facts.Phase) && cursor < len(fl.Plan) {
+	if st.Facts != nil && !pathDone(st.Facts) && cursor < len(fl.Plan) {
 		fl.Ghosts = slices.Clone(fl.Plan[cursor:])
 	}
 	return fl

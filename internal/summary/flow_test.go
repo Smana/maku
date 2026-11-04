@@ -130,6 +130,18 @@ func TestFlowView(t *testing.T) {
 					t.Fatalf("ghosts = %v", fl.Ghosts)
 				}
 			}},
+		{"no ghosts once merged and verifying, the auto-merge's path to Done", fruns(envelope.TaskFacts{Phase: "Verifying", Plan: plan}, frun("a", "implementer", "implementer", 0)),
+			func(t *testing.T, fl *Flow) {
+				if len(fl.Ghosts) != 0 {
+					t.Fatalf("ghosts = %v", fl.Ghosts)
+				}
+			}},
+		{"ghosts stay while the merge can still fail back", fruns(envelope.TaskFacts{Phase: "AutoMerging", Plan: plan}, frun("a", "implementer", "implementer", 0)),
+			func(t *testing.T, fl *Flow) {
+				if !slices.Equal(fl.Ghosts, []string{"reviewer"}) {
+					t.Fatalf("ghosts = %v", fl.Ghosts)
+				}
+			}},
 		{"rounds", func() []envelope.Event {
 			rev := frun("b", "reviewer", "reviewer", 0)
 			rev.Verdict = "changes"
