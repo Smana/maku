@@ -5,6 +5,7 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -555,16 +556,30 @@ func TestTheCatalogEntryGate(t *testing.T) {
 				forge.Push{Type: "push", Actor: kbBot, Before: "c1", After: "c2"}, forge.Push{Type: "branch_creation", Actor: kbBot, After: "c1"})
 		}, "shadow_would_arm"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			g := kbRig(t)
-			c.edit(g)
-			tk := g.reconcile(t, adoptTask, 1)
-			if tk.Status.Reason != c.reason {
-				t.Fatalf("%s reason %q, want %q", tk.Status.Phase, tk.Status.Reason, c.reason)
-			}
-			if len(g.f.Armed()) != 0 {
-				t.Fatal("shadow never merges")
-			}
-		})
+		// A refusal is a hand-off to a human (a wait also writes the reason): proved in shadow and on a
+		// live class, where only the decisions that would arm do arm.
+		for _, live := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/live=%t", name, live), func(t *testing.T) {
+				g := kbRig(t)
+				if live {
+					cl := kbClass()
+					cl.Shadow, cl.Live = false, true
+					g.r.Cfg.Classes["deps-patch"] = cl
+				}
+				c.edit(g)
+				tk := g.reconcile(t, adoptTask, 1)
+				arms := c.reason == "shadow_would_arm"
+				switch {
+				case arms && live:
+					if tk.Status.Phase != v1alpha1.PhaseAutoMerging || len(g.f.Armed()) != 1 {
+						t.Fatalf("%s %s %v, want it armed", tk.Status.Phase, tk.Status.Reason, g.f.Armed())
+					}
+				default:
+					if tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != c.reason || len(g.f.Armed()) != 0 {
+						t.Fatalf("%s %q armed %v, want AwaitingHuman %q and nothing armed", tk.Status.Phase, tk.Status.Reason, g.f.Armed(), c.reason)
+					}
+				}
+			})
+		}
 	}
 }
