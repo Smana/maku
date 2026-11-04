@@ -413,3 +413,76 @@ func TestAFullClassPushesNoPullRequestIntoAnother(t *testing.T) {
 		t.Fatalf("%d", n)
 	}
 }
+
+const kbRepo = "Smana/runlore-kb"
+
+// kbAdopter is the adopter over runlore-kb's class: kb-entries, adopted from runlore[bot], with
+// TestAdded's first diff (runlore-kb #163) as the diff every pull request reads.
+func kbAdopter(t *testing.T) (*forgetest.Fake, *Adopter, client.Client) {
+	t.Helper()
+	cl := config.Class{Live: false, Shadow: true, DiffShape: "added-entry", AllowedFiles: []string{`^incidents/[^/]+\.md$`},
+		CompanionFiles: []string{`^index\.md$`, `^log\.md$`}, HoldoutChecks: []string{"validate"}, RequiredLabel: "ready-to-merge",
+		MaxPatchFiles: 3, MaxModifiedLines: 60,
+		Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"runlore[bot]"}, Branches: []string{"^runlore/kb-"}}}}
+	cfg := &config.Config{Repository: kbRepo, Defaults: config.Defaults{DataClass: "internal"}, Classes: map[string]config.Class{"kb-entries": cl}}
+	f := forgetest.NewFake()
+	const entry = "incidents/kube-pod-crashlooping-3f9a1c2e.md"
+	f.SetFiles(map[string]string{entry: "", "index.md": "# Index\n- a\n", "log.md": "l1\n"},
+		map[string]string{entry: strings.Repeat("line\n", 48), "index.md": "# Index\n- a\n- b\n", "log.md": "l1\nl2\nl3\nl4\nl5\n"})
+	f.SetFileStats(forge.FileStat{Path: entry, Status: "added", Additions: 48},
+		forge.FileStat{Path: "index.md", Status: "modified", Additions: 1}, forge.FileStat{Path: "log.md", Status: "modified", Additions: 4})
+	c := fake.NewClientBuilder().WithScheme(adoptScheme()).Build()
+	return f, adopter(f, c, cfg), c
+}
+
+// Review Focus 5, K11: a pull request read before its label is adopted once labelled, at the same head.
+func TestALabelAddedLaterAdoptsTheSameHead(t *testing.T) {
+	f, a, c := kbAdopter(t)
+	pr := forge.PRSummary{Number: 163, Author: "runlore[bot]", HeadRef: "runlore/kb-kube-pod-crashlooping-1762160000", HeadSHA: "h1", BaseRef: "main"}
+	for i, labels := range [][]string{nil, {"ready-to-merge"}} { // the same head both ticks
+		pr.Labels = labels
+		f.SetOpenPRs(pr)
+		if err := a.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := adoptedTasks(t, c); len(got) != i || (i == 1 && got[0].Spec.PredictedClass != "kb-entries") {
+			t.Fatalf("tick %d: %+v", i, got)
+		}
+	}
+}
+
+// K10, K11: a labelled pull request outside the added-entry shape adopts nothing.
+func TestAdopterTakesALabelledCatalogEntry(t *testing.T) {
+	const second = "incidents/other-00000000.md"
+	for name, edit := range map[string]func(f *forgetest.Fake){
+		"as RunLore opens it": nil,
+		"index.md loses a line": func(f *forgetest.Fake) {
+			f.SetFiles(map[string]string{"incidents/kube-pod-crashlooping-3f9a1c2e.md": "", "index.md": "# Index\n- a\n", "log.md": "l1\n"},
+				map[string]string{"incidents/kube-pod-crashlooping-3f9a1c2e.md": "x\n", "index.md": "# Index\n", "log.md": "l1\nl2\n"})
+			f.SetFileStats(forge.FileStat{Path: "incidents/kube-pod-crashlooping-3f9a1c2e.md", Status: "added", Additions: 1},
+				forge.FileStat{Path: "index.md", Status: "modified", Deletions: 1}, forge.FileStat{Path: "log.md", Status: "modified", Additions: 1})
+		},
+		"two entries": func(f *forgetest.Fake) {
+			f.SetFiles(map[string]string{"incidents/a-00000000.md": "", second: ""}, map[string]string{"incidents/a-00000000.md": "x\n", second: "y\n"})
+			f.SetFileStats(forge.FileStat{Path: "incidents/a-00000000.md", Status: "added", Additions: 1}, forge.FileStat{Path: second, Status: "added", Additions: 1})
+		},
+		"README.md modified": func(f *forgetest.Fake) {
+			f.SetFiles(map[string]string{"incidents/a-00000000.md": "", "README.md": "a\n"}, map[string]string{"incidents/a-00000000.md": "x\n", "README.md": "a\nb\n"})
+			f.SetFileStats(forge.FileStat{Path: "incidents/a-00000000.md", Status: "added", Additions: 1}, forge.FileStat{Path: "README.md", Status: "modified", Additions: 1})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, a, c := kbAdopter(t)
+			if edit != nil {
+				edit(f)
+			}
+			f.SetOpenPRs(forge.PRSummary{Number: 163, Author: "runlore[bot]", HeadRef: "runlore/kb-x-1", HeadSHA: "h1", BaseRef: "main", Labels: []string{"ready-to-merge"}})
+			if err := a.Tick(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if n, want := len(adoptedTasks(t, c)), map[bool]int{true: 1}[edit == nil]; n != want {
+				t.Fatalf("%d tasks, want %d", n, want)
+			}
+		})
+	}
+}

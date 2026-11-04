@@ -21,6 +21,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/entrydiff"
 	"github.com/Smana/maku/internal/factory/filefence"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -99,10 +100,14 @@ func (a *Adopter) Start(ctx context.Context) error {
 // adoptShape is a diff shape the poller tries, in order, against the classes declaring it.
 type adoptShape struct {
 	name string
-	ok   func(base, head map[string]string) (bool, string)
+	ok   func(cl config.Class, d forge.Diff) (bool, string)
 }
 
-var adoptShapes = []adoptShape{{"semver-patch", semverdiff.Patch}, {"semver-minor", semverdiff.Minor}}
+var adoptShapes = []adoptShape{
+	{"semver-patch", func(_ config.Class, d forge.Diff) (bool, string) { return semverdiff.Patch(d.Base, d.Head) }},
+	{"semver-minor", func(_ config.Class, d forge.Diff) (bool, string) { return semverdiff.Minor(d.Base, d.Head) }},
+	{"added-entry", entrydiff.Added},
+}
 
 // Tick adopts the open pull requests of every owned repository that has an adopted class live or
 // in shadow. A list that fails or fills its page, or a diff that cannot be read, adopts nothing
@@ -203,6 +208,9 @@ func candidates(rc *config.Repository, p forge.PRSummary) map[string]string {
 		if p.CrossRepository || p.BaseRef != adoptBase { // a fork's names are its own; the diff is read against main
 			continue
 		}
+		if cl.RequiredLabel != "" && !slices.Contains(p.Labels, cl.RequiredLabel) { // never diffed nor judged: a label added later is seen at the same head
+			continue
+		}
 		if !slices.ContainsFunc(ad.Logins, func(l string) bool { return forge.SameLogin(p.Author, l) }) || !branchAdopted(ad, p.HeadRef) {
 			continue
 		}
@@ -251,7 +259,7 @@ func (a *Adopter) classOf(ctx context.Context, rc *config.Repository, m Schedule
 		}
 		// The shape and the class's file conditions, which are the gate's own functions: a pull
 		// request outside the fence is not this class's, whatever its shape.
-		if held, _ := s.ok(d.Base, d.Head); held && filefence.Refusal(rc.Classes[class], d.Files) == "" {
+		if held, _ := s.ok(rc.Classes[class], d); held && filefence.Refusal(rc.Classes[class], d.Files) == "" {
 			// The class is the one the gate would pick among all eligible ones. When it is full the
 			// pull request waits for a place: a full class never pushes it into another.
 			return class, !full(class), nil
