@@ -343,12 +343,29 @@ func Started(t *v1alpha1.Task, s runs.Spec, roomsURL string) Event {
 // ProposalReady narrates a finished triage on the task's issue: the proposal stays in the room
 // (internal) until a maintainer publishes it (R38). factory/publish has the factory file the
 // sanitised proposal as a new issue; starting that one is a second label (RunLore RA9).
-func ProposalReady(t *v1alpha1.Task, roomsURL string) Event {
+//
+// With starts, factory/publish also starts the fix (K6): the comment says so, and who pays.
+func ProposalReady(t *v1alpha1.Task, roomsURL string, starts bool) Event {
+	if starts {
+		return Event{Key: "proposal", Body: fmt.Sprintf("Agent factory task `%s`: the triager proposes a change. Read the "+
+			"proposal in the room, %s/r/%s (tailnet only). If it is safe to publish, label this issue `factory/publish`: "+
+			"the factory files the proposal as a new issue and the fix starts at once, charged to you. "+
+			"Nothing else starts from this finding.",
+			t.Name, strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)}
+	}
 	return Event{Key: "proposal", Body: fmt.Sprintf("Agent factory task `%s`: the triager proposes a change. Read the "+
 		"proposal in the room, %s/r/%s (tailnet only). If it is safe to publish, label this issue `factory/publish`: "+
 		"the factory files the proposal as a new issue, which you read before you label it `factory/ready`. "+
 		"Nothing else starts from this finding.",
 		t.Name, strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)}
+}
+
+// PublishedStarted answers a factory/publish that filed the proposal and started its fix: the
+// issue, the Task and the class it runs under. Its key is Published's, so a replay posts nothing new.
+func PublishedStarted(issue int, by, task, class string) Event {
+	return Event{Key: fmt.Sprintf("published-%d", issue),
+		Body: fmt.Sprintf("Published as #%d by @%s. The fix started at once: agent factory task `%s`, class `%s`, charged to @%s.",
+			issue, by, task, class, by)}
 }
 
 // Published answers a factory/publish that filed the proposal, or one whose proposal was already
