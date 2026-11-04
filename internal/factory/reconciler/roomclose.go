@@ -45,6 +45,10 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 			return false, "", left, nil // a maintainer may still ask for the revert, which posts facts again
 		}
 	}
+	if r.verdictHolds(t) {
+		// room.monitor_verdict rides the facts (K2): a sealed log takes none
+		return false, "", monitorEvery, nil
+	}
 	var room roomv1.Room
 	err = r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: t.Status.RoomRef}, &room)
 	switch {
@@ -65,6 +69,12 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 		capped = capHumanDriver
 	}
 	return true, capped, 0, nil
+}
+
+// verdictHolds: an origin task's room stays open while its monitor is due and has no verdict,
+// since the verdict reaches RunLore through the room's facts. A task without an origin closes as before.
+func (r *Reconciler) verdictHolds(t *v1alpha1.Task) bool {
+	return t.Spec.Origin != "" && r.monitorDue(t) && (t.Status.Monitor == nil || t.Status.Monitor.Verdict == "")
 }
 
 // humanDriverWait is how long a room a person drives is left before it is looked at again.

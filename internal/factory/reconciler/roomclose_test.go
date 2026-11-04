@@ -17,6 +17,9 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/rooms"
 )
 
@@ -204,5 +207,64 @@ func TestARoomWhoseFactsNeverPostClosesAtTheCap(t *testing.T) {
 	}
 	if !slices.Contains(g.metrics.recorded, "room_closed_at_cap facts_due") {
 		t.Fatalf("the close at the cap is not counted: %v", g.metrics.recorded)
+	}
+}
+
+// originVerdictRig: an ended task merged by a person an hour ago, of a class with a 2 h monitor,
+// its room open and main's CI pending. origin is spec.origin.
+func originVerdictRig(t *testing.T, origin string) (*rig, metav1.Time) {
+	t.Helper()
+	tk := endedTask(v1alpha1.PhaseDone)
+	merged := metav1.NewTime(now.Add(-time.Hour))
+	tk.Spec.Origin, tk.Spec.PredictedClass = origin, "alert-rules"
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", MergedAt: &merged, MergeCommitSHA: "m1"}
+	g := newRig(t, tk)
+	g.r.Merger = g.f
+	g.r.Cfg.Classes = map[string]config.Class{"alert-rules": {Monitor: &config.Monitor{FollowUpWindow: config.Duration{Duration: 2 * time.Hour}}}}
+	g.f.SetPR(forge.PR{Number: 12, State: "MERGED", MergedAt: merged.Time, MergeCommitSHA: "m1"})
+	g.f.SetCommitChecks("m1", forge.Check{Name: "Pre-commit checks", State: "PENDING"})
+	withRoom(t, g)
+	return g, merged
+}
+
+// lastFacts is the facts the fake log holds at the highest clientSeq.
+func lastFacts(g *rig) envelope.TaskFacts {
+	var top int64 = -1
+	for seq := range g.r.Rooms.(*fakeLog).facts {
+		top = max(top, seq)
+	}
+	return g.r.Rooms.(*fakeLog).facts[top]
+}
+
+// room.monitor_verdict rides the facts (K2): a sealed log takes none, so an origin task's room
+// waits for its verdict; a task without an origin closes as before.
+func TestAnOriginRoomWaitsForItsVerdict(t *testing.T) {
+	for _, origin := range []string{"abcd2345", ""} {
+		t.Run("origin "+origin, func(t *testing.T) {
+			g, merged := originVerdictRig(t, origin)
+			g.reconcile(t, "3buqdlot", 1)
+			if gone := roomGone(t, g); gone != (origin == "") {
+				t.Fatalf("origin %q: room gone %v before the verdict", origin, gone)
+			}
+			if origin != "" { // the comment alone guards nothing: the second block runs only for an origin task
+				// past the window the monitor decides; the facts carry it before the room closes
+				g.r.Now = func() time.Time { return merged.Add(2*time.Hour + searchLag + time.Minute) }
+				got := g.reconcile(t, "3buqdlot", 2)
+				if got.Status.Monitor.Verdict != "inconclusive" || lastFacts(g).Monitor != "inconclusive" || !roomGone(t, g) {
+					t.Fatalf("the verdict must reach the log before the close: %+v, facts %+v", got.Status, lastFacts(g))
+				}
+			}
+		})
+	}
+}
+
+// K1: a regression decided before the window ends is final, so the room is released at once.
+func TestARegressionReleasesAnOriginRoomAtOnce(t *testing.T) {
+	g, _ := originVerdictRig(t, "abcd2345")
+	g.f.SetCommitChecks("m1", forge.Check{Name: "Pre-commit checks", State: "FAILURE"})
+	got := g.reconcile(t, "3buqdlot", 2)
+	if got.Status.Monitor == nil || got.Status.Monitor.Verdict != "regression" || got.Status.Monitor.Posted ||
+		lastFacts(g).Monitor != "regression" || !roomGone(t, g) {
+		t.Fatalf("a regression inside the window must reach the log and release the room: %+v, facts %+v", got.Status.Monitor, lastFacts(g))
 	}
 }
