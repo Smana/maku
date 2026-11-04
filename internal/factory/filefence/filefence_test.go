@@ -73,3 +73,21 @@ func TestInferOnTheHostsClasses(t *testing.T) {
 		})
 	}
 }
+
+// K10: a class's companionFiles are allowed beside its allowedFiles.
+func TestCompanionFilesAreAllowed(t *testing.T) {
+	cl := config.Class{AllowedFiles: []string{`incidents/[^/]+\.md`}, CompanionFiles: []string{`index\.md`, `log\.md`}}
+	one := func(p string) []forge.FileStat { return []forge.FileStat{{Path: p, Status: "modified"}} }
+	for _, p := range []string{"incidents/a-1.md", "index.md", "log.md"} {
+		if got := AllowedFiles(cl, one(p)); got != "" {
+			t.Errorf("%s: %q", p, got)
+		}
+	}
+	if got := AllowedFiles(cl, one("README.md")); got != "file_not_allowed" {
+		t.Errorf("README.md: %q", got)
+	}
+	cl.CompanionFiles = nil
+	if got := AllowedFiles(cl, one("index.md")); got != "file_not_allowed" {
+		t.Errorf("no companions: %q", got)
+	}
+}
