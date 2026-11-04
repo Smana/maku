@@ -444,3 +444,127 @@ func TestAnAdoptedBranchPrefixIsLiteral(t *testing.T) {
 		}
 	}
 }
+
+const (
+	kbBot     = "runlore[bot]"
+	kbBranch  = "runlore/kb-kube-pod-crashlooping-1762160000"
+	kbEntry   = "incidents/kube-pod-crashlooping-3f9a1c2e.md"
+	kbLabel   = "ready-to-merge"
+	kbIndex   = "# Index\n- a\n"
+	kbLogBase = "l1\n"
+)
+
+// kbClass is Task 8's kb-entries fixture, in shadow.
+func kbClass() config.Class {
+	return config.Class{Shadow: true, DiffShape: "added-entry", AllowedFiles: []string{`^incidents/[^/]+\.md$`},
+		CompanionFiles: []string{`^index\.md$`, `^log\.md$`}, RequiredLabel: kbLabel, HoldoutChecks: []string{"validate"}, MaxPerDay: 5,
+		Author: &config.Author{Adopt: &config.Adopt{Logins: []string{kbBot}, Branches: []string{`^runlore/kb-`}}}}
+}
+
+// kbRig is adoptRig on runlore-kb's shape: PR 30 by runlore[bot] adds an entry and appends to
+// index.md (+1) and log.md (+4), labelled by runlore[bot], validate green.
+func kbRig(t *testing.T) *rig {
+	t.Helper()
+	g := adoptRig(t)
+	g.r.Cfg.Classes = map[string]config.Class{"deps-patch": kbClass()}
+	g.editPR(func(p *forge.PR) {
+		p.Author, p.HeadRef, p.Labels = kbBot, kbBranch, []string{kbLabel}
+	})
+	g.f.SetCommits(30, forge.Commit{SHA: "c1", Author: kbBot}, forge.Commit{SHA: adoptHead, Author: kbBot})
+	g.f.SetActivity(kbBranch, forge.Push{Type: "push", Actor: kbBot, Before: "c1", After: adoptHead},
+		forge.Push{Type: "branch_creation", Actor: kbBot, After: "c1"})
+	g.f.SetEvents(30, forge.LabelEvent{Actor: kbBot, Label: kbLabel})
+	checks := green("SUCCESS")
+	checks.Statuses = nil
+	checks.Statuses = append(checks.Statuses, forge.Status{Context: "policy-bot: main", State: "SUCCESS", Creator: "ogenki-merge-gate[bot]"})
+	checks.Runs = append(checks.Runs, forge.Check{Name: "validate", State: "SUCCESS", Conclusion: "SUCCESS", App: forge.ActionsApp})
+	g.f.SetChecks(30, checks)
+	g.f.SetFiles(
+		map[string]string{kbEntry: "", "index.md": kbIndex, "log.md": kbLogBase},
+		map[string]string{kbEntry: strings.Repeat("line\n", 48), "index.md": kbIndex + "- b\n", "log.md": kbLogBase + "l2\nl3\nl4\nl5\n"})
+	g.f.SetFileStats(
+		forge.FileStat{Path: kbEntry, Status: "added", Additions: 48},
+		forge.FileStat{Path: "index.md", Status: "modified", Additions: 1},
+		forge.FileStat{Path: "log.md", Status: "modified", Additions: 4})
+	return g
+}
+
+// Offline proof 7 (K10, K11): the gate decides an added entry and who applied its label.
+func TestTheCatalogEntryGate(t *testing.T) {
+	runlore, smana := forge.LabelEvent{Actor: kbBot, Label: kbLabel}, forge.LabelEvent{Actor: "Smana", Label: kbLabel}
+	for name, c := range map[string]struct {
+		edit   func(g *rig)
+		reason string
+	}{
+		"as built": {func(*rig) {}, "shadow_would_arm"},
+		"index.md deletes a line": {func(g *rig) {
+			g.f.SetFileStats(
+				forge.FileStat{Path: kbEntry, Status: "added", Additions: 48},
+				forge.FileStat{Path: "index.md", Status: "modified", Additions: 1, Deletions: 1},
+				forge.FileStat{Path: "log.md", Status: "modified", Additions: 4})
+		}, "class_mismatch"},
+		"a second added entry": {func(g *rig) {
+			p2 := "incidents/other-11223344.md"
+			g.f.SetFiles(
+				map[string]string{kbEntry: "", p2: "", "index.md": kbIndex, "log.md": kbLogBase},
+				map[string]string{kbEntry: "a\n", p2: "b\n", "index.md": kbIndex + "- b\n", "log.md": kbLogBase + "l2\nl3\nl4\nl5\n"})
+			g.f.SetFileStats(
+				forge.FileStat{Path: kbEntry, Status: "added", Additions: 1},
+				forge.FileStat{Path: p2, Status: "added", Additions: 1},
+				forge.FileStat{Path: "index.md", Status: "modified", Additions: 1})
+		}, "class_mismatch"},
+		"the entry modified": {func(g *rig) {
+			g.f.SetFiles(
+				map[string]string{kbEntry: "old\n", "index.md": kbIndex, "log.md": kbLogBase},
+				map[string]string{kbEntry: "old\nnew\n", "index.md": kbIndex + "- b\n", "log.md": kbLogBase + "l2\nl3\nl4\nl5\n"})
+			g.f.SetFileStats(
+				forge.FileStat{Path: kbEntry, Status: "modified", Additions: 1},
+				forge.FileStat{Path: "index.md", Status: "modified", Additions: 1},
+				forge.FileStat{Path: "log.md", Status: "modified", Additions: 4})
+		}, "class_mismatch"},
+		"README.md modified too": {func(g *rig) {
+			g.f.SetFileStats(
+				forge.FileStat{Path: kbEntry, Status: "added", Additions: 48},
+				forge.FileStat{Path: "index.md", Status: "modified", Additions: 1},
+				forge.FileStat{Path: "log.md", Status: "modified", Additions: 4},
+				forge.FileStat{Path: "README.md", Status: "modified", Additions: 1})
+		}, "file_not_allowed"},
+		"the entry under notes/": {func(g *rig) {
+			g.f.SetFileStats(
+				forge.FileStat{Path: "notes/x.md", Status: "added", Additions: 48},
+				forge.FileStat{Path: "index.md", Status: "modified", Additions: 1},
+				forge.FileStat{Path: "log.md", Status: "modified", Additions: 4})
+		}, "file_not_allowed"},
+		"validate red": {func(g *rig) {
+			c, _ := g.f.PullRequestChecks(t.Context(), 30)
+			for i := range c.Runs {
+				if c.Runs[i].Name == "validate" {
+					c.Runs[i].State, c.Runs[i].Conclusion = "FAILURE", "FAILURE"
+				}
+			}
+			g.f.SetChecks(30, c)
+		}, "holdout_red"},
+		"another author":                       {func(g *rig) { g.setAuthor(30, "someone[bot]") }, "not_adopted_author"},
+		"no label":                             {func(g *rig) { g.editPR(func(p *forge.PR) { p.Labels = nil }) }, "label_missing"},
+		"labelled by Smana":                    {func(g *rig) { g.f.SetEvents(30, smana) }, "label_not_adopted"},
+		"removed and re-applied by a stranger": {func(g *rig) { g.f.SetEvents(30, runlore, smana) }, "label_not_adopted"},
+		"the events truncated":                 {func(g *rig) { g.f.SetEventsTruncated(30) }, "label_not_adopted"},
+		"the adopted login labelled last":      {func(g *rig) { g.f.SetEvents(30, smana, runlore) }, "shadow_would_arm"},
+		"a force-push by runlore": {func(g *rig) {
+			g.f.SetActivity(kbBranch, forge.Push{Type: "force_push", Actor: kbBot, Before: "c2", After: adoptHead},
+				forge.Push{Type: "push", Actor: kbBot, Before: "c1", After: "c2"}, forge.Push{Type: "branch_creation", Actor: kbBot, After: "c1"})
+		}, "shadow_would_arm"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := kbRig(t)
+			c.edit(g)
+			tk := g.reconcile(t, adoptTask, 1)
+			if tk.Status.Reason != c.reason {
+				t.Fatalf("%s reason %q, want %q", tk.Status.Phase, tk.Status.Reason, c.reason)
+			}
+			if len(g.f.Armed()) != 0 {
+				t.Fatal("shadow never merges")
+			}
+		})
+	}
+}

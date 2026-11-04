@@ -266,6 +266,8 @@ func reasons() map[string]string {
 		"adopt_ref_invalid":         "the adopted pull request's reference could not be read, so it was not adopted",
 		"not_adopted_author":        "it is not authored by a login this class adopts",
 		"branch_not_allowed":        "its branch is not one this class adopts",
+		"label_missing":             "it does not carry the label its class requires",
+		"label_not_adopted":         "its required label was not applied by a login the class adopts",
 		"release_age_pending":       "the release age check has not passed yet",
 		"release_age_red":           "the release age check failed, or was not posted by the login this class adopts",
 		"ci_pending":                "CI has not finished",

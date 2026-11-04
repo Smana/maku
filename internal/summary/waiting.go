@@ -124,6 +124,8 @@ func reasons() map[string]string {
 		"adoption_unread":           "who authored its commits and pushed its branch could not be read",
 		"not_adopted_author":        "it is not authored by a login the class adopts",
 		"branch_not_allowed":        "its branch is not one the class adopts",
+		"label_missing":             "it does not carry the label its class requires",
+		"label_not_adopted":         "its required label was not applied by a login the class adopts",
 		"release_age_pending":       "the release age check has not passed yet",
 		"release_age_red":           "the release age check failed, or was not posted by the adopted login",
 		"holdout_pending":           "a holdout check has not passed yet",

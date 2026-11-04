@@ -643,7 +643,7 @@ func (r *Reconciler) factoryPushed(ctx context.Context, t *v1alpha1.Task, head s
 	return r.pushedBy(ctx, "agent/"+t.Name, []string{r.Cfg.AgentsLogin}, head)
 }
 
-// adoption reads what an adopted class's author mode decides on: every commit's author, the head
+// adoption reads what an adopted class's author mode decides on: the required label's newest actor, every commit's author, the head
 // among them, and who pushed the branch. A list past GitHub's cap, or one without the head, is a
 // stranger's. An adopted task never waits for a push to be recorded: there is no run to finish.
 func (r *Reconciler) adoption(ctx context.Context, t *v1alpha1.Task, pr forge.PR, cl config.Class) (a Adoption, err error) {
@@ -661,6 +661,17 @@ func (r *Reconciler) adoption(ctx context.Context, t *v1alpha1.Task, pr forge.PR
 	}
 	if !slices.ContainsFunc(cs, func(c forge.Commit) bool { return c.SHA == pr.HeadSHA }) {
 		a.CommitAuthors = append(a.CommitAuthors, "") // the head is not among them: a push since
+	}
+	if l := cl.RequiredLabel; l != "" {
+		// Oldest first: the newest event is the last. A list cut at the page cap leaves it unread.
+		evs, err := r.gh(ctx).LabelEvents(ctx, pr.Number, l)
+		switch {
+		case errors.Is(err, forge.ErrEventsTruncated):
+		case err != nil:
+			return a, err
+		case len(evs) > 0:
+			a.LabelledBy = evs[len(evs)-1].Actor
+		}
 	}
 	a.Pushed, err = r.pushedBy(ctx, pr.HeadRef, cl.Author.Adopt.Logins, pr.HeadSHA)
 	return a, err
