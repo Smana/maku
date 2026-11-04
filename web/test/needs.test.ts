@@ -297,4 +297,25 @@ describe("the approval card's guidance", () => {
     expect(document.activeElement).toBe(root.querySelector("li.approval"));
     root.remove();
   });
+  it("focuses the first card of any kind: a merge, an answer or a hold alone still takes the pill somewhere", () => {
+    for (const n of [
+      { kind: "merge", what: "merge it", url: "https://github.com/o/r/pull/1" },
+      { kind: "answer", what: "pick one", url: "https://github.com/o/r/issues/2" },
+      { kind: "hold", what: "held" },
+    ] as unknown as Summary["needsYou"]) {
+      const { root, needs } = mount();
+      needs.setSummary(sum([n]));
+      document.body.append(root);
+      expect(needs.focusFirst()).toBe(true);
+      expect(document.activeElement).toBe(root.querySelector(".needs-other li"));
+      root.remove();
+    }
+  });
+  it("reports nothing to focus when no card waits", () => {
+    const { root, needs } = mount();
+    needs.refresh();
+    document.body.append(root);
+    expect(needs.focusFirst()).toBe(false);
+    root.remove();
+  });
 });

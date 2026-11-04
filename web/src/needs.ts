@@ -18,7 +18,7 @@ import { needsItems, type Summary } from "./summary";
 // has it; chat finds a call's row for the card's link.
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   chat: { rowFor(callId: string): HTMLElement | undefined }, fourEyes: () => boolean | undefined = () => undefined):
-  { refresh(): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
+  { refresh(): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): boolean } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
   const approvals = el("ul", { className: "approvals" });
@@ -119,13 +119,15 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       const all = state.approvals();
       return { total: all.length, mine: all.filter((a) => standing(a).can).length };
     },
-    // focusFirst takes the reader, and the keyboard focus, to the first card.
-    focusFirst(): void {
-      const li = approvals.querySelector<HTMLElement>("li.approval");
-      if (!li) return;
+    // focusFirst takes the reader, and the keyboard focus, to the first card of any kind: an
+    // approval, else a merge, answer or hold. It reports whether there was one.
+    focusFirst(): boolean {
+      const li = root.querySelector<HTMLElement>("li.approval, ul.needs-other > li");
+      if (!li) return false;
       li.tabIndex = -1;
       li.scrollIntoView?.({ block: "start" });
       li.focus({ preventScroll: true });
+      return true;
     },
   };
   return panel;
