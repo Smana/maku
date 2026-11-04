@@ -84,9 +84,11 @@ func TestResolveRefuses(t *testing.T) {
 		cfg  *config.Config
 		want string
 	}{
-		"an unknown profile": {strings.Replace(example, "harness: plain", "harness: nope", 1), central(), "nope"},
-		"a cap over":         {example, over(), "maxPatchFiles"},
-		"agents with none":   {strings.Replace(example, "harness: plain", "harness: adopted-none", 1), central(), "runs nothing"},
+		"an unknown profile":  {strings.Replace(example, "harness: plain", "harness: nope", 1), central(), "nope"},
+		"a cap over":          {example, over(), "maxPatchFiles"},
+		"a negative file cap": {strings.Replace(example, "maxPatchFiles: 10", "maxPatchFiles: -1", 1), central(), "maxPatchFiles"},
+		"a negative day cap":  {strings.Replace(example, "maxPerDay: 2", "maxPerDay: -1", 1), central(), "maxPerDay"},
+		"agents with none":    {strings.Replace(example, "harness: plain", "harness: adopted-none", 1), central(), "runs nothing"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, err := Parse([]byte(tc.raw))

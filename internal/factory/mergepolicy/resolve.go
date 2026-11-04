@@ -84,6 +84,8 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 		limit int
 	}{{"maxPatchFiles", &cl.MaxPatchFiles, g.MaxPatchFiles}, {"maxModifiedLines", &cl.MaxModifiedLines, g.MaxModifiedLines}, {"maxPerDay", &cl.MaxPerDay, g.MaxPerDay}} {
 		switch {
+		case *f.value < 0:
+			return Resolved{}, fmt.Errorf("class %s: %w: %s %d is negative", name, ErrGuardrail, f.key, *f.value)
 		case f.limit == 0:
 		case *f.value == 0:
 			*f.value = f.limit
