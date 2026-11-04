@@ -388,7 +388,7 @@ func (c Client) Get(ctx context.Context, id string) (Run, bool, error) {
 	return r, ok, nil
 }
 
-// List reads every run in Namespace.
+// List reads every run in the kind's namespace (Kind.Namespace).
 func (c Client) List(ctx context.Context) ([]Run, error) {
 	l := &unstructured.UnstructuredList{}
 	l.SetGroupVersionKind(c.Kind.GVK().GroupVersion().WithKind("AgentRunList"))

@@ -101,3 +101,17 @@ qs_fetch_roomctl() {
   ((rc == 0)) || echo "could not fetch maku $1 for linux-$arch (or its checksum did not match)" >&2
   return "$rc"
 }
+
+# qs_install_gvisor TARBALL DIR WANT: unpacks a verified gvisor.tar.bz2 into DIR and stamps WANT,
+# replacing only what gVisor owns there: runsc, containerd-shim-runsc-v1, gvisor-bin/ and the
+# stamp. DIR is .quickstart/bin, which also holds the maku up.sh installed a step earlier; wiping
+# the directory deleted it on every first run and every GVISOR_RELEASE bump (audit H-6).
+qs_install_gvisor() {
+  local tarball=$1 dir=$2 want=$3
+  rm -rf "$dir/runsc" "$dir/containerd-shim-runsc-v1" "$dir/gvisor-bin" "$dir/.gvisor-release"
+  mkdir -p "$dir"
+  tar -xjf "$tarball" -C "$dir" || return 1
+  chmod +x "$dir/runsc" "$dir/containerd-shim-runsc-v1" || return 1
+  [[ -d $dir/gvisor-bin ]] || { echo "gvisor-bin/ missing from the tarball" >&2; return 1; }
+  echo "$want" >"$dir/.gvisor-release"
+}

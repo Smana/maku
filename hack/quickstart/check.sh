@@ -83,6 +83,12 @@ for c in ok:dmesg ok:dns ok:tcp; do grep -q "$c" "$tmp/gvisor-probe.yaml" || bad
 [[ $(yq '.clusterDomain' "$vals") == cluster.local ]] || bad "up.sh's probe assumes clusterDomain cluster.local"
 grep -qF 'unsandboxed == 0 ]]; then' "$qs/up.sh" || bad "up.sh does not skip the probe under ALLOW_UNSANDBOXED=1"
 for t in sha256sum sha512sum bzip2 tar; do grep -E "^for t in " "$qs/up.sh" | grep -qw "$t" || bad "up.sh does not check for $t (fetch-runsc.sh needs sha512sum, bzip2 and tar; qs_fetch_roomctl needs sha256sum)"; done
+# fetch-runsc.sh installs through qs_install_gvisor, never wipes .quickstart/bin: maku lives there (H-6)
+# shellcheck disable=SC2016 # the literal $tmp, $dir and $want are fetch-runsc.sh's text
+{
+grep -qF 'qs_install_gvisor "$tmp/gvisor.tar.bz2" "$dir" "$want"' "$qs/fetch-runsc.sh" || bad "fetch-runsc.sh does not install through qs_install_gvisor"
+if grep -qE '^rm -rf "\$dir"$' "$qs/fetch-runsc.sh"; then bad "fetch-runsc.sh wipes .quickstart/bin, the maku up.sh installed included"; fi
+}
 
 # Cilium must keep socket-LB out of pod namespaces, or gVisor run pods cannot reach any ClusterIP
 grep -q 'socketLB.hostNamespaceOnly=true' "$qs/up.sh" || bad "up.sh does not set socketLB.hostNamespaceOnly=true (gVisor)"

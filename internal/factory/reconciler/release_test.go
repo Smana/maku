@@ -141,18 +141,18 @@ func TestAStopSurvivesAFailedRelease(t *testing.T) {
 	g := reservingRig(t)
 	g.reconcile(t, "3buqdlot", 3)
 	g.runs.set(rid(0), "Running")
-	ledger := g.r.Ledger
+	held := g.r.Ledger
 	g.r.Ledger = brokenLedger{g.c}
 	halt(t, g, "annotation")
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped || len(g.runs.runs) != 0 {
 		t.Fatalf("the stop does not wait for the ledger: %s %v", tk.Status.Phase, g.runs.runs)
 	}
-	g.r.Ledger = ledger
+	g.r.Ledger = held
 	if _, ids := ledgerOf(t, g); !slices.Equal(ids, []string{rid(0)}) {
 		t.Fatalf("left for the meter: %v", ids)
 	}
 	clock := now
-	m := &meter.Meter{Runs: meterStore{g.runs}, Source: meterSource{}, Ledger: ledger, Namespace: "agent-system",
+	m := &meter.Meter{Runs: meterStore{g.runs}, Source: meterSource{}, Ledger: held, Namespace: "agent-system",
 		Now: func() time.Time { return clock }}
 	for _, d := range []time.Duration{0, 3 * time.Minute} {
 		clock = now.Add(d)
@@ -174,13 +174,13 @@ func TestAReplayedStopReleases(t *testing.T) {
 	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 25, HumanDailyUSD: 5}
 	g.reconcile(t, "3buqdlot", 3)
 	g.runs.set(rid(0), "Running")
-	ledger := g.r.Ledger
+	held := g.r.Ledger
 	g.r.Ledger = brokenLedger{g.c} // the first stop's release fails: a crash before it
 	halt(t, g, "annotation")
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the stop's status write is lost")
 	}
-	g.r.Ledger = ledger
+	g.r.Ledger = held
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped {
 		t.Fatal(tk.Status.Phase)
 	}
