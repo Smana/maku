@@ -25,7 +25,8 @@ const prefersReduced = () => typeof matchMedia === "function" && matchMedia("(pr
 
 export interface Rail {
   el: HTMLElement;
-  set(f: Flow | undefined, phase: string, now: number): void;
+  // cursor is the seq the summary folded through: live counts only past it. A replay frame has none.
+  set(f: Flow | undefined, phase: string, now: number, cursor?: number): void;
   tick(now: number): void;
   live(e: RoomEvent): void;
   mark(run: string | undefined): void;
@@ -113,21 +114,28 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
   let picked: string | undefined;
   let carded: string | undefined;
   const opened = new Set<number>();
-  // The tool counts the stream adds between two summaries; the next set starts again from its own.
-  const tools = new Map<string, { ok: number; failed: number }>();
+  // The tool results the stream delivered past the last summary's cursor, in seq order: the socket's
+  // tail may replay what the summary already counted, and may deliver what it has not yet.
+  let through = 0;
+  let extra: { seq: number; run: string; failed: boolean }[] = [];
+  const toolsOf = (n: FlowNode) => {
+    const t = { ...n.tools };
+    for (const x of extra) if (x.run === n.run) { if (x.failed) t.failed++; else t.ok++; }
+    return t;
+  };
   const ages = new Map<string, HTMLElement>();
   const buttons = new Map<string, HTMLButtonElement>();
 
   // While a replay runs, a refetch is held here and applied when it ends.
   let running: { skip(): void; next(): void; stop(): void } | undefined;
-  let held: { f: Flow | undefined; phase: string; now: number } | undefined;
+  let held: { f: Flow | undefined; phase: string; now: number; cursor?: number } | undefined;
 
   let prev: { runs: Set<string>; edges: Set<string>; judges: Map<string, number>; done: Set<string> } | undefined;
 
   const nodeOf = (run: string) => flow?.nodes.find((n) => n.run === run);
 
   function fillCard(n: FlowNode): void {
-    const t = tools.get(n.run) ?? n.tools;
+    const t = toolsOf(n);
     const lines: HTMLElement[] = [
       el("p", { textContent: `start ${stamp(n.startedAt) || "unknown"}` }),
       el("p", { textContent: n.endedAt ? `end ${stamp(n.endedAt)}` : isLive(n) ? "still running" : "end unknown" }),
@@ -334,11 +342,15 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
   }
 
 
-  function show(f: Flow | undefined, phase: string, now: number): void {
+  function show(f: Flow | undefined, phase: string, now: number, cursor?: number): void {
     flow = f;
     phaseNow = phase;
     clock = now;
-    tools.clear();
+    if (cursor === undefined) extra = [];
+    else {
+      through = cursor;
+      extra = extra.filter((x) => x.seq > cursor);
+    }
     root.hidden = !f;
     if (f) {
       if (known) {
@@ -363,7 +375,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     running = undefined;
     const h = held;
     held = undefined;
-    if (h) show(h.f, h.phase, h.now);
+    if (h) show(h.f, h.phase, h.now, h.cursor);
     sync();
   }
 
@@ -386,9 +398,9 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
 
   return {
     el: root,
-    set(f, phase, now) {
-      if (running) held = { f, phase, now };
-      else show(f, phase, now);
+    set(f, phase, now, cursor) {
+      if (running) held = { f, phase, now, cursor };
+      else show(f, phase, now, cursor);
     },
     tick(now) {
       clock = now;
@@ -400,12 +412,9 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     live(e) {
       if (e.type !== "tool_result" || !e.runId) return;
       const n = nodeOf(e.runId);
-      if (!n || !isLive(n)) return;
-      const t = { ...(tools.get(n.run) ?? n.tools) };
+      if (!n || !isLive(n) || e.seq <= Math.max(through, extra.at(-1)?.seq ?? 0)) return;
       const s = e.payload?.status;
-      if (s === "error" || s === "rejected") t.failed++;
-      else t.ok++;
-      tools.set(n.run, t);
+      extra.push({ seq: e.seq, run: n.run, failed: s === "error" || s === "rejected" });
       if (carded === n.run) fillCard(n);
     },
     mark(run) {

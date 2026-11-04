@@ -10,7 +10,7 @@ import type { Flow } from "./summary";
 export interface RailPane {
   body: HTMLElement; // div.room-body: dots, the regions, then the rail
   rail: Rail;
-  show(flow: Flow | undefined, phase: string, now: number): void;
+  show(flow: Flow | undefined, phase: string, now: number, cursor?: number): void;
 }
 
 // mountRailPane puts regions in order inside the body. select is called with the run a node
@@ -37,8 +37,8 @@ export function mountRailPane(select: (run: string | undefined) => void, ...regi
   body.append(dots, ...regions, rail.el);
   return {
     body, rail,
-    show(f, phase, now) {
-      rail.set(f, phase, now);
+    show(f, phase, now, cursor) {
+      rail.set(f, phase, now, cursor);
       body.classList.toggle("has-rail", !!f);
       dots.hidden = !f;
       if (!f) rail.el.classList.remove("open");

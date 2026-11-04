@@ -96,7 +96,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, skeleton, main, forkPanel);
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
-  const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now());
+  const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
   // Header and dock heights place the sticky rail between them.
   let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {

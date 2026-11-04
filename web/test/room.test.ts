@@ -837,6 +837,28 @@ describe("the room page", () => {
       history.replaceState(null, "", "/");
     });
 
+    it("a summary that arrives before the socket's tail does not count the tail twice", async () => {
+      const summed = { ...sumWith({ nodes: [node({ tools: { ok: 2, failed: 0 } })] }), cursor: "seq:2" };
+      const get = vi.fn(async () => new Response(JSON.stringify(summed), { status: 200 })) as unknown as typeof fetch;
+      const p = page(get);
+      document.body.append(p.app);
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        p.join(snapshot(), 2);
+        const toolResult = (seq: number) => {
+          const f = agent(seq, "tool_result", { callId: "c", status: "ok" });
+          return { ...f, event: { ...f.event, runId: "r-i" } };
+        };
+        p.last().recv(toolResult(1));
+        p.last().recv(toolResult(2));
+        p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.focus();
+        const card = p.app.querySelector<HTMLElement>(".rail-card")!;
+        expect(card.textContent).toContain("2 ok · 0 failed");
+        p.last().recv(toolResult(3));
+        expect(card.textContent).toContain("3 ok · 0 failed");
+      } finally { p.app.remove(); }
+    });
+
     describe("with a run view open", () => {
       const open = async () => {
         const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/events") ? { events: [] } : sumWith(flow)), { status: 200 })) as unknown as typeof fetch;

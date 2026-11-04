@@ -103,13 +103,36 @@ describe("rail", () => {
     const button = nodeOf(rail, "r-i").querySelector("button")!;
     button.focus();
     expect(card(rail).textContent).toContain("3 ok · 1 failed");
-    rail.live(ev({ runId: "r-i", payload: { status: "error" } }));
+    rail.live(ev({ seq: 1, runId: "r-i", payload: { status: "error" } }));
     expect(card(rail).textContent).toContain("3 ok · 2 failed");
-    rail.live(ev({ runId: "r-s", payload: { status: "error" } }));
-    rail.live(ev({ runId: "r-i", type: "message", payload: { status: "error" } }));
+    rail.live(ev({ seq: 2, runId: "r-s", payload: { status: "error" } }));
+    rail.live(ev({ seq: 3, runId: "r-i", type: "message", payload: { status: "error" } }));
     expect(card(rail).textContent).toContain("3 ok · 2 failed");
-    rail.live(ev({ runId: "r-i", payload: { status: "ok" } }));
+    rail.live(ev({ seq: 4, runId: "r-i", payload: { status: "ok" } }));
     expect(card(rail).textContent).toContain("4 ok · 2 failed");
+  });
+
+  it("live counts only what the summary has not, in either order", () => {
+    const { rail } = mount();
+    const withTools = (failed: number) => ({ ...flow, nodes: [scoper, { ...implementer, tools: { ok: 3, failed } }] });
+    const shown = () => {
+      nodeOf(rail, "r-i").querySelector("button")!.focus();
+      return card(rail).textContent;
+    };
+    rail.set(withTools(1), "AwaitingCI", now, 100);
+    // The summary came first: the socket's tail replays what it already counted.
+    rail.live(ev({ seq: 90, runId: "r-i", payload: { status: "error" } }));
+    rail.live(ev({ seq: 100, runId: "r-i", payload: { status: "error" } }));
+    expect(shown()).toContain("3 ok · 1 failed");
+    rail.live(ev({ seq: 101, runId: "r-i", payload: { status: "error" } }));
+    rail.live(ev({ seq: 101, runId: "r-i", payload: { status: "error" } })); // a reconnect's replay
+    expect(shown()).toContain("3 ok · 2 failed");
+    // A summary older than the stream keeps what it has not folded.
+    rail.set(withTools(1), "AwaitingCI", now, 100);
+    expect(shown()).toContain("3 ok · 2 failed");
+    // A summary that folded it does not count it twice.
+    rail.set(withTools(2), "AwaitingCI", now, 101);
+    expect(shown()).toContain("3 ok · 2 failed");
   });
 
   it("announces a run that starts", () => {
