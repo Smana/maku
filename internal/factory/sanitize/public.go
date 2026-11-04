@@ -30,7 +30,7 @@ var (
 		`|[A-Za-z0-9._%+-]{1,256}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+` + // an email
 		`|[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}(?:#[0-9]+|@[0-9a-f]{7,40}|/(?:issues|pull|pulls|discussions)/[0-9]+)` + // owner/repo#n, @sha, /issues/n
 		`|[A-Za-z0-9][A-Za-z0-9-]{0,99}@[0-9a-f]{7,40}` + // owner@sha
-		`|([A-Za-z0-9][A-Za-z0-9-]{0,99})#[0-9]+` + // owner#n: GitHub reads it as owner/<this repo>#n
+		`|[A-Za-z0-9][A-Za-z0-9-]{0,99}#[0-9]+` + // owner#n: GitHub reads it as owner/<this repo>#n; any word can be an account
 		`|(@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9_.-]+)?|#[0-9]+|(?i:gh)-[0-9]+` + // a mention, #n, GH-n
 		`|/(?:issues|pull|discussions)/[0-9]+` + // the path of this repository's issue
 		`|(?i:ghsa)(?:-[0-9a-zA-Z]{4}){3}|(?i:cve)-[0-9]{4}-[0-9]{4,})` + // an advisory
@@ -42,14 +42,9 @@ var (
 // liveForm's groups.
 const (
 	formEntity  = 1
-	formOwner   = 2 // the word before "#": see allowedOwner
-	formBounded = 3 // live only after a non-alphanumeric character
-	formCommit  = 4 // live only as a whole word
+	formBounded = 2 // live only after a non-alphanumeric character
+	formCommit  = 3 // live only as a whole word
 )
-
-// allowedOwner is the one word whose owner#n stays: it is ordinary text ("fix#9"), and GitHub links
-// it only if the account of that name holds a repository named as this one.
-const allowedOwner = "fix"
 
 // Public makes text written by an agent safe to publish as a GitHub issue (RunLore agent-to-agent
 // RA9, R8): Text's defusing, then every link, mention and reference inert. An inline link keeps its
@@ -345,10 +340,6 @@ func (w *inertWriter) codeSpanLive(t string) {
 		afterWord := start > last && isAlnum(view[start-1])
 		if _, ok := group(formEntity); ok && keptEntity(view[start:end]) {
 			pos = end
-			continue
-		}
-		if owner, ok := group(formOwner); ok && strings.EqualFold(owner, allowedOwner) {
-			pos = start + len(owner)
 			continue
 		}
 		if _, ok := group(formBounded); ok && afterWord {

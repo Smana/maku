@@ -68,7 +68,7 @@ func TestPublicExactForms(t *testing.T) {
 		{"what a refused match covered: a URL", "text@https://evil.example/x", "text@`https://evil.example/x`"},
 		{"what a refused match covered: an email", "x@y@evil.example", "x@`y@evil.example`"},
 		{"what a refused match covered: an owner", "math@Smana#325", "math@`Smana#325`"},
-		{"what an allowed word covered", "fix#9/fix#9", "fix#`9/fix#9`"},
+		{"two word#n around a slash", "fix#9/fix#9", "`fix#9`/`fix#9`"},
 		{"advisory", "GHSA-4jq9-2xhw-jpx7", "`GHSA-4jq9-2xhw-jpx7`"},
 		{"cve", "CVE-2021-44228", "`CVE-2021-44228`"},
 		// commits
@@ -129,8 +129,10 @@ func TestPublicExactForms(t *testing.T) {
 		{"a fence stays as written", "```go\nx := \"@smana #1 " + sha40 + " https://evil.example\"\n```\n", "```go\nx := \"@smana #1 " + sha40 + " https://evil.example\"\n```\n"},
 		{"a table's escaped pipe keeps its span", "| a |\n|---|\n| `x \\| @smana b` |", "| a |\n|---|\n| `x \\| @smana b` |"},
 		// ordinary text
-		{"C#", "C# and fix#9.", "C# and fix#9."},
-		{"Fix#9", "Fix#9 here", "Fix#9 here"},
+		{"C# with no digit", "C# and F#.", "C# and F#."},
+		{"C# with a digit", "C#7", "`C#7`"},
+		{"fix#9 is a word#n like any other", "fix#9.", "`fix#9`."},
+		{"Fix#9 too", "Fix#9 here", "`Fix#9` here"},
 		{"plain words", "a b, 50% & c; 1 2 3 #; x@y; abc123 v1.2.3 12345 #fff", "a b, 50% & c; 1 2 3 #; x@y; abc123 v1.2.3 12345 #fff"},
 		{"a word before @", "a@Smana", "a@Smana"},
 		{"a word before #", "1#325", "`1#325`"},
@@ -163,10 +165,8 @@ var liveRE = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])@[a-z0-9]` +
 	`|[a-z0-9_.-]+/[a-z0-9_.-]+#[0-9]` +
 	`|[a-z0-9_.-]+/[a-z0-9_.-]+/(?:issues|pull|discussions)/[0-9]` +
 	`|(?:https?|ftp)://|www\.|github\.com/` +
+	`|[a-z0-9-]#[0-9]` +
 	`|ghsa-|cve-[0-9]`)
-
-// ownerRE is an owner#n form, the one the allowed word fix#n can match.
-var ownerRE = regexp.MustCompile(`(?i)[a-z0-9-]+#[0-9]+`)
 
 // liveTexts is each stretch of text a reader sees outside a code span, entities and escapes
 // decoded as GitHub decodes them before it looks for references. Anything that is not text ends a
@@ -215,12 +215,6 @@ func assertNoLiveReference(t *testing.T, in, out string) {
 	for _, text := range liveTexts(out) {
 		if m := liveRE.FindString(text); m != "" {
 			t.Errorf("Public(%q): %q is live in %q (text %q)", in, m, out, text)
-		}
-		for _, m := range ownerRE.FindAllString(text, -1) {
-			// A leading hyphen is no part of a login, so "-fix#9" is the allowed word too.
-			if word, _, _ := strings.Cut(strings.ToLower(m), "#"); strings.TrimLeft(word, "-") != allowedOwner {
-				t.Errorf("Public(%q): %q is live in %q (text %q)", in, m, out, text)
-			}
 		}
 	}
 	src := []byte(out)
