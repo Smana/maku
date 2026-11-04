@@ -126,7 +126,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       return sent;
     },
   };
-  const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, views, () => snap?.fourEyes);
+  const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, { rowFor: views.rowFor, reveal: () => runView.leave() }, () => snap?.fourEyes);
   let controls: ReturnType<typeof mountControls> | undefined;
   let composer: ReturnType<typeof mountComposer> | undefined;
   const say = (text: string) => { notice.textContent = text; };
@@ -171,9 +171,11 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   });
   // The Now line's row: the chat's, else the raw log's (the chat folds a result into its
   // call's row, which carries the call's seq). A row gone at the cap finds nothing. The
-  // row opens, and so does every fold or raw log around it; the focus moves to it.
+  // row opens, and so does every fold or raw log around it; the focus moves to it. A run view
+  // hides these rows, so it closes first.
   strip.onApprovalsClick(() => needsPanelView.focusFirst());
   strip.onNowClick((seq) => {
+    runView.leave();
     const row = main.querySelector<HTMLElement>(`.view-chat [data-seq="${seq}"]`) ?? main.querySelector<HTMLElement>(`[data-seq="${seq}"]`);
     if (row) focusRow(row);
   });

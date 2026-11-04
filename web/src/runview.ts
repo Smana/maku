@@ -20,7 +20,8 @@ export function nodeAt(nodes: FlowNode[], seq: number): string | undefined {
   return best?.run;
 }
 
-export interface RunView { set(nodes: FlowNode[]): void; select(run: string | undefined): Promise<void>; apply(e: RoomEvent): void }
+// leave returns to All runs, if a run is open: synchronously, so a caller can then land on a row.
+export interface RunView { set(nodes: FlowNode[]): void; select(run: string | undefined): Promise<void>; apply(e: RoomEvent): void; leave(): void }
 
 function hashRun(): string | undefined {
   const m = /^#run=(.+)$/.exec(location.hash);
@@ -153,6 +154,9 @@ export function mountRunView(roomMain: HTMLElement, o: {
       if (!n) return;
       if (loading) { waiting.push(e); return; }
       feed(n, e);
+    },
+    leave() {
+      if (chosen !== undefined) void api.select(undefined);
     },
   };
   return api;

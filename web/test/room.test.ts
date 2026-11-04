@@ -837,6 +837,52 @@ describe("the room page", () => {
       history.replaceState(null, "", "/");
     });
 
+    describe("with a run view open", () => {
+      const open = async () => {
+        const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/events") ? { events: [] } : sumWith(flow)), { status: 200 })) as unknown as typeof fetch;
+        const p = page(get);
+        document.body.append(p.app);
+        p.join(live({ approver: true }), 0);
+        await vi.advanceTimersByTimeAsync(0);
+        p.last().recv(agent(1, "tool_call", { callId: "c1", tool: "terminal", args: { command: "git push" } }));
+        p.last().recv(agent(2, "approval_requested", { approvalId: "ap1", callId: "c1", class: "forge.other",
+          action: { command: "git push" }, expiresAt: "2026-10-06T11:00:00Z" }));
+        const row = p.app.querySelector<HTMLDetailsElement>('main .view-chat details[data-seq="1"]')!;
+        row.scrollIntoView = () => {};
+        p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(p.app.querySelector("main .run-view")).not.toBeNull();
+        return { p, row };
+      };
+
+      it.each([
+        ["the Now line", ".now-link"],
+        ["the Needs-you call link", "a.approval-call"],
+      ])("%s returns to All runs and lands on the row", async (_name, link) => {
+        const { p, row } = await open();
+        try {
+          p.app.querySelector<HTMLElement>(link)!.click();
+          expect(p.app.querySelector("main .run-view")).toBeNull();
+          expect(p.app.querySelector<HTMLElement>("main .view-chat")!.closest("[hidden]")).toBeNull();
+          expect(row.open).toBe(true);
+          expect(document.activeElement).toBe(row);
+          expect(location.hash).toBe("");
+          expect(p.app.querySelector(".rail-node[data-run=r-i] button")!.getAttribute("aria-pressed")).toBe("false");
+        } finally { p.app.remove(); history.replaceState(null, "", "/"); }
+      });
+
+      it("with no run view open, a call link leaves the page's hash alone", async () => {
+        const { p } = await open();
+        try {
+          p.app.querySelector<HTMLElement>(".run-view-back")!.click();
+          await vi.advanceTimersByTimeAsync(0);
+          history.replaceState(null, "", "/#ap1");
+          p.app.querySelector<HTMLElement>("a.approval-call")!.click();
+          expect(location.hash).toBe("#ap1");
+        } finally { p.app.remove(); history.replaceState(null, "", "/"); }
+      });
+    });
+
     it("the conversation keeps its place", async () => {
       const { p } = await withFlow(flow);
       const main = p.app.querySelector("main")!;
