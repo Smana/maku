@@ -63,3 +63,20 @@ func TestPolicyRefusesAnUnlistedRepository(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// check is for a repository's own CI: a file naming another factory gives the repository away.
+func TestPolicyCheckRefusesAnotherFactory(t *testing.T) {
+	repo := policyRepo(t)
+	file := filepath.Join(t.TempDir(), "agent-factory.yaml")
+	if err := os.WriteFile(file, []byte("factory: gcp-0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"policy", "check", "--config", policyConfig, "--repository", repo, file})
+	if err == nil || !strings.Contains(err.Error(), "gcp-0") || !strings.Contains(err.Error(), "aws-0") {
+		t.Fatalf("got %v", err)
+	}
+	if strings.Contains(out.String(), "equivalent") {
+		t.Fatalf("%s", out.String())
+	}
+}

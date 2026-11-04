@@ -68,6 +68,9 @@ func (r Maku) policy(args []string) error {
 		if err != nil {
 			return err
 		}
+		if f.Factory != cfg.Factory {
+			return fmt.Errorf("policy: the file names factory %q, this config is factory %q", f.Factory, cfg.Factory)
+		}
 		if err := mergepolicy.Validate(f, cfg); err != nil {
 			return err
 		}
