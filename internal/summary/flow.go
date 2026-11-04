@@ -424,7 +424,7 @@ func edgeInto(j, prev flowJoin, pr *envelope.PRFact) string {
 // lineEnd is a rune a renderer may break a line on.
 func lineEnd(r rune) bool {
 	switch r {
-	case '\n', '\r', '\v', '\f', '\u0085', ' ', ' ':
+	case '\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029':
 		return true
 	}
 	return false

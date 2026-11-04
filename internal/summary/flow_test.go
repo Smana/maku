@@ -333,8 +333,8 @@ func TestFlowView(t *testing.T) {
 				}
 			}},
 		{"a handoff is one line of plain text, whatever room_handoff let through", []envelope.Event{fjoin(1, "a", "implementer"), fjoin(2, "b", "implementer"),
-			fhandoff(3, "a", envelope.HandoffPayload{Summary: "‮ok​\tdone⁦" + strings.Repeat("é", 200) + "\nsecond"}),
-			fhandoff(4, "b", envelope.HandoffPayload{Summary: "one two\r\nthree"})},
+			fhandoff(3, "a", envelope.HandoffPayload{Summary: "\u202eok\u200b\tdone\u2066" + strings.Repeat("é", 200) + "\nsecond"}),
+			fhandoff(4, "b", envelope.HandoffPayload{Summary: "one\u2028two\r\nthree"})},
 			func(t *testing.T, fl *Flow) {
 				got := fl.Nodes[0].Handoff
 				if !strings.HasPrefix(got, "ok done") || len([]rune(got)) != 120 || strings.ContainsFunc(got, envelope.Control) {
@@ -345,7 +345,7 @@ func TestFlowView(t *testing.T) {
 				}
 			}},
 		{"every free-text field of a node is plain text", func() []envelope.Event {
-			const evil = "x‮​\x1b[2J\n"
+			const evil = "x\u202e\u200b\x1b[2J\n"
 			a := envelope.RunFact{ID: "a", Role: "impl" + evil, Verdict: "ok" + evil, Outcome: "ended" + evil, StartedAt: fat(1)}
 			return []envelope.Event{
 				fev(1, "", envelope.StateChanged, envelope.Actor{Kind: envelope.ActorHuman, ID: "github:ana" + evil},
