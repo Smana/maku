@@ -32,22 +32,24 @@ const LabelPublish = "factory/publish"
 
 // publishes reads factory/publish on the stub issues of investigate tasks: a maintainer's label
 // files the proposal once, sanitised, unlabelled; anything else is answered and consumed. One
-// issue's failure does not keep the others waiting.
-func (p *IssuePoller) publishes(ctx context.Context) error {
+// issue's failure does not keep the others waiting. started holds the issues whose fix this pass
+// started: factory/ready on them waits for the next poll, which answers it task_active (K13).
+func (p *IssuePoller) publishes(ctx context.Context) (started map[int]bool, err error) {
 	items, err := p.Forge.Labeled(ctx, LabelPublish)
 	if err != nil || len(items) == 0 {
-		return err
+		return nil, err
 	}
+	started = map[int]bool{}
 	var errs []error
 	for _, it := range items {
 		if it.PullRequest {
 			continue
 		}
-		if err := p.publishOne(ctx, it.Number); err != nil {
+		if err := p.publishOne(ctx, it.Number, started); err != nil {
 			errs = append(errs, fmt.Errorf("publish #%d: %w", it.Number, err))
 		}
 	}
-	return errors.Join(errs...)
+	return started, errors.Join(errs...)
 }
 
 // refusePublish answers the label once, keyed by its time, then consumes it. Nothing is created.
@@ -63,7 +65,7 @@ func (p *IssuePoller) refuseWith(ctx context.Context, n int, e narrate.Event) er
 	return p.Forge.RemoveLabel(ctx, n, LabelPublish)
 }
 
-func (p *IssuePoller) publishOne(ctx context.Context, n int) error {
+func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[int]bool) error {
 	evs, ok, err := p.labelEvents(ctx, n, LabelPublish)
 	if err != nil || !ok {
 		return err
@@ -149,6 +151,9 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int) error {
 		if started, err = p.startPublished(ctx, t, iss.Number, last.Actor, class); err != nil {
 			return err // the label stays: the retry finds the issue by its marker
 		}
+		if started != "" {
+			startedIssues[iss.Number] = true
+		}
 	}
 	// The label stays only while the issue is unrecorded: past this point a failure is logged with
 	// the issue's number and the label still goes, so a retry files no second issue.
@@ -180,6 +185,9 @@ func (p *IssuePoller) startPublished(ctx context.Context, origin *v1alpha1.Task,
 	iss, err := p.Forge.Issue(ctx, n)
 	if err != nil {
 		return "", err
+	}
+	if iss.State != "OPEN" { // IssuesLabelled lists closed issues too; factory/ready never sees one
+		return "", nil
 	}
 	if !iss.LastEditedAt.IsZero() || !iss.TitleEditedAt.IsZero() {
 		return "", nil

@@ -492,7 +492,7 @@ func TestPublishStarts(t *testing.T) {
 		}
 	})
 
-	t.Run("a factory/ready between the failure and the retry starts nothing (K13)", func(t *testing.T) {
+	t.Run("a generation-1 Task opened between a failure and the retry starts nothing (K13)", func(t *testing.T) {
 		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
 		failTaskCreateOnce(p, c)
 		if err := p.Poll(t.Context()); err == nil {
@@ -513,6 +513,68 @@ func TestPublishStarts(t *testing.T) {
 		}
 		if !slices.Equal(open, []string{fixName(1)}) || !strings.Contains(commentsOf(f, 7), "factory/ready") {
 			t.Fatalf("%v %q", open, commentsOf(f, 7))
+		}
+	})
+
+	for name, hide := range map[string]bool{"": false, " with a lagging List": true} {
+		t.Run("factory/ready seen with the retry: the start wins, one Task and one charge (K13)"+name, func(t *testing.T) {
+			p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+			failTaskCreateOnce(p, c)
+			if err := p.Poll(t.Context()); err == nil {
+				t.Fatal("the first poll errs")
+			}
+			f.SetEvents(501, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: t0})
+			f.SetLabeled("factory/ready", forge.Item{Number: 501})
+			f.SetLabeled(LabelPublish, forge.Item{Number: 7})
+			if hide { // the informer has not yet seen the Task the retry creates
+				base := p.Client
+				created := false
+				p.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{
+					Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if _, ok := obj.(*v1alpha1.Task); ok {
+							created = true
+						}
+						return cl.Create(ctx, obj, opts...)
+					},
+					List: func(ctx context.Context, cl client.WithWatch, l client.ObjectList, opts ...client.ListOption) error {
+						err := cl.List(ctx, l, opts...)
+						if tl, ok := l.(*v1alpha1.TaskList); ok && created {
+							tl.Items = slices.DeleteFunc(tl.Items, func(t v1alpha1.Task) bool { return t.Spec.Issue == 501 })
+						}
+						return err
+					}})
+			}
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var on501 []v1alpha1.Task
+			for _, tk := range tasks(t, c) {
+				if tk.Spec.Issue == 501 {
+					on501 = append(on501, tk)
+				}
+			}
+			if len(on501) != 1 || on501[0].Name != fixName(0) || on501[0].Payer() != "github:smana" {
+				t.Fatalf("%+v", on501)
+			}
+			p.Client = c // the cache has caught up: the next poll refuses the label
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := commentsOf(f, 501); !strings.Contains(got, "is still running") {
+				t.Fatalf("task_active expected: %q", got)
+			}
+		})
+	}
+
+	t.Run("a filed issue closed before the retry starts nothing", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		f.SetIssue(forge.Issue{Number: 88, Title: "docs(alerts): x", Body: proposalWithFiles, Author: "ogenki-agent-factory[bot]", State: "CLOSED",
+			Labels: []string{"factory/published-from:3buqdlot", "class:alert-rules"}})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 0 || len(tasks(t, c)) != 1 || !strings.Contains(commentsOf(f, 7), "factory/ready") {
+			t.Fatalf("%v %d %q", f.Created(), len(tasks(t, c)), commentsOf(f, 7))
 		}
 	})
 

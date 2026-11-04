@@ -227,12 +227,16 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(append(errs, fmt.Errorf("intake: %w", err))...)
 	}
-	if err := p.publishes(ctx); err != nil { // before factory/ready: the maintainer reads the filed issue, then starts it
+	started, err := p.publishes(ctx)
+	if err != nil { // before factory/ready: the maintainer reads the filed issue, then starts it
 		errs = append(errs, err)
 	}
 	for _, it := range items {
 		if it.PullRequest {
 			continue // factory/ready starts work from issues only
+		}
+		if started[it.Number] {
+			continue // a publish started its fix this pass: the cache may not hold it yet, the next poll answers the label
 		}
 		if err := p.one(ctx, it.Number); err != nil {
 			errs = append(errs, fmt.Errorf("#%d: %w", it.Number, err))
