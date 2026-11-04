@@ -154,6 +154,11 @@ type Published struct {
 	// +kubebuilder:validation:MaxLength=8
 	// +optional
 	EvidenceFor string `json:"evidenceFor,omitempty"`
+	// The class inferred from the proposal's paths at publish (K4), which the fix task's
+	// spec.predictedClass copies.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Class string `json:"class,omitempty"`
 }
 
 // Finding is one dead external link two consecutive detector runs on main reported (MC5).
