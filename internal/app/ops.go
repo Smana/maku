@@ -6,10 +6,27 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/Smana/maku/internal/version"
 )
+
+// drainFlag is /readyz's "shutting down": true once the process context ended (a signal) or Begin
+// ran. A serving listener that dies cancels the run's own context, not the process's, so the
+// signal alone would leave /readyz answering 200 while the other listeners drain.
+type drainFlag struct {
+	process context.Context
+	begun   atomic.Bool
+}
+
+func newDrainFlag(process context.Context) *drainFlag { return &drainFlag{process: process} }
+
+// Begin marks the shutdown as started, whatever started it.
+func (d *drainFlag) Begin() { d.begun.Store(true) }
+
+// Draining reports whether the process has begun shutting down.
+func (d *drainFlag) Draining() bool { return d.begun.Load() || d.process.Err() != nil }
 
 // probeTimeout bounds each probe's check, under the kubelet's default 1 s timeout
 // plus a margin the kubelet can be told to wait.

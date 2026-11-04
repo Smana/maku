@@ -86,3 +86,36 @@ func TestNoPhaseSinceIsNotBounded(t *testing.T) {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
 	}
 }
+
+// A release-age status the adopted login posted as PENDING is working as designed (Renovate's
+// stability days run for days): the awaitingCIFor bound does not hand the PR off as a check that
+// never reported. It has its own, longer bound; a status never posted is still a check that never
+// reported and expires at awaitingCIFor.
+func TestAPendingReleaseAgeOutlastsTheCIBound(t *testing.T) {
+	for name, c := range map[string]struct {
+		edit          func(g *rig)
+		since         time.Duration
+		phase, reason string
+	}{
+		"pending, past the CI bound": {func(g *rig) { g.setStatus(30, ageCheck, "PENDING", bot) }, 25 * time.Hour,
+			v1alpha1.PhaseAwaitingCI, "release_age_pending"},
+		"pending, past its own bound": {func(g *rig) { g.setStatus(30, ageCheck, "PENDING", bot) }, releaseAgeWaitMax,
+			v1alpha1.PhaseAwaitingHuman, "ci_wait_expired"},
+		"never posted, past the CI bound": {func(g *rig) {
+			c, _ := g.f.PullRequestChecks(t.Context(), 30)
+			c.Statuses = c.Statuses[:1]
+			g.f.SetChecks(30, c)
+		}, 25 * time.Hour, v1alpha1.PhaseAwaitingHuman, "ci_wait_expired"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := adoptRig(t)
+			g.r.Cfg.Merge.AwaitingCIFor = &config.Duration{Duration: 24 * time.Hour}
+			c.edit(g)
+			g.setPhaseSince(t, adoptTask, now.Add(-c.since))
+			tk := g.reconcile(t, adoptTask, 1)
+			if tk.Status.Phase != c.phase || tk.Status.Reason != c.reason {
+				t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+			}
+		})
+	}
+}
