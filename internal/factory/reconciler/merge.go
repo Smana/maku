@@ -885,7 +885,20 @@ func (r *Reconciler) mergedAt(pr forge.PR) metav1.Time {
 // ran is not failing: a path-filtered push workflow never reports on a docs merge. The marker of a
 // truncated listing (D3) reads PENDING whatever is watched; a failure still wins.
 func MainState(runs []forge.Check, watched []string) string {
+	return mainState(runs, watched, false)
+}
+
+// verifyState is MainState for verifying, which ends merged_verified on it: a watched check absent
+// from the commit's check runs reads PENDING there, not green. Right after the merge nothing has
+// reported yet, and a check that never reports leaves the merge unverified past twice verifyFor
+// (D1) rather than verified on nothing.
+func verifyState(runs []forge.Check, watched []string) string {
+	return mainState(runs, watched, true)
+}
+
+func mainState(runs []forge.Check, watched []string, absentPending bool) string {
 	state := "SUCCESS"
+	seen := map[string]bool{}
 	for _, c := range runs {
 		if c.Name == forge.CheckListTruncated {
 			state = "PENDING"
@@ -894,11 +907,19 @@ func MainState(runs []forge.Check, watched []string) string {
 		if !slices.Contains(watched, c.Name) {
 			continue
 		}
+		seen[c.Name] = true
 		switch c.State {
 		case "FAILURE":
 			return "FAILURE"
 		case "PENDING", "CANCELLED": // a cancelled check on main is not green and not red: keep watching
 			state = "PENDING"
+		}
+	}
+	if absentPending {
+		for _, w := range watched {
+			if !seen[w] {
+				state = "PENDING"
+			}
 		}
 	}
 	return state
@@ -918,7 +939,7 @@ func (r *Reconciler) verifying(ctx context.Context, t *v1alpha1.Task) error {
 	if err != nil {
 		return err
 	}
-	switch MainState(runs, mg.VerifyChecks) {
+	switch verifyState(runs, mg.VerifyChecks) {
 	case "FAILURE":
 		return r.revert(ctx, t, "main_red")
 	case "SUCCESS":
