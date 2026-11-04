@@ -142,6 +142,12 @@ func TestFlowView(t *testing.T) {
 					t.Fatalf("ghosts = %v", fl.Ghosts)
 				}
 			}},
+		{"no ghosts under an approved split: the parts do the work", fruns(envelope.TaskFacts{Phase: "Split", Plan: plan, Split: &envelope.SplitFact{Of: 2}}, frun("a", "triager", "scoper", 0)),
+			func(t *testing.T, fl *Flow) {
+				if len(fl.Ghosts) != 0 {
+					t.Fatalf("ghosts = %v", fl.Ghosts)
+				}
+			}},
 		{"rounds", func() []envelope.Event {
 			rev := frun("b", "reviewer", "reviewer", 0)
 			rev.Verdict = "changes"

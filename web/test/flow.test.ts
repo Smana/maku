@@ -93,6 +93,7 @@ describe("ghosts", () => {
     expect(ghostMerge(f(undefined), "Done")).toBe(false);
     expect(ghostMerge(f([{ phase: "AutoMerging", at: "t", seq: 1 }]), "AutoMerging")).toBe(true);
     expect(ghostMerge(f(undefined), "Verifying")).toBe(false);
+    expect(ghostMerge({ ...f(undefined), split: { of: 2 } }, "Split")).toBe(false);
     expect(ghostMerge(f([{ phase: "Verifying", at: "t", seq: 1 }]), "Reverted")).toBe(false);
   });
   it("ghostsAfter the matched steps", () => {

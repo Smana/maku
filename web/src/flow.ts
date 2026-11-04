@@ -92,12 +92,13 @@ export function rows(nodes: FlowNode[], max: number): Row[] {
 export const terminal = new Set(["Merged", "Done", "Reverted", "Escalated", "Closed", "Stopped", "NoOp", "Rejected", "Sealed"]);
 
 // ghostMerge is whether the rail draws a ghost merge step: a plan that can reach a merge (not a
-// manual room's, nor an investigation's triager alone), the task not over and nothing merged. The
-// factory sets Verifying once an auto-merge landed, and never sets Merged.
+// manual room's, nor an investigation's triager alone), the task not over, nothing merged and no
+// approved split, whose parts merge instead. The factory sets Verifying once an auto-merge landed,
+// and never sets Merged.
 export function ghostMerge(f: Flow, phase: string): boolean {
   const plan = f.plan ?? [];
   const merged = (p: string) => p === "Merged" || p === "Verifying";
-  return plan.length > 0 && !(plan.length === 1 && plan[0] === "triager") && !terminal.has(phase) && !merged(phase) && !f.milestones?.some((m) => merged(m.phase));
+  return plan.length > 0 && !(plan.length === 1 && plan[0] === "triager") && !f.split && !terminal.has(phase) && !merged(phase) && !f.milestones?.some((m) => merged(m.phase));
 }
 
 // ghostsAfter mirrors the broker's cursor (internal/summary flow.go): each node advances past the

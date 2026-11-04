@@ -252,10 +252,11 @@ func terminalPhase(p string) bool {
 	return false
 }
 
-// pathDone reports whether no run is ahead of a task: its phase closes the path, or the merge is
-// behind it. The factory sets Verifying once an auto-merge landed; it never sets Merged.
+// pathDone reports whether no run is ahead of a task: its phase closes the path, the merge is behind
+// it, or its parts took over. The factory sets Verifying once an auto-merge landed, never Merged; a
+// split parent waits in Split on its parts, not terminal, and runs nothing more itself.
 func pathDone(f *envelope.TaskFacts) bool {
-	return terminalPhase(f.Phase) || f.Phase == "Verifying"
+	return terminalPhase(f.Phase) || f.Phase == "Verifying" || f.Split != nil
 }
 
 // triggerEdges are the edges a run's trigger names.
