@@ -334,3 +334,31 @@ func TestPublishOnARejectedTaskNamesTheRejection(t *testing.T) {
 		t.Fatalf("%d issues, comments %q, removed %v", len(f.Created()), cs, f.Removed(7))
 	}
 }
+
+func TestProposalPaths(t *testing.T) {
+	for name, c := range map[string]struct {
+		body string
+		want []string
+	}{
+		"listed": {"## Acceptance check\nquiet\n## Files\n- `observability/a.yaml`\n- `observability/b.yml`\n",
+			[]string{"observability/a.yaml", "observability/b.yml"}},
+		"next heading": {"## Files\n- `a.yaml`\n## Notes\n- `b.yaml`\n", []string{"a.yaml"}},
+		"footer":       {"## Files\n- `a.yaml`\n\n---\nPublished by @x from agent factory task `y`.", []string{"a.yaml"}},
+		"no section":   {"## Acceptance check\nquiet\n", nil},
+		"dotdot":       {"## Files\n- `../etc/passwd`\n", nil},
+		"dotdot inner": {"## Files\n- `a/../b.yaml`\n", nil},
+		"absolute":     {"## Files\n- `/abs/x`\n", nil},
+		"no code span": {"## Files\n- a.yaml\n", nil},
+		"whitespace":   {"## Files\n- `a b.yaml`\n", nil},
+		"too long":     {"## Files\n- `" + strings.Repeat("a", 201) + "`\n", nil},
+		"one bad line": {"## Files\n- `a.yaml`\nnot a path\n", nil},
+		"eleven":       {"## Files\n" + strings.Repeat("- `a.yaml`\n", 11), nil},
+		"ten":          {"## Files\n" + strings.Repeat("- `a.yaml`\n", 10), slices.Repeat([]string{"a.yaml"}, 10)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := proposalPaths(c.body); !slices.Equal(got, c.want) || (c.want == nil) != (got == nil) {
+				t.Fatalf("proposalPaths = %q, want %q", got, c.want)
+			}
+		})
+	}
+}

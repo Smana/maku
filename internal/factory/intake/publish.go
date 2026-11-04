@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -250,4 +251,39 @@ func (p *IssuePoller) now() time.Time {
 		return p.Now()
 	}
 	return time.Now()
+}
+
+const (
+	maxProposalPaths = 10
+	maxPathBytes     = 200
+)
+
+var proposalPathLine = regexp.MustCompile("^- `([^`\\s]+)`$")
+
+// proposalPaths are the repository paths a proposal's `## Files` section lists, one "- `path`" per
+// line. The section ends at the next "## " heading or at the footer's "---" line. A line of any
+// other form, a path with a ".." segment, a leading "/" or over maxPathBytes, or more than
+// maxProposalPaths lines, empties the list: an unreadable scope infers nothing.
+func proposalPaths(body string) []string {
+	var paths []string
+	in := false
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimRight(line, "\r")
+		switch {
+		case !in:
+			in = line == "## Files"
+			continue
+		case strings.HasPrefix(line, "## ") || line == "---":
+			return paths
+		case strings.TrimSpace(line) == "":
+			continue
+		}
+		m := proposalPathLine.FindStringSubmatch(line)
+		if m == nil || len(paths) == maxProposalPaths || len(m[1]) > maxPathBytes ||
+			strings.HasPrefix(m[1], "/") || slices.Contains(strings.Split(m[1], "/"), "..") {
+			return nil
+		}
+		paths = append(paths, m[1])
+	}
+	return paths
 }
