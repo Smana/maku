@@ -610,13 +610,28 @@ func TestPlanOf(t *testing.T) {
 	for _, tc := range []struct {
 		name, template string
 		scope, testRst bool
+		task           func(*v1alpha1.Task)
 		want           []string
 	}{
-		{"investigate", "investigate", false, false, []string{"triager"}},
-		{"pair", "pair", false, false, []string{"implementer", "reviewer"}},
-		{"pair with scope", "pair", true, false, []string{"scoper", "implementer", "reviewer"}},
-		{"pair with scope and test-first", "pair", true, true, []string{"scoper", "tester", "implementer", "reviewer"}},
-		{"solo", "solo", false, false, []string{"implementer"}},
+		{"investigate", "investigate", false, false, nil, []string{"triager"}},
+		{"pair", "pair", false, false, nil, []string{"implementer", "reviewer"}},
+		{"pair with scope", "pair", true, false, nil, []string{"scoper", "implementer", "reviewer"}},
+		{"pair with scope and test-first", "pair", true, true, nil, []string{"scoper", "tester", "implementer", "reviewer"}},
+		{"solo", "solo", false, false, nil, []string{"implementer"}},
+		{"a split part carries its scope in its spec: no scoper", "pair", true, false,
+			func(t *v1alpha1.Task) { t.Spec.Scope = &v1alpha1.TaskScope{} }, []string{"implementer", "reviewer"}},
+		{"a scoper that ran stays in the plan", "pair", true, false, func(t *v1alpha1.Task) {
+			t.Status.Scope = &v1alpha1.ScopeStatus{State: "ready", Seq: 1}
+			t.Status.Runs = []v1alpha1.RunRecord{{ID: "a", Role: "triager"}}
+		}, []string{"scoper", "implementer", "reviewer"}},
+		{"a non-public task runs no tester", "pair", false, true,
+			func(t *v1alpha1.Task) { t.Spec.DataClass = "internal" }, []string{"implementer", "reviewer"}},
+		{"a task holding a contract runs no tester", "pair", false, true,
+			func(t *v1alpha1.Task) { t.Status.Contract = &v1alpha1.ContractStatus{} }, []string{"implementer", "reviewer"}},
+		{"a tester that wrote the contract stays in the plan", "pair", false, true, func(t *v1alpha1.Task) {
+			t.Status.Contract = &v1alpha1.ContractStatus{}
+			t.Status.Runs = []v1alpha1.RunRecord{{ID: "a", Role: "tester"}}
+		}, []string{"tester", "implementer", "reviewer"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			task := issueTask("3buqdlot", 7, "x")
@@ -628,6 +643,9 @@ func TestPlanOf(t *testing.T) {
 				task.Spec.ScopeMode = string(config.ScopeScoper)
 			}
 			g.r.Cfg.Classes["scripts"] = config.Class{TestFirst: tc.testRst}
+			if tc.task != nil {
+				tc.task(task)
+			}
 			got := g.r.planOf(task)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("plan %v, want %v", got, tc.want)

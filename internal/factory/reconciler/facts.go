@@ -17,7 +17,6 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 )
@@ -270,10 +269,10 @@ func (r *Reconciler) planOf(t *v1alpha1.Task) []string {
 			plan = append(plan, p)
 		}
 	}
-	if t.Spec.ScopeMode == string(config.ScopeScoper) {
+	if scoperPlanned(t) {
 		add("scoper")
 	}
-	if r.testFirst(t) {
+	if r.testerPlanned(t) {
 		add("tester")
 	}
 	for _, role := range r.Cfg.Templates[t.Spec.Template].Roles {
