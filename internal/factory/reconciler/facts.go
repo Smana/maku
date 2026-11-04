@@ -174,7 +174,12 @@ func factsKey(f envelope.TaskFacts) string {
 	// ends still posts them, since its phase moves its key.
 	ended := v1alpha1.TerminalPhase(f.Phase) || f.Phase == v1alpha1.PhaseEscalated
 	if ended {
-		f.Plan, f.Split, f.Parent = nil, nil, nil
+		f.Plan, f.Parent = nil, nil
+		// An escalated parent still waits on its parts: tellParent can revert one under it, with no
+		// other field moving, and the rail must not keep drawing that part as landed.
+		if f.Phase != v1alpha1.PhaseEscalated {
+			f.Split = nil
+		}
 	}
 	// A run's dollars count once it has ended: a running run's tick never posts (R4).
 	f.Run = settled(f.Run)

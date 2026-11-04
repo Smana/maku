@@ -36,15 +36,21 @@ func retainedTask(phase, hash string) *v1alpha1.Task {
 // An upgrade must not rewrite the rooms of the tasks it retains: the rail's new fields are left out
 // of an ended task's hash, so its ledger still matches and nothing is posted.
 func TestAnUpgradeLeavesAnEndedTasksFactsAlone(t *testing.T) {
-	for _, tc := range []struct{ phase, pin string }{
-		{v1alpha1.PhaseDone, "bf32e4e7d52a1a70"},
-		{v1alpha1.PhaseEscalated, "ebbc81f6439abc8a"},
+	for _, tc := range []struct {
+		phase, pin string
+		split      bool
+	}{
+		{v1alpha1.PhaseDone, "bf32e4e7d52a1a70", true},
+		{v1alpha1.PhaseEscalated, "ebbc81f6439abc8a", false},
 	} {
 		t.Run(tc.phase, func(t *testing.T) {
 			tk := retainedTask(tc.phase, tc.pin)
+			if !tc.split {
+				tk.Status.Split = nil
+			}
 			g := newRig(t, tk)
 			g.r.Cfg.Templates["pair"] = config.Template{Roles: []string{"implementer", "reviewer"}}
-			if f := g.r.factsFor(tk); len(f.Plan) == 0 || f.Runs[0].Persona == "" || f.Split == nil || f.Parent == nil {
+			if f := g.r.factsFor(tk); len(f.Plan) == 0 || f.Runs[0].Persona == "" || (f.Split != nil) != tc.split || f.Parent == nil {
 				t.Fatalf("the fixture must carry the rail's fields: %+v", f)
 			}
 			if got := factsKey(g.r.factsFor(tk)); got != tc.pin {
@@ -57,6 +63,18 @@ func TestAnUpgradeLeavesAnEndedTasksFactsAlone(t *testing.T) {
 				t.Fatalf("posted %v, roomSeq %d", g.log.factsSeqs, tk.Status.RoomSeq)
 			}
 		})
+	}
+}
+
+// An escalated parent still waits on budget-family, and tellParent can revert a part under it while
+// the phase stays Escalated: that must reach the room, or the rail keeps drawing the part as landed.
+func TestAnEscalatedParentsRevertedPartMovesItsKey(t *testing.T) {
+	tk := retainedTask(v1alpha1.PhaseEscalated, "")
+	tk.Status.Split.Children = []v1alpha1.SplitChild{{Index: 1, Issue: 52, Task: "k2mqx7ba", Outcome: ChildLanded}}
+	before := factsKey(factsOf(tk))
+	tk.Status.Split.Children[0].Outcome = ChildReverted
+	if factsKey(factsOf(tk)) == before {
+		t.Fatal("a reverted part did not move an escalated parent's key")
 	}
 }
 
