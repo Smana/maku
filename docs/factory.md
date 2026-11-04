@@ -295,7 +295,7 @@ returns it.
 | `closes_parent` | A part's pull request body closes its parent issue; the parent closes with its last part, so edit the body and merge it yourself |
 | `class_paused` | The class's breaker tripped: reverts, and with `maxFollowUps` set follow-up fixes and regressions, among its newest merges |
 | `ledger_truncated` | A merge-ledger read filled its page of 100 and its oldest pull request is still inside the breaker window or today, so the ledger may under-count; nothing arms. A maintainer decides |
-| `ci_wait_expired` | The pull request waited `merge.awaitingCIFor` in `AwaitingCI` and a required check never reported. The message names the checks. A maintainer decides |
+| `ci_wait_expired` | The pull request waited `merge.awaitingCIFor` in `AwaitingCI` and a required check never reported. A release-age status posted as pending waits longer, up to 7 days or the bound if that is larger. The message names the checks. A maintainer decides |
 | `auto_merge_cap` | `merge.autoMergesPerDay` is reached |
 | `not_owned` | The repository's `.github/agent-factory.yaml` does not name this factory ([the fence](#the-ownership-fence)) |
 | `shadow_would_arm` | Every check holds and the class is in shadow. Next step: merge or close it |
@@ -767,7 +767,7 @@ it checked nothing. A holdout check that is not reported yet, or still running, 
 
 When every check holds on a live class, the merger App merges the decided head; GitHub refuses
 the merge if the head moved, and the new head is decided again. The task then watches
-`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. No result within twice `merge.verifyFor` (a check cancelled, as `cancel-in-progress` does on main, or never finished) ends `Done` `merged_unverified`. A
+`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. No result within twice `merge.verifyFor` (a check cancelled, as `cancel-in-progress` does on main, never finished, or never reported, so don't list a path-filtered workflow) ends `Done` `merged_unverified`. A
 maintainer's `factory/revert` within `merge.revertWindow` reverts too. The revert pull request
 auto-merges only while the `revert` class is live; otherwise a maintainer merges it.
 
