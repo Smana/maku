@@ -294,6 +294,58 @@ func TestPublishWaitsOutARenderOutage(t *testing.T) {
 	}
 }
 
+// Public's code spans break the redactor's rules: a token split by them matches none. So the raw
+// draft is scanned first, and a secret is refused with nothing sent to be rendered. Each token is
+// built here, from halves, so no literal sits in the source.
+func TestPublishScansTheDraftBeforeItIsMadeInert(t *testing.T) {
+	fold := func(s string) string { // fullwidth: no rule reads it until Text folds it
+		var b strings.Builder
+		for _, r := range s {
+			if r >= '!' && r <= '~' {
+				r += 0xFEE0
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
+	hex36 := strings.Repeat("4f9a1c7e", 5)[:36]
+	slackBot := "xox" + "b-2846193750-3917264058-" + "aB3dE6gH9jK2mN5pQ8sT1vW4"
+	for name, c := range map[string]struct{ title, secret string }{
+		"a slack bot token":  {"", slackBot},
+		"a slack user token": {"", "xox" + "p-2846193750-3917264058-3917264058-" + hex36[:32]},
+		"a github pat":       {"", "gh" + "p_" + hex36},
+		"a github oauth":     {"", "gh" + "o_" + hex36},
+		"a github app token": {"", "gh" + "s_" + hex36},
+		"an npm token":       {"", "np" + "m_" + hex36},
+		"in the title":       {slackBot, ""},
+		"folded by Text":     {"", fold(slackBot)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := proposalOK
+			if c.title != "" {
+				text = strings.Replace(text, "completed Job\n", "completed "+c.title+"\n", 1)
+			}
+			if c.secret != "" {
+				text = strings.Replace(text, "The rule counts Job pods.", "see "+c.secret+" here", 1)
+			}
+			p, f, cl := publishing(t, text, investigated("3buqdlot"), "Smana")
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			cs := strings.Join(f.Comments(7), "\n")
+			if len(f.Created()) != 0 || !strings.Contains(cs, "looks like a secret") || !slices.Contains(f.Removed(7), LabelPublish) {
+				t.Fatalf("%d issues, comments %q", len(f.Created()), cs)
+			}
+			if got := f.Rendered(); len(got) != 0 {
+				t.Fatal("the draft was sent to be rendered")
+			}
+			if got := getTask(t, cl, "3buqdlot"); got.Status.Published != nil {
+				t.Fatalf("a refusal records nothing: %+v", got.Status.Published)
+			}
+		})
+	}
+}
+
 // A write check that fails leaves the label for the next poll, as factory/ready does.
 func TestPublishNeedsTheWriteCheck(t *testing.T) {
 	p, f, _ := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")

@@ -701,7 +701,7 @@ sequenceDiagram
   F-->>R: 201 task, stub issue (factory/proposed)
   Note over F: investigate: the triager's proposal stays in the room
   M->>F: label the stub factory/publish
-  F->>F: CheckDraft, sanitise as public text, redact, render through GitHub
+  F->>F: CheckDraft, redact, sanitise as public text, redact, render through GitHub
   F->>M: new issue (no label), status.published recorded
   M->>F: label the new issue factory/ready
   F->>F: fix task with spec.origin = the investigate task
@@ -711,9 +711,9 @@ sequenceDiagram
 task. Only the last label event's actor counts, through the same maintainer and write checks as
 `factory/ready`; anyone else's is answered `unauthorised_labeller` and removed. The proposal is the
 last handoff to `implementer` that the task's triager run recorded itself. Its first line is the
-title and the rest the body, held to the issue template, then made inert (every link, bare URL,
-address, @mention and issue or commit reference becomes a code span, no HTML survives, no hidden character), then scanned by the redactor,
-then rendered through GitHub's `POST /markdown` with the repository as context: any anchor or
+title and the rest the body, held to the issue template, scanned by the redactor as written, then
+made inert (every link, bare URL, address, @mention and issue or commit reference becomes a code
+span, no HTML survives, no hidden character), scanned again, then rendered through GitHub's `POST /markdown` with the repository as context: any anchor or
 mention, issue or commit link in the page refuses it, title and body alike. The footer naming the
 maintainer is added after this gate, and is the one deliberate mention.
 A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`, `live_reference`) is a

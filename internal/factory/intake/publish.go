@@ -185,13 +185,22 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 	if err != nil {
 		return "", "", "invalid_draft", nil
 	}
+	if p.Redact == nil {
+		return "", "", "redacted", nil // no scan, no publication
+	}
+	// Before Public, whose code spans split a token so that no rule matches it; and again after Text,
+	// whose fold can turn a fullwidth token, which no rule reads, into one Public would then split.
+	foldedTitle, _ := sanitize.Text(d.Title)
+	foldedBody, _ := sanitize.Text(d.Body)
+	for _, text := range []string{d.Title + "\n" + d.Body, foldedTitle + "\n" + foldedBody} {
+		if _, rules := p.Redact.String(text); len(rules) > 0 {
+			return "", "", "redacted", nil
+		}
+	}
 	title, tr := sanitize.Public(d.Title)
 	body, br := sanitize.Public(d.Body)
 	if tr.Withheld || br.Withheld {
 		return "", "", "live_reference", nil
-	}
-	if p.Redact == nil {
-		return "", "", "redacted", nil // no scan, no publication
 	}
 	if _, rules := p.Redact.String(title + "\n" + body); len(rules) > 0 {
 		return "", "", "redacted", nil
