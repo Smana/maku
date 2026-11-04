@@ -168,6 +168,102 @@ func TestPublishRefusals(t *testing.T) {
 	}
 }
 
+// The last gate is GitHub's own reading of the final title and body: whatever it renders live, or
+// cannot render, publishes nothing. The refusal answers once and consumes the label, as invalid_draft
+// and redacted do; the caller's footer, a deliberate mention, is added after it and never sent.
+func TestPublishRenderGate(t *testing.T) {
+	const title = "docs(alerts): the crash-loop rule fires on a completed Job"
+	mention := `<p dir="auto"><span class="user-mention">@x</span></p>`
+	for name, c := range map[string]struct {
+		render func(string) (string, error)
+		want   string
+	}{
+		"a link in the body": {func(s string) (string, error) {
+			if s == title {
+				return "<p>ok</p>", nil
+			}
+			return `<p><a href="https://evil.example">x</a></p>`, nil
+		}, "cannot make inert"},
+		"a link in the title": {func(s string) (string, error) {
+			if s == title {
+				return `<p><A HREF="https://evil.example">x</A></p>`, nil
+			}
+			return "<p>ok</p>", nil
+		}, "cannot make inert"},
+		"a mention's class": {func(string) (string, error) { return mention, nil }, "cannot make inert"},
+		"an issue link's class": {func(string) (string, error) {
+			return `<p><span class="x issue-link">#1</span></p>`, nil
+		}, "cannot make inert"},
+		"a commit link's class": {func(string) (string, error) {
+			return `<p><span class="commit-link">18e264e</span></p>`, nil
+		}, "cannot make inert"},
+		"an error": {func(string) (string, error) { return "", errors.New("forge: 502") }, "could not check"},
+		"a rate limit": {func(string) (string, error) {
+			return "", errors.New("forge: secondary rate limit")
+		}, "could not check"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, f, cl := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
+			f.SetRender(c.render)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			cs := strings.Join(f.Comments(7), "\n")
+			if len(f.Created()) != 0 || !strings.Contains(cs, "did not publish #7's proposal") || !strings.Contains(cs, c.want) ||
+				!slices.Contains(f.Removed(7), LabelPublish) {
+				t.Fatalf("%d issues, comments %q, removed %v", len(f.Created()), cs, f.Removed(7))
+			}
+			if got := getTask(t, cl, "3buqdlot"); got.Status.Published != nil {
+				t.Fatalf("a refusal records nothing: %+v", got.Status.Published)
+			}
+		})
+	}
+
+	t.Run("an inert page publishes, the footer never rendered", func(t *testing.T) {
+		p, f, _ := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
+		// Text in a page is no markup: GitHub escapes it, so a class name in a code span is harmless.
+		f.SetRender(func(string) (string, error) {
+			return `<h2 dir="auto">What is wrong</h2><p><code>class=&quot;user-mention&quot; issue-link &lt;a href</code></p>`, nil
+		})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 1 || !strings.Contains(f.Created()[0], "Published by @Smana") {
+			t.Fatalf("%q", f.Created())
+		}
+		got := f.Rendered()
+		if len(got) != 2 || got[0] != title || !strings.HasPrefix(got[1], "## What is wrong") {
+			t.Fatalf("rendered %q", got)
+		}
+		if strings.Contains(strings.Join(got, ""), "Published by") {
+			t.Fatalf("the footer was rendered: %q", got)
+		}
+	})
+
+	t.Run("a secret is never sent to be rendered", func(t *testing.T) {
+		aws := "AKIA" + "Z3QPLR7MXN2KWT5V"
+		text := strings.Replace(proposalOK, "The rule counts Job pods.", "key "+aws+" and secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzZ3qLpTnVb", 1)
+		p, f, _ := publishing(t, text, investigated("3buqdlot"), "Smana")
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Rendered()) != 0 || !strings.Contains(strings.Join(f.Comments(7), ""), "looks like a secret") {
+			t.Fatalf("rendered %q, comments %q", f.Rendered(), f.Comments(7))
+		}
+	})
+
+	t.Run("what Public withholds is refused for what it is", func(t *testing.T) {
+		text := strings.Replace(proposalOK, "The rule counts Job pods.", "> | a |\n|---|\n| x | @Smana |", 1)
+		p, f, _ := publishing(t, text, investigated("3buqdlot"), "Smana")
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 0 || len(f.Rendered()) != 0 || !strings.Contains(strings.Join(f.Comments(7), ""), "cannot make inert") {
+			t.Fatalf("created %q, rendered %q, comments %q", f.Created(), f.Rendered(), f.Comments(7))
+		}
+	})
+}
+
 // A write check that fails leaves the label for the next poll, as factory/ready does.
 func TestPublishNeedsTheWriteCheck(t *testing.T) {
 	p, f, _ := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")

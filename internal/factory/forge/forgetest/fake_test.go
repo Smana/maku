@@ -17,6 +17,7 @@ type api interface {
 	Labeled(ctx context.Context, label string) ([]forge.Item, error)
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
 	Issue(ctx context.Context, number int) (forge.Issue, error)
+	RenderMarkdown(ctx context.Context, text string) (string, error)
 	Comment(ctx context.Context, number int, body string) error
 	RecentComments(ctx context.Context, number int) ([]forge.Comment, error)
 	AddLabels(ctx context.Context, number int, labels ...string) error
@@ -86,6 +87,22 @@ func TestFakeRecordsWhatTheFactoryDid(t *testing.T) {
 	if d, err := f.Diff(ctx, "base", "head"); err != nil || d.Base["docs/a.md"] != "old" || d.Head["docs/a.md"] != "new" ||
 		len(d.Files) != 1 || d.Files[0] != (forge.FileStat{Path: "docs/a.md", Status: "modified", Additions: 1, Deletions: 1}) {
 		t.Errorf("diff %+v %v", d, err)
+	}
+}
+
+// RenderMarkdown answers an inert page by default, escaped as GitHub escapes text, and what a test
+// sets otherwise; it records what it was asked.
+func TestFakeRenderMarkdown(t *testing.T) {
+	f := NewFake()
+	if got, err := f.RenderMarkdown(t.Context(), "a <b>"); err != nil || got != "<p>a &lt;b&gt;</p>" {
+		t.Fatalf("%q %v", got, err)
+	}
+	f.SetRender(func(string) (string, error) { return "", errors.New("rate limit") })
+	if _, err := f.RenderMarkdown(t.Context(), "c"); err == nil {
+		t.Fatal("the set renderer was not used")
+	}
+	if got := f.Rendered(); len(got) != 2 || got[0] != "a <b>" || got[1] != "c" {
+		t.Fatalf("%q", got)
 	}
 }
 

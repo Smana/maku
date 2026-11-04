@@ -219,7 +219,12 @@ principal is never allowed `internal`, and its request refuses an `incident`.
 `factory/publish` is the one place internal text becomes public, and a maintainer's label starts it.
 The proposal is the triager run's own handoff, never another writer's. It is held to the issue
 template, made inert (`sanitize.Public`: no link, raw HTML, image or hidden character survives; URLs,
-addresses, @mentions and issue references are kept in code spans, so none pings or links), and scanned by the redactor; a hit publishes nothing. The
+addresses, @mentions and issue or commit references are kept in code spans, so none pings or links),
+scanned by the redactor, then rendered through GitHub's `POST /markdown`. A secret refuses it as
+`redacted`. Text the last scan cannot prove inert, or a page holding any anchor or mention, issue or
+commit link, refuses it as `live_reference`; a render that fails refuses it as `render_unavailable`.
+Each publishes nothing. The scan does not use the parser the rewrite uses, and the render is
+GitHub's own reading, so a misparse must pass both to reach a reader. The
 factory files it once, with no trigger label, and records it on the task. An origin is that record, never
 issue text.
 

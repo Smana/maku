@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -187,7 +188,7 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 	title, tr := sanitize.Public(d.Title)
 	body, br := sanitize.Public(d.Body)
 	if tr.Withheld || br.Withheld {
-		return "", "", "invalid_draft", nil
+		return "", "", "live_reference", nil
 	}
 	if p.Redact == nil {
 		return "", "", "redacted", nil // no scan, no publication
@@ -195,8 +196,25 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 	if _, rules := p.Redact.String(title + "\n" + body); len(rules) > 0 {
 		return "", "", "redacted", nil
 	}
+	// After the redactor, so a secret never leaves for GitHub, and before the caller's footer, whose
+	// mention is deliberate.
+	for _, text := range []string{title, body} {
+		page, err := p.Forge.RenderMarkdown(ctx, text)
+		if err != nil {
+			p.log().Error("the proposal could not be rendered to check it", "task", t.Name, "error", err)
+			return "", "", "render_unavailable", nil
+		}
+		if renderedLive.MatchString(page) {
+			return "", "", "live_reference", nil
+		}
+	}
 	return title, body, "", nil
 }
+
+// renderedLive is what makes a page GitHub rendered something more than text: any anchor, or the
+// classes it gives a mention, an issue link or a commit link. GitHub escapes the text it shows, so
+// neither a code span nor a paragraph can spell this. Its API gives a heading no anchor.
+var renderedLive = regexp.MustCompile(`(?i)<a[\s>/]|class="[^"]*\b(?:user-mention|team-mention|issue-link|commit-link)\b`)
 
 // ErrNoProposal is what a Proposal reader answers when the task has none.
 var ErrNoProposal = errors.New("intake: the task has no proposal")

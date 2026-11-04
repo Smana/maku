@@ -64,6 +64,8 @@ type issueForge interface {
 	AddLabels(ctx context.Context, number int, labels ...string) error
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
 	IssuesLabelled(ctx context.Context, label string) ([]forge.Issue, error)
+	// RenderMarkdown is the publish gate's reading of a draft, as GitHub would show it.
+	RenderMarkdown(ctx context.Context, text string) (string, error)
 }
 
 // errorCounter counts a failed poll, a label left for the next one, and a label refused on its

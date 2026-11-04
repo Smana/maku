@@ -303,6 +303,18 @@ func (g *GitHub) CreateIssue(ctx context.Context, title, body string, labels []s
 	return restIssue(iss), nil
 }
 
+// RenderMarkdown is text as GitHub would show it in an issue of this repository: mode gfm, the
+// repository as context, so mentions and references resolve as they would once filed. It writes
+// nothing and notifies nobody. A refusal, a rate limit among them, is an error.
+func (g *GitHub) RenderMarkdown(ctx context.Context, text string) (string, error) {
+	html, _, err := g.rest.Markdown.Render(ctx, text, &github.MarkdownOptions{Mode: "gfm", Context: g.owner + "/" + g.name})
+	g.mark(err)
+	if err != nil {
+		return "", wrap("render markdown", err)
+	}
+	return html, nil
+}
+
 // restIssue is a REST issue as the forge reads one.
 func restIssue(i *github.Issue) Issue {
 	out := Issue{Number: i.GetNumber(), ID: i.GetID(), URL: i.GetHTMLURL(), Title: i.GetTitle(), Body: i.GetBody(),
