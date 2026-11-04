@@ -409,6 +409,21 @@ end of RunLore's window. With both off together the cursor stays, and the room i
 Known limit: a class whose `followUpWindow` is over 24 h can lose its verdict at `roomCloseCap`; the exact case is in
 [the post-merge monitor](factory.md#the-post-merge-monitor).
 
+### An adopted knowledge base repository
+
+For a repository whose bot adds catalog entries (an [adopted class](factory.md#adopted-classes) with
+`diffShape: added-entry`), the repository carries, and each is a policy-bot gate path:
+
+- the fence file `.github/agent-factory.yaml`, naming this factory ([the fence](factory.md#the-ownership-fence));
+- the policy-bot configuration;
+- the validator's workflow, `.github/workflows/validate-kb.yml`, whose job `validate` is the class's
+  holdout check. If a pull request could edit it, it could post `SUCCESS` itself.
+
+The `ready-to-merge` label (the class's `requiredLabel`) must exist on the repository. The adopt poller
+reads one page of 100 open pull requests: with 100 or more open it adopts nothing, and logs it, until
+some close. A class starts in `shadow`; a handed-off entry whose label was removed is not revived by
+labelling it again ([known limit](factory.md#adopted-classes)).
+
 ### Webhooks
 
 The broker's `webhooks` list declares the subscribers of [room events](api.md#webhooks). Each entry:
