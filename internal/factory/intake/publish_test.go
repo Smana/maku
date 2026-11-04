@@ -3,8 +3,10 @@
 package intake
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -162,6 +164,182 @@ func TestPublishRefusals(t *testing.T) {
 			if len(f.Created()) != 0 || !strings.Contains(cs, "did not publish #7's proposal") || !strings.Contains(cs, c.want) ||
 				!slices.Contains(f.Removed(7), LabelPublish) {
 				t.Fatalf("%d issues, comments %q, removed %v", len(f.Created()), cs, f.Removed(7))
+			}
+			if got := getTask(t, cl, "3buqdlot"); got.Status.Published != nil {
+				t.Fatalf("a refusal records nothing: %+v", got.Status.Published)
+			}
+		})
+	}
+}
+
+// The last gate is GitHub's own reading of the final title and body: whatever it renders live, or
+// cannot render, publishes nothing. The refusal answers once and consumes the label, as invalid_draft
+// and redacted do; the caller's footer, a deliberate mention, is added after it and never sent.
+func TestPublishRenderGate(t *testing.T) {
+	const title = "docs(alerts): the crash-loop rule fires on a completed Job"
+	mention := `<p dir="auto"><span class="user-mention">@x</span></p>`
+	for name, c := range map[string]struct {
+		render func(string) (string, error)
+		want   string
+	}{
+		"a link in the body": {func(s string) (string, error) {
+			if s == title {
+				return "<p>ok</p>", nil
+			}
+			return `<p><a href="https://evil.example">x</a></p>`, nil
+		}, "cannot make inert"},
+		"a link in the title": {func(s string) (string, error) {
+			if s == title {
+				return `<p><A HREF="https://evil.example">x</A></p>`, nil
+			}
+			return "<p>ok</p>", nil
+		}, "cannot make inert"},
+		"a mention's class": {func(string) (string, error) { return mention, nil }, "cannot make inert"},
+		"an issue link's class": {func(string) (string, error) {
+			return `<p><span class="x issue-link">#1</span></p>`, nil
+		}, "cannot make inert"},
+		"a commit link's class": {func(string) (string, error) {
+			return `<p><span class="commit-link">18e264e</span></p>`, nil
+		}, "cannot make inert"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, f, cl := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
+			f.SetRender(c.render)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			cs := strings.Join(f.Comments(7), "\n")
+			if len(f.Created()) != 0 || !strings.Contains(cs, "did not publish #7's proposal") || !strings.Contains(cs, c.want) ||
+				!slices.Contains(f.Removed(7), LabelPublish) {
+				t.Fatalf("%d issues, comments %q, removed %v", len(f.Created()), cs, f.Removed(7))
+			}
+			if got := getTask(t, cl, "3buqdlot"); got.Status.Published != nil {
+				t.Fatalf("a refusal records nothing: %+v", got.Status.Published)
+			}
+		})
+	}
+
+	t.Run("an inert page publishes, the footer never rendered", func(t *testing.T) {
+		p, f, _ := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
+		// Text in a page is no markup: GitHub escapes it, so a class name in a code span is harmless.
+		f.SetRender(func(string) (string, error) {
+			return `<h2 dir="auto">What is wrong</h2><p><code>class=&quot;user-mention&quot; issue-link &lt;a href</code></p>`, nil
+		})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 1 || !strings.Contains(f.Created()[0], "Published by @Smana") {
+			t.Fatalf("%q", f.Created())
+		}
+		got := f.Rendered()
+		if len(got) != 2 || got[0] != title || !strings.HasPrefix(got[1], "## What is wrong") {
+			t.Fatalf("rendered %q", got)
+		}
+		if strings.Contains(strings.Join(got, ""), "Published by") {
+			t.Fatalf("the footer was rendered: %q", got)
+		}
+	})
+
+	t.Run("a secret is never sent to be rendered", func(t *testing.T) {
+		aws := "AKIA" + "Z3QPLR7MXN2KWT5V"
+		text := strings.Replace(proposalOK, "The rule counts Job pods.", "key "+aws+" and secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYzZ3qLpTnVb", 1)
+		p, f, _ := publishing(t, text, investigated("3buqdlot"), "Smana")
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Rendered()) != 0 || !strings.Contains(strings.Join(f.Comments(7), ""), "looks like a secret") {
+			t.Fatalf("rendered %q, comments %q", f.Rendered(), f.Comments(7))
+		}
+	})
+
+	t.Run("what Public withholds is refused for what it is", func(t *testing.T) {
+		text := strings.Replace(proposalOK, "The rule counts Job pods.", "> | a |\n|---|\n| x | @Smana |", 1)
+		p, f, _ := publishing(t, text, investigated("3buqdlot"), "Smana")
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 0 || len(f.Rendered()) != 0 || !strings.Contains(strings.Join(f.Comments(7), ""), "cannot make inert") {
+			t.Fatalf("created %q, rendered %q, comments %q", f.Created(), f.Rendered(), f.Comments(7))
+		}
+	})
+}
+
+// A render that fails is no verdict on the proposal: as with a write check that fails, nothing is
+// filed or said, the label waits, and a later poll publishes once GitHub answers. Every poll of an
+// outage logs it.
+func TestPublishWaitsOutARenderOutage(t *testing.T) {
+	for name, cause := range map[string]string{"an error": "forge: 502", "a rate limit": "forge: secondary rate limit"} {
+		t.Run(name, func(t *testing.T) {
+			p, f, _ := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
+			var logged bytes.Buffer
+			p.Log = slog.New(slog.NewTextHandler(&logged, nil))
+			f.SetRender(func(string) (string, error) { return "", errors.New(cause) })
+			for poll := 1; poll <= 3; poll++ {
+				if err := p.Poll(t.Context()); err == nil {
+					t.Fatalf("poll %d: the outage was swallowed", poll)
+				}
+				if len(f.Created()) != 0 || len(f.Comments(7)) != 0 || len(f.Removed(7)) != 0 {
+					t.Fatalf("poll %d: created %q, comments %q, removed %v", poll, f.Created(), f.Comments(7), f.Removed(7))
+				}
+				if got := strings.Count(logged.String(), "could not be rendered"); got != poll {
+					t.Fatalf("poll %d: logged %d times: %s", poll, got, logged.String())
+				}
+			}
+			f.SetRender(nil)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.Created()) != 1 || !slices.Contains(f.Removed(7), LabelPublish) {
+				t.Fatalf("recovered: created %q, removed %v", f.Created(), f.Removed(7))
+			}
+		})
+	}
+}
+
+// Public's code spans break the redactor's rules: a token split by them matches none. So the raw
+// draft is scanned first, and a secret is refused with nothing sent to be rendered. Each token is
+// built here, from halves, so no literal sits in the source.
+func TestPublishScansTheDraftBeforeItIsMadeInert(t *testing.T) {
+	fold := func(s string) string { // fullwidth: no rule reads it until Text folds it
+		var b strings.Builder
+		for _, r := range s {
+			if r >= '!' && r <= '~' {
+				r += 0xFEE0
+			}
+			b.WriteRune(r)
+		}
+		return b.String()
+	}
+	hex36 := strings.Repeat("4f9a1c7e", 5)[:36]
+	slackBot := "xox" + "b-2846193750-3917264058-" + "aB3dE6gH9jK2mN5pQ8sT1vW4"
+	for name, c := range map[string]struct{ title, secret string }{
+		"a slack bot token":  {"", slackBot},
+		"a slack user token": {"", "xox" + "p-2846193750-3917264058-3917264058-" + hex36[:32]},
+		"a github pat":       {"", "gh" + "p_" + hex36},
+		"a github oauth":     {"", "gh" + "o_" + hex36},
+		"a github app token": {"", "gh" + "s_" + hex36},
+		"an npm token":       {"", "np" + "m_" + hex36},
+		"in the title":       {slackBot, ""},
+		"folded by Text":     {"", fold(slackBot)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := proposalOK
+			if c.title != "" {
+				text = strings.Replace(text, "completed Job\n", "completed "+c.title+"\n", 1)
+			}
+			if c.secret != "" {
+				text = strings.Replace(text, "The rule counts Job pods.", "see "+c.secret+" here", 1)
+			}
+			p, f, cl := publishing(t, text, investigated("3buqdlot"), "Smana")
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			cs := strings.Join(f.Comments(7), "\n")
+			if len(f.Created()) != 0 || !strings.Contains(cs, "looks like a secret") || !slices.Contains(f.Removed(7), LabelPublish) {
+				t.Fatalf("%d issues, comments %q", len(f.Created()), cs)
+			}
+			if got := f.Rendered(); len(got) != 0 {
+				t.Fatal("the draft was sent to be rendered")
 			}
 			if got := getTask(t, cl, "3buqdlot"); got.Status.Published != nil {
 				t.Fatalf("a refusal records nothing: %+v", got.Status.Published)

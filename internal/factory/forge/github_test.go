@@ -475,6 +475,16 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 	// An issue's comments as GitHub serves them: ascending id, paged, sort and direction ignored
 	// (review R1). Issue 7 has one comment; 9, 10 and 11 have 130, 180 and 60; 13 has two, the
 	// second edited after it was posted.
+	mux.HandleFunc("POST /markdown", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Text, Mode, Context string }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if in.Text == "refused" {
+			http.Error(w, `{"message":"You have exceeded a secondary rate limit"}`, http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html;charset=utf-8")
+		_, _ = fmt.Fprintf(w, "<p>%s %s %s</p>", in.Text, in.Mode, in.Context)
+	}))
 	mux.HandleFunc("POST /repos/Smana/demo/issues", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			Title, Body string
@@ -1823,6 +1833,19 @@ func TestIssuesAreOpenedLinkedAndClosed(t *testing.T) {
 	all, err := r.g.IssuesLabelled(ctx, "factory/child-of:#7")
 	if err != nil || len(all) != 1 || all[0].Number != 31 || all[0].ID != 3101 || !strings.Contains(all[0].Body, "split=3buqdlot/1") {
 		t.Fatalf("%+v %v", all, err)
+	}
+}
+
+// The render gate asks GitHub with this repository as the context, as an issue here would be read,
+// and a refusal, a rate limit among them, is an error and never an empty page.
+func TestRenderMarkdown(t *testing.T) {
+	r := newRig(t)
+	html, err := r.g.RenderMarkdown(t.Context(), "hello")
+	if err != nil || html != "<p>hello gfm Smana/demo</p>" {
+		t.Fatalf("%q %v", html, err)
+	}
+	if html, err := r.g.RenderMarkdown(t.Context(), "refused"); err == nil || html != "" {
+		t.Fatalf("a 403 was swallowed: %q %v", html, err)
 	}
 }
 

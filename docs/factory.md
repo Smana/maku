@@ -702,7 +702,7 @@ sequenceDiagram
   F-->>R: 201 task, stub issue (factory/proposed)
   Note over F: investigate: the triager's proposal stays in the room
   M->>F: label the stub factory/publish
-  F->>F: sanitise as public text, redact, CheckDraft
+  F->>F: CheckDraft, redact, sanitise as public text, redact, render through GitHub
   F->>F: infer the class from the proposal's ## Files
   F->>M: new issue (no trigger label, class:<c>), status.published recorded
   alt publishStarts
@@ -717,10 +717,26 @@ sequenceDiagram
 task. Only the last label event's actor counts, through the same maintainer and write checks as
 `factory/ready`; anyone else's is answered `unauthorised_labeller` and removed. The proposal is the
 last handoff to `implementer` that the task's triager run recorded itself. Its first line is the
-title and the rest the body, held to the issue template, then made inert (every link, bare URL,
-address, @mention and issue reference becomes a code span, no HTML survives, no hidden character), then scanned by the redactor.
-A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`) is a comment on the stub and
-the label removed; nothing is created. The factory files the issue **once per task**, with no trigger label (only a marker,
+title and the rest the body, held to the issue template, scanned by the redactor as written, then
+made inert (every link, bare URL, address, @mention and issue or commit reference becomes a code
+span, no HTML survives, no hidden character), scanned again, then rendered through GitHub's `POST /markdown` with the repository as context: any anchor or
+mention, issue or commit link in the page refuses it, title and body alike. The footer naming the
+maintainer is added after this gate, and is the one deliberate mention.
+A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`, `live_reference`) is a
+comment on the stub and the label removed, so a retry is a new label; nothing is created. A render
+that fails, a rate limit included, is no refusal: as when the write check gets no answer, nothing is
+filed or said, the error is logged and the label waits for the next poll.
+
+Making text inert has two independent checks, because no parser here is GitHub's. A last scan that
+does not use goldmark trusts only a backtick span on one line and a fence opening and closing at
+column 0. If it finds a form anywhere else the text is withheld (`live_reference`), as it is for an
+unclosed column-0 fence, which would swallow the footer. Indented code and nested fences move to a
+column-0 fence first, which ends a surrounding list or quote there, so their content is kept. What
+is still refused when it holds a link or a reference: an inline code span over several lines, a
+code span with a pipe in a document that has a table, a table cell beyond its header's columns,
+and an ordered list numbered like a commit.
+
+The factory files the issue **once per task**, with no trigger label (only a marker,
 `factory/published-from:<task>`, which grants nothing and lets a retry after a crash find the issue
 instead of filing a second): the maintainer reads it on GitHub and starts it with `factory/ready`, which is the second, money
 spending decision. With `publishStarts` on the principal, `factory/publish` is that decision too (see below).

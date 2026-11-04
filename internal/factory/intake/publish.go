@@ -279,19 +279,45 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 	if err != nil {
 		return "", "", "invalid_draft", nil
 	}
+	if p.Redact == nil {
+		return "", "", "redacted", nil // no scan, no publication
+	}
+	// Before Public, whose code spans split a token so that no rule matches it; and again after Text,
+	// whose fold can turn a fullwidth token, which no rule reads, into one Public would then split.
+	foldedTitle, _ := sanitize.Text(d.Title)
+	foldedBody, _ := sanitize.Text(d.Body)
+	for _, text := range []string{d.Title + "\n" + d.Body, foldedTitle + "\n" + foldedBody} {
+		if _, rules := p.Redact.String(text); len(rules) > 0 {
+			return "", "", "redacted", nil
+		}
+	}
 	title, tr := sanitize.Public(d.Title)
 	body, br := sanitize.Public(d.Body)
 	if tr.Withheld || br.Withheld {
-		return "", "", "invalid_draft", nil
-	}
-	if p.Redact == nil {
-		return "", "", "redacted", nil // no scan, no publication
+		return "", "", "live_reference", nil
 	}
 	if _, rules := p.Redact.String(title + "\n" + body); len(rules) > 0 {
 		return "", "", "redacted", nil
 	}
+	// After the redactor, so a secret never leaves for GitHub, and before the caller's footer, whose
+	// mention is deliberate.
+	for _, text := range []string{title, body} {
+		page, err := p.Forge.RenderMarkdown(ctx, text)
+		if err != nil {
+			p.log().Error("the proposal could not be rendered to check it", "task", t.Name, "error", err)
+			return "", "", "", fmt.Errorf("render the proposal: %w", err) // no answer is no refusal: the label waits for the next poll
+		}
+		if renderedLive.MatchString(page) {
+			return "", "", "live_reference", nil
+		}
+	}
 	return title, body, "", nil
 }
+
+// renderedLive is what makes a page GitHub rendered something more than text: any anchor, or the
+// classes it gives a mention, an issue link or a commit link. GitHub escapes the text it shows, so
+// neither a code span nor a paragraph can spell this. Its API gives a heading no anchor.
+var renderedLive = regexp.MustCompile(`(?i)<a[\s>/]|class="[^"]*\b(?:user-mention|team-mention|issue-link|commit-link)\b`)
 
 // ErrNoProposal is what a Proposal reader answers when the task has none.
 var ErrNoProposal = errors.New("intake: the task has no proposal")

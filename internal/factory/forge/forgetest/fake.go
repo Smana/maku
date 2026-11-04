@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"html"
 	"maps"
 	"slices"
 	"strings"
@@ -77,6 +78,8 @@ type Fake struct {
 	blameErr     map[string]error
 	subErr       error
 	createErr    error
+	render       func(string) (string, error)
+	rendered     []string
 	listErr      error
 	closeErr     error
 	nextID       int64
@@ -345,6 +348,32 @@ func (f *Fake) FailSubIssues(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.subErr = err
+}
+
+// RenderMarkdown implements the forge's RenderMarkdown: an inert page of the escaped text, unless
+// SetRender says otherwise. It records what it was asked.
+func (f *Fake) RenderMarkdown(_ context.Context, text string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rendered = append(f.rendered, text)
+	if f.render != nil {
+		return f.render(text)
+	}
+	return "<p>" + html.EscapeString(text) + "</p>", nil
+}
+
+// SetRender sets what RenderMarkdown answers.
+func (f *Fake) SetRender(render func(text string) (string, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.render = render
+}
+
+// Rendered is what RenderMarkdown was asked, in order.
+func (f *Fake) Rendered() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.rendered)
 }
 
 // FailCreates makes every CreateIssue fail with err.
