@@ -516,7 +516,11 @@ func TestPublishStarts(t *testing.T) {
 		}
 	})
 
-	for name, hide := range map[string]bool{"": false, " with a lagging List": true} {
+	for _, hide := range []bool{false, true} {
+		name := ""
+		if hide {
+			name = " with a lagging List"
+		}
 		t.Run("factory/ready seen with the retry: the start wins, one Task and one charge (K13)"+name, func(t *testing.T) {
 			p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
 			failTaskCreateOnce(p, c)
