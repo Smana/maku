@@ -704,7 +704,7 @@ ids and closed codes only: never room text, a title, a branch or a message.
 | `room.ended` | The task's first coarse end: `done`, `failed` or `stopped` | `state` |
 
 A task event fires on a change of phase only: the factory rewrites a phase's facts (budget, run,
-pull request) without a new event. `repo` is on `task_received` and `task_triaged` only.
+pull request) without a new event. `repo` is on `task_received`, `task_triaged` and `room.monitor_verdict` only.
 `verdict_posted` is sent once GitHub accepted the comment, not when it was attempted.
 
 `origin` is on **every** event of a room whose task was started from an issue the factory published

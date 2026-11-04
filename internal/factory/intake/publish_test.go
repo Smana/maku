@@ -616,3 +616,39 @@ func TestFactoryReadyAfterAPublishedStartIsGenerationOne(t *testing.T) {
 		t.Fatalf("%+v", fix.Spec)
 	}
 }
+
+// A crash or a failed comment after the Task is created: the retry announces the start that
+// happened, never "label it factory/ready" beside a running fix.
+func TestPublishRetryAnnouncesTheStartThatHappened(t *testing.T) {
+	t.Run("the record is missing", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			return errors.New("no record") // the record fails; the Task is already created
+		}})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		f.SetLabeled(LabelPublish, forge.Item{Number: 7})
+		p.Client = c
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if cs := commentsOf(f, 7); !strings.Contains(cs, "The fix started at once") || len(tasks(t, c)) != 2 {
+			t.Fatalf("%d tasks, %q", len(tasks(t, c)), cs)
+		}
+	})
+	t.Run("the comment failed after the record", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		f.SetComments(7) // the comment never landed
+		f.SetLabeled(LabelPublish, forge.Item{Number: 7})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if cs := commentsOf(f, 7); !strings.Contains(cs, "The fix started at once") || strings.Contains(cs, "label it `factory/ready`") || len(tasks(t, c)) != 2 {
+			t.Fatalf("%d tasks, %q", len(tasks(t, c)), cs)
+		}
+	})
+}

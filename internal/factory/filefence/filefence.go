@@ -114,9 +114,10 @@ func Refusal(cl config.Class, stats []forge.FileStat) string {
 }
 
 // Infer is the class a change to paths belongs to (RunLore KB, RK15): among the classes that
-// declare allowedFiles and are neither review, revert, adopted nor oracle-backed, the one whose
+// declare allowedFiles and are neither review, revert, adopted, live nor oracle-backed, the one whose
 // allowedFiles admit every path and whose protectedFiles admit none. "review" when none or several
-// do, or paths is empty: an ambiguous scope infers nothing.
+// do, or paths is empty: an ambiguous scope infers nothing. A live class is never inferred: a list
+// the triager wrote from alert text must not choose a class that merges by itself.
 func Infer(classes map[string]config.Class, paths []string) string {
 	if len(paths) == 0 {
 		return "review"
@@ -127,7 +128,7 @@ func Infer(classes map[string]config.Class, paths []string) string {
 	}
 	match := ""
 	for name, cl := range classes {
-		if name == "review" || name == "revert" || cl.Adopted() || cl.Oracle != nil || len(cl.AllowedFiles) == 0 {
+		if name == "review" || name == "revert" || cl.Adopted() || cl.Live || cl.Oracle != nil || len(cl.AllowedFiles) == 0 {
 			continue
 		}
 		if AllowedFiles(cl, stats) != "" || ProtectedFiles(cl, stats) != "" {

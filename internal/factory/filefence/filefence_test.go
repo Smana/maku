@@ -48,6 +48,8 @@ func TestInferOnTheHostsClasses(t *testing.T) {
 	}
 	obs := classes()
 	obs["obs"] = config.Class{AllowedFiles: []string{`^observability/.+$`}}
+	live := classes()
+	live["alert-rules"] = config.Class{AllowedFiles: []string{`^observability/.+\.ya?ml$`}, Live: true}
 	obsProtected := classes()
 	obsProtected["obs"] = config.Class{AllowedFiles: []string{`^observability/.+$`}, ProtectedFiles: []string{`^observability/`}}
 	for name, c := range map[string]struct {
@@ -60,6 +62,7 @@ func TestInferOnTheHostsClasses(t *testing.T) {
 		"none":                 {classes(), nil, "review"},
 		"the oracle class's":   {classes(), []string{"docs/a.md"}, "review"},
 		"the adopted classes'": {classes(), []string{"apps/x.yaml"}, "review"},
+		"a live class":         {live, []string{"observability/base/rules/apps.yaml"}, "review"},
 		"two match":            {obs, []string{"observability/a.yaml"}, "review"},
 		"protected breaks tie": {obsProtected, []string{"observability/a.yaml"}, "alert-rules"},
 	} {

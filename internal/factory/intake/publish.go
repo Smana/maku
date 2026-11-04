@@ -90,7 +90,14 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 	case t == nil:
 		return p.refusePublish(ctx, n, last, "no_proposal")
 	case t.Status.Published != nil: // once per task: the label points at what was filed
-		if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), narrate.Published(n, t.Status.Published.Issue, t.Status.Published.By)); err != nil {
+		pub := t.Status.Published
+		e := narrate.Published(n, pub.Issue, pub.By)
+		if name, err := p.startedFix(ctx, t, pub.Issue); err != nil {
+			return err
+		} else if name != "" { // the start happened and its comment did not: say so, not "label it factory/ready"
+			e = narrate.PublishedStarted(pub.Issue, pub.By, name, pub.Class)
+		}
+		if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
 			return err
 		}
 		return p.Forge.RemoveLabel(ctx, n, LabelPublish)
@@ -175,6 +182,9 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 // to by (K6): the Task's name, "" when nothing starts. Nothing starts while any Task exists on the
 // issue (K13), or when the issue was edited since it was filed or its text is withheld (K7).
 func (p *IssuePoller) startPublished(ctx context.Context, origin *v1alpha1.Task, n int, by, class string) (string, error) {
+	if name, err := p.startedFix(ctx, origin, n); err != nil || name != "" {
+		return name, err // an earlier attempt's start: announced, not repeated
+	}
 	var l v1alpha1.TaskList
 	if err := p.Client.List(ctx, &l, client.InNamespace(p.Namespace), client.MatchingLabels{v1alpha1.LabelIssue: strconv.Itoa(n)}); err != nil {
 		return "", fmt.Errorf("list tasks: %w", err)
@@ -207,6 +217,23 @@ func (p *IssuePoller) startPublished(ctx context.Context, origin *v1alpha1.Task,
 		return "", fmt.Errorf("create task %s: %w", t.Name, err) // AlreadyExists is the dedup
 	}
 	return t.Name, nil
+}
+
+// startedFix is the name of issue n's generation-0 Task when origin's own publish started it, ""
+// otherwise: only that Task, never another Task of the issue, is the start a retry announces.
+func (p *IssuePoller) startedFix(ctx context.Context, origin *v1alpha1.Task, n int) (string, error) {
+	var t v1alpha1.Task
+	name := taskid.Name(taskid.IssueKey(p.repo().Name, n, 0))
+	switch err := p.Client.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: name}, &t); {
+	case apierrors.IsNotFound(err):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("get task %s: %w", name, err)
+	}
+	if t.Spec.Origin != origin.Name || !p.owns(&t) {
+		return "", nil
+	}
+	return name, nil
 }
 
 // PublishedFromLabel marks the issue filed from task name's proposal: the retry's way to find it.

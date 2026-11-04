@@ -387,7 +387,7 @@ Off until `api.internalPrincipals` is written (same prerequisites as a sponsored
 `api.projectIDFile`, `meter.prices`, the client id file). `maku_factory_api_intake_total` counts its
 requests under `principal="system:<name>"`. The `factory/publish` label must exist on each
 repository the factory serves, as `factory/ready` does; the factory removes it once it has answered.
-An issue the factory filed from a proposal carries no label: the maintainer applies `factory/ready`.
+An issue the factory filed from a proposal carries a marker label and `class:<c>`; the maintainer applies `factory/ready`, unless `publishStarts` already started the fix.
 
 **RunLore's verdict.** Off until an internal principal has `verification: true` and a class declares
 `monitor.verification.within`; the route is a `404` before. The `runlore:` block (the old
@@ -395,8 +395,8 @@ An issue the factory filed from a proposal carries no label: the maintainer appl
 `maku_factory_monitor_verifications_total{verdict="none"}`: a verdict that never arrives.
 
 **Starting the fix from the label.** `publishStarts: true` on an internal principal makes `factory/publish` also start the
-fix, charged to the maintainer who labelled (see [`factory/publish`](factory.md#internal-principals)). It is off by default. The
-factory labels the issue it files `class:<c>`, the class inferred from the proposal's `## Files` (`review` when none fits), so each
+fix, charged to the maintainer who labelled (see [`factory/publish`](factory.md#internal-principals)). Only that start is off by default. The
+factory labels every issue it files `class:<c>`, with or without `publishStarts`: the class inferred from the proposal's `## Files` (`review` when none fits; a live class is never inferred), so each
 `class:<c>` label must exist on the repository, as `factory/ready` does. A `class:` label a maintainer applies takes precedence.
 
 **Roll the broker first.** The broker decodes task facts strictly: the factory posts `origin` and `monitor` in

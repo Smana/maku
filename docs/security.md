@@ -230,7 +230,7 @@ Task `Escalated` with `budget-person`, and a later `factory/ready` on the issue 
 
 ## Webhooks
 
-An event carries ids and closed codes only, never room text: `reason`, `limit` and `state` are
+An event carries ids and closed codes only, never room text: `reason`, `limit`, `state` and `verdict` are
 clipped to fixed lists, and any other value is sent as `other`. A message is never decoded to build
 an event.
 
