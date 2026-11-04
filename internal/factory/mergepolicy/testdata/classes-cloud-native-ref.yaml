@@ -1,0 +1,102 @@
+# Smana/cloud-native-ref's classes as ai-native-ref declares them centrally: copied, not edited.
+alert-rules:
+  allowedFiles:
+  - ^observability/.+\.ya?ml$
+  monitor:
+    followUpWindow: 2h
+    verification:
+      within: 2h
+  shadow: true
+dashboards: {}
+dead-links:
+  allowedFiles:
+  - ^(docs|website/content)/.+\.md$
+  diffShape: links-only
+  holdoutChecks:
+  - External links 🔗
+  maxModifiedLines: 20
+  maxPerDay: 1
+  modifyOnly: true
+  monitor:
+    followUpWindow: 168h
+    oracleRuns: 2
+  oracle:
+    maxFindings: 10
+    probe: dead-links
+    workflow: dead-links.yaml
+  protectedFiles:
+  - ^docs/(superpowers|specs)/
+  - ^website/content/docs/decisions/
+  shadow: true
+deps-minor:
+  allowedFiles:
+  - ^(apps|flux|infrastructure|observability|security|tooling)/.+\.ya?ml$
+  author:
+    adopt:
+      branches:
+      - ^renovate/
+      logins:
+      - renovate[bot]
+  diffShape: semver-minor
+  maxModifiedLines: 10
+  maxPatchFiles: 3
+  modifyOnly: true
+  monitor:
+    flux:
+      source: flux-system/flux-system
+      within: 1h
+    followUpWindow: 168h
+  protectedFiles:
+  - ^security/base/zitadel/
+  - ^security/(aws|gcp)-0/zitadel/
+  - ^flux/sources/helmrepo-zitadel\.yaml$
+  - ^infrastructure/base/crossplane/configuration-core/
+  - ^flux/sources/gitrepo-gateway-api\.yaml$
+  - ^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\.yaml$
+  releaseAgeCheck: renovate/stability-days
+  shadow: true
+deps-patch:
+  allowedFiles:
+  - ^(apps|flux|infrastructure|observability|security|tooling)/.+\.ya?ml$
+  author:
+    adopt:
+      branches:
+      - ^renovate/
+      logins:
+      - renovate[bot]
+  diffShape: semver-patch
+  maxModifiedLines: 10
+  maxPatchFiles: 3
+  maxPerDay: 2
+  modifyOnly: true
+  monitor:
+    flux:
+      source: flux-system/flux-system
+      within: 1h
+    followUpWindow: 168h
+  protectedFiles:
+  - ^security/base/zitadel/
+  - ^security/(aws|gcp)-0/zitadel/
+  - ^flux/sources/helmrepo-zitadel\.yaml$
+  - ^infrastructure/base/crossplane/configuration-core/
+  - ^flux/sources/gitrepo-gateway-api\.yaml$
+  - ^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\.yaml$
+  releaseAgeCheck: renovate/stability-days
+  shadow: true
+docs:
+  checks: true
+docs-links:
+  holdoutChecks:
+  - Check the documentation links 🔗
+  live: true
+revert:
+  holdoutChecks:
+  - Check the documentation links 🔗
+  live: true
+review:
+  checks: false
+  testFirst: false
+scripts:
+  checks: false
+  testFirst: false
+tests: {}

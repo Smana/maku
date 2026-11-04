@@ -1,0 +1,34 @@
+# Smana/ai-native-ref's classes as ai-native-ref declares them centrally: copied, not edited.
+dashboards: {}
+dead-links:
+  allowedFiles:
+  - ^(docs|website/content)/.+\.md$
+  diffShape: links-only
+  holdoutChecks:
+  - External links 🔗
+  maxModifiedLines: 20
+  maxPerDay: 1
+  modifyOnly: true
+  monitor:
+    followUpWindow: 168h
+    oracleRuns: 2
+  oracle:
+    maxFindings: 10
+    probe: dead-links
+    workflow: dead-links.yaml
+  protectedFiles:
+  - ^docs/(superpowers|specs)/
+  - ^website/content/docs/decisions/
+  shadow: true
+docs:
+  checks: true
+docs-links:
+  holdoutChecks:
+  - validate
+  shadow: true
+revert:
+  holdoutChecks:
+  - validate
+  shadow: true
+scripts: {}
+tests: {}
