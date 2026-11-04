@@ -412,7 +412,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("Reads of a repository's merge policy that failed: invalid, or over a guardrail."))
 	check(err)
 	s.policyDivergence, err = meter.Int64Gauge("agent_factory_policy_central_divergence",
-		metric.WithDescription("Classes on which a repository's merge policy differs from the central config, as last read: 0 is equivalent; a repository with no policy has no series."))
+		metric.WithDescription("Classes on which a repository's merge policy differs from the central config, as last compared: 0 is equivalent. A repository never compared has no series; the value is the last comparison's."))
 	check(err)
 	s.refusals, err = meter.Int64Counter("agent_factory_admission_refusals_total",
 		metric.WithDescription("Run requests refused on their repository: bound to another, no write on GitHub, or not this factory's."))

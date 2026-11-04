@@ -1483,7 +1483,8 @@ factory: aws-0
 ```
 
 Every replica reads each listed repository's file at start and every 5 minutes, with the factory
-App. Absent, unparsable (the file names the factory with `factory: <name>`, and may also hold `classes`, which never decides ownership) or naming another factory, the repository
+App. Absent, unparsable (the file names the factory with `factory: <name>`, and may also hold
+`classes`, which never decides ownership) or naming another factory, the repository
 gets no trigger-label or revert intake, no orphan scan, no schedules, no RunLore issues
 (`409 repository_not_owned`), no API runs (`409 repository_not_owned`) and no merges (gate step
 `not_owned`, a human merges). Stop labels and the control issue still work. A read that fails keeps

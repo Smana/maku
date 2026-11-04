@@ -47,9 +47,11 @@ type Watch struct {
 	state map[string]Snapshot
 }
 
-// Observe reads one file. A file with no classes has no policy and records no divergence: a series
-// means a policy was compared, so 0 is never "nothing to compare". It logs only when the file or its result changes: the fence reads every
-// five minutes. The load-error counter counts every failed read, so a rate shows it is still bad.
+// Observe reads one file. A file with no classes has no policy and records no divergence, and a
+// failed read records none either: the gauge keeps the last comparison's value, and a repository
+// never compared has no series, so 0 is never "nothing to compare". It logs only when the file or
+// its result changes: the fence reads every five minutes. The load-error counter counts every
+// failed read, so a rate shows it is still bad.
 func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 	rc := w.listed(repository)
 	if rc == nil {
