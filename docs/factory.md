@@ -4,8 +4,8 @@ A maintainer labels an issue; the factory turns it into a task, runs agents on i
 narrates each step on the issue, and stops at its budget. The agent run opens the pull request;
 the factory watches it through CI and its merge gate. Humans steer through GitHub reviews and
 comments, or from the task's room. Only low-risk classes the config marks `live` merge
-themselves; a `shadow` class is decided the same way and never merged. cloud-native-ref's
-config runs two classes (`docs-links`, `revert`) in shadow.
+themselves; a `shadow` class is decided the same way and never merged. On cloud-native-ref,
+`docs-links` and `revert` are live; on ai-native-ref, they are in shadow.
 
 ```mermaid
 flowchart LR
