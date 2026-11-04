@@ -88,6 +88,9 @@ func (st State) Clone() State {
 		m := *st.PrevLLM
 		c.PrevLLM = &m
 	}
+	c.flow.runs = slices.Clone(st.flow.runs)
+	c.flow.phases = slices.Clone(st.flow.phases)
+	c.flow.requested = slices.Clone(st.flow.requested)
 	return c
 }
 
