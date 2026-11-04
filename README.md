@@ -1,96 +1,159 @@
-# maku
+# Maku
 
-<a href="docs/naming.md">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/png/maku-lockup-horizontal-dark.png">
-    <img src="docs/assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku, a controlled stage for delegated agent work" width="300">
-  </picture>
-</a>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/png/maku-lockup-horizontal-dark.png">
+  <img src="docs/assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku" width="300">
+</picture>
 
-Maku is the product, the repository, the module and the CLI (`maku`); its components are `maku-*`. Kubernetes identities (ServiceAccounts, Services, audiences) keep their earlier names ([naming](docs/naming.md#technical-names)).
+**Run coding agents on your own Kubernetes cluster without having to trust them.**
 
-**Run coding agents on your Kubernetes cluster without trusting them.**
+Label a GitHub issue and Maku takes it from there: it picks a model and a budget, runs agents in
+isolated sandboxes, and brings back a pull request. You can watch every step live, steer the agent,
+approve what it may not do alone, or stop it. Whatever happens is kept in a record nobody can
+rewrite, the agent included.
 
-- **Sandboxed:** every run is an isolated pod holding only [short-lived, scoped credentials](docs/quickstart.md#what-differs-from-production), inside [a budget it cannot raise](docs/quickstart.md#what-differs-from-production).
-- **Supervised:** approvals, steering and the merge gate sit outside the sandbox, with humans.
-- **On the record:** every run streams into a room that nobody can rewrite, the agent included.
+Every control sits outside the agent. A run can't raise its own budget, widen its own network access
+or approve its own merge, however it was prompted. That is what makes it reasonable to leave agents
+working unattended on real repositories.
 
 <a href="https://blog.ogenki.io/maku/">
-  <img alt="A 44-second screencast in light mode: the room list refreshing on its own every 10 seconds, then the live demo replaying a factory run: the agent's commands and a failing test, a human steering it, the push held for approval, and the room ending on its Next box, the reviewer approved and a maintainer merges the pull request" src="docs/assets/maku-room.webp" width="800">
+  <img alt="A 38-second screencast in light mode, the run rail as its subject: the room list, then a live demo replaying a factory run. The camera closes on the rail as the implementer node appears with the reviewer and merge steps still ahead, pulls back for a human steering the agent and for the push held on its approval card, then closes on the rail again as the reviewer node draws with its edge from the pull request and ends on approve. Last, a finished task's rail replays up close: scoper, tester, implementer and reviewer light up in turn with the edges between them, the milestones fill to Done, and the implementer's card lists every model that served it" src="docs/assets/maku-room.webp" width="800">
 </a>
 
-**[Watch a run in the live demo →](https://blog.ogenki.io/maku/)** · [How it works](#how-it-works) · [What's a room?](#whats-a-room)
+**[Watch a run in the live demo →](https://blog.ogenki.io/maku/)** · **[Try it on your laptop →](docs/quickstart.md)**
 
-**[Try it on your laptop →](docs/quickstart.md)** · one command, Linux and Docker, no cloud.
+## Main features
 
-## What's a room?
+### From issue to pull request
 
-A room is a flight recorder and a group chat for one piece of agent work. While the run is live,
-you watch every step, steer the agent, and approve what it may not do alone. Afterwards the room
-stays: an ordered, redacted record that nobody can edit, which you audit, fork from any message, or
-hand to the next run.
+- **Label to start.** A maintainer's `factory/ready` label starts a task; the same label from anyone
+  else starts nothing. Tasks can also come from a Slack thread, a schedule, a
+  [RunLore](docs/factory.md#triggers) finding, or your own coding agent.
+- **Triage.** Each task gets a template (who runs, in what order) and a tier (model, deadline, token
+  budget), chosen once. See [tiers and templates](docs/factory.md#triage-tiers-templates-classes).
+- **Agents that check each other.** An implementer opens the pull request on an `agent/<task>`
+  branch and a reviewer gives its verdict. A tester can write the failing test first, and a large
+  task can be [split](docs/factory.md#splits).
+- **Narrated on GitHub.** The factory comments each step on the issue and pull request. A **Request
+  changes** review sends the work back to an agent on the same branch.
 
-Why you can trust that record:
+### Sandboxed and bounded
 
-- **Append-only.** The broker's database role can insert and read events, never update or delete
-  them ([the room log](docs/room-log.md#the-guarantees)).
-- **Redacted first.** Secrets are detected and removed before an event is stored, logged or
-  counted ([security](docs/security.md)).
-- **Attributed.** Every event carries an identity the broker stamped from a verified credential,
-  never one the sender claimed ([principals](docs/security.md)).
+- **Isolated runs.** Each agent gets its own gVisor pod behind a default-deny network policy with an
+  egress allowlist. Nothing dials into a sandbox.
+- **Short-lived, scoped credentials.** They're minted for one run alone, so a reviewer can't push.
+- **Budgets it can't raise.** [Per-run and per-task caps](docs/factory.md#budgets), in tokens or USD,
+  are enforced from outside the sandbox. A run that reaches its cap is revoked.
+- **A kill switch.** One [stop object or label](docs/factory.md#the-kill-switch) ends every task and
+  pauses intake.
+
+### Rooms: live and on the record
+
+A room is a flight recorder and a group chat for one piece of agent work.
+
+- **Watch and steer.** Follow each command and its output as it happens, and redirect the agent
+  mid-run from the [web UI](docs/web-ui.md).
+- **Approvals.** The push waits for your decision, and the card shows the raw action rather than the
+  agent's description of it.
+- **A record you can trust.** The broker's database role can only read and insert events
+  ([the guarantees](docs/room-log.md#the-guarantees)). Secrets are [redacted](docs/security.md#redaction)
+  before anything is stored, and each event carries an identity taken from a verified credential.
+- **Fork and hand off.** [Start a new room](docs/web-ui.md#forks) from any message, or hand the
+  context to the next run.
+
+### A merge gate for low-risk changes
+
+- **Humans merge by default.** Only a class of change you mark `live` merges itself, and only when
+  [every check holds](docs/factory.md#the-merge-gate): the diff's shape, its files, its size, CI.
+- **Try before arming.** A `shadow` class is decided the same way but never merged, so you can read
+  its decisions first.
+- **A way back.** After a merge, `main` is watched and a red result opens a revert. Reverts count
+  towards a breaker that pauses the class.
+- **Proof, not trust.** An [oracle class](docs/factory.md#oracle-classes) such as `dead-links` has a
+  detector that says what is wrong, and the gate proves the pull request fixed exactly that.
+
+### Where you already work
+
+- **`maku` CLI.** [Read a task's status, follow its log, post a note or fork a room](docs/cli.md)
+  from a terminal.
+- **Your coding agent.** `maku setup` registers an [MCP server](docs/cli.md#the-mcp-server) and a
+  [handoff skill](docs/cli.md#the-factory-handoff-skill) for Claude Code, Codex, Copilot, Cursor,
+  Gemini and OpenCode.
+- **Slack.** [A mention drafts an issue](docs/slack.md), a maintainer's check mark files it, and the
+  thread follows its progress.
+- **Observability.** [Prometheus metrics and alerts](docs/operations.md), and a trace per task.
 
 ## How it works
 
 ```mermaid
 flowchart LR
   issue["Issue<br/>factory/ready"] --> triage["Triage<br/>tier · budget"] --> run["Sandboxed run<br/>gVisor pod"]
-  run --> room[("Room<br/>live · permanent")]
-  run --> pr["Pull request"] --> merge{"Human merge"}
+  run --> room[("Room<br/>live · kept")]
+  humans["Humans<br/>watch · steer · approve"] <--> room
+  run --> pr["Pull request"] --> gate{"Merge gate"}
+  gate -->|"low-risk, every check holds"| merged["Merged<br/>main watched"]
+  gate -->|"anything else"| human["A maintainer<br/>reviews and merges"]
 ```
 
-1. **Issue.** A maintainer labels an issue `factory/ready`. The same label from anyone else starts nothing.
-2. **Triage.** The factory picks the task's template and its tier, which sets the model, the deadline and the token budget, once.
-3. **Sandboxed run.** Each agent runs in its own gVisor pod behind a default-deny network policy, with short-lived credentials minted for that run alone.
-4. **Room.** The run streams every step into its room: live while it works, kept after it ends.
-5. **Pull request.** The implementer run opens the pull request on an `agent/<task>` branch, and a reviewer run gives its verdict.
-6. **Human merge.** A maintainer merges. Only a low-risk class the config marks `live` merges itself, after every check holds; a `shadow` class is decided the same way and never merged.
+| Component | Role |
+|---|---|
+| `maku-factory` | Turns a labelled issue into a task, runs its agents, narrates, and applies the merge gate |
+| `maku-broker` | The log of record: authenticates writers, redacts and orders events, serves the web UI and the APIs |
+| `maku-bridge` | A sidecar in each run's pod that pushes the agent's events to the broker and carries steering back |
+| `maku-harness` | The image a run executes in: the OpenHands agent-server, plus `gh` |
+| `maku-run-controller` | Turns an `AgentRun` into a sandboxed pod, on clusters without cloud-native-ref's runtime |
+| `maku-slack` | The Slack App |
+| `maku` | The terminal client for people, and the MCP relay for their coding agents |
 
-## Who it's for
+Details, ports and trust boundaries are in [Architecture](docs/architecture.md).
 
-For platform teams who want coding agents on their cluster, under their own rules.
+## Get started
 
-Not for: a hosted service. A laptop trial exists, scaled down (see the quickstart).
+| You want | Start at | What you get |
+|---|---|---|
+| To try it | [Quickstart](docs/quickstart.md): Linux and Docker, no cloud | A room and a real sandboxed run. No factory, budgets or sign-in: [what differs from production](docs/quickstart.md#what-differs-from-production) |
+| The whole platform | [ai-native-ref](https://github.com/Smana/ai-native-ref) | The factory with its gateway, identities, policies and dashboards, deployed with GitOps |
+| To fit it into your own cluster | [Integration](docs/integration.md) | What each piece needs and what to pin |
+
+```bash
+git clone https://github.com/Smana/maku && cd maku
+export MODEL_API_KEY=… GITHUB_TOKEN=… REPO=owner/throwaway
+task quickstart    # kind, Cilium, gVisor, cert-manager, CNPG, the chart and maku
+```
+
+Use a token scoped to a throwaway repository: on a laptop, the agent can read it. The
+[quickstart](docs/quickstart.md#start-a-run) continues from there.
 
 ## Status
 
-In daily use on one cloud for one public repository, with the merge gate in shadow; the version and its notes are on the [latest release](https://github.com/Smana/maku/releases/latest). It
-runs today on [cloud-native-ref](https://github.com/Smana/cloud-native-ref); the [quickstart](docs/quickstart.md) runs it on a laptop (kind, Linux and Docker). What is proven live and what comes next is on the
-platform's [status page](https://github.com/Smana/cloud-native-ref/blob/main/website/content/docs/platform/ai-platform/status.md).
+Maku runs daily as part of the Agent Factory, on AWS and GCP. There's one maintainer, and the API and
+CRDs are still `v1alpha1`. What is proven live and what comes next is on the
+[status page](https://airef.ogenki.io/docs/status/), and each version's notes are on the
+[latest release](https://github.com/Smana/maku/releases/latest).
 
-## Start here
+Maku is for platform teams who want coding agents under their own rules. It isn't a hosted service.
 
-| You are | Start at |
+## Documentation
+
+| You are | Read |
 |---|---|
 | New here | [Concepts](docs/concepts.md), then [Architecture](docs/architecture.md) |
 | A maintainer with a factory issue or PR | [The factory](docs/factory.md) |
-| A developer who wants the CLI | [maku](docs/cli.md) |
+| Following a run | [Web UI](docs/web-ui.md) and [the `maku` CLI](docs/cli.md) |
+| Assessing the risk | [Security](docs/security.md): the threat model and what each control leaves open |
 | Operating a cluster | [Integration](docs/integration.md), then [Operations](docs/operations.md) |
 | Changing the code | [AGENTS.md](AGENTS.md), then [Development](docs/development.md) |
 
-Every page is indexed in [docs/](docs/README.md). The binaries, images, ports and release
-mechanics are in [Architecture](docs/architecture.md#binaries-images-and-releases).
+Every page is indexed in [docs/](docs/README.md).
 
-## Develop
+## Contributing
 
 ```bash
-mise install    # Go, golangci-lint, task, govulncheck, pinned in mise.toml
-task check      # every gate CI runs (see AGENTS.md)
+mise install    # the tools, pinned in mise.toml
+task check      # every gate CI runs; store tests need a running Docker daemon
 ```
 
-Store tests use testcontainers, so they need a running Docker daemon.
-
-CI also runs CodeQL on every PR and weekly, and OpenSSF Scorecard weekly on `main`. Report
-vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
 ## Support this work
 

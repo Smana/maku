@@ -148,6 +148,16 @@ func openPull(n int, nodeID, author, head string) string {
 		n, nodeID, n, author, head, n)
 }
 
+// openPullLabelled is openPull with the labels GET /pulls carries.
+func openPullLabelled(n int, nodeID, author, head string, labels ...string) string {
+	ls := make([]string, 0, len(labels))
+	for _, l := range labels {
+		ls = append(ls, fmt.Sprintf(`{"name":%q}`, l))
+	}
+	p := openPull(n, nodeID, author, head)
+	return strings.TrimSuffix(p, "}") + `,"labels":[` + strings.Join(ls, ",") + `]}`
+}
+
 func (g *fakeGitHub) addOpen(p string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -2091,5 +2101,19 @@ func TestACommentRefusedForGoodIsPermanent(t *testing.T) {
 	var pe *PermanentError
 	if _, err := r.g.RecentComments(t.Context(), 404); !errors.As(err, &pe) || pe.Status != http.StatusNotFound {
 		t.Fatalf("the marker read of a deleted issue: %v", err)
+	}
+}
+
+// K11: the poller reads each open pull request's labels from the list, in the order GitHub gives them.
+func TestOpenPullRequestsCarryTheirLabels(t *testing.T) {
+	r := newRig(t)
+	r.gh.addOpen(openPullLabelled(21, "PR_21", "runlore[bot]", "runlore/kb-x-1", "ready-to-merge", "kb"))
+	r.gh.addOpen(openPull(22, "PR_22", "runlore[bot]", "runlore/kb-y-1"))
+	prs, err := r.g.OpenPullRequests(t.Context())
+	if err != nil || len(prs) != 2 {
+		t.Fatalf("%+v %v", prs, err)
+	}
+	if !slices.Equal(prs[0].Labels, []string{"ready-to-merge", "kb"}) || len(prs[1].Labels) != 0 {
+		t.Fatalf("labels %v, %v", prs[0].Labels, prs[1].Labels)
 	}
 }

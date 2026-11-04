@@ -319,6 +319,41 @@
         }
       ]
     },
+    "flow": {
+      "untrusted": true,
+      "nodes": [
+        {
+          "run": "c1",
+          "persona": "unknown",
+          "role": "impl`[x](https://evil.example) <b>",
+          "round": 1,
+          "startedAt": "2026-10-07T17:00:00Z",
+          "endedAt": "2026-10-07T17:40:00Z",
+          "fromSeq": 0,
+          "toSeq": 0,
+          "outcome": "succeeded",
+          "verdict": "a\\|b [x](https://e.io) # <b>",
+          "microUSD": 180000,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          }
+        },
+        {
+          "run": "cf4ato2x",
+          "persona": "implementer",
+          "role": "implementer",
+          "round": 1,
+          "startedAt": "2026-10-07T19:11:50Z",
+          "fromSeq": 4,
+          "toSeq": 0,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          }
+        }
+      ]
+    },
     "cursor": "seq:9"
   }
 }

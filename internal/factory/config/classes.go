@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Class is one merge class (§5.2): live classes auto-merge once policy-bot agrees; a shadow
@@ -55,6 +56,12 @@ type Class struct {
 	// ReleaseAgeCheck names the commit status that holds the release age (MC11), posted by an
 	// adopted login: Renovate's renovate/stability-days.
 	ReleaseAgeCheck string `json:"releaseAgeCheck,omitempty"`
+	// CompanionFiles are the paths an added-entry pull request may append to beside its one added
+	// entry (a knowledge base's index and log), anchored like AllowedFiles.
+	CompanionFiles []string `json:"companionFiles,omitempty"`
+	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
+	// the factory to adopt it (K11): RunLore's ready-to-merge.
+	RequiredLabel string `json:"requiredLabel,omitempty"`
 }
 
 // Author is a class's author mode.
@@ -122,7 +129,9 @@ const MaxFindings = 16
 var workflowRE = regexp.MustCompile(`^[A-Za-z0-9._-]+\.ya?ml$`)
 
 // DiffShapes are the shapes diffShape names.
-func DiffShapes() []string { return []string{"links-only", "semver-patch", "semver-minor"} }
+func DiffShapes() []string {
+	return []string{"links-only", "semver-patch", "semver-minor", "added-entry"}
+}
 
 // BuiltInShape is the diff shape the gate holds a class to when its config names none: R52's
 // promise of the two entry classes (MC1: their conditions become built-in defaults at parity).
@@ -181,17 +190,22 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 			}
 		}
 	}
-	for _, p := range cl.AllowedFiles {
-		// The match is unanchored, as policy-bot's is, so an allow list must say where a path
-		// begins and ends: "docs/.+" would allow "evil/docs/x".
-		if !strings.HasPrefix(p, "^") || !strings.HasSuffix(p, "$") {
-			bad("class %s: allowedFiles %q must start with ^ and end with $", name, p)
+	for _, f := range []struct {
+		key  string
+		pats []string
+	}{{"allowedFiles", cl.AllowedFiles}, {"companionFiles", cl.CompanionFiles}} {
+		for _, p := range f.pats {
+			// The match is unanchored, as policy-bot's is, so an allow list must say where a path
+			// begins and ends: "docs/.+" would allow "evil/docs/x".
+			if !strings.HasPrefix(p, "^") || !strings.HasSuffix(p, "$") {
+				bad("class %s: %s %q must start with ^ and end with $", name, f.key, p)
+			}
 		}
 	}
 	for _, f := range []struct {
 		key  string
 		pats []string
-	}{{"allowedFiles", cl.AllowedFiles}, {"protectedFiles", cl.ProtectedFiles}} {
+	}{{"allowedFiles", cl.AllowedFiles}, {"companionFiles", cl.CompanionFiles}, {"protectedFiles", cl.ProtectedFiles}} {
 		for _, p := range f.pats {
 			if _, err := regexp.Compile(p); err != nil || p == "" {
 				bad("class %s: %s %q is not a regular expression", name, f.key, p)
@@ -213,17 +227,34 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 		bad("class %s: diffShape is %s, built in (R52)", name, b)
 	}
 	semver := cl.DiffShape == "semver-patch" || cl.DiffShape == "semver-minor"
+	entry := cl.DiffShape == "added-entry"
 	switch {
-	case semver && !cl.Adopted():
+	case (semver || entry) && !cl.Adopted():
 		bad("class %s: diffShape %s needs author.adopt (MC10)", name, cl.DiffShape)
-	case cl.Adopted() && !semver:
-		bad("class %s: author.adopt needs diffShape semver-patch or semver-minor", name)
+	case cl.Adopted() && !semver && !entry:
+		bad("class %s: author.adopt needs diffShape semver-patch, semver-minor or added-entry", name)
 	case semver && !cl.ModifyOnly:
 		bad("class %s: a semver shape needs modifyOnly: true", name)
+	case entry && cl.ModifyOnly:
+		bad("class %s: added-entry adds a file: modifyOnly must be false", name)
+	case entry && len(cl.AllowedFiles) == 0:
+		bad("class %s: added-entry needs allowedFiles: the entries' paths", name)
+	case entry && len(cl.HoldoutChecks) == 0:
+		bad("class %s: added-entry needs holdoutChecks: the validator's check", name)
+	case entry && cl.RequiredLabel == "":
+		bad("class %s: added-entry needs requiredLabel", name)
 	case cl.DiffShape == "semver-minor" && cl.Live:
 		bad("class %s: semver-minor is shadow only (M2)", name)
 	case cl.ReleaseAgeCheck != "" && !cl.Adopted():
 		bad("class %s: releaseAgeCheck needs author.adopt", name)
+	}
+	switch {
+	case len(cl.CompanionFiles) > 0 && !entry:
+		bad("class %s: companionFiles needs diffShape added-entry", name)
+	case cl.RequiredLabel != "" && !cl.Adopted():
+		bad("class %s: requiredLabel needs author.adopt", name)
+	case utf8.RuneCountInString(cl.RequiredLabel) > 50:
+		bad("class %s: requiredLabel is 1..50 characters, GitHub's bound", name)
 	}
 	if cl.Adopted() {
 		a := cl.Author.Adopt

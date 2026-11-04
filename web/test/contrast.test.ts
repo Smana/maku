@@ -44,6 +44,10 @@ const pairs = (t: Tokens) => [
   ["the room list's notice on the page", t["--destructive-text"], t["--muted"], 4.5],
   ["destructive text on the page (.status-error, .summary-error, .mk-harness_error)", t["--destructive"], t["--muted"], 4.5],
   ["the focus ring on the header", t["--ring"], t["--brand-header"], 3],
+  // The run rail's lanes and ghosts, drawn on a card.
+  ["the writer lane on a card", t["--flow-writer"], t["--card"], 3],
+  ["the judge lane on a card", t["--flow-judge"], t["--card"], 3],
+  ["the plan's ghosts on a card", t["--flow-plan"], t["--card"], 3],
   // The dock (P4, P8): its own surface, the composer's boundary, the delivery segments.
   ["text on the dock", t["--foreground"], t["--surface-raised"], 4.5],
   ["muted text on the dock (session line, hints)", t["--muted-foreground"], t["--surface-raised"], 4.5],
@@ -159,6 +163,9 @@ const MAKU_TOKENS: [string, string, string][] = [
   ["--brand-header", "#ffffff", "#14141c"],
   ["--brand-header-foreground", "#0a0a0f", "#f3f2fa"],
   ["--placeholder", "#6b6b6b", "#9b9aae"],
+  ["--flow-writer", "#0e7490", "#22d3ee"],
+  ["--flow-judge", "#6d28d9", "#a78bfa"],
+  ["--flow-plan", "#b45309", "#f5a524"],
 ];
 
 describe("Maku tokens", () => {

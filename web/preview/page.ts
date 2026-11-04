@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The room page's regions for an offline page, mounted as room.ts mounts them, with no
-// broker: every act is inert. The developer preview (full.ts) and the live demo (demo.ts)
+// broker: every act is inert. The rail and the run view are mounted as room.ts mounts them. The developer preview (full.ts) and the live demo (demo.ts)
 // both mount through here, so the demo can never drift from what the preview shows.
 
 import { mountBrand } from "../src/brand";
@@ -10,8 +10,10 @@ import { mountComposer, mountControls } from "../src/controls";
 import type { Dashboard } from "../src/dashboards";
 import { mountFork } from "../src/fork";
 import { mountNeeds } from "../src/needs";
+import { mountRailPane } from "../src/railpane";
 import { RoomState } from "../src/room-state";
 import { mountViews } from "../src/roomview";
+import { mountRunView, mountScrollIndex } from "../src/runview";
 import { mountStrip } from "../src/strip";
 import { renderNotes, type Summary } from "../src/summary";
 import { mountThemeButton, type ThemeController } from "../src/theme";
@@ -37,6 +39,7 @@ export interface PreviewOptions {
   assetBase?: string; // where the brand marks are served; "/assets" unless the demo serves them relative
   theme: ThemeController; // initialised by the caller, so a ?theme override can follow it
   dashboards?: Dashboard[]; // the strip's link templates; none by default
+  now?: () => number; // the rail's clock; Date.now unless the fixture's events are not recent
 }
 
 export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPage {
@@ -75,11 +78,34 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   mountThemeButton(meta, o.theme);
   meta.append(status);
   footer.append(session, composerEl, meta);
-  app.replaceChildren(header, needsPanel, lead, main, forkPanel, footer);
+  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, main, forkPanel);
+  const { rail } = pane;
+  app.replaceChildren(header, pane.body, footer);
+  // The sticky rail sits between the header and the dock, as room.ts measures them.
+  if (typeof ResizeObserver !== "undefined") {
+    const size = () => {
+      app.style.setProperty("--header-h", `${header.offsetHeight}px`);
+      app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
+    };
+    const ro = new ResizeObserver(size);
+    ro.observe(header);
+    ro.observe(footer);
+    size();
+  }
+  const now = o.now ?? Date.now;
 
   const say = (text: string) => { notice.textContent = text; };
   const sender = { send: () => { say(o.nothingSent); return false; } };
   const views = mountViews(main, (seq) => fork.open(seq), () => snap.you.principal);
+  // The run view reads the events held here instead of fetching them.
+  const log: RoomEvent[] = [];
+  const runView = mountRunView(main, {
+    load: async (after, limit) => log.filter((e) => e.seq > after).slice(0, limit),
+    views: (el) => mountViews(el, (seq) => fork.open(seq), () => snap.you.principal),
+    chosen: (run) => rail.chosen(run),
+  });
+  const scrollIndex = mountScrollIndex(main.querySelector<HTMLElement>(".view-chat")!,
+    { nodes: () => summary.flow?.nodes ?? [], mark: (run) => rail.mark(run) });
   const state = new RoomState();
   state.reset(snap, o.count);
   const needs = mountNeeds(needsPanel, sender, state, () => snap.you, views);
@@ -90,9 +116,14 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   const fork = mountFork(forkPanel, sender, state);
 
   let applied = 0;
+  setInterval(() => rail.tick(now()), 1000);
   return {
     apply(e) {
+      log.push(e);
       views.apply(e);
+      rail.live(e);
+      runView.apply(e);
+      scrollIndex.refresh();
       state.apply(e);
       views.counters(`seq ${++applied} · gaps 0 · dups 0`);
     },
@@ -106,6 +137,8 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
       strip.update({ roomId: summary.room, snap, phase: state.phase, driver: state.driver, sealedBy: state.closed, sealed: state.sealed,
         summary, needs: needs.count(), now: state.latest(), running: state.running(), ran: state.ran(),
         dashboards: o.dashboards });
+      pane.show(summary.flow, summary.status.phase, now());
+      runView.set(summary.flow?.nodes ?? []);
     },
     setSummary(s) { summary = s; },
     say,

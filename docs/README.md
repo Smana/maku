@@ -7,8 +7,6 @@
   </picture>
 </a>
 
-Maku is the product, the repository, the module and the CLI (`maku`); its components are `maku-*`. Kubernetes identities (ServiceAccounts, Services, audiences) keep their earlier names ([naming](naming.md#technical-names)).
-
 The reference for the broker, the bridge, the factory, the CLI and the web UI; the platform's docs site holds the overview and the status.
 
 ## Pages

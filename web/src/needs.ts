@@ -17,7 +17,7 @@ import { needsItems, type Summary } from "./summary";
 // mountNeeds renders the panel into root. you reads the viewer as the latest state frame
 // has it; chat finds a call's row for the card's link.
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
-  chat: { rowFor(callId: string): HTMLElement | undefined }, fourEyes: () => boolean | undefined = () => undefined):
+  chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined):
   { refresh(): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
@@ -59,6 +59,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     link.dataset.callId = a.callId;
     link.onclick = (e) => {
       e.preventDefault();
+      chat.reveal?.();
       const row = chat.rowFor(a.callId);
       if (row) focusRow(row); // the row, and any fold around it, opened and focused
     };

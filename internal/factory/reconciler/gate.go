@@ -12,6 +12,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
+	"github.com/Smana/maku/internal/factory/entrydiff"
 	"github.com/Smana/maku/internal/factory/filefence"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/mdlinks"
@@ -85,6 +86,10 @@ func diffShape(cl config.Class, in ArmInputs) (string, bool) {
 		}
 	case "semver-minor":
 		if ok, _ := semverdiff.Minor(in.Files.Base, in.Files.Head); !ok {
+			return "class_mismatch", false
+		}
+	case "added-entry":
+		if ok, _ := entrydiff.Added(cl, forge.Diff{Base: in.Files.Base, Head: in.Files.Head, Files: in.Stats}); !ok {
 			return "class_mismatch", false
 		}
 	}
@@ -217,7 +222,7 @@ var onDiff = []string{"allowedFiles", "protectedFiles", "modifyOnly", "maxPatchF
 // semver shapes, which would refuse two empty trees, and not for links-only (R52's vacuous pass).
 func onDiffFor(c Condition, cl config.Class) bool {
 	return slices.Contains(onDiff, c.Key) ||
-		c.Key == "diffShape" && (cl.DiffShape == "semver-patch" || cl.DiffShape == "semver-minor")
+		c.Key == "diffShape" && (cl.DiffShape == "semver-patch" || cl.DiffShape == "semver-minor" || cl.DiffShape == "added-entry")
 }
 
 // rowOf names the decision record's string row a condition fills (AM8); the file conditions

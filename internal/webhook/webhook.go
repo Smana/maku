@@ -42,6 +42,8 @@ type Event struct {
 	// RA10), on every event of the room once its facts name one, so a subscriber correlates an
 	// event it missed the start of.
 	Origin string `json:"origin,omitempty"`
+	// Verdict is the post-merge monitor's verdict on room.monitor_verdict: a closed code, no text.
+	Verdict string `json:"verdict,omitempty"`
 }
 
 // ID is a delivery's webhook-id: the same for every retry and every leader, distinct per

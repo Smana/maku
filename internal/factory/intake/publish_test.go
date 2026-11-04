@@ -17,11 +17,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
+	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/redact"
 )
 
@@ -93,7 +95,7 @@ func TestPublishFilesTheProposalOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := f.Created(); len(got) != 1 || !strings.HasPrefix(got[0], "docs(alerts): the crash-loop rule fires on a completed Job\n") ||
-		!strings.Contains(got[0], "\n\n---\nPublished by @Smana from agent factory task `3buqdlot`.\nlabels: ") || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot") {
+		!strings.Contains(got[0], "\n\n---\nPublished by @Smana from agent factory task `3buqdlot`.\nlabels: ") || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot,class:review") {
 		t.Fatalf("the draft's title, a footer and only the marker that makes a retry find it, never factory/ready: %q", got)
 	}
 	tk := getTask(t, c, "3buqdlot")
@@ -511,4 +513,320 @@ func TestPublishOnARejectedTaskNamesTheRejection(t *testing.T) {
 		!slices.Contains(f.Removed(7), LabelPublish) {
 		t.Fatalf("%d issues, comments %q, removed %v", len(f.Created()), cs, f.Removed(7))
 	}
+}
+
+func TestProposalPaths(t *testing.T) {
+	for name, c := range map[string]struct {
+		body string
+		want []string
+	}{
+		"listed": {"## Acceptance check\nquiet\n## Files\n- `observability/a.yaml`\n- `observability/b.yml`\n",
+			[]string{"observability/a.yaml", "observability/b.yml"}},
+		"next heading": {"## Files\n- `a.yaml`\n## Notes\n- `b.yaml`\n", []string{"a.yaml"}},
+		"footer":       {"## Files\n- `a.yaml`\n\n---\nPublished by @x from agent factory task `y`.", []string{"a.yaml"}},
+		"no section":   {"## Acceptance check\nquiet\n", nil},
+		"dotdot":       {"## Files\n- `../etc/passwd`\n", nil},
+		"dotdot inner": {"## Files\n- `a/../b.yaml`\n", nil},
+		"absolute":     {"## Files\n- `/abs/x`\n", nil},
+		"no code span": {"## Files\n- a.yaml\n", nil},
+		"whitespace":   {"## Files\n- `a b.yaml`\n", nil},
+		"too long":     {"## Files\n- `" + strings.Repeat("a", 201) + "`\n", nil},
+		"one bad line": {"## Files\n- `a.yaml`\nnot a path\n", nil},
+		"eleven":       {"## Files\n" + strings.Repeat("- `a.yaml`\n", 11), nil},
+		"ten":          {"## Files\n" + strings.Repeat("- `a.yaml`\n", 10), slices.Repeat([]string{"a.yaml"}, 10)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := proposalPaths(c.body); !slices.Equal(got, c.want) || (c.want == nil) != (got == nil) {
+				t.Fatalf("proposalPaths = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// hostClasses are the host's classes as Task 4's inference reads them.
+func hostClasses() map[string]config.Class {
+	deps := `^(apps|flux|infrastructure|observability|security|tooling)/.+\.ya?ml$`
+	adopt := &config.Author{Adopt: &config.Adopt{}}
+	return map[string]config.Class{
+		"alert-rules": {AllowedFiles: []string{`^observability/.+\.ya?ml$`}},
+		"deps-patch":  {AllowedFiles: []string{deps}, Author: adopt},
+		"deps-minor":  {AllowedFiles: []string{deps}, Author: adopt},
+		"dead-links":  {AllowedFiles: []string{`^(docs|website/content)/.+\.md$`}, Oracle: &config.Oracle{}},
+		"docs-links":  {}, "docs": {}, "review": {}, "revert": {},
+	}
+}
+
+const proposalWithFiles = proposalOK + "\n## Files\n- `observability/base/rules/apps.yaml`"
+
+// startsPublishing is publishing with the host's classes and runlore an internal principal whose
+// publishStarts is starts.
+func startsPublishing(t *testing.T, starts bool, text string, tk *v1alpha1.Task) (*IssuePoller, *forgetest.Fake, client.Client) {
+	t.Helper()
+	p, f, c := publishing(t, text, tk, "Smana")
+	p.Cfg.Classes = hostClasses()
+	p.Cfg.API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, PublishStarts: starts}}
+	return p, f, c
+}
+
+func fixName(gen int) string {
+	return taskid.Name(taskid.IssueKey("Smana/cloud-native-ref", 501, gen))
+}
+
+// failTaskCreateOnce makes the poller's first Task create fail.
+func failTaskCreateOnce(p *IssuePoller, c client.Client) {
+	failed := false
+	p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+		if _, ok := obj.(*v1alpha1.Task); ok && !failed {
+			failed = true
+			return errors.New("the API server refused")
+		}
+		return cl.Create(ctx, obj, opts...)
+	}})
+}
+
+func commentsOf(f *forgetest.Fake, n int) string { return strings.Join(f.Comments(n), "\n") }
+
+// K5 to K9, K13, K14, offline proof 2: factory/publish on an internal principal's stub with
+// publishStarts files the issue with the inferred class and starts the fix, once; anything else
+// only publishes.
+func TestPublishStarts(t *testing.T) {
+	t.Run("starts the fix and records the class", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot,class:alert-rules") {
+			t.Fatalf("%q", got)
+		}
+		fix := getTask(t, c, fixName(0))
+		if fix.Spec.Source.Kind != "issue" || fix.Spec.Source.RequestedBy != "github:Smana" || fix.Payer() != "github:smana" ||
+			fix.Spec.Issue != 501 || fix.Spec.Origin != "3buqdlot" || fix.Spec.PredictedClass != "alert-rules" || fix.Spec.DataClass != "public" {
+			t.Fatalf("%+v", fix.Spec)
+		}
+		if got := getTask(t, c, "3buqdlot"); got.Status.Published == nil || got.Status.Published.Class != "alert-rules" {
+			t.Fatalf("%+v", got.Status.Published)
+		}
+		if cs := commentsOf(f, 7); !strings.Contains(cs, "#501") || !strings.Contains(cs, fixName(0)) || !strings.Contains(cs, "alert-rules") {
+			t.Fatalf("%q", cs)
+		}
+		f.SetLabeled(LabelPublish, forge.Item{Number: 7}) // the same label again
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 1 || len(tasks(t, c)) != 2 {
+			t.Fatalf("%d issues, %d tasks", len(f.Created()), len(tasks(t, c)))
+		}
+	})
+
+	t.Run("a proposal with no files is review", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalOK, investigated("3buqdlot"))
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		fix := getTask(t, c, fixName(0))
+		if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "class:review") || fix.Spec.PredictedClass != "review" {
+			t.Fatalf("%q %+v", got, fix.Spec)
+		}
+	})
+
+	for name, c := range map[string]struct {
+		starts bool
+		tk     func(*v1alpha1.Task)
+	}{
+		"publishStarts off":       {false, nil},
+		"a runlore-kind task":     {true, func(t *v1alpha1.Task) { t.Spec.Source.Kind = "runlore" }},
+		"a sponsored principal's": {true, func(t *v1alpha1.Task) { t.Spec.Source.RequestedBy = "system:slack-app" }},
+	} {
+		t.Run("publishes only: "+name, func(t *testing.T) {
+			tk := investigated("3buqdlot")
+			if c.tk != nil {
+				c.tk(tk)
+			}
+			p, f, cl := startsPublishing(t, c.starts, proposalWithFiles, tk)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.Created()) != 1 || len(tasks(t, cl)) != 1 || !strings.Contains(commentsOf(f, 7), "factory/ready") {
+				t.Fatalf("%d issues, %d tasks, %q", len(f.Created()), len(tasks(t, cl)), commentsOf(f, 7))
+			}
+		})
+	}
+
+	t.Run("a failed create retries to one issue, one Task and the same class (K14)", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		failTaskCreateOnce(p, c)
+		if err := p.Poll(t.Context()); err == nil || len(f.Removed(7)) != 0 {
+			t.Fatalf("the poll errs and the label stays: %v %v", err, f.Removed(7))
+		}
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		fix := getTask(t, c, fixName(0))
+		got := getTask(t, c, "3buqdlot")
+		created := f.Created()
+		if len(created) != 1 || !strings.HasSuffix(created[0], "class:alert-rules") || slices.Contains(f.Added(501), "class:review") ||
+			len(tasks(t, c)) != 2 || fix.Spec.PredictedClass != "alert-rules" || got.Status.Published == nil || got.Status.Published.Class != "alert-rules" {
+			t.Fatalf("%q %v %d %+v %+v", created, f.Added(501), len(tasks(t, c)), fix.Spec, got.Status.Published)
+		}
+	})
+
+	t.Run("a generation-1 Task opened between a failure and the retry starts nothing (K13)", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		failTaskCreateOnce(p, c)
+		if err := p.Poll(t.Context()); err == nil {
+			t.Fatal("the first poll errs")
+		}
+		f.SetEvents(501, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: t0})
+		if err := p.one(t.Context(), 501); err != nil { // a poll that ran factory/ready on the filed issue
+			t.Fatal(err)
+		}
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var open []string
+		for _, tk := range tasks(t, c) {
+			if tk.Spec.Issue == 501 {
+				open = append(open, tk.Name)
+			}
+		}
+		if !slices.Equal(open, []string{fixName(1)}) || !strings.Contains(commentsOf(f, 7), "factory/ready") {
+			t.Fatalf("%v %q", open, commentsOf(f, 7))
+		}
+	})
+
+	for _, hide := range []bool{false, true} {
+		name := ""
+		if hide {
+			name = " with a lagging List"
+		}
+		t.Run("factory/ready seen with the retry: the start wins, one Task and one charge (K13)"+name, func(t *testing.T) {
+			p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+			failTaskCreateOnce(p, c)
+			if err := p.Poll(t.Context()); err == nil {
+				t.Fatal("the first poll errs")
+			}
+			f.SetEvents(501, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: t0})
+			f.SetLabeled("factory/ready", forge.Item{Number: 501})
+			f.SetLabeled(LabelPublish, forge.Item{Number: 7})
+			if hide { // the informer has not yet seen the Task the retry creates
+				base := p.Client
+				created := false
+				p.Client = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{
+					Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						if _, ok := obj.(*v1alpha1.Task); ok {
+							created = true
+						}
+						return cl.Create(ctx, obj, opts...)
+					},
+					List: func(ctx context.Context, cl client.WithWatch, l client.ObjectList, opts ...client.ListOption) error {
+						err := cl.List(ctx, l, opts...)
+						if tl, ok := l.(*v1alpha1.TaskList); ok && created {
+							tl.Items = slices.DeleteFunc(tl.Items, func(t v1alpha1.Task) bool { return t.Spec.Issue == 501 })
+						}
+						return err
+					}})
+			}
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var on501 []v1alpha1.Task
+			for _, tk := range tasks(t, c) {
+				if tk.Spec.Issue == 501 {
+					on501 = append(on501, tk)
+				}
+			}
+			if len(on501) != 1 || on501[0].Name != fixName(0) || on501[0].Payer() != "github:smana" {
+				t.Fatalf("%+v", on501)
+			}
+			p.Client = c // the cache has caught up: the next poll refuses the label
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if got := commentsOf(f, 501); !strings.Contains(got, "is still running") {
+				t.Fatalf("task_active expected: %q", got)
+			}
+		})
+	}
+
+	t.Run("a filed issue closed before the retry starts nothing", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		f.SetIssue(forge.Issue{Number: 88, Title: "docs(alerts): x", Body: proposalWithFiles, Author: "ogenki-agent-factory[bot]", State: "CLOSED",
+			Labels: []string{"factory/published-from:3buqdlot", "class:alert-rules"}})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 0 || len(tasks(t, c)) != 1 || !strings.Contains(commentsOf(f, 7), "factory/ready") {
+			t.Fatalf("%v %d %q", f.Created(), len(tasks(t, c)), commentsOf(f, 7))
+		}
+	})
+
+	t.Run("an edited marker issue starts nothing (K7)", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		f.SetIssue(forge.Issue{Number: 88, Title: "docs(alerts): x", Body: proposalWithFiles, Author: "ogenki-agent-factory[bot]", State: "OPEN",
+			Labels: []string{"factory/published-from:3buqdlot", "class:alert-rules"}, LastEditedAt: t0.Add(time.Minute)})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.Created()) != 0 || len(tasks(t, c)) != 1 || !strings.Contains(commentsOf(f, 7), "factory/ready") {
+			t.Fatalf("%v %d %q", f.Created(), len(tasks(t, c)), commentsOf(f, 7))
+		}
+	})
+}
+
+// Review Focus 3: a maintainer's factory/ready after a published start is generation 1, carrying
+// the origin and the class.
+func TestFactoryReadyAfterAPublishedStartIsGenerationOne(t *testing.T) {
+	p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	gen0 := getTask(t, c, fixName(0))
+	gen0.Status.Phase = v1alpha1.PhaseDone
+	if err := c.Status().Update(t.Context(), &gen0); err != nil {
+		t.Fatal(err)
+	}
+	labelled(f, 501, "Smana")
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	fix := getTask(t, c, fixName(1))
+	if fix.Spec.Origin != "3buqdlot" || fix.Spec.PredictedClass != "alert-rules" {
+		t.Fatalf("%+v", fix.Spec)
+	}
+}
+
+// A crash or a failed comment after the Task is created: the retry announces the start that
+// happened, never "label it factory/ready" beside a running fix.
+func TestPublishRetryAnnouncesTheStartThatHappened(t *testing.T) {
+	t.Run("the record is missing", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
+			return errors.New("no record") // the record fails; the Task is already created
+		}})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		f.SetLabeled(LabelPublish, forge.Item{Number: 7})
+		p.Client = c
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if cs := commentsOf(f, 7); !strings.Contains(cs, "The fix started at once") || len(tasks(t, c)) != 2 {
+			t.Fatalf("%d tasks, %q", len(tasks(t, c)), cs)
+		}
+	})
+	t.Run("the comment failed after the record", func(t *testing.T) {
+		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		f.SetComments(7) // the comment never landed
+		f.SetLabeled(LabelPublish, forge.Item{Number: 7})
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if cs := commentsOf(f, 7); !strings.Contains(cs, "The fix started at once") || strings.Contains(cs, "label it `factory/ready`") || len(tasks(t, c)) != 2 {
+			t.Fatalf("%d tasks, %q", len(tasks(t, c)), cs)
+		}
+	})
 }

@@ -35,7 +35,57 @@ describe("summaryAt", () => {
   });
   it("is the recorded summary once done, with the shown notes", () => {
     const s = summaryAt(final, events, events.length, true);
-    expect({ ...s, notes: final.notes }).toEqual(final);
+    expect({ ...s, notes: final.notes, flow: final.flow }).toEqual(final);
     expect(s.notes.items).toHaveLength(final.notes.items.length);
+  });
+
+  describe("flow", () => {
+    const flowAt = (pred: (e: RoomEvent) => boolean) => at(upTo(pred)).flow!;
+    it("plans the implementer and the reviewer, both ghosts, before any run", () => {
+      expect(at(events.slice(0, 1)).flow).toEqual({ plan: ["implementer", "reviewer"], nodes: [], ghosts: ["implementer", "reviewer"] });
+    });
+    it("opens a live node as its run joins, with the role the request named", () => {
+      const f = flowAt((e) => e.seq === 6);
+      expect(f.nodes).toHaveLength(1);
+      expect(f.nodes[0]).toMatchObject({ run: "w4hn8c2r", persona: "implementer", role: "implementer", fromSeq: 6, toSeq: 0, tools: { ok: 0, failed: 0 } });
+      expect(f.nodes[0].endedAt).toBeUndefined();
+      expect(f.nodes[0].edge).toBeUndefined();
+      expect(f.ghosts).toEqual(["reviewer"]);
+    });
+    it("counts tool results as they are shown", () => {
+      const f = flowAt((e) => e.seq === 41);
+      const results = events.filter((e) => e.seq <= 41 && e.type === "tool_result");
+      expect(f.nodes[0].tools.ok + f.nodes[0].tools.failed).toBe(results.length);
+      expect(results.length).toBeGreaterThan(0);
+    });
+    it("ends the implementer when it leaves and starts the reviewer behind a PR edge", () => {
+      const f = flowAt((e) => e.seq === 77);
+      expect(f.nodes.map((n) => [n.run, n.fromSeq, n.toSeq, n.outcome])).toEqual([["w4hn8c2r", 6, 75, "succeeded"], ["p9tz3b6d", 77, 0, undefined]]);
+      expect(f.nodes[1].edge).toBe("PR #214");
+      expect(f.ghosts).toEqual([]);
+    });
+    it("names each node's model and effort from the events shown", () => {
+      const f = flowAt((e) => e.seq === 93);
+      expect(f.nodes.map((n) => [n.model, n.models, n.effort])).toEqual([["glm-5.3", ["glm-5.3"], "high"], ["claude-sonnet-4.5", ["claude-sonnet-4.5"], "medium"]]);
+      expect(flowAt((e) => e.seq === 8).nodes[0].effort).toBeUndefined();
+    });
+    it("takes the served models from the recorded runs once done", () => {
+      const withRuns = { ...final, runs: [{ id: "w4hn8c2r", role: "implementer", provenance: { servedModels: ["claude-haiku-4.5", "glm-5.3"] } }] };
+      const f = summaryAt(withRuns, events, events.length, true).flow!;
+      expect(f.nodes[0].models).toEqual(["claude-haiku-4.5", "glm-5.3"]);
+      expect(f.nodes[1].models).toEqual(["claude-sonnet-4.5"]);
+    });
+    it("carries the reviewer's verdict, and no milestone, until the replay is done", () => {
+      const f = flowAt((e) => e.seq === 93);
+      expect(f.nodes[1]).toMatchObject({ verdict: "approve", toSeq: 93 });
+      expect(f.milestones).toBeUndefined();
+    });
+    it("ends on the milestone the recorded phase implies", () => {
+      const s = summaryAt(final, events, events.length, true);
+      expect(s.flow!.milestones!.map((m) => m.phase)).toEqual(["AwaitingHuman"]);
+      expect(s.flow!.milestones![0].seq).toBe(events.at(-1)!.seq);
+      const merged = summaryAt({ ...final, status: { ...final.status, phase: "Done" } }, events, events.length, true);
+      expect(merged.flow!.milestones!.map((m) => m.phase)).toEqual(["AwaitingHuman", "Done"]);
+    });
   });
 });

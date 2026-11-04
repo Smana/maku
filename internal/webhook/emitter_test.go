@@ -747,3 +747,76 @@ func TestEmitterRepositoryAgreement(t *testing.T) {
 		t.Fatal("a room whose log and Room disagree was delivered or moved on")
 	}
 }
+
+// The verdict is sent once, across a restart (the tracker's monitorSent is rebuilt by replaying the
+// log up to the cursor); a cursor reset delivers it again under the same webhook-id; a sealed room
+// still delivers it.
+func TestEmitterSendsTheVerdictOnceAcrossARestart(t *testing.T) {
+	var mu sync.Mutex
+	var ids []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		ids = append(ids, r.Header.Get("webhook-id"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	got := func() []string { mu.Lock(); defer mu.Unlock(); return slices.Clone(ids) }
+	withVerdict := func(f envelope.TaskFacts) envelope.TaskFacts {
+		f.Origin, f.Monitor = "abcdefgh", "regression"
+		return f
+	}
+	rig := newEmitterRig(t, srv.URL, []string{"room.monitor_verdict"})
+	rig.start()
+	rig.log("aaaaaaaa", fact(1, func() envelope.TaskFacts { f := factsPR("Done", 3); f.Origin = "abcdefgh"; return f }()))
+	rig.log("aaaaaaaa", fact(2, withVerdict(factsPR("Done", 3))))
+	rig.log("aaaaaaaa", fact(3, func() envelope.TaskFacts {
+		f := withVerdict(factsPR("Done", 3))
+		f.Spend = &envelope.SpendFact{UsedMicroUSD: 1}
+		return f
+	}()))
+	rig.waitCursor(t, "aaaaaaaa", 3)
+	if n := len(got()); n != 1 {
+		t.Fatalf("%d deliveries, want 1", n)
+	}
+
+	// A restart: a new Emitter over the same state, one more rewrite.
+	restart := func() {
+		rig.cancel()
+		<-rig.done
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		rig.ctx, rig.cancel = ctx, cancel
+		old := rig.em
+		rig.em = &Emitter{Subs: old.Subs, Events: old.Events, Rooms: old.Rooms, State: old.State, Metrics: old.Metrics,
+			Logger: old.Logger, Now: old.Now, Sleep: old.Sleep, SweepEvery: old.SweepEvery, MinBackoff: old.MinBackoff,
+			FactoryPrincipal: old.FactoryPrincipal, LaggingLimit: old.LaggingLimit}
+		rig.start()
+	}
+	restart()
+	rig.log("aaaaaaaa", fact(4, withVerdict(factsPR("Done", 3))))
+	rig.waitCursor(t, "aaaaaaaa", 4)
+	if n := len(got()); n != 1 {
+		t.Fatalf("%d deliveries after the restart, want 1", n)
+	}
+
+	// The cursor reset below the verdict: the same webhook-id again.
+	rig.mu.Lock()
+	rig.cur[[2]string{"slack-app", "aaaaaaaa"}] = 1
+	rig.mu.Unlock()
+	restart()
+	rig.log("aaaaaaaa", fact(5, withVerdict(factsPR("Done", 3))))
+	rig.waitCursor(t, "aaaaaaaa", 5)
+	if g := got(); len(g) != 2 || g[0] != g[1] {
+		t.Fatalf("ids %v: want the same webhook-id twice", g)
+	}
+
+	// A sealed room: the verdict comes before the seal and is delivered.
+	rig.log("bbbbbbbb", fact(1, factsPR("Done", 4)))
+	rig.log("bbbbbbbb", fact(2, withVerdict(factsPR("Done", 4))))
+	rig.log("bbbbbbbb", seal(3))
+	rig.waitCursor(t, "bbbbbbbb", 3)
+	if n := len(got()); n != 3 {
+		t.Fatalf("%d deliveries with the sealed room, want 3", n)
+	}
+}

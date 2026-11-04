@@ -462,3 +462,13 @@ func TestScoperMarkerFormat(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestTheTriagerListsItsFiles(t *testing.T) {
+	tk := &v1alpha1.Task{}
+	tk.Name = "t1"
+	b := TriagerBrief(tk, "n")
+	i, j := strings.Index(b, "`## Acceptance check`"), strings.Index(b, "`## Files`")
+	if i < 0 || j < i || !strings.Contains(b, "one per line as `` - `path` ``") || !strings.Contains(b, "at most 10") {
+		t.Fatalf("the brief does not list ## Files after ## Acceptance check:\n%s", b)
+	}
+}

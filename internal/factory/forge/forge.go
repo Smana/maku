@@ -477,6 +477,8 @@ type PRSummary struct {
 	// NodeID and URL are the pull request's GraphQL id and page: an adopted revert needs no second read.
 	NodeID string
 	URL    string
+	// Labels are the names of the labels the pull request carries, in GitHub's order.
+	Labels []string
 }
 
 // Merger is GitHub through the merger App (owner, 2026-09-27; R16): the only identity that reads

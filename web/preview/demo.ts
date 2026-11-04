@@ -68,6 +68,9 @@ async function run() {
   page.footer.prepend(...slot.childNodes);
   page.setStatus(`demo · 0 / ${events.length} events`);
   page.settle();
+  // ?speed=N sets a speed the bar does not offer: the README screencast records at 2.
+  const speed = Number(new URLSearchParams(location.search).get("speed"));
+  if (speed > 0) replay.setSpeed(speed);
   replay.play();
 }
 

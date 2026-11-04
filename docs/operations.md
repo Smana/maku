@@ -387,16 +387,42 @@ Off until `api.internalPrincipals` is written (same prerequisites as a sponsored
 `api.projectIDFile`, `meter.prices`, the client id file). `maku_factory_api_intake_total` counts its
 requests under `principal="system:<name>"`. The `factory/publish` label must exist on each
 repository the factory serves, as `factory/ready` does; the factory removes it once it has answered.
-An issue the factory filed from a proposal carries no label: the maintainer applies `factory/ready`.
+An issue the factory filed from a proposal carries a marker label and `class:<c>`; the maintainer applies `factory/ready`, unless `publishStarts` already started the fix.
 
 **RunLore's verdict.** Off until an internal principal has `verification: true` and a class declares
 `monitor.verification.within`; the route is a `404` before. The `runlore:` block (the old
 `/intake/runlore`) is optional: leave it out and the intake and its port are not started. Watch
 `maku_factory_monitor_verifications_total{verdict="none"}`: a verdict that never arrives.
 
-**Roll the broker first.** The broker decodes task facts strictly: the factory posts `origin` in
-them only for a fix started from a published issue, and an older broker refuses such facts. Upgrade
-the broker, then the factory.
+**Starting the fix from the label.** `publishStarts: true` on an internal principal makes `factory/publish` also start the
+fix, charged to the maintainer who labelled (see [`factory/publish`](factory.md#internal-principals)). Only that start is off by default. The
+factory labels every issue it files `class:<c>`, with or without `publishStarts`: the class inferred from the proposal's `## Files` (`review` when none fits; a live class is never inferred), so each
+`class:<c>` label must exist on the repository, as `factory/ready` does. A `class:` label a maintainer applies takes precedence.
+
+**Roll the broker first.** The broker decodes task facts strictly: the factory posts `origin` and `monitor` in
+them, and an older broker refuses such facts. Upgrade the broker, then the factory.
+
+**`room.monitor_verdict`.** A subscriber receives it only when its `events` list names it (see [webhooks](#webhooks)). Switch
+RunLore and its subscriber off together. A delivery gives up after four failed tries (about 6 minutes) and the cursor moves on, so
+never leave RunLore down past about 6 minutes with the subscriber on: a verdict lost that way reads as an unverified entry at the
+end of RunLore's window. With both off together the cursor stays, and the room is replayed when they are back, closed rooms included.
+Known limit: a class whose `followUpWindow` is over 24 h can lose its verdict at `roomCloseCap`; the exact case is in
+[the post-merge monitor](factory.md#the-post-merge-monitor).
+
+### An adopted knowledge base repository
+
+For a repository whose bot adds catalog entries (an [adopted class](factory.md#adopted-classes) with
+`diffShape: added-entry`), the repository carries, and each is a policy-bot gate path:
+
+- the fence file `.github/agent-factory.yaml`, naming this factory ([the fence](factory.md#the-ownership-fence));
+- the policy-bot configuration;
+- the validator's workflow, `.github/workflows/validate-kb.yml`, whose job `validate` is the class's
+  holdout check. If a pull request could edit it, it could post `SUCCESS` itself.
+
+The `ready-to-merge` label (the class's `requiredLabel`) must exist on the repository. The adopt poller
+reads one page of 100 open pull requests: with 100 or more open it adopts nothing, and logs it, until
+some close. A class starts in `shadow`; a handed-off entry whose label was removed is not revived by
+labelling it again ([known limit](factory.md#adopted-classes)).
 
 ### Webhooks
 

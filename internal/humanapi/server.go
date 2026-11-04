@@ -198,6 +198,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/rooms", s.listRooms)
 	mux.HandleFunc("POST /api/rooms", s.createRoom)
 	mux.HandleFunc("GET /api/rooms/{id}/summary", s.roomSummary)
+	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
 	mux.HandleFunc("GET /.well-known/roomctl", s.publicSetup)
 	mux.HandleFunc("GET /v1/ws", s.ws)

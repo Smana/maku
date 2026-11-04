@@ -4,7 +4,7 @@
 // the chat and raw views, and the dock (the session's controls behind a toggle, the
 // composer, the connection), all fed by one RoomConnection.
 
-import { api } from "./api";
+import { api, fetchEvents } from "./api";
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
@@ -16,6 +16,8 @@ import { PendingActs } from "./pending";
 import { RoomState } from "./room-state";
 import { mountViews } from "./roomview";
 import type { Dashboard } from "./dashboards";
+import { mountRailPane } from "./railpane";
+import { mountRunView, mountScrollIndex } from "./runview";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -90,8 +92,31 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   mountThemeButton(meta, theme);
   meta.append(status);
   footer.append(session, composerEl, meta);
-  app.replaceChildren(sandbox, header, banner, needsPanel, lead, skeleton, main, forkPanel, footer);
+  // The rail beside the conversation, not in main: mountViews wipes main's children.
+  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, skeleton, main, forkPanel);
+  const { rail, body: roomBody } = pane;
+  app.replaceChildren(sandbox, header, banner, roomBody, footer);
+  const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
+  // Header and dock heights place the sticky rail between them.
+  let ro: ResizeObserver | undefined;
+  if (typeof ResizeObserver !== "undefined") {
+    const size = () => {
+      app.style.setProperty("--header-h", `${header.offsetHeight}px`);
+      app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
+    };
+    ro = new ResizeObserver(size);
+    ro.observe(header);
+    ro.observe(footer);
+    size();
+  }
   const views = mountViews(main, (seq) => fork.open(seq), () => snap?.you.principal);
+  const runView = mountRunView(main, {
+    load: (after, limit) => fetchEvents(id, after, limit, o.get),
+    views: (el) => mountViews(el, (seq) => fork.open(seq), () => snap?.you.principal),
+    chosen: (run) => rail.chosen(run),
+  });
+  const scrollIndex = mountScrollIndex(main.querySelector<HTMLElement>(".view-chat")!,
+    { nodes: () => summary?.flow?.nodes ?? [], mark: (run) => rail.mark(run) });
   const state = new RoomState();
   let you: Snapshot["you"] | undefined;
   const sender = {
@@ -101,7 +126,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       return sent;
     },
   };
-  const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, views, () => snap?.fourEyes);
+  const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, { rowFor: views.rowFor, reveal: () => runView.leave() }, () => snap?.fourEyes);
   let controls: ReturnType<typeof mountControls> | undefined;
   let composer: ReturnType<typeof mountComposer> | undefined;
   const say = (text: string) => { notice.textContent = text; };
@@ -146,9 +171,11 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   });
   // The Now line's row: the chat's, else the raw log's (the chat folds a result into its
   // call's row, which carries the call's seq). A row gone at the cap finds nothing. The
-  // row opens, and so does every fold or raw log around it; the focus moves to it.
+  // row opens, and so does every fold or raw log around it; the focus moves to it. A run view
+  // hides these rows, so it closes first.
   strip.onApprovalsClick(() => needsPanelView.focusFirst());
   strip.onNowClick((seq) => {
+    runView.leave();
     const row = main.querySelector<HTMLElement>(`.view-chat [data-seq="${seq}"]`) ?? main.querySelector<HTMLElement>(`[data-seq="${seq}"]`);
     if (row) focusRow(row);
   });
@@ -156,8 +183,8 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // mounted page, rewriting them in place every second. It stops with the page, and on
   // its own once the page has left app (a re-mount or the "no such room" page replaced it).
   const ticker = setInterval(() => {
-    if (!app.contains(header)) clearInterval(ticker);
-    else { needsPanelView.refresh(); refreshStrip(); }
+    if (!app.contains(header)) { clearInterval(ticker); ro?.disconnect(); scrollIndex.disconnect(); rail.dispose(); }
+    else { needsPanelView.refresh(); refreshStrip(); rail.tick(Date.now()); }
   }, 1000);
   // The summary loads on mount, then at most once a second while events it folds arrive
   // (R27). A failed fetch shows its text on the error line and leaves the stream alone.
@@ -183,6 +210,8 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         controls?.setSummary(sum);
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
+        showRail(sum);
+        runView.set(sum.flow?.nodes ?? []);
         shown = key;
       }
       summaryError.hidden = true;
@@ -202,6 +231,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     if (landed) return;
     let id = "";
     try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    if (id.startsWith("run=")) return; // the run view's, not an approval
     if (id) landed = focusApproval(id.replace(/^approval-/, ""));
   };
   const onHash = () => { landed = false; land(); };
@@ -243,6 +273,9 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     },
     onEvent: (e) => {
       views.apply(e);
+      rail.live(e);
+      runView.apply(e);
+      scrollIndex.refresh();
       if (changesSummary(e)) scheduleSummary();
       state.apply(e);
       needsPanelView.refresh();
@@ -290,6 +323,9 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       removeEventListener("hashchange", onHash);
       clearTimeout(refreshTimer);
       clearInterval(ticker);
+      ro?.disconnect();
+      scrollIndex.disconnect();
+      rail.dispose();
       const back = document.createElement("a");
       back.href = "/";
       back.textContent = "See the rooms you can read";

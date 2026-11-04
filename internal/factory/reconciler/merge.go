@@ -182,7 +182,16 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	switch d.Verdict {
 	case "wait":
-		if b := r.repo(t).Merge.AwaitingCIBound(); b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
+		b := r.repo(t).Merge.AwaitingCIBound()
+		if b > 0 && d.Reason == "release_age_pending" {
+			// A release-age status posted PENDING is the adopted author's stability window running, not a
+			// check that never reported: it outlasts the CI bound, up to its own (releaseAgeWaitMax).
+			// A status never posted is unreported and keeps the CI bound.
+			if state, _ := in.Checks.StatusOf(cl.ReleaseAgeCheck); state == "PENDING" {
+				b = max(b, releaseAgeWaitMax)
+			}
+		}
+		if b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
 			// #182: a check that never reports (a typo in a holdout, a workflow not set up) must not
 			// hold the task silently. Nothing merged: the hand-off says what is missing.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
@@ -634,7 +643,7 @@ func (r *Reconciler) factoryPushed(ctx context.Context, t *v1alpha1.Task, head s
 	return r.pushedBy(ctx, "agent/"+t.Name, []string{r.Cfg.AgentsLogin}, head)
 }
 
-// adoption reads what an adopted class's author mode decides on: every commit's author, the head
+// adoption reads what an adopted class's author mode decides on: the required label's newest actor, every commit's author, the head
 // among them, and who pushed the branch. A list past GitHub's cap, or one without the head, is a
 // stranger's. An adopted task never waits for a push to be recorded: there is no run to finish.
 func (r *Reconciler) adoption(ctx context.Context, t *v1alpha1.Task, pr forge.PR, cl config.Class) (a Adoption, err error) {
@@ -652,6 +661,17 @@ func (r *Reconciler) adoption(ctx context.Context, t *v1alpha1.Task, pr forge.PR
 	}
 	if !slices.ContainsFunc(cs, func(c forge.Commit) bool { return c.SHA == pr.HeadSHA }) {
 		a.CommitAuthors = append(a.CommitAuthors, "") // the head is not among them: a push since
+	}
+	if l := cl.RequiredLabel; l != "" {
+		// Oldest first: the newest event is the last. A list cut at the page cap leaves it unread.
+		evs, err := r.gh(ctx).LabelEvents(ctx, pr.Number, l)
+		switch {
+		case errors.Is(err, forge.ErrEventsTruncated):
+		case err != nil:
+			return a, err
+		case len(evs) > 0:
+			a.LabelledBy = evs[len(evs)-1].Actor
+		}
 	}
 	a.Pushed, err = r.pushedBy(ctx, pr.HeadRef, cl.Author.Adopt.Logins, pr.HeadSHA)
 	return a, err
@@ -880,12 +900,29 @@ func (r *Reconciler) mergedAt(pr forge.PR) metav1.Time {
 	return metav1.NewTime(r.Now())
 }
 
+// releaseAgeWaitMax bounds the wait on a PENDING release-age status (MC11): longer than any
+// stability window a repository sets, so a status stuck pending still reaches a human.
+const releaseAgeWaitMax = 7 * 24 * time.Hour
+
 // MainState is §6.4's watch of main's CI on the merge commit: FAILURE if a watched check that ran
 // failed, PENDING while one that ran is still running, else SUCCESS. A watched check that never
 // ran is not failing: a path-filtered push workflow never reports on a docs merge. The marker of a
 // truncated listing (D3) reads PENDING whatever is watched; a failure still wins.
 func MainState(runs []forge.Check, watched []string) string {
+	return mainState(runs, watched, false)
+}
+
+// verifyState is MainState for verifying, which ends merged_verified on it: a watched check absent
+// from the commit's check runs reads PENDING there, not green. Right after the merge nothing has
+// reported yet, and a check that never reports leaves the merge unverified past twice verifyFor
+// (D1) rather than verified on nothing.
+func verifyState(runs []forge.Check, watched []string) string {
+	return mainState(runs, watched, true)
+}
+
+func mainState(runs []forge.Check, watched []string, absentPending bool) string {
 	state := "SUCCESS"
+	seen := map[string]bool{}
 	for _, c := range runs {
 		if c.Name == forge.CheckListTruncated {
 			state = "PENDING"
@@ -894,11 +931,19 @@ func MainState(runs []forge.Check, watched []string) string {
 		if !slices.Contains(watched, c.Name) {
 			continue
 		}
+		seen[c.Name] = true
 		switch c.State {
 		case "FAILURE":
 			return "FAILURE"
 		case "PENDING", "CANCELLED": // a cancelled check on main is not green and not red: keep watching
 			state = "PENDING"
+		}
+	}
+	if absentPending {
+		for _, w := range watched {
+			if !seen[w] {
+				state = "PENDING"
+			}
 		}
 	}
 	return state
@@ -918,7 +963,7 @@ func (r *Reconciler) verifying(ctx context.Context, t *v1alpha1.Task) error {
 	if err != nil {
 		return err
 	}
-	switch MainState(runs, mg.VerifyChecks) {
+	switch verifyState(runs, mg.VerifyChecks) {
 	case "FAILURE":
 		return r.revert(ctx, t, "main_red")
 	case "SUCCESS":

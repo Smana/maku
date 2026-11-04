@@ -243,7 +243,8 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 			return fmt.Errorf("room-broker: webhook emitter: %w", err)
 		}
 	}
-	ops := opsHandler(st.Ping, st.SchemaReady, boundedSync(rw.synced), func() bool { return ctx.Err() != nil }, exp.Handler())
+	down := newDrainFlag(ctx)
+	ops := opsHandler(st.Ping, st.SchemaReady, boundedSync(rw.synced), down.Draining, exp.Handler())
 
 	var lc net.ListenConfig
 	// The config decides :8090 (I8), so a broker that serves no room tool never binds the port.
@@ -268,6 +269,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		refreshers = append(refreshers, v)
 	}
 	g, gctx := errgroup.WithContext(runCtx)
+	// A listener or the manager dying cancels gctx, not ctx: /readyz must say 503 for that drain too.
+	stopWatch := context.AfterFunc(gctx, down.Begin)
+	defer stopWatch()
 	g.Go(func() error { return api.ListenAndServeTLS(gctx, bridgeAddr, tlsCfg, bridgeDrain) })
 	g.Go(func() error { return hub.Run(gctx) })
 	g.Go(func() error { return humans.Serve(gctx, humanLn, humanDrain) })

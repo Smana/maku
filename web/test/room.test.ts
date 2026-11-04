@@ -615,12 +615,13 @@ describe("the room page", () => {
     it("heads the lead, between the strip and the chat", () => {
       const p = page();
       p.join(snapshot({ role: "owner" }), 0, requested(1, "01M4A"));
-      const kids = [...p.app.children];
       const panel = p.app.querySelector("section.needs")!;
-      // Only the reconnecting banner, hidden while live, sits between the strip and the panel.
-      expect(kids.indexOf(panel)).toBe(kids.indexOf(p.app.querySelector("header")!) + 2);
-      expect(kids[kids.indexOf(panel) - 1].className).toBe("banner");
-      expect(kids.indexOf(panel)).toBeLessThan(kids.indexOf(p.app.querySelector("main")!));
+      const body = panel.parentElement!;
+      const kids = [...p.app.children];
+      // Only the reconnecting banner, hidden while live, sits between the strip and the room body.
+      expect(kids.indexOf(body)).toBe(kids.indexOf(p.app.querySelector("header")!) + 2);
+      expect(kids[kids.indexOf(body) - 1].className).toBe("banner");
+      expect([...body.children].indexOf(panel)).toBeLessThan([...body.children].indexOf(p.app.querySelector("main")!));
       expect(panel.querySelector("#approval-01M4A .approval-command")?.textContent).toBe("git push");
     });
 
@@ -739,6 +740,177 @@ describe("the room page", () => {
       await tick();
       expect(p.app.querySelector('[data-block="notes"]')).toBe(first);
       expect(p.app.querySelector("h1")).toBe(h1); // nor the strip, whose PR link may hold the focus
+    });
+  });
+
+  describe("the rail", () => {
+    const node = (o: object) => ({ run: "r-i", persona: "implementer", role: "implementer", round: 1, fromSeq: 1, toSeq: 0,
+      startedAt: "2026-10-06T10:00:00Z", tools: { ok: 0, failed: 0 }, ...o });
+    const sumWith = (flow?: object) => ({ apiVersion: "summary/v1", room: "3kq7x2ma", url: "u",
+      status: { phase: "Implementing", run: null, budget: null, pr: null, issue: null, lastVerdict: null },
+      needsYou: [], actions: [], notes: { untrusted: true, items: [] }, cursor: "seq:0", ...(flow ? { flow } : {}) });
+    const withFlow = async (flow?: object) => {
+      const get = vi.fn(async () => ({ ok: true, status: 200, json: async () => sumWith(flow) })) as unknown as typeof fetch;
+      const p = page(get);
+      p.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      return { p, get };
+    };
+    const flow = { nodes: [node({})], ghosts: ["reviewer"] };
+
+    it("a summary with a flow shows the rail", async () => {
+      const { p } = await withFlow(flow);
+      expect(p.app.querySelector<HTMLElement>(".room-body.has-rail aside.rail")!.hidden).toBe(false);
+      expect(p.app.querySelectorAll(".rail-dots .rail-dot")).toHaveLength(2);
+    });
+
+    it("a summary without a flow hides it", async () => {
+      const { p } = await withFlow();
+      expect(p.app.querySelector(".room-body.has-rail")).toBeNull();
+      expect(p.app.querySelector<HTMLElement>("aside.rail")!.hidden).toBe(true);
+    });
+
+    it("the ticker ages the live node", async () => {
+      vi.setSystemTime(Date.parse("2026-10-06T10:00:30Z"));
+      const { p } = await withFlow(flow);
+      const detail = () => p.app.querySelector(".rail-node[data-state=live] .rail-detail")!.textContent;
+      const before = detail();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(detail()).not.toBe(before);
+    });
+
+    it("a tool result counts live", async () => {
+      const { p } = await withFlow(flow);
+      const f = event(1, "tool_result", { status: "ok" });
+      p.last().recv({ ...f, event: { ...f.event, runId: "r-i" } });
+      p.app.querySelector(".rail-node[data-run=r-i] button")!.dispatchEvent(new FocusEvent("focus"));
+      expect(p.app.querySelector(".rail-card")!.textContent).toContain("tool calls 1 ok");
+    });
+
+    it("a judge verdict refetches", async () => {
+      const { p, get } = await withFlow(flow);
+      p.last().recv(event(1, "message", { kind: "judge_verdict", text: "x" }));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(get).toHaveBeenCalledTimes(2);
+    });
+
+    it("dots open the drawer", async () => {
+      const { p } = await withFlow(flow);
+      p.app.querySelector<HTMLElement>(".rail-dots")!.click();
+      expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(true);
+      p.app.querySelector<HTMLElement>(".rail-close")!.click();
+      expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(false);
+    });
+
+    it("choosing a node closes the drawer", async () => {
+      const { p } = await withFlow(flow);
+      p.app.querySelector<HTMLElement>(".rail-dots")!.click();
+      p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.click();
+      expect(p.app.querySelector("aside.rail")!.classList.contains("open")).toBe(false);
+      history.replaceState(null, "", "/");
+    });
+
+    it("Escape closes the drawer and returns to the dots", async () => {
+      const { p } = await withFlow(flow);
+      document.body.append(p.app);
+      const dots = p.app.querySelector<HTMLElement>(".rail-dots")!;
+      dots.hidden = false;
+      dots.click();
+      const rail = p.app.querySelector<HTMLElement>("aside.rail")!;
+      rail.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(rail.classList.contains("open")).toBe(false);
+      expect(document.activeElement).toBe(dots);
+      p.app.remove();
+    });
+
+    it("a node opens its run's view from the room's log", async () => {
+      const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/events")
+        ? { events: [event(1, "message", { text: "hi" }).event] } : sumWith(flow)), { status: 200 })) as unknown as typeof fetch;
+      const p = page(get);
+      p.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.click();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get).toHaveBeenCalledWith(expect.stringContaining("/api/rooms/3kq7x2ma/events?after=0&limit=500"), expect.anything());
+      expect(p.app.querySelector("main .run-view .view-chat [data-seq='1']")).not.toBeNull();
+      expect(p.app.querySelector(".rail-node[data-run=r-i] button")!.getAttribute("aria-pressed")).toBe("true");
+      history.replaceState(null, "", "/");
+    });
+
+    it("a summary that arrives before the socket's tail does not count the tail twice", async () => {
+      const summed = { ...sumWith({ nodes: [node({ tools: { ok: 2, failed: 0 } })] }), cursor: "seq:2" };
+      const get = vi.fn(async () => new Response(JSON.stringify(summed), { status: 200 })) as unknown as typeof fetch;
+      const p = page(get);
+      document.body.append(p.app);
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        p.join(snapshot(), 2);
+        const toolResult = (seq: number) => {
+          const f = agent(seq, "tool_result", { callId: "c", status: "ok" });
+          return { ...f, event: { ...f.event, runId: "r-i" } };
+        };
+        p.last().recv(toolResult(1));
+        p.last().recv(toolResult(2));
+        p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.focus();
+        const card = p.app.querySelector<HTMLElement>(".rail-card")!;
+        expect(card.textContent).toContain("2 ok · 0 failed");
+        p.last().recv(toolResult(3));
+        expect(card.textContent).toContain("3 ok · 0 failed");
+      } finally { p.app.remove(); }
+    });
+
+    describe("with a run view open", () => {
+      const open = async () => {
+        const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/events") ? { events: [] } : sumWith(flow)), { status: 200 })) as unknown as typeof fetch;
+        const p = page(get);
+        document.body.append(p.app);
+        p.join(live({ approver: true }), 0);
+        await vi.advanceTimersByTimeAsync(0);
+        p.last().recv(agent(1, "tool_call", { callId: "c1", tool: "terminal", args: { command: "git push" } }));
+        p.last().recv(agent(2, "approval_requested", { approvalId: "ap1", callId: "c1", class: "forge.other",
+          action: { command: "git push" }, expiresAt: "2026-10-06T11:00:00Z" }));
+        const row = p.app.querySelector<HTMLDetailsElement>('main .view-chat details[data-seq="1"]')!;
+        row.scrollIntoView = () => {};
+        p.app.querySelector<HTMLElement>(".rail-node[data-run=r-i] button")!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(p.app.querySelector("main .run-view")).not.toBeNull();
+        return { p, row };
+      };
+
+      it.each([
+        ["the Now line", ".now-link"],
+        ["the Needs-you call link", "a.approval-call"],
+      ])("%s returns to All runs and lands on the row", async (_name, link) => {
+        const { p, row } = await open();
+        try {
+          p.app.querySelector<HTMLElement>(link)!.click();
+          expect(p.app.querySelector("main .run-view")).toBeNull();
+          expect(p.app.querySelector<HTMLElement>("main .view-chat")!.closest("[hidden]")).toBeNull();
+          expect(row.open).toBe(true);
+          expect(document.activeElement).toBe(row);
+          expect(location.hash).toBe("");
+          expect(p.app.querySelector(".rail-node[data-run=r-i] button")!.getAttribute("aria-pressed")).toBe("false");
+        } finally { p.app.remove(); history.replaceState(null, "", "/"); }
+      });
+
+      it("with no run view open, a call link leaves the page's hash alone", async () => {
+        const { p } = await open();
+        try {
+          p.app.querySelector<HTMLElement>(".run-view-back")!.click();
+          await vi.advanceTimersByTimeAsync(0);
+          history.replaceState(null, "", "/#ap1");
+          p.app.querySelector<HTMLElement>("a.approval-call")!.click();
+          expect(location.hash).toBe("#ap1");
+        } finally { p.app.remove(); history.replaceState(null, "", "/"); }
+      });
+    });
+
+    it("the conversation keeps its place", async () => {
+      const { p } = await withFlow(flow);
+      const main = p.app.querySelector("main")!;
+      expect(main.querySelector(".view-chat")).not.toBeNull();
+      expect(main.querySelector("details.raw-events")).not.toBeNull();
+      expect(main.parentElement!.classList.contains("room-body")).toBe(true);
     });
   });
 });

@@ -24,6 +24,9 @@ import (
 // factsOf is what the room's summary shows of a task: phase, current run, budget, issue, PR.
 func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	f := envelope.TaskFacts{Phase: t.Status.Phase, Reason: t.Status.Reason, Origin: t.Spec.Origin}
+	if m := t.Status.Monitor; t.Spec.Origin != "" && m != nil {
+		f.Monitor = m.Verdict
+	}
 	// An unfinished record is over (M4) when a later run superseded it (a retry from Escalated), ended
 	// at the next run's start; or, for the last one, when the task ended or escalated as stuck, at its
 	// phase's start. Otherwise a view would read a dead run as running.
@@ -31,6 +34,12 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	fact := func(i int) envelope.RunFact {
 		r := t.Status.Runs[i]
 		rf := runFact(r)
+		rf.Persona = personaOf(t, r)
+		// The history keeps the models only: 20 runs of full provenance would pass the broker's body
+		// bound for facts, which refuses for good.
+		if len(r.Provenance.ServedModels) > 0 {
+			rf.Provenance = &envelope.ProvenanceFact{ServedModels: slices.Clone(r.Provenance.ServedModels)}
+		}
 		if r.Finished != nil {
 			return rf
 		}
@@ -51,8 +60,7 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	}
 	if len(t.Status.Runs) > 0 {
 		rf := fact(len(t.Status.Runs) - 1)
-		run := current(t)
-		if p := run.Provenance; !p.IsZero() {
+		if p := current(t).Provenance; !p.IsZero() {
 			rf.Provenance = &envelope.ProvenanceFact{FactoryVersion: p.FactoryVersion, CompositionRevision: p.CompositionRevision,
 				HarnessImage: p.HarnessImage, ServedModels: slices.Clone(p.ServedModels)}
 		}
@@ -61,6 +69,10 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 			f.Runs = append(f.Runs, fact(i))
 		}
 	}
+	if sp := t.Status.Split; sp != nil && sp.State == SplitApproved {
+		f.Split = splitFact(sp)
+	}
+	f.Parent = parentFact(t.Spec.Parent)
 	// Known limit: a task mixing priced and unpriced runs shows the priced dollars only, while its token cap binds.
 	if u, limit := t.Status.Usage.CostMicroUSD, t.Spec.Budget.TaskMicroUSD; u > 0 || limit > 0 {
 		f.Spend = &envelope.SpendFact{UsedMicroUSD: dollars(u), LimitMicroUSD: dollars(limit)}
@@ -82,7 +94,7 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	return f
 }
 
-// runFact is a run record as the room's facts carry it, without provenance (only the current run has it).
+// runFact is a run record as the room's facts carry it, without provenance (factsOf adds it).
 // Times are as the CRD stores them, so the hash of a task read back matches the one posted.
 func runFact(r v1alpha1.RunRecord) envelope.RunFact {
 	f := envelope.RunFact{ID: r.ID, Role: r.Role, Trigger: r.Trigger, Verdict: r.Verdict, MicroUSD: dollars(r.CostMicroUSD), Outcome: outcomeOf(r)}
@@ -159,11 +171,32 @@ func factsKey(f envelope.TaskFacts) string {
 		}
 		f.Spend = &step
 	}
+	// An ended task's key leaves out what only the room's rail reads, the config-derived plan among
+	// them. Every retained task would otherwise read as changed after an upgrade, or a config change:
+	// each would rewrite its room, and a sealed room's would post on every reconcile. A task that
+	// ends still posts them, since its phase moves its key.
+	ended := v1alpha1.TerminalPhase(f.Phase) || f.Phase == v1alpha1.PhaseEscalated
+	if ended {
+		f.Plan, f.Parent = nil, nil
+		// An escalated parent still waits on its parts: tellParent can revert one under it, with no
+		// other field moving, and the rail must not keep drawing that part as landed.
+		if f.Phase != v1alpha1.PhaseEscalated {
+			f.Split = nil
+		}
+	}
 	// A run's dollars count once it has ended: a running run's tick never posts (R4).
 	f.Run = settled(f.Run)
+	if ended && f.Run != nil {
+		c := *f.Run
+		c.Persona = ""
+		f.Run = &c
+	}
 	f.Runs = slices.Clone(f.Runs)
 	for i := range f.Runs {
 		f.Runs[i] = *settled(&f.Runs[i])
+		if ended {
+			f.Runs[i].Persona, f.Runs[i].Provenance = "", nil
+		}
 	}
 	b, _ := json.Marshal(f) // strings, ints, a time and slices: Marshal cannot fail
 	sum := sha256.Sum256(b)
@@ -193,6 +226,7 @@ func (r *Reconciler) factsDue(t *v1alpha1.Task) bool {
 // an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says.
 func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 	f := factsOf(t)
+	f.Plan = r.planOf(t)
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(t, t.Status.Reason)
 	return f
 }
@@ -200,8 +234,9 @@ func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 // postFacts writes the task's facts into its room. New facts take roomSeq + 1, persisted before
 // the post (ruling SK); a retry of the same facts resends that seq, which the broker keeps once.
 // The caller's status write records Posted. A room the broker has no log for yet, or a broker that
-// does not allow the factory yet (FR-1), is a wait, as for the snapshot: the facts stay due. So is a
-// sealed room: it never takes them, and an error would hold the task in backoff instead of its poll.
+// does not allow the factory yet (FR-1), is a wait, as for the snapshot: the facts stay due. A sealed
+// room never takes them, so they are settled: waiting would post and log on every later reconcile,
+// and an error would hold the task in backoff instead of its poll.
 func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 	if !r.factsDue(t) {
 		return nil
@@ -225,7 +260,9 @@ func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 			r.log().Warn("task facts wait for a broker that serves them: upgrade the broker", "err", err)
 		})
 		return nil
-	case errors.Is(err, rooms.ErrNoRoom), errors.Is(err, rooms.ErrNotPermitted), errors.Is(err, rooms.ErrSealed):
+	case errors.Is(err, rooms.ErrSealed):
+		r.log().Info("task facts dropped: the room is sealed", "task.id", t.Name, "seq", t.Status.Facts.Seq)
+	case errors.Is(err, rooms.ErrNoRoom), errors.Is(err, rooms.ErrNotPermitted):
 		r.log().Info("task facts wait for the broker", "task.id", t.Name, "seq", t.Status.Facts.Seq, "err", err)
 		return nil
 	case err != nil:
@@ -238,3 +275,52 @@ func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 // dollars is a micro-USD amount clamped to the envelope's bound: a task past it still posts its facts,
 // read as the cap.
 func dollars(v int64) int64 { return min(max(v, 0), envelope.MaxMicroUSD) }
+
+// personaOf is what a run is for. The triager role is the scoper on every template but investigate,
+// where it triages; the role itself stays what the run may do.
+func personaOf(t *v1alpha1.Task, r v1alpha1.RunRecord) string {
+	if r.Role == "triager" && t.Spec.Template != "investigate" {
+		return "scoper"
+	}
+	return r.Role
+}
+
+// planOf is the personas the task is expected to run, in order, for the room's stage strip.
+func (r *Reconciler) planOf(t *v1alpha1.Task) []string {
+	if r.Cfg.Investigates(t.Spec.Template) {
+		return []string{"triager"}
+	}
+	var plan []string
+	add := func(p string) {
+		if !slices.Contains(plan, p) && len(plan) < envelope.MaxPlan {
+			plan = append(plan, p)
+		}
+	}
+	if scoperPlanned(t) {
+		add("scoper")
+	}
+	if r.testerPlanned(t) {
+		add("tester")
+	}
+	for _, role := range r.Cfg.Templates[t.Spec.Template].Roles {
+		add(role)
+	}
+	return plan
+}
+
+// splitFact is an approved split's parts, each with the room of its child task.
+func splitFact(s *v1alpha1.SplitStatus) *envelope.SplitFact {
+	f := &envelope.SplitFact{Of: int(s.Of)}
+	for _, c := range s.Children {
+		f.Parts = append(f.Parts, envelope.PartFact{Index: int(c.Index), Issue: c.Issue, Room: c.Task, Outcome: c.Outcome})
+	}
+	return f
+}
+
+// parentFact is the split parent a part belongs to; nil for a task that is no part.
+func parentFact(p *v1alpha1.Parent) *envelope.ParentFact {
+	if p == nil {
+		return nil
+	}
+	return &envelope.ParentFact{Room: p.Task, Issue: p.Issue, Index: int(p.Index), Of: int(p.Of)}
+}

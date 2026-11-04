@@ -47,9 +47,9 @@ func Paths(stats []forge.FileStat) []string {
 }
 
 // AllowedFiles matches whole paths: policy-bot's match is unanchored, so the pattern is anchored
-// here. "" when every path is allowed.
+// here. A class's companionFiles are allowed too (K10). "" when every path is allowed.
 func AllowedFiles(cl config.Class, stats []forge.FileStat) string {
-	res := Compile(cl.AllowedFiles, true)
+	res := Compile(append(slices.Clone(cl.AllowedFiles), cl.CompanionFiles...), true)
 	for _, p := range Paths(stats) {
 		if !MatchesAny(res, p) {
 			return "file_not_allowed"
@@ -111,4 +111,36 @@ func Refusal(cl config.Class, stats []forge.FileStat) string {
 		return MaxModifiedLines(cl, stats)
 	}
 	return ""
+}
+
+// Infer is the class a change to paths belongs to (RunLore KB, RK15): among the classes that
+// declare allowedFiles and are neither review, revert, adopted, live nor oracle-backed, the one whose
+// allowedFiles admit every path and whose protectedFiles admit none. "review" when none or several
+// do, or paths is empty: an ambiguous scope infers nothing. A live class is never inferred: a list
+// the triager wrote from alert text must not choose a class that merges by itself.
+func Infer(classes map[string]config.Class, paths []string) string {
+	if len(paths) == 0 {
+		return "review"
+	}
+	stats := make([]forge.FileStat, 0, len(paths))
+	for _, p := range paths {
+		stats = append(stats, forge.FileStat{Path: p, Status: "modified"})
+	}
+	match := ""
+	for name, cl := range classes {
+		if name == "review" || name == "revert" || cl.Adopted() || cl.Live || cl.Oracle != nil || len(cl.AllowedFiles) == 0 {
+			continue
+		}
+		if AllowedFiles(cl, stats) != "" || ProtectedFiles(cl, stats) != "" {
+			continue
+		}
+		if match != "" {
+			return "review"
+		}
+		match = name
+	}
+	if match == "" {
+		return "review"
+	}
+	return match
 }

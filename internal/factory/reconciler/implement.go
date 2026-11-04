@@ -569,7 +569,7 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 		if len(evs) == 0 {
 			return r.end(ctx, t, v1alpha1.PhaseNoOp, "no_action")
 		}
-		narrateLater(t, narrate.ProposalReady(t, r.Cfg.RoomsURL))
+		narrateLater(t, narrate.ProposalReady(t, r.Cfg.RoomsURL, r.Cfg.PublishStarts(t.Spec.Source.Kind, t.Spec.Source.RequestedBy)))
 		return r.end(ctx, t, v1alpha1.PhaseDone, "proposal_ready")
 	}
 	// F3-R7: an implementer that holds a contract and hands off to the tester disputes it. No dispute

@@ -541,8 +541,15 @@ func TestAMonitorRegressionSaysWhatItCosts(t *testing.T) {
 func TestPublishNarration(t *testing.T) {
 	tk := task()
 	tk.Status.RoomRef = "3kq7x2ma"
-	if b := ProposalReady(tk, "https://rooms.example").Body; !strings.Contains(b, "label this issue `factory/publish`") || !strings.Contains(b, "`factory/ready`") {
+	if b := ProposalReady(tk, "https://rooms.example", false).Body; !strings.Contains(b, "label this issue `factory/publish`") || !strings.Contains(b, "`factory/ready`") {
 		t.Fatalf("%s", b)
+	}
+	if b := ProposalReady(tk, "https://rooms.example", true).Body; !strings.Contains(b, "the fix starts at once") || !strings.Contains(b, "charged to you") {
+		t.Fatalf("%s", b)
+	}
+	if e := PublishedStarted(501, "smana", "x7k2m4pq", "alert-rules"); e.Key != "published-501" || !strings.Contains(e.Body, "#501") ||
+		!strings.Contains(e.Body, "`x7k2m4pq`") || !strings.Contains(e.Body, "`alert-rules`") {
+		t.Fatalf("%+v", e)
 	}
 	if e := Published(7, 42, "smana"); e.Key != "published-42" || e.Body != "Published as #42 by @smana. Read it, then label it `factory/ready` to start the fix." {
 		t.Fatalf("%+v", e)

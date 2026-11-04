@@ -4,8 +4,8 @@ A maintainer labels an issue; the factory turns it into a task, runs agents on i
 narrates each step on the issue, and stops at its budget. The agent run opens the pull request;
 the factory watches it through CI and its merge gate. Humans steer through GitHub reviews and
 comments, or from the task's room. Only low-risk classes the config marks `live` merge
-themselves; a `shadow` class is decided the same way and never merged. cloud-native-ref's
-config runs two classes (`docs-links`, `revert`) in shadow.
+themselves; a `shadow` class is decided the same way and never merged. On cloud-native-ref,
+`docs-links` and `revert` are live; on ai-native-ref, they are in shadow.
 
 ```mermaid
 flowchart LR
@@ -295,7 +295,7 @@ returns it.
 | `closes_parent` | A part's pull request body closes its parent issue; the parent closes with its last part, so edit the body and merge it yourself |
 | `class_paused` | The class's breaker tripped: reverts, and with `maxFollowUps` set follow-up fixes and regressions, among its newest merges |
 | `ledger_truncated` | A merge-ledger read filled its page of 100 and its oldest pull request is still inside the breaker window or today, so the ledger may under-count; nothing arms. A maintainer decides |
-| `ci_wait_expired` | The pull request waited `merge.awaitingCIFor` in `AwaitingCI` and a required check never reported. The message names the checks. A maintainer decides |
+| `ci_wait_expired` | The pull request waited `merge.awaitingCIFor` in `AwaitingCI` and a required check never reported. A release-age status posted as pending waits longer, up to 7 days or the bound if that is larger. The message names the checks. A maintainer decides |
 | `auto_merge_cap` | `merge.autoMergesPerDay` is reached |
 | `not_owned` | The repository's `.github/agent-factory.yaml` does not name this factory ([the fence](#the-ownership-fence)) |
 | `shadow_would_arm` | Every check holds and the class is in shadow. Next step: merge or close it |
@@ -678,7 +678,8 @@ An entry holds a sponsored principal's keys (`name`, `clientIDFile`, `sponsor`, 
 |---|---|
 | `minConfidence` | In (0, 1]: a finding below it is `202 below_threshold` |
 | `dailyTasks` | At least 1: tasks of the principal created this UTC day, any kind, so the retiring `/intake/runlore`'s count while both run |
-| `verification` | Reserved for the verdict endpoint; no effect yet |
+| `verification` | Admits [`POST /v1/tasks/{task}/verification`](api.md#post-v1taskstaskverification) for this principal |
+| `publishStarts` | Default false. `factory/publish` on the stub of this principal's `api` task also starts the fix, see [`factory/publish`](#internal-principals) |
 
 The name `runlore` is allowed on an internal principal only. Names and client id files are unique
 across `api.sponsored`, `api.internalPrincipals` and `api.systemPrincipals`.
@@ -702,9 +703,14 @@ sequenceDiagram
   Note over F: investigate: the triager's proposal stays in the room
   M->>F: label the stub factory/publish
   F->>F: CheckDraft, redact, sanitise as public text, redact, render through GitHub
-  F->>M: new issue (no label), status.published recorded
-  M->>F: label the new issue factory/ready
-  F->>F: fix task with spec.origin = the investigate task
+  F->>F: infer the class from the proposal's ## Files
+  F->>M: new issue (no trigger label, class:<c>), status.published recorded
+  alt publishStarts
+    F->>F: fix task, generation 0, charged to the publisher
+  else
+    M->>F: label the new issue factory/ready
+    F->>F: fix task with spec.origin = the investigate task
+  end
 ```
 
 **`factory/publish`.** The issue poller (leader only) reads it on the stub issue of an `investigate`
@@ -733,7 +739,26 @@ and an ordered list numbered like a commit.
 The factory files the issue **once per task**, with no trigger label (only a marker,
 `factory/published-from:<task>`, which grants nothing and lets a retry after a crash find the issue
 instead of filing a second): the maintainer reads it on GitHub and starts it with `factory/ready`, which is the second, money
-spending decision.
+spending decision. With `publishStarts` on the principal, `factory/publish` is that decision too (see below).
+
+**`## Files` and the inferred class.** The triager's brief asks for a fourth section, `## Files`: each
+repository path the change touches, one `` - `path` `` per line, at most 10. The factory reads that
+section from the proposal (it ends at the next `## ` heading or the footer's `---` line). A line of any other form, a path with a `..`
+segment, a leading `/`, a path over 200 bytes, or more than 10 lines, empties the list. `filefence.Infer` then names the class: among the
+classes that declare `allowedFiles` and are neither `review`, `revert`, adopted nor oracle-backed, the one whose `allowedFiles` admit
+every path and whose `protectedFiles` admit none. None, several, or no path: `review`. The filed issue carries the label
+`class:<c>` and `status.published.class` records it; a retry re-reads the filed body and adds the label if it is missing. The fix task
+of the published issue (`spec.origin` set) takes it as `spec.predictedClass`, and triage keeps it when the repository declares that
+class and it is not `revert`; a `class:` label a maintainer applies to the issue still takes precedence. Otherwise the class is `review`.
+
+**With `publishStarts`.** For an `api` task of an internal principal that declares it, the same label also starts the fix, as
+`factory/ready` would: generation 0, `spec.origin` the investigate task, `spec.predictedClass` the inferred class, `requestedBy`
+the publisher, who is charged. The start skips intake's advisory day check, so the reservation at queueing binds (see
+[security](security.md#internal-principals-and-publishing)). Nothing starts when any Task exists on the issue, when the
+issue is closed, when it was edited since it was filed, or when its text is withheld: the issue stays filed and `factory/ready`
+remains the way to start it. The invariant is one Task and one charge per issue: when `factory/ready` and a publish retry land in the
+same poll, the publish start wins (generation 0, charged to the publisher), and `factory/ready` is answered `task_active` on a later
+poll. A closed issue starts nothing. The comment on the stub says the fix started, which task and class, and who pays.
 
 **`spec.origin`.** The poller sets it on a new `factory/ready` task only when a task of the same
 repository carries the label `agents.ogenki.io/published-issue: <n>` **and** its
@@ -760,7 +785,7 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | 5 | The class is `live` or `shadow` | `class_unarmed` |
 | 6 | The template's reviewer approved, the room reported the head, and every approval is of that head | `no_approving_verdict`, `head_unreported`, `verdict_stale` |
 | 7 | The head's `Agent-Run` trailer names one of the task's runs | `foreign_trailer` |
-| 8 | The class's declared conditions, in this order: `allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines` (GitHub's counts), `diffShape` (`links-only`: link targets only, each staying relative, on its https host, or moving to web.archive.org; built into `docs-links` and `revert`), or `semver-patch` and `semver-minor` for an [adopted class](#adopted-classes) (computed from the diff), `holdoutChecks` (SUCCESS from GitHub Actions), `oracle` (the task's `spec.findings` no longer link targets in the head, and every finding was a link target on the base and none is on the head, and no target moved but to the exact snapshot its finding gave) | `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `class_mismatch`, `holdout_red`, `oracle_finding_open`, `oracle_unrequested`; a pending holdout waits as `holdout_pending` |
+| 8 | The class's declared conditions, in this order: `allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines` (GitHub's counts), `diffShape` (`links-only`: link targets only, each staying relative, on its https host, or moving to web.archive.org; built into `docs-links` and `revert`), or `semver-patch`, `semver-minor` and `added-entry` for an [adopted class](#adopted-classes) (computed from the diff; `companionFiles` extends the files an `added-entry` may touch), `holdoutChecks` (SUCCESS from GitHub Actions), `oracle` (the task's `spec.findings` no longer link targets in the head, and every finding was a link target on the base and none is on the head, and no target moved but to the exact snapshot its finding gave) | `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `class_mismatch`, `holdout_red`, `oracle_finding_open`, `oracle_unrequested`; a pending holdout waits as `holdout_pending` |
 | 9 | A `live` class: its breaker has not tripped | `class_paused` |
 | 10 | A `live` class: under `merge.autoMergesPerDay` today, and under the class's `maxPerDay` | `auto_merge_cap` |
 | 11 | The class is `live` | `shadow_would_arm`: the decision is posted, nothing is merged |
@@ -783,7 +808,7 @@ it checked nothing. A holdout check that is not reported yet, or still running, 
 
 When every check holds on a live class, the merger App merges the decided head; GitHub refuses
 the merge if the head moved, and the new head is decided again. The task then watches
-`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. No result within twice `merge.verifyFor` (a check cancelled, as `cancel-in-progress` does on main, or never finished) ends `Done` `merged_unverified`. A
+`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. No result within twice `merge.verifyFor` (a check cancelled, as `cancel-in-progress` does on main, never finished, or never reported, so don't list a path-filtered workflow) ends `Done` `merged_unverified`. A
 maintainer's `factory/revert` within `merge.revertWindow` reverts too. The revert pull request
 auto-merges only while the `revert` class is live; otherwise a maintainer merges it.
 
@@ -947,18 +972,39 @@ classes:
   deps-minor: {shadow: true, author: {adopt: {logins: ["renovate[bot]"], branches: ["^renovate/"]}}, diffShape: semver-minor, modifyOnly: true, allowedFiles: ['…']}
 ```
 
+A catalog repository adopts the pull requests of a bot that adds one entry file, with the `added-entry`
+shape. This is RunLore's knowledge base: `runlore[bot]` adds `incidents/<slug>-<8 hex>.md`, appends
+to `index.md` and `log.md`, and labels the pull request `ready-to-merge`. Its validator is the
+holdout check `validate`, the job `validate` of the workflow "Validate KB"
+(`.github/workflows/validate-kb.yml`, which runs `lore validate-kb`):
+
+```yaml
+classes:
+  kb-entries:
+    shadow: true
+    author: {adopt: {logins: ["runlore[bot]"], branches: ["^runlore/kb-"]}}
+    diffShape: added-entry
+    allowedFiles: ['^incidents/[^/]+\.md$']
+    companionFiles: ['^index\.md$', '^log\.md$']
+    requiredLabel: ready-to-merge
+    holdoutChecks: [validate]
+```
+
 | Key | Holds |
 |---|---|
 | `author.adopt.logins` | The adopted authors. Each ends in `[bot]` (a human login is refused at start) |
 | `author.adopt.branches` | Head branch prefixes: `^` and a literal prefix, as `^renovate/`. The leading `^` is required, and any other regexp character is refused (the prefix is matched as written) |
-| `diffShape` | `semver-patch` or `semver-minor`, required with `author.adopt` and with `modifyOnly: true`. `semver-minor` is `shadow` only: the config refuses it `live` |
+| `diffShape` | `semver-patch` or `semver-minor` (`added-entry` has its own row), required with `author.adopt`; a semver shape needs `modifyOnly: true`. `semver-minor` is `shadow` only: the config refuses it `live` |
+| `diffShape: added-entry` | One new catalog entry and appends to its companion files, required with `author.adopt` and `modifyOnly: false`. It needs `allowedFiles` (where entries go), `holdoutChecks` (the validator: the factory runs no command and reads only the diff) and `requiredLabel`. `semver-minor`'s `shadow`-only rule does not apply to it |
+| `companionFiles` | Anchored patterns (`^` and `$`, as `allowedFiles`) of the files an `added-entry` pull request may append to beside its entry. Needs `diffShape: added-entry`; `allowedFiles` in the fence admits them too |
+| `requiredLabel` | A label (1 to 50 characters) the pull request must carry, applied by an adopted login. Needs `author.adopt` |
 | `releaseAgeCheck` | The commit status that holds the release age, posted by an adopted login (Renovate's `renovate/stability-days`). Needs `author.adopt` |
 
 **The poller.** A leader-only loop, once a minute, off unless a class adopts and is `shadow` or
 `live` (a class that is off adopts nothing). On a repository the factory owns, it lists the open
 pull requests and adopts one only when it is into `main`, from the same repository (never a fork),
-by an adopted login on an adopted branch, and its diff, computed by the factory, matches the shape of a class and keeps that class's file conditions (`allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines`: the gate's own functions), so a pull request outside the fence is never bound to the class, whatever its shape. A list that
-fails or fills its page, or a diff that cannot be read, adopts nothing and is retried. At most 10
+by an adopted login on an adopted branch, carrying the class's `requiredLabel` when it has one (checked before the diff is read, so a pull request without it is neither diffed nor judged, and one labelled later is seen at the same head), and its diff, computed by the factory, matches the shape of a class and keeps that class's file conditions (`allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines`: the gate's own functions), so a pull request outside the fence is never bound to the class, whatever its shape. A list that
+fails or fills its page, or a diff that cannot be read, adopts nothing and is retried. The list is one page of 100 open pull requests: a repository with 100 or more open pull requests adopts nothing until some close. At most 10
 adopted Tasks are open per repository and class, the rest wait for one to end. The Task is named from its key,
 `adopt:<repository>#<number>`, so there is never a second Task for one key, across a restart or after
 the first ended. Adopted Tasks fill none of the factory's caps (`caps.tasksPerDay`, `caps.activeTasks`,
@@ -979,7 +1025,21 @@ labels or title. `semver-patch` and `semver-minor` (package `semverdiff`) are st
   appears or disappears, a pre-release or build suffix, a changed trailing newline, an unchanged file.
   A lockfile fails by construction.
 
-**The gate in author mode.** Rows 4 to 7 change for an adopted class, the rest read as for any class:
+`added-entry` (package `entrydiff`) is the shape of a catalog entry's pull request. It holds when:
+
+- exactly one file is `added`, its path matches `allowedFiles`, it is absent on the base, and on the
+  head it is non-empty valid UTF-8 whose line count equals the stat's additions;
+- every other file is `modified`, matches `companionFiles`, deletes no line, adds 1 to 10 lines,
+  and keeps the base's lines in order (an append, or lines inserted);
+- no file is renamed;
+- the entry and each added line hold no control character but tab and newline and no Unicode format
+  character (zero-width, bidi), and no path holds a control or format character, newline included.
+
+The shape reads the diff only. What the entry says is the holdout check's job (`validate`), and the
+fence bounds where it goes. A symlink to a one-line target still passes the shape (its text is the
+target's): `runlore[bot]` as the only adopted author and the required `validate` check cover it.
+
+**The gate in author mode.** Rows 4 to 7 change for an adopted class, and the label row adds to row 4's evidence, the rest read as for any class:
 
 | Check | If it fails |
 |---|---|
@@ -989,6 +1049,7 @@ labels or title. `semver-patch` and `semver-minor` (package `semverdiff`) are st
 | Every commit's author is an adopted login, and every push to the branch was one's | `human_commit_in_pr`, `push_unrecorded` (`adoption_unread`: the decision ran without the read) |
 | `diffShape` holds on the diff the factory computed at the pinned head | `class_mismatch` |
 | `releaseAgeCheck` is `SUCCESS`, posted by an adopted login | `release_age_pending` waits; `release_age_red` |
+| `requiredLabel`, when the class declares one, is on the pull request, and its newest `labeled` event is an adopted login's (a list of events cut at its page reads as unproven) | `label_missing`, `label_not_adopted` |
 
 The veto is a repository member's or collaborator's: a review counts only when GitHub's
 `authorAssociation` is `OWNER`, `MEMBER` or `COLLABORATOR`, so a stranger's review (anyone can submit
@@ -1017,7 +1078,13 @@ GitHub refuses it if Renovate pushed since. A read error of the commit authors o
 | `human_commit_in_pr`, `ci_red`, `release_age_red`, `push_unrecorded`, `policy_pending`, `policy_absent`, `ci_cancelled`, `ci_wait_expired` | Hands off to `AwaitingHuman`, and **re-enters on a new head**: Renovate's rebase or a fresh push is decided again whole, up to 3 times (`maxGateReentries`, counted) |
 | `auto_merge_cap`, `class_paused` | Same: re-enters on a new head, counted. A `live` class only: a `shadow` class records `shadow_would_arm` through them (AM4) |
 | `shadow_would_arm` | The shadow decision: returns to `AwaitingCI` on Renovate's next head (`adopted_head_moved`), not counted, since it is no hand-off |
-| Every other reason: `class_unarmed`, `class_mismatch`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
+| Every other reason: `class_unarmed`, `class_mismatch`, `holdout_red`, `label_missing`, `label_not_adopted`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
+
+Known limit: `label_missing` is terminal. RunLore's refresh of an entry removes `ready-to-merge` and
+pushes; an adopted entry that was already handed off stays handed off, and labelling it again does
+not revive it. A maintainer merges it, or closes it and RunLore files a new one. The label is also
+not bound to a head: a label applied to head A stands on head B, so the gate keeps checking who
+applied it, and relies on RunLore's removal on push.
 
 `push_unrecorded` is GitHub not having recorded the push of the head yet (its events lag a push):
 the Task waits for it at most 10 minutes, then hands off. A push made during a long CI wait gets no
@@ -1117,6 +1184,15 @@ window ends. The comment ends `<!-- agent-factory … event=monitor-<n> verdict=
 what it read, with `follow_ups=N`. A regression, and each follow-up found, are also posted on the
 control issue (under their own keys), when it lives on the task's repository.
 `maku_factory_monitor_verdicts_total{class,verdict,repository}` counts each verdict once.
+
+**An origin task's verdict reaches the room.** For a task with `spec.origin`, the verdict is in the task facts (`monitor`) and
+the broker sends it as [`room.monitor_verdict`](api.md#webhooks). A sealed log takes no facts, so the room stays open while
+the task's monitor is due and has no verdict; the reconciler looks again after `monitorEvery`. A task without an origin closes its room
+as before. Known limit: that wait has no `roomCloseCap` test, so for a class window over 24 h the room stays open past the cap
+until the verdict is decided, and `roomCloseCap` (24 h from the task's end) is not what ends it. The cap acts after the verdict is
+set: if its facts are still unposted at that pass because the post was answered `ErrNoRoute`, `ErrNoRoom`, `ErrNotPermitted` or
+`ErrSealed`, the room closes at the cap with `facts_due` and the verdict is never sent. `alert-rules` (2 h) is not exposed to
+this; a maintainer's `class:` label naming a longer window is.
 
 **The labels** the merger writes (it asks for `issues: write` while any class is `live` or has a
 `monitor`):
