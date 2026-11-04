@@ -3,6 +3,7 @@
 package sanitize
 
 import (
+	"bytes"
 	"cmp"
 	"regexp"
 	"slices"
@@ -27,8 +28,8 @@ var (
 	liveForm = regexp.MustCompile("" +
 		`(&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);)` + // an entity
 		"|(?i:(?:https?|ftp)://|www\\.|github\\.com/)[^\\s<>`\\\\]+" + // a URL, a www. host, a github.com path
-		`|[A-Za-z0-9._%+-]{1,256}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+` + // an email
-		`|[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}(?:#[0-9]+|@[0-9a-f]{7,40}|/(?:issues|pull|pulls|discussions)/[0-9]+)` + // owner/repo#n, @sha, /issues/n
+		`|[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}(?:#[0-9]+|@[A-Za-z0-9._-]+|/(?:issues|pull|pulls|discussions)/[0-9]+)` + // owner/repo#n, @ref, /issues/n
+		`|[A-Za-z0-9._%+-]{1,256}@[A-Za-z0-9_.-]*\.[A-Za-z0-9_-]+` + // an email: GFM takes "_" and a leading "." in the domain
 		`|[A-Za-z0-9][A-Za-z0-9-]{0,99}@[0-9a-f]{7,40}` + // owner@sha
 		`|[A-Za-z0-9][A-Za-z0-9-]{0,99}#[0-9]+` + // owner#n: GitHub reads it as owner/<this repo>#n; any word can be an account
 		`|(@[A-Za-z0-9][A-Za-z0-9-]*(?:/[A-Za-z0-9_.-]+)?|#[0-9]+|(?i:gh)-[0-9]+` + // a mention, #n, GH-n
@@ -37,6 +38,8 @@ var (
 		`|([0-9a-f]{7,40})`) // a bare commit, digits alone included
 	// fenceLang is a fence's info string that GitHub reads as a language and nothing more.
 	fenceLang = regexp.MustCompile(`^[A-Za-z0-9_+#.-]+$`)
+	// fenceCloser is the line a fence's content ends at, behind whatever indent or quote it has.
+	fenceCloser = regexp.MustCompile("^[ \\t>]*(?:`{3,}|~{3,})[ \\t]*\r?\n?$")
 )
 
 // liveForm's groups.
@@ -53,16 +56,20 @@ const (
 // looks for references. GFM never links inside a code span, and goldmark reads where those are.
 //
 // Unlike Text it parses, because what shields text is structure: a backtick pair is no span across
-// a blank line, a list item or a table's pipe. Only inline text is rewritten, so a code block stays
-// as written. Like Text it fails closed: output that does not settle, or that goldmark still reads
-// a link in, is replaced by Withheld.
+// a blank line, a list item or a table's pipe. A column-0 fence stays as written; any other code
+// block moves to one, the one code block every parser agrees on, so its content need not be
+// refused below. A list or a quote around it is cut there.
+//
+// Like Text it fails closed. Output that does not settle, that goldmark still reads a link in, or
+// in which scanLive finds a live form outside what no parser could read as live, is replaced by
+// Withheld: goldmark is not GitHub's parser, and the scan does not depend on it.
 func Public(s string) (string, Report) {
 	out, rep := Text(s)
 	if rep.Withheld {
 		return out, rep
 	}
-	out, ok := settle(out, inertPass)
-	if !ok {
+	out, ok := settle(expandTabs(out), inertPass)
+	if !ok || scanLive(out) {
 		return Withheld, Report{Withheld: true}
 	}
 	return out, rep
@@ -103,14 +110,16 @@ func parseGFM(s string) ast.Node {
 type piece struct {
 	start, stop int
 	kind        pieceKind
+	text        string // pieceBlock: what replaces it
 }
 
 type pieceKind int
 
 const (
-	pieceLive pieceKind = iota // inline text outside a code span
-	pieceSpan                  // an author's code span
-	pieceInfo                  // a fence's info string
+	pieceLive  pieceKind = iota // inline text outside a code span
+	pieceSpan                   // an author's code span
+	pieceInfo                   // a column-0 fence's info string
+	pieceBlock                  // a code block moved to column 0
 )
 
 // inertPass is one pass over s: it splits s by goldmark's reading of it, and rewrites each piece.
@@ -119,6 +128,9 @@ func inertPass(s string) string {
 	var w inertWriter
 	last := 0
 	for _, p := range pieces {
+		if p.start < last {
+			continue // goldmark overlapped two: the piece stays as written, for the last scan to read
+		}
 		w.raw(s[last:p.start])
 		text := s[p.start:p.stop]
 		switch p.kind {
@@ -126,6 +138,8 @@ func inertPass(s string) string {
 			w.span(text)
 		case pieceInfo:
 			w.raw(inertInfo(text))
+		case pieceBlock:
+			w.raw(p.text)
 		case pieceLive:
 			w.inertLinks(escapeBackticks(text))
 		}
@@ -150,18 +164,22 @@ func piecesOf(s string) []piece {
 		switch n := n.(type) {
 		case *ast.CodeSpan:
 			if start, stop, ok := spanRange(n, src); ok {
-				pieces = append(pieces, piece{start, stop, pieceSpan})
+				pieces = append(pieces, piece{start: start, stop: stop, kind: pieceSpan})
 				for i := start; i < stop; i++ {
 					inSpan[i] = true
 				}
 			}
 			return ast.WalkSkipChildren, nil
 		case *ast.FencedCodeBlock:
-			if n.Info != nil {
-				pieces = append(pieces, piece{n.Info.Segment.Start, n.Info.Segment.Stop, pieceInfo})
+			pieces = append(pieces, fencePieces(n, src)...)
+			return ast.WalkSkipChildren, nil
+		case *ast.CodeBlock:
+			if n.Lines().Len() > 0 {
+				first, last := n.Lines().At(0), n.Lines().At(n.Lines().Len()-1)
+				pieces = append(pieces, movedBlock(n, src, "", lineStart(src, first.Start), last.Stop))
 			}
 			return ast.WalkSkipChildren, nil
-		case *ast.CodeBlock, *ast.HTMLBlock:
+		case *ast.HTMLBlock:
 			return ast.WalkSkipChildren, nil
 		}
 		if n.Type() == ast.TypeBlock {
@@ -181,7 +199,7 @@ func piecesOf(s string) []piece {
 			for j < l.Stop && !inSpan[j] {
 				j++
 			}
-			pieces = append(pieces, piece{i, j, pieceLive})
+			pieces = append(pieces, piece{start: i, stop: j, kind: pieceLive})
 			i = j
 		}
 	}
@@ -213,15 +231,98 @@ func spanRange(n *ast.CodeSpan, src []byte) (start, stop int, ok bool) {
 	return start, stop, start >= 0
 }
 
-// inertInfo keeps a fence's info string when GitHub reads a plain language in it. A fence of `math`
-// renders what it holds as live text, and GitHub decodes an entity in the info string first, so
-// anything but a plain word that is not math becomes "text": the block stays a code block.
+// fencePieces is what a pass does to a fence: one opening and closing at column 0 outside every
+// container keeps its lines and has its info string checked; any other moves there. An empty one
+// holds nothing to move.
+func fencePieces(n *ast.FencedCodeBlock, src []byte) []piece {
+	info := ""
+	var infoPiece []piece
+	if n.Info != nil {
+		seg := n.Info.Segment
+		info = string(src[seg.Start:seg.Stop])
+		infoPiece = []piece{{start: seg.Start, stop: seg.Stop, kind: pieceInfo}}
+	}
+	if n.Lines().Len() == 0 {
+		return infoPiece
+	}
+	first, last := n.Lines().At(0), n.Lines().At(n.Lines().Len()-1)
+	open := lineStart(src, lineStart(src, first.Start)-1)
+	root := n.Parent() != nil && n.Parent().Kind() == ast.KindDocument
+	stop := last.Stop
+	atZero := root && strings.IndexByte("`~", src[open]) >= 0
+	if end := lineEnd(src, stop); stop < end && fenceCloser.Match(src[stop:end]) && (root || src[stop] == ' ' || src[stop] == '>') {
+		atZero = atZero && src[stop] != ' '
+		stop = end
+	}
+	if atZero {
+		return infoPiece
+	}
+	return []piece{movedBlock(n, src, inertInfo(info), open, stop)}
+}
+
+// movedBlock is the code block n, whose lines lie between start and stop, as a fence at column 0,
+// always closed, and long enough for any backticks it holds.
+func movedBlock(n ast.Node, src []byte, info string, start, stop int) piece {
+	var content strings.Builder
+	longest, run := 0, 0
+	for i := range n.Lines().Len() {
+		seg := n.Lines().At(i)
+		v := seg.Value(src)
+		content.Write(v)
+		for _, c := range v {
+			if c == '`' {
+				run++
+				longest = max(longest, run)
+			} else {
+				run = 0
+			}
+		}
+	}
+	body := content.String()
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	fence := strings.Repeat("`", max(3, longest+1))
+	text := fence + info + "\n" + body + fence
+	if stop > 0 && src[stop-1] == '\n' {
+		text += "\n"
+	}
+	return piece{start: start, stop: stop, kind: pieceBlock, text: text}
+}
+
+// lineStart is the index of the line holding i.
+func lineStart(src []byte, i int) int {
+	if i <= 0 {
+		return 0
+	}
+	return bytes.LastIndexByte(src[:i], '\n') + 1
+}
+
+// lineEnd is the index just past the line starting at i, its newline included.
+func lineEnd(src []byte, i int) int {
+	if nl := bytes.IndexByte(src[i:], '\n'); nl >= 0 {
+		return i + nl + 1
+	}
+	return len(src)
+}
+
+// inertInfo is a fence's info string reduced to the plain language GitHub reads in it. A fence of
+// `math` renders what it holds as live text, those GitHub renders client-side are not ours to vouch
+// for, and GitHub decodes an entity in the info string first, so anything else becomes "text": the
+// block stays a code block.
 func inertInfo(info string) string {
 	lang, _, _ := strings.Cut(strings.TrimSpace(info), " ")
-	if !fenceLang.MatchString(lang) || strings.EqualFold(lang, "math") {
+	if lang == "" {
+		return ""
+	}
+	if !fenceLang.MatchString(lang) {
 		return "text"
 	}
-	return info
+	switch strings.ToLower(lang) {
+	case "math", "mermaid", "geojson", "topojson", "stl":
+		return "text"
+	}
+	return lang
 }
 
 // escapeBackticks escapes every backtick of t not already escaped. t lies outside every code span,
