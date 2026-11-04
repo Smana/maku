@@ -230,7 +230,6 @@ func reasons() map[string]string {
 		"invalid_draft":             "the proposal does not follow the issue template (a title `<area>: <what is wrong>`, then the sections What is wrong, What it should be and Acceptance check)",
 		"redacted":                  "the proposal holds something that looks like a secret, so it stays in the room",
 		"live_reference":            "the proposal holds a link, a mention or a reference the factory cannot make inert, so it stays in the room; a multi-line code span, a table row with more cells than its header or an unclosed code fence is the usual cause",
-		"render_unavailable":        "the factory could not check the proposal through GitHub's Markdown API, so nothing was filed; apply factory/publish again",
 		"proposal_ready":            "the triager proposed a change for a maintainer to publish (factory/publish)",
 		"merged":                    "the pull request was merged",
 		"pr_closed":                 "the pull request was closed",

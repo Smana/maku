@@ -3,8 +3,10 @@
 package intake
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -197,10 +199,6 @@ func TestPublishRenderGate(t *testing.T) {
 		"a commit link's class": {func(string) (string, error) {
 			return `<p><span class="commit-link">18e264e</span></p>`, nil
 		}, "cannot make inert"},
-		"an error": {func(string) (string, error) { return "", errors.New("forge: 502") }, "could not check"},
-		"a rate limit": {func(string) (string, error) {
-			return "", errors.New("forge: secondary rate limit")
-		}, "could not check"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p, f, cl := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
@@ -262,6 +260,38 @@ func TestPublishRenderGate(t *testing.T) {
 			t.Fatalf("created %q, rendered %q, comments %q", f.Created(), f.Rendered(), f.Comments(7))
 		}
 	})
+}
+
+// A render that fails is no verdict on the proposal: as with a write check that fails, nothing is
+// filed or said, the label waits, and a later poll publishes once GitHub answers. Every poll of an
+// outage logs it.
+func TestPublishWaitsOutARenderOutage(t *testing.T) {
+	for name, cause := range map[string]string{"an error": "forge: 502", "a rate limit": "forge: secondary rate limit"} {
+		t.Run(name, func(t *testing.T) {
+			p, f, _ := publishing(t, proposalOK, investigated("3buqdlot"), "Smana")
+			var logged bytes.Buffer
+			p.Log = slog.New(slog.NewTextHandler(&logged, nil))
+			f.SetRender(func(string) (string, error) { return "", errors.New(cause) })
+			for poll := 1; poll <= 3; poll++ {
+				if err := p.Poll(t.Context()); err == nil {
+					t.Fatalf("poll %d: the outage was swallowed", poll)
+				}
+				if len(f.Created()) != 0 || len(f.Comments(7)) != 0 || len(f.Removed(7)) != 0 {
+					t.Fatalf("poll %d: created %q, comments %q, removed %v", poll, f.Created(), f.Comments(7), f.Removed(7))
+				}
+				if got := strings.Count(logged.String(), "could not be rendered"); got != poll {
+					t.Fatalf("poll %d: logged %d times: %s", poll, got, logged.String())
+				}
+			}
+			f.SetRender(nil)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.Created()) != 1 || !slices.Contains(f.Removed(7), LabelPublish) {
+				t.Fatalf("recovered: created %q, removed %v", f.Created(), f.Removed(7))
+			}
+		})
+	}
 }
 
 // A write check that fails leaves the label for the next poll, as factory/ready does.

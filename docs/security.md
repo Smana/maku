@@ -222,8 +222,8 @@ template, made inert (`sanitize.Public`: no link, raw HTML, image or hidden char
 addresses, @mentions and issue or commit references are kept in code spans, so none pings or links),
 scanned by the redactor, then rendered through GitHub's `POST /markdown`. A secret refuses it as
 `redacted`. Text the last scan cannot prove inert, or a page holding any anchor or mention, issue or
-commit link, refuses it as `live_reference`; a render that fails refuses it as `render_unavailable`.
-Each publishes nothing. The scan does not use the parser the rewrite uses, and the render is
+commit link, refuses it as `live_reference`. Each publishes nothing, and so does a render that
+fails: the label then waits for the next poll, with no refusal. The scan does not use the parser the rewrite uses, and the render is
 GitHub's own reading, so a misparse must pass both to reach a reader. The
 factory files it once, with no trigger label, and records it on the task. An origin is that record, never
 issue text.

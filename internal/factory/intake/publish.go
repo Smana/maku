@@ -202,7 +202,7 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 		page, err := p.Forge.RenderMarkdown(ctx, text)
 		if err != nil {
 			p.log().Error("the proposal could not be rendered to check it", "task", t.Name, "error", err)
-			return "", "", "render_unavailable", nil
+			return "", "", "", fmt.Errorf("render the proposal: %w", err) // no answer is no refusal: the label waits for the next poll
 		}
 		if renderedLive.MatchString(page) {
 			return "", "", "live_reference", nil

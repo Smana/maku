@@ -552,7 +552,7 @@ func TestPublishNarration(t *testing.T) {
 		e.Body != "The agent factory did not publish #7's proposal: only a maintainer's factory/publish files a proposal." {
 		t.Fatalf("%+v", e)
 	}
-	for _, r := range []string{"no_proposal", "task_not_ended", "invalid_draft", "redacted", "live_reference", "render_unavailable"} {
+	for _, r := range []string{"no_proposal", "task_not_ended", "invalid_draft", "redacted", "live_reference"} {
 		if got := Reason(r); got == r || got == "" {
 			t.Errorf("%s has no narration", r)
 		}

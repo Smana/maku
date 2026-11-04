@@ -716,9 +716,10 @@ address, @mention and issue or commit reference becomes a code span, no HTML sur
 then rendered through GitHub's `POST /markdown` with the repository as context: any anchor or
 mention, issue or commit link in the page refuses it, title and body alike. The footer naming the
 maintainer is added after this gate, and is the one deliberate mention.
-A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`, `live_reference`,
-`render_unavailable`) is a comment on the stub and
-the label removed, so a retry is a new label; nothing is created.
+A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`, `live_reference`) is a
+comment on the stub and the label removed, so a retry is a new label; nothing is created. A render
+that fails, a rate limit included, is no refusal: as when the write check gets no answer, nothing is
+filed or said, the error is logged and the label waits for the next poll.
 
 Making text inert has two independent checks, because no parser here is GitHub's. A last scan that
 does not use goldmark trusts only a backtick span on one line and a fence opening and closing at
@@ -727,8 +728,9 @@ unclosed column-0 fence, which would swallow the footer. Indented code and neste
 column-0 fence first, which ends a surrounding list or quote there, so their content is kept. What
 is still refused when it holds a link or a reference: an inline code span over several lines, a
 code span with a pipe in a document that has a table, a table cell beyond its header's columns,
-and an ordered list numbered like a commit. `render_unavailable` means GitHub could not be asked,
-a rate limit included. The factory files the issue **once per task**, with no trigger label (only a marker,
+and an ordered list numbered like a commit.
+
+The factory files the issue **once per task**, with no trigger label (only a marker,
 `factory/published-from:<task>`, which grants nothing and lets a retry after a crash find the issue
 instead of filing a second): the maintainer reads it on GitHub and starts it with `factory/ready`, which is the second, money
 spending decision.
