@@ -170,6 +170,8 @@ type Set struct {
 	runBudgetUSD         metric.Float64Gauge
 	budgetFallbacks      metric.Int64Counter
 	owned                metric.Int64Gauge
+	policyLoadErrors     metric.Int64Counter
+	policyDivergence     metric.Int64Gauge
 	refusals             metric.Int64Counter
 	unpricedModels       metric.Int64Counter
 	excludesCache        metric.Int64Counter
@@ -406,6 +408,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.owned, err = meter.Int64Gauge("agent_factory_repository_owned",
 		metric.WithDescription("1 while the repository's .github/agent-factory.yaml names this factory (v2 D7), else 0."))
 	check(err)
+	s.policyLoadErrors, err = meter.Int64Counter("agent_factory_policy_load_errors_total",
+		metric.WithDescription("Reads of a repository's merge policy that failed: invalid, or over a guardrail."))
+	check(err)
+	s.policyDivergence, err = meter.Int64Gauge("agent_factory_policy_central_divergence",
+		metric.WithDescription("Classes on which a repository's merge policy differs from the central config, as last read."))
+	check(err)
 	s.refusals, err = meter.Int64Counter("agent_factory_admission_refusals_total",
 		metric.WithDescription("Run requests refused on their repository: bound to another, no write on GitHub, or not this factory's."))
 	check(err)
@@ -526,6 +534,22 @@ func (s *Set) RepositoryOwned(ctx context.Context, repository string, owned bool
 		v = 1
 	}
 	s.owned.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+func policyLoadReasons() []string { return []string{"invalid", "guardrail_mismatch"} }
+
+// PolicyLoadError counts a failed read of repository's merge policy; a reason outside the list is
+// not counted.
+func (s *Set) PolicyLoadError(ctx context.Context, repository, reason string) {
+	if !slices.Contains(policyLoadReasons(), reason) {
+		return
+	}
+	s.policyLoadErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository)), attribute.String("reason", reason)))
+}
+
+// PolicyDivergence records how many classes differ from the central config (stage 1's exit: 0).
+func (s *Set) PolicyDivergence(ctx context.Context, repository string, n int) {
+	s.policyDivergence.Record(ctx, int64(n), metric.WithAttributes(attribute.String("repository", s.repository(repository))))
 }
 
 // AdmissionRefused counts a run request refused on its repository, the one ctx names. Other
