@@ -290,6 +290,7 @@
       ]
     },
     "flow": {
+      "untrusted": true,
       "nodes": [
         {
           "run": "c1",

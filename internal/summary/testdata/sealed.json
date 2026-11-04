@@ -30,6 +30,7 @@
     "actions": [],
     "notes": {"untrusted": true, "items": []},
     "flow": {
+      "untrusted": true,
       "nodes": [
         {
           "run": "c1",

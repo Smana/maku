@@ -23,7 +23,7 @@ export interface SplitPart { index: number; issue: number; room: string; outcome
 // The task's path as the rail draws it (internal/summary Flow). Role is the log's text and may be
 // any string: key nothing on it without a fallback.
 export interface Flow {
-  plan?: string[]; nodes: FlowNode[]; ghosts?: string[]; milestones?: Milestone[];
+  untrusted?: boolean; plan?: string[]; nodes: FlowNode[]; ghosts?: string[]; milestones?: Milestone[];
   split?: { of: number; parts?: SplitPart[] }; parent?: { room: string; issue: number; index: number; of: number };
 }
 

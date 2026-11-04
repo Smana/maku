@@ -329,6 +329,41 @@ func TestFlowView(t *testing.T) {
 					t.Fatalf("reason = %q (%d bytes)", got, len(got))
 				}
 			}},
+		{"a handoff is one line of plain text, whatever room_handoff let through", []envelope.Event{fjoin(1, "a", "implementer"), fjoin(2, "b", "implementer"),
+			fhandoff(3, "a", envelope.HandoffPayload{Summary: "‮ok​\tdone⁦" + strings.Repeat("é", 200) + "\nsecond"}),
+			fhandoff(4, "b", envelope.HandoffPayload{Summary: "one two\r\nthree"})},
+			func(t *testing.T, fl *Flow) {
+				got := fl.Nodes[0].Handoff
+				if !strings.HasPrefix(got, "ok done") || len([]rune(got)) != 120 || strings.ContainsFunc(got, envelope.Control) {
+					t.Fatalf("handoff = %q", got)
+				}
+				if got := fl.Nodes[1].Handoff; got != "one" {
+					t.Fatalf("a line separator ends the line: %q", got)
+				}
+			}},
+		{"every free-text field of a node is plain text", func() []envelope.Event {
+			const evil = "x‮​\x1b[2J\n"
+			a := envelope.RunFact{ID: "a", Role: "impl" + evil, Verdict: "ok" + evil, Outcome: "ended" + evil, StartedAt: fat(1)}
+			return []envelope.Event{
+				fev(1, "", envelope.StateChanged, envelope.Actor{Kind: envelope.ActorHuman, ID: "github:ana" + evil},
+					envelope.StatePayload("run_requested", map[string]any{"runId": "a"})),
+				fjoin(2, "a", "implementer"),
+				ffacts(3, envelope.TaskFacts{Phase: "Implementing", Runs: []envelope.RunFact{a}}),
+			}
+		}(), func(t *testing.T, fl *Flow) {
+			n := fl.Nodes[0]
+			for name, v := range map[string]string{"role": n.Role, "verdict": n.Verdict, "outcome": n.Outcome, "startedBy": n.StartedBy} {
+				if strings.ContainsFunc(v, func(r rune) bool { return envelope.Control(r) || r == '\n' }) {
+					t.Errorf("%s = %q", name, v)
+				}
+			}
+		}},
+		{"the flow is marked untrusted, as the notes are", []envelope.Event{fjoin(1, "a", "implementer"), fjoin(2, "b", "implementer")},
+			func(t *testing.T, fl *Flow) {
+				if !fl.Untrusted {
+					t.Fatal("flow not marked untrusted")
+				}
+			}},
 		{"a person's run", []envelope.Event{
 			fev(1, "", envelope.StateChanged, envelope.Actor{Kind: envelope.ActorHuman, ID: "github:ana"},
 				envelope.StatePayload("run_requested", map[string]any{"runId": "b"})),

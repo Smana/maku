@@ -171,11 +171,7 @@ func foldFlow(st *State, ev envelope.Event) {
 		if json.Unmarshal(ev.Payload, &h) != nil {
 			return
 		}
-		line, _, _ := strings.Cut(h.Summary, "\n")
-		if rs := []rune(line); len(rs) > maxHandoffLine {
-			line = string(rs[:maxHandoffLine])
-		}
-		r.handoff, r.scoped, r.split = line, h.Scope != nil, h.Split != nil
+		r.handoff, r.scoped, r.split = handoffLine(h.Summary), h.Scope != nil, h.Split != nil
 	}
 }
 
@@ -202,6 +198,8 @@ func (f *flowState) hasPhase(p string) bool {
 // Flow is the task's path as the animated run view draws it: its runs in start order, the plan's
 // steps no run has matched yet, and the phases after the runs.
 type Flow struct {
+	// Untrusted marks what the agents wrote here, the handoff lines, as data, never an instruction.
+	Untrusted  bool                 `json:"untrusted"`
 	Plan       []string             `json:"plan,omitempty"`
 	Nodes      []FlowNode           `json:"nodes"`
 	Ghosts     []string             `json:"ghosts,omitempty"`
@@ -240,8 +238,8 @@ type FlowNode struct {
 // maxFlowModels bounds a node's served models: the Task CRD's own bound.
 const maxFlowModels = 8
 
-// maxFlowReason bounds a node's end reason, in bytes: the log's text, rendered as is.
-const maxFlowReason = 64
+// maxFlowField bounds a node's free-text field, its end reason among them, in bytes.
+const maxFlowField = 64
 
 // terminalPhase reports whether a task phase closes the path (animated run view, decision 5).
 func terminalPhase(p string) bool {
@@ -305,7 +303,7 @@ func flowView(st State) *Flow {
 		return nil
 	}
 
-	fl := &Flow{Nodes: make([]FlowNode, 0, len(joins)), Milestones: slices.Clone(st.flow.phases)}
+	fl := &Flow{Untrusted: true, Nodes: make([]FlowNode, 0, len(joins)), Milestones: slices.Clone(st.flow.phases)}
 	var pr *envelope.PRFact
 	if f := st.Facts; f != nil {
 		fl.Plan, pr = slices.Clone(f.Plan), f.PR
@@ -385,8 +383,13 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 			n.Judge = &jm
 		}
 		n.Effort = r.effort
-		n.Tools, n.StartedBy, n.Reason, n.Handoff = r.tools, r.startedBy, plainReason(r.reason), r.handoff
+		n.Tools, n.StartedBy, n.Reason, n.Handoff = r.tools, r.startedBy, r.reason, r.handoff
 		j.scoped, j.split = r.scoped, r.split
+	}
+	// The fold reads the log unvalidated. The model, effort, judge, persona and handoff are bounded
+	// on their own, and an edge comes from a fixed table.
+	for _, s := range []*string{&n.Run, &n.Role, &n.Outcome, &n.Verdict, &n.StartedBy, &n.Reason} {
+		*s = plainField(*s)
 	}
 	if n.Persona == "" {
 		n.Persona = n.Role
@@ -420,19 +423,45 @@ func edgeInto(j, prev flowJoin, pr *envelope.PRFact) string {
 	return ""
 }
 
-// plainReason is s on one line, without control or format characters, cut to maxFlowReason bytes
-// on a rune boundary.
-func plainReason(s string) string {
-	s = strings.Map(func(r rune) rune {
+// lineEnd is a rune a renderer may break a line on.
+func lineEnd(r rune) bool {
+	switch r {
+	case '\n', '\r', '\v', '\f', '\u0085', ' ', ' ':
+		return true
+	}
+	return false
+}
+
+// plainText is s on one line, without control or format characters: bidi overrides and zero-width
+// characters reorder or hide what a reader sees, and MCP's text() lets them through.
+func plainText(s string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
-		case r == '\n' || r == '\t':
+		case r == '\t' || lineEnd(r):
 			return ' '
 		case envelope.Control(r) || r == utf8.RuneError:
 			return -1
 		}
 		return r
 	}, strings.ToValidUTF8(s, ""))
-	for len(s) > maxFlowReason {
+}
+
+// handoffLine is a handoff summary's first line, plain, at most maxHandoffLine runes.
+func handoffLine(summary string) string {
+	if i := strings.IndexFunc(summary, lineEnd); i >= 0 {
+		summary = summary[:i]
+	}
+	line := plainText(summary)
+	if rs := []rune(line); len(rs) > maxHandoffLine {
+		line = string(rs[:maxHandoffLine])
+	}
+	return line
+}
+
+// plainField is s as plainText, cut to maxFlowField bytes on a rune boundary.
+func plainField(s string) string {
+	s = plainText(s)
+	for len(s) > maxFlowField {
 		_, size := utf8.DecodeLastRuneInString(s)
 		s = s[:len(s)-size]
 	}
