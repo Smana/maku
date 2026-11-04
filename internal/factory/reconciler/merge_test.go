@@ -54,8 +54,10 @@ func (l *fakeLog) handoff(run, commit string) {
 		Payload: envelope.Must(envelope.HandoffPayload{FromRole: "implementer", ToRole: "factory", Commit: commit})})
 }
 
-// C2: a watched check that never ran on main (a path-filtered push workflow) is not pending forever.
-func TestVerifyingIgnoresChecksThatNeverRanOnMain(t *testing.T) {
+// C2 as amended: a watched check absent from main's check runs is not green. Verifying reads it
+// PENDING, so it never ends merged_verified: past twice verifyFor it ends merged_unverified (D1).
+// The monitor's MainState still ignores a check that never ran (a path-filtered push workflow).
+func TestVerifyingReadsAnAbsentWatchedCheckAsPending(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseVerifying)
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
@@ -64,8 +66,15 @@ func TestVerifyingIgnoresChecksThatNeverRanOnMain(t *testing.T) {
 	_ = g.c.Status().Update(t.Context(), &tk)
 	g.f.SetCommitChecks("m1", forge.Check{Name: required[0], State: "SUCCESS"}) // required[1] never runs on push
 	g.r.Now = func() time.Time { return now.Add(31 * time.Minute) }
-	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseDone || got.Status.Reason != "merged_verified" {
+	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseVerifying {
+		t.Fatalf("%s %s: an absent watched check verified the merge", got.Status.Phase, got.Status.Reason)
+	}
+	g.r.Now = func() time.Time { return now.Add(61 * time.Minute) }
+	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseDone || got.Status.Reason != "merged_unverified" {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	}
+	if MainState([]forge.Check{{Name: required[1], State: "SUCCESS"}}, required) != "SUCCESS" {
+		t.Fatal("the monitor's read still ignores a check that never ran")
 	}
 	if MainState([]forge.Check{{Name: required[0], State: "PENDING"}}, required) != "PENDING" ||
 		MainState([]forge.Check{{Name: required[1], State: "FAILURE"}}, required) != "FAILURE" {

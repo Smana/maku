@@ -357,13 +357,14 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return fmt.Errorf("manager: %w", err)
 		}
 	}
-	ops := factoryOps(mgr.GetCache().WaitForCacheSync, func() bool { return ctx.Err() != nil }, exp.Handler())
-	return serveFactory(ctx, log, mgr, ops, ns)
+	down := newDrainFlag(ctx)
+	ops := factoryOps(mgr.GetCache().WaitForCacheSync, down.Draining, exp.Handler())
+	return serveFactory(ctx, log, mgr, ops, down, ns)
 }
 
 // serveFactory runs the manager until ctx ends or it fails; :9090 stops last, so the drain's
 // final counts are scraped and /readyz answers 503 meanwhile, as the broker's does.
-func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, ops http.Handler, ns string) error {
+func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, ops http.Handler, down *drainFlag, ns string) error {
 	var lc net.ListenConfig
 	opsLn, err := lc.Listen(ctx, "tcp", opsAddr)
 	if err != nil {
@@ -382,6 +383,8 @@ func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, op
 		opsDone <- err
 	}()
 	g, gctx := errgroup.WithContext(runCtx)
+	stopWatch := context.AfterFunc(gctx, down.Begin) // the manager dying is a shutdown too
+	defer stopWatch()
 	g.Go(func() error {
 		if err := mgr.Start(gctx); err != nil {
 			return fmt.Errorf("manager: %w", err)
