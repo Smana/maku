@@ -58,7 +58,7 @@ type flowRun struct {
 	reason                     string // run_phase's terminal reason, as the log holds it
 	handoff                    string // its handoff summary's first line, at most 120 runes
 	from, to, last             int64
-	at                         time.Time
+	at, leftAt                 time.Time
 	tools                      ToolCount
 	judge                      JudgeMark
 	scoped, split              bool
@@ -137,7 +137,7 @@ func foldFlow(st *State, ev envelope.Event) {
 			}
 		case "left":
 			if r := f.run(id); r != nil {
-				r.to = ev.Seq
+				r.to, r.leftAt = ev.Seq, ev.TS
 				r.last = max(r.last, ev.Seq)
 			}
 		}
@@ -359,6 +359,9 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 		}
 		if n.StartedAt.IsZero() {
 			n.StartedAt = r.at
+		}
+		if n.EndedAt.IsZero() {
+			n.EndedAt = r.leftAt // a manual room's facts, or facts that lag: a run that left is over
 		}
 		n.FromSeq, n.ToSeq = r.from, r.to
 		if n.ToSeq == 0 && rf != nil && !rf.EndedAt.IsZero() {

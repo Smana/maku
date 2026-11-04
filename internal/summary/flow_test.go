@@ -74,6 +74,25 @@ func TestFlowView(t *testing.T) {
 					t.Fatalf("flow = %+v", fl)
 				}
 			}},
+		{"no task, a run that left has ended at its leaving", []envelope.Event{fjoin(1, "a", "implementer"), fjoin(2, "b", "reviewer"), fleft(3, "a")},
+			func(t *testing.T, fl *Flow) {
+				if a := fl.Nodes[0]; a.ToSeq != 3 || !a.EndedAt.Equal(fat(3)) {
+					t.Fatalf("a = %+v", a)
+				}
+				if b := fl.Nodes[1]; b.ToSeq != 0 || !b.EndedAt.IsZero() {
+					t.Fatalf("b = %+v", b)
+				}
+			}},
+		{"a run that left before its facts say so has ended; the facts' end wins once they do", func() []envelope.Event {
+			told := frun("b", "reviewer", "reviewer", 2)
+			told.EndedAt = fat(9)
+			evs := []envelope.Event{fjoin(1, "a", "implementer"), fjoin(2, "b", "reviewer"), fleft(5, "a"), fleft(6, "b")}
+			return append(evs, ffacts(7, envelope.TaskFacts{Phase: "Reviewing", Runs: []envelope.RunFact{frun("a", "implementer", "implementer", 1), told}}))
+		}(), func(t *testing.T, fl *Flow) {
+			if !fl.Nodes[0].EndedAt.Equal(fat(5)) || !fl.Nodes[1].EndedAt.Equal(fat(9)) {
+				t.Fatalf("nodes = %+v", fl.Nodes)
+			}
+		}},
 		{"a task with no run yet", []envelope.Event{ffacts(1, envelope.TaskFacts{Phase: "Triaged", Plan: plan})},
 			func(t *testing.T, fl *Flow) {
 				if fl == nil || len(fl.Nodes) != 0 || fl.Nodes == nil || !slices.Equal(fl.Ghosts, plan) {
