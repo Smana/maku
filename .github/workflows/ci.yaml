@@ -206,7 +206,11 @@ jobs:
           v="${next}.g${sha8}"
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "$GH_ACTOR" --password-stdin
           helm package charts/maku-factory --version "$v" --app-version "v${next}.${sha8}"
-          out="$(helm push "maku-factory-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)"; echo "$out"
+          # Print the output whether or not the push fails: under bash -e a bare assignment
+          # exits first and the error is lost.
+          rc=0; out="$(helm push "maku-factory-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)" || rc=$?
+          echo "$out"
+          [ "$rc" -eq 0 ] || { echo "helm push failed (exit $rc)" >&2; exit "$rc"; }
           digest="$(sed -n 's/^Digest: //p' <<<"$out")"
           [ -n "$digest" ] || { echo "helm push printed no digest" >&2; exit 1; }
           # Signs the digest, never the version, as the images do.
