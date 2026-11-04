@@ -580,7 +580,7 @@ func TestPublishStarts(t *testing.T) {
 
 	t.Run("an edited marker issue starts nothing (K7)", func(t *testing.T) {
 		p, f, c := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
-		f.SetIssue(forge.Issue{Number: 88, Title: "docs(alerts): x", Body: proposalWithFiles, Author: "ogenki-agent-factory[bot]",
+		f.SetIssue(forge.Issue{Number: 88, Title: "docs(alerts): x", Body: proposalWithFiles, Author: "ogenki-agent-factory[bot]", State: "OPEN",
 			Labels: []string{"factory/published-from:3buqdlot", "class:alert-rules"}, LastEditedAt: t0.Add(time.Minute)})
 		if err := p.Poll(t.Context()); err != nil {
 			t.Fatal(err)
