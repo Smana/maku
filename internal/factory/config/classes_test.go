@@ -50,7 +50,7 @@ func TestBadConditionsFail(t *testing.T) {
 		"a bad pattern":       {"docs-links: {}\n  revert: {}\n  x: {allowedFiles: ['(']}", `class x: allowedFiles "(" is not a regular expression`},
 		"an empty pattern":    {"docs-links: {}\n  revert: {}\n  x: {protectedFiles: ['']}", `class x: protectedFiles "" is not a regular expression`},
 		"a negative cap":      {"docs-links: {}\n  revert: {}\n  x: {maxModifiedLines: -1}", "class x: maxModifiedLines must be 0 (no cap) or more"},
-		"an unknown shape":    {"docs-links: {}\n  revert: {}\n  x: {diffShape: semver-major}", `class x: diffShape "semver-major" is not one of [links-only semver-patch semver-minor]`},
+		"an unknown shape":    {"docs-links: {}\n  revert: {}\n  x: {diffShape: semver-major}", `class x: diffShape "semver-major" is not one of [links-only semver-patch semver-minor added-entry]`},
 		"a holdout twice":     {"docs-links: {}\n  revert: {}\n  x: {holdoutChecks: [a, a]}", `class x: holdoutChecks names "a" empty or twice`},
 		"live and shadow":     {"docs-links: {live: true, shadow: true}\n  revert: {}", "class docs-links: live and shadow never together (R32)"},
 		"a negative per day":  {"docs-links: {}\n  revert: {}\n  x: {maxPerDay: -2}", "class x: maxPerDay must be 0 (no cap) or more"},
@@ -168,7 +168,7 @@ func TestBadAdoptionFails(t *testing.T) {
 	base := "docs-links: {}\n  revert: {}\n  "
 	for name, c := range map[string]struct{ classes, err string }{
 		"semver without adopt":      {base + "x: {diffShape: semver-patch, modifyOnly: true}", "class x: diffShape semver-patch needs author.adopt (MC10)"},
-		"adopt without semver":      {base + "x: {author: {adopt: {logins: ['a[bot]'], branches: ['^r/']}}}", "class x: author.adopt needs diffShape semver-patch or semver-minor"},
+		"adopt without semver":      {base + "x: {author: {adopt: {logins: ['a[bot]'], branches: ['^r/']}}}", "class x: author.adopt needs diffShape semver-patch, semver-minor or added-entry"},
 		"no logins":                 {base + "x: {author: {adopt: {logins: [], branches: ['^r/']}}, diffShape: semver-patch, modifyOnly: true}", "class x: author.adopt needs logins and branches"},
 		"an unanchored branch":      {base + "x: {author: {adopt: {logins: ['a[bot]'], branches: ['renovate/']}}, diffShape: semver-patch, modifyOnly: true}", `class x: author.adopt.branches "renovate/" must be ^ and a literal prefix`},
 		"semver without modifyOnly": {base + "x: {author: {adopt: {logins: ['a[bot]'], branches: ['^r/']}}, diffShape: semver-patch}", "class x: a semver shape needs modifyOnly: true"},
@@ -195,5 +195,43 @@ func TestMonitorVerificationParses(t *testing.T) {
 	}
 	if v := c.RepositoryFor("Smana/cloud-native-ref").Classes["x"].Monitor.Verification; v == nil || v.Within.Duration != 2*time.Hour {
 		t.Fatalf("%+v", v)
+	}
+}
+
+const kbEntries = `kb-entries: {shadow: true, author: {adopt: {logins: ["runlore[bot]"], branches: ['^runlore/kb-']}},
+    diffShape: added-entry, allowedFiles: ['^incidents/[^/]+\.md$'], companionFiles: ['^index\.md$', '^log\.md$'],
+    requiredLabel: ready-to-merge, holdoutChecks: [validate], maxPerDay: 5}`
+
+// K10, K11: an added-entry class parses beside the entry classes.
+func TestACatalogClassParses(t *testing.T) {
+	c, err := Parse([]byte(withClasses(t, "docs-links: {}\n  revert: {}\n  "+kbEntries)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cl := c.RepositoryFor("Smana/cloud-native-ref").Classes["kb-entries"]
+	if !cl.Adopted() || cl.DiffShape != "added-entry" || len(cl.CompanionFiles) != 2 || cl.RequiredLabel != "ready-to-merge" {
+		t.Fatalf("%+v", cl)
+	}
+}
+
+func TestBadCatalogClassFails(t *testing.T) {
+	base := "docs-links: {}\n  revert: {}\n  "
+	with := func(old, repl string) string { return base + strings.Replace(kbEntries, old, repl, 1) }
+	for name, c := range map[string]struct{ classes, err string }{
+		"modifyOnly":           {with("maxPerDay", "modifyOnly: true, maxPerDay"), "class kb-entries: added-entry adds a file: modifyOnly must be false"},
+		"no allowedFiles":      {with("allowedFiles: ['^incidents/[^/]+\\.md$'],", ""), "class kb-entries: added-entry needs allowedFiles: the entries' paths"},
+		"no holdout":           {with("holdoutChecks: [validate],", ""), "class kb-entries: added-entry needs holdoutChecks: the validator's check"},
+		"no label":             {with("requiredLabel: ready-to-merge,", ""), "class kb-entries: added-entry needs requiredLabel"},
+		"no author":            {with(`author: {adopt: {logins: ["runlore[bot]"], branches: ['^runlore/kb-']}},`, ""), "class kb-entries: diffShape added-entry needs author.adopt (MC10)"},
+		"unanchored companion": {with(`'^index\.md$'`, `'index\.md'`), `class kb-entries: companionFiles "index\\.md" must start with ^ and end with $`},
+		"companion off shape":  {base + "x: {companionFiles: ['^a$']}", "class x: companionFiles needs diffShape added-entry"},
+		"label off adopt":      {base + "x: {requiredLabel: l}", "class x: requiredLabel needs author.adopt"},
+		"a long label":         {with("ready-to-merge", strings.Repeat("l", 51)), "class kb-entries: requiredLabel is 1..50 characters, GitHub's bound"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(withClasses(t, c.classes))); err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Fatalf("got %v, want %q", err, c.err)
+			}
+		})
 	}
 }
