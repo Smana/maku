@@ -70,3 +70,19 @@ func TestWouldArmAdoptedNamesWhatIsDeclared(t *testing.T) {
 		t.Fatalf("bare %q full %q", bare, full)
 	}
 }
+
+// The shadow comment names what the class's shape checked: a semver bump keeps its words, an added
+// entry does not claim to be one.
+func TestWouldArmAdoptedNamesTheShape(t *testing.T) {
+	tk := &v1alpha1.Task{}
+	for shape, c := range map[string]struct{ has, hasNot string }{
+		"semver-patch": {"the diff a semver bump", "added entry"},
+		"semver-minor": {"the diff a semver bump", "added entry"},
+		"added-entry":  {"the diff one added entry with only appended lines in the class's companion files, its required label applied by a login the class adopts", "semver"},
+	} {
+		body := WouldArmAdopted(tk, config.Class{DiffShape: shape, AllowedFiles: []string{"x"}, RequiredLabel: "ready-to-merge"}, "c", "h", false, false).Body
+		if !strings.Contains(body, c.has) || strings.Contains(body, c.hasNot) {
+			t.Errorf("%s: %q", shape, body)
+		}
+	}
+}
