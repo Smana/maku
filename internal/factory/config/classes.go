@@ -154,6 +154,9 @@ func (c Class) ReadsDiff(name string) bool {
 }
 
 // validateClass reports one class's problems.
+// ValidateClass reports one class's problems, for a class read from outside this config.
+func ValidateClass(name string, cl Class, bad func(string, ...any)) { validateClass(name, cl, bad) }
+
 func validateClass(name string, cl Class, bad func(string, ...any)) {
 	if cl.Live && cl.Shadow {
 		bad("class %s: live and shadow never together (R32)", name)
