@@ -11,9 +11,9 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
-// types are R19's eleven events, in the design's order.
+// types are R19's eleven events and the monitor's verdict, twelve, in the design's order.
 var types = []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
-	"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted",
+	"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
 	"room.budget_reached", "room.ended"}
 
 // Types lists the events a subscriber may ask for.
@@ -45,7 +45,7 @@ func Reasons() []string {
 	return slices.Compact(out)
 }
 
-// Clip is v when kind's vocabulary ("reason", "limit" or "state") holds it, "" for "", else
+// Clip is v when kind's vocabulary ("reason", "limit", "state" or "verdict") holds it, "" for "", else
 // "other": no value outside a closed list leaves the broker or reaches a Slack thread.
 func Clip(kind, v string) string {
 	var list []string
@@ -56,6 +56,8 @@ func Clip(kind, v string) string {
 		list = limits
 	case "state":
 		list = States()
+	case "verdict":
+		list = envelope.MonitorVerdicts()
 	}
 	if v == "" || slices.Contains(list, v) {
 		return v
@@ -67,13 +69,14 @@ func Clip(kind, v string) string {
 // room (M1): what it has sent is that subscriber's, so two subscribers at different cursors never
 // share it. The emitter warms it by replaying the room up to the subscriber's cursor.
 type Tracker struct {
-	seq        int64  // the last seq read: an entry at or below it is a replay and means nothing
-	phase      string // the last task phase seen: an event fires on a change only (M2)
-	pr         int    // the last pull request number seen, for merged, reverted and verdict_posted
-	prSent     bool
-	mergedSent bool // room.merged goes out once: a human merge reaches it through reason, not phase
-	ended      bool
-	origin     string // the last origin the task facts named: every event after it repeats it (RA10)
+	seq         int64  // the last seq read: an entry at or below it is a replay and means nothing
+	phase       string // the last task phase seen: an event fires on a change only (M2)
+	pr          int    // the last pull request number seen, for merged, reverted and verdict_posted
+	prSent      bool
+	mergedSent  bool // room.merged goes out once: a human merge reaches it through reason, not phase
+	ended       bool
+	monitorSent bool   // room.monitor_verdict goes out once: a verdict is final once set (MC7)
+	origin      string // the last origin the task facts named: every event after it repeats it (RA10)
 }
 
 // Events is what ev means to a subscriber of room, whose repository is repo: none, one or a few
@@ -138,6 +141,10 @@ func (t *Tracker) task(room, repo string, f envelope.TaskFacts) []Event {
 		// A human merge is Done to Done with reason merged: no Merged phase, so the reason is the fact.
 		t.mergedSent = true
 		out = append(out, Event{Type: "room.merged", Room: room, PR: t.pr})
+	}
+	if f.Monitor != "" && t.origin != "" && !t.monitorSent {
+		t.monitorSent = true // final once set (MC7): a later rewrite of the facts repeats it
+		out = append(out, Event{Type: "room.monitor_verdict", Room: room, Repo: repo, PR: t.pr, Verdict: Clip("verdict", f.Monitor)})
 	}
 	if f.Phase == t.phase {
 		return out // the factory rewrites a phase's facts (budget, run, PR): no new event

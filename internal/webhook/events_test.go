@@ -91,7 +91,7 @@ func TestEvents(t *testing.T) {
 		t.Errorf("a new seq is still read after a replay: %v", g)
 	}
 	wantTypes := []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
-		"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted",
+		"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
 		"room.budget_reached", "room.ended"}
 	if !slices.Equal(Types(), wantTypes) {
 		t.Fatalf("Types() = %v, want %v", Types(), wantTypes)
@@ -228,5 +228,34 @@ func TestAnUnverifiedMergeEmitsRoomMerged(t *testing.T) {
 	got := tr.Events("room0001", "r", fact(1, envelope.TaskFacts{Phase: "Done", Reason: "merged_unverified", PR: &envelope.PRFact{Number: 9}}))
 	if !slices.ContainsFunc(got, func(e Event) bool { return e.Type == "room.merged" && e.PR == 9 }) {
 		t.Fatalf("want room.merged pr 9: %+v", got)
+	}
+}
+
+func TestMonitorVerdictIsSentOncePerRoom(t *testing.T) {
+	pr := &envelope.PRFact{Number: 42, URL: "https://github.com/Smana/cloud-native-ref/pull/42"}
+	run := func(origin string, facts ...envelope.TaskFacts) (out []Event) {
+		var tr Tracker
+		for i, f := range facts {
+			f.Origin, f.PR = origin, pr
+			for _, e := range tr.Events("aaaaaaaa", "Smana/cloud-native-ref", fact(int64(i+1), f)) {
+				if e.Type == "room.monitor_verdict" {
+					out = append(out, e)
+				}
+			}
+		}
+		return out
+	}
+	done := envelope.TaskFacts{Phase: "Done", Reason: "merged"}
+	reg, rewrite := done, done
+	reg.Monitor, rewrite.Monitor, rewrite.Spend = "regression", "regression", &envelope.SpendFact{UsedMicroUSD: 1}
+	if b, _ := json.Marshal(run("abcdefgh", done, reg, rewrite, reg)); string(b) !=
+		`[{"type":"room.monitor_verdict","room":"aaaaaaaa","repo":"Smana/cloud-native-ref","pr":42,"origin":"abcdefgh","verdict":"regression"}]` {
+		t.Fatalf("once, ids and a closed code, no text: %s", b)
+	}
+	if got := run("abcdefgh", done, envelope.TaskFacts{Phase: "Done", Monitor: "inconclusive"}); len(got) != 1 || got[0].Verdict != "inconclusive" {
+		t.Fatalf("inconclusive is sent as such: %+v", got)
+	}
+	if got := run("", done, reg); len(got) != 0 || !slices.Contains(Types(), "room.monitor_verdict") || Clip("verdict", "fixed") != "other" {
+		t.Fatalf("no origin, no event; subscribable; clipped: %+v", got)
 	}
 }

@@ -766,3 +766,21 @@ func TestFactsAtTheirWorstFitTheBrokerBody(t *testing.T) {
 		t.Fatalf("body %d bytes leaves under %d of the broker's %d", len(body), margin, limit)
 	}
 }
+
+// The monitor's verdict rides the facts of an origin task only.
+func TestFactsCarryAnOriginTasksVerdict(t *testing.T) {
+	task := issueTask("3buqdlot", 7, "x")
+	task.Status.Phase = v1alpha1.PhaseDone
+	task.Status.Monitor = &v1alpha1.MonitorStatus{Verdict: "healthy"}
+	if f := factsOf(task); f.Monitor != "" {
+		t.Fatalf("no origin: %+v", f)
+	}
+	task.Spec.Origin = "abcdefgh"
+	if f := factsOf(task); f.Monitor != "healthy" || f.Validate() != nil {
+		t.Fatalf("origin: %+v", f)
+	}
+	task.Status.Monitor.Verdict = ""
+	if f := factsOf(task); f.Monitor != "" {
+		t.Fatalf("empty verdict: %+v", f)
+	}
+}
