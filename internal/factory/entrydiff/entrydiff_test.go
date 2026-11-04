@@ -50,7 +50,7 @@ func TestAdded(t *testing.T) {
 		edit func(d *forge.Diff)
 		want bool
 	}{
-		"as RunLore opens it": {func(d *forge.Diff) {}, true},
+		"as RunLore opens it": {func(*forge.Diff) {}, true},
 		"the entry alone": {func(d *forge.Diff) {
 			d.Files = d.Files[:1]
 		}, true},
