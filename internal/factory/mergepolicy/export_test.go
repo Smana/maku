@@ -3,6 +3,7 @@
 package mergepolicy
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,5 +118,57 @@ func TestCompareCountsAnApprovalSubset(t *testing.T) {
 	}
 	if d := Compare(rc, f, central()); len(d) != 1 || !strings.Contains(d[0], "requiresApproval") {
 		t.Fatalf("%v", d)
+	}
+}
+
+// Each field a repository file can express, differing alone from a bare shadow class: Compare
+// reports it, and Resolve carries the file's value into the class the gate would read.
+func TestCompareSeesEveryField(t *testing.T) {
+	c := central()
+	c.HarnessProfiles["tested"] = config.HarnessProfile{Checks: true, TestFirst: true}
+	const head = "mode: shadow\n    author: agents\n    harness: plain\n"
+	for name, tc := range map[string]struct {
+		body string // the class's lines, 4-space indented
+		want config.Class
+	}{
+		"mode":             {"mode: live\n    author: agents\n    harness: plain\n", config.Class{Live: true}},
+		"checks":           {"mode: shadow\n    author: agents\n    harness: checked\n", config.Class{Shadow: true, Checks: true}},
+		"testFirst":        {"mode: shadow\n    author: agents\n    harness: tested\n", config.Class{Shadow: true, Checks: true, TestFirst: true}},
+		"allowedFiles":     {head + "    conditions: {all: [{allowedFiles: ['^docs/']}]}\n", config.Class{Shadow: true, AllowedFiles: []string{"^docs/"}}},
+		"protectedFiles":   {head + "    conditions: {deny: [{protectedFiles: ['^infra/']}]}\n", config.Class{Shadow: true, ProtectedFiles: []string{"^infra/"}}},
+		"modifyOnly":       {head + "    conditions: {all: [{modifyOnly: true}]}\n", config.Class{Shadow: true, ModifyOnly: true}},
+		"maxPatchFiles":    {head + "    conditions: {all: [{maxPatchFiles: 3}]}\n", config.Class{Shadow: true, MaxPatchFiles: 3}},
+		"maxModifiedLines": {head + "    conditions: {all: [{maxModifiedLines: 40}]}\n", config.Class{Shadow: true, MaxModifiedLines: 40}},
+		"diffShape":        {head + "    conditions: {all: [{diffShape: links-only}]}\n", config.Class{Shadow: true, DiffShape: "links-only"}},
+		"holdoutChecks":    {head + "    conditions: {all: [{holdoutChecks: [ci]}]}\n", config.Class{Shadow: true, HoldoutChecks: []string{"ci"}}},
+		"maxPerDay":        {head + "    limits: {maxPerDay: 2}\n", config.Class{Shadow: true, MaxPerDay: 2}},
+		"oracle": {head + "    conditions: {all: [{oracle: {probe: p, workflow: w.yml, maxFindings: 3}}]}\n",
+			config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "p", Workflow: "w.yml", MaxFindings: 3}}},
+		"monitor": {head + "    monitor: {oracleRuns: 2}\n", config.Class{Shadow: true, Monitor: &config.Monitor{OracleRuns: 2}}},
+		"author adopt": {"mode: shadow\n    author: adopt\n    adopt: {logins: [bot], branches: ['^b/']}\n    harness: adopted-none\n",
+			config.Class{Shadow: true, Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"bot"}, Branches: []string{"^b/"}}}}},
+		"releaseAgeCheck": {head + "    conditions: {all: [{releaseAgeCheck: renovate/stability-days}]}\n", config.Class{Shadow: true, ReleaseAgeCheck: "renovate/stability-days"}},
+		"companionFiles":  {head + "    conditions: {all: [{companionFiles: ['^kb/index.md$']}]}\n", config.Class{Shadow: true, CompanionFiles: []string{"^kb/index.md$"}}},
+		"requiredLabel":   {head + "    conditions: {all: [{requiredLabel: ready-to-merge}]}\n", config.Class{Shadow: true, RequiredLabel: "ready-to-merge"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, err := Parse([]byte("factory: aws-0\nclasses:\n  c:\n    " + tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := Resolve("c", f.Classes["c"], c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, _ := json.Marshal(r.Class)
+			want, _ := json.Marshal(tc.want)
+			if string(got) != string(want) {
+				t.Fatalf("Resolve carried\n%s\nwant\n%s", got, want)
+			}
+			rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{"c": {Shadow: true}}}
+			if d := Compare(rc, f, c); len(d) != 1 || !strings.HasPrefix(d[0], "c: central") {
+				t.Fatalf("no divergence for %s: %v", name, d)
+			}
+		})
 	}
 }
