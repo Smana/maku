@@ -182,7 +182,16 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	switch d.Verdict {
 	case "wait":
-		if b := r.repo(t).Merge.AwaitingCIBound(); b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
+		b := r.repo(t).Merge.AwaitingCIBound()
+		if b > 0 && d.Reason == "release_age_pending" {
+			// A release-age status posted PENDING is the adopted author's stability window running, not a
+			// check that never reported: it outlasts the CI bound, up to its own (releaseAgeWaitMax).
+			// A status never posted is unreported and keeps the CI bound.
+			if state, _ := in.Checks.StatusOf(cl.ReleaseAgeCheck); state == "PENDING" {
+				b = max(b, releaseAgeWaitMax)
+			}
+		}
+		if b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
 			// #182: a check that never reports (a typo in a holdout, a workflow not set up) must not
 			// hold the task silently. Nothing merged: the hand-off says what is missing.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
@@ -879,6 +888,10 @@ func (r *Reconciler) mergedAt(pr forge.PR) metav1.Time {
 	}
 	return metav1.NewTime(r.Now())
 }
+
+// releaseAgeWaitMax bounds the wait on a PENDING release-age status (MC11): longer than any
+// stability window a repository sets, so a status stuck pending still reaches a human.
+const releaseAgeWaitMax = 7 * 24 * time.Hour
 
 // MainState is §6.4's watch of main's CI on the merge commit: FAILURE if a watched check that ran
 // failed, PENDING while one that ran is still running, else SUCCESS. A watched check that never
