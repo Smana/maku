@@ -99,6 +99,26 @@
         }
       ]
     },
+    "flow": {
+      "untrusted": true,
+      "nodes": [
+        {
+          "run": "cf4ato2x",
+          "persona": "implementer",
+          "role": "implementer",
+          "round": 1,
+          "startedAt": "2026-10-07T19:11:50Z",
+          "fromSeq": 4,
+          "toSeq": 0,
+          "model": "agent-default",
+          "effort": "high",
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          }
+        }
+      ]
+    },
     "cursor": "seq:8"
   }
 }

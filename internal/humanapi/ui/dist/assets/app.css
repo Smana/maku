@@ -23,6 +23,10 @@
 :root {
   color-scheme: light;
 
+  --flow-writer: #0e7490; /* the run rail: a writer's lane */
+  --flow-judge: #6d28d9; /* a judge's lane */
+  --flow-plan: #b45309; /* a plan step no run has reached */
+
   --background: #ffffff;
   --foreground: #0a0a0f; /* Ink */
   --card: #ffffff;
@@ -83,6 +87,10 @@
 
 .dark {
   color-scheme: dark;
+
+  --flow-writer: #22d3ee;
+  --flow-judge: #a78bfa;
+  --flow-plan: #f5a524;
 
   --background: #0a0a0f; /* Ink */
   --foreground: #f3f2fa; /* Paper */
@@ -774,3 +782,111 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .run-status[data-kind="finished"], .run-status[data-kind="done"] { border-left-color: var(--success); }
 .run-status[data-kind="failed"] { border-left-color: var(--destructive); }
 .run-status-icon { flex: none; }
+
+/* The run rail (rail.ts): a node's lane colour comes from data-tone, a plan step's from
+   data-state=ghost; role text never reaches a class. Past runs dim so the live one leads. */
+.rail { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.rail[hidden] { display: none; }
+.rail-path, .rail-milestones { list-style: none; margin: 0; padding: 0; }
+.rail-node { position: relative; --lane: var(--flow-writer); }
+.rail-node[data-tone="judge"] { --lane: var(--flow-judge); }
+.rail-node[data-state="ghost"] { --lane: var(--flow-plan); }
+.rail-node[data-state="ghost"] > .rail-button { opacity: 0.6; }
+.rail-node[data-state="done"] > .rail-button { opacity: 0.72; }
+.rail-button {
+  display: grid; gap: 2px; width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left;
+  font: inherit; color: var(--foreground); background: var(--card); cursor: pointer;
+  border: 1px solid var(--border); border-left: 3px solid var(--lane); border-radius: 6px;
+}
+.rail-button:hover { box-shadow: var(--shadow-border-hover); }
+.rail-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.rail-button[aria-current="true"] { border-color: var(--lane); }
+.rail-button[aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
+.rail-node[data-state="ghost"] .rail-button { background: transparent; border-style: dashed; cursor: default; }
+.rail-line { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.rail-line .glyph { flex: none; width: 18px; height: 18px; color: var(--lane); }
+.rail-persona { font-weight: 500; min-width: 0; }
+.rail-chip { margin-left: auto; white-space: nowrap; color: var(--muted-foreground); }
+.rail-chip[data-kind="ok"] { color: var(--success-text); }
+.rail-chip[data-kind="changes"], .rail-chip[data-kind="fail"] { color: var(--destructive-text); }
+.rail-chip[data-kind="live"] { color: var(--lane); }
+.rail-judge { color: var(--flow-judge); white-space: nowrap; }
+.rail-detail { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.rail-edge { display: flex; align-items: center; gap: 6px; padding-left: 4px; }
+.rail-edge svg { flex: none; }
+.rail-stroke { fill: none; stroke: var(--border); stroke-width: 2; }
+.rail-edge[data-state="ghost"] .rail-stroke { stroke: var(--flow-plan); stroke-dasharray: 3 3; opacity: 0.6; }
+.rail-edge-label { color: var(--muted-foreground); }
+.rail-round > button {
+  width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left; font: inherit;
+  color: var(--muted-foreground); background: transparent; border: 1px dashed var(--border); border-radius: 6px; cursor: pointer;
+}
+.rail-parts { list-style: none; margin: 4px 0 0; padding: 0 0 0 12px; display: grid; gap: 2px; font-size: 13px; }
+.rail-part, .rail-parent { color: var(--muted-foreground); }
+.rail-part a, .rail-parent a { color: var(--muted-foreground); }
+.rail-part[data-state="running"] { color: var(--foreground); }
+.rail-part[data-state="queued"] { opacity: 0.6; }
+.rail-parent { padding: 0 0 6px 4px; font-size: 13px; }
+.rail-milestones { display: grid; gap: 4px; margin-top: 8px; }
+.rail-milestone { display: flex; gap: 6px; align-items: center; color: var(--muted-foreground); }
+.rail-milestone::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
+.rail-milestone[data-state="ghost"] { color: var(--flow-plan); opacity: 0.6; }
+.rail-milestone[data-state="ghost"]::before { background: transparent; border: 1px dashed var(--flow-plan); }
+.rail-card {
+  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; padding: 8px; display: grid; gap: 2px;
+  background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-border); border-radius: 6px;
+}
+.rail-card[hidden] { display: none; }
+.rail-card p { margin: 0; }
+.rail-card .hint { margin-left: 8px; color: var(--muted-foreground); }
+@media (prefers-reduced-motion: no-preference) {
+  .rail-node.enter { animation: rail-enter 150ms ease-out; }
+  .rail-stroke.draw { stroke-dasharray: var(--len); animation: rail-draw 400ms ease-out; }
+  .rail-judge.tick { display: inline-block; animation: rail-tick 200ms ease-out; }
+  .rail-milestone.fill::before { animation: rail-fill 300ms ease-out; }
+  .rail-node[data-state="live"] > .rail-button { animation: rail-breathe 2.4s ease-in-out infinite; }
+  @keyframes rail-enter { from { opacity: 0; transform: scale(0.96); } }
+  @keyframes rail-draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
+  @keyframes rail-tick { 50% { transform: scale(1.4); } }
+  @keyframes rail-fill { from { transform: scale(0); } }
+  @keyframes rail-breathe { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--lane) 35%, transparent); } }
+}
+.rail-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0; }
+
+/* The room body: the conversation, and the rail beside it from 1100 px up. Below that the rail is
+   a drawer a row of dots opens. --header-h and --dock-h come from room.ts (CSSOM). */
+.room-body { min-width: 0; }
+.rail-dots, .rail-close { display: none; }
+.room-body:not(.has-rail) > .rail { display: none; }
+.rail-dots { gap: 6px; align-items: center; margin: 8px 16px 0; padding: 6px 8px; min-height: var(--hit); background: var(--card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.rail-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--flow-writer); }
+.rail-dot[data-tone="judge"] { background: var(--flow-judge); }
+.rail-dot[data-state="ghost"] { background: transparent; border: 2px dashed var(--flow-plan); box-sizing: border-box; }
+.rail-dot[data-state="done"] { opacity: 0.72; }
+@media (max-width: 1099.98px) {
+  .room-body.has-rail > .rail-dots:not([hidden]) { display: flex; }
+  .room-body.has-rail > .rail.open {
+    display: block; position: fixed; z-index: 3; top: 0; right: 0; bottom: 0; width: min(320px, 100vw);
+    overflow-y: auto; padding: 16px; box-sizing: border-box; background: var(--surface-raised); box-shadow: var(--shadow-dock);
+  }
+  .rail.open > .rail-close { display: block; margin-left: auto; margin-bottom: 8px; min-height: var(--hit); }
+  .room-body.has-rail > .rail:not(.open) { display: none; }
+}
+@media (min-width: 1100px) {
+  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
+  .room-body.has-rail > :not(.rail) { grid-column: 1; }
+  .room-body.has-rail > .rail {
+    grid-column: 2; grid-row: 1 / span 6; position: sticky; top: var(--header-h, 0px);
+    max-height: calc(100vh - var(--header-h, 0px) - var(--dock-h, 0px)); overflow-y: auto; align-self: start;
+    padding-top: 8px;
+  }
+}
+
+/* A run's own view (runview.ts), in place of the room's conversation. */
+.run-view-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.run-view-title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.run-view-note { margin: 0 0 8px; color: var(--muted-foreground); }
+.rail-replays { display: flex; gap: 6px; margin-bottom: 8px; }
+.rail-replays[hidden], .rail-replay[hidden] { display: none; }
+.rail-replay { font: inherit; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.rail-replay:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }

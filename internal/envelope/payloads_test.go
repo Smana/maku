@@ -40,30 +40,43 @@ func TestTaskFactsValidate(t *testing.T) {
 		f    TaskFacts
 		want string // "" means any error
 	}{
-		"no phase":         {TaskFacts{}, ""},
-		"negative usage":   {TaskFacts{Phase: "Implementing", Budget: &BudgetFact{UsedTokens: -1}}, ""},
-		"non-github pr":    {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: "https://evil.example/pull/1"}}, ""},
-		"negative used":    {TaskFacts{Phase: "Queued", Spend: &SpendFact{UsedMicroUSD: -1}}, "usedMicroUSD"},
-		"negative limit":   {TaskFacts{Phase: "Queued", Spend: &SpendFact{LimitMicroUSD: -1}}, "limitMicroUSD"},
-		"negative run":     {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", MicroUSD: -1}}, "microUSD"},
-		"negative runs 2":  {TaskFacts{Phase: "Queued", Runs: bad2}, "runs[2]"},
-		"21 runs":          {TaskFacts{Phase: "Queued", Runs: runs(21)}, "at most 20"},
-		"over cap used":    {TaskFacts{Phase: "Queued", Spend: &SpendFact{UsedMicroUSD: MaxMicroUSD + 1}}, "usedMicroUSD"},
-		"over cap limit":   {TaskFacts{Phase: "Queued", Spend: &SpendFact{LimitMicroUSD: MaxMicroUSD + 1}}, "limitMicroUSD"},
-		"over cap run":     {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", MicroUSD: MaxMicroUSD + 1}}}, "microUSD"},
-		"bidi verdict":     {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "ok\u202e"}}}, "verdict"},
-		"zwsp verdict":     {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\u200bb"}}}, "verdict"},
-		"esc verdict":      {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\x1b[0m"}}}, "verdict"},
-		"newline verdict":  {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\nb"}}}, "verdict"},
-		"utf8 verdict":     {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\xffb"}}}, "verdict"},
-		"run stalled":      {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", Outcome: "stalled"}}, "outcome"},
-		"run verdict":      {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", Verdict: strings.Repeat("v", 33)}}, "verdict"},
-		"run ended first":  {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", StartedAt: t0, EndedAt: t0.Add(-time.Second)}}, "endedAt"},
-		"stalled":          {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Outcome: "stalled"}}}, "outcome"},
-		"long verdict":     {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: strings.Repeat("v", 33)}}}, "verdict"},
-		"ended first":      {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", StartedAt: t0, EndedAt: t0.Add(-time.Second)}}}, "endedAt"},
-		"origin not an id": {TaskFacts{Phase: "Received", Origin: "NOT AN ID"}, "origin"},
-		"origin too long":  {TaskFacts{Phase: "Received", Origin: "abcdefghi"}, "origin"},
+		"no phase":                 {TaskFacts{}, ""},
+		"negative usage":           {TaskFacts{Phase: "Implementing", Budget: &BudgetFact{UsedTokens: -1}}, ""},
+		"non-github pr":            {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: "https://evil.example/pull/1"}}, ""},
+		"negative used":            {TaskFacts{Phase: "Queued", Spend: &SpendFact{UsedMicroUSD: -1}}, "usedMicroUSD"},
+		"negative limit":           {TaskFacts{Phase: "Queued", Spend: &SpendFact{LimitMicroUSD: -1}}, "limitMicroUSD"},
+		"negative run":             {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", MicroUSD: -1}}, "microUSD"},
+		"negative runs 2":          {TaskFacts{Phase: "Queued", Runs: bad2}, "runs[2]"},
+		"21 runs":                  {TaskFacts{Phase: "Queued", Runs: runs(21)}, "at most 20"},
+		"over cap used":            {TaskFacts{Phase: "Queued", Spend: &SpendFact{UsedMicroUSD: MaxMicroUSD + 1}}, "usedMicroUSD"},
+		"over cap limit":           {TaskFacts{Phase: "Queued", Spend: &SpendFact{LimitMicroUSD: MaxMicroUSD + 1}}, "limitMicroUSD"},
+		"over cap run":             {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", MicroUSD: MaxMicroUSD + 1}}}, "microUSD"},
+		"bidi verdict":             {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "ok\u202e"}}}, "verdict"},
+		"zwsp verdict":             {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\u200bb"}}}, "verdict"},
+		"esc verdict":              {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\x1b[0m"}}}, "verdict"},
+		"newline verdict":          {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\nb"}}}, "verdict"},
+		"utf8 verdict":             {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: "a\xffb"}}}, "verdict"},
+		"run stalled":              {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", Outcome: "stalled"}}, "outcome"},
+		"run verdict":              {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", Verdict: strings.Repeat("v", 33)}}, "verdict"},
+		"run ended first":          {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", StartedAt: t0, EndedAt: t0.Add(-time.Second)}}, "endedAt"},
+		"stalled":                  {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Outcome: "stalled"}}}, "outcome"},
+		"long verdict":             {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", Verdict: strings.Repeat("v", 33)}}}, "verdict"},
+		"ended first":              {TaskFacts{Phase: "Queued", Runs: []RunFact{{ID: "r", StartedAt: t0, EndedAt: t0.Add(-time.Second)}}}, "endedAt"},
+		"origin not an id":         {TaskFacts{Phase: "Received", Origin: "NOT AN ID"}, "origin"},
+		"origin too long":          {TaskFacts{Phase: "Received", Origin: "abcdefghi"}, "origin"},
+		"persona not a persona":    {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", Persona: "Scoper"}}, "persona"},
+		"plan of 9":                {TaskFacts{Phase: "Queued", Plan: strings.Split("a,a,a,a,a,a,a,a,a", ",")}, "plan is at most 8"},
+		"plan entry not a persona": {TaskFacts{Phase: "Queued", Plan: []string{"x y"}}, "plan"},
+		"split of 1":               {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 1}}, "split"},
+		"split of 6":               {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 6}}, "split"},
+		"part past of":             {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{{Index: 3, Issue: 1, Room: "k2mqx7ba"}}}}, "part"},
+		"part room not an id":      {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{{Index: 1, Issue: 1, Room: "t-52"}}}}, "part"},
+		"part outcome unknown":     {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{{Index: 1, Issue: 1, Room: "k2mqx7ba", Outcome: "merged"}}}}, "part"},
+		"more parts than of": {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{
+			{Index: 1, Issue: 1, Room: "k2mqx7ba"}, {Index: 2, Issue: 2, Room: "k2mqx7bb"}, {Index: 2, Issue: 3, Room: "k2mqx7bc"}}}}, "part"},
+		"part issue 0":         {TaskFacts{Phase: "Queued", Split: &SplitFact{Of: 2, Parts: []PartFact{{Index: 1, Issue: 0, Room: "k2mqx7ba"}}}}, "part"},
+		"parent issue 0":       {TaskFacts{Phase: "Queued", Parent: &ParentFact{Room: "k2mqx7ba", Issue: 0, Index: 1, Of: 2}}, "parent"},
+		"parent index past of": {TaskFacts{Phase: "Queued", Parent: &ParentFact{Room: "k2mqx7ba", Issue: 1, Index: 3, Of: 2}}, "parent"},
 	} {
 		err := tc.f.Validate()
 		if err == nil {
@@ -71,6 +84,13 @@ func TestTaskFactsValidate(t *testing.T) {
 		} else if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: error %q does not name %q", name, err, tc.want)
 		}
+	}
+	rich := TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", Persona: "security-reviewer"},
+		Plan:   strings.Split("a,b,c,d,e,f,g,h", ","),
+		Split:  &SplitFact{Of: 3, Parts: []PartFact{{Index: 1, Issue: 5, Room: "k2mqx7ba", Outcome: "landed"}, {Index: 2, Issue: 6, Room: "k2mqx7bb"}}},
+		Parent: &ParentFact{Room: "k2mqx7bc", Issue: 4, Index: 2, Of: 3}}
+	if err := rich.Validate(); err != nil {
+		t.Fatalf("persona, plan, split and parent refused: %v", err)
 	}
 	if err := (TaskFacts{Phase: "Queued", Runs: runs(MaxRuns)}).Validate(); err != nil {
 		t.Fatalf("%d runs refused: %v", MaxRuns, err)

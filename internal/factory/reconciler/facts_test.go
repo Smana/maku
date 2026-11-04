@@ -4,9 +4,12 @@ package reconciler
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +21,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/wire"
 )
@@ -184,13 +188,11 @@ func TestAFailedFactsPostReusesItsSeq(t *testing.T) {
 }
 
 // No log for the room yet, or no permission for the factory yet (FR-1), is a wait as it is for the
-// snapshot: no error, and the facts stay due under the seq they took. So is a sealed room, which
-// would otherwise hold the task in error backoff for good.
+// snapshot: no error, and the facts stay due under the seq they took.
 func TestARefusedFactsPostWaits(t *testing.T) {
 	for name, refuse := range map[string]func(*fakeLog){
 		"no room log":   func(l *fakeLog) { l.noRoom = true },
 		"not permitted": func(l *fakeLog) { l.noPermit = true },
-		"sealed":        func(l *fakeLog) { l.failFacts = &rooms.APIError{Status: 410, Reason: "sealed"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t, awaiting())
@@ -558,5 +560,209 @@ func TestFactsSayWhetherAnApprovalReturnsTheHandOff(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPersonaOf(t *testing.T) {
+	for _, tc := range []struct{ template, role, want string }{
+		{"pair", "triager", "scoper"},
+		{"investigate", "triager", "triager"},
+		{"pair", "implementer", "implementer"},
+		{"pair", "reviewer", "reviewer"},
+		{"pair", "tester", "tester"},
+	} {
+		t.Run(tc.template+"/"+tc.role, func(t *testing.T) {
+			task := issueTask("3buqdlot", 7, "x")
+			task.Spec.Template = tc.template
+			if got := personaOf(task, v1alpha1.RunRecord{Role: tc.role}); got != tc.want {
+				t.Fatalf("persona %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFactsOfCarriesPersonas(t *testing.T) {
+	task := awaiting()
+	task.Spec.Template = "pair"
+	task.Status.Runs = runsOf(3)
+	for i, role := range []string{"triager", "implementer", "reviewer"} {
+		task.Status.Runs[i].Role = role
+	}
+	f := factsOf(task)
+	var got []string
+	for _, r := range f.Runs {
+		got = append(got, r.Persona)
+	}
+	if want := []string{"scoper", "implementer", "reviewer"}; !slices.Equal(got, want) {
+		t.Fatalf("personas %v, want %v", got, want)
+	}
+	if f.Run.Persona != "reviewer" {
+		t.Fatalf("run persona %q, want reviewer", f.Run.Persona)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlanOf(t *testing.T) {
+	for _, tc := range []struct {
+		name, template string
+		scope, testRst bool
+		task           func(*v1alpha1.Task)
+		want           []string
+	}{
+		{"investigate", "investigate", false, false, nil, []string{"triager"}},
+		{"pair", "pair", false, false, nil, []string{"implementer", "reviewer"}},
+		{"pair with scope", "pair", true, false, nil, []string{"scoper", "implementer", "reviewer"}},
+		{"pair with scope and test-first", "pair", true, true, nil, []string{"scoper", "tester", "implementer", "reviewer"}},
+		{"solo", "solo", false, false, nil, []string{"implementer"}},
+		{"a split part carries its scope in its spec: no scoper", "pair", true, false,
+			func(t *v1alpha1.Task) { t.Spec.Scope = &v1alpha1.TaskScope{} }, []string{"implementer", "reviewer"}},
+		{"a scoper that ran stays in the plan", "pair", true, false, func(t *v1alpha1.Task) {
+			t.Status.Scope = &v1alpha1.ScopeStatus{State: "ready", Seq: 1}
+			t.Status.Runs = []v1alpha1.RunRecord{{ID: "a", Role: "triager"}}
+		}, []string{"scoper", "implementer", "reviewer"}},
+		{"a non-public task runs no tester", "pair", false, true,
+			func(t *v1alpha1.Task) { t.Spec.DataClass = "internal" }, []string{"implementer", "reviewer"}},
+		{"a task holding a contract runs no tester", "pair", false, true,
+			func(t *v1alpha1.Task) { t.Status.Contract = &v1alpha1.ContractStatus{} }, []string{"implementer", "reviewer"}},
+		{"a tester that wrote the contract stays in the plan", "pair", false, true, func(t *v1alpha1.Task) {
+			t.Status.Contract = &v1alpha1.ContractStatus{}
+			t.Status.Runs = []v1alpha1.RunRecord{{ID: "a", Role: "tester"}}
+		}, []string{"tester", "implementer", "reviewer"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			task := issueTask("3buqdlot", 7, "x")
+			task.Status.Phase = v1alpha1.PhaseImplementing
+			g := newRig(t, task)
+			g.r.Cfg.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
+			task.Spec.Template, task.Spec.PredictedClass = tc.template, "scripts"
+			if tc.scope {
+				task.Spec.ScopeMode = string(config.ScopeScoper)
+			}
+			g.r.Cfg.Classes["scripts"] = config.Class{TestFirst: tc.testRst}
+			if tc.task != nil {
+				tc.task(task)
+			}
+			got := g.r.planOf(task)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("plan %v, want %v", got, tc.want)
+			}
+			f := g.r.factsFor(task)
+			if err := f.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestFactsOfCarriesTheSplit(t *testing.T) {
+	task := awaiting()
+	task.Status.Split = &v1alpha1.SplitStatus{State: SplitApproved, Of: 3, Children: []v1alpha1.SplitChild{
+		{Index: 1, Issue: 52, Task: "k2mqx7ba", Outcome: "landed"}, {Index: 2, Issue: 53, Task: "p4zt6wce"}}}
+	f := factsOf(task)
+	want := &envelope.SplitFact{Of: 3, Parts: []envelope.PartFact{{Index: 1, Issue: 52, Room: "k2mqx7ba", Outcome: "landed"},
+		{Index: 2, Issue: 53, Room: "p4zt6wce"}}}
+	if !reflect.DeepEqual(f.Split, want) {
+		t.Fatalf("split %+v, want %+v", f.Split, want)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{SplitProposed, SplitDeclined, "ignored"} {
+		task.Status.Split.State = state
+		if factsOf(task).Split != nil {
+			t.Fatalf("a %s split is in the facts", state)
+		}
+	}
+}
+
+func TestFactsOfCarriesTheParent(t *testing.T) {
+	task := awaiting()
+	task.Spec.Parent = &v1alpha1.Parent{Task: "m3pq6xzb", Issue: 50, Index: 2, Of: 3}
+	f := factsOf(task)
+	want := &envelope.ParentFact{Room: "m3pq6xzb", Issue: 50, Index: 2, Of: 3}
+	if !reflect.DeepEqual(f.Parent, want) {
+		t.Fatalf("parent %+v, want %+v", f.Parent, want)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every run of the history carries what it ran on, not only the current one: the flow's nodes name
+// each run's models.
+func TestFactsOfCarriesEachRunsServedModels(t *testing.T) {
+	task := awaiting()
+	task.Status.Runs = runsOf(3)
+	finish(&task.Status.Runs[0], "Succeeded", 1, "")
+	finish(&task.Status.Runs[1], "Succeeded", 1, "")
+	task.Status.Runs[0].Provenance.ServedModels = []string{"glm-5.3"}
+	task.Status.Runs[1].Provenance.ServedModels = []string{"kimi-k3", "qwen-4"}
+	f := factsOf(task)
+	if p := f.Runs[0].Provenance; p == nil || !slices.Equal(p.ServedModels, []string{"glm-5.3"}) {
+		t.Fatalf("run 0: %+v", f.Runs[0].Provenance)
+	}
+	if p := f.Runs[1].Provenance; p == nil || !slices.Equal(p.ServedModels, []string{"kimi-k3", "qwen-4"}) {
+		t.Fatalf("run 1: %+v", f.Runs[1].Provenance)
+	}
+	if f.Runs[2].Provenance != nil || f.Run.Provenance != nil {
+		t.Fatalf("a run without provenance has none: %+v %+v", f.Runs[2], f.Run)
+	}
+	task.Status.Runs[2].Provenance.ServedModels = []string{"glm-5.3"}
+	if f = factsOf(task); f.Run.Provenance == nil || !slices.Equal(f.Run.Provenance.ServedModels, f.Runs[2].Provenance.ServedModels) {
+		t.Fatalf("the current run is the last of the history: %+v", f)
+	}
+}
+
+// The facts of a task at its realistic worst fit the broker's body bound for task facts: past it the
+// broker refuses with a 400 for good and the task's room never takes its last facts. The bound is
+// bridgeapi's maxMessageBytes, 2 * envelope.MaxHumanMessage, repeated here (it is unexported).
+func TestFactsAtTheirWorstFitTheBrokerBody(t *testing.T) {
+	task := awaiting()
+	task.Spec.Issue, task.Spec.Repository = 1_000_000, strings.Repeat("o", 39)+"/"+strings.Repeat("r", 100)
+	task.Spec.Text = "# " + strings.Repeat("t", 400)
+	task.Spec.IssueAuthor = strings.Repeat("a", 39)
+	task.Spec.Source.RequestedBy = "github:" + strings.Repeat("l", 39)
+	task.Spec.Parent = &v1alpha1.Parent{Task: "p4zt6wce", Issue: 1_000_000, Index: 5, Of: 5}
+	task.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1_000_000, URL: "https://github.com/o/r/pull/1000000",
+		Author: strings.Repeat("a", 39), Reviewers: slices.Repeat([]string{strings.Repeat("v", 39)}, 8)}
+	task.Status.Reason = strings.Repeat("r", 64)
+	task.Status.Runs = runsOf(envelope.MaxRuns)
+	var models []string
+	for i := range 8 {
+		models = append(models, fmt.Sprintf("%02d%s", i, strings.Repeat("m", 62)))
+	}
+	for i := range task.Status.Runs {
+		r := &task.Status.Runs[i]
+		r.Trigger, r.Role = "resume", "implementer"
+		finish(r, "BudgetExhausted", envelope.MaxMicroUSD, strings.Repeat("v", envelope.MaxVerdict))
+		r.Provenance = v1alpha1.RunProvenance{FactoryVersion: strings.Repeat("v", 64),
+			CompositionRevision: strings.Repeat("c", 253), HarnessImage: strings.Repeat("h", 320), ServedModels: models}
+	}
+	f := factsOf(task)
+	f.Plan = slices.Repeat([]string{strings.Repeat("p", 32)}, envelope.MaxPlan)
+	f.Split = &envelope.SplitFact{Of: 5}
+	for i := range 5 {
+		f.Split.Parts = append(f.Split.Parts, envelope.PartFact{Index: i + 1, Issue: 1_000_000, Room: "k2mqx7ba", Outcome: "landed"})
+	}
+	if f.Run == nil || f.Run.Provenance == nil || len(f.Run.Provenance.HarnessImage) != 320 || len(f.Runs[0].Provenance.HarnessImage) != 0 {
+		t.Fatalf("the current run keeps its full provenance, the history only its models: %+v", f)
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	// What the factory client posts: {"clientSeq", "facts"}, the facts as the state payload's fields.
+	body, err := json.Marshal(struct {
+		ClientSeq int64              `json:"clientSeq"`
+		Facts     envelope.TaskFacts `json:"facts"`
+	}{1 << 40, f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const limit, margin = 2 * envelope.MaxHumanMessage, 4 << 10
+	t.Logf("body %d of %d bytes", len(body), limit)
+	if len(body) > limit-margin {
+		t.Fatalf("body %d bytes leaves under %d of the broker's %d", len(body), margin, limit)
 	}
 }

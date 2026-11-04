@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RoomEvent } from "./conn";
+
 // Where the page goes; an object so tests can replace it (jsdom does not navigate).
 export const nav = { go: (url: string) => location.assign(url) };
 
@@ -22,4 +24,12 @@ export async function api(path: string, init: RequestInit = {}, get: typeof fetc
     throw new SignInRequired();
   }
   return r;
+}
+
+// fetchEvents is one page of a room's log after seq `after`, oldest first.
+export async function fetchEvents(id: string, after: number, limit: number, get: typeof fetch = fetch): Promise<RoomEvent[]> {
+  const r = await api(`/api/rooms/${encodeURIComponent(id)}/events?after=${after}&limit=${limit}`, {}, get);
+  if (!r.ok) throw new Error(`The room's log is unavailable: ${r.status}`);
+  const body = (await r.json()) as { events?: RoomEvent[] };
+  return body.events ?? [];
 }

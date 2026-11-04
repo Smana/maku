@@ -29,6 +29,34 @@
     "needsYou": [],
     "actions": [],
     "notes": {"untrusted": true, "items": []},
+    "flow": {
+      "untrusted": true,
+      "nodes": [
+        {
+          "run": "c1",
+          "persona": "implementer",
+          "role": "implementer",
+          "round": 1,
+          "startedAt": "2026-10-07T17:00:00Z",
+          "endedAt": "2026-10-07T17:40:00Z",
+          "fromSeq": 0,
+          "toSeq": 0,
+          "outcome": "succeeded",
+          "microUSD": 180000,
+          "tools": {
+            "ok": 0,
+            "failed": 0
+          }
+        }
+      ],
+      "milestones": [
+        {
+          "phase": "Merged",
+          "at": "2026-10-07T18:01:00Z",
+          "seq": 2
+        }
+      ]
+    },
     "cursor": "seq:4"
   }
 }

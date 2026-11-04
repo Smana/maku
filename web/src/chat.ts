@@ -37,7 +37,7 @@ function redacted(ev: RoomEvent): HTMLElement | null {
 }
 
 // idTail is a principal without its kind; a long human id keeps its first four characters.
-function idTail(id: string): string {
+export function idTail(id: string): string {
   const i = id.indexOf(":");
   const tail = id.slice(i + 1);
   return id.startsWith("human:") && tail.length > 8 ? `${tail.slice(0, 4)}…` : tail;

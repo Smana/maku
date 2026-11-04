@@ -149,6 +149,83 @@ type TaskFacts struct {
 	// maintainer's approval of the head returns it to the gate, which merges it. False is the
 	// bypass: the switch off, an adopted class, or a reason no approval returns.
 	MergeByApproval bool `json:"mergeByApproval,omitempty"`
+	// Plan is the personas the task expects to run, in order, at most MaxPlan: the factory's
+	// forecast, so a view can show the steps ahead.
+	Plan []string `json:"plan,omitempty"`
+	// Split is the task as a parent of parts (a maintainer accepted the scoper's split).
+	Split *SplitFact `json:"split,omitempty"`
+	// Parent is set on a part's room: the task it was split from.
+	Parent *ParentFact `json:"parent,omitempty"`
+}
+
+// MaxPlan bounds TaskFacts.Plan.
+const MaxPlan = 8
+
+// SplitFact is a split parent's view of its parts: Of parts, between MinChildren and MaxChildren.
+type SplitFact struct {
+	Of    int        `json:"of"`
+	Parts []PartFact `json:"parts,omitempty"`
+}
+
+// PartFact is one part of a split: its place in the merge order (1-based), its issue and room, and
+// how it ended, empty while it has not. Outcome is landed, dropped or reverted.
+type PartFact struct {
+	Index   int    `json:"index"`
+	Issue   int    `json:"issue"`
+	Room    string `json:"room"`
+	Outcome string `json:"outcome,omitempty"`
+}
+
+// ParentFact points a part's room back at the task it was split from, and says which part it is.
+type ParentFact struct {
+	Room  string `json:"room"`
+	Issue int    `json:"issue"`
+	Index int    `json:"index"`
+	Of    int    `json:"of"`
+}
+
+func validPartOutcome(o string) bool {
+	switch o {
+	case "", "landed", "dropped", "reverted":
+		return true
+	}
+	return false
+}
+
+func (s SplitFact) validate() error {
+	if s.Of < MinChildren || s.Of > MaxChildren {
+		return fmt.Errorf("split is of %d to %d parts, got %d", MinChildren, MaxChildren, s.Of)
+	}
+	if len(s.Parts) > s.Of {
+		return fmt.Errorf("part count %d is more than the split's %d", len(s.Parts), s.Of)
+	}
+	for i, p := range s.Parts {
+		switch {
+		case p.Index < 1 || p.Index > s.Of:
+			return fmt.Errorf("part[%d] index is between 1 and %d", i, s.Of)
+		case p.Issue < 1:
+			return fmt.Errorf("part[%d] issue is at least 1", i)
+		case !ValidID(p.Room):
+			return fmt.Errorf("part[%d] room is a room id", i)
+		case !validPartOutcome(p.Outcome):
+			return fmt.Errorf("part[%d] outcome %q is not landed, dropped or reverted", i, p.Outcome)
+		}
+	}
+	return nil
+}
+
+func (p ParentFact) validate() error {
+	switch {
+	case !ValidID(p.Room):
+		return errors.New("parent room is a room id")
+	case p.Issue < 1:
+		return errors.New("parent issue is at least 1")
+	case p.Of < MinChildren || p.Of > MaxChildren:
+		return fmt.Errorf("parent is of %d to %d parts, got %d", MinChildren, MaxChildren, p.Of)
+	case p.Index < 1 || p.Index > p.Of:
+		return fmt.Errorf("parent index is between 1 and %d", p.Of)
+	}
+	return nil
 }
 
 // MaxRuns bounds TaskFacts.Runs.
@@ -180,9 +257,11 @@ func validOutcome(o string) bool {
 
 // RunFact is a run's role, trigger, and lifecycle in a task.
 type RunFact struct {
-	ID        string    `json:"id"`
-	Role      string    `json:"role"`
-	Trigger   string    `json:"trigger,omitempty"`
+	ID      string `json:"id"`
+	Role    string `json:"role"`
+	Trigger string `json:"trigger,omitempty"`
+	// Persona is what the run is for, set by the factory alone; Role stays what it may do.
+	Persona   string    `json:"persona,omitempty"`
 	StartedAt time.Time `json:"startedAt,omitzero"`
 	// EndedAt, Outcome, Verdict and MicroUSD are set once the run has ended.
 	EndedAt  time.Time `json:"endedAt,omitzero"`
@@ -262,6 +341,8 @@ func (r RunFact) validate() error {
 		return fmt.Errorf("verdict is at most %d bytes of plain text, with no control, bidi or zero-width characters", MaxVerdict)
 	case !r.EndedAt.IsZero() && r.EndedAt.Before(r.StartedAt):
 		return errors.New("endedAt is before startedAt")
+	case r.Persona != "" && !ValidPersona(r.Persona):
+		return errors.New("persona is a lowercase name of at most 32 characters")
 	}
 	return nil
 }
@@ -285,6 +366,23 @@ func (f TaskFacts) Validate() error {
 		return errors.New("task facts: the PR URL is a github.com pull request")
 	case f.Origin != "" && !ValidID(f.Origin):
 		return errors.New("task facts: the origin is a room id")
+	case len(f.Plan) > MaxPlan:
+		return fmt.Errorf("task facts: plan is at most %d, got %d", MaxPlan, len(f.Plan))
+	}
+	for i, p := range f.Plan {
+		if !ValidPersona(p) {
+			return fmt.Errorf("task facts: plan[%d] is a persona name", i)
+		}
+	}
+	if f.Split != nil {
+		if err := f.Split.validate(); err != nil {
+			return fmt.Errorf("task facts: split: %w", err)
+		}
+	}
+	if f.Parent != nil {
+		if err := f.Parent.validate(); err != nil {
+			return fmt.Errorf("task facts: parent: %w", err)
+		}
 	}
 	if f.Run != nil {
 		if err := f.Run.validate(); err != nil {

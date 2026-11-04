@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, nav, SignInRequired } from "../src/api";
+import { api, fetchEvents, nav, SignInRequired } from "../src/api";
 import { listRooms, newRoomForm } from "../src/view";
 
 const answer = (status: number, body = "") => (() => Promise.resolve(new Response(body, { status }))) as typeof fetch;
@@ -84,5 +84,18 @@ describe("newRoomForm", () => {
     const form = submit(answer(201, JSON.stringify({ id: "../oauth2/sign_out" })));
     await vi.waitFor(() => expect(form.querySelector(".notice")?.textContent).toMatch(/unexpected/));
     expect(go).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchEvents", () => {
+  it("asks for one page after a seq and returns its events", async () => {
+    let url = "";
+    const get = (async (u: string) => { url = u; return new Response(JSON.stringify({ events: [{ seq: 4 }] }), { status: 200 }); }) as unknown as typeof fetch;
+    expect(await fetchEvents("3kq7x2ma", 3, 50, get)).toEqual([{ seq: 4 }]);
+    expect(url).toBe("/api/rooms/3kq7x2ma/events?after=3&limit=50");
+  });
+  it("throws on an error status", async () => {
+    const get = (async () => new Response("", { status: 503 })) as unknown as typeof fetch;
+    await expect(fetchEvents("3kq7x2ma", 0, 50, get)).rejects.toThrow("503");
   });
 });

@@ -17,7 +17,7 @@ or approve its own merge, however it was prompted. That is what makes it reasona
 working unattended on real repositories.
 
 <a href="https://blog.ogenki.io/maku/">
-  <img alt="A 44-second screencast in light mode: the room list refreshing on its own every 10 seconds, then the live demo replaying a factory run: the agent's commands and a failing test, a human steering it, the push held for approval, and the room ending on its Next box, the reviewer approved and a maintainer merges the pull request" src="docs/assets/maku-room.webp" width="800">
+  <img alt="A 38-second screencast in light mode, the run rail as its subject: the room list, then a live demo replaying a factory run. The camera closes on the rail as the implementer node appears with the reviewer and merge steps still ahead, pulls back for a human steering the agent and for the push held on its approval card, then closes on the rail again as the reviewer node draws with its edge from the pull request and ends on approve. Last, a finished task's rail replays up close: scoper, tester, implementer and reviewer light up in turn with the edges between them, the milestones fill to Done, and the implementer's card lists every model that served it" src="docs/assets/maku-room.webp" width="800">
 </a>
 
 **[Watch a run in the live demo →](https://blog.ogenki.io/maku/)** · **[Try it on your laptop →](docs/quickstart.md)**

@@ -2,12 +2,21 @@
 
 // The offline full-page preview: the room page's regions, mounted as room.ts mounts
 // them, fed by the recorded fixtures instead of a socket. `npm run preview`, then open
-// /preview/full.html (?theme=dark for the dark palette). No broker, no network beyond
-// the static fixtures.
+// /preview/full.html. No broker, no network beyond the static fixtures. Query params:
+//   ?theme=dark   the dark palette
+//   ?session      the session toggle open
+//   ?escalated    the factory's escalated room
+//   ?stress       a long Now line and a 64-hex digest (the phone bugs)
+// One rail fixture (flow-fixtures.ts), the first of:
+//   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
+//   ?split        a scoper whose handoff split into three parts
+//   ?part         a part's room, linked back to its parent
+//   (none)        a task in flight: scoper, tester, the live implementer, a ghost reviewer
 
 import type { RoomEvent, Snapshot } from "../src/conn";
 import type { Summary } from "../src/summary";
 import { applyTheme, initTheme } from "../src/theme";
+import { flowFixture, flowName } from "./flow-fixtures";
 import { mountPreviewPage } from "./page";
 
 const get = async <T>(path: string): Promise<T> => (await fetch(path)).json() as Promise<T>;
@@ -37,8 +46,15 @@ async function run() {
       reason: "the agent stopped on an error", next: "a maintainer comments `/factory retry` on the issue to run it again, or pushes to the branch" }
     : summary.status;
   if (params.has("escalated")) Object.assign(snap, { driver: "system:factory", dataClass: "public" });
-  const page = mountPreviewPage(document.getElementById("app")!, { snap, summary: { ...summary, status: { ...status, task: summary.room } },
-    count: events.length, dashboards,
+  const fx = flowFixture(flowName(params));
+  const finished = params.has("finished") || params.has("split");
+  const phase = params.has("escalated") ? status.phase : fx.phase;
+  // The fixture's events are weeks old: the rail's clock starts at the last one.
+  const loaded = Date.now();
+  const lastAt = Date.parse(events[events.length - 1].ts);
+  const page = mountPreviewPage(document.getElementById("app")!, { snap,
+    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
+    count: events.length, dashboards, now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });
   for (const e of events) page.apply(e);
   page.setStatus(`live · ${events.length} events (offline fixture)`);

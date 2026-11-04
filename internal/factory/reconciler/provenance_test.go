@@ -71,13 +71,13 @@ func TestFactsCarryTheCurrentRunsProvenance(t *testing.T) {
 
 // R6: a task whose runs carry no provenance hashes as a task without the field does: the literal is
 // the key with the run history (runs, no provenance), computed at the run-facts change, which moved
-// every task's key once (L5). Dropping omitempty or making the pointer a value changes the key and
-// fails here.
+// every task's key once (L5), and again at the persona. Dropping omitempty or making the pointer a
+// value changes the key and fails here.
 func TestTheFactsKeyOfATaskWithoutProvenanceIsUnchanged(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, "x")
 	tk.Status.Phase = v1alpha1.PhaseImplementing
 	tk.Status.Runs = []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial"}}
-	if got := factsKey(factsOf(tk)); got != "17a78b59f1f0423a" {
+	if got := factsKey(factsOf(tk)); got != "6b8c7e73769df4fa" {
 		t.Fatalf("facts key %s", got)
 	}
 }
