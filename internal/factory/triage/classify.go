@@ -139,7 +139,7 @@ func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (string, e
 	}
 	gh := c.forge(t)
 	if t.Spec.Issue == 0 || gh == nil {
-		return "review", nil
+		return c.inferred(t), nil
 	}
 	iss, err := gh.Issue(ctx, t.Spec.Issue)
 	if err != nil {
@@ -158,5 +158,17 @@ func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (string, e
 			return name, nil
 		}
 	}
-	return "review", nil
+	return c.inferred(t), nil
+}
+
+// inferred: K5, the factory's own record, never a label it applied. An origin task keeps the class
+// inferred at publish when its repository declares it and it is not revert; else review.
+func (c Classify) inferred(t *v1alpha1.Task) string {
+	if t.Spec.Origin == "" || t.Spec.PredictedClass == "revert" {
+		return "review"
+	}
+	if _, ok := c.Cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass]; ok {
+		return t.Spec.PredictedClass
+	}
+	return "review"
 }

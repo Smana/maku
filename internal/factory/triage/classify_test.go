@@ -244,3 +244,35 @@ func TestInternalPrincipalTasksInvestigate(t *testing.T) {
 		})
 	}
 }
+
+// K5: a task with an origin keeps the class the factory inferred at publish, unless a maintainer's
+// class: label names another. The factory's own label never counts.
+func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
+	cfg := testCfg()
+	cfg.Classes["alert-rules"] = config.Class{}
+	for name, c := range map[string]struct {
+		predicted, origin, label, actor, want string
+	}{
+		"the factory's own label":    {"alert-rules", "3buqdlot", "class:alert-rules", "ogenki-agent-factory[bot]", "alert-rules"},
+		"a maintainer's other label": {"alert-rules", "3buqdlot", "class:docs", "Smana", "docs"},
+		"revert is never inferred":   {"revert", "3buqdlot", "", "", "review"},
+		"an undeclared class":        {"gone", "3buqdlot", "", "", "review"},
+		"no origin":                  {"alert-rules", "", "", "", "review"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := forgetest.NewFake()
+			iss := forge.Issue{Number: 7}
+			if c.label != "" {
+				iss.Labels = []string{c.label}
+				f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: c.label, At: time.Now()})
+			}
+			f.SetIssue(iss)
+			tk := issueTask()
+			tk.Spec.PredictedClass, tk.Spec.Origin = c.predicted, c.origin
+			d, err := Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), tk)
+			if err != nil || d.PredictedClass != c.want {
+				t.Fatalf("PredictedClass %q, want %q (%v)", d.PredictedClass, c.want, err)
+			}
+		})
+	}
+}
