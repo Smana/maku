@@ -31,7 +31,7 @@ describe("flow fixtures", () => {
     expect(flow.nodes.at(-1)).toMatchObject({ persona: "reviewer", verdict: "approve", edge: "PR #41" });
     expect(terminal.has(phase)).toBe(true);
     const seqs = flow.milestones!.map((m) => m.seq);
-    expect(flow.milestones!.map((m) => m.phase)).toEqual(["AwaitingCI", "AwaitingHuman", "Merged", "Done"]);
+    expect(flow.milestones!.map((m) => m.phase)).toEqual(["AwaitingCI", "AwaitingHuman", "Done"]);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
   });
   it("split and part carry their links", () => {

@@ -11,7 +11,7 @@ import type { Flow, FlowNode, Summary } from "../src/summary";
 
 const plan = ["implementer", "reviewer"];
 // The phases a task passes after the review, in order: the final phase brings the ones before it.
-const afterReview = ["AwaitingHuman", "Merged", "Done"];
+const afterReview = ["AwaitingHuman", "Done"];
 
 // flowAt is the rail's path from the events shown: a node per run as it joins, ended when it
 // leaves; the milestones only once the replay is done.

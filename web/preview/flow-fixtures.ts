@@ -42,8 +42,7 @@ const ended = (n: FlowNode): FlowNode => ({ ...n, endedAt: "2026-10-04T14:05:00Z
 const milestones: Milestone[] = [
   { phase: "AwaitingCI", at: "2026-10-04T14:06:00Z", seq: 28 },
   { phase: "AwaitingHuman", at: "2026-10-04T14:12:00Z", seq: 29 },
-  { phase: "Merged", at: "2026-10-04T14:20:00Z", seq: 30 },
-  { phase: "Done", at: "2026-10-04T14:20:05Z", seq: 31 },
+  { phase: "Done", at: "2026-10-04T14:20:05Z", seq: 30 },
 ];
 
 export function flowFixture(name: FlowName): FlowFixture {

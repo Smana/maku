@@ -84,8 +84,8 @@ describe("summaryAt", () => {
       const s = summaryAt(final, events, events.length, true);
       expect(s.flow!.milestones!.map((m) => m.phase)).toEqual(["AwaitingHuman"]);
       expect(s.flow!.milestones![0].seq).toBe(events.at(-1)!.seq);
-      const merged = summaryAt({ ...final, status: { ...final.status, phase: "Merged" } }, events, events.length, true);
-      expect(merged.flow!.milestones!.map((m) => m.phase)).toEqual(["AwaitingHuman", "Merged"]);
+      const merged = summaryAt({ ...final, status: { ...final.status, phase: "Done" } }, events, events.length, true);
+      expect(merged.flow!.milestones!.map((m) => m.phase)).toEqual(["AwaitingHuman", "Done"]);
     });
   });
 });
