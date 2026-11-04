@@ -134,7 +134,7 @@ func (t *Tracker) task(room, repo string, f envelope.TaskFacts) []Event {
 			out = append(out, Event{Type: "room.pr_opened", Room: room, PR: t.pr})
 		}
 	}
-	if !t.mergedSent && (f.Reason == "merged" || f.Reason == "merged_verified") {
+	if !t.mergedSent && slices.Contains([]string{"merged", "merged_verified", "merged_unverified"}, f.Reason) {
 		// A human merge is Done to Done with reason merged: no Merged phase, so the reason is the fact.
 		t.mergedSent = true
 		out = append(out, Event{Type: "room.merged", Room: room, PR: t.pr})

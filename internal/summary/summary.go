@@ -72,6 +72,25 @@ type State struct {
 	flow         flowState
 }
 
+// Clone is a copy of st that folds on apart from it. Add writes Pending, Agents, Notes and the
+// run models in place, so a fold kept for later readers hands each a clone. Facts, Verdict and
+// Judge are replaced by Add, never written through, so the clone shares them.
+func (st State) Clone() State {
+	c := st
+	c.Pending = maps.Clone(st.Pending)
+	c.Agents = maps.Clone(st.Agents)
+	c.Notes = slices.Clone(st.Notes)
+	if st.LLM != nil {
+		m := *st.LLM
+		c.LLM = &m
+	}
+	if st.PrevLLM != nil {
+		m := *st.PrevLLM
+		c.PrevLLM = &m
+	}
+	return c
+}
+
 // RunModel is what a run runs on: Model is its claim's spec.model, from the broker's
 // run_phase{Running}; Effort is the reasoning effort its harness reported on harness_status, an
 // enum. Neither is the model that served it, which the gateway reports.

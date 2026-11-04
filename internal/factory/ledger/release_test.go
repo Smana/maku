@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package api
+package ledger
 
 import (
 	"errors"
-	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,10 +17,10 @@ import (
 )
 
 func ledgerWith(reserved map[string]string) *corev1.ConfigMap {
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LedgerPrefix + "20260927", Namespace: "agent-system"},
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: Prefix + "20260927", Namespace: "agent-system"},
 		Data: map[string]string{}}
 	for id, v := range reserved {
-		cm.Data[LedgerReserved+id] = v
+		cm.Data[Reserved+id] = v
 	}
 	return cm
 }
@@ -30,7 +28,7 @@ func ledgerWith(reserved map[string]string) *corev1.ConfigMap {
 func readLedger(t *testing.T, c client.Client) *corev1.ConfigMap {
 	t.Helper()
 	var cm corev1.ConfigMap
-	if err := c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: LedgerPrefix + "20260927"}, &cm); err != nil {
+	if err := c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: Prefix + "20260927"}, &cm); err != nil {
 		t.Fatal(err)
 	}
 	return &cm
@@ -47,10 +45,10 @@ func TestReleaseIsIdempotentByRunID(t *testing.T) {
 		t.Fatal(err)
 	}
 	cm := readLedger(t, c)
-	if _, ok := cm.Data[LedgerReserved+"aaaaaaaa"]; ok {
+	if _, ok := cm.Data[Reserved+"aaaaaaaa"]; ok {
 		t.Fatal("released")
 	}
-	if _, ok := cm.Data[LedgerReserved+"bbbbbbbb"]; !ok {
+	if _, ok := cm.Data[Reserved+"bbbbbbbb"]; !ok {
 		t.Fatal("another run's reservation is kept")
 	}
 	rv := cm.ResourceVersion
@@ -100,25 +98,5 @@ func TestABlindMeterRefusesEnforcedAdmission(t *testing.T) {
 				t.Fatalf("want blind %v: %v", c.blind, err)
 			}
 		})
-	}
-}
-
-// #54: the API says why it refuses: the meter, not the ledger.
-func TestTheAPIRefusesWhileTheMeterIsBlind(t *testing.T) {
-	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
-	st := &store{}
-	h := mkServer(t, st, c, true, false, "7f3cq2xz", 5_000_000)
-	if err := StampMeter(t.Context(), c, "agent-system", now.Add(-time.Hour), 5*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if w := post(h.Handler(), "alice", base()); w.Code != http.StatusServiceUnavailable ||
-		!strings.Contains(w.Body.String(), "meter_blind") || len(st.created) != 0 {
-		t.Fatalf("%d %s %d", w.Code, w.Body, len(st.created))
-	}
-	if err := StampMeter(t.Context(), c, "agent-system", now, 5*time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	if w := post(h.Handler(), "alice", base()); w.Code != http.StatusCreated {
-		t.Fatalf("the meter sees again: %d %s", w.Code, w.Body)
 	}
 }

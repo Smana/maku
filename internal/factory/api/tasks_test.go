@@ -26,6 +26,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/redact"
 )
@@ -91,7 +92,7 @@ func sponsoredCfg() *config.Config {
 // micro-USD, and its issues filed by one fakeFiler.
 func newTaskServer(t *testing.T, p authn.Principal, spent int64, objs ...client.Object) (*Server, *fakeFiler) {
 	t.Helper()
-	objs = append(objs, ledgerCM(now.UTC().Format(LedgerDayLayout), map[string]int64{"system:slack-app": spent}))
+	objs = append(objs, ledgerCM(now.UTC().Format(ledger.DayLayout), map[string]int64{"system:slack-app": spent}))
 	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(objs...).Build()
 	s := mkServer(t, &store{}, c, false, false, "7f3cq2xz", 5_000_000)
 	s.Auth, s.Cfg, s.Redact = byToken{"t": p}, sponsoredCfg(), testRedactor(t)
@@ -348,7 +349,7 @@ func TestCreateTaskReplayScope(t *testing.T) {
 func TestCreateTaskPatchRetries(t *testing.T) {
 	fails := 1
 	c := fake.NewClientBuilder().WithScheme(scheme()).
-		WithObjects(ledgerCM(now.UTC().Format(LedgerDayLayout), nil)).
+		WithObjects(ledgerCM(now.UTC().Format(ledger.DayLayout), nil)).
 		WithInterceptorFuncs(interceptor.Funcs{Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, p client.Patch, o ...client.PatchOption) error {
 			if fails > 0 {
 				fails--
@@ -395,7 +396,7 @@ func TestCreateTaskRaceConflict(t *testing.T) {
 	squat := openTask(taskid.Name("api:slack-app:k"))
 	squat.Spec.Source.Key = "api:slack-app:elsewhere"
 	first := true
-	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(squat, ledgerCM(now.UTC().Format(LedgerDayLayout), nil)).
+	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(squat, ledgerCM(now.UTC().Format(ledger.DayLayout), nil)).
 		WithInterceptorFuncs(interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
 			if _, ok := o.(*factoryv1.Task); ok && first {
 				first = false
@@ -414,7 +415,7 @@ func TestCreateTaskRaceConflict(t *testing.T) {
 
 // A link that never lands names the filed issue in the log, so an operator can link it by hand.
 func TestCreateTaskOrphanIsLogged(t *testing.T) {
-	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(ledgerCM(now.UTC().Format(LedgerDayLayout), nil)).
+	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(ledgerCM(now.UTC().Format(ledger.DayLayout), nil)).
 		WithInterceptorFuncs(interceptor.Funcs{Patch: func(context.Context, client.WithWatch, client.Object, client.Patch, ...client.PatchOption) error {
 			return errors.New("apiserver down")
 		}}).Build()

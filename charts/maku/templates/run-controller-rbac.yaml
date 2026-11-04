@@ -57,7 +57,8 @@ roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller}
 subjects:
   - {kind: ServiceAccount, name: run-controller, namespace: {{ .Release.Namespace }}}
 ---
-# The broker's CA, copied into each run: the one Secret it reads outside the runs namespace.
+# The broker's CA, copied into each run: the one Secret it reads outside the runs namespace, and
+# ca.crt only: never broker.tls.secretName, whose tls.key would let the controller impersonate the broker.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -66,7 +67,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [{{ .Values.broker.tls.secretName | quote }}]
+    resourceNames: [{{ .Values.broker.tls.caSecretName | quote }}]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

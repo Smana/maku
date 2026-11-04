@@ -67,7 +67,7 @@ func (a tokenAuth) Authenticate(r *http.Request) (authn.Principal, error) {
 // memLog is the log in memory, with the store's idempotency, fencing and
 // sealing semantics. refuse fails chosen appends; touchHeld makes TouchBridge
 // report the lease held whoever holds it, as a lease lost between the touch and
-// the append does.
+// the append does; a room in sealed refuses its bridge lease, as the store does.
 type memLog struct {
 	mu        sync.Mutex
 	events    map[string][]envelope.Event
@@ -76,7 +76,8 @@ type memLog struct {
 	leases    map[string]string // room -> the run holding its bridge lease (no expiry here)
 	refuse    func(envelope.Draft) error
 	touchHeld bool
-	touches   int // lease renewals
+	sealed    map[string]bool // rooms whose lease ClaimBridge refuses with ErrSealed
+	touches   int             // lease renewals
 	// deliveryReads counts the replay's reads of the log.
 	deliveryReads int
 	// ranged, when set, gets the last seq of each hub read that returned events.
@@ -205,6 +206,9 @@ func (m *memLog) ClaimBridge(ctx context.Context, roomID, runID string, live fun
 	if _, ok := m.events[roomID]; !ok {
 		return "", false, store.ErrNoRoom
 	}
+	if m.sealed[roomID] {
+		return "", false, fmt.Errorf("store: claim the bridge of room %s: %w", roomID, store.ErrSealed)
+	}
 	if h, ok := m.leases[roomID]; ok && h != runID && live(ctx, h) {
 		return h, false, nil
 	}
@@ -255,7 +259,7 @@ func newServer(t *testing.T) (*Server, *memLog, *runwatch.Watcher) {
 		t.Fatal(err)
 	}
 	log := newMemLog()
-	w := runwatch.New()
+	w := runwatch.New(runwatch.DefaultKind)
 	hub := fanout.New(log, nil, nil)
 	hub.PollEvery = 10 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1390,4 +1394,21 @@ func TestAnAbsentLeaseHolderIsTakenOverAfterSync(t *testing.T) {
 	w.Upsert(t.Context(), agentRun(runB, room, "Running"))
 	log.leases[room] = runA
 	hello(t, s.Routes(), runB)
+}
+
+// Audit H-1 (D5): a closed room's hello answers 410 sealed, so the bridge keeps its harness held
+// rather than release it into a room that records nothing. No lease is taken, nothing is appended.
+func TestHelloOnASealedRoomIsGone(t *testing.T) {
+	s, log, w := newServer(t)
+	w.Upsert(t.Context(), agentRun(runA, room, "Running"))
+	log.mu.Lock()
+	log.sealed = map[string]bool{room: true}
+	log.mu.Unlock()
+	rec := call(t, s.Routes(), http.MethodPost, "/v1/bridge/hello", "run:"+runA, nil)
+	if rec.Code != http.StatusGone || reason(t, rec) != wire.ReasonSealed {
+		t.Fatalf("hello on a sealed room: %d %s", rec.Code, rec.Body)
+	}
+	if h, ok := log.leases[room]; ok || len(log.stored()) != 0 {
+		t.Fatalf("lease %q, %d events: a sealed room handed out its lease", h, len(log.stored()))
+	}
 }

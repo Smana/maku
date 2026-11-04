@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // Kind is where AgentRuns live and how they are named: cloud-native-ref's Crossplane XR by
-// default, agent-platform's own CRD (run-controller, adoption 3a) when configured.
+// default, agent-platform's own CRD (run-controller, adoption 3a) when configured. It is a value
+// each binary builds from its config and hands to every reader of a claim (D9): there is no
+// process-wide kind, so two kinds can share a process, as the tests do.
 type Kind struct {
 	Group      string `json:"group,omitempty"`
 	Namespace  string `json:"namespace,omitempty"`
@@ -27,21 +28,6 @@ var (
 	nsRE     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	prefixRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}-$`) // + 8 id characters stays a DNS label
 )
-
-type state struct {
-	kind    Kind
-	subject *regexp.Regexp
-}
-
-// current is read on every claim; atomic so a test's Configure never races a watch goroutine.
-var current atomic.Pointer[state]
-
-func init() { current.Store(newState(DefaultKind)) }
-
-func newState(k Kind) *state {
-	return &state{kind: k, subject: regexp.MustCompile("^system:serviceaccount:" +
-		regexp.QuoteMeta(k.Namespace) + ":" + regexp.QuoteMeta(k.NamePrefix) + "([a-z2-7]{8})$")}
-}
 
 // WithDefaults fills each empty field from DefaultKind.
 func (k Kind) WithDefaults() Kind {
@@ -80,31 +66,18 @@ func ValidatePrefix(p string) error {
 	return nil
 }
 
-// Configure sets the kind every reader uses, its empty fields defaulted. Call it once at
-// startup, before a watch or a client reads a run. A refused kind leaves the current one.
-func Configure(k Kind) error {
-	k = k.WithDefaults()
-	if err := k.Validate(); err != nil {
-		return err
-	}
-	current.Store(newState(k))
-	return nil
+// GVK is k's AgentRun kind (C3).
+func (k Kind) GVK() schema.GroupVersionKind {
+	return schema.GroupVersionKind{Group: k.Group, Version: "v1alpha1", Kind: "AgentRun"}
 }
 
-// Current is the configured kind.
-func Current() Kind { return current.Load().kind }
+// ClaimName is the name of run id's claim under k: <prefix><C2 id>.
+func (k Kind) ClaimName(id string) string { return k.NamePrefix + id }
 
-// Namespace is where every run lives.
-func Namespace() string { return Current().Namespace }
-
-// ClaimPrefix starts every run's name: <prefix><C2 id>.
-func ClaimPrefix() string { return Current().NamePrefix }
-
-// GVK is the AgentRun's kind (C3).
-func GVK() schema.GroupVersionKind {
-	return schema.GroupVersionKind{Group: Current().Group, Version: "v1alpha1", Kind: "AgentRun"}
+// RunSubject matches a run's ServiceAccount token subject under k, capturing the run id: the
+// ServiceAccount is named exactly like the run, on both runtimes. It compiles on each call, so a
+// caller that matches many subjects keeps the result.
+func (k Kind) RunSubject() *regexp.Regexp {
+	return regexp.MustCompile("^system:serviceaccount:" + regexp.QuoteMeta(k.Namespace) + ":" +
+		regexp.QuoteMeta(k.NamePrefix) + "([a-z2-7]{8})$")
 }
-
-// RunSubject matches a run's ServiceAccount token subject, capturing the run id: the
-// ServiceAccount is named exactly like the run, on both runtimes.
-func RunSubject() *regexp.Regexp { return current.Load().subject }

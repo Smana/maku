@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/runrequest"
+	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
 )
@@ -91,7 +92,7 @@ func forkFixture(t *testing.T, funcs *interceptor.Funcs) (*Actor, *actLog, *v1al
 	req := &fakeRequester{}
 	a.Requester = requesterFunc(func(ctx context.Context, r runrequest.Request) (runrequest.Result, error) {
 		_, _ = req.Request(ctx, r)
-		return runrequest.Manifest{}.Request(ctx, r)
+		return runrequest.Manifest{Kind: runwatch.DefaultKind}.Request(ctx, r)
 	})
 	return a, log, room, req
 }
@@ -396,5 +397,45 @@ func TestForksAreRateLimitedPerPrincipal(t *testing.T) {
 	}
 	if f := act(a, room, "human:col", 51, nil, Action{Kind: "message", Text: "still here", Delivery: "none"}); f.Rejected != "" {
 		t.Fatalf("other actions keep their own limit: %+v", f)
+	}
+}
+
+// Audit R-1: a Room Create that outlives the act's context still leaves the fork's log closed:
+// the close runs on its own bounded context. A close that fails is logged with the room's id,
+// since nothing else would ever seal that log.
+func TestAForkWhoseCreateOutlivesTheActIsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		closeErr  error
+		wantClose bool
+		wantLog   string
+	}{
+		{"the act's context is spent", nil, true, ""},
+		{"the close fails", errors.New("conn reset"), false, "level=ERROR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			slow := &interceptor.Funcs{Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+				cancel() // the act's deadline passes while the API server answers
+				return context.Canceled
+			}}
+			a, log, room, _ := forkFixture(t, slow)
+			log.closeErr = tc.closeErr
+			var buf bytes.Buffer
+			a.Logger = slog.New(slog.NewTextHandler(&buf, nil))
+			raw, _ := json.Marshal(Action{Kind: "fork", Seq: 1})
+			p := authn.Principal{Kind: envelope.ActorHuman, ID: "human:bob", Groups: []string{"agents-member"}}
+			if f := a.Handle(ctx, p, false, "s1", room, wire.ClientFrame{Type: "act", ClientSeq: 1, Action: raw}); f.Rejected != "log_unavailable" {
+				t.Fatalf("%+v", f)
+			}
+			forked := log.forkedRoom.ID
+			if closed := log.closedRoom == forked && log.closeBounded; closed != tc.wantClose {
+				t.Fatalf("closed %q (bounded %v), fork %q; want closed %v", log.closedRoom, log.closeBounded, forked, tc.wantClose)
+			}
+			if l := buf.String(); tc.wantLog != "" && (!strings.Contains(l, tc.wantLog) || !strings.Contains(l, "room="+forked)) {
+				t.Fatalf("logged %q", l)
+			}
+		})
 	}
 }

@@ -7,3 +7,6 @@ _site/
 __pycache__/
 *.pyc
 .quickstart/
+.worktrees/
+# Claude Code's local state and its agent worktrees: full copies of the tree the gates would read.
+.claude/

@@ -16,6 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 func spec() Spec {
@@ -27,7 +29,7 @@ func spec() Spec {
 func split(p string) []string { return strings.Split(p, ".") }
 
 func TestBuildIsTheSP1Claim(t *testing.T) {
-	u := Build(spec())
+	u := Build(runwatch.DefaultKind, spec())
 	if u.GetName() != "xplane-run-7f3cq2xz" || u.GetNamespace() != "agents" || u.GetLabels()[LabelTask] != "3buqdlot" ||
 		u.GetLabels()[LabelPrincipal] != "system.factory" {
 		t.Fatalf("identity %s/%s %v", u.GetNamespace(), u.GetName(), u.GetLabels())
@@ -47,7 +49,7 @@ func TestBuildIsTheSP1Claim(t *testing.T) {
 	}
 	r := spec()
 	r.Role, r.TaskText, r.TaskURL = "reviewer", "", "https://github.com/Smana/cloud-native-ref/pull/12"
-	u = Build(r)
+	u = Build(runwatch.DefaultKind, r)
 	if _, found, _ := unstructured.NestedString(u.Object, "spec", "task", "text"); found {
 		t.Error("a reviewer with no brief writes no task.text")
 	}
@@ -60,7 +62,7 @@ func TestBuildKeepsBothTaskFieldsForAReviewerOnly(t *testing.T) {
 	for role, wantText := range map[string]bool{"reviewer": true, "implementer": false, "tester": false, "triager": false} {
 		s := spec()
 		s.Role, s.TaskText, s.TaskURL = role, "You are the reviewer", pr
-		u := Build(s)
+		u := Build(runwatch.DefaultKind, s)
 		text, found, _ := unstructured.NestedString(u.Object, "spec", "task", "text")
 		url, _, _ := unstructured.NestedString(u.Object, "spec", "task", "url")
 		if url != pr || found != wantText || (wantText && text != "You are the reviewer") {
@@ -71,12 +73,12 @@ func TestBuildKeepsBothTaskFieldsForAReviewerOnly(t *testing.T) {
 
 // v2 suspend: spec.suspendable is immutable once set, so it is written only when true.
 func TestBuildWritesSuspendableOnlyWhenSet(t *testing.T) {
-	if _, found, _ := unstructured.NestedFieldNoCopy(Build(spec()).Object, "spec", "suspendable"); found {
+	if _, found, _ := unstructured.NestedFieldNoCopy(Build(runwatch.DefaultKind, spec()).Object, "spec", "suspendable"); found {
 		t.Error("today's claim carries no suspendable")
 	}
 	s := spec()
 	s.Suspendable = true
-	if v, found, _ := unstructured.NestedBool(Build(s).Object, "spec", "suspendable"); !found || !v {
+	if v, found, _ := unstructured.NestedBool(Build(runwatch.DefaultKind, s).Object, "spec", "suspendable"); !found || !v {
 		t.Errorf("suspendable = %v, %v", v, found)
 	}
 }
@@ -84,14 +86,14 @@ func TestBuildWritesSuspendableOnlyWhenSet(t *testing.T) {
 func TestBuildWritesQueueAndEgressOnlyWhenSet(t *testing.T) {
 	s := spec()
 	s.Queue, s.EgressProfiles = QueueFactory, []string{"github", "docs"}
-	u := Build(s)
+	u := Build(runwatch.DefaultKind, s)
 	if q, _, _ := unstructured.NestedString(u.Object, "spec", "queueName"); q != "factory" {
 		t.Errorf("queueName = %q", q)
 	}
 	if p, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "egress", "profiles"); strings.Join(p, ",") != "github,docs" {
 		t.Errorf("egress.profiles = %v", p)
 	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(Build(spec()).Object, "spec", "egress"); found {
+	if _, found, _ := unstructured.NestedFieldNoCopy(Build(runwatch.DefaultKind, spec()).Object, "spec", "egress"); found {
 		t.Error("no profiles, no egress block")
 	}
 }
@@ -100,11 +102,11 @@ func TestBuildWritesQueueAndEgressOnlyWhenSet(t *testing.T) {
 func TestBuildCarriesTraceparentAndTier(t *testing.T) {
 	s := spec()
 	s.Traceparent, s.Tier = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "standard"
-	u := Build(s)
+	u := Build(runwatch.DefaultKind, s)
 	if u.GetAnnotations()[AnnTraceparent] != s.Traceparent || u.GetLabels()[LabelTier] != "standard" {
 		t.Fatalf("%v %v", u.GetAnnotations(), u.GetLabels())
 	}
-	u = Build(spec())
+	u = Build(runwatch.DefaultKind, spec())
 	if _, ok := u.GetAnnotations()[AnnTraceparent]; ok {
 		t.Error("no task trace, no annotation: the harness starts its own")
 	}
@@ -118,14 +120,14 @@ func TestBuildCarriesTraceparentAndTier(t *testing.T) {
 func TestBuildCarriesTheTaskURLAnnotation(t *testing.T) {
 	s := spec()
 	s.Traceparent, s.SourceURL = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", "https://github.com/Smana/cloud-native-ref/issues/2112"
-	u := Build(s)
+	u := Build(runwatch.DefaultKind, s)
 	if u.GetAnnotations()[AnnTaskURL] != s.SourceURL || u.GetAnnotations()[AnnTraceparent] != s.Traceparent {
 		t.Fatalf("both annotations ride together: %v", u.GetAnnotations())
 	}
 	if text, _, _ := unstructured.NestedString(u.Object, "spec", "task", "text"); text != "brief" {
 		t.Errorf("the annotation leaves task.text alone: %q", text)
 	}
-	if _, ok := Build(spec()).GetAnnotations()[AnnTaskURL]; ok {
+	if _, ok := Build(runwatch.DefaultKind, spec()).GetAnnotations()[AnnTaskURL]; ok {
 		t.Error("no source URL, no annotation")
 	}
 }
@@ -136,20 +138,20 @@ func TestBuildCarriesTheTaskURLAnnotation(t *testing.T) {
 func TestBuildCarriesTheStartSeqAndHead(t *testing.T) {
 	s := spec()
 	s.StartSeq, s.Head = 1202, "4be1c9d0a1b2c3d4e5f60718293a4b5c6d7e8f90"
-	u := Build(s)
+	u := Build(runwatch.DefaultKind, s)
 	if u.GetAnnotations()[AnnStartSeq] != "1202" || u.GetAnnotations()[AnnHead] != s.Head {
 		t.Fatalf("%v", u.GetAnnotations())
 	}
-	r, ok := FromUnstructured(u)
+	r, ok := FromUnstructured(runwatch.DefaultKind, u)
 	// The brief reads back too: a resumed run is briefed with its lost run's (disruption design §4).
 	if !ok || r.StartSeq != 1202 || r.Head != s.Head || r.TaskText == "" || r.TaskText != s.TaskText {
 		t.Fatalf("read back: %+v", r)
 	}
-	u = Build(spec())
+	u = Build(runwatch.DefaultKind, spec())
 	if _, ok := u.GetAnnotations()[AnnStartSeq]; ok {
 		t.Error("an empty room's lastSeq is 0, the absent annotation's own value")
 	}
-	r, _ = FromUnstructured(u)
+	r, _ = FromUnstructured(runwatch.DefaultKind, u)
 	if r.StartSeq != 0 || r.Head != "" {
 		t.Fatalf("an absent annotation reads back as zero values: %+v", r)
 	}
@@ -279,7 +281,7 @@ func TestAnnotateRefusesTheCreateOnlyKeys(t *testing.T) {
 			t.Errorf("%s was patched", key)
 		}
 	}
-	r := Build(s)
+	r := Build(runwatch.DefaultKind, s)
 	if err := c.C.Get(t.Context(), client.ObjectKeyFromObject(r), r); err != nil || r.GetAnnotations()[AnnTaskURL] != s.SourceURL {
 		t.Fatalf("%v %v", r.GetAnnotations(), err)
 	}
@@ -290,8 +292,8 @@ func TestAnnotateRefusesTheCreateOnlyKeys(t *testing.T) {
 func TestClientRefusesAnIDThatIsNotARun(t *testing.T) {
 	c := newClient()
 	for _, id := range []string{"notanid1", "7f3cq2x"} {
-		u := Build(spec())
-		u.SetName(Name(id))
+		u := Build(runwatch.DefaultKind, spec())
+		u.SetName(runwatch.DefaultKind.ClaimName(id))
 		if err := c.C.Create(t.Context(), u); err != nil {
 			t.Fatal(err)
 		}
@@ -310,11 +312,11 @@ func TestClientRefusesAnIDThatIsNotARun(t *testing.T) {
 }
 
 func TestFromUnstructuredReadsFinishedAt(t *testing.T) {
-	u := Build(spec())
+	u := Build(runwatch.DefaultKind, spec())
 	if err := unstructured.SetNestedField(u.Object, "2026-09-30T10:20:00Z", "status", "finishedAt"); err != nil {
 		t.Fatal(err)
 	}
-	r, ok := FromUnstructured(u)
+	r, ok := FromUnstructured(runwatch.DefaultKind, u)
 	if want := time.Date(2026, 9, 30, 10, 20, 0, 0, time.UTC); !ok || !r.Finished.Equal(want) {
 		t.Fatalf("%v %v", r.Finished, ok)
 	}
@@ -323,21 +325,21 @@ func TestFromUnstructuredReadsFinishedAt(t *testing.T) {
 // #55: a claim deleted while live keeps its phase while its finalizers run; Deleting says it
 // is going, so its reservation is released then, not at a terminal phase it never reaches.
 func TestFromUnstructuredReadsDeleting(t *testing.T) {
-	u := Build(spec())
-	if r, _ := FromUnstructured(u); r.Deleting {
+	u := Build(runwatch.DefaultKind, spec())
+	if r, _ := FromUnstructured(runwatch.DefaultKind, u); r.Deleting {
 		t.Fatal("a claim without a deletion timestamp is not deleting")
 	}
 	ts := metav1.NewTime(time.Date(2026, 9, 30, 10, 20, 0, 0, time.UTC))
 	u.SetDeletionTimestamp(&ts)
-	if r, ok := FromUnstructured(u); !ok || !r.Deleting {
+	if r, ok := FromUnstructured(runwatch.DefaultKind, u); !ok || !r.Deleting {
 		t.Fatalf("%+v %v", r, ok)
 	}
 }
 
 func newClient() Client {
 	s := runtime.NewScheme()
-	Scheme(s)
-	return Client{C: fake.NewClientBuilder().WithScheme(s).Build()}
+	Scheme(s, runwatch.DefaultKind)
+	return Client{C: fake.NewClientBuilder().WithScheme(s).Build(), Kind: runwatch.DefaultKind}
 }
 
 func TestFromUnstructuredSkipsWhatIsNotARun(t *testing.T) {
@@ -347,9 +349,9 @@ func TestFromUnstructuredSkipsWhatIsNotARun(t *testing.T) {
 		"outside the agents": func(u *unstructured.Unstructured) { u.SetNamespace("default") },
 	} {
 		t.Run(name, func(t *testing.T) {
-			u := Build(spec())
+			u := Build(runwatch.DefaultKind, spec())
 			edit(u)
-			if _, ok := FromUnstructured(u); ok {
+			if _, ok := FromUnstructured(runwatch.DefaultKind, u); ok {
 				t.Error("read as a run")
 			}
 		})
@@ -358,8 +360,8 @@ func TestFromUnstructuredSkipsWhatIsNotARun(t *testing.T) {
 
 func TestClientRoundTrip(t *testing.T) {
 	s := runtime.NewScheme()
-	Scheme(s)
-	c := Client{C: fake.NewClientBuilder().WithScheme(s).Build()}
+	Scheme(s, runwatch.DefaultKind)
+	c := Client{C: fake.NewClientBuilder().WithScheme(s).Build(), Kind: runwatch.DefaultKind}
 	ctx := t.Context()
 	sp := spec()
 	sp.Tier = "standard" // the meter prices a run by its tier and model
@@ -394,11 +396,11 @@ func TestClientRoundTrip(t *testing.T) {
 func TestChargedToRoundTrips(t *testing.T) {
 	s := spec()
 	s.ChargedTo = "github:alice"
-	r, ok := FromUnstructured(Build(s))
+	r, ok := FromUnstructured(runwatch.DefaultKind, Build(runwatch.DefaultKind, s))
 	if !ok || r.ChargedTo != "github:alice" {
 		t.Fatalf("%+v", r)
 	}
-	if r, _ := FromUnstructured(Build(spec())); r.ChargedTo != "" || Build(spec()).GetAnnotations()[AnnChargedTo] != "" {
+	if r, _ := FromUnstructured(runwatch.DefaultKind, Build(runwatch.DefaultKind, spec())); r.ChargedTo != "" || Build(runwatch.DefaultKind, spec()).GetAnnotations()[AnnChargedTo] != "" {
 		t.Fatal("no person, no annotation")
 	}
 }
@@ -406,7 +408,7 @@ func TestChargedToRoundTrips(t *testing.T) {
 // Loop policy part 2: spec.loop is written only when set, judgeModel only when the task names a judge.
 func TestBuildWritesTheLoopOnlyWhenSet(t *testing.T) {
 	base := Spec{RunID: "7f3cq2xz", Role: "implementer", Repository: "Smana/cloud-native-ref"}
-	if _, found, _ := unstructured.NestedMap(Build(base).Object, "spec", "loop"); found {
+	if _, found, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, base).Object, "spec", "loop"); found {
 		t.Fatal("no loop: no spec.loop (D4)")
 	}
 	for _, c := range []struct {
@@ -418,7 +420,7 @@ func TestBuildWritesTheLoopOnlyWhenSet(t *testing.T) {
 	} {
 		s := base
 		s.Loop = &c.loop
-		got, _, err := unstructured.NestedMap(Build(s).Object, "spec", "loop")
+		got, _, err := unstructured.NestedMap(Build(runwatch.DefaultKind, s).Object, "spec", "loop")
 		if err != nil || !reflect.DeepEqual(got, c.want) {
 			t.Fatalf("spec.loop = %v (%v), want %v", got, err, c.want)
 		}
@@ -441,7 +443,7 @@ func TestCreateIsStrictOnlyForALoopClaim(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			var got string
 			s := runtime.NewScheme()
-			Scheme(s)
+			Scheme(s, runwatch.DefaultKind)
 			cl := fake.NewClientBuilder().WithScheme(s).WithInterceptorFuncs(interceptor.Funcs{
 				Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 					co := &client.CreateOptions{}
@@ -451,7 +453,7 @@ func TestCreateIsStrictOnlyForALoopClaim(t *testing.T) {
 				}}).Build()
 			sp := spec()
 			sp.Loop, sp.Search = c.loop, c.search
-			if err := (Client{C: cl}).Create(t.Context(), sp); err != nil {
+			if err := (Client{C: cl, Kind: runwatch.DefaultKind}).Create(t.Context(), sp); err != nil {
 				t.Fatal(err)
 			}
 			if got != c.want {
@@ -463,12 +465,12 @@ func TestCreateIsStrictOnlyForALoopClaim(t *testing.T) {
 
 // v3 feature 3: spec.loop.checks is written only when on, so every other claim is today's.
 func TestBuildWritesLoopChecksOnlyWhenOn(t *testing.T) {
-	if _, found, _ := unstructured.NestedMap(Build(spec()).Object, "spec", "loop"); found {
+	if _, found, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, spec()).Object, "spec", "loop"); found {
 		t.Fatal("spec.loop written for a run without checks")
 	}
 	s := spec()
 	s.Checks, s.EgressProfiles = true, []string{"golang", "pypi"}
-	u := Build(s)
+	u := Build(runwatch.DefaultKind, s)
 	if on, _, _ := unstructured.NestedBool(u.Object, "spec", "loop", "checks"); !on {
 		t.Fatalf("spec.loop.checks not set: %v", u.Object["spec"])
 	}
@@ -480,12 +482,12 @@ func TestBuildWritesLoopChecksOnlyWhenOn(t *testing.T) {
 // v3 feature 5: spec.loop.search is written only when on, as spec.loop's only key (Create's Strict
 // validation for it is TestCreateIsStrictOnlyForALoopClaim).
 func TestBuildWritesLoopSearchOnlyWhenOn(t *testing.T) {
-	if _, found, _ := unstructured.NestedMap(Build(spec()).Object, "spec", "loop"); found {
+	if _, found, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, spec()).Object, "spec", "loop"); found {
 		t.Fatal("spec.loop written for a run without search")
 	}
 	s := spec()
 	s.Search = true
-	if loop, _, _ := unstructured.NestedMap(Build(s).Object, "spec", "loop"); !reflect.DeepEqual(loop, map[string]any{"search": true}) {
+	if loop, _, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, s).Object, "spec", "loop"); !reflect.DeepEqual(loop, map[string]any{"search": true}) {
 		t.Fatalf("spec.loop %v, want {search: true}", loop)
 	}
 }
@@ -494,12 +496,12 @@ func TestBuildWritesLoopSearchOnlyWhenOn(t *testing.T) {
 func TestBuildJoinsChecksSearchAndTheLoop(t *testing.T) {
 	s := spec()
 	s.Checks, s.Search = true, true
-	if loop, _, _ := unstructured.NestedMap(Build(s).Object, "spec", "loop"); !reflect.DeepEqual(loop, map[string]any{"checks": true, "search": true}) {
+	if loop, _, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, s).Object, "spec", "loop"); !reflect.DeepEqual(loop, map[string]any{"checks": true, "search": true}) {
 		t.Fatalf("checks+search: spec.loop %v", loop)
 	}
 	s.Loop = &Loop{StallSteps: 40, Continuations: 2}
 	want := map[string]any{"stallSteps": int64(40), "continuations": int64(2), "checks": true, "search": true}
-	if loop, _, _ := unstructured.NestedMap(Build(s).Object, "spec", "loop"); !reflect.DeepEqual(loop, want) {
+	if loop, _, _ := unstructured.NestedMap(Build(runwatch.DefaultKind, s).Object, "spec", "loop"); !reflect.DeepEqual(loop, want) {
 		t.Fatalf("loop+checks+search: spec.loop %v, want %v", loop, want)
 	}
 }
@@ -509,11 +511,11 @@ func TestBuildJoinsChecksSearchAndTheLoop(t *testing.T) {
 func TestMaxMicroUSDRoundTrips(t *testing.T) {
 	s := spec()
 	s.MaxMicroUSD = 666_666
-	u := Build(s)
-	if r, ok := FromUnstructured(u); !ok || r.MaxMicroUSD != 666_666 || u.GetAnnotations()[AnnMaxMicroUSD] != "666666" {
+	u := Build(runwatch.DefaultKind, s)
+	if r, ok := FromUnstructured(runwatch.DefaultKind, u); !ok || r.MaxMicroUSD != 666_666 || u.GetAnnotations()[AnnMaxMicroUSD] != "666666" {
 		t.Fatalf("%+v %v", r, u.GetAnnotations())
 	}
-	if r, _ := FromUnstructured(Build(spec())); r.MaxMicroUSD != 0 || Build(spec()).GetAnnotations()[AnnMaxMicroUSD] != "" {
+	if r, _ := FromUnstructured(runwatch.DefaultKind, Build(runwatch.DefaultKind, spec())); r.MaxMicroUSD != 0 || Build(runwatch.DefaultKind, spec()).GetAnnotations()[AnnMaxMicroUSD] != "" {
 		t.Fatal("no cap, no annotation")
 	}
 }
@@ -522,13 +524,13 @@ func TestMaxMicroUSDRoundTrips(t *testing.T) {
 // an absent cap (0): the meter revokes the first and the second alike.
 func TestAnUnreadableMaxMicroUSDIsNotAnAbsentOne(t *testing.T) {
 	for v, want := range map[string]int64{"666666": 666_666, "": 0, "abc": -1, "0": -1, "-5": -1} {
-		u := Build(spec())
+		u := Build(runwatch.DefaultKind, spec())
 		if v != "" {
 			ann := u.GetAnnotations()
 			ann[AnnMaxMicroUSD] = v
 			u.SetAnnotations(ann)
 		}
-		if r, _ := FromUnstructured(u); r.MaxMicroUSD != want {
+		if r, _ := FromUnstructured(runwatch.DefaultKind, u); r.MaxMicroUSD != want {
 			t.Errorf("%q: %d, want %d", v, r.MaxMicroUSD, want)
 		}
 	}

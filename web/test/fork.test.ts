@@ -63,7 +63,7 @@ describe("mountFork", () => {
   it("says why the fork's run failed, beside the fork it made", () => {
     const f = setup();
     f.fork.open(3);
-    f.field<HTMLSelectElement>("forkRole").value = "tester";
+    f.field<HTMLSelectElement>("forkRole").value = "reviewer";
     f.submit();
     f.fork.onAck({ type: "ack", clientSeq: f.sent[0].clientSeq, seq: 4, result: { roomId: "abcdefgh", run: null, runError: "over_budget" } });
     expect(f.root.textContent).toContain("over your budget");

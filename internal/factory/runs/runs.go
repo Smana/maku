@@ -19,7 +19,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -77,17 +76,10 @@ const (
 	ReasonPodFailed = "PodFailed"
 )
 
-// Namespace is the claims' namespace: the broker's own (runwatch), so the two readers of a
-// claim never disagree.
-func Namespace() string { return runwatch.Namespace() }
-
-// GVK is SP1's AgentRun claim: the broker's own, so the two readers of a claim never disagree.
-func GVK() schema.GroupVersionKind { return runwatch.GVK() }
-
-// Scheme registers AgentRun as an unstructured kind (the XRD has no Go types).
-func Scheme(s *runtime.Scheme) {
-	s.AddKnownTypeWithName(GVK(), &unstructured.Unstructured{})
-	s.AddKnownTypeWithName(GVK().GroupVersion().WithKind("AgentRunList"), &unstructured.UnstructuredList{})
+// Scheme registers k's AgentRun as an unstructured kind (the XRD has no Go types).
+func Scheme(s *runtime.Scheme, k runwatch.Kind) {
+	s.AddKnownTypeWithName(k.GVK(), &unstructured.Unstructured{})
+	s.AddKnownTypeWithName(k.GVK().GroupVersion().WithKind("AgentRunList"), &unstructured.UnstructuredList{})
 }
 
 // Spec is what the factory decides about one run. TaskText and TaskURL are exclusive, as the
@@ -167,11 +159,8 @@ func (s Spec) Validate() error {
 	return errors.Join(errs...)
 }
 
-// Name is the claim's name for a run id.
-func Name(runID string) string { return runwatch.ClaimPrefix() + runID }
-
-// Build is the claim for s. It does not validate: Create does, before the claim exists.
-func Build(s Spec) *unstructured.Unstructured {
+// Build is the claim for s, of kind k. It does not validate: Create does, before the claim exists.
+func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	task := map[string]any{"text": s.TaskText}
 	if s.TaskURL != "" {
 		task = map[string]any{"url": s.TaskURL}
@@ -217,9 +206,9 @@ func Build(s Spec) *unstructured.Unstructured {
 		spec["egress"] = map[string]any{"profiles": profiles}
 	}
 	u := &unstructured.Unstructured{Object: map[string]any{"spec": spec}}
-	u.SetGroupVersionKind(GVK())
-	u.SetNamespace(Namespace())
-	u.SetName(Name(s.RunID))
+	u.SetGroupVersionKind(k.GVK())
+	u.SetNamespace(k.Namespace)
+	u.SetName(k.ClaimName(s.RunID))
 	labels := map[string]string{LabelRole: s.Role, LabelPrincipal: strings.ReplaceAll(s.Principal, ":", ".")}
 	if s.TaskID != "" {
 		labels[LabelTask] = s.TaskID // the composition copies it onto every composed object
@@ -275,10 +264,10 @@ type Run struct {
 }
 
 // FromUnstructured reads a claim. ok is false for one that is not a run: not named
-// <prefix><C2 id> (runs.namePrefix), or outside runs.namespace, as the broker's runwatch decides.
-func FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
-	id, ok := strings.CutPrefix(u.GetName(), runwatch.ClaimPrefix())
-	if !ok || !envelope.ValidID(id) || u.GetNamespace() != Namespace() {
+// <prefix><C2 id> (runs.namePrefix), or outside runs.namespace, as runwatch's Kind decides.
+func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool) {
+	id, ok := strings.CutPrefix(u.GetName(), k.NamePrefix)
+	if !ok || !envelope.ValidID(id) || u.GetNamespace() != k.Namespace {
 		return Run{}, false
 	}
 	str := func(path ...string) string { v, _, _ := unstructured.NestedString(u.Object, path...); return v }
@@ -316,19 +305,23 @@ func FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
 	return r, true
 }
 
-// Client creates, reads, annotates and deletes claims in Namespace.
-type Client struct{ C client.Client }
+// Client creates, reads, annotates and deletes claims of Kind, in its namespace.
+type Client struct {
+	C client.Client
+	// Kind is the runs kind, required: every claim read or written is one of its runs.
+	Kind runwatch.Kind
+}
 
-func empty() *unstructured.Unstructured {
+func (c Client) empty() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(GVK())
+	u.SetGroupVersionKind(c.Kind.GVK())
 	return u
 }
 
-func named(id string) *unstructured.Unstructured {
-	u := empty()
-	u.SetNamespace(Namespace())
-	u.SetName(Name(id))
+func (c Client) named(id string) *unstructured.Unstructured {
+	u := c.empty()
+	u.SetNamespace(c.Kind.Namespace)
+	u.SetName(c.Kind.ClaimName(id))
 	return u
 }
 
@@ -345,7 +338,7 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 	if s.Loop != nil || s.Checks || s.Search {
 		opts = append(opts, client.FieldValidation("Strict"))
 	}
-	if err := c.C.Create(ctx, Build(s), opts...); err != nil {
+	if err := c.C.Create(ctx, Build(c.Kind, s), opts...); err != nil {
 		if apierrors.IsAlreadyExists(err) && c.replayOf(ctx, s) {
 			return nil
 		}
@@ -358,8 +351,8 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 // identity (R48), so equality is what only CREATE could have written: start seq and head.
 // Everything else on a live claim is the composition's or the meter's to change.
 func (c Client) replayOf(ctx context.Context, s Spec) bool {
-	u := empty()
-	if err := c.C.Get(ctx, types.NamespacedName{Namespace: Namespace(), Name: Name(s.RunID)}, u); err != nil {
+	u := c.empty()
+	if err := c.C.Get(ctx, types.NamespacedName{Namespace: c.Kind.Namespace, Name: c.Kind.ClaimName(s.RunID)}, u); err != nil {
 		return false
 	}
 	a := u.GetAnnotations()
@@ -383,28 +376,28 @@ func (c Client) Get(ctx context.Context, id string) (Run, bool, error) {
 	if err := validID("get", id); err != nil {
 		return Run{}, false, err
 	}
-	u := empty()
-	err := c.C.Get(ctx, types.NamespacedName{Namespace: Namespace(), Name: Name(id)}, u)
+	u := c.empty()
+	err := c.C.Get(ctx, types.NamespacedName{Namespace: c.Kind.Namespace, Name: c.Kind.ClaimName(id)}, u)
 	if apierrors.IsNotFound(err) {
 		return Run{}, false, nil
 	}
 	if err != nil {
 		return Run{}, false, fmt.Errorf("get run %s: %w", id, err)
 	}
-	r, ok := FromUnstructured(u)
+	r, ok := FromUnstructured(c.Kind, u)
 	return r, ok, nil
 }
 
-// List reads every run in Namespace.
+// List reads every run in the kind's namespace (Kind.Namespace).
 func (c Client) List(ctx context.Context) ([]Run, error) {
 	l := &unstructured.UnstructuredList{}
-	l.SetGroupVersionKind(GVK().GroupVersion().WithKind("AgentRunList"))
-	if err := c.C.List(ctx, l, client.InNamespace(Namespace())); err != nil {
+	l.SetGroupVersionKind(c.Kind.GVK().GroupVersion().WithKind("AgentRunList"))
+	if err := c.C.List(ctx, l, client.InNamespace(c.Kind.Namespace)); err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
 	out := make([]Run, 0, len(l.Items))
 	for i := range l.Items {
-		if r, ok := FromUnstructured(&l.Items[i]); ok {
+		if r, ok := FromUnstructured(c.Kind, &l.Items[i]); ok {
 			out = append(out, r)
 		}
 	}
@@ -427,7 +420,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 	if err != nil {
 		return fmt.Errorf("annotate run %s: %w", id, err)
 	}
-	if err := c.C.Patch(ctx, named(id), client.RawPatch(types.MergePatchType, body)); err != nil {
+	if err := c.C.Patch(ctx, c.named(id), client.RawPatch(types.MergePatchType, body)); err != nil {
 		return fmt.Errorf("annotate run %s: %w", id, err)
 	}
 	return nil
@@ -438,7 +431,7 @@ func (c Client) Delete(ctx context.Context, id string) error {
 	if err := validID("delete", id); err != nil {
 		return err
 	}
-	if err := client.IgnoreNotFound(c.C.Delete(ctx, named(id))); err != nil {
+	if err := client.IgnoreNotFound(c.C.Delete(ctx, c.named(id))); err != nil {
 		return fmt.Errorf("delete run %s: %w", id, err)
 	}
 	return nil

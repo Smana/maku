@@ -19,8 +19,8 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/triage"
 )
@@ -168,8 +168,8 @@ func sponsoredDayRig(t *testing.T, objs ...*v1alpha1.Task) *rig {
 // holdDay reserves what is left of the principal's day under another run id.
 func holdDay(t *testing.T, g *rig, micro int64) {
 	t.Helper()
-	if _, err := api.Reserve(t.Context(), g.c, "agent-system", now, "zzzzzzzz",
-		api.Reservation{Principal: "system:factory", Person: "system:slack-app", MaxMicroUSD: micro}, 1_000_000_000, 0, false); err != nil {
+	if _, err := ledger.Reserve(t.Context(), g.c, "agent-system", now, "zzzzzzzz",
+		ledger.Reservation{Principal: "system:factory", Person: "system:slack-app", MaxMicroUSD: micro}, 1_000_000_000, 0, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -202,14 +202,14 @@ func TestASponsoredRunIsRefusedWhenThePrincipalsDayIsFull(t *testing.T) {
 // settleSpend writes the principal's settled spend into the day's ledger, as the meter does.
 func settleSpend(t *testing.T, g *rig, micro int64) {
 	t.Helper()
-	key := types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + now.UTC().Format(api.LedgerDayLayout)}
+	key := types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout)}
 	var cm corev1.ConfigMap
 	err := g.c.Get(t.Context(), key, &cm)
 	found := err == nil
 	if !found {
 		cm = corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
 	}
-	if err := api.SetLedgerSpentColumn(&cm, map[string]int64{"system:slack-app": micro}); err != nil {
+	if err := ledger.SetSpentColumn(&cm, map[string]int64{"system:slack-app": micro}); err != nil {
 		t.Fatal(err)
 	}
 	if found {
@@ -229,7 +229,7 @@ func TestASponsoredRunThatFitsIsAdmittedAndCharged(t *testing.T) {
 	if got := g.reconcile(t, "3buqdlot", 3); got.Status.Phase != v1alpha1.PhaseImplementing {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
 	}
-	used, err := api.DayUsed(t.Context(), g.c, "agent-system", "system:slack-app", now)
+	used, err := ledger.DayUsed(t.Context(), g.c, "agent-system", "system:slack-app", now)
 	if err != nil || used != sponsoredDayMicro {
 		t.Fatalf("used %d, %v", used, err)
 	}
@@ -247,11 +247,11 @@ func TestTwoSponsoredRunsRaceForTheLastSlot(t *testing.T) {
 		conflicts int
 		both      = make(chan struct{})
 	)
-	ledger := func(o client.Object) bool { return strings.HasPrefix(o.GetName(), api.LedgerPrefix) }
+	isLedger := func(o client.Object) bool { return strings.HasPrefix(o.GetName(), ledger.Prefix) }
 	g.r.Ledger = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
 		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
 			err := c.Get(ctx, key, o, opts...)
-			if strings.HasPrefix(key.Name, api.LedgerPrefix) && err == nil {
+			if strings.HasPrefix(key.Name, ledger.Prefix) && err == nil {
 				mu.Lock()
 				if gets++; gets == 2 {
 					close(both)
@@ -261,7 +261,7 @@ func TestTwoSponsoredRunsRaceForTheLastSlot(t *testing.T) {
 			return err
 		},
 		Update: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.UpdateOption) error {
-			if ledger(o) {
+			if isLedger(o) {
 				select {
 				case <-both:
 				case <-time.After(5 * time.Second):
@@ -290,12 +290,12 @@ func TestTwoSponsoredRunsRaceForTheLastSlot(t *testing.T) {
 				_, err := g.r.reserveFactoryDay(t.Context(), tk, g.r.Cfg.Budgets.DailyMicroUSD("system:factory"))
 				mu.Lock()
 				switch {
-				case errors.Is(err, api.ErrLedgerBusy):
+				case errors.Is(err, ledger.ErrBusy):
 					mu.Unlock()
 					continue
 				case err == nil:
 					landed++
-				case errors.Is(err, api.ErrPersonOverBudget):
+				case errors.Is(err, ledger.ErrPersonOverBudget):
 					refus++
 				default:
 					t.Error(err)
@@ -383,10 +383,10 @@ func TestAnAPITaskOfAnUnknownPrincipalIsEscalated(t *testing.T) {
 		t.Fatalf("%s %s, %d specs", got.Status.Phase, got.Status.Reason, len(g.runs.specs))
 	}
 	var cm corev1.ConfigMap
-	key := types.NamespacedName{Namespace: "agent-system", Name: api.LedgerPrefix + now.UTC().Format(api.LedgerDayLayout)}
+	key := types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout)}
 	if err := g.c.Get(t.Context(), key, &cm); err == nil {
 		for k := range cm.Data {
-			if strings.HasPrefix(k, api.LedgerReserved) {
+			if strings.HasPrefix(k, ledger.Reserved) {
 				t.Fatalf("a reservation was made: %s", k)
 			}
 		}

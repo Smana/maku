@@ -74,11 +74,11 @@ func Terminal(phase string) bool {
 // Live is the broker's check on every bridge request (S4): not terminal, not revoked.
 func (r Run) Live() bool { return !Terminal(r.Phase) && r.Revoked == "" }
 
-// FromUnstructured reads exactly the C3 fields SP2 relies on. ok is false for a
-// claim that is not a run: not named <prefix><C2 id>, or outside the namespace.
-func FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
-	id, ok := strings.CutPrefix(u.GetName(), ClaimPrefix())
-	if !ok || !envelope.ValidID(id) || u.GetNamespace() != Namespace() {
+// FromUnstructured reads exactly the C3 fields SP2 relies on. ok is false for a claim that is not
+// one of k's runs: not named <prefix><C2 id>, or outside k's namespace.
+func (k Kind) FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
+	id, ok := strings.CutPrefix(u.GetName(), k.NamePrefix)
+	if !ok || !envelope.ValidID(id) || u.GetNamespace() != k.Namespace {
 		return Run{}, false
 	}
 	str := func(path ...string) string { s, _, _ := unstructured.NestedString(u.Object, path...); return s }

@@ -10,13 +10,15 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/runwatch"
 )
 
-// maxVMReply bounds a query reply: one series per live or recent run, a few hundred bytes each.
+// maxVMReply bounds a query reply: one series per live or recent run, or per replica and token type
+// and model of each when the query keeps them apart, a few hundred bytes each.
 const maxVMReply = 4 << 20
 
 // maxReading is the largest count taken as a reading: far above any run's cap (5 M, C3), and
@@ -26,14 +28,16 @@ const maxReading = 1 << 53
 // VM runs the meter's one instant query against VictoriaMetrics (R12): the expression of SP4
 // PR 2's agent_router:run_tokens:total over the raw series, until that rule exists.
 type VM struct {
-	base  *url.URL
-	query string
-	hc    *http.Client
+	base    *url.URL
+	query   string
+	subject *regexp.Regexp // the run subjects of the runs kind: a series of any other is no reading
+	hc      *http.Client
 }
 
 // NewVM is the source at rawURL (meter.url): http or https with a host, since vmsingle serves
-// plain http in the cluster. hc comes from httpx.New.
-func NewVM(rawURL, query string, hc *http.Client) (*VM, error) {
+// plain http in the cluster. kind is the runs kind whose run subjects it reads; hc comes from
+// httpx.New.
+func NewVM(rawURL, query string, kind runwatch.Kind, hc *http.Client) (*VM, error) {
 	u, err := url.Parse(rawURL)
 	switch {
 	case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
@@ -41,18 +45,30 @@ func NewVM(rawURL, query string, hc *http.Client) (*VM, error) {
 		return nil, errors.New("meter: meter.url must be http(s)://<host>[/path], without credentials or query")
 	case query == "":
 		return nil, errors.New("meter: meter.query is required")
+	case kind.Validate() != nil:
+		return nil, fmt.Errorf("meter: the runs kind is required: %w", kind.Validate())
 	case hc == nil:
 		return nil, errors.New("meter: an HTTP client from httpx.New is required")
 	}
-	return &VM{base: u, query: query, hc: hc}, nil
+	return &VM{base: u, query: query, subject: kind.RunSubject(), hc: hc}, nil
 }
 
-// RunUsage is each run's raw counters, by run id. A series that is not a run's, or whose value is
-// not a finite, non-negative count, is no reading. A series labelled gen_ai_token_type counts
-// as its type (reasoning, a subset of output, and unknown types are ignored), and also under its
-// gen_ai_request_model, the model that served it; an unlabelled one is the token count itself, so
-// an untyped query meters as before.
+// RunUsage is each run's raw counters, by run id: RunSeries summed by run, stateless. A series
+// labelled gen_ai_token_type counts as its type, and also under its gen_ai_request_model, the
+// model that served it; an unlabelled one is the token count itself, so an untyped query meters as
+// before.
 func (v *VM) RunUsage(ctx context.Context) (map[string]Usage, error) {
+	series, err := v.RunSeries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sumUsage(series), nil
+}
+
+// RunSeries is the query's reply series by series (D10), each keyed by its labels. A series that is
+// not a run's, whose value is not a finite, non-negative count, or whose gen_ai_token_type the
+// meter does not price (reasoning, a subset of output, and unknown types), is no reading.
+func (v *VM) RunSeries(ctx context.Context) ([]Series, error) {
 	target := v.base.JoinPath("api/v1/query")
 	target.RawQuery = url.Values{"query": {v.query}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
@@ -71,11 +87,12 @@ func (v *VM) RunUsage(ctx context.Context) (map[string]Usage, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("meter: query: status %d", resp.StatusCode)
 	}
-	return parseUsage(raw)
+	return parseSeries(raw, v.subject)
 }
 
-// parseUsage reads the body of an api/v1/query reply into each run's counters.
-func parseUsage(raw []byte) (map[string]Usage, error) {
+// parseSeries reads the body of an api/v1/query reply into the runs' series. subject captures a
+// run's id from its ar_agent label.
+func parseSeries(raw []byte, subject *regexp.Regexp) ([]Series, error) {
 	var body struct {
 		Status string `json:"status"`
 		Data   struct {
@@ -92,9 +109,9 @@ func parseUsage(raw []byte) (map[string]Usage, error) {
 	if body.Status != "success" || body.Data.ResultType != "vector" {
 		return nil, fmt.Errorf("meter: query: status %q, result %q: want a success and a vector", body.Status, body.Data.ResultType)
 	}
-	out := map[string]Usage{}
+	var out []Series
 	for _, s := range body.Data.Result {
-		m := runwatch.RunSubject().FindStringSubmatch(s.Metric["ar_agent"])
+		m := subject.FindStringSubmatch(s.Metric["ar_agent"])
 		if m == nil {
 			continue
 		}
@@ -103,36 +120,12 @@ func parseUsage(raw []byte) (map[string]Usage, error) {
 		if err != nil || math.IsNaN(f) || f < 0 || f > maxReading {
 			continue
 		}
-		u, n := out[m[1]], int64(f)
 		typ, typed := s.Metric["gen_ai_token_type"]
-		if !typed {
-			u.Tokens += n
-			out[m[1]] = u
-			continue
+		if typed && !countedType(typ) {
+			continue // reasoning, a subset of output, and unknown types
 		}
-		model := s.Metric["gen_ai_request_model"] // "": the query does not group by model
-		mu := u.Models[model]
-		switch typ {
-		case "input":
-			u.Input, mu.Input = u.Input+n, mu.Input+n
-			u.Tokens += n
-			u.Typed = true
-		case "output":
-			u.Output, mu.Output = u.Output+n, mu.Output+n
-			u.Tokens += n
-			u.Typed = true
-		case "cached_input":
-			u.CacheRead, mu.CacheRead = u.CacheRead+n, mu.CacheRead+n
-		case "cache_creation_input":
-			u.CacheWrite, mu.CacheWrite = u.CacheWrite+n, mu.CacheWrite+n
-		default:
-			continue
-		}
-		if u.Models == nil {
-			u.Models = map[string]ModelUsage{}
-		}
-		u.Models[model] = mu
-		out[m[1]] = u
+		out = append(out, Series{Run: m[1], Key: seriesKey(s.Metric), Typed: typed, Type: typ,
+			Model: s.Metric["gen_ai_request_model"], Value: int64(f)})
 	}
 	return out, nil
 }

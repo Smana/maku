@@ -4,68 +4,21 @@ package bridgeapi
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"io"
 	"log/slog"
-	"math/big"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/tlsreload"
+	"github.com/Smana/maku/internal/tlsreload/tlsreloadtest"
 )
-
-// writePair writes a self-signed pair for 127.0.0.1 with the given serial, dated
-// at mod so a rotation is visible whatever the filesystem's timestamp granularity.
-func writePair(t *testing.T, dir string, serial int64, mod time.Time) *x509.Certificate {
-	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "room-broker.agent-system.svc"},
-		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)}, DNSNames: []string{"room-broker.agent-system.svc"},
-		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true, IsCA: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, block := range map[string]*pem.Block{
-		"tls.crt": {Type: "CERTIFICATE", Bytes: der},
-		"tls.key": {Type: "EC PRIVATE KEY", Bytes: keyDER},
-	} {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, pem.EncodeToMemory(block), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(p, mod, mod); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return cert
-}
 
 // freeAddr reserves a loopback port for ListenAndServeTLS, which binds its own.
 func freeAddr(t *testing.T) string {
@@ -104,9 +57,9 @@ func get(t *testing.T, c *http.Client, url string) (int, *x509.Certificate, erro
 // GP-18: :8443 speaks TLS only, and serves a renewed pair without a restart.
 func TestPlainHTTPIsRefused(t *testing.T) {
 	dir := t.TempDir()
-	first := writePair(t, dir, 1, time.Now().Add(-time.Minute))
+	first := tlsreloadtest.WritePair(t, dir, 1, time.Now().Add(-time.Minute))
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg, err := TLSConfig(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"), quiet)
+	cfg, err := tlsreload.Config(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"), quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +94,7 @@ func TestPlainHTTPIsRefused(t *testing.T) {
 	}
 
 	// cert-manager renews the pair in place; the next handshake serves it.
-	second := writePair(t, dir, 2, time.Now())
+	second := tlsreloadtest.WritePair(t, dir, 2, time.Now())
 	roots.AddCert(second)
 	secure = httpx.New(5*time.Second, roots)
 	if code, peer, err = get(t, secure, url); err != nil || peer.SerialNumber.Int64() != 2 {
@@ -151,31 +104,6 @@ func TestPlainHTTPIsRefused(t *testing.T) {
 	cancel()
 	if err := <-served; err != nil {
 		t.Fatalf("shutdown: %v", err)
-	}
-}
-
-// A pair that fails to load mid-rotation never stops the listener: the last good one stays.
-func TestABrokenRenewalKeepsTheLastGoodPair(t *testing.T) {
-	dir := t.TempDir()
-	writePair(t, dir, 1, time.Now().Add(-time.Minute))
-	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cfg, err := TLSConfig(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"), quiet)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "tls.key"), []byte("half-written"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := cfg.GetCertificate(nil)
-	if err != nil || c == nil || c.Leaf.SerialNumber.Int64() != 1 {
-		t.Fatalf("got %v, %v", c, err)
-	}
-}
-
-func TestTLSConfigRefusesAMissingPair(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := TLSConfig(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"), slog.New(slog.DiscardHandler)); err == nil {
-		t.Fatal("no pair, no error")
 	}
 }
 

@@ -1,0 +1,61 @@
+{{- $name := printf "room-broker-%s-agentruns" .Release.Namespace -}}
+# The broker writes an AgentRun for one reason: the suspend trigger's merge patch of three
+# annotations (internal/suspend; runwatch's OperatingMode, RemainingSeconds and ResumedAt keys).
+# RBAC cannot bound a patch to fields, so this in-tree policy (Kubernetes 1.30+) does: an UPDATE
+# by the broker's ServiceAccount may set, change or drop those three keys and nothing else. Exact
+# keys, not the agents.ogenki.io/ prefix: the meter's, the factory's and the revoke annotations
+# share it. Every other writer passes untouched.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [{{ .Values.runs.group | quote }}]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [agentruns]
+  matchConditions:
+    - name: the-broker
+      expression: {{ printf "request.userInfo.username == 'system:serviceaccount:%s:room-broker'" .Release.Namespace | quote }}
+  variables:
+    - name: suspendKeys
+      expression: "['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']"
+  validations:
+    - expression: >-
+        has(object.spec) == has(oldObject.spec) && (!has(object.spec) || object.spec == oldObject.spec)
+      message: the broker may not change an AgentRun's spec
+    - expression: >-
+        has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+        (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels)
+      message: the broker may not change an AgentRun's labels
+    - expression: >-
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+      message: the broker may not change an AgentRun's finalizers
+    - expression: >-
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: the broker may not change an AgentRun's owners
+    - expression: >-
+        (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in variables.suspendKeys ||
+        (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations && oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
+        (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k in variables.suspendKeys ||
+        (has(object.metadata.annotations) && k in object.metadata.annotations)))
+      message: the broker may change only the suspend annotations (operating-mode, remaining-seconds, resumed-at)
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Values.runs.namespace }}

@@ -36,6 +36,12 @@ data:
     {{- with $b.factoryURL }}
     factoryURL: {{ . | quote }}
     {{- end }}
+    {{- if $b.factoryInsecure }}
+    factoryInsecure: true
+    {{- end }}
+    {{- if $b.factoryCA.secretName }}
+    factoryCAFile: /etc/room-broker/factory-ca/ca.crt
+    {{- end }}
     {{- if $local }}
     human:
       mode: local

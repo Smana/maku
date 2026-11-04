@@ -58,7 +58,7 @@ ykind CiliumNetworkPolicy 'select(.metadata.namespace=="agents") | ((.spec.ingre
 ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.endpointSelector.matchLabels."app.kubernetes.io/name" == "room-broker"' 'broker CNP selects the broker'
 
 # the run-controller: config from `runs`, its own identity, the verbs the reconciler calls
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namespace == "agents" and .namePrefix == "run-" and .runtimeClassName == "gvisor" and .broker.url == "https://room-broker.maku.svc.cluster.local:8443" and .broker.namespace == "maku" and .broker.caSecret == "room-broker-tls" and .broker.labels."app.kubernetes.io/name" == "room-broker")' 'controller config: runs, FQDN broker URL, broker labels, CA from broker.tls.secretName'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namespace == "agents" and .namePrefix == "run-" and .runtimeClassName == "gvisor" and .broker.url == "https://room-broker.maku.svc.cluster.local:8443" and .broker.namespace == "maku" and .broker.caSecret == "room-broker-ca" and .broker.labels."app.kubernetes.io/name" == "room-broker")' 'controller config: runs, FQDN broker URL, broker labels, CA from broker.tls.caSecretName'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | ((.broker.labels | keys | join(",")) == "app.kubernetes.io/name")' 'broker.labels is the one stable selector label (a version label would cut in-flight runs off on upgrade)'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="agentruns/finalizers") | ((.verbs | join(",")) == "update")' 'controller can set blockOwnerDeletion'
 ykind Deployment 'select(.metadata.name=="run-controller") | (.spec.template.spec.containers[0].ports | map(.containerPort) | sort | join(",")) == "9090,9091"' 'controller ports 9090/9091'
@@ -68,7 +68,9 @@ ykind Deployment 'select(.metadata.name=="run-controller") | (.spec.selector.mat
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | (.rules | map(.resources) | flatten | sort | join(",")) == "agentruns,agentruns/finalizers,agentruns/status,ciliumnetworkpolicies,configmaps,events,leases,pods,secrets,serviceaccounts"' 'controller RBAC in the runs namespace'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="pods") | (.verbs | sort | join(",")) == "create,delete,get,list,watch"' 'controller can revoke (delete pods)'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | ((.resourceNames | join(",")) == "agent-model,agent-git" and (.verbs | join(",")) == "get")' 'get on the model and git Secrets by name'
-ykind Role 'select(.metadata.name=="run-controller-ca") | (.metadata.namespace == null and (.rules[0].resourceNames | join(",")) == "room-broker-tls" and (.rules[0].verbs | join(",")) == "get")' 'get on the CA Secret by name, in the release namespace'
+ykind Role 'select(.metadata.name=="run-controller-ca") | (.metadata.namespace == null and (.rules[0].resourceNames | join(",")) == "room-broker-ca" and (.rules[0].verbs | join(",")) == "get")' 'get on the CA-only Secret by name, in the release namespace'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "room-broker-tls")' 'no Role reads the broker key pair (S-3)'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | select(.resourceNames == null)' 'no Role grants Secrets without resourceNames (S-3)'
 ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.endpointSelector.matchLabels."app.kubernetes.io/name" == "run-controller" and (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "443,6443"))' 'controller CNP: apiserver on apiServerPorts, own selector'
 ykind RuntimeClass '(.handler == "runsc" and .metadata.name == "gvisor")' 'RuntimeClass gvisor'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "agent-factory")' 'the quickstart renders no factory object'
@@ -78,29 +80,37 @@ crds="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --include
 [[ $crds == "AgentRun,Room" ]] || { echo "FAIL: crds/ holds \"$crds\", want AgentRun,Room" >&2; fail=1; }
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'the broker runs on the default runtime: kubectl port-forward cannot reach a runsc pod'
 
-# production-shaped render: no migrate, no tokenreview binding
-p="$(helm template ap . -n agent-system "${imgs[@]}" \
-     --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys \
-     --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com \
-     --set broker.human.issuer=https://idp.example.com --set broker.human.jwksURL=https://idp.example.com/keys \
-     --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com \
-     --set broker.human.groups.admin=a --set broker.human.groups.member=m \
-     --set runs.group=cloud.ogenki.io --set runs.namePrefix=xplane-run- \
-     --set broker.tls.secretName=broker-cert --set apiServerPorts='{6443}' --set clusterDomain=corp.local)"
+# production-shaped render (cloud-native-ref): no migrate, no tokenreview binding, and no run
+# controller: there Crossplane's composition runs the cloud.ogenki.io AgentRuns (S-5)
+prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
+      --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com
+      --set broker.human.issuer=https://idp.example.com --set broker.human.jwksURL=https://idp.example.com/keys
+      --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com
+      --set broker.human.groups.admin=a --set broker.human.groups.member=m
+      --set runs.namePrefix=xplane-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
+      --set 'apiServerPorts={6443}' --set clusterDomain=corp.local)
+p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
 ynone 'select(.kind=="ClusterRoleBinding")' 'jwks mode binds no auth-delegator'
 ynone 'select(.kind=="RuntimeClass")' 'production renders no RuntimeClass: the cluster-scoped gvisor may already exist'
 ynone 'select(.kind=="Deployment") | .spec.template.spec.initContainers | select(. != null)' 'no owner Secret, no migrate'
+ynone 'select(.metadata.labels."app.kubernetes.io/name" == "run-controller")' 'runController.enabled=false renders no run controller object'
 check 'xplane-run-' 'the production prefix flows through'
 check 'cloud.ogenki.io' 'the production group flows through'
 ykind Service 'select(.metadata.name=="room-broker") | (.spec.ports | map(.port) | sort | join(",")) == "8080,8443,9090"' 'oidc mode exposes :8080'
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.enabled == true' 'the default keeps the :8090 room tools on, as every existing deployment runs it'
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-cert" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.secretName, clusterDomain'
-ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-cert"' 'the CA Role follows broker.tls.secretName'
-ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "cloud.ogenki.io"' 'controller RBAC follows runs.group'
-ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "6443")' 'controller CNP follows apiServerPorts'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "agent-factory")' 'the production render has no factory object'
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'production: the broker runs on the default runtime'
+
+# the run controller under production values: it follows runs.namePrefix, broker.tls, clusterDomain
+# and apiServerPorts; its group is maku.ogenki.io, the only one it reconciles
+ctl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}")"
+out="$ctl"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-ca" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.caSecretName, clusterDomain'
+ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-ca"' 'the CA Role follows broker.tls.caSecretName'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "broker-cert")' 'no Role reads the key pair broker.tls.secretName names'
+ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "maku.ogenki.io"' 'controller RBAC names the group the controller reconciles'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "6443")' 'controller CNP follows apiServerPorts'
 
 # two DSNs, two roles, one pod: each container reads the Secret meant for it, through the variable
 # its subcommand reads, and the broker never sees the owner's credential
@@ -131,6 +141,29 @@ out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set runC
   --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'unsandboxed: the broker still has no runtimeClassName'
 
+# the factory's two flows (S-4) open only with factoryURL: ingress to :8443 from its pods, egress to
+# factoryURL's port on them, in the release namespace unless broker.factoryPodLabels names one
+out="$q"
+ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.ingress[] | select(.fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory")' 'no factory ingress without factoryURL'
+ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory")' 'no factory egress without factoryURL'
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.factoryURL=https://agent-factory.x.svc.cluster.local:8082)"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.ingress[] | select(.fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.fromEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "x" and .toPorts[0].ports[0].port == "8443")' 'the factory reaches :8443 from its pods in the release namespace'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "x" and .toPorts[0].ports[0].port == "8082")' "the broker reaches factoryURL's port on the factory pods"
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.factoryURL=https://factory.example \
+  --set 'broker.factoryPodLabels.io\.kubernetes\.pod\.namespace=agent-system')"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "agent-system" and .toPorts[0].ports[0].port == "443")' 'an https factoryURL without a port is 443; factoryPodLabels may name the namespace'
+
+# the AgentRun admission policy (S-2, D4): the broker's updates may touch the suspend annotations only.
+# CEL is proven in charts/maku/tests/admission (envtest); here, its shape and binding.
+out="$q"
+ykind ValidatingAdmissionPolicy '(.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules[0] | (.apiGroups[0] == "maku.ogenki.io" and (.operations | join(",")) == "UPDATE" and (.resources | join(",")) == "agentruns")))' 'the policy holds every AgentRun update, failing closed'
+ykind ValidatingAdmissionPolicy '.spec.matchConditions[0].expression | test("^request.userInfo.username == .system:serviceaccount:maku:room-broker.$")' "the policy applies to the broker's ServiceAccount only"
+KEYS="['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']" \
+  ykind ValidatingAdmissionPolicy '.spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
+ykind ValidatingAdmissionPolicyBinding '(.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
+out="$p"
+ykind ValidatingAdmissionPolicy '(.metadata.name == "room-broker-agent-system-agentruns" and .spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io")' "the policy follows runs.group and the release namespace"
+
 # a misconfiguration is a helm error, for the intended reason: each case names its message
 bad() { # bad 'expected message' --set ...
   local want="$1" err; shift
@@ -151,15 +184,35 @@ bad 'factory: this chart has no factory' --set factory.enabled=false
 bad 'broker.runtimeClassName: the broker runs on the default runtime' --set broker.runtimeClassName=gvisor
 bad 'broker.publicURL "https://rooms.example" in local mode' --set broker.publicURL=https://rooms.example
 bad 'broker.publicURL "http://0.0.0.0:8080" in local mode' --set broker.publicURL=http://0.0.0.0:8080
+bad 'runs.group "cloud.ogenki.io" with runController.enabled' --set runs.group=cloud.ogenki.io
+bad 'broker.tls.caSecretName must not be broker.tls.secretName' --set broker.tls.caSecretName=room-broker-tls
+bad 'runs.namespace "x" is the release namespace' --set runs.namespace=x
+bad 'broker.tls.secretName is required' --set broker.tls.secretName=
+
+# S-1, D6: the factory's CA and the insecure opt-out reach the broker's config; http alone is refused
+fca="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
+  --set broker.factoryURL=https://agent-factory.x.svc:8082 --set broker.factoryCA.secretName=agent-factory-api-tls)"
+out="$fca"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.factoryURL == "https://agent-factory.x.svc:8082" and .factoryCAFile == "/etc/room-broker/factory-ca/ca.crt" and (has("factoryInsecure") | not))' 'factoryCA.secretName writes factoryCAFile'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-ca") | (.secret.secretName == "agent-factory-api-tls" and .secret.items[0].key == "ca.crt")' 'the factory CA Secret, ca.crt only'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].volumeMounts[] | select(.name=="factory-ca") | (.mountPath == "/etc/room-broker/factory-ca" and .readOnly == true)' 'the factory CA mounted where factoryCAFile reads it'
+fins="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
+  --set broker.factoryURL=http://agent-factory.x.svc:8082 --set broker.factoryInsecure=true)"
+out="$fins"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.factoryInsecure == true and (has("factoryCAFile") | not))' 'factoryInsecure reaches the config'
+ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-ca")' 'no factory CA Secret, no mount'
+bad 'broker.factoryURL "http://agent-factory.x.svc:8082" is http' --set broker.factoryURL=http://agent-factory.x.svc:8082
 
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$p" >"$tmp/production.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fwd" >"$tmp/forwarded.yaml"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fca" >"$tmp/factory-ca.yaml"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fins" >"$tmp/factory-insecure.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
-yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$p" >"$tmp/rc-production.yaml"
-go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" || fail=1
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
+go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
 go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" || fail=1

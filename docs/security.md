@@ -97,8 +97,14 @@ The permission matrix, enforced by the broker (`internal/policy`, tested row by 
   the update, the membership briefly has no record; retrying the act with the same `clientSeq`
   heals it (the update is then a no-op, and the append writes or replays the record). The CR
   change is also in the Kubernetes audit log. A sealed room refuses the invite before the update.
-- **The broker never creates `AgentRun`s**: its RBAC is `get`, `list`, `watch`, `delete` on
-  `agentruns` in `agents`; CRUD on `rooms` in `agent-system`; leases; no cluster-admin.
+- **The broker never creates `AgentRun`s**: its RBAC is `get`, `list`, `watch`, `delete` and `patch`
+  on `agentruns` in `agents`; CRUD on `rooms` in `agent-system`; leases; no cluster-admin. The `patch`
+  is the suspend trigger's, and RBAC cannot bound it to fields: the maku chart's
+  `ValidatingAdmissionPolicy` `room-broker-<namespace>-agentruns` refuses any update by the broker's
+  ServiceAccount that changes more than the three suspend annotations
+  (`agents.ogenki.io/operating-mode`, `agents.ogenki.io/remaining-seconds`,
+  `agents.ogenki.io/resumed-at`): no spec, label, finalizer, owner or other annotation, the meter's
+  included. An install without the chart needs the same policy for the same bound.
 
 ### A sponsored principal's bounds
 
@@ -132,6 +138,12 @@ cloud-native-ref.
 | CA distribution | An ExternalSecret `room-broker-ca` in `agents` copies the platform CA chain, key `ca.crt` (not from `agents-secrets`: that SecretStore is namespaced to `agent-system` and cannot serve `agents`) |
 | Bridge | Mounts `room-broker-ca` read-only at `/etc/room-broker-ca`; loads `$BROKER_CA_FILE` (default `/etc/room-broker-ca/ca.crt`) as its only root. It refuses to start if the file is missing or `BROKER_URL` is not `https://` |
 | Operators | Call `:8443` with `https://` and `--cacert` on the same CA |
+
+The broker forwards each human's ZITADEL bearer token to the factory's `:8082` on a run request,
+so that hop is TLS too once the factory chart sets `api.tls.secretName`: the same reloading loader
+(`internal/tlsreload`), TLS 1.3 minimum, the broker trusting `factoryCAFile`. The broker refuses
+an `http://` `factoryURL` at start unless `factoryInsecure: true` says the operator accepts
+plaintext, the same rule as the bridge's `BROKER_URL`.
 
 `:8080` stays behind oauth2-proxy and `:8090` behind the `agent-router` Gateway, unchanged.
 

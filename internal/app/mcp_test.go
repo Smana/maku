@@ -54,7 +54,7 @@ func TestRoomMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := runwatch.New()
+	runs := runwatch.New(runwatch.DefaultKind)
 	runs.Upsert(t.Context(), &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "xplane-run-7f3cq2xz", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},

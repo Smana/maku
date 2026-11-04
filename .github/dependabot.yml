@@ -45,3 +45,18 @@ updates:
       - dependency-name: "openhands/agent-server"
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+
+  # web/'s dependencies, markdown-it among them: the parser of untrusted room text. A bump changes
+  # the committed bundle, so its PR fails ui:check until `task ui:build` is committed on its branch.
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

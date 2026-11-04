@@ -99,6 +99,10 @@ helm upgrade --install cert-manager cert-manager --repo https://charts.jetstack.
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -n "$NS" -f hack/quickstart/manifests/ca-issuer.yaml.tmpl
 kubectl -n "$NS" wait --for=condition=Ready issuer/quickstart-ca --timeout=120s
+# The run controller's copy of the CA (the chart's broker.tls.caSecretName): ca.crt only, never a key.
+kubectl -n "$NS" get secret quickstart-ca -o json |
+  yq -p=json -o=yaml '{"apiVersion": "v1", "kind": "Secret", "type": "Opaque", "metadata": {"name": "room-broker-ca"}, "data": {"ca.crt": .data."tls.crt"}}' |
+  kubectl -n "$NS" apply -f -
 
 step "CloudNativePG $CNPG_VERSION"
 kubectl apply --server-side -f "https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-${CNPG_VERSION%.*}/releases/cnpg-${CNPG_VERSION}.yaml"

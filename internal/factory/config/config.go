@@ -63,6 +63,8 @@ const (
 	defaultAdminGroup  = "agents-admin"
 	defaultMemberGroup = "agents-member"
 	defaultProbeAuthor = "renovate[bot]"
+	// D2: a wait verdict in AwaitingCI is bounded unless the config writes 0s.
+	defaultAwaitingCIFor = 24 * time.Hour
 )
 
 // Duration is a time.Duration written as a string such as "30s".
@@ -386,9 +388,10 @@ type Merge struct {
 	VerifyFor    Duration `json:"verifyFor"`    // 30m of main's CI after an auto-merge
 	RevertWindow Duration `json:"revertWindow"` // 7 days for a maintainer's factory/revert
 	// AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
-	// a human is told which checks never reported. 0 is no bound, the behaviour before it.
-	AwaitingCIFor Duration `json:"awaitingCIFor,omitempty"`
-	Breaker       Breaker  `json:"breaker"`
+	// a human is told which checks never reported. Omitted, Parse sets 24h (D2); 0s is no bound.
+	// Read it through AwaitingCIBound.
+	AwaitingCIFor *Duration `json:"awaitingCIFor,omitempty"`
+	Breaker       Breaker   `json:"breaker"`
 	// ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
 	// agents pull request (human path AM1). Off, the approval hands off to a human merge.
 	ApproveToMerge bool `json:"approveToMerge,omitempty"`
@@ -638,10 +641,13 @@ type Groups struct {
 // API is the run-request API's configuration (§4): what it binds, which repositories it
 // accepts (OD-6), and how it authenticates callers (Task 5.1's Authenticator).
 type API struct {
-	Listen       string   `json:"listen"`
-	Repositories []string `json:"repositories"` // OD-6: cloud-native-ref only
-	HumanIssuer  string   `json:"humanIssuer"`
-	HumanJWKS    string   `json:"humanJWKS"`
+	Listen string `json:"listen"`
+	// TLS serves the API over TLS 1.3 from this pair, re-read when it is renewed (S-1, D6): the
+	// broker forwards each human's bearer token here. Absent, the API serves plaintext.
+	TLS          *ServerTLS `json:"tls,omitempty"`
+	Repositories []string   `json:"repositories"` // OD-6: cloud-native-ref only
+	HumanIssuer  string     `json:"humanIssuer"`
+	HumanJWKS    string     `json:"humanJWKS"`
 	// Files holding the rooms-proxy and maku client ids (from agents-secrets).
 	ClientIDFiles []string `json:"clientIDFiles"`
 	// ProjectIDFile holds the ZITADEL project id a sponsored token's aud must hold, as the broker's
@@ -666,6 +672,13 @@ type API struct {
 	// InternalPrincipals are sponsored principals allowed internal data (RunLore agent-to-agent
 	// RA2): empty ships, and POST /v1/tasks stays a 404 while this and Sponsored are both empty (D4).
 	InternalPrincipals []InternalPrincipal `json:"internalPrincipals,omitempty"`
+}
+
+// ServerTLS is a listener's key pair: two mounted files, re-read on renewal. Both are set, or the
+// block is absent.
+type ServerTLS struct {
+	CertFile string `json:"certFile"`
+	KeyFile  string `json:"keyFile"`
 }
 
 // Access is api.access (v2 D4).
@@ -943,6 +956,27 @@ var modelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // the claim's logical model.
 func (m Meter) ByModel() bool { return strings.Contains(m.Query, "gen_ai_request_model") }
 
+// replicaBy matches a by (...) clause of the meter's query.
+var replicaBy = regexp.MustCompile(`\bby\s*\(([^)]*)\)`)
+
+// ByReplica is true when the meter's query has exactly one by (...) clause and it names pod or
+// instance, as a whole word: the label that tells the gateway's replicas apart. The meter folds one
+// baseline per series (D10) only then, since a series is exact only as one replica's counter. A
+// second clause (an inner or outer aggregation that may sum the replicas again), a without clause,
+// a matcher or a longer name (agent-pods) does not keep the replicas apart.
+func (m Meter) ByReplica() bool {
+	cs := replicaBy.FindAllStringSubmatch(m.Query, -1)
+	if len(cs) != 1 {
+		return false
+	}
+	for _, l := range strings.FieldsFunc(cs[0][1], func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		if l == "pod" || l == "instance" {
+			return true
+		}
+	}
+	return false
+}
+
 // models are C5's logical names: the only names a tier's model or a template's reviewerModel may
 // take, since both reach internal tasks too.
 func models() []string {
@@ -1074,6 +1108,9 @@ func Parse(raw []byte) (*Config, error) {
 		c.API.Groups.Member = defaultMemberGroup
 	}
 	for i := range c.Repositories {
+		if m := &c.Repositories[i].Merge; m.AwaitingCIFor == nil {
+			m.AwaitingCIFor = &Duration{Duration: defaultAwaitingCIFor} // D2: an unbounded wait holds a slot forever
+		}
 		for j := range c.Repositories[i].Schedules {
 			if s := &c.Repositories[i].Schedules[j]; s.ProbeAuthor == "" {
 				s.ProbeAuthor = defaultProbeAuthor
@@ -1103,6 +1140,11 @@ func Parse(raw []byte) (*Config, error) {
 				c.Warnings = append(c.Warnings, fmt.Sprintf("class %s of %s is live without holdoutChecks: refused from the next minor (TO5)", name, r.Name))
 			}
 		}
+	}
+	if !c.Meter.ByReplica() {
+		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, so a stale replica's return charges "+
+			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
+			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])
@@ -1293,6 +1335,7 @@ func (c *Config) Validate() error {
 			bad("template %s: only an implementer writes, so every template but a lone triager has one", name)
 		}
 	}
+	c.validateTriageTemplates(bad)
 	// Nothing reads defaults.template or defaults.tier: checked only when set.
 	if _, ok := c.Templates[c.Defaults.Template]; c.Defaults.Template != "" && !ok {
 		bad("defaults.template %q is not a template", c.Defaults.Template)
@@ -1361,6 +1404,9 @@ func (c *Config) Validate() error {
 		if f.value == "" {
 			bad("%s is required", f.key)
 		}
+	}
+	if t := c.API.TLS; t != nil && (t.CertFile == "" || t.KeyFile == "") {
+		bad("api.tls needs certFile and keyFile both: set both, or drop the block to serve plaintext")
 	}
 	if c.API.Groups.Admin == "" {
 		bad("api.groups.admin is required")
@@ -1548,7 +1594,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if r.Merge.RevertWindow.Duration <= 0 {
 		bad("merge.revertWindow must be positive")
 	}
-	if r.Merge.AwaitingCIFor.Duration < 0 {
+	if r.Merge.AwaitingCIBound() < 0 {
 		bad("merge.awaitingCIFor must be 0 (no bound) or positive")
 	}
 	if b := r.Merge.Breaker; b.Window < 1 || b.MaxReverts < 1 || b.MaxReverts > b.Window {
@@ -1846,4 +1892,33 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 			bad("loops.%s: the loop policy needs cloud-native-ref's AgentRun (runs.group %s): this runtime's has no spec.loop", name, runwatch.DefaultKind.Group)
 		}
 	}
+}
+
+// validateTriageTemplates (S-7): every template triage can choose is defined. solo, pair and trio
+// are chosen by a task's class and tier (triage.Matrix, an oracle class's solo); a missing one is
+// a team with no roles, which no reviewer ever joins. investigate is chosen for a RunLore finding
+// and an internal principal's api task: wherever one can arrive it must be the lone triager,
+// since the reconciler starts the triager only for a [triager] template and an implementer
+// otherwise, on internal data (R38).
+func (c *Config) validateTriageTemplates(bad func(string, ...any)) {
+	for _, name := range []string{"solo", "pair", "trio"} {
+		if _, ok := c.Templates[name]; !ok {
+			bad("templates.%s is missing: triage chooses it by class and tier", name)
+		}
+	}
+	if c.RunLore == (RunLore{}) && len(c.API.InternalPrincipals) == 0 {
+		return // no investigate task can arrive
+	}
+	if roles := c.Templates["investigate"].Roles; !slices.Equal(roles, []string{"triager"}) {
+		bad("templates.investigate.roles must be [triager] while runlore or api.internalPrincipals is set: its tasks read internal data and must not write (R38), got %v", roles)
+	}
+}
+
+// AwaitingCIBound is AwaitingCIFor as a bound: 0 is none, whether written 0s or left nil on a
+// Config built without Parse.
+func (m Merge) AwaitingCIBound() time.Duration {
+	if m.AwaitingCIFor == nil {
+		return 0
+	}
+	return m.AwaitingCIFor.Duration
 }

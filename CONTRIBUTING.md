@@ -21,8 +21,9 @@ wrapper then falls back to whatever golangci-lint is on PATH (it refuses a v1).
 
 ## The gate
 
-`task check` must exit 0 before every commit and push. It runs eleven steps (SPDX headers, tidy,
-lint, vuln, test, CRD check, chart check, migrations, docs lint, UI test, UI check); CI's required `check`
+`task check` must exit 0 before every commit and push. It runs fourteen steps (SPDX headers, tidy,
+lint, vuln, test, CRD check, chart check, quickstart check, migrations, docs lint, old-name check,
+operator scripts, UI test, UI check); CI's required `check`
 job runs the same command. What each step catches is in the [table in AGENTS.md](AGENTS.md#quality-gate-run-before-every-commit).
 
 Every new `.go` file starts with:

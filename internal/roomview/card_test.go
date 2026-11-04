@@ -371,7 +371,7 @@ func TestCardTokenAutolink(t *testing.T) {
 func TestCardKeepsTheBrokersTextWhole(t *testing.T) {
 	merge := summary.MergeHow("Smana/a", 2239)
 	answer := "@alice answers the scoper's question by editing issue #42, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption"
-	next := "nothing to do: the task goes on when the class's holdout checks report; a check that never reports keeps it waiting until merge.awaitingCIFor, if set (agent-platform #182)"
+	next := "nothing to do: the task goes on when the class's holdout checks report; a check that never reports keeps it waiting until merge.awaitingCIFor, 24h unless set (agent-platform #182)"
 	for _, s := range []string{merge, answer, next} {
 		if len([]rune(s)) <= maxText {
 			t.Fatalf("the fixture must outrun the cut: %q", s)

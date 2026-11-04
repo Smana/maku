@@ -90,6 +90,7 @@ stateDiagram-v2
   AutoMerging --> Done: a maintainer merged
   AutoMerging --> Closed: pull request closed
   Verifying --> Done: main green for merge.verifyFor
+  Verifying --> Done: no result within twice merge.verifyFor
   Verifying --> Reverted: main red, factory/revert
   Done --> Reverted: factory/revert in the window
   AwaitingHuman --> Queued: Request changes
@@ -304,7 +305,7 @@ returns it.
 
 A holdout's workflow file must be a gate path (policy-bot's gate paths cover it), otherwise a pull
 request can edit the workflow and post SUCCESS itself; the host's gate-coverage check enforces it.
-A diff of 100 files or more is `patch_too_large` without being read.
+A compare that lists 300 files or more, GitHub's cap, is `patch_too_large` without being read.
 
 The gate compares GitHub logins (`agentsLogin`, `factoryLogin`, `merge.policyBotLogin`,
 `merge.mergerLogin`) case-insensitively, as GitHub does.
@@ -336,7 +337,7 @@ every maintainer.
 | `budget-principal` | The factory's daily budget in dollars is spent |
 | `budget-fleet` | The agent gateway's fleet-wide token budget is spent |
 | `failed` or another run phase, lowercased | The run ended without a more specific reason from the room or the meter |
-| `budget-task` | The task cap has no room for another whole run |
+| `budget-task` | The task cap has no room for another whole run. Under `budgets.enforceTask`, `/factory retry` is answered and not taken: the cap is part of the task's spec, so raise it on a new task |
 | `budget-person` | [Per-person caps](#per-person-caps): the day of the person the next run is charged to is spent; the comment names them. A maintainer's `/factory retry` charges the retrier instead |
 | `ci_red` | CI stayed red after `merge.fixRuns` fix runs; the comment names the failing checks |
 | `secret_scan_red` | The secret scan (`merge.leakScanCheck`) found a live credential. Next step: a maintainer revokes the key and closes the pull request; the factory does not retry |
@@ -349,7 +350,7 @@ A task ends with one of these:
 
 | Phase | Reasons |
 |---|---|
-| `Done` | `children_merged` (a split's last part merged), `merged` (by a maintainer), `merged_verified` (auto-merged, main green for `merge.verifyFor`), `proposal_ready` (a triager's proposal: label its issue `factory/publish`, read the new issue the factory files, then label that one `factory/ready`) |
+| `Done` | `children_merged` (a split's last part merged), `merged` (by a maintainer), `merged_verified` (auto-merged, main green for `merge.verifyFor`), `merged_unverified` (auto-merged, main's CI gave no result within twice `merge.verifyFor`, a check cancelled or never finished; the comment names the merge commit, and `factory/revert` still reverts it within `merge.revertWindow`), `proposal_ready` (a triager's proposal: label its issue `factory/publish`, read the new issue the factory files, then label that one `factory/ready`) |
 | `NoOp` | `no_pr` (the run opened no pull request), `no_action` (the triager found nothing to change). Add detail and re-apply `factory/ready` |
 | `Rejected` | `text_too_long` (over `caps.maxTextBytes`), `daily_task_cap` (`caps.tasksPerDay`). Fix it and re-apply `factory/ready` |
 | `Closed` | `pr_closed`, `stale`, `child_dropped` (a part's issue closed unmerged, or a part reverted) |
@@ -362,7 +363,11 @@ The factory App comments on the task's issue, or on its pull request when it has
 start (id, branch, budget, the room link, how to stop it), the pull request, each revision, CI fix
 and resume, each hand-off with its reason and the merge command, and the end with the tokens used.
 Each comment carries a hidden marker and is posted at least once and never twice, from an outbox
-written with the transition that caused it. Comments hold the factory's own words and ids, never
+written with the transition that caused it. The
+outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged
+`narration_dropped`. A comment GitHub refuses for good (its issue deleted,
+issues turned off, or the issue locked) is dropped and logged the same way, and the comments after
+it still post. Comments hold the factory's own words and ids, never
 text a user wrote. The task's room gets the issue snapshot as its first `task_state` message, then
 the task's facts (phase, reason, current run, the run history with each run's outcome, end and
 dollars, token budget, dollar spend, issue and pull request), which the room page and `maku status`
@@ -438,7 +443,7 @@ prices both caps stay in tokens.
 |---|---|
 | `meter.prices.<model>: {input, cacheRead, cacheWrite?, output, source?, checkedAt?}` | USD per million tokens, keyed by the model that served the tokens (`glm-5.3`, `claude-opus-5-5`) when `meter.query` groups by `gen_ai_request_model`, else by the tier's logical model. `cacheWrite` defaults to `input`. Each price must be positive. `source` (an `https://` URL) and `checkedAt` (`YYYY-MM-DD`) say where and when the row was read: checked when set, never priced |
 | `tiers.<tier>.runUSD`, `tiers.<tier>.taskUSD` | The tier's caps in USD; `taskUSD` may not be below `runUSD`. Keyed by logical model, a tier with either set and no price for its model fails the rollout: an unpriced run would cost $0 |
-| `meter.query` | Must group by `gen_ai_token_type` (`input`, `cached_input`, `cache_creation_input`, `output`), or no run can be priced and every run is capped in tokens. Grouped by `gen_ai_request_model` too, each model is priced at its own rate |
+| `meter.query` | Must group by `gen_ai_token_type` (`input`, `cached_input`, `cache_creation_input`, `output`), or no run can be priced and every run is capped in tokens. Grouped by `gen_ai_request_model` too, each model is priced at its own rate. Should keep the gateway replica apart, in a `by (...)` clause naming `pod` (or `instance`): the meter then keeps one baseline per returned series, so a replica whose scrape drops out for a tick adds nothing and, on its return, only what it grew, and a replica's counter that falls restarted and adds its new value. A query summing the replicas loads with a startup warning and keeps the per-run reading: a stale replica's return charges its counter again (an over-count that can revoke a run under budget), and a replica restart loses that tick's growth, until the query keeps `pod` |
 
 Grouping by served model is what makes a logical name safe to price: the same claim's
 `agent-default` is GLM-5.3 on one gateway listener and Claude Opus on another, about ten times
@@ -508,7 +513,7 @@ the entries it learned, for a write its predecessor lost. That write carries the
 write's ledger to the same end, and a new leader does so for the days its first read of the run
 showed, today's, and, in the first ten minutes of a day, the day before
 ([#166](https://github.com/Smana/maku/issues/166)). A run is charged once across a
-failover, a ledger that cannot be read, a failed write, landed or not, and midnight, with three
+failover, a ledger that cannot be read, a failed write, landed or not, and midnight, with five
 bounded exceptions:
 
 - A gateway counter reset before a new leader's first reading, once the counters have passed what
@@ -518,6 +523,12 @@ bounded exceptions:
 - A lifted run's late spend not yet in a ledger at a failover (the leader's write was lost, or it
   died before its next tick) is not charged: an under-count bounded by the reading lag at a run's
   end.
+- On a per-replica query, a new leader whose first reading of a run misses a stale gateway replica counts that replica's
+  whole counter when it returns: it cannot tell a returning replica from a new one on a run it
+  has never read. An over-count bounded by that replica's share of the run.
+- On a summed query, a gateway replica that is stale for a tick is charged its whole counter again
+  when it returns, and a replica's restart loses that tick's growth: an over-count that can revoke a
+  run under budget (H-4), and an under-count. Only a `meter.query` that keeps `pod` fixes it.
 
 The meter deletes the ledgers after 35 days, and the token ledgers `agent-factory-ledger-<YYYYMMDD>`
 they replaced the same way. A run the meter first sees ended, with its usage annotated, is taken as
@@ -752,11 +763,11 @@ policy-bot's own matching. `allowedFiles` patterns must start with `^` and end w
 entry passes only when every run of that name was posted by GitHub Actions with the raw conclusion
 `SUCCESS`: a skipped or neutral job (an `if:` or `paths:` filter) refuses as `holdout_red`, since
 it checked nothing. A holdout check that is not reported yet, or still running, holds the task as
-`holdout_pending`; one that never reports leaves the task waiting (issue #182).
+`holdout_pending`; one that never reports holds it for `merge.awaitingCIFor` (24h unless set, `0s` for no bound), then hands it off as `ci_wait_expired` (issue #182).
 
 When every check holds on a live class, the merger App merges the decided head; GitHub refuses
 the merge if the head moved, and the new head is decided again. The task then watches
-`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. A
+`merge.verifyChecks` on the merge commit for `merge.verifyFor`: red reverts, green ends `Done`. No result within twice `merge.verifyFor` (a check cancelled, as `cancel-in-progress` does on main, or never finished) ends `Done` `merged_unverified`. A
 maintainer's `factory/revert` within `merge.revertWindow` reverts too. The revert pull request
 auto-merges only while the `revert` class is live; otherwise a maintainer merges it.
 
@@ -859,7 +870,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
 decision that did not read the diff prints `files=-/3 lines=-/20` (the caps always print). `-` is
 not `0`: a replay must not count a diff nobody read as an empty one, so it counts such a record as
-unreplayable. A `patch_too_large` from a diff over GitHub's page of files prints `-` too. The
+unreplayable. A `patch_too_large` from a compare at GitHub's 300-file cap prints `-` too. The
 record is **its own `agent-factory-decision` line, beside the event marker, not fields in it**: a
 recorded deviation from AM8's single marker (R-m11), which leaves the would-arm marker and the
 tally's regex for it unchanged. The same facts go to the log as `merge decision` with `rows=`.
@@ -1031,7 +1042,7 @@ classes:
       verification: {within: 6h}   # optional: wait for an internal principal's verdict on the fix (see below)
       followUpWindow: 72h    # how long later merges are read for a fix of this one; the verdict is final after it
 merge:
-  awaitingCIFor: 6h          # bound AwaitingCI on a wait verdict; 0, the default, is no bound
+  awaitingCIFor: 6h          # bound AwaitingCI on a wait verdict; 24h when omitted, 0s is no bound
   breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}   # maxFollowUps 0 counts none; recoverAfter 0 never recovers early
 ```
 
@@ -1046,7 +1057,7 @@ Without it every read is refused and the signal ends `inconclusive`. `merge.brea
 
 | Signal | Reads | Regression | Healthy |
 |---|---|---|---|
-| Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge's was already watched by the task, so it counts healthy | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
+| Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge that ended `merged_verified` was already watched by the task, so it counts healthy; one that ended `merged_unverified` is read like any other merge | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
 | Detector (oracle) | Each scheduled run of the class's oracle workflow after the merge, oldest first, through the probe's readers | A run reports gone a target this merge wrote | `oracleRuns` clean runs. A run that failed or whose findings are refused: `inconclusive` |
 | Flux | The `source` GitRepository (`get`), and the Kustomizations and HelmReleases of that source (`list`), on the factory's cluster | A Kustomization or HelmRelease of the source turned not Ready from the blame start (the source's fetch of the merge commit, or the merge's own time when the source was first seen already at a later commit) until `within` after the source was first seen holding it | The source holds the merge, `within` has passed since it applied it, nothing turned not Ready in the window. A source that never holds the merge within `within`, or is suspended: `inconclusive` |
 | RunLore's verification | `status.monitor.verification`, recorded by [`POST /v1/tasks/{task}/verification`](api.md#post-v1taskstaskverification). Only for a merge whose `spec.origin` names a task of an internal principal with `verification: true` | `persisting` | `resolved`. No verdict `within` after the merge: `inconclusive` |
@@ -1330,14 +1341,14 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `defaults` | `template`, `tier`, `dataClass`, `predictedClass` | `dataClass` and `predictedClass` required; `template` and `tier` are read by nothing, optional, checked only when set |
 | `triage` | `classifierURL`, `controlPercent` (0–100) | `controlPercent` required; `classifierURL` unset: no classifier call, every task takes the static `standard` tier |
 | `tiers` | Exactly `light`, `standard`, `frontier`; see [Triage](#triage-tiers-templates-classes) | `runUSD`, `taskUSD` from the token caps when `meter.prices` is set |
-| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role | Required; `reviewerModel` unset: the other tier's model |
+| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role. `solo`, `pair` and `trio` are required: triage chooses them by class and tier. Once `runlore` or `api.internalPrincipals` is set, `investigate` is required as `{roles: [triager]}` | Required; `reviewerModel` unset: the other tier's model |
 | `caps` | `activeTasks`, `concurrentRuns`, `tasksPerDay`, `maxTextBytes` (≤ 14336), `awaitingHumanWIP`, `maxPendingMinutes` (5–480), `escalatedHours` | `maxPendingMinutes` 30, `escalatedHours` 168 |
 | `budgets` | `enforceTask`, `enforcePrincipal`, `factoryDailyUSD`, `humanDailyUSD` ([daily budgets](#daily-budgets)), `perPerson: {enabled, dailyUSD}` ([per-person caps](#per-person-caps)), each day positive. The token days `factoryDaily`, `humanDaily` and `perPerson.dailyTokens` load in this release only, ignored, each named in a startup warning | `enforceTask` true, `factoryDailyUSD` 42.50, `humanDailyUSD` 8.50, `perPerson.enabled` false, `perPerson.dailyUSD` `humanDailyUSD` |
 | `resume` | `maxPerTask` (1–5) | 2 |
 | `scoper` | `nudgeAt`, `maxToolCalls` (`1 <= nudgeAt < maxToolCalls <= 200`): the [scoper](#the-scoper)'s tool-call bounds, written as its brief's first line, `<!-- agent-factory scoper nudgeAt=N maxToolCalls=M -->`, which stays first when the run is resumed | `nudgeAt` 25, `maxToolCalls` 40, each defaulted alone |
 | `meter` | `url`, `query`, `logsURL`, `throttleQuery`, `prices` | Required but `prices` |
 | `tracing` | `otlpEndpoint`, `host:port` | Empty: tracing off |
-| `api` | `listen` (the chart's `api` port is `:8082`), `humanIssuer`, `humanJWKS`, `clientIDFiles`; `groups: {admin, member}`, the two groups the API admits; `systemIssuer`, `systemJWKS` (both or neither), `systemPrincipals`; `systemRepositories: {<principal>: [owner/name]}`, the listed repositories each system principal may start runs on; `access: {readerFile, ttl}`, the ZITADEL reader that resolves a human caller to their GitHub login (`ttl` at most 5m); `projectIDFile` and `sponsored`, see [sponsored principals](#sponsored-principals) | Required but `groups`, `access` and the system keys; `groups` defaults to `agents-admin` and `agents-member`, the broker's values. Without `access` every human run is refused |
+| `api` | `listen` (the chart's `api` port is `:8082`), `humanIssuer`, `humanJWKS`, `clientIDFiles`; `groups: {admin, member}`, the two groups the API admits; `systemIssuer`, `systemJWKS` (both or neither), `systemPrincipals`; `systemRepositories: {<principal>: [owner/name]}`, the listed repositories each system principal may start runs on; `access: {readerFile, ttl}`, the ZITADEL reader that resolves a human caller to their GitHub login (`ttl` at most 5m); `tls: {certFile, keyFile}`, both or neither: the API serves TLS 1.3 from that pair, re-read when it is renewed, and the broker's `factoryURL` becomes `https://` (the chart's `api.tls` writes it); absent, plaintext; `projectIDFile` and `sponsored`, see [sponsored principals](#sponsored-principals) | Required but `groups`, `access` and the system keys; `groups` defaults to `agents-admin` and `agents-member`, the broker's values. Without `access` every human run is refused |
 | `runlore` | `listen`, `tokenFile`, `minConfidence` (0–1], `dailyCap`; `repository`, the listed repository its issues and tasks go to | Required but `repository`, which defaults to the first entry |
 | `sandbox` | `suspend: {enabled}`: a run `POST /v1/runs` starts in an attended room gets `spec.suspendable: true`, which lets the room broker suspend it while its approval waits on an idle room (the broker's `suspend` config). Fixed on the claim at create | `enabled` false |
 | `loops` | `<class>: {stallSteps (1–500), continuations (0–5), judge (an alias or none)}`, keyed by a declared class, `review` or `default` (every class without a row). A row is read whole, never merged with `default`'s (a row with only `scope` has no loop, even when `default` has one); it switches the class's [loop policy](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-21-loops-and-teams-design.md) on when it sets any of the three, and an unset one is 80, 2 or `tier-light`; `scope` (`off`, `steering`, `scoper`; unset is `off`, and a bare `off` in YAML reads as `off`) picks the class's [steering](#steering) or [scoper](#the-scoper): never part of the loop, so `{scope: steering}` alone switches no loop on; `split` (`{maxChildren 2–5, familyUSD, childTier, anyTier}`; `familyUSD` defaults to four of the child tier's `taskUSD`, `childTier` to `standard`) is refused without `scope: scoper` on the same row, on `docs-links`, `revert` or an oracle class, and without `meter.prices`; it lets the scoper of a task C7 itself rated `frontier` propose [a split](#splits); `anyTier: true` (default `false`) offers it on every task of the class, whatever tier C7 rated it (needed where no classifier is deployed, so every task is `standard`). `search: true` offers the class's implementer runs the [search tool](../images/maku-harness/README.md) (`spec.loop.search`, which the harness reads as `AGENT_SEARCH=1`); like `scope`, it never switches the loop on, and a row is read whole, so a class row without `search` is off whatever `default` says. The room-bridge classes a bare `search` as the plain built-in only on a run given it, assuming MCP tools reach it prefixed (`server_tool`): an unprefixed MCP tool named `search` would also class plain (and the SDK refuses the duplicate tool name at start). `models` (`{<role>: {<tier>: <alias>}}`) puts a role on a provider alias for a **public** task of that tier, the run's tier (the reviewer's is the other tier, the scoper's `light`): `kimi-frontier` (Moonshot's `k3.1-pro`) on `frontier`, `mistral-standard` (Mistral Medium 3.5) on `standard`, `mistral-light` (Mistral Small 4) on `light`, and no alias on another tier, so a run keeps its tier's caps. A role or tier without an entry keeps its tier's `model`, or the template's `reviewerModel`; an internal task always does, since Moonshot processes in China and Mistral in the EU, and the run's `provenance.modelSource` records `tier`, `reviewerModel` or `classModels`. `judge` may be `mistral-light` too, and an internal task of the class then gets `tier-light`. With `meter.prices` set, each alias needs a row: its served model's for a query by `gen_ai_request_model`, else its own. No tier's `model` and no `reviewerModel` may name a provider alias, `POST /v1/runs` refuses one on an internal run (`provider_alias_is_public_only`), every claim is refused one on an internal run, as its model or its judge's, and the Task and AgentRun CRDs hold the same rule; like `scope`, `models` never switches the loop on. Needs cloud-native-ref's `AgentRun` (`runs` left at its default) for the loop | None: every run as before |
@@ -1351,7 +1362,7 @@ Each `repositories` entry:
 | `triggerLabel` | The start label, `factory/ready` | Required |
 | `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` never declared | Required |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin`, `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor`, `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
+| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin`, `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `schedules` | `[{name, cron, class, text, dataClass?, probe?, probeAuthor?}]`; `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
 
 `api.repositories`, the run-request API's allowlist, is the entries' names.
@@ -1504,7 +1515,7 @@ A task with a `spec.maxMicroUSD` (an api task) is never offered a split: see [sp
 
 Both endpoints serve on every replica.
 
-**`POST /v1/runs`**, on `api.listen` (the chart's `api` port, 8082, plaintext inside the mesh; the broker's `:8443` is the TLS listener): a person's or an allowlisted
+**`POST /v1/runs`**, on `api.listen` (the chart's `api` port, 8082, TLS 1.3 when `api.tls` is set (`internal/tlsreload`)): a person's or an allowlisted
 system's run request. Source: `internal/factory/api/server.go`.
 
 | | |

@@ -10,11 +10,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base32"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -79,31 +82,59 @@ func task(r Request) map[string]string {
 	return map[string]string{"text": r.TaskText}
 }
 
-// Manifest renders the AgentRun claim for the owner to create (ruling P14), on
-// runwatch's seam: its GVK and namespace, and the name prefix it parses.
-type Manifest struct{}
+// Manifest renders the AgentRun claim for the owner to create (ruling P14), of Kind: its GVK and
+// namespace, and the name prefix runwatch parses.
+type Manifest struct {
+	// Kind is the runs kind, required: the claim rendered is one of its runs.
+	Kind runwatch.Kind
+}
 
 // Request renders r as a claim, its run id derived from r's idempotency key.
-func (Manifest) Request(_ context.Context, r Request) (Result, error) {
+func (m Manifest) Request(_ context.Context, r Request) (Result, error) {
+	if err := m.Kind.Validate(); err != nil {
+		return Result{}, fmt.Errorf("runrequest: the manifest needs the runs kind: %w", err)
+	}
 	id := idFor(r.IdempotencyKey)
 	spec := map[string]any{"role": r.Role, "repository": r.Repository, "baseRef": r.BaseRef, "branch": r.Branch,
 		"principal": r.Principal, "dataClass": r.DataClass, "roomRef": r.RoomRef, "task": task(r)}
 	if len(r.EgressProfiles) > 0 {
 		spec["egress"] = map[string]any{"profiles": r.EgressProfiles}
 	}
-	gvk := runwatch.GVK()
+	gvk := m.Kind.GVK()
 	b, err := json.Marshal(map[string]any{"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
-		"metadata": map[string]string{"name": runwatch.ClaimPrefix() + id, "namespace": runwatch.Namespace()}, "spec": spec})
+		"metadata": map[string]string{"name": m.Kind.ClaimName(id), "namespace": m.Kind.Namespace}, "spec": spec})
 	if err != nil {
 		return Result{}, fmt.Errorf("runrequest: render: %w", err)
 	}
 	return Result{RunID: id, Via: "manifest", Manifest: b}, nil
 }
 
-// Factory is SP3's run API at URL. HC nil means the audited egress client.
+// Factory is SP3's run API at URL. HC, when set, is the client (tests). Otherwise each call
+// builds the audited egress client, trusting the PEM CA in CAFile, read at that call so a rotated
+// CA needs no restart (S-1), or the system roots when CAFile is empty.
 type Factory struct {
-	URL string
-	HC  *http.Client
+	URL    string
+	CAFile string
+	HC     *http.Client
+}
+
+// client is f's HTTP client for one call.
+func (f Factory) client() (*http.Client, error) {
+	if f.HC != nil {
+		return f.HC, nil
+	}
+	if f.CAFile == "" {
+		return httpx.New(factoryTimeout, nil), nil
+	}
+	raw, err := os.ReadFile(filepath.Clean(f.CAFile))
+	if err != nil {
+		return nil, fmt.Errorf("runrequest: factoryCAFile: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(raw) {
+		return nil, fmt.Errorf("runrequest: factoryCAFile %s holds no PEM certificate", f.CAFile)
+	}
+	return httpx.New(factoryTimeout, roots), nil
 }
 
 // Request posts r to the factory as the human it names, with their own token.
@@ -128,9 +159,12 @@ func (f Factory) Request(ctx context.Context, r Request) (Result, error) {
 	// SP3's contract: the same key answers the same runId, so a retried act
 	// never creates a second run (docs/integration.md).
 	req.Header.Set("Idempotency-Key", r.IdempotencyKey)
-	hc := f.HC
-	if hc == nil {
-		hc = httpx.New(factoryTimeout, nil)
+	hc, err := f.client()
+	if err != nil {
+		return Result{}, err
+	}
+	if f.HC == nil {
+		defer hc.CloseIdleConnections() // a client per call: its connection goes with it
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

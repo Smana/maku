@@ -35,14 +35,36 @@ func Public(s string) (string, Report) {
 			b.WriteString(seg.text)
 			continue
 		}
-		t := mdLink.ReplaceAllString(seg.text, "$1 (`$2`)")
-		// A destination the pattern did not take (a nested bracket, a title) is no link either:
-		// "](" is what makes one.
-		t = strings.ReplaceAll(t, "](", "] (")
-		t = codeSpanLive(t)
-		b.WriteString(t)
+		b.WriteString(inertLinks(seg.text))
 	}
 	return b.String(), rep
+}
+
+// inertLinks turns each inline link of t into its text and its URL in a code span, and wraps what is
+// live in the rest. The URL span is written after the live scan and never rescanned: scanning it
+// would put backticks inside it, and they would pair with the span's own (`[a](\@smana)`).
+func inertLinks(t string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range mdLink.FindAllStringSubmatchIndex(t, -1) {
+		before := t[last:m[0]]
+		if run := len(before) - len(strings.TrimRight(before, `\`)); run%2 == 1 {
+			continue // an escaped "[" opens no link: it stays text, its "](" defused below
+		}
+		b.WriteString(defuseText(before + t[m[2]:m[3]] + " ("))
+		if m[4] < m[5] { // an empty destination gets no span: "``" would pair with the next run
+			b.WriteString("`" + t[m[4]:m[5]] + "`")
+		}
+		last = m[1] - 1 // the closing ")" starts the next run
+	}
+	b.WriteString(defuseText(t[last:]))
+	return b.String()
+}
+
+// defuseText handles a run outside every link destination: a destination the pattern did not take
+// (a nested bracket, a title) is no link either, "](" is what makes one; then the live text.
+func defuseText(t string) string {
+	return codeSpanLive(strings.ReplaceAll(t, "](", "] ("))
 }
 
 type segment struct {
@@ -112,7 +134,10 @@ func closingRun(s string, from, n int) int {
 	return -1
 }
 
-// codeSpanLive wraps every autolink, mention and reference of t in a code span.
+// codeSpanLive wraps every autolink, mention and reference of t in a code span. A span opened
+// right after an odd run of backslashes would have its backtick escaped, leaving the match live
+// (S-6: `\@smana`), so such a run gains one backslash and escapes itself instead. An even run
+// already does.
 func codeSpanLive(t string) string {
 	var b strings.Builder
 	last := 0
@@ -121,7 +146,11 @@ func codeSpanLive(t string) string {
 		if m[2] >= 0 { // a mention or #n: the character before it stays outside
 			start = m[2]
 		}
-		b.WriteString(t[last:start])
+		before := t[last:start]
+		b.WriteString(before)
+		if run := len(before) - len(strings.TrimRight(before, `\`)); run%2 == 1 {
+			b.WriteByte('\\')
+		}
 		b.WriteString("`" + t[start:end] + "`")
 		last = end
 	}

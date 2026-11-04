@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -68,7 +68,7 @@ func newLateCommit(objs ...client.Object) *lateCommit {
 			return cl.Create(ctx, obj, opts...)
 		},
 		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-			if _, ok := api.LedgerDay(key.Name, api.LedgerPrefix); ok {
+			if _, ok := ledger.Day(key.Name, ledger.Prefix); ok {
 				l.ticking++
 				if l.at != 0 && l.ticking == l.at && l.held != nil {
 					l.commitHeld(ctx, cl)
@@ -108,7 +108,7 @@ func TestReviewParked1LateCommit(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			now := tc.start
-			day := now.Format(api.LedgerDayLayout)
+			day := now.Format(ledger.DayLayout)
 			// The day's ledger exists, so the write is an Update that carries a resourceVersion.
 			c := newLateCommit(ledgerDay(t, day, map[string]int64{"github:bob": 5}, nil))
 			m := usdLedgerMeter(&store{patches: map[string]map[string]string{}, runs: []runs.Run{glmRun("aaaaaaaa", now)}},

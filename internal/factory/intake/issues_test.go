@@ -220,12 +220,12 @@ func TestNoLabelEventYetWaits(t *testing.T) {
 	}
 }
 
-func TestGenerationCountsMaintainersInTimeOrder(t *testing.T) {
+func TestGenerationCountsEveryLabelInTimeOrder(t *testing.T) {
 	is := func(l string) bool { return l == "Smana" }
 	evs := []forge.LabelEvent{{Actor: "Smana", At: t0.Add(2 * time.Minute)}, {Actor: "someone", At: t0.Add(time.Minute)},
 		{Actor: "Smana", At: t0}}
 	gen, last, ok := Generation(evs, is)
-	if gen != 2 || !ok || !last.At.Equal(t0.Add(2*time.Minute)) {
+	if gen != 3 || !ok || !last.At.Equal(t0.Add(2*time.Minute)) {
 		t.Fatalf("%d %+v %v", gen, last, ok)
 	}
 	if evs[0].At != t0.Add(2*time.Minute) {

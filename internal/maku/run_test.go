@@ -220,7 +220,7 @@ func TestQuickstartRunRefusesRolesBeforeAnyRequest(t *testing.T) {
 		Apply: func(context.Context, []byte) error { return nil }, Out: io.Discard}.Do(t.Context())
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if err == nil || !strings.Contains(err.Error(), "implementer, a tester or a triager") || b.created != 0 {
+	if err == nil || !strings.Contains(err.Error(), "implementer or a triager") || b.created != 0 {
 		t.Fatalf("err %v, rooms created %d", err, b.created)
 	}
 }

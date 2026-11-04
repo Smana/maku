@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,8 +26,10 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/policy"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 type byToken map[string]authn.Principal
@@ -72,7 +73,7 @@ func mkServer(t *testing.T, st RunStore, c client.Client, enforce, stopped bool,
 		t.Fatal(err)
 	}
 	if enforce { // an enforced cap needs a meter that sees (#54)
-		if err := StampMeter(t.Context(), c, "agent-system", now, time.Hour); err != nil {
+		if err := ledger.StampMeter(t.Context(), c, "agent-system", now, time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -105,13 +106,13 @@ func scheme() *runtime.Scheme {
 // column, so a test is the only one who writes it before then.
 func ledgerCM(day string, spent map[string]int64) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
-		Name: LedgerPrefix + day, Namespace: "agent-system"}}
+		Name: ledger.Prefix + day, Namespace: "agent-system"}}
 	if spent != nil {
 		b, err := json.Marshal(spent)
 		if err != nil {
 			panic(err)
 		}
-		cm.Data = map[string]string{LedgerSpent: string(b)}
+		cm.Data = map[string]string{ledger.Spent: string(b)}
 	}
 	return cm
 }
@@ -373,6 +374,26 @@ func TestDailyBudget(t *testing.T) {
 	}
 }
 
+// #54: the API says why it refuses: the meter, not the ledger.
+func TestTheAPIRefusesWhileTheMeterIsBlind(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
+	st := &store{}
+	h := mkServer(t, st, c, true, false, "7f3cq2xz", 5_000_000)
+	if err := ledger.StampMeter(t.Context(), c, "agent-system", now.Add(-time.Hour), 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if w := post(h.Handler(), "alice", base()); w.Code != http.StatusServiceUnavailable ||
+		!strings.Contains(w.Body.String(), "meter_blind") || len(st.created) != 0 {
+		t.Fatalf("%d %s %d", w.Code, w.Body, len(st.created))
+	}
+	if err := ledger.StampMeter(t.Context(), c, "agent-system", now, 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if w := post(h.Handler(), "alice", base()); w.Code != http.StatusCreated {
+		t.Fatalf("the meter sees again: %d %s", w.Code, w.Body)
+	}
+}
+
 // staleOnce serves its client's first ConfigMap read from a frozen snapshot: one replica's
 // informer state before the other's reservation landed — R50's race, made deterministic.
 type staleOnce struct {
@@ -405,8 +426,8 @@ func TestTwoAdmissionsOneSlot(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			var objs []client.Object
-			ledger := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LedgerPrefix + "20260927", Namespace: "agent-system"}}
-			objs = append(objs, ledger)
+			day := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ledger.Prefix + "20260927", Namespace: "agent-system"}}
+			objs = append(objs, day)
 			body := base()
 			if c.room {
 				objs = append(objs, aliceRoom())
@@ -414,7 +435,7 @@ func TestTwoAdmissionsOneSlot(t *testing.T) {
 			}
 			api := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(objs...).Build()
 			var seed corev1.ConfigMap
-			if err := api.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: ledger.Name}, &seed); err != nil {
+			if err := api.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: day.Name}, &seed); err != nil {
 				t.Fatal(err)
 			}
 			stA, stB := &store{}, &store{}
@@ -463,9 +484,9 @@ func TestDeleteDoesNotRefund(t *testing.T) {
 // attempt's reservation kept, not dropped as a create failure.
 func TestTheRetryOfAWholeAdmissionAnswers201Again(t *testing.T) {
 	s := scheme()
-	runs.Scheme(s)
+	runs.Scheme(s, runwatch.DefaultKind)
 	c := fake.NewClientBuilder().WithScheme(s).Build()
-	h := mkServer(t, runs.Client{C: c}, c, false, false, "7f3cq2xz", 5_000_000).Handler()
+	h := mkServer(t, runs.Client{C: c, Kind: runwatch.DefaultKind}, c, false, false, "7f3cq2xz", 5_000_000).Handler()
 	if w := post(h, "alice", base()); w.Code != http.StatusCreated {
 		t.Fatalf("the first attempt: %d %s", w.Code, w.Body)
 	}
@@ -473,66 +494,11 @@ func TestTheRetryOfAWholeAdmissionAnswers201Again(t *testing.T) {
 		t.Fatalf("the retry of a landed creation must not 503 or eat a second slot: %d %s", w.Code, w.Body)
 	}
 	var cm corev1.ConfigMap
-	key := types.NamespacedName{Namespace: "agent-system", Name: LedgerPrefix + "20260927"}
+	key := types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + "20260927"}
 	if err := c.Get(t.Context(), key, &cm); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cm.Data[LedgerReserved+"7f3cq2xz"]; !ok {
+	if _, ok := cm.Data[ledger.Reserved+"7f3cq2xz"]; !ok {
 		t.Fatalf("the retry dropped the reservation of a live run: %v", cm.Data)
-	}
-}
-
-// #78: four factory runs reserving at once on an enforced day with room for two: exactly two
-// land, whatever the interleaving; in shadow all four land and the over ones say so.
-func TestConcurrentReservationsAdmitOnlyWhatFits(t *testing.T) {
-	for _, enforce := range []bool{true, false} {
-		l := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: LedgerPrefix + "20260927", Namespace: "agent-system"}}
-		if err := SetLedgerSpentColumn(l, map[string]int64{runs.PrincipalFactory: 22_000_000}); err != nil {
-			t.Fatal(err)
-		}
-		c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(l).Build()
-		if err := StampMeter(t.Context(), c, "agent-system", now, time.Hour); err != nil {
-			t.Fatal(err)
-		}
-		var (
-			wg                 sync.WaitGroup
-			mu                 sync.Mutex
-			landed, over, busy int
-		)
-		for _, id := range []string{"aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd"} {
-			wg.Go(func() {
-				for { // a caller retries ErrLedgerBusy: the reconciler's requeue, the API's 503
-					o, err := Reserve(t.Context(), c, "agent-system", now, id,
-						Reservation{Principal: runs.PrincipalFactory, MaxMicroUSD: 1_500_000}, 25_000_000, 0, enforce)
-					mu.Lock()
-					switch {
-					case errors.Is(err, ErrLedgerBusy):
-						busy++
-						mu.Unlock()
-						continue
-					case err == nil:
-						landed++
-					case !errors.Is(err, ErrOverBudget):
-						t.Error(err)
-					}
-					if o != "" {
-						over++
-					}
-					mu.Unlock()
-					return
-				}
-			})
-		}
-		wg.Wait()
-		used, err := DayUsed(t.Context(), c, "agent-system", runs.PrincipalFactory, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		switch {
-		case enforce && (landed != 2 || over != 2 || used != 25_000_000):
-			t.Fatalf("enforced: %d landed, %d over, used %d (%d busy)", landed, over, used, busy)
-		case !enforce && (landed != 4 || over != 2 || used != 28_000_000):
-			t.Fatalf("shadow: %d landed, %d over, used %d (%d busy)", landed, over, used, busy)
-		}
 	}
 }

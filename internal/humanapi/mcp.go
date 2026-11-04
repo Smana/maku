@@ -12,7 +12,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"golang.org/x/time/rate"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/mcpwire"
@@ -351,19 +350,7 @@ func refusal(err error) (string, bool) {
 }
 
 // mcpAllow takes one of principal's /mcp requests: 10 a second, burst 20, per replica, as acts.
-func (s *Server) mcpAllow(principal string) bool {
-	s.mcpMu.Lock()
-	defer s.mcpMu.Unlock()
-	if s.mcpLimits == nil {
-		s.mcpLimits = map[string]*rate.Limiter{}
-	}
-	l, ok := s.mcpLimits[principal]
-	if !ok {
-		l = rate.NewLimiter(10, 20)
-		s.mcpLimits[principal] = l
-	}
-	return l.Allow()
-}
+func (s *Server) mcpAllow(principal string) bool { return s.take(&s.mcpLimits, principal) }
 
 func (s *Server) mcpCounted(ctx context.Context, tool, outcome string) {
 	if s.Metrics != nil {

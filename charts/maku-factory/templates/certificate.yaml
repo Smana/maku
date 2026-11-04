@@ -1,0 +1,23 @@
+{{- $t := .Values.api.tls -}}
+{{- if and $t.issuerRef.name (not $t.secretName) -}}
+{{- fail "api.tls.issuerRef.name needs api.tls.secretName: the Secret the Certificate writes and the pod mounts" -}}
+{{- end -}}
+{{- if $t.issuerRef.name }}
+# The run-request API serves TLS from this pair; the factory re-reads it on renewal, so no restart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: agent-factory-api-tls
+  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $t.secretName }}
+  duration: 720h # 30d
+  renewBefore: 240h # 10d
+  commonName: agent-factory.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}
+  dnsNames:
+    - agent-factory.{{ .Release.Namespace }}.svc
+    - agent-factory.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}
+  issuerRef:
+    group: cert-manager.io
+    {{- toYaml $t.issuerRef | nindent 4 }}
+{{- end }}

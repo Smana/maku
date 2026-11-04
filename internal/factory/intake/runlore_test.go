@@ -21,6 +21,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
 	"github.com/Smana/maku/internal/factory/taskid"
 )
@@ -178,5 +179,55 @@ func TestFailedIntakeLogsTheTaskNotTheFinding(t *testing.T) {
 	}
 	if want := taskid.Name(taskid.RunloreKey(p.AlertName, p.ResourceRef)); !strings.Contains(out, want) {
 		t.Fatalf("the log lacks the task name %q: %s", want, out)
+	}
+}
+
+// ctxForge refuses a call on a spent context, as the real client's HTTP request does.
+type ctxForge struct{ *forgetest.Fake }
+
+func (f ctxForge) CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error) {
+	if err := ctx.Err(); err != nil {
+		return forge.Issue{}, err
+	}
+	return f.Fake.CreateIssue(ctx, title, body, labels)
+}
+
+// F-8: once the Task exists, a caller that hangs up must not orphan it: the issue is filed and
+// the Task linked to it on a context that outlives the request.
+func TestAHangUpAfterTheTaskStillFilesTheIssue(t *testing.T) {
+	h, _, f := runlore(t)
+	ctx, hangUp := context.WithCancel(context.Background())
+	defer hangUp()
+	s := runtime.NewScheme()
+	_ = v1alpha1.AddToScheme(s)
+	h.Client = fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&v1alpha1.Task{}).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			err := c.Create(ctx, obj, opts...)
+			hangUp() // the caller goes once the Task exists
+			return err
+		},
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
+			if err := ctx.Err(); err != nil { // the apiserver call fails on a spent context
+				return err
+			}
+			return c.Patch(ctx, obj, p, opts...)
+		},
+	}).Build()
+	h.Forge = ctxForge{f}
+
+	b, _ := json.Marshal(finding)
+	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/intake/runlore", bytes.NewReader(b))
+	r.Header.Set("Authorization", "Bearer s3cret")
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	if n := len(f.Created()); n != 1 {
+		t.Fatalf("the issue was not filed after the hang-up: %d issues", n)
+	}
+	var l v1alpha1.TaskList
+	if err := h.Client.List(context.Background(), &l); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Items) != 1 || l.Items[0].Spec.Issue == 0 {
+		t.Fatalf("the Task is not linked to its issue: %+v", l.Items)
 	}
 }

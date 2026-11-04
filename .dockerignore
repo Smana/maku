@@ -1,0 +1,10 @@
+# The Go images build from the repository root (docker build -f images/<bin>/Dockerfile .) and
+# COPY . . for go build, which needs the module only. Never send the history, local agent
+# worktrees and reports, the quickstart's admin kubeconfig, or web/'s dependencies.
+.git
+.claude
+.worktrees
+.superpowers
+.quickstart
+web/node_modules
+**/__pycache__

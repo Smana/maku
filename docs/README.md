@@ -17,7 +17,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 |---|---|
 | [Quickstart](quickstart.md) | One command to a sandboxed run on a laptop, and what differs from production |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
-| [Architecture](architecture.md) | The four binaries, the trust boundaries, one task's life, where each piece runs |
+| [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
 | [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
 | [maku](cli.md) | Install and verify, configure, every command, the factory-handoff skill |
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |

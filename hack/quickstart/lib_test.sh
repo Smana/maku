@@ -57,6 +57,23 @@ body=$(declare -f qs_secret)
 # shellcheck disable=SC2016 # the literal ${!var} text is what must be absent
 [[ $body != *'${!var}'* ]] || { echo "FAIL: qs_secret expands a variable's value" >&2; fail=1; }
 
+# qs_install_gvisor: a refetch replaces gVisor's files and keeps the rest of .quickstart/bin, maku included (H-6)
+gv=$(mktemp -d)
+trap 'rm -rf "$gv"' EXIT
+mkdir -p "$gv/src/gvisor-bin" "$gv/bin/gvisor-bin"
+printf new >"$gv/src/runsc"; printf new >"$gv/src/containerd-shim-runsc-v1"; printf new >"$gv/src/gvisor-bin/helper"
+tar -cjf "$gv/gvisor.tar.bz2" -C "$gv/src" runsc containerd-shim-runsc-v1 gvisor-bin
+printf maku >"$gv/bin/maku"; printf old >"$gv/bin/runsc"; printf old >"$gv/bin/gvisor-bin/stale"
+ok qs_install_gvisor "$gv/gvisor.tar.bz2" "$gv/bin" "release-x86_64"
+eq "$(cat "$gv/bin/maku" 2>/dev/null)" maku "a refetch keeps the maku up.sh installed"
+eq "$(cat "$gv/bin/runsc")" new "a refetch replaces runsc"
+eq "$(cat "$gv/bin/.gvisor-release")" release-x86_64 "the release stamp"
+[[ ! -e $gv/bin/gvisor-bin/stale ]] || { echo "FAIL: a refetch leaves no stale gvisor-bin/ file" >&2; fail=1; }
+[[ -x $gv/bin/runsc && -x $gv/bin/containerd-shim-runsc-v1 ]] || { echo "FAIL: runsc and its shim are executable" >&2; fail=1; }
+rm "$gv/src/gvisor-bin/helper"; rmdir "$gv/src/gvisor-bin"
+tar -cjf "$gv/bad.tar.bz2" -C "$gv/src" runsc containerd-shim-runsc-v1
+no qs_install_gvisor "$gv/bad.tar.bz2" "$gv/bin" "release-x86_64"
+
 # no script passes a literal secret on a command line
 if grep -n -- '--from-literal' hack/quickstart/*.sh | grep -v '^hack/quickstart/lib_test.sh:'; then
   echo "FAIL: --from-literal puts a value on argv: use qs_secret" >&2; fail=1

@@ -18,6 +18,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/ledger"
 )
 
 const (
@@ -60,7 +61,7 @@ func verifyServer(t *testing.T, p authn.Principal, objs ...client.Object) *Serve
 	t.Helper()
 	s, _ := newTaskServer(t, p, 0)
 	s.Rooms = fake.NewClientBuilder().WithScheme(scheme()).WithStatusSubresource(&factoryv1.Task{}).
-		WithObjects(append(objs, ledgerCM(now.UTC().Format(LedgerDayLayout), map[string]int64{}))...).Build()
+		WithObjects(append(objs, ledgerCM(now.UTC().Format(ledger.DayLayout), map[string]int64{}))...).Build()
 	s.Cfg = verifyCfg()
 	return s
 }

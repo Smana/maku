@@ -63,7 +63,7 @@ Not for: a hosted service. A laptop trial exists, scaled down (see the quickstar
 
 ## Status
 
-v0.15.2, in daily use on one cloud for one public repository, with the merge gate in shadow. It
+In daily use on one cloud for one public repository, with the merge gate in shadow; the version and its notes are on the [latest release](https://github.com/Smana/maku/releases/latest). It
 runs today on [cloud-native-ref](https://github.com/Smana/cloud-native-ref); the [quickstart](docs/quickstart.md) runs it on a laptop (kind, Linux and Docker). What is proven live and what comes next is on the
 platform's [status page](https://github.com/Smana/cloud-native-ref/blob/main/website/content/docs/platform/ai-platform/status.md).
 

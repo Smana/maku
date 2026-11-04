@@ -17,9 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/triage"
 )
 
@@ -48,7 +48,7 @@ func envTesterRig(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 		t.Fatal(err)
 	}
 	clock := time.Now()
-	if err := api.StampMeter(ctx, c, "agent-system", clock, 1000*time.Hour); err != nil {
+	if err := ledger.StampMeter(ctx, c, "agent-system", clock, 1000*time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	tk := issueTask("3buqdlot", 7, "# Add --dry-run to the script\n\n## Acceptance check\n`scripts/ci/tests/run.sh` passes")

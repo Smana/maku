@@ -34,11 +34,11 @@ type runWiring struct {
 // admission reads it) and adds, through add, the leader Runnable that alone
 // appends run lifecycles: the watch's callbacks, a replay once elected, and the
 // sweep of runs that joined and never left. tick paces the sweep; nil means a
-// time.Ticker.
-func wireRuns(ctx context.Context, src informerSource, add func(manager.Runnable) error, log *slog.Logger,
+// time.Ticker. kind is the config's runs kind: the watch reads only its claims.
+func wireRuns(ctx context.Context, kind runwatch.Kind, src informerSource, add func(manager.Runnable) error, log *slog.Logger,
 	open runwatch.Unfinished, events *runwatch.Events, tick func(time.Duration) (<-chan time.Time, func()),
 ) (runWiring, error) {
-	watch := runwatch.New()
+	watch := runwatch.New(kind)
 	handlerSynced, err := runwatch.Register(ctx, src, watch)
 	if err != nil {
 		return runWiring{}, err

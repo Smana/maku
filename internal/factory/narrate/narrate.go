@@ -106,6 +106,10 @@ func record(t *v1alpha1.Task, key string) {
 	}
 }
 
+// Abandon records key as narrated without a post: the forge refused it for good (F-3), and a
+// narration that fires again must not queue a post that can only be refused again.
+func Abandon(t *v1alpha1.Task, key string) { record(t, key) }
+
 // roomPoster is the broker's system API as narration uses it (rooms.Client).
 type roomPoster interface {
 	TaskState(ctx context.Context, room, text string, clientSeq int64) error
@@ -268,6 +272,7 @@ func reasons() map[string]string {
 		"main_red":                  "main's CI went red after the merge",
 		"revert_requested":          "a maintainer asked for a revert",
 		"merged_verified":           "merged, and main stayed green for 30 minutes",
+		"merged_unverified":         "merged, and main's CI on the merge commit gave no result within twice merge.verifyFor (a check was cancelled or never finished)",
 		"gate_path":                 "it touches a gate path, so an agent can never merge it; a human must re-author the change",
 		"steering_path":             "it changes a steering note, which only a maintainer on the default branch may do",
 		"class_mismatch":            "the diff is not the class the triage predicted",
@@ -497,6 +502,13 @@ func Retrying(t *v1alpha1.Task, by, after string) Event {
 			"`changes` verdict, or a review without a verdict, escalates it again."
 	}
 	return Event{Key: fmt.Sprintf("retry-%d", t.Status.Retries), Body: body}
+}
+
+// TaskCapHolds answers a /factory retry of a task escalated at its cap (F-4): Queued would only
+// escalate it again, so the retry is not taken. Keyed by the command: each is answered once.
+func TaskCapHolds(t *v1alpha1.Task, command int64) Event {
+	return Event{Key: fmt.Sprintf("retry-refused-%d", command), Body: fmt.Sprintf("Agent factory task `%s` was not retried: %s, "+
+		"and the task's cap is part of its spec: raise it on a new task.", t.Name, Reason("budget-task"))}
 }
 
 // Resuming says the factory resumes a run its sandbox lost, on its own, n of limit (disruption
@@ -794,7 +806,25 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 	} else { // a retry can still spend: this is the total so far
 		b.WriteString(usageLine + " so far: " + Tokens(t.Status.Usage.Tokens) + ".")
 	}
-	return Event{Key: fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs)), Body: b.String()}
+	key := fmt.Sprintf(closingPrefix+"%s-%d", strings.ToLower(phase), len(t.Status.Runs))
+	if phase == v1alpha1.PhaseEscalated {
+		key += fmt.Sprintf("-%d", t.Status.Retries) // F-4: a retry that escalates again before a run is a new escalation
+	}
+	return Event{Key: key, Body: b.String()}
+}
+
+// MergedUnverified is the end of an auto-merge whose merge commit got no result from main's CI
+// within twice merge.verifyFor (D1): it names the commit, and until when a maintainer's
+// factory/revert still reverts it. It is Ended's event (its key, its token line), so it settles.
+func MergedUnverified(t *v1alpha1.Task, revertUntil time.Time) Event {
+	e := Ended(t, v1alpha1.PhaseDone, "merged_unverified")
+	ref := t.Status.PullRequest
+	note := fmt.Sprintf(" Merge commit `%s`: main's CI gave it no result, so nothing shows it green or red. "+
+		"Label #%d `factory/revert` before %s to revert it.", ref.MergeCommitSHA, ref.Number, revertUntil.UTC().Format("2006-01-02 15:04 UTC"))
+	if i := strings.LastIndex(e.Body, usageLine); i >= 0 {
+		e.Body = e.Body[:i] + note + e.Body[i:]
+	}
+	return e
 }
 
 const (

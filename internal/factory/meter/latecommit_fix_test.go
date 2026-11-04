@@ -10,7 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -53,7 +53,7 @@ func TestANewLeaderChargesAnOldLeadersLateCommitOnce(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			now := tc.start
-			day := now.Format(api.LedgerDayLayout)
+			day := now.Format(ledger.DayLayout)
 			c := newLateCommit(ledgerDay(t, day, map[string]int64{"github:bob": 5}, nil))
 			src := typed{"aaaaaaaa": glmUsage(1_000_000)}
 			run := glmRun("aaaaaaaa", now)
@@ -161,12 +161,12 @@ func TestFenceRetriesCreatesAndLetsAPrunedDayGo(t *testing.T) {
 			t.Fatalf("tick N: %v", err)
 		}
 		c.failing, c.ticking, c.at = false, 0, 2 // the late write commits at the fence's retry read
-		c.conflicts = map[string]int{api.LedgerPrefix + "20261022": 1}
+		c.conflicts = map[string]int{ledger.Prefix + "20261022": 1}
 		now = now.Add(time.Minute)
 		if err := m.Tick(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if n := c.updates[api.LedgerPrefix+"20261022"]; n < 3 { // the 504, the conflict, the fence's retry
+		if n := c.updates[ledger.Prefix+"20261022"]; n < 3 { // the 504, the conflict, the fence's retry
 			t.Fatalf("%d Updates of the 22nd, want the fence to retry", n)
 		}
 		if spent, settled := totals(t, c); spent != 1_400_000 || settled["aaaaaaaa"] != 1_400_000 {
@@ -182,7 +182,7 @@ func TestFenceRetriesCreatesAndLetsAPrunedDayGo(t *testing.T) {
 			t.Fatal("tick N: want the 504")
 		}
 		c.failing = false
-		c.conflicts = map[string]int{api.LedgerPrefix + "20261022": api.LedgerAttempts}
+		c.conflicts = map[string]int{ledger.Prefix + "20261022": ledger.Attempts}
 		now = now.Add(time.Minute)
 		if err := m.Tick(t.Context()); err == nil || !strings.Contains(err.Error(), "stayed busy") {
 			t.Fatalf("want the busy day to fail the tick: %v", err)
@@ -235,7 +235,7 @@ func TestFenceRetriesCreatesAndLetsAPrunedDayGo(t *testing.T) {
 		if _, ok := spentOf(t, c, "20261022"); ok {
 			t.Fatal("the fence created a ledger the pruner would delete")
 		}
-		if s, ok := spentOf(t, c, now.Format(api.LedgerDayLayout)); !ok || s[runs.PrincipalFactory] != 1_400_000 {
+		if s, ok := spentOf(t, c, now.Format(ledger.DayLayout)); !ok || s[runs.PrincipalFactory] != 1_400_000 {
 			t.Fatalf("today's ledger holds %v, want the run's 1400000", s)
 		}
 	})
@@ -321,7 +321,7 @@ func TestANewLeaderFencesTheDaysItLearnedOnWhenItsFirstSettleIsLate(t *testing.T
 			c.failing = false
 			now = tc.learn
 			b := usdLedgerMeter(&store{patches: map[string]map[string]string{}, runs: []runs.Run{run}}, src, c, &now)
-			c.conflicts = map[string]int{api.LedgerPrefix + tc.busy: api.LedgerAttempts}
+			c.conflicts = map[string]int{ledger.Prefix + tc.busy: ledger.Attempts}
 			if err := b.Tick(t.Context()); err == nil {
 				t.Fatal("B's first tick: want the busy ledger to fail it")
 			}
@@ -346,7 +346,7 @@ func TestANewLeaderFencesTheDaysItLearnedOnWhenItsFirstSettleIsLate(t *testing.T
 func TestANewLeaderWithAChargeInItsBaselineStillChargesTheRest(t *testing.T) {
 	now := day22
 	cm := ledgerDay(t, "20261022", map[string]int64{runs.PrincipalFactory: 700_000, "github:bob": 5}, nil)
-	if err := api.AddSettled(cm, map[string]int64{"aaaaaaaa": 700_000}); err != nil {
+	if err := ledger.AddSettled(cm, map[string]int64{"aaaaaaaa": 700_000}); err != nil {
 		t.Fatal(err)
 	}
 	c := newLateCommit(cm)

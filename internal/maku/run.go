@@ -18,9 +18,10 @@ import (
 	"github.com/Smana/maku/internal/wire"
 )
 
-// QuickstartRoles are the roles maku run starts: a reviewer needs a pull request, and a new
-// room names none.
-var QuickstartRoles = []string{"implementer", "tester", "triager"}
+// QuickstartRoles are the roles maku run starts: those start_run takes
+// (humanapi's TestQuickstartRolesAreRunRoles), less the reviewer, who needs a pull request a new
+// room names none of. The tester is the factory's alone.
+var QuickstartRoles = []string{"implementer", "triager"}
 
 // terminalPhases are runwatch.Terminal's (TestTerminalPhasesMatchRunwatch): a run_phase with one
 // of them is the run's end.
@@ -65,7 +66,7 @@ func (e *StepError) Unwrap() error { return e.Err }
 // ended Succeeded.
 func (q QuickstartRun) Do(ctx context.Context) (RunEnd, error) {
 	if !slices.Contains(QuickstartRoles, q.Role) {
-		return RunEnd{}, &StepError{"start_run", fmt.Errorf("role %q: maku run starts an implementer, a tester or a triager", q.Role)}
+		return RunEnd{}, &StepError{"start_run", fmt.Errorf("role %q: maku run starts an implementer or a triager", q.Role)}
 	}
 	act := func(room string, action map[string]any) (wire.ServerFrame, error) {
 		actx, cancel := context.WithTimeout(ctx, cmp.Or(q.ActTimeout, time.Minute))

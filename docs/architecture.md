@@ -1,11 +1,14 @@
 # Architecture
 
-Four binaries and one image. **`maku-factory`** turns a labelled GitHub issue into a narrated run
-and merges the result through its gate. **`maku-broker`** is the log of record: it owns the `Room`
-CRD, authenticates every writer, redacts and sequences events, and stores each room's log in
-Postgres. **`maku-bridge`** is a native sidecar in every `AgentRun` pod that names a room: it polls
-the harness on loopback and pushes its events to the broker over TLS on `:8443`. **`maku`** is
-the terminal client for people. **`maku-harness`** is the image the run executes in (OpenHands
+Five services, one CLI and one run image. **`maku-factory`** turns a labelled GitHub issue into a
+narrated run and merges the result through its gate. **`maku-broker`** is the log of record: it owns
+the `Room` CRD, authenticates every writer, redacts and sequences events, and stores each room's log
+in Postgres. **`maku-bridge`** is a native sidecar in every `AgentRun` pod that names a room: it polls
+the harness on loopback and pushes its events to the broker over TLS on `:8443`.
+**`maku-run-controller`**, on a cluster without cloud-native-ref's Crossplane runtime, turns each
+`maku.ogenki.io` `AgentRun` into a gVisor pod. **`maku-slack`** is the factory's Slack App: a thread
+becomes a task, and the broker's webhooks post the room's progress back to it. **`maku`** is the
+terminal client for people. **`maku-harness`** is the image the run executes in (OpenHands
 agent-server, `gh`, the pull-request footer). Nothing dials into a sandbox: every connection from
 the `agents` namespace is one the pod opens.
 
@@ -13,10 +16,12 @@ the `agents` namespace is one the pod opens.
 
 | Component | Runs | Does |
 |---|---|---|
-| `maku-factory` | Deployment `agent-factory` in `agent-system`, two replicas, one leading; chart `charts/maku-factory` | Reconciles the `Task` CRD, polls maintainer-labelled issues, answers `POST /v1/runs` on `:8082` (plaintext inside the mesh), meters each run, narrates on the issue, runs the merge gate |
+| `maku-factory` | Deployment `agent-factory` in `agent-system`, two replicas, one leading; chart `charts/maku-factory` | Reconciles the `Task` CRD, polls maintainer-labelled issues, answers `POST /v1/runs` on `:8082` (TLS 1.3 with `api.tls`), meters each run, narrates on the issue, runs the merge gate |
 | `maku-broker` | Deployment `room-broker` (an identity that keeps its pre-maku name, see [naming](naming.md#technical-names)) in `agent-system`, from an `App` claim; two replicas with a PDB | The log of record, the Room controller, the `:8443`, `:8080`, `:8090` and `:9090` listeners, the retention job (`maku-broker retention`) |
 | `maku-bridge` | Native sidecar `room-bridge` (`restartPolicy: Always`) after `identity-proxy`, in every run pod with `spec.roomRef` | Mirrors the harness into the room; carries steering, interrupts and decisions back over one SSE stream |
 | `maku-harness` | The run container of the `AgentRun` pod | The agent itself; it opens the pull request with `gh pr create` and the provenance footer (`images/maku-harness/pr_footer.py`). In the test-first flow it also runs the tester's red check and signed contract push, and holds an implementer to the contract with the `pre-commit` hook and `test-contract hold` ([README](../images/maku-harness/README.md#the-test-first-tester)) |
+| `maku-run-controller` | Deployment `run-controller`, chart `charts/maku`, on clusters without cloud-native-ref's Crossplane runtime | Reconciles `maku.ogenki.io` `AgentRun`s into a run's pod, ServiceAccount, ConfigMaps and CiliumNetworkPolicy |
+| `maku-slack` | A Deployment beside the factory ([Slack App](slack.md)) | Slack events on `:8080` start factory tasks from a thread; the broker's webhooks on `:8081` post each room's progress back to it |
 | Room controller | Inside the broker, reconciling `Room` CRs | Creates the room's log row and its first event, projects `status`, runs the finalizer that seals the log |
 | `AgentRun` watch | Inside the broker, on every replica | Admits bridges of live runs only, drops a run's connections when it ends, records joins, phases and end reasons |
 | Log store | CNPG `SQLInstance xplane-rooms`, database `rooms` | Append-only events, one gapless `seq` per room |
@@ -204,7 +209,7 @@ rules shape the tree.
 | Rule | In practice |
 |---|---|
 | Packages split by domain or pipeline stage, never by layer | `envelope`, `redact`, `store`, `authn`, `runwatch`, `roomctrl`, `bridgeapi`, `bridge`, `policy`, `fanout`, `humanapi`, `mcp`: no `service/`, `repository/` or `handler/` |
-| `cmd/<bin>` stays thin | `cmd/maku-broker`, `cmd/maku-bridge`, `cmd/maku` and `cmd/maku-factory` parse arguments and dispatch; the wiring lives in `internal/app` |
+| `cmd/<bin>` stays thin | `cmd/maku-broker`, `cmd/maku-bridge`, `cmd/maku`, `cmd/maku-factory`, `cmd/maku-run-controller` and `cmd/maku-slack` parse arguments and dispatch; the wiring lives in `internal/app` |
 | Interfaces are declared on the consumer side | A package asks for the few methods it calls (the bridge API's `Log`, the controller's `Store`) instead of importing a wide type |
 | The store is the only SQL adapter | Nothing outside `internal/store` writes SQL, the retention job's `DELETE`s included |
 | One egress client | Every outbound HTTP call goes through `internal/httpx`; a lint rule bans the bare `net/http` helpers elsewhere |
@@ -213,10 +218,11 @@ Broker, bridge and CLI, by pipeline stage:
 
 | Package | Stage |
 |---|---|
-| `cmd/maku-broker` | `serve` and `retention` subcommands |
+| `cmd/maku-broker` | `serve`, `retention`, `migrate` and `migrate-group` subcommands |
 | `cmd/maku-bridge` | The sidecar binary |
 | `cmd/maku-run-controller` | The AgentRun controller binary |
 | `cmd/maku`, `internal/maku` | The human CLI and its client; `maku mcp`, the stdio relay to `/mcp` |
+| `cmd/maku-slack`, `internal/slackapp` | The factory's Slack App: intake from a thread, webhooks to the thread ([Slack App](slack.md)) |
 | `internal/maku/skill` | The embedded factory-handoff Agent Skill (MCP first, shell fallback), released with maku; `maku setup` and `skill install` write it, `skill.Version` reads its stamp for the doctor's `skill` drift check |
 | `internal/app` | Wiring per binary, the only importer of every adapter |
 | `internal/config` | The broker's config file: strict decode, defaults, validation |
@@ -226,25 +232,32 @@ Broker, bridge and CLI, by pipeline stage:
 | `internal/bridge` | The sidecar: harness adapter over loopback, event mapping, status, uploader, SSE consumer |
 | `internal/wire` | Bridge and browser frames: the types both ends of a connection share |
 | `internal/authn` | Offline JWT verification for runs, system callers and humans; principal mapping |
+| `internal/sponsored` | What the broker and the factory must agree on for a sponsored principal |
 | `internal/envelope` | Event types, payload builders, validation, limits |
 | `internal/redact` | Secret detection over every JSON string of a payload |
 | `internal/store` (+ `migrations/`) | Append, range, cursors, seal; the only package that speaks SQL |
 | `api/v1alpha1` | The `Room` types and deepcopy; the CRD is generated into `config/crd/` |
 | `internal/runwatch` | The `AgentRun` informer: liveness, membership, run events, end reason |
 | `internal/roomctrl` | The `Room` reconciler: row, first event, finalizer, status projection |
+| `internal/suspend` | The suspend trigger: a suspendable run waiting on an approval in an idle attended room is suspended, and resumed once nothing waits |
+| `internal/runctl` | The run controller: `maku.ogenki.io` AgentRuns into pod, ServiceAccount, ConfigMaps and CNP |
 | `internal/bridgeapi` | `:8443`: hello, events, SSE stream, system API, approvals |
+| `internal/tlsreload` | The reloading certificate loader of `:8443` and the factory's run-request API; `tlsreload/tlsreloadtest` is its test-only pair writer |
 | `internal/mcp` | `:8090` MCP server, the `room_*` tools |
 | `internal/mcpwire` | The JSON-RPC wire both MCP servers share: one message in, one answer out |
 | `internal/github`, `internal/verdictpost` | The factory App client; the leader's verdict comments |
 | `internal/brief`, `internal/runrequest` | The fenced brief; manifest and factory run requesters |
 | `internal/prpattern` | A repository's pull-request URL patterns, compiled once per repository in a bounded cache |
+| `internal/webhook` | The broker's outbound events: id-only payloads, signed as Standard Webhooks sign them |
 | `internal/fanout` | LISTEN/NOTIFY hub: coalesced per-room reads, a 1 s poll while the listener is down |
 | `internal/policy` | The permission matrix |
 | `internal/summary` | The pure fold of a room's log into `summary/v1`, the one object the room page and `maku status` render |
+| `internal/roomview` | The factory's four room views as `maku` renders them; the one place that makes untrusted text inert |
 | `internal/ghidentity`, `internal/repoaccess` | A member's GitHub login from their ZITADEL link; whether it may read a room's repository, cached, failing closed |
 | `internal/humanapi` + `ui/dist/` | `:8080` WebSocket, room list, actions, embedded UI; `POST /mcp`, the humans' MCP server |
 | `web/` | TypeScript UI and its vitest suite |
 | `internal/metrics` | The metric set and the Prometheus exporter maku-broker serves |
+| `internal/migrategroup` | `maku-broker migrate-group`: Rooms and Tasks copied from one API group to another |
 
 The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 
@@ -254,9 +267,16 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 | Entry | `internal/factory/config` | The factory's config file: strict decode, defaults, validation, its hash |
 | Intake | `internal/factory/intake` | The issue poller: maintainer labels, snapshots, dedup, stop labels |
 | Intake | `internal/factory/sanitize`, `internal/factory/taskid` | Untrusted text defused to a fixpoint; task names and ids |
+| Intake | `internal/factory/fence` | The single-owner fence: a repository is acted on only by the factory its default branch's `.github/agent-factory.yaml` names |
+| Intake | `internal/factory/finding` | What both RunLore intakes write the same way: the task text, the public stub issue, the label charset that keeps attacker-influenced identifiers inert |
 | Tasks | `api/factory/v1alpha1` | The `Task` types and deepcopy; CRD generated into `config/crd/` |
 | Tasks | `internal/factory/triage`, `internal/factory/reconciler` | Template, tier and budget; the `Task` state machine |
 | Tasks | `internal/factory/runs`, `internal/factory/killswitch` | The `AgentRun` claim; the stop object |
+| Tasks | `internal/factory/steering` | A task class's steering note, read on the default branch at triage; an agent pull request that changes one is refused |
+| Tasks | `internal/factory/ledger` | The budget ledger: one ConfigMap per UTC day, its resourceVersion the transaction; admission reserves a run's ceiling, the run's end releases it, the meter owns the spent and settled columns; `api`, `intake`, `meter` and `reconciler` import it |
+| Gate | `internal/factory/filefence`, `internal/factory/mdlinks`, `internal/factory/semverdiff` | A class's file conditions on a diff, one implementation for the gate and the adopt poller; Markdown link targets as the links-only shape reads them; whether a diff is a dependency bump of one kind |
+| Gate | `internal/factory/decision` | the per-decision record: the values each declared row read, so the tally can replay a cap |
+| Gate | `internal/factory/fluxwatch` | Flux's objects for the post-merge monitor (MC7): uncached, read-only, `unstructured` |
 | Out | `internal/factory/forge`, `internal/factory/narrate` | GitHub as the factory App (`internal/factory/forge/forgetest`: its test-only fake); narration, at least once |
 | Out | `internal/factory/rooms` | The broker's system API over TLS |
 | Ops | `internal/factory/meter`, `internal/factory/fmetrics`, `internal/factory/tracing` | The run meter; the metrics; one root span per task |
@@ -294,21 +314,26 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 | `:8443` | maku-broker | The bridge in each run pod; system callers (the factory) |
 | `:8090` | maku-broker | The agents' `room_*` tools through the agent gateway (agent-router) |
 | `:9090` | maku-broker | Metrics and probes |
-| `:8082` | maku-factory | `POST /v1/runs`, plaintext inside the mesh: the broker's `start_run` |
+| `:8082` | maku-factory | `POST /v1/runs`, TLS 1.3 when `api.tls` is set (`internal/tlsreload`): the broker's `start_run` |
 | `:8080` | maku-factory | `POST /intake/runlore` |
 | `:9090` | maku-factory | Metrics and probes |
 | `:9090` | maku-run-controller | Metrics |
 | `:9091` | maku-run-controller | Probes (`/healthz`, `/readyz`) |
+| `:8085` | maku-bridge | The kubelet's probes of the native sidecar (`HEALTH_ADDR`) |
+| `:8080` | maku-slack | Slack's events, `POST /slack/events` |
+| `:8081` | maku-slack | The broker's webhooks, `POST /webhooks`, cluster only |
+| `:9090` | maku-slack | Metrics and probes |
 
 ### Binaries and images
 
 | Binary | Runs as | Image |
 |---|---|---|
-| `maku-broker` | Stateless service in `agent-system`; owns the `Room` CRD (`maku.ogenki.io/v1alpha1`) | `ghcr.io/smana/maku-broker` |
+| `maku-broker` | Stateless service in `agent-system`; owns the `Room` CRD (`maku.ogenki.io/v1alpha1`); subcommands `serve`, `retention`, `migrate`, `migrate-group` | `ghcr.io/smana/maku-broker` |
 | `maku-bridge` | Native sidecar in every `AgentRun` pod that names a room; relays harness events, carries the room token | `ghcr.io/smana/maku-bridge` |
 | `maku-factory` | The factory's orchestrator in `agent-system`, two replicas, one leading; owns the `Task` CRD; chart `oci://ghcr.io/smana/charts/maku-factory` | `ghcr.io/smana/maku-factory` |
 | `maku-harness` | Main container of every `AgentRun` pod: OpenHands agent-server plus `agent-run`, the git credential helper, `gh` with the PR footer and the trailer hook ([`images/maku-harness`](../images/maku-harness/README.md)) | `ghcr.io/smana/maku-harness` |
 | `maku-run-controller` | A Deployment, on clusters without cloud-native-ref's Crossplane runtime; reconciles `maku.ogenki.io` AgentRuns into gVisor pods | `ghcr.io/smana/maku-run-controller` |
+| `maku-slack` | The factory's Slack App, a Deployment beside the factory; its config is `--config` or `SLACK_APP_CONFIG` ([Slack App](slack.md)) | `ghcr.io/smana/maku-slack` |
 | `maku` | A developer's CLI: list, follow, post, queue and fork rooms; `maku skill install` writes the factory-handoff Agent Skill for local coding agents; `maku token` for scripts. Never steers or approves: those stay in the web UI | Release assets `maku-{linux,darwin}-{amd64,arm64}` + `maku.sha256`; before a release, `go build ./cmd/maku` |
 
 Every image is multi-arch (`linux/amd64`, `linux/arm64`). The Go ones are static binaries on distroless `nonroot`; the harness is OpenHands' Python image, run as uid 10001.

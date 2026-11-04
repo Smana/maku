@@ -26,18 +26,19 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 // RunClient is the AgentRun API as the reconciler uses it (runs.Client).
@@ -164,8 +165,10 @@ type Reconciler struct {
 	Clients func(repository string) (TaskForge, forge.Merger, bool)
 	// Owned is v2 D7's fence: the merge gate hands a repository this factory does not own to a
 	// human. nil owns nothing.
-	Owned   func(repository string) bool
-	Runs    RunClient
+	Owned func(repository string) bool
+	Runs  RunClient
+	// Kind is the runs kind, required: SetupWithManager watches its AgentRuns.
+	Kind    runwatch.Kind
 	Rooms   RoomLog
 	Triage  triage.Triager
 	Metrics metrics
@@ -187,8 +190,11 @@ type Reconciler struct {
 
 // SetupWithManager watches Tasks and the AgentRuns that carry a task label.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.Kind.Validate(); err != nil {
+		return fmt.Errorf("reconciler: the runs kind: %w", err)
+	}
 	run := &unstructured.Unstructured{}
-	run.SetGroupVersionKind(runs.GVK())
+	run.SetGroupVersionKind(r.Kind.GVK())
 	return ctrl.NewControllerManagedBy(mgr).For(&v1alpha1.Task{}).
 		Watches(run, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
 			id := o.GetLabels()[runs.LabelTask]
@@ -248,6 +254,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), &t)
 	}
 	if !equality.Semantic.DeepEqual(*before, t.Status) {
+		r.capOutbox(&t)
 		if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
 			r.mon.forget(t.Name) // the pass was not recorded: its retry must not wait out the throttle
 			return ctrl.Result{}, errors.Join(err, uerr)
@@ -275,8 +282,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 		}
 	}
+	// A span the collector refused is retried every spanRetry (ST2). It is folded into the terminal
+	// block's requeue: an early return here kept an ended task's room open, and its revert watch,
+	// settle and monitor on the span's clock, for as long as the collector was down (F-9).
+	var spanWait time.Duration
 	if err == nil && r.spanDue(&t) {
-		return ctrl.Result{RequeueAfter: spanRetry}, nil
+		spanWait = spanRetry
 	}
 	if v1alpha1.TerminalPhase(t.Status.Phase) {
 		// #56: the room closes once everything the task owes it has landed. Re-evaluated on the
@@ -297,19 +308,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		// The revert watch polls: a revert PR merges, closes or stalls on GitHub's clock, not ours.
 		if err == nil && (r.revertable(&t) || r.revertPending(&t)) {
-			return ctrl.Result{RequeueAfter: r.Cfg.Poll.Tasks.Duration}, nil
+			return ctrl.Result{RequeueAfter: soonest(r.Cfg.Poll.Tasks.Duration, spanWait)}, nil
 		}
 		if err == nil && r.settling(&t) {
 			wait := r.settleLeft(&t) // for the settle, at its window, unless a merge under watch is due sooner
 			if r.monitorDue(&t) {
 				wait = min(wait, monitorEvery)
 			}
-			return ctrl.Result{RequeueAfter: wait}, nil
+			return ctrl.Result{RequeueAfter: soonest(wait, spanWait)}, nil
 		}
 		if err == nil && r.monitorDue(&t) && (closeLeft <= 0 || closeLeft > monitorEvery) {
-			return ctrl.Result{RequeueAfter: monitorEvery}, nil // a merge under watch is read on its own clock
+			return ctrl.Result{RequeueAfter: soonest(monitorEvery, spanWait)}, nil // a merge under watch is read on its own clock
 		}
-		return ctrl.Result{RequeueAfter: closeLeft}, err // closeLeft: the revert window or a driving person (#56)
+		return ctrl.Result{RequeueAfter: soonest(closeLeft, spanWait)}, err // closeLeft: the revert window or a driving person (#56)
 	}
 	if err != nil {
 		return ctrl.Result{}, err
@@ -577,14 +588,22 @@ func narrateOn(t *v1alpha1.Task, n int, e narrate.Event) {
 }
 
 // drain posts the outbox in order and stops at the first failure, which the next reconcile
-// retries. A post that landed but failed is found by its marker then, not posted twice.
+// retries. A post that landed but failed is found by its marker then, not posted twice. A post
+// GitHub refuses for good (F-3) is dropped: it would hold back every later one and the room's close.
 func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
 	for len(t.Status.Outbox) > 0 {
 		o := t.Status.Outbox[0]
 		if narrate.Closing(o.Key) && r.settling(t) {
 			break // its token total is final only once the usage settles (#42); settle requeues
 		}
-		if err := r.narrator(ctx).Post(ctx, t, o.Number, narrate.Event{Key: o.Key, Body: o.Body}); err != nil {
+		err := r.narrator(ctx).Post(ctx, t, o.Number, narrate.Event{Key: o.Key, Body: o.Body})
+		var pe *forge.PermanentError
+		switch {
+		case errors.As(err, &pe):
+			// Error, not Warn: a mis-scoped App token reads as a refusal too, and must be seen.
+			r.log().Error("narration_dropped", "task.id", t.Name, "key", o.Key, "number", o.Number, "why", "refused", "status", pe.Status)
+			narrate.Abandon(t, o.Key)
+		case err != nil:
 			return err
 		}
 		t.Status.Outbox = t.Status.Outbox[1:]
@@ -593,6 +612,20 @@ func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
 		t.Status.Outbox = nil
 	}
 	return nil
+}
+
+// maxOutbox is status.outbox's CRD maxItems: a status write carrying more is refused whole.
+const maxOutbox = 16
+
+// capOutbox keeps the outbox within maxOutbox before the pass's status write (F-2): past it every
+// write is refused, and drain, which posts only a written outbox, never runs, so the task wedges.
+// The oldest entries go first, an ending's comment last: it carries the outcome and the token total.
+func (r *Reconciler) capOutbox(t *v1alpha1.Task) {
+	for len(t.Status.Outbox) > maxOutbox {
+		i := max(slices.IndexFunc(t.Status.Outbox, func(o v1alpha1.Narration) bool { return !narrate.Closing(o.Key) }), 0)
+		r.log().Warn("narration_dropped", "task.id", t.Name, "key", t.Status.Outbox[i].Key, "why", "outbox_full")
+		t.Status.Outbox = slices.Delete(t.Status.Outbox, i, i+1)
+	}
 }
 
 // target is where a task narrates: its issue, else its PR (R28), else nowhere.
@@ -670,6 +703,17 @@ func (r *Reconciler) settleLeft(t *v1alpha1.Task) time.Duration {
 		return r.Cfg.Poll.Tasks.Duration
 	}
 	return max(r.settleWindow()-r.Now().Sub(t.Status.PhaseSince.Time), time.Second)
+}
+
+// soonest is the nearer of two requeues, where 0 means none.
+func soonest(a, b time.Duration) time.Duration {
+	switch {
+	case a <= 0:
+		return b
+	case b <= 0:
+		return a
+	}
+	return min(a, b)
 }
 
 // spanDue: the task has ended and its root span is still to export (R46).
@@ -962,13 +1006,13 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	if limit > 0 {
 		over, err := r.reserveFactoryDay(ctx, t, limit)
 		switch {
-		case errors.Is(err, api.ErrPersonOverBudget): // D4/D5: the person's day, not the fleet's: refused, not queued
+		case errors.Is(err, ledger.ErrPersonOverBudget): // D4/D5: the person's day, not the fleet's: refused, not queued
 			record(ctx, func(ctx context.Context) { r.Metrics.Revoked(ctx, "budget-person") })
 			return r.end(ctx, t, v1alpha1.PhaseEscalated, "budget-person")
-		case errors.Is(err, api.ErrOverBudget):
+		case errors.Is(err, ledger.ErrOverBudget):
 			t.Status.Reason = "waiting_daily_budget" // no new factory run until 00:00 UTC
 			return nil
-		case errors.Is(err, api.ErrMeterBlind): // an enforced cap the meter cannot feed holds (#54)
+		case errors.Is(err, ledger.ErrMeterBlind): // an enforced cap the meter cannot feed holds (#54)
 			t.Status.Reason = "waiting_meter_blind"
 			return nil
 		case err != nil && (r.Cfg.Budgets.EnforcePrincipal || sponsored):

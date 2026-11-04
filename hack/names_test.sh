@@ -40,4 +40,6 @@ for f in docs/bad-group.md bad-rbac.yaml docs/bad-plural.md docs/bad-metric.md d
   grep -q "^$f:1:" <<<"$out" || { echo "names.sh missed $f"; exit 1; }
 done
 if grep -q 'ok-keys\.md' <<<"$out"; then echo "a key, the lease or a maku_ name was refused: $out"; exit 1; fi
+# Local agent worktrees under .claude/ are copies of the tree: the gates must never read them (S-11).
+git -C "$here/.." check-ignore -q .claude/worktrees/any/AGENTS.md || { echo "names_test: .claude/ is not ignored, so names.sh and spdx.sh read every local worktree"; exit 1; }
 echo "==> names_test: ok"

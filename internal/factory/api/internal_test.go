@@ -18,6 +18,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/finding"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/taskid"
 )
 
@@ -189,7 +190,7 @@ func TestInternalPrincipalRefusals(t *testing.T) {
 	t.Run("the principal's day is a bound", func(t *testing.T) {
 		s, _ := internalServer(t)
 		s.Rooms = fake.NewClientBuilder().WithScheme(scheme()).WithObjects(
-			ledgerCM(now.UTC().Format(LedgerDayLayout), map[string]int64{"system:runlore": 9_000_000})).Build()
+			ledgerCM(now.UTC().Format(ledger.DayLayout), map[string]int64{"system:runlore": 9_000_000})).Build()
 		w := postTask(s, incident(0.9), key)
 		if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), reasonPrincipalOver) {
 			t.Fatalf("%d %s", w.Code, w.Body)

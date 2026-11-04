@@ -2,7 +2,7 @@
 
 Deploys the agent factory: two replicas of the `maku-factory` controller (Deployment `agent-factory`) behind a
 PodDisruptionBudget, RBAC in two namespaces (a Role in the release namespace and a Role in
-`agents`, `templates/rbac.yaml`), and the `Task` CRD (`crds/`). It ships as
+`config.runs.namespace`, default `agents`, `templates/rbac.yaml`), and the `Task` CRD (`crds/`). It ships as
 `oci://ghcr.io/smana/charts/maku-factory`, at the version of the release tag.
 
 Install it only after the secrets below exist in the release namespace. The factory's behaviour
@@ -43,6 +43,9 @@ uid and nobody else.
 | `githubSecret`, `mergerSecret`, `brokerCASecret`, `oidcSecret`, `intakeSecret` | see the table above | Secret names |
 | `monitor.flux.enabled` | `false` | Renders the read-only ClusterRole and ClusterRoleBinding `agent-factory-flux-reader` (`get` on gitrepositories, `list` on kustomizations and helmreleases, no watch) for a class's `monitor.flux`; without it the Flux signal ends `inconclusive` ([docs/factory.md](../../docs/factory.md#the-post-merge-monitor)) |
 | `roomsAudience` | `rooms-system` | Audience of the projected token for the broker's system API |
+| `api.tls.secretName` | `""` | The run-request API's key pair (`tls.crt`, `tls.key`), mounted at `/etc/agent-factory-api-tls`; the chart writes `config.api.tls` to read it and names the Service port `https`. Empty: plaintext, and the broker needs `factoryInsecure: true` |
+| `api.tls.issuerRef` | `{kind: ClusterIssuer, name: ""}` | `name` set: a cert-manager `Certificate` `agent-factory-api-tls` for `agent-factory.<ns>.svc[.<clusterDomain>]` writes `api.tls.secretName`; empty: bring the Secret yourself |
+| `clusterDomain` | `cluster.local` | The cluster's DNS domain, for the Certificate's names |
 | `config` | `{}` | The factory config, rendered verbatim; an empty config fails the start |
 
 ## Ports
@@ -50,7 +53,7 @@ uid and nobody else.
 | Service port | Container port | Serves |
 |---|---|---|
 | `metrics` 9090 | `ops` | Metrics and the probes |
-| `api` 8082 | `api` | `POST /v1/runs`, plaintext inside the mesh; the broker's `factoryURL` points here. Before this chart moved it, the API sat on 8443 |
+| `api` 8082 (`https` with `api.tls.secretName`) | `api` | `POST /v1/runs` and `POST /v1/tasks`; TLS 1.3 when `api.tls.secretName` is set, plaintext otherwise; the broker's `factoryURL` points here. Before this chart moved it, the API sat on 8443 |
 | `intake` 8080 | `intake` | `POST /intake/runlore` |
 
 ## RBAC
@@ -62,7 +65,7 @@ deletes `Room`s, takes the leader lease and records events. Its one ConfigMap ru
 `agent-factory-ledger-usd-<UTC day>`, whose names carry the date; the meter also deletes the token
 ledgers they replaced, `agent-factory-ledger-<UTC day>`, once 35 days old. The namespace is the bound, so the
 factory can touch every ConfigMap in it, its own config included: keep no ConfigMap there it must
-not touch. In `agents`, a second Role manages `AgentRun`s. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
+not touch. In `config.runs.namespace` (default `agents`), a second Role manages the `AgentRun`s of `config.runs.group` (default `cloud.ogenki.io`): the values the binary reads, so the two cannot disagree. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
 
 ## Config
 

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -72,6 +73,8 @@ type Reconciler struct {
 	Store     Store
 	// Runs feeds the status projection; a deletion lists runs through Client.
 	Runs runIndex
+	// Kind is the runs kind, required: a deletion lists and reads the room's runs as its claims.
+	Kind runwatch.Kind
 	// Ends is required: a deletion records every run's end before it seals.
 	Ends runEnds
 	// Observe, when set, feeds the rooms{phase} and rooms_last_event_timestamp_seconds gauges.
@@ -219,9 +222,10 @@ func (r *Reconciler) open(ctx context.Context, room *v1alpha1.Room) error {
 }
 
 // patchStatus writes want when it differs. A merge patch of the status
-// subresource cannot conflict with a spec or finalizer write.
+// subresource cannot conflict with a spec or finalizer write. Semantic, not ==:
+// Task is a pointer that taskStatus rebuilds from the log each time (audit R-2).
 func (r *Reconciler) patchStatus(ctx context.Context, room *v1alpha1.Room, want v1alpha1.RoomStatus) error {
-	if room.Status == want {
+	if equality.Semantic.DeepEqual(room.Status, want) {
 		return nil
 	}
 	base := room.DeepCopy()
@@ -270,17 +274,17 @@ func (r *Reconciler) finalize(ctx context.Context, room *v1alpha1.Room) (ctrl.Re
 // those not already deleting, and splits them into terminal and live.
 func (r *Reconciler) deleteRuns(ctx context.Context, room string) (ended, live []runwatch.Run, err error) {
 	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(runwatch.GVK().GroupVersion().WithKind(runwatch.GVK().Kind + "List"))
+	list.SetGroupVersionKind(r.Kind.GVK().GroupVersion().WithKind(r.Kind.GVK().Kind + "List"))
 	var reader client.Reader = r.Client
 	if r.APIReader != nil {
 		reader = r.APIReader
 	}
-	if err := reader.List(ctx, list, client.InNamespace(runwatch.Namespace())); err != nil {
+	if err := reader.List(ctx, list, client.InNamespace(r.Kind.Namespace)); err != nil {
 		return nil, nil, fmt.Errorf("roomctrl: list the runs of room %s: %w", room, err)
 	}
 	for i := range list.Items {
 		u := &list.Items[i]
-		run, ok := runwatch.FromUnstructured(u)
+		run, ok := r.Kind.FromUnstructured(u)
 		if !ok || run.Room != room {
 			continue
 		}
@@ -366,6 +370,9 @@ func (r *Reconciler) log() *slog.Logger {
 // would recover and retry forever with the Room stuck Terminating. It runs one
 // reconcile at a time by default, which bounds the store's load.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.Kind.Validate(); err != nil {
+		return fmt.Errorf("roomctrl: the reconciler needs Kind: %w", err)
+	}
 	for field, missing := range map[string]bool{
 		"Client": r.Client == nil, "Store": r.Store == nil, "Runs": r.Runs == nil, "Ends": r.Ends == nil,
 	} {

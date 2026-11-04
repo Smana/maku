@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -26,23 +26,23 @@ func personBudgets(enabled, enforce bool) config.Budgets {
 
 // spentLedger is today's ledger with a spent column.
 func spentLedger(spent map[string]int64) *corev1.ConfigMap {
-	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: api.LedgerPrefix + now.UTC().Format(api.LedgerDayLayout),
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout),
 		Namespace: "agent-system"}}
-	if err := api.SetLedgerSpentColumn(cm, spent); err != nil {
+	if err := ledger.SetSpentColumn(cm, spent); err != nil {
 		panic(err)
 	}
 	return cm
 }
 
-func reservationOf(t *testing.T, g *rig, id string) api.Reservation {
+func reservationOf(t *testing.T, g *rig, id string) ledger.Reservation {
 	t.Helper()
 	var cm corev1.ConfigMap
 	if err := g.r.Ledger.Get(t.Context(), client.ObjectKey{Namespace: "agent-system",
-		Name: api.LedgerPrefix + g.r.Now().UTC().Format(api.LedgerDayLayout)}, &cm); err != nil {
+		Name: ledger.Prefix + g.r.Now().UTC().Format(ledger.DayLayout)}, &cm); err != nil {
 		t.Fatal(err)
 	}
-	var r api.Reservation
-	if err := json.Unmarshal([]byte(cm.Data[api.LedgerReserved+id]), &r); err != nil {
+	var r ledger.Reservation
+	if err := json.Unmarshal([]byte(cm.Data[ledger.Reserved+id]), &r); err != nil {
 		t.Fatalf("%s: %v %v", id, err, cm.Data)
 	}
 	return r
@@ -55,7 +55,7 @@ func TestATaskRunIsChargedToItsLabeller(t *testing.T) {
 		g := newRig(t, issueTask("3buqdlot", 7, "x"))
 		g.r.Cfg.Budgets = personBudgets(enabled, true)
 		tk := g.reconcile(t, "3buqdlot", 3)
-		want, person := api.Reservation{Principal: runs.PrincipalFactory, MaxMicroUSD: config.RefMicroUSD(tk.Spec.Budget.RunTokens)}, ""
+		want, person := ledger.Reservation{Principal: runs.PrincipalFactory, MaxMicroUSD: config.RefMicroUSD(tk.Spec.Budget.RunTokens)}, ""
 		if enabled {
 			want.Person, person = "github:smana", "github:smana"
 		}

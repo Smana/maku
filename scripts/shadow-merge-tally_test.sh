@@ -85,6 +85,11 @@ grep -qF 'label:"factory/follow-up-of:#100"' "$GH_LOG" || { echo "FAIL: the foll
 # A posted regression verdict counts as bad even when its label write failed.
 out="$(TALLY_FIXTURE=regcomment tally)"
 expect "$(grep -o 'bad=[0-9]*' <<<"$out") $(grep -o 'regression=[0-9]*' <<<"$out")" "bad=1 regression=1" "a regression comment without its label is bad"
+# A failed search stops the tally (S-12): read through a process substitution, its failure was lost
+# and the tally counted the other search's merges alone, rc 0 and widen=yes.
+if out="$(TALLY_FIXTURE=searchfail tally 2>&1)"; then
+  echo "FAIL: a failed gh search must fail the tally, got rc 0: $out" >&2; exit 1
+fi
 # --window is whole hours: anything else is refused, not miscomputed.
 for w in 7d 72h30m 168; do
   if GH=scripts/testdata/tally/gh-stub.sh scripts/shadow-merge-tally.sh --class dead-links --outcomes --since 2026-08-01 --window "$w" >/dev/null 2>&1; then

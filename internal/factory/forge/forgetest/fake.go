@@ -792,13 +792,13 @@ func (f *Fake) DisableAutoMerge(_ context.Context, nodeID string) error {
 }
 
 // RevertPR implements the Merger's RevertPR: every call opens the next numbered revert.
-func (f *Fake) RevertPR(_ context.Context, nodeID, title, _ string) (forge.Revert, error) {
+func (f *Fake) RevertPR(_ context.Context, of forge.RevertOf) (forge.Revert, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.reverts = append(f.reverts, nodeID+" "+title)
+	f.reverts = append(f.reverts, of.NodeID+" "+of.Title)
 	n := 900 + len(f.reverts)
 	if _, ok := f.prs[n]; !ok { // the revert is a pull request GitHub reads back, as a replay does
-		f.prs[n] = forge.PR{Number: n, NodeID: "PR_revert", State: "OPEN", Title: title}
+		f.prs[n] = forge.PR{Number: n, NodeID: "PR_revert", State: "OPEN", Title: of.Title}
 	}
 	return forge.Revert{Number: n, URL: "https://github.com/Smana/cloud-native-ref/pull/901", NodeID: "PR_revert"}, nil
 }

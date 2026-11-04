@@ -194,22 +194,26 @@ func TestLoadReadsTheFile(t *testing.T) {
 	}
 }
 
-// awaitingCIFor off, written as 0 or left out, loads as no bound (#182).
-func TestAwaitingCIForZeroOrOmittedIsOff(t *testing.T) {
-	for name, raw := range map[string]string{
-		"omitted": good,
-		"zero":    strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 0s", 1),
+// D2: awaitingCIFor left out bounds the wait at a day; written 0s keeps no bound; written, it is read.
+func TestAwaitingCIForDefaultsToADay(t *testing.T) {
+	for name, c := range map[string]struct {
+		raw  string
+		want time.Duration
+	}{
+		"omitted": {good, 24 * time.Hour},
+		"zero":    {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 0s", 1), 0},
+		"set":     {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 6h", 1), 6 * time.Hour},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if name == "zero" && raw == good {
+			if name != "omitted" && c.raw == good {
 				t.Fatal("the edit did not apply")
 			}
-			c, err := Parse([]byte(raw))
+			cfg, err := Parse([]byte(c.raw))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if d := c.Repos()[0].Merge.AwaitingCIFor.Duration; d != 0 {
-				t.Fatalf("awaitingCIFor = %v", d)
+			if d := cfg.Repos()[0].Merge.AwaitingCIBound(); d != c.want {
+				t.Fatalf("awaitingCIFor = %v, want %v", d, c.want)
 			}
 		})
 	}
@@ -472,6 +476,12 @@ func TestBadConfigsFail(t *testing.T) {
 		"no meter throttle query": {`throttleQuery: '_time:2m kubernetes.pod_labels.gateway.envoyproxy.io/owning-gateway-name:"agent-router" | unpack_json | log.response_code:429 AND log.response_flags:~"RL" | stats by (log.x_ar_agent) count() hits'`,
 			"throttleQuery: ''", "meter.throttleQuery is required"},
 		// §4: what the run-request API binds, admits and authenticates against.
+		// S-1, D6: TLS on the run-request API is the whole pair or nothing.
+		"api tls without its key": {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {certFile: /etc/agent-factory-api-tls/tls.crt}\n",
+			"api.tls needs certFile and keyFile both"},
+		"api tls without its cert": {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {keyFile: /etc/agent-factory-api-tls/tls.key}\n",
+			"api.tls needs certFile and keyFile both"},
+		"an empty api tls":              {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {}\n", "api.tls needs certFile and keyFile both"},
 		"no api listen":                 {`listen: ":8443"`, `listen: ''`, "api.listen is required"},
 		"no api issuer":                 {"humanIssuer: https://auth.ogenki.io", "humanIssuer: ''", "api.humanIssuer is required"},
 		"no api jwks":                   {"humanJWKS: https://auth.ogenki.io/oauth/v2/keys", "humanJWKS: ''", "api.humanJWKS is required"},
@@ -716,5 +726,20 @@ func TestParseRefusesTheMetricsSwitch(t *testing.T) {
 		if _, err := Parse([]byte(raw)); err == nil {
 			t.Fatalf("parsed %q", raw)
 		}
+	}
+}
+
+// S-1, D6: api.tls is optional; set, it carries the pair the API serves.
+func TestAPITLSIsOptional(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil || c.API.TLS != nil {
+		t.Fatalf("absent: %+v %v", c.API.TLS, err)
+	}
+	raw := strings.Replace(good, `  listen: ":8443"`+"\n",
+		`  listen: ":8443"`+"\n  tls: {certFile: /etc/agent-factory-api-tls/tls.crt, keyFile: /etc/agent-factory-api-tls/tls.key}\n", 1)
+	c, err = Parse([]byte(raw))
+	if err != nil || c.API.TLS == nil || c.API.TLS.CertFile != "/etc/agent-factory-api-tls/tls.crt" ||
+		c.API.TLS.KeyFile != "/etc/agent-factory-api-tls/tls.key" {
+		t.Fatalf("set: %+v %v", c.API.TLS, err)
 	}
 }

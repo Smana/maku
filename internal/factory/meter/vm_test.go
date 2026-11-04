@@ -5,6 +5,7 @@ package meter
 import (
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 func vmServer(t *testing.T, code int, body string) *VM {
@@ -27,7 +29,7 @@ func vmServer(t *testing.T, code int, body string) *VM {
 		_, _ = io.WriteString(w, body)
 	}))
 	t.Cleanup(srv.Close)
-	v, err := NewVM(srv.URL, "Q", httpx.New(5*time.Second, nil))
+	v, err := NewVM(srv.URL, "Q", runwatch.DefaultKind, httpx.New(5*time.Second, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +129,13 @@ func TestNewVMRefuses(t *testing.T) {
 		"no HTTP client": {"http://vmsingle:8428", "Q", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewVM(c.url, c.query, c.hc); err == nil {
+			if _, err := NewVM(c.url, c.query, runwatch.DefaultKind, c.hc); err == nil {
 				t.Fatal("accepted")
 			}
 		})
 	}
 	for _, u := range []string{"http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428", "https://vm.example/select/0/prometheus"} {
-		if _, err := NewVM(u, "Q", hc); err != nil {
+		if _, err := NewVM(u, "Q", runwatch.DefaultKind, hc); err != nil {
 			t.Fatalf("%s: %v", u, err)
 		}
 	}
@@ -146,11 +148,11 @@ func TestCostFollowsTheGatewaySeries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	usage, err := parseUsage(raw)
+	series, err := parseSeries(raw, runwatch.DefaultKind.RunSubject())
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := usage["cf4ato2x"]
+	u := sumUsage(series)["cf4ato2x"]
 	if u.Input != 1_000_000 || u.CacheRead != 800_000 || u.CacheWrite != 50_000 || u.Output != 100_000 || !u.Typed {
 		t.Fatalf("usage %+v", u)
 	}
@@ -158,5 +160,41 @@ func TestCostFollowsTheGatewaySeries(t *testing.T) {
 	// fresh 150,000 x 1.40 + 800,000 x 0.26 + 50,000 x 1.40 + 100,000 x 4.40 = 928,000 micro-USD
 	if got := cost(p, u); got != 928_000 {
 		t.Fatalf("cost = %d micro-USD, want 928000", got)
+	}
+}
+
+// D9: the meter reads the run subjects of the kind it was given, not a process-wide one, and
+// refuses to start without one.
+func TestTheMeterReadsItsKindsSubjects(t *testing.T) {
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	raw := []byte(`{"status":"success","data":{"resultType":"vector","result":[` +
+		`{"metric":{"ar_agent":"system:serviceaccount:runs:run-abcdefgh"},"value":[0,"42"]},` +
+		`{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"},"value":[0,"9"]}]}}`)
+	series, err := parseSeries(raw, native.RunSubject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 1 || series[0].Run != "abcdefgh" || series[0].Value != 42 {
+		t.Fatalf("series %+v: want the native run's 42 only", series)
+	}
+	if _, err := NewVM("http://vm.example:8428", "Q", runwatch.Kind{}, httpx.New(5*time.Second, nil)); err == nil {
+		t.Fatal("a meter without the runs kind must refuse")
+	}
+}
+
+// D9: so does the throttle reader.
+func TestVLReadsItsKindsSubjects(t *testing.T) {
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"log.x_ar_agent":"system:serviceaccount:runs:run-abcdefgh","hits":"3"}`+"\n"+
+			`{"log.x_ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz","hits":"1"}`+"\n")
+	}))
+	t.Cleanup(srv.Close)
+	got, err := VL{Kind: native, URL: srv.URL, Query: "q", HC: srv.Client()}.RecentlyThrottled(t.Context())
+	if err != nil || !maps.Equal(got, map[string]bool{"abcdefgh": true}) {
+		t.Fatalf("%v %v", got, err)
+	}
+	if _, err := (VL{URL: srv.URL, Query: "q", HC: srv.Client()}).RecentlyThrottled(t.Context()); err == nil {
+		t.Fatal("a VL without the runs kind must refuse")
 	}
 }

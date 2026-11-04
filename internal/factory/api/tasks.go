@@ -25,6 +25,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/ghidentity"
@@ -358,7 +359,7 @@ func (s *Server) openTasks(ctx context.Context, principal string) (int, error) {
 // principalSpent reads the principal's use of the day, spent plus reserved, as admission does
 // (R6, C8): the request's whole ceiling must still fit under its dailyUSD.
 func (s *Server) principalSpent(ctx context.Context, sp *config.Sponsored, maxUSD int64) (bool, error) {
-	used, err := DayUsed(ctx, s.Rooms, s.Namespace, sp.Principal(), s.Now())
+	used, err := ledger.DayUsed(ctx, s.Rooms, s.Namespace, sp.Principal(), s.Now())
 	if err != nil {
 		return false, err
 	}

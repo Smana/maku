@@ -61,6 +61,12 @@ for k in modelSecret gitSecret; do
   s=$(yq ".. | select(has(\"$k\")) | .$k" - <<<"$cfg")
   grep -q "qs_secret agents $s " "$qs/up.sh" || bad "up.sh does not create $k ($s)"
 done
+# The run controller's CA Secret: up.sh creates the one the chart names, holding ca.crt only (S-3)
+ca_secret=$(yq '.broker.tls.caSecretName' "$vals")
+grep -qF "\"metadata\": {\"name\": \"$ca_secret\"}" "$qs/up.sh" || bad "up.sh does not create the CA Secret $ca_secret"
+[[ $(yq '.broker.caSecret' - <<<"$cfg") == "$ca_secret" ]] || bad "the run controller does not read the CA from $ca_secret"
+! grep -F -- 'room-broker-ca' "$qs/up.sh" | grep -q 'tls\.key' || bad "up.sh copies tls.key into the CA Secret"
+[[ $(grep -c '"data": {"ca.crt": .data."tls.crt"}' "$qs/up.sh") == 1 ]] || bad "up.sh does not build the CA Secret data from tls.crt alone"
 [[ $(yq ".. | select(has(\"namespace\")) | .namespace" - <<<"$cfg" | head -1) == "$runs_ns" ]] || bad "run-controller namespace is not $runs_ns"
 grep -q "create namespace $runs_ns " "$qs/up.sh" || bad "up.sh does not create namespace $runs_ns"
 [[ $(q Namespace 'length') == 0 ]] || bad "chart renders a Namespace despite createRunsNamespace=false"
@@ -77,6 +83,12 @@ for c in ok:dmesg ok:dns ok:tcp; do grep -q "$c" "$tmp/gvisor-probe.yaml" || bad
 [[ $(yq '.clusterDomain' "$vals") == cluster.local ]] || bad "up.sh's probe assumes clusterDomain cluster.local"
 grep -qF 'unsandboxed == 0 ]]; then' "$qs/up.sh" || bad "up.sh does not skip the probe under ALLOW_UNSANDBOXED=1"
 for t in sha256sum sha512sum bzip2 tar; do grep -E "^for t in " "$qs/up.sh" | grep -qw "$t" || bad "up.sh does not check for $t (fetch-runsc.sh needs sha512sum, bzip2 and tar; qs_fetch_roomctl needs sha256sum)"; done
+# fetch-runsc.sh installs through qs_install_gvisor, never wipes .quickstart/bin: maku lives there (H-6)
+# shellcheck disable=SC2016 # the literal $tmp, $dir and $want are fetch-runsc.sh's text
+{
+grep -qF 'qs_install_gvisor "$tmp/gvisor.tar.bz2" "$dir" "$want"' "$qs/fetch-runsc.sh" || bad "fetch-runsc.sh does not install through qs_install_gvisor"
+if grep -qE '^rm -rf "\$dir"$' "$qs/fetch-runsc.sh"; then bad "fetch-runsc.sh wipes .quickstart/bin, the maku up.sh installed included"; fi
+}
 
 # Cilium must keep socket-LB out of pod namespaces, or gVisor run pods cannot reach any ClusterIP
 grep -q 'socketLB.hostNamespaceOnly=true' "$qs/up.sh" || bad "up.sh does not set socketLB.hostNamespaceOnly=true (gVisor)"

@@ -19,8 +19,8 @@ import (
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/factory/killswitch"
-	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/tracing"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 func TestRunFactoryRefuses(t *testing.T) {
@@ -53,9 +53,14 @@ func TestRunFactoryRefuses(t *testing.T) {
 }
 
 func TestFactoryManagerOptions(t *testing.T) {
-	for _, ns := range []string{"agent-system", "factory-test"} {
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	for _, tc := range []struct {
+		ns string
+		rk runwatch.Kind // the runs kind: the loop below has its own kind
+	}{{"agent-system", runwatch.DefaultKind}, {"factory-test", native}} {
+		ns, rk := tc.ns, tc.rk
 		t.Run(ns, func(t *testing.T) {
-			o := factoryManagerOptions(ns)
+			o := factoryManagerOptions(ns, rk)
 			if !o.LeaderElection || o.LeaderElectionID != "agent-factory.agents.ogenki.io" || o.LeaderElectionNamespace != ns ||
 				!o.LeaderElectionReleaseOnCancel {
 				t.Fatalf("leader election: %+v", o)
@@ -70,7 +75,7 @@ func TestFactoryManagerOptions(t *testing.T) {
 				t.Fatal("unstructured reads (a stop's run list) must reach the API server")
 			}
 			// The chart's Roles grant exactly these namespaces: a cluster-wide informer is refused.
-			want := map[string][]string{"Task": {ns}, "Room": {ns}, "ConfigMap": {ns}, runs.GVK().Kind: {runs.Namespace()}}
+			want := map[string][]string{"Task": {ns}, "Room": {ns}, "ConfigMap": {ns}, rk.GVK().Kind: {rk.Namespace}}
 			if len(o.Cache.ByObject) != len(want) || o.Cache.DefaultNamespaces != nil {
 				t.Fatalf("cached kinds: %v, default namespaces %v", o.Cache.ByObject, o.Cache.DefaultNamespaces)
 			}
@@ -89,7 +94,7 @@ func TestFactoryManagerOptions(t *testing.T) {
 					}
 				case *unstructured.Unstructured:
 					kind = x.GroupVersionKind().Kind
-					if x.GroupVersionKind() != runs.GVK() {
+					if x.GroupVersionKind() != rk.GVK() {
 						t.Fatalf("watches %v, want the AgentRun GVK", x.GroupVersionKind())
 					}
 				default:

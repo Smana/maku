@@ -181,7 +181,7 @@ func (g *GitHub) LabelEvents(ctx context.Context, number int, label string) ([]L
 func (g *GitHub) Comment(ctx context.Context, number int, body string) error {
 	_, _, err := g.rest.Issues.CreateComment(ctx, g.owner, g.name, number, github.IssueCommentRequest{Body: body})
 	g.mark(err)
-	return wrap("comment", err)
+	return permanent("comment", err)
 }
 
 // recentComments is how many of an issue's newest comments RecentComments returns.
@@ -197,7 +197,7 @@ func (g *GitHub) RecentComments(ctx context.Context, number int) ([]Comment, err
 			&github.IssueListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100, Page: n}})
 		g.mark(err)
 		if err != nil {
-			return nil, nil, wrap("list comments", err)
+			return nil, nil, permanent("list comments", err)
 		}
 		return cs, resp, nil
 	}
@@ -926,20 +926,44 @@ func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, err
 	return out, nil
 }
 
+// maxCheckPages bounds CommitChecks: ten pages of 100 check runs (D3).
+const maxCheckPages = 10
+
+// CheckListTruncated names the marker check CommitChecks appends, State "PENDING", when the
+// listing reached maxCheckPages: checks past the cap were never read, so the commit cannot read
+// green through MainState whatever names it watches.
+const CheckListTruncated = "maku: check listing truncated"
+
 // CommitChecks are the check runs on one commit: main's CI after a merge, where no pull request
-// carries the verdict anymore.
+// carries the verdict anymore. Every page is read, up to maxCheckPages (D3). A listing still going
+// at the cap returns each run it read that is not FAILURE as PENDING, plus the CheckListTruncated
+// marker: the commit reads as still running, never green, while a failure read stays a failure.
 func (g *GitHub) CommitChecks(ctx context.Context, sha string) ([]Check, error) {
-	res, _, err := g.rest.Checks.ListCheckRunsForRef(ctx, g.owner, g.name, sha, &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}})
-	g.mark(err)
-	if err != nil {
-		return nil, wrap("list check runs", err)
+	var out []Check
+	opt := &github.ListCheckRunsOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	for page := 1; ; page++ {
+		res, resp, err := g.rest.Checks.ListCheckRunsForRef(ctx, g.owner, g.name, sha, opt)
+		g.mark(err)
+		if err != nil {
+			return nil, wrap("list check runs", err)
+		}
+		for _, cr := range res.CheckRuns {
+			out = append(out, Check{ID: cr.GetID(), Name: cr.GetName(), State: checkState(strings.ToUpper(cr.GetStatus()), strings.ToUpper(cr.GetConclusion())),
+				Conclusion: strings.ToUpper(cr.GetConclusion())})
+		}
+		if resp.NextPage == 0 {
+			return out, nil
+		}
+		if page == maxCheckPages {
+			for i := range out {
+				if out[i].State != "FAILURE" {
+					out[i].State = "PENDING"
+				}
+			}
+			return append(out, Check{Name: CheckListTruncated, State: "PENDING"}), nil
+		}
+		opt.Page = resp.NextPage
 	}
-	out := make([]Check, 0, len(res.CheckRuns))
-	for _, cr := range res.CheckRuns {
-		out = append(out, Check{ID: cr.GetID(), Name: cr.GetName(), State: checkState(strings.ToUpper(cr.GetStatus()), strings.ToUpper(cr.GetConclusion())),
-			Conclusion: strings.ToUpper(cr.GetConclusion())})
-	}
-	return out, nil
 }
 
 // IsAncestor reports whether ancestor is sha or one of its ancestors: GitHub's compare of
@@ -961,11 +985,24 @@ func (g *GitHub) IsAncestor(ctx context.Context, ancestor, sha string) (bool, er
 	}
 }
 
+// mergeRefusals are GitHub's own words for the refusals mergePullRequest answers 200 with errors[]
+// (F-1), as recorded live in testdata/merge-*.json. The GraphQL client keeps only the first error's
+// message; it is matched by prefix against these, never searched, so text a message happens to
+// carry cannot pass for a refusal.
+var mergeRefusals = []struct {
+	message string
+	err     error
+}{
+	{"Head branch was modified", ErrHeadMoved},
+	{"Pull Request has merge conflicts", ErrNotMergeable},
+}
+
 // Merge merges the pull request now, at the decided head (external review R02, ruling R52):
 // mergePullRequest with expectedHeadOid checks the head at merge time, so a push that lands
 // after the decision refuses the merge instead of merging on the old decision — which is what
 // enablePullRequestAutoMerge's enable-time-only check failed to guarantee. GitHub answers a
-// moved head with 409 and a disallowed merge with 405; the sentinels are what the reconciler
+// moved head or a disallowed merge with 409 or 405, or with 200 and an errors[] message (F-1,
+// testdata/merge-*.json); the sentinels are what the reconciler
 // decides on. squash always: the factory's one commit per task is the history.
 func (g *GitHub) Merge(ctx context.Context, nodeID, head string) error {
 	if head == "" {
@@ -991,6 +1028,16 @@ func (g *GitHub) Merge(ctx context.Context, nodeID, head string) error {
 			return fmt.Errorf("forge: merge: %w", ErrHeadMoved)
 		case http.StatusMethodNotAllowed:
 			return fmt.Errorf("forge: merge: %w", ErrNotMergeable)
+		}
+	}
+	// F-1: most refusals come back 200 with errors[]. Only an error that is not the transport's
+	// (*url.Error carries statusRT's status and any network failure) is GitHub's message.
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		for _, m := range mergeRefusals {
+			if strings.HasPrefix(err.Error(), m.message) {
+				return fmt.Errorf("forge: merge: %w", m.err)
+			}
 		}
 	}
 	return wrap("merge", err)
@@ -1028,8 +1075,21 @@ func (g *GitHub) DisableAutoMerge(ctx context.Context, nodeID string) error {
 }
 
 // RevertPR produces the revert PR GitHub's own button would (§6.4); its revert-<n>-<head> branch is
-// created by the merger App, which is why only that App bypasses agent-merge (R16).
-func (g *GitHub) RevertPR(ctx context.Context, nodeID, title, body string) (Revert, error) {
+// created by the merger App, which is why only that App bypasses agent-merge (R16). A revert already
+// open on such a branch by of.By is the one a previous call opened and lost the answer of (F-11):
+// it is returned, never doubled, since a second revert would count twice against the breaker. The
+// list is one page of 100 open pull requests, newest first, where a revert just opened is.
+func (g *GitHub) RevertPR(ctx context.Context, of RevertOf) (Revert, error) {
+	open, err := g.OpenPullRequests(ctx)
+	if err != nil {
+		return Revert{}, err
+	}
+	branch := fmt.Sprintf("revert-%d-", of.Number)
+	for _, p := range open {
+		if strings.HasPrefix(p.HeadRef, branch) && !p.CrossRepository && SameLogin(p.Author, of.By) {
+			return Revert{Number: p.Number, URL: p.URL, NodeID: p.NodeID}, nil
+		}
+	}
 	var m struct {
 		RevertPullRequest struct {
 			RevertPullRequest struct {
@@ -1039,8 +1099,8 @@ func (g *GitHub) RevertPR(ctx context.Context, nodeID, title, body string) (Reve
 			}
 		} `graphql:"revertPullRequest(input: $input)"`
 	}
-	t, b := githubv4.String(title), githubv4.String(body)
-	err := g.v4.Mutate(ctx, &m, githubv4.RevertPullRequestInput{PullRequestID: githubv4.ID(nodeID), Title: &t, Body: &b}, nil)
+	t, b := githubv4.String(of.Title), githubv4.String(of.Body)
+	err = g.v4.Mutate(ctx, &m, githubv4.RevertPullRequestInput{PullRequestID: githubv4.ID(of.NodeID), Title: &t, Body: &b}, nil)
 	g.mark(err)
 	r := m.RevertPullRequest.RevertPullRequest
 	return Revert{Number: r.Number, URL: r.URL, NodeID: r.ID}, wrap("open a revert", err)
@@ -1171,7 +1231,8 @@ func (g *GitHub) OpenPullRequests(ctx context.Context) ([]PRSummary, error) {
 	for _, p := range prs {
 		out = append(out, PRSummary{Number: p.GetNumber(), Author: p.GetUser().GetLogin(), Created: p.GetCreatedAt().Time,
 			HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA(), BaseRef: p.GetBase().GetRef(),
-			CrossRepository: p.GetHead().GetRepo() == nil || !strings.EqualFold(p.GetHead().GetRepo().GetFullName(), p.GetBase().GetRepo().GetFullName())})
+			CrossRepository: p.GetHead().GetRepo() == nil || !strings.EqualFold(p.GetHead().GetRepo().GetFullName(), p.GetBase().GetRepo().GetFullName()),
+			NodeID:          p.GetNodeID(), URL: p.GetHTMLURL()})
 	}
 	return out, nil
 }
@@ -1190,8 +1251,9 @@ func (g *GitHub) Diff(ctx context.Context, base, head string) (Diff, error) {
 	if cmp.GetTotalCommits() > comparePage { // the files are on a later page: the diff cannot be judged
 		return Diff{}, fmt.Errorf("%w: %d commits between %s and %s, the files are unread", ErrDiffTooLarge, cmp.GetTotalCommits(), base, head)
 	}
-	if len(cmp.Files) == 100 { // one page exactly: unseen files must not let a diff pass as links-only
-		return Diff{}, fmt.Errorf("%w: 100 files differ between %s and %s, the links-only test cannot see them all", ErrDiffTooLarge, base, head)
+	if len(cmp.Files) >= maxChangedFiles { // GitHub's cap: unseen files must not let a diff pass a class's checks
+		return Diff{}, fmt.Errorf("%w: %d files differ between %s and %s, as many as a compare lists: the diff cannot be judged whole",
+			ErrDiffTooLarge, len(cmp.Files), base, head)
 	}
 	// The file list is three-dot: changed since the merge base. Reading the base side at base's
 	// tip instead would fold in whatever landed there since the branch was cut
@@ -1303,6 +1365,21 @@ func (g *GitHub) DefaultBranchFile(ctx context.Context, path string) (text, sha 
 		return "", fc.GetSHA(), false, fmt.Errorf("forge: %s is %d bytes and not readable through the contents API: %w", path, fc.GetSize(), ErrNotAFile)
 	}
 	return text, fc.GetSHA(), true, nil
+}
+
+// permanent is wrap, except that a refusal GitHub will repeat forever is a *PermanentError: the
+// issue gone (404, 410) or locked (a 403 whose message says so; a rate limit's 403 is go-github's
+// own RateLimitError or AbuseRateLimitError, never an ErrorResponse).
+func permanent(what string, err error) error {
+	var er *github.ErrorResponse
+	if errors.As(err, &er) && er.Response != nil {
+		switch code := er.Response.StatusCode; {
+		case code == http.StatusNotFound, code == http.StatusGone,
+			code == http.StatusForbidden && strings.Contains(strings.ToLower(er.Message), "locked"):
+			return &PermanentError{Status: code, Err: wrap(what, err)}
+		}
+	}
+	return wrap(what, err)
 }
 
 func wrap(what string, err error) error {

@@ -143,7 +143,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		diff, ferr := r.merger(ctx).Diff(ctx, "main", pr.HeadSHA)
 		switch {
 		case errors.Is(ferr, forge.ErrDiffTooLarge):
-			// A full page of files is over any class's maxPatchFiles: hand it off, as the gate does.
+			// A compare at GitHub's 300-file cap may hide files: hand it off, as the gate does.
 			d = ArmDecision{Verdict: "human", Reason: "patch_too_large", Rows: d.Rows}
 		case ferr != nil:
 			return ferr
@@ -182,7 +182,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	switch d.Verdict {
 	case "wait":
-		if b := r.repo(t).Merge.AwaitingCIFor.Duration; b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
+		if b := r.repo(t).Merge.AwaitingCIBound(); b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
 			// #182: a check that never reports (a typo in a holdout, a workflow not set up) must not
 			// hold the task silently. Nothing merged: the hand-off says what is missing.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
@@ -882,10 +882,15 @@ func (r *Reconciler) mergedAt(pr forge.PR) metav1.Time {
 
 // MainState is §6.4's watch of main's CI on the merge commit: FAILURE if a watched check that ran
 // failed, PENDING while one that ran is still running, else SUCCESS. A watched check that never
-// ran is not failing: a path-filtered push workflow never reports on a docs merge.
+// ran is not failing: a path-filtered push workflow never reports on a docs merge. The marker of a
+// truncated listing (D3) reads PENDING whatever is watched; a failure still wins.
 func MainState(runs []forge.Check, watched []string) string {
 	state := "SUCCESS"
 	for _, c := range runs {
+		if c.Name == forge.CheckListTruncated {
+			state = "PENDING"
+			continue
+		}
 		if !slices.Contains(watched, c.Name) {
 			continue
 		}
@@ -901,23 +906,32 @@ func MainState(runs []forge.Check, watched []string) string {
 
 // verifying watches main's CI on the merge commit for merge.verifyFor (§6.4). Red, or a
 // maintainer's factory/revert, reverts; not red for the whole window, with nothing still running,
-// is done.
+// is done. A check cancelled on main (cancel-in-progress) or one that never finishes gives no
+// verdict: past twice verifyFor the merge is done unverified (D1), which frees the task's slot and
+// leaves the revert to a maintainer's factory/revert within revertWindow.
 func (r *Reconciler) verifying(ctx context.Context, t *v1alpha1.Task) error {
 	if t.Annotations[v1alpha1.AnnotationRevert] != "" {
 		return r.revert(ctx, t, "revert_requested")
 	}
-	ref := t.Status.PullRequest
+	ref, mg := t.Status.PullRequest, r.repo(t).Merge
 	runs, err := r.merger(ctx).CommitChecks(ctx, ref.MergeCommitSHA)
 	if err != nil {
 		return err
 	}
-	switch MainState(runs, r.repo(t).Merge.VerifyChecks) {
+	switch MainState(runs, mg.VerifyChecks) {
 	case "FAILURE":
 		return r.revert(ctx, t, "main_red")
 	case "SUCCESS":
-		if ref.MergedAt != nil && r.Now().Sub(ref.MergedAt.Time) >= r.repo(t).Merge.VerifyFor.Duration {
+		if ref.MergedAt != nil && r.Now().Sub(ref.MergedAt.Time) >= mg.VerifyFor.Duration {
 			return r.end(ctx, t, v1alpha1.PhaseDone, "merged_verified")
 		}
+	}
+	since := ref.MergedAt
+	if since == nil {
+		since = t.Status.PhaseSince // a status without MergedAt still has the phase's clock
+	}
+	if since != nil && r.Now().Sub(since.Time) >= 2*mg.VerifyFor.Duration {
+		r.finish(ctx, t, v1alpha1.PhaseDone, "merged_unverified", narrate.MergedUnverified(t, since.Add(mg.RevertWindow.Duration)))
 	}
 	return nil
 }
@@ -962,8 +976,9 @@ func (r *Reconciler) revert(ctx context.Context, t *v1alpha1.Task, why string) e
 		if ref.AutoMerged { // an approved merge keeps its two labels (AM1)
 			r.label(ctx, pr, AutoMergedLabel(t.Spec.PredictedClass)) // a second chance: its revert is read against it
 		}
-		if rv, err = r.merger(ctx).RevertPR(ctx, ref.NodeID, fmt.Sprintf("Revert %q", pr.Title),
-			fmt.Sprintf("Reverts #%d (agent factory task `%s`): %s.", ref.Number, t.Name, narrate.Reason(why))); err != nil {
+		if rv, err = r.merger(ctx).RevertPR(ctx, forge.RevertOf{Number: ref.Number, NodeID: ref.NodeID,
+			Title: fmt.Sprintf("Revert %q", pr.Title), By: r.repo(t).Merge.MergerLogin,
+			Body: fmt.Sprintf("Reverts #%d (agent factory task `%s`): %s.", ref.Number, t.Name, narrate.Reason(why))}); err != nil {
 			return err
 		}
 		base := t.DeepCopy()

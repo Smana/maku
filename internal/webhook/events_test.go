@@ -221,3 +221,12 @@ func TestHumanMergeEmitsRoomMergedOnce(t *testing.T) {
 		t.Fatalf("a Done without a merged reason emits nothing: %+v", got)
 	}
 }
+
+// D1: an auto-merge done unverified is merged all the same: it says room.merged.
+func TestAnUnverifiedMergeEmitsRoomMerged(t *testing.T) {
+	var tr Tracker
+	got := tr.Events("room0001", "r", fact(1, envelope.TaskFacts{Phase: "Done", Reason: "merged_unverified", PR: &envelope.PRFact{Number: 9}}))
+	if !slices.ContainsFunc(got, func(e Event) bool { return e.Type == "room.merged" && e.PR == 9 }) {
+		t.Fatalf("want room.merged pr 9: %+v", got)
+	}
+}

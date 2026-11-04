@@ -26,6 +26,7 @@ import (
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 // Against a real API server: the status subresource, resourceVersions, the AgentRun watch.
@@ -41,7 +42,7 @@ func TestEnvtestTaskToRun(t *testing.T) {
 	}
 	defer func() { _ = env.Stop() }()
 	s := scheme()
-	runs.Scheme(s)
+	runs.Scheme(s, runwatch.DefaultKind)
 	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{Scheme: s, Metrics: metricsserver.Options{BindAddress: "0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -49,12 +50,12 @@ func TestEnvtestTaskToRun(t *testing.T) {
 	c := mgr.GetClient()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	for _, ns := range []string{"agent-system", runs.Namespace()} {
+	for _, ns := range []string{"agent-system", runwatch.DefaultKind.Namespace} {
 		if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	r := &Reconciler{Client: c, Namespace: "agent-system", Cfg: cfg(), Forge: forgetest.NewFake(), Runs: runs.Client{C: c},
+	r := &Reconciler{Client: c, Namespace: "agent-system", Cfg: cfg(), Forge: forgetest.NewFake(), Kind: runwatch.DefaultKind, Runs: runs.Client{C: c, Kind: runwatch.DefaultKind},
 		Rooms: &fakeLog{}, Triage: triage.Static{Cfg: cfg()}, Metrics: &fakeMetrics{},
 		Now: time.Now, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Trace: &fakeSink{}}
@@ -70,10 +71,10 @@ func TestEnvtestTaskToRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(runs.GVK())
+	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
 	var got v1alpha1.Task
 	eventually(func() bool {
-		if c.Get(ctx, types.NamespacedName{Namespace: runs.Namespace(), Name: runs.Name(runID("3buqdlot", 0))}, u) != nil {
+		if c.Get(ctx, types.NamespacedName{Namespace: runwatch.DefaultKind.Namespace, Name: runwatch.DefaultKind.ClaimName(runID("3buqdlot", 0))}, u) != nil {
 			return false
 		}
 		return c.Get(ctx, client.ObjectKeyFromObject(tk), &got) == nil && got.Status.Phase == v1alpha1.PhaseImplementing &&
