@@ -168,11 +168,27 @@ func factsKey(f envelope.TaskFacts) string {
 		}
 		f.Spend = &step
 	}
+	// An ended task's key leaves out what only the room's rail reads, the config-derived plan among
+	// them. Every retained task would otherwise read as changed after an upgrade, or a config change:
+	// each would rewrite its room, and a sealed room's would post on every reconcile. A task that
+	// ends still posts them, since its phase moves its key.
+	ended := v1alpha1.TerminalPhase(f.Phase) || f.Phase == v1alpha1.PhaseEscalated
+	if ended {
+		f.Plan, f.Split, f.Parent = nil, nil, nil
+	}
 	// A run's dollars count once it has ended: a running run's tick never posts (R4).
 	f.Run = settled(f.Run)
+	if ended && f.Run != nil {
+		c := *f.Run
+		c.Persona = ""
+		f.Run = &c
+	}
 	f.Runs = slices.Clone(f.Runs)
 	for i := range f.Runs {
 		f.Runs[i] = *settled(&f.Runs[i])
+		if ended {
+			f.Runs[i].Persona, f.Runs[i].Provenance = "", nil
+		}
 	}
 	b, _ := json.Marshal(f) // strings, ints, a time and slices: Marshal cannot fail
 	sum := sha256.Sum256(b)
@@ -210,8 +226,9 @@ func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 // postFacts writes the task's facts into its room. New facts take roomSeq + 1, persisted before
 // the post (ruling SK); a retry of the same facts resends that seq, which the broker keeps once.
 // The caller's status write records Posted. A room the broker has no log for yet, or a broker that
-// does not allow the factory yet (FR-1), is a wait, as for the snapshot: the facts stay due. So is a
-// sealed room: it never takes them, and an error would hold the task in backoff instead of its poll.
+// does not allow the factory yet (FR-1), is a wait, as for the snapshot: the facts stay due. A sealed
+// room never takes them, so they are settled: waiting would post and log on every later reconcile,
+// and an error would hold the task in backoff instead of its poll.
 func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 	if !r.factsDue(t) {
 		return nil
@@ -235,7 +252,9 @@ func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
 			r.log().Warn("task facts wait for a broker that serves them: upgrade the broker", "err", err)
 		})
 		return nil
-	case errors.Is(err, rooms.ErrNoRoom), errors.Is(err, rooms.ErrNotPermitted), errors.Is(err, rooms.ErrSealed):
+	case errors.Is(err, rooms.ErrSealed):
+		r.log().Info("task facts dropped: the room is sealed", "task.id", t.Name, "seq", t.Status.Facts.Seq)
+	case errors.Is(err, rooms.ErrNoRoom), errors.Is(err, rooms.ErrNotPermitted):
 		r.log().Info("task facts wait for the broker", "task.id", t.Name, "seq", t.Status.Facts.Seq, "err", err)
 		return nil
 	case err != nil:

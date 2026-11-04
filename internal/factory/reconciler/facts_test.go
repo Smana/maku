@@ -188,13 +188,11 @@ func TestAFailedFactsPostReusesItsSeq(t *testing.T) {
 }
 
 // No log for the room yet, or no permission for the factory yet (FR-1), is a wait as it is for the
-// snapshot: no error, and the facts stay due under the seq they took. So is a sealed room, which
-// would otherwise hold the task in error backoff for good.
+// snapshot: no error, and the facts stay due under the seq they took.
 func TestARefusedFactsPostWaits(t *testing.T) {
 	for name, refuse := range map[string]func(*fakeLog){
 		"no room log":   func(l *fakeLog) { l.noRoom = true },
 		"not permitted": func(l *fakeLog) { l.noPermit = true },
-		"sealed":        func(l *fakeLog) { l.failFacts = &rooms.APIError{Status: 410, Reason: "sealed"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t, awaiting())
