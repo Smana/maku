@@ -231,9 +231,8 @@ func spanRange(n *ast.CodeSpan, src []byte) (start, stop int, ok bool) {
 	return start, stop, start >= 0
 }
 
-// fencePieces is what a pass does to a fence: one opening and closing at column 0 outside every
-// container keeps its lines and has its info string checked; any other moves there. An empty one
-// holds nothing to move.
+// fencePieces is what a pass does to a fence, empty or not: one opening and closing at column 0
+// outside every container keeps its lines and has its info string checked; any other moves there.
 func fencePieces(n *ast.FencedCodeBlock, src []byte) []piece {
 	info := ""
 	var infoPiece []piece
@@ -242,13 +241,18 @@ func fencePieces(n *ast.FencedCodeBlock, src []byte) []piece {
 		info = string(src[seg.Start:seg.Stop])
 		infoPiece = []piece{{start: seg.Start, stop: seg.Stop, kind: pieceInfo}}
 	}
+	var open, stop int
 	if n.Lines().Len() == 0 {
-		return infoPiece
+		if n.Pos() < 0 {
+			return infoPiece // goldmark records none: the last scan reads what stays
+		}
+		open = lineStart(src, n.Pos())
+		stop = lineEnd(src, open)
+	} else {
+		open = lineStart(src, lineStart(src, n.Lines().At(0).Start)-1)
+		stop = n.Lines().At(n.Lines().Len() - 1).Stop
 	}
-	first, last := n.Lines().At(0), n.Lines().At(n.Lines().Len()-1)
-	open := lineStart(src, lineStart(src, first.Start)-1)
 	root := n.Parent() != nil && n.Parent().Kind() == ast.KindDocument
-	stop := last.Stop
 	atZero := root && strings.IndexByte("`~", src[open]) >= 0
 	if end := lineEnd(src, stop); stop < end && fenceCloser.Match(src[stop:end]) && (root || src[stop] == ' ' || src[stop] == '>') {
 		atZero = atZero && src[stop] != ' '
@@ -279,7 +283,7 @@ func movedBlock(n ast.Node, src []byte, info string, start, stop int) piece {
 		}
 	}
 	body := content.String()
-	if !strings.HasSuffix(body, "\n") {
+	if body != "" && !strings.HasSuffix(body, "\n") {
 		body += "\n"
 	}
 	fence := strings.Repeat("`", max(3, longest+1))

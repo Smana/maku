@@ -35,39 +35,68 @@ var (
 // Everything else counts as live, indented code, nested fences and table cells included. It also
 // answers true for a column-0 fence left open, which would swallow what a caller appends.
 func scanLive(s string) bool {
+	live, _ := scanFences(s)
+	return live
+}
+
+// scanFences is scanLive, and the column-0 fences it trusted, by line. A fence opened behind one to
+// three spaces is real too, so it is followed to its closer and counted when left open, but what it
+// holds counts as live: nothing above can say whether a parser saw it open.
+func scanFences(s string) (bool, []fenceRange) {
 	table := false
 	for _, m := range scanDelimiter.FindAllString(s, -1) {
 		table = table || strings.Contains(m, "|")
 	}
-	var open fence
-	trust, carry := true, false // trust: no nested fence yet, which could pair with a column-0 one
-	for line := range strings.SplitSeq(s, "\n") {
+	var trusted []fenceRange
+	var open, loose fence
+	openAt := 0
+	live, trust, carry := false, true, false // trust: no nested fence yet, which could pair with a column-0 one
+	for i, line := range strings.Split(s, "\n") {
 		if open.char != 0 {
 			if open.closedBy(line) {
+				trusted = append(trusted, fenceRange{first: openAt, last: i})
 				open = fence{}
 			}
 			continue
 		}
-		if f, ok := openingFence(line); ok && trust {
-			open, carry = f, false
-			continue
+		if loose.char != 0 {
+			if loose.closedBy(line) {
+				loose = fence{}
+				continue
+			}
+		} else if f, indent, ok := fenceAtIndent(line); ok {
+			if indent == 0 && trust {
+				open, openAt, carry = f, i, false
+				continue
+			}
+			loose, trust = f, false
 		}
 		trust = trust && !scanNested.MatchString(line)
 		if strings.TrimSpace(line) == "" {
 			carry = false // a paragraph's end ends a backtick left open
 			continue
 		}
-		if liveLine(blankSpans(line, table, &carry)) {
-			return true
-		}
+		live = liveLine(blankSpans(line, table, &carry)) || live
 	}
-	return open.char != 0
+	return live || open.char != 0 || loose.char != 0, trusted
 }
 
-// fence is a column-0 fence's opening: its character and length.
+// fenceRange is a fence by the index of its opening and closing lines.
+type fenceRange struct{ first, last int }
+
+// fence is a fence's opening: its character and length.
 type fence struct {
 	char byte
 	n    int
+}
+
+// fenceAtIndent reads line as a fence opening behind at most three spaces, CommonMark's limit.
+func fenceAtIndent(line string) (f fence, indent int, ok bool) {
+	for indent < len(line) && indent < 3 && line[indent] == ' ' {
+		indent++
+	}
+	f, ok = openingFence(line[indent:])
+	return f, indent, ok
 }
 
 // openingFence reads line as a fence opening at column 0. A backtick fence's info string holds no
@@ -86,13 +115,19 @@ func openingFence(line string) (fence, bool) {
 	return fence{char: line[0], n: n}, true
 }
 
-// closedBy is whether line closes f at column 0.
+// closedBy is whether line closes f as CommonMark reads a closer: behind at most three spaces, at
+// least as long as the opening, with only spaces and tabs after it. A fence a parser has closed
+// must never read as still open here, or what follows it would count as shielded.
 func (f fence) closedBy(line string) bool {
+	i := 0
+	for i < len(line) && i < 3 && line[i] == ' ' {
+		i++
+	}
 	n := 0
-	for n < len(line) && line[n] == f.char {
+	for i+n < len(line) && line[i+n] == f.char {
 		n++
 	}
-	return n >= f.n && strings.TrimSpace(line[n:]) == ""
+	return n >= f.n && strings.Trim(line[i+n:], " \t") == ""
 }
 
 // blankSpans replaces each span of line that shields what it holds with a space. A span does not

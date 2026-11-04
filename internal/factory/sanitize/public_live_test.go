@@ -398,6 +398,129 @@ func TestPublicWithholdsWhatTheParsersDisagreeOn(t *testing.T) {
 	}
 }
 
+// Fences as CommonMark reads them: a closer may sit behind up to three spaces, and any fence, even
+// an empty one, gets the same handling. The first two came through a review, live on GitHub.
+func TestPublicReadsAFenceAsCommonMarkDoes(t *testing.T) {
+	for _, c := range []struct{ name, in, want string }{
+		{"a table after an indented closer", "```\n  ```\n- | a |\n|---|\n| x | [click](https://evil.example/p) #325 @Smana |\n```", Withheld},
+		{"a table after an indented closer, tildes", "~~~\n  ~~~\n> | a |\n|---|\n| x | www.evil.example Smana/maku#325 |\n~~~", Withheld},
+		{"the same, the last fence closed", "```\n  ```\n- | a |\n|---|\n| x | @Smana |\n```\n```", Withheld},
+		{"an empty fence closed indented moves", "```\n  ```\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty fence closed 3 spaces in", "~~~\n   ~~~\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty indented fence moves", "  ```\n  ```\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty nested fence moves", "- ```\n  ```\n\n@x", "```\n```\n\n`@x`"},
+		{"an empty indented fence left open is closed", "text\n\n  ```", "text\n\n```\n```"},
+		{"an empty column-0 fence closed there stays", "```\n```\n\n@x", "```\n```\n\n`@x`"},
+		// open by CommonMark's rules, so the caller's footer would land inside it
+		{"open: nothing after it", "text\n```", Withheld},
+		{"open: four spaces is no closer", "```\nx\n    ```", Withheld},
+		{"open: a tab is no closer", "```\nx\n\t```", Withheld},
+		{"open: a closer with words is no closer", "```\nx\n``` y", Withheld},
+		{"open: a shorter run is no closer", "````\nx\n```", Withheld},
+		{"open: the other character is no closer", "~~~\nx\n```", Withheld},
+		{"open: closed, then opened again", "```\nx\n```\n```\ny", Withheld},
+		// the same with nothing wrong
+		{"a closer with spaces after it", "```\nx\n```  ", "```\nx\n```  "},
+		{"a longer closer", "```\nx\n`````", "```\nx\n`````"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, rep := Public(c.in)
+			if got != c.want {
+				t.Fatalf("Public(%q)\n got %q\nwant %q", c.in, got, c.want)
+			}
+			if rep.Withheld != (c.want == Withheld) {
+				t.Fatalf("Public(%q): %+v", c.in, rep)
+			}
+		})
+	}
+}
+
+// commonMarkCloser is a line CommonMark reads as closing a fence of n of char, written apart from
+// the code's reading of one.
+func commonMarkCloser(char byte, n int) *regexp.Regexp {
+	return regexp.MustCompile("^ {0,3}" + strings.Repeat(string(char), n) + string(char) + "*[ \t]*$")
+}
+
+// fenceLines are lines of nothing but fences, indents and a form: the arrangements that test where a
+// fence ends.
+func fenceLines(seed int64) string {
+	lines := []string{
+		"```", "````", "`````", "~~~", "~~~~", " ```", "  ```", "   ```", "    ```", "\t```", " \t```", " ~~~", "   ~~~", "    ~~~", "\t~~~",
+		"``` x", "~~~ x", "```math", "```  ", "~~~\t", "", "x", "@x", "| a |", "|---|", "| x | @x |", "- | a |", "> | a |",
+	}
+	r := rand.New(rand.NewSource(seed)) //nolint:gosec // a reproducible test corpus
+	var out []string
+	for range 2 + r.Intn(10) {
+		out = append(out, lines[r.Intn(len(lines))])
+	}
+	return strings.Join(out, "\n")
+}
+
+// A reviewer's finding as a property: no fence the scan trusts holds a line CommonMark would read as
+// its closer. And the two things that follow from CommonMark's own reading of these lines, walked
+// here without the scan: a fence left open is refused, and a form outside every fence is live.
+func TestScanTrustsNoFenceCommonMarkWouldClose(t *testing.T) {
+	opener := regexp.MustCompile("^ {0,3}(`{3,}|~{3,})(.*)$")
+	check := func(t *testing.T, s string) {
+		t.Helper()
+		live, fences := scanFences(s)
+		lines := strings.Split(s, "\n")
+		for _, f := range fences {
+			head := opener.FindStringSubmatch(lines[f.first])
+			if head == nil || f.last <= f.first {
+				t.Fatalf("scanFences(%q): %+v is no fence", s, f)
+			}
+			closer := commonMarkCloser(head[1][0], len(head[1]))
+			if !closer.MatchString(lines[f.last]) {
+				t.Errorf("scanFences(%q): %+v does not end on a closer", s, f)
+			}
+			for _, l := range lines[f.first+1 : f.last] {
+				if closer.MatchString(l) {
+					t.Errorf("scanFences(%q): %+v holds %q, which closes it", s, f, l)
+				}
+			}
+		}
+		// CommonMark's walk of a document with no container above the fences.
+		if strings.Contains(s, "- |") || strings.Contains(s, "> |") {
+			return
+		}
+		var open *regexp.Regexp
+		formOutside := false
+		for _, l := range lines {
+			switch {
+			case open != nil:
+				if open.MatchString(l) {
+					open = nil
+				}
+			default:
+				if h := opener.FindStringSubmatch(l); h != nil && (h[1][0] != '`' || !strings.Contains(h[2], "`")) {
+					open = commonMarkCloser(h[1][0], len(h[1]))
+				} else if strings.Contains(strings.ReplaceAll(l, "`@x`", ""), "@x") { // the span Public writes shields it
+					formOutside = true
+				}
+			}
+		}
+		if open != nil && !live {
+			t.Errorf("scanLive(%q) = false, yet CommonMark leaves a fence open", s)
+		}
+		if formOutside && !live {
+			t.Errorf("scanLive(%q) = false, yet CommonMark reads a form outside every fence", s)
+		}
+	}
+	for seed := range int64(5000) {
+		s := fenceLines(seed)
+		check(t, s)
+		out, rep := Public(s)
+		if !rep.Withheld {
+			check(t, out)
+		}
+	}
+	// Soups hold fences in positions no line list reaches.
+	for seed := range int64(500) {
+		check(t, soup(seed, 8+int(seed%60)))
+	}
+}
+
 // A draft as an agent writes one is published: what the last scan refuses must not be ordinary text.
 func TestPublicKeepsAnOrdinaryDraft(t *testing.T) {
 	in := "## What is wrong\n" +
@@ -503,6 +626,13 @@ func TestScanLive(t *testing.T) {
 		{"a fence closed short", "````\nx\n```", true},
 		{"a fence with backticks in its info is no fence", "``` a`b\n@smana\n```", true},
 		{"a tag before a fence still defused", "&lt;div>\n```\n@x\n```\n&lt;/div>", false},
+		{"a closer 3 spaces in closes", "```\n   ```\n@smana\n```\nx\n```", true},
+		{"a closer 2 spaces in, then a form", "~~~\n  ~~~\n@smana", true},
+		{"a closer 4 spaces in does not close", "```\n    ```\n@smana\n```", false},
+		{"a closer behind a tab does not close", "```\n\t```\n@smana\n```", false},
+		{"an indented fence left open", "x\n\n  ```\ny", true},
+		{"an indented fence left open, an empty one", "x\n  ```", true},
+		{"an indented fence, closed, nothing live", "  ```\nx\n  ```", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := scanLive(c.in); got != c.want {
