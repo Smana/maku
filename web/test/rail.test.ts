@@ -79,6 +79,24 @@ describe("rail", () => {
     expect(nodeOf(rail, "r-s").querySelector(".rail-detail")!.textContent).toBe(done);
   });
 
+  it("a run with an outcome and no end time is over, not running", () => {
+    const { rail } = mount();
+    const over = node({ run: "r-o", outcome: "ended", tools: { ok: 1, failed: 0 } });
+    rail.set({ nodes: [over] }, "Implementing", now);
+    const li = nodeOf(rail, "r-o");
+    expect(li.dataset.state).toBe("done");
+    expect(li.querySelector(".rail-chip")!.textContent).toBe("ended");
+    expect(li.querySelector(".rail-detail")!.textContent).toBe("");
+    rail.tick(now + 60_000);
+    expect(li.querySelector(".rail-detail")!.textContent).toBe("");
+    li.querySelector("button")!.focus();
+    expect(card(rail).textContent).not.toContain("still running");
+    rail.live(ev({ runId: "r-o", payload: { status: "ok" } }));
+    expect(card(rail).textContent).toContain("1 ok · 0 failed");
+    rail.set({ nodes: [over, node({ run: "r-n" })] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-live")!.textContent).toBe("implementer started");
+  });
+
   it("live counts a tool result", () => {
     const { rail } = mount();
     rail.set(flow, "AwaitingCI", now);

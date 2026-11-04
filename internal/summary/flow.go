@@ -364,8 +364,8 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 			n.EndedAt = r.leftAt // a manual room's facts, or facts that lag: a run that left is over
 		}
 		n.FromSeq, n.ToSeq = r.from, r.to
-		if n.ToSeq == 0 && rf != nil && !rf.EndedAt.IsZero() {
-			n.ToSeq = r.last // a lost run never left
+		if n.ToSeq == 0 && rf != nil && (!rf.EndedAt.IsZero() || rf.Outcome != "") {
+			n.ToSeq = r.last // a lost or superseded run never left
 		}
 		if envelope.ValidModel(r.model) {
 			n.Model = r.model

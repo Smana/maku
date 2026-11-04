@@ -190,6 +190,19 @@ func TestFlowView(t *testing.T) {
 				t.Fatalf("node = %+v", n)
 			}
 		}},
+		{"a superseded run with an outcome and no end time closes its range", func() []envelope.Event {
+			over := frun("a", "implementer", "implementer", 0)
+			over.Outcome = envelope.OutcomeEnded
+			return []envelope.Event{fjoin(1, "a", "implementer"), ftool(7, "a", "ok"), fjoin(8, "b", "implementer"), ftool(9, "b", "ok"),
+				ffacts(10, envelope.TaskFacts{Phase: "Implementing", Runs: []envelope.RunFact{over, frun("b", "implementer", "implementer", 8)}})}
+		}(), func(t *testing.T, fl *Flow) {
+			if a := fl.Nodes[0]; a.Run != "a" || a.ToSeq != 7 {
+				t.Fatalf("a = %+v", a)
+			}
+			if b := fl.Nodes[1]; b.ToSeq != 0 {
+				t.Fatalf("b = %+v", b)
+			}
+		}},
 		{"a run rotated out", many, func(t *testing.T, fl *Flow) {
 			if len(fl.Nodes) != 20 || fl.Nodes[0].Run != "run00001" {
 				t.Fatalf("nodes = %d, first %+v", len(fl.Nodes), fl.Nodes[0])

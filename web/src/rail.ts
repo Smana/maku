@@ -7,7 +7,7 @@
 import type { RoomEvent } from "./conn";
 import { idTail } from "./chat";
 import { el } from "./controls";
-import { chip, detail, ghostMerge, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
+import { chip, detail, ghostMerge, isLive, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
 import { replay } from "./replay";
 import type { Flow, FlowNode } from "./summary";
@@ -130,7 +130,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     const t = tools.get(n.run) ?? n.tools;
     const lines: HTMLElement[] = [
       el("p", { textContent: `start ${stamp(n.startedAt) || "unknown"}` }),
-      el("p", { textContent: n.endedAt ? `end ${stamp(n.endedAt)}` : "still running" }),
+      el("p", { textContent: n.endedAt ? `end ${stamp(n.endedAt)}` : isLive(n) ? "still running" : "end unknown" }),
       el("p", { textContent: `tool calls ${t.ok} ok · ${t.failed} failed` }),
     ];
     const names = [...(n.model ? [`${n.model} (asked)`] : []), ...(n.models ?? []).filter((m) => m !== n.model)];
@@ -167,7 +167,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     const li = el("li", { className: "rail-node" });
     li.dataset.run = n.run;
     li.dataset.tone = tone(n.role);
-    li.dataset.state = n.endedAt ? "done" : "live";
+    li.dataset.state = isLive(n) ? "live" : "done";
     const b = el("button", { type: "button", className: "rail-button" });
     b.setAttribute("aria-describedby", card.id);
     const c = chip(n);
@@ -178,7 +178,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     line.append(glyph(glyphFor(n.persona, n.role)), persona, chipEl);
     if (n.judge?.count) line.append(el("span", { className: "rail-judge", textContent: `◇×${n.judge.count}`, title: `${n.judge.count} judge verdicts` }));
     const age = el("span", { className: "rail-detail", textContent: detail(n, clock) });
-    if (!n.endedAt) ages.set(n.run, age);
+    if (isLive(n)) ages.set(n.run, age);
     b.append(line, age);
     b.onclick = () => h.select(n.run);
     b.onfocus = () => showCard(n.run);
@@ -342,7 +342,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     root.hidden = !f;
     if (f) {
       if (known) {
-        const started = f.nodes.filter((n) => !n.endedAt && !known!.has(n.run));
+        const started = f.nodes.filter((n) => isLive(n) && !known!.has(n.run));
         if (started.length) announcer.textContent = started.map((n) => `${personaLabel(n.persona)} started`).join(", ");
       }
       known = new Set(f.nodes.map((n) => n.run));
@@ -400,7 +400,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     live(e) {
       if (e.type !== "tool_result" || !e.runId) return;
       const n = nodeOf(e.runId);
-      if (!n || n.endedAt) return;
+      if (!n || !isLive(n)) return;
       const t = { ...(tools.get(n.run) ?? n.tools) };
       const s = e.payload?.status;
       if (s === "error" || s === "rejected") t.failed++;

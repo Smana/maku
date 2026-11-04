@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chip, detail, ghostMerge, ghostsAfter, parts, personaLabel, rows, tone } from "../src/flow";
+import { chip, detail, ghostMerge, ghostsAfter, isLive, parts, personaLabel, rows, tone } from "../src/flow";
 import type { Flow, FlowNode } from "../src/summary";
 
 const node = (o: Partial<FlowNode> = {}): FlowNode => ({
@@ -28,7 +28,17 @@ describe("chip", () => {
     ["ended, no outcome", {}, "ended", ""],
     ["ended, judge met", { judge: { count: 1, last: "met" } }, "✓", "ok"],
     ["live, judge met", { endedAt: undefined, judge: { count: 1, last: "met" } }, "running", "live"],
+    ["an outcome and no end time", { endedAt: undefined, outcome: "ended" }, "ended", ""],
+    ["an outcome, no end time, judge met", { endedAt: undefined, outcome: "ended", judge: { count: 1, last: "met" } }, "✓", "ok"],
   ])("%s", (_n, o, text, kind) => expect(chip(node(o))).toEqual({ text, kind }));
+});
+
+describe("isLive", () => {
+  it.each<[string, Partial<FlowNode>, boolean]>([
+    ["no end, no outcome", { endedAt: undefined }, true],
+    ["an end time", {}, false],
+    ["an outcome and no end time", { endedAt: undefined, outcome: "ended" }, false],
+  ])("%s", (_n, o, want) => expect(isLive(node(o))).toBe(want));
 });
 
 describe("detail", () => {
@@ -46,6 +56,8 @@ describe("detail", () => {
     expect(detail(node({ startedAt: undefined, microUSD: 10000 }), now)).toBe("$0.01");
   });
   it("counts a live run up to now", () => expect(detail(node({ endedAt: undefined }), now)).toBe("60 m"));
+  it("a run over with no end time has no duration, rather than one that grows", () =>
+    expect(detail(node({ endedAt: undefined, outcome: "ended", model: "glm-5.3" }), now)).toBe("glm-5.3"));
 });
 
 describe("rows", () => {
@@ -61,6 +73,10 @@ describe("rows", () => {
   it("never folds the round holding a live node", () => {
     const r = rows(mk([1, 1, 1, 1, 1, 1, 1, 1, 1, 1], true), 8);
     expect(r.every((x) => "node" in x)).toBe(true);
+  });
+  it("folds a round whose runs have an outcome and no end time", () => {
+    const over = mk([1, 1, 1, 2, 2, 2, 3, 3, 3, 3]).map((n) => (n.round === 1 ? { ...n, endedAt: undefined, outcome: "ended" } : n));
+    expect("round" in rows(over, 8)[0]).toBe(true);
   });
 });
 

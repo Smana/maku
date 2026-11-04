@@ -18,6 +18,12 @@ export function personaLabel(persona: string): string {
   return persona.replaceAll("-", " ");
 }
 
+// isLive is the one liveness rule: a run is over once it has an end time or an outcome. The
+// envelope allows an outcome with no end time: factsOf leaves one on a superseded run.
+export function isLive(n: FlowNode): boolean {
+  return !n.endedAt && !n.outcome;
+}
+
 export type ChipKind = "ok" | "changes" | "fail" | "stop" | "live" | "";
 
 export function chip(n: FlowNode): { text: string; kind: ChipKind } {
@@ -29,7 +35,7 @@ export function chip(n: FlowNode): { text: string; kind: ChipKind } {
     case "lost": return { text: "failed", kind: "fail" };
     case "revoked": case "budget_exhausted": return { text: "stopped", kind: "stop" };
   }
-  if (!n.endedAt) return { text: "running", kind: "live" };
+  if (isLive(n)) return { text: "running", kind: "live" };
   if (n.judge?.last === "met") return { text: "✓", kind: "ok" };
   return { text: "ended", kind: "" };
 }
@@ -44,7 +50,7 @@ function duration(ms: number): string {
 export function detail(n: FlowNode, now: number): string {
   const parts: string[] = [];
   const start = n.startedAt ? Date.parse(n.startedAt) : NaN;
-  if (!Number.isNaN(start)) {
+  if (!Number.isNaN(start) && (n.endedAt || isLive(n))) {
     const end = n.endedAt ? Date.parse(n.endedAt) : now;
     if (!Number.isNaN(end)) parts.push(duration(end - start));
   }
@@ -71,7 +77,7 @@ export function rows(nodes: FlowNode[], max: number): Row[] {
   let count = nodes.length;
   const out: Row[] = [];
   rounds.forEach((r, i) => {
-    const foldable = count > max && i < rounds.length - 1 && r.nodes.length > 1 && r.nodes.every((n) => n.endedAt);
+    const foldable = count > max && i < rounds.length - 1 && r.nodes.length > 1 && r.nodes.every((n) => !isLive(n));
     if (foldable) {
       count -= r.nodes.length - 1;
       out.push({ round: r.round, nodes: r.nodes });

@@ -3,7 +3,7 @@
 // The room body with its rail: the conversation's regions beside the run rail, the dots button
 // and the drawer a narrow screen opens. room.ts and the offline preview mount it the same way.
 
-import { tone } from "./flow";
+import { isLive, tone } from "./flow";
 import { mountRail, type Rail } from "./rail";
 import type { Flow } from "./summary";
 
@@ -42,7 +42,7 @@ export function mountRailPane(select: (run: string | undefined) => void, ...regi
       body.classList.toggle("has-rail", !!f);
       dots.hidden = !f;
       if (!f) rail.el.classList.remove("open");
-      dots.replaceChildren(...[...f?.nodes.map((n) => [n.role, n.endedAt ? "done" : "live"]) ?? [], ...(f?.ghosts ?? []).map((g) => [g, "ghost"])].map(([who, st]) => {
+      dots.replaceChildren(...[...f?.nodes.map((n) => [n.role, isLive(n) ? "live" : "done"]) ?? [], ...(f?.ghosts ?? []).map((g) => [g, "ghost"])].map(([who, st]) => {
         const d = document.createElement("span");
         d.className = "rail-dot";
         d.dataset.tone = tone(who);
