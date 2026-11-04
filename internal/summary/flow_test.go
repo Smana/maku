@@ -250,25 +250,28 @@ func TestFlowView(t *testing.T) {
 			return append(evs, fphase(50, "b", map[string]any{"phase": "Running", "model": "kimi-k3"}))
 		}(), func(t *testing.T, fl *Flow) {
 			a, b := fl.Nodes[0], fl.Nodes[1]
-			if a.Outcome != "succeeded" || a.MicroUSD != 820000 || !a.EndedAt.Equal(fat(5)) || a.Model != "glm-5.3" {
+			if a.Outcome != "succeeded" || a.MicroUSD != 820000 || !a.EndedAt.Equal(fat(5)) || a.Model != "" || !slices.Equal(a.Models, []string{"glm-5.3", "other"}) {
 				t.Fatalf("a = %+v", a)
 			}
 			if b.Verdict != "approve" || b.Model != "kimi-k3" {
 				t.Fatalf("b = %+v", b)
 			}
 		}},
-		{"a model the log holds is a model name, else the served one", func() []envelope.Event {
+		{"model is what the log says was asked, a model name, and never the served one", func() []envelope.Event {
 			a := frun("a", "implementer", "implementer", 0)
 			a.Provenance = &envelope.ProvenanceFact{ServedModels: []string{"glm-5.3"}}
 			b := frun("b", "reviewer", "reviewer", 0)
 			b.Provenance = &envelope.ProvenanceFact{ServedModels: []string{"<b>served</b>"}}
-			evs := fruns(envelope.TaskFacts{Phase: "Implementing"}, a, b)
+			c := frun("c", "reviewer", "reviewer", 0)
+			c.Provenance = &envelope.ProvenanceFact{ServedModels: []string{"glm-5.3"}}
+			evs := fruns(envelope.TaskFacts{Phase: "Implementing"}, a, b, c)
 			return append(evs,
 				fphase(50, "a", map[string]any{"phase": "Running", "model": "<img src=x>"}),
-				fphase(51, "b", map[string]any{"phase": "Running", "model": "bad model\n"}))
+				fphase(51, "b", map[string]any{"phase": "Running", "model": "bad model\n"}),
+				fphase(52, "c", map[string]any{"phase": "Running", "model": "agent-default"}))
 		}(), func(t *testing.T, fl *Flow) {
-			if fl.Nodes[0].Model != "glm-5.3" || fl.Nodes[1].Model != "" {
-				t.Fatalf("models = %q, %q", fl.Nodes[0].Model, fl.Nodes[1].Model)
+			if a, b, c := fl.Nodes[0], fl.Nodes[1], fl.Nodes[2]; a.Model != "" || !slices.Equal(a.Models, []string{"glm-5.3"}) || b.Model != "" || c.Model != "agent-default" {
+				t.Fatalf("nodes = %+v", fl.Nodes)
 			}
 		}},
 		{"a node names every served model that is a model name, and its effort", func() []envelope.Event {

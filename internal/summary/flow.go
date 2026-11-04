@@ -209,8 +209,9 @@ type Flow struct {
 }
 
 // FlowNode is one run on the path. ToSeq and EndedAt are zero while the run is live; Edge names
-// the edge into it, from structured fields only. Models are every model that served the run, from
-// its facts; Effort is the reasoning effort its harness last reported.
+// the edge into it, from structured fields only. Model is the model the run asked for, its claim's
+// spec.model from run_phase, which the page labels as asked; Models are every model that served it,
+// from its facts; Effort is the reasoning effort its harness last reported.
 type FlowNode struct {
 	Run       string     `json:"run"`
 	Persona   string     `json:"persona"`
@@ -351,9 +352,6 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 				if envelope.ValidModel(m) && len(n.Models) < maxFlowModels {
 					n.Models = append(n.Models, m)
 				}
-			}
-			if len(p.ServedModels) > 0 && envelope.ValidModel(p.ServedModels[0]) {
-				n.Model = p.ServedModels[0]
 			}
 		}
 	}
