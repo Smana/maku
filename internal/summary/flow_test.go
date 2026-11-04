@@ -408,6 +408,22 @@ func TestFlowView(t *testing.T) {
 	}
 }
 
+func TestARoomSealedMidRunHasNoGhosts(t *testing.T) {
+	plan := []string{"implementer", "reviewer"}
+	for name, seal := range map[string]envelope.Event{
+		"closed": fev(90, "", envelope.StateChanged, fSys, envelope.StatePayload("room_phase", map[string]any{"phase": "Closed"})),
+		"full":   fev(90, "", envelope.StateChanged, fSys, envelope.StatePayload("limit", map[string]any{"events": 1000})),
+	} {
+		t.Run(name, func(t *testing.T) {
+			evs := append(fruns(envelope.TaskFacts{Phase: "Implementing", Plan: plan}, frun("a", "implementer", "implementer", 0)), seal)
+			s := View(Fold(evs), "r", "u", policy.Subject{Kind: envelope.ActorHuman}, 0, fat(100))
+			if s.Flow == nil || len(s.Flow.Nodes) != 1 || len(s.Flow.Ghosts) != 0 {
+				t.Fatalf("flow = %+v", s.Flow)
+			}
+		})
+	}
+}
+
 func TestASealedRoomKeepsItsFlow(t *testing.T) {
 	evs := append(fruns(envelope.TaskFacts{Phase: "Done"}, frun("a", "implementer", "implementer", 0)),
 		fev(90, "", envelope.StateChanged, fSys, envelope.StatePayload("room_phase", map[string]any{"phase": "Closed"})))

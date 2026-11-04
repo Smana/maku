@@ -333,7 +333,8 @@ func flowView(st State) *Flow {
 		}
 		fl.Nodes = append(fl.Nodes, n)
 	}
-	if st.Facts != nil && !pathDone(st.Facts) && cursor < len(fl.Plan) {
+	// A sealed room refuses new facts, so its task's last phase is stale and no run can join.
+	if st.Facts != nil && st.Sealed == "" && !pathDone(st.Facts) && cursor < len(fl.Plan) {
 		fl.Ghosts = slices.Clone(fl.Plan[cursor:])
 	}
 	return fl
