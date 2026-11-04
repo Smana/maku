@@ -71,6 +71,14 @@ func inClusterClient() (client.Client, error) {
 func startSlackApp(ctx context.Context, log *slog.Logger, args []string, getenv func(string) string,
 	newClient func() (client.Client, error),
 ) (*slackRunning, error) {
+	var lc net.ListenConfig
+	return startSlackAppOn(ctx, log, args, getenv, newClient, lc.Listen)
+}
+
+// startSlackAppOn is startSlackApp with its listeners opened by listen.
+func startSlackAppOn(ctx context.Context, log *slog.Logger, args []string, getenv func(string) string,
+	newClient func() (client.Client, error), listen func(ctx context.Context, network, address string) (net.Listener, error),
+) (*slackRunning, error) {
 	fs := flag.NewFlagSet("factory-slack-app", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	path := fs.String("config", getenv("SLACK_APP_CONFIG"), "the App's config file")
@@ -104,10 +112,9 @@ func startSlackApp(ctx context.Context, log *slog.Logger, args []string, getenv 
 	}
 	a := newSlackApp(cfg, cl, rec, log)
 
-	var lc net.ListenConfig
 	lns := make([]net.Listener, 0, 3)
 	for _, addr := range []string{cfg.EventsAddr, cfg.WebhooksAddr, cfg.OpsAddr} {
-		ln, err := lc.Listen(ctx, "tcp", addr)
+		ln, err := listen(ctx, "tcp", addr)
 		if err != nil {
 			for _, l := range lns {
 				_ = l.Close()
@@ -117,10 +124,13 @@ func startSlackApp(ctx context.Context, log *slog.Logger, args []string, getenv 
 		lns = append(lns, ln)
 	}
 	events, hooks, opsLn := lns[0], lns[1], lns[2]
-	ops := opsHandler(func(context.Context) error { return nil }, func(context.Context) (bool, error) { return true, nil },
-		func(context.Context) bool { return true }, func() bool { return ctx.Err() != nil }, exp.Handler())
-
 	runCtx, cancelRun := context.WithCancel(ctx)
+	// A dead listener cancels runCtx, not ctx: /readyz must say 503 for that drain too.
+	down := newDrainFlag(ctx)
+	context.AfterFunc(runCtx, down.Begin)
+	ops := opsHandler(func(context.Context) error { return nil }, func(context.Context) (bool, error) { return true, nil },
+		func(context.Context) bool { return true }, down.Draining, exp.Handler())
+
 	opsCtx, stopOps := context.WithCancel(context.WithoutCancel(ctx))
 	var (
 		mu         sync.Mutex
