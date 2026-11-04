@@ -47,6 +47,15 @@ func Added(cl config.Class, d forge.Diff) (bool, string) {
 			if d.Head[f.Path] == "" {
 				return false, "entry empty: " + f.Path
 			}
+			if why := checkPath(f.Path); why != "" {
+				return false, "entry path " + why
+			}
+			// An in-repo symlink reads back as its target's text, so the head's line count must
+			// equal the stat's additions. A symlink to a one-line target still passes: runlore[bot]
+			// being the only adopted author and the required validate check are what cover it.
+			if n := len(lines(d.Head[f.Path])); n != f.Additions {
+				return false, "entry lines differ from the stat: " + f.Path
+			}
 		case f.Status == "modified" && filefence.MatchesAny(companions, f.Path):
 			if why := appendOnly(f, d.Base[f.Path], d.Head[f.Path]); why != "" {
 				return false, f.Path + ": " + why
@@ -72,6 +81,16 @@ func checkText(s string) string {
 		}
 		if unicode.Is(unicode.Cf, r) {
 			return "format character"
+		}
+	}
+	return ""
+}
+
+// checkPath refuses any control or format character in a path, newline and tab included.
+func checkPath(p string) string {
+	for _, r := range p {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return "has a control or format character"
 		}
 	}
 	return ""

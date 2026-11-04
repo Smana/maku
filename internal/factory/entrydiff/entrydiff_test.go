@@ -40,6 +40,11 @@ func stat(d *forge.Diff, p string) *forge.FileStat {
 	panic(p)
 }
 
+func renameEntry(d *forge.Diff, p string) {
+	d.Base[p], d.Head[p] = "", d.Head[entryPath]
+	stat(d, entryPath).Path = p
+}
+
 func TestAdded(t *testing.T) {
 	for name, c := range map[string]struct {
 		edit func(d *forge.Diff)
@@ -114,8 +119,27 @@ func TestAdded(t *testing.T) {
 		"the entry holds invalid UTF-8": {func(d *forge.Diff) {
 			d.Head[entryPath] = "a\xffb\n"
 		}, false},
+		"the stat disagrees with the entry's lines": {func(d *forge.Diff) {
+			stat(d, entryPath).Additions = 47
+		}, false},
+		"the entry is +0": {func(d *forge.Diff) {
+			stat(d, entryPath).Additions = 0
+		}, false},
+		"the path holds a bidi override": {func(d *forge.Diff) {
+			renameEntry(d, "incidents/a\u202edm.txt.md")
+		}, false},
+		"the path holds a zero-width space": {func(d *forge.Diff) {
+			renameEntry(d, "incidents/a\u200bb.md")
+		}, false},
+		"the path holds a newline": {func(d *forge.Diff) {
+			renameEntry(d, "incidents/a\nb.md")
+		}, false},
+		"the path holds a tab": {func(d *forge.Diff) {
+			renameEntry(d, "incidents/a\tb.md")
+		}, false},
 		"the entry holds tabs": {func(d *forge.Diff) {
 			d.Head[entryPath] = "a\tb\n"
+			stat(d, entryPath).Additions = 1
 		}, true},
 		"an added log line holds a bidi override": {func(d *forge.Diff) {
 			d.Head["log.md"] = "l1\nl2\nl3\nl4\nl\u202e5\n"
