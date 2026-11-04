@@ -86,6 +86,11 @@ func TestParseRefuses(t *testing.T) {
 		"an empty leaf":       {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{}]}}"), "exactly one"},
 		"a repeated leaf":     {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{maxPatchFiles: 1}, {maxPatchFiles: 2}]}}"), "twice"},
 		"modifyOnly false":    {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{modifyOnly: false}]}}"), "modifyOnly"},
+		"a cased top key":     {"Factory: aws-0\n", "Factory"},
+		"a cased dup of mode": {cl("{mode: shadow, Mode: live, author: agents, harness: p}"), "Mode"},
+		"a cased mode alone":  {cl("{Mode: live, author: agents, harness: p}"), "Mode"},
+		"a cased leaf key":    {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{MaxPatchFiles: 1}]}}"), "MaxPatchFiles"},
+		"a cased monitor key": {cl("{mode: shadow, author: agents, harness: p, monitor: {FollowUpWindow: 1h}}"), "FollowUpWindow"},
 		"a long pattern":      {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{allowedFiles: [" + long + "]}]}}"), "bytes"},
 	} {
 		t.Run(name, func(t *testing.T) {

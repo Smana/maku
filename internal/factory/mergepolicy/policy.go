@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 
@@ -145,6 +147,13 @@ func Parse(raw []byte) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mergepolicy: not YAML: %w", err)
 	}
+	var tree any
+	if err := json.Unmarshal(j, &tree); err != nil {
+		return nil, fmt.Errorf("mergepolicy: %w", err)
+	}
+	if err := exactKeys(tree, reflect.TypeFor[File]()); err != nil {
+		return nil, fmt.Errorf("mergepolicy: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(j))
 	dec.DisallowUnknownFields()
 	var f File
@@ -220,4 +229,51 @@ func (p ClassPolicy) shape() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// exactKeys walks a decoded document against t: encoding/json matches keys case-insensitively, so
+// {mode: shadow, Mode: live} would otherwise read as live. At a struct, every key must equal a
+// field's JSON name exactly. Map keys are free-form; other values end the walk.
+func exactKeys(v any, t reflect.Type) error {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch v := v.(type) {
+	case map[string]any:
+		switch t.Kind() {
+		case reflect.Map:
+			for _, k := range slices.Sorted(maps.Keys(v)) {
+				if err := exactKeys(v[k], t.Elem()); err != nil {
+					return err
+				}
+			}
+		case reflect.Struct:
+			fields := map[string]reflect.Type{}
+			for f := range t.Fields() {
+				name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+				if name == "" {
+					name = f.Name
+				}
+				fields[name] = f.Type
+			}
+			for _, k := range slices.Sorted(maps.Keys(v)) {
+				ft, ok := fields[k]
+				if !ok {
+					return fmt.Errorf("key %q is not a field: keys are matched exactly, in their documented case", k)
+				}
+				if err := exactKeys(v[k], ft); err != nil {
+					return err
+				}
+			}
+		}
+	case []any:
+		if t.Kind() == reflect.Slice {
+			for _, e := range v {
+				if err := exactKeys(e, t.Elem()); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
