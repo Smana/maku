@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Smana/maku/internal/envelope"
 )
@@ -36,6 +37,14 @@ const (
 // maxPressPayload bounds one interaction's payload: a card's value is under two hundred bytes, so
 // this is Slack's own size for the message it re-sends plus room to spare.
 const maxPressPayload = 64 << 10
+
+// pressAnswerBound is how long the door may spend telling the clicker something before it answers
+// §6 step 3's already-local outcome. Slack requires the press answered within three seconds, and the
+// Slack client's own timeout is ten: without this, one slow chat.postEphemeral would hold the 200
+// past Slack's window, Slack would retry a press the App has already read, and the clicker could see
+// the line twice. Two seconds leaves the rest of the window for the signature, the parse and the
+// counter.
+const pressAnswerBound = 2 * time.Second
 
 // lineNotEnabled is the one line a press in a channel without the approvals flag gets (§6 step 3):
 // no card was drawn there, so the decision stays on the room page.
@@ -118,9 +127,7 @@ func (a *App) interaction(ctx context.Context, body []byte) string {
 	if !ch.Approvals {
 		// Answered locally, with no broker call (§6 step 3): the flag is off, so no card with a
 		// button was drawn here and the clicker alone is told where the decision lives.
-		if err := a.Slack.PostEphemeral(ctx, in.Channel, in.User, "", a.notEnabled()); err != nil {
-			a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)
-		}
+		a.sayNotEnabled(ctx, in)
 		return "not_enabled"
 	}
 	// §6 step 4: stable across Slack's retries of one press, so a retry answers 200 and does
@@ -138,6 +145,18 @@ func (a *App) interaction(ctx context.Context, body []byte) string {
 		return "busy"
 	}
 	return "queued"
+}
+
+// sayNotEnabled tells the clicker alone where the decision lives, inside pressAnswerBound: the one
+// Slack call the door makes, and so the one that must not outlast Slack's three seconds. A failed or
+// timed-out answer is logged and dropped (§6 step 6): it is never retried, never enqueued as work,
+// and never turns the press into a decision.
+func (a *App) sayNotEnabled(ctx context.Context, in interaction) {
+	actx, cancel := context.WithTimeout(ctx, pressAnswerBound)
+	defer cancel()
+	if err := a.Slack.PostEphemeral(actx, in.Channel, in.User, "", a.notEnabled()); err != nil {
+		a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)
+	}
 }
 
 // notEnabled is the room page's root, the only URL a press in a closed channel is sent to.

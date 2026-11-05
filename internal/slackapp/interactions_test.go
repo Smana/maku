@@ -3,7 +3,9 @@
 package slackapp
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -324,6 +326,61 @@ func TestInteractivityShape(t *testing.T) {
 			t.Fatalf("the clicker was not told where the decision lives: %+v", e)
 		}
 	})
+}
+
+// slowSlack holds chat.postEphemeral until its context ends, as a Slack that will not answer in time
+// does: the call is recorded first, so a test can see the App did try to tell the clicker.
+type slowSlack struct {
+	*fakeSlack
+	entered chan struct{}
+}
+
+func (s *slowSlack) PostEphemeral(ctx context.Context, _, _, _, _ string) error {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(5 * time.Second): // a fast failure for a door with no bound, never a hung test
+		return errors.New("slack did not answer")
+	}
+}
+
+// §6 step 5 and 6: the door's answer is Slack's three seconds, so the one Slack call it makes on the
+// not_enabled path is bounded by the App, not by the client's ten-second timeout. A slow Slack leaves
+// the press answered 200 inside the window, answered not_enabled once, and never turned into a
+// decision — the failed ephemeral is logged and counted, never retried and never enqueued.
+func TestNotEnabledAnswersWithinSlacksWindow(t *testing.T) {
+	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+	slow := &slowSlack{fakeSlack: rig.slack, entered: make(chan struct{}, 1)}
+	rig.app.Slack = slow
+
+	start := time.Now()
+	if st := rig.interact(pressPayload(t, nil)); st != http.StatusOK {
+		t.Fatalf("%d, want 200", st)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("the door held the press for %s, past Slack's three-second window", d)
+	}
+	select {
+	case <-slow.entered:
+	default:
+		t.Fatal("the clicker was never told where the decision lives")
+	}
+	if n := rig.metrics.count("interactions", "not_enabled"); n != 1 {
+		t.Fatalf("interactions/not_enabled counted %d times, want 1", n)
+	}
+	// The slow answer is never a decision, and it never becomes one later either.
+	if got := rig.broker.decided(); len(got) != 0 {
+		t.Fatalf("a channel with the flag off reached the broker: %+v", got)
+	}
+	for _, outcome := range []string{"decided", "duplicate", "refused", "error", "queued"} {
+		if n := rig.metrics.count("interactions", outcome); n != 0 {
+			t.Fatalf("interactions/%s counted %d times, want 0", outcome, n)
+		}
+	}
 }
 
 // A press answered 503 busy must be retried by Slack and handled then, never read as a duplicate and
