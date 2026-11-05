@@ -282,3 +282,68 @@ func TestAFinalFiguresKeyIsNotBucketed(t *testing.T) {
 		t.Fatal("a final figure's key carries the exact dollars (CD23)")
 	}
 }
+
+// aEnded is aSettled in the phase a task that never merged ends in: no pull request, so no revert
+// window keeps its log open — the close is decided by the settle and the final spend alone.
+func aEnded(phase string, end time.Time) *v1alpha1.Task {
+	tk := aSettled(end, 0)
+	tk.Status.Phase = phase
+	return tk
+}
+
+// CD23: the final spend is a fact the room must still take, so the close waits for its instant — a
+// failed or stopped task has no revert window to keep the log open, and closing at the settle window
+// would seal it one minute before the fact is due (the post is then refused for good). Past the instant
+// the room closes as before, so a task whose runs the meter could not price — whose final fact is
+// withheld — is not held open for a figure that can never come.
+func TestTheRoomStaysOpenForTheFinalSpend(t *testing.T) {
+	for _, phase := range []string{v1alpha1.PhaseRejected, v1alpha1.PhaseStopped} {
+		t.Run(phase, func(t *testing.T) {
+			end := now
+			g := newRig(t, aEnded(phase, end))
+			g.r.Cfg.Facts.FinalSpend = true
+			factsPosted(t, g)
+			withRoom(t, g)
+			// The pass that settles the usage would close the room; the instant is still ahead of it.
+			g.r.Now = func() time.Time { return end.Add(g.r.settleWindow()) }
+			res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if roomGone(t, g) {
+				t.Fatal("the room closed before the final spend was due: its log would refuse the fact")
+			}
+			if res.RequeueAfter <= 0 || res.RequeueAfter > spendFinalMargin {
+				t.Fatalf("requeue %s, want the instant, %s away", res.RequeueAfter, spendFinalMargin)
+			}
+			// The instant: the run is priced again, the final fact lands, and the room closes after it.
+			g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
+			g.r.Now = func() time.Time { return end.Add(g.r.settleWindow() + spendFinalMargin) }
+			g.reconcile(t, "3buqdlot", 2)
+			got := finalFacts(g)
+			if len(got) != 1 || got[0].Spend == nil || got[0].Spend.UsedMicroUSD != 420_000 {
+				t.Fatalf("final facts %+v, all %+v", got, g.log.facts)
+			}
+			if !roomGone(t, g) {
+				t.Fatal("the room stays open past the instant")
+			}
+		})
+	}
+	// An unpriced run: no final fact is coming, and the wait is the instant alone — the room closes at
+	// it rather than being retained for a figure the meter cannot claim.
+	t.Run("unpriced", func(t *testing.T) {
+		end := now
+		g := newRig(t, aSettled(end, 1_500)) // tokens, no dollars: the meter priced none of them
+		g.r.Cfg.Facts.FinalSpend = true
+		factsPosted(t, g)
+		withRoom(t, g)
+		g.r.Now = func() time.Time { return end.Add(g.r.settleWindow() + spendFinalMargin) }
+		g.reconcile(t, "3buqdlot", 1)
+		if posted := finalFacts(g); len(posted) != 0 {
+			t.Fatalf("an unpriced task claimed a final figure: %+v", posted)
+		}
+		if !roomGone(t, g) {
+			t.Fatal("the room is held for a final figure that cannot come")
+		}
+	})
+}

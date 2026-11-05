@@ -28,6 +28,14 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 		r.settling(t) || r.revertable(t) || r.revertPending(t) {
 		return false, "", 0, nil
 	}
+	// CD23: the final spend is a fact the room still has to take, and the close seals the log, so the
+	// room stays writable until the instant it is due — a task with no merged pull request has no
+	// revert window to keep it open otherwise. Past the instant the pass either posts the fact (and
+	// this decision is read again after the post) or withholds it, for runs the meter could not price:
+	// then the room closes as it always did, so no room is kept for a figure that cannot come.
+	if at, ok := r.spendFinalAt(t); ok && r.Now().Before(at) {
+		return false, "", max(at.Sub(r.Now()), time.Second), nil
+	}
 	var capLeft time.Duration // no end time, no cap: the room waits as before
 	if s := t.Status.PhaseSince; s != nil {
 		capLeft = max(s.Add(roomCloseCap).Sub(r.Now()), 0)

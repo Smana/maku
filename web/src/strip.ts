@@ -187,8 +187,9 @@ function chips(i: StripInput, now: number, status: boolean): HTMLElement[] {
     out.push(b);
   }
   // CD23: the dollars, in the room's own words — a figure only once it is the task's last, else the
-  // state that stands in its place (summary.ts's spendWords). Nothing to say, no chip.
-  const spend = st?.spend ? spendWords(st) : "";
+  // state that stands in its place (summary.ts's spendWords, which reads an absent spend as the
+  // unpriced case). Nothing to say, no chip.
+  const spend = st ? spendWords(st) : "";
   if (st && spend) {
     const c = chip("chip-spend", spend);
     if (spend === "spend settling") c.title = "the factory prices a finished task's runs again, after the settle window";
