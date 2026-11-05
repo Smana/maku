@@ -4,6 +4,8 @@ package humanapi
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -36,7 +38,7 @@ func needKeysOf(t *testing.T, got toolCall) []string {
 
 // CD10: the tool's items are the route's items, in the same order, and its text is the list to show as it is.
 func TestNeedsListMatchesTheRoute(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
+	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate)
 	got := call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{})
 	var data struct{ Items []summary.Need }
 	if err := json.Unmarshal([]byte(got.structured), &data); err != nil {
@@ -54,8 +56,8 @@ func TestNeedsListMatchesTheRoute(t *testing.T) {
 	}
 }
 
-// CD21: the tool is the route's list, item for item, whatever the route's own door is switched to: one
-// derivation, one order, and the same envelope as structuredContent (the `since` cursor included).
+// CD21: the tool is the route's list, item for item: one derivation, one order, and the same envelope
+// as structuredContent (the `since` cursor included).
 func TestNeedsListIsTheRoutesList(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate)
 	route := mustNeeds(t, e, "", admin("dev"))
@@ -78,7 +80,7 @@ func TestNeedsListIsTheRoutesList(t *testing.T) {
 // Review Focus 3: a `since` that is not an RFC 3339 instant, or one in the future, is refused by the tool
 // as the route refuses it — never read as everything, and never as nothing.
 func TestNeedsListRefusesABadSince(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
+	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate)
 	future := e.srv.now().Add(time.Hour).UTC().Format(time.RFC3339)
 	for _, since := range []string{"yesterday", "2026-11-04 19:10:00", "9999-99-99T00:00:00Z", future} {
 		got := call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{"since": since})
@@ -100,7 +102,7 @@ func TestNeedsListRefusesABadSince(t *testing.T) {
 // CD28: the tool's schema is closed and carries no field that could act: an argument this list does not
 // take, a decision among them, is refused rather than ignored.
 func TestNeedsListTakesNoDecision(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
+	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate)
 	for _, extra := range []string{"decision", "approve", "merge", "action"} {
 		got := call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{extra: "x"})
 		if !got.isError || !strings.Contains(got.text, "invalid_arguments") {
@@ -112,7 +114,7 @@ func TestNeedsListTakesNoDecision(t *testing.T) {
 // Review Focus 1: a room whose facts cannot be read contributes no item, and the tool's text says so in
 // one line — naming only a room the caller may read, as the route does.
 func TestNeedsListSaysWhenARoomsStateIsUnread(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate, unreadableFactsRooms(roomID))
+	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate, unreadableFactsRooms(roomID))
 	got := call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{})
 	if keys := needKeysOf(t, got); !slices.Equal(keys, []string{"26zfnuxm/plan_confirmation/2238"}) {
 		t.Fatalf("%v, want the readable room's item alone", keys)
@@ -129,7 +131,7 @@ func TestNeedsListSaysWhenARoomsStateIsUnread(t *testing.T) {
 // The list narrows to one room and to one repository, as the route's does, and never reveals a room the
 // caller may not read.
 func TestNeedsListNarrowsToRoomAndRepo(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
+	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate)
 	if keys := needKeysOf(t, call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{"room": roomID})); !slices.Equal(keys, []string{"3kq7x2ma/merge/2239"}) {
 		t.Fatalf("room: %v", keys)
 	}
@@ -143,10 +145,33 @@ func TestNeedsListNarrowsToRoomAndRepo(t *testing.T) {
 	}
 }
 
+// CD28: needs_list is one list with GET /api/needs, so the operator's switch governs both: with
+// human.needs.enabled off the tool is on neither list, and a call on either door is an unknown tool.
+// The App never reads needs the feature is off for.
+func TestNeedsListFollowsItsSwitch(t *testing.T) {
+	inits := map[string]http.Header{"a human": viaRoomctl("dev"), "the App": bearer("slack-app")}
+	off := setup(t, mcpOn, withSponsored(sponsoredP)) // needsOn left out: human.needs.enabled is off
+	for name, h := range inits {
+		if names := toolNames(t, off, h); strings.Contains(names, "needs_list") {
+			t.Errorf("%s sees needs_list while human.needs.enabled is off: %s", name, names)
+		}
+		_, out := rpc(t, off, h, "tools/call", map[string]any{"name": "needs_list", "arguments": map[string]any{}})
+		if rpcCode(out) != -32602 || !strings.Contains(fmt.Sprint(out["error"]), "unknown tool: needs_list") {
+			t.Errorf("%s, switch off: %v", name, out)
+		}
+	}
+	on := setup(t, mcpOn, needsOn, withSponsored(sponsoredP))
+	for name, h := range inits {
+		if names := toolNames(t, on, h); !strings.Contains(names, "needs_list") {
+			t.Errorf("%s does not see needs_list with human.needs.enabled on: %s", name, names)
+		}
+	}
+}
+
 // The list is measured by the door it came through: needs_list_total carries surface "tool" for this one,
 // as surface "api" for the route, so a dashboard's single query covers both (PR 3's metrics).
 func TestNeedsListIsMeasured(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
+	e := setup(t, mcpOn, needsOn, worldWithSplitAndMerge(t).gate)
 	call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{})
 	call(t, e, viaRoomctl("dev"), "needs_list", map[string]any{"since": "yesterday"})
 	body := scrape(t, e)

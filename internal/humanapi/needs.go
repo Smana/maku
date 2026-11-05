@@ -47,8 +47,14 @@ type needsEnvelope struct {
 	Unread []string `json:"unread,omitempty"`
 }
 
-// needsFilter narrows one needs read: to a room, to a repository, or to neither (both).
-type needsFilter struct{ room, repo string }
+// needsFilter narrows one needs read: to a room, to a repository, or to neither (both). roomScoped is the
+// door's (CD28): needs_list answers for the App, which has no login, so each item's action is a link it
+// cannot follow for anyone (summary.Caller.RoomScoped); GET /api/needs answers for a login, and leaves it
+// false, as the room rows and the room summary do.
+type needsFilter struct {
+	room, repo string
+	roomScoped bool
+}
 
 // needsScan is the one scan both doors read (CD21, CD28): every room p may read, its needs from needs/v1,
 // in the one order across rooms — a deadline first, then the kind, then the room (summary.Ordered), so the
@@ -66,14 +72,20 @@ func (s *Server) needsScan(ctx context.Context, p authn.Principal, f needsFilter
 	if !s.Groups.IsAdmin(p) && (s.Access == nil || s.Identity == nil) {
 		access = accessUnverified
 	}
-	// As the room list: the gate depends on the repository alone, and a failed check is not cached, so
-	// rooms sharing an unreachable one cost one timeout, not one each.
+	// As the room list: for a login the gate depends on the repository alone, and a failed check is not
+	// cached past this call, so rooms sharing an unreachable one cost one timeout, not one each. A
+	// sponsored principal is the exception (R13): its gate is its membership of *this* room, so two rooms
+	// on one repository answer differently and the room is the key.
 	readable := map[string]bool{}
 	items, unread = []summary.Need{}, []string{}
 	for i := range rooms.Items {
 		room := &rooms.Items[i]
 		repo := room.Spec.Repository
-		ok, seen := readable[repo]
+		key := repo
+		if p.Sponsored {
+			key = room.Name
+		}
+		ok, seen := readable[key]
 		if !seen {
 			v, err := s.gate(actx, room, p)
 			switch {
@@ -86,7 +98,7 @@ func (s *Server) needsScan(ctx context.Context, p authn.Principal, f needsFilter
 				}
 			}
 			ok = v == admitted
-			readable[repo] = ok
+			readable[key] = ok
 		}
 		if !ok {
 			continue
@@ -102,7 +114,7 @@ func (s *Server) needsScan(ctx context.Context, p authn.Principal, f needsFilter
 		if f.repo != "" && !strings.EqualFold(repo, f.repo) {
 			continue
 		}
-		need, read := s.needsFor(ctx, room, p, sub)
+		need, read := s.needsFor(ctx, room, p, sub, f.roomScoped)
 		if !read && room.Status.Task != nil {
 			// A room with no task has nothing to read, so it is quiet and not unread; one whose task's
 			// facts cannot be read is named, and contributes no item (Review Focus 1).

@@ -349,6 +349,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no GitHub link on their ZITADEL user), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
+| `GET /api/needs` | What needs the caller, across every room they may read: [`needs/v1`](#get-apineeds), in the one order, with the cursor to ask from next. Served while `human.needs.enabled` (the default); off, `404`, and `needs_list` is not listed either |
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
 | `POST /api/slack/decisions` | The Slack App's one deciding route, when `human.slackDecide`: `{team, user, channel, messageTS, approvalId, branch, decision}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 200 with a closed code for every refusal, `400` for shape, size or content type, `429` over 10 a minute (burst 5, per `(team,user)`, per replica), `503` when the store, the room or the log cannot be read. `forge.push` only; the human is resolved from `slack_links`, and must be an approver or owner of the room *and* write on its repository |
@@ -403,6 +404,42 @@ access and role check as `GET /v1/ws`, whose replay filters nothing per viewer e
 | `400` | `after` is not a non-negative integer, or `limit` is not an integer from 1 to 500 |
 | `404` | No such room, or one the caller may not read: the same `no such room` |
 | `503` | `access_unverified`, or the rooms or the log are unavailable (`room log unreadable`). Retry |
+
+### `GET /api/needs`
+
+What needs the caller, across every room they may read: one list, one order. `needs/v1` is one
+derivation, and the room rows, the room summary, this route, `needs_list` and the web panel all read it,
+so no two surfaces can disagree. It is a human token's route, as every route but `POST /mcp`: a sponsored
+principal reads its own rooms' needs through `needs_list`, and is `401` here. Served unless
+`human.needs.enabled` is off ([the broker's configuration](integration.md#the-brokers-configuration));
+off, it is a `404` and `needs_list` is not listed either.
+
+| Param | Holds |
+|---|---|
+| `since` | An RFC 3339 instant, the `cursor` of a previous answer: only the items whose cause is newer. Never in the future, and never another format: both are `400`, so a mistyped cursor is neither everything nor nothing |
+| `room` | One room's items |
+| `repo` | One repository's, matched as the room list matches it |
+
+| Field | Holds |
+|---|---|
+| `apiVersion` | `needs/v1` |
+| `items` | One item per thing to do, `[]` when nothing does: `kind` (`plan_confirmation`, `approval`, `question`, `merge`, `review`, `failed_check`, `recovery` or `hold`), `id`, `what` (the move, in prose), `why?` (the factory's reason), `room`, `url`, `action` (`{kind, label, url}`: the one thing to do, and where), `deadline?` (an approval's), `at?` (when the cause landed), `issue?`, `pr?`, `author?` (a question's issue author) and `approve?` (a merge an approval settles: the step says approve the head, never `--admin`). It carries no command: an approval is decided on the room page, every other action on GitHub or the issue, and `action.url` is the link. In the one order, deterministic and never scored: a deadline ascending first, then the kind order above, then the room |
+| `cursor` | This answer's instant, truncated to the second: ask with it as `since` |
+| `access` | `X-Rooms-Access`' value for the caller: why the list may be short, about the caller alone |
+| `unread?` | The rooms whose state could not be read: they contribute no item, and one line of the text says so rather than passing them off as quiet. A room the caller may not read is never named |
+
+| Status | When |
+|---|---|
+| `200` | The list |
+| `400` | `since` is not an RFC 3339 instant, or is in the future |
+| `401` | Not a human's token; a sponsored principal's included |
+| `404` | `human.needs.enabled` is off |
+| `429` | `rate_limited`: over the caller's read budget (10/s, burst 20, per replica), shared with `GET /api/rooms` |
+| `503` | `access_unverified`, or the rooms are unavailable. Retry |
+
+An answer counts in `maku_needs_list_total{surface="api", principal, outcome}` (`ok`, `unread`,
+`refused` or `error`), and what it held in `maku_needs_items{kind}`. The same list over `POST /mcp`
+counts under `surface="tool"`, so one query covers both doors.
 
 ### The coarse state
 
@@ -544,10 +581,11 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `room_queue` | collaborator | `room`, `text` | `{room, queued}`: the message's `seq`. Its text is machine-sent |
 | `room_fork` | as the `fork` action | `room`, `at`, `role?`, `prUrl?`, `egress?`, `note?` | `{room, url, run?, runError?}`. The note is machine-sent |
 | `issue_draft` | any member | `repo`, `title`, `body` | `{repo, title, body, stripped, canStart, canStartWhy?}`: the draft with hidden and control characters stripped (`stripped` counts them). `canStart` is true when `repo` is in `human.mcp.sessionStart` and the caller writes to it on GitHub; else `canStartWhy` is `off` (not listed, no GitHub check wired, or a sponsored caller), `not_linked`, `no_write` (read only, or the GitHub App cannot see the repository) or `unverified` (the check failed). Refused unless the title reads `<area>: <what is wrong>` (at most 256 characters), the body holds `## What is wrong`, `## What it should be` and `## Acceptance check` in that order (at most 16 KiB), and the redactor finds no secret. It files nothing: `maku mcp`'s `issue_file` does |
+| `needs_list` | any member; a sponsored principal, the rooms it watches | `since?`, `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. Listed only while `human.needs.enabled` serves the route. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page |
 | `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, the one question to ask first, `canStart`. One public-text-only model call; it files nothing ([the planner](#the-planner-on-mcp)) |
 | `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, `on_behalf_of?` | The plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
 
-The view tools (`rooms_list`, `room_summary`, `room_changes`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
+The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
 
 `prompts/list` and `prompts/get` serve the prompts `handoff` (`what`), `plan` (`what`), `status` (`room`) and `inbox`: canned
 messages the client offers as slash commands. A sponsored principal's list is empty. The prompts start nothing and compose nothing: `handoff` passes the developer's words and the session's context to `intake_plan` and then files through `issue_file`, and `plan` stops after showing what the planner answered.
@@ -650,11 +688,17 @@ public text only, refuses a private repository before the call, and logs the has
 A sponsored principal (a ZITADEL machine user declared in the broker's `human.mcp.sponsored` and the
 factory's `api.sponsored`, [factory](factory.md#sponsored-principals)) reaches `/mcp` with its own
 client-credentials token, whose audience must hold the project (`human.projectIDFile`). Nothing
-else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees five tools
-plus the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`,
-`room_summary`, `room_tail`, `room_changes`, `intake_plan` and `plan_check`; `room_queue`,
-`room_fork` and `rooms_list` are unknown tools to it. It reads a room only as one of its `watcher`
-members, which the factory adds when it creates its task's room, with no GitHub check.
+else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees six tools, plus
+the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`, `room_summary`,
+`room_tail`, `room_changes`, `needs_list`, `intake_plan` and `plan_check`; `room_queue`, `room_fork` and
+`rooms_list` are unknown tools to it, as is `needs_list` while `human.needs.enabled` is off. It reads a
+room only as one of its `watcher` members, which the factory adds when it creates its task's room, with no
+GitHub check.
+
+`needs_list` is its one room-scoped read (CD28): the room's needs, not a login's, so the merge it cannot
+perform is listed with a link to the pull request and no field that could carry a decision — the schema
+takes `since`, `room` and `repo` only, and refuses anything else. The two legacy room reads stay need-free
+(B1): `room_summary` and the room's row say nothing needs it, as they did before.
 
 | Tool | Arguments | Result |
 |---|---|---|

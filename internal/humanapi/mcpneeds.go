@@ -36,8 +36,9 @@ func (s *Server) needsServedTool(ctx context.Context, p authn.Principal, outcome
 // needsList is needs_list: the caller's needs across every room they may read, as needs/v1 — GET
 // /api/needs' answer for a client that reaches the broker through /mcp (CD21, CD28). Both doors read one
 // scan (needsScan), so their items and their order cannot disagree, and the text is roomview.Needs', the
-// list as the model shows it. It follows /mcp's switch, not human.needs.enabled: with the browser's door
-// off, this stays the App's own way to the same list.
+// list as the model shows it. It is listed only while human.needs.enabled serves the list (mcpTools), so
+// the App's door and the browser's turn off together. A sponsored caller reads the room's needs, not a
+// login's (summary.Caller.RoomScoped): it has no login, and every item's action is a link, never a decision.
 func (s *Server) needsList(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
 	var a needsArgs
 	bad := toolError("invalid_arguments: since is an RFC 3339 instant, as the answer's cursor is, and never in the future; " +
@@ -57,7 +58,7 @@ func (s *Server) needsList(ctx context.Context, p authn.Principal, args json.Raw
 		}
 		since = t
 	}
-	items, unread, access, err := s.needsScan(ctx, p, needsFilter{room: a.Room, repo: a.Repo})
+	items, unread, access, err := s.needsScan(ctx, p, needsFilter{room: a.Room, repo: a.Repo, roomScoped: p.Sponsored})
 	if err != nil {
 		s.needsServedTool(ctx, p, needsOutcomeError)
 		return nil, err

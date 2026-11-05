@@ -178,7 +178,8 @@ func TestNeedsRouteFollowsItsSwitch(t *testing.T) {
 }
 
 // R13, C18: /api/needs is the human token's door. A sponsored token stays unauthenticated there, as on
-// every route but /mcp: the App reads its rooms through its own tool, never through this one (CD28).
+// every route but /mcp: the App reads its rooms' needs through its own tool, never through this one
+// (CD28: needs_list is the App's door, and TestSponsoredNeedsListIsTheRooms is that side).
 func TestNeedsRefusesASponsoredToken(t *testing.T) {
 	e := setup(t, needsOn, needsWorld(t, nil), withSponsored(sponsoredP))
 	if code, body := get(t, e, "/api/needs", bearer("slack-app")); code != http.StatusUnauthorized {
