@@ -217,9 +217,13 @@ func markdownWhere(r Row, o Options) string {
 }
 
 // needPhrase is a need of the broker's own kinds as a short phrase for a row's cell, "" for a need
-// it does not know. The need's full text is the card's: a cell stays one short line.
+// it does not know. The need's full text is the card's: a cell stays one short line. A merge need
+// reads the one answer it carries (Need.Approve): an approval of the head is the action when the gate
+// merges it (AM3), and a row that said "merge" there would ask for a merge nobody may do.
 func needPhrase(n *summary.Need) string {
 	switch {
+	case n.Kind == "merge" && digits(n.ID) && n.Approve:
+		return "approve the head on #" + n.ID
 	case n.Kind == "merge" && digits(n.ID):
 		return "merge #" + n.ID
 	case n.Kind == summary.NeedQuestion && digits(n.ID):

@@ -170,3 +170,32 @@ func TestTheNextStepUnderApproveToMergeSaysApprove(t *testing.T) {
 		t.Fatalf("without approveToMerge: reason %q next %q", st.Reason, st.Next)
 	}
 }
+
+// A pull request holding a commit no run of the task reported waits on the one path that takes it: a
+// repository admin's bypass, and both the NEXT box and the step say so in one sentence, with the
+// reason. Waiting is the door the factory's issue comment reads, so the two surfaces cannot diverge.
+func TestTheHumanCommitStepSaysWhy(t *testing.T) {
+	f := &envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "human_commit_in_pr",
+		PR: &envelope.PRFact{Number: 42, URL: "https://github.com/o/r/pull/42"}}
+	_, next := summary.Waiting(f)
+	for _, want := range []string{"a person pushed a commit the factory cannot vouch for", "only a repository admin can merge it", "bypass rules", "--admin"} {
+		if !strings.Contains(next, want) {
+			t.Fatalf("next %q lacks %q", next, want)
+		}
+	}
+	step := summary.StepFor(summary.StepIn{Phase: "AwaitingHuman", Reason: "human_commit_in_pr", PR: 42,
+		PRURL: "https://github.com/o/r/pull/42", CanClose: true})
+	if step == nil || step.Kind != summary.StepPR || step.Approve ||
+		!strings.Contains(step.Label, "a repository admin merges PR #42") ||
+		!strings.Contains(step.Label, "a person pushed a commit the factory cannot vouch for") {
+		t.Fatalf("step: %+v", step)
+	}
+	// The room says it too: the next step is the facts', not the renderer's.
+	if s := taskView(*f, owner()); s.Status.Next != next {
+		t.Fatalf("the room's next %q, the door's %q", s.Status.Next, next)
+	}
+	// It stays a step for the caller who may close the room, and is none for anyone else.
+	if got := taskView(*f, watcher()).Step; got != nil {
+		t.Fatalf("a watcher's step: %+v", got)
+	}
+}

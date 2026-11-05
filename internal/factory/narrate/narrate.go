@@ -634,10 +634,24 @@ func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paus
 func WaitingForHuman(t *v1alpha1.Task, reason string) Event {
 	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, Reason(reason))
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
-		// The ruleset blocks a plain merge, whoever approved (#51).
-		body += "\n\nTo merge: " + summ.MergeHow(t.Spec.Repository, pr.Number, false) + "."
+		body += "\n\nTo merge: " + howAMaintainerMerges(t, reason, pr.Number) + "."
 	}
 	return Event{Key: "human-" + reason + "-" + fmt.Sprint(len(t.Status.Runs)), Body: body}
+}
+
+// howAMaintainerMerges is how a by-hand hand-off's pull request is merged, in the room's own words.
+// A hand-off whose next step names this merge itself keeps summary.Waiting's sentence verbatim
+// (human_commit_in_pr: only a repository admin can take a commit the factory cannot vouch for, and the
+// sentence says why before how), so the comment a maintainer reads on GitHub and the room's NEXT box
+// cannot say two things (CD21, fast-follow 1). The other by-hand reasons keep the ruleset's bypass
+// sentence, which no approval returns (#51).
+func howAMaintainerMerges(t *v1alpha1.Task, reason string, n int) string {
+	if reason == "human_commit_in_pr" {
+		if _, next := summ.Waiting(&envelope.TaskFacts{Phase: v1alpha1.PhaseAwaitingHuman, Reason: reason}); next != "" {
+			return next
+		}
+	}
+	return summ.MergeHow(t.Spec.Repository, n, false)
 }
 
 // WaitingForApproval is WaitingForHuman on a repository with approveToMerge (human path AM3): the

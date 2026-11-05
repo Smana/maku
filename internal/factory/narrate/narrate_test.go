@@ -15,10 +15,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	summ "github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/wire"
 )
 
@@ -610,5 +612,29 @@ func TestTheWouldArmMarkerSaysWhatBlocked(t *testing.T) {
 	tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"}}
 	if k := WouldArm(tk, "docs-links", "abc", true, false).Key; k != "would-arm-0 head=abc paused=true capped=false" {
 		t.Fatalf("%q", k)
+	}
+}
+
+// Fast-follow 1: the comment a maintainer reads on GitHub for a commit the factory cannot vouch for
+// carries the room's own sentence, verbatim: only a repository admin can merge it, and why. Two
+// surfaces telling one hand-off differently is the defect, so the sentence is the summary's.
+func TestTheHumanCommitHandOffCarriesTheRoomsSentence(t *testing.T) {
+	tk := task()
+	tk.Spec.Repository = "Smana/cloud-native-ref"
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 2267, URL: "https://github.com/Smana/cloud-native-ref/pull/2267"}
+	body := WaitingForHuman(tk, "human_commit_in_pr").Body
+	_, next := summ.Waiting(&envelope.TaskFacts{Phase: v1alpha1.PhaseAwaitingHuman, Reason: "human_commit_in_pr",
+		PR: &envelope.PRFact{Number: 2267, URL: "https://github.com/Smana/cloud-native-ref/pull/2267"}})
+	if next == "" || !strings.Contains(body, next) {
+		t.Fatalf("the comment must carry the room's sentence %q:\n%s", next, body)
+	}
+	for _, want := range []string{"a person pushed a commit the factory cannot vouch for", "--admin"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("no %q in\n%s", want, body)
+		}
+	}
+	// It is the by-hand hand-off: the approveToMerge wording is not this one's.
+	if strings.Contains(body, "To merge: approve this pull request") {
+		t.Fatalf("an approve-to-merge comment for a by-hand reason:\n%s", body)
 	}
 }

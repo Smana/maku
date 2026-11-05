@@ -350,3 +350,25 @@ func TestRoomIDComesLast(t *testing.T) {
 		t.Errorf("terminal:\n%s", txt)
 	}
 }
+
+// A row's cell answers the need's own question: approve, when an approval merges the head the
+// maintainer read (AM3), merge otherwise. The row never says merge for work an approval settles.
+func TestTheRowSaysApproveWhenAnApprovalMergesTheHead(t *testing.T) {
+	rows := []Row{
+		{ID: "approve1", State: summary.StateWaiting, Need: &summary.Need{Kind: summary.NeedMerge, ID: "2239", Approve: true,
+			What: summary.MergeHow("Smana/a", 2239, true)}, LastEventAt: now},
+		{ID: "merge001", State: summary.StateWaiting, Need: &summary.Need{Kind: summary.NeedMerge, ID: "2240",
+			What: summary.MergeHow("Smana/a", 2240, false)}, LastEventAt: now},
+	}
+	for _, f := range []Format{Markdown, Text} {
+		out := render(t, rows, Options{Format: f, Now: now, Rooms: rooms})
+		for _, want := range []string{"approve the head on #2239", "merge #2240"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("format %d: no %q in\n%s", f, want, out)
+			}
+		}
+		if strings.Contains(out, "merge #2239") || strings.Contains(out, "--admin") {
+			t.Errorf("format %d: an approve-to-merge row says merge in\n%s", f, out)
+		}
+	}
+}
