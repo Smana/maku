@@ -162,6 +162,10 @@ type Set struct {
 	// SlackLinks is rooms_slack_links_total{outcome}: the Slack self-serve link's steps and
 	// refusals, from humanapi's closed list.
 	SlackLinks metric.Int64Counter
+	// SlackDecisions is rooms_slack_decisions_total{result, decision}: the one route the Slack App
+	// decides through, by the closed code it answered with and the decision it recorded (empty when
+	// it recorded none).
+	SlackDecisions metric.Int64Counter
 
 	meter             metric.Meter
 	appended          metric.Int64Counter
@@ -233,6 +237,9 @@ func New(meter metric.Meter) (*Set, error) {
 	s.MCPCalls, err = meter.Int64Counter("rooms_human_mcp_calls_total", metric.WithDescription("Tool calls on the human MCP server, by tool and outcome."))
 	check(err)
 	s.SlackLinks, err = meter.Int64Counter("rooms_slack_links_total", metric.WithDescription("Slack self-serve link steps and refusals, by outcome."))
+	check(err)
+	s.SlackDecisions, err = meter.Int64Counter("rooms_slack_decisions_total",
+		metric.WithDescription("Slack decisions on forge.push approvals, by the closed result code and the decision."))
 	check(err)
 	// Ruling AP: counted by the broker from the events bridges append, since
 	// nothing dials into a sandbox to scrape a bridge.

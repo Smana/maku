@@ -95,6 +95,9 @@ type HumanConfig struct {
 	// SlackLink turns on the Slack self-serve link: the Slack App mints one-time codes, and a
 	// signed-in human confirms one on /link/slack. Off unless set.
 	SlackLink *SlackLinkConfig `json:"slackLink,omitempty"`
+	// SlackDecide turns on POST /api/slack/decisions: the Slack App's Approve/Deny buttons decide a
+	// forge.push approval. Off unless set: the path is then the mux's 404.
+	SlackDecide *SlackDecideConfig `json:"slackDecide,omitempty"`
 }
 
 // EffectiveMode is the mode the broker serves: an empty mode is the OIDC deployment every existing
@@ -127,6 +130,15 @@ type SlackLinkConfig struct {
 
 // slackTeamRE is a Slack workspace id, as the App's.
 var slackTeamRE = regexp.MustCompile(`^T[A-Z0-9]{2,20}$`)
+
+// SlackDecideConfig is human.slackDecide: the sponsored principal (the Slack App) that may post a
+// decision, and the one Slack workspace whose clicks are this broker's (v3.x Slack push approval
+// D14). On, it serves POST /api/slack/decisions; off, the path is a 404. The class it decides is a
+// constant (D13), so it is not configurable here.
+type SlackDecideConfig struct {
+	Principal string `json:"principal"`
+	TeamID    string `json:"teamID"`
+}
 
 // MCPConfig switches the human listener's MCP server.
 type MCPConfig struct {
@@ -505,6 +517,7 @@ func (h HumanConfig) validate(system []string) []error {
 			{"human.projectIDFile", h.ProjectIDFile != "", "no token carries a project audience"},
 			{"human.access", h.Access != nil, "the local user is an admin, and D7 gates members only"},
 			{"human.slackLink", h.SlackLink != nil, "a link code names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.slackDecide", h.SlackDecide != nil, "a decision names a sponsored principal and a GitHub link, neither of which mode local has"},
 		} {
 			if f.refused {
 				errs = append(errs, fmt.Errorf("%s: mode local takes no %s: %s", f.name, strings.TrimPrefix(f.name, "human."), f.why))
@@ -597,6 +610,20 @@ func (h HumanConfig) validate(system []string) []error {
 		}
 		if h.Access == nil {
 			errs = append(errs, errors.New("human.slackLink needs human.access: a link is to the account's GitHub link"))
+		}
+	}
+	// D14: the decide switch names what the route resolves a click through — a declared sponsored
+	// principal and the GitHub check that turns the linked human into a login — and nothing else:
+	// the one class it decides is a constant (D13). The workspace is the App's, as slackLink's.
+	if d := h.SlackDecide; d != nil {
+		if !slices.ContainsFunc(h.MCP.Sponsored, func(sp SponsoredConfig) bool { return sp.Name == d.Principal }) {
+			errs = append(errs, fmt.Errorf("human.slackDecide.principal: %q is not one of human.mcp.sponsored", d.Principal))
+		}
+		if !slackTeamRE.MatchString(d.TeamID) {
+			errs = append(errs, fmt.Errorf("human.slackDecide.teamID: %q is not a Slack workspace id", d.TeamID))
+		}
+		if h.Access == nil {
+			errs = append(errs, errors.New("human.slackDecide needs human.access: a decision is the linked human's room standing and repository write"))
 		}
 	}
 	if a := h.Access; a != nil {
