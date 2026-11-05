@@ -856,10 +856,19 @@ func (a *App) Webhooks() http.Handler {
 			http.Error(w, "try again", http.StatusBadGateway)
 			return
 		}
-		a.count(ctx, "webhooks", outcome)
+		// One request has one outcome: the approval-close path counts its own word where it happens
+		// (closeCard), so it hands back countedInPlace and has nothing left to add here.
+		if outcome != countedInPlace {
+			a.count(ctx, "webhooks", outcome)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 }
+
+// countedInPlace is the outcome a path returns when it counted its own word instead of handing one
+// back: the approval-close path does (closeCard, counted in deliver, D10), so one request keeps one
+// outcome and its word never becomes the 502 the broker retries.
+const countedInPlace = ""
 
 func (a *App) deliver(ctx context.Context, body []byte) string {
 	var e webhook.Event
@@ -880,6 +889,17 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	// approval id. Everything else keeps today's line, with no button.
 	if e.Type == "room.waiting_for_human" && a.cardWanted(e, th) {
 		return a.postOrUpdateCard(ctx, th, e)
+	}
+	// D10: a closed approval makes its card inert, in a channel that draws cards; a channel that
+	// draws none had the wait as a text line, so its close is the thread's line instead. The card is
+	// a view, never the fence: the close's word is counted here rather than by the handler, so the
+	// delivery itself is never the `error` the broker retries — a card the App cannot rewrite stays
+	// readable, and the store refuses a press on it anyway.
+	if e.Type == "room.approval_closed" {
+		if ch, served := a.Channels[th.Channel]; served && ch.Approvals {
+			a.count(ctx, "webhooks", a.closeCard(ctx, th, e))
+			return countedInPlace
+		}
 	}
 	return a.postWaitLine(ctx, th, e)
 }
@@ -908,6 +928,10 @@ func (a *App) line(e webhook.Event) (string, bool) {
 		return fmt.Sprintf("A budget was reached (%s).", limit), true
 	case "room.ended":
 		return fmt.Sprintf("Ended, state: %s. Room: %s", state, url), true
+	case "room.approval_closed":
+		// D10: the thread that draws no card still hears how its wait closed; a channel that draws
+		// cards has the card itself as that message (closeCard), and this line is never reached.
+		return fmt.Sprintf("The approval closed: %s. Room: %s", webhook.Clip("decision", e.Decision), url), true
 	}
 	return "", false
 }

@@ -214,6 +214,109 @@ func approvalCard(e webhook.Event, roomsURL string, now time.Time) (string, json
 	return cardTitle, raw
 }
 
+// The four lines a closed card carries (§5's teardown, and the design's lifecycle). They are fixed
+// and name nobody: §4's room.approval_closed payload is {approvalId, decision} — no actor — so a
+// card that said "approved by @x" would name the wrong person whenever the room page decided it.
+const (
+	lineCardApproved   = "Approved."
+	lineCardDenied     = "Denied."
+	lineCardExpired    = "The deadline passed."
+	lineCardSuperseded = "No longer open."
+)
+
+// closeCardLine is the one line a closed card carries for one of §4's four decisions. A value
+// outside the closed set — the tracker drops those, so this is a barrier — reads as the line that
+// says the card is closed without claiming how.
+func closeCardLine(decision string) string {
+	switch decision {
+	case codeApproved:
+		return lineCardApproved
+	case codeDenied:
+		return lineCardDenied
+	case "expired":
+		return lineCardExpired
+	}
+	return lineCardSuperseded
+}
+
+// inertCard is §5's card after it closes: the header, the fields it still knows, and one fixed
+// outcome line, with no actions block at all — a block list left as it is keeps its buttons. It
+// draws from the event (or the card's own tag) and never from a clock: what closed the approval is
+// the store's, and the card only reports it (D10). The Deadline row is gone with the buttons: the
+// close's payload carries no deadline, and the row is what a press decides against.
+//
+// text is the line and not the title: Slack shows text wherever blocks do not render (a
+// notification, an old client), and the outcome is what that place should say.
+func inertCard(e webhook.Event, roomsURL, line string) (text string, blocks json.RawMessage) {
+	fields := []cardText{{Type: cardMrkdwn, Text: "*Class*\n" + pressClass}}
+	if envelope.ValidBranch(e.Branch) {
+		fields = append(fields, cardText{Type: cardMrkdwn, Text: "*Branch*\n" + slackText(e.Branch)})
+	}
+	if approvalIDRE.MatchString(e.ApprovalID) {
+		fields = append(fields, cardText{Type: cardMrkdwn, Text: "*Approval*\n" + e.ApprovalID})
+	}
+	out := []cardBlock{
+		{Type: "header", Text: &cardText{Type: "plain_text", Text: cardTitle}},
+		{Type: "section", Fields: fields},
+		{Type: "section", Text: &cardText{Type: cardMrkdwn, Text: line}},
+	}
+	// The room link lives in the context block — the one button an inert card would have carried —
+	// and only the close knows the room: a press names a channel and a message ts and nothing that
+	// resolves a room (Threads maps room to thread only). `r/` with no room is not a URL, so it is
+	// left out rather than drawn broken; the close that follows the press draws it.
+	if roomRE.MatchString(e.Room) {
+		out = append(out, cardBlock{Type: "context", Elements: []any{
+			cardText{Type: cardMrkdwn, Text: strings.TrimSuffix(roomsURL, "/") + "/r/" + e.Room}}})
+	}
+	raw, err := cardJSON(out)
+	if err != nil {
+		return line, nil // nothing the App builds can fail to encode; the caller empties the blocks
+	}
+	return line, raw
+}
+
+// closeCard makes a closed approval's card inert (§4's room.approval_closed, §5's teardown): the
+// room's thread is read once, the card that names the approval is found by its tag, and it is
+// rewritten in place — twice for a decision taken from Slack, once by the click and once by this,
+// and idempotent either way.
+//
+// It is best effort and never fatal: the card is a view and the store is the fence (D10), so a close
+// the App cannot draw must not make the broker retry it into a loop (three given-up deliveries
+// disable the subscriber). One request has one outcome — card_closed, ignored, or error — and this
+// returns it for the caller to count.
+//
+// §4's payload carries no class, no branch and no deadline, so the fields the wait drew are taken
+// back from the card's own tag, which the App wrote there from the wait's event: an inert card must
+// not lose what the live one said. A missing card is ignored rather than posted: the thread already
+// told the wait's story.
+func (a *App) closeCard(ctx context.Context, th Thread, e webhook.Event) string {
+	if !approvalIDRE.MatchString(e.ApprovalID) {
+		return "ignored"
+	}
+	msgs, err := a.Slack.Thread(ctx, th.Channel, th.TS)
+	if err != nil {
+		a.log().Warn("slack thread fetch failed", "channel", th.Channel, "err", err)
+		return "error"
+	}
+	card, ok := a.cardIn(msgs, e.ApprovalID)
+	if !ok {
+		return "ignored"
+	}
+	if p, ok := card.Metadata.approvalPayload(); ok && e.Branch == "" {
+		e.Branch = p.Branch
+	}
+	text, blocks := inertCard(e, a.RoomsURL, closeCardLine(e.Decision))
+	if blocks == nil {
+		blocks = json.RawMessage("[]") // the buttons come off whatever else failed
+	}
+	if err := a.Slack.Update(ctx, th.Channel, card.TS, text, blocks); err != nil {
+		// The line the press path's own teardown logs, and what SlackCardUpdatesFailing reads.
+		a.log().Warn("card update failed", "approval", e.ApprovalID, "channel", th.Channel, "err", err)
+		return "error"
+	}
+	return "card_closed"
+}
+
 // cardJSON encodes a card's blocks as Slack reads them. HTML escaping is off because the only `<` in
 // them is Slack's own date token, which the design writes verbatim: an escaped \u003c decodes to the
 // same text but reads as noise in the wire bytes the L6 proof and the tests quote.

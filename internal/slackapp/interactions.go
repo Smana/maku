@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Smana/maku/internal/webhook"
 )
 
 // Interactivity (v3.x Slack push approval §6, D11): Slack's button presses come to the same
@@ -226,12 +228,19 @@ func (a *App) answer(ctx context.Context, in interaction, line string) bool {
 	return true
 }
 
-// inert takes the card's buttons off after a recorded decision (§6 step 7): the message becomes the
-// outcome, and its blocks are emptied, because a block list left as it is keeps the buttons. What
-// makes an inert card is Task 16's inertCard — the header, the fields and the line — and this is its
-// one call site.
+// inert takes the card's buttons off after a recorded decision (§6 step 7): the card becomes §5's
+// inert form — the header, the fields and the clicker's own line — and its blocks are replaced
+// wholesale, because a block list left as it is keeps the buttons. The fields come from the press,
+// which names the approval and the branch it bound and no room: the card it rewrites already carries
+// the room link, and the broker's room.approval_closed rewrites it again with the room (closeCard).
+// The class is the card's own constant — no card is drawn for another one. Blocks the App could not
+// encode fall back to emptied ones: no button may survive.
 func (a *App) inert(ctx context.Context, in interaction, line string) error {
-	return a.Slack.Update(ctx, in.Channel, in.MessageTS, line, json.RawMessage("[]"))
+	text, blocks := inertCard(webhook.Event{ApprovalID: in.ApprovalID, Branch: in.Branch}, a.RoomsURL, line)
+	if blocks == nil {
+		blocks = json.RawMessage("[]")
+	}
+	return a.Slack.Update(ctx, in.Channel, in.MessageTS, text, blocks)
 }
 
 // parseInteraction reads Slack's interactivity body — the form already verified — into one press:

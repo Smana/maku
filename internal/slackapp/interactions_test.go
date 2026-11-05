@@ -472,11 +472,24 @@ func TestSlackDecidesForgePushOnly(t *testing.T) {
 			t.Fatalf("interactions/decided counted %d times, want 1", n)
 		}
 		// The card is inert afterwards: one update of the pressed message, the outcome as its text,
-		// and no button left in its blocks.
+		// and §5's inert body — the header, the fields it knows and the clicker's own line — with no
+		// deciding button and no actions block left in it.
 		u := rig.slack.updatesMade()
 		if len(u) != 1 || u[0].channel != "C03" || u[0].ts != cardTS || u[0].text != lineApproved ||
 			strings.Contains(string(u[0].blocks), "factory_approval_") {
 			t.Fatalf("the card was updated %+v, want one inert update of %s", u, cardTS)
+		}
+		for _, want := range []string{
+			`{"type":"header","text":{"type":"plain_text","text":"Approval needed: push to the forge"}}`,
+			`*Class*\nforge.push`, `*Branch*\n` + cardBranch, `*Approval*\n` + cardApprovalID,
+			`{"type":"section","text":{"type":"mrkdwn","text":"` + lineApproved + `"}}`,
+		} {
+			if !strings.Contains(string(u[0].blocks), want) {
+				t.Errorf("the decided card is missing %s\nin %s", want, u[0].blocks)
+			}
+		}
+		if strings.Contains(string(u[0].blocks), `"type":"actions"`) {
+			t.Fatalf("a decided card kept an actions block: %s", u[0].blocks)
 		}
 	})
 
@@ -1001,4 +1014,152 @@ func TestCardValue(t *testing.T) {
 			t.Fatalf("parseCardValue(%q) accepted a value the App never wrote", bad)
 		}
 	}
+}
+
+// ---- the teardown (Task 16) ----
+
+// closeBody is one room.approval_closed delivery: §4's payload, which carries the decision and
+// nothing else — no class, no branch, no deadline, no actor. The card it rewrites is found by its
+// approval id, and the fields the wait drew come back from the card's own tag.
+func closeBody(decision string) string {
+	raw, err := json.Marshal(map[string]any{
+		"type": "room.approval_closed", "room": cardRoom, "approvalId": cardApprovalID, "decision": decision,
+	})
+	if err != nil {
+		panic(err) // a test's own map of literals
+	}
+	return string(raw)
+}
+
+// D10: room.approval_closed makes the card inert — no buttons, one fixed line — and a redelivery is
+// idempotent. A thread too long to read is counted, never fatal.
+func TestCardCloseIsInert(t *testing.T) {
+	// The four decisions §4 clips to, and the one line each leaves on the card. They are fixed and
+	// name nobody: approval_closed carries no actor, so a card that said "approved by @x" would name
+	// the wrong person whenever the room page decided it.
+	for _, tc := range []struct{ decision, line string }{
+		{"approved", "Approved."},
+		{"denied", "Denied."},
+		{"expired", "The deadline passed."},
+		{"superseded", "No longer open."},
+	} {
+		t.Run("a card closed "+tc.decision, func(t *testing.T) {
+			rig := filedRig(t)
+			seedCard(t, rig, cardTS, cardApprovalID)
+			rig.webhook(closeBody(tc.decision))
+
+			u := rig.slack.updatesMade()
+			if len(u) != 1 || u[0].channel != "C03" || u[0].ts != cardTS {
+				t.Fatalf("the close updated %+v, want the card %s in C03 once", u, cardTS)
+			}
+			blocks := string(u[0].blocks)
+			for _, want := range []string{
+				`{"type":"header","text":{"type":"plain_text","text":"Approval needed: push to the forge"}}`,
+				`*Class*\nforge.push`, `*Branch*\n` + cardBranch, `*Approval*\n` + cardApprovalID,
+				`{"type":"section","text":{"type":"mrkdwn","text":"` + tc.line + `"}}`,
+			} {
+				if !strings.Contains(blocks, want) {
+					t.Errorf("the closed card is missing %s\nin %s", want, blocks)
+				}
+			}
+			if strings.Contains(blocks, "factory_approval_") {
+				t.Fatalf("a closed card kept a deciding button: %s", blocks)
+			}
+			if strings.Contains(blocks, `"type":"actions"`) {
+				t.Fatalf("a closed card kept an actions block: %s", blocks)
+			}
+			if d := len(rig.posts()); d != 0 {
+				t.Fatalf("the close posted %d new messages, want the card rewritten in place: %+v", d, rig.posts())
+			}
+			if n := rig.metrics.count("webhooks", "card_closed"); n != 1 {
+				t.Fatalf("webhooks/card_closed counted %d times, want 1", n)
+			}
+		})
+	}
+
+	// A redelivery under a fresh webhook-id — rig.webhook signs a new evt_<seq>, where webhookReplay
+	// re-sends the same id and would prove the delivery dedup instead — rewrites the same card again
+	// with the same bytes: the close is idempotent, not a duplicate to suppress.
+	t.Run("a redelivery of the close", func(t *testing.T) {
+		rig := filedRig(t)
+		seedCard(t, rig, cardTS, cardApprovalID)
+		rig.webhook(closeBody("approved"))
+		rig.webhook(closeBody("approved"))
+		u := rig.slack.updatesMade()
+		if len(u) != 2 {
+			t.Fatalf("the redelivery made %d updates, want 2: %+v", len(u), u)
+		}
+		if u[1].ts != cardTS || u[1].text != u[0].text || string(u[1].blocks) != string(u[0].blocks) {
+			t.Fatalf("the redelivery wrote %+v, want the same card and the same blocks as %+v", u[1], u[0])
+		}
+		if d := len(rig.posts()); d != 0 {
+			t.Fatalf("a redelivered close posted %d new messages: %+v", d, rig.posts())
+		}
+		if n := rig.metrics.count("webhooks", "card_closed"); n != 2 {
+			t.Fatalf("webhooks/card_closed counted %d times, want 2", n)
+		}
+	})
+
+	// A room that was never filed from Slack has no thread and no card: ignored, as every other
+	// delivery for it is.
+	t.Run("a room with no thread", func(t *testing.T) {
+		rig := newAppRig(t, liveCardChannel())
+		seedCard(t, rig, cardTS, cardApprovalID)
+		rig.webhook(closeBody("approved"))
+		if n := rig.metrics.count("webhooks", "ignored"); n != 1 {
+			t.Fatalf("webhooks/ignored counted %d times, want 1", n)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("a room with no thread was updated: %+v", u)
+		}
+	})
+
+	// A card channel whose thread holds no card for that approval: nothing to rewrite, and nothing
+	// to post either — the thread already told the wait's story.
+	t.Run("no card in the thread", func(t *testing.T) {
+		rig := filedRig(t)
+		rig.webhook(closeBody("approved"))
+		if n := rig.metrics.count("webhooks", "ignored"); n != 1 {
+			t.Fatalf("webhooks/ignored counted %d times, want 1", n)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("a close with no card was updated: %+v", u)
+		}
+		if d := len(rig.posts()); d != 0 {
+			t.Fatalf("a close with no card posted %d messages: %+v", d, rig.posts())
+		}
+	})
+
+	// A thread too long to read: the card cannot be found, so nothing is written and the failure is
+	// counted — but the delivery is answered 200. A 502 would make the broker retry a card the App
+	// cannot rewrite, and three given-up deliveries disable the subscriber.
+	t.Run("a thread too long to read", func(t *testing.T) {
+		rig := filedRig(t)
+		seedCard(t, rig, cardTS, cardApprovalID)
+		rig.slack.threadErr = ErrThreadTooLong
+		if st := rig.webhookStatus(closeBody("approved"), "signed"); st != http.StatusOK {
+			t.Fatalf("a close the App could not draw answered %d, want 200", st)
+		}
+		if n := rig.metrics.count("webhooks", "error"); n != 1 {
+			t.Fatalf("webhooks/error counted %d times, want 1", n)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("a thread too long to read was written to: %+v", u)
+		}
+		if d := len(rig.posts()); d != 0 {
+			t.Fatalf("a thread too long to read got %d posts: %+v", d, rig.posts())
+		}
+	})
+
+	// A channel that draws no card (approvals off) had the wait as a text line, so its close is the
+	// thread's own line: the card's absence is not a silent thread.
+	t.Run("a channel that draws no card", func(t *testing.T) {
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig.threads.put(cardRoom, Thread{Channel: "C03", TS: pressThread})
+		rig.webhook(closeBody("expired"))
+		p := rig.lastPost()
+		if p.text != "The approval closed: expired. Room: https://rooms.example/r/aaaaaaaa" || p.blocks != nil {
+			t.Fatalf("the close's line: %+v", p)
+		}
+	})
 }
