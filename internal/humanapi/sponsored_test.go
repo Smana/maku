@@ -117,7 +117,8 @@ func sponsoredMergeRoom(t *testing.T) option {
 // R13, invariant 8: a sponsored principal's tools read, and none labels, approves, steers, queues,
 // forks or stops; a call to a human's tool is an unknown tool (C2). CD28: adding needs_list to the
 // sponsored set is a deliberate, tested amendment — the list is closed and read-only, and the two
-// legacy room reads stay need-free.
+// legacy room reads stay need-free. CD11: room_brief is the human list's alone — a sponsored principal
+// has no developer to resume for, so the App's list must not gain it.
 func TestSponsoredToolList(t *testing.T) {
 	// human.intake.plan on: the planner's two tools join both lists, the App's last and the human's
 	// after issue_draft (PR 2): intake_plan, then plan_check, the door a consumer re-validates through.
@@ -125,10 +126,10 @@ func TestSponsoredToolList(t *testing.T) {
 	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,issue_draft,room_summary,room_tail,room_changes,needs_list,intake_plan,plan_check" {
 		t.Fatalf("%s", got)
 	}
-	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check" {
+	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check,room_brief" {
 		t.Fatalf("a human's list changed: %s", got)
 	}
-	for _, name := range []string{"room_queue", "room_fork", "rooms_list"} {
+	for _, name := range []string{"room_queue", "room_fork", "rooms_list", "room_brief"} {
 		_, out := rpc(t, e, bearer("slack-app"), "tools/call", map[string]any{"name": name,
 			"arguments": map[string]any{"room": roomID, "text": "x", "at": 1}})
 		if rpcCode(out) != -32602 || !strings.Contains(fmt.Sprint(out["error"]), "unknown tool: "+name) {

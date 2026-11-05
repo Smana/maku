@@ -17,7 +17,8 @@ import (
 )
 
 // F3: the tools mirror maku's standing; none labels, approves, steers, stops or starts work. CD28:
-// needs_list is the last of them, and only while human.needs.enabled serves the list.
+// needs_list is the last of the reads, and only while human.needs.enabled serves the list. CD11:
+// room_brief follows it — the list's only brief, and a read like the rest.
 func TestMCPToolList(t *testing.T) {
 	e := setup(t, mcpOn, needsOn)
 	_, out := rpc(t, e, viaRoomctl("dev"), "tools/list", nil)
@@ -36,7 +37,7 @@ func TestMCPToolList(t *testing.T) {
 			t.Errorf("%s: execution %+v", tool.Name, tool.Execution)
 		}
 	}
-	if want := []string{"rooms_list", "room_summary", "room_tail", "room_changes", "room_queue", "room_fork", "issue_draft", "needs_list"}; !slices.Equal(names, want) {
+	if want := []string{"rooms_list", "room_summary", "room_tail", "room_changes", "room_queue", "room_fork", "issue_draft", "needs_list", "room_brief"}; !slices.Equal(names, want) {
 		t.Fatalf("tools %v, want %v", names, want)
 	}
 }
