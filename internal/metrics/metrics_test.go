@@ -369,6 +369,21 @@ func TestMakuNameCoversNeeds(t *testing.T) {
 	}
 }
 
+// CD22's counter is maku_revision_deferred_total, the name the design's table and the live proof
+// query: MakuName can only produce it from a revision_* instrument, and an agent_factory_ one would
+// be served as maku_factory_revision_deferred_total.
+func TestMakuNameCoversRevisionDeferred(t *testing.T) {
+	for in, want := range map[string]string{
+		"revision_deferred_total": "maku_revision_deferred_total",
+		"revision":                "",
+		"revisions_total":         "",
+	} {
+		if got := MakuName(in); got != want {
+			t.Fatalf("MakuName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // needs/v1's adoption is measured where the list is served: one count per call, labelled by surface,
 // principal and outcome, and what the last list held by kind. Both keep the spec's names, so the
 // dashboard's maku_needs_* queries match; a list that holds no item of a kind drops that kind.

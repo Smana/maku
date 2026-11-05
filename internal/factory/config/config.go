@@ -503,6 +503,11 @@ type Caps struct {
 	// more of the review-class work that produces them (§6.2's back-pressure on reviewers).
 	// Required, never defaulted: a config that omits it fails its rollout (§4).
 	AwaitingHumanWIP int `json:"awaitingHumanWIP"`
+	// PreferRevisions is CD22: while any task in the factory waits for a slot to run a revision
+	// (a run that continues a task which already has one), a task whose next run is its first
+	// waits with the reason waiting_revision_first. Caps still bind: this priority never overrides
+	// a limit, and nothing is reserved — a first run gives up one slot-time. Off by default.
+	PreferRevisions bool `json:"preferRevisions,omitempty"`
 }
 
 // Budgets are the admission-time caps SP3 owns (C5). The task cap is enforced unless the config

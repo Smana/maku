@@ -354,6 +354,8 @@ func (m *fakeMetrics) SplitChild(_ context.Context, class, outcome string) {
 	m.add("split_child " + class + " " + outcome)
 }
 
+func (m *fakeMetrics) RevisionDeferred(context.Context) { m.add("revision_deferred") }
+
 func (m *fakeMetrics) Resumed(_ context.Context, reason string) { m.add("resumed " + reason) }
 func (m *fakeMetrics) RoomClosedAtCap(_ context.Context, reason string) {
 	m.add("room_closed_at_cap " + reason)

@@ -78,6 +78,19 @@ func (r *Reconciler) slotFree(ctx context.Context, t *v1alpha1.Task) (bool, stri
 	if live >= r.Cfg.Caps.ConcurrentRuns {
 		return false, "waiting_run_slot", nil
 	}
+	// CD22: a revision goes first. preferRevisions waits only for a task whose next run continues it and
+	// which a *slot* holds: a neighbour stopped by any other cap is not waiting for the slot, and priority
+	// never overrides a limit. A first run waits one slot-time; nothing is reserved.
+	if r.Cfg.Caps.PreferRevisions && len(t.Status.Runs) == 0 {
+		waiting, err := r.revisionWaiting(ctx, t)
+		if err != nil {
+			return false, "", err
+		}
+		if waiting {
+			record(ctx, func(ctx context.Context) { r.Metrics.RevisionDeferred(ctx) })
+			return false, "waiting_revision_first", nil
+		}
+	}
 	var room roomv1.Room
 	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: t.Status.RoomRef}, &room); err != nil {
 		return false, "", err
@@ -86,6 +99,17 @@ func (r *Reconciler) slotFree(ctx context.Context, t *v1alpha1.Task) (bool, stri
 		return false, "waiting_human_driver", nil
 	}
 	return true, "", nil
+}
+
+// revisionWaiting is CD22's condition: whether another task of the factory is queued for a slot to
+// run a run that continues it. Only waiting_run_slot counts: a task a cap holds waits for that cap,
+// so yielding to it would starve the first runs while the backlog is already bounded.
+func (r *Reconciler) revisionWaiting(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+	queued, err := r.countTasks(ctx, func(o *v1alpha1.Task) bool {
+		return o.Name != t.Name && o.Status.Phase == v1alpha1.PhaseQueued && len(o.Status.Runs) > 0 &&
+			o.Status.Reason == "waiting_run_slot"
+	})
+	return queued > 0, err
 }
 
 // runID is the deterministic id of a task's nth run (R48): the claim a replay recomputes, so a

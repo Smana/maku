@@ -316,6 +316,7 @@ func reasons() map[string]string {
 		"waiting_human_driver":      "a person drives its room; the hold ends when they hand the driver back or their lease lapses",
 		"waiting_room_busy":         "another run in its room is still going; the hold ends when that run ends",
 		"waiting_run_slot":          "the factory runs its tasks one at a time and another one has the slot",
+		"waiting_revision_first":    "a revision of another task runs before new intake",
 		"waiting_active_tasks":      "the factory's cap on active tasks is reached",
 		"waiting_review_wip":        "the reviewers are at their limit of pull requests in review",
 		"waiting_daily_budget":      "the factory's daily budget in dollars is spent",

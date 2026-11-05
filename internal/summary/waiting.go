@@ -135,6 +135,7 @@ func Answer(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
 func reasons() map[string]string {
 	return map[string]string{
 		"waiting_run_slot":          "the factory runs its tasks one at a time and another one has the slot",
+		"waiting_revision_first":    "a revision of another task runs before new intake",
 		"waiting_active_tasks":      "the factory's cap on active tasks is reached",
 		"waiting_review_wip":        "the reviewers are at their limit of pull requests in review",
 		"waiting_daily_budget":      "the factory's daily budget in dollars is spent",
@@ -249,6 +250,8 @@ func nextStep(reason string, byApproval bool) string {
 	switch reason {
 	case "waiting_daily_budget":
 		return "nothing to do: it resumes after 00:00 UTC"
+	case "waiting_revision_first":
+		return "nothing to do: it starts once no revision waits for the slot"
 	case "secret_scan_red":
 		return "a maintainer revokes the leaked key and closes the pull request; the factory does not retry"
 	case "ci_pending":
