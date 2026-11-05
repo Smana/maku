@@ -24,6 +24,14 @@ var idRE = regexp.MustCompile(`^[a-z2-7]{8}$`)
 // ValidID reports whether s is a C2 id: 8 characters of lowercase unpadded base32.
 func ValidID(s string) bool { return idRE.MatchString(s) }
 
+// branchRE is the AgentRun CRD's own pattern for AgentRunSpec.Branch
+// (api/v1alpha1/agentrun_types.go), repeated here because this package imports no Kubernetes.
+var branchRE = regexp.MustCompile(`^agent/[a-z0-9][a-z0-9._/-]{0,100}$`)
+
+// ValidBranch reports whether s is an AgentRun's branch (v1alpha1.AgentRunSpec.Branch's pattern):
+// the one thing a forge.push approval binds (v3.x Slack push approval D5).
+func ValidBranch(s string) bool { return branchRE.MatchString(s) }
+
 // ActorKind is who acted: an agent run, a human, or the platform.
 type ActorKind string
 

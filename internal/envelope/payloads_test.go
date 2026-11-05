@@ -137,6 +137,39 @@ func TestTaskFactsRoundTripsRunsAndDollars(t *testing.T) {
 	}
 }
 
+// D5: a forge.push approval binds the run's branch, so the request payload carries it — and every
+// other class, and every request written before the field existed, omits the key entirely.
+func TestApprovalRequestedPayloadCarriesTheBranch(t *testing.T) {
+	bound := ApprovalRequestedPayload{ApprovalID: "01J9X7K2ABCDEFGHJKMNPQRSTV", CallID: "c1", Class: "forge.push",
+		Action: json.RawMessage(`{"kind":"push"}`), ExpiresAt: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC),
+		Branch: "agent/26zfnuxm"}
+	b, err := json.Marshal(bound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"branch":"agent/26zfnuxm"`) {
+		t.Fatalf("a bound request lacks its branch: %s", b)
+	}
+	var back ApprovalRequestedPayload
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Branch != "agent/26zfnuxm" {
+		t.Fatalf("branch round trip = %q", back.Branch)
+	}
+	unbound := bound
+	unbound.Branch = ""
+	b, err = json.Marshal(unbound)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "branch") {
+		t.Fatalf("an unbound request carries the key: %s", b)
+	}
+}
+
 func TestGitHubURL(t *testing.T) {
 	if !GitHubURL("https://github.com/Smana/a/pull/7") {
 		t.Error("a github.com pull request refused")
