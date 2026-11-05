@@ -331,6 +331,13 @@ func (f *fakeSlack) whispers() []ephemeral {
 	return append([]ephemeral(nil), f.ephemerals...)
 }
 
+// updatesMade is every chat.update the App made, oldest first.
+func (f *fakeSlack) updatesMade() []post {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]post(nil), f.updates...)
+}
+
 func (f *fakeSlack) Post(_ context.Context, channel, threadTS, text string, meta *Metadata) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -422,6 +429,13 @@ type stubBroker struct {
 	links     []string // team/user/name of each slack_link_code
 	unlinked  map[string]bool
 	decisions []Decision // every Decide call, oldest first
+	answers   []string   // every closed code the broker answered, oldest first
+	// decideAnswer is what the route answers instead of the recorded decision; fence answers
+	// already_decided to every press after the first, as the store does.
+	decideAnswer string
+	decideErr    error
+	fence        bool
+	fenced       bool
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {
@@ -483,13 +497,58 @@ func (b *stubBroker) RunCreate(_ context.Context, c RunCreate) (RunResult, error
 	return RunResult{Room: room, Issue: 42, Duplicate: dup, Sponsor: b.sponsor}, nil
 }
 
-// Decide records every press and echoes the decision, as the route answers a closed code. A stub
-// told to answer otherwise (already_decided, not_supported…) is Task 14's.
+// Decide records every press and answers the closed code the test told it to: a recorded decision by
+// default, else the code the route answers (already_decided, not_supported, four_eyes…), or a
+// transport error. fence is the store's own single-decision fence (D7): the first press is recorded
+// and every later one answers already_decided, which is what makes the concurrent redelivery case
+// one decision.
 func (b *stubBroker) Decide(_ context.Context, d Decision) (DecisionResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.decisions = append(b.decisions, d)
+	switch {
+	case b.decideErr != nil:
+		return DecisionResult{}, b.decideErr
+	case b.fence:
+		if b.fenced {
+			b.answers = append(b.answers, "already_decided")
+			return DecisionResult{Result: "already_decided"}, nil
+		}
+		b.fenced = true
+	case b.decideAnswer != "":
+		b.answers = append(b.answers, b.decideAnswer)
+		return DecisionResult{Result: b.decideAnswer}, nil
+	}
+	b.answers = append(b.answers, d.Decision)
 	return DecisionResult{Result: d.Decision}, nil
+}
+
+// answerWith makes the broker answer every press with code, as the route answers a refusal.
+func (b *stubBroker) answerWith(code string) {
+	b.mu.Lock()
+	b.decideAnswer = code
+	b.mu.Unlock()
+}
+
+// decideFails makes every press a transport failure: the broker was never reached.
+func (b *stubBroker) decideFails(err error) {
+	b.mu.Lock()
+	b.decideErr = err
+	b.mu.Unlock()
+}
+
+// fenceDecisions makes the broker answer like the store: one recorded decision, then already_decided.
+func (b *stubBroker) fenceDecisions() {
+	b.mu.Lock()
+	b.fence = true
+	b.mu.Unlock()
+}
+
+// decideAnswers is every closed code the broker answered, oldest first.
+func (b *stubBroker) decideAnswers() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.answers...)
 }
 
 // decided is every press the broker was asked to record, oldest first.

@@ -138,12 +138,15 @@ func TestBrokerNeverSendsTasks(t *testing.T) {
 }
 
 // §1: Decide posts §1's body to the decide route as the App's principal — not to /mcp, no tools
-// envelope — reads the closed code back, retries once on a 401, and reads a non-200 as transport
-// rather than as a decision.
-func TestDecidePostsTheRoute(t *testing.T) {
+// envelope — reads the closed code back, retries once on a 401, and reads a non-200 (or an answer
+// that names no code) as transport rather than as a decision. This is the route's own test: the
+// worker that calls it is interactions_test.go's.
+func TestDecideCall(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []map[string]string
 	var paths, auth []string
+	answer := `{"result":"approved"}`
+	setAnswer := func(a string) { mu.Lock(); answer = a; mu.Unlock() }
 	var asks atomic.Int32
 	var fails atomic.Int32 // the next n answers are 401
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -151,14 +154,15 @@ func TestDecidePostsTheRoute(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		mu.Lock()
 		bodies, paths, auth = append(bodies, m), append(paths, r.URL.Path), append(auth, r.Header.Get("Authorization"))
-		asks.Add(1)
+		now := answer
 		mu.Unlock()
+		asks.Add(1)
 		if fails.Load() > 0 {
 			fails.Add(-1)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_, _ = io.WriteString(w, `{"result":"approved"}`)
+		_, _ = io.WriteString(w, now)
 	}))
 	t.Cleanup(srv.Close)
 	b := Broker{URL: srv.URL, Tokens: staticTokens("tok"), HC: srv.Client()}
@@ -175,9 +179,19 @@ func TestDecidePostsTheRoute(t *testing.T) {
 		t.Fatalf("%+v %s %s", bodies[0], paths[0], auth[0])
 	}
 
+	// Every closed code is read back as is: the route answers 200 for all of them, and the App's
+	// worker is what gives one its line.
+	for _, code := range []string{"denied", "already_decided", "four_eyes", "not_supported", "sealed"} {
+		setAnswer(`{"result":"` + code + `"}`)
+		if res, err := b.Decide(context.Background(), d); err != nil || res.Result != code {
+			t.Fatalf("%s: %+v %v", code, res, err)
+		}
+	}
+	setAnswer(`{"result":"approved"}`)
+
 	// A 401 drops the cached token and retries once, as every other call does.
 	fails.Store(1)
-	if _, err := b.Decide(context.Background(), d); err != nil || asks.Load() != 3 {
+	if _, err := b.Decide(context.Background(), d); err != nil || asks.Load() != 8 {
 		t.Fatalf("err %v after %d asks, want a retried press", err, asks.Load())
 	}
 
@@ -185,6 +199,13 @@ func TestDecidePostsTheRoute(t *testing.T) {
 	fails.Store(2)
 	if _, err := b.Decide(context.Background(), d); err == nil {
 		t.Fatal("two 401s were read as a decision")
+	}
+	// An answer that names no code is not a decision either.
+	for _, body := range []string{`{}`, `{"result":""}`, `not json`} {
+		setAnswer(body)
+		if _, err := b.Decide(context.Background(), d); err == nil {
+			t.Fatalf("%s was read as a decision", body)
+		}
 	}
 }
 

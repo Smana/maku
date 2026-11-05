@@ -5,7 +5,6 @@ package slackapp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -19,7 +18,9 @@ import (
 // POST /slack/events door, through the same signature check, and are dispatched by content type.
 // There is no second public path, no response_url dialled (the App's egress stays slack.com), and
 // nothing here decides anything: a press is handed to the broker's decide route as the App's
-// principal, and the store keeps the single-decision fence (D7).
+// principal, and the store keeps the single-decision fence (D7). What this file does own is the
+// answer: the clicker alone is told, in one fixed line (card.go), what became of the press, and a
+// recorded decision leaves the card inert behind it.
 
 // The two action ids a card carries (§5). No other press is read.
 const (
@@ -45,10 +46,6 @@ const maxPressPayload = 64 << 10
 // the line twice. Two seconds leaves the rest of the window for the signature, the parse and the
 // counter.
 const pressAnswerBound = 2 * time.Second
-
-// lineNotEnabled is the one line a press in a channel without the approvals flag gets (§6 step 3):
-// no card was drawn there, so the decision stays on the room page.
-const lineNotEnabled = "Not decided from Slack: approvals are not turned on in this channel. Decide it on the room page: %s"
 
 // approvalIDRE is an approval's id, a ULID: bridgeapi is its only producer. The decide route checks
 // the same shape, and neither takes the other's word for it.
@@ -154,33 +151,103 @@ func (a *App) interaction(ctx context.Context, body []byte) string {
 func (a *App) sayNotEnabled(ctx context.Context, in interaction) {
 	actx, cancel := context.WithTimeout(ctx, pressAnswerBound)
 	defer cancel()
-	if err := a.Slack.PostEphemeral(actx, in.Channel, in.User, "", a.notEnabled()); err != nil {
+	if err := a.Slack.PostEphemeral(actx, in.Channel, in.User, "", notEnabledLine(a.RoomsURL)); err != nil {
 		a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)
 	}
 }
 
-// notEnabled is the room page's root, the only URL a press in a closed channel is sent to.
-func (a *App) notEnabled() string {
-	return fmt.Sprintf(lineNotEnabled, strings.TrimSuffix(a.RoomsURL, "/"))
+// pageRoot is the rooms page's root, the only URL a refusal sends a person to: a click carries a
+// channel and a message ts, and Threads maps room to thread only, so the App cannot name the room's
+// own page here. The card's own context block carries it.
+func (a *App) pageRoot() string {
+	return strings.TrimSuffix(a.RoomsURL, "/")
 }
 
-// decide is the press's work, after the 200 (§6 step 5): the one broker call. The clicker's answer
-// and the card's inert form follow it (Tasks 14-16, this file's worker); its return value is the
-// counter's outcome, a bounded word and never a payload field.
+// decide is the press's work, after the 200 (§6 steps 5-7): the one broker call, the answer the
+// clicker alone sees, and — when the broker recorded a decision — the card made inert. Its return
+// value is the counter's outcome, a bounded word and never a payload field:
+//
+//	approved, denied   -> decided
+//	already_decided    -> duplicate
+//	not_supported      -> not_supported
+//	any other code     -> refused
+//	no call, no answer -> error
+//
+// The answer is the one step that always runs: whatever the broker said, the person who pressed is
+// told something true, and a press that decided nothing leaves the card's buttons where they were —
+// the refusal lines themselves say to press again.
 func (a *App) decide(ctx context.Context, in interaction) string {
+	page := a.pageRoot()
 	res, err := a.Broker.Decide(ctx, Decision{Team: in.Team, User: in.User, Channel: in.Channel,
 		MessageTS: in.MessageTS, ApprovalID: in.ApprovalID, Branch: in.Branch, Decision: in.Decision})
 	if err != nil {
 		a.log().Warn("slack decide failed", "err", err)
+		a.answer(ctx, in, refusalLine("unavailable", in.User, page)) // false is already this outcome
+		return "error"                                               // D7: the store is the fence, so a press that never arrived decided nothing
+	}
+	outcome, line := outcomeOf(res.Result), answerLine(res.Result, in.User, page)
+	told := a.answer(ctx, in, line)
+	if outcome == "decided" {
+		if err := a.inert(ctx, in, line); err != nil {
+			a.log().Warn("card update failed", "approval", in.ApprovalID, "channel", in.Channel, "err", err)
+			return "error" // the decision stands; the card still shows live buttons, which the alert names
+		}
+	}
+	if !told {
 		return "error"
 	}
-	switch res.Result {
-	case "approved", "denied":
+	return outcome
+}
+
+// outcomeOf is a closed code as the counter's bounded word (§6 step 2). Every refusal that is not a
+// duplicate or a class the App never drew a card for is `refused`: the counter says whether the press
+// landed, and the line says why it did not.
+func outcomeOf(code string) string {
+	switch code {
+	case codeApproved, codeDenied:
 		return "decided"
 	case "already_decided":
 		return "duplicate"
+	case "not_supported":
+		return "not_supported"
 	}
 	return "refused"
+}
+
+// answer tells the clicker alone, in the card's thread, what became of the press (§6 step 6): one
+// chat.postEphemeral addressed to the id Slack signed the click with, always, success included. A
+// failed answer is logged and dropped — never retried, never turned into a second press — and its
+// false is the worker's `error`.
+func (a *App) answer(ctx context.Context, in interaction, line string) bool {
+	if err := a.Slack.PostEphemeral(ctx, in.Channel, in.User, a.cardThread(ctx, in), line); err != nil {
+		a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)
+		return false
+	}
+	return true
+}
+
+// cardThread is the thread the card lives in, so the answer appears beside it. The interaction
+// payload carries a channel and a message ts and nothing that names the thread, so the App reads the
+// pressed message; a read that fails leaves the answer in the channel rather than losing it. The
+// card's own read (Task 15) is the one that knows this thread, and this is where it lands.
+func (a *App) cardThread(ctx context.Context, in interaction) string {
+	m, err := a.Slack.Message(ctx, in.Channel, in.MessageTS)
+	if err != nil {
+		a.log().Info("slack message read for the answer's thread failed", "channel", in.Channel, "err", err)
+		return ""
+	}
+	if m.ThreadTS != "" {
+		return m.ThreadTS
+	}
+	return m.TS
+}
+
+// inert takes the card's buttons off after a recorded decision (§6 step 7): the message becomes the
+// outcome, and its blocks are emptied, because a block list left as it is keeps the buttons. What
+// makes an inert card is Task 16's inertCard — the header, the fields and the line — and this is its
+// one call site.
+func (a *App) inert(ctx context.Context, in interaction, line string) error {
+	return a.Slack.Update(ctx, in.Channel, in.MessageTS, line, json.RawMessage("[]"))
 }
 
 // parseInteraction reads Slack's interactivity body — the form already verified — into one press:
