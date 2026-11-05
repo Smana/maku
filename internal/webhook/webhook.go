@@ -50,6 +50,9 @@ type Event struct {
 	Class      string `json:"class,omitempty"`
 	Branch     string `json:"branch,omitempty"`
 	ExpiresAt  string `json:"expiresAt,omitempty"` // RFC 3339, UTC
+	// Decision is how the approval closed, on room.approval_closed: approved, denied, expired
+	// or superseded, never free text.
+	Decision string `json:"decision,omitempty"`
 }
 
 // ID is a delivery's webhook-id: the same for every retry and every leader, distinct per

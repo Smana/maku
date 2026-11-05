@@ -93,7 +93,7 @@ func TestEvents(t *testing.T) {
 	}
 	wantTypes := []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 		"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-		"room.budget_reached", "room.ended"}
+		"room.budget_reached", "room.ended", "room.approval_closed"}
 	if !slices.Equal(Types(), wantTypes) {
 		t.Fatalf("Types() = %v, want %v", Types(), wantTypes)
 	}
@@ -159,6 +159,51 @@ func TestWaitingCarriesApproval(t *testing.T) {
 	if e := wait(envelope.ApprovalRequestedPayload{ApprovalID: "ap1", CallID: "c1", Class: "forge.push",
 		Branch: "agent/26zfnuxm"}); e.ApprovalID != "" || e.Class != "forge.push" {
 		t.Fatalf("an id that is not a ULID: %+v", e)
+	}
+}
+
+// §4: every close is one event, once per approval, with its closed decision.
+func TestApprovalClosed(t *testing.T) {
+	for _, d := range Decisions() {
+		var tr Tracker
+		ev := envelope.Event{RoomID: "aaaaaaaa", Seq: 1, Type: envelope.ApprovalDecided,
+			Payload: envelope.Must(envelope.ApprovalDecidedPayload{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", Decision: d})}
+		got := tr.Events("aaaaaaaa", "Smana/ai-native-ref", ev)
+		b, _ := json.Marshal(got)
+		want := `[{"type":"room.approval_closed","room":"aaaaaaaa","approvalId":"01M4A1B2C3D4E5F6G7H8J9K0MN","decision":"` + d + `"}]`
+		if string(b) != want {
+			t.Fatalf("%s, want %s", b, want)
+		}
+		if again := tr.Events("aaaaaaaa", "Smana/ai-native-ref", ev); len(again) != 0 {
+			t.Fatalf("a replay emitted %v", again)
+		}
+	}
+	var tr Tracker
+	for _, bad := range []envelope.ApprovalDecidedPayload{
+		{ApprovalID: "ap1", Decision: "approved"},                     // not a ULID: dropped
+		{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", Decision: "bogus"}, // a made-up decision: dropped
+	} {
+		if got := tr.Events("aaaaaaaa", "r", envelope.Event{RoomID: "aaaaaaaa", Seq: 2, Type: envelope.ApprovalDecided,
+			Payload: envelope.Must(bad)}); len(got) != 0 {
+			t.Fatalf("%+v emitted %v", bad, got)
+		}
+	}
+	// The decision is one of the four ways an approval closes and nothing else: the list is that
+	// closed vocabulary, and the clip a subscriber shares keeps every word of it unchanged while
+	// any other becomes "other" — never a made-up word on the wire or in a thread.
+	if want := []string{"approved", "denied", "expired", "superseded"}; !slices.Equal(Decisions(), want) {
+		t.Fatalf("Decisions() = %v, want %v", Decisions(), want)
+	}
+	for _, d := range Decisions() {
+		if got := Clip("decision", d); got != d {
+			t.Fatalf("Clip(decision, %s) = %s", d, got)
+		}
+	}
+	if got := Clip("decision", "bogus"); got != "other" {
+		t.Fatalf("Clip(decision, bogus) = %s", got)
+	}
+	if got := Clip("decision", ""); got != "" {
+		t.Fatalf("Clip(decision, \"\") = %s", got)
 	}
 }
 

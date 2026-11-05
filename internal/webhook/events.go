@@ -13,10 +13,11 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
-// types are R19's eleven events and the monitor's verdict, twelve, in the design's order.
+// types are R19's eleven events, the monitor's verdict and an approval's close, thirteen, in the
+// design's order.
 var types = []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 	"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-	"room.budget_reached", "room.ended"}
+	"room.budget_reached", "room.ended", "room.approval_closed"}
 
 // Types lists the events a subscriber may ask for.
 func Types() []string { return slices.Clone(types) }
@@ -135,6 +136,13 @@ func (t *Tracker) events(room, repo string, ev envelope.Event) []Event {
 			e.ExpiresAt = p.ExpiresAt.UTC().Format(time.RFC3339)
 		}
 		return []Event{e}
+	}
+	if ev.Type == envelope.ApprovalDecided {
+		var p envelope.ApprovalDecidedPayload
+		if json.Unmarshal(ev.Payload, &p) != nil || !ulidRE.MatchString(p.ApprovalID) || !slices.Contains(decisions, p.Decision) {
+			return nil // a close the App cannot act on is not an event
+		}
+		return []Event{{Type: "room.approval_closed", Room: room, ApprovalID: p.ApprovalID, Decision: p.Decision}}
 	}
 	if ev.Type != envelope.StateChanged {
 		return nil
