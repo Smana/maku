@@ -15,6 +15,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/summary"
 )
 
 var sponsoredP = authn.Principal{Kind: envelope.ActorSystem, ID: "system:slack-app", Sponsored: true, AccessToken: "t",
@@ -189,6 +190,41 @@ func TestSponsoredSummaryAdvertisesNothing(t *testing.T) {
 	}
 	if got.isError || json.Unmarshal(got.structured, &s) != nil || len(s.Actions) != 0 || len(s.NeedsYou) != 0 {
 		t.Fatalf("%s", got.structured)
+	}
+}
+
+// R13 with CD21 and B1: one sponsored principal, one room, and one answer on both surfaces. A pull
+// request whose reviewers name someone else would be a merge — or a review — for a caller GitHub lets
+// write; a sponsored principal has no login and only reads, so the room's rows and its room_summary both
+// list no need. The rows' derivation (needsFor) leaves summary.Caller.RoomScoped to PR 3's needs_list,
+// whose room-scoped read is its own contract: the two legacy surfaces say what View says.
+func TestSponsoredRowsAndSummaryAgreeOnNoNeeds(t *testing.T) {
+	e := setup(t, mcpOn, withSponsored(sponsoredP), func(s *Server, _ *fanout.Hub, v *hubView) {
+		mine := repoRoom(roomID, "Smana/a")
+		mine.Spec.Members = []v1alpha1.Member{{Principal: "system:slack-app", Role: "watcher"}}
+		mine.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239, PRReviewers: []string{"dev1"}}
+		s.Rooms = roomClient(t, mine)
+		v.evs = append(v.evs, envelope.Event{V: 1, Seq: 11, RoomID: roomID, Type: envelope.StateChanged, TS: time.Now(),
+			Payload: envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman",
+				PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}})})
+	})
+	// The room's row, as the list computes it: a sponsored bearer reaches no /api/rooms route (C18), so the
+	// list's own function is called with the principal the sponsored tools authenticate.
+	rows, _, err := e.srv.roomRows(t.Context(), sponsoredP, &roomFilter{})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows: %+v, %v", rows, err)
+	}
+	if r := rows[0]; r.NeedsMe || r.NeedsYou != 0 || r.Need != nil || r.Step != nil {
+		t.Fatalf("a sponsored row lists %+v", r)
+	}
+	// The room's summary, as the sponsored tool reads it.
+	got := call(t, e, bearer("slack-app"), "room_summary", map[string]any{"room": roomID})
+	var s struct {
+		NeedsYou []json.RawMessage
+		Step     *summary.Step
+	}
+	if got.isError || json.Unmarshal(got.structured, &s) != nil || len(s.NeedsYou) != 0 || s.Step != nil {
+		t.Fatalf("the summary: %s", got.structured)
 	}
 }
 

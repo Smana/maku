@@ -305,6 +305,11 @@ func (s *Server) standing(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 // needsFor is room's needs for this caller, from the one derivation (CD21). read is false when the room's
 // facts could not be read: its other needs still stand, and its state is not guessed. A caller that has
 // already read the room hands the same facts and approvals in (needsRead), so one request reads them once.
+//
+// summary.Caller.RoomScoped stays false here, whatever the principal: the rows and room_summary answer for a
+// sponsored caller as View does, with no action need (R13, I1), so one sponsored principal cannot see a merge
+// in its room's row and none in its room's summary (B1). PR 3's needs_list sets RoomScoped for its own
+// room-scoped read contract, which is where a room's needs are derived for the App and not for a login.
 func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Principal, sub policy.Subject,
 	got ...needsRead) (items []summary.Need, read bool) {
 	r := needsRead{facts: s.taskFacts(ctx, room)} // one indexed read, which reads on its first call
@@ -321,8 +326,7 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 		FactsRead: true, Facts: r.facts(), FactsAt: s.foldFactsAt(room), Approvals: approvalsOf(r.live), Now: s.now(),
 		GitHub: s.standing(ctx, room, p),
 		Caller: summary.Caller{WebUI: web.WebUI, CanDecide: policy.Allowed(web, policy.Decide),
-			CanClose: policy.Allowed(sub, policy.Close), CanRelease: policy.Allowed(sub, policy.StartRun),
-			RoomScoped: p.Sponsored}}
+			CanClose: policy.Allowed(sub, policy.Close), CanRelease: policy.Allowed(sub, policy.StartRun)}}
 	return summary.Ordered(summary.Items(in)), r.facts() != nil
 }
 
