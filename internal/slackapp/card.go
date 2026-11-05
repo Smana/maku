@@ -3,8 +3,16 @@
 package slackapp
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
+
+	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/webhook"
 )
 
 // The lines a press is answered with (§6, the design's one refusal table plus the two success ones).
@@ -99,4 +107,232 @@ func answerLine(code, user, pageURL string) string {
 // notEnabledLine is lineNotEnabled with the one URL a press in a closed channel is sent to.
 func notEnabledLine(roomsURL string) string {
 	return fmt.Sprintf(lineNotEnabled, strings.TrimSuffix(roomsURL, "/"))
+}
+
+// The card §5 draws for a forge.push wait: fixed prose, and the event's ids and closed values. The
+// two sentences are the room page's own approval help, so a person reads the same thing on both
+// surfaces. Nothing here is room text, a reason, a GitHub login or another person's name (D5, D12).
+const (
+	cardTitle    = "Approval needed: push to the forge"
+	cardApprove  = "Approve"
+	cardDeny     = "Deny"
+	cardOpenRoom = "Open the room"
+	cardProse    = "If you approve: the push goes out and the run continues.\n" +
+		"If you deny: nothing is pushed; the agent is told no and none of it runs."
+	// cardDeadline is Slack's own date token: the client renders it in the reader's timezone, so the
+	// App holds neither a clock nor a zone in the message.
+	cardDeadline = "<!date^%d^{date_short_pretty} at {time}|by %d>"
+	// cardMrkdwn is Block Kit's text type for everything but a header or a button label.
+	cardMrkdwn = "mrkdwn"
+)
+
+// cardBlock is one Block Kit block in the three shapes §5 uses: a header and a section carry Text, a
+// fields section carries Fields, and an actions or context block carries Elements.
+type cardBlock struct {
+	Type     string     `json:"type"`
+	Text     *cardText  `json:"text,omitempty"`
+	Fields   []cardText `json:"fields,omitempty"`
+	Elements []any      `json:"elements,omitempty"`
+}
+
+// cardText is Block Kit's text object: mrkdwn everywhere but a header's and a button's labels.
+type cardText struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// cardButton is a card's button: the two deciding ones carry an action id, the card's value and a
+// style; the room's carries only a URL, so it presses nothing.
+type cardButton struct {
+	Type     string   `json:"type"`
+	Text     cardText `json:"text"`
+	ActionID string   `json:"action_id,omitempty"`
+	Value    string   `json:"value,omitempty"`
+	Style    string   `json:"style,omitempty"`
+	URL      string   `json:"url,omitempty"`
+}
+
+// cardValue is a deciding button's value (§5): v1|forge.push|<approvalId>|<branch>, under two thousand
+// characters by construction — a ULID is 26 and a branch at most 107. The version and the class are
+// literals, so a value the App did not write is refused by parseCardValue rather than read as one of
+// its own.
+func cardValue(approvalID, branch string) string {
+	return pressVersion + "|" + pressClass + "|" + approvalID + "|" + branch
+}
+
+// parseCardValue reads a card button's value back: v1|forge.push|<approvalId>|<branch>. The branch is
+// the AgentRun's own pattern (envelope.ValidBranch), never a copy of it.
+func parseCardValue(v string) (approvalID, branch string, ok bool) {
+	parts := strings.Split(v, "|")
+	if len(parts) != 4 || parts[0] != pressVersion || parts[1] != pressClass ||
+		!approvalIDRE.MatchString(parts[2]) || !envelope.ValidBranch(parts[3]) {
+		return "", "", false
+	}
+	return parts[2], parts[3], true
+}
+
+// approvalCard is §5's card for one wait: the text Slack shows where blocks do not render, and the
+// blocks themselves, in the design's order. now decides only what is drawn, never what is decided:
+// past the deadline the card is drawn inert — the prose and the room link, no button — because the
+// store would refuse the press (review focus 5, D10). A nil text and no blocks is the one case the
+// caller answers with today's line: the App could not encode what it drew.
+func approvalCard(e webhook.Event, roomsURL string, now time.Time) (string, json.RawMessage) {
+	room := strings.TrimSuffix(roomsURL, "/") + "/r/" + e.Room
+	fields := []cardText{
+		{Type: cardMrkdwn, Text: "*Class*\n" + pressClass},
+		{Type: cardMrkdwn, Text: "*Branch*\n" + slackText(e.Branch)},
+		{Type: cardMrkdwn, Text: "*Approval*\n" + e.ApprovalID},
+	}
+	// The deadline comes from the event's own RFC 3339 field: no clock and no timezone of the App's
+	// reach the message. An event without one (the broker always sets it) is drawn without the row
+	// rather than with an invented value, and is live, since nothing says it is past.
+	deadline, dated := cardDeadlineOf(e)
+	expired := dated && now.After(time.Unix(deadline, 0))
+	if dated {
+		fields = append(fields, cardText{Type: cardMrkdwn, Text: fmt.Sprintf("*Deadline*\n"+cardDeadline, deadline, deadline)})
+	}
+	buttons := []any{}
+	if !expired {
+		buttons = append(buttons,
+			cardButton{Type: "button", Text: cardText{Type: "plain_text", Text: cardApprove},
+				ActionID: actionApprove, Value: cardValue(e.ApprovalID, e.Branch), Style: "primary"},
+			cardButton{Type: "button", Text: cardText{Type: "plain_text", Text: cardDeny},
+				ActionID: actionDeny, Value: cardValue(e.ApprovalID, e.Branch), Style: "danger"})
+	}
+	buttons = append(buttons, cardButton{Type: "button", Text: cardText{Type: "plain_text", Text: cardOpenRoom}, URL: room})
+	blocks := []cardBlock{
+		{Type: "header", Text: &cardText{Type: "plain_text", Text: cardTitle}},
+		{Type: "section", Fields: fields},
+		{Type: "section", Text: &cardText{Type: cardMrkdwn, Text: cardProse}},
+		{Type: "actions", Elements: buttons},
+		{Type: "context", Elements: []any{cardText{Type: cardMrkdwn, Text: room}}},
+	}
+	raw, err := cardJSON(blocks)
+	if err != nil {
+		return "", nil // nothing the App builds can fail to encode; the caller keeps today's line
+	}
+	return cardTitle, raw
+}
+
+// cardJSON encodes a card's blocks as Slack reads them. HTML escaping is off because the only `<` in
+// them is Slack's own date token, which the design writes verbatim: an escaped \u003c decodes to the
+// same text but reads as noise in the wire bytes the L6 proof and the tests quote.
+func cardJSON(v any) (json.RawMessage, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, fmt.Errorf("slackapp: the card's blocks: %w", err)
+	}
+	return json.RawMessage(strings.TrimSuffix(b.String(), "\n")), nil
+}
+
+// cardDeadlineOf is the event's deadline as a unix second, which is what Slack's date token takes.
+func cardDeadlineOf(e webhook.Event) (unix int64, ok bool) {
+	at, err := time.Parse(time.RFC3339, e.ExpiresAt)
+	if err != nil {
+		return 0, false
+	}
+	return at.Unix(), true
+}
+
+// cardWanted is §5's four conditions, the thread's included: the room was filed from Slack (th), the
+// channel draws cards and serves the event's repository, and the event carries the three values a
+// card is drawn from — an approval id, this class, and a branch inside the AgentRun's shape. Every
+// other wait keeps today's line, so a forge.pr approval in the same thread reads as it always did.
+func (a *App) cardWanted(e webhook.Event, th Thread) bool {
+	ch, served := a.Channels[th.Channel]
+	return served && ch.Approvals && slices.Contains(ch.Repositories, e.Repo) &&
+		e.Class == pressClass && approvalIDRE.MatchString(e.ApprovalID) && envelope.ValidBranch(e.Branch)
+}
+
+// postOrUpdateCard draws the wait as §5's card, once per approval: the room's thread is read for a
+// card that names this approval, and that one is rewritten in place, so a webhook redelivery — or a
+// restart that lost the in-memory delivery set — cannot double the card. A thread too long to read
+// posts anyway and counts too_long, its one honest downgrade. The outcome is the counter's word:
+// card_posted, card_updated or too_long; error when the thread or Slack could not be reached, which
+// the broker retries.
+func (a *App) postOrUpdateCard(ctx context.Context, th Thread, e webhook.Event) string {
+	text, blocks := approvalCard(e, a.RoomsURL, a.now())
+	if blocks == nil {
+		a.log().Error("the card could not be encoded, the thread keeps today's line", "room", e.Room)
+		return a.postWaitLine(ctx, th, e)
+	}
+	payload, perr := metaPayload(ApprovalPayload{ApprovalID: e.ApprovalID, Class: e.Class, Branch: e.Branch})
+	if perr != nil {
+		// The tag is what finds the card again, so a card posted without it would be doubled by the
+		// next delivery. It is posted all the same, and this names the consequence.
+		a.log().Error("card metadata: a redelivery would draw a second card", "room", e.Room, "err", perr)
+		payload = json.RawMessage(`{}`)
+	}
+	meta := &Metadata{EventType: approvalEventType, EventPayload: payload}
+	msgs, err := a.Slack.Thread(ctx, th.Channel, th.TS)
+	tooLong := errors.Is(err, ErrThreadTooLong)
+	if err != nil && !tooLong {
+		a.log().Warn("slack thread fetch failed", "channel", th.Channel, "err", err)
+		return "error"
+	}
+	if card, ok := a.cardIn(msgs, e.ApprovalID); ok {
+		if err := a.Slack.Update(ctx, th.Channel, card.TS, text, blocks); err != nil {
+			// The same line the decide path's own teardown logs, and what its alert reads.
+			a.log().Warn("card update failed", "approval", e.ApprovalID, "channel", th.Channel, "err", err)
+			return "error"
+		}
+		return "card_updated"
+	}
+	if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, text, blocks, meta); err != nil {
+		a.log().Warn("slack post failed", "room", e.Room, "err", err)
+		return "error"
+	}
+	if tooLong {
+		return "too_long"
+	}
+	return "card_posted"
+}
+
+// postWaitLine is what the wait would have been without a card: the thread's own line. It is the one
+// caller of approvalCard's impossible failure, so a card the App cannot encode still tells the thread.
+func (a *App) postWaitLine(ctx context.Context, th Thread, e webhook.Event) string {
+	line, ok := a.line(e)
+	if !ok {
+		return "ignored"
+	}
+	if _, err := a.Slack.Post(ctx, th.Channel, th.TS, line, nil); err != nil {
+		a.log().Warn("slack post failed", "room", e.Room, "err", err)
+		return "error"
+	}
+	return "posted"
+}
+
+// cardIn is the thread's card for one approval, the newest first: the App's own message — posted by
+// its bot user — tagged factory_approval, whose payload names the approval. A message that fails any
+// of that is not a card, which is the branch a foreign message already takes for a draft: nothing
+// else in the thread can be rewritten in its place.
+func (a *App) cardIn(msgs []Message, approvalID string) (Message, bool) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.User == "" || m.User != a.BotUserID || m.Metadata == nil {
+			continue
+		}
+		if p, ok := m.Metadata.approvalPayload(); ok && p.ApprovalID == approvalID {
+			return m, true
+		}
+	}
+	return Message{}, false
+}
+
+// cardAt is the card a press names and the thread it lives in, from one read: the interaction payload
+// carries a channel and a message ts and nothing that names the thread, so the App reads the pressed
+// message once — here — and every press-path caller takes both from it. A read that fails leaves the
+// thread empty rather than losing the answer.
+func (a *App) cardAt(ctx context.Context, channel, ts string) (Message, string) {
+	m, err := a.Slack.Message(ctx, channel, ts)
+	if err != nil {
+		a.log().Info("slack message read for the answer's thread failed", "channel", channel, "err", err)
+		return Message{}, ""
+	}
+	if m.ThreadTS != "" {
+		return m, m.ThreadTS
+	}
+	return m, m.TS
 }

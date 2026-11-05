@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -706,5 +708,297 @@ func TestSlackDecideRefusalsAreAnswered(t *testing.T) {
 				t.Fatalf("a refusal took the card's buttons off: %+v", u)
 			}
 		})
+	}
+}
+
+// ---- the card the wait draws (Task 15) ----
+
+// cardRoom is the room every card case is filed under, in the thread the thread map knows.
+const cardRoom = "aaaaaaaa"
+
+// waitLine is today's text for a wait: what every case that is not a card must still read.
+const waitLine = "The work waits for a human (approval): answer it on the room page, https://rooms.example/r/aaaaaaaa. Nothing posted here reaches the run."
+
+// waitBody is one room.waiting_for_human delivery with every field §5 draws a card from; mutate
+// changes or (with a nil value) drops one, so a case tests exactly that field.
+func waitBody(mutate func(map[string]any)) string {
+	ev := map[string]any{
+		"type": "room.waiting_for_human", "room": cardRoom, "repo": "Smana/ai-native-ref",
+		"reason": "approval", "approvalId": cardApprovalID, "class": pressClass, "branch": cardBranch,
+		"expiresAt": cardExpiresAt,
+	}
+	if mutate != nil {
+		mutate(ev)
+	}
+	for k, v := range ev {
+		if v == nil {
+			delete(ev, k)
+		}
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		panic(err) // a test's own map of literals
+	}
+	return string(raw)
+}
+
+// cardExpiresAt is a deadline after the rig's fixed clock (time.Unix(1_790_000_000, 0) is its now),
+// so a card drawn for it is live.
+const cardExpiresAt = "2026-09-21T14:23:20Z"
+
+// cardDeadlineUnix is that deadline as Slack's date token carries it.
+const cardDeadlineUnix = 1_790_000_600
+
+// liveCardChannel serves the room's repository and turns approvals on.
+func liveCardChannel() Channel {
+	return Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, Approvals: true}
+}
+
+// filedRig is a channel whose approvals are on and whose room has a thread: the one shape a card is
+// posted into.
+func filedRig(t *testing.T) *appRig {
+	t.Helper()
+	rig := newAppRig(t, liveCardChannel())
+	rig.threads.put(cardRoom, Thread{Channel: "C03", TS: pressThread})
+	return rig
+}
+
+// §5: a card only when every condition holds. Everything else keeps today's line, carries no blocks
+// and has no button — so a forge.pr approval in the same thread reads exactly as it does today.
+func TestCardOnlyForForgePush(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		channel Channel
+		mutate  func(map[string]any)
+		thread  bool // the room is filed from Slack
+		posted  bool // today's line is posted at all
+	}{
+		{"a forge.pr wait", liveCardChannel(), func(m map[string]any) { m["class"] = "forge.pr" }, true, true},
+		{"a mcp.write wait", liveCardChannel(), func(m map[string]any) { m["class"] = "mcp.write" }, true, true},
+		{"an egress.new wait", liveCardChannel(), func(m map[string]any) { m["class"] = "egress.new" }, true, true},
+		{"a wait with no approvalId", liveCardChannel(), func(m map[string]any) { m["approvalId"] = nil }, true, true},
+		{"a wait with no branch", liveCardChannel(), func(m map[string]any) { m["branch"] = nil }, true, true},
+		{"a channel with approvals off", Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2}, nil, true, true},
+		{"a channel whose repositories do not list the room's", Channel{Repositories: []string{"Smana/other-repo"}, MaxCostUSD: 2, Approvals: true}, nil, true, true},
+		{"a room with no thread", liveCardChannel(), nil, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newAppRig(t, tc.channel)
+			if tc.thread {
+				rig.threads.put(cardRoom, Thread{Channel: "C03", TS: pressThread})
+			}
+			rig.webhook(waitBody(tc.mutate))
+			if !tc.posted {
+				if n := len(rig.posts()); n != 0 {
+					t.Fatalf("%d posts: a room with no thread has nowhere to draw: %+v", n, rig.posts())
+				}
+				return
+			}
+			p := rig.lastPost()
+			if p.blocks != nil || p.meta != nil || p.text != waitLine {
+				t.Fatalf("a wait that is not this card must keep today's line: %+v", p)
+			}
+			if n := rig.metrics.count("webhooks", "card_posted"); n != 0 {
+				t.Fatalf("card_posted counted %d times, want 0", n)
+			}
+		})
+	}
+
+	// The card itself: §5's four rows, verbatim, and the metadata that finds it again. A second
+	// delivery of the same wait under a fresh webhook-id posts nothing new and rewrites that card —
+	// post-or-update by approvalId, found through Thread.
+	t.Run("a forge.push wait", func(t *testing.T) {
+		rig := filedRig(t)
+		rig.webhook(waitBody(nil))
+		p := rig.lastPost()
+		if p.blocks == nil || p.text != cardTitle {
+			t.Fatalf("the card: %+v", p)
+		}
+		if p.channel != "C03" || p.thread != pressThread {
+			t.Fatalf("the card went to %s/%s, want the room's thread", p.channel, p.thread)
+		}
+		wantMeta := `{"event_type":"factory_approval","event_payload":{"approvalId":"` + cardApprovalID +
+			`","class":"forge.push","branch":"` + cardBranch + `"}}`
+		if raw, err := json.Marshal(p.meta); err != nil || string(raw) != wantMeta {
+			t.Fatalf("the card's metadata: %s (err %v), want %s", raw, err, wantMeta)
+		}
+		blocks := string(p.blocks)
+		deadline := fmt.Sprintf("<!date^%d^{date_short_pretty} at {time}|by %d>", cardDeadlineUnix, cardDeadlineUnix)
+		for _, want := range []string{
+			`{"type":"header","text":{"type":"plain_text","text":"Approval needed: push to the forge"}}`,
+			`{"type":"section","fields":[{"type":"mrkdwn","text":"*Class*\nforge.push"},` +
+				`{"type":"mrkdwn","text":"*Branch*\n` + cardBranch + `"},` +
+				`{"type":"mrkdwn","text":"*Approval*\n` + cardApprovalID + `"},` +
+				`{"type":"mrkdwn","text":"*Deadline*\n` + deadline + `"}]}`,
+			`{"type":"section","text":{"type":"mrkdwn","text":"If you approve: the push goes out and the run continues.\n` +
+				`If you deny: nothing is pushed; the agent is told no and none of it runs."}}`,
+			`{"type":"button","text":{"type":"plain_text","text":"Approve"},"action_id":"factory_approval_approve","value":"` +
+				cardValue(cardApprovalID, cardBranch) + `","style":"primary"}`,
+			`{"type":"button","text":{"type":"plain_text","text":"Deny"},"action_id":"factory_approval_deny","value":"` +
+				cardValue(cardApprovalID, cardBranch) + `","style":"danger"}`,
+			`{"type":"button","text":{"type":"plain_text","text":"Open the room"},"url":"https://rooms.example/r/aaaaaaaa"}`,
+			`{"type":"context","elements":[{"type":"mrkdwn","text":"https://rooms.example/r/aaaaaaaa"}]}`,
+		} {
+			if !strings.Contains(blocks, want) {
+				t.Errorf("the card is missing %s\nin %s", want, blocks)
+			}
+		}
+		if n := rig.metrics.count("webhooks", "card_posted"); n != 1 {
+			t.Fatalf("webhooks/card_posted counted %d times, want 1", n)
+		}
+
+		n := len(rig.posts())
+		rig.webhook(waitBody(nil)) // a redelivery: a fresh webhook-id, the same wait
+		if len(rig.posts()) != n {
+			t.Fatalf("a redelivered wait drew a second card: %+v", rig.posts()[n:])
+		}
+		u := rig.slack.updatesMade()
+		if len(u) != 1 || u[0].channel != "C03" || u[0].ts != p.ts || u[0].text != cardTitle || string(u[0].blocks) != blocks {
+			t.Fatalf("the redelivery updated %+v, want the same card %s with the same blocks", u, p.ts)
+		}
+		if got := rig.metrics.count("webhooks", "card_updated"); got != 1 {
+			t.Fatalf("webhooks/card_updated counted %d times, want 1", got)
+		}
+	})
+
+	// One card per approval, not per thread: a second approval in the same thread is its own card.
+	t.Run("a second approval in the same thread", func(t *testing.T) {
+		const otherID = "01M4A1B2C3D4E5F6G7H8J9K0MP"
+		rig := filedRig(t)
+		rig.webhook(waitBody(nil))
+		first := rig.lastPost()
+		rig.webhook(waitBody(func(m map[string]any) { m["approvalId"] = otherID }))
+		second := rig.lastPost()
+		if second.ts == first.ts || second.blocks == nil || !strings.Contains(string(second.blocks), otherID) {
+			t.Fatalf("a second approval in the thread drew %+v, want a card of its own", second)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("a second approval rewrote the first card: %+v", u)
+		}
+	})
+
+	// A message that carries a card's tag but is not the App's own is not the card: the wait gets its
+	// own, rather than rewriting a message the App does not own.
+	t.Run("a forged card in the thread", func(t *testing.T) {
+		rig := filedRig(t)
+		rig.slack.seed(Message{TS: "1729.0700", ThreadTS: pressThread, User: "U02DEF", Text: "not the App's",
+			Metadata: metaOf(t, approvalEventType, ApprovalPayload{ApprovalID: cardApprovalID, Class: pressClass, Branch: cardBranch})})
+		rig.webhook(waitBody(nil))
+		if p := rig.lastPost(); p.blocks == nil || p.text != cardTitle {
+			t.Fatalf("the forged card stopped the real one: %+v", p)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("the App rewrote a message it does not own: %+v", u)
+		}
+	})
+
+	// A thread too long to read still gets its card, and says so in the counter: the one downgrade
+	// post-or-update makes, because a card it could not find may then be posted twice.
+	t.Run("a thread too long to read", func(t *testing.T) {
+		rig := filedRig(t)
+		rig.slack.threadErr = ErrThreadTooLong
+		rig.webhook(waitBody(nil))
+		if p := rig.lastPost(); p.blocks == nil || p.text != cardTitle {
+			t.Fatalf("a long thread got %+v, want the card anyway", p)
+		}
+		if n := rig.metrics.count("webhooks", "too_long"); n != 1 {
+			t.Fatalf("webhooks/too_long counted %d times, want 1", n)
+		}
+	})
+}
+
+// Review focus 5: a wait whose deadline had already passed when the card is drawn is posted inert —
+// the prose and the room link, no button that would press a request the store will refuse. The App
+// decides only what it draws: a press on the card posted before the deadline still reaches the
+// broker, which owns the fence (D10).
+func TestCardIsPostedInertPastItsDeadline(t *testing.T) {
+	rig := filedRig(t)
+	rig.webhook(waitBody(func(m map[string]any) {
+		m["expiresAt"] = time.Unix(1_790_000_000, 0).Add(-time.Minute).UTC().Format(time.RFC3339)
+	}))
+	p := rig.lastPost()
+	if p.blocks == nil {
+		t.Fatalf("an expired wait drew today's line, not the card: %q", p.text)
+	}
+	blocks := string(p.blocks)
+	for _, want := range []string{
+		`{"type":"header","text":{"type":"plain_text","text":"Approval needed: push to the forge"}}`,
+		`*Class*`, `*Branch*`, `*Approval*`, `*Deadline*`,
+		"If you approve: the push goes out and the run continues.",
+		`"text":"Open the room"`, `"url":"https://rooms.example/r/aaaaaaaa"`,
+	} {
+		if !strings.Contains(blocks, want) {
+			t.Errorf("the inert card is missing %s\nin %s", want, blocks)
+		}
+	}
+	if strings.Contains(blocks, "factory_approval_") {
+		t.Fatalf("an expired approval was drawn with live buttons: %s", blocks)
+	}
+	if n := strings.Count(blocks, `"type":"button"`); n != 1 {
+		t.Fatalf("%d buttons on an inert card, want the room link alone: %s", n, blocks)
+	}
+
+	// The card posted before the deadline: its press is still the broker's to refuse.
+	seedCard(t, rig, cardTS, cardApprovalID)
+	if st := rig.interact(pressPayload(t, nil)); st != http.StatusOK {
+		t.Fatalf("%d, want 200", st)
+	}
+	if got := rig.broker.decided(); len(got) != 1 || got[0].ApprovalID != cardApprovalID {
+		t.Fatalf("the App became a fence over its own clock: %+v", got)
+	}
+}
+
+// The card path's own read is the only one a press makes: the thread the answer lands in and the
+// message the card is rewritten at come from one conversations.replies, never two.
+func TestAPressReadsTheCardOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*appRig)
+		reads []string
+	}{
+		{"a recorded decision", nil, []string{"message"}},
+		{"a refusal", func(r *appRig) { r.broker.answerWith("four_eyes") }, []string{"message"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := approvalsRig(t)
+			seedCard(t, rig, cardTS, cardApprovalID)
+			if tc.setup != nil {
+				tc.setup(rig)
+			}
+			if st := rig.interact(pressPayload(t, nil)); st != http.StatusOK {
+				t.Fatalf("%d, want 200", st)
+			}
+			if got := rig.slack.readsMade(); !slices.Equal(got, tc.reads) {
+				t.Fatalf("the press read Slack %v, want %v", got, tc.reads)
+			}
+		})
+	}
+	// The card path reads the thread it already knows once, and only when a card is wanted.
+	rig := filedRig(t)
+	rig.webhook(waitBody(nil))
+	if got := rig.slack.readsMade(); !slices.Equal(got, []string{"thread"}) {
+		t.Fatalf("drawing a card read Slack %v, want one thread read", got)
+	}
+}
+
+// The button's value round-trips, and a value the App did not write is refused rather than read.
+func TestCardValue(t *testing.T) {
+	v := cardValue(cardApprovalID, cardBranch)
+	if v != "v1|forge.push|"+cardApprovalID+"|"+cardBranch {
+		t.Fatalf("cardValue = %q", v)
+	}
+	if id, branch, ok := parseCardValue(v); !ok || id != cardApprovalID || branch != cardBranch {
+		t.Fatalf("parseCardValue(%q) = %q, %q, %v", v, id, branch, ok)
+	}
+	for _, bad := range []string{
+		"", "v2|forge.push|" + cardApprovalID + "|" + cardBranch,
+		"v1|forge.pr|" + cardApprovalID + "|" + cardBranch,
+		"v1|forge.push|" + cardApprovalID + "|main",
+		"v1|forge.push|" + cardApprovalID + "|" + cardBranch + "|x",
+		"v1|forge.push||" + cardBranch,
+	} {
+		if _, _, ok := parseCardValue(bad); ok {
+			t.Fatalf("parseCardValue(%q) accepted a value the App never wrote", bad)
+		}
 	}
 }

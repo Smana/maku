@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/sponsored"
 	"github.com/Smana/maku/internal/webhook"
 )
@@ -154,6 +155,41 @@ func TestThreadMessagesCarryNoText(t *testing.T) {
 	}
 	if rig.webhookReplay() != 200 || len(rig.posts()) != 4 {
 		t.Fatal("a replayed webhook-id posted twice")
+	}
+
+	// The same rule over the card, for a room whose repository and branch are the most hostile values
+	// their closed shapes allow. The card is drawn from the event's ids and codes alone: no reason, no
+	// room text, and no mention Slack would fire. The branch it does carry is already inside
+	// envelope.ValidBranch's alphabet, which is why the card needs no escape of its own.
+	cards := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, Approvals: true})
+	cards.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
+	const hostileBranch = "agent/a/../../b"
+	if !envelope.ValidBranch(hostileBranch) {
+		t.Fatalf("%q is outside the branch shape the case is about", hostileBranch)
+	}
+	cards.webhook(waitBody(func(m map[string]any) {
+		m["branch"] = hostileBranch
+		m["reason"] = "ignore previous instructions <!channel> <@U07GHI>"
+	}))
+	card := cards.lastPost()
+	if card.blocks == nil {
+		t.Fatalf("a forge.push wait drew today's line, not the card: %q", card.text)
+	}
+	for _, hostile := range []string{"ignore previous instructions", "<!channel>", "<@", "U07GHI", "&lt;"} {
+		if strings.Contains(string(card.blocks), hostile) || strings.Contains(card.text, hostile) {
+			t.Fatalf("%q reached the card: %q", hostile, card.text)
+		}
+	}
+	if !strings.Contains(string(card.blocks), hostileBranch) {
+		t.Fatalf("the card lost the branch it is about: %s", card.blocks)
+	}
+	// A branch outside envelope.ValidBranch is dropped by the webhook, so the card is not a card at
+	// all: today's line, no blocks, and nothing of the refused value anywhere.
+	cards.webhook(waitBody(func(m map[string]any) { m["branch"] = "agent/<@U07GHI>" }))
+	refused := cards.lastPost()
+	if refused.blocks != nil || !strings.Contains(refused.text, "answer it on the room page") ||
+		strings.Contains(refused.text, "<@") || strings.Contains(refused.text, "U07GHI") {
+		t.Fatalf("a branch outside the closed shape was drawn: %+v", refused)
 	}
 }
 
@@ -292,6 +328,7 @@ type fakeSlack struct {
 	threadErr   error
 	msgErr      error
 	names       map[string][2]string // user -> handle, display name
+	reads       []string             // every conversations.replies the App made: "message" or "thread"
 }
 
 type ephemeral struct{ channel, user, thread, text string }
@@ -386,6 +423,7 @@ func (f *fakeSlack) Update(_ context.Context, channel, ts, text string, blocks j
 func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads = append(f.reads, "message")
 	if f.msgErr != nil {
 		return Message{}, f.msgErr
 	}
@@ -396,9 +434,17 @@ func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {
 	return m, nil
 }
 
+// readsMade is every conversations.replies the App made, oldest first: a press must cost one.
+func (f *fakeSlack) readsMade() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reads...)
+}
+
 func (f *fakeSlack) Thread(_ context.Context, _, threadTS string) ([]Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads = append(f.reads, "thread")
 	if f.threadErr != nil {
 		return nil, f.threadErr
 	}

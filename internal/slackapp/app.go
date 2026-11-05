@@ -866,10 +866,8 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	if json.Unmarshal(body, &e) != nil || !slices.Contains(webhook.Types(), e.Type) || !roomRE.MatchString(e.Room) {
 		return "ignored"
 	}
-	line, ok := a.line(e)
-	if !ok {
-		return "ignored"
-	}
+	// The thread is read before the dispatch: the card needs it as much as the line does, and the
+	// line's own template is decided after it.
 	th, found, err := a.Threads.Get(ctx, e.Room)
 	if err != nil {
 		a.log().Warn("thread map get failed", "room", e.Room, "err", err)
@@ -878,11 +876,12 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	if !found {
 		return "ignored" // a room that was not filed from Slack
 	}
-	if _, err := a.Slack.Post(ctx, th.Channel, th.TS, line, nil); err != nil {
-		a.log().Warn("slack post failed", "room", e.Room, "err", err)
-		return "error"
+	// §5: a forge.push wait in a channel that draws cards is one card, posted or updated by its
+	// approval id. Everything else keeps today's line, with no button.
+	if e.Type == "room.waiting_for_human" && a.cardWanted(e, th) {
+		return a.postOrUpdateCard(ctx, th, e)
 	}
-	return "posted"
+	return a.postWaitLine(ctx, th, e)
 }
 
 // line is the event's thread template. Every value is clipped to the broker's own vocabulary

@@ -10,8 +10,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/Smana/maku/internal/envelope"
 )
 
 // Interactivity (v3.x Slack push approval §6, D11): Slack's button presses come to the same
@@ -217,29 +215,15 @@ func outcomeOf(code string) string {
 // answer tells the clicker alone, in the card's thread, what became of the press (§6 step 6): one
 // chat.postEphemeral addressed to the id Slack signed the click with, always, success included. A
 // failed answer is logged and dropped — never retried, never turned into a second press — and its
-// false is the worker's `error`.
+// false is the worker's `error`. The card and its thread come from the card path's one read
+// (cardAt), so a press costs Slack one conversations.replies and no more.
 func (a *App) answer(ctx context.Context, in interaction, line string) bool {
-	if err := a.Slack.PostEphemeral(ctx, in.Channel, in.User, a.cardThread(ctx, in), line); err != nil {
+	_, thread := a.cardAt(ctx, in.Channel, in.MessageTS)
+	if err := a.Slack.PostEphemeral(ctx, in.Channel, in.User, thread, line); err != nil {
 		a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)
 		return false
 	}
 	return true
-}
-
-// cardThread is the thread the card lives in, so the answer appears beside it. The interaction
-// payload carries a channel and a message ts and nothing that names the thread, so the App reads the
-// pressed message; a read that fails leaves the answer in the channel rather than losing it. The
-// card's own read (Task 15) is the one that knows this thread, and this is where it lands.
-func (a *App) cardThread(ctx context.Context, in interaction) string {
-	m, err := a.Slack.Message(ctx, in.Channel, in.MessageTS)
-	if err != nil {
-		a.log().Info("slack message read for the answer's thread failed", "channel", in.Channel, "err", err)
-		return ""
-	}
-	if m.ThreadTS != "" {
-		return m.ThreadTS
-	}
-	return m.TS
 }
 
 // inert takes the card's buttons off after a recorded decision (§6 step 7): the message becomes the
@@ -275,7 +259,7 @@ func parseInteraction(body []byte) (interaction, bool) {
 	if !ok {
 		return interaction{}, false
 	}
-	approvalID, branch, ok := parsePressValue(act.Value)
+	approvalID, branch, ok := parseCardValue(act.Value)
 	if !ok {
 		return interaction{}, false
 	}
@@ -297,17 +281,6 @@ func decisionOf(actionID string) (string, bool) {
 		return "denied", true
 	}
 	return "", false
-}
-
-// parsePressValue reads a card button's value (§5): v1|forge.push|<approvalId>|<branch>. The branch
-// is the AgentRun's own pattern (envelope.ValidBranch), never a copy of it.
-func parsePressValue(v string) (approvalID, branch string, ok bool) {
-	parts := strings.Split(v, "|")
-	if len(parts) != 4 || parts[0] != pressVersion || parts[1] != pressClass ||
-		!approvalIDRE.MatchString(parts[2]) || !envelope.ValidBranch(parts[3]) {
-		return "", "", false
-	}
-	return parts[2], parts[3], true
 }
 
 // messageTSOf names the message the press was made on (§6 step 3, review focus 3). The container's
