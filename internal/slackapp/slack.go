@@ -24,11 +24,12 @@ const (
 	maxSlackReply = 1 << 20
 )
 
-// Metadata is the draft the App attaches to its own message (R23); Slack keeps it off the
-// visible text.
+// Metadata is what the App attaches to its own messages (R23); Slack keeps it off the visible text.
+// EventPayload is tagged: the App decodes it on demand by EventType, so a card and a draft share one
+// message shape (v3.x Slack push approval §5). A draft's bytes on the wire do not change.
 type Metadata struct {
-	EventType    string       `json:"event_type"`
-	EventPayload DraftPayload `json:"event_payload"`
+	EventType    string          `json:"event_type"`
+	EventPayload json.RawMessage `json:"event_payload"`
 }
 
 // DraftPayload is the checked draft and its hash, sha256 hex of repo, title and body joined by NUL.
@@ -43,6 +44,52 @@ type DraftPayload struct {
 	Rev    int    `json:"rev,omitempty"`
 }
 
+// ApprovalPayload is a card's metadata (§5): what finds the card again without a search scope.
+type ApprovalPayload struct {
+	ApprovalID string `json:"approvalId"`
+	Class      string `json:"class"`
+	Branch     string `json:"branch"`
+}
+
+// approvalEventType marks a card the App posted for an approval.
+const approvalEventType = "factory_approval"
+
+// draftPayload decodes the payload as the draft the event type claims; false when it is anything
+// else, which reads as "not a draft", the branch a foreign message already takes.
+func (m *Metadata) draftPayload() (DraftPayload, bool) {
+	if m == nil || m.EventType != draftEventType {
+		return DraftPayload{}, false
+	}
+	var p DraftPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return DraftPayload{}, false
+	}
+	return p, true
+}
+
+// approvalPayload decodes the payload as a card's; false when it is anything else.
+func (m *Metadata) approvalPayload() (ApprovalPayload, bool) {
+	if m == nil || m.EventType != approvalEventType {
+		return ApprovalPayload{}, false
+	}
+	var p ApprovalPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return ApprovalPayload{}, false
+	}
+	return p, true
+}
+
+// metaPayload marshals a payload the App builds itself. The error is returned rather than dropped:
+// the payload is what finds the message again, so a caller that cannot tag must not post as if it
+// had. Nothing the App builds today can fail to marshal; this is the barrier if one ever can.
+func metaPayload(v any) (json.RawMessage, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("slackapp: slack: the message metadata: %w", err)
+	}
+	return raw, nil
+}
+
 // Message is a Slack message as the ✅ flow reads it (M9). User is who posted it: the App's own
 // bot user for its drafts.
 type Message struct {
@@ -55,6 +102,12 @@ type Slack interface {
 	// Thread is the thread's messages, oldest first, the parent included, with their metadata.
 	Thread(ctx context.Context, channel, threadTS string) ([]Message, error)
 	Post(ctx context.Context, channel, threadTS, text string, meta *Metadata) (ts string, err error)
+	// PostCard posts text with Block Kit blocks: the approval card and the conversational design's
+	// proposal message ride it, so Post's own wire bytes do not move.
+	PostCard(ctx context.Context, channel, threadTS, text string, blocks json.RawMessage, meta *Metadata) (ts string, err error)
+	// Update rewrites a message the App posted (chat.update), for a card that must turn inert. Slack
+	// refuses a message the App does not own; the error carries Slack's code.
+	Update(ctx context.Context, channel, ts, text string, blocks json.RawMessage) error
 	Message(ctx context.Context, channel, ts string) (Message, error)
 	// PostEphemeral is a message only user sees, in channel (and threadTS, when set).
 	PostEphemeral(ctx context.Context, channel, user, threadTS, text string) error
@@ -98,8 +151,8 @@ type slackAnswer struct {
 		User     string `json:"user"`
 		Text     string `json:"text"`
 		Metadata *struct {
-			EventType    string       `json:"event_type"`
-			EventPayload DraftPayload `json:"event_payload"`
+			EventType    string          `json:"event_type"`
+			EventPayload json.RawMessage `json:"event_payload"`
 		} `json:"metadata"`
 	} `json:"messages"`
 }
@@ -127,6 +180,57 @@ func (c *SlackClient) Post(ctx context.Context, channel, threadTS, text string, 
 		return "", err
 	}
 	return a.TS, nil
+}
+
+// PostCard is chat.postMessage for a message that carries Block Kit blocks (§5, §6): the card's
+// prose is its text, so a client without blocks still reads it. Separate from Post on purpose —
+// Post's own call sites and the draft's wire bytes stay untouched.
+func (c *SlackClient) PostCard(ctx context.Context, channel, threadTS, text string, blocks json.RawMessage, meta *Metadata) (string, error) {
+	body := map[string]any{"channel": channel, "text": text, "unfurl_links": false, "unfurl_media": false}
+	if threadTS != "" {
+		body["thread_ts"] = threadTS
+	}
+	if len(blocks) > 0 {
+		body["blocks"] = blocks
+	}
+	if meta != nil {
+		body["metadata"] = meta
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("chat.postMessage"), bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	a, err := c.do(req)
+	if err != nil {
+		return "", err
+	}
+	return a.TS, nil
+}
+
+// Update is chat.update (chat:write already covers it): it rewrites a message the App posted, in
+// place. No metadata — an update is the App's own change to its own message, never a new tag — and
+// no unfurling, as on Post. blocks replaces the message's own; empty leaves them as they are.
+func (c *SlackClient) Update(ctx context.Context, channel, ts, text string, blocks json.RawMessage) error {
+	body := map[string]any{"channel": channel, "ts": ts, "text": text, "unfurl_links": false, "unfurl_media": false}
+	if len(blocks) > 0 {
+		body["blocks"] = blocks
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("chat.update"), bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	_, err = c.do(req)
+	return err
 }
 
 // PostEphemeral is chat.postEphemeral (chat:write): text that only user sees, never stored in the

@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +39,7 @@ func TestSlackPost(t *testing.T) {
 		_ = json.Unmarshal(body, &got)
 		return `{"ok":true,"ts":"1729.0002"}`
 	})
-	meta := &Metadata{EventType: "factory_draft", EventPayload: DraftPayload{Repo: "a/b", Title: "t", Body: "b", SHA256: "h"}}
+	meta := metaOf(t, draftEventType, DraftPayload{Repo: "a/b", Title: "t", Body: "b", SHA256: "h"})
 	ts, err := c.Post(context.Background(), "C03", "1729.0001", "hello", meta)
 	if err != nil || ts != "1729.0002" {
 		t.Fatalf("%q %v", ts, err)
@@ -74,8 +77,10 @@ func TestSlackMessage(t *testing.T) {
 		q.Get("inclusive") != "true" || q.Get("include_all_metadata") != "true" {
 		t.Fatalf("query %v", q)
 	}
-	if m.TS != "1729.0002" || m.ThreadTS != "1729.0001" || m.User != "U0BOT" || m.Metadata == nil ||
-		m.Metadata.EventType != "factory_draft" || m.Metadata.EventPayload.SHA256 != "h" {
+	if m.TS != "1729.0002" || m.ThreadTS != "1729.0001" || m.User != "U0BOT" || m.Metadata == nil {
+		t.Fatalf("%+v", m)
+	}
+	if p, ok := m.Metadata.draftPayload(); !ok || m.Metadata.EventType != "factory_draft" || p.SHA256 != "h" {
 		t.Fatalf("%+v", m)
 	}
 	if _, err := c.Message(context.Background(), "C03", "9999.0000"); err == nil {
@@ -105,9 +110,11 @@ func TestSlackThreadFollowsTheCursor(t *testing.T) {
 		 "metadata":{"event_type":"factory_draft","event_payload":{"repo":"a/b","author":"U02DEF","rev":2}}}]}`
 	})
 	msgs, err := c.Thread(context.Background(), "C03", "1729.0001")
-	if err != nil || len(msgs) != 2 || len(cursors) != 2 || cursors[1] != "c2" ||
-		msgs[1].Metadata == nil || msgs[1].Metadata.EventPayload.Author != "U02DEF" || msgs[1].Metadata.EventPayload.Rev != 2 {
+	if err != nil || len(msgs) != 2 || len(cursors) != 2 || cursors[1] != "c2" || msgs[1].Metadata == nil {
 		t.Fatalf("%v %v %+v", err, cursors, msgs)
+	}
+	if p, ok := msgs[1].Metadata.draftPayload(); !ok || p.Author != "U02DEF" || p.Rev != 2 {
+		t.Fatalf("%+v", msgs[1].Metadata)
 	}
 }
 
@@ -151,5 +158,134 @@ func TestSlackEphemeralAndUserName(t *testing.T) {
 	answer = `{"ok":false,"error":"missing_scope"}`
 	if _, n, err := c.UserName(context.Background(), "U02DEF"); err == nil || n != "" {
 		t.Fatalf("missing_scope: %q %v", n, err)
+	}
+}
+
+// §6: chat.update rewrites the App's own message in place; chat.postMessage with blocks posts the
+// card. chat:write already covers both, and no metadata is touched by an update. slackServer fails
+// the test itself when a call does not carry "Authorization: Bearer <Token()>".
+func TestUpdateAndCardWire(t *testing.T) {
+	// The block set PR4 will draw, minus the elements this test does not read.
+	const card = `[{"type":"section","text":{"type":"mrkdwn","text":"If you approve: the push goes out."}},` +
+		`{"type":"actions","elements":[{"type":"button","action_id":"factory_approval_approve","text":{"type":"plain_text","text":"Approve"},"value":"v1|forge.push|01J0|agent/x"}]}]`
+
+	// body records one call: its path and the body's top-level fields, raw so a subtest compares
+	// the exact bytes Slack receives.
+	body := func(t *testing.T, path *string, got *map[string]json.RawMessage) func(string, *http.Request, []byte) string {
+		t.Helper()
+		return func(p string, _ *http.Request, raw []byte) string {
+			*path = p
+			if err := json.Unmarshal(raw, got); err != nil {
+				t.Errorf("%s: body %q: %v", p, raw, err)
+			}
+			return `{"ok":true,"ts":"1729.0002"}`
+		}
+	}
+	// keys is the body's top-level fields, sorted: a map marshals them in that order, so the sorted
+	// list is also the wire's key order.
+	keys := func(got map[string]json.RawMessage) string {
+		out := make([]string, 0, len(got))
+		for k := range got {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return strings.Join(out, ",")
+	}
+	fields := func(t *testing.T, got map[string]json.RawMessage, want map[string]string) {
+		t.Helper()
+		for k, w := range want {
+			if string(got[k]) != w {
+				t.Errorf("%s = %s, want %s", k, got[k], w)
+			}
+		}
+	}
+
+	t.Run("chat.update, in place and with no metadata", func(t *testing.T) {
+		var path string
+		var got map[string]json.RawMessage
+		c := slackServer(t, body(t, &path, &got))
+		if err := c.Update(context.Background(), "C03", "1729.0001", "Approval needed", json.RawMessage(card)); err != nil {
+			t.Fatal(err)
+		}
+		if path != "/api/chat.update" {
+			t.Fatalf("path %s", path)
+		}
+		if have, want := keys(got), "blocks,channel,text,ts,unfurl_links,unfurl_media"; have != want {
+			t.Fatalf("fields %s, want %s", have, want)
+		}
+		fields(t, got, map[string]string{
+			"channel": `"C03"`, "ts": `"1729.0001"`, "text": `"Approval needed"`,
+			"blocks": card, "unfurl_links": "false", "unfurl_media": "false",
+		})
+	})
+
+	t.Run("PostCard posts the card with its metadata", func(t *testing.T) {
+		var path string
+		var got map[string]json.RawMessage
+		c := slackServer(t, body(t, &path, &got))
+		meta := metaOf(t, approvalEventType, ApprovalPayload{ApprovalID: "01J0", Class: "forge.push", Branch: "agent/x"})
+		ts, err := c.PostCard(context.Background(), "C03", "1729.0001", "Approval needed", json.RawMessage(card), meta)
+		if err != nil || ts != "1729.0002" {
+			t.Fatalf("%q %v", ts, err)
+		}
+		if path != "/api/chat.postMessage" {
+			t.Fatalf("path %s", path)
+		}
+		if have, want := keys(got), "blocks,channel,metadata,text,thread_ts,unfurl_links,unfurl_media"; have != want {
+			t.Fatalf("fields %s, want %s", have, want)
+		}
+		fields(t, got, map[string]string{
+			"channel": `"C03"`, "thread_ts": `"1729.0001"`, "text": `"Approval needed"`,
+			"blocks": card, "unfurl_links": "false", "unfurl_media": "false",
+			"metadata": `{"event_type":"factory_approval","event_payload":{"approvalId":"01J0","class":"forge.push","branch":"agent/x"}}`,
+		})
+	})
+
+	// A card's prose is mrkdwn carrying <@user> mentions and & in room names. encoding/json escapes
+	// both, and Slack reads them back as the same characters: the bytes below are the wire's.
+	t.Run("HTML-significant text reaches the wire escaped", func(t *testing.T) {
+		text := `<@U02DEF> & co`
+		blocks := json.RawMessage(`[{"type":"section","text":{"type":"mrkdwn","text":"<@U02DEF> & the room"}}]`)
+		const (
+			wantText   = `"\u003c@U02DEF\u003e \u0026 co"`
+			wantBlocks = `[{"type":"section","text":{"type":"mrkdwn","text":"\u003c@U02DEF\u003e \u0026 the room"}}]`
+		)
+		var path string
+		var got map[string]json.RawMessage
+		c := slackServer(t, body(t, &path, &got))
+		if _, err := c.PostCard(context.Background(), "C03", "", text, blocks, nil); err != nil {
+			t.Fatal(err)
+		}
+		fields(t, got, map[string]string{"text": wantText, "blocks": wantBlocks})
+		if _, ok := got["thread_ts"]; ok {
+			t.Fatal("chat.postMessage carried a thread_ts for a card with no thread")
+		}
+		got = nil
+		if err := c.Update(context.Background(), "C03", "1729.0001", text, blocks); err != nil {
+			t.Fatal(err)
+		}
+		fields(t, got, map[string]string{"text": wantText, "blocks": wantBlocks})
+	})
+
+	// A non-ok answer is Slack's own code: never the token, never a body echoed back.
+	t.Run("a refused update is Slack's code, never the token", func(t *testing.T) {
+		c := slackServer(t, func(string, *http.Request, []byte) string {
+			return `{"ok":false,"error":"cant_update_message"}`
+		})
+		err := c.Update(context.Background(), "C03", "1729.0001", "Approval needed", json.RawMessage(card))
+		if err == nil || !strings.Contains(err.Error(), "cant_update_message") || strings.Contains(err.Error(), "xoxb-test") {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// A payload that cannot marshal is an error, not the empty payload every decoder would refuse
+// quietly: the caller that can say so must (Task 10's carry-forward).
+func TestMetaPayloadRefusesWhatItCannotMarshal(t *testing.T) {
+	if _, err := metaPayload(math.Inf(1)); err == nil {
+		t.Fatal("an unmarshalable payload was accepted")
+	}
+	if raw, err := metaPayload(DraftPayload{Repo: "a/b"}); err != nil || string(raw) != `{"repo":"a/b","title":"","body":"","sha256":""}` {
+		t.Fatalf("%s %v", raw, err)
 	}
 }

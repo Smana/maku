@@ -89,7 +89,7 @@ func TestAFullEventQueueAnswers503(t *testing.T) {
 func TestWaitFinishesTheEventInFlight(t *testing.T) {
 	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
 	rig.slack.seed(Message{TS: "1729.0009", ThreadTS: "1729.0001", User: "U0BOT", Text: "draft",
-		Metadata: &Metadata{EventType: draftEventType, EventPayload: draftPayload("Smana/ai-native-ref", "t", "b")}})
+		Metadata: metaOf(t, draftEventType, draftPayload("Smana/ai-native-ref", "t", "b"))})
 	gate := &gatedBroker{stubBroker: rig.broker, entered: make(chan struct{}, 1), release: make(chan struct{})}
 	rig.app.Broker, rig.app.Async = gate, nil
 

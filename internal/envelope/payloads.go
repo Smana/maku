@@ -96,7 +96,7 @@ type ApprovalRequestedPayload struct {
 // ApprovalDecidedPayload is an approval_decided event's payload.
 type ApprovalDecidedPayload struct {
 	ApprovalID string `json:"approvalId"`
-	Decision   string `json:"decision"` // approved | denied | expired
+	Decision   string `json:"decision"` // approved | denied | expired | superseded
 	Reason     string `json:"reason,omitempty"`
 }
 

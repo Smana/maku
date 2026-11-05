@@ -4,17 +4,20 @@ package webhook
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/summary"
 )
 
-// types are R19's eleven events and the monitor's verdict, twelve, in the design's order.
+// types are R19's eleven events, the monitor's verdict and an approval's close, thirteen, in the
+// design's order.
 var types = []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 	"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-	"room.budget_reached", "room.ended"}
+	"room.budget_reached", "room.ended", "room.approval_closed"}
 
 // Types lists the events a subscriber may ask for.
 func Types() []string { return slices.Clone(types) }
@@ -32,6 +35,19 @@ func States() []string {
 		summary.StateFailed, summary.StateStopped}
 }
 
+// classes are the five classes the broker forwards to approvers (bridgeapi's list), repeated here as
+// this package's contract: a class outside them is dropped from an event, never clipped to "other".
+var classes = []string{"forge.push", "forge.pr", "forge.other", "mcp.write", "shell.high"}
+
+// Classes lists the values an event's class may hold.
+func Classes() []string { return slices.Clone(classes) }
+
+// decisions are the four ways an approval closes (store.Approval*).
+var decisions = []string{"approved", "denied", "expired", "superseded"}
+
+// Decisions lists the values an event's decision may hold.
+func Decisions() []string { return slices.Clone(decisions) }
+
 // Reasons lists the values an event's reason may hold: the wait reasons the summary has prose
 // for, the run ends that escalate a task, the broker's approval, and the three escalations the
 // factory raises on a room it cannot use. They repeat the factory's strings: this package
@@ -45,8 +61,12 @@ func Reasons() []string {
 	return slices.Compact(out)
 }
 
-// Clip is v when kind's vocabulary ("reason", "limit", "state" or "verdict") holds it, "" for "", else
-// "other": no value outside a closed list leaves the broker or reaches a Slack thread.
+// ulidRE is an approval id's shape: the bridgeapi mints it, as a ULID, and nothing else produces
+// one, so an id that does not match is dropped rather than carried into a card.
+var ulidRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+
+// Clip is v when kind's vocabulary ("reason", "limit", "state", "verdict" or "decision") holds it, ""
+// for "", else "other": no value outside a closed list leaves the broker or reaches a Slack thread.
 func Clip(kind, v string) string {
 	var list []string
 	switch kind {
@@ -58,6 +78,8 @@ func Clip(kind, v string) string {
 		list = States()
 	case "verdict":
 		list = envelope.MonitorVerdicts()
+	case "decision":
+		list = decisions
 	}
 	if v == "" || slices.Contains(list, v) {
 		return v
@@ -95,7 +117,32 @@ func (t *Tracker) events(room, repo string, ev envelope.Event) []Event {
 	}
 	t.seq = ev.Seq
 	if ev.Type == envelope.ApprovalRequested {
-		return []Event{{Type: "room.waiting_for_human", Room: room, Reason: "approval"}}
+		e := Event{Type: "room.waiting_for_human", Room: room, Repo: repo, Reason: "approval"}
+		var p envelope.ApprovalRequestedPayload
+		if json.Unmarshal(ev.Payload, &p) != nil {
+			return []Event{e}
+		}
+		// Each value is dropped when it is outside its closed shape: the App then draws today's line.
+		if ulidRE.MatchString(p.ApprovalID) {
+			e.ApprovalID = p.ApprovalID
+		}
+		if slices.Contains(classes, p.Class) {
+			e.Class = p.Class
+		}
+		if envelope.ValidBranch(p.Branch) {
+			e.Branch = p.Branch
+		}
+		if !p.ExpiresAt.IsZero() {
+			e.ExpiresAt = p.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+		return []Event{e}
+	}
+	if ev.Type == envelope.ApprovalDecided {
+		var p envelope.ApprovalDecidedPayload
+		if json.Unmarshal(ev.Payload, &p) != nil || !ulidRE.MatchString(p.ApprovalID) || !slices.Contains(decisions, p.Decision) {
+			return nil // a close the App cannot act on is not an event
+		}
+		return []Event{{Type: "room.approval_closed", Room: room, ApprovalID: p.ApprovalID, Decision: p.Decision}}
 	}
 	if ev.Type != envelope.StateChanged {
 		return nil

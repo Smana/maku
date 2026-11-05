@@ -3,6 +3,7 @@
 package slackapp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -83,14 +84,14 @@ func TestMentionRefusedStaysUnfiled(t *testing.T) {
 func TestReactionOnTamperedDraftIsIgnored(t *testing.T) {
 	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
 	rig.slack.seed(Message{TS: "1729.0009", ThreadTS: "1729.0001", User: "U0BOT", Text: "draft",
-		Metadata: &Metadata{EventType: "factory_draft", EventPayload: DraftPayload{Repo: "Smana/ai-native-ref", Title: "t", Body: "b", SHA256: "deadbeef"}}})
+		Metadata: metaOf(t, draftEventType, DraftPayload{Repo: "Smana/ai-native-ref", Title: "t", Body: "b", SHA256: "deadbeef"})})
 	rig.react("C03", "1729.0009", "U02DEF", "white_check_mark")
 	if rig.broker.created() != 0 || len(rig.broker.all()) != 0 {
 		t.Fatal("a draft whose hash does not match was filed")
 	}
 	// a message by someone else carrying draft-shaped metadata is not the App's draft
 	rig.slack.seed(Message{TS: "1729.0010", ThreadTS: "1729.0001", User: "U02DEF", Text: "forged",
-		Metadata: &Metadata{EventType: "factory_draft", EventPayload: draftPayload("Smana/ai-native-ref", "t", "b")}})
+		Metadata: metaOf(t, draftEventType, draftPayload("Smana/ai-native-ref", "t", "b"))})
 	rig.react("C03", "1729.0010", "U02DEF", "white_check_mark")
 	if len(rig.broker.all()) != 0 {
 		t.Fatal("a forged draft by another user was filed")
@@ -182,7 +183,92 @@ func TestSlackNeverDecides(t *testing.T) {
 	}
 }
 
+// §5: the metadata payload is tagged and decoded on demand. A draft's JSON on the wire is
+// byte-identical to today's, and its hash still validates; a card's decodes as an approval payload;
+// an unknown event_type, a card where a draft is expected, and an unreadable payload are all "not a
+// draft" to threadDraft — no draft, no panic; "filed" is still seen and the newest valid draft wins.
+func TestMetadataShapes(t *testing.T) {
+	const repo, title, body = "Smana/ai-native-ref", "t", "b"
+	hash := draftHash(repo, title, body)
+	wire, err := json.Marshal(&Metadata{EventType: draftEventType, EventPayload: mustJSON(t, DraftPayload{
+		Repo: repo, Title: title, Body: body, SHA256: hash})})
+	if want := []byte(`{"event_type":"factory_draft","event_payload":{"repo":"Smana/ai-native-ref",` +
+		`"title":"t","body":"b","sha256":"` + hash + `"}}`); err != nil || !bytes.Equal(wire, want) {
+		t.Fatalf("%s (err %v), want %s", wire, err, want)
+	}
+
+	app := &App{BotUserID: "U0BOT"}
+	drafted := func(ts string, meta *Metadata) Message {
+		return Message{TS: ts, ThreadTS: "1729.0001", User: "U0BOT", Text: "draft", Metadata: meta}
+	}
+	latest, filed := app.threadDraft([]Message{drafted("1729.0009", metaOf(t, draftEventType, DraftPayload{
+		Repo: repo, Title: title, Body: body, SHA256: hash}))})
+	if latest == nil || latest.TS != "1729.0009" || filed {
+		t.Fatalf("a full draft with a holding hash is the thread's draft: %+v %v", latest, filed)
+	}
+
+	card := metaOf(t, approvalEventType, ApprovalPayload{ApprovalID: "ap1", Class: "forge.push", Branch: "agent/x"})
+	if p, ok := card.approvalPayload(); !ok || p.ApprovalID != "ap1" || p.Class != "forge.push" || p.Branch != "agent/x" {
+		t.Fatalf("a card's payload: %+v %v", p, ok)
+	}
+	for _, tc := range []struct {
+		name string
+		meta *Metadata
+	}{
+		{"a card", card},
+		{"a draft event type carrying a card", metaOf(t, draftEventType, ApprovalPayload{ApprovalID: "ap1", Class: "forge.push", Branch: "agent/x"})},
+		{"an unreadable payload", &Metadata{EventType: draftEventType, EventPayload: json.RawMessage(`"nope"`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			latest, filed := app.threadDraft([]Message{drafted("1729.0009", tc.meta)})
+			if latest != nil || filed {
+				t.Fatalf("not a draft: %+v %v", latest, filed)
+			}
+		})
+	}
+	// A payload json cannot read is refused by the decoder itself; one it reads but that is not a
+	// draft is refused by the hash, since a draft carries the hash of its own text.
+	if _, ok := (&Metadata{EventType: draftEventType, EventPayload: json.RawMessage(`"nope"`)}).draftPayload(); ok {
+		t.Fatal("a payload that is not JSON decoded as a draft")
+	}
+	// A card is not a draft under any event type, and a draft is not a card.
+	if _, ok := card.draftPayload(); ok {
+		t.Fatal("a card decoded as a draft")
+	}
+	if _, ok := (metaOf(t, draftEventType, DraftPayload{Repo: repo, Title: title, Body: body, SHA256: hash})).approvalPayload(); ok {
+		t.Fatal("a draft decoded as a card")
+	}
+
+	// Two drafts and the "Filed" line: the newest draft that still holds its hash, and the thread is
+	// closed to further edits.
+	latest, filed = app.threadDraft([]Message{
+		drafted("1729.0009", metaOf(t, draftEventType, DraftPayload{Repo: repo, Title: title, Body: body, SHA256: hash})),
+		drafted("1729.0010", metaOf(t, filedEventType, DraftPayload{Repo: repo})),
+		drafted("1729.0011", metaOf(t, draftEventType, DraftPayload{Repo: repo, Title: title, Body: "b2",
+			SHA256: draftHash(repo, title, "b2")})),
+	})
+	if !filed || latest == nil || latest.TS != "1729.0011" {
+		t.Fatalf("the newest valid draft and the filed mark: %+v %v", latest, filed)
+	}
+}
+
 // ---- the rig ----
+
+// mustJSON marshals v as a Metadata payload, failing the test when it cannot.
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal %T: %v", v, err)
+	}
+	return raw
+}
+
+// metaOf is the metadata the App attaches to a message whose payload is v, tagged eventType.
+func metaOf(t *testing.T, eventType string, v any) *Metadata {
+	t.Helper()
+	return &Metadata{EventType: eventType, EventPayload: mustJSON(t, v)}
+}
 
 func draftPayload(repo, title, body string) DraftPayload {
 	return DraftPayload{Repo: repo, Title: title, Body: body, SHA256: draftHash(repo, title, body)}
@@ -191,17 +277,20 @@ func draftPayload(repo, title, body string) DraftPayload {
 type post struct {
 	ts, channel, thread, text string
 	meta                      *Metadata
+	blocks                    json.RawMessage
 }
 
 type fakeSlack struct {
-	mu         sync.Mutex
-	posts      []post
-	ephemerals []ephemeral
-	msgs       map[string]Message
-	failPosts  int // the next n Posts fail
-	threadErr  error
-	msgErr     error
-	names      map[string][2]string // user -> handle, display name
+	mu          sync.Mutex
+	posts       []post
+	updates     []post // chat.update calls, oldest first
+	ephemerals  []ephemeral
+	msgs        map[string]Message
+	failPosts   int // the next n Posts fail
+	failUpdates int // the next n Updates fail
+	threadErr   error
+	msgErr      error
+	names       map[string][2]string // user -> handle, display name
 }
 
 type ephemeral struct{ channel, user, thread, text string }
@@ -252,6 +341,38 @@ func (f *fakeSlack) Post(_ context.Context, channel, threadTS, text string, meta
 	f.posts = append(f.posts, post{ts: ts, channel: channel, thread: threadTS, text: text, meta: meta})
 	f.msgs[ts] = Message{TS: ts, ThreadTS: threadTS, User: "U0BOT", Text: text, Metadata: meta}
 	return ts, nil
+}
+
+// PostCard records the post with its blocks, so a test can read what a card carried; its ts comes
+// from the same counter as Post, so a thread's posts stay ordered.
+func (f *fakeSlack) PostCard(_ context.Context, channel, threadTS, text string, blocks json.RawMessage, meta *Metadata) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failPosts > 0 {
+		f.failPosts--
+		return "", errors.New("slack down")
+	}
+	ts := fmt.Sprintf("1729.%04d", 1000+len(f.posts))
+	f.posts = append(f.posts, post{ts: ts, channel: channel, thread: threadTS, text: text, meta: meta, blocks: blocks})
+	f.msgs[ts] = Message{TS: ts, ThreadTS: threadTS, User: "U0BOT", Text: text, Metadata: meta}
+	return ts, nil
+}
+
+// Update replaces the seeded message's text and records the call; Slack itself answers an update it
+// cannot make with cant_update_message, which failUpdates stands in for.
+func (f *fakeSlack) Update(_ context.Context, channel, ts, text string, blocks json.RawMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failUpdates > 0 {
+		f.failUpdates--
+		return errors.New("cant_update_message")
+	}
+	f.updates = append(f.updates, post{ts: ts, channel: channel, text: text, blocks: blocks})
+	if m, ok := f.msgs[ts]; ok {
+		m.Text = text
+		f.msgs[ts] = m
+	}
+	return nil
 }
 
 func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {
@@ -649,7 +770,7 @@ func TestDraftPostIsInert(t *testing.T) {
 	if strings.Contains(p.text, "```") {
 		t.Fatalf("a fence from the body survived: %q", p.text)
 	}
-	if p.meta == nil || !strings.Contains(p.meta.EventPayload.Title, "<!channel>") {
+	if p.meta == nil || !strings.Contains(rig.payload(p).Title, "<!channel>") {
 		t.Fatal("the metadata must keep the draft as the broker returned it")
 	}
 }
@@ -737,7 +858,14 @@ func editRig(t *testing.T) *appRig {
 	return newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
 }
 
-func (r *appRig) payload(p post) DraftPayload { return p.meta.EventPayload }
+func (r *appRig) payload(p post) DraftPayload {
+	r.t.Helper()
+	d, ok := p.meta.draftPayload()
+	if !ok {
+		r.t.Fatalf("not the App's draft: %+v", p.meta)
+	}
+	return d
+}
 
 // Today's case: a one-line mention, then a reply that adds the acceptance check.
 func TestReplyAddsTheAcceptanceCheck(t *testing.T) {
@@ -980,8 +1108,11 @@ func TestCheckMarkReplyIsNeverDraftText(t *testing.T) {
 	rig.broker.refuse("slack:T01ABC/U02DEF", "rejected: not_linked")
 	rig.reply("U02DEF", ":white_check_mark:")
 	for _, p := range rig.posts() {
-		if p.meta != nil && p.meta.EventPayload.Rev > 1 {
-			t.Fatalf("the check mark was appended: %+v", p.meta.EventPayload)
+		if p.meta == nil {
+			continue
+		}
+		if d := rig.payload(p); d.Rev > 1 {
+			t.Fatalf("the check mark was appended: %+v", d)
 		}
 	}
 	// no draft in the thread: nothing at all

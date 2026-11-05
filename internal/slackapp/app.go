@@ -470,9 +470,12 @@ func (a *App) unlink(ctx context.Context, ev slackEvent, thread string) string {
 
 // postDraft posts the draft as Slack shows it, its checked text and hash in the message metadata.
 func (a *App) postDraft(ctx context.Context, channel, thread string, d Draft, author string, rev int) string {
-	meta := &Metadata{EventType: draftEventType, EventPayload: DraftPayload{Repo: d.Repo, Title: d.Title, Body: d.Body,
-		SHA256: draftHash(d.Repo, d.Title, d.Body), Author: author, Rev: rev}}
-	if mj, err := json.Marshal(meta); err != nil || len(mj) > maxMetadata {
+	// The draft is a tag plus its own JSON (§5), so a card and a draft share the message's shape; the
+	// bytes the metadata carries are the ones it always carried.
+	payload, perr := json.Marshal(DraftPayload{Repo: d.Repo, Title: d.Title, Body: d.Body,
+		SHA256: draftHash(d.Repo, d.Title, d.Body), Author: author, Rev: rev})
+	meta := &Metadata{EventType: draftEventType, EventPayload: payload}
+	if mj, err := json.Marshal(meta); perr != nil || err != nil || len(mj) > maxMetadata {
 		// Slack would refuse the metadata: say so, with none of the draft's text.
 		if _, err := a.Slack.Post(ctx, channel, thread, "Draft not posted: it is too long to file from Slack; file it from the web UI.", nil); err != nil {
 			a.log().Warn("slack post failed", "channel", channel, "err", err)
@@ -516,12 +519,11 @@ func (a *App) threadDraft(msgs []Message) (latest *Message, filed bool) {
 		if m.User == "" || m.User != a.BotUserID || m.Metadata == nil {
 			continue
 		}
-		p := m.Metadata.EventPayload
 		switch m.Metadata.EventType {
 		case filedEventType:
 			filed = true
 		case draftEventType:
-			if p.SHA256 == draftHash(p.Repo, p.Title, p.Body) {
+			if p, ok := m.Metadata.draftPayload(); ok && p.SHA256 == draftHash(p.Repo, p.Title, p.Body) {
 				latest = m
 			}
 		}
@@ -588,7 +590,10 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	if latest == nil || filed {
 		return "ignored"
 	}
-	p := latest.Metadata.EventPayload
+	p, ok := latest.Metadata.draftPayload()
+	if !ok {
+		return "ignored"
+	}
 	if p.Author == "" || p.Author != ev.User || !slices.Contains(ch.Repositories, p.Repo) {
 		return "ignored"
 	}
@@ -638,7 +643,11 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	}
 	// Only the App's own draft counts: posted by its bot user, carrying a draft (R23).
 	m := msg.Metadata
-	if msg.User == "" || msg.User != a.BotUserID || m == nil || m.EventType != draftEventType {
+	if msg.User == "" || msg.User != a.BotUserID || m == nil {
+		return "ignored"
+	}
+	p, ok := m.draftPayload()
+	if !ok {
 		return "ignored"
 	}
 	thread := msg.ThreadTS
@@ -668,7 +677,6 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		}
 		return "error"
 	}
-	p := m.EventPayload
 	ch, served := a.Channels[channel]
 	switch {
 	case p.SHA256 != draftHash(p.Repo, p.Title, p.Body):
@@ -694,7 +702,15 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		refuse("replaced", "This draft was replaced by a newer one: react on the latest draft.")
 		return "ignored"
 	}
-	filedMark := &Metadata{EventType: filedEventType, EventPayload: DraftPayload{Repo: p.Repo}}
+	// The mark's tag is what stops the draft being edited; its payload is inert, nothing decodes a
+	// factory_filed. A marshal error is therefore logged with that consequence named rather than
+	// dropped: the tag still goes out, the payload is the empty object every decoder refuses.
+	filedPayload, perr := metaPayload(DraftPayload{Repo: p.Repo})
+	if perr != nil {
+		a.log().Error("filed mark payload: the draft stays editable", "err", perr)
+		filedPayload = json.RawMessage(`{}`)
+	}
+	filedMark := &Metadata{EventType: filedEventType, EventPayload: filedPayload}
 	res, err := a.Broker.RunCreate(ctx, RunCreate{
 		Draft:      Draft{Repo: p.Repo, Title: p.Title, Body: p.Body},
 		MaxCostUSD: ch.MaxCostUSD,

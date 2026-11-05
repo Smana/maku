@@ -38,11 +38,14 @@ type Config struct {
 	OpsAddr      string `json:"opsAddr,omitempty"`
 }
 
-// Channel is a channel the App serves: the repositories a draft there may name, and the
-// max_cost a ✅ there sends.
+// Channel is a channel the App serves: the repositories a draft there may name, the max_cost a ✅
+// there sends, and whether its forge.push approvals are drawn as a card.
 type Channel struct {
 	Repositories []string `json:"repositories"`
 	MaxCostUSD   float64  `json:"maxCostUSD"`
+	// Approvals draws this channel's forge.push approvals as a card with two buttons (v3.x Slack push
+	// approval D14). Off, the thread keeps today's line and a press answers not_enabled.
+	Approvals bool `json:"approvals,omitempty"`
 }
 
 // LoadConfig reads, strictly decodes, defaults and validates the file at path.

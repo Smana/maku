@@ -783,7 +783,8 @@ principal is known and are **not counted**.
 
 The broker sends signed, id-only events to the subscribers declared in its `webhooks` config (see
 [operations](operations.md#webhooks)). It is off until a subscriber is declared. A payload carries
-ids and closed codes only: never room text, a title, a branch or a message.
+ids and closed codes only: never room text, a title or a message — a `branch` is a code shape, on the
+one approval that binds it.
 
 | Event | Fires when | Fields beyond `type` and `room` |
 |---|---|---|
@@ -791,7 +792,7 @@ ids and closed codes only: never room text, a title, a branch or a message.
 | `room.task_triaged` | The task enters `Triaged` | `repo` |
 | `room.run_started` | A run enters `Running` | `run` |
 | `room.run_ended` | A run ends: `Succeeded`, `Failed`, `BudgetExhausted` or `Revoked` | `run` |
-| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason` |
+| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them |
 | `room.pr_opened` | The first pull request of the task is known | `pr` |
 | `room.verdict_posted` | GitHub accepted the verdict comment | `pr` |
 | `room.merged` | The task enters `Merged`, or its facts carry reason `merged` (a human merge), `merged_verified` or `merged_unverified`, once | `pr` |
@@ -799,10 +800,19 @@ ids and closed codes only: never room text, a title, a branch or a message.
 | `room.monitor_verdict` | The [post-merge monitor](factory.md#the-post-merge-monitor)'s verdict reaches the task facts of a room that names an `origin`, once | `repo`, `pr`, `verdict` |
 | `room.budget_reached` | A task phase or a run end names a budget reason | `limit` |
 | `room.ended` | The task's first coarse end: `done`, `failed` or `stopped` | `state` |
+| `room.approval_closed` | An approval is `approved`, `denied`, `expired` or `superseded` | `approvalId`, `decision` |
 
 A task event fires on a change of phase only: the factory rewrites a phase's facts (budget, run,
-pull request) without a new event. `repo` is on `task_received`, `task_triaged` and `room.monitor_verdict` only.
+pull request) without a new event. `repo` is on `task_received`, `task_triaged`, `room.monitor_verdict`
+and an approval's `room.waiting_for_human`.
 `verdict_posted` is sent once GitHub accepted the comment, not when it was attempted.
+
+An approval's `room.waiting_for_human` names the approval, and `room.approval_closed` says how it
+ended, so a subscriber follows one approval from request to close without reading the room.
+`approvalId` is a ULID and `class` is one of the broker's five: a value outside its closed shape is
+dropped from the event rather than clipped, and the reader draws the plain line instead. `branch` is
+the run's branch on the approval that binds one, and `expiresAt` is its deadline, RFC 3339 in UTC to
+the second. A close is one event per approval; a replayed entry emits nothing.
 
 `origin` is on **every** event of a room whose task was started from an issue the factory published
 (see [`factory/publish`](factory.md#internal-principals)): the room id of the investigate task. It is
@@ -813,7 +823,9 @@ absent on any other room's events.
 only when its `events` list names it.
 
 `reason`, `limit`, `state` and `verdict` are clipped to closed lists (`webhook.Reasons`, `webhook.Limits`,
-`webhook.States`, and the monitor's three verdicts); anything else is sent as `other`. The factory's room escalations `foreign_room`,
+`webhook.States`, and the monitor's three verdicts); anything else is sent as `other`. `decision` is
+the fifth closed list: a close outside it is not sent at all, and a subscriber that renders one clips
+it the same way (`webhook.Clip("decision", …)`). The factory's room escalations `foreign_room`,
 `room_log_unreadable` and `rooms_crd_outdated` are listed.
 
 | Field | Values |
@@ -821,6 +833,7 @@ only when its `events` list names it.
 | `limit` | `budget-run`, `budget-task`, `budget-principal`, `budget-fleet`, `budget-person`, `budget-family` |
 | `state` | `queued`, `running`, `waiting`, `done`, `failed`, `stopped` |
 | `verdict` | `healthy`, `regression`, `inconclusive` |
+| `decision` | `approved`, `denied`, `expired`, `superseded` |
 | `reason` | The wait reasons of [the summary](#get-apiroomsidsummary), plus `approval`, `manual`, `revoked`, `deleted`, `principal_unknown`, `budget-run`, `budget-principal`, `budget-fleet`, `budget-person`, `foreign_room`, `room_log_unreadable`, `rooms_crd_outdated` |
 
 Example body:
