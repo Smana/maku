@@ -24,6 +24,52 @@ channels:
     maxCostUSD: 2
 `
 
+// withApprovals is goodConfig with line inserted as the C03 channel's first key; the empty string
+// is the key absent. A goodConfig that stopped matching would leave the key out, and the true
+// case below would fail rather than silently pass.
+func withApprovals(line string) string {
+	return strings.Replace(goodConfig, "channels:\n  C03:\n", "channels:\n  C03:\n"+line, 1)
+}
+
+// D14: who gets the affordance is a per-channel switch, false when absent; an unknown key is still
+// refused, so an older App refuses a config that asks for cards rather than ignoring it.
+func TestLoadConfigApprovals(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		text   string
+		want   bool
+		errHas string
+	}{
+		{name: "absent, the switch is off", text: goodConfig, want: false},
+		{name: "true", text: withApprovals("    approvals: true\n"), want: true},
+		{name: "false", text: withApprovals("    approvals: false\n"), want: false},
+		{name: "not a boolean", text: withApprovals("    approvals: \"yes\"\n"), errHas: "approvals"},
+		{name: "unknown channel key", text: withApprovals("    cards: true\n"), errHas: "cards"},
+		{name: "no repositories is still refused",
+			text:   strings.Replace(withApprovals("    approvals: false\n"), "[Smana/ai-native-ref]", "[]", 1),
+			errHas: "repositories is empty"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadConfigText(t, tc.text)
+			if tc.errHas != "" {
+				if err == nil {
+					t.Fatalf("accepted, want an error naming %q", tc.errHas)
+				}
+				if !strings.Contains(err.Error(), tc.errHas) {
+					t.Fatalf("error %q does not name %q", err, tc.errHas)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Channels["C03"].Approvals; got != tc.want {
+				t.Fatalf("Channels[C03].Approvals = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func loadConfigText(t *testing.T, text string) (Config, error) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "c.yaml")
