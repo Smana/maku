@@ -18,6 +18,7 @@ import (
 	"github.com/Smana/maku/internal/roomctrl"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/store"
+	"github.com/Smana/maku/internal/summary"
 )
 
 // briefVersion is the resume brief's one envelope, on both doors (CD11).
@@ -125,10 +126,10 @@ func (s *Server) roomBriefTool(ctx context.Context, p authn.Principal, args json
 }
 
 // briefOf is the resume brief of room id as p reads it: the room's facts, the last handoff's scope, the
-// milestones since `since`, and the one need that stands in the way (CD11). It is deterministic — the same
-// log and the same cursor give the same text — and it decides nothing: every line is a statement, and the
-// one thing to do is an action whose URL the broker built. Cause is left zero: the fix table lands with
-// brief.ciEvidence (PR 7).
+// milestones since `since`, the one need that stands in the way (CD11) and the one failure that need is —
+// with its fix (fast-follow 6). It is deterministic — the same log and the same cursor give the same text —
+// and it decides nothing: every line is a statement, and the one thing to do is an action whose URL the
+// broker built.
 func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, since briefSince) (briefEnvelope, error) {
 	room, row, sub, err := s.readRoom(ctx, id, p)
 	if err != nil {
@@ -148,6 +149,9 @@ func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, sinc
 	}
 	in := roomview.BriefIn{Room: id, RoomURL: s.PublicURL + "/r/" + id, Facts: fold.Facts, Sealed: fold.Sealed,
 		Scope: scope, Since: at, Changed: changed, Now: s.now()}
+	// Fast-follow 6: the one failure the room's facts and notes name, and its fix. The fold's notes are
+	// already in hand, so the brief reads nothing new to say it.
+	in.Cause, _ = summary.Cause(fold.Facts, fold.Notes)
 	if f := fold.Facts; f != nil {
 		in.Issue, in.PR = f.Issue, f.PR
 	}

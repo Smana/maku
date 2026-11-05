@@ -1,0 +1,85 @@
+{
+  "room": "2vq7m4xa",
+  "roomURL": "https://rooms.example/r/2vq7m4xa",
+  "issue": {
+    "number": 2251,
+    "url": "https://github.com/Smana/ai-native-ref/issues/2251",
+    "title": "feat: the factory posts the release note it drafts"
+  },
+  "pr": {
+    "number": 2252,
+    "url": "https://github.com/Smana/ai-native-ref/pull/2252"
+  },
+  "facts": {
+    "phase": "Escalated",
+    "reason": "agent_error",
+    "pr": {
+      "number": 2252,
+      "url": "https://github.com/Smana/ai-native-ref/pull/2252"
+    }
+  },
+  "plan": {
+    "source": "scope",
+    "ceilingMicroUSD": 2000000,
+    "ceilingSource": "class"
+  },
+  "scope": {
+    "state": "ready",
+    "task": "the factory posts a release note when a pull request merges",
+    "touches": ["internal/factory/reconciler/text.go"],
+    "plan": ["read how a merge is reported today", "post the note once, after the settle window"],
+    "acceptance": [
+      {
+        "check": "go test ./internal/factory/reconciler/ -run TestReleaseNote",
+        "proves": "one note per merge, posted once"
+      }
+    ]
+  },
+  "since": "2026-11-04T21:10:00Z",
+  "changed": {
+    "room": "2vq7m4xa",
+    "url": "https://rooms.example/r/2vq7m4xa",
+    "untrusted": true,
+    "items": [
+      {
+        "seq": 63,
+        "at": "2026-11-04T21:26:00Z",
+        "kind": "run_started",
+        "run": "9fq2m",
+        "role": "implementer",
+        "text": "the implementer started"
+      },
+      {
+        "seq": 68,
+        "at": "2026-11-04T21:48:00Z",
+        "kind": "note",
+        "run": "9fq2m",
+        "role": "implementer",
+        "text": "gh: Resource not accessible by integration (HTTP 403): the note cannot be posted on the pull request"
+      },
+      {
+        "seq": 69,
+        "at": "2026-11-04T21:49:00Z",
+        "kind": "run_ended",
+        "run": "9fq2m",
+        "role": "implementer",
+        "text": "the run ended: the agent stopped on an error"
+      }
+    ]
+  },
+  "blocker": {
+    "kind": "recovery",
+    "id": "agent_error",
+    "what": "a maintainer comments `/factory retry` on issue #2251 to run it again, or closes the room",
+    "url": "https://rooms.example/r/2vq7m4xa",
+    "issue": 2251,
+    "pr": 2252,
+    "action": {
+      "kind": "retry",
+      "label": "retry the task or close the room",
+      "url": "https://rooms.example/r/2vq7m4xa"
+    }
+  },
+  "cause": "app_permission",
+  "now": "2026-11-05T09:00:00Z"
+}
