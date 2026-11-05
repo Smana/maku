@@ -57,6 +57,11 @@ const makuUsage = `usage: maku <command>
                                   issues you filed or labelled, PRs you authored or review.
                                   --needs-me: an approval you could decide, a task held on your room,
                                   or a PR waiting for your merge. --all: the rooms that ended over a week ago too
+  needs [--since RFC3339] [--room id] [--repo owner/name] [--format md|text] [--json]
+                                  what needs you across every room you can read, in one order: the kind, what it
+                                  asks, the one action and where it happens. --since: only what moved after that
+                                  instant, as the cursor of your last call, which each call stores; --room and
+                                  --repo narrow it. It decides nothing: each action is a link
   checkout <room>                 check the room's agent/<room> branch out into a new worktree beside this repository,
                                   never touching your checkout; it asks (y/N) before files that run code, and needs a terminal for that
   watch <room> [--tail N]         follow a room
@@ -161,7 +166,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "status", "changes", "checkout", "watch", "post", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "watch", "post", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -242,6 +247,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 			return err
 		}
 		return c.Rooms(ctx, r.Out, f)
+	case "needs":
+		return r.needs(ctx, c, filepath.Join(r.Dir, "cursors.json"), args)
 	case "status":
 		return r.status(ctx, c, args)
 	case "changes":
@@ -602,6 +609,68 @@ func (r Maku) status(ctx context.Context, c maku.Client, args []string) error {
 	// The card has no cursor: status prints it last, so --after can take it back.
 	_, err = fmt.Fprintf(r.Out, "cursor: %s\n", maku.OneLine(sum.Cursor))
 	return err
+}
+
+const needsUsage = "needs [--since RFC3339] [--room id] [--repo owner/name] [--format md|text] [--json]"
+
+// needsCursor is cursors.json's entry for `maku needs`. The list spans rooms, so one entry holds the whole
+// list's cursor (cursors.go's room field is the entry's name).
+const needsCursor = "needs"
+
+// needs prints what needs the developer across the rooms they may read, rendered by roomview.Needs — the
+// same derivation and the same view the route, the tool and the panel read (CD21, CD28), so the CLI cannot
+// disagree with them about the order or a sentence. Without --since the cursor the last call stored answers,
+// and each call stores the one it returns; the list decides nothing: every action is a link.
+func (r Maku) needs(ctx context.Context, c maku.Client, cursorsPath string, args []string) error {
+	fs := flag.NewFlagSet("needs", flag.ContinueOnError)
+	since := fs.String("since", "", "only what moved after this instant, RFC 3339 (default: where your last call ended)")
+	room := fs.String("room", "", "only this room's needs")
+	repo := fs.String("repo", "", "only this repository's needs, owner/name")
+	format := fs.String("format", "", "md or text")
+	asJSON := fs.Bool("json", false, "print the broker's answer as is")
+	pos, err := flags(fs, args)
+	if err != nil || len(pos) != 0 {
+		return fmt.Errorf("%s: %w", needsUsage, errors.Join(err, errors.New("no arguments")))
+	}
+	f, err := viewFormat(r.Out, *format)
+	if err != nil {
+		return err
+	}
+	// Review Focus 3: a `since` that is not an instant is refused here, naming the format the answer's own
+	// cursor has, before any request — never read as everything, and never as nothing.
+	if *since != "" && !validSince(*since) {
+		return fmt.Errorf("--since %q is not an RFC 3339 instant, as the cursor of your last call is: %s", *since, needsUsage)
+	}
+	store := maku.Cursors{Path: cursorsPath}
+	if *since == "" {
+		// The file is a convenience, never a source of truth (cursors.go): a stored cursor that no longer
+		// holds an instant reads as none, rather than sending a `since` the route would refuse.
+		if stored := store.Get(needsCursor); validSince(stored) {
+			*since = stored
+		}
+	}
+	page, err := c.Needs(ctx, maku.NeedsFilter{Since: *since, Room: *room, Repo: *repo})
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		if _, err := fmt.Fprintln(r.Out, string(page.Raw())); err != nil {
+			return err
+		}
+	} else if err := roomview.Needs(r.Out, page.Items, page.Unread,
+		roomview.Options{Format: f, Now: time.Now(), Rooms: c.URL}); err != nil {
+		return err
+	}
+	if page.Cursor != "" {
+		return store.Put(needsCursor, page.Cursor)
+	}
+	return nil
+}
+
+// validSince reports whether s is an instant as an answer's cursor is, RFC 3339.
+func validSince(s string) bool {
+	_, err := time.Parse(time.RFC3339, s)
+	return err == nil
 }
 
 // roomsBase is the base of the room links the card may print: the broker's PublicURL, which the
