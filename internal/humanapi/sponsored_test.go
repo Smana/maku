@@ -107,8 +107,9 @@ func TestSponsoredReadsItsRoomsOnly(t *testing.T) {
 	}
 }
 
-// R13, C18: a sponsored token is unauthenticated everywhere but /mcp, and on /mcp while no
-// principal is declared: principal() runs the human authenticator, which never accepts it.
+// R13, C18: a sponsored token is unauthenticated everywhere but /mcp and the App's decide route
+// (v3.x Slack push approval D2), and on /mcp while no principal is declared: principal() runs the
+// human authenticator, which never accepts it.
 func TestSponsoredTokenElsewhere(t *testing.T) {
 	e := setup(t, mcpOn, withSponsored(sponsoredP))
 	for _, path := range []string{"/api/rooms", "/api/rooms/" + roomID + "/summary", "/v1/ws?room=" + roomID} {
@@ -119,6 +120,31 @@ func TestSponsoredTokenElsewhere(t *testing.T) {
 	off := setup(t, mcpOn)
 	if code, _ := rpc(t, off, bearer("slack-app"), "tools/list", nil); code != http.StatusUnauthorized {
 		t.Fatalf("no principal declared: %d", code)
+	}
+}
+
+// D2: the decide route is the Slack App's alone. Another sponsored principal and a human's
+// token, web or maku, are refused before the body is read, with no code the App could act on.
+func TestSlackDecideIsTheAppsOnly(t *testing.T) {
+	var decisions []decided
+	e := setup(t, withSponsored(sponsoredP, otherBot), slackDecideOn(t, slackLinks(), slackApprovals(), &decisions))
+	body := `{"team":"` + slackTeam + `","user":"U02","channel":"C0CC4M8SNVD","messageTS":"1730822400.123456",` +
+		`"approvalId":"` + ap1 + `","branch":"` + slackBranch + `","decision":"approved"}`
+	for name, h := range map[string]http.Header{
+		"another sponsored principal": bearer("other-bot"),
+		"a human's web session":       header("own"),
+		"a human's maku token":        viaRoomctl("own"),
+	} {
+		code, out := postDecide(t, e, h, body)
+		if code != http.StatusForbidden || strings.Contains(out, `"result"`) {
+			t.Errorf("%s: %d %q", name, code, out)
+		}
+	}
+	if len(decisions) != 0 {
+		t.Fatalf("a principal that is not the App decided: %+v", decisions)
+	}
+	if code, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, "approved")); code != http.StatusOK || result != "approved" {
+		t.Fatalf("the control: %d %s", code, result)
 	}
 }
 

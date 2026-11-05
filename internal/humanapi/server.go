@@ -144,6 +144,9 @@ type Server struct {
 	// SlackLink is the Slack self-serve link (human.slackLink): its two tools for the Slack App and
 	// the /link/slack page. Nil serves neither.
 	SlackLink *SlackLinker
+	// SlackDecide is human.slackDecide: the App's one route that records a decision, for forge.push
+	// only (v3.x Slack push approval D2, D13). Nil serves nothing: the path is the mux's 404.
+	SlackDecide *SlackDecider
 
 	// Connection bounds; zero takes the default.
 	HelloWait time.Duration // the first frame must arrive within it (10 s)
@@ -204,6 +207,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/ws", s.ws)
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)
+	}
+	if s.SlackDecide != nil {
+		// POST only, one path, no cookie: the route has no CSRF surface because it has none.
+		mux.HandleFunc("POST "+slackDecidePath, s.slackDecide)
 	}
 	if s.MCP {
 		mux.HandleFunc("POST /mcp", s.mcp)
