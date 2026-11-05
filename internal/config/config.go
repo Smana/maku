@@ -89,6 +89,9 @@ type HumanConfig struct {
 	// MCP serves /mcp, the MCP server maku mcp relays (factory interfaces F2). Off unless
 	// enabled: v3 ships each feature behind a switch (D4).
 	MCP MCPConfig `json:"mcp,omitzero"`
+	// Needs serves GET /api/needs, needs/v1's human door (CD28): every room's needs for one caller,
+	// read-only, with a `since` cursor. On unless a file turns it off.
+	Needs NeedsConfig `json:"needs,omitzero"`
 	// Dashboards are the room page's links out, such as Grafana's, filled with the room's ids.
 	// None by default: the page then shows no group at all.
 	Dashboards []DashboardConfig `json:"dashboards,omitempty"`
@@ -323,6 +326,21 @@ var slackTeamRE = regexp.MustCompile(`^T[A-Z0-9]{2,20}$`)
 type SlackDecideConfig struct {
 	Principal string `json:"principal"`
 	TeamID    string `json:"teamID"`
+}
+
+// NeedsConfig switches the human listener's needs route (CD28). An absent block is on: needs/v1 is a
+// read-only list, which the spec ships on with its release, and only an explicit false closes the door.
+type NeedsConfig struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// NeedsEnabled is the needs route's switch: an absent block, or a block with no enabled, is true, and
+// false is the opt-out the decoder keeps — a plain bool could not tell the absent block from a refusal.
+func (h HumanConfig) NeedsEnabled() bool {
+	if h.Needs.Enabled == nil {
+		return true
+	}
+	return *h.Needs.Enabled
 }
 
 // MCPConfig switches the human listener's MCP server.

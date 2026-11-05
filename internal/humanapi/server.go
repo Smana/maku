@@ -141,6 +141,9 @@ type Server struct {
 	Dashboards []Dashboard
 	// MCP serves POST /mcp, the MCP server maku mcp relays (human.mcp.enabled). Off, /mcp is a 404.
 	MCP bool
+	// Needs serves GET /api/needs, needs/v1's human door (CD28; human.needs.enabled, on unless a file
+	// turns it off). Off, /api/needs is a 404 and the App's own door is needs_list on /mcp.
+	Needs bool
 	// SlackLink is the Slack self-serve link (human.slackLink): its two tools for the Slack App and
 	// the /link/slack page. Nil serves neither.
 	SlackLink *SlackLinker
@@ -202,6 +205,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /assets/{file...}", withCSP(assets))
 	mux.Handle("GET /assets", withCSP(http.NotFoundHandler())) // not the mux's redirect to /assets/
 	mux.HandleFunc("GET /api/rooms", s.listRooms)
+	if s.Needs { // needs/v1's human door (CD28; human.needs.enabled). Off, /api/needs is a 404.
+		mux.HandleFunc("GET /api/needs", s.needsRoute)
+	}
 	mux.HandleFunc("POST /api/rooms", s.createRoom)
 	mux.HandleFunc("GET /api/rooms/{id}/summary", s.roomSummary)
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)

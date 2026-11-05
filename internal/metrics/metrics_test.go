@@ -353,6 +353,56 @@ func TestMakuName(t *testing.T) {
 	}
 }
 
+// The spec's series are maku_needs_*, which MakuName can only produce from a needs_* instrument:
+// rooms_needs_list_total would be served as maku_rooms_needs_list_total. This is the test that makes
+// the dashboard's queries true rather than plausible.
+func TestMakuNameCoversNeeds(t *testing.T) {
+	for in, want := range map[string]string{
+		"needs_list_total": "maku_needs_list_total",
+		"needs_items":      "maku_needs_items",
+		"needs":            "",
+		"needsx":           "",
+	} {
+		if got := MakuName(in); got != want {
+			t.Fatalf("MakuName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// needs/v1's adoption is measured where the list is served: one count per call, labelled by surface,
+// principal and outcome, and what the last list held by kind. Both keep the spec's names, so the
+// dashboard's maku_needs_* queries match; a list that holds no item of a kind drops that kind.
+func TestNeedsInstruments(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.NeedsList(ctx, "api", "human:dev", "ok")
+	s.NeedsList(ctx, "api", "human:dev", "unread")
+	s.Needs(map[string]int{"plan_confirmation": 2, "merge": 1})
+	for _, want := range []string{
+		`maku_needs_list_total{outcome="ok",principal="human:dev",surface="api"} 1`,
+		`maku_needs_list_total{outcome="unread",principal="human:dev",surface="api"} 1`,
+		`maku_needs_items{kind="merge"} 1`,
+		`maku_needs_items{kind="plan_confirmation"} 2`,
+	} {
+		if body := scrape(t, exp.Handler()); !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s", want)
+		}
+	}
+	// The copy replaces the last list wholesale: a kind the list no longer holds has no series.
+	s.Needs(nil)
+	if body := scrape(t, exp.Handler()); strings.Contains(body, "maku_needs_items{") {
+		t.Errorf("a list with no items keeps %s", body)
+	}
+}
+
 // v0.31.0 serves the maku_ names only (the rebrand): every rooms series as maku_rooms*, none under its
 // old name, the build info included.
 func TestOnlyMakuNamesAreServed(t *testing.T) {
