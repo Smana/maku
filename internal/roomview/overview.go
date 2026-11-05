@@ -222,7 +222,7 @@ func needPhrase(n *summary.Need) string {
 	switch {
 	case n.Kind == "merge" && digits(n.ID):
 		return "merge #" + n.ID
-	case n.Kind == "answer" && digits(n.ID):
+	case n.Kind == summary.NeedQuestion && digits(n.ID):
 		return "answer on #" + n.ID
 	case n.Kind == "hold" && n.ID == "waiting_human_driver":
 		return "hand the driver back"

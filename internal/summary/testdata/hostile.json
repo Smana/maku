@@ -274,7 +274,10 @@
         "id": "01M4A",
         "what": "\u001b[2Jrm -rf / \u202e\u200b",
         "deadline": "2026-10-07T19:45:00Z",
-        "url": "https://rooms.example/r/26zfnuxm#01M4A"
+        "url": "https://rooms.example/r/26zfnuxm#01M4A",
+        "room": "26zfnuxm",
+        "at": "2026-10-07T19:15:00Z",
+        "action": {"kind": "decide", "label": "decide in the room", "url": "https://rooms.example/r/26zfnuxm#01M4A"}
       }
     ],
     "step": {"kind": "approve", "label": "approve here", "url": "https://rooms.example/r/26zfnuxm"},

@@ -208,7 +208,7 @@ func TestRoomRowCountsTheAnswerNeed(t *testing.T) {
 		v.evs = append(v.evs, envelope.Event{V: 1, Seq: 1, RoomID: roomID, Type: envelope.StateChanged, TS: time.Now(), Payload: envelope.TaskStatePayload(f)})
 	})
 	rows := rowsFor(t, e, "?needs_me=1", admin("boss"))
-	if len(rows) != 1 || rows[0].NeedsYou != 1 || !rows[0].NeedsMe || rows[0].Need == nil || rows[0].Need.Kind != "answer" || rows[0].Need.ID != "42" {
+	if len(rows) != 1 || rows[0].NeedsYou != 1 || !rows[0].NeedsMe || rows[0].Need == nil || rows[0].Need.Kind != summary.NeedQuestion || rows[0].Need.ID != "42" {
 		t.Fatalf("an owner's row: %+v", rows)
 	}
 	if rows[0].Reason != "needs_author" || log.factsReads != 1 {

@@ -433,7 +433,7 @@ func (c *card) needs(s summary.Summary) {
 			}
 		case "merge":
 			item, label = c.needLine(n, c.mergeLine), "open the pull request"
-		case "answer":
+		case summary.NeedQuestion:
 			item, label = c.needLine(n, c.answerLine), "answer on the issue"
 		case "hold":
 			item, label = c.broker(n.What), "open the room"

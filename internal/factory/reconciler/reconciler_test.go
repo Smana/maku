@@ -723,7 +723,7 @@ func TestAHumanHoldIsNarratedOnceAndNeedsTheHolder(t *testing.T) {
 			evs = append(evs, envelope.Event{Seq: seq, Type: envelope.StateChanged, Payload: envelope.TaskStatePayload(g.log.facts[seq])})
 		}
 		holder := policy.Subject{Kind: envelope.ActorHuman, ID: "human:smana", Role: policy.Collaborator, Driver: true, WebUI: true}
-		return summary.View(summary.Fold(evs), "3buqdlot", "u", holder, 0, now).NeedsYou
+		return summary.View(summary.Fold(evs), "3buqdlot", "u", holder, summary.GitHubStanding{}, 0, now).NeedsYou
 	}
 
 	// A person's run in the room: the task waits, says so once, and needs the person.

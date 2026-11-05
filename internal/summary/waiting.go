@@ -55,8 +55,12 @@ func urlOfIssue(i *envelope.IssueFact) string {
 // restricts updates on every branch but agent/**, so an approval alone leaves "Merging is
 // blocked"): only a repository admin can bypass it, so the text names who (#51). Without a
 // repository it gives the bypass box alone rather than a gh command that would act on whichever
-// checkout it runs from (#59).
-func MergeHow(repo string, n int) string {
+// checkout it runs from (#59). byApproval selects the approval's sentence instead (ApproveHow): the
+// gate merges the head a maintainer approved, so no renderer can print the bypass for it (AM3).
+func MergeHow(repo string, n int, byApproval bool) string {
+	if byApproval {
+		return ApproveHow(repo, n)
+	}
 	if repo == "" {
 		return fmt.Sprintf("a maintainer with admin on the repository merges PR #%d: the ruleset blocks a plain merge, so tick \"bypass rules\" on the PR page", n)
 	}
@@ -75,34 +79,52 @@ func ApproveHow(repo string, n int) string {
 		n, repo, n)
 }
 
-// Merge is the need of a task that waits for a maintainer's merge: AwaitingHuman with a pull
-// request. Whoever owns the room, the maintainer, sees it; GitHub still decides who may merge.
-// When the facts say an approval returns the hand-off, it says approve, as the issue comment does.
-func Merge(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
-	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || f.PR.Number <= 0 || !policy.Allowed(sub, policy.Close) {
+// MergeNeed is the merge need's prose alone: the standing is the derivation's (CD26), the sentence is the
+// gate's. When the facts say an approval returns the hand-off, the sentence is ApproveHow's and
+// Need.Approve is set, so no renderer can print the bypass for it (AM3, fast-follow 1).
+func MergeNeed(f *envelope.TaskFacts) (Need, bool) {
+	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || f.PR.Number <= 0 {
 		return Need{}, false
 	}
-	n := Need{Kind: "merge", ID: fmt.Sprint(f.PR.Number), What: MergeHow(repoOf(f), f.PR.Number), URL: f.PR.URL}
+	n := Need{Kind: NeedMerge, ID: fmt.Sprint(f.PR.Number), URL: f.PR.URL,
+		What: MergeHow(repoOf(f), f.PR.Number, f.MergeByApproval)}
 	if f.MergeByApproval {
-		n.What, n.Approve = ApproveHow(repoOf(f), f.PR.Number), true
+		n.Approve = true
 	}
 	return n, true
 }
 
-// Answer is the need of a task the scoper bounced (scoper design SC8): its issue's author answers
-// by editing the issue. A public issue's author cannot reach the rooms, so the need is the room
-// owner's, as a merge is, and names the author.
-func Answer(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
-	if f == nil || f.Phase != "Escalated" || f.Reason != "needs_author" || f.Issue == nil || f.Issue.Number <= 0 ||
-		!policy.Allowed(sub, policy.Close) {
+// QuestionNeed is the needs_author prose alone (SC8): the issue's author answers by editing the issue.
+func QuestionNeed(f *envelope.TaskFacts) (Need, bool) {
+	if f == nil || f.Phase != "Escalated" || f.Reason != "needs_author" || f.Issue == nil || f.Issue.Number <= 0 {
 		return Need{}, false
 	}
 	who := "the issue's author"
 	if f.Issue.Author != "" {
 		who = "@" + f.Issue.Author
 	}
-	return Need{Kind: "answer", ID: fmt.Sprint(f.Issue.Number), URL: f.Issue.URL, Author: f.Issue.Author,
+	return Need{Kind: NeedQuestion, ID: fmt.Sprint(f.Issue.Number), URL: f.Issue.URL, Author: f.Issue.Author,
 		What: fmt.Sprintf("%s answers the scoper's question by editing issue #%d, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption", who, f.Issue.Number)}, true
+}
+
+// Merge is the need of a task that waits for a maintainer's merge, for a caller who may close the room:
+// the standing-checked wrapper a room row and the summary's neighbours use. needs/v1 decides a merge on
+// the caller's GitHub standing instead (CD26); MergeNeed is the prose both read.
+func Merge(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
+	if !policy.Allowed(sub, policy.Close) {
+		return Need{}, false
+	}
+	return MergeNeed(f)
+}
+
+// Answer is the need of a task the scoper bounced (scoper design SC8), for a caller who may close the
+// room. A public issue's author cannot reach the rooms, so the need is the room owner's, as a merge is,
+// and it names the author. QuestionNeed is its prose.
+func Answer(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
+	if !policy.Allowed(sub, policy.Close) {
+		return Need{}, false
+	}
+	return QuestionNeed(f)
 }
 
 // reasons is the prose of the wait reasons a task shows, repeated from the factory's narration

@@ -16,7 +16,7 @@ func TestTheSummaryShowsTheRunsProvenance(t *testing.T) {
 	facts := envelope.TaskFacts{Phase: "Implementing", Run: &envelope.RunFact{ID: "cf4ato2x", Role: "implementer",
 		Provenance: &envelope.ProvenanceFact{FactoryVersion: "v0.16.0", CompositionRevision: "xagentruns.cloud.ogenki.io-41b6efe"}}}
 	s := summary.View(summary.Fold([]envelope.Event{ev(1, envelope.StateChanged, factory, envelope.TaskStatePayload(facts))}),
-		"r", "u", owner(), 0, time.Now())
+		"r", "u", owner(), summary.GitHubStanding{}, 0, time.Now())
 	if s.Status.Run == nil || s.Status.Run.Provenance == nil || s.Status.Run.Provenance.FactoryVersion != "v0.16.0" ||
 		s.Status.Run.Provenance.CompositionRevision != "xagentruns.cloud.ogenki.io-41b6efe" {
 		t.Fatalf("%+v", s.Status.Run)

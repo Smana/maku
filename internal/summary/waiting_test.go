@@ -17,10 +17,14 @@ const (
 	prURL    = "https://github.com/Smana/cloud-native-ref/pull/2267"
 )
 
+// taskView is a room whose last facts are f, as sub sees it. The GitHub standing is the caller's policy
+// standing where the action happens: a caller who may close the room is taken to be able to write its
+// repository, which is what a merge need asks (CD26).
 func taskView(f envelope.TaskFacts, sub policy.Subject) summary.Summary {
 	factory := envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"}
 	st := summary.Fold([]envelope.Event{ev(1, envelope.StateChanged, factory, envelope.TaskStatePayload(f))})
-	return summary.View(st, "r", "https://rooms.example/r/r", sub, 0, time.Now())
+	return summary.View(st, "r", "https://rooms.example/r/r", sub,
+		summary.GitHubStanding{MayWrite: policy.Allowed(sub, policy.Close)}, 0, time.Now())
 }
 
 // #59: a generated command run from another checkout would act on that checkout's repository.

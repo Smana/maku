@@ -52,12 +52,15 @@ func Hold(f *envelope.TaskFacts, sub policy.Subject, url string) (Need, bool) {
 	if f == nil || f.Phase != "Queued" || holds()[f.Reason] == "" || !policy.Allowed(sub, policy.StartRun) {
 		return Need{}, false
 	}
-	return Need{Kind: "hold", ID: f.Reason, What: holds()[f.Reason], URL: url}, true
+	return Need{Kind: NeedHold, ID: f.Reason, What: holds()[f.Reason], URL: url}, true
 }
 
 // State is what Fold keeps of a log.
 type State struct {
-	Facts     *envelope.TaskFacts
+	Facts *envelope.TaskFacts
+	// FactsAt is the ts of the event that carried Facts: when the room last heard what its task waits on,
+	// which a needs/v1 item's At carries (a member's row and the room summary date an item alike).
+	FactsAt   time.Time
 	Verdict   *Verdict
 	Judge     *JudgeVerdict
 	Pending   map[string]Approval // approval id -> still open
@@ -124,6 +127,9 @@ type Approval struct {
 	ID        string
 	What      string
 	ExpiresAt time.Time
+	// At is when the approval was asked: the approval_requested event's ts, so a needs/v1 item says how
+	// long it has waited (PR 1's ordering reads the deadline, not this).
+	At        time.Time
 	Prompters []string // who prompted the turn: under four-eyes, none of them decides it
 }
 
@@ -143,22 +149,36 @@ type QueuedNote struct {
 	Text   string `json:"text"`
 }
 
-// Need is a pending approval the viewer could decide, or a factory task the viewer's hold on the
-// room keeps waiting (N3), or the answer a bounced task waits for from its issue's author (scoper
-// design SC8; the room's owner sees it). It carries a link to the room and never a command: approving is
-// web-only (D4, ruling P18).
+// Need is one thing that needs a person, as needs/v1 derives it (CD21): identified by its room, kind and
+// id (Key), with the one action to take and the link where it happens. It carries no command: approving is
+// web-only (D4, ruling P18), and every other action happens on GitHub.
 type Need struct {
-	Kind     string    `json:"kind"` // approval | hold (ID is then the task's wait reason) | merge (ID is the PR number) | answer (ID is the issue number)
+	// Kind is one of the eight needs/v1 kinds, in the order they are listed.
+	Kind     string    `json:"kind"` // plan_confirmation | approval | question | merge | review | failed_check | recovery | hold
 	ID       string    `json:"id"`
 	What     string    `json:"what"`
 	Deadline time.Time `json:"deadline,omitzero"`
 	URL      string    `json:"url"`
-	// Author is an answer need's issue author, a validated GitHub login: the part views build their
+	// Room is the room the item belongs to: the list spans rooms, so an item names its own (Key).
+	Room string `json:"room,omitempty"`
+	// Issue and PR are the GitHub numbers the item acts on, 0 when it acts on neither.
+	Issue int `json:"issue,omitempty"`
+	PR    int `json:"pr,omitempty"`
+	// Why is the factory's reason in prose (reasons()), the cause, while What is the move: a view may show
+	// both, and Why is never a repeat of What.
+	Why string `json:"why,omitempty"`
+	// At is when the item's cause landed: the facts' ts, or the approval's.
+	At time.Time `json:"at,omitzero"`
+	// Action is the one thing to do and where; URL above is the item's own link.
+	Action NeedAction `json:"action,omitzero"`
+	// Author is a question need's issue author, a validated GitHub login: the part views build their
 	// own sentence from. Absent for every other kind.
 	Author string `json:"author,omitempty"`
 	// Approve marks a merge need a maintainer's approval settles (TaskFacts.MergeByApproval): the
 	// views say approve, not bypass. Absent for every other need.
 	Approve bool `json:"approve,omitempty"`
+	// Source is where the item was derived from: for the tests, never in the object a surface renders.
+	Source NeedSource `json:"-"`
 }
 
 // Action is something the viewer can do now.
@@ -248,7 +268,7 @@ func (st *State) Add(evs []envelope.Event) {
 		case envelope.ApprovalRequested:
 			var a envelope.ApprovalRequestedPayload
 			if json.Unmarshal(ev.Payload, &a) == nil {
-				st.Pending[a.ApprovalID] = Approval{ID: a.ApprovalID, What: describe(a), ExpiresAt: a.ExpiresAt, Prompters: a.Prompters}
+				st.Pending[a.ApprovalID] = Approval{ID: a.ApprovalID, What: describe(a), ExpiresAt: a.ExpiresAt, At: ev.TS, Prompters: a.Prompters}
 			}
 		case envelope.ApprovalDecided:
 			var a envelope.ApprovalDecidedPayload
@@ -300,7 +320,7 @@ func foldState(st *State, ev envelope.Event) {
 	case "task":
 		var f envelope.TaskFacts
 		if json.Unmarshal(ev.Payload, &f) == nil {
-			st.Facts = &f
+			st.Facts, st.FactsAt = &f, ev.TS
 		}
 	case "run_phase":
 		// The broker's run_phase{Running} names the claim's spec.model, which no sandbox writes.
@@ -397,8 +417,11 @@ func DescribeApproval(class string, action json.RawMessage) string {
 	return what
 }
 
-// View is st as sub sees it: needs-you and actions follow sub's standing, notes are those after `after`.
-func View(st State, room, url string, sub policy.Subject, after int64, now time.Time) Summary {
+// View is st as sub sees it (CD21): needs-you from the one derivation, which takes the caller's GitHub
+// standing because a merge, a review and an answer are GitHub's to decide (CD26). The standing is the
+// caller's where the action happens: the server resolves it once per room and passes the same one to the
+// rows, the summary and the tools. Notes are those after `after`.
+func View(st State, room, url string, sub policy.Subject, standing GitHubStanding, after int64, now time.Time) Summary {
 	var s Summary
 	s.APIVersion, s.Room, s.URL = APIVersion, room, url
 	s.Cursor = fmt.Sprintf("seq:%d", st.LastSeq)
@@ -433,23 +456,14 @@ func View(st State, room, url string, sub policy.Subject, after int64, now time.
 	// still learns an approval is needed, with a link and no command (D4).
 	web := sub
 	web.WebUI = true
-	if policy.Allowed(web, policy.Decide) {
-		for _, id := range slices.Sorted(maps.Keys(st.Pending)) {
-			a := st.Pending[id]
-			if !a.ExpiresAt.IsZero() && now.After(a.ExpiresAt) {
-				continue // the sweep's approval_decided{expired} has not landed yet
-			}
-			s.NeedsYou = append(s.NeedsYou, Need{Kind: "approval", ID: a.ID, What: a.What, Deadline: a.ExpiresAt, URL: url + "#" + a.ID})
-		}
-	}
-	if n, ok := Hold(st.Facts, sub, url); ok {
-		s.NeedsYou = append(s.NeedsYou, n)
-	}
-	if n, ok := Merge(st.Facts, sub); ok {
-		s.NeedsYou = append(s.NeedsYou, n)
-	}
-	if n, ok := Answer(st.Facts, sub); ok {
-		s.NeedsYou = append(s.NeedsYou, n)
+	s.NeedsYou = Ordered(Items(NeedsIn{Room: room, URL: url, Repository: repoOf(st.Facts),
+		FactsRead: true, Facts: st.Facts, FactsAt: st.FactsAt, Approvals: live(st.Pending, now),
+		GitHub: standing,
+		Caller: Caller{WebUI: web.WebUI, CanDecide: policy.Allowed(web, policy.Decide),
+			CanClose: policy.Allowed(sub, policy.Close), CanRelease: policy.Allowed(sub, policy.StartRun)},
+		Now: now}))
+	if s.NeedsYou == nil {
+		s.NeedsYou = []Need{} // the object's shape, for a room with nothing due: needsYou is a list
 	}
 	s.Step = viewStep(s, factsReason(st.Facts), url, policy.Allowed(web, policy.Decide))
 	// Review requests are not needs here: GitHub already notifies them (spec D6).
@@ -472,8 +486,8 @@ func View(st State, room, url string, sub policy.Subject, after int64, now time.
 	return s
 }
 
-// viewStep is the summary's step: an approval it lists, else a merge or an answer need it lists.
-// Those needs are listed only for a caller who may close, so they carry the standing.
+// viewStep is the summary's step: an approval it lists, else a merge or a question need it lists.
+// Those needs carry the standing that decided them, so the step is theirs and never a second opinion.
 func viewStep(s Summary, reason, roomURL string, canDecide bool) *Step {
 	in := StepIn{RoomURL: roomURL, Phase: s.Status.Phase, Reason: reason}
 	if p := s.Status.PR; p != nil {
@@ -484,9 +498,9 @@ func viewStep(s Summary, reason, roomURL string, canDecide bool) *Step {
 	}
 	for _, n := range s.NeedsYou {
 		switch n.Kind {
-		case "approval":
+		case NeedApproval:
 			in.Approvals = canDecide
-		case "merge", "answer":
+		case NeedMerge, NeedQuestion:
 			in.CanClose = true
 			in.MergeByApproval = in.MergeByApproval || n.Approve
 		}

@@ -70,7 +70,7 @@ func TestStatusOfReadsTheSummary(t *testing.T) {
 // code on every surface: the page, maku status and the room list.
 func TestViewCarriesTheReasonCode(t *testing.T) {
 	st := State{Facts: &envelope.TaskFacts{Phase: "Rejected", Reason: "ci_red"}, Pending: map[string]Approval{}}
-	v := View(st, "r", "u", policy.Subject{}, 0, time.Now())
+	v := View(st, "r", "u", policy.Subject{}, GitHubStanding{}, 0, time.Now())
 	if v.Status.ReasonCode != "ci_red" {
 		t.Fatalf("reasonCode = %q", v.Status.ReasonCode)
 	}

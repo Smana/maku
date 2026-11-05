@@ -42,7 +42,7 @@ func foldGolden(t *testing.T, name string) (summary.Summary, time.Time) {
 	}
 	v := policy.Subject{Kind: envelope.ActorHuman, Role: policy.ParseRole(tc.Viewer.Role),
 		Approver: tc.Viewer.Approver, Driver: tc.Viewer.Driver, WebUI: tc.Viewer.WebUI}
-	return summary.View(summary.Fold(tc.Events), "26zfnuxm", rooms+"/r/26zfnuxm", v, 0, tc.Now), tc.Now
+	return summary.View(summary.Fold(tc.Events), "26zfnuxm", rooms+"/r/26zfnuxm", v, summary.GitHubStanding{}, 0, tc.Now), tc.Now
 }
 
 func card1(t *testing.T, s summary.Summary, o Options) string {
@@ -369,7 +369,7 @@ func TestCardTokenAutolink(t *testing.T) {
 // Only untrusted text is cut: the broker's own instructions arrive whole, and their code spans
 // are not wrapped in a second one.
 func TestCardKeepsTheBrokersTextWhole(t *testing.T) {
-	merge := summary.MergeHow("Smana/a", 2239)
+	merge := summary.MergeHow("Smana/a", 2239, false)
 	answer := "@alice answers the scoper's question by editing issue #42, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption"
 	next := "nothing to do: the task goes on when the class's holdout checks report; a check that never reports keeps it waiting until merge.awaitingCIFor, 24h unless set (agent-platform #182)"
 	for _, s := range []string{merge, answer, next} {
@@ -382,7 +382,7 @@ func TestCardKeepsTheBrokersTextWhole(t *testing.T) {
 	sum.Status.Next = next
 	sum.NeedsYou = []summary.Need{
 		{Kind: "merge", ID: "2239", What: merge, URL: "https://github.com/Smana/a/pull/2239"},
-		{Kind: "answer", ID: "42", What: answer, URL: "https://github.com/Smana/a/issues/42"},
+		{Kind: summary.NeedQuestion, ID: "42", What: answer, URL: "https://github.com/Smana/a/issues/42"},
 	}
 	// The merge and answer lines are built from their parts, with the repository, the author and
 	// the commands in code spans; a terminal shows the same words without the backticks.
@@ -514,7 +514,7 @@ func TestCardMergeNeedIsInertForAHostileRepository(t *testing.T) {
 	for _, repo := range []string{"o/_www.evil.example", "o/_x_", "o/a.b"} {
 		sum := summary.Summary{Room: "r", URL: rooms + "/r/r"}
 		sum.Status.Phase = "AwaitingHuman"
-		sum.NeedsYou = []summary.Need{{Kind: "merge", ID: "1", What: summary.MergeHow(repo, 1), URL: "https://github.com/" + repo + "/pull/1"}}
+		sum.NeedsYou = []summary.Need{{Kind: "merge", ID: "1", What: summary.MergeHow(repo, 1, false), URL: "https://github.com/" + repo + "/pull/1"}}
 		md := card1(t, sum, Options{Format: Markdown, Now: now, Rooms: rooms})
 		assertInert(t, md, rooms, nil)
 		noEmphasis(t, md)
@@ -529,7 +529,7 @@ func TestCardMergeNeedIsInertForAHostileRepository(t *testing.T) {
 	}
 	// With no repository the line says so and offers no gh command.
 	sum := summary.Summary{Room: "r", URL: rooms + "/r/r"}
-	sum.NeedsYou = []summary.Need{{Kind: "merge", ID: "1", What: summary.MergeHow("", 1), URL: "https://evil.example/x"}}
+	sum.NeedsYou = []summary.Need{{Kind: "merge", ID: "1", What: summary.MergeHow("", 1, false), URL: "https://evil.example/x"}}
 	if got := card1(t, sum, textOpts(now)); strings.Contains(got, "gh pr merge") || !strings.Contains(got, "bypass rules") {
 		t.Errorf("no repository:\n%s", got)
 	}
@@ -541,7 +541,7 @@ func TestCardMergeCommandIsWhole(t *testing.T) {
 	repo := strings.Repeat("o", 39) + "/" + strings.Repeat("r", 100)
 	sum := summary.Summary{Room: "r", URL: rooms + "/r/r"}
 	sum.Status.Phase = "AwaitingHuman"
-	sum.NeedsYou = []summary.Need{{Kind: "merge", ID: "2239", What: summary.MergeHow(repo, 2239), URL: "https://github.com/" + repo + "/pull/2239"}}
+	sum.NeedsYou = []summary.Need{{Kind: "merge", ID: "2239", What: summary.MergeHow(repo, 2239, false), URL: "https://github.com/" + repo + "/pull/2239"}}
 	want := "gh pr merge 2239 --squash --admin --repo " + repo
 	if md := card1(t, sum, Options{Format: Markdown, Now: now, Rooms: rooms}); !slices.Contains(codeSpans(md), want) {
 		t.Errorf("markdown: the whole command is a code span, got %q", codeSpans(md))
@@ -555,7 +555,7 @@ func TestCardMergeCommandIsWhole(t *testing.T) {
 func TestCardAnswerNeedIsInertForAHostileAuthor(t *testing.T) {
 	for author, want := range map[string]string{"alice-b": "`@alice-b`", "_www.evil.example": "the issue's author", "x`y": "the issue's author", "": "the issue's author"} {
 		sum := summary.Summary{Room: "r", URL: rooms + "/r/r"}
-		sum.NeedsYou = []summary.Need{{Kind: "answer", ID: "42", Author: author, URL: "https://github.com/o/r/issues/42",
+		sum.NeedsYou = []summary.Need{{Kind: summary.NeedQuestion, ID: "42", Author: author, URL: "https://github.com/o/r/issues/42",
 			What: "<b>evil</b> _www.evil.example answers"}}
 		md := card1(t, sum, Options{Format: Markdown, Now: now, Rooms: rooms})
 		assertInert(t, md, rooms, []string{"evil"})
@@ -651,5 +651,19 @@ func TestCardLeadsWithTheStatus(t *testing.T) {
 		if first := strings.SplitN(got, "\n", 2)[0]; first != want {
 			t.Errorf("format %d: first line %q, want %q", f, first, want)
 		}
+	}
+}
+
+// CD21: the need kind is "question" (it was "answer"), and the card still says who answers and how.
+func TestAQuestionNeedRendersAsTheAnswerLine(t *testing.T) {
+	s := summary.Summary{NeedsYou: []summary.Need{{Kind: summary.NeedQuestion, ID: "2242", Author: "dana",
+		Action: summary.NeedAction{Kind: "answer", Label: "answer on #2242", URL: "https://github.com/o/r/issues/2242"}}}}
+	s.Status.Phase = "Escalated"
+	var b strings.Builder
+	if err := Card(&b, s, Options{Format: Markdown, Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "answers the scoper's question by editing issue #2242") {
+		t.Fatalf("%s", b.String())
 	}
 }

@@ -64,7 +64,8 @@ func TestViewStepFollowsTheCaller(t *testing.T) {
 		{"no answer for a watcher", State{Facts: &envelope.TaskFacts{Phase: "Escalated", Reason: "needs_author", Issue: issue}}, watcher, ""},
 		{"sealed room", State{Sealed: "Closed", Facts: &envelope.TaskFacts{Phase: "AwaitingHuman", PR: pr}}, owner, ""},
 	} {
-		got := View(tc.st, "r", "https://rooms.example/r/r", tc.sub, 0, now).Step
+		got := View(tc.st, "r", "https://rooms.example/r/r", tc.sub,
+			GitHubStanding{Login: "ann", MayWrite: policy.Allowed(tc.sub, policy.Close)}, 0, now).Step
 		if (got == nil) != (tc.kind == "") || got != nil && got.Kind != tc.kind {
 			t.Errorf("%s: step = %+v, want %q", tc.name, got, tc.kind)
 		}
