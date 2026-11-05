@@ -129,6 +129,14 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 			description: "Check a factory issue draft: the title `<area>: <what is wrong>`, the body's sections ## What is wrong, ## What it should be, " +
 				"## Acceptance check, no secret; hidden characters are stripped. It files nothing: show the draft to the developer, then use issue_file.",
 			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","title","body"],"properties":{"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},"title":{"type":"string","minLength":1,"maxLength":1024},"body":{"type":"string","minLength":1,"maxLength":16384}}}`)},
+		{name: "needs_list", call: s.needsList,
+			description: "What needs you across every room you can read, as needs/v1: the list to show as it is (text), and the same items as structuredContent. " +
+				"In the one order, never scored: a deadline first, then the kind — plan_confirmation, approval, question, merge, review, failed_check, recovery, hold — then the room, " +
+				"so this list, the room rows and the room's summary cannot disagree. " +
+				"Filters: since (the cursor of a previous answer, never a future instant), room, repo. " +
+				"access says why the list may be short; unread names a room whose state could not be read, and the text says so. " +
+				"Nothing here decides anything: an approval is decided on the room page, a merge on GitHub; show each item's action as its link.",
+			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"since":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}}}`)},
 	}
 	if s.Intake != nil {
 		// The planner's tools exist only when the switch that would serve them does: a list

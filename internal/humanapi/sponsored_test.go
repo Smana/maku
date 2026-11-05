@@ -83,7 +83,7 @@ func TestSponsoredToolList(t *testing.T) {
 	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,issue_draft,room_summary,room_tail,room_changes,intake_plan,plan_check" {
 		t.Fatalf("%s", got)
 	}
-	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,intake_plan,plan_check" {
+	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check" {
 		t.Fatalf("a human's list changed: %s", got)
 	}
 	for _, name := range []string{"room_queue", "room_fork", "rooms_list"} {
