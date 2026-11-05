@@ -231,8 +231,9 @@ func (a *App) answer(ctx context.Context, in interaction, line string) bool {
 // inert takes the card's buttons off after a recorded decision (§6 step 7): the card becomes §5's
 // inert form — the header, the fields and the clicker's own line — and its blocks are replaced
 // wholesale, because a block list left as it is keeps the buttons. The fields come from the press,
-// which names the approval and the branch it bound and no room: the card it rewrites already carries
-// the room link, and the broker's room.approval_closed rewrites it again with the room (closeCard).
+// which names the approval and the branch it bound and nothing that resolves a room, so the room
+// link is dropped by this write: the broker's room.approval_closed rewrites the same card a moment
+// later with the room in its context block (closeCard), and that write is where the link comes back.
 // The class is the card's own constant — no card is drawn for another one. Blocks the App could not
 // encode fall back to emptied ones: no button may survive.
 func (a *App) inert(ctx context.Context, in interaction, line string) error {

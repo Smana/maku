@@ -450,7 +450,7 @@ func pressOf(t *testing.T, ts, approvalID, actionID string) string {
 
 // §1 and §6: an Approve reaches the broker exactly once with the body of §1 and the clicker sees one
 // answer; a Deny likewise. The card is the only surface: a thread reply saying "approve" reaches
-// nothing (TestSlackNeverDecides' half, amended in Task 17).
+// nothing (TestSlackNeverDecidesOnAThreadReply's half: only a card's two action ids decide).
 func TestSlackDecidesForgePushOnly(t *testing.T) {
 	t.Run("an approve press", func(t *testing.T) {
 		rig := approvalsRig(t)

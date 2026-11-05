@@ -1,6 +1,6 @@
 # The Slack App
 
-`maku-slack` is the factory's Slack App: a mention in a thread drafts an issue, a maintainer's check mark files it and starts the work, and the broker's signed webhooks tell the same thread how it goes. Approvals and steering stay in the [web UI](web-ui.md). A question from the run is linked in the thread, never answered there.
+`maku-slack` is the factory's Slack App: a mention in a thread drafts an issue, a maintainer's check mark files it and starts the work, and the broker's signed webhooks tell the same thread how it goes. Steering, every other approval class, and merges stay in the [web UI](web-ui.md); a `forge.push` approval has a card you can decide. A question from the run is linked in the thread, never answered there.
 
 ```mermaid
 sequenceDiagram
@@ -37,14 +37,14 @@ The App is one workspace's: create it from this manifest, install it, and put th
       "request_url": "https://factory-slack.<domain>/slack/events",
       "bot_events": ["app_mention", "reaction_added", "message.channels", "message.groups"]
     },
-    "interactivity": { "is_enabled": false },
+    "interactivity": { "is_enabled": true, "request_url": "https://factory-slack.<domain>/slack/events" },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false
   }
 }
 ```
 
-No interactivity and no slash command. `chat:write` also covers the [self-serve link](#self-serve-link)'s answer, a direct message from the bot (`chat.postMessage` with the user's id as channel, no `im:write` and no `conversations.open`) and, when that fails, `chat.postEphemeral`. `users:read` is optional: with it the link page names the Slack user by their handle, then their display name (`users.info`), without it by their id only; an App created from an earlier copy adds it under OAuth & Permissions and reinstalls.
+Interactivity, and no slash command. The interactivity request URL is the events URL itself: Slack signs a button press exactly as it signs an event, so one door with one signature check, one size cap and one workspace check serves both, and the body's content type says which shape arrived ([security](security.md#the-slack-app)). The bot scopes do not change: `chat:write` covers `chat.update` (a card rewritten in place) and `chat.postEphemeral` (the line one clicker sees) as it already covers `chat.postMessage`. `chat:write` also covers the [self-serve link](#self-serve-link)'s answer, a direct message from the bot (`chat.postMessage` with the user's id as channel, no `im:write` and no `conversations.open`) and, when that fails, `chat.postEphemeral`. `users:read` is optional: with it the link page names the Slack user by their handle, then their display name (`users.info`), without it by their id only; an App created from an earlier copy adds it under OAuth & Permissions and reinstalls.
 
 Draft editing needs the `message.channels` (and, for private channels, `message.groups`) bot events: an App created from an earlier copy of this manifest must add them under Event Subscriptions in the Slack console and reinstall. The scopes (`channels:history`, `groups:history`) are already there. Without the events, mentions and check marks work as before and replies are never seen.
 
@@ -55,7 +55,8 @@ Draft editing needs the `message.channels` (and, for private channels, `message.
 | Key | Meaning |
 |---|---|
 | `teamID` | Required. The one workspace served; any other workspace's events are dropped |
-| `channels` | Required, at least one: `<channel id>: {repositories: [owner/name], maxCostUSD}`. The repositories a draft there may name, and the `max_cost` a check mark there sends (at least 0.01) |
+| `channels` | Required, at least one: `<channel id>: {repositories: [owner/name], maxCostUSD, approvals}`. The repositories a draft there may name, and the `max_cost` a check mark there sends (at least 0.01) |
+| `channels.<id>.approvals` | Optional, default `false`: a `forge.push` wait in that channel is drawn as [the card](#the-card), and a press on it reaches the broker. Off, the wait keeps the text line, and a press on a card posted while it was on is answered "approvals are not turned on in this channel" with the room link, without reaching the broker. Turning it off is the fast rollback; it is not the authority, since a broker without `human.slackDecide` answers the route with a 404 and a press then says the factory could not be reached |
 | `signingSecretFile`, `botTokenFile`, `webhookKeyFile`, `botUserIDFile` | Required mounted files; each must be readable and non-empty, and the webhook key must parse (one or two base64 lines of at least 32 bytes): the App refuses to start otherwise, naming the field and never the content |
 | `clientIDFile`, `clientSecretFile`, `projectIDFile`, `issuerURL` | Required: the ZITADEL machine user's client, the project whose audience the token carries, and the issuer (an absolute `https` URL; `http` is accepted only for a loopback host, in tests). The three files are checked at start like the others |
 | `brokerURL`, `roomsURL` | The broker's base URL, its human listener (`http://<svc>.<ns>.svc.cluster.local:8080`, no path: the App calls `<brokerURL>/mcp`), and the room pages' base URL |
@@ -74,13 +75,13 @@ webhooks:
     network: cluster
     url: http://<svc>.<ns>.svc.cluster.local:8081/webhooks
     events: [room.task_triaged, room.run_started, room.waiting_for_human, room.pr_opened, room.verdict_posted,
-             room.merged, room.reverted, room.budget_reached, room.ended]
+             room.merged, room.reverted, room.budget_reached, room.ended, room.approval_closed]
     repositories: [Smana/ai-native-ref]
     secretFile: /etc/webhook/key   # the key file the App mounts as webhookKeyFile
 ```
 
 - `network: cluster`; the port `:8081` is mandatory and the path is exactly `/webhooks`.
-- `events` are the nine above, by their full names: the broker refuses a short one. The App ignores `room.task_received` and `room.run_ended`.
+- `events` are the ten above, by their full names: the broker refuses a short one. The App ignores `room.task_received` and `room.run_ended`. `room.approval_closed` is what makes a card inert after the deadline or another surface's decision, so a subscriber serving a channel with `approvals: true` must list it.
 - `repositories` is required.
 - `secretFile` is the same key as the App's `webhookKeyFile`: one or two base64 lines, each at least 32 bytes decoded.
 
@@ -126,6 +127,20 @@ The draft is shown in Slack's mrkdwn (an intro line, then `*What is wrong*`, `*W
 
 A passing failure (`kill_switch`, `principal_task_cap`, `link_unverified`, `ledger_unavailable`, `tasks_unavailable`, `intake_failed`, `meter_unpriced`, the factory or Slack unreachable) says to react again, at most once per 5 minutes per draft, user and reason. **Silent on purpose:** a ✅ on a message that is not the App's draft, a malformed id, the App's own user, a bot's event, another workspace, an event already seen, and a message Slack cannot return (no thread is known to answer in; logged and counted `error`).
 
+### The card
+
+One `forge.push` wait is one card in the thread it was filed from, and the card's two buttons are the only thing in a thread that decides anything ([security](security.md#the-slack-app) has the route, the standings and the closed codes).
+
+**When a card is drawn.** All four hold: the room was filed from Slack (so its thread is in the map), the channel has `approvals: true` **and** lists the wait's repository, the class is `forge.push`, and the event carries an approval id and a branch inside the run pattern. Everything else keeps today's text line, which sends a person to the room page: `forge.pr`, `forge.other`, `mcp.write`, `shell.high`, `egress.new`, and a `forge.push` without a branch. One approval, one message: the App reads the thread, finds the card whose tagged metadata names the same approval id, and rewrites it in place, so a webhook redelivery — or a restart that lost the in-memory delivery set — cannot double it. A thread too long to read posts the card anyway and counts `too_long`.
+
+**What it shows.** The class prose the room page shows, the branch, the deadline as Slack's own date token (the client renders it in the reader's timezone, so the App holds neither a clock nor a zone in the message), the approval's id, and the room's link. No agent text, no reason, no GitHub login, no other person's name: invariant 7 holds over the card as over every line. A card drawn after its deadline is posted already inert — prose and room link, no buttons — because the store would refuse the press; the App's clock decides only what is drawn, never what is decided.
+
+**A press.** The buttons carry `v1|forge.push|<approvalId>|<branch>`, which is a hint and never authority: the broker re-reads the approval, the class, the run's branch and the clicker's standing, and a card that outlived the state it was drawn from decides nothing. Slack answers a press within 3 seconds, so the one door verifies the signature, deduplicates and enqueues, and a worker does the rest. The clicker alone is told what became of it, in one fixed sentence in the card's thread (an ephemeral): `Decided: the push goes out.`, `Not decided: your GitHub account cannot write to this room's repository.`, and so on — one line per closed code, naming no repository, branch, login or approver, and never repeating a broker's prose. Only a recorded decision takes the buttons off.
+
+**Teardown.** Two `chat.update` writes, both best effort and both idempotent: the press's own, which turns the card into its header, class, branch, approval and the clicker's line; and the broker's `room.approval_closed`, which rewrites the same card for any close — approved, denied, expired, superseded — whoever decided, the room page included. A press names no room, so the room link leaves the card on the first write and comes back on the second. A failed update is logged as `card update failed` and counted `error`, and it is never retried: the card is a view, the store's single-decision fence is what refuses a stale press, and three given-up webhook deliveries would disable the subscriber.
+
+**A close with no card is silent.** In a channel with `approvals: true`, a wait that drew only a text line (another class, or a `forge.push` without a branch) gets no close line either: the thread already told that wait's story, and its decision lives where its wait pointed, on the room page. A channel with `approvals` off draws no cards at all, so its close is the thread's line, `The approval closed: <decision>. Room: <url>`. A channel removed from `channels:` after its card was posted takes that same text-line path: the card keeps its buttons, and a press there is `ignored` before any broker call: the App does not serve that channel, so nothing decides.
+
 ### Self-serve link
 
 The link routes answer `Referrer-Policy: same-origin` (the rest of the rooms UI is `no-referrer`): under no-referrer a browser sends the form POST's `Origin: null`, which the broker's origin check refuses.
@@ -145,15 +160,21 @@ Both sides must opt in: the broker's `human.slackLink` (principal, team, reposit
 ## State
 
 - The thread map is the ConfigMap `factory-slack-threads`, the only object the App's Role names. Entries older than 30 days are pruned on write, and the encoded map is bounded near 900 KiB (a ConfigMap holds 1 MiB).
-- One replica. Slack events (on `event_id`) and webhooks (on `webhook-id`) are deduplicated in an in-memory LRU, so a restart can post one duplicate line. Two concurrent redeliveries of one id can both pass the check before either finishes (known race): the worst case is one duplicate thread line.
-- A webhook key the App cannot read answers `503 no_key`. That is not a hold: the broker retries a receiver's non-2xx after 10s, 1m and 5m, then counts a failure, and three given-up deliveries disable the subscriber until its `generation` is bumped. A rotated or missing key, or a Slack outage that makes the App answer `502`, therefore loses those events and can disable the subscriber. **Recovery:** fix the key (or wait for Slack), bump `generation` on the broker's `webhooks` entry and restart the broker (a `webhooks` change applies only at restart); the events of the disabled window are not replayed, and a room's page still shows its state.
-- Series: `factory_slack_requests_total{route, outcome}` (`events`, `webhooks`; the closed list is `drafted`, `edited`, `refused`, `filed`, `duplicate`, `posted`, `link`, `unlinked`, `ignored`, `bad_signature`, `no_key`, `too_large`, `busy` and `error`). `busy` is an event answered 503 because the App's 8 workers and its 64 queued events are all taken, or it is shutting down: Slack retries it.
+- One replica. Slack events (on `event_id`), button presses (on the approval, the user, the action id and the action's own `action_ts`, so Slack's retry of one press is a duplicate) and webhooks (on `webhook-id`) are deduplicated in an in-memory LRU, so a restart can post one duplicate line. Two concurrent redeliveries of one id can both pass the check before either finishes (known race): the worst case is one duplicate thread line, and for a press the store's single-decision fence still records one decision.
+- **The message metadata is tagged.** Every message the App posts carries `event_type` and its payload: `factory_draft` (`repo`, `title`, `body`, `sha256`), `factory_filed`, and `factory_approval` (`approvalId`, `class`, `branch`) on a card. The tag is what finds a card again — a webhook redelivery rewrites it instead of posting a second one, and `room.approval_closed` reads the branch back from it — so a card posted without its tag would be doubled. A draft's payload on the wire is byte-identical to what it always was.
+- **Two switches, both off by default, and they do different things.** The broker's `human.slackDecide` is the authority: without it the decide route is the mux's `404`, and a press says the factory could not be reached. The channel's `approvals` is who gets the affordance: without it a wait is a text line and a press never reaches the broker. The broker's switch must be on before any card offers a button, and Slack's interactivity URL must be set before the first card with one is posted.
+- A webhook key the App cannot read answers `503 no_key`. That is not a hold: the broker retries a receiver's non-2xx after 10s, 1m and 5m, then counts a failure, and three given-up deliveries disable the subscriber until its `generation` is bumped. A rotated or missing key, or a Slack outage that makes the App answer `502`, therefore loses those events and can disable the subscriber. **Recovery:** fix the key (or wait for Slack), bump `generation` on the broker's `webhooks` entry and restart the broker (a `webhooks` change applies only at restart); the events of the disabled window are not replayed, and a room's page still shows its state. A failed card update is never one of these: it is logged and counted, and the close it was rewriting is answered `200`.
+- Series: `factory_slack_requests_total{route, outcome}` (`events`, `webhooks`, `interactions`; the closed list is `drafted`, `edited`, `refused`, `filed`, `posted`, `card_posted`, `card_updated`, `card_closed`, `decided`, `ignored`, `not_enabled`, `not_supported`, `duplicate`, `link`, `unlinked`, `ok`, `bad_request`, `bad_signature`, `no_key`, `too_large`, `too_long`, `busy` and `error`). `busy` is an event or a press answered 503 because the App's 8 workers and its 64 queued items are all taken, or it is shutting down: Slack retries it. A press's own words are `decided` (a decision was recorded), `duplicate` (the fence had already closed it), `not_supported` (the class is not `forge.push`), `refused` (any other closed code the broker answered) and `error` (the broker, Slack or the clicker's line failed).
 - A refusal said once is remembered in memory (at most 4096): a restart can say it once more.
 - `factory_slack_build_info{version}`: the running build, constant 1.
 
 ## What it never does
 
-- Answer an approval, steer or stop a run, or read a thread reply as a command. It reads replies in a draft's thread for one purpose only: the mention's author amends that draft while it is unfiled (see Edit). A reply that is only a ✅, from anyone, files the latest draft as a reaction does (the same checks, the same lines); any other reply from anyone else, or after the draft is filed, is dropped unread.
+- **Answer anything but a `forge.push` approval, and only from a card's button.** The one exception is first, with its limits: a signed press on the card the App itself posted decides that approval, for `forge.push` only, as the linked human the broker resolves — one class, no reason (the decision carries an empty one), no answers to a run's question, and no steering. Everything below still holds everywhere else.
+- Answer an approval, steer or stop a run from a thread, or read a reply as a command. It reads replies in a draft's thread for one purpose only: the mention's author amends that draft while it is unfiled (see Edit). A reply that is only a ✅, from anyone, files the latest draft as a reaction does (the same checks, the same lines); any other reply from anyone else, or after the draft is filed, is dropped unread — saying `approve`, `deny`, `stop` or `/factory retry` in the thread of a card does nothing at all, and neither does a ✅ on the card.
+- Decide any other class, from any surface it owns: `forge.pr`, `forge.other`, `mcp.write`, `shell.high` and `egress.new` stay on the room page, and a press on a card for another class is `not_supported`.
+- Merge. A card's approval releases one push; merging stays a review of the current head on GitHub.
+- Take a reason, or show one. A press sends a decision and nothing a model could read as a sentence, and no card carries agent text.
 - Post a link code where anyone but its user sees it, or trust a GitHub login from Slack.
 - Post room text or anything an agent wrote.
 - Answer a slash command.
@@ -162,4 +183,4 @@ Both sides must opt in: the broker's `human.slackLink` (principal, team, reposit
 
 ## Live proof 5
 
-Offline, `internal/slackapp` and `internal/app` cover all of the above. On the cluster, confirm two things about Slack itself: `conversations.replies` with the reply's `ts` and `limit=1` returns the reply (not the thread's parent), and a bot's messages carry `user=<the bot's U-id>`. The check-mark filter relies on both. The App reads its own message metadata through `conversations.replies`, so `metadata.message:read` is not needed; confirm that too, and that the manifest's bot scopes suffice.
+Offline, `internal/slackapp` and `internal/app` cover the draft, the file, the card and the teardown; the two switches' live behaviour is [the design's eight proofs](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-05-v3x-slack-push-approval-design.md), L1–L8, run on one channel with `approvals: true`. On the cluster, also confirm two things about Slack itself: `conversations.replies` with the reply's `ts` and `limit=1` returns the reply (not the thread's parent), and a bot's messages carry `user=<the bot's U-id>`. The check-mark filter relies on both. The App reads its own message metadata through `conversations.replies`, so `metadata.message:read` is not needed; confirm that too, and that the manifest's bot scopes suffice.

@@ -208,16 +208,76 @@ func TestWebhookIgnores(t *testing.T) {
 	}
 }
 
-// Invariant 8: nothing in a thread approves, steers or stops; the App reads no reply.
-func TestSlackNeverDecides(t *testing.T) {
-	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
-	rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
-	for _, text := range []string{"approve", "/factory retry", "<@U0BOT> approve aaaaaaaa", "stop"} {
-		rig.message("C03", "1729.0001", "U02DEF", text)
-	}
-	if calls := rig.broker.all(); len(calls) != 0 {
-		t.Fatalf("a thread message reached the broker: %+v", calls)
-	}
+// Invariant 8, as the `forge.push` card amends it: no tool and no Slack *reply* approves or steers.
+// The App reads no reply in a thread as a command, so the four replies a person would try reach no
+// broker and decide nothing, and a ✅ reply keeps doing the one thing a reply may: it files the
+// thread's latest draft, which decides nothing either. A thread that holds a card changes none of
+// that: its replies and its reactions act on nothing, and only a card's two action ids decide.
+func TestSlackNeverDecidesOnAThreadReply(t *testing.T) {
+	t.Run("a reply is never a decision", func(t *testing.T) {
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
+		for _, text := range []string{"approve", "/factory retry", "<@U0BOT> approve aaaaaaaa", "stop"} {
+			rig.message("C03", "1729.0001", "U02DEF", text)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a thread message reached the broker: %+v", calls)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a thread message decided %+v", d)
+		}
+	})
+
+	// The check mark's own case, kept: a ✅ reply files, and filing is not deciding.
+	t.Run("a ✅ reply files a draft", func(t *testing.T) {
+		rig := editRig(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> docs: runbook 18 ends badly")
+		rig.reply("U02DEF", "✅")
+		if n := len(rig.broker.runCreates()); n != 1 {
+			t.Fatalf("a ✅ reply filed %d drafts, want 1", n)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a ✅ reply decided %+v", d)
+		}
+	})
+
+	// The amendment's first new case: the thread holds a card, and a reply in it is read no
+	// differently — the card's buttons are the surface, its thread is not.
+	t.Run("a reply in a card's thread", func(t *testing.T) {
+		rig := approvalsRig(t)
+		seedCard(t, rig, cardTS, cardApprovalID)
+		for _, text := range []string{"approve", "deny", "/factory retry", "<@U0BOT> approve aaaaaaaa"} {
+			rig.message("C03", pressThread, "U02DEF", text)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a reply in a card's thread reached the broker: %+v", calls)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a reply in a card's thread decided %+v", d)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("a reply in a card's thread rewrote the card: %+v", u)
+		}
+	})
+
+	// The amendment's second new case: a reaction on the card's own message is not a press. The
+	// card is the bot's message carrying an approval tag, so it is not a draft either: nothing files.
+	t.Run("a reaction on the card", func(t *testing.T) {
+		rig := approvalsRig(t)
+		seedCard(t, rig, cardTS, cardApprovalID)
+		for _, reaction := range []string{"white_check_mark", "+1", "thumbsup"} {
+			rig.react("C03", cardTS, "U02DEF", reaction)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a reaction on the card reached the broker: %+v", calls)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a reaction on the card decided %+v", d)
+		}
+		if e := rig.slack.whispers(); len(e) != 0 {
+			t.Fatalf("a reaction on the card was answered: %+v", e)
+		}
+	})
 }
 
 // §5: the metadata payload is tagged and decoded on demand. A draft's JSON on the wire is
