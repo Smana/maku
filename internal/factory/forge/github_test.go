@@ -25,6 +25,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -140,6 +141,10 @@ type fakeGitHub struct {
 	// fence is .github/agent-factory.yaml on the default branch: "" is absent, "!" a 500.
 	fence string
 	steer map[string]string // default-branch steering notes by path; "!" fails the read
+	// extra is more REST GETs than the snapshot serves, one read's test at a time: the body by
+	// path. A path no test added is GitHub's 404; extraQueries records their query strings.
+	extra        map[string]string
+	extraQueries []string
 }
 
 // openPull is one open pull request as GET /pulls lists it, on this repository.
@@ -834,6 +839,19 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 	}))
 	mux.HandleFunc("GET /rate_limit", g.authed(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"resources":{}}`)
+	}))
+	// The extra reads a single test adds (ghFake): the body by path, behind the installation token
+	// as every other call is, and GitHub's 404 for a path no test served.
+	mux.HandleFunc("GET /", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		body, ok := g.extra[r.URL.Path]
+		g.extraQueries = append(g.extraQueries, r.URL.RawQuery)
+		g.mu.Unlock()
+		if !ok {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, body)
 	}))
 	g.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(g.srv.Close)
@@ -1630,6 +1648,86 @@ func TestRerunCheckPostsTheJobRerun(t *testing.T) {
 	defer r.gh.mu.Unlock()
 	if !slices.Contains(r.gh.calls, "POST /repos/Smana/demo/actions/jobs/4242/rerun") {
 		t.Fatalf("calls: %v", r.gh.calls)
+	}
+}
+
+// ghFake is a rig whose GitHub serves the REST reads the snapshot's routes do not: each path
+// answers its body to a request carrying the installation token, and a path no test gave is
+// GitHub's 404.
+func ghFake(t *testing.T, routes map[string]string) *rig {
+	t.Helper()
+	r := newRig(t)
+	r.gh.mu.Lock()
+	r.gh.extra = maps.Clone(routes)
+	r.gh.mu.Unlock()
+	return r
+}
+
+// CD12: a failing check's annotations are what the revision brief quotes, and a merge App that cannot read them
+// says so instead of failing the pass.
+func TestCheckAnnotations(t *testing.T) {
+	srv := ghFake(t, map[string]string{
+		"/repos/Smana/demo/check-runs/9001/annotations": `{"annotations":[{"path":"docs/install.md","start_line":14,"annotation_level":"failure","message":"dead link"}]}`,
+	})
+	got, err := srv.g.CheckAnnotations(t.Context(), 9001)
+	if err != nil || len(got) != 1 || got[0].Path != "docs/install.md" || got[0].StartLine != 14 {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// The brief quotes evidence, so the read is bounded: one page of 50 annotations, and 500 runes of a
+// message a check may otherwise make as long as it likes, cut on a rune boundary and marked as cut.
+func TestCheckAnnotationsBoundsItsEvidence(t *testing.T) {
+	long := strings.Repeat("\u00e9", 600)
+	as := make([]string, 60)
+	for i := range as {
+		as[i] = fmt.Sprintf(`{"path":"docs/a.md","start_line":%d,"annotation_level":"failure","message":%q}`, i+1, long)
+	}
+	srv := ghFake(t, map[string]string{
+		"/repos/Smana/demo/check-runs/9002/annotations": `{"total_count":60,"annotations":[` + strings.Join(as, ",") + `]}`,
+	})
+	got, err := srv.g.CheckAnnotations(t.Context(), 9002)
+	if err != nil || len(got) != maxAnnotations {
+		t.Fatalf("%d annotations %v", len(got), err)
+	}
+	if m := got[0].Message; utf8.RuneCountInString(m) != maxAnnotationMessage || !strings.HasSuffix(m, "\u2026") ||
+		!utf8.ValidString(m) || !strings.HasPrefix(m, "\u00e9") {
+		t.Fatalf("%d bytes, cut where: %q", len(m), m)
+	}
+	// The page is what bounds the read at GitHub's end, so the request asks for one.
+	if q := strings.Join(srv.gh.queries(), " "); !strings.Contains(q, "per_page=50") {
+		t.Fatalf("per_page: %q", q)
+	}
+	// A short message is quoted as the check wrote it: no marker, no reshaping.
+	short := ghFake(t, map[string]string{
+		"/repos/Smana/demo/check-runs/9003/annotations": `{"total_count":1,"annotations":[{"path":"a.md","start_line":3,"annotation_level":"warning","message":"ok"}]}`,
+	})
+	if got, err := short.g.CheckAnnotations(t.Context(), 9003); err != nil || len(got) != 1 || got[0].Message != "ok" ||
+		got[0].Level != "warning" || got[0].StartLine != 3 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	// GitHub documents the object above and go-github v92 decodes a bare array: the read takes both.
+	bare := ghFake(t, map[string]string{
+		"/repos/Smana/demo/check-runs/9004/annotations": `[{"path":"a.md","start_line":3,"annotation_level":"warning","message":"w"}]`,
+	})
+	if got, err := bare.g.CheckAnnotations(t.Context(), 9004); err != nil || len(got) != 1 || got[0].Message != "w" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
+
+// queries are the query strings of the extra reads served so far, in order.
+func (g *fakeGitHub) queries() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return slices.Clone(g.extraQueries)
+}
+
+// A check run GitHub refuses to serve — a merger App without checks: read, a run it cannot see —
+// is an error, never an empty list that would read as "the check annotated nothing".
+func TestCheckAnnotationsReportsARefusal(t *testing.T) {
+	r := newRig(t) // no route serves it: the fake answers GitHub's 404
+	if as, err := r.g.CheckAnnotations(t.Context(), 9005); err == nil || as != nil {
+		t.Fatalf("%+v %v", as, err)
 	}
 }
 

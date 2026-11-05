@@ -273,6 +273,17 @@ type Check struct {
 // checks to (15368).
 const ActionsApp int64 = 15368
 
+// Annotation is one line a check run annotated on a commit: GitHub's path and start line, its
+// level (failure, warning, notice) and what it said.
+//
+// The message is the check's own text, and a check may write anything a workflow or a pull
+// request's author makes it write, so it is untrusted: a revision brief quotes it as data, bounded
+// by the read and made inert where it is rendered (CD12). StartLine is 0 when GitHub named none.
+type Annotation struct {
+	Path, Message, Level string
+	StartLine            int
+}
+
 // FileStat is one changed file as GitHub's compare lists it: its status (added, removed,
 // modified, renamed, copied, changed, unchanged), its previous name on a rename, and its line
 // counts, which policy-bot's modified_lines sums.
@@ -517,6 +528,11 @@ type Merger interface {
 	// RerunCheck re-runs the Actions job a check run is. It needs actions: write, beyond what
 	// the merger App held until merge.checkReruns was turned on.
 	RerunCheck(ctx context.Context, id int64) error
+	// CheckAnnotations is what a check run annotated: the paths, lines and messages a revision
+	// brief quotes as the evidence of a failure (CD12). It is evidence, never a gate, so it is
+	// bounded — one page of annotations, and each message cut — and a caller that cannot read it
+	// says so rather than failing the pass.
+	CheckAnnotations(ctx context.Context, id int64) ([]Annotation, error)
 	Diff(ctx context.Context, base, head string) (Diff, error)
 	// ChangedFiles is the path of every file changed between base and head, without contents
 	// (a rename lists both names). A head not ahead of base is ErrNotDescendant; a full page of

@@ -33,6 +33,10 @@ func (Absent) IsAncestor(context.Context, string, string) (bool, error) { return
 // RerunCheck implements Merger.
 func (Absent) RerunCheck(context.Context, int64) error { return ErrNoMerger }
 
+// CheckAnnotations implements the Merger's CheckAnnotations and fails closed: a brief says it could
+// not read the failing check, rather than quoting nothing as if the check had said nothing.
+func (Absent) CheckAnnotations(context.Context, int64) ([]Annotation, error) { return nil, ErrNoMerger }
+
 // WorkflowRuns implements the Merger's WorkflowRuns and fails closed.
 func (Absent) WorkflowRuns(context.Context, string) ([]WorkflowRun, error) { return nil, ErrNoMerger }
 

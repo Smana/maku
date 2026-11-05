@@ -3,7 +3,9 @@
 package forge
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -877,6 +880,81 @@ func (g *GitHub) SetStatus(ctx context.Context, sha, state, statusContext, descr
 		return wrap("post a commit status", err)
 	}
 	return nil
+}
+
+// maxAnnotations bounds CheckAnnotations: one page of 50, more than a failing check reports in
+// practice and still one read for a brief's evidence.
+const maxAnnotations = 50
+
+// maxAnnotationMessage bounds one annotation's message, in runes: a brief quotes it, and a check
+// may write anything.
+const maxAnnotationMessage = 500
+
+// CheckAnnotations is what a check run annotated, in GitHub's order, at most maxAnnotations of
+// them: the evidence of a failure that a revision brief quotes (CD12).
+//
+// It is evidence, never a gate, so the read is bounded rather than fail-closed: one page, and each
+// message cut to maxAnnotationMessage runes on a rune boundary, marked with "…" so half a sentence
+// never reads as the whole of what the check said. Annotations past the page and messages past the
+// cut are unread, and the caller says the factory could not read a check rather than claiming it
+// said nothing. The text itself stays as GitHub wrote it: making it inert is the renderer's one
+// job (roomview, reconciler text), not this read's.
+func (g *GitHub) CheckAnnotations(ctx context.Context, id int64) ([]Annotation, error) {
+	body, err := g.annotationsBody(ctx, fmt.Sprintf("repos/%s/%s/check-runs/%d/annotations", g.owner, g.name, id))
+	g.mark(err)
+	if err != nil {
+		return nil, wrap("list a check run's annotations", err)
+	}
+	var out []Annotation
+	for _, a := range body.Annotations {
+		if len(out) == maxAnnotations { // a server that ignored per_page cannot widen the bound
+			break
+		}
+		out = append(out, Annotation{Path: a.GetPath(), StartLine: a.GetStartLine(),
+			Level: a.GetAnnotationLevel(), Message: annotationMessage(a.GetMessage())})
+	}
+	return out, nil
+}
+
+// annotationList is the annotations endpoint's answer. GitHub documents it as this object; go-github
+// v92's own decoder reads a bare array instead, and a test that pinned one of the two would hide
+// the other, so annotationsBody accepts either.
+type annotationList struct {
+	Annotations []*github.CheckRunAnnotation `json:"annotations"`
+}
+
+// annotationsBody is one page of annotations, decoded: the installation token comes from the
+// client's transport as on every call, and a refusal is go-github's own typed error.
+func (g *GitHub) annotationsBody(ctx context.Context, path string) (annotationList, error) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return annotationList{}, err
+	}
+	q := u.Query()
+	q.Set("per_page", strconv.Itoa(maxAnnotations))
+	u.RawQuery = q.Encode()
+	req, err := g.rest.NewRequest(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return annotationList{}, err
+	}
+	var raw json.RawMessage
+	if _, err := g.rest.Do(req, &raw); err != nil {
+		return annotationList{}, err
+	}
+	var out annotationList
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '[' {
+		return out, json.Unmarshal(trimmed, &out.Annotations)
+	}
+	return out, json.Unmarshal(raw, &out)
+}
+
+// annotationMessage is a check's message, cut to maxAnnotationMessage runes with the cut marked.
+func annotationMessage(s string) string {
+	r := []rune(s)
+	if len(r) <= maxAnnotationMessage {
+		return s
+	}
+	return string(r[:maxAnnotationMessage-1]) + "…"
 }
 
 // PullRequestChecks is the head commit's rollup, one GraphQL query. It needs checks: read and

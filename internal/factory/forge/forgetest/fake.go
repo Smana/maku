@@ -27,67 +27,69 @@ var _ forge.Merger = (*Fake)(nil)
 type Fake struct {
 	Now func() time.Time
 
-	mu           sync.Mutex
-	labeled      map[string][]forge.Item
-	events       map[int][]forge.LabelEvent
-	issues       map[int]forge.Issue
-	prs          map[int]forge.PR
-	branches     map[string]int
-	comments     map[int][]forge.Comment
-	added        map[int][]string
-	removed      map[int][]string
-	cut          map[int]bool
-	closed       map[int]bool
-	agentPulls   []forge.AgentPull
-	checks       map[int]forge.Checks
-	commitChecks map[string][]forge.Check
-	ancestors    map[string][]string
-	commits      map[int][]forge.Commit
-	commitsCut   map[int]bool
-	bySHA        map[string]forge.Commit
-	changed      map[string]changedFiles
-	activity     map[string][]forge.Push
-	activityErr  map[string]error
-	filesBase    map[string]string
-	filesHead    map[string]string
-	fileStats    []forge.FileStat
-	runs         []forge.WorkflowRun
-	artifacts    map[int64][]byte
-	mainFiles    map[string]string
-	diffErr      error
-	open         []forge.PRSummary
-	created      []string
-	armed        []string
-	reruns       []int64
-	statuses     map[string][]forge.Status
-	statusErr    error
-	rerunFail    map[int64]error
-	disarmed     []string
-	reverts      []string
-	refused      map[string]error
-	labelErr     error
-	labelErrFor  map[string]error
-	files        map[string]string // default-branch files by path; "!" fails the read
-	calls        []string
-	merged       []forge.MergedPull
-	pullFiles    map[int][]forge.FilePatch
-	blame        map[string][]forge.BlameRange
-	blameCalls   int
-	mergedErr    error
-	labelReads   []string  // the labels PullsWithLabel was asked for, in order
-	mergedCutoff time.Time // MergedSince truncates a read that starts before it
-	filesErr     map[int]error
-	blameErr     map[string]error
-	subErr       error
-	createErr    error
-	private      bool  // Public answers false when set; a Fake is public by default
-	publicErr    error // Public fails with it
-	publicCalls  int
-	render       func(string) (string, error)
-	rendered     []string
-	listErr      error
-	closeErr     error
-	nextID       int64
+	mu            sync.Mutex
+	labeled       map[string][]forge.Item
+	events        map[int][]forge.LabelEvent
+	issues        map[int]forge.Issue
+	prs           map[int]forge.PR
+	branches      map[string]int
+	comments      map[int][]forge.Comment
+	added         map[int][]string
+	removed       map[int][]string
+	cut           map[int]bool
+	closed        map[int]bool
+	agentPulls    []forge.AgentPull
+	checks        map[int]forge.Checks
+	commitChecks  map[string][]forge.Check
+	annotations   map[int64][]forge.Annotation
+	annotationErr map[int64]error
+	ancestors     map[string][]string
+	commits       map[int][]forge.Commit
+	commitsCut    map[int]bool
+	bySHA         map[string]forge.Commit
+	changed       map[string]changedFiles
+	activity      map[string][]forge.Push
+	activityErr   map[string]error
+	filesBase     map[string]string
+	filesHead     map[string]string
+	fileStats     []forge.FileStat
+	runs          []forge.WorkflowRun
+	artifacts     map[int64][]byte
+	mainFiles     map[string]string
+	diffErr       error
+	open          []forge.PRSummary
+	created       []string
+	armed         []string
+	reruns        []int64
+	statuses      map[string][]forge.Status
+	statusErr     error
+	rerunFail     map[int64]error
+	disarmed      []string
+	reverts       []string
+	refused       map[string]error
+	labelErr      error
+	labelErrFor   map[string]error
+	files         map[string]string // default-branch files by path; "!" fails the read
+	calls         []string
+	merged        []forge.MergedPull
+	pullFiles     map[int][]forge.FilePatch
+	blame         map[string][]forge.BlameRange
+	blameCalls    int
+	mergedErr     error
+	labelReads    []string  // the labels PullsWithLabel was asked for, in order
+	mergedCutoff  time.Time // MergedSince truncates a read that starts before it
+	filesErr      map[int]error
+	blameErr      map[string]error
+	subErr        error
+	createErr     error
+	private       bool  // Public answers false when set; a Fake is public by default
+	publicErr     error // Public fails with it
+	publicCalls   int
+	render        func(string) (string, error)
+	rendered      []string
+	listErr       error
+	closeErr      error
+	nextID        int64
 }
 
 // NewFake returns an empty Fake.
@@ -95,7 +97,8 @@ func NewFake() *Fake {
 	return &Fake{labeled: map[string][]forge.Item{}, events: map[int][]forge.LabelEvent{}, issues: map[int]forge.Issue{},
 		prs: map[int]forge.PR{}, branches: map[string]int{}, comments: map[int][]forge.Comment{}, added: map[int][]string{},
 		removed: map[int][]string{}, cut: map[int]bool{}, closed: map[int]bool{},
-		checks: map[int]forge.Checks{}, commitChecks: map[string][]forge.Check{}, ancestors: map[string][]string{}, commits: map[int][]forge.Commit{}, commitsCut: map[int]bool{},
+		checks: map[int]forge.Checks{}, commitChecks: map[string][]forge.Check{}, annotations: map[int64][]forge.Annotation{},
+		annotationErr: map[int64]error{}, ancestors: map[string][]string{}, commits: map[int][]forge.Commit{}, commitsCut: map[int]bool{},
 		bySHA: map[string]forge.Commit{}, changed: map[string]changedFiles{},
 		activity: map[string][]forge.Push{}, activityErr: map[string]error{}}
 }
@@ -580,6 +583,19 @@ func (f *Fake) SetCommitChecks(sha string, cs ...forge.Check) {
 	f.commitChecks[sha] = cs
 }
 
+// SetCheckAnnotations sets what CheckAnnotations answers for the check run id, and the error it
+// fails with (nil reads them): a revision brief's evidence read, and a merger that cannot make it.
+func (f *Fake) SetCheckAnnotations(id int64, as []forge.Annotation, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.annotations[id] = slices.Clone(as)
+	if err == nil {
+		delete(f.annotationErr, id)
+		return
+	}
+	f.annotationErr[id] = err
+}
+
 // SetFiles sets what Files returns: only the files a compare says changed, the base side as of
 // the merge base, each side "" when the file is absent there, as an added or deleted file reads
 // on GitHub.
@@ -812,6 +828,13 @@ func (f *Fake) CommitChecks(_ context.Context, sha string) ([]forge.Check, error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.commitChecks[sha]), nil
+}
+
+// CheckAnnotations implements the Merger's CheckAnnotations: SetCheckAnnotations' list, or its error.
+func (f *Fake) CheckAnnotations(_ context.Context, id int64) ([]forge.Annotation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.annotations[id]), f.annotationErr[id]
 }
 
 // SetAncestors sets the commits each sha descends from (or is), as IsAncestor answers.
