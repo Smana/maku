@@ -314,8 +314,9 @@ const (
 
 // evidence is what a revision brief quotes from GitHub (CD12): the open change requests' bodies and
 // their comments, and the failing checks' annotations. Every string is a reviewer's or a check's, so
-// the block renders it as data. A source that cannot be read yields one plain sentence and never
-// fails the pass (fast-follow 6); with brief.ciEvidence off it reads nothing at all.
+// the block renders it as data. A source that cannot be read yields one plain sentence — one however
+// many checks failed, since it is one permission and one fix — and never fails the pass (fast-follow
+// 6); with brief.ciEvidence off it reads nothing at all.
 func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []evidenceItem, notes []string) {
 	if !r.Cfg.Brief.CIEvidence || t.Status.PullRequest == nil || t.Status.PullRequest.Number == 0 {
 		return nil, nil
@@ -351,6 +352,7 @@ func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []ev
 			failing = append(failing, c)
 		}
 	}
+	unread := false
 	for i, c := range failing {
 		if i == maxEvidenceChecks {
 			notes = append(notes, fmt.Sprintf("the factory quotes the first %d failing checks; %d more are on the pull request.",
@@ -358,14 +360,17 @@ func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []ev
 			break
 		}
 		as, err := r.merger(ctx).CheckAnnotations(ctx, c.ID)
-		if err != nil { // the merger App lacks checks: read, or the run is gone: one sentence, never a lost brief
+		if err != nil { // the merger App lacks checks: read, or the run is gone: never a lost brief
 			r.log().Warn("the revision brief's annotations are unread", "task.id", t.Name, "pr", n, "check", c.ID, "err", err)
-			notes = append(notes, evidenceUnread)
+			unread = true
 			continue
 		}
 		for _, a := range as {
 			items = append(items, evidenceItem{source: evidenceCI, where: annotationWhere(c, a), text: a.Message})
 		}
+	}
+	if unread { // one sentence however many checks failed: it is one permission, and one fix
+		notes = append(notes, evidenceUnread)
 	}
 	return items, notes
 }

@@ -526,6 +526,9 @@ func (g *evidenceRig) annotations(id int64, as ...forge.Annotation) {
 	g.f.SetCheckAnnotations(id, as, nil)
 }
 
+// annotationsError makes the merger App's annotation read for one check run fail: no checks: read.
+func (g *evidenceRig) annotationsError(id int64, err error) { g.f.SetCheckAnnotations(id, nil, err) }
+
 // checksError makes the merger App's checks read fail: it lacks checks: read.
 func (g *evidenceRig) checksError(n int, err error) { g.f.SetChecksError(n, err) }
 
@@ -634,5 +637,27 @@ func TestTheEvidenceComesBeforeTheQueuedMessage(t *testing.T) {
 	}
 	if !slices.Equal(refs, []int64{4}) || !strings.Contains(got, "please rebase on main") {
 		t.Fatalf("the queued message is not quoted, %v:\n%s", refs, got)
+	}
+}
+
+// Fast-follow 6: three failing checks whose annotations the merger App cannot read are one sentence,
+// not three. The permission is the same one each time, and the revision still goes out.
+func TestSeveralUnreadableChecksAreOneSentence(t *testing.T) {
+	r := reviseRig(t, config.Brief{CIEvidence: true})
+	r.pr(2239, review("CHANGES_REQUESTED", "the install link is still dead"))
+	r.checks(2239,
+		forge.Check{ID: 9001, Name: "links", State: "FAILURE"},
+		forge.Check{ID: 9002, Name: "lint", State: "FAILURE"},
+		forge.Check{ID: 9003, Name: "tests", State: "FAILURE"},
+		forge.Check{ID: 9004, Name: "build", State: "SUCCESS"})
+	for _, id := range []int64{9001, 9002, 9003} {
+		r.annotationsError(id, errors.New("403 Resource not accessible by integration"))
+	}
+	got, _ := r.reviseBrief(t)
+	if n := strings.Count(got, evidenceUnread); n != 1 {
+		t.Fatalf("the unreadable checks are %d sentences, not one:\n%s", n, got)
+	}
+	if !strings.Contains(got, "keep working on branch agent/3buqdlot") || !strings.Contains(got, "the install link is still dead") {
+		t.Fatalf("the revision did not go out:\n%s", got)
 	}
 }
