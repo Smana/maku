@@ -5,6 +5,7 @@ package fence
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -15,15 +16,18 @@ func TestParse(t *testing.T) {
 		in, want string
 		ok       bool
 	}{
-		"one factory":    {"factory: aws-0\n", "aws-0", true},
-		"a comment":      {"# owner: platform\nfactory: gcp-0\n", "gcp-0", true},
-		"empty":          {"", "", false},
-		"no factory key": {"owner: aws-0\n", "", false},
-		"an unknown key": {"factory: aws-0\nalso: gcp-0\n", "", false},
-		"a list":         {"factory: [aws-0, gcp-0]\n", "", false},
-		"not a name":     {"factory: AWS 0\n", "", false},
-		"an empty name":  {"factory: \"\"\n", "", false},
-		"not yaml":       {"factory: [\n", "", false},
+		"one factory":               {"factory: aws-0\n", "aws-0", true},
+		"a comment":                 {"# owner: platform\nfactory: gcp-0\n", "gcp-0", true},
+		"empty":                     {"", "", false},
+		"no factory key":            {"owner: aws-0\n", "", false},
+		"an unknown key":            {"factory: aws-0\nalso: gcp-0\n", "", false},
+		"a list":                    {"factory: [aws-0, gcp-0]\n", "", false},
+		"not a name":                {"factory: AWS 0\n", "", false},
+		"an empty name":             {"factory: \"\"\n", "", false},
+		"not yaml":                  {"factory: [\n", "", false},
+		"classes beside factory":    {"factory: aws-0\nclasses: {docs-links: {mode: live}}\n", "aws-0", true},
+		"invalid classes still own": {"factory: aws-0\nclasses: [not, a, map]\n", "aws-0", true},
+		"classes without factory":   {"classes: {}\n", "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := Parse([]byte(tc.in))
@@ -107,5 +111,25 @@ func TestOwnership(t *testing.T) {
 	_ = f.Refresh(t.Context())
 	if f.Owned("Smana/mine") {
 		t.Fatal("the fence moved to another factory")
+	}
+}
+
+// The fence decides ownership alone (MP13): a class policy it cannot read is the observer's
+// problem, and it reaches the observer only from a repository this factory owns.
+func TestRefreshHandsTheOwnedFileToOnFile(t *testing.T) {
+	fs := &files{by: map[string]file{
+		"o/mine":   {body: "factory: aws-0\nclasses: {}\n", found: true},
+		"o/theirs": {body: "factory: gcp-0\n", found: true},
+		"o/broken": {err: errors.New("github down")},
+	}}
+	var got []string
+	f := &Fence{Name: "aws-0", Read: fs.read, Repositories: []string{"o/mine", "o/theirs", "o/broken"},
+		Stale: time.Hour, Now: time.Now,
+		OnFile: func(_ context.Context, repo string, body []byte) { got = append(got, repo+"="+string(body)) }}
+	if err := f.Refresh(t.Context()); err == nil {
+		t.Fatal("the failed read is reported")
+	}
+	if want := []string{"o/mine=factory: aws-0\nclasses: {}\n"}; !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

@@ -62,6 +62,7 @@ const makuUsage = `usage: maku <command>
   watch <room> [--tail N]         follow a room
   post <room> [--queue] <text>    chat, or queue it for the next run's brief
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
+  policy export|check   write or check a repository's merge policy file, offline
   mcp                             the factory's MCP tools on stdio, for a local coding agent:
                                   claude mcp add factory -- maku mcp
   setup <claude|opencode|codex|gemini|cursor|copilot> [--project] [--print] [--restart-service]
@@ -153,6 +154,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.configure(ctx, cfgPath, args)
 	case "skill":
 		return r.skill(args)
+	case "policy":
+		return r.policy(args)
 	case "setup":
 		return r.setup(ctx, args)
 	case "help", "-h", "--help":

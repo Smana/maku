@@ -31,8 +31,8 @@ var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // ValidName reports whether name can be a factory's name in the fence file.
 func ValidName(name string) bool { return nameRE.MatchString(name) }
 
-// Parse reads a fence file strictly: exactly `factory: <name>`. Anything else is an error, and the
-// caller treats the repository as not owned.
+// Parse reads a fence file's ownership: factory, and a classes key it does not read. Any other key
+// is an error, and the caller treats the repository as not owned.
 func Parse(raw []byte) (string, error) {
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
@@ -42,6 +42,9 @@ func Parse(raw []byte) (string, error) {
 	dec.DisallowUnknownFields()
 	var f struct {
 		Factory string `json:"factory"`
+		// Classes is the repository's merge policy (mergepolicy), which never decides ownership: a
+		// class this factory cannot read pauses that class's automation, not the repository's intake.
+		Classes json.RawMessage `json:"classes"`
 	}
 	if err := dec.Decode(&f); err != nil {
 		return "", errors.New("fence: not {factory: <name>}")
@@ -66,7 +69,9 @@ type Fence struct {
 	Now          func() time.Time
 	// OnState hears each repository's state after every refresh (agent_factory_repository_owned).
 	OnState func(ctx context.Context, repository string, owned bool)
-	Log     *slog.Logger
+	// OnFile hears the fence file of a repository this factory owns, after each successful read.
+	OnFile func(ctx context.Context, repository string, body []byte)
+	Log    *slog.Logger
 
 	mu    sync.RWMutex
 	state map[string]entry
@@ -107,6 +112,9 @@ func (f *Fence) Refresh(ctx context.Context) error {
 			}
 			f.state[strings.ToLower(repo)] = entry{owned: owner == f.Name, at: f.Now()}
 			f.mu.Unlock()
+			if f.OnFile != nil && owner == f.Name {
+				f.OnFile(ctx, repo, body)
+			}
 		}
 		if f.OnState != nil {
 			f.OnState(ctx, repo, f.Owned(repo))

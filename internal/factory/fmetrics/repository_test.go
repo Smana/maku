@@ -71,3 +71,25 @@ func TestOwnershipAndAdmissionRefusals(t *testing.T) {
 		t.Fatal("only the repository refusals are counted")
 	}
 }
+
+// Merge policy: bounded by the repository list and the closed reason list (MP18).
+func TestPolicyMetricsAreBounded(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
+	s, scrape := rig(t, c, func() bool { return true })
+	s.ListRepositories("Smana/a")
+	s.PolicyLoadError(t.Context(), "Smana/a", "invalid")
+	s.PolicyLoadError(t.Context(), "Smana/a", "not-a-reason")
+	s.PolicyDivergence(t.Context(), "Smana/a", 2)
+	out := scrape()
+	for _, want := range []string{
+		`maku_factory_policy_load_errors_total{reason="invalid",repository="Smana/a"`,
+		`maku_factory_policy_central_divergence{repository="Smana/a"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "not-a-reason") {
+		t.Fatal("a reason outside the list")
+	}
+}

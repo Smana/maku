@@ -84,6 +84,9 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// MarshalJSON writes the form UnmarshalJSON reads.
+func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(d.String()) }
+
 // Sandbox is how the factory's runs are sandboxed (v2 warm-sandboxes design §6).
 type Sandbox struct {
 	Suspend SandboxSuspend `json:"suspend,omitzero"`
@@ -143,6 +146,11 @@ type Config struct {
 	// or default. Each row is whole: a class with no row reads default's, and a row is read
 	// alone, never merged with default's (LoopFor).
 	Loops map[string]Loop `json:"loops,omitempty"`
+	// HarnessProfiles, MergeGuardrails and PolicyManagement are the central half of the repository
+	// merge policy (mergepolicy): what a repository's class may reference and how far it may go.
+	HarnessProfiles  map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
+	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
+	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
 	// Ignored are the keys the file sets that this release accepts and ignores, for the binary
@@ -1489,6 +1497,7 @@ func (c *Config) Validate() error {
 		bad("tracing.otlpEndpoint %q is not host:port", c.Tracing.OTLPEndpoint)
 	}
 	c.validateLoops(bad)
+	c.validateMergePolicy(bad)
 	return errors.Join(errs...)
 }
 

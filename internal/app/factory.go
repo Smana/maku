@@ -43,6 +43,7 @@ import (
 	"github.com/Smana/maku/internal/factory/intake"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/ledger"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -186,6 +187,10 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// v2 D7: a repository is acted on only while its default branch names this factory.
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names(), Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
+	// Stage 1 (merge policy): observed and compared, deciding nothing.
+	if cfg.PolicyManagement.Read {
+		fenced.OnFile = (&mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log}).Observe
+	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	runUSD := map[string]float64{}
 	for name, t := range cfg.Tiers {
