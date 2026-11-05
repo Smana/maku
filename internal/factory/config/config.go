@@ -137,6 +137,7 @@ type Config struct {
 	Templates map[string]Template `json:"templates"`
 	Caps      Caps                `json:"caps"`
 	Facts     Facts               `json:"facts,omitzero"`
+	Brief     Brief               `json:"brief,omitzero"`
 	Budgets   Budgets             `json:"budgets"`
 	Resume    Resume              `json:"resume"`
 	Scoper    Scoper              `json:"scoper,omitzero"`
@@ -520,6 +521,18 @@ type Facts struct {
 	// change — the facts key stops bucketing dollars for it. Off by default: it is a new claim
 	// about money, and a room that read it needs the release that writes it.
 	FinalSpend bool `json:"finalSpend,omitempty"`
+}
+
+// Brief is what a revision brief quotes from GitHub beyond the room's own log (CD12). A switch here
+// lands with the code that reads it: both decoders refuse a key they do not know, so a file written
+// for a later release fails this one's rollout instead of silently changing nothing.
+type Brief struct {
+	// CIEvidence is CD12: a revision brief carries, fenced as untrusted data, what the open change
+	// requests asked for and what the failing checks annotated — the reviewer's comments and the
+	// failing job are the cheapest context a revision can have. Each is bounded by its read and
+	// cleaned where it is rendered, and a source the merger App cannot read leaves one sentence.
+	// Off by default: a room that reads it needs the release that writes it.
+	CIEvidence bool `json:"ciEvidence,omitempty"`
 }
 
 // Budgets are the admission-time caps SP3 owns (C5). The task cap is enforced unless the config

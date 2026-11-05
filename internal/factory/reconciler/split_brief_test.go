@@ -65,7 +65,7 @@ func TestAPartsBriefsFit(t *testing.T) {
 	rt.Status = reviseTask().Status
 	big := maxScope(t)
 	rt.Spec.Scope = taskScopeOf(&big)
-	b, _ := reviseBrief(rt, worstLog(), nil, "n0nce234", partScoped(rt))
+	b, _ := reviseBrief(rt, worstLog(), nil, "n0nce234", partScoped(rt), evidenceSet{})
 	if len(b) > reviseCap || !strings.Contains(b, "SCOPE-DATA-") || strings.Contains(b, "did not fit in this brief: it is the handoff") {
 		t.Fatalf("revision: %d bytes", len(b))
 	}

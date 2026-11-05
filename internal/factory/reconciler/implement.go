@@ -302,6 +302,123 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 // refusedSchema: the cluster refused the claim's shape, which no retry of the same claim changes.
 func refusedSchema(err error) bool { return apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) }
 
+// The evidence a revision brief reads from GitHub (CD12, fast-follow 6).
+const (
+	// maxEvidenceChecks bounds the failing checks a brief reads annotations for: a check's own
+	// words are context, and one read is one GitHub call the whole factory shares.
+	maxEvidenceChecks = 5
+	// evidenceUnread is the one sentence a check the merger App cannot read leaves in the brief
+	// (fast-follow 6): what failed, and the permission that fixes it.
+	evidenceUnread = "the factory could not read the failing check's details: the merger App needs checks: read on this repository"
+)
+
+// evidence is what a revision brief quotes from GitHub (CD12): the open change requests' bodies and
+// their comments, and the failing checks' annotations. Every string is a reviewer's or a check's, so
+// the block renders it as data. A source that cannot be read yields one plain sentence and never
+// fails the pass (fast-follow 6); with brief.ciEvidence off it reads nothing at all.
+func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []evidenceItem, notes []string) {
+	if !r.Cfg.Brief.CIEvidence || t.Status.PullRequest == nil || t.Status.PullRequest.Number == 0 {
+		return nil, nil
+	}
+	n := t.Status.PullRequest.Number
+	pr, err := r.gh(ctx).PullRequest(ctx, n)
+	switch {
+	case err != nil:
+		r.log().Warn("the revision brief's review is unread", "task.id", t.Name, "pr", n, "err", err)
+		notes = append(notes, fmt.Sprintf("the factory could not read pull request #%d's review: it is on the pull request.", n))
+	default:
+		// The open change requests by a maintainer: the same reviews that send a task back for a
+		// revision, whatever its earlier runs have acted on. A stranger's review is advice to a
+		// maintainer (Δ5), and a request its author approved over is lifted.
+		for _, rv := range openChangeRequests(pr.Reviews, false) {
+			if !r.repo(t).IsMaintainer(rv.Author) {
+				continue
+			}
+			items = append(items, evidenceItem{source: evidenceReview, where: reviewWhere(rv, n), text: rv.Body})
+			for _, c := range rv.Comments {
+				items = append(items, evidenceItem{source: evidenceReview, where: commentWhere(rv, c), text: c.Body})
+			}
+		}
+	}
+	checks, err := r.merger(ctx).PullRequestChecks(ctx, n)
+	if err != nil {
+		r.log().Warn("the revision brief's checks are unread", "task.id", t.Name, "pr", n, "err", err)
+		return items, append(notes, evidenceUnread)
+	}
+	var failing []forge.Check
+	for _, c := range checks.Runs {
+		if c.State == "FAILURE" {
+			failing = append(failing, c)
+		}
+	}
+	for i, c := range failing {
+		if i == maxEvidenceChecks {
+			notes = append(notes, fmt.Sprintf("the factory quotes the first %d failing checks; %d more are on the pull request.",
+				maxEvidenceChecks, len(failing)-i))
+			break
+		}
+		as, err := r.merger(ctx).CheckAnnotations(ctx, c.ID)
+		if err != nil { // the merger App lacks checks: read, or the run is gone: one sentence, never a lost brief
+			r.log().Warn("the revision brief's annotations are unread", "task.id", t.Name, "pr", n, "check", c.ID, "err", err)
+			notes = append(notes, evidenceUnread)
+			continue
+		}
+		for _, a := range as {
+			items = append(items, evidenceItem{source: evidenceCI, where: annotationWhere(c, a), text: a.Message})
+		}
+	}
+	return items, notes
+}
+
+// revisionBrief is the revision brief as the factory builds it: the room's log and queue, and, with
+// brief.ciEvidence, what the review asked for and what CI said (CD12). One place, so a test that
+// renders the brief renders what production does.
+func (r *Reconciler) revisionBrief(ctx context.Context, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped) (string, []int64) {
+	items, notes := r.evidence(ctx, t)
+	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes})
+}
+
+// reviewWhere is where a review's body came from, as the brief names it.
+func reviewWhere(rv forge.Review, n int) string {
+	if rv.Author == "" {
+		return fmt.Sprintf("a review on #%d", n)
+	}
+	return fmt.Sprintf("review by @%s on #%d", rv.Author, n)
+}
+
+// commentWhere is where one inline comment came from: its reviewer's login and its place in the diff.
+func commentWhere(rv forge.Review, c forge.ReviewComment) string {
+	at := c.Path
+	if c.Line > 0 {
+		at = fmt.Sprintf("%s:%d", c.Path, c.Line)
+	}
+	if rv.Author == "" {
+		return "comment on " + at
+	}
+	return fmt.Sprintf("comment by @%s on %s", rv.Author, at)
+}
+
+// annotationWhere is where one annotation came from: the check run, its level, and the line it
+// marked. A log the factory's egress policy will not fetch leaves this and the message (CD12).
+func annotationWhere(c forge.Check, a forge.Annotation) string {
+	level := a.Level
+	if level == "" {
+		level = "failure"
+	}
+	at := a.Path
+	switch {
+	case at == "" && a.StartLine > 0:
+		at = fmt.Sprintf("line %d", a.StartLine)
+	case at != "" && a.StartLine > 0:
+		at = fmt.Sprintf("%s:%d", a.Path, a.StartLine)
+	}
+	where := fmt.Sprintf("check %s (run %d), %s", c.Name, c.ID, level)
+	if at != "" {
+		where += " on " + at
+	}
+	return where
+}
+
 // unbriefedReviewer says in the room, once per task and best effort, that a reviewer runs on the
 // pull request alone because the AgentRun schema refuses its brief beside it (HR4).
 func (r *Reconciler) unbriefedReviewer(ctx context.Context, t *v1alpha1.Task) {

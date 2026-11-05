@@ -54,11 +54,11 @@ func TestTheBoundsHoldTogether(t *testing.T) {
 		t.Fatalf("first: %d bytes", len(b))
 	}
 	rt := steered(reviseTask())
-	b, _ := reviseBrief(rt, worstLog(), nil, "n0nce234", sc)
+	b, _ := reviseBrief(rt, worstLog(), nil, "n0nce234", sc, evidenceSet{})
 	if len(b) > reviseCap || !strings.Contains(b, "STEERING-") || !strings.Contains(b, "seq 9") {
 		t.Fatalf("revision: %d bytes", len(b))
 	}
-	small, _ := reviseBrief(rt, nil, nil, "n0nce234", sc)
+	small, _ := reviseBrief(rt, nil, nil, "n0nce234", sc, evidenceSet{})
 	if !strings.Contains(small, "SCOPE-DATA-") {
 		t.Fatal("a revision with room for the scope carries it whole")
 	}

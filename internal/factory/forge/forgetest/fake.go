@@ -40,6 +40,7 @@ type Fake struct {
 	closed        map[int]bool
 	agentPulls    []forge.AgentPull
 	checks        map[int]forge.Checks
+	checksErr     map[int]error
 	commitChecks  map[string][]forge.Check
 	annotations   map[int64][]forge.Annotation
 	annotationErr map[int64]error
@@ -97,7 +98,7 @@ func NewFake() *Fake {
 	return &Fake{labeled: map[string][]forge.Item{}, events: map[int][]forge.LabelEvent{}, issues: map[int]forge.Issue{},
 		prs: map[int]forge.PR{}, branches: map[string]int{}, comments: map[int][]forge.Comment{}, added: map[int][]string{},
 		removed: map[int][]string{}, cut: map[int]bool{}, closed: map[int]bool{},
-		checks: map[int]forge.Checks{}, commitChecks: map[string][]forge.Check{}, annotations: map[int64][]forge.Annotation{},
+		checks: map[int]forge.Checks{}, checksErr: map[int]error{}, commitChecks: map[string][]forge.Check{}, annotations: map[int64][]forge.Annotation{},
 		annotationErr: map[int64]error{}, ancestors: map[string][]string{}, commits: map[int][]forge.Commit{}, commitsCut: map[int]bool{},
 		bySHA: map[string]forge.Commit{}, changed: map[string]changedFiles{},
 		activity: map[string][]forge.Push{}, activityErr: map[string]error{}}
@@ -576,6 +577,18 @@ func (f *Fake) SetChecks(n int, c forge.Checks) {
 	f.checks[n] = c
 }
 
+// SetChecksError sets the error PullRequestChecks answers with for pull request n, nil to read the
+// rollup again: a merger App that cannot read the checks at all (CD12, fast-follow 6).
+func (f *Fake) SetChecksError(n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err == nil {
+		delete(f.checksErr, n)
+		return
+	}
+	f.checksErr[n] = err
+}
+
 // SetCommitChecks sets the check runs sha carries, as CommitChecks returns them.
 func (f *Fake) SetCommitChecks(sha string, cs ...forge.Check) {
 	f.mu.Lock()
@@ -775,6 +788,9 @@ func (f *Fake) Merge(_ context.Context, nodeID, head string) error {
 func (f *Fake) PullRequestChecks(_ context.Context, n int) (forge.Checks, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.checksErr[n]; err != nil {
+		return forge.Checks{}, err
+	}
 	c := f.checks[n]
 	// A status SetStatus posted on the pull request's head reads back as GitHub's rollup does:
 	// state in capitals, the latest of a context replacing the one it supersedes.
