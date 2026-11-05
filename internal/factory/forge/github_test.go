@@ -1667,7 +1667,7 @@ func ghFake(t *testing.T, routes map[string]string) *rig {
 // says so instead of failing the pass.
 func TestCheckAnnotations(t *testing.T) {
 	srv := ghFake(t, map[string]string{
-		"/repos/Smana/demo/check-runs/9001/annotations": `{"annotations":[{"path":"docs/install.md","start_line":14,"annotation_level":"failure","message":"dead link"}]}`,
+		"/repos/Smana/demo/check-runs/9001/annotations": `[{"path":"docs/install.md","start_line":14,"annotation_level":"failure","message":"dead link"}]`,
 	})
 	got, err := srv.g.CheckAnnotations(t.Context(), 9001)
 	if err != nil || len(got) != 1 || got[0].Path != "docs/install.md" || got[0].StartLine != 14 {
@@ -1684,7 +1684,7 @@ func TestCheckAnnotationsBoundsItsEvidence(t *testing.T) {
 		as[i] = fmt.Sprintf(`{"path":"docs/a.md","start_line":%d,"annotation_level":"failure","message":%q}`, i+1, long)
 	}
 	srv := ghFake(t, map[string]string{
-		"/repos/Smana/demo/check-runs/9002/annotations": `{"total_count":60,"annotations":[` + strings.Join(as, ",") + `]}`,
+		"/repos/Smana/demo/check-runs/9002/annotations": `[` + strings.Join(as, ",") + `]`,
 	})
 	got, err := srv.g.CheckAnnotations(t.Context(), 9002)
 	if err != nil || len(got) != maxAnnotations {
@@ -1700,17 +1700,10 @@ func TestCheckAnnotationsBoundsItsEvidence(t *testing.T) {
 	}
 	// A short message is quoted as the check wrote it: no marker, no reshaping.
 	short := ghFake(t, map[string]string{
-		"/repos/Smana/demo/check-runs/9003/annotations": `{"total_count":1,"annotations":[{"path":"a.md","start_line":3,"annotation_level":"warning","message":"ok"}]}`,
+		"/repos/Smana/demo/check-runs/9003/annotations": `[{"path":"a.md","start_line":3,"annotation_level":"warning","message":"ok"}]`,
 	})
 	if got, err := short.g.CheckAnnotations(t.Context(), 9003); err != nil || len(got) != 1 || got[0].Message != "ok" ||
 		got[0].Level != "warning" || got[0].StartLine != 3 {
-		t.Fatalf("%+v %v", got, err)
-	}
-	// GitHub documents the object above and go-github v92 decodes a bare array: the read takes both.
-	bare := ghFake(t, map[string]string{
-		"/repos/Smana/demo/check-runs/9004/annotations": `[{"path":"a.md","start_line":3,"annotation_level":"warning","message":"w"}]`,
-	})
-	if got, err := bare.g.CheckAnnotations(t.Context(), 9004); err != nil || len(got) != 1 || got[0].Message != "w" {
 		t.Fatalf("%+v %v", got, err)
 	}
 }

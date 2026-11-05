@@ -3,9 +3,7 @@
 package forge
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -13,7 +11,6 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -899,53 +896,25 @@ const maxAnnotationMessage = 500
 // cut are unread, and the caller says the factory could not read a check rather than claiming it
 // said nothing. The text itself stays as GitHub wrote it: making it inert is the renderer's one
 // job (roomview, reconciler text), not this read's.
+//
+// The endpoint answers a bare array (GitHub's OpenAPI response for this operation), which is what
+// go-github's Checks.ListCheckRunAnnotations decodes, so the typed call is the whole read.
 func (g *GitHub) CheckAnnotations(ctx context.Context, id int64) ([]Annotation, error) {
-	body, err := g.annotationsBody(ctx, fmt.Sprintf("repos/%s/%s/check-runs/%d/annotations", g.owner, g.name, id))
+	as, _, err := g.rest.Checks.ListCheckRunAnnotations(ctx, g.owner, g.name, id,
+		&github.ListOptions{PerPage: maxAnnotations})
 	g.mark(err)
 	if err != nil {
 		return nil, wrap("list a check run's annotations", err)
 	}
 	var out []Annotation
-	for _, a := range body.Annotations {
-		if len(out) == maxAnnotations { // a server that ignored per_page cannot widen the bound
+	for _, a := range as {
+		if len(out) == maxAnnotations { // the page is the bound; a longer answer cannot widen it
 			break
 		}
 		out = append(out, Annotation{Path: a.GetPath(), StartLine: a.GetStartLine(),
 			Level: a.GetAnnotationLevel(), Message: annotationMessage(a.GetMessage())})
 	}
 	return out, nil
-}
-
-// annotationList is the annotations endpoint's answer. GitHub documents it as this object; go-github
-// v92's own decoder reads a bare array instead, and a test that pinned one of the two would hide
-// the other, so annotationsBody accepts either.
-type annotationList struct {
-	Annotations []*github.CheckRunAnnotation `json:"annotations"`
-}
-
-// annotationsBody is one page of annotations, decoded: the installation token comes from the
-// client's transport as on every call, and a refusal is go-github's own typed error.
-func (g *GitHub) annotationsBody(ctx context.Context, path string) (annotationList, error) {
-	u, err := url.Parse(path)
-	if err != nil {
-		return annotationList{}, err
-	}
-	q := u.Query()
-	q.Set("per_page", strconv.Itoa(maxAnnotations))
-	u.RawQuery = q.Encode()
-	req, err := g.rest.NewRequest(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return annotationList{}, err
-	}
-	var raw json.RawMessage
-	if _, err := g.rest.Do(req, &raw); err != nil {
-		return annotationList{}, err
-	}
-	var out annotationList
-	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '[' {
-		return out, json.Unmarshal(trimmed, &out.Annotations)
-	}
-	return out, json.Unmarshal(raw, &out)
 }
 
 // annotationMessage is a check's message, cut to maxAnnotationMessage runes with the cut marked.
