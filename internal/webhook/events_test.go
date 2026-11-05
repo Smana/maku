@@ -178,13 +178,15 @@ func TestApprovalClosed(t *testing.T) {
 			t.Fatalf("a replay emitted %v", again)
 		}
 	}
-	var tr Tracker
+	// Each bad close is its own entry, read by its own tracker: one shared tracker at one seq
+	// answers the second case as a replay, and the decision guard would go unexercised.
 	for _, bad := range []envelope.ApprovalDecidedPayload{
 		{ApprovalID: "ap1", Decision: "approved"},                     // not a ULID: dropped
 		{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", Decision: "bogus"}, // a made-up decision: dropped
 	} {
-		if got := tr.Events("aaaaaaaa", "r", envelope.Event{RoomID: "aaaaaaaa", Seq: 2, Type: envelope.ApprovalDecided,
-			Payload: envelope.Must(bad)}); len(got) != 0 {
+		var tr Tracker
+		if got := tr.Events("aaaaaaaa", "r", envelope.Event{RoomID: "aaaaaaaa", Seq: 1,
+			Type: envelope.ApprovalDecided, Payload: envelope.Must(bad)}); len(got) != 0 {
 			t.Fatalf("%+v emitted %v", bad, got)
 		}
 	}
