@@ -60,7 +60,8 @@ type summaryBody struct {
 		Phase string `json:"phase"`
 	} `json:"status"`
 	NeedsYou []struct {
-		ID string `json:"id"`
+		ID   string `json:"id"`
+		Kind string `json:"kind"`
 	} `json:"needsYou"`
 	Notes struct {
 		Untrusted bool `json:"untrusted"`
@@ -102,6 +103,23 @@ func TestSummaryEndpoint(t *testing.T) {
 	}
 	if code, _ := get(t, e, "/api/rooms/"+roomID+"/summary", nil); code != http.StatusUnauthorized {
 		t.Fatalf("anonymous: %d", code)
+	}
+}
+
+// CD26 at the summary's door: room_summary lists the merge need for a maintainer who is not the room's
+// owner, because the server resolves the standing and hands it to View (B1).
+func TestRoomSummaryKeepsTheMergeNeedForAMaintainer(t *testing.T) {
+	w := world(nil) // dev1 may write Smana/a and owns no room, as a maintainer who is not the owner
+	w.set(func() { w.writes = map[string][]string{"Smana/a": {"dev1"}} })
+	e := setup(t, abc(t), w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
+		s.PublicURL = "https://rooms.test"
+		v.evs = append(v.evs, envelope.Event{V: 1, Seq: 11, RoomID: roomID, Type: envelope.StateChanged, TS: time.Now(),
+			Payload: envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman",
+				PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}})})
+	})
+	s := summaryOf(t, e, roomID, "", header("dev1"))
+	if len(s.NeedsYou) != 1 || s.NeedsYou[0].Kind != summary.NeedMerge {
+		t.Fatalf("%+v", s.NeedsYou)
 	}
 }
 
@@ -164,9 +182,10 @@ func TestSummaryReadsEveryPage(t *testing.T) {
 }
 
 // filteredRooms serves A (Smana/a, issue by Dev1), B (Smana/b, dev1 reviews, one approval
-// pending) and C (Smana/a, two approvals pending).
+// pending) and C (Smana/a, two approvals pending). The approvals are the ledger's rows, which is what
+// needs/v1 lists: the rooms' pending count is only the projection (CD21).
 func filteredRooms(t *testing.T) option {
-	return func(s *Server, _ *fanout.Hub, _ *hubView) {
+	return func(s *Server, _ *fanout.Hub, v *hubView) {
 		a := repoRoom(roomID, "Smana/a")
 		a.Status.Task = &v1alpha1.TaskStatus{IssueAuthor: "Dev1"}
 		b := repoRoom(roomB, "Smana/b")
@@ -175,6 +194,12 @@ func filteredRooms(t *testing.T) option {
 		c := repoRoom(roomC, "Smana/a")
 		c.Status.PendingApprovals = 2
 		s.Rooms = roomClient(t, a, b, c)
+		live := time.Now().Add(time.Hour)
+		v.approvals = []store.Approval{
+			{ID: "01J9B", RoomID: roomB, Class: "shell", ExpiresAt: live},
+			{ID: "01J9C", RoomID: roomC, Class: "shell", ExpiresAt: live},
+			{ID: "01J9D", RoomID: roomC, Class: "shell", ExpiresAt: live},
+		}
 	}
 }
 

@@ -217,6 +217,30 @@ func TestRoomWaitReturnsTheCard(t *testing.T) {
 	}
 }
 
+// room_wait's needs_you condition is the same list: a split proposal now ends a wait. The row carries
+// needs/v1's item over the wire, so the relay compares the broker's one derivation, not a count of its own.
+func TestRoomWaitReturnsOnASplitProposal(t *testing.T) {
+	b := newMCPBroker(t)
+	b.roomText = "# card"
+	b.roomsFn = func(n int, _ map[string]any) []map[string]any {
+		return []map[string]any{row("aaaaaaaa", func(m map[string]any) {
+			if n >= 2 { // the second poll: a scoper proposed a split, and a maintainer has something to do
+				m["needsYou"] = 1
+				m["need"] = map[string]any{"kind": "plan_confirmation", "id": "2238", "room": "aaaaaaaa",
+					"what": "a maintainer comments `/factory split` on issue #2238", "url": "https://rooms.test/r/aaaaaaaa",
+					"action": map[string]any{"kind": "comment", "label": "comment on the issue", "url": "https://rooms.test/r/aaaaaaaa"}}
+			}
+		})}
+	}
+	s := relayTo(t, b, tok, withAfter((&steps{}).after))
+	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}, "until": []string{"needs_you"}}, nil)
+	res, _ := answer(t, s, 1.0)
+	_, sc, isErr := resultOf(res)
+	if isErr || sc["condition"] != "needs_you" || !strings.Contains(fmt.Sprint(res), "needs_you") {
+		t.Fatalf("%v", res)
+	}
+}
+
 func TestRoomWaitBacksOff(t *testing.T) {
 	b := newMCPBroker(t)
 	b.roomText = "# card"

@@ -19,14 +19,21 @@ import (
 )
 
 // #50: the list carries what a person needs to tell the rows apart — the issue, its title, the
-// task's phase and its PR — and #51: a PR waiting on the merge counts as a need for whoever owns it.
+// task's phase and its PR — and #51: a PR waiting on the merge counts as a need for a maintainer who
+// may write its repository (CD26), as needs/v1 lists it.
 func TestRoomListCarriesTheTask(t *testing.T) {
-	e := setup(t, func(s *Server, _ *fanout.Hub, _ *hubView) {
+	w := world(nil) // boss may write Smana/a: the pull request's merge is theirs (CD26)
+	w.set(func() { w.writes = map[string][]string{"Smana/a": {"boss"}} })
+	e := setup(t, w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
 		a := repoRoom(roomID, "Smana/a")
 		a.Status.Phase = "Idle"
 		a.Status.PendingApprovals = 1
 		a.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", Issue: 2266, IssueTitle: "docs(agents): runbook 11", PR: 2267}
 		s.Rooms = roomClient(t, a, repoRoom(roomB, "Smana/a"))
+		v.approvals = []store.Approval{{ID: "01J9A", RoomID: roomID, Class: "shell", ExpiresAt: time.Now().Add(time.Hour)}}
+		v.evs = append(v.evs, envelope.Event{V: 1, Seq: 11, RoomID: roomID, Type: envelope.StateChanged, TS: time.Now(),
+			Payload: envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman",
+				PR: &envelope.PRFact{Number: 2267, URL: "https://github.com/Smana/a/pull/2267"}})})
 	})
 	rowsOf := func(q string, h http.Header) map[string]roomRow {
 		t.Helper()
@@ -113,8 +120,9 @@ func TestRoomRowNeedIsTheFirstNeed(t *testing.T) {
 			facts: &envelope.TaskFacts{Phase: "Queued", Reason: "waiting_human_driver"},
 			want:  &summary.Need{Kind: "hold", ID: "waiting_human_driver", URL: "https://rooms.test/r/" + roomID}},
 		{name: "a PR waits for the caller's merge", h: admin("boss"),
-			task: &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 7},
-			want: &summary.Need{Kind: "merge", ID: "7", URL: "https://github.com/Smana/a/pull/7"}},
+			task:  &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 7},
+			facts: &envelope.TaskFacts{Phase: "AwaitingHuman", PR: &envelope.PRFact{Number: 7}},
+			want:  &summary.Need{Kind: "merge", ID: "7", URL: "https://github.com/Smana/a/pull/7"}},
 		// The room's facts say an approval returns the hand-off (AM3): the row's need says approve.
 		{name: "a PR an approval returns", h: admin("boss"),
 			task:  &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 7},
@@ -125,7 +133,9 @@ func TestRoomRowNeedIsTheFirstNeed(t *testing.T) {
 		{name: "nothing waits", h: admin("boss")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, func(s *Server, _ *fanout.Hub, v *hubView) {
+			w := world(nil) // boss may write Smana/a: a merge is GitHub's, not the room owner's (CD26)
+			w.set(func() { w.writes = map[string][]string{"Smana/a": {"boss"}} })
+			e := setup(t, w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
 				a := repoRoom(roomID, "Smana/a")
 				a.Status.PendingApprovals, a.Status.Task = tc.pending, tc.task
 				s.Rooms = roomClient(t, a)
@@ -222,6 +232,50 @@ func TestRoomRowCountsTheAnswerNeed(t *testing.T) {
 	}
 }
 
+// G4: the split proposal and a second maintainer's merge are in the row list, and appear in room_wait
+// (offline proofs 6 and 9): the row's count and its first need are needs/v1's, so a proposal that
+// reached nobody is an item and a maintainer who may write the repository merges whether or not they
+// own the room (CD21, CD26).
+func TestRowsListTheSplitProposalAndAMaintainersMerge(t *testing.T) {
+	// maintainer is a world in which dev1 may write Smana/a, and owns no room.
+	maintainer := func() *gitHubWorld {
+		w := world(nil)
+		w.set(func() { w.writes = map[string][]string{"Smana/a": {"dev1"}} })
+		return w
+	}
+	facts := func(seq int64, f envelope.TaskFacts) envelope.Event {
+		return envelope.Event{V: 1, Seq: seq, RoomID: roomID, Type: envelope.StateChanged, TS: time.Now(),
+			Payload: envelope.TaskStatePayload(f)}
+	}
+	w := maintainer()
+	e := setup(t, abc(t), w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
+		a := repoRoom(roomID, "Smana/a")
+		a.Status.Task = &v1alpha1.TaskStatus{Phase: "Escalated", Issue: 2238}
+		s.Rooms = roomClient(t, a)
+		s.PublicURL = "https://rooms.test"
+		v.evs = append(v.evs, facts(11, envelope.TaskFacts{Phase: "Escalated", Reason: "split_proposed",
+			Issue: &envelope.IssueFact{Number: 2238, URL: "https://github.com/Smana/a/issues/2238"}}))
+	})
+	rows := rowsFor(t, e, "", header("dev1")) // the caller may write Smana/a, and does not own the room
+	if len(rows) != 1 || rows[0].NeedsYou != 1 || !rows[0].NeedsMe || rows[0].Need == nil ||
+		rows[0].Need.Kind != summary.NeedPlanConfirmation || rows[0].Need.ID != "2238" {
+		t.Fatalf("%+v", rows)
+	}
+	// A merge, for the same maintainer: the room projects the pull request, the facts say it waits.
+	e2 := setup(t, abc(t), maintainer().option(), func(s *Server, _ *fanout.Hub, v *hubView) {
+		a := repoRoom(roomID, "Smana/a")
+		a.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
+		s.Rooms = roomClient(t, a)
+		s.PublicURL = "https://rooms.test"
+		v.evs = append(v.evs, facts(11, envelope.TaskFacts{Phase: "AwaitingHuman",
+			PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}}))
+	})
+	rows = rowsFor(t, e2, "", header("dev1"))
+	if len(rows) != 1 || rows[0].NeedsYou != 1 || rows[0].Need == nil || rows[0].Need.Kind != summary.NeedMerge {
+		t.Fatalf("a maintainer's merge: %+v", rows)
+	}
+}
+
 // An approval past its deadline that the sweep has not decided yet is no need: the count and the
 // first need agree with the summary, which drops it.
 func TestRoomRowSkipsAnUnsweptExpiredApproval(t *testing.T) {
@@ -269,7 +323,8 @@ func TestRoomRowStep(t *testing.T) {
 		want      *summary.Step
 	}{
 		{name: "a PR held for an owner", task: pr, h: admin("boss"),
-			want: &summary.Step{Kind: summary.StepPR, Label: "review and merge or close PR #7", URL: "https://github.com/Smana/a/pull/7"}},
+			facts: &envelope.TaskFacts{Phase: "AwaitingHuman", PR: &envelope.PRFact{Number: 7}},
+			want:  &summary.Step{Kind: summary.StepPR, Label: "review and merge or close PR #7", URL: "https://github.com/Smana/a/pull/7"}},
 		// The room's facts say an approval returns the hand-off (AM3): the step says approve, not merge.
 		{name: "a PR an approval returns", task: pr, h: admin("boss"),
 			facts: &envelope.TaskFacts{Phase: "AwaitingHuman", MergeByApproval: true, PR: &envelope.PRFact{Number: 7}},
@@ -283,7 +338,9 @@ func TestRoomRowStep(t *testing.T) {
 		{name: "a running task", task: &v1alpha1.TaskStatus{Phase: "Implementing", PR: 7}, h: admin("boss")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := setup(t, func(s *Server, _ *fanout.Hub, v *hubView) {
+			w := world(nil) // boss may write Smana/a: the merge step is the merge need's (CD21, CD26)
+			w.set(func() { w.writes = map[string][]string{"Smana/a": {"boss"}} })
+			e := setup(t, w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
 				a := repoRoom(roomID, "Smana/a")
 				a.Status.PendingApprovals, a.Status.Task = tc.pending, tc.task
 				if tc.phase != "" {

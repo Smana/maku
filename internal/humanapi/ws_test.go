@@ -75,11 +75,18 @@ func (m *memLog) Queue(context.Context, string) ([]store.Queued, error) {
 	return m.queue, m.queueErr
 }
 
-func (m *memLog) OpenApprovals(context.Context, string) ([]store.Approval, error) {
+func (m *memLog) OpenApprovals(_ context.Context, room string) ([]store.Approval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.approvalReads++
-	return m.approvals, m.approvalErr
+	// As the store's query reads them: the room's own, and those a test left unnamed for every room.
+	out := make([]store.Approval, 0, len(m.approvals))
+	for _, a := range m.approvals {
+		if a.RoomID == "" || a.RoomID == room {
+			out = append(out, a)
+		}
+	}
+	return out, m.approvalErr
 }
 
 func (m *memLog) LastEventAt(_ context.Context, ids []string) (map[string]time.Time, error) {
@@ -116,8 +123,8 @@ func (m *memLog) TaskReasons(_ context.Context, after map[string]int64) (map[str
 	return out, nil
 }
 
-// LastTaskState is the log's last task facts above after, as the store's query reads them.
-func (m *memLog) LastTaskState(_ context.Context, _ string, after int64) (json.RawMessage, error) {
+// LastTaskState is the log's last task facts above after, as the store's query reads them: the room's own.
+func (m *memLog) LastTaskState(_ context.Context, room string, after int64) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.factsReads++
@@ -126,7 +133,7 @@ func (m *memLog) LastTaskState(_ context.Context, _ string, after int64) (json.R
 		var p struct {
 			Kind string `json:"kind"`
 		}
-		if e.Seq > after && e.Type == envelope.StateChanged && json.Unmarshal(e.Payload, &p) == nil && p.Kind == "task" {
+		if e.RoomID == room && e.Seq > after && e.Type == envelope.StateChanged && json.Unmarshal(e.Payload, &p) == nil && p.Kind == "task" {
 			return e.Payload, nil
 		}
 	}

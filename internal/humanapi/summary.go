@@ -66,11 +66,11 @@ func (s *Server) summaryOf(ctx context.Context, id string, p authn.Principal, af
 		}
 		s.folds.put(id, uid, fold)
 	}
-	// The standing only the server can resolve is the rows' and the summary's one resolver, which lands
-	// with them: until then a caller who may close the room stands for one who may write its repository,
-	// which is what this view listed before needs/v1 (CD26). Zero is a caller with no GitHub link.
-	standing := summary.GitHubStanding{MayWrite: policy.Allowed(sub, policy.Close)}
-	view := summary.View(fold, id, s.PublicURL+"/r/"+id, sub, standing, after, s.now())
+	// The standing only the server can resolve is resolved once, here, and handed to View (CD26, B1): the
+	// rows' resolver is this one too, so room_summary and the row list cannot disagree about a merge, a
+	// review or an answer. A caller with no GitHub link gets the zero standing, and keeps what the policy
+	// grants.
+	view := summary.View(fold, id, s.PublicURL+"/r/"+id, sub, s.standing(ctx, room, p), after, s.now())
 	if fold.Sealed == "" { // a sealed room takes no next run
 		if q, err := s.Log.Queue(ctx, id); err != nil {
 			s.log().Warn("summary: queue unreadable", "room", id, "err", err)
