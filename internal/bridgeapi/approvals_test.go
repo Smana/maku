@@ -68,6 +68,7 @@ func TestApprovalRequests(t *testing.T) {
 	s, _, w := newServer(t)
 	run := agentRun(runA, room, "Running")
 	run.Object["spec"].(map[string]any)["principal"] = "human:own"
+	run.Object["status"].(map[string]any)["branch"] = "agent/26zfnuxm"
 	w.Upsert(t.Context(), run)
 	f := &fakeApprovals{prompters: []string{"human:steerer"}}
 	s.Approvals = f
@@ -104,6 +105,38 @@ func TestApprovalRequests(t *testing.T) {
 		d.Origin != envelope.OriginHarness || d.OriginClient != "agent:"+runA+":approvals" || d.OriginSeq <= 0 {
 		t.Fatalf("draft %+v", d)
 	}
+
+	// D5: the request carries the run's own branch, and the row's binding is that branch.
+	if len(f.got) == 0 || f.got[0].BindingBranch != "agent/26zfnuxm" {
+		t.Fatalf("the request's binding: %+v", f.got)
+	}
+
+	// D5: the binding is the run's effective branch (status.branch, or spec.branch
+	// before status has one), and a run with neither keeps today's empty binding:
+	// the bridge never invents a branch, and an unbranched approval is not a refusal.
+	t.Run("a run with no branch is approved, unbound", func(t *testing.T) {
+		const unbranched = "22222222"
+		w.Upsert(t.Context(), agentRun(unbranched, room, "Running"))
+		if rec := post("run:"+unbranched, request("e90", "c", "forge.push", map[string]any{})); rec.Code != http.StatusOK {
+			t.Fatalf("an unbranched run's request: %d %s", rec.Code, rec.Body)
+		}
+		if got := f.got[1]; got.RunID != unbranched || got.BindingBranch != "" {
+			t.Fatalf("an unbranched run's approval: %+v", got)
+		}
+	})
+
+	t.Run("spec.branch before status has one", func(t *testing.T) {
+		const forked = "33333333"
+		obj := agentRun(forked, room, "Running")
+		obj.Object["spec"].(map[string]any)["branch"] = "agent/fork"
+		w.Upsert(t.Context(), obj)
+		if rec := post("run:"+forked, request("e91", "c", "forge.push", map[string]any{})); rec.Code != http.StatusOK {
+			t.Fatalf("a forked run's request: %d %s", rec.Code, rec.Body)
+		}
+		if got := f.got[2]; got.RunID != forked || got.BindingBranch != "agent/fork" {
+			t.Fatalf("a forked run's approval: %+v", got)
+		}
+	})
 
 	t.Run("the principal is named once", func(t *testing.T) {
 		f.prompters = []string{"human:own"}

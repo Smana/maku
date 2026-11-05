@@ -21,6 +21,21 @@ func TestValidID(t *testing.T) {
 	}
 }
 
+// D5: the branch a forge.push approval binds is the AgentRun CRD's own pattern, checked in one
+// place by the store's trigger's neighbour, the webhook and the App's button.
+func TestValidBranch(t *testing.T) {
+	for _, ok := range []string{"agent/26zfnuxm", "agent/a", "agent/a.b_c-d/e"} {
+		if !ValidBranch(ok) {
+			t.Errorf("%q refused", ok)
+		}
+	}
+	for _, bad := range []string{"", "main", "agent/", "agent/A", "agents/x", "agent/" + strings.Repeat("a", 102)} {
+		if ValidBranch(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
 func TestEventCarriesExactlyTheC4Keys(t *testing.T) {
 	caused := int64(1840)
 	ev := Event{V: 1, ID: "01J9X7K2", Seq: 1842, RoomID: "3kq7x2ma", RunID: "7f3cq2xz",

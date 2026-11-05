@@ -49,20 +49,23 @@ const (
 // Approval is one row of the approvals projection.
 type Approval struct {
 	ID, RoomID, RunID, EventID, CallID, Class, State string
-	Action                                           json.RawMessage
-	Prompters                                        []string
-	RequestedSeq                                     int64
-	RequestedAt, ExpiresAt                           time.Time
+	// BindingBranch is the branch a forge.push approval binds, from the run's AgentRun (D5): the
+	// boundary the repository ruleset already enforces on that run's token. Empty otherwise.
+	BindingBranch          string
+	Action                 json.RawMessage
+	Prompters              []string
+	RequestedSeq           int64
+	RequestedAt, ExpiresAt time.Time
 }
 
 const approvalCols = `approval_id, room_id, run_id, event_id, call_id, class, state, action, prompters, requested_seq,
-	requested_at, expires_at`
+	requested_at, expires_at, binding_branch`
 
 func scanApproval(row pgx.Row) (Approval, error) {
 	var a Approval
 	var action []byte
 	err := row.Scan(&a.ID, &a.RoomID, &a.RunID, &a.EventID, &a.CallID, &a.Class, &a.State, &action, &a.Prompters,
-		&a.RequestedSeq, &a.RequestedAt, &a.ExpiresAt)
+		&a.RequestedSeq, &a.RequestedAt, &a.ExpiresAt, &a.BindingBranch)
 	a.Action = action
 	return a, err
 }
@@ -104,7 +107,7 @@ func (s *Store) requestApproval(ctx context.Context, a Approval, d envelope.Draf
 	a.ExpiresAt = a.ExpiresAt.UTC().Truncate(time.Microsecond)
 	d.RoomID, d.RunID, d.Type = a.RoomID, a.RunID, envelope.ApprovalRequested
 	d.Payload = envelope.Must(envelope.ApprovalRequestedPayload{ApprovalID: a.ID, CallID: a.CallID, Class: a.Class,
-		Action: a.Action, ExpiresAt: a.ExpiresAt, Prompters: a.Prompters})
+		Branch: a.BindingBranch, Action: a.Action, ExpiresAt: a.ExpiresAt, Prompters: a.Prompters})
 	if err := d.Validate(); err != nil {
 		return Approval{}, envelope.Event{}, err
 	}
@@ -136,8 +139,10 @@ func (s *Store) requestApproval(ctx context.Context, a Approval, d envelope.Draf
 		return Approval{}, envelope.Event{}, ErrKeyConflict
 	}
 	if err := tx.QueryRow(ctx, `INSERT INTO approvals (approval_id, room_id, run_id, event_id, call_id, class, action,
-		prompters, state, requested_seq, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10) RETURNING requested_at`,
-		a.ID, a.RoomID, a.RunID, a.EventID, a.CallID, a.Class, []byte(a.Action), a.Prompters, ev.Seq, a.ExpiresAt,
+		binding_branch, prompters, state, requested_seq, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11) RETURNING requested_at`,
+		a.ID, a.RoomID, a.RunID, a.EventID, a.CallID, a.Class, []byte(a.Action), a.BindingBranch, a.Prompters, ev.Seq,
+		a.ExpiresAt,
 	).Scan(&a.RequestedAt); err != nil {
 		return Approval{}, envelope.Event{}, err
 	}

@@ -80,11 +80,14 @@ type ToolResultPayload struct {
 
 // ApprovalRequestedPayload is an approval_requested event's payload.
 type ApprovalRequestedPayload struct {
-	ApprovalID string          `json:"approvalId"`
-	CallID     string          `json:"callId"`
-	Class      string          `json:"class"`
-	Action     json.RawMessage `json:"action"` // the raw, redacted call (T3)
-	ExpiresAt  time.Time       `json:"expiresAt"`
+	ApprovalID string `json:"approvalId"`
+	CallID     string `json:"callId"`
+	Class      string `json:"class"`
+	// Branch is the run's branch, set by the bridge for the classes it forwards (D5): the one
+	// thing a forge.push approval binds. Empty for every other class and for older requests.
+	Branch    string          `json:"branch,omitempty"`
+	Action    json.RawMessage `json:"action"` // the raw, redacted call (T3)
+	ExpiresAt time.Time       `json:"expiresAt"`
 	// Prompters are the principals who prompted the turn: with four-eyes on, none of
 	// them may decide it. The page reads them to say who may.
 	Prompters []string `json:"prompters,omitempty"`
