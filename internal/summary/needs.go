@@ -121,8 +121,11 @@ func factsNeed(in NeedsIn) (Need, bool) {
 	case f.Phase == "Escalated" && f.Reason == "split_proposed":
 		return planConfirmationNeed(in, f), true
 	// Review before merge: a requested reviewer is asked for the review the merge then follows, so one
-	// pull request is one item for them (CD26). It is GitHub's to decide, as a merge is.
-	case f.PR != nil && in.GitHub.Login != "" && slices.ContainsFunc(in.GitHub.Reviewers, func(l string) bool {
+	// pull request is one item for them (CD26). It is GitHub's to decide, as a merge is, and it lives as
+	// long as the merge does: the facts keep their PR after it merged, so a phase other than
+	// AwaitingHuman's would hand a requested reviewer a review of work that already landed (Review
+	// Focus 2).
+	case f.Phase == "AwaitingHuman" && f.PR != nil && in.GitHub.Login != "" && slices.ContainsFunc(in.GitHub.Reviewers, func(l string) bool {
 		return strings.EqualFold(l, in.GitHub.Login)
 	}):
 		return reviewNeed(in, f), true

@@ -175,3 +175,23 @@ func TestASealedRoomHasNoNeeds(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// The facts keep the pull request after it merged, so a review is owed only while a human still waits:
+// a requested reviewer of an ended task gets nothing (Review Focus 2).
+func TestAReviewIsOwedOnlyWhileAHumanWaits(t *testing.T) {
+	pr := &envelope.PRFact{Number: 2245, URL: "https://github.com/Smana/ai-native-ref/pull/2245"}
+	in := func(phase string) summary.NeedsIn {
+		return summary.NeedsIn{Room: "b3c4d5e6", URL: "https://rooms.example/r/b3c4d5e6", Repository: "Smana/ai-native-ref",
+			FactsRead: true, Facts: &envelope.TaskFacts{Phase: phase, PR: pr},
+			GitHub: summary.GitHubStanding{Login: "bob", MayWrite: true, Reviewers: []string{"bob"}}}
+	}
+	for _, phase := range []string{"Done", "Reverted", "Merged", "Verifying", "AwaitingCI", "Reviewing", "Implementing"} {
+		if got := summary.Items(in(phase)); len(got) != 0 {
+			t.Errorf("%s: a review of work that is not waiting for one: %+v", phase, got)
+		}
+	}
+	got := summary.Items(in("AwaitingHuman"))
+	if len(got) != 1 || got[0].Kind != summary.NeedReview || got[0].ID != "2245" {
+		t.Fatalf("the reviewer still waiting: %+v", got)
+	}
+}
