@@ -603,6 +603,12 @@ func (r Maku) status(ctx context.Context, c maku.Client, args []string) error {
 	if err := json.Unmarshal(raw, &sum); err != nil {
 		return fmt.Errorf("status: the broker's answer: %w", err)
 	}
+	// CD11: the brief's head leads, then the card it summarises (maku_views.go).
+	if head := r.briefHead(ctx, c, pos[0]); head != "" {
+		if _, err := fmt.Fprintf(r.Out, "%s\n\n", head); err != nil {
+			return err
+		}
+	}
 	if err := roomview.Card(r.Out, sum, roomview.Options{Format: f, Now: time.Now(), Rooms: roomsBase(sum, c.URL)}); err != nil {
 		return err
 	}

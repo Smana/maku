@@ -631,6 +631,68 @@ func TestToolErrors(t *testing.T) {
 	}
 }
 
+// CD11: maku status's head is the brief's, cut to the six lines that say where the task stands — the plan,
+// the last change, the blocker — with the changed block's list and the full brief's other lines left behind.
+func TestBriefHead(t *testing.T) {
+	brief := "**Resume: 26zfnuxm · #2238 docs: the install link points at a moved page**\n" +
+		"\nAsked: #2238, the install link points at a moved page\n" +
+		"Acceptance: `go test ./...`, `task docs`\n" +
+		"Plan: scope ready · budget $2.00 ceiling\n" +
+		"Changed since 12:04 UTC (3m ago):\n- 12:04 a run started\n- and 2 more\n" +
+		"Blocked on: `failed_check` — the docs link check fails\n" +
+		"Next: read the failing check → https://github.com/Smana/a/pull/2238\n" +
+		"Links: room https://rooms.example/r/26zfnuxm\n"
+	want := "**Resume: 26zfnuxm · #2238 docs: the install link points at a moved page**\n" +
+		"Asked: #2238, the install link points at a moved page\n" +
+		"Plan: scope ready · budget $2.00 ceiling\n" +
+		"Changed since 12:04 UTC (3m ago):\n" +
+		"Blocked on: `failed_check` — the docs link check fails\n" +
+		"Next: read the failing check → https://github.com/Smana/a/pull/2238"
+	for name, tc := range map[string]struct{ text, want string }{
+		"a full brief":                 {brief, want},
+		"no brief at all":              {"", ""},
+		"a card, which has no section": {"26zfnuxm\nImplementing · Smana/a\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := BriefHead(tc.text); got != tc.want {
+				t.Fatalf("%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Brief is room_brief's text for one room, and since the cursor a previous brief handed back when there is
+// one (CD11). A broker without the tool is ErrUnknownTool, which the caller tells apart from a failure.
+func TestBriefCallsRoomBrief(t *testing.T) {
+	var since any = "unset"
+	c, _ := toolBroker(t, http.StatusOK, func(req map[string]any) string {
+		p := req["params"].(map[string]any)
+		if req["method"] != "tools/call" || p["name"] != "room_brief" {
+			t.Errorf("request %v", req)
+		}
+		a := p["arguments"].(map[string]any)
+		if a["room"] != "26zfnuxm" {
+			t.Errorf("room: %v", a)
+		}
+		since = a["since"]
+		return `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"**Resume: 26zfnuxm**"}],` +
+			`"structuredContent":{"apiVersion":"brief/v1","room":"26zfnuxm","text":"**Resume: 26zfnuxm**","cursor":"seq:12"}}}`
+	})
+	text, err := c.Brief(t.Context(), "26zfnuxm", "seq:9")
+	if err != nil || text != "**Resume: 26zfnuxm**" || since != "seq:9" {
+		t.Fatalf("%q %v, since %v", text, err, since)
+	}
+	if _, err := c.Brief(t.Context(), "26zfnuxm", ""); err != nil || since != nil {
+		t.Fatalf("no cursor is no since argument: %v", since)
+	}
+	c, _ = toolBroker(t, http.StatusOK, func(map[string]any) string {
+		return `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown tool: room_brief"}}`
+	})
+	if _, err := c.Brief(t.Context(), "26zfnuxm", ""); !errors.Is(err, ErrUnknownTool) {
+		t.Fatalf("an older broker is ErrUnknownTool: %v", err)
+	}
+}
+
 // rooms --json prints what the broker sent, but only when it is the rows: a garbled body is an error.
 func TestRoomsJSONValidatesTheBody(t *testing.T) {
 	for body, ok := range map[string]bool{`[{"id":"3kq7x2ma"}]`: true, `[]`: true, `<html>proxy error</html>`: false, `{"error":"x"}`: false, ``: false} {

@@ -90,11 +90,34 @@ var mcpPrompts = []mcpPrompt{
 		},
 	},
 	{
+		name: "resume", description: "Come back to a task: what it needs, the plan, what changed, and the one next step.",
+		args: []promptArg{{"room", "a room id, #<issue> or PR #<n>; default: the first room in your needs list"}},
+		text: func(a map[string]string) string { return resumeText(refText(a["room"])) },
+	},
+	{
 		name: "inbox", description: "Show the rooms that need you, then your other rooms.",
 		text: func(map[string]string) string {
-			return "Call `rooms_list` with `needsMe`, then with `mine`, and show each text as it is."
+			return "Call `needs_list`. Show its text as it is. If it is empty, say so in one line and name " +
+				"`rooms_list` with `mine` for the rest."
 		},
 	},
+}
+
+// resumeText is the resume prompt (CD11): one call to the needs list, then the brief of the room that needs
+// the developer, so a session starts from the brief rather than from a search of the logs. The brief decides
+// nothing — its one next step is a statement and a link — and a room is never claimed to exist before the
+// brief has shown it, which keeps a resume from inventing a room id the broker would refuse.
+func resumeText(room string) string {
+	if room != "" {
+		return "Call `room_brief` for room `" + room + "` (as written: maku resolves #<issue>, PR #<n> and numbers, " +
+			"and says when several rooms match; ask the developer then, never guess), and `needs_list` with `room` `" +
+			room + "` for what it waits on: show each tool's text as it is, name the brief's `Next:` line as the one " +
+			"next step, and never say a room exists before room_brief shows it."
+	}
+	return "Call `needs_list`, take its first item's room, and call `room_brief` for that room: show each tool's " +
+		"text as it is, name the brief's `Next:` line as the one next step and the item's action link with it, and " +
+		"never say a room exists before room_brief shows it. If the list is empty, say so in one line and name " +
+		"`rooms_list` with `mine`."
 }
 
 // mcpPromptsList is prompts/list: a sponsored principal has no prompts, so its list is empty.
