@@ -65,15 +65,37 @@ func sponsoredRooms(t *testing.T, w *gitHubWorld) option {
 // toolNames is tools/list's names, in order, as h sees them.
 func toolNames(t *testing.T, e env, h http.Header) string {
 	t.Helper()
-	_, out := rpc(t, e, h, "tools/list", nil)
-	var res struct{ Tools []struct{ Name string } }
-	b, _ := json.Marshal(out["result"])
-	_ = json.Unmarshal(b, &res)
-	names := make([]string, 0, len(res.Tools))
-	for _, tool := range res.Tools {
-		names = append(names, tool.Name)
+	list := tools(t, e, h)
+	names := make([]string, 0, len(list))
+	for _, tool := range list {
+		name, _ := tool["name"].(string)
+		names = append(names, name)
 	}
 	return strings.Join(names, ",")
+}
+
+// tools is tools/list's entries, as h sees them.
+func tools(t *testing.T, e env, h http.Header) []map[string]any {
+	t.Helper()
+	_, out := rpc(t, e, h, "tools/list", nil)
+	b, _ := json.Marshal(out["result"])
+	var res struct{ Tools []map[string]any }
+	if err := json.Unmarshal(b, &res); err != nil {
+		t.Fatalf("%s: %v", b, err)
+	}
+	return res.Tools
+}
+
+// toolEntry is tools/list's entry for name, as h sees it: the whole tool, schema and outputSchema included.
+func toolEntry(t *testing.T, e env, h http.Header, name string) map[string]any {
+	t.Helper()
+	for _, tool := range tools(t, e, h) {
+		if tool["name"] == name {
+			return tool
+		}
+	}
+	t.Fatalf("%s: no %s", toolNames(t, e, h), name)
+	return nil
 }
 
 // sponsoredMergeRoom is the sponsored door's fixture: roomID's pull request waits for a maintainer's
@@ -148,26 +170,12 @@ func TestSponsoredNeedsListIsTheRooms(t *testing.T) {
 }
 
 // CD28: one tool, one schema. The App's needs_list and the human's are one entry in tools/list, so a
-// field cannot appear on one door and not the other — the closed schema is the whole surface on both.
+// field cannot appear on one door and not the other — the closed schema is the whole surface on both, and
+// so is the outputSchema the answer is declared against.
 func TestSponsoredNeedsListIsTheSameTool(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
-	entry := func(h http.Header) map[string]any {
-		t.Helper()
-		_, out := rpc(t, e, h, "tools/list", nil)
-		b, _ := json.Marshal(out["result"])
-		var res struct{ Tools []map[string]any }
-		if err := json.Unmarshal(b, &res); err != nil {
-			t.Fatal(err)
-		}
-		for _, tool := range res.Tools {
-			if tool["name"] == "needs_list" {
-				return tool
-			}
-		}
-		t.Fatalf("no needs_list in %s", b)
-		return nil
-	}
-	if human, app := entry(viaRoomctl("dev")), entry(bearer("slack-app")); !reflect.DeepEqual(human, app) {
+	human, app := toolEntry(t, e, viaRoomctl("dev"), "needs_list"), toolEntry(t, e, bearer("slack-app"), "needs_list")
+	if !reflect.DeepEqual(human, app) {
 		t.Fatalf("the App's needs_list is another tool:\nhuman %v\napp   %v", human, app)
 	}
 }

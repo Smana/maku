@@ -168,6 +168,30 @@ func TestNeedsListFollowsItsSwitch(t *testing.T) {
 	}
 }
 
+// CD28: needs_list declares its answer, as rooms_list does. tools/list carries an outputSchema, and the
+// structuredContent the tool serves satisfies it — every required name present, every declared type met —
+// on the human's door and the App's alike (one entry, so one schema: TestSponsoredNeedsListIsTheSameTool).
+func TestNeedsListDeclaresItsOutput(t *testing.T) {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), worldWithSplitAndMerge(t).gate)
+	schema, ok := toolEntry(t, e, viaRoomctl("dev"), "needs_list")["outputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("needs_list declares no outputSchema")
+	}
+	for name, h := range map[string]http.Header{"a human": viaRoomctl("dev"), "the App": bearer("slack-app")} {
+		got := call(t, e, h, "needs_list", map[string]any{})
+		if got.isError || got.structured == nil {
+			t.Fatalf("%s: %+v", name, got)
+		}
+		var served any
+		if err := json.Unmarshal(got.structured, &served); err != nil {
+			t.Fatalf("%s: %s", name, err)
+		}
+		for _, fault := range schemaFaults(schema, served, "structuredContent") {
+			t.Errorf("%s: %s", name, fault)
+		}
+	}
+}
+
 // The list is measured by the door it came through: needs_list_total carries surface "tool" for this one,
 // as surface "api" for the route, so a dashboard's single query covers both (PR 3's metrics).
 func TestNeedsListIsMeasured(t *testing.T) {

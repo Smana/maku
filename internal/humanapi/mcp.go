@@ -141,7 +141,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 				"Filters: since (the cursor of a previous answer, never a future instant), room, repo. " +
 				"access says why the list may be short; unread names a room whose state could not be read, and the text says so. " +
 				"Nothing here decides anything: an approval is decided on the room page, a merge on GitHub; show each item's action as its link.",
-			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"since":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}}}`)})
+			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"since":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}}}`),
+			// The answer, declared as rooms_list declares its rows (CD28): the envelope needs.go writes, its
+			// required names, and the types of the fields a model reads. One constant serving both doors, so
+			// the App's outputSchema and a human's cannot drift.
+			output: json.RawMessage(`{"type":"object","required":["apiVersion","items","cursor","access"],"properties":{"apiVersion":{"type":"string"},"cursor":{"type":"string"},"access":{"type":"string"},"unread":{"type":"array","items":{"type":"string"}},"items":{"type":"array","items":{"type":"object","required":["kind","id","what","url","room"],"properties":{"kind":{"type":"string"},"id":{"type":"string"},"what":{"type":"string"},"url":{"type":"string"},"room":{"type":"string"},"why":{"type":"string"},"issue":{"type":"integer"},"pr":{"type":"integer"},"deadline":{"type":"string"},"at":{"type":"string"},"author":{"type":"string"},"approve":{"type":"boolean"},"action":{"type":"object","required":["kind","label"],"properties":{"kind":{"type":"string"},"label":{"type":"string"},"url":{"type":"string"}}}}}}}}`)})
 	}
 	if s.Intake != nil {
 		// The planner's tools exist only when the switch that would serve them does: a list
