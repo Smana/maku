@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -407,19 +408,20 @@ func (f *fakeSlack) Thread(_ context.Context, _, threadTS string) ([]Message, er
 func (f *fakeSlack) seed(m Message) { f.mu.Lock(); f.msgs[m.TS] = m; f.mu.Unlock() }
 
 type stubBroker struct {
-	mu       sync.Mutex
-	calls    []any
-	accepted []RunCreate
-	refused  []RunCreate
-	deny     map[string]string
-	keys     map[string]bool
-	draftErr error
-	room     string // run_create's room, "aaaaaaaa" when empty
-	sponsor  string // run_create's sponsor
-	runErr   error  // run_create's error, before deny
-	linkErr  error
-	links    []string // team/user/name of each slack_link_code
-	unlinked map[string]bool
+	mu        sync.Mutex
+	calls     []any
+	accepted  []RunCreate
+	refused   []RunCreate
+	deny      map[string]string
+	keys      map[string]bool
+	draftErr  error
+	room      string // run_create's room, "aaaaaaaa" when empty
+	sponsor   string // run_create's sponsor
+	runErr    error  // run_create's error, before deny
+	linkErr   error
+	links     []string // team/user/name of each slack_link_code
+	unlinked  map[string]bool
+	decisions []Decision // every Decide call, oldest first
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {
@@ -479,6 +481,22 @@ func (b *stubBroker) RunCreate(_ context.Context, c RunCreate) (RunResult, error
 		room = "aaaaaaaa"
 	}
 	return RunResult{Room: room, Issue: 42, Duplicate: dup, Sponsor: b.sponsor}, nil
+}
+
+// Decide records every press and echoes the decision, as the route answers a closed code. A stub
+// told to answer otherwise (already_decided, not_supported…) is Task 14's.
+func (b *stubBroker) Decide(_ context.Context, d Decision) (DecisionResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.decisions = append(b.decisions, d)
+	return DecisionResult{Result: d.Decision}, nil
+}
+
+// decided is every press the broker was asked to record, oldest first.
+func (b *stubBroker) decided() []Decision {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]Decision(nil), b.decisions...)
 }
 
 func (b *stubBroker) newIssues() int { b.mu.Lock(); defer b.mu.Unlock(); return len(b.keys) }
@@ -607,6 +625,42 @@ func (r *appRig) event(event string) {
 		r.t.Fatalf("events: %d", st)
 	}
 }
+
+// formBody is the body Slack's interactivity sends: one url-encoded payload field. Shared by the
+// events door's second body shape and the tests of it.
+func formBody(payload string) string { return url.Values{"payload": {payload}}.Encode() }
+
+// postInteraction posts body to the events door as Slack's interactivity does: form-encoded and
+// signed at the rig's clock.
+func (r *appRig) postInteraction(body string) int {
+	r.t.Helper()
+	return r.postInteractionAs(body, formCT, r.now.Unix(), true)
+}
+
+// postInteractionAs is postInteraction with the content type, the clock the signature claims and
+// whether it carries one at all: the ways a press can be wrong before its body is read.
+func (r *appRig) postInteractionAs(body, contentType string, at int64, signed bool) int {
+	r.t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/slack/events", strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	if signed {
+		ts := strconv.FormatInt(at, 10)
+		req.Header.Set("X-Slack-Request-Timestamp", ts)
+		req.Header.Set("X-Slack-Signature", slackSign(rigSecret, ts, body))
+	}
+	w := httptest.NewRecorder()
+	r.app.Events().ServeHTTP(w, req)
+	return w.Code
+}
+
+// interact is one button press: the payload Slack sends, in the body it sends it in.
+func (r *appRig) interact(payload string) int {
+	r.t.Helper()
+	return r.postInteraction(formBody(payload))
+}
+
+// formCT is the content type Slack's button presses carry.
+const formCT = "application/x-www-form-urlencoded"
 
 func jsonString(s string) string { b, _ := json.Marshal(s); return string(b) }
 

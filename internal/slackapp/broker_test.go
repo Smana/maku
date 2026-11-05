@@ -137,6 +137,57 @@ func TestBrokerNeverSendsTasks(t *testing.T) {
 	}
 }
 
+// §1: Decide posts §1's body to the decide route as the App's principal — not to /mcp, no tools
+// envelope — reads the closed code back, retries once on a 401, and reads a non-200 as transport
+// rather than as a decision.
+func TestDecidePostsTheRoute(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []map[string]string
+	var paths, auth []string
+	var asks atomic.Int32
+	var fails atomic.Int32 // the next n answers are 401
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		mu.Lock()
+		bodies, paths, auth = append(bodies, m), append(paths, r.URL.Path), append(auth, r.Header.Get("Authorization"))
+		asks.Add(1)
+		mu.Unlock()
+		if fails.Load() > 0 {
+			fails.Add(-1)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"result":"approved"}`)
+	}))
+	t.Cleanup(srv.Close)
+	b := Broker{URL: srv.URL, Tokens: staticTokens("tok"), HC: srv.Client()}
+	d := Decision{Team: "T01ABC", User: "U02DEF", Channel: "C03", MessageTS: "1729.0500",
+		ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", Branch: "agent/26zfnuxm", Decision: "approved"}
+
+	res, err := b.Decide(context.Background(), d)
+	if err != nil || res != (DecisionResult{Result: "approved"}) {
+		t.Fatalf("%+v %v", res, err)
+	}
+	want := map[string]string{"team": "T01ABC", "user": "U02DEF", "channel": "C03", "messageTS": "1729.0500",
+		"approvalId": "01M4A1B2C3D4E5F6G7H8J9K0MN", "branch": "agent/26zfnuxm", "decision": "approved"}
+	if !maps.Equal(bodies[0], want) || paths[0] != "/api/slack/decisions" || auth[0] != "Bearer tok" {
+		t.Fatalf("%+v %s %s", bodies[0], paths[0], auth[0])
+	}
+
+	// A 401 drops the cached token and retries once, as every other call does.
+	fails.Store(1)
+	if _, err := b.Decide(context.Background(), d); err != nil || asks.Load() != 3 {
+		t.Fatalf("err %v after %d asks, want a retried press", err, asks.Load())
+	}
+
+	// The route answers a closed code with 200; anything else is transport, never a decision.
+	fails.Store(2)
+	if _, err := b.Decide(context.Background(), d); err == nil {
+		t.Fatal("two 401s were read as a decision")
+	}
+}
+
 // L9: a 401 drops the token and retries once on a new one; a second 401 fails.
 func TestBrokerRefreshesOn401(t *testing.T) {
 	f := newFakeBroker(t, "t2", `{"structuredContent":{"repo":"Smana/x","title":"t","body":"b"}}`)

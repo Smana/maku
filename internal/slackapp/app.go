@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"regexp"
 	"slices"
@@ -56,6 +57,9 @@ type BrokerAPI interface {
 	RunCreate(ctx context.Context, c RunCreate) (RunResult, error)
 	SlackLinkCode(ctx context.Context, team, user, handle, name string) (string, error)
 	SlackUnlink(ctx context.Context, team, user string) (bool, error)
+	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
+	// thing the App decides, and only for forge.push.
+	Decide(ctx context.Context, d Decision) (DecisionResult, error)
 }
 
 // Recorder counts requests for factory_slack_requests_total{route, outcome}.
@@ -64,8 +68,9 @@ type Recorder interface {
 }
 
 // App is the flows: a mention drafts, the draft's author amends it with replies in its thread, a
-// maintainer's check mark files, the broker's webhooks tell the thread. A thread reply is read only
-// to amend an unfiled draft; none is ever a command and no approval is answered (invariant 8).
+// maintainer's check mark files, the broker's webhooks tell the thread, and — for forge.push only,
+// where the channel's approvals flag is on — a card's button decides. A thread reply is read only
+// to amend an unfiled draft; none is ever a command (invariant 8) and no reply is ever a decision.
 type App struct {
 	Slack       Slack
 	Broker      BrokerAPI
@@ -285,14 +290,27 @@ type slackEvent struct {
 	} `json:"item"`
 }
 
-// Events is the events listener's handler: the signature first, nothing read before it.
+// Events is the events listener's handler: the signature first, nothing read before it. Two body
+// shapes arrive at this one door (D11, §6): Slack's JSON events and its form-encoded button presses,
+// told apart by content type after the same verification.
 func (a *App) Events() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		// The header alone names the route, so a refusal before the body is read is counted where
+		// the request was going: a press that does not verify is an interactions refusal.
+		press := isForm(r.Header.Get("Content-Type"))
+		route := "events"
+		if press {
+			route = "interactions"
+		}
 		body, err := a.Verifier.Body(r)
 		if err != nil {
-			a.count(ctx, "events", "bad_signature")
+			a.count(ctx, route, "bad_signature")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if press {
+			a.handleInteraction(w, r, body) // §6: the second body shape, one door and one lock
 			return
 		}
 		var env slackEnvelope
@@ -330,6 +348,13 @@ func (a *App) Events() http.Handler {
 			w.WriteHeader(http.StatusOK)
 		}
 	})
+}
+
+// isForm reports whether the request carries Slack's interactivity body shape (§6 step 2): the one
+// content type its button presses come in. Anything else is the JSON events path, byte-for-byte.
+func isForm(contentType string) bool {
+	ct, _, err := mime.ParseMediaType(contentType)
+	return err == nil && ct == "application/x-www-form-urlencoded"
 }
 
 // handle runs one event and names its outcome for the counter.

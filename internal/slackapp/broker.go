@@ -90,6 +90,53 @@ type RunResult struct {
 // ErrUnknownTool is the broker without the tool asked: the self-serve link is off there.
 var ErrUnknownTool = errors.New("slackapp: the broker does not offer this tool")
 
+// decidePath is the route human.slackDecide registers on the broker's human listener (D2); unset
+// there, it is the mux's 404, so a press answers not_supported-class transport and nothing happens.
+const decidePath = "/api/slack/decisions"
+
+// Decision is one press, as POST /api/slack/decisions takes it (§1 of the design). The App fills it
+// from the signed click only; no field comes from the card's text.
+type Decision struct {
+	Team, User, Channel, MessageTS, ApprovalID, Branch, Decision string
+}
+
+// DecisionResult is the broker's closed code; Result is the decision when it recorded one.
+type DecisionResult struct{ Result string }
+
+// Decide posts one press to the broker's human listener as the App's principal, with the same token
+// cache and the same 401 retry every other call uses. The route answers a closed code with 200 for
+// every refusal, so anything but 200 is transport, not a decision.
+func (b Broker) Decide(ctx context.Context, d Decision) (DecisionResult, error) {
+	body, err := json.Marshal(map[string]string{"team": d.Team, "user": d.User, "channel": d.Channel,
+		"messageTS": d.MessageTS, "approvalId": d.ApprovalID, "branch": d.Branch, "decision": d.Decision})
+	if err != nil {
+		return DecisionResult{}, err
+	}
+	for attempt := 0; ; attempt++ {
+		raw, status, err := b.send(ctx, decidePath, body, false)
+		if err != nil {
+			return DecisionResult{}, err
+		}
+		if status == http.StatusUnauthorized && attempt == 0 {
+			b.Tokens.Invalidate()
+			continue
+		}
+		if status != http.StatusOK {
+			return DecisionResult{}, fmt.Errorf("slackapp: broker answered %d", status)
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return DecisionResult{}, fmt.Errorf("slackapp: decide result: %w", err)
+		}
+		if out.Result == "" {
+			return DecisionResult{}, errors.New("slackapp: broker reply has no result")
+		}
+		return DecisionResult{Result: out.Result}, nil
+	}
+}
+
 // IssueDraft asks the broker to judge a draft against the issue template.
 func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
 	sc, err := b.call(ctx, "issue_draft", map[string]any{"repo": d.Repo, "title": d.Title, "body": d.Body})
@@ -189,17 +236,25 @@ func (b Broker) call(ctx context.Context, tool string, args map[string]any) (jso
 }
 
 func (b Broker) post(ctx context.Context, body []byte) ([]byte, int, error) {
+	return b.send(ctx, "/mcp", body, true)
+}
+
+// send is one POST to the broker, as the App's principal: path is the listener's route, mcp adds
+// the tools endpoint's own headers (the decide route takes none).
+func (b Broker) send(ctx context.Context, path string, body []byte, mcp bool) ([]byte, int, error) {
 	tok, err := b.Tokens.Token(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(b.URL, "/")+"/mcp", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(b.URL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	if mcp {
+		req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	hc := b.HC
 	if hc == nil {
