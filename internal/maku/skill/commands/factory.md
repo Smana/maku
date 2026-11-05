@@ -1,5 +1,5 @@
 ---
-description: "The agent factory: /factory handoff <what> | status [#issue] | inbox"
+description: "The agent factory: /factory handoff <what> | status [room] | resume [room] | inbox"
 ---
 
 You were asked: `/factory $ARGUMENTS`. Use the `factory` MCP server's tools. The first word is the
@@ -16,6 +16,13 @@ subcommand; the rest is its argument. Show each tool's text as it is, and never 
   When `issue_file` returns `started: true`, start a background `room_wait` on the room at once (see the skill), without being asked.
 - `status [room]`: call `room_summary` for the room. The room may be `#<issue>`, `PR #<n>`, a bare
   number or a room id, passed as typed; with none, use the `rooms_list` row updated most recently.
-- `inbox`: call `rooms_list` with `needsMe`, then with `mine`.
+- `resume [room]`: call `needs_list` once. With a room given, pass it as typed (`#<issue>`,
+  `PR #<n>`, a bare number or a room id) to `room_brief` and to `needs_list` with `room` for what it
+  waits on; with none, take the first item's room and call `room_brief` for it. Show each tool's text
+  as it is, name the brief's `Next:` line and its action link as the one next step, and never say a
+  room exists before `room_brief` shows it. If the list is empty, say so in one line and name
+  `rooms_list` with `mine`.
+- `inbox`: call `needs_list` once and show its text as it is. Empty, say so in one line and name
+  `rooms_list` with `mine`; do not call `rooms_list` unasked.
 
-With no subcommand, or one that is not listed, show these three lines and stop.
+With no subcommand, or one that is not listed, show these four lines and stop.

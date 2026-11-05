@@ -49,7 +49,7 @@ maku doctor                                   # check the setup
 | `doctor` | Checks the VPN, the CA, your login, your GitHub link and the installed skill's version (`skill`), with the fix of each |
 | `token` | Prints a valid access token, for scripts. Treat it as a secret |
 | `run --repo owner/name --task TEXT [--role implementer\|triager]` | Quickstart only, on a local broker ([quickstart](quickstart.md)): creates a room, queues TEXT for the run's brief, starts the run, applies the claim the broker rendered with your own kubectl and kubeconfig, and follows the room until the run ends. Exit 0 only when the run ended Succeeded. It stops at the first failing step and names it: room, task, start_run (with the broker's reason), claim (kubectl's own error), run. On any other broker it refuses: the factory starts runs there |
-| `status <room> [--json] [--after seq:N]` | Where a room stands, as the room card (below): the title, the state, the facts (run, spend, PR and last verdict, next, why), what needs you, the runs line, the agents' notes and what you can do, then a `cursor: seq:N` line. `--json` prints the broker's summary as is; `--after` shows only the notes after a cursor (the output prints it as `seq:N`) |
+| `status <room> [--json] [--after seq:N]` | Where a room stands. It leads with the [brief](api.md#get-apiroomsidbrief)'s head — the `Resume:` line, what was asked, the plan, what changed since your last brief, what blocks it and the one `Next:` step — then the room card (below): the title, the state, the facts (run, spend, PR and last verdict, next, why), what needs you, the runs line, the agents' notes and what you can do, then a `cursor: seq:N` line. `--json` prints the broker's summary as is; `--after` shows only the notes after a cursor (the output prints it as `seq:N`) |
 | `rooms [--repo owner/name] [--mine] [--needs-me] [--all] [--json]` | The rooms you can read, as a table that leads with the task and ends with the room id: TASK (`#issue title`), REPO (when several), STATE, WHERE IT IS, PR, UPDATED, ROOM. `--mine`: tasks of issues you filed or labelled, PRs you authored or review. `--needs-me`: an approval you could decide, a task held on your room, a PR waiting for your merge, or an Escalated task waiting for its issue's author when you own the room. `--all`: the rooms that ended over a week ago too. `--json`: the broker's rows as is |
 | `changes <room> [--cursor seq:N] [--format md\|text] [--json]` | What changed in a room since the cursor of your last call (the first call: 24 hours). The cursor is kept in `cursors.json` beside the config. Needs a broker with `room_changes` |
 | `checkout <room>` | Checks the room's branch, `agent/<room>`, out into a new git worktree beside the repository you are in, `<repo>.<room>`, and prints its path. It never touches your current checkout, so a dirty tree or your branch is safe, and a second call prints the same path. It refuses outside a checkout of the room's repository, and prints the `gh repo clone` command. When the branch changes files that run code on open or on commit, it lists them and asks `y/N`, and refuses without a terminal ([below](#checking-out-an-agents-branch)) |
@@ -61,9 +61,16 @@ maku doctor                                   # check the setup
 
 Flags may come before or after the positional arguments. Source: `internal/app/maku.go`.
 
-`status` prints the room card, then the cursor. For a task's room:
+`status` leads with the brief's head, prints the room card, then the cursor. For a task's room:
 
 ```text
+**Resume: 26zfnuxm · #42 docs: chart version is wrong**
+Asked: #42, chart version is wrong
+Plan: scope ready · budget $1.50 ceiling
+Changed since 2026-11-04 18:20 UTC (16 h):
+Blocked on: `approval` — "git push to agent/26zfnuxm" waits for you
+Next: approve it on the room page → https://rooms.example/r/26zfnuxm#01M4A
+
 #42 docs: chart version is wrong · 26zfnuxm
 needs you · an agent is coding · Smana/cloud-native-ref · open the room (https://rooms.example/r/26zfnuxm)
 
@@ -96,6 +103,13 @@ Room links print only under the broker's own address: the card takes it from the
 carries none. A broker reached by another name (a port-forward) therefore still shows its links.
 Source: `internal/roomview/card.go`.
 
+The head above the card is the first six section lines of the room's
+[brief](api.md#get-apiroomsidbrief), taken as they are: the changed block's items, the acceptance
+checks and the links stay in the brief an agent reads in full, since the card already carries what
+needs you. A broker that serves no `room_brief` prints the card alone, as before; a brief that fails
+for another reason says so in one line on stderr, because the card is still what you asked for.
+Source: `internal/maku/status.go`.
+
 ## The MCP server
 
 `maku mcp` is an MCP server on stdio. It relays each message to the broker's
@@ -107,12 +121,17 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 ```
 
 - The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
-- The tools: `rooms_list`, `room_summary`, `room_tail`, `room_changes`, `room_queue`, `room_fork` and
-  `issue_draft` from the broker; `intake_plan` and `plan_check` too, when the broker's operator has
-  turned the planner on ([below](#the-plan)); and `issue_file`, `room_wait` and `room_checkout`, maku's own.
-  `room_tail` also runs as an MCP Task that waits for the room's next events; `maku mcp` polls it
-  for your agent. The broker also serves the prompts `handoff` (`what`), `plan` (`what`), `status`
-  (`room`) and `inbox`, which your agent offers as slash commands (see [Short commands](#short-commands) for how to type them).
+- The tools: `rooms_list`, `room_summary`, `room_brief`, `room_tail`, `room_changes`, `needs_list`,
+  `room_queue`, `room_fork` and `issue_draft` from the broker; `intake_plan` and `plan_check` too, when
+  the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `room_wait`
+  and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
+  events; `maku mcp` polls it for your agent. The broker also serves the prompts `handoff` (`what`),
+  `plan` (`what`), `status` (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash
+  commands (see [Short commands](#short-commands) for how to type them).
+- `resume` is the one to start a session with: it calls `needs_list` once, then `room_brief` of the
+  first room that needs you — or of the room you passed — and names the brief's `Next:` line as the
+  one step. `inbox` is one `needs_list` call: when the list is empty it says so in one line and names
+  `rooms_list` with `mine` instead of asking the broker twice.
 - `issue_file` files a draft with your `gh`, as you, only after you accept it in a prompt your agent
   shows you (MCP elicitation). Pass it a plan and the hash `intake_plan` answered with, and the
   broker's `plan_check` re-validates both before the prompt is built: the prompt then shows the
@@ -123,8 +142,9 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   only when `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`: yes labels the issue `factory/ready` with
   your `gh`, which starts the factory. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
   call `issue_file` but cannot answer the form.
-- Every tool and prompt that takes a room (`room_summary`, `room_changes`, `room_queue`, `room_tail`,
-  `room_fork`, `room_wait`, `room_checkout`, the `status` prompt) accepts the room id, `#<issue>`
+- Every tool and prompt that takes a room (`room_summary`, `room_brief`, `room_changes`, `room_queue`,
+  `room_tail`, `room_fork`, `room_wait`, `room_checkout`, the `status` and `resume` prompts) accepts
+  the room id, `#<issue>`
   (the issue only), `PR #<n>` (the PR only), a bare number (an issue or a PR), or a fragment of the
   task's title (3 characters or more, case-insensitive; not an id or a number). `maku mcp` resolves
   it through the room list, open rooms first and then the ended ones. When several rooms match (the
@@ -281,7 +301,8 @@ also write one command file, `factory.md`, that calls the same prompts' tools:
 |---|---|
 | `/factory handoff [what]` | plans it with `intake_plan` and shows the plan, then files its first issue with `issue_file` and the plan's hash; with the planner off, writes the issue, has `issue_draft` check it, and files it |
 | `/factory status [room]` | `room_summary` of the room; none: your most recently updated room |
-| `/factory inbox` | `rooms_list` with `needsMe`, then `mine` |
+| `/factory resume [room]` | `needs_list` once, then `room_brief` of the first room that needs you (or of the room you passed); names the brief's `Next:` line as the one step |
+| `/factory inbox` | `needs_list` once: the rooms that need you. Empty, it says so and names `rooms_list` with `mine` |
 
 Where: `~/.claude/commands/factory.md` (`.claude/commands/` with `--project`) for Claude Code,
 `~/.config/opencode/commands/factory.md` (`.opencode/commands/`) for OpenCode, which reads the same
