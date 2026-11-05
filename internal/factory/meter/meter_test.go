@@ -695,3 +695,19 @@ func TestARunIsRevokedEvenWhenTheLedgerFails(t *testing.T) {
 		}
 	})
 }
+
+// CD23: the meter drops an ended run from its active set endSettle after it ended; its settled cost
+// stays readable for the reconciler's final re-price, and no longer.
+func TestCostsKeepARunsSettledValuePastItsEnd(t *testing.T) {
+	now := time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC)
+	var c Costs
+	c.Put(map[string]Cost{"r1": {MicroUSD: 420_000}}, now)
+	c.Put(map[string]Cost{}, now.Add(3*time.Minute)) // the run left the tick's set
+	if got, ok := c.Get("r1"); !ok || got.MicroUSD != 420_000 {
+		t.Fatalf("%+v %v", got, ok)
+	}
+	c.Put(map[string]Cost{}, now.Add(20*time.Minute))
+	if _, ok := c.Get("r1"); ok {
+		t.Fatal("a 20-minute-old entry is still served")
+	}
+}
