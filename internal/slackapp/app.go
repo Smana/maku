@@ -702,7 +702,15 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		refuse("replaced", "This draft was replaced by a newer one: react on the latest draft.")
 		return "ignored"
 	}
-	filedMark := &Metadata{EventType: filedEventType, EventPayload: metaPayload(DraftPayload{Repo: p.Repo})}
+	// The mark's tag is what stops the draft being edited; its payload is inert, nothing decodes a
+	// factory_filed. A marshal error is therefore logged with that consequence named rather than
+	// dropped: the tag still goes out, the payload is the empty object every decoder refuses.
+	filedPayload, perr := metaPayload(DraftPayload{Repo: p.Repo})
+	if perr != nil {
+		a.log().Error("filed mark payload: the draft stays editable", "err", perr)
+		filedPayload = json.RawMessage(`{}`)
+	}
+	filedMark := &Metadata{EventType: filedEventType, EventPayload: filedPayload}
 	res, err := a.Broker.RunCreate(ctx, RunCreate{
 		Draft:      Draft{Repo: p.Repo, Title: p.Title, Body: p.Body},
 		MaxCostUSD: ch.MaxCostUSD,

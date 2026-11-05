@@ -277,17 +277,20 @@ func draftPayload(repo, title, body string) DraftPayload {
 type post struct {
 	ts, channel, thread, text string
 	meta                      *Metadata
+	blocks                    json.RawMessage
 }
 
 type fakeSlack struct {
-	mu         sync.Mutex
-	posts      []post
-	ephemerals []ephemeral
-	msgs       map[string]Message
-	failPosts  int // the next n Posts fail
-	threadErr  error
-	msgErr     error
-	names      map[string][2]string // user -> handle, display name
+	mu          sync.Mutex
+	posts       []post
+	updates     []post // chat.update calls, oldest first
+	ephemerals  []ephemeral
+	msgs        map[string]Message
+	failPosts   int // the next n Posts fail
+	failUpdates int // the next n Updates fail
+	threadErr   error
+	msgErr      error
+	names       map[string][2]string // user -> handle, display name
 }
 
 type ephemeral struct{ channel, user, thread, text string }
@@ -338,6 +341,38 @@ func (f *fakeSlack) Post(_ context.Context, channel, threadTS, text string, meta
 	f.posts = append(f.posts, post{ts: ts, channel: channel, thread: threadTS, text: text, meta: meta})
 	f.msgs[ts] = Message{TS: ts, ThreadTS: threadTS, User: "U0BOT", Text: text, Metadata: meta}
 	return ts, nil
+}
+
+// PostCard records the post with its blocks, so a test can read what a card carried; its ts comes
+// from the same counter as Post, so a thread's posts stay ordered.
+func (f *fakeSlack) PostCard(_ context.Context, channel, threadTS, text string, blocks json.RawMessage, meta *Metadata) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failPosts > 0 {
+		f.failPosts--
+		return "", errors.New("slack down")
+	}
+	ts := fmt.Sprintf("1729.%04d", 1000+len(f.posts))
+	f.posts = append(f.posts, post{ts: ts, channel: channel, thread: threadTS, text: text, meta: meta, blocks: blocks})
+	f.msgs[ts] = Message{TS: ts, ThreadTS: threadTS, User: "U0BOT", Text: text, Metadata: meta}
+	return ts, nil
+}
+
+// Update replaces the seeded message's text and records the call; Slack itself answers an update it
+// cannot make with cant_update_message, which failUpdates stands in for.
+func (f *fakeSlack) Update(_ context.Context, channel, ts, text string, blocks json.RawMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failUpdates > 0 {
+		f.failUpdates--
+		return errors.New("cant_update_message")
+	}
+	f.updates = append(f.updates, post{ts: ts, channel: channel, text: text, blocks: blocks})
+	if m, ok := f.msgs[ts]; ok {
+		m.Text = text
+		f.msgs[ts] = m
+	}
+	return nil
 }
 
 func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {
