@@ -17,6 +17,7 @@ import (
 
 	"github.com/coder/websocket"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
@@ -383,10 +384,25 @@ func slackDecideOn(t *testing.T, links map[string]string, aps map[string]store.A
 // store recorded, and in what order, rather than only what the route answered.
 func slackDecideOnStore(t *testing.T, links map[string]string, aps map[string]store.Approval, decisions *[]decided) (*memDecides, option) {
 	t.Helper()
-	st := &memDecides{links: links, rows: aps, decided: decisions, sealed: map[string]bool{roomB: true},
+	st := slackDecideStore(links, aps, decisions)
+	return st, slackDecideRig(t, st)
+}
+
+// slackDecideStore is the route's store over links, aps and decisions, apart from the server that
+// serves it: the limiter's state is the SlackDecider's, so a case that proves it per instance mounts
+// one store on two servers.
+func slackDecideStore(links map[string]string, aps map[string]store.Approval, decisions *[]decided) *memDecides {
+	return &memDecides{links: links, rows: aps, decided: decisions, sealed: map[string]bool{roomB: true},
 		keys: map[string]stored{}}
-	return st, func(s *Server, _ *fanout.Hub, v *hubView) {
-		st.memLog = v.memLog
+}
+
+// slackDecideRig serves st as the App's decider on the server, the team T01ABC, the rig's rooms and
+// the rig's GitHub gate.
+func slackDecideRig(t *testing.T, st *memDecides) option {
+	return func(s *Server, _ *fanout.Hub, v *hubView) {
+		if st.memLog == nil { // one log for the store: a second server over it keeps the first's
+			st.memLog = v.memLog
+		}
 		rooms := roomClient(t, slackRoomA(), repoRoom(roomB, "Smana/b"))
 		// The run the approvals were requested for is live, on its branch: the binding is read from
 		// the watch, never from the body (D6).
@@ -461,6 +477,12 @@ func decide(t *testing.T, e env, b SlackDecision) (int, string) {
 		t.Fatal(err)
 	}
 	status, raw := postDecide(t, e, bearer("slack-app"), string(body))
+	return answerOf(t, status, raw)
+}
+
+// answerOf is the route's one-key answer: the status and the code, and nothing else in the body.
+func answerOf(t *testing.T, status int, raw string) (int, string) {
+	t.Helper()
 	var out map[string]any
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		t.Fatalf("%d: the answer is not §1's body: %q", status, raw)
@@ -852,4 +874,125 @@ func TestSlackDecideOff(t *testing.T) {
 	if got, raw := postDecide(t, e, bearer("slack-app"), string(body)); got != http.StatusNotFound {
 		t.Fatalf("off: %d %q", got, raw)
 	}
+}
+
+// D14: every transport failure is its own status, and a store, room-reader or log failure is 503
+// unavailable so the App may retry. The limiter is 10 a minute, burst 5, per (team,user), and its
+// state is the instance's.
+func TestSlackDecideUnavailable(t *testing.T) {
+	t.Run("a read the route cannot make is 503 unavailable", func(t *testing.T) {
+		for name, breakIt := range map[string]func(*memDecides){
+			"the link table":   func(st *memDecides) { st.linkErr = errors.New("links down") },
+			"the approval row": func(st *memDecides) { st.rowErr = errors.New("approvals down") },
+			"the room state":   func(st *memDecides) { st.roomErr = errors.New("log down") },
+			"the decision":     func(st *memDecides) { st.decideErr = errors.New("write failed") },
+		} {
+			t.Run(name, func(t *testing.T) {
+				var decisions []decided
+				st := slackDecideStore(slackLinks(), slackApprovals(), &decisions)
+				breakIt(st)
+				e := setup(t, withSponsored(sponsoredP), slackDecideRig(t, st))
+				if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, "approved")); got != http.StatusServiceUnavailable || result != "unavailable" {
+					t.Fatalf("%d %s, want 503 unavailable", got, result)
+				}
+				if len(decisions) != 0 {
+					t.Fatalf("an unreadable store decided: %+v", decisions)
+				}
+			})
+		}
+	})
+
+	// The Room CR is the fourth read, and its failure is the same retryable status: the code says
+	// nothing about what could not be read.
+	t.Run("the Room CR cannot be read", func(t *testing.T) {
+		var decisions []decided
+		st := slackDecideStore(slackLinks(), slackApprovals(), &decisions)
+		e := setup(t, withSponsored(sponsoredP), slackDecideRig(t, st),
+			func(s *Server, _ *fanout.Hub, _ *hubView) {
+				s.Rooms, s.SlackDecide.Rooms = brokenRooms{}, brokenRooms{}
+			})
+		if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, "approved")); got != http.StatusServiceUnavailable || result != "unavailable" {
+			t.Fatalf("%d %s, want 503 unavailable", got, result)
+		}
+	})
+
+	t.Run("a body the route will not read is 400 bad_request", func(t *testing.T) {
+		good, err := json.Marshal(press(slackTeam, "U02", ap1, slackBranch, "approved"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := setup(t, withSponsored(sponsoredP), slackDecideOn(t, slackLinks(), slackApprovals(), &[]decided{}))
+		for name, c := range map[string]struct {
+			body  string
+			ctype string
+		}{
+			// §1's cap is 4 KiB, and a body over it never reaches the decoder whole.
+			"a 5 KiB body":      {body: string(good) + strings.Repeat(" ", 5<<10), ctype: "application/json"},
+			"a text/plain body": {body: string(good), ctype: "text/plain"},
+			"a body with an unknown key": {body: `{"team":"` + slackTeam + `","user":"U02","channel":"C0CC4M8SNVD",` +
+				`"messageTS":"1730822400.123456","approvalId":"` + ap1 + `","branch":"` + slackBranch + `",` +
+				`"decision":"approved","reason":"x"}`, ctype: "application/json"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				h := bearer("slack-app")
+				h.Set("Content-Type", c.ctype)
+				status, raw := postDecide(t, e, h, c.body)
+				if got, result := answerOf(t, status, raw); got != http.StatusBadRequest || result != "bad_request" {
+					t.Fatalf("%d %s, want 400 bad_request", got, result)
+				}
+			})
+		}
+	})
+
+	t.Run("ten a minute, burst five, per (team,user), per instance", func(t *testing.T) {
+		var decisions []decided
+		st := slackDecideStore(slackLinks(), slackApprovals(), &decisions)
+		e := setup(t, withSponsored(sponsoredP), slackDecideRig(t, st))
+		for i := range 5 {
+			if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, "approved")); got != http.StatusOK || result != "approved" {
+				t.Fatalf("press %d: %d %s, want 200 approved", i+1, got, result)
+			}
+		}
+		if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, "approved")); got != http.StatusTooManyRequests || result != "rate_limited" {
+			t.Fatalf("the sixth press: %d %s, want 429 rate_limited", got, result)
+		}
+		// Five presses of one click are one decision: the burst is what the limiter took, not the log.
+		if len(decisions) != 1 {
+			t.Fatalf("the store recorded %+v, want one decision", decisions)
+		}
+		// The counter is the answer, per code: rooms_slack_decisions_total{result, decision}, the
+		// decision empty when the answer carried none ([operations](../docs/operations.md)). A
+		// replayed click counts as the decision it answered with, and one decision is in the log.
+		body := scrape(t, e)
+		for _, want := range []string{
+			`maku_rooms_slack_decisions_total{decision="approved",result="approved"} 5`,
+			`maku_rooms_slack_decisions_total{decision="",result="rate_limited"} 1`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("the counter holds no %s:\n%s", want, body)
+			}
+		}
+		// No sleep proves the refill: the limiter's state is the SlackDecider's, so a fresh one over
+		// the same store and the same fakes serves the next press at once.
+		e2 := setup(t, withSponsored(sponsoredP), slackDecideRig(t, st))
+		if got, result := decide(t, e2, press(slackTeam, "U02", ap1, slackBranch, "approved")); got != http.StatusOK || result != "approved" {
+			t.Fatalf("a fresh decider: %d %s, want 200 approved", got, result)
+		}
+		// Another person's presses are their own: the key is the pair, not the route.
+		if got, result := decide(t, e2, press(slackTeam, "U07", ap1, slackBranch, "approved")); got != http.StatusOK {
+			t.Fatalf("another person after the burst: %d %s", got, result)
+		}
+	})
+}
+
+// brokenRooms is the room reader that cannot answer: the Room CR read fails as an API server that
+// is down does, which the route may only answer as retryable.
+type brokenRooms struct{}
+
+func (brokenRooms) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return errors.New("the API server is unavailable")
+}
+
+func (brokenRooms) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return errors.New("the API server is unavailable")
 }

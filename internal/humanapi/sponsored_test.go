@@ -111,11 +111,25 @@ func TestSponsoredReadsItsRoomsOnly(t *testing.T) {
 // (v3.x Slack push approval D2), and on /mcp while no principal is declared: principal() runs the
 // human authenticator, which never accepts it.
 func TestSponsoredTokenElsewhere(t *testing.T) {
-	e := setup(t, mcpOn, withSponsored(sponsoredP))
+	var decisions []decided
+	e := setup(t, mcpOn, withSponsored(sponsoredP), slackDecideOn(t, slackLinks(), slackApprovals(), &decisions))
 	for _, path := range []string{"/api/rooms", "/api/rooms/" + roomID + "/summary", "/v1/ws?room=" + roomID} {
 		if code, _ := get(t, e, path, bearer("slack-app")); code != http.StatusUnauthorized {
 			t.Errorf("%s: %d", path, code)
 		}
+	}
+	// D2: the one route it does reach, and its answer is a closed code rather than a 401.
+	if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, "approved")); got != http.StatusOK || result != "approved" {
+		t.Fatalf("the App's own route: %d %s, want 200 approved", got, result)
+	}
+	// A human's token on that route is the sponsored authenticator's 403, and no code: the App is
+	// the only principal this path names.
+	body, err := json.Marshal(press(slackTeam, "U02", ap1, slackBranch, "approved"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, raw := postDecide(t, e, header("own"), string(body)); code != http.StatusForbidden || strings.Contains(raw, `"result"`) {
+		t.Fatalf("a human on the App's route: %d %q", code, raw)
 	}
 	off := setup(t, mcpOn)
 	if code, _ := rpc(t, off, bearer("slack-app"), "tools/list", nil); code != http.StatusUnauthorized {

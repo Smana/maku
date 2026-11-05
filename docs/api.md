@@ -351,6 +351,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
+| `POST /api/slack/decisions` | The Slack App's one deciding route, when `human.slackDecide`: `{team, user, channel, messageTS, approvalId, branch, decision}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 200 with a closed code for every refusal, `400` for shape, size or content type, `429` over 10 a minute (burst 5, per `(team,user)`, per replica), `503` when the store, the room or the log cannot be read. `forge.push` only; the human is resolved from `slack_links`, and must be an approver or owner of the room *and* write on its repository |
 | `POST /api/rooms` | `{"dataClass": "public", "repository": "Smana/cloud-native-ref"}` → `201 {"id": "…"}`: a new room owned and driven by the caller, any agents member, on a `repository` they can read (room access). `400` for another data class, a missing or malformed repository, an unknown field or a principal the Room CRD would refuse, `404` for a repository the caller cannot read or the factory App cannot see (missing, or the App not installed), `409` when a Room of the generated id exists, `429` past the caller's action budget (10/s, burst 20, shared with acts), `500` when the Room is refused for any other reason, such as the broker lacking `create` on rooms (logged at WARN), `503` when the API server is unreachable, overloaded or times out, or `access_unverified` when the caller's access cannot be checked. The `SameSite=Strict` cookie and the `Origin` check stop a cross-site post |
 | `GET /.well-known/roomctl` | The same `{url, issuer, clientID, projectID, version, humanMode}` with no sign-in, for `maku configure --url`; none of it is a secret. `humanMode` is `oidc` or `local` (`local`: no IdP, no token, and the `maku` values are empty). The proxy in front must let this path through unauthenticated |
 | `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](integration.md#the-brokers-configuration), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/roomctl` leaves them out, since `maku configure` has no use for them |
@@ -613,6 +614,102 @@ Triage makes the room, so a task whose room does not exist yet is `working` for 
 from its creation, then `failed` (`no such room`). A slow triage can flip a `failed` task back to
 `working` once the room appears: poll `tasks/get` until `completed` or `cancelled`, and treat
 `failed` as provisional until the grace is well past.
+
+### `POST /api/slack/decisions`
+
+The one route the Slack App decides an approval through ([Slack](slack.md)): the Approve and Deny
+buttons of a `forge.push` card. It is on only when the broker's config sets `human.slackDecide`
+([integration](integration.md)); off, the path is the mux's `404`, as `/mcp` is when
+`human.mcp.enabled` is false. The class it decides is `forge.push` alone, a constant: no other class
+is decided here, and no configuration widens it.
+
+It takes the App's client-credentials token, through the sponsored authenticator `POST /mcp` uses:
+a human's session or a machine's token is `403`. No cookie is read and no `Origin` is required, so
+the route has no CSRF surface either. The body is strictly decoded — an unknown key is a `400` — and
+capped at 4 KiB, one value per request, with `Content-Type: application/json` required:
+
+```json
+{
+  "team": "T07J97G2K2P",
+  "user": "U07JY4EQNDN",
+  "channel": "C0CC4M8SNVD",
+  "messageTS": "1730822400.123456",
+  "approvalId": "01M4A1B2C3D4E5F6G7H8J9K0MN",
+  "branch": "agent/26zfnuxm",
+  "decision": "approved"
+}
+```
+
+| Field | Shape, checked before any read |
+|---|---|
+| `team` | `^T[A-Z0-9]{2,20}$`, and equal to `human.slackDecide.teamID` |
+| `user` | `^[UW][A-Z0-9]{2,20}$` |
+| `channel` | `^[CG][A-Z0-9]{2,20}$` |
+| `messageTS` | `^[0-9]{1,12}\.[0-9]{1,8}$` |
+| `approvalId` | `^[0-9A-HJKMNP-TV-Z]{26}$`, a ULID: the broker's bridge API is its only producer |
+| `branch` | the Room's run pattern, `^agent/[a-z0-9][a-z0-9._/-]{0,100}$` |
+| `decision` | `approved` or `denied` |
+
+Each person makes 10 decisions a minute, burst 5, per replica, keyed by `(team,user)`: a person
+presses a button a few times and never in a stream, so this is not the room page's 10 a second.
+Past it, `429 rate_limited`.
+
+The answer is one key, always a closed code and never a sentence: `{"result": "approved"}`.
+
+| HTTP | `result` | Meaning |
+|---|---|---|
+| `200` | `approved`, `denied` | The decision was recorded on this request |
+| `200` | `already_decided` | Someone, or this same click replayed, closed it first; nothing was appended |
+| `200` | `approval_expired` | The deadline had passed; the click closed it `expired` if it was still pending |
+| `200` | `not_linked` | The Slack user has no `slack_links` row, or the account has no GitHub identity |
+| `200` | `link_unverified` | ZITADEL or GitHub could not be asked; it fails closed, with no detail |
+| `200` | `not_permitted` | Not an approver or owner in this room, or the room is admins-only |
+| `200` | `repository_permission` | The resolved login cannot write the room's repository |
+| `200` | `four_eyes` | This human prompted the run (or the room), and the room sets four eyes |
+| `200` | `binding_mismatch` | The branch is not the run's branch, or the approval binds none |
+| `200` | `not_supported` | The class is not `forge.push` |
+| `200` | `not_found` | No such approval in the room log |
+| `200` | `sealed` | The room is sealed |
+| `400` | `bad_request` | Shape, body size or content type |
+| `401`, `403` | — | Not the App's principal |
+| `429` | `rate_limited` | Over the pair's budget |
+| `503` | `unavailable` | The store, the room or the log could not be read: retry |
+
+Every refusal is a `200` with a code, apart from those four transport ones, so the App never retries
+a refusal and Slack never redelivers one into a loop. Each answer counts in
+`maku_rooms_slack_decisions_total{result, decision}` ([operations](operations.md)): `result` is the
+code, `decision` the decision it answered with, and empty when the answer carried none.
+
+What it reads, in order, each step naming the code it refuses with. Nothing comes from the request
+beyond its ids: the body cannot name a human, a room or a class.
+
+1. **The App.** The sponsored principal, and its id must be `human.slackDecide.principal`. Not it:
+   `403`.
+2. **The workspace.** `team` must be `human.slackDecide.teamID`. Different: `not_permitted`, and the
+   answer says nothing about which workspace it was.
+3. **The link.** `slack_links` says which ZITADEL account the Slack user is ([Slack self-serve
+   link](slack.md#self-serve-link)). None: `not_linked`.
+4. **The room.** The approval row names it, so a card cannot be pointed at another room's approval.
+   No such approval: `not_found`. The room's state seals it: `sealed`.
+5. **The class.** `forge.push` only: `not_supported` for any other, before any GitHub call.
+6. **Room standing.** The Room CR alone decides it: its `spec.owner`, a `spec.members` role or the
+   `approver` flag. The broker holds no token for the linked human, so no ZITADEL group grant is
+   read: an `agents-admin` who is neither the room's owner nor one of its approvers is
+   `not_permitted` here, and decides on the room page.
+7. **The account.** The current GitHub login of that ZITADEL account: no GitHub link is
+   `not_linked`, and a ZITADEL or GitHub read that fails is `link_unverified`.
+8. **Repository write.** `repository_permission` when the login cannot write the room's repository,
+   which is the second standing a maintainer outside the room does not have.
+9. **The binding.** The approval recorded its run's branch when it was requested, and the run is
+   re-read now; the body's `branch` must be that branch, and an approval that binds none is
+   `binding_mismatch`. A card that outlived the state it was drawn from decides nothing.
+10. **Four eyes.** A room with four eyes refuses the person who prompted it, on the row's own
+    prompters, exactly as the room page compares them.
+11. **The decision.** Through the store's one fence, unchanged. The event names the person, never the
+    App. A replayed click answers as itself, and the opposite decision is not a replay.
+
+Merging is untouched: this route decides an approval, and the merge stays a review of the current
+head on GitHub.
 
 ## `:8082` — the factory's task intake
 
