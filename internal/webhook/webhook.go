@@ -44,6 +44,12 @@ type Event struct {
 	Origin string `json:"origin,omitempty"`
 	// Verdict is the post-merge monitor's verdict on room.monitor_verdict: a closed code, no text.
 	Verdict string `json:"verdict,omitempty"`
+	// The approval a wait line is about (§4): ids and closed values only, so the App can draw one
+	// card with buttons without reading the room.
+	ApprovalID string `json:"approvalId,omitempty"`
+	Class      string `json:"class,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	ExpiresAt  string `json:"expiresAt,omitempty"` // RFC 3339, UTC
 }
 
 // ID is a delivery's webhook-id: the same for every retry and every leader, distinct per

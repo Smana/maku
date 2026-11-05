@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Smana/maku/internal/envelope"
 )
@@ -65,7 +66,7 @@ func TestEvents(t *testing.T) {
 		{fact(6, envelope.TaskFacts{Phase: "AwaitingCI", PR: pr7}), nil},
 		{runPhase(7, "cf4ato2x", "BudgetExhausted", "budget-run"), []string{`{"type":"room.run_ended","room":"aaaaaaaa","run":"cf4ato2x"}`, `{"type":"room.budget_reached","room":"aaaaaaaa","limit":"budget-run"}`}},
 		{runPhase(8, "cf4ato2y", "BudgetExhausted", "budget-<b>"), []string{`{"type":"room.run_ended","room":"aaaaaaaa","run":"cf4ato2y"}`, `{"type":"room.budget_reached","room":"aaaaaaaa","limit":"other"}`}},
-		{approval(9), []string{`{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"approval"}`}},
+		{approval(9), []string{`{"type":"room.waiting_for_human","room":"aaaaaaaa","repo":"Smana/ai-native-ref","reason":"approval"}`}},
 		{fact(10, envelope.TaskFacts{Phase: "Escalated", Reason: "<script>", PR: pr7}), []string{`{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"other"}`}},
 		{fact(11, envelope.TaskFacts{Phase: "Escalated", Reason: "<script>", PR: pr7}), nil},
 		{verdictPosted(12), []string{`{"type":"room.verdict_posted","room":"aaaaaaaa","pr":7}`}},
@@ -114,6 +115,50 @@ func TestEvents(t *testing.T) {
 	}
 	if Clip("reason", "") != "" {
 		t.Error("an empty value stays empty, so it is omitted")
+	}
+}
+
+// §4: the wait line for an approval carries room, repo, approval id, class, branch and deadline;
+// a value outside a closed set is dropped, not clipped to "other" — an approval card with a made-up
+// class is not a card.
+func TestWaitingCarriesApproval(t *testing.T) {
+	var tr Tracker
+	ev := envelope.Event{RoomID: "aaaaaaaa", Seq: 1, RunID: "cf4ato2x", Type: envelope.ApprovalRequested,
+		Payload: envelope.Must(envelope.ApprovalRequestedPayload{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", CallID: "c1",
+			Class: "forge.push", Branch: "agent/26zfnuxm", ExpiresAt: time.Date(2026, 11, 5, 19, 45, 0, 0, time.UTC)})}
+	got := tr.Events("aaaaaaaa", "Smana/ai-native-ref", ev)
+	if len(got) != 1 {
+		t.Fatalf("%v", got)
+	}
+	e := got[0]
+	if e.Type != "room.waiting_for_human" || e.Repo != "Smana/ai-native-ref" || e.Reason != "approval" ||
+		e.ApprovalID != "01M4A1B2C3D4E5F6G7H8J9K0MN" || e.Class != "forge.push" || e.Branch != "agent/26zfnuxm" ||
+		e.ExpiresAt != "2026-11-05T19:45:00Z" {
+		t.Fatalf("%+v", e)
+	}
+	// A class outside the five is dropped; a branch outside the CRD's pattern is dropped, while a
+	// valid class on the same event is kept: the values are judged one by one, never the event.
+	wait := func(p envelope.ApprovalRequestedPayload) Event {
+		t.Helper()
+		var tr Tracker
+		got := tr.Events("aaaaaaaa", "Smana/ai-native-ref", envelope.Event{RoomID: "aaaaaaaa", Seq: 1,
+			Type: envelope.ApprovalRequested, Payload: envelope.Must(p)})
+		if len(got) != 1 {
+			t.Fatalf("%v", got)
+		}
+		return got[0]
+	}
+	if e := wait(envelope.ApprovalRequestedPayload{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", CallID: "c1",
+		Class: "shell", Branch: "agent/26zfnuxm"}); e.Class != "" || e.Branch != "agent/26zfnuxm" {
+		t.Fatalf("a class outside the five: %+v", e)
+	}
+	if e := wait(envelope.ApprovalRequestedPayload{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", CallID: "c1",
+		Class: "forge.push", Branch: "main"}); e.Class != "forge.push" || e.Branch != "" {
+		t.Fatalf("a branch outside the pattern: %+v", e)
+	}
+	if e := wait(envelope.ApprovalRequestedPayload{ApprovalID: "ap1", CallID: "c1", Class: "forge.push",
+		Branch: "agent/26zfnuxm"}); e.ApprovalID != "" || e.Class != "forge.push" {
+		t.Fatalf("an id that is not a ULID: %+v", e)
 	}
 }
 
