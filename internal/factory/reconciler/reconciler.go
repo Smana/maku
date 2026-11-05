@@ -121,6 +121,9 @@ type metrics interface {
 	SplitChild(ctx context.Context, class, outcome string)
 	// RevisionDeferred counts a first run that yielded its slot-time to a revision (CD22).
 	RevisionDeferred(ctx context.Context)
+	// TaskSpendFinal records how long a terminal task's dollars took to settle, from its last
+	// run's end to the pass that posted them (CD23).
+	TaskSpendFinal(ctx context.Context, d time.Duration)
 }
 
 // A task's span unexported at its end is retried every spanRetry, and given up spanGiveUp after
@@ -239,8 +242,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, rerr
 		}
 	}
-	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(&t) && !closeDue {
-		return ctrl.Result{RequeueAfter: closeWait}, nil // closeWait: the revert window still open (#56)
+	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(&t) && !r.spendFinalDue(&t) && !closeDue {
+		left := closeWait
+		// CD23's one timed requeue: the instant a terminal task's dollars are final, never a poll.
+		// Only an instant still ahead is scheduled — past it the pass below owes the fact, and
+		// scheduling it again would wake the task every second for a figure already posted.
+		if at, ok := r.spendFinalAt(&t); ok && r.Now().Before(at) {
+			left = soonest(left, max(at.Sub(r.Now()), time.Second))
+		}
+		return ctrl.Result{RequeueAfter: left}, nil // closeWait: the revert window still open (#56)
 	}
 	before := t.Status.DeepCopy()
 	if t.Status.Phase == "" {
@@ -256,6 +266,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err == nil && ended && watchWait && r.settling(&t) {
 		// A task kept alive by a watch still settles its usage: the switch above took the watch.
 		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), &t)
+	}
+	// CD23: the final spend. The pass that owes it prices the task's runs again — price is
+	// idempotent, a record only ever takes the larger cost — so the fact posted below carries the
+	// figure the meter settled on after the run left its active set.
+	finalSpend := r.spendFinalDue(&t)
+	if finalSpend {
+		r.price(ctx, &t)
 	}
 	if !equality.Semantic.DeepEqual(*before, t.Status) {
 		r.capOutbox(&t)
@@ -275,11 +292,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(&t) {
 		queued := t.Status.DeepCopy()
 		err = errors.Join(err, r.drain(ctx, &t))
-		err = errors.Join(err, r.postFacts(ctx, &t))
+		perr := r.postFacts(ctx, &t)
+		err = errors.Join(err, perr)
 		r.endTrace(ctx, &t)
+		// CD23: the pass that landed the final fact records how long its dollars took to settle,
+		// from the last run's end. A post that failed is retried, and its retry counts it; a fact
+		// the pass could not claim (an unpriced run) counts nothing.
+		final := finalSpend && perr == nil && r.spendIsFinal(&t) && t.Status.Facts != nil && t.Status.Facts.Posted &&
+			(queued.Facts == nil || queued.Facts.Hash != t.Status.Facts.Hash)
 		if !equality.Semantic.DeepEqual(*queued, t.Status) {
 			if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
 				return ctrl.Result{}, errors.Join(err, uerr)
+			}
+			if final {
+				if end, ok := lastRunEnd(&t); ok {
+					r.Metrics.TaskSpendFinal(ctx, r.Now().Sub(end))
+				}
 			}
 			if t.Status.Trace != nil && t.Status.Trace.ExportAbandoned && !queued.Trace.ExportAbandoned {
 				r.Metrics.TraceExportAbandoned(ctx) // once: counted with the write that records it
@@ -294,6 +322,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		spanWait = spanRetry
 	}
 	if v1alpha1.TerminalPhase(t.Status.Phase) {
+		// CD23: the one wake-up the final spend is owed, while its instant is still ahead. It is
+		// folded into every requeue below, as the settle's is: a task whose room closed before the
+		// instant would otherwise never be woken for it.
+		var finalWait time.Duration
+		if at, ok := r.spendFinalAt(&t); ok && r.Now().Before(at) {
+			finalWait = max(at.Sub(r.Now()), time.Second)
+		}
 		// #56: the room closes once everything the task owes it has landed. Re-evaluated on the
 		// state this pass left, so the pass that posts the last fact closes it.
 		var closeLeft time.Duration
@@ -312,19 +347,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		// The revert watch polls: a revert PR merges, closes or stalls on GitHub's clock, not ours.
 		if err == nil && (r.revertable(&t) || r.revertPending(&t)) {
-			return ctrl.Result{RequeueAfter: soonest(r.Cfg.Poll.Tasks.Duration, spanWait)}, nil
+			return ctrl.Result{RequeueAfter: soonest(soonest(r.Cfg.Poll.Tasks.Duration, spanWait), finalWait)}, nil
 		}
 		if err == nil && r.settling(&t) {
 			wait := r.settleLeft(&t) // for the settle, at its window, unless a merge under watch is due sooner
 			if r.monitorDue(&t) {
 				wait = min(wait, monitorEvery)
 			}
-			return ctrl.Result{RequeueAfter: soonest(wait, spanWait)}, nil
+			return ctrl.Result{RequeueAfter: soonest(soonest(wait, spanWait), finalWait)}, nil
 		}
 		if err == nil && r.monitorDue(&t) && (closeLeft <= 0 || closeLeft > monitorEvery) {
-			return ctrl.Result{RequeueAfter: soonest(monitorEvery, spanWait)}, nil // a merge under watch is read on its own clock
+			return ctrl.Result{RequeueAfter: soonest(soonest(monitorEvery, spanWait), finalWait)}, nil // a merge under watch is read on its own clock
 		}
-		return ctrl.Result{RequeueAfter: soonest(closeLeft, spanWait)}, err // closeLeft: the revert window or a driving person (#56)
+		return ctrl.Result{RequeueAfter: soonest(soonest(closeLeft, spanWait), finalWait)}, err // closeLeft: the revert window or a driving person (#56)
 	}
 	if err != nil {
 		return ctrl.Result{}, err
@@ -709,6 +744,74 @@ func (r *Reconciler) settleLeft(t *v1alpha1.Task) time.Duration {
 	return max(r.settleWindow()-r.Now().Sub(t.Status.PhaseSince.Time), time.Second)
 }
 
+// spendFinalMargin is past the meter's own settle window, so the re-price reads a figure that has
+// landed: the meter prices a run from its claim's annotation, one tick behind at worst (R49).
+const spendFinalMargin = time.Minute
+
+// lastRunEnd is when a task's last run ended — its finish, else its start, else the end of the
+// phase it is in — the instant CD23 measures the final spend and its metric from. false for a task
+// that never ran.
+func lastRunEnd(t *v1alpha1.Task) (time.Time, bool) {
+	if len(t.Status.Runs) == 0 {
+		return time.Time{}, false
+	}
+	last := t.Status.Runs[len(t.Status.Runs)-1]
+	end := last.Started
+	if last.Finished != nil {
+		end = last.Finished
+	}
+	if end == nil {
+		end = t.Status.PhaseSince
+	}
+	if end == nil {
+		return time.Time{}, false
+	}
+	return end.Time, true
+}
+
+// spendFinalAt is when a terminal task's dollars are final (CD23): its last run's end, plus the
+// settle window, plus a margin. false for a task that never ran — there is nothing to settle — or
+// when facts.finalSpend is off.
+func (r *Reconciler) spendFinalAt(t *v1alpha1.Task) (time.Time, bool) {
+	if !r.Cfg.Facts.FinalSpend || !v1alpha1.TerminalPhase(t.Status.Phase) {
+		return time.Time{}, false
+	}
+	end, ok := lastRunEnd(t)
+	if !ok {
+		return time.Time{}, false
+	}
+	return end.Add(r.settleWindow() + spendFinalMargin), true
+}
+
+// spendFinalDue: the pass that owes a terminal task's last word about its dollars (CD23) — the
+// instant has passed, and the room does not carry the fact this pass would post. That fact is the
+// final one when every run is priced, and the settled facts otherwise, so a task whose dollars
+// cannot be claimed is at rest here rather than posting a figure it would have to change.
+func (r *Reconciler) spendFinalDue(t *v1alpha1.Task) bool {
+	at, ok := r.spendFinalAt(t)
+	return ok && !r.Now().Before(at) && r.factsDue(t)
+}
+
+// spendIsFinal: the task's dollars are the last figure its room will read (CD23). Past the instant,
+// and only when every run of the task is priced: a final spend is a claim about money, so a run the
+// meter could only say Why about — or one it has no figure for — withholds it.
+func (r *Reconciler) spendIsFinal(t *v1alpha1.Task) bool {
+	at, ok := r.spendFinalAt(t)
+	return ok && !r.Now().Before(at) && allPriced(t)
+}
+
+// allPriced: every run of the task carries a price. A cost entry with a Why and no dollars (the
+// meter could not price the model) leaves the record unpriced, and so does a run with tokens and no
+// cost: both are "no figure", never $0 (OD-6 (b)).
+func allPriced(t *v1alpha1.Task) bool {
+	for _, rec := range t.Status.Runs {
+		if rec.Unpriced != "" || (rec.Tokens > 0 && rec.CostMicroUSD == 0) {
+			return false
+		}
+	}
+	return true
+}
+
 // soonest is the nearer of two requeues, where 0 means none.
 func soonest(a, b time.Duration) time.Duration {
 	switch {
@@ -889,15 +992,7 @@ func runFits(t *v1alpha1.Task) bool {
 // it holds was priced. A run the meter could not price, or one with tokens and no cost (a task
 // begun before the meter priced runs), holds it to TaskTokens: never a cost counted as $0.
 func usdCapped(t *v1alpha1.Task) bool {
-	if t.Spec.Budget.TaskMicroUSD <= 0 {
-		return false
-	}
-	for _, rec := range t.Status.Runs {
-		if rec.Unpriced != "" || (rec.Tokens > 0 && rec.CostMicroUSD == 0) {
-			return false
-		}
-	}
-	return true
+	return t.Spec.Budget.TaskMicroUSD > 0 && allPriced(t)
 }
 
 // taskLimit names the task cap runFits checks, for the revocations metric.

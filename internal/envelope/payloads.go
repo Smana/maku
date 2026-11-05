@@ -142,6 +142,10 @@ type TaskFacts struct {
 	Budget *BudgetFact `json:"budget,omitempty"`
 	// Spend is the task's dollars, beside Budget's tokens (BudgetFact is unchanged).
 	Spend *SpendFact `json:"spend,omitempty"`
+	// SpendFinal is CD23: the Spend beside it is the task's last figure — priced again after the
+	// settle window, and never bucketed by the facts key. False while the dollars may still move,
+	// and for a task whose runs the meter cannot price: no figure is claimed for those.
+	SpendFinal bool `json:"spendFinal,omitempty"`
 	// Runs is the task's run history, oldest first, at most MaxRuns.
 	Runs  []RunFact  `json:"runs,omitempty"`
 	Issue *IssueFact `json:"issue,omitempty"`

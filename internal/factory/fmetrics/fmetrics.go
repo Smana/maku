@@ -130,6 +130,9 @@ var (
 	runCostBuckets = []float64{0.1, 0.25, 0.51, 0.75, 1, 1.5, 2, 2.55, 3.5, 5, 6.8, 10}
 	// AM9: 5 m, 15 m, 1 h, 4 h, 1 d, 3 d, 7 d.
 	handoffToMergeBuckets = []float64{300, 900, 3600, 14400, 86400, 259200, 604800}
+	// CD23: the settle window itself (2.5 m at the default meter poll), then a slow meter, a slow
+	// post, and the 15-minute retention bound past which no settled cost is readable any more.
+	spendFinalBuckets = []float64{60, 150, 300, 600, 900, 1800, 3600}
 )
 
 // Set is the factory's instruments. Record through its methods, which fix each label set.
@@ -164,6 +167,7 @@ type Set struct {
 	noHoldout            metric.Int64Gauge
 	classPaused          metric.Int64Gauge
 	roomsCapped          metric.Int64Counter
+	taskSpendFinal       metric.Float64Histogram
 	usageErrors          metric.Int64Counter
 	meterSuccess         metric.Int64Gauge
 	overshoot            metric.Int64Counter
@@ -389,6 +393,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.roomsCapped, err = meter.Int64Counter("agent_factory_rooms_closed_at_cap_total",
 		metric.WithDescription("Finished tasks' rooms closed a day after the end, by the wait cut short: a driver still holding the room, or facts the broker never took (#92)."))
+	check(err)
+	s.taskSpendFinal, err = meter.Float64Histogram("agent_factory_task_spend_final_seconds",
+		metric.WithDescription("From a terminal task's last run's end to the pass that posted its final spend (CD23): inside the meter's 15-minute retention, or the figure was not claimable."),
+		metric.WithExplicitBucketBoundaries(spendFinalBuckets...))
 	check(err)
 	// #54: the meter's health. Only the leader meters, so only the leader sets the timestamp:
 	// an alert reads its max across pods.
@@ -923,6 +931,13 @@ func (s *Set) TraceExportAbandoned(ctx context.Context) { s.traceAbandoned.Add(c
 // RevisionDeferred counts a first run that waited one slot-time for a revision (CD22), by no label:
 // the counter answers how often the preference bites, and the room's row says which task.
 func (s *Set) RevisionDeferred(ctx context.Context) { s.revisionDeferred.Add(ctx, 1) }
+
+// TaskSpendFinal records how long a terminal task's dollars took to settle (CD23): from its last
+// run's end to the pass that posted the final figure. A sample at or past 15 minutes says the
+// meter's retention had already dropped the cost the final needed.
+func (s *Set) TaskSpendFinal(ctx context.Context, d time.Duration) {
+	s.taskSpendFinal.Record(ctx, d.Seconds(), metric.WithAttributes(s.repoOf(ctx)))
+}
 
 // GitHubUp sets agent_factory_github_up: whether GitHub answered recently (forge.Healthy).
 func (s *Set) GitHubUp(ctx context.Context, up bool) {

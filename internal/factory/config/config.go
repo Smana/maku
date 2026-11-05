@@ -136,6 +136,7 @@ type Config struct {
 	Tiers     map[string]Tier     `json:"tiers"`
 	Templates map[string]Template `json:"templates"`
 	Caps      Caps                `json:"caps"`
+	Facts     Facts               `json:"facts,omitzero"`
 	Budgets   Budgets             `json:"budgets"`
 	Resume    Resume              `json:"resume"`
 	Scoper    Scoper              `json:"scoper,omitzero"`
@@ -508,6 +509,17 @@ type Caps struct {
 	// waits with the reason waiting_revision_first. Caps still bind: this priority never overrides
 	// a limit, and nothing is reserved — a first run gives up one slot-time. Off by default.
 	PreferRevisions bool `json:"preferRevisions,omitempty"`
+}
+
+// Facts are what a terminal task tells its room about its dollars (CD23). A switch here lands with
+// the code that reads it: both decoders refuse a key they do not know, so a file written for a
+// later release fails this one's rollout instead of silently changing nothing.
+type Facts struct {
+	// FinalSpend is CD23: a terminal task requeues once at its last run's end plus the settle
+	// window plus a margin, prices its runs again, and posts one fact whose dollars it will not
+	// change — the facts key stops bucketing dollars for it. Off by default: it is a new claim
+	// about money, and a room that read it needs the release that writes it.
+	FinalSpend bool `json:"finalSpend,omitempty"`
 }
 
 // Budgets are the admission-time caps SP3 owns (C5). The task cap is enforced unless the config
