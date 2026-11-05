@@ -4,7 +4,7 @@
 // the chat and raw views, and the dock (the session's controls behind a toggle, the
 // composer, the connection), all fed by one RoomConnection.
 
-import { api, fetchEvents } from "./api";
+import { api, fetchEvents, fetchNeeds } from "./api";
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
@@ -126,7 +126,10 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       return sent;
     },
   };
-  const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, { rowFor: views.rowFor, reveal: () => runView.leave() }, () => snap?.fourEyes);
+  const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, { rowFor: views.rowFor, reveal: () => runView.leave() }, () => snap?.fourEyes,
+    // The panel's list is this room's from the route the CLI and the tools read (CD21), through the
+    // page's own fetch so a test drives it as it drives the summary.
+    { needs: () => fetchNeeds(id, undefined, o.get) });
   let controls: ReturnType<typeof mountControls> | undefined;
   let composer: ReturnType<typeof mountComposer> | undefined;
   const say = (text: string) => { notice.textContent = text; };

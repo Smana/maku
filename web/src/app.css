@@ -613,6 +613,9 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .needs h2 { margin: 0; font-size: 1em; }
 .approvals, .needs-other { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .needs-other li { overflow-wrap: anywhere; }
+/* A list that could not be refreshed, and a room whose state could not be read: information under the
+   list, not needs themselves, so the pill does not count them. */
+.needs-other li.needs-stale, .needs-other li.needs-unread { color: var(--muted-foreground); font-size: 13px; }
 /* The 6 px reason field and buttons plus the 8 px of padding, concentric. The accent is a bar,
    as a rejected call's is, on the card's own edge; the left padding clears its 3 px. */
 .approval { border-radius: calc(var(--radius-control) + 8px); padding: 8px 12px 8px 15px; display: grid; gap: 6px;

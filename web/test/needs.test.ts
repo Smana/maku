@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { NeedsPage } from "../src/api";
 import type { Snapshot } from "../src/conn";
 import { RULES } from "../src/approval-help";
 import { approvalCard } from "../src/controls";
@@ -12,10 +13,10 @@ const approval = { approvalId: "01M4A", runId: "ikely2yk", callId: "c9", class: 
 const sum = (needs: Summary["needsYou"]): Summary => ({ apiVersion: "summary/v1", room: "r", url: "u",
   status: { phase: "Implementing", run: null, budget: null, pr: null, issue: null, lastVerdict: null }, needsYou: needs, actions: [],
   notes: { untrusted: true, items: [] }, cursor: "seq:1" });
-function mount(state = new RoomState(), sent: Record<string, unknown>[] = []) {
+function mount(state = new RoomState(), sent: Record<string, unknown>[] = [], opts: { needs?: () => Promise<NeedsPage> } = {}) {
   const root = document.createElement("section");
   const row = document.createElement("details"); row.dataset.callId = "c9"; row.dataset.seq = "12";
-  const needs = mountNeeds(root, { send: (f) => { sent.push(f); return true; } }, state, () => you, { rowFor: (id) => (id === "c9" ? row : undefined) });
+  const needs = mountNeeds(root, { send: (f) => { sent.push(f); return true; } }, state, () => you, { rowFor: (id) => (id === "c9" ? row : undefined) }, () => undefined, opts);
   return { root, needs, sent, row };
 }
 
@@ -129,6 +130,98 @@ describe("the needs-you panel", () => {
       expect(root.querySelector(`#${b.getAttribute("aria-describedby")}`)).toBe(root.querySelector(".approval-command"));
     }
     expect(root.querySelector('button[data-act="deny"]')?.classList.contains("deny")).toBe(true);
+  });
+});
+
+// The list under the cards is the needs route's (CD21), not the summary frame's: the panel reads
+// /api/needs?room=<id>, so the page lists what the CLI and the tools list, in the route's order.
+describe("the panel's list from the needs route", () => {
+  // CD21: the panel's non-approval items are the route's, whatever the summary frame says.
+  it("renders the needs route's items", async () => {
+    const page: NeedsPage = { apiVersion: "needs/v1", cursor: "2026-11-04T19:10:00Z", items: [
+      { kind: "plan_confirmation", id: "2238", room: "26zfnuxm", what: "the scoper proposes a split",
+        action: { kind: "comment", label: "comment /factory split on issue #2238", url: "https://github.com/Smana/ai-native-ref/issues/2238" }, source: { kind: "facts" } }] };
+    const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => page });
+    // The summary's items hold the panel until the read answers, never an empty panel.
+    panel.setSummary(sum([{ kind: "merge", id: "77", what: "a maintainer merges PR #77", url: "https://github.com/o/r/pull/77" }]));
+    expect(root.textContent).toContain("a maintainer merges PR #77");
+    await panel.refresh();
+    expect(root.textContent).toContain("comment /factory split on issue #2238");
+    expect(root.textContent).not.toContain("a maintainer merges PR #77");
+    expect(root.querySelector("ul.needs-other li.need a")?.getAttribute("href")).toBe("https://github.com/Smana/ai-native-ref/issues/2238");
+    expect(panel.count()).toBe(1);
+  });
+
+  // Deciding is the cards': the route lists approvals too, and a second decision path on the same
+  // item would be a button that does not know four-eyes or the policy.
+  it("leaves an approval to its card, and links only https", async () => {
+    const page: NeedsPage = { apiVersion: "needs/v1", items: [
+      { kind: "approval", id: "01M4A", room: "r", what: "the agent wants to push", url: "https://broker/r/1#01M4A",
+        action: { kind: "decide", label: "decide in the room", url: "https://broker/r/1#01M4A" } },
+      { kind: "merge", id: "77", room: "r", what: "a maintainer merges PR #77", url: "javascript:alert(1)",
+        action: { kind: "merge", label: "open the pull request", url: "javascript:alert(1)" } }] };
+    const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => page });
+    await panel.refresh();
+    const items = [...root.querySelectorAll("ul.needs-other li")];
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).not.toContain("decide in the room");
+    expect(items[0].textContent).toContain("a maintainer merges PR #77");
+    expect(items[0].querySelector("a")).toBeNull(); // safeLink: not https, text
+    expect(items[0].textContent).toContain("javascript:alert(1)");
+    expect((items[0] as HTMLElement).dataset.kind).toBe("merge");
+  });
+
+  // A read that failed says so in one line and leaves the list it could not refresh in place: a
+  // quiet panel is the one thing it must not look like.
+  it("keeps the summary's items and says why when the read fails", async () => {
+    const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => { throw new Error("The needs list is unavailable: 503."); } });
+    panel.setSummary(sum([{ kind: "hold", id: "waiting_human_driver", what: "hand the driver back", url: "u" }]));
+    await panel.refresh();
+    expect([...root.querySelectorAll("ul.needs-other li")].map((l) => l.textContent))
+      .toEqual(["Hold: hand the driver back", "The needs list is unavailable: 503."]);
+    expect(root.hidden).toBe(false);
+    expect(panel.count()).toBe(1); // the line is not a need
+  });
+
+  // Review Focus 1: a room whose state could not be read contributes nothing, and the panel says so.
+  it("says a room's state could not be read, in one line", async () => {
+    const page: NeedsPage = { apiVersion: "needs/v1", items: [], unread: ["3kq7x2ma"] };
+    const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => page });
+    await panel.refresh();
+    const line = root.querySelector<HTMLElement>("ul.needs-other li.needs-unread");
+    expect(line?.textContent).toContain("3kq7x2ma");
+    expect(line?.textContent).toContain("could not be read");
+    expect(root.hidden).toBe(false);
+    expect(panel.count()).toBe(0);
+  });
+
+  // refresh runs on every frame a replay delivers; one read is a scan of every room the caller may
+  // read, so a burst of frames costs one.
+  it("reads the route on a cadence, not on every frame", async () => {
+    vi.useFakeTimers();
+    try {
+      let reads = 0;
+      const { needs: panel } = mount(new RoomState(), [], { needs: async () => { reads++; return { apiVersion: "needs/v1", items: [] }; } });
+      vi.setSystemTime(new Date(2026, 10, 5, 10, 0, 0));
+      await panel.refresh();
+      await panel.refresh();
+      await panel.refresh();
+      expect(reads).toBe(1);
+      vi.setSystemTime(new Date(2026, 10, 5, 10, 0, 6));
+      await panel.refresh();
+      expect(reads).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Nothing to show and a read that failed: no heading, as before the first read answered. The page's
+  // own error line carries the outage; a "Needs you" heading over one error would say the opposite.
+  it("stays hidden when it has nothing to show", async () => {
+    const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => { throw new Error("The needs list is unavailable: 503."); } });
+    await panel.refresh();
+    expect(root.querySelector("ul.needs-other li")).toBeNull();
+    expect(root.hidden).toBe(true);
   });
 });
 

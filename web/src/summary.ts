@@ -51,8 +51,9 @@ export interface Summary {
   };
   // A hold (N3): a factory task waits on the viewer's hold on this room; id is its wait reason.
   runs?: { id: string; role: string; provenance?: { servedModels?: string[] } }[]; // the task's run history, oldest first
-  // needs/v1's eight kinds, in the order the broker lists them (CD21); the page renders the ones a
-  // viewer acts on, silently aware of the rest until the needs panel reads them (PR 3).
+  // needs/v1's eight kinds, in the order the broker lists them (CD21). The panel's list is the needs
+  // route's (needs.ts, /api/needs); these entries stand in until that read answers, and stay if it
+  // fails, so the parts rendered here are the ones a summary has always carried.
   // question: a task the scoper bounced waits on its issue's author (scoper SC8); id is the issue
   // number, url the issue, author its author's GitHub login. approve: a merge need a maintainer's
   // approval settles (approveToMerge).
@@ -143,7 +144,9 @@ function linkedNeed(label: string, what: string, link: Node): HTMLLIElement {
 }
 
 // needsItems is the summary's merges, questions and holds, one list item each; the approvals come
-// from the live log instead (needs.ts), so the summary's approval entries are skipped.
+// from the live log instead (needs.ts), so the summary's approval entries are skipped. It is the
+// panel's list until the needs route answers (and after a read that failed), which is the list every
+// surface reads (CD21).
 export function needsItems(s: Summary): HTMLLIElement[] {
   const out: HTMLLIElement[] = [];
   for (const n of s.needsYou) {

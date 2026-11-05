@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "../src/conn";
+import type { NeedsPage } from "../src/api";
 import type { Dashboard } from "../src/dashboards";
 import { mountRoom } from "../src/room";
 import { FakeSocket } from "./fakes";
@@ -277,10 +278,15 @@ describe("the room page", () => {
   const listed = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
   // The summary fetch is not a list call: it gets a 503 and is not counted.
   const noSummary = Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) });
+  // The needs panel reads /api/needs beside the summary (needs.ts): the scripts here answer it, so a
+  // fake counts only the calls its test is about. The panel's own read is needs.test.ts's.
+  const noNeeds = () => Promise.resolve(new Response(JSON.stringify({ apiVersion: "needs/v1", items: [] }), { status: 200 }));
+  const isNeeds = (url: string) => String(url).startsWith("/api/needs");
   const lists = (...script: string[][]) => {
     const calls: number[] = [];
     const get = ((url: string) => {
       if (url.includes("/summary")) return noSummary;
+      if (isNeeds(url)) return noNeeds();
       calls.push(calls.length);
       return listed(script[Math.min(calls.length - 1, script.length - 1)].map((id) => ({ id })));
     }) as unknown as typeof fetch;
@@ -318,6 +324,7 @@ describe("the room page", () => {
     let asked = 0;
     const p = page(((url: string) => {
       if (url.includes("/summary")) return noSummary;
+      if (isNeeds(url)) return noNeeds();
       asked++;
       return asked < 3 ? listed([]) : new Promise((r) => { answer = r; });
     }) as unknown as typeof fetch);
@@ -428,21 +435,27 @@ describe("the room page", () => {
   it("leads with the summary, refetched at most once a second on summary events, over the one socket", async () => {
     const sum = { apiVersion: "summary/v1", room: "3kq7x2ma", url: "u", status: { phase: "Open", run: null, budget: null, pr: null, issue: null, lastVerdict: null },
       needsYou: [], actions: [], notes: { untrusted: true, items: [{ at: "2026-10-06T10:00:00Z", run: "ikely2yk", text: "reading" }] }, cursor: "seq:0" };
-    const get = vi.fn(async () => new Response(JSON.stringify(sum), { status: 200 })) as unknown as typeof fetch;
+    const calls: string[] = [];
+    const get = vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return isNeeds(url) ? noNeeds() : new Response(JSON.stringify(sum), { status: 200 });
+    }) as unknown as typeof fetch;
+    // The summary's reads alone: the needs panel reads the route beside it, on its own cadence.
+    const summaryCalls = () => calls.filter((u) => !isNeeds(u)).length;
     const p = page(get);
     await vi.advanceTimersByTimeAsync(0);
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(summaryCalls()).toBe(1);
     expect(p.app.querySelector('.summary [data-block="notes"]')).not.toBeNull();
     expect(p.app.querySelector<HTMLDetailsElement>("details.raw-events")!.open).toBe(false);
     p.join(snapshot(), 0);
     p.last().recv(event(1, "message", { kind: "chat", text: "a", delivery: "none" }));
     p.last().recv(event(2, "tool_call", { callId: "c1", tool: "terminal", args: {} }));
     await vi.advanceTimersByTimeAsync(1000);
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(summaryCalls()).toBe(1);
     p.last().recv(event(3, "message", { kind: "progress", text: "planning", delivery: "none" }));
     p.last().recv(event(4, "state_changed", { kind: "task", phase: "Implementing" }));
     await vi.advanceTimersByTimeAsync(1000);
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(summaryCalls()).toBe(2);
     expect(p.sockets).toHaveLength(1);
   });
 
@@ -661,6 +674,27 @@ describe("the room page", () => {
       expect(p.app.querySelector<HTMLElement>("section.needs")!.hidden).toBe(true);
       expect(pill(p)).toBeUndefined();
     });
+    // CD21: the page's list is the route's, for this room, through the page's own fetch — the same
+    // list the CLI and the tools read.
+    it("reads this room's list from the needs route", async () => {
+      const urls: string[] = [];
+      const listed: NeedsPage = { apiVersion: "needs/v1", cursor: "2026-11-04T19:10:00Z", items: [
+        { kind: "merge", id: "77", room: "3kq7x2ma", what: "a maintainer merges PR #77", url: "https://github.com/o/r/pull/77",
+          action: { kind: "merge", label: "open the pull request", url: "https://github.com/o/r/pull/77" } }] };
+      const p = page((async (url: string) => {
+        urls.push(url);
+        return isNeeds(url) ? new Response(JSON.stringify(listed), { status: 200 }) : new Response("", { status: 503 });
+      }) as unknown as typeof fetch);
+      p.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(urls).toContain("/api/needs?room=3kq7x2ma");
+      const panel = p.app.querySelector<HTMLElement>("section.needs")!;
+      expect(panel.hidden).toBe(false);
+      expect(panel.querySelector("ul.needs-other li a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/77");
+      // The strip's pill reads the panel's count, and the ticker refreshes it once a second.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(pill(p)).toBe("Needs you · 1");
+    });
   });
 
   describe("summary refresh", () => {
@@ -673,7 +707,7 @@ describe("the room page", () => {
 
     it("keeps the blocks and adds an error line when a refresh fails", async () => {
       const replies = [() => ok(sum("Running", "seq:1")), () => new Response("", { status: 503 })];
-      const p = page((async () => replies.shift()!()) as unknown as typeof fetch);
+      const p = page((async (url: string) => isNeeds(url) ? noNeeds() : replies.shift()!()) as unknown as typeof fetch);
       await vi.advanceTimersByTimeAsync(0);
       p.join(snapshot(), 0);
       note(p, 1);
@@ -686,7 +720,7 @@ describe("the room page", () => {
 
     it("drops a response older than the one already rendered", async () => {
       const late: ((r: Response) => void)[] = [];
-      const p = page((() => new Promise<Response>((r) => late.push(r))) as unknown as typeof fetch);
+      const p = page(((url: string) => isNeeds(url) ? noNeeds() : new Promise<Response>((r) => late.push(r))) as unknown as typeof fetch);
       p.join(snapshot(), 0);
       note(p, 1);
       await tick(); // request 2 is out beside request 1
@@ -750,11 +784,17 @@ describe("the room page", () => {
       status: { phase: "Implementing", run: null, budget: null, pr: null, issue: null, lastVerdict: null },
       needsYou: [], actions: [], notes: { untrusted: true, items: [] }, cursor: "seq:0", ...(flow ? { flow } : {}) });
     const withFlow = async (flow?: object) => {
-      const get = vi.fn(async () => ({ ok: true, status: 200, json: async () => sumWith(flow) })) as unknown as typeof fetch;
+      const calls: string[] = [];
+      const get = vi.fn(async (url: string) => {
+        calls.push(url);
+        return isNeeds(url) ? noNeeds() : { ok: true, status: 200, json: async () => sumWith(flow) };
+      }) as unknown as typeof fetch;
       const p = page(get);
       p.join(snapshot(), 0);
       await vi.advanceTimersByTimeAsync(0);
-      return { p, get };
+      // The summary's reads alone: the needs panel reads the route beside it (needs.ts).
+      const summaryCalls = () => calls.filter((u) => !isNeeds(u)).length;
+      return { p, summaryCalls };
     };
     const flow = { nodes: [node({})], ghosts: ["reviewer"] };
 
@@ -788,10 +828,10 @@ describe("the room page", () => {
     });
 
     it("a judge verdict refetches", async () => {
-      const { p, get } = await withFlow(flow);
+      const { p, summaryCalls } = await withFlow(flow);
       p.last().recv(event(1, "message", { kind: "judge_verdict", text: "x" }));
       await vi.advanceTimersByTimeAsync(1000);
-      expect(get).toHaveBeenCalledTimes(2);
+      expect(summaryCalls()).toBe(2);
     });
 
     it("dots open the drawer", async () => {
