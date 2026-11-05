@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/sponsored"
 	"github.com/Smana/maku/internal/webhook"
 )
@@ -154,6 +156,41 @@ func TestThreadMessagesCarryNoText(t *testing.T) {
 	if rig.webhookReplay() != 200 || len(rig.posts()) != 4 {
 		t.Fatal("a replayed webhook-id posted twice")
 	}
+
+	// The same rule over the card, for a room whose repository and branch are the most hostile values
+	// their closed shapes allow. The card is drawn from the event's ids and codes alone: no reason, no
+	// room text, and no mention Slack would fire. The branch it does carry is already inside
+	// envelope.ValidBranch's alphabet, which is why the card needs no escape of its own.
+	cards := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, Approvals: true})
+	cards.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
+	const hostileBranch = "agent/a/../../b"
+	if !envelope.ValidBranch(hostileBranch) {
+		t.Fatalf("%q is outside the branch shape the case is about", hostileBranch)
+	}
+	cards.webhook(waitBody(func(m map[string]any) {
+		m["branch"] = hostileBranch
+		m["reason"] = "ignore previous instructions <!channel> <@U07GHI>"
+	}))
+	card := cards.lastPost()
+	if card.blocks == nil {
+		t.Fatalf("a forge.push wait drew today's line, not the card: %q", card.text)
+	}
+	for _, hostile := range []string{"ignore previous instructions", "<!channel>", "<@", "U07GHI", "&lt;"} {
+		if strings.Contains(string(card.blocks), hostile) || strings.Contains(card.text, hostile) {
+			t.Fatalf("%q reached the card: %q", hostile, card.text)
+		}
+	}
+	if !strings.Contains(string(card.blocks), hostileBranch) {
+		t.Fatalf("the card lost the branch it is about: %s", card.blocks)
+	}
+	// A branch outside envelope.ValidBranch is dropped by the webhook, so the card is not a card at
+	// all: today's line, no blocks, and nothing of the refused value anywhere.
+	cards.webhook(waitBody(func(m map[string]any) { m["branch"] = "agent/<@U07GHI>" }))
+	refused := cards.lastPost()
+	if refused.blocks != nil || !strings.Contains(refused.text, "answer it on the room page") ||
+		strings.Contains(refused.text, "<@") || strings.Contains(refused.text, "U07GHI") {
+		t.Fatalf("a branch outside the closed shape was drawn: %+v", refused)
+	}
 }
 
 // A delivery for a room not filed from Slack, an unknown type, or a room id that is not a C2 id
@@ -171,16 +208,76 @@ func TestWebhookIgnores(t *testing.T) {
 	}
 }
 
-// Invariant 8: nothing in a thread approves, steers or stops; the App reads no reply.
-func TestSlackNeverDecides(t *testing.T) {
-	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
-	rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
-	for _, text := range []string{"approve", "/factory retry", "<@U0BOT> approve aaaaaaaa", "stop"} {
-		rig.message("C03", "1729.0001", "U02DEF", text)
-	}
-	if calls := rig.broker.all(); len(calls) != 0 {
-		t.Fatalf("a thread message reached the broker: %+v", calls)
-	}
+// Invariant 8, as the `forge.push` card amends it: no tool and no Slack *reply* approves or steers.
+// The App reads no reply in a thread as a command, so the four replies a person would try reach no
+// broker and decide nothing, and a ✅ reply keeps doing the one thing a reply may: it files the
+// thread's latest draft, which decides nothing either. A thread that holds a card changes none of
+// that: its replies and its reactions act on nothing, and only a card's two action ids decide.
+func TestSlackNeverDecidesOnAThreadReply(t *testing.T) {
+	t.Run("a reply is never a decision", func(t *testing.T) {
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
+		for _, text := range []string{"approve", "/factory retry", "<@U0BOT> approve aaaaaaaa", "stop"} {
+			rig.message("C03", "1729.0001", "U02DEF", text)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a thread message reached the broker: %+v", calls)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a thread message decided %+v", d)
+		}
+	})
+
+	// The check mark's own case, kept: a ✅ reply files, and filing is not deciding.
+	t.Run("a ✅ reply files a draft", func(t *testing.T) {
+		rig := editRig(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> docs: runbook 18 ends badly")
+		rig.reply("U02DEF", "✅")
+		if n := len(rig.broker.runCreates()); n != 1 {
+			t.Fatalf("a ✅ reply filed %d drafts, want 1", n)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a ✅ reply decided %+v", d)
+		}
+	})
+
+	// The amendment's first new case: the thread holds a card, and a reply in it is read no
+	// differently — the card's buttons are the surface, its thread is not.
+	t.Run("a reply in a card's thread", func(t *testing.T) {
+		rig := approvalsRig(t)
+		seedCard(t, rig, cardTS, cardApprovalID)
+		for _, text := range []string{"approve", "deny", "/factory retry", "<@U0BOT> approve aaaaaaaa"} {
+			rig.message("C03", pressThread, "U02DEF", text)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a reply in a card's thread reached the broker: %+v", calls)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a reply in a card's thread decided %+v", d)
+		}
+		if u := rig.slack.updatesMade(); len(u) != 0 {
+			t.Fatalf("a reply in a card's thread rewrote the card: %+v", u)
+		}
+	})
+
+	// The amendment's second new case: a reaction on the card's own message is not a press. The
+	// card is the bot's message carrying an approval tag, so it is not a draft either: nothing files.
+	t.Run("a reaction on the card", func(t *testing.T) {
+		rig := approvalsRig(t)
+		seedCard(t, rig, cardTS, cardApprovalID)
+		for _, reaction := range []string{"white_check_mark", "+1", "thumbsup"} {
+			rig.react("C03", cardTS, "U02DEF", reaction)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a reaction on the card reached the broker: %+v", calls)
+		}
+		if d := rig.broker.decided(); len(d) != 0 {
+			t.Fatalf("a reaction on the card decided %+v", d)
+		}
+		if e := rig.slack.whispers(); len(e) != 0 {
+			t.Fatalf("a reaction on the card was answered: %+v", e)
+		}
+	})
 }
 
 // §5: the metadata payload is tagged and decoded on demand. A draft's JSON on the wire is
@@ -291,6 +388,7 @@ type fakeSlack struct {
 	threadErr   error
 	msgErr      error
 	names       map[string][2]string // user -> handle, display name
+	reads       []string             // every conversations.replies the App made: "message" or "thread"
 }
 
 type ephemeral struct{ channel, user, thread, text string }
@@ -328,6 +426,13 @@ func (f *fakeSlack) whispers() []ephemeral {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]ephemeral(nil), f.ephemerals...)
+}
+
+// updatesMade is every chat.update the App made, oldest first.
+func (f *fakeSlack) updatesMade() []post {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]post(nil), f.updates...)
 }
 
 func (f *fakeSlack) Post(_ context.Context, channel, threadTS, text string, meta *Metadata) (string, error) {
@@ -378,6 +483,7 @@ func (f *fakeSlack) Update(_ context.Context, channel, ts, text string, blocks j
 func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads = append(f.reads, "message")
 	if f.msgErr != nil {
 		return Message{}, f.msgErr
 	}
@@ -388,9 +494,17 @@ func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {
 	return m, nil
 }
 
+// readsMade is every conversations.replies the App made, oldest first: a press must cost one.
+func (f *fakeSlack) readsMade() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reads...)
+}
+
 func (f *fakeSlack) Thread(_ context.Context, _, threadTS string) ([]Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads = append(f.reads, "thread")
 	if f.threadErr != nil {
 		return nil, f.threadErr
 	}
@@ -407,19 +521,27 @@ func (f *fakeSlack) Thread(_ context.Context, _, threadTS string) ([]Message, er
 func (f *fakeSlack) seed(m Message) { f.mu.Lock(); f.msgs[m.TS] = m; f.mu.Unlock() }
 
 type stubBroker struct {
-	mu       sync.Mutex
-	calls    []any
-	accepted []RunCreate
-	refused  []RunCreate
-	deny     map[string]string
-	keys     map[string]bool
-	draftErr error
-	room     string // run_create's room, "aaaaaaaa" when empty
-	sponsor  string // run_create's sponsor
-	runErr   error  // run_create's error, before deny
-	linkErr  error
-	links    []string // team/user/name of each slack_link_code
-	unlinked map[string]bool
+	mu        sync.Mutex
+	calls     []any
+	accepted  []RunCreate
+	refused   []RunCreate
+	deny      map[string]string
+	keys      map[string]bool
+	draftErr  error
+	room      string // run_create's room, "aaaaaaaa" when empty
+	sponsor   string // run_create's sponsor
+	runErr    error  // run_create's error, before deny
+	linkErr   error
+	links     []string // team/user/name of each slack_link_code
+	unlinked  map[string]bool
+	decisions []Decision // every Decide call, oldest first
+	answers   []string   // every closed code the broker answered, oldest first
+	// decideAnswer is what the route answers instead of the recorded decision; fence answers
+	// already_decided to every press after the first, as the store does.
+	decideAnswer string
+	decideErr    error
+	fence        bool
+	fenced       bool
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {
@@ -479,6 +601,67 @@ func (b *stubBroker) RunCreate(_ context.Context, c RunCreate) (RunResult, error
 		room = "aaaaaaaa"
 	}
 	return RunResult{Room: room, Issue: 42, Duplicate: dup, Sponsor: b.sponsor}, nil
+}
+
+// Decide records every press and answers the closed code the test told it to: a recorded decision by
+// default, else the code the route answers (already_decided, not_supported, four_eyes…), or a
+// transport error. fence is the store's own single-decision fence (D7): the first press is recorded
+// and every later one answers already_decided, which is what makes the concurrent redelivery case
+// one decision.
+func (b *stubBroker) Decide(_ context.Context, d Decision) (DecisionResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.decisions = append(b.decisions, d)
+	switch {
+	case b.decideErr != nil:
+		return DecisionResult{}, b.decideErr
+	case b.fence:
+		if b.fenced {
+			b.answers = append(b.answers, "already_decided")
+			return DecisionResult{Result: "already_decided"}, nil
+		}
+		b.fenced = true
+	case b.decideAnswer != "":
+		b.answers = append(b.answers, b.decideAnswer)
+		return DecisionResult{Result: b.decideAnswer}, nil
+	}
+	b.answers = append(b.answers, d.Decision)
+	return DecisionResult{Result: d.Decision}, nil
+}
+
+// answerWith makes the broker answer every press with code, as the route answers a refusal.
+func (b *stubBroker) answerWith(code string) {
+	b.mu.Lock()
+	b.decideAnswer = code
+	b.mu.Unlock()
+}
+
+// decideFails makes every press a transport failure: the broker was never reached.
+func (b *stubBroker) decideFails(err error) {
+	b.mu.Lock()
+	b.decideErr = err
+	b.mu.Unlock()
+}
+
+// fenceDecisions makes the broker answer like the store: one recorded decision, then already_decided.
+func (b *stubBroker) fenceDecisions() {
+	b.mu.Lock()
+	b.fence = true
+	b.mu.Unlock()
+}
+
+// decideAnswers is every closed code the broker answered, oldest first.
+func (b *stubBroker) decideAnswers() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.answers...)
+}
+
+// decided is every press the broker was asked to record, oldest first.
+func (b *stubBroker) decided() []Decision {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]Decision(nil), b.decisions...)
 }
 
 func (b *stubBroker) newIssues() int { b.mu.Lock(); defer b.mu.Unlock(); return len(b.keys) }
@@ -607,6 +790,42 @@ func (r *appRig) event(event string) {
 		r.t.Fatalf("events: %d", st)
 	}
 }
+
+// formBody is the body Slack's interactivity sends: one url-encoded payload field. Shared by the
+// events door's second body shape and the tests of it.
+func formBody(payload string) string { return url.Values{"payload": {payload}}.Encode() }
+
+// postInteraction posts body to the events door as Slack's interactivity does: form-encoded and
+// signed at the rig's clock.
+func (r *appRig) postInteraction(body string) int {
+	r.t.Helper()
+	return r.postInteractionAs(body, formCT, r.now.Unix(), true)
+}
+
+// postInteractionAs is postInteraction with the content type, the clock the signature claims and
+// whether it carries one at all: the ways a press can be wrong before its body is read.
+func (r *appRig) postInteractionAs(body, contentType string, at int64, signed bool) int {
+	r.t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/slack/events", strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	if signed {
+		ts := strconv.FormatInt(at, 10)
+		req.Header.Set("X-Slack-Request-Timestamp", ts)
+		req.Header.Set("X-Slack-Signature", slackSign(rigSecret, ts, body))
+	}
+	w := httptest.NewRecorder()
+	r.app.Events().ServeHTTP(w, req)
+	return w.Code
+}
+
+// interact is one button press: the payload Slack sends, in the body it sends it in.
+func (r *appRig) interact(payload string) int {
+	r.t.Helper()
+	return r.postInteraction(formBody(payload))
+}
+
+// formCT is the content type Slack's button presses carry.
+const formCT = "application/x-www-form-urlencoded"
 
 func jsonString(s string) string { b, _ := json.Marshal(s); return string(b) }
 

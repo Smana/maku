@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package slackapp is the factory's Slack App (factory interfaces F9): a sponsored principal that
-// drafts and files issues from a thread, and a webhook subscriber that keeps the thread told.
-// It never answers an approval and never relays room text.
+// drafts and files issues from a thread, a webhook subscriber that keeps the thread told, and the
+// one surface that decides a forge.push approval — a card's two buttons, inside the same signed
+// events door (v3.x Slack push approval §6), answered by the broker's decide route as the App's
+// principal. It never relays room text, and no reply, reaction or message ever decides anything.
 package slackapp
 
 import (

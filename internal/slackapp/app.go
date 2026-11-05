@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"regexp"
 	"slices"
@@ -56,6 +57,9 @@ type BrokerAPI interface {
 	RunCreate(ctx context.Context, c RunCreate) (RunResult, error)
 	SlackLinkCode(ctx context.Context, team, user, handle, name string) (string, error)
 	SlackUnlink(ctx context.Context, team, user string) (bool, error)
+	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
+	// thing the App decides, and only for forge.push.
+	Decide(ctx context.Context, d Decision) (DecisionResult, error)
 }
 
 // Recorder counts requests for factory_slack_requests_total{route, outcome}.
@@ -64,8 +68,9 @@ type Recorder interface {
 }
 
 // App is the flows: a mention drafts, the draft's author amends it with replies in its thread, a
-// maintainer's check mark files, the broker's webhooks tell the thread. A thread reply is read only
-// to amend an unfiled draft; none is ever a command and no approval is answered (invariant 8).
+// maintainer's check mark files, the broker's webhooks tell the thread, and — for forge.push only,
+// where the channel's approvals flag is on — a card's button decides. A thread reply is read only
+// to amend an unfiled draft; none is ever a command (invariant 8) and no reply is ever a decision.
 type App struct {
 	Slack       Slack
 	Broker      BrokerAPI
@@ -285,14 +290,27 @@ type slackEvent struct {
 	} `json:"item"`
 }
 
-// Events is the events listener's handler: the signature first, nothing read before it.
+// Events is the events listener's handler: the signature first, nothing read before it. Two body
+// shapes arrive at this one door (D11, §6): Slack's JSON events and its form-encoded button presses,
+// told apart by content type after the same verification.
 func (a *App) Events() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		// The header alone names the route, so a refusal before the body is read is counted where
+		// the request was going: a press that does not verify is an interactions refusal.
+		press := isForm(r.Header.Get("Content-Type"))
+		route := "events"
+		if press {
+			route = "interactions"
+		}
 		body, err := a.Verifier.Body(r)
 		if err != nil {
-			a.count(ctx, "events", "bad_signature")
+			a.count(ctx, route, "bad_signature")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if press {
+			a.handleInteraction(w, r, body) // §6: the second body shape, one door and one lock
 			return
 		}
 		var env slackEnvelope
@@ -330,6 +348,13 @@ func (a *App) Events() http.Handler {
 			w.WriteHeader(http.StatusOK)
 		}
 	})
+}
+
+// isForm reports whether the request carries Slack's interactivity body shape (§6 step 2): the one
+// content type its button presses come in. Anything else is the JSON events path, byte-for-byte.
+func isForm(contentType string) bool {
+	ct, _, err := mime.ParseMediaType(contentType)
+	return err == nil && ct == "application/x-www-form-urlencoded"
 }
 
 // handle runs one event and names its outcome for the counter.
@@ -831,20 +856,27 @@ func (a *App) Webhooks() http.Handler {
 			http.Error(w, "try again", http.StatusBadGateway)
 			return
 		}
-		a.count(ctx, "webhooks", outcome)
+		// One request has one outcome: the approval-close path counts its own word where it happens
+		// (closeCard), so it hands back countedInPlace and has nothing left to add here.
+		if outcome != countedInPlace {
+			a.count(ctx, "webhooks", outcome)
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 }
+
+// countedInPlace is the outcome a path returns when it counted its own word instead of handing one
+// back: the approval-close path does (closeCard, counted in deliver, D10), so one request keeps one
+// outcome and its word never becomes the 502 the broker retries.
+const countedInPlace = ""
 
 func (a *App) deliver(ctx context.Context, body []byte) string {
 	var e webhook.Event
 	if json.Unmarshal(body, &e) != nil || !slices.Contains(webhook.Types(), e.Type) || !roomRE.MatchString(e.Room) {
 		return "ignored"
 	}
-	line, ok := a.line(e)
-	if !ok {
-		return "ignored"
-	}
+	// The thread is read before the dispatch: the card needs it as much as the line does, and the
+	// line's own template is decided after it.
 	th, found, err := a.Threads.Get(ctx, e.Room)
 	if err != nil {
 		a.log().Warn("thread map get failed", "room", e.Room, "err", err)
@@ -853,11 +885,23 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	if !found {
 		return "ignored" // a room that was not filed from Slack
 	}
-	if _, err := a.Slack.Post(ctx, th.Channel, th.TS, line, nil); err != nil {
-		a.log().Warn("slack post failed", "room", e.Room, "err", err)
-		return "error"
+	// §5: a forge.push wait in a channel that draws cards is one card, posted or updated by its
+	// approval id. Everything else keeps today's line, with no button.
+	if e.Type == "room.waiting_for_human" && a.cardWanted(e, th) {
+		return a.postOrUpdateCard(ctx, th, e)
 	}
-	return "posted"
+	// D10: a closed approval makes its card inert, in a channel that draws cards; a channel that
+	// draws none had the wait as a text line, so its close is the thread's line instead. The card is
+	// a view, never the fence: the close's word is counted here rather than by the handler, so the
+	// delivery itself is never the `error` the broker retries — a card the App cannot rewrite stays
+	// readable, and the store refuses a press on it anyway.
+	if e.Type == "room.approval_closed" {
+		if ch, served := a.Channels[th.Channel]; served && ch.Approvals {
+			a.count(ctx, "webhooks", a.closeCard(ctx, th, e))
+			return countedInPlace
+		}
+	}
+	return a.postWaitLine(ctx, th, e)
 }
 
 // line is the event's thread template. Every value is clipped to the broker's own vocabulary
@@ -884,6 +928,10 @@ func (a *App) line(e webhook.Event) (string, bool) {
 		return fmt.Sprintf("A budget was reached (%s).", limit), true
 	case "room.ended":
 		return fmt.Sprintf("Ended, state: %s. Room: %s", state, url), true
+	case "room.approval_closed":
+		// D10: the thread that draws no card still hears how its wait closed; a channel that draws
+		// cards has the card itself as that message (closeCard), and this line is never reached.
+		return fmt.Sprintf("The approval closed: %s. Room: %s", webhook.Clip("decision", e.Decision), url), true
 	}
 	return "", false
 }

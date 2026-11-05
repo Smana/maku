@@ -244,7 +244,7 @@ func (c *SlackClient) PostEphemeral(ctx context.Context, channel, user, threadTS
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("chat.postEphemeral"), bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("chat.postEphemeral"), bytes.NewReader(raw)) //nolint:gosec // G704: the URL is a constant method name; the tainted values are the JSON body
 	if err != nil {
 		return err
 	}
@@ -354,7 +354,9 @@ func (c *SlackClient) do(req *http.Request) (slackAnswer, error) {
 	if hc == nil {
 		hc = httpx.New(10*time.Second, nil)
 	}
-	resp, err := hc.Do(req)
+	// The request's URL is c.url(<constant>) and its Authorization is the App's own token; a value
+	// from a request body only ever reaches the JSON body, never the target.
+	resp, err := hc.Do(req) //nolint:gosec // G704: see above
 	if err != nil {
 		return slackAnswer{}, fmt.Errorf("slackapp: slack: %w", err)
 	}
