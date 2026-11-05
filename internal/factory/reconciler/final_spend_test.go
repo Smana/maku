@@ -4,14 +4,21 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/meter"
 )
@@ -107,6 +114,85 @@ func TestAFinalSpendLandsOnce(t *testing.T) {
 	}
 	if posted := finalFacts(g); len(posted) != 1 || len(g.log.factsSeqs) != 1 {
 		t.Fatalf("a second final fact: %d posted, calls %v", len(posted), g.log.factsSeqs)
+	}
+}
+
+// CD23: postFacts persists the fact's hash before the room takes it, so a post the room refused
+// leaves the final figure in the ledger with Posted false, and a hash test alone would lose the
+// settle it measures. The retry that lands the fact counts it, once.
+func TestAFinalSpendTheRoomRefusedIsCountedOnItsRetry(t *testing.T) {
+	end := now
+	g := newRig(t, aSettled(end, 0))
+	g.r.Cfg.Facts.FinalSpend = true
+	factsPosted(t, g)
+	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
+	g.r.Now = func() time.Time { return end.Add(3 * time.Minute) }
+	g.log.failFacts = errors.New("the room is unreachable")
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+		t.Fatal("a post the room refused is returned for a retry")
+	}
+	if tk := stored(t, g.c); tk.Status.Facts == nil || tk.Status.Facts.Posted || tk.Status.Facts.Hash == "" {
+		t.Fatalf("the ledger records the final fact before the room took it: %+v", tk.Status.Facts)
+	}
+	if len(g.metrics.recorded) != 0 {
+		t.Fatalf("a post that never landed was counted: %q", g.metrics.recorded)
+	}
+	g.log.failFacts = nil
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter != 0 {
+		t.Fatalf("requeue %s, %v", res.RequeueAfter, err)
+	}
+	want := []string{"spend_final 180"}
+	if !slices.Equal(g.metrics.recorded, want) || len(finalFacts(g)) != 1 {
+		t.Fatalf("metrics %q, facts %+v, want %q and one fact", g.metrics.recorded, finalFacts(g), want)
+	}
+	// The reconcile after the retry posts nothing, and counts nothing.
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter != 0 {
+		t.Fatalf("requeue %s, %v", res.RequeueAfter, err)
+	}
+	if !slices.Equal(g.metrics.recorded, want) {
+		t.Fatalf("counted twice: %q", g.metrics.recorded)
+	}
+}
+
+// The same fact, lost on the write that records Posted: the room has it, the ledger does not, and
+// the replay counts the settle once.
+func TestAFinalSpendsConflictedWriteCountsItOnce(t *testing.T) {
+	end := now
+	armed := false
+	c := fake.NewClientBuilder().WithScheme(scheme()).WithStatusSubresource(&v1alpha1.Task{}, &roomv1.Room{}).
+		WithObjects(aSettled(end, 0)).
+		WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+			if tk, ok := o.(*v1alpha1.Task); ok && armed && tk.Status.Facts != nil && tk.Status.Facts.Seq == 2 && tk.Status.Facts.Posted {
+				armed = false
+				return apierrors.NewConflict(schema.GroupResource{Resource: "tasks"}, o.GetName(), errors.New("stale"))
+			}
+			return cl.SubResource(sub).Update(ctx, o, opts...)
+		}}).Build()
+	g := newRig(t)
+	g.c, g.r.Client = c, c
+	seeingMeter(t, c)
+	g.r.Cfg.Facts.FinalSpend = true
+	factsPosted(t, g) // the room's ledger before the final fact: seq 1, posted
+	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
+	g.r.Now = func() time.Time { return end.Add(3 * time.Minute) }
+	armed = true
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+		t.Fatal("the lost write is returned")
+	}
+	if tk := stored(t, g.c); tk.Status.Facts.Posted || tk.Status.Facts.Seq != 2 {
+		t.Fatalf("the room has the fact, the ledger records it unposted: %+v", tk.Status.Facts)
+	}
+	if len(g.metrics.recorded) != 0 || len(g.log.factsSeqs) != 1 {
+		t.Fatalf("metrics %q, posts %v: one post, nothing counted yet", g.metrics.recorded, g.log.factsSeqs)
+	}
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter != 0 {
+		t.Fatalf("requeue %s, %v", res.RequeueAfter, err)
+	}
+	if want := []string{"spend_final 180"}; !slices.Equal(g.metrics.recorded, want) {
+		t.Fatalf("metrics %q, want %q", g.metrics.recorded, want)
+	}
+	if tk := stored(t, g.c); !tk.Status.Facts.Posted || len(finalFacts(g)) != 1 {
+		t.Fatalf("ledger %+v, facts %+v", tk.Status.Facts, finalFacts(g))
 	}
 }
 

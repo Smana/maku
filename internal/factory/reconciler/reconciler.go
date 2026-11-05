@@ -296,10 +296,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		err = errors.Join(err, perr)
 		r.endTrace(ctx, &t)
 		// CD23: the pass that landed the final fact records how long its dollars took to settle,
-		// from the last run's end. A post that failed is retried, and its retry counts it; a fact
-		// the pass could not claim (an unpriced run) counts nothing.
+		// from the last run's end. postFacts persists the fact's hash before it calls the room, so a
+		// post the room refused — or a write that conflicted after it — leaves the ledger with the
+		// final hash and Posted false: the Posted flip is what counts that retry, once, and a later
+		// reconcile that posts nothing counts nothing. A fact the pass could not claim (an unpriced
+		// run) counts nothing either.
 		final := finalSpend && perr == nil && r.spendIsFinal(&t) && t.Status.Facts != nil && t.Status.Facts.Posted &&
-			(queued.Facts == nil || queued.Facts.Hash != t.Status.Facts.Hash)
+			(queued.Facts == nil || !queued.Facts.Posted || queued.Facts.Hash != t.Status.Facts.Hash)
 		if !equality.Semantic.DeepEqual(*queued, t.Status) {
 			if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
 				return ctrl.Result{}, errors.Join(err, uerr)
