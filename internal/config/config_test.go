@@ -564,6 +564,46 @@ func TestLoadSlackLink(t *testing.T) {
 	}
 }
 
+// human.slackDecide is human.slackLink's neighbour: off by default; on, it names a declared
+// sponsored principal and one workspace, and needs the GitHub check, since the route resolves the
+// linked human's login.
+const slackDecide = access + "  roomctlClientIDFile: /etc/room-broker/oidc/roomctl\n  mcp:\n    enabled: true\n" +
+	"    sponsored: [{name: slack-app, clientIDFile: /etc/slack/client-id}]\n" +
+	"  slackDecide:\n    principal: slack-app\n    teamID: T01ABC\n"
+
+// decideConfig is slackDecide with what a sponsored principal and an enabled /mcp already need:
+// valid's config has no factoryURL, and human.mcp.sponsored refuses to load without one.
+const decideConfig = slackDecide + "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+
+func TestLoadSlackDecide(t *testing.T) {
+	if c, err := Load(write(t, valid)); err != nil || c.Human.SlackDecide != nil {
+		t.Fatalf("off by default: %+v %v", c.Human.SlackDecide, err)
+	}
+	c, err := Load(write(t, valid+decideConfig))
+	if err != nil || c.Human.SlackDecide == nil || c.Human.SlackDecide.Principal != "slack-app" || c.Human.SlackDecide.TeamID != "T01ABC" {
+		t.Fatalf("%+v %v", c.Human.SlackDecide, err)
+	}
+	for name, c := range map[string]struct{ body, want string }{
+		"an undeclared principal": {strings.Replace(decideConfig, "principal: slack-app", "principal: other", 1), "human.slackDecide.principal"},
+		"a bad team":              {strings.Replace(decideConfig, "teamID: T01ABC", "teamID: x", 1), "human.slackDecide.teamID"},
+		"no GitHub check":         {strings.Replace(decideConfig, access, "", 1), "human.slackDecide needs human.access"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(write(t, valid+c.body))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+	// mode local has no sponsored principal and no GitHub check to resolve a login with, so it
+	// refuses the switch on its own key. localConfig is the existing local fixture, not valid
+	// rewritten: a local config carries no issuer, no OAuth client and a loopback publicURL.
+	local := strings.Replace(localConfig, "human:\n", "human:\n  slackDecide:\n    principal: slack-app\n    teamID: T01ABC\n", 1)
+	if _, err := Load(write(t, local)); err == nil || !strings.Contains(err.Error(), "human.slackDecide") {
+		t.Fatalf("mode local: %v", err)
+	}
+}
+
 // v0.31.0 serves the maku_ names only, so the one-release switch is gone, and strict decode refuses it.
 func TestLoadRefusesTheMetricsSwitch(t *testing.T) {
 	for _, body := range []string{valid + "metrics:\n  makuNames: true\n", valid + "metrics:\n  makuNames: false\n"} {

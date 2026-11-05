@@ -216,6 +216,14 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		humans.SlackLink = &humanapi.SlackLinker{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID, Repository: l.Repository}
 		api.SlackLinks, api.SlackLinkReader = st, fconfig.PrincipalFactory
 	}
+	if l := cfg.Human.SlackDecide; l != nil { // the App's one deciding route (v3.x Slack push approval D14)
+		humans.SlackDecide = &humanapi.SlackDecider{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID,
+			Rooms: mgr.GetClient(), Namespace: ns, Identity: humans.Identity, Access: humans.Access, Runs: humans.Runs,
+			Metrics: m, Logger: log,
+			OnDecided: func(d time.Duration) { m.DecisionSeconds.Record(context.Background(), d.Seconds()) }}
+		// Groups stays zero on purpose (D15): standing is the Room CR's alone, never a ZITADEL grant the
+		// broker would have to hold a token for.
+	}
 	if len(cfg.Human.MCP.Sponsored) > 0 { // the factory's URL is the config's, never a request's
 		humans.Tasks = runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 	}
