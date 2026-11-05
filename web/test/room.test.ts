@@ -472,10 +472,15 @@ describe("the room page", () => {
   // Review focus 1: the strip needs no summary; the state frame alone heads the page.
   it("renders the strip from the state frame when the summary cannot be fetched", async () => {
     const p = page(() => Promise.resolve(new Response("", { status: 503 })));
-    expect(p.app.querySelector<HTMLElement>("section.needs")!.hidden).toBe(true); // before join: no empty heading
+    const panel = () => p.app.querySelector<HTMLElement>("section.needs")!;
+    expect(panel().hidden).toBe(true); // before join: nothing has been read yet
     p.join(snapshot(), 0);
     await vi.runOnlyPendingTimersAsync();
-    expect(p.app.querySelector<HTMLElement>("section.needs")!.hidden).toBe(true);
+    // The needs read failed too (this fake answers 503 to everything): the panel says so in one line
+    // rather than staying silent, and its heading never claims "Needs you" over that line (fix round 1).
+    expect(panel().hidden).toBe(false);
+    expect(panel().querySelector("ul.needs-other li.needs-stale")?.textContent).toMatch(/needs list is unavailable/);
+    expect(panel().querySelector("h2")?.textContent).toBe("Waiting for an approver");
     expect(p.app.querySelector("h1")?.textContent).toBe("Room 3kq7x2ma");
     expect(p.phase()).toBe("Open");
     expect(p.app.querySelector(".chip-driver")?.textContent).toBe("Driven by human:a");

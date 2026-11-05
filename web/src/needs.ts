@@ -145,16 +145,17 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       if (l.textContent !== text) l.textContent = text;
     }
     // The list the route answered, the summary's until then; and under it, one line each for a read
-    // that failed and for a room the route could not read. A failure's line is only shown beside
-    // something else: silence over an otherwise empty panel is the page's own error line's to carry,
-    // and a "Needs you" heading over one error would say the opposite of it.
+    // that failed and for a room the route could not read. A failure is itself something to show: the
+    // line is the panel's, and it is never suppressed, so an unreadable list cannot pass for a quiet
+    // one. The heading stays the count's — with nothing to count it reads "Waiting for an approver",
+    // never "Needs you" over a single warning.
     const items = listed ?? summarised;
-    const show = items.length + pending.length + unread.length > 0;
     const notes: HTMLLIElement[] = [];
     if (stale) notes.push(el("li", { className: "needs-stale", textContent: stale }));
     if (unread.length) notes.push(el("li", { className: "needs-unread", textContent: unreadLine(unread) }));
-    other.replaceChildren(...items, ...(show ? notes : []));
+    other.replaceChildren(...items, ...notes);
     others = items.length;
+    const show = items.length + pending.length + unread.length + (stale ? 1 : 0) > 0;
     // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
     // someone else's turn.
     const heading = panel.count() > 0 ? "Needs you" : "Waiting for an approver";

@@ -215,13 +215,18 @@ describe("the panel's list from the needs route", () => {
     }
   });
 
-  // Nothing to show and a read that failed: no heading, as before the first read answered. The page's
-  // own error line carries the outage; a "Needs you" heading over one error would say the opposite.
-  it("stays hidden when it has nothing to show", async () => {
+  // Fix round 1: a read that failed is itself something to show. With no summary items, no earlier
+  // items and no approvals, the panel still lists the warning — never an empty panel — and its heading
+  // stays the count's, so the reader is not told "Needs you" over one error line.
+  it("shows the warning, and no Needs you heading, when only the read failed", async () => {
     const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => { throw new Error("The needs list is unavailable: 503."); } });
     await panel.refresh();
-    expect(root.querySelector("ul.needs-other li")).toBeNull();
-    expect(root.hidden).toBe(true);
+    expect([...root.querySelectorAll("ul.needs-other li")].map((l) => l.textContent))
+      .toEqual(["The needs list is unavailable: 503."]);
+    expect(root.querySelector("ul.needs-other li.needs-stale")).not.toBeNull();
+    expect(root.hidden).toBe(false);
+    expect(root.querySelector("h2")?.textContent).toBe("Waiting for an approver");
+    expect(panel.count()).toBe(0); // a warning is not a need
   });
 });
 
