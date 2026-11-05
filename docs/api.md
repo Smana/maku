@@ -403,9 +403,9 @@ session reads what a person reads.
 
 | Field | Holds |
 |---|---|
-| `apiVersion` | `brief/v1`, the contract both doors and `maku status` read |
+| `apiVersion` | `brief/v1`, the envelope both doors serve. A client reads `text`; `maku status` takes the tool's `text` as it is and never inspects this field |
 | `room` | The room id |
-| `text` | The brief, Markdown: `Resume:` and the room, with the issue and its title when it has one; `Asked:`; `Acceptance:`, each check of the last handoff's scope in a code span; `Plan:`; `Changed since …`, at most 20 milestones with the rest counted; `Blocked on:` and `Fix:`; the one `Next:` step with its action link; `Links:`. A section whose data is absent is left out. The agents' words are quoted, never an instruction |
+| `text` | The brief, Markdown: `Resume:` and the room, with the issue and its title when it has one; `Asked:`; `Acceptance:`, each check of the last handoff's scope in a code span; `Plan:`; `Changed since …`, at most 20 milestones with the rest counted; `Blocked on:`; `Fix:`, one line naming the cause, and only when the broker has one — the fix table lands behind `brief.ciEvidence`, so a brief carries none today; the one `Next:` step with its action link; `Links:`. A section whose data is absent is left out. The agents' words are quoted, never an instruction |
 | `cursor` | `seq:N`, the last event the changed block covered: pass it back as `since` |
 
 | Status | When |

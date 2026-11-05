@@ -52,6 +52,9 @@ type mcpBroker struct {
 	calls []toolCall
 	// card, when set, is room_summary's structuredContent.
 	card map[string]any
+	// tools, when set, is tools/list's tools: the broker's own set, which the relay rewrites for room
+	// references and extends with its local tools. nil serves the two-tool default.
+	tools []any
 }
 
 func newMCPBroker(t *testing.T) *mcpBroker {
@@ -83,9 +86,13 @@ func newMCPBroker(t *testing.T) *mcpBroker {
 		case "initialize":
 			res = map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}}}
 		case "tools/list":
-			res = map[string]any{"tools": []any{map[string]any{"name": "rooms_list"},
-				map[string]any{"name": "room_summary", "description": "d", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{
-					"room": map[string]any{"type": "string", "pattern": "^[a-z2-7]{8}$"}}}}}}
+			tools := b.tools
+			if tools == nil {
+				tools = []any{map[string]any{"name": "rooms_list"},
+					map[string]any{"name": "room_summary", "description": "d", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+						"room": map[string]any{"type": "string", "pattern": "^[a-z2-7]{8}$"}}}}}
+			}
+			res = map[string]any{"tools": tools}
 		case "tools/call":
 			var c struct {
 				Name      string
