@@ -661,3 +661,21 @@ describe("plainText", () => {
     expect(plainText(src)).toBe(want);
   });
 });
+
+// CD23: the strip's one dollars chip, in the room's own words: a settled figure, or the state that
+// stands in its place.
+describe("the strip's dollars", () => {
+  it("shows a final figure, and says settling or unpriced instead of a figure that may change", () => {
+    const { h, strip } = mount();
+    const done = (spend: Summary["status"]["spend"], spendFinal = false) =>
+      input({ summary: summary({ state: "done", phase: "Done", spend, spendFinal }) });
+    strip.update(done({ usedMicroUSD: 310_000, limitMicroUSD: 1_500_000 }));
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("spend settling");
+    strip.update(done({ usedMicroUSD: 310_000, limitMicroUSD: 1_500_000 }, true));
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("$0.31 of $1.50 (21 %)");
+    strip.update(done({ usedMicroUSD: 0, limitMicroUSD: 1_500_000 }));
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("spend unpriced");
+    strip.update(done(undefined));
+    expect(h.querySelector(".chip-spend")).toBeNull(); // no dollars at all: the token chip is the whole figure
+  });
+});

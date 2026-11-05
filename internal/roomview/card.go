@@ -106,10 +106,7 @@ func (c *card) line(s string) { c.b.WriteString(s + "\n") }
 // left out. It prints no cursor: the caller that needs one has the summary.
 func Card(w io.Writer, s summary.Summary, o Options) error {
 	c := &card{o: o}
-	switch cardState(s) {
-	case summary.StateDone, summary.StateFailed, summary.StateStopped:
-		c.over = true
-	}
+	c.over = over(cardState(s))
 	needs := len(s.NeedsYou) > 0
 	c.status(s)
 	c.title(s)
@@ -200,6 +197,20 @@ func cardState(s summary.Summary) string {
 	}
 	return summary.Coarse(s.Status.Phase, s.Status.Phase, false)
 }
+
+// over is whether a coarse state is a task that ended: the states whose dollars CD23's final spend is
+// the only thing left to settle.
+func over(state string) bool {
+	switch state {
+	case summary.StateDone, summary.StateFailed, summary.StateStopped:
+		return true
+	}
+	return false
+}
+
+// sealed is a room whose log is closed or sealed, the two values summary.State.Sealed carries: it
+// refuses every event, so the dollar figure in it is the last its reader will see, final claim or not.
+func sealed(phase string) bool { return phase == "Closed" || phase == "Sealed" }
 
 func urlOf(i *envelope.IssueFact) string {
 	if i == nil {
@@ -370,18 +381,68 @@ func (c *card) runFact(r envelope.RunFact, m *summary.RunModel) string {
 
 // spend is the task's dollars and tokens. A spend of 0 says nothing (an unpriced run costs 0), so
 // the tokens read on their own, against their limit.
+//
+// CD23: a task that ended names its dollars only once the factory says they are final. Until then the
+// figure may still move, so the row says it is settling rather than show a number it would have to
+// change — and a task whose runs the meter could not price has no figure and no final fact coming, so
+// it says they are unpriced instead of settling for ever. A sealed room is the exception: its log takes
+// no event, so the figure in it is the last its reader will see, final claim or not.
 func (c *card) spend(s summary.Summary) string {
 	sp, b := s.Status.Spend, s.Status.Budget
+	if c.over && !s.Status.SpendFinal && !sealed(s.Status.Phase) {
+		switch {
+		case sp != nil && sp.UsedMicroUSD > 0:
+			return joined(spendSettling, countOf(b))
+		case unpriced(sp, b):
+			return joined(spendUnpriced, tokensWords(b))
+		}
+		return ""
+	}
 	if sp != nil && sp.UsedMicroUSD > 0 {
 		out := dollars(sp.UsedMicroUSD)
 		if sp.LimitMicroUSD > 0 {
 			out += fmt.Sprintf(" of %s (%d %%)", dollars(sp.LimitMicroUSD), percent(sp.UsedMicroUSD, sp.LimitMicroUSD))
 		}
-		if b != nil && b.UsedTokens > 0 {
-			out += " · " + tokens(b.UsedTokens) + " tokens"
-		}
-		return out
+		return joined(out, countOf(b))
 	}
+	return tokensWords(b)
+}
+
+// The two things a task's dollars say before the factory claims a figure final (CD23).
+const (
+	spendSettling = "spend settling"
+	spendUnpriced = "spend unpriced"
+)
+
+// unpriced is a terminal task's dollars with no figure to report: it spent tokens, and the meter priced
+// none of them, so the factory withholds its final fact (allPriced) and no figure is coming. A run the
+// meter did price carries its dollars, so tokens with no sum to their name is no figure at all — the
+// card says so rather than promise dollars that are still settling.
+func unpriced(sp *envelope.SpendFact, b *envelope.BudgetFact) bool {
+	return (sp == nil || sp.UsedMicroUSD <= 0) && b != nil && b.UsedTokens > 0
+}
+
+// joined is the parts that are not empty, " · " between them.
+func joined(parts ...string) string {
+	kept := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " · ")
+}
+
+// countOf is the task's tokens as a bare count, beside its dollars: "" when it spent none.
+func countOf(b *envelope.BudgetFact) string {
+	if b == nil || b.UsedTokens <= 0 {
+		return ""
+	}
+	return tokens(b.UsedTokens) + " tokens"
+}
+
+// tokensWords is the tokens alone, against their limit: what a task with no dollar figure reports.
+func tokensWords(b *envelope.BudgetFact) string {
 	if b == nil || b.UsedTokens <= 0 && b.LimitTokens <= 0 {
 		return ""
 	}

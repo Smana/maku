@@ -37,6 +37,12 @@ export interface Summary {
     task?: string; // the room's Task, named as the room; absent without one
     run: { id: string; role: string; trigger?: string; startedAt?: string; endedAt?: string } | null;
     budget: { usedTokens: number; limitTokens: number } | null;
+    // spend is the task's dollars, beside budget's tokens, and spendFinal is CD23: the factory's claim
+    // that the figure is the task's last. Both absent while the dollars may still move, and for a task
+    // whose runs the meter could not price — spendWords reads them, and no surface prints the figure
+    // without it.
+    spend?: { usedMicroUSD: number; limitMicroUSD?: number };
+    spendFinal?: boolean;
     pr: { number: number; url: string; author?: string; reviewers?: string[] } | null;
     issue: { number: number; url: string; title?: string; author?: string; labelledBy?: string } | null;
     lastVerdict: { by: string; verdict: string; at: string } | null;
@@ -127,6 +133,33 @@ export function focusApproval(id: string): boolean {
   (card.querySelector<HTMLElement>('button[data-act="approve"]') ?? card.querySelector<HTMLElement>("button, input"))?.focus();
   return true;
 }
+
+// spendWords is what the room says about its dollars (CD23): the figure while the task runs and once
+// the factory has claimed it final, "spend settling" while a finished task's figure may still move,
+// and "spend unpriced" when the meter priced none of its runs — the case where no final figure is ever
+// posted, so "settling" there would promise a change that never comes. A sealed room is the exception:
+// its log takes no event, so the figure in it is the last the page will see. Empty: nothing to say.
+export function spendWords(st: Summary["status"]): string {
+  const spent = st.spend?.usedMicroUSD ?? 0;
+  if (spent <= 0) {
+    // A finished task that spent tokens it has no dollars for: the meter priced none of its runs.
+    if (over(st) && !sealedRoom(st) && (st.budget?.usedTokens ?? 0) > 0) return "spend unpriced";
+    return "";
+  }
+  if (over(st) && !sealedRoom(st) && !st.spendFinal) return "spend settling";
+  const limit = st.spend?.limitMicroUSD ?? 0;
+  const usd = (micro: number) => `$${(micro / 1e6).toFixed(2)}`;
+  return limit > 0 ? `${usd(spent)} of ${usd(limit)} (${Math.round((spent / limit) * 100)} %)` : usd(spent);
+}
+
+// The phases of a room whose task ended, and of one whose log is closed or sealed: the coarse state is
+// the caller's to set and may be absent, so the phase decides when it is not there.
+const OVER_PHASES = new Set(["Done", "NoOp", "Rejected", "Reverted", "Stopped", "Closed"]);
+const SEALED_PHASES = new Set(["Closed", "Sealed"]);
+
+const over = (st: Summary["status"]) =>
+  st.state ? ["done", "failed", "stopped"].includes(st.state) : OVER_PHASES.has(st.phase);
+const sealedRoom = (st: Summary["status"]) => SEALED_PHASES.has(st.phase);
 
 // inlineCode sets text with its backticked spans as <code>, every part as text: a need's what
 // names a command (`gh api …`) that must not show its backticks.

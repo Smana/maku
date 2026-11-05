@@ -200,15 +200,20 @@ type Summary struct {
 		Task string `json:"task,omitempty"`
 		// State is the coarse state (Coarse): set by the caller, which holds the Room's projected
 		// phase and its runs; the fold alone has neither.
-		State       string               `json:"state,omitempty"`
-		Run         *envelope.RunFact    `json:"run"`
-		Budget      *envelope.BudgetFact `json:"budget"`
-		Spend       *envelope.SpendFact  `json:"spend,omitempty"` // the task's dollars, beside Budget's tokens
-		PR          *envelope.PRFact     `json:"pr"`
-		Issue       *envelope.IssueFact  `json:"issue"`
-		LastVerdict *Verdict             `json:"lastVerdict"`
-		LastJudge   *JudgeVerdict        `json:"lastJudge,omitempty"` // the completion judge's last answer (untrusted text)
-		Reason      string               `json:"reason,omitempty"`    // why the task waits, when it does (#59)
+		State  string               `json:"state,omitempty"`
+		Run    *envelope.RunFact    `json:"run"`
+		Budget *envelope.BudgetFact `json:"budget"`
+		Spend  *envelope.SpendFact  `json:"spend,omitempty"` // the task's dollars, beside Budget's tokens
+		// SpendFinal is CD23: Spend is the task's last figure, priced again after the settle window
+		// and never bucketed by the factory's facts key. Absent while the dollars may still move, and
+		// for a task whose runs the meter could not price — a surface that shows the figure reads this
+		// first, and says "settling" or "unpriced" instead of a number it would have to change.
+		SpendFinal  bool                `json:"spendFinal,omitempty"`
+		PR          *envelope.PRFact    `json:"pr"`
+		Issue       *envelope.IssueFact `json:"issue"`
+		LastVerdict *Verdict            `json:"lastVerdict"`
+		LastJudge   *JudgeVerdict       `json:"lastJudge,omitempty"` // the completion judge's last answer (untrusted text)
+		Reason      string              `json:"reason,omitempty"`    // why the task waits, when it does (#59)
 		// ReasonCode is the factory's raw reason code from the last task facts, bounded: the key the
 		// status line reads on every surface, beside Reason's prose. Kept in a sealed room.
 		ReasonCode string `json:"reasonCode,omitempty"`
@@ -434,6 +439,7 @@ func View(st State, room, url string, sub policy.Subject, standing GitHubStandin
 			sp := *f.Spend
 			s.Status.Spend = &sp
 		}
+		s.Status.SpendFinal = f.SpendFinal // CD23: the factory's claim that the figure above is the last
 	}
 	s.Status.LastVerdict = st.Verdict
 	s.Status.LastJudge = st.Judge

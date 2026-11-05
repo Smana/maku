@@ -146,7 +146,7 @@ func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, sinc
 	if err != nil {
 		return briefEnvelope{}, err
 	}
-	in := roomview.BriefIn{Room: id, RoomURL: s.PublicURL + "/r/" + id, Facts: fold.Facts,
+	in := roomview.BriefIn{Room: id, RoomURL: s.PublicURL + "/r/" + id, Facts: fold.Facts, Sealed: fold.Sealed,
 		Scope: scope, Since: at, Changed: changed, Now: s.now()}
 	if f := fold.Facts; f != nil {
 		in.Issue, in.PR = f.Issue, f.PR

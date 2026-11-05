@@ -709,6 +709,62 @@ func TestNoRendererSaysAdminMergeForApproveToMerge(t *testing.T) {
 	}
 }
 
+// CD23: a finished task says its dollars are still settling, in the card and in the brief, and names no figure
+// it will change.
+func TestTheCardSaysSpendSettling(t *testing.T) {
+	var s summary.Summary
+	s.Status.Phase = "Done"
+	s.Status.Spend = &envelope.SpendFact{UsedMicroUSD: 3_100_000, LimitMicroUSD: 5_000_000}
+	var b strings.Builder
+	if err := Card(&b, s, Options{Format: Text, Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "spend settling") || strings.Contains(b.String(), "$3.10") {
+		t.Fatalf("%s", b.String())
+	}
+}
+
+// CD23: once the factory's final fact has landed, the card names the figure and stops saying it settles.
+func TestTheCardNamesTheFinalFigure(t *testing.T) {
+	var s summary.Summary
+	s.Status.Phase = "Done"
+	s.Status.SpendFinal = true
+	s.Status.Spend = &envelope.SpendFact{UsedMicroUSD: 3_100_000, LimitMicroUSD: 5_000_000}
+	got := card1(t, s, textOpts(now))
+	if !strings.Contains(got, "$3.10 of $5.00 (62 %)") || strings.Contains(got, "settling") {
+		t.Fatalf("%s", got)
+	}
+}
+
+// CD23, the other half: a task whose runs the meter could not price has no figure, and no final fact is
+// coming. The card says that, rather than promising dollars that are still settling for ever.
+func TestTheCardSaysSpendUnpriced(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		spend *envelope.SpendFact
+	}{
+		{"no dollars at all", nil},
+		{"a dollar cap and nothing spent", &envelope.SpendFact{UsedMicroUSD: 0, LimitMicroUSD: 1_500_000}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := summary.Summary{Room: "r"}
+			s.Status.Phase = "Done"
+			s.Status.Spend = tc.spend
+			s.Status.Budget = &envelope.BudgetFact{UsedTokens: 182_000, LimitTokens: 1_500_000}
+			got := card1(t, s, textOpts(now))
+			if !strings.Contains(got, "spend unpriced") || strings.Contains(got, "settling") || strings.Contains(got, "$") {
+				t.Errorf("spend %+v:\n%s", tc.spend, got)
+			}
+		})
+	}
+	// A finished task that spent no tokens has nothing to say about its dollars: no figure, no promise.
+	s := summary.Summary{Room: "r"}
+	s.Status.Phase = "Done"
+	if got := card1(t, s, textOpts(now)); strings.Contains(got, "settling") || strings.Contains(got, "unpriced") {
+		t.Errorf("nothing spent:\n%s", got)
+	}
+}
+
 // Where a repository admin's merge is the only path, the card says why (the step) and how (the merge
 // line): the bypass is reserved for that hand-off, and it never stands without its reason.
 func TestTheCardOfACommitTheFactoryCannotVouchForSaysWhyAnAdminMerges(t *testing.T) {
