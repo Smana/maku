@@ -36,15 +36,29 @@ const (
 	slackRun    = "7f3cq2xz"       // the run ap1 was requested for
 	slackPath   = "/api/slack/decisions"
 
+	// slackSub is the linked human the actor and four-eyes cases click as: the sub the design pins
+	// its actor, its idempotency scope and its prompter on (D8, D7, OD-16).
+	slackSub = "2918"
+
 	// ap1 is the approval every case names; ap2 is the sealed room's; ap3 is ap1's row with no
 	// binding; ap4 is ap1's with a run no watch holds; ap5 has the room's owner as a prompter.
-	// apMissing is a well-formed ULID the log does not hold.
-	ap1       = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	ap2       = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
-	ap3       = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
-	ap4       = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
-	ap5       = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
-	apMissing = "01M4A1B2C3D4E5F6G7H8J9K0MN"
+	// apMissing is a well-formed ULID the log does not hold. apActor and apActorDenied are the two
+	// rows of the actor case, whose ids the design pins its idempotency scope on.
+	ap1           = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	ap2           = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
+	ap3           = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
+	ap4           = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
+	ap5           = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+	apActor       = "01M4A1B2C3D4E5F6G7H8J9K0MN"
+	apActorDenied = "01M4A1B2C3D4E5F6G7H8J9K0MP"
+	apMissing     = "01M4A1B2C3D4E5F6G7H8J9K0MN"
+)
+
+// The store's own closes, as internal/store writes them: the broker's actor, its key, and the
+// reasons it closes a row a human was too late for.
+const (
+	slackBroker        = "system:room-broker"
+	slackReasonExpired = "no decision before the deadline"
 )
 
 // classApprovals are the ids of five approvals whose class the route never decides, one per class
@@ -75,20 +89,23 @@ func slackLinks() map[string]string {
 	}
 }
 
+// slackRow is one of the rig's rows: pending, bound to binding (empty for none), requested a minute
+// ago and due in an hour, by the approvers a case names.
+func slackRow(id, room, run, binding string, prompters ...string) store.Approval {
+	now := time.Now()
+	return store.Approval{ID: id, RoomID: room, RunID: run, EventID: "ev", CallID: "call-1", Class: slackDecidableClass,
+		State: store.ApprovalPending, BindingBranch: binding, Prompters: prompters,
+		RequestedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)}
+}
+
 // slackApprovals is the rig's rows.
 func slackApprovals() map[string]store.Approval {
-	now := time.Now()
-	row := func(id, room, run, binding string, prompters ...string) store.Approval {
-		return store.Approval{ID: id, RoomID: room, RunID: run, EventID: "ev", CallID: "call-1", Class: slackDecidableClass,
-			State: store.ApprovalPending, BindingBranch: binding, Prompters: prompters,
-			RequestedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour)}
-	}
 	return map[string]store.Approval{
-		ap1: row(ap1, roomID, slackRun, slackBranch),
-		ap2: row(ap2, roomB, slackRun, slackBranch),
-		ap3: row(ap3, roomID, slackRun, ""),
-		ap4: row(ap4, roomID, "9zzzzzzz", slackBranch),
-		ap5: row(ap5, roomID, slackRun, slackBranch, "human:own"),
+		ap1: slackRow(ap1, roomID, slackRun, slackBranch),
+		ap2: slackRow(ap2, roomB, slackRun, slackBranch),
+		ap3: slackRow(ap3, roomID, slackRun, ""),
+		ap4: slackRow(ap4, roomID, "9zzzzzzz", slackBranch),
+		ap5: slackRow(ap5, roomID, slackRun, slackBranch, "human:own"),
 	}
 }
 
@@ -105,6 +122,21 @@ type memDecides struct {
 	linkErr   error
 	roomErr   error
 	rowErr    error
+
+	// drafts and events are what the store was handed and what it appended, in order: the actor,
+	// the origin and the idempotency key, which the counters and the event body do not carry.
+	drafts []envelope.Draft
+	events []envelope.Event
+	keys   map[string]stored // originClient:seq -> what that key recorded
+	// supersede is the approvals the store refuses because their call already has a result or their
+	// run ended, and the reason it closes each with.
+	supersede map[string]string
+}
+
+// stored is what one idempotency key recorded: the decision and the event its first write appended.
+type stored struct {
+	decision string
+	ev       envelope.Event
 }
 
 func (m *memDecides) SlackLink(_ context.Context, team, user string) (string, bool, error) {
@@ -144,8 +176,11 @@ func (m *memDecides) Room(ctx context.Context, id string) (store.RoomState, erro
 	return m.memLog.Room(ctx, id)
 }
 
-// Decide is the store's fence as the tests need it: the first decision wins, an expired row is
-// ErrApprovalExpired and a later decision ErrAlreadyDecided.
+// Decide is store.Decide as approvals.go documents it: the key is checked first, so the replay of a
+// click that won answers as itself; a call already answered or a run already ended closes the row as
+// superseded and is ErrAlreadyDecided; a decision past the deadline closes it as expired and is
+// ErrApprovalExpired. Every one of those closes is the store's — the broker's actor and key — so a
+// route that appended anything of its own would leave a second event in the log (D7).
 func (m *memDecides) Decide(_ context.Context, id, decision, by, reason string, d envelope.Draft) (envelope.Event, store.Approval, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -153,19 +188,113 @@ func (m *memDecides) Decide(_ context.Context, id, decision, by, reason string, 
 		return envelope.Event{}, store.Approval{}, m.decideErr
 	}
 	a, ok := m.rows[id]
-	switch {
-	case !ok:
+	if !ok {
 		return envelope.Event{}, a, store.ErrNoApproval
+	}
+	key := d.OriginClient + ":" + strconv.FormatInt(d.OriginSeq, 10)
+	if prev, ok := m.keys[key]; ok {
+		if prev.decision != decision {
+			return envelope.Event{}, a, store.ErrKeyConflict
+		}
+		return prev.ev, a, nil
+	}
+	closeAs, why, refusal := "", "", error(nil)
+	switch {
 	case a.State == store.ApprovalExpired:
 		return envelope.Event{}, a, store.ErrApprovalExpired
 	case a.State != store.ApprovalPending:
 		return envelope.Event{}, a, store.ErrAlreadyDecided
+	case m.supersede[id] != "": // the call answered and the run ended both come before the deadline
+		closeAs, why, refusal = store.ApprovalSuperseded, m.supersede[id], store.ErrAlreadyDecided
+	case time.Now().After(a.ExpiresAt):
+		closeAs, why, refusal = store.ApprovalExpired, slackReasonExpired, store.ErrApprovalExpired
+	}
+	if closeAs != "" { // too late for anyone: closed for what it is, then refused
+		m.closeLocked(a, closeAs, why)
+		return envelope.Event{}, a, refusal
 	}
 	a.State = decision
 	m.rows[id] = a
 	*m.decided = append(*m.decided, decided{by: by, decision: decision, reason: reason,
 		originClient: d.OriginClient, seq: d.OriginSeq})
-	return envelope.Event{V: 1, Seq: 1, RoomID: a.RoomID}, a, nil
+	d.RoomID, d.RunID, d.Type = a.RoomID, a.RunID, envelope.ApprovalDecided
+	d.Payload = envelope.Must(envelope.ApprovalDecidedPayload{ApprovalID: id, Decision: decision, Reason: reason})
+	ev := m.appendLocked(d)
+	m.keys[key] = stored{decision: decision, ev: ev}
+	return ev, a, nil
+}
+
+// appendLocked is the store's append: the event joins the room's log at the next seq, carrying the
+// draft's actor and origin, and the case keeps it.
+func (m *memDecides) appendLocked(d envelope.Draft) envelope.Event {
+	m.memLog.mu.Lock()
+	defer m.memLog.mu.Unlock()
+	ev := envelope.Event{V: envelope.Version, Seq: int64(len(m.evs) + 1), RoomID: d.RoomID, RunID: d.RunID,
+		Actor: d.Actor, Type: d.Type, Origin: d.Origin, Payload: d.Payload, TS: time.Now()}
+	m.evs = append(m.evs, ev)
+	m.events = append(m.events, ev)
+	m.drafts = append(m.drafts, d)
+	return ev
+}
+
+// closeLocked is the store's own close of a row it refuses: the broker's actor and key, one
+// approval_decided, and the row moved to closeAs. Nothing of the route's is in it.
+func (m *memDecides) closeLocked(a store.Approval, closeAs, why string) {
+	a.State = closeAs
+	m.rows[a.ID] = a
+	d := envelope.Draft{RoomID: a.RoomID, RunID: a.RunID,
+		Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: slackBroker},
+		Type:  envelope.ApprovalDecided, Origin: envelope.OriginBroker,
+		OriginClient: "broker:approval:" + a.ID, OriginSeq: 1,
+		Payload: envelope.Must(envelope.ApprovalDecidedPayload{ApprovalID: a.ID, Decision: closeAs, Reason: why})}
+	m.appendLocked(d)
+	*m.decided = append(*m.decided, decided{by: slackBroker, decision: closeAs, reason: why,
+		originClient: d.OriginClient, seq: d.OriginSeq})
+}
+
+// sweepExpired is store.ExpireDue: every pending row past its deadline, closed by the broker. It
+// returns how many it closed, so a case can prove the click already closed its own row.
+func (m *memDecides) sweepExpired() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, a := range m.rows {
+		if a.State == store.ApprovalPending && time.Now().After(a.ExpiresAt) {
+			m.closeLocked(a, store.ApprovalExpired, slackReasonExpired)
+			n++
+		}
+	}
+	return n
+}
+
+// row is the store's row as it now stands.
+func (m *memDecides) row(id string) store.Approval {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.rows[id]
+}
+
+// draft is the last decision the store was handed: its actor and its idempotency key.
+func (m *memDecides) draft() envelope.Draft {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.drafts) == 0 {
+		return envelope.Draft{}
+	}
+	return m.drafts[len(m.drafts)-1]
+}
+
+// decidedEvents is every approval_decided the store appended, in order: its own closes included.
+func (m *memDecides) decidedEvents() []envelope.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []envelope.Event
+	for _, ev := range m.events {
+		if ev.Type == envelope.ApprovalDecided {
+			out = append(out, ev)
+		}
+	}
+	return out
 }
 
 // decideGitHub is the rig's GitHub gate, answering per sub: writes lists the logins that write a
@@ -246,22 +375,52 @@ func (g *decideGitHub) gate(d *SlackDecider) {
 // slackDecideOn serves POST /api/slack/decisions as the App: the team T01ABC, the rig's rooms, the
 // rig's GitHub gate, and memLog-backed readings plus a decision log the test inspects.
 func slackDecideOn(t *testing.T, links map[string]string, aps map[string]store.Approval, decisions *[]decided) option {
-	return func(s *Server, _ *fanout.Hub, v *hubView) {
+	_, opt := slackDecideOnStore(t, links, aps, decisions)
+	return opt
+}
+
+// slackDecideOnStore is slackDecideOn with the store handed back, for the cases that read what the
+// store recorded, and in what order, rather than only what the route answered.
+func slackDecideOnStore(t *testing.T, links map[string]string, aps map[string]store.Approval, decisions *[]decided) (*memDecides, option) {
+	t.Helper()
+	st := &memDecides{links: links, rows: aps, decided: decisions, sealed: map[string]bool{roomB: true},
+		keys: map[string]stored{}}
+	return st, func(s *Server, _ *fanout.Hub, v *hubView) {
+		st.memLog = v.memLog
 		rooms := roomClient(t, slackRoomA(), repoRoom(roomB, "Smana/b"))
 		// The run the approvals were requested for is live, on its branch: the binding is read from
 		// the watch, never from the body (D6).
 		if w, ok := s.Runs.(*runwatch.Watcher); ok {
 			w.Upsert(t.Context(), slackRunClaim(slackRun, roomID, slackBranch))
 		}
-		d := &SlackDecider{
-			Store: &memDecides{memLog: v.memLog, links: links, rows: aps, decided: decisions,
-				sealed: map[string]bool{roomB: true}},
-			Principal: "system:slack-app", TeamID: slackTeam, Rooms: rooms, Namespace: namespace,
-			Runs: s.Runs, Metrics: s.Metrics, Logger: s.log(),
-		}
+		d := &SlackDecider{Store: st, Principal: "system:slack-app", TeamID: slackTeam, Rooms: rooms,
+			Namespace: namespace, Runs: s.Runs, Metrics: s.Metrics, Logger: s.log()}
 		slackGitHub().gate(d)
 		s.Rooms, s.SlackDecide = rooms, d
 	}
+}
+
+// slackRoomOwnedBy is room A with sub as its owner and the four-eyes flag the case sets: the
+// standing the clicker's own principal must hold is the human's, not the App's, so a case that
+// clicks as someone the shared fixture does not have needs a room of its own.
+func slackRoomOwnedBy(t *testing.T, sub string, fourEyes bool) option {
+	t.Helper()
+	return func(s *Server, _ *fanout.Hub, _ *hubView) {
+		room := slackRoomA()
+		room.Spec.Owner = "human:" + sub
+		room.Spec.Approvals.FourEyes = fourEyes
+		rooms := roomClient(t, room, repoRoom(roomB, "Smana/b"))
+		s.Rooms = rooms
+		if s.SlackDecide != nil {
+			s.SlackDecide.Rooms = rooms
+		}
+	}
+}
+
+// gateOn replaces the rig's GitHub gate with w's: the readings a case needs, for a sub the shared
+// gate does not know.
+func gateOn(w *decideGitHub) option {
+	return func(s *Server, _ *fanout.Hub, _ *hubView) { w.gate(s.SlackDecide) }
 }
 
 // slackRunClaim is the run an approval binds, as runwatch reads a claim: the room's implementer on
@@ -470,15 +629,189 @@ func TestSlackDecideBinding(t *testing.T) {
 	}
 }
 
-// OD-16: four eyes hold on this surface too, comparing the row's prompters as the room page does.
-func TestSlackDecideFourEyes(t *testing.T) {
+// D8: the log names the person, never the App. One actor is stamped, and the surface lives in the
+// idempotency scope.
+func TestSlackDecideActorIsHuman(t *testing.T) {
 	var decisions []decided
-	e := setup(t, withSponsored(sponsoredP), slackDecideOn(t, slackLinks(), slackApprovals(), &decisions))
-	if got, result := decide(t, e, press(slackTeam, "U02", ap5, slackBranch, "approved")); got != http.StatusOK || result != "four_eyes" {
-		t.Fatalf("%d %s, want 200 four_eyes", got, result)
+	rows := map[string]store.Approval{
+		apActor:       slackRow(apActor, roomID, slackRun, slackBranch),
+		apActorDenied: slackRow(apActorDenied, roomID, slackRun, slackBranch),
 	}
-	if len(decisions) != 0 {
-		t.Fatalf("four eyes decided: %+v", decisions)
+	st, rig := slackDecideOnStore(t, map[string]string{slackTeam + "/U02": slackSub}, rows, &decisions)
+	w := &decideGitHub{writes: map[string]bool{slackSub: true}}
+	e := setup(t, withSponsored(sponsoredP), rig, slackRoomOwnedBy(t, slackSub, true), gateOn(w))
+
+	if got, result := decide(t, e, press(slackTeam, "U02", apActor, slackBranch, store.ApprovalApproved)); got != http.StatusOK || result != store.ApprovalApproved {
+		t.Fatalf("%d %s, want 200 approved", got, result)
+	}
+	evs := st.decidedEvents()
+	if len(evs) != 1 {
+		t.Fatalf("the store appended %d approval_decided, want 1", len(evs))
+	}
+	ev := evs[0]
+	if ev.Actor.Kind != envelope.ActorHuman || ev.Actor.ID != "human:"+slackSub {
+		t.Fatalf("the event's actor is %+v, want the linked human", ev.Actor)
+	}
+	if ev.Origin != envelope.OriginClient {
+		t.Fatalf("the event's origin is %q, want %q", ev.Origin, envelope.OriginClient)
+	}
+	// The App is nowhere in the record: a payload that named it would make it an actor in the room.
+	if ev.Actor.ID == "system:slack-app" || strings.Contains(string(ev.Payload), "slack-app") {
+		t.Fatalf("the App is in the record: %+v %s", ev.Actor, ev.Payload)
+	}
+	// The surface is in the key instead: one key per approval, and one per decision within it.
+	dr := st.draft()
+	if dr.Actor != ev.Actor || dr.Origin != ev.Origin {
+		t.Fatalf("the draft's actor and origin are %+v %q, want the event's", dr.Actor, dr.Origin)
+	}
+	if want := "human:" + slackSub + ":slack:" + apActor; dr.OriginClient != want {
+		t.Fatalf("the idempotency key is %q, want %q", dr.OriginClient, want)
+	}
+	if dr.OriginSeq != 1 {
+		t.Fatalf("the approval's seq is %d, want 1", dr.OriginSeq)
+	}
+	// A denial is its own key: the same approval's no is not the replay of its yes.
+	if got, result := decide(t, e, press(slackTeam, "U02", apActorDenied, slackBranch, store.ApprovalDenied)); got != http.StatusOK || result != store.ApprovalDenied {
+		t.Fatalf("%d %s, want 200 denied", got, result)
+	}
+	if dr := st.draft(); dr.OriginSeq != 2 || dr.OriginClient != "human:"+slackSub+":slack:"+apActorDenied {
+		t.Fatalf("the denial's key is %q:%d, want the second seq under its own approval", dr.OriginClient, dr.OriginSeq)
+	}
+	if len(decisions) != 2 || decisions[1].by != "human:"+slackSub {
+		t.Fatalf("the store got %+v", decisions)
+	}
+}
+
+// D7: the same click twice is one decision and the same answer; approve then deny is
+// already_decided and still one approval_decided.
+func TestSlackDecideIdempotent(t *testing.T) {
+	var decisions []decided
+	st, rig := slackDecideOnStore(t, slackLinks(), slackApprovals(), &decisions)
+	e := setup(t, withSponsored(sponsoredP), rig)
+
+	for i := range 2 {
+		if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, store.ApprovalApproved)); got != http.StatusOK || result != store.ApprovalApproved {
+			t.Fatalf("press %d: %d %s, want 200 approved", i+1, got, result)
+		}
+		if len(decisions) != 1 {
+			t.Fatalf("press %d: the store recorded %+v, want one decision", i+1, decisions)
+		}
+	}
+	if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, store.ApprovalDenied)); got != http.StatusOK || result != slackAlreadyDecided {
+		t.Fatalf("the opposite press: %d %s, want 200 already_decided", got, result)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("the opposite press recorded %+v, want the one decision kept", decisions)
+	}
+	if n := len(st.decidedEvents()); n != 1 {
+		t.Fatalf("the log holds %d approval_decided, want 1", n)
+	}
+	if a := st.row(ap1); a.State != store.ApprovalApproved {
+		t.Fatalf("the row is %q, want the first decision's", a.State)
+	}
+}
+
+// OD-16: four eyes hold on this surface too, on the row's own prompters as the room page compares
+// them. The person who asked is refused while they are on, another approver who writes the
+// repository decides, and with four eyes off the prompter decides their own request.
+func TestSlackDecideFourEyes(t *testing.T) {
+	links := map[string]string{slackTeam + "/U02": slackSub, slackTeam + "/U07": "dana"}
+	for name, c := range map[string]struct {
+		user    string
+		four    bool
+		result  string
+		decided int
+	}{
+		"the prompter, four eyes on":     {"U02", true, "four_eyes", 0},
+		"another approver, four eyes on": {"U07", true, "approved", 1},
+		"the prompter, four eyes off":    {"U02", false, "approved", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var decisions []decided
+			rows := map[string]store.Approval{ap5: slackRow(ap5, roomID, slackRun, slackBranch, "human:"+slackSub)}
+			st, rig := slackDecideOnStore(t, links, rows, &decisions)
+			w := &decideGitHub{writes: map[string]bool{slackSub: true, "dana": true}}
+			e := setup(t, withSponsored(sponsoredP), rig, slackRoomOwnedBy(t, slackSub, c.four), gateOn(w))
+			if got, result := decide(t, e, press(slackTeam, c.user, ap5, slackBranch, store.ApprovalApproved)); got != http.StatusOK || result != c.result {
+				t.Fatalf("%d %s, want 200 %s", got, result, c.result)
+			}
+			if len(decisions) != c.decided {
+				t.Fatalf("the store recorded %+v, want %d", decisions, c.decided)
+			}
+			if n := len(st.decidedEvents()); n != c.decided {
+				t.Fatalf("the log holds %d approval_decided, want %d", n, c.decided)
+			}
+		})
+	}
+}
+
+// D7's other closes: a click past the deadline, before any sweep. The store's own deadline fence
+// closes the row as expired and refuses; the route answers approval_expired and writes nothing of
+// its own, so the log keeps the store's one event and a sweep afterwards has nothing left to close.
+func TestSlackDecideExpired(t *testing.T) {
+	var decisions []decided
+	row := slackRow(ap1, roomID, slackRun, slackBranch)
+	row.ExpiresAt = time.Now().Add(-time.Second)
+	st, rig := slackDecideOnStore(t, slackLinks(), map[string]store.Approval{ap1: row}, &decisions)
+	e := setup(t, withSponsored(sponsoredP), rig)
+
+	if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, store.ApprovalApproved)); got != http.StatusOK || result != slackApprovalExpired {
+		t.Fatalf("%d %s, want 200 approval_expired", got, result)
+	}
+	if a := st.row(ap1); a.State != store.ApprovalExpired {
+		t.Fatalf("the row is %q, want expired", a.State)
+	}
+	// The one write is the store's refusal path, not the route's: the broker's close of the row.
+	if len(decisions) != 1 || decisions[0].by != slackBroker || decisions[0].decision != store.ApprovalExpired {
+		t.Fatalf("the store recorded %+v, want the broker's one close", decisions)
+	}
+	evs := st.decidedEvents()
+	if len(evs) != 1 {
+		t.Fatalf("the log holds %d approval_decided, want the store's one", len(evs))
+	}
+	if evs[0].Actor.ID != slackBroker || evs[0].Origin != envelope.OriginBroker {
+		t.Fatalf("the event is %+v, want the broker's close", evs[0])
+	}
+	if !strings.Contains(string(evs[0].Payload), store.ApprovalExpired) {
+		t.Fatalf("the event says %s, want the expiry", evs[0].Payload)
+	}
+	// The sweep the route may have beaten appends nothing: the row is no longer pending.
+	if n := st.sweepExpired(); n != 0 {
+		t.Fatalf("the sweep closed %d rows after the click", n)
+	}
+	if n := len(st.decidedEvents()); n != 1 {
+		t.Fatalf("the log holds %d approval_decided after the sweep, want 1", n)
+	}
+}
+
+// D7: a call answered after the request, and a run that ended, are both already_decided with the row
+// superseded: the store closes it for what it is, and the click appends nothing.
+func TestSlackDecideSuperseded(t *testing.T) {
+	for name, why := range map[string]string{
+		"the call answered after the request": "the call already has a result",
+		"the run ended":                       "the run ended",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var decisions []decided
+			st, rig := slackDecideOnStore(t, slackLinks(),
+				map[string]store.Approval{ap1: slackRow(ap1, roomID, slackRun, slackBranch)}, &decisions)
+			st.supersede = map[string]string{ap1: why}
+			e := setup(t, withSponsored(sponsoredP), rig)
+
+			if got, result := decide(t, e, press(slackTeam, "U02", ap1, slackBranch, store.ApprovalApproved)); got != http.StatusOK || result != slackAlreadyDecided {
+				t.Fatalf("%d %s, want 200 already_decided", got, result)
+			}
+			if a := st.row(ap1); a.State != store.ApprovalSuperseded {
+				t.Fatalf("the row is %q, want superseded", a.State)
+			}
+			if len(decisions) != 1 || decisions[0].reason != why {
+				t.Fatalf("the store recorded %+v, want its own close for %q", decisions, why)
+			}
+			evs := st.decidedEvents()
+			if len(evs) != 1 || evs[0].Actor.ID != slackBroker || !strings.Contains(string(evs[0].Payload), store.ApprovalSuperseded) {
+				t.Fatalf("the log holds %+v, want the store's one superseded close", evs)
+			}
+		})
 	}
 }
 
@@ -493,8 +826,7 @@ func TestSlackDecideClasses(t *testing.T) {
 	}
 	var decisions []decided
 	w := &decideGitHub{}
-	e := setup(t, withSponsored(sponsoredP), slackDecideOn(t, slackLinks(), rows, &decisions),
-		func(s *Server, _ *fanout.Hub, _ *hubView) { w.gate(s.SlackDecide) })
+	e := setup(t, withSponsored(sponsoredP), slackDecideOn(t, slackLinks(), rows, &decisions), gateOn(w))
 	for i, class := range classes {
 		// U09 stands in for any clicker: an agents-admin with no entry in the Room CR, refused as
 		// not_supported rather than as not_permitted, since the class is checked first.

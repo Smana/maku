@@ -353,13 +353,17 @@ func (d *SlackDecider) resolve(ctx context.Context, p authn.Principal, in SlackD
 	}
 	// 13. The decision, through the store's one fence (D7): unchanged, under an idempotency scope of
 	// its own, so a Slack retry replays and the opposite decision is not a replay.
-	_, _, err = d.Store.Decide(ctx, ap.ID, in.Decision, "human:"+sub, "", envelope.Draft{
-		RoomID:       ap.RoomID,
-		Actor:        envelope.Actor{Kind: envelope.ActorHuman, ID: "human:" + sub},
-		Origin:       envelope.OriginClient,
+	dr := envelope.Draft{
+		RoomID: ap.RoomID, RunID: ap.RunID,
+		Actor:  envelope.Actor{Kind: envelope.ActorHuman, ID: "human:" + sub}, // D8: the person, never the App
+		Origin: envelope.OriginClient,
+		// The surface is in the scope, not the actor: one key per approval, and one per decision
+		// within it (D7), so a replayed click replays and the opposite decision is not a replay.
 		OriginClient: "human:" + sub + ":slack:" + ap.ID,
 		OriginSeq:    decisionSeq[in.Decision],
-	})
+	}
+	// The reason is empty, always (D12): this surface carries a decision and never a sentence.
+	_, _, err = d.Store.Decide(ctx, ap.ID, in.Decision, "human:"+sub, "", dr)
 	switch {
 	case errors.Is(err, store.ErrAlreadyDecided):
 		return slackAlreadyDecided, ""
