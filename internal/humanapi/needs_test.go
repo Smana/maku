@@ -44,7 +44,8 @@ func needsFacts(room string, seq int64, f envelope.TaskFacts) envelope.Event {
 
 // needsRooms is the fixture behind every /api/needs test: the split proposal on splitRoom (G4), the
 // pull request waiting for a maintainer's merge on roomID (CD26), and a room with no task at all — which
-// is not unread, it has no news. approval, when set, is a live approval of splitRoom.
+// is not unread, it has no news. approval, when set, is a live approval of roomID: the lexically later
+// room on purpose, so the list's order across rooms is observable (CD21).
 func needsRooms(t *testing.T, approval *store.Approval) option {
 	t.Helper()
 	return func(s *Server, _ *fanout.Hub, v *hubView) {
@@ -53,7 +54,7 @@ func needsRooms(t *testing.T, approval *store.Approval) option {
 		merge := repoRoom(roomID, "Smana/a")
 		merge.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
 		if approval != nil {
-			split.Status.PendingApprovals = 1 // the room projects it; the store below holds it
+			merge.Status.PendingApprovals = 1 // the room projects it; the store below holds it
 			v.approvals = []store.Approval{*approval}
 		}
 		s.Rooms = roomClient(t, split, merge, repoRoom(roomC, "Smana/a"))
@@ -185,10 +186,13 @@ func TestNeedsRefusesASponsoredToken(t *testing.T) {
 	}
 }
 
-// Review Focus 3: a cursor that is not an RFC 3339 instant is refused, never read as everything or nothing.
+// Review Focus 3: a cursor that is not an RFC 3339 instant, or one in the future, is refused — never read
+// as everything, and never as nothing: a future cursor would filter every dated item away and answer a
+// quiet list nobody is in.
 func TestNeedsRefusesAMalformedSince(t *testing.T) {
 	e := setup(t, needsOn, needsWorld(t, nil))
-	for _, since := range []string{"yesterday", "2026-11-04 19:10:00", "9999-99-99T00:00:00Z"} {
+	future := e.srv.now().Add(time.Hour).UTC().Format(time.RFC3339)
+	for _, since := range []string{"yesterday", "2026-11-04 19:10:00", "9999-99-99T00:00:00Z", future} {
 		code, body := get(t, e, "/api/needs?since="+url.QueryEscape(since), admin("dev"))
 		if code != http.StatusBadRequest || !strings.Contains(body, "since is an RFC 3339 instant") {
 			t.Errorf("%s: %d %s", since, code, body)
@@ -212,13 +216,28 @@ func TestNeedsSaysWhenARoomsStateIsUnread(t *testing.T) {
 	}
 }
 
+// CD21: the one order spans rooms. A deadline sorts first, then the kind, then the room — so an approval
+// in a lexically later room sorts before an earlier room's plan confirmation, whatever order the rooms
+// were read in. Ordering each room's items alone would pass every single-room test and still disagree
+// with the tool and the panel.
+func TestNeedsOrderSpansRooms(t *testing.T) {
+	approval := &store.Approval{ID: "01J9A", RoomID: roomID, Class: "shell", State: "pending",
+		RequestedAt: time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC), ExpiresAt: time.Now().Add(time.Hour)}
+	e := setup(t, needsOn, needsWorld(t, approval))
+	want := []string{"3kq7x2ma/approval/01J9A", "26zfnuxm/plan_confirmation/2238", "3kq7x2ma/merge/2239"}
+	if keys := needKeys(mustNeeds(t, e, "", admin("dev")).Items); !slices.Equal(keys, want) {
+		t.Fatalf("%v, want %v: the deadline first, then the kind, then the room", keys, want)
+	}
+}
+
 // `since` keeps only the items whose cause is newer than it: an approval asked at 19:00 is out at 19:05.
 // An item with no date is kept: a zero At is unknown, never old (Review Focus 3).
 func TestNeedsSinceFiltersByTheItemsOwnTime(t *testing.T) {
-	approval := &store.Approval{ID: "01J9A", RoomID: splitRoom, Class: "shell", State: "pending",
-		RequestedAt: time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC), ExpiresAt: time.Now().Add(time.Hour)}
-	e := setup(t, needsOn, needsWorld(t, approval))
-	asked, split, merge := splitRoom+"/approval/01J9A", splitRoom+"/plan_confirmation/2238", "3kq7x2ma/merge/2239"
+	askedAt := time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC)
+	approval := &store.Approval{ID: "01J9A", RoomID: roomID, Class: "shell", State: "pending",
+		RequestedAt: askedAt, ExpiresAt: time.Now().Add(time.Hour)}
+	e := setup(t, needsOn, needsWorld(t, approval), factsDatedAt(askedAt))
+	asked, split, merge := roomID+"/approval/01J9A", splitRoom+"/plan_confirmation/2238", roomID+"/merge/2239"
 	// No cursor lists everything, in the one order: the approval's deadline first, then the kinds.
 	if keys := needKeys(mustNeeds(t, e, "", admin("dev")).Items); !slices.Equal(keys, []string{asked, split, merge}) {
 		t.Fatalf("no cursor: %v", keys)
@@ -231,17 +250,32 @@ func TestNeedsSinceFiltersByTheItemsOwnTime(t *testing.T) {
 	if keys := needKeys(mustNeeds(t, e, "?since="+url.QueryEscape("2026-11-04T18:59:00Z"), admin("dev")).Items); !slices.Equal(keys, []string{asked, split, merge}) {
 		t.Fatalf("since 18:59: %v", keys)
 	}
-	// Read once, the split room's facts carry their date (summary.State.FactsAt), so a cursor past it
-	// drops that item too, while the merge stays undated. The answer names the instant to ask from next.
+	// Read once, the split room's facts carry their own date (summary.State.FactsAt, 19:00 here), so the
+	// same 19:01 cursor drops that item too; the merge, which no room of its own dated, stays. The answer
+	// names the instant to ask from next, and it is never in the future.
 	if code, body := get(t, e, "/api/rooms/"+splitRoom+"/summary", admin("dev")); code != http.StatusOK {
 		t.Fatalf("summary: %d %s", code, body)
 	}
-	next := mustNeeds(t, e, "?since="+url.QueryEscape(time.Now().Add(time.Hour).UTC().Format(time.RFC3339)), admin("dev"))
+	next := mustNeeds(t, e, "?since="+url.QueryEscape("2026-11-04T19:01:00Z"), admin("dev"))
 	if keys := needKeys(next.Items); !slices.Equal(keys, []string{merge}) {
-		t.Fatalf("since an hour from now: %v", keys)
+		t.Fatalf("since 19:01 after the fold: %v", keys)
 	}
 	if at, err := time.Parse(time.RFC3339, next.Cursor); err != nil || time.Since(at) > time.Minute || time.Until(at) > time.Minute {
 		t.Fatalf("cursor %q, want this answer's instant", next.Cursor)
+	}
+}
+
+// factsDatedAt dates every task-facts event of the fixture's log at ts, so a test can fold a room whose
+// facts did not land now, and a `since` past them filters the item that stands on them. The fixture's log
+// serves one page for the whole store (memLog.Range ignores the room, as a shared fixture), so each event
+// that could date a fold is dated, not just one room's.
+func factsDatedAt(ts time.Time) option {
+	return func(_ *Server, _ *fanout.Hub, v *hubView) {
+		for i := range v.evs {
+			if v.evs[i].Type == envelope.StateChanged {
+				v.evs[i].TS = ts
+			}
+		}
 	}
 }
 

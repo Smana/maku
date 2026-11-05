@@ -51,8 +51,10 @@ type needsEnvelope struct {
 type needsFilter struct{ room, repo string }
 
 // needsScan is the one scan both doors read (CD21, CD28): every room p may read, its needs from needs/v1,
-// and the rooms whose state could not be read. access is X-Rooms-Access' value for the caller: a list may
-// be short, and the value says why without naming a room. Its one error is errRoomsUnavailable.
+// in the one order across rooms — a deadline first, then the kind, then the room (summary.Ordered), so the
+// route, the tool and the panel cannot disagree — and the rooms whose state could not be read. access is
+// X-Rooms-Access' value for the caller: a list may be short, and the value says why without naming a room.
+// Its one error is errRoomsUnavailable.
 func (s *Server) needsScan(ctx context.Context, p authn.Principal, f needsFilter) (items []summary.Need, unread []string, access string, err error) {
 	var rooms v1alpha1.RoomList
 	if err := s.Rooms.List(ctx, &rooms, client.InNamespace(s.Namespace)); err != nil {
@@ -108,7 +110,9 @@ func (s *Server) needsScan(ctx context.Context, p authn.Principal, f needsFilter
 		}
 		items = append(items, need...)
 	}
-	return items, unread, access, nil
+	// The one order, over the whole list: each room's items arrive ordered among themselves, and only the
+	// combined sort puts an approval in a later room before an earlier room's plan confirmation (CD21).
+	return summary.Ordered(items), unread, access, nil
 }
 
 // needsRoute is GET /api/needs: the human door onto needs/v1 (CD28), for the browser and the CLI. The
@@ -123,14 +127,15 @@ func (s *Server) needsRoute(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
 	defer cancel()
 	q := r.URL.Query()
-	// Review Focus 3: a cursor that is not an instant is refused with the format it should have been,
-	// never read as everything (a list nobody asked for) or as nothing (a cursor that hides work).
+	// Review Focus 3: a cursor that is not an instant, or one in the future, is refused with the format
+	// the answer's own cursor has — never read as everything (a list nobody asked for), and never as
+	// nothing (a future cursor would filter every dated item away and answer a quiet list nobody is in).
 	var since time.Time
 	if raw := q.Get("since"); raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
+		if err != nil || t.After(s.now()) {
 			s.needsServed(ctx, p, needsOutcomeRefused)
-			http.Error(w, "since is an RFC 3339 instant, as this answer's cursor is", http.StatusBadRequest)
+			http.Error(w, "since is an RFC 3339 instant, as this answer's cursor is, and never in the future", http.StatusBadRequest)
 			return
 		}
 		since = t
