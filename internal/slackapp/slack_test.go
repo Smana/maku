@@ -36,7 +36,7 @@ func TestSlackPost(t *testing.T) {
 		_ = json.Unmarshal(body, &got)
 		return `{"ok":true,"ts":"1729.0002"}`
 	})
-	meta := &Metadata{EventType: "factory_draft", EventPayload: DraftPayload{Repo: "a/b", Title: "t", Body: "b", SHA256: "h"}}
+	meta := metaOf(t, draftEventType, DraftPayload{Repo: "a/b", Title: "t", Body: "b", SHA256: "h"})
 	ts, err := c.Post(context.Background(), "C03", "1729.0001", "hello", meta)
 	if err != nil || ts != "1729.0002" {
 		t.Fatalf("%q %v", ts, err)
@@ -74,8 +74,10 @@ func TestSlackMessage(t *testing.T) {
 		q.Get("inclusive") != "true" || q.Get("include_all_metadata") != "true" {
 		t.Fatalf("query %v", q)
 	}
-	if m.TS != "1729.0002" || m.ThreadTS != "1729.0001" || m.User != "U0BOT" || m.Metadata == nil ||
-		m.Metadata.EventType != "factory_draft" || m.Metadata.EventPayload.SHA256 != "h" {
+	if m.TS != "1729.0002" || m.ThreadTS != "1729.0001" || m.User != "U0BOT" || m.Metadata == nil {
+		t.Fatalf("%+v", m)
+	}
+	if p, ok := m.Metadata.draftPayload(); !ok || m.Metadata.EventType != "factory_draft" || p.SHA256 != "h" {
 		t.Fatalf("%+v", m)
 	}
 	if _, err := c.Message(context.Background(), "C03", "9999.0000"); err == nil {
@@ -105,9 +107,11 @@ func TestSlackThreadFollowsTheCursor(t *testing.T) {
 		 "metadata":{"event_type":"factory_draft","event_payload":{"repo":"a/b","author":"U02DEF","rev":2}}}]}`
 	})
 	msgs, err := c.Thread(context.Background(), "C03", "1729.0001")
-	if err != nil || len(msgs) != 2 || len(cursors) != 2 || cursors[1] != "c2" ||
-		msgs[1].Metadata == nil || msgs[1].Metadata.EventPayload.Author != "U02DEF" || msgs[1].Metadata.EventPayload.Rev != 2 {
+	if err != nil || len(msgs) != 2 || len(cursors) != 2 || cursors[1] != "c2" || msgs[1].Metadata == nil {
 		t.Fatalf("%v %v %+v", err, cursors, msgs)
+	}
+	if p, ok := msgs[1].Metadata.draftPayload(); !ok || p.Author != "U02DEF" || p.Rev != 2 {
+		t.Fatalf("%+v", msgs[1].Metadata)
 	}
 }
 

@@ -24,11 +24,12 @@ const (
 	maxSlackReply = 1 << 20
 )
 
-// Metadata is the draft the App attaches to its own message (R23); Slack keeps it off the
-// visible text.
+// Metadata is what the App attaches to its own messages (R23); Slack keeps it off the visible text.
+// EventPayload is tagged: the App decodes it on demand by EventType, so a card and a draft share one
+// message shape (v3.x Slack push approval §5). A draft's bytes on the wire do not change.
 type Metadata struct {
-	EventType    string       `json:"event_type"`
-	EventPayload DraftPayload `json:"event_payload"`
+	EventType    string          `json:"event_type"`
+	EventPayload json.RawMessage `json:"event_payload"`
 }
 
 // DraftPayload is the checked draft and its hash, sha256 hex of repo, title and body joined by NUL.
@@ -41,6 +42,48 @@ type DraftPayload struct {
 	// draft. Rev counts the drafts the thread has had, 1 for the first.
 	Author string `json:"author,omitempty"`
 	Rev    int    `json:"rev,omitempty"`
+}
+
+// ApprovalPayload is a card's metadata (§5): what finds the card again without a search scope.
+type ApprovalPayload struct {
+	ApprovalID string `json:"approvalId"`
+	Class      string `json:"class"`
+	Branch     string `json:"branch"`
+}
+
+// approvalEventType marks a card the App posted for an approval.
+const approvalEventType = "factory_approval"
+
+// draftPayload decodes the payload as the draft the event type claims; false when it is anything
+// else, which reads as "not a draft", the branch a foreign message already takes.
+func (m *Metadata) draftPayload() (DraftPayload, bool) {
+	if m == nil || m.EventType != draftEventType {
+		return DraftPayload{}, false
+	}
+	var p DraftPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return DraftPayload{}, false
+	}
+	return p, true
+}
+
+// approvalPayload decodes the payload as a card's; false when it is anything else.
+func (m *Metadata) approvalPayload() (ApprovalPayload, bool) {
+	if m == nil || m.EventType != approvalEventType {
+		return ApprovalPayload{}, false
+	}
+	var p ApprovalPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return ApprovalPayload{}, false
+	}
+	return p, true
+}
+
+// metaPayload marshals a payload the App builds itself. These always marshal; a failure would leave
+// an empty payload, which every decoder refuses, rather than a panic on the way to Slack.
+func metaPayload(v any) json.RawMessage {
+	raw, _ := json.Marshal(v)
+	return raw
 }
 
 // Message is a Slack message as the ✅ flow reads it (M9). User is who posted it: the App's own
@@ -98,8 +141,8 @@ type slackAnswer struct {
 		User     string `json:"user"`
 		Text     string `json:"text"`
 		Metadata *struct {
-			EventType    string       `json:"event_type"`
-			EventPayload DraftPayload `json:"event_payload"`
+			EventType    string          `json:"event_type"`
+			EventPayload json.RawMessage `json:"event_payload"`
 		} `json:"metadata"`
 	} `json:"messages"`
 }
