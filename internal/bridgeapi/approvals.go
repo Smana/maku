@@ -111,7 +111,9 @@ func (s *Server) approval(w http.ResponseWriter, r *http.Request) {
 	}
 	a, _, err := s.Approvals.RequestApproval(ctx, store.Approval{ID: ulid.Make().String(), RoomID: run.Room, RunID: run.ID,
 		EventID: in.EventID, CallID: in.CallID, Class: in.Class, Action: action, Prompters: prompters,
-		ExpiresAt: s.now().Add(approvalTTL(s.policy(ctx, run.Room)))},
+		// D5: the branch is the run's, as the claim carries it; the bridge never invents one.
+		BindingBranch: run.Branch,
+		ExpiresAt:     s.now().Add(approvalTTL(s.policy(ctx, run.Room)))},
 		envelope.Draft{Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: p.ID, Role: run.Role}, Origin: envelope.OriginHarness,
 			OriginClient: "agent:" + run.ID + ":approvals", OriginSeq: originSeq(in.EventID), Redactions: rules})
 	if err != nil {
