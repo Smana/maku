@@ -749,3 +749,57 @@ func TestALateDecisionNeverBeatsTheSweep(t *testing.T) {
 		t.Fatalf("%d closes, %d approved, %v; want %d expiries and no approval", closes, approved, err, rounds)
 	}
 }
+
+// D5: a forge.push approval binds the run's branch, and nothing else. The column round-trips, the
+// row stays its event down to the branch (a differing one is refused), and the broker's grant
+// cannot rewrite it after the fact.
+func TestApprovalBinding(t *testing.T) {
+	ctx := t.Context()
+	s, _, _, _ := open(t)
+	holdBridge(t, s, room, approvalRun)
+	branched := approval("ap1", "e1", "c1", time.Hour)
+	branched.Class, branched.BindingBranch = "forge.push", "agent/26zfnuxm"
+	got, ev, err := s.RequestApproval(ctx, branched, approvalDraft())
+	if err != nil || got.BindingBranch != "agent/26zfnuxm" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	var p envelope.ApprovalRequestedPayload
+	if json.Unmarshal(ev.Payload, &p) != nil || p.Branch != "agent/26zfnuxm" {
+		t.Fatalf("the event's branch: %s", ev.Payload)
+	}
+	again, err := s.Approval(ctx, "ap1")
+	if err != nil || again.BindingBranch != "agent/26zfnuxm" {
+		t.Fatalf("read back: %+v %v", again, err)
+	}
+	// An unbranched approval keeps the default, and its event says nothing about a branch.
+	plain, plainEv, err := s.RequestApproval(ctx, approval("ap2", "e2", "c2", time.Hour), approvalDraft())
+	if err != nil || plain.BindingBranch != "" || strings.Contains(string(plainEv.Payload), "branch") {
+		t.Fatalf("an unbranched approval: %+v %s %v", plain, plainEv.Payload, err)
+	}
+	// A fresh approval_requested event, and a row whose branch alone disagrees with it. Every
+	// comparison the trigger made before the branch clause matches (approvalId, run, call, class,
+	// action, seq; the event id is fresh, so the (room, run, event) key is free, and the trigger
+	// never reads it), so only the new clause rejects the row.
+	const differs = `UPDATE rooms SET last_seq = last_seq + 1 WHERE room_id = '3kq7x2ma';
+		INSERT INTO events (room_id, seq, id, run_id, actor_kind, actor_id, type, origin, origin_client, origin_seq, ts, payload)
+		SELECT room_id, last_seq, 'eX', '7f3cq2xz', 'agent', 'agent:7f3cq2xz', 'approval_requested', 'harness',
+			'test:binding', 1, now(),
+			'{"approvalId":"apX","callId":"c1","class":"forge.push","action":{"command":"gh pr create"},"branch":"agent/other"}'
+			FROM rooms WHERE room_id = '3kq7x2ma';
+		INSERT INTO approvals (approval_id, room_id, run_id, event_id, call_id, class, action, binding_branch, state,
+			requested_seq, expires_at)
+		SELECT 'apX', room_id, '7f3cq2xz', 'eX', 'c1', 'forge.push', '{"command":"gh pr create"}', 'agent/26zfnuxm',
+			'pending', last_seq, now() + interval '1 hour' FROM rooms WHERE room_id = '3kq7x2ma'`
+	for tc, want := range map[string]struct{ sql, code, msg string }{
+		"a row whose branch differs from its event's": {differs, "23514", "not its approval_requested"},
+		"a branch outside the CRD's pattern":          {`UPDATE approvals SET binding_branch = 'main' WHERE approval_id = 'ap1'`, "42501", ""},
+	} {
+		t.Run(tc, func(t *testing.T) {
+			err := inTx(ctx, s, want.sql)
+			var pg *pgconn.PgError
+			if !errors.As(err, &pg) || pg.Code != want.code || !strings.Contains(pg.Message, want.msg) {
+				t.Fatalf("want SQLSTATE %s mentioning %q, got %v", want.code, want.msg, err)
+			}
+		})
+	}
+}
