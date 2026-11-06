@@ -878,11 +878,24 @@ func TestOneProposalMessageAcrossRevisions(t *testing.T) {
 		t.Fatalf("the reposted metadata: %+v %v", p, ok)
 	}
 
-	// The old message is made inert, once, with no blocks: its buttons are gone.
+	// The old message is made inert, once, with an emptied block list — not an absent one: chat.update
+	// leaves the blocks alone when the key is absent, so nil would keep the old Confirm and Cancel
+	// live beside the fresh proposal's (Review Focus 1). The approval design's inert card writes the
+	// same emptied list for the same reason.
 	inert := fake.updatesMade()
 	if len(inert) != 1 || inert[0].ts != ts || inert[0].channel != channel ||
-		inert[0].text != "This proposal was replaced below." || len(inert[0].blocks) != 0 {
+		inert[0].text != "This proposal was replaced below." {
 		t.Fatalf("the replaced message: %+v", inert)
+	}
+	if string(inert[0].blocks) != "[]" {
+		t.Fatalf("the replaced message's blocks are %q, want an emptied list", inert[0].blocks)
+	}
+	// Slack keeps a message's metadata through an update that carries none, so the replaced message
+	// is still decodable as the revision it showed. Only threadProposal's newest-wins rule keeps one
+	// proposal live: PR 6 must read the newest proposal before filing, never the clicked message's
+	// metadata (the comment on repostProposal says so).
+	if old, ok := fake.msgs[ts].Metadata.proposalPayload(); !ok || old.Rev != 5 {
+		t.Fatalf("the replaced message no longer reads as the revision it showed: %+v %v", old, ok)
 	}
 	if latest, closed := app.threadProposal(fake.thread()); latest == nil || latest.TS != fresh.ts || closed {
 		t.Fatalf("the newest message is the one live proposal: %+v %v", latest, closed)

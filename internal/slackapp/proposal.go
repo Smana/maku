@@ -632,13 +632,22 @@ func (a *App) updateProposal(ctx context.Context, channel, ts string, prev, next
 // inert. The new message goes first: a failed repost leaves the old one live rather than none at all.
 // The inert update is best effort and never retried into a loop — its failure is logged with the
 // channel and the ts, and the newest message is the thread's live proposal either way.
+//
+// The inert write sends an empty block list, not none: chat.update leaves a message's blocks as they
+// are when the key is absent, so nil would keep the old Confirm and Cancel live and give the thread
+// two sets of working buttons, the older binding a hash its metadata no longer holds. An emptied list
+// is what takes a card's buttons off here (App.inert, §6 step 7), and this is the same write.
+//
+// Slack keeps the message's metadata through an update that carries none, so the replaced message is
+// still decodable as a proposal: threadProposal's newest-wins rule is what makes the fresh one the
+// live proposal, and the click to act on is always the newest message's.
 func (a *App) repostProposal(ctx context.Context, channel, oldTS string, p ProposalPayload, q *intake.Question) string {
 	// The old message's own ts is the thread handle here: Slack resolves a reply's ts to the thread
 	// it is in, so the repost lands beside the proposal it replaces.
 	if code := a.postProposal(ctx, channel, oldTS, p, q); code != "proposed" {
 		return code
 	}
-	if err := a.Slack.Update(ctx, channel, oldTS, proposalReplacedLine, nil); err != nil {
+	if err := a.Slack.Update(ctx, channel, oldTS, proposalReplacedLine, json.RawMessage("[]")); err != nil {
 		a.log().Warn("proposal inert update failed", "channel", channel, "ts", oldTS, "err", err)
 	}
 	return "reposted"
