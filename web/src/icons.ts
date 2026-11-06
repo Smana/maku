@@ -13,6 +13,11 @@ const paths = {
   spinner: ["M8 1.75a6.25 6.25 0 1 0 6.25 6.25"],
   chevron: ["M6 3.5l4.5 4.5-4.5 4.5"],
   send: ["M2.5 8h10", "M8.5 4l4 4-4 4"],
+  // The run status's kinds (statusIcon). dot is filled by CSS (.icon-dot): a live run.
+  clock: ["M8 1.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 1 0 0-12.5z", "M8 4.75V8l2.25 1.5"],
+  dot: ["M8 4.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7z"],
+  circle: ["M8 3.25a4.75 4.75 0 1 0 0 9.5a4.75 4.75 0 1 0 0-9.5z"],
+  square: ["M4.25 4.25h7.5v7.5h-7.5z"],
 } as const;
 
 export type IconName = keyof typeof paths;
@@ -37,4 +42,16 @@ export function icon(name: IconName, label?: string): SVGSVGElement {
     svg.append(p);
   }
   return svg;
+}
+
+// The run status's glyph by kind. The status carries a character too (the CLI prints it, and
+// internal/summary mirrors it); the page draws this instead, so the line matches the icon set.
+const STATUS: Record<string, IconName> = {
+  running: "dot", queued: "circle", "waiting-you": "clock", "waiting-other": "clock", "waiting-pr": "clock",
+  waiting: "clock", finished: "check", done: "check", failed: "x", stopped: "square",
+};
+
+// statusIcon is the decorative glyph for a run-status kind, null for a kind it does not know.
+export function statusIcon(kind: string): SVGSVGElement | null {
+  return Object.hasOwn(STATUS, kind) ? icon(STATUS[kind]) : null;
 }

@@ -142,11 +142,11 @@ describe("text wrapping", () => {
 describe("surfaces", () => {
   it("rounds the approval card concentrically: its 6 px controls plus 8 px of padding", () => {
     const a = decl(outside, ".approval");
-    expect(a).toMatch(/border-radius:\s*14px/);
+    expect(a).toMatch(/border-radius:\s*calc\(var\(--radius-control\)\s*\+\s*8px\)/);
     expect(a).toMatch(/padding:\s*8px 12px/);
   });
   it("squares an open call's summary at the body's edge", () => {
-    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*8px 8px 0 0/);
+    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*var\(--radius-row\) var\(--radius-row\) 0 0/);
   });
 });
 
@@ -198,5 +198,77 @@ describe("phone clamps and long tokens", () => {
   it("wraps a long unbroken token in message prose; pre keeps its own wrapping", () => {
     expect(decl(outside, ".md")).toMatch(/overflow-wrap:\s*anywhere/);
     expect(decl(outside, "pre")).toMatch(/overflow-wrap:\s*anywhere/);
+  });
+});
+
+// The layout pass (2026-11-06): a phone's first screen goes to the conversation, the lockup
+// sits on the title's row, and a wide screen keeps the log, the rail and the composer together.
+const wide = media("(min-width: 1100px)");
+describe("layout", () => {
+  it("lets the header scroll away on a phone, so the chrome never pins two thirds of the screen", () => {
+    expect(decl(phone, ".page-header")).toMatch(/position:\s*static/);
+  });
+  it("keeps Send beside the text on a phone rather than a full-width row under it", () => {
+    expect(phone).not.toMatch(/\.composer-write\s*{[^}]*flex-direction:\s*column/);
+  });
+  it("keeps the theme button and the connection on one line on a phone", () => {
+    const m = decl(phone, ".dock-meta");
+    expect(m).toMatch(/flex-wrap:\s*nowrap/);
+    expect(decl(phone, ".dock-meta .theme-toggle")).toMatch(/white-space:\s*nowrap/);
+    const s = decl(phone, ".page-dock .status");
+    expect(s).toMatch(/text-overflow:\s*ellipsis/);
+    expect(s).toMatch(/min-width:\s*0/);
+  });
+  it("aligns the lockup with the title's row, not the middle of the whole header", () => {
+    expect(decl(outside, ".brand")).toMatch(/align-self:\s*start/);
+  });
+  it("sizes the conversation's column to the log's measure on a wide screen, the rail beside it", () => {
+    expect(decl(outside, ":root")).toMatch(/--log-w:\s*72ch/);
+    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*calc\(var\(--log-w\)\s*\+\s*32px\)\)\s*300px/);
+  });
+  it("gives the composer the log's measure on a wide screen", () => {
+    const d = decl(wide, ".page-dock");
+    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*var\(--log-w\)\)\s*300px/);
+    // 16 px of the main's padding past the measure, plus the room body's 16 px gap: the meta sits under the rail.
+    expect(d).toMatch(/column-gap:\s*32px/);
+  });
+});
+
+// The appearance pass (2026-11-06): hierarchy from size and opacity, one radius scale, the
+// approval card's accent as a bar, the connection as a dot.
+describe("appearance", () => {
+  it("sets the room title bigger and lighter, smaller again on a phone", () => {
+    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*22px/);
+  });
+  it("mutes the header's secondary facts and keeps the state chips at full strength", () => {
+    expect(decl(outside, ".page-header .chip")).toMatch(/color:\s*color-mix\(in srgb, var\(--brand-header-foreground\) 68%, var\(--brand-header\)\)/);
+    expect(decl(outside, ".page-header .chip-phase, .page-header .chip-run, .page-header .chip-verdict")).toMatch(/color:\s*var\(--brand-header-foreground\)/);
+  });
+  it("draws the approval card's accent as a bar on a raised card, not a full outline", () => {
+    const a = decl(outside, ".approval");
+    expect(a).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
+    expect(a).toMatch(/box-shadow:\s*var\(--shadow-border\),\s*inset 3px 0 0 var\(--warning\)/);
+    expect(a).toMatch(/padding:\s*8px 12px 8px 15px/);
+  });
+  it("draws deny as a ghost: no outline until hovered", () => {
+    const d = decl(outside, "button.deny");
+    expect(d).toMatch(/border-color:\s*transparent/);
+    expect(d).toMatch(/background:\s*transparent/);
+    expect(decl(outside, "button.deny:hover")).toMatch(/background:\s*color-mix\(in srgb, var\(--destructive\) 10%, transparent\)/);
+  });
+  it("says the connection with a dot and the UI face, the dot's colour by state", () => {
+    const s = decl(outside, ".page-dock .status");
+    expect(s).not.toMatch(/monospace/);
+    expect(decl(outside, ".page-dock .status::before")).toMatch(/border-radius:\s*50%/);
+    expect(decl(outside, '.page-dock[data-status="live"] .status::before')).toMatch(/background:\s*var\(--success\)/);
+    expect(decl(outside, '.page-dock[data-status="reconnecting"] .status::before')).toMatch(/background:\s*var\(--warning\)/);
+  });
+  it("keeps one radius scale: controls, rows and cards", () => {
+    const root = decl(outside, ":root");
+    expect(root).toMatch(/--radius-control:\s*6px/);
+    expect(root).toMatch(/--radius-row:\s*8px/);
+    expect(root).toMatch(/--radius-card:\s*12px/);
+    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-card\)/);
   });
 });

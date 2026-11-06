@@ -21,6 +21,10 @@
   src: url("/assets/fonts/space-grotesk-latin-700-normal.woff2") format("woff2");
 }
 :root {
+  /* The log's measure: every row, and on a wide screen the conversation's column and the composer. */
+  --log-w: 72ch;
+  /* One radius scale: a control, a row (a call, the table, the composer), a card. */
+  --radius-control: 6px; --radius-row: 8px; --radius-card: 12px;
   color-scheme: light;
 
   --flow-writer: #0e7490; /* the run rail: a writer's lane */
@@ -159,7 +163,7 @@ strong, b { font-weight: 700; }
 /* Code, commands and tool I/O are monospace at 14 px; IDs, timestamps and counters at 13 px
    with tabular numerals. Prose, bubbles and cards stay in the sans. */
 .t-cmd, .t-command, .approval-command, pre, code { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-time, .t-time, .step-dur, .page-dock .status, .replay-progress, .t-prompt {
+time, .t-time, .step-dur, .replay-progress, .t-prompt {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45;
   font-variant-numeric: tabular-nums;
 }
@@ -185,7 +189,7 @@ a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-ra
    both in the DOM; .dark (theme.ts), not the OS media query, picks one, so a manual choice
    and the system choice agree. */
 .brand {
-  display: flex; align-items: center; gap: 16px; align-self: center;
+  display: flex; align-items: center; gap: 16px; align-self: start;
   color: var(--brand-header-foreground); text-decoration: none;
 }
 .page-header a.brand { text-decoration: none; }
@@ -223,11 +227,11 @@ a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-ra
 .composer-write { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
 .composer-write textarea {
   flex: 1 1 auto; min-width: 0; box-sizing: border-box; font: inherit;
-  padding: 8px 10px; border-radius: 8px; resize: vertical;
+  padding: 8px 10px; border-radius: var(--radius-row); resize: vertical;
   /* Grows with the text from two lines to eight where the browser can; rows=2 elsewhere. */
   field-sizing: content; min-height: calc(2lh + 18px); max-height: calc(8lh + 18px);
 }
-button.send { display: inline-flex; gap: 6px; align-items: center; justify-content: center; padding: 0 14px 0 16px; font-weight: 700; border-radius: 8px; min-width: 88px; }
+button.send { display: inline-flex; gap: 6px; align-items: center; justify-content: center; padding: 0 14px 0 16px; font-weight: 700; border-radius: var(--radius-row); min-width: 88px; }
 /* The arrow beside a 700 label carries its weight: 2.5, not the set's 1.5. The icon side's
    padding is the text side's less 2 px, so the pair reads centred. */
 button.send .icon { stroke-width: 2.5; }
@@ -251,19 +255,24 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 .seg input:focus-visible + span { outline: 2px solid var(--ring); outline-offset: 1px; }
 .seg input:disabled + span { opacity: .5; }
 .dock-meta { justify-content: flex-end; }
-.page-dock .status { color: var(--muted-foreground); }
-.page-dock[data-status="live"] .status { color: var(--success-text); }
+.page-dock .status { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
+/* The connection is a dot beside the words: green live, amber reconnecting, grey otherwise. */
+.page-dock .status::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--placeholder); }
+.page-dock[data-status="live"] .status::before { background: var(--success); }
+.page-dock[data-status="reconnecting"] .status::before { background: var(--warning); }
 .page-dock .notice { color: var(--destructive-text); overflow-wrap: anywhere; }
 @media (max-width: 640px) {
   :root { --hit: 44px; }
-  .page-header { padding: 14px; row-gap: 14px; }
+  /* Static, not sticky: pinned, the header and the dock took two thirds of an 844 px screen. */
+  .page-header { position: static; padding: 14px; row-gap: 14px; }
   .brand { gap: 14px; }
   .brand img { width: 28px; height: 28px; }
   .brand-wordmark { font-size: 22px; }
   .page-header .strip { grid-column: 1 / -1; }
   .page-dock { grid-template-columns: minmax(0, 1fr); }
-  .dock-meta { justify-content: space-between; }
-  .composer-write { flex-direction: column; }
+  .dock-meta { flex-wrap: nowrap; justify-content: space-between; }
+  .dock-meta .theme-toggle { flex: none; white-space: nowrap; }
+  .page-dock .status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .composer-row .keys { display: none; }
   .seg input { inset: -8px 0; }
   /* Touch: every form control is a full target, not only the dock's. */
@@ -282,7 +291,7 @@ main { padding: 8px 16px 16px; max-width: 100%; }
 button {
   font: inherit; cursor: pointer;
   background: var(--card); color: var(--card-foreground);
-  border: 1px solid var(--border); border-radius: 6px; padding: 2px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-control); padding: 2px 10px;
   min-height: 28px;
   transition-property: box-shadow, background-color, scale; transition-duration: 150ms; transition-timing-function: ease-out;
 }
@@ -316,7 +325,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* The title strip (strip.ts): rows of the header, on the brand header, so every chip and link
    takes the header's text token rather than the card's. */
 .strip { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
-.strip-title { font-size: 20px; line-height: 1.3; margin: 0; font-weight: 700; }
+/* Size carries the title, not weight: 500 at 26 px, tracked in as display type is. */
+.strip-title { font-size: 26px; line-height: 1.2; margin: 0; font-weight: 500; letter-spacing: -0.02em; }
 /* The title links its issue: underlined on hover only, a heading first. */
 .page-header .strip-title a { text-decoration: none; }
 .page-header .strip-title a:hover, .page-header .strip-title a:focus-visible { text-decoration: underline; }
@@ -335,7 +345,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header .needs-pill::after { content: ""; position: absolute; inset: -3px 0; }
 /* The facts read as one line of text, not a row of buttons: no outline, a middle dot between
    them; the links among them stay underlined. */
-.page-header .chip { color: var(--brand-header-foreground); background: transparent; border-color: transparent; padding: 0; }
+/* Hierarchy by strength: the facts at 68% of the header's ink, the state chips at full. */
+.page-header .chip { color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); background: transparent; border-color: transparent; padding: 0; }
+.page-header .chip-phase, .page-header .chip-run, .page-header .chip-verdict { color: var(--brand-header-foreground); }
 .page-header .chip + .chip::before { content: "·"; margin-right: 6px; opacity: .6; }
 .page-header .chip[title] { cursor: help; }
 /* The budget is quiet until it matters: amber from 80 %, red once spent. */
@@ -392,7 +404,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .page-header .strip-chips::-webkit-scrollbar { display: none; }
   .page-header .strip-chips > * { flex: none; } /* never squeezed: a short fact would stack a letter a line */
   .page-header .needs-pill { order: -1; }
-  .strip-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .strip-title { font-size: 22px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .page-header .waiting { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* The clamp's overflow clips an ::after: the button's own box grows instead, the margin
      taking the 24 px back: 20 px of line and 24 px of padding is the 44. The clamp hides lines
@@ -407,14 +419,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 /* Chat view */
-.msg { margin: 14px 0; max-width: 72ch; }
+.msg { margin: 14px 0; max-width: var(--log-w); }
 .msg-head { color: var(--muted-foreground); font-size: 13px; display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; }
 .msg-head time, .t-time { margin-left: auto; color: var(--placeholder); white-space: nowrap; }
 /* --bubble-bg is the bubble's own surface: a long message's fade (below) ends in it. */
 .bubble {
   --bubble-bg: var(--card);
   background: var(--bubble-bg); color: var(--card-foreground);
-  border-radius: 4px 12px 12px 12px; padding: 8px 14px;
+  border-radius: 4px var(--radius-card) var(--radius-card) var(--radius-card); padding: 8px 14px;
   box-shadow: var(--shadow-border);
 }
 .from-human .bubble { --bubble-bg: color-mix(in srgb, var(--primary) 10%, var(--card)); }
@@ -441,14 +453,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* A tool row: one line, the detail behind the toggle */
 .tool {
   background: var(--card); color: var(--card-foreground);
-  border-radius: 8px; margin: 6px 0; max-width: 72ch;
+  border-radius: var(--radius-row); margin: 6px 0; max-width: var(--log-w);
   box-shadow: var(--shadow-border);
 }
-.tool summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; list-style: none; flex-wrap: wrap; border-radius: 8px; }
+.tool summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; list-style: none; flex-wrap: wrap; border-radius: var(--radius-row); }
 .tool summary::before { content: "▸"; color: var(--placeholder); }
 .tool[open] summary::before { content: "▾"; }
 .tool summary::-webkit-details-marker { display: none; }
-.tool[open] > summary { border-radius: 8px 8px 0 0; } /* its bottom meets the body's rule */
+.tool[open] > summary { border-radius: var(--radius-row) var(--radius-row) 0 0; } /* its bottom meets the body's rule */
 .tool.st-rejected, .tool.st-error { box-shadow: var(--shadow-border), inset 3px 0 0 color-mix(in srgb, var(--destructive) 65%, var(--card)); }
 .tool.st-rejected { box-shadow: var(--shadow-border), inset 3px 0 0 color-mix(in srgb, var(--warning) 80%, var(--card)); }
 .t-name { color: var(--link); font-weight: 700; }
@@ -501,22 +513,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 /* Timeline markers and system lines */
-.handoff > .md { margin: -2px 0 8px 14px; max-width: 72ch; }
+.handoff > .md { margin: -2px 0 8px 14px; max-width: var(--log-w); }
 .mark, .sys { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; display: flex; gap: 8px; align-items: baseline; }
 .mark .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--placeholder); align-self: center; flex: none; }
 .mark-text { overflow-wrap: anywhere; }
 .sys { font-style: italic; }
 .sys::before { content: "·"; }
 .mk-harness_error .mark-text, .mk-limit .mark-text { color: var(--destructive); }
-.mark { max-width: 72ch; }
+.mark { max-width: var(--log-w); }
 /* U7: a run of plumbing rows reads as one "· N changes" line, open on click. */
-.fold { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; max-width: 72ch; }
+.fold { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; max-width: var(--log-w); }
 .fold > summary { cursor: pointer; list-style: none; }
 .fold > summary::-webkit-details-marker { display: none; }
 .fold-body { padding-left: 14px; }
 .notes details > summary, .fold > summary, .step-calls > summary, .t-sec { font-variant-numeric: tabular-nums; }
 /* A step (P1): an agent's message, then its calls behind one line, on a rail under it. */
-.step { margin: 12px 0; max-width: 72ch; }
+.step { margin: 12px 0; max-width: var(--log-w); }
 .step > .msg, .step > .row > .msg { margin: 0; }
 .step-calls { margin: 6px 0 0 3px; padding-left: 12px; border-left: 2px solid var(--border); }
 .step[data-state="failed"] > .step-calls { border-left-color: color-mix(in srgb, var(--destructive) 65%, var(--card)); }
@@ -544,7 +556,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .swatch-3 { background: var(--destructive); }
 .swatch-4 { background: var(--link); }
 .swatch-5 { background: var(--muted-foreground); }
-.other { max-width: 72ch; color: var(--muted-foreground); }
+.other { max-width: var(--log-w); color: var(--muted-foreground); }
 .other summary { cursor: pointer; }
 
 /* Raw view */
@@ -601,9 +613,11 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .needs h2 { margin: 0; font-size: 1em; }
 .approvals, .needs-other { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .needs-other li { overflow-wrap: anywhere; }
-/* 14 px: the 6 px reason field and buttons plus the 8 px of padding, concentric. */
-.approval { border: 1px solid var(--warning-border); border-radius: 14px; padding: 8px 12px; display: grid; gap: 6px;
-  background: var(--card); color: var(--card-foreground); min-width: 0; }
+/* The 6 px reason field and buttons plus the 8 px of padding, concentric. The accent is a bar,
+   as a rejected call's is, on the card's own edge; the left padding clears its 3 px. */
+.approval { border-radius: calc(var(--radius-control) + 8px); padding: 8px 12px 8px 15px; display: grid; gap: 6px;
+  background: var(--card); color: var(--card-foreground); min-width: 0;
+  box-shadow: var(--shadow-border), inset 3px 0 0 var(--warning); }
 .approval-command { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-meta { color: var(--muted-foreground); font-size: 13px; overflow-wrap: anywhere; }
 .approval-json > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; }
@@ -611,12 +625,14 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .approval-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .approval-decide input { flex: 1 1 12em; min-width: 0; }
 button.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
-button.deny { color: var(--destructive-text); border-color: var(--destructive-text); }
+/* Deny is a ghost: the destructive word, no outline; hover tints it. */
+button.deny { color: var(--destructive-text); border-color: transparent; background: transparent; }
+button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, transparent); box-shadow: none; }
 .manifest pre { background: var(--muted); padding: 8px; border-radius: 6px; }
 .new-room { padding: 8px 16px; } .new-room .notice { color: var(--destructive); }
 .fork-here { font-size: 13px; padding: 0 6px; }
 /* U7: fork here sits in a toolbar beside a message or a handoff, shown on hover and focus. */
-.row { position: relative; max-width: 72ch; }
+.row { position: relative; max-width: var(--log-w); }
 .row-tools { position: absolute; right: -4px; top: 0; opacity: 0; visibility: hidden; pointer-events: none; transition-property: opacity, visibility; transition-duration: 150ms; transition-timing-function: ease-out; }
 .row:hover .row-tools, .row:focus-within .row-tools { opacity: 1; visibility: visible; pointer-events: auto; }
 /* No hover, no reveal: on touch the control stays visible, in the flow under the row where it
@@ -640,7 +656,7 @@ button.deny { color: var(--destructive-text); border-color: var(--destructive-te
    its Copy button. Concentric radii: the card 14 px, a block 10 px, the button 6 px at 4 px
    in. A block wraps its lines (a word breaks only when nothing else fits), so the fold never
    scrolls sideways; the button floats, so the command's later lines run under it. */
-.cli-card { background: var(--card); color: var(--card-foreground); box-shadow: var(--shadow-border); border-radius: 14px; padding: 16px; max-width: 80ch; min-width: 0; }
+.cli-card { background: var(--card); color: var(--card-foreground); box-shadow: var(--shadow-border); border-radius: var(--radius-card); padding: 16px; max-width: 80ch; min-width: 0; }
 .cli-message { margin: 0; }
 .cli-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; counter-reset: cli-step; }
 .cli-step { counter-increment: cli-step; display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px; row-gap: 6px; }
@@ -658,7 +674,7 @@ button.deny { color: var(--destructive-text); border-color: var(--destructive-te
 .cli-copy { float: right; min-height: var(--hit); min-width: 84px; margin: 0 0 4px 8px; padding: 0 12px; font-size: 13px; border-radius: 6px; }
 .cli-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 640px) {
-  .cli-card { padding: 12px; border-radius: 12px; }
+  .cli-card { padding: 12px; }
   .cli-step { grid-template-columns: minmax(0, 1fr); }
   .cli-step::before { display: none; }
   .cli-step-title::before { content: counter(cli-step) ". "; color: var(--primary); }
@@ -681,8 +697,8 @@ button.deny { color: var(--destructive-text); border-color: var(--destructive-te
 .raw-events { margin-top: 8px; }
 .raw-events > summary { cursor: pointer; padding: 4px 0; }
 /* Until the first frame (P9): three message shapes, pulsing where motion is welcome. */
-.skeleton { padding: 8px 16px; display: grid; gap: 12px; max-width: 72ch; }
-.sk-msg { height: 56px; border-radius: 12px; background: var(--card); box-shadow: var(--shadow-border); }
+.skeleton { padding: 8px 16px; display: grid; gap: 12px; max-width: var(--log-w); }
+.sk-msg { height: 56px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); }
 .sk-msg:nth-child(2) { width: 70%; }
 .sk-msg:nth-child(3) { width: 85%; }
 @media (prefers-reduced-motion: no-preference) {
@@ -720,7 +736,7 @@ button.deny { color: var(--destructive-text); border-color: var(--destructive-te
 .refresh-status { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
 .refresh-status[data-failed] { color: var(--destructive-text); }
 .refresh-pause { padding: 0 10px; }
-table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collapse; background: var(--card); box-shadow: var(--shadow-border); border-radius: 8px; overflow: hidden; }
+table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collapse; background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); overflow: hidden; }
 .rooms th, .rooms td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: baseline; font-variant-numeric: tabular-nums; }
 .rooms tbody tr:last-child td { border-bottom: 0; }
 .rooms th { font-size: 13px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .04em; }
@@ -781,7 +797,9 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .run-status[data-kind="waiting-you"], .run-status[data-kind="waiting-other"], .run-status[data-kind="waiting-pr"], .run-status[data-kind="waiting"] { border-left-color: var(--warning); }
 .run-status[data-kind="finished"], .run-status[data-kind="done"] { border-left-color: var(--success); }
 .run-status[data-kind="failed"] { border-left-color: var(--destructive); }
-.run-status-icon { flex: none; }
+.run-status-icon { flex: none; align-self: center; display: inline-flex; }
+.run-status-icon .icon, .row-status-icon .icon { display: block; }
+.icon-dot { fill: currentColor; }
 
 /* The run rail (rail.ts): a node's lane colour comes from data-tone, a plan step's from
    data-state=ghost; role text never reaches a class. Past runs dim so the live one leads. */
@@ -873,7 +891,10 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   .room-body.has-rail > .rail:not(.open) { display: none; }
 }
 @media (min-width: 1100px) {
-  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
+  /* The column is the log's measure plus the main's padding, so the rail sits beside the rows
+     rather than across an empty band; the composer takes the same measure. */
+  .page-dock { grid-template-columns: minmax(0, var(--log-w)) 300px; column-gap: 32px; }
+  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, calc(var(--log-w) + 32px)) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
   .room-body.has-rail > :not(.rail) { grid-column: 1; }
   .room-body.has-rail > .rail {
     grid-column: 2; grid-row: 1 / span 6; position: sticky; top: var(--header-h, 0px);
