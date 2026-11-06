@@ -649,8 +649,19 @@ func planFixture(t *testing.T, name string) intake.Plan {
 // recomputed over it, and whether the developer may start the factory on it.
 func checked(t *testing.T, name string) string {
 	t.Helper()
+	return checkedStart(t, name, true, "")
+}
+
+// checkedStart is that same structuredContent with the canStart the broker answered: false carries
+// the broker's own why, which the form repeats to the developer.
+func checkedStart(t *testing.T, name string, canStart bool, why string) string {
+	t.Helper()
 	p := planFixture(t, name)
-	b, err := json.Marshal(map[string]any{"plan": p, "hash": intake.Hash(p), "canStart": true})
+	d := map[string]any{"plan": p, "hash": intake.Hash(p), "canStart": canStart}
+	if why != "" {
+		d["canStartWhy"] = why
+	}
+	b, err := json.Marshal(d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +670,18 @@ func checked(t *testing.T, name string) string {
 
 // planCheckAccepted is the broker accepting a plan_check: the whole tools/call result, isError false.
 func planCheckAccepted(t *testing.T) string {
-	return `{"isError":false,"content":[{"type":"text","text":"plan"}],"structuredContent":` + checked(t, "single") + `}`
+	return planCheckResult(checked(t, "single"))
+}
+
+// planCheckCannotStart is the same acceptance where the developer may not start the factory, for the
+// reason the broker gives.
+func planCheckCannotStart(t *testing.T, why string) string {
+	return planCheckResult(checkedStart(t, "single", false, why))
+}
+
+// planCheckResult is a plan_check tools/call result around structuredContent, as the broker sends it.
+func planCheckResult(structured string) string {
+	return `{"isError":false,"content":[{"type":"text","text":"plan"}],"structuredContent":` + structured + `}`
 }
 
 // planCheckRefused is the broker refusing one: the whole tools/call result, isError true, whose text
@@ -793,5 +815,24 @@ func TestIssueFileRefusesAPlanOnABrokerWithoutThePlanner(t *testing.T) {
 	got := r.issueFile(t.Context(), planArgs(t))
 	if !strings.Contains(fmt.Sprint(got), "unknown tool: plan_check") || r.filed != 0 || r.asked != 0 {
 		t.Fatalf("%v filed=%d asked=%d", got, r.filed, r.asked)
+	}
+}
+
+// FA4: a plan this developer may not start still files, the form offers no start field at all, and
+// plan_check's own why survives into the message the developer reads.
+func TestIssueFileOffersNoStartOnAPlanItCannotStart(t *testing.T) {
+	r := relay(t, fakeBroker(t, planCheckCannotStart(t, "your repository is not in sessionStart")))
+	got := r.issueFile(t.Context(), planArgs(t))
+	form := r.lastForm()
+	props := form["requestedSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, has := props["start"]; has {
+		t.Fatalf("start offered on a plan canStart says no: %v", props)
+	}
+	msg := fmt.Sprint(form)
+	if !strings.Contains(msg, "your repository is not in sessionStart") || !strings.Contains(msg, "factory/ready") {
+		t.Fatalf("the form says neither why nor how the developer starts it: %s", msg)
+	}
+	if r.filed != 1 || !strings.Contains(fmt.Sprint(got), "filed") || strings.Contains(fmt.Sprint(got), `"started":true`) {
+		t.Fatalf("%v filed=%d", got, r.filed)
 	}
 }
