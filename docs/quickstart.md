@@ -30,7 +30,7 @@ Without a terminal it never asks: it stops and names the variable.
 |---|---|
 | preflight | Checks Docker, Helm, kubectl, curl and buildx, finds the latest `maku` release, and picks k3d or kind |
 | model | Asks for the model's base URL, name and key (the key is not echoed) |
-| GitHub App | Serves a page on `127.0.0.1` and prints its address. **Click Create** on GitHub's page, then the key comes back to the script on localhost. Skipped when you give an existing App |
+| GitHub App | Serves a page on `127.0.0.1`; your browser should open by itself (if not, open the address it prints). **Click Create** on GitHub's page, and the key comes back to the script on localhost. It then prints "Now install the App on your repository: ..." Skipped when you give an existing App |
 | repository | Creates `DEMO_REPO` from the template [`Smana/maku-demo`](https://github.com/Smana/maku-demo) (public), seeds its issues and labels, and adds a ruleset (below). Then asks you to **Install** the App on that repository and press Enter |
 | cluster | Creates the cluster `maku-demo` with its own kubeconfig in `.demo/`, or uses your current context (`CLUSTER=current`) |
 | install | Installs `charts/agent-factory` with `profile: demo`, with the release's images pinned by digest, and waits for the broker, the run controller and the factory |
@@ -74,9 +74,13 @@ merger and every run.
 4. The gate posts the commit status **`maku/merge-gate`** on the pull request, naming the class and the
    reason. In the demo's first run the class is in *shadow*: the status says what the gate would do,
    and merges nothing. You can merge the pull request yourself.
-5. To let the factory merge, run `DEMO_LIVE=1 task demo` again. It reuses the cluster and your answers
-   and turns the class live. Label the second issue `factory/ready`: it opens a pull request, `ci`
-   passes, and the gate merges it with no human.
+5. The second seeded issue is labelled `documentation`, not `class:docs-links`, so the gate classes it
+   `review` and hands it to a human: it posts that a human decides, and you merge the pull request by hand
+   on GitHub (the demo does not configure approve-to-merge).
+6. To see a merge with no human, run `DEMO_LIVE=1 task demo` again: it reuses the cluster and your
+   answers and turns the `docs-links` class live. Then open a **new** issue labelled `class:docs-links`
+   (for example: retarget the other link in `docs/guide.md`, or any one-link fix in a `.md` file) and add
+   `factory/ready`. It opens a pull request, `ci` passes, and the gate merges it.
 
 ## What production adds
 
@@ -88,7 +92,7 @@ table names what you have not proven by running it.
 |---|---|
 | One GitHub App: the factory, every run and the merger share it, and a run can read its token | A read-only factory App, a separate merger App, and a token per role minted for one run: a reviewer cannot push |
 | The model key goes from the run to the provider; a run is bounded by its minutes and the provider's limit on your key | A gateway holds the key outside the sandbox, enforces a per-run, fleet and per-person budget, and meters every call |
-| The judge calls the run's own model directly: its alias is not pinned by a proxy | The judge's model is pinned behind the gateway, so a run cannot swap it |
+| The judge calls the run's own model directly: its alias is not pinned by a proxy | The judge's model is pinned by the identity proxy, so a run cannot swap it |
 | No meter and no USD caps | The meter reads the gateway's metrics; caps refuse a task over its dollars |
 | Runs under runc, with the room's "Not sandboxed" banner | Runs in a gVisor sandbox |
 | Network policies on the rooms database (the broker only) and the factory's API (the broker only; the ops port stays open); **runs keep their egress** | Default-deny egress with a per-run FQDN allow-list |
@@ -100,8 +104,8 @@ table names what you have not proven by running it.
 ## Clean up
 
 ```bash
-task demo:down           # stops the port-forward, deletes the cluster, keeps the App's id and key
-task demo:down -- --all  # also removes .demo/, including your answers and the App's key
+task demo:down           # stops the port-forward, deletes the cluster, removes your answers and values; keeps .demo/app
+task demo:down -- --all  # also removes .demo/app: the App's id and key
 ```
 
 `--all` prints the address where you delete the App on GitHub: `https://github.com/settings/apps/<slug>/advanced`.
@@ -229,7 +233,7 @@ first as the `migrate` init container's `ROOMS_MIGRATION_DATABASE_URL` (`maku-br
 every object as `rooms_owner`); the broker itself reads the second as `ROOMS_DATABASE_URL`, and its
 role holds `SELECT, INSERT` on `events` only, so `serve` cannot alter the schema or delete history.
 
-### Troubleshooting
+### Troubleshooting the one-run quickstart
 
 | Symptom | Cause and fix |
 |---|---|
