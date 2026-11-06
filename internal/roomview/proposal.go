@@ -112,7 +112,13 @@ type ProposalSection struct {
 // issue as it will be filed, the roles, the ceiling, the one question when there is one, and the
 // controls. Every value is escaped here once — the plan's text as data, the broker's own lines
 // stripped — so a title holding a link, a heading, an ANSI escape or a bidi override is the text it
-// is, and the only URLs in the message are the ones the broker built.
+// is, and this renderer builds a link only from a field the broker approved (an evidence URL that
+// `allowed` admits) and a mention only from an id's shape.
+//
+// Escaping is the whole of what this package can do about links: Slack auto-links a bare URL in a
+// message's text, and no escape of `&`, `<` or `>` and no code span disables that, so a URL the plan
+// spelled is shown as the text it is and Slack may still make it clickable. Nothing the plan wrote
+// ever becomes a link of this renderer's.
 //
 // Slack is the one format: the message is Slack's, and a caller asking for another is told so
 // rather than given a second rendering to keep true.
