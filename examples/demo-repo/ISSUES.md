@@ -7,8 +7,8 @@ then a blank line, then the body up to the next `## ` heading. Nothing above the
 
 Labels: class:docs-links
 
-The second link in `docs/guide.md` points to `setup.md`, which does not exist. Make the link work: point it
-at a page that exists, or remove it. Change only that file.
+The second link in `docs/guide.md` points to `setup.md`, which does not exist. Retarget the broken link to a
+page that exists in this repository, for example `../README.md`. Do not remove it. Change only that file.
 
 ## Add a sentence to the README about what this repository is for
 
