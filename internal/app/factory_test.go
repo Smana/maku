@@ -219,3 +219,18 @@ func TestNonDemoStartupStillFailsFast(t *testing.T) {
 		t.Fatal("an unreachable JWKS must fail construction")
 	}
 }
+
+// Demo mode's git token is for the served repositories of one account, written in the runs'
+// namespace; two accounts cannot share one installation.
+func TestDemoGitTokenServesTheListedRepositories(t *testing.T) {
+	cfg := &config.Config{Demo: true, Runs: runwatch.Kind{Namespace: "runs"},
+		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}}
+	g, err := demoGitToken(cfg, nil, slog.New(slog.DiscardHandler))
+	if err != nil || g.Namespace != "runs" || g.NeedLeaderElection() != true {
+		t.Fatalf("%+v %v", g, err)
+	}
+	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Other/c"})
+	if _, err := demoGitToken(cfg, nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
+		t.Fatalf("err = %v", err)
+	}
+}

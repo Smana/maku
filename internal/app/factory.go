@@ -37,6 +37,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
@@ -165,6 +166,26 @@ func humanVerifier(ctx context.Context, cfg *config.Config) (*authn.Verifier, er
 		return nil, nil
 	}
 	return authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+}
+
+// demoGitToken keeps the runs' shared git Secret filled with a token from the factory App, on
+// the served repositories (demo mode: one App does both the factory's and the runs' work).
+func demoGitToken(cfg *config.Config, c client.Client, log *slog.Logger) (*demo.GitToken, error) {
+	var owner string
+	var names []string
+	for _, r := range cfg.Repos() {
+		o, n, _ := strings.Cut(r.Name, "/")
+		if owner != "" && !strings.EqualFold(o, owner) {
+			return nil, fmt.Errorf("demo: repositories %q and %q have different owners: one App installation serves one account", owner+"/"+names[0], r.Name)
+		}
+		owner = o
+		names = append(names, n)
+	}
+	hc := httpx.New(githubTimeout, nil)
+	opts := forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
+		Owner: owner, Repositories: names, Permissions: demo.Permissions()}
+	return &demo.GitToken{Client: c, Namespace: cfg.Runs.Namespace, Every: 30 * time.Minute, Log: log,
+		Mint: func(ctx context.Context) (forge.Token, error) { return forge.Mint(ctx, hc, githubAPI, opts) }}, nil
 }
 
 func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) error {
@@ -345,6 +366,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return text, err
 	}
 	var runnables []manager.Runnable
+	if cfg.Demo {
+		g, err := demoGitToken(cfg, live, log)
+		if err != nil {
+			return err
+		}
+		runnables = append(runnables, g)
+	}
 	for _, rp := range cfg.Repos() {
 		c, _ := conns.get(rp.Name)
 		name := rp.Name
