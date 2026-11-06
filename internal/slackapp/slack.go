@@ -54,6 +54,15 @@ type ApprovalPayload struct {
 // approvalEventType marks a card the App posted for an approval.
 const approvalEventType = "factory_approval"
 
+// MarkerPayload is the "Filed" line's tag: the repository that was filed and the room it started,
+// so a thread that lost its map can still tell where the work went. Today's Filed lines carry the
+// repository alone, which is why Room is optional — a decoder that required one would read every
+// Filed line posted so far as a foreign message.
+type MarkerPayload struct {
+	Repo string `json:"repo"`
+	Room string `json:"room,omitempty"`
+}
+
 // draftPayload decodes the payload as the draft the event type claims; false when it is anything
 // else, which reads as "not a draft", the branch a foreign message already takes.
 func (m *Metadata) draftPayload() (DraftPayload, bool) {
@@ -75,6 +84,37 @@ func (m *Metadata) approvalPayload() (ApprovalPayload, bool) {
 	var p ApprovalPayload
 	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
 		return ApprovalPayload{}, false
+	}
+	return p, true
+}
+
+// proposalPayload decodes the payload as the proposal the event type claims — the plan, the hash, its
+// author and its revision — and only when the plan is the one the hash covers. False for anything
+// else, which reads exactly as a foreign message already reads (CD20): the text is never parsed to
+// recover a plan.
+func (m *Metadata) proposalPayload() (ProposalPayload, bool) {
+	if m == nil || m.EventType != proposalEventType {
+		return ProposalPayload{}, false
+	}
+	var p ProposalPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return ProposalPayload{}, false
+	}
+	if !proposalHashHolds(p) {
+		return ProposalPayload{}, false
+	}
+	return p, true
+}
+
+// markerPayload decodes a Filed line's tag: the repository filed and the room it started, either of
+// which may be absent on a line posted before this shape existed.
+func (m *Metadata) markerPayload() (MarkerPayload, bool) {
+	if m == nil || m.EventType != filedEventType {
+		return MarkerPayload{}, false
+	}
+	var p MarkerPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return MarkerPayload{}, false
 	}
 	return p, true
 }
