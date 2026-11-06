@@ -60,7 +60,7 @@ step "create the $CLUSTER_KIND cluster $NAME"
 # A cluster that already bears the name is somebody's: refuse rather than delete it in the trap.
 case "$CLUSTER_KIND" in
   k3d)
-    ! k3d cluster list -o json | grep -q "\"name\":\"$NAME\"" || { trap - EXIT; die "cluster $NAME exists"; }
+    ! k3d cluster get "$NAME" >/dev/null 2>&1 || { trap - EXIT; die "cluster $NAME exists"; }
     k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait \
       --k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0' \
       --kubeconfig-update-default=false --kubeconfig-switch-context=false
@@ -97,34 +97,41 @@ echo "ok: Postgres, broker (migrate init: $init) and run-controller are Ready"
 step "the factory parses its config, mounts everything and reports the dummy App"
 found=0
 for _ in $(seq 60); do
-  if kubectl -n "$NS" logs deploy/agent-factory --all-containers 2>&1 | grep -iE 'installation|repository' | grep -iE 'fail|error|not found|401|404|cannot|unable' >"$work/factory.log"; then found=1; break; fi
+  kubectl -n "$NS" logs deploy/agent-factory --all-containers >"$work/all.log" 2>&1 || true
+  # the App lookup is the first thing the factory does once its config has parsed
+  if grep -F "find the App's installation" "$work/all.log" >"$work/factory.log"; then found=1; break; fi
   sleep 3
 done
-((found)) || die "the factory logged no installation/repository lookup failure"
-cat "$work/factory.log" | head -3
+((found)) || { cat "$work/all.log" >&2; die "the factory did not log the App lookup failure (find the App's installation)"; }
+head -3 "$work/factory.log"
+! grep -E '(^|[^a-z])config: ' "$work/all.log" || die "the factory logged a config error"
 kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory
-! kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}{.items[*].status.containerStatuses[*].lastState.terminated.reason}' | grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' ||
+reasons=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}{.items[*].status.containerStatuses[*].lastState.terminated.reason}') || die "kubectl could not read the factory pods"
+! grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' <<<"$reasons" ||
   die "the factory failed before it started (a mount or the image)"
 
 step "no Cilium, cert-manager or CNPG objects"
 # By API group: a core name such as `certificates` is not cert-manager's.
-res=$(kubectl api-resources -o name)
+res=$(kubectl api-resources -o name) || die "kubectl api-resources failed"
 ! grep -E '(^|\.)(cilium\.io|cert-manager\.io|cnpg\.io)$' <<<"$res" || die "the cluster has Cilium, cert-manager or CNPG APIs; the test cluster must lack them"
 for r in ciliumnetworkpolicies.cilium.io certificates.cert-manager.io issuers.cert-manager.io; do
   ! kubectl -n "$NS" get "$r" >/dev/null 2>&1 || die "$r is served"
 done
-! kubectl get all,cm,secret -A -o name | grep -E 'ciliumnetworkpolic|cert-manager' || die "a Cilium or cert-manager object exists"
+objs=$(kubectl get all,cm,secret -A -o name) || die "kubectl could not list the objects"
+! grep -E 'ciliumnetworkpolic|cert-manager' <<<"$objs" || die "a Cilium or cert-manager object exists"
 echo "ok: the cluster has none of those APIs, and the install needed none"
 
 step "a second helm upgrade with the same values keeps the CA, the certificate and both DSNs"
 snap() {
   for s in room-broker-ca room-broker-tls rooms-broker-dsn rooms-owner-dsn; do
-    printf '%s %s\n' "$s" "$(kubectl -n "$NS" get secret "$s" -o jsonpath='{.data}' | sha256sum | cut -d' ' -f1)"
+    local d
+    d=$(kubectl -n "$NS" get secret "$s" -o jsonpath='{.data}') || die "kubectl get secret $s failed"
+    printf '%s %s\n' "$s" "$(sha256sum <<<"$d" | cut -d' ' -f1)"
   done
 }
-before="$(snap)"
+before="$(snap)" || exit 1
 helm upgrade af charts/agent-factory -n "$NS" "${values[@]}" --timeout 5m >/dev/null
-after="$(snap)"
+after="$(snap)" || exit 1
 [[ "$before" == "$after" ]] || { echo "before:" >&2; echo "$before" >&2; echo "after:" >&2; echo "$after" >&2; die "a Secret changed across helm upgrade"; }
 echo "$after"
 echo "install OK on $CLUSTER_KIND"
