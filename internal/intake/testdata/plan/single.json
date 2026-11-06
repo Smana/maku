@@ -1,0 +1,23 @@
+{
+  "apiVersion": "plan/v1",
+  "rev": 1,
+  "planner": {"model": "tier-frontier", "surface": "slack", "at": "2026-11-05T09:41:07Z"},
+  "repository": "Smana/ai-native-ref",
+  "repositoryEvidence": [
+    {"kind": "path", "text": "README.md named in the thread", "url": "https://github.com/Smana/ai-native-ref/blob/main/README.md"},
+    {"kind": "thread", "text": "asked in #platform, which serves Smana/ai-native-ref"}
+  ],
+  "alternatives": [],
+  "issues": [
+    {
+      "index": 1,
+      "title": "docs: the install link points at a moved page",
+      "body": "## What is wrong\nThe install link on the docs landing page points at a page that moved.\n\n## What it should be\nIt points at the page that page moved to.\n\n## Acceptance check\nThe landing page's install link reaches the install page in one click.",
+      "class": "docs-links",
+      "roles": ["scoper", "implementer", "reviewer"],
+      "dependsOn": []
+    }
+  ],
+  "budget": {"ceilingUSD": 2.0, "source": "class:docs-links.taskUSD"},
+  "question": null
+}
