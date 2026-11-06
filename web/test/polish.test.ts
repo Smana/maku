@@ -222,13 +222,19 @@ describe("layout", () => {
   it("aligns the lockup with the title's row, not the middle of the whole header", () => {
     expect(decl(outside, ".brand")).toMatch(/align-self:\s*start/);
   });
-  it("sizes the conversation's column to the log's measure on a wide screen, the rail beside it", () => {
+  it("lets the conversation's column grow with the window on a wide screen, the rail at its right edge", () => {
     expect(decl(outside, ":root")).toMatch(/--log-w:\s*72ch/);
-    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*calc\(var\(--log-w\)\s*\+\s*32px\)\)\s*300px/);
+    expect(decl(wide, ".room-body")).toMatch(/--log-w:\s*none/);
+    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
+    expect(decl(wide, ".bubble .md, .handoff > .md, .notes")).toMatch(/max-width:\s*100ch/);
   });
-  it("gives the composer the log's measure on a wide screen", () => {
+  it("fills the window's height, the dock at the bottom of a short room", () => {
+    expect(decl(outside, "#app")).toMatch(/min-height:\s*100dvh/);
+    expect(decl(outside, "#app > .page-dock")).toMatch(/margin-top:\s*auto/);
+  });
+  it("shares the conversation's grid with the composer on a wide screen", () => {
     const d = decl(wide, ".page-dock");
-    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*var\(--log-w\)\)\s*300px/);
+    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
     // 16 px of the main's padding past the measure, plus the room body's 16 px gap: the meta sits under the rail.
     expect(d).toMatch(/column-gap:\s*32px/);
   });
