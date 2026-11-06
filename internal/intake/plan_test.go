@@ -176,6 +176,12 @@ func TestCheckRefusesEachRule(t *testing.T) {
 			change: func(p *intake.Plan) { p.Repository = "owner/secret-repo" },
 			want:   intake.ReasonRepositoryNotInCandidates, detail: "outside the ones this request may use",
 			forbidden: "secret-repo"},
+		{name: "an alternative outside the candidates",
+			change: func(p *intake.Plan) {
+				p.Alternatives = []intake.Alternative{{Repository: "owner/secret-repo", Why: "also fits"}}
+			},
+			want: intake.ReasonRepositoryNotInCandidates, detail: "outside the ones this request may use",
+			forbidden: "secret-repo"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			p := planFixture(t, "single")

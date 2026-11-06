@@ -39,8 +39,10 @@ type ComposeIn struct {
 //   - each issue's `class` is the reply's choice, checked against `in.Classes`; a class the table does
 //     not define is refused (`invalid_class`), never guessed;
 //   - each issue's `roles` are that class's template, and every role the reply named is dropped;
-//   - the plan's `ceilingUSD` is the highest of its issues' class ceilings, lowered to the channel's
-//     when the channel's is lower, and `source` says which one won;
+//   - the plan's `ceilingUSD` is the **sum** of its issues' class ceilings — two $2.00 issues cost
+//     $4.00, because a plan of two issues spends two classes' `taskUSD` — lowered to the channel's when
+//     the channel's is lower, and `source` names every class that contributed, or the channel when it
+//     won (controller ruling, fix round 1);
 //   - `dependsOn` keeps only the indices of earlier issues, and an entry that names anything else
 //     drops the list: a plan is ordered, never circular.
 //
@@ -72,9 +74,11 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 	// never the values the model chose.
 	dropped := make([]string, 0, len(d.Issues))
 
-	// The ceiling the plan is charged against: the highest of its classes', then the channel's when
-	// that is lower. Issues in array order, so two processes agree on which source won.
-	ceiling, source := 0.0, ""
+	// The ceiling the plan is charged against: the sum of its issues' class ceilings — a plan of two
+	// issues spends two classes' taskUSD, not the larger of them (controller ruling, fix round 1) —
+	// then the channel's when that is lower. Issues in array order, so two processes agree.
+	ceiling := 0.0
+	sources := make([]string, 0, len(d.Issues))
 	for i, is := range d.Issues {
 		class, ok := in.Classes[is.Class]
 		if !ok {
@@ -91,8 +95,11 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		if is.BudgetUSD != 0 {
 			dropped = append(dropped, fmt.Sprintf("budgetUSD@%d", i+1))
 		}
-		if i == 0 || class.CeilingUSD > ceiling {
-			ceiling, source = class.CeilingUSD, class.Source
+		ceiling += class.CeilingUSD
+		// The source names where the money came from: one entry per class that contributed, in
+		// issue order and once each, so the string is the sum's own account of itself.
+		if !slices.Contains(sources, class.Source) {
+			sources = append(sources, class.Source)
 		}
 		p.Issues = append(p.Issues, Issue{
 			Index:     i + 1,
@@ -103,6 +110,7 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 			DependsOn: earlier(is.DependsOn, i+1),
 		})
 	}
+	source := strings.Join(sources, "+")
 	if in.CeilingUSD > 0 && in.CeilingUSD < ceiling {
 		ceiling, source = in.CeilingUSD, in.CeilingSource
 	}
@@ -114,8 +122,10 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 	p.Hash = Hash(p)
 
 	if len(dropped) > 0 {
-		in.log().Warn("intake: the reply named values the config owns; dropped",
-			"repository", p.Repository, "dropped", dropped)
+		// The fields, never the repository and never the values the model chose: at this point in the
+		// call nothing has checked the repository against the candidates, and this line is an
+		// operator's, not a person's (fix round 1, finding 2).
+		in.log().Warn("intake: the reply named values the config owns; dropped", "dropped", dropped)
 	}
 	return p, nil
 }

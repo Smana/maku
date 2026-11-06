@@ -4,6 +4,7 @@ package intake_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"slices"
 	"strings"
@@ -115,6 +116,10 @@ func TestModelSuppliedEvidenceLinksAreDropped(t *testing.T) {
 	if p.Question == nil || p.Question.Text != d.Question.Text || p.Question.Recommended.Answer != "ai-native-ref" {
 		t.Fatalf("%+v", p.Question)
 	}
+	// The alternative it composed is a candidate, so the plan holds Check as well.
+	if r := intake.Check(p, []string{"smana/ai-native-ref", "smana/cloud-native-ref"}, classes()); r != nil {
+		t.Fatalf("the composed plan does not hold: %+v", r)
+	}
 }
 
 // A composed plan is the contract's plan: the broker's provenance, the revision it was asked at, the
@@ -184,8 +189,88 @@ func TestDependsOnKeepsOnlyEarlierIndices(t *testing.T) {
 	}
 }
 
+// The ceiling is the sum of the plan's classes, because a plan of two issues spends two classes'
+// taskUSD: two $2.00 issues are $4.00, one issue is still $2.00, and the channel's cap lowers the sum
+// when the channel is the lower of the two (controller ruling, fix round 1).
+func TestTheCeilingIsTheSumOfTheIssuesClasses(t *testing.T) {
+	table := classes()
+	table["docs"] = intake.Class{Roles: []string{"implementer"}, CeilingUSD: 1, Source: "class:docs.taskUSD"}
+	two := intake.Draft{Repository: "Smana/ai-native-ref", Issues: []intake.DraftIssue{
+		{Title: "docs: x is wrong", Body: validBody, Class: "docs-links"},
+		{Title: "docs: y is wrong", Body: validBody, Class: "docs-links"},
+	}}
+	in := composeIn()
+	in.Classes = table
+	p, err := intake.Compose(two, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Budget.CeilingUSD != 4 || p.Budget.Source != "class:docs-links.taskUSD" {
+		t.Fatalf("%+v", p.Budget)
+	}
+	// Different classes add up too, and the source names each one that contributed, in issue order.
+	mixed := intake.Draft{Repository: "Smana/ai-native-ref", Issues: []intake.DraftIssue{
+		two.Issues[0],
+		{Title: "docs: y is wrong", Body: validBody, Class: "docs"},
+	}}
+	p, err = intake.Compose(mixed, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Budget.CeilingUSD != 3 || p.Budget.Source != "class:docs-links.taskUSD+class:docs.taskUSD" {
+		t.Fatalf("%+v", p.Budget)
+	}
+	// The channel's cap still binds below the sum.
+	in.CeilingUSD, in.CeilingSource = 3, "channel:C1.maxCostUSD"
+	if p, err := intake.Compose(two, in); err != nil || p.Budget.CeilingUSD != 3 || p.Budget.Source != "channel:C1.maxCostUSD" {
+		t.Fatalf("%+v %v", p.Budget, err)
+	}
+	// One issue is one class's ceiling: the sum of one term is itself.
+	single := intake.Draft{Repository: "Smana/ai-native-ref", Issues: two.Issues[:1]}
+	if p, err := intake.Compose(single, composeIn()); err != nil || p.Budget.CeilingUSD != 2 || p.Budget.Source != "class:docs-links.taskUSD" {
+		t.Fatalf("%+v %v", p.Budget, err)
+	}
+}
+
+// Review Focus 1, over the alternatives: an outsider named as "also fits" is a repository the request
+// never allowed, so the plan is refused whole and the outsider is never echoed (CD5, §security).
+func TestAlternativesMustBeCandidates(t *testing.T) {
+	candidates := []string{"smana/ai-native-ref", "smana/cloud-native-ref"}
+	d := intake.Draft{Repository: "Smana/ai-native-ref",
+		Alternatives: []intake.Alternative{{Repository: "Smana/Cloud-Native-Ref", Why: "serves the same docs"}},
+		Issues:       []intake.DraftIssue{{Title: "docs: x is wrong", Body: validBody, Class: "docs-links"}}}
+	p, err := intake.Compose(d, composeIn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An alternative that is a candidate holds, in another case as GitHub reads names.
+	if r := intake.Check(p, candidates, classes()); r != nil {
+		t.Fatalf("an alternative that is a candidate was refused: %+v", r)
+	}
+	// The same plan carrying an outsider: refused whole.
+	p.Alternatives = append(slices.Clone(p.Alternatives), intake.Alternative{Repository: "owner/secret-repo", Why: "also fits"})
+	r := intake.Check(p, candidates, classes())
+	if r == nil || r.Reason != intake.ReasonRepositoryNotInCandidates {
+		t.Fatalf("%+v", r)
+	}
+	if strings.Contains(r.Error(), "secret-repo") || strings.Contains(r.Sentence, "owner/") {
+		t.Fatalf("the refusal names the outsider: %s", r.Error())
+	}
+	// Compose itself has no candidate set to check against, so it composes the outsider — and Check
+	// is what refuses it. A composed plan never carries an alternative the request did not allow.
+	d.Alternatives = []intake.Alternative{{Repository: "owner/secret-repo", Why: "also fits"}}
+	outsider, err := intake.Compose(d, composeIn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := intake.Check(outsider, candidates, classes()); r == nil || r.Reason != intake.ReasonRepositoryNotInCandidates {
+		t.Fatalf("%+v", r)
+	}
+}
+
 // The one line an operator reads: every value the reply named that config owns is dropped, and the
-// line names the field — never the value the model chose.
+// line names the field — never the value the model chose, and never the repository either (it is not
+// checked against the candidates yet when Compose writes this line).
 func TestADroppedModelValueIsLoggedByName(t *testing.T) {
 	var buf bytes.Buffer
 	in := composeIn()
@@ -196,15 +281,29 @@ func TestADroppedModelValueIsLoggedByName(t *testing.T) {
 	if _, err := intake.Compose(d, in); err != nil {
 		t.Fatal(err)
 	}
-	line := buf.String()
-	if !strings.Contains(line, "roles@1") || !strings.Contains(line, "budgetUSD@1") {
-		t.Fatalf("the line does not name the dropped fields: %s", line)
+	rec := logRecord(t, buf.String())
+	if got := rec["msg"]; got != "intake: the reply named values the config owns; dropped" {
+		t.Fatalf("msg: %v", got)
 	}
-	if strings.Contains(line, "admin") || strings.Contains(line, "99") {
-		t.Fatalf("the line carries the model's values: %s", line)
+	dropped, ok := rec["dropped"].([]any)
+	if !ok || !slices.Equal(anyStrings(dropped), []string{"roles@1", "budgetUSD@1"}) {
+		t.Fatalf("the line does not name the dropped fields: %v", rec["dropped"])
 	}
-	if n := strings.Count(strings.TrimSpace(line), "\n"); n != 0 {
-		t.Fatalf("%d lines for one drop: %s", n+1, line)
+	// The repository is not an attribute: at this point in the call nothing has checked it against
+	// the candidates, and the line is an operator's, not a person's.
+	if _, ok := rec["repository"]; ok {
+		t.Fatalf("the line carries the repository: %v", rec)
+	}
+	// Nothing the model chose reaches the line, in any attribute: time and source are the handler's
+	// own and are stripped, so a clock reading (…:27.99Z) cannot make this pass or fail by accident.
+	delete(rec, "time")
+	delete(rec, "source")
+	rest, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rest), "admin") || strings.Contains(string(rest), "99") {
+		t.Fatalf("the line carries the model's values: %s", rest)
 	}
 	// A reply that names nothing config owns logs nothing: the line is the exception, not the log.
 	buf.Reset()
@@ -212,6 +311,33 @@ func TestADroppedModelValueIsLoggedByName(t *testing.T) {
 	if _, err := intake.Compose(d, in); err != nil || buf.Len() != 0 {
 		t.Fatalf("%v %s", err, buf.String())
 	}
+}
+
+// logRecord is the one JSON record a logger wrote, decoded: the test reads the line's fields rather
+// than its bytes, so that a timestamp or a source line cannot decide the assertion.
+func logRecord(t *testing.T, line string) map[string]any {
+	t.Helper()
+	if n := strings.Count(strings.TrimSpace(line), "\n"); n != 0 {
+		t.Fatalf("%d lines for one record: %s", n+1, line)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		t.Fatalf("the line is not one JSON record: %v (%s)", err, line)
+	}
+	return rec
+}
+
+// anyStrings is a decoded JSON array of strings, for a comparison that names the expected values.
+func anyStrings(in []any) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		s, ok := v.(string)
+		if !ok {
+			return nil
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // Compose refuses what the contract refuses, with the closed list's reason: a surface nobody labels,

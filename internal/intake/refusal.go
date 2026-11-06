@@ -129,14 +129,16 @@ func invalidClass(index int, class string) *Refusal {
 }
 
 // Check holds a plan to the contract's closed rules before anything is filed, in this order: the
-// version, the issue count, each draft through `sanitize.CheckDraft`, the repository against the
-// candidate set, each class against the config's table, the evidence bounds and the one question.
+// version, the issue count, each draft through `sanitize.CheckDraft`, the repository and every
+// alternative against the candidate set, each class against the config's table, the evidence bounds
+// and the one question.
 // It returns nil when the plan holds. It is the re-validation every consumer runs — `issue_file` and
 // `run_create` alike — so a plan that changed after it was shown is refused here and nowhere else.
 //
-// A repository outside candidates is refused whole and never named (Review Focus 1): the plan may be
-// guessing at repositories the requester does not know exist. Diagnostics name the field and the
-// bound; a draft's message is `CheckDraft`'s own, verbatim.
+// A repository outside candidates — the plan's own, or one named as an alternative — is refused whole
+// and never named (Review Focus 1): the plan may be guessing at repositories the requester does not
+// know exist, and an alternative is shown to the person as "also fits". Diagnostics name the field and
+// the bound; a draft's message is `CheckDraft`'s own, verbatim.
 func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 	if p.APIVersion != APIVersion {
 		return refuse(ReasonPlannerInvalid, "apiVersion "+strconv.Quote(p.APIVersion)+", the contract's is "+APIVersion)
@@ -149,8 +151,15 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 			return &Refusal{Reason: ReasonInvalidDraft, Sentence: err.Error()}
 		}
 	}
-	if !slices.ContainsFunc(candidates, func(c string) bool { return strings.EqualFold(c, p.Repository) }) {
+	if !isCandidate(candidates, p.Repository) {
 		return refuse(ReasonRepositoryNotInCandidates, "")
+	}
+	for _, a := range p.Alternatives {
+		// An alternative is display, and display is shown: naming an outsider as "also fits" would
+		// tell the requester a repository exists that this request never allowed (CD5, §security).
+		if !isCandidate(candidates, a.Repository) {
+			return refuse(ReasonRepositoryNotInCandidates, "")
+		}
 	}
 	for _, is := range p.Issues {
 		if _, ok := classes[is.Class]; !ok {
@@ -172,4 +181,11 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 		return refuse(ReasonPlannerInvalid, "question: it carries text and a recommended answer, or it is absent")
 	}
 	return nil
+}
+
+// isCandidate is whether repository is one of candidates, as GitHub reads a name: without regard to
+// case. It is the whole of the plan's repository rule, applied to the plan's own repository and to
+// every alternative, so an outsider cannot enter a plan through the display fields.
+func isCandidate(candidates []string, repository string) bool {
+	return slices.ContainsFunc(candidates, func(c string) bool { return strings.EqualFold(c, repository) })
 }
