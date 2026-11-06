@@ -30,7 +30,7 @@ The rules:
 - One defect per issue, and at most three issues. Do not split one defect into steps.
 - A title is one line, "<area>: <what is wrong>", at most 256 characters.
 - A body has the three headings in this order: "## What is wrong", "## What it should be", "## Acceptance check". At most 16 KiB.
-- class is one short lowercase slug naming the area of the work. Never name roles, a budget or an amount of money: the broker sets those from its own config, and yours would be dropped.
+- class is exactly one of the classes you are given, copied as it is written there, and no other: it names the area of the work. Never name roles, a budget or an amount of money: the broker sets those from its own config, and yours would be dropped.
 - evidence is why you chose the repository: at most five items of at most 280 characters each. Describe what you read. Never write a URL: the broker builds every link a person may click.
 - alternatives are the other repositories you were given that also fit, with one line of why each.
 - dependsOn lists the indices of earlier issues this one waits for, or is absent.
@@ -70,6 +70,16 @@ func userMessage(req DraftRequest) (string, error) {
 		b.WriteString("- ")
 		b.WriteString(c)
 		b.WriteString("\n")
+	}
+	if len(req.Classes) > 0 {
+		// The config's class table, so a class the model names is one the broker can charge and
+		// staff: the reply's class is one sourced choice, and this is the source (CD17).
+		b.WriteString("\nClasses you may name, and no others:\n")
+		for _, c := range req.Classes {
+			b.WriteString("- ")
+			b.WriteString(c)
+			b.WriteString("\n")
+		}
 	}
 	return b.String(), nil
 }

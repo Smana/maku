@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/version"
 )
@@ -129,6 +130,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 				"## Acceptance check, no secret; hidden characters are stripped. It files nothing: show the draft to the developer, then use issue_file.",
 			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","title","body"],"properties":{"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},"title":{"type":"string","minLength":1,"maxLength":1024},"body":{"type":"string","minLength":1,"maxLength":16384}}}`)},
 	}
+	if s.Intake != nil {
+		// The planner's tools exist only when the switch that would serve them does: a list
+		// advertising a tool the broker refuses is worse than a short list.
+		all = append(all, s.intakeTools()...)
+	}
 	if !p.Sponsored {
 		return all
 	}
@@ -153,7 +159,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 
 // sponsoredTools are a sponsored principal's tools besides run_create (R13, which mcpTools lists first), in tools/list order:
 // the draft check and the reads of its own tasks' rooms.
-var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges}
+var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, mcpwire.IntakePlan}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
 // the bearer is one of theirs. Its expiry is checked as a human's is.
@@ -334,12 +340,16 @@ func (s *Server) writeTool(ctx context.Context, w http.ResponseWriter, id json.R
 	mcpwire.Write(w, id, mcpwire.ToolError("unavailable: try again later"), nil)
 }
 
-// refusal is the text a model may read for err: a tool's own refusal, or a room read's, whose text
-// reads the same for every room.
+// refusal is the text a model may read for err: a tool's own refusal, a planner refusal from the
+// closed list, or a room read's, whose text reads the same for every room.
 func refusal(err error) (string, bool) {
 	var te toolError
 	if errors.As(err, &te) {
 		return te.Error(), true
+	}
+	var ir *intake.Refusal
+	if errors.As(err, &ir) && ir != nil {
+		return ir.Error(), true
 	}
 	for _, known := range []error{errNoSuchRoom, errRoomsUnavailable, errAccessUnverified, errLogUnavailable, errLogUnreadable} {
 		if errors.Is(err, known) {

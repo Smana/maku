@@ -31,8 +31,10 @@ import (
 	"github.com/Smana/maku/internal/config"
 	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/humanapi/ui"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/redact"
@@ -224,6 +226,11 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		// Groups stays zero on purpose (D15): standing is the Room CR's alone, never a ZITADEL grant the
 		// broker would have to hold a token for.
 	}
+	if humans.Intake != nil {
+		// A sponsored plan resolves the Slack user to the account it is linked to, so the link tables
+		// are the planner's too (internal/humanapi/intake.go's requester).
+		humans.Intake.Links = st
+	}
 	if len(cfg.Human.MCP.Sponsored) > 0 { // the factory's URL is the config's, never a request's
 		humans.Tasks = runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 	}
@@ -353,11 +360,39 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		dashboards = append(dashboards, humanapi.Dashboard{Label: d.Label, URL: d.URL})
 	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
+		Intake:    intakeServer(cfg.IntakePlan()),
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID: projectID,
 		Rooms:     rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
 		MCP: h.MCP.Enabled, SessionStart: start, Dashboards: dashboards}
+}
+
+// intakeServer is human.intake.plan as the human API serves it (v3.x conversational intake): the
+// class table and the allowlist from config, the one bounded model call through the audited egress
+// client, the per-requester daily cap and the degraded composer's switch. Nil when the switch is off,
+// so neither tool is on any list a switched-off deployment serves.
+//
+// Its visibility read (Intake.Public) is the GitHub App's, wired where the store and the App are
+// (internal/app/access.go's intakePublicity): until it is set, the guard can verify nothing and
+// refuses every plan with repository_unverified before any model call, which is the fail-closed
+// answer rather than a plan nobody checked.
+func intakeServer(plan config.PlanConfig) *humanapi.Intake {
+	if !plan.Enabled {
+		return nil
+	}
+	allow := make(map[string]bool, len(plan.Repositories))
+	for _, repository := range plan.Repositories {
+		allow[strings.ToLower(repository)] = true
+	}
+	classes := make(map[string]intake.Class, len(plan.Classes))
+	for name, class := range plan.Classes {
+		classes[name] = intake.Class{Roles: class.Roles, CeilingUSD: class.CeilingUSD, Source: class.Source}
+	}
+	return &humanapi.Intake{Classes: classes, Allow: allow,
+		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
+			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration},
+		Daily: plan.DailyPlans, Fallback: plan.Fallback}
 }
 
 // roomRuns is the one watch method roomObserver reads; *runwatch.Watcher has it.

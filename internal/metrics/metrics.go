@@ -44,6 +44,9 @@ var (
 	appendBuckets   = []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
 	fanoutBuckets   = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
 	decisionBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 900, 1800, 3600, 14400}
+	// intakeBuckets straddle the planner's 20 s deadline: the bound is the product decision, and a
+	// plan over it is the one the caller had already given up on.
+	intakeBuckets = []float64{0.25, 0.5, 1, 2, 5, 10, 15, 20, 30}
 )
 
 // Each binary's build-info gauge carries its own prefix (rooms_ for room-broker,
@@ -69,6 +72,11 @@ func MakuName(name string) string {
 		return "maku_" + name
 	case strings.HasPrefix(name, "agent_factory_"):
 		return "maku_factory_" + strings.TrimPrefix(name, "agent_factory_")
+	case strings.HasPrefix(name, "intake_"):
+		// The planner's family is intake_*, served as maku_intake_*: the spec's series name, which
+		// an instrument spelled rooms_intake_* could not produce (it would read
+		// maku_rooms_intake_*), and which the dashboard queries byte for byte.
+		return "maku_" + name
 	}
 	return ""
 }
@@ -177,6 +185,13 @@ type Set struct {
 	webhookDeliveries metric.Int64Counter
 	webhookDisabled   metric.Int64Gauge
 
+	// The planner's three series (IntakePlan and its two siblings): intake_* in Go, maku_intake_* on
+	// scrape. They are unexported because every label vocabulary is closed, and the methods below are
+	// the only way a caller may spell one.
+	intakePlans       metric.Int64Counter
+	intakePlanSeconds metric.Float64Histogram
+	intakePlanTokens  metric.Int64Counter
+
 	mu    sync.Mutex
 	rooms map[string]roomGauge
 	runs  map[string]string // run -> the effort its harness reported
@@ -240,6 +255,19 @@ func New(meter metric.Meter) (*Set, error) {
 	check(err)
 	s.SlackDecisions, err = meter.Int64Counter("rooms_slack_decisions_total",
 		metric.WithDescription("Slack decisions on forge.push approvals, by the closed result code and the decision."))
+	check(err)
+	// intake_plan_total{surface,outcome,reason}: whether the planner works. A rising asked means the
+	// allowlist or the evidence is weak, degraded means the route is down, and a refused plan names
+	// the one reason of the closed list.
+	s.intakePlans, err = meter.Int64Counter("intake_plan_total", metric.WithDescription("Plans the intake boundary produced, asked, degraded or refused."))
+	check(err)
+	// intake_plan_seconds{surface,outcome}: the 20 s bound is a product decision, so the buckets
+	// straddle it.
+	s.intakePlanSeconds, err = meter.Float64Histogram("intake_plan_seconds", metric.WithDescription("One intake_plan, its model call included."),
+		metric.WithExplicitBucketBoundaries(intakeBuckets...))
+	check(err)
+	// intake_plan_tokens{surface,kind}: the call's cost, from the response's own usage.
+	s.intakePlanTokens, err = meter.Int64Counter("intake_plan_tokens", metric.WithDescription("Tokens the planner spent, by kind."))
 	check(err)
 	// Ruling AP: counted by the broker from the events bridges append, since
 	// nothing dials into a sandbox to scrape a bridge.
@@ -392,6 +420,35 @@ func (s *Set) ForgetRoom(room string) {
 // AppendTook records one append's latency, whatever its outcome.
 func (s *Set) AppendTook(ctx context.Context, d time.Duration) {
 	s.appendSeconds.Record(ctx, d.Seconds())
+}
+
+// IntakePlan counts one plan attempt: surface is the one it was asked on, outcome planned, asked,
+// degraded or refused, and reason the closed refusal's own when it refused (empty otherwise). The
+// three labels are bounded by their callers: a plan's text, a repository and a hash never label a
+// series.
+func (s *Set) IntakePlan(ctx context.Context, surface, outcome, reason string) {
+	attrs := []attribute.KeyValue{attribute.String("surface", surface), attribute.String("outcome", outcome)}
+	if reason != "" {
+		attrs = append(attrs, attribute.String("reason", reason))
+	}
+	s.intakePlans.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+// IntakePlanSeconds records one plan attempt's duration, the model call included.
+func (s *Set) IntakePlanSeconds(ctx context.Context, surface, outcome string, d time.Duration) {
+	s.intakePlanSeconds.Record(ctx, d.Seconds(),
+		metric.WithAttributes(attribute.String("surface", surface), attribute.String("outcome", outcome)))
+}
+
+// IntakePlanTokens adds the tokens a plan's call spent, by kind (prompt, completion), from the
+// response's usage. Nothing spent records nothing: a zero series would read as a call that cost
+// nothing rather than as no call.
+func (s *Set) IntakePlanTokens(ctx context.Context, surface, kind string, n int64) {
+	if n <= 0 {
+		return
+	}
+	s.intakePlanTokens.Add(ctx, n,
+		metric.WithAttributes(attribute.String("surface", surface), attribute.String("kind", kind)))
 }
 
 // Appended counts a new durable event and the redaction rules it matched.

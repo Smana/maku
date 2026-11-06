@@ -89,12 +89,17 @@ type Model struct {
 }
 
 // DraftRequest is one governed question: what the person asked, the context they brought (both
-// public text, bounded), and the candidate repositories the guard already allowed — the only
-// repositories the reply may name.
+// public text, bounded), the candidate repositories the guard already allowed — the only
+// repositories the reply may name — and the classes the broker's table defines, which are the only
+// ones a reply may carry (CD17). Classes is the config's vocabulary shown to the model, so that a
+// reply names one of them: a model guessing at classes the broker does not serve makes
+// `invalid_class` the default outcome rather than the exception. Empty, the prompt says nothing
+// about classes, which is the shape `Compose` refuses.
 type DraftRequest struct {
 	Text       string
 	Context    string
 	Candidates []string
+	Classes    []string
 }
 
 // Draft is the model's answer, as it arrives and before config has a say: the repository and the

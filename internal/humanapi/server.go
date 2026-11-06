@@ -147,6 +147,9 @@ type Server struct {
 	// SlackDecide is human.slackDecide: the App's one route that records a decision, for forge.push
 	// only (v3.x Slack push approval D2, D13). Nil serves nothing: the path is the mux's 404.
 	SlackDecide *SlackDecider
+	// Intake is the governed planner (human.intake.plan). Nil is the switch off: neither intake_plan
+	// nor plan_check exists on any /mcp list, so the list a deployment sees is the list it has.
+	Intake *Intake
 
 	// Connection bounds; zero takes the default.
 	HelloWait time.Duration // the first frame must arrive within it (10 s)

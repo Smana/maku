@@ -3,6 +3,7 @@
 package intake
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -126,6 +127,41 @@ func refuse(reason, detail string) *Refusal {
 func invalidClass(index int, class string) *Refusal {
 	return refuse(ReasonInvalidClass,
 		fmt.Sprintf("issue %d: class %s is not in the class table", index, strconv.Quote(class)))
+}
+
+// ReasonRefusal is reason's refusal, in the closed list's one sentence: for the reasons a caller
+// decides itself rather than receives from a call — a Slack user the link tables do not know
+// (`not_linked`), a spent daily cap (`daily_plans_reached`), a check that could not be made
+// (`repository_unverified`) — so that no call site writes the sentence a person reads. A reason
+// outside the list, or one whose sentence names a diagnostic, panics as refuse does: this is for the
+// sentences that stand alone.
+func ReasonRefusal(reason string) *Refusal { return refuse(reason, "") }
+
+// RefusalOf is the closed refusal err spells, when err is one of the model call's sentinels:
+// ErrInvalid is `planner_invalid` with the field and the bound the error names, ErrTimeout is
+// `planner_timeout` and ErrUnavailable is `planner_unavailable`, each in the closed list's sentence
+// rather than the vendor's text. ok is false for an error that is none of the three, and a caller
+// then answers its own rather than passing a transport failure off as a refusal.
+func RefusalOf(err error) (*Refusal, bool) {
+	switch {
+	case errors.Is(err, ErrInvalid):
+		return refuse(ReasonPlannerInvalid, diagnostic(err)), true
+	case errors.Is(err, ErrTimeout):
+		return refuse(ReasonPlannerTimeout, ""), true
+	case errors.Is(err, ErrUnavailable):
+		return refuse(ReasonPlannerUnavailable, ""), true
+	}
+	return nil, false
+}
+
+// diagnostic is err's words after its sentinel's own reason: the field and the bound model.go named,
+// which is what the `planner_invalid` sentence has a place for. It never carries plan text, since
+// model.go's details name fields and bounds alone.
+func diagnostic(err error) string {
+	if _, rest, ok := strings.Cut(err.Error(), ": "); ok {
+		return rest
+	}
+	return err.Error()
 }
 
 // Check holds a plan to the contract's closed rules before anything is filed, in this order: the
