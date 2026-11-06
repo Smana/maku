@@ -101,6 +101,10 @@ type SandboxSuspend struct {
 
 // Config is the factory's configuration.
 type Config struct {
+	// Demo labels a factory on a laptop cluster: no OIDC issuer, no metrics backend, an http broker,
+	// one GitHub App. It relaxes the rules Validate marks "demo" and refuses what needs the pieces
+	// it lacks; absent, every rule is production's.
+	Demo bool `json:"demo,omitempty"`
 	// Repositories are the repositories the factory takes issues from, each with its own
 	// maintainers, label, classes, merge gate and schedules (v2 D1).
 	Repositories []Repository `json:"repositories,omitempty"`
@@ -384,10 +388,14 @@ type Merge struct {
 	VerifyChecks []string `json:"verifyChecks"`
 	// ContractCheck is the check run that proves a task's test contract (R21, TF7): required on
 	// a task with a contract (row 2b), only reported on one without.
-	ContractCheck    string `json:"contractCheck,omitempty"`
-	LeakScanCheck    string `json:"leakScanCheck"`  // R42: TruffleHog's check run, "Security scanning 🔒"
-	PolicyBotLogin   string `json:"policyBotLogin"` // the status's expected creator
-	MergerLogin      string `json:"mergerLogin"`    // the arming actor, so the merge actor (R16)
+	ContractCheck  string `json:"contractCheck,omitempty"`
+	LeakScanCheck  string `json:"leakScanCheck"`  // R42: TruffleHog's check run, "Security scanning 🔒"
+	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
+	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
+	GateStatus bool `json:"gateStatus,omitempty"`
+	// PolicyBot false drops policy-bot from the gate (the demo's); nil means true.
+	PolicyBot        *bool  `json:"policyBot,omitempty"`
+	MergerLogin      string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
 	AutoMergesPerDay int    `json:"autoMergesPerDay"`
 	FixRuns          int32  `json:"fixRuns"`
 	// CheckReruns caps the re-runs of a cancelled required check per task; 0 hands it to a human
@@ -417,6 +425,9 @@ type Breaker struct {
 	// newest bad one, are clean and mature (human path AM7); 0 keeps the window rule alone.
 	RecoverAfter int `json:"recoverAfter,omitempty"`
 }
+
+// UsesPolicyBot reports whether the gate goes through policy-bot: true unless policyBot is false.
+func (m Merge) UsesPolicyBot() bool { return m.PolicyBot == nil || *m.PolicyBot }
 
 // Tier is a model and its budgets. RunUSD and TaskUSD cap a run and a task in USD, priced by
 // meter.prices, in place of RunTokens and TaskTokens; 0 keeps the token cap. With meter.prices
@@ -1039,6 +1050,31 @@ func judges() []string {
 	return j
 }
 
+// validateDemoMeter: a demo without a metrics backend (meter.url empty) meters nothing, so a cap in USD
+// would silently be a cap in nothing. With meter.url set, the production rules apply unchanged.
+func (c *Config) validateDemoMeter(bad func(string, ...any)) {
+	if !c.Demo || c.Meter.URL != "" {
+		return
+	}
+	const msg = "demo: %s needs a meter, and the demo has none"
+	if len(c.Meter.Prices) > 0 {
+		bad(msg, "meter.prices")
+	}
+	if len(c.API.Sponsored)+len(c.API.InternalPrincipals) > 0 {
+		bad(msg, "api.sponsored and api.internalPrincipals ceilings in USD")
+	}
+	for _, name := range tiers() {
+		if t := c.Tiers[name]; t.TaskUSD > 0 || t.RunUSD > 0 {
+			bad(msg, "tier "+name+" runUSD and taskUSD")
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
+		if s := c.Loops[name].Split; s != nil && s.FamilyUSD != 0 {
+			bad(msg, "loops."+name+".split.familyUSD")
+		}
+	}
+}
+
 // needsPrice: with meter.prices set, a provider alias must be priced: under the model its backend
 // pins for a meter that prices by served model, else under its own name. An unpriced run would
 // fall back to its token caps (F3, F8).
@@ -1122,10 +1158,11 @@ func Parse(raw []byte) (*Config, error) {
 	if a := c.API.Access; a != nil && a.TTL.Duration == 0 {
 		a.TTL.Duration = MaxAccessTTL
 	}
-	if c.API.Groups.Admin == "" {
+	// demo: no identity provider, so no groups to default; Validate refuses a set one.
+	if c.API.Groups.Admin == "" && !c.Demo {
 		c.API.Groups.Admin = defaultAdminGroup
 	}
-	if c.API.Groups.Member == "" {
+	if c.API.Groups.Member == "" && !c.Demo {
 		c.API.Groups.Member = defaultMemberGroup
 	}
 	for i := range c.Repositories {
@@ -1162,7 +1199,7 @@ func Parse(raw []byte) (*Config, error) {
 			}
 		}
 	}
-	if !c.Meter.ByReplica() {
+	if !c.Meter.ByReplica() && (!c.Demo || c.Meter.Query != "") {
 		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, so a stale replica's return charges "+
 			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
@@ -1253,25 +1290,39 @@ func (c *Config) Validate() error {
 	} else if ctl.Issue > 0 && !seenRepo[strings.ToLower(ctl.Repository)] {
 		bad("control.repository %q is not a listed repository", ctl.Repository)
 	}
-	for _, f := range []struct{ key, value string }{
-		{"factoryLogin", c.FactoryLogin}, {"agentsLogin", c.AgentsLogin},
-		{"roomsURL", c.RoomsURL}, {"broker.url", c.Broker.URL}, {"broker.caFile", c.Broker.CAFile},
-		{"broker.tokenFile", c.Broker.TokenFile}, {"github.appIDFile", c.GitHub.AppIDFile},
-		{"github.privateKeyFile", c.GitHub.PrivateKeyFile}, {"meter.url", c.Meter.URL}, {"meter.query", c.Meter.Query},
-		{"meter.logsURL", c.Meter.LogsURL}, {"meter.throttleQuery", c.Meter.ThrottleQuery},
+	for _, f := range []struct {
+		key, value   string
+		demoOptional bool // demo: the laptop has no CA and no metrics backend
+	}{
+		{"factoryLogin", c.FactoryLogin, false}, {"agentsLogin", c.AgentsLogin, false},
+		{"roomsURL", c.RoomsURL, false}, {"broker.url", c.Broker.URL, false}, {"broker.caFile", c.Broker.CAFile, true},
+		{"broker.tokenFile", c.Broker.TokenFile, false}, {"github.appIDFile", c.GitHub.AppIDFile, false},
+		{"github.privateKeyFile", c.GitHub.PrivateKeyFile, false}, {"meter.url", c.Meter.URL, true}, {"meter.query", c.Meter.Query, true},
+		{"meter.logsURL", c.Meter.LogsURL, true}, {"meter.throttleQuery", c.Meter.ThrottleQuery, true},
 	} {
-		if f.value == "" {
+		if f.value == "" && (!c.Demo || !f.demoOptional) {
 			bad("%s is required", f.key)
 		}
 	}
 	// GP-18: the broker serves TLS only, and the factory never talks to it in the clear.
-	if u, err := url.Parse(c.Broker.URL); c.Broker.URL != "" && (err != nil || u.Scheme != "https" || u.Host == "") {
-		bad("broker.url %q must be an https:// URL", c.Broker.URL)
+	// demo: a laptop broker may serve http, and then has no CA to name.
+	if u, err := url.Parse(c.Broker.URL); c.Broker.URL != "" && (err != nil || u.Host == "" ||
+		(u.Scheme != "https" && (!c.Demo || u.Scheme != "http"))) {
+		if c.Demo {
+			bad("broker.url %q must be an http:// or https:// URL", c.Broker.URL)
+		} else {
+			bad("broker.url %q must be an https:// URL", c.Broker.URL)
+		}
+	} else if c.Demo && err == nil && u.Scheme == "http" && c.Broker.CAFile != "" {
+		bad("demo: broker.caFile must be empty with an http broker.url")
 	}
+	c.validateDemoMeter(bad)
 	// Narration posts roomsURL on public issues as the watch link: the rooms UI's origin over TLS,
 	// with nothing a reader could be sent elsewhere by, and nothing that could break the markdown.
 	// url.Parse accepts "(", ")", "<" and ">" in a host name; hostRE does not.
-	if u, err := url.Parse(c.RoomsURL); c.RoomsURL != "" && (err != nil || u.Scheme != "https" || !hostRE.MatchString(u.Host) ||
+	// demo: http://localhost and http://127.0.0.1 also, the laptop's own port-forward.
+	if u, err := url.Parse(c.RoomsURL); c.RoomsURL != "" && (err != nil || (u.Scheme != "https" &&
+		(!c.Demo || u.Scheme != "http" || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1"))) || !hostRE.MatchString(u.Host) ||
 		u.User != nil || strings.Trim(u.Path, "/") != "" || u.RawQuery != "" || u.Fragment != "") {
 		bad("roomsURL must be https://<host>, without credentials, path or query: %q", c.RoomsURL)
 	}
@@ -1419,20 +1470,31 @@ func (c *Config) Validate() error {
 	// The run-request API (§4): the factory binary serves it from Task 5.4's wiring, so its
 	// block is as required as the rest of this file. A human caller is verified against the
 	// ZITADEL issuer and one of the rooms client ids; a system caller pairs issuer with JWKS.
-	for _, f := range []struct{ key, value string }{
-		{"api.listen", c.API.Listen}, {"api.humanIssuer", c.API.HumanIssuer}, {"api.humanJWKS", c.API.HumanJWKS},
+	// demo: the factory API takes no human tokens, so none of the identity provider's keys are set.
+	for _, f := range []struct {
+		key, value string
+		human      bool
+	}{
+		{"api.listen", c.API.Listen, false}, {"api.humanIssuer", c.API.HumanIssuer, true}, {"api.humanJWKS", c.API.HumanJWKS, true},
 	} {
-		if f.value == "" {
+		if f.value == "" && (!c.Demo || !f.human) {
 			bad("%s is required", f.key)
 		}
+	}
+	if c.Demo && (c.API.HumanIssuer != "" || c.API.HumanJWKS != "" || len(c.API.ClientIDFiles) > 0 ||
+		c.API.Groups.Admin != "" || c.API.Groups.Member != "") {
+		bad("demo: the factory API takes no human tokens")
+	}
+	if c.Demo && c.API.Access != nil {
+		bad("demo: api.access needs an identity provider")
 	}
 	if t := c.API.TLS; t != nil && (t.CertFile == "" || t.KeyFile == "") {
 		bad("api.tls needs certFile and keyFile both: set both, or drop the block to serve plaintext")
 	}
-	if c.API.Groups.Admin == "" {
+	if c.API.Groups.Admin == "" && !c.Demo {
 		bad("api.groups.admin is required")
 	}
-	if c.API.Groups.Member == "" {
+	if c.API.Groups.Member == "" && !c.Demo {
 		bad("api.groups.member is required")
 	}
 	if len(c.API.Repositories) == 0 {
@@ -1443,7 +1505,7 @@ func (c *Config) Validate() error {
 			bad("api.repository %q is not owner/name", r)
 		}
 	}
-	if len(c.API.ClientIDFiles) == 0 {
+	if len(c.API.ClientIDFiles) == 0 && !c.Demo {
 		bad("api.clientIDFiles is empty: the rooms-proxy and maku client ids name the human callers")
 	}
 	if (c.API.SystemIssuer == "") != (c.API.SystemJWKS == "") {
@@ -1594,9 +1656,18 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if m := r.Merge; !slices.Contains(m.RequiredChecks, m.LeakScanCheck) || !slices.Contains(m.VerifyChecks, m.LeakScanCheck) {
 		bad("merge.leakScanCheck %q must be in merge.requiredChecks and merge.verifyChecks (R42)", r.Merge.LeakScanCheck)
 	}
+	if c.Demo && !r.Merge.GateStatus {
+		bad("demo: merge.gateStatus must be true, or no gate verdict reaches the pull request")
+	}
+	if r.Merge.PolicyBot != nil && !*r.Merge.PolicyBot && !c.Demo {
+		bad("merge.policyBot: false is the demo's: production gates through policy-bot")
+	}
 	for _, f := range []struct{ key, value string }{
 		{"merge.policyBotLogin", r.Merge.PolicyBotLogin}, {"merge.mergerLogin", r.Merge.MergerLogin},
 	} {
+		if f.key == "merge.policyBotLogin" && !r.Merge.UsesPolicyBot() && c.Demo {
+			continue // demo: no policy-bot, so no status creator to expect
+		}
 		if !strings.HasSuffix(strings.ToLower(f.value), "[bot]") {
 			bad("%s %q must be a bot login", f.key, f.value)
 		}
@@ -1886,7 +1957,7 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		default:
 			bad("loops.%s.scope %q is off, steering or scoper", name, m)
 		}
-		if m := row.Scope; m == ScopeScoper && c.Runs.Group != runwatch.DefaultKind.Group {
+		if m := row.Scope; m == ScopeScoper && c.Runs.Group != runwatch.DefaultKind.Group && !c.Demo { // demo: the read-only claim is waived
 			// The scoper is read-only because cloud-native-ref maps the triager role to an octo-sts
 			// token with contents: read; this runtime gives every role the same token.
 			bad("loops.%s: scope: scoper needs cloud-native-ref's AgentRun (runs.group %s): this runtime gives every role one token, so a scoper would not be read-only", name, runwatch.DefaultKind.Group)
@@ -1911,6 +1982,22 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 			}
 		}
 		if row.On() && c.Runs.Group != runwatch.DefaultKind.Group {
+			if c.Demo {
+				// demo: the portable AgentRun's spec.loop carries checks and search only (the run-controller
+				// passes AGENT_CHECKS and AGENT_SEARCH); stallSteps, continuations and judge reach no harness.
+				var unpassed []string
+				if row.StallSteps != nil {
+					unpassed = append(unpassed, "stallSteps")
+				}
+				if row.Continuations != nil {
+					unpassed = append(unpassed, "continuations")
+				}
+				if row.Judge != "" {
+					unpassed = append(unpassed, "judge")
+				}
+				bad("loops.%s: demo: %s not passed to the harness by the portable AgentRun (runs.group %s): its spec.loop has checks and search only", name, strings.Join(unpassed, ", "), c.Runs.Group)
+				continue
+			}
 			bad("loops.%s: the loop policy needs cloud-native-ref's AgentRun (runs.group %s): this runtime's has no spec.loop", name, runwatch.DefaultKind.Group)
 		}
 	}
