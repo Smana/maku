@@ -142,7 +142,7 @@ narwhals==2.5.0
 nodeenv==1.9.1
 nodejs-wheel-binaries==24.19.0
 numpy==2.3.3
-oauthlib==4.0.0
+oauthlib==4.0.1
 ollama==0.6.0
 openai==2.33.0
 openapi-pydantic==0.5.1
