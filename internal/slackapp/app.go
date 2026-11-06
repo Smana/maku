@@ -998,6 +998,13 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 			return countedInPlace
 		}
 	}
+	// CD11: a line is posted only for a transition the thread's channel is told about (its notify
+	// list, webhook.Notify() when it gave none), so a run start says nothing by default. The card
+	// branches above are the approvals switch's, not a line, and are not filtered. A thread whose
+	// channel the config no longer serves posts nothing rather than guessing.
+	if ch, served := a.Channels[th.Channel]; !served || !ch.notifies(e.Type) {
+		return "ignored"
+	}
 	return a.postWaitLine(ctx, th, e)
 }
 

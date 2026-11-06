@@ -139,6 +139,8 @@ func TestLoadNotify(t *testing.T) {
 		{name: "the same transition twice", line: "    notify: [room.waiting_for_human, room.waiting_for_human]\n",
 			errHas: []string{"room.waiting_for_human", "C03", "more than once"}},
 		{name: "not a list", line: "    notify: room.merged\n", errHas: []string{"notify"}},
+		{name: "a transition the App draws no line for", line: "    notify: [room.monitor_verdict]\n",
+			errHas: []string{"room.monitor_verdict", "C03", "no line"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := loadConfigText(t, withChannelKey(tc.line))

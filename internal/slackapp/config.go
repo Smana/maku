@@ -145,6 +145,13 @@ func (c Config) validate() error {
 				errs = append(errs, fmt.Errorf("channels.%s: notify %q is not a webhook event", id, typ))
 				continue
 			}
+			// A type the App draws no line for (room.task_received, room.run_ended,
+			// room.monitor_verdict) would be accepted and never post: line is the one table of what
+			// renders, so it is asked rather than copied here.
+			if _, renders := (&App{}).line(webhook.Event{Type: typ}); !renders {
+				errs = append(errs, fmt.Errorf("channels.%s: notify %q has no line the App posts", id, typ))
+				continue
+			}
 			if _, twice := notified[typ]; twice {
 				errs = append(errs, fmt.Errorf("channels.%s: notify lists %q more than once", id, typ))
 			}
