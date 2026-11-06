@@ -200,6 +200,41 @@ func TestTheHandoffPromptPassesContextInsteadOfWriting(t *testing.T) {
 	}
 }
 
+// The handoff prompt needs the switch-off route its sibling texts carry: `human.intake.plan.enabled`
+// is false by default and the release this lands in precedes the one that turns it on, so a prompt
+// that named only `intake_plan` would fail every handoff as `unknown tool: intake_plan`. It is an
+// exception to "never assemble a plan by hand", so it is pinned as one: guarded by the tool's
+// absence, and it says the broker planned nothing rather than passing off a hand-written issue as a
+// plan. The `plan` prompt gets no such route: it is read-only, so an older broker's error is its
+// whole answer.
+func TestTheHandoffPromptFallsBackWhenThePlannerIsOff(t *testing.T) {
+	handoff := flat(PromptFor(t, "handoff", map[string]string{"what": "the install link"}))
+	for _, want := range []string{
+		"if `intake_plan` is not listed",
+		"the planner is off",
+		"`issue_draft`",
+		"`issue_file`",
+		"the broker planned nothing",
+	} {
+		if !strings.Contains(handoff, want) {
+			t.Errorf("the handoff prompt has no guarded fallback: lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"draft one issue", "check it with `issue_draft`, fix what it reports"} {
+		if strings.Contains(handoff, gone) {
+			t.Errorf("the fallback reads as the first route: %q", gone)
+		}
+	}
+	// Read-only, so it composes nothing even when the planner is missing: no drafting tool, no
+	// hand-written template.
+	plan := flat(PromptFor(t, "plan", map[string]string{"what": "the install link"}))
+	for _, gone := range []string{"issue_draft", "three sections", "issue_file"} {
+		if strings.Contains(plan, gone) {
+			t.Errorf("the plan prompt gained a filing route: %q", gone)
+		}
+	}
+}
+
 // issue_file files the plan's first issue and nothing else (CD19; its schema has no issue
 // selector), so neither text may read as one call for a whole plan.
 func TestNeitherTextPromisesEveryIssueAtOnce(t *testing.T) {
