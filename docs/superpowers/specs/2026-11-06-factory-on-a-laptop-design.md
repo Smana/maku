@@ -57,11 +57,11 @@ Taken one question at a time, in this order. Later answers supersede earlier one
 | Q18 | **Fresh-agent test:** a fresh agent given only the quickstart page reaches the gate's status. It runs before v4.0, recorded in a results file, then before any minor release that changes the quickstart page or scripts |
 | Q19 | **One chart:** the demo installs the umbrella chart with `profile: demo`. Production differs only by values |
 | Q20 | **Home:** the chart is `charts/agent-factory` in this repository, and this design lives here. ai-native-ref keeps the reference host's values and its own gates |
-| Q21 | *Superseded by Q24* (a ruleset created with the reader's `gh`) |
-| Q22 | **A minimal cluster:** no Cilium, cert-manager, CNPG or gVisor; the broker keeps TLS, with a CA the chart generates (the database hop is plain inside the cluster); a Postgres pod from the chart; runc. The script creates a kind or a k3d cluster (`CLUSTER=kind\|k3d`), or installs into the current kubeconfig. kind and k3d are both tested in CI. The room page is served on localhost with no port-forward |
+| Q21 | *Superseded by Q24, itself amended by D2* |
+| Q22 | **A minimal cluster:** no Cilium, cert-manager, CNPG or gVisor; the broker keeps TLS, with a CA the chart generates (the database hop is plain inside the cluster); a Postgres pod from the chart; runc. The script creates a kind or a k3d cluster (`CLUSTER=kind\|k3d`), or installs into the current kubeconfig. kind and k3d are both tested in CI (k3d on pull requests, kind nightly). The room page is on http://localhost:8080 through a port-forward that `task demo` starts in the background (the broker's local human mode listens on the pod's loopback only, which a Service cannot reach) and `task demo:down` stops: still no second terminal |
 | Q23 | **GitHub identity:** a GitHub App created from a manifest in two clicks (Create, Install). The pull requests are its bot's, so you can approve them; a PAT or your `gh` token would make them yours, and GitHub refuses self-approval |
-| Q24 | **No branch protection, `gh` optional:** the status shows the gate's verdict and the gate merges by itself when live. With `gh` logged in, the script creates the repository from the template; otherwise it prints the "Use this template" link and waits for the name |
-| Q25 | **One command:** `task demo` asks for the model endpoint and key (or reads them from the environment or `.env`), opens the App page, creates the cluster and the repository, installs, and ends by printing the room page's URL and the issue to label. Re-running it resumes where it stopped |
+| Q24 | *Amended by D2.* **`gh` optional:** with `gh` logged in and admin rights, the script creates the repository from the template and adds a ruleset requiring pull requests and the template's GitHub Actions check `ci` (never `maku/merge-gate`: the verdict stays advisory against an agent holding the App's token); otherwise it prints the "Use this template" link and the ruleset to add by hand |
+| Q25 | **One command:** `task demo` asks for the model endpoint and key (or reads them from the environment or `.env`), opens the App page, creates the cluster and the repository, installs, and ends by printing the room page's URL and the issue to label. Re-running is idempotent: finished answers, the App and the cluster are reused |
 | Q26 | **15 minutes**, from clone to the gate's status |
 | Q27 | **Headless runs:** `task demo` also takes an existing App's id and key and skips the browser step. The nightly job and the fresh agent use one pre-made test App installed on their test repository |
 
@@ -75,14 +75,13 @@ task demo
 1. `task demo` asks for the model's base URL, model name and key.
 2. It opens GitHub on the App manifest page: you click **Create**, then **Install** on the repository.
    The key returns to the script on localhost.
-3. It creates the cluster, installs the chart with `profile: demo`, and creates your repository from the
-   template.
+3. It creates your repository from the template, then the cluster, and installs the chart.
 4. It prints the room page (`http://localhost:8080`) and the issue to label.
 5. You add `factory/ready` to issue #1 and watch the room. The reviewed pull request appears, and the
    gate posts `maku/merge-gate`: what it would do, in shadow.
 6. The last step shows the one value that turns the class live; a second issue then merges with no human.
 
-Tools: Docker, Helm, kubectl, kind or k3d, and Task. `task demo:down` removes the cluster.
+Tools: Docker (with buildx), Helm, kubectl, kind or k3d, Task and curl; `gh` is optional; until a release carries `maku demo app`, Go too (or an existing App's id and key). `task demo:down` removes the cluster.
 
 ## What production adds {#production-adds}
 
@@ -95,7 +94,7 @@ The quickstart page carries this table, so a reader knows exactly what the demo 
 | No meter and no USD caps | The meter reads the gateway's metrics; caps refuse a task over its dollars |
 | Runs under runc, with the room's "not isolated" banner | Runs in a gVisor sandbox |
 | No egress control | Default-deny egress with a per-run FQDN allow-list |
-| No branch protection; the gate's status is informational for humans | `main` requires the gate's verdict |
+| A ruleset requiring pull requests and `ci` (with your `gh`); the gate's status is advisory | `main` requires the gate's verdict |
 | One local user, no login | OIDC login, roles, room access following GitHub permissions |
 | TLS from a CA the chart generates; the database hop is plain inside the cluster | TLS from your CA, database included |
 | Runs call the broker's `:8090` room tools over plain HTTP in the cluster, and the broker checks each run's own token with the apiserver (`roomTools.auth: tokenreview`) | A gateway verifies the run, holds the room tools key and fronts `:8090` (`roomTools.auth: key`) |
