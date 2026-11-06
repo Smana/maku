@@ -18,6 +18,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/intake"
 )
 
 const (
@@ -181,6 +182,58 @@ func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 		return RunResult{}, fmt.Errorf("slackapp: run_create result: %w", err)
 	}
 	return RunResult(out), nil
+}
+
+// IntakeRequest is intake_plan's arguments, as the App has them: the requester's own words, the
+// channel's repositories as the candidate set, the linked Slack user the plan is made for and the
+// channel's ceiling. It carries no repository the App picked — the candidate set is the whole of
+// what the App chooses, and which of it a plan names is the planner's, checked by the broker (CD5).
+type IntakeRequest struct {
+	Text       string
+	Context    string
+	OnBehalfOf string
+	Candidates []string
+	CeilingUSD float64
+}
+
+// IntakeResult is intake_plan's data: the plan the planner drew, the hash the broker computed over it,
+// the at-most-one question to ask first, whether this caller may start the factory on it, and whether
+// a template rather than the planner wrote it (CD18).
+type IntakeResult struct {
+	Plan        intake.Plan
+	Hash        string
+	Question    *intake.Question
+	CanStart    bool
+	CanStartWhy string
+	Degraded    bool
+}
+
+// IntakePlan is that tool's one call. The arguments are its schema's, and a key it does not have is
+// never sent: a sponsored principal states whom it plans for and the channel's ceiling, and an
+// argument the tool refuses would turn a plan into a transport failure. ErrUnknownTool comes back
+// untouched, so an older broker answers the mention's own line rather than a draft (CD1).
+func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error) {
+	args := map[string]any{"text": in.Text, "candidates": in.Candidates, "on_behalf_of": in.OnBehalfOf,
+		"ceiling": in.CeilingUSD}
+	if in.Context != "" { // a mention has none; a reply's context is PR 6's second flow
+		args["context"] = in.Context
+	}
+	sc, err := b.call(ctx, "intake_plan", args)
+	if err != nil {
+		return IntakeResult{}, err
+	}
+	var out struct {
+		Plan        intake.Plan      `json:"plan"`
+		Hash        string           `json:"hash"`
+		Question    *intake.Question `json:"question"`
+		CanStart    bool             `json:"canStart"`
+		CanStartWhy string           `json:"canStartWhy"`
+		Degraded    bool             `json:"degraded"`
+	}
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return IntakeResult{}, fmt.Errorf("slackapp: intake_plan result: %w", err)
+	}
+	return IntakeResult(out), nil
 }
 
 // linkPath is the page a link code opens on the broker's public URL.

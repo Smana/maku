@@ -595,6 +595,11 @@ type stubBroker struct {
 	decideErr    error
 	fence        bool
 	fenced       bool
+	// intake is every intake_plan the App asked for, oldest first; intakeResult is the planner's
+	// answer and intakeErr the failure it answers instead.
+	intake       []IntakeRequest
+	intakeResult IntakeResult
+	intakeErr    error
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {
@@ -680,6 +685,26 @@ func (b *stubBroker) Decide(_ context.Context, d Decision) (DecisionResult, erro
 	}
 	b.answers = append(b.answers, d.Decision)
 	return DecisionResult{Result: d.Decision}, nil
+}
+
+// IntakePlan records the plan request and answers what the test told it to: withProposals sets the
+// fixture's plan, and a refusal or a failure is the one line each.
+func (b *stubBroker) IntakePlan(_ context.Context, in IntakeRequest) (IntakeResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls = append(b.calls, in)
+	b.intake = append(b.intake, in)
+	if b.intakeErr != nil {
+		return IntakeResult{}, b.intakeErr
+	}
+	return b.intakeResult, nil
+}
+
+// intakeCalls is every plan the App asked the broker for, oldest first.
+func (b *stubBroker) intakeCalls() []IntakeRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]IntakeRequest(nil), b.intake...)
 }
 
 // answerWith makes the broker answer every press with code, as the route answers a refusal.
@@ -1551,4 +1576,268 @@ func TestCheckMarkReplyIsNeverDraftText(t *testing.T) {
 	if len(rig2.posts()) != 0 || len(rig2.broker.all()) != 0 {
 		t.Fatal("a check mark in a thread without a draft did something")
 	}
+}
+
+// ---- a mention plans, and posts one proposal (CD1, §the Slack journey) ----
+
+// mentionWords is the request every test here sends: a sentence a person would write, with no
+// repository, no title and no grammar in it.
+const mentionWords = "the install link in the README is dead"
+
+// withProposals is a rig with the proposal flow on and a planner answering this package's fixture.
+// The channel serves two repositories, so a candidate set that was the plan's own repository rather
+// than the channel's is visible in the call.
+func withProposals(t *testing.T) (*appRig, intake.Plan) {
+	t.Helper()
+	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref", "Smana/cloud-native-ref"}, MaxCostUSD: 2})
+	rig.app.Proposals = Proposals{Enabled: true}
+	plan := planFixture(t, "slack-one-issue")
+	rig.broker.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+	return rig, plan
+}
+
+// CD1 and the Slack journey: with proposals on, a mention in plain words is planned by the broker and
+// posted as one proposal — the App parses no repository line, guesses no repository and files nothing.
+func TestMentionProposes(t *testing.T) {
+	t.Run("a mention in plain words is planned and posted as one proposal", func(t *testing.T) {
+		rig, plan := withProposals(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+
+		posts := rig.posts()
+		if len(posts) != 1 {
+			t.Fatalf("%d posts, want the one proposal: %+v", len(posts), posts)
+		}
+		p := posts[0]
+		if p.channel != "C03" || p.thread != "1729.0001" || len(p.blocks) == 0 {
+			t.Fatalf("the proposal is not one card in the mention's thread: %+v", p)
+		}
+		if p.meta == nil || p.meta.EventType != proposalEventType {
+			t.Fatalf("the message's tag: %+v", p.meta)
+		}
+		prop, ok := p.meta.proposalPayload()
+		if !ok || prop.Rev != 1 || prop.Author != "U02DEF" || prop.Hash != intake.Hash(plan) {
+			t.Fatalf("the message's payload: %+v (%v)", prop, ok)
+		}
+		for _, want := range []string{plan.Repository, plan.Issues[0].Title, actionProposalConfirm, actionProposalCancel} {
+			if !strings.Contains(string(p.blocks), want) {
+				t.Fatalf("the blocks do not carry %q: %s", want, p.blocks)
+			}
+		}
+
+		// The call is intake_plan's contract: the requester's own words, the channel's repositories
+		// as the candidate set, the App's principal and the channel's ceiling. No repository the App
+		// picked, and no context it does not have — a mention is the person's words alone (CD1).
+		calls := rig.broker.intakeCalls()
+		if len(calls) != 1 {
+			t.Fatalf("%d intake_plan calls, want one", len(calls))
+		}
+		want := IntakeRequest{Text: mentionWords, OnBehalfOf: "slack:T01ABC/U02DEF",
+			Candidates: []string{"Smana/ai-native-ref", "Smana/cloud-native-ref"}, CeilingUSD: 2}
+		if !reflect.DeepEqual(calls[0], want) {
+			t.Fatalf("the plan request is %+v, want %+v", calls[0], want)
+		}
+		if n := len(rig.broker.all()); n != 1 { // the plan, and nothing else: no draft, no filing
+			t.Fatalf("%d broker calls, want the plan alone: %+v", n, rig.broker.all())
+		}
+		if got := rig.metrics.count("events", "proposed"); got != 1 {
+			t.Fatalf("the proposal went uncounted: %d", got)
+		}
+	})
+
+	// With the switch off the mention is today's draft, planned by issue_draft from the repository
+	// line the person typed: the deployed behaviour the switch exists to preserve.
+	t.Run("the switch off keeps today's draft", func(t *testing.T) {
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig.mention("C03", "1729.0001", "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("-proposals: the mention planned through the broker")
+		}
+		if p := rig.lastPost(); p.meta == nil || p.meta.EventType != draftEventType || !strings.HasPrefix(p.text, "Draft for ") {
+			t.Fatalf("-proposals: the mention is not today's draft: %+v", p)
+		}
+		if calls := rig.broker.all(); len(calls) != 1 {
+			t.Fatalf("-proposals: %d broker calls, want the one issue_draft", len(calls))
+		}
+	})
+}
+
+// The refusals a person actually meets, one fixed line each, and the one that names where to go
+// instead: a private repository, a model that is down, a plan too large, more than one issue.
+func TestProposalRefusals(t *testing.T) {
+	served := "Smana/ai-native-ref, Smana/cloud-native-ref"
+	for _, tc := range []struct {
+		name    string
+		setup   func(t *testing.T, b *stubBroker)
+		want    string
+		outcome string
+	}{
+		{
+			name: "repository_not_allowed names the channel's repositories",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("repository_not_allowed: no repository the allowlist serves and you may write in matches this request; name one of the repositories listed; you can file into Smana/other")
+			},
+			want:    "Not proposed: this channel serves " + served + " and you may file in none of them; ask an operator to add one you may write in.",
+			outcome: "refused",
+		},
+		{
+			name: "no_write names the channel's repositories too",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("no_write: you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it")
+			},
+			want:    "Not proposed: <@U02DEF> cannot write to " + served + ", the repositories this channel serves; ask an operator for one you may write in.",
+			outcome: "refused",
+		},
+		{
+			name: "a private repository points at the coding agent",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("private_repository_unsupported: the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route")
+			},
+			want:    "Not proposed: the planner reads public repositories only; use your coding agent (`issue_draft` then `issue_file`), or wait for the internal route.",
+			outcome: "refused",
+		},
+		{
+			name: "planner_unavailable says when to mention again",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("planner_unavailable: the plan service is unavailable; try again later")
+			},
+			want:    "Not proposed: the plan service is unavailable; mention me again in a minute.",
+			outcome: "error", // a passing failure: the person's fix is to mention again
+		},
+		{
+			name: "planner_timeout has its own line",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("planner_timeout: the plan service did not answer inside its deadline; try again")
+			},
+			want:    "Not proposed: the plan service did not answer in time; mention me again in a minute.",
+			outcome: "error",
+		},
+		{
+			name: "planner_invalid has its own line",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("planner_invalid: the plan is not the shape the contract asks for (issues: 0, the contract asks for 1 to 3); ask again")
+			},
+			want:    "Not proposed: the plan service answered something that is not a plan; mention me again, or hand it off from your coding agent.",
+			outcome: "refused",
+		},
+		{
+			name: "daily_plans_reached has its own line",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("daily_plans_reached: you have used today's plans; the cap resets at 00:00 UTC")
+			},
+			want:    "Not proposed: you have used today's plans; mention me again after 00:00 UTC, or hand it off from your coding agent.",
+			outcome: "refused",
+		},
+		{
+			// The broker predates the planner: the old grammar still works there, so the line names it
+			// rather than leaving the person with a refusal they cannot act on.
+			name: "a broker without the planner keeps the old grammar",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = ErrUnknownTool
+			},
+			want:    planUnsupported,
+			outcome: "refused",
+		},
+		{
+			name: "an unknown refusal is shown as the broker gave it",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused("not_linked: your account is not linked to GitHub, so the broker cannot tell what you may write; link it first")
+			},
+			want:    "Not proposed: not_linked: your account is not linked to GitHub, so the broker cannot tell what you may write; link it first",
+			outcome: "refused",
+		},
+		{
+			name: "a plan with two issues is refused whole",
+			setup: func(t *testing.T, b *stubBroker) {
+				plan := clonePlan(t, b.intakeResult.Plan)
+				second := plan.Issues[0]
+				second.Index, second.DependsOn = 2, []int{1}
+				plan.Issues = append(plan.Issues, second)
+				b.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+			},
+			want:    "Proposal not posted: this plan covers 2 issues and Slack files one: use your coding agent or the web UI.",
+			outcome: "multi_issue",
+		},
+		{
+			name: "a plan over 7 KiB is refused whole",
+			setup: func(t *testing.T, b *stubBroker) {
+				plan := clonePlan(t, b.intakeResult.Plan)
+				plan.Issues[0].Body = strings.Repeat("a", maxProposalPlanBytes)
+				b.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+			},
+			want:    "Proposal not posted: the plan is too long for Slack; use your coding agent or the web UI.",
+			outcome: "too_large",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig, _ := withProposals(t)
+			tc.setup(t, rig.broker)
+			rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+			posts := rig.posts()
+			if len(posts) != 1 || posts[0].text != tc.want || posts[0].meta != nil {
+				t.Fatalf("the thread says %+v, want one line %q and no metadata", posts, tc.want)
+			}
+			if n := len(rig.broker.intakeCalls()); n != 1 {
+				t.Fatalf("%d intake_plan calls, want the one the refusal came from", n)
+			}
+			if n := len(rig.broker.runCreates()); n != 0 {
+				t.Fatalf("a refused plan filed %d issues", n)
+			}
+			if got := rig.metrics.count("events", tc.outcome); got != 1 {
+				t.Fatalf("the refusal was counted %d times as %q", got, tc.outcome)
+			}
+		})
+	}
+
+	// The bound is measured on the planner's input, not on the HTTP body: a request past intake_plan's
+	// 16 KiB is refused here, before the broker is called at all.
+	t.Run("a request past 16 KiB is refused before the planner is called", func(t *testing.T) {
+		rig, _ := withProposals(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+strings.Repeat("a", maxProposalRequestBytes+1))
+		posts := rig.posts()
+		if len(posts) != 1 || posts[0].text != RequestedTextTooLong.Error() || posts[0].meta != nil {
+			t.Fatalf("the thread says %+v, want %q", posts, RequestedTextTooLong.Error())
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("%d intake_plan calls for an oversized request", n)
+		}
+		if got := rig.metrics.count("events", "too_large"); got != 1 {
+			t.Fatalf("the refusal was counted %d times as too_large", got)
+		}
+	})
+
+	// The idempotency key is the thread, so a thread whose task is filed plans nothing more: the line
+	// names the room the marker holds, which is the one place a closed thread says where it went.
+	t.Run("a thread that already filed its issue names the room", func(t *testing.T) {
+		rig, _ := withProposals(t)
+		rig.slack.seed(Message{TS: "1729.0002", ThreadTS: "1729.0001", User: "U0BOT",
+			Text:     "Filed #42 for <@U02DEF>; the factory starts it. Room: https://rooms.example/r/26zfnuxm",
+			Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref", Room: "26zfnuxm"})})
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+		want := "Not proposed: this thread's task is already filed, in room https://rooms.example/r/26zfnuxm; start a new mention for another."
+		if p := rig.lastPost(); p.text != want || p.meta != nil {
+			t.Fatalf("%q, want %q", p.text, want)
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("a closed thread planned %d times", n)
+		}
+	})
+
+	// CD18: a degraded plan is the composer's template, and the proposal says so in its header — the
+	// person is never left to believe a planner read the request.
+	t.Run("a degraded plan posts, and its header says it is a template", func(t *testing.T) {
+		rig, plan := withProposals(t)
+		rig.broker.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan), Degraded: true}
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+		posts := rig.posts()
+		if len(posts) != 1 || len(posts[0].blocks) == 0 {
+			t.Fatalf("%d posts, want the one proposal: %+v", len(posts), posts)
+		}
+		if !strings.Contains(string(posts[0].blocks), "template draft: the plan service is unavailable") {
+			t.Fatalf("the header does not say the plan is a template: %s", posts[0].blocks)
+		}
+		prop, ok := posts[0].meta.proposalPayload()
+		if !ok || !prop.Degraded {
+			t.Fatalf("the payload does not carry the label a restart reads: %+v (%v)", prop, ok)
+		}
+	})
 }

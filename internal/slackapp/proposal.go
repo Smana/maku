@@ -60,6 +60,10 @@ const (
 // nothing is filed from anything but the plan it refused.
 var errProposalTooLarge = errors.New("the plan is too long for Slack; use your coding agent or the web UI")
 
+// notPostedLine is a plan Slack cannot carry, as the thread says it: one sentence, from the error that
+// refused it, so the mention that drew the plan and the reply that re-planned it say the same thing.
+func notPostedLine(err error) string { return "Proposal not posted: " + err.Error() + "." }
+
 // proposalHashRE is the shape of a plan hash: a Confirm binds one of these, and anything else binds
 // nothing.
 var proposalHashRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -521,6 +525,206 @@ func cutRunes(s string, limit int) []string {
 	return out
 }
 
+// ---- the mention: a plan through the broker, and one proposal (CD1, CD18) ----
+
+const (
+	// maxProposalRequestBytes is intake_plan's text bound, measured on the planner's input —
+	// commandless's answer, the mention with the bot's <@…> taken out and trimmed — and never on the
+	// HTTP body Slack posts, which the verifier already caps at 1 MiB. A request past it is refused
+	// before the broker is called, with its own line.
+	maxProposalRequestBytes = 16 << 10
+	// planUnsupported is the mention's answer on a broker that has no planner. The old grammar still
+	// works there, and saying so is better than a refusal the person cannot act on.
+	planUnsupported = "This deployment does not plan from Slack yet; mention me in the old grammar."
+)
+
+// RequestedTextTooLong is a mention whose planner input is past intake_plan's 16 KiB bound. Its text
+// is the one line the thread shows: the person's fix is to hand the request off, not to shorten it in
+// Slack, since a plan drawn from part of a request is a plan nobody read. The name and the prose are
+// this package's interface rather than a caller's error to test, which is why they are not Go's
+// Err-something form.
+//
+//nolint:revive,staticcheck // the name and the words are the plan's: RequestedTextTooLong, one line for the person
+var RequestedTextTooLong = errors.New("Not proposed: that request is longer than 16 KB; hand it off from your coding agent or the web UI.")
+
+// commandless is a mention as the planner reads it: the bot's <@…> taken out and the rest trimmed. It
+// is the one place a mention becomes intake_plan's text, and therefore the one place the 16 KiB bound
+// is measured (CD1: the person's own words are the request).
+func commandless(text, bot string) string {
+	return strings.TrimSpace(strings.ReplaceAll(text, "<@"+bot+">", ""))
+}
+
+// propose plans a mention through intake_plan and posts the answer as the thread's one proposal
+// (CD1, CD7, CD20). It is the whole of the mention flow with proposals on: the App picks no
+// repository, parses no grammar and files nothing — the plan, its hash and its author are the
+// message's, and the person confirms it there.
+//
+// Two things are refused before the broker is called, each with its own line: a request past
+// intake_plan's 16 KiB bound, and a thread whose task is already filed or cancelled — the
+// idempotency key is the thread, so a second plan there would be a second message about one filing.
+//
+// The outcome is what the caller counts: postProposal's ("proposed", "too_large", "multi_issue",
+// "error"), "refused" for a refusal whose fix is a new mention, and "error" for a passing one.
+func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) string {
+	say := func(line string) bool {
+		if _, err := a.Slack.Post(ctx, ev.Channel, thread, line, nil); err != nil {
+			a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
+			return false
+		}
+		return true
+	}
+	if len(text) > maxProposalRequestBytes {
+		if !say(RequestedTextTooLong.Error()) {
+			return "error"
+		}
+		return "too_large"
+	}
+	// The thread decides before a plan is drawn, because its message is what says the task is filed:
+	// a thread the App cannot read is planned anyway rather than left with no answer at all — the
+	// broker's idempotency key is still what refuses a second filing.
+	if msgs, err := a.Slack.Thread(ctx, ev.Channel, thread); err != nil {
+		a.log().Warn("slack thread fetch failed", "channel", ev.Channel, "err", err)
+	} else if _, closed := a.threadProposal(msgs); closed {
+		if !say(a.proposalClosedLine(a.threadRoom(msgs))) {
+			return "error"
+		}
+		return "refused"
+	}
+
+	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{
+		Text:       text,
+		Candidates: ch.Repositories,
+		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
+		CeilingUSD: ch.MaxCostUSD,
+	})
+	var r Refused
+	switch {
+	case errors.Is(err, ErrUnknownTool):
+		if !say(planUnsupported) {
+			return "error"
+		}
+		return "refused"
+	case errors.As(err, &r):
+		code, line, passing := notProposed(string(r), ev.User, ch.Repositories...)
+		a.log().Info("proposal refused", "code", code, "channel", ev.Channel) // the reason, never the request's text
+		if !say(line) {
+			return "error"
+		}
+		if passing {
+			return "error" // a passing failure, whose fix the line states: mention again
+		}
+		return "refused"
+	case err != nil:
+		a.log().Warn("intake_plan failed", "err", err)
+		if !say("Not proposed: the planner could not be reached; mention me again in a minute.") {
+			return "error"
+		}
+		return "error"
+	}
+
+	// The broker's answer is held to the message's own contract before a byte of it is posted: a plan
+	// whose hash does not bind it is a proposal no Confirm could trust (CD20), one Slack cannot carry is
+	// refused whole with the same line postProposal uses, and one at the revision cap is refused with the
+	// line the reply flow's re-plan meets too.
+	prop, err := newProposal(res.Plan, res.Hash, ev.User, rev)
+	switch {
+	case err == nil:
+	case errors.Is(err, errProposalTooLarge):
+		if !say(notPostedLine(errProposalTooLarge)) {
+			return "error"
+		}
+		return "too_large"
+	case errors.Is(err, errProposalRev):
+		a.log().Warn("intake_plan answered a plan past the revision cap", "channel", ev.Channel)
+		if !say("Not proposed: this thread has all the revisions one proposal may have; confirm it, or start a new mention.") {
+			return "error"
+		}
+		return "refused"
+	case errors.Is(err, errProposalHash):
+		a.log().Warn("intake_plan answered a plan that does not hold", "channel", ev.Channel)
+		if !say("Not proposed: the plan the planner answered does not match its check; mention me again.") {
+			return "error"
+		}
+		return "refused"
+	default:
+		a.log().Warn("intake_plan answered a plan that cannot be shown", "channel", ev.Channel, "err", err)
+		if !say("Not proposed: the plan the planner answered cannot be shown here; mention me again.") {
+			return "error"
+		}
+		return "refused"
+	}
+	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
+	return a.postProposal(ctx, ev.Channel, thread, prop, res.Question)
+}
+
+// proposalClosedLine is the mention's answer in a thread whose task is filed or cancelled: one line,
+// naming the room when the thread's marker names one. Nothing is planned there, because the
+// idempotency key is the thread and a second plan would describe a filing that cannot happen.
+func (a *App) proposalClosedLine(room string) string {
+	if !roomRE.MatchString(room) {
+		return "Not proposed: this thread's task is already filed or cancelled; start a new mention for another."
+	}
+	return "Not proposed: this thread's task is already filed, in room " +
+		strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + room + "; start a new mention for another."
+}
+
+// threadRoom is the room the thread's marker names: the App's own filed message is the one place a
+// closed thread says where its task went. "" when no marker of the App's names one.
+func (a *App) threadRoom(msgs []Message) string {
+	room := ""
+	for i := range msgs {
+		m := &msgs[i]
+		if m.User == "" || m.User != a.BotUserID || m.Metadata == nil {
+			continue
+		}
+		if mark, ok := m.Metadata.markerPayload(); ok && roomRE.MatchString(mark.Room) {
+			room = mark.Room
+		}
+	}
+	return room
+}
+
+// notProposed is an intake_plan refusal as the thread says it: one fixed line per reason of intake's
+// closed list, and for the two a person can act on by asking an operator, the repositories this
+// channel serves. passing marks the reasons whose fix is to mention again — an outage, not a decision
+// — so the caller counts them apart. A reason outside the list, and anything the broker says that is
+// not one, is shown as it was given, as every other refusal in this package is (shown).
+//
+// served is variadic because it is display for two of the lines and because the reason is what
+// decides: a caller with no channel list still gets its answer, without the repositories in it.
+func notProposed(refusal, user string, served ...string) (code, text string, passing bool) {
+	// intake_plan answers `<reason>: <sentence>` (intake.Refusal), and the doors that wrap a refusal
+	// answer `rejected: <reason>`: both spellings name the same reason, and the reason is the first
+	// field of either.
+	code, _, _ = strings.Cut(strings.TrimPrefix(refusal, "rejected: "), ":")
+	what := strings.Join(served, ", ")
+	switch {
+	case code == "repository_not_allowed" && what != "":
+		return code, "Not proposed: this channel serves " + slackText(what) +
+			" and you may file in none of them; ask an operator to add one you may write in.", false
+	case code == "no_write" && what != "":
+		return code, "Not proposed: <@" + user + "> cannot write to " + slackText(what) +
+			", the repositories this channel serves; ask an operator for one you may write in.", false
+	case code == "private_repository_unsupported":
+		return code, "Not proposed: the planner reads public repositories only; use your coding agent " +
+			"(`issue_draft` then `issue_file`), or wait for the internal route.", false
+	case code == "planner_unavailable":
+		return code, "Not proposed: the plan service is unavailable; mention me again in a minute.", true
+	case code == "planner_timeout":
+		return code, "Not proposed: the plan service did not answer in time; mention me again in a minute.", true
+	case code == "planner_invalid":
+		return code, "Not proposed: the plan service answered something that is not a plan; mention me again, " +
+			"or hand it off from your coding agent.", false
+	case code == "daily_plans_reached":
+		return code, "Not proposed: you have used today's plans; mention me again after 00:00 UTC, " +
+			"or hand it off from your coding agent.", false
+	case code == "repository_unverified":
+		return code, "Not proposed: GitHub could not confirm the repository, so the planner will not guess; " +
+			"mention me again in a minute.", true
+	}
+	return code, "Not proposed: " + shown(refusal), false
+}
+
 // ---- the message in the thread: posted once, edited in place, found again ----
 
 // proposalReplacedLine is what the proposal a repost replaced says afterwards: the message keeps its
@@ -546,7 +750,7 @@ func (a *App) postProposal(ctx context.Context, channel, thread string, p Propos
 		return true
 	}
 	tooLarge := func() string {
-		if !say("Proposal not posted: " + errProposalTooLarge.Error() + ".") {
+		if !say(notPostedLine(errProposalTooLarge)) {
 			return "error"
 		}
 		return "too_large"

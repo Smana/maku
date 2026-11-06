@@ -349,3 +349,51 @@ func TestBrokerSlackLink(t *testing.T) {
 		t.Fatalf("off: %v", err)
 	}
 }
+
+// intake_plan's schema exactly: the requester's words, the channel's repositories as the candidate
+// set, the App's principal and the channel's ceiling — a context key only when the App has one, and
+// no repository the App picked. Its data decodes into the App's own result.
+func TestIntakePlanCall(t *testing.T) {
+	plan := planFixture(t, "slack-one-issue")
+	raw, err := plan.JSON()
+	if err != nil {
+		t.Fatalf("the plan's JSON: %v", err)
+	}
+	hash := intake.Hash(plan)
+	question := `{"text":"Which repository should this go to?","recommended":{"answer":"Smana/ai-native-ref","why":"the thread is about it"}}`
+	f := newFakeBroker(t, "", `{"structuredContent":{"plan":`+string(raw)+`,"hash":"`+hash+`","question":`+question+
+		`,"canStart":true,"canStartWhy":"a channel ceiling binds","degraded":true}}`)
+	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
+
+	got, err := b.IntakePlan(context.Background(), IntakeRequest{Text: "the install link in the README is dead",
+		OnBehalfOf: "slack:T01ABC/U02DEF", Candidates: []string{"Smana/ai-native-ref"}, CeilingUSD: 1.5})
+	wantPlan := plan
+	wantPlan.Hash = hash // a plan sent without one gains the hash it computes
+	want := IntakeResult{Plan: wantPlan, Hash: hash,
+		Question: &intake.Question{Text: "Which repository should this go to?",
+			Recommended: intake.Answer{Answer: "Smana/ai-native-ref", Why: "the thread is about it"}},
+		CanStart: true, CanStartWhy: "a channel ceiling binds", Degraded: true}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("the result is %+v (%v), want %+v", got, err, want)
+	}
+
+	c := f.calls[0]
+	if c.Method != "tools/call" || c.Params.Name != "intake_plan" {
+		t.Fatalf("%+v", c)
+	}
+	wantArgs := map[string]any{"text": "the install link in the README is dead",
+		"candidates": []any{"Smana/ai-native-ref"}, "on_behalf_of": "slack:T01ABC/U02DEF", "ceiling": 1.5}
+	if !reflect.DeepEqual(c.Params.Arguments, wantArgs) {
+		t.Fatalf("the arguments are %+v, want exactly %+v", c.Params.Arguments, wantArgs)
+	}
+
+	// A context the App does have is the one extra key; nothing else moves.
+	if _, err := b.IntakePlan(context.Background(), IntakeRequest{Text: "x", Context: "the thread says the link is dead",
+		Candidates: []string{"Smana/ai-native-ref"}}); err != nil {
+		t.Fatalf("intake_plan with a context: %v", err)
+	}
+	more := f.calls[1].Params.Arguments
+	if len(more) != 5 || more["context"] != "the thread says the link is dead" {
+		t.Fatalf("the arguments with a context: %+v", more)
+	}
+}

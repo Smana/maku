@@ -57,6 +57,9 @@ type BrokerAPI interface {
 	RunCreate(ctx context.Context, c RunCreate) (RunResult, error)
 	SlackLinkCode(ctx context.Context, team, user, handle, name string) (string, error)
 	SlackUnlink(ctx context.Context, team, user string) (bool, error)
+	// IntakePlan is the governed planner (CD18): a mention's words become the plan/v1 the proposal
+	// message carries. It files nothing, and ErrUnknownTool is a broker without the tool.
+	IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error)
 	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
 	// thing the App decides, and only for forge.push.
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)
@@ -81,6 +84,7 @@ type App struct {
 	BotUserID   string
 	RoomsURL    string
 	Channels    map[string]Channel
+	Proposals   Proposals    // the proposal flow's switch (CD7): on, a mention is planned and posted as one proposal
 	Async       func(func()) // runs an event's handling after the 200 (tests); nil means the App's workers
 	Now         func() time.Time
 	Metrics     Recorder
@@ -397,6 +401,12 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 		return a.link(ctx, ev, thread)
 	case "unlink":
 		return a.unlink(ctx, ev, thread)
+	}
+	// CD1, §the Slack journey: with proposals on, a mention in plain words is planned by the broker and
+	// posted as one proposal. The App parses no repository line and guesses no repository: the person's
+	// own words are the planner's input (commandless), which is where the 16 KiB bound is measured.
+	if a.Proposals.Enabled {
+		return a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
 	}
 	d, err := ParseMention(ev.Text, a.BotUserID, ch.Repositories)
 	if err != nil {
