@@ -14,9 +14,13 @@ in local human mode with the apiserver vouching for runs and for the factory (`s
 (`allowUnsandboxed`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
 mode on one GitHub App. The two Secrets come from `demo.model` (`agent-model`, in the runs namespace)
 and `demo.githubApp` (`agent-factory-github`), or exist already (`existingSecret`, which must carry the
-name the subchart reads). `agent-git` is the factory's to write. Name your repository, maintainers,
-the App's bot login and your CI's check names under `maku-factory.config` (`owner/repo` and `ci` are
-placeholders). An unset `profile` fails: production values arrive with stage 2.
+name the subchart reads). `agent-git` is the factory's to write. To point it at your repository, copy
+[`values-mine.example.yaml`](values-mine.example.yaml): Helm replaces a list whole, so a values file
+must restate the whole `maku-factory.config.repositories[0]` entry, not one field of it. The
+placeholders to change are `name` (`owner/repo`), `maintainers`, `merge.mergerLogin`,
+`merge.requiredChecks`, `merge.verifyChecks` and `merge.leakScanCheck` (`ci`), plus `factoryLogin` and
+`agentsLogin` (the App's `<slug>[bot]`). The demo loop is scoper, implementer, completion judge,
+reviewer, gate (`maku-factory.config.loops`). An unset `profile` fails: production values arrive with stage 2.
 
 Not for production: no backups, no HA, no database TLS.
 `clusterDomain` must equal `maku.clusterDomain` and `maku-factory.clusterDomain`.
