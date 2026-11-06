@@ -64,6 +64,11 @@ type fakeGitHub struct {
 	repoOf   map[string]string // the repository each token was minted for
 	perms    map[string]string // a login's permission on cloud-native-ref; absent is GitHub's 404
 	permCode int               // the permission GET's status, when set
+	// repos is GET /repos/<owner>/<name>'s answer, by owner/name, and the repositories the App has
+	// an installation on: an absent key is a repository GitHub does not have for it. unreadable is
+	// one the installation's scoped token cannot read. Both are GitHub's 404.
+	repos      map[string]string
+	unreadable map[string]bool
 	// hold, when set, runs before a request takes the fake's lock; false means it
 	// answered the request itself.
 	hold func(w http.ResponseWriter, r *http.Request) bool
@@ -120,6 +125,13 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		strings.HasPrefix(auth, "ghs_installation-") && r.URL.Path != "/repos/Smana/"+f.repoOf[auth]+"/issues/12/comments":
 		// A token scoped to one repository sees no other: GitHub answers 404.
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/installation") && appJWT():
+		// Every repository the fake carries is installed; one it does not carry is GitHub's 404.
+		if _, installed := f.repos[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/"), "/installation")]; !installed {
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":77}`))
 	case r.URL.Path == "/repos/Smana/cloud-native-ref/issues/12/comments" && strings.HasPrefix(auth, "ghs_installation-") && (auth == f.stale || f.refuse):
 		f.refused++
 		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
@@ -169,6 +181,19 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{"permission": perm, "role_name": perm, "user": map[string]string{"login": login}})
 		}
+	case r.Method == http.MethodGet && strings.HasPrefix(auth, "ghs_installation-"):
+		// The repository's own read, and the last case: a path that is not one is no credentials.
+		if slug, ok := repoInPath(r.URL.Path); ok {
+			body, carried := f.repos[slug]
+			// A repository the scoped token cannot read, and one the fake does not carry: both 404.
+			if !carried || f.unreadable[slug] {
+				http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(body))
+			return
+		}
+		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
 	default:
 		http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
 	}
@@ -928,5 +953,66 @@ func TestPermissionRefusesUnsafePaths(t *testing.T) {
 	}
 	if f.requests != 0 {
 		t.Fatalf("%d requests reached GitHub", f.requests)
+	}
+}
+
+// repoInPath is the owner/name path names when it is exactly /repos/<owner>/<name>.
+func repoInPath(path string) (string, bool) {
+	rest, ok := strings.CutPrefix(path, "/repos/")
+	if !ok {
+		return "", false
+	}
+	owner, name, ok := strings.Cut(rest, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", false
+	}
+	return owner + "/" + name, true
+}
+
+// The visibility read is the App's, and a repository it cannot see is not public: the installation
+// token reads metadata: read, which is all the planner's public-only guard asks (CD5, v3.x
+// conversational intake).
+func TestRepositoryVisibility(t *testing.T) {
+	a, f, _ := app(t)
+	f.locked(func() {
+		f.repos = map[string]string{
+			"Smana/ai-native-ref": `{"private":false,"visibility":"public"}`,
+			"Smana/hidden":        `{"private":true,"visibility":"private"}`,
+			"Smana/internal":      `{"private":true,"visibility":"internal"}`,
+			"Smana/unreadable":    `{"private":false,"visibility":"public"}`,
+		}
+		f.unreadable = map[string]bool{"Smana/unreadable": true}
+	})
+	if r, err := a.Repository(t.Context(), "Smana", "ai-native-ref"); err != nil || r.Private || r.Visibility != "public" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if r, err := a.Repository(t.Context(), "Smana", "hidden"); err != nil || !r.Private || r.Visibility != "private" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// An enterprise's internal repository is private to everyone outside it, whatever a token can see.
+	if r, err := a.Repository(t.Context(), "Smana", "internal"); err != nil || !r.Private {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// One the App has no installation on, and one the scoped token cannot read: both are GitHub's
+	// 404, and neither is an answer.
+	for _, repo := range []string{"gone", "unreadable"} {
+		if _, err := a.Repository(t.Context(), "Smana", repo); !errors.Is(err, ErrNoInstallation) {
+			t.Errorf("%s: %v", repo, err)
+		}
+	}
+}
+
+// A reply that carries no visibility word is not an answer: the guard reads "not private" as
+// public, so a body GitHub would never send must not become one.
+func TestRepositoryNeedsItsVisibilityWord(t *testing.T) {
+	a, f, _ := app(t)
+	f.locked(func() { f.repos = map[string]string{"Smana/vague": `{"private":false}`} })
+	if _, err := a.Repository(t.Context(), "Smana", "vague"); err == nil {
+		t.Fatal("a reply with no visibility word must not read as public")
+	}
+	for _, c := range [][2]string{{"Smana", ".."}, {"..", "x"}, {"Smana", "a/../../orgs"}, {"", "x"}} {
+		if _, err := a.Repository(t.Context(), c[0], c[1]); !errors.Is(err, ErrNotAPullRequest) {
+			t.Fatalf("%q/%q: %v", c[0], c[1], err)
+		}
 	}
 }

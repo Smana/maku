@@ -40,11 +40,12 @@ type humanLog interface {
 }
 
 // humanSide is :8080 over the broker's parts: the actor serving acts, the
-// server with D7's GitHub check through gh (nil without the factory App), and
-// the leader's lease sweep, added through add. One call carries the parts, so a
-// missing one fails start-up (review 4.4 M2).
+// server with D7's GitHub check through gh (nil without the factory App), the
+// planner's visibility read through vis, and the leader's lease sweep, added
+// through add. One call carries the parts, so a missing one fails start-up
+// (review 4.4 M2).
 func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Client, ns string, roomLog humanLog, red humanapi.Redactor,
-	hub humanapi.Hub, runs humanapi.Runs, gh gitHubUsers, add func(manager.Runnable) error, m *metrics.Set, log *slog.Logger,
+	hub humanapi.Hub, runs humanapi.Runs, gh gitHubUsers, vis gitHubVisibilities, add func(manager.Runnable) error, m *metrics.Set, log *slog.Logger,
 ) (*humanapi.Server, error) {
 	actor, err := humanActor(cfg.Human, roomLog, red, runs, rooms, runRequester(cfg.FactoryURL, cfg.FactoryCAFile, cfg.Runs), m)
 	if err != nil {
@@ -58,7 +59,10 @@ func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Cl
 		return nil, fmt.Errorf("driver lease: %w", err)
 	}
 	actor.Logger = log
-	s := humanServer(cfg, humans, rooms, ns, roomLog, hub, runs, actor, m, log)
+	s, err := humanServer(cfg, humans, rooms, ns, roomLog, hub, runs, actor, vis, m, log)
+	if err != nil {
+		return nil, err
+	}
 	s.Identity, s.Access = identity, access
 	return s, nil
 }

@@ -223,6 +223,9 @@ func (h *countingHub) Unsubscribe(sub *fanout.Sub) {
 type hubView struct {
 	*memLog
 	skip int64
+	// intake is the plan server the intake tests' options build, carried to env so a test can count
+	// the fake gateway's calls and step its clock.
+	intake *fakeIntake
 }
 
 func (v hubView) Range(ctx context.Context, room string, after int64, limit int) ([]envelope.Event, error) {
@@ -274,12 +277,13 @@ func (headerAuth) Authenticate(r *http.Request) (authn.Principal, error) {
 }
 
 type env struct {
-	ts   *httptest.Server
-	srv  *Server
-	log  *memLog
-	hub  *fanout.Hub
-	subs *countingHub
-	exp  *metrics.Exporter
+	ts     *httptest.Server
+	srv    *Server
+	log    *memLog
+	hub    *fanout.Hub
+	subs   *countingHub
+	exp    *metrics.Exporter
+	intake *fakeIntake // the plan server an intake option built, nil otherwise
 }
 
 type option func(*Server, *fanout.Hub, *hubView)
@@ -329,7 +333,7 @@ func setup(t *testing.T, opts ...option) env {
 		<-done
 		_ = exp.Shutdown(context.Background())
 	})
-	return env{ts: ts, srv: srv, log: log, hub: hub, subs: subs, exp: exp}
+	return env{ts: ts, srv: srv, log: log, hub: hub, subs: subs, exp: exp, intake: view.intake}
 }
 
 func wsURL(ts *httptest.Server) string {

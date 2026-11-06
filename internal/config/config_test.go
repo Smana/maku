@@ -641,3 +641,167 @@ func TestFactoryURLIsHTTPSUnlessInsecure(t *testing.T) {
 		})
 	}
 }
+
+// The keys land with the code that reads them, and a bad one fails the rollout, not the first call.
+func TestIntakePlanConfig(t *testing.T) {
+	intake := func(plan string) string {
+		return valid + "\n  intake:\n    plan:\n" + plan // appended under human:
+	}
+	for name, body := range map[string]string{
+		"a model, not the alias":    intake("      enabled: true\n      model: glm-5.3\n      url: http://gw/v1\n      apiKeyFile: /k\n"),
+		"a deadline over the bound": intake("      enabled: true\n      model: tier-frontier\n      url: http://gw/v1\n      apiKeyFile: /k\n      deadline: 30s\n"),
+		"a third fallback":          intake("      fallback: template\n"),
+		"a duplicated key":          intake("      enabled: true\n      enabled: false\n"),
+		"a role the factory lacks":  intake("      classes:\n        docs-links:\n          roles: [admin]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"),
+		"a repository that is not":  intake("      repositories: [not-a-repo]\n"),
+		"enabled with no key file":  intake("      enabled: true\n      url: http://gw/v1\n      model: tier-frontier\n"),
+	} {
+		if _, err := Load(write(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	cfg, err := Load(write(t, valid+"\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n"+
+		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n"+
+		"  intake:\n    plan:\n"+
+		"      enabled: true\n      url: http://ai-gateway.envoy-gateway-system.svc.cluster.local:8080/v1\n"+
+		"      apiKeyFile: /etc/room-broker/planner/api-key\n      repositories: [Smana/ai-native-ref]\n"+
+		"      classes:\n        docs-links: {roles: [scoper, implementer, reviewer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.IntakePlan()
+	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.Fallback != "off" {
+		t.Fatalf("%+v", p)
+	}
+	// Disabled, the keys may be absent entirely: `tier-frontier` is required only of a planner that runs.
+	if _, err := Load(write(t, valid+"\n  intake:\n    plan:\n      enabled: false\n")); err != nil {
+		t.Fatalf("disabled with no route: %v", err)
+	}
+}
+
+// Off by default: no block means no planner, and the defaults a caller reads are the switch-off ones.
+func TestIntakePlanIsOffByDefault(t *testing.T) {
+	cfg, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.IntakePlan()
+	if p.Enabled || p.URL != "" || p.APIKeyFile != "" || len(p.Repositories) != 0 || len(p.Classes) != 0 {
+		t.Fatalf("a config with no block must serve no planner: %+v", p)
+	}
+	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.Fallback != "off" {
+		t.Fatalf("%+v", p)
+	}
+}
+
+// Every rule the brief names, on its own, with the field it is about: a class's roles are the
+// factory's, its money is above zero and says where it came from, and the route is a route whether
+// or not the switch is on yet.
+func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
+	intake := func(plan string) string { return valid + "\n  intake:\n    plan:\n" + plan }
+	class := func(body string) string {
+		return intake("      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n      classes:\n        docs-links:\n" + body)
+	}
+	for name, c := range map[string]struct{ body, want string }{
+		"a role twice":                  {class("          roles: [implementer, implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "declared twice"},
+		"no roles":                      {class("          roles: []\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "roles is empty"},
+		"a ceiling of zero":             {class("          roles: [implementer]\n          ceilingUSD: 0\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
+		"a negative ceiling":            {class("          roles: [implementer]\n          ceilingUSD: -2\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
+		"no source":                     {class("          roles: [implementer]\n          ceilingUSD: 2\n"), "source is required"},
+		"a class with no name":          {intake("      classes:\n        \"\": {roles: [implementer], ceilingUSD: 2, source: class:x.taskUSD}\n"), "a class needs a name"},
+		"a repository twice":            {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
+		"a route with no scheme":        {intake("      url: gw/v1\n"), "http(s)"},
+		"a route with userinfo":         {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
+		"a route that is not http":      {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
+		"a deadline over the bound":     {intake("      deadline: 21s\n"), "deadline"},
+		"a negative daily cap":          {intake("      dailyPlans: -1\n"), "dailyPlans"},
+		"the alias, while switched off": {intake("      model: glm-5.3\n"), "tier-frontier"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, c.body)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+	for name, c := range map[string]struct {
+		body string
+		want func(PlanConfig) bool
+	}{
+		"the deadline at its bound": {intake("      deadline: 20s\n"), func(p PlanConfig) bool { return p.Deadline.Duration == 20*time.Second }},
+		"one plan a day":            {intake("      dailyPlans: 1\n"), func(p PlanConfig) bool { return p.DailyPlans == 1 }},
+		"the degraded composer":     {intake("      fallback: composer\n"), func(p PlanConfig) bool { return p.Fallback == "composer" }},
+		"two repositories":          {intake("      repositories: [Smana/a, Smana/b]\n"), func(p PlanConfig) bool { return len(p.Repositories) == 2 }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, err := Load(write(t, c.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p := cfg.IntakePlan(); !c.want(p) {
+				t.Fatalf("%+v", p)
+			}
+		})
+	}
+}
+
+// Local mode has one loopback user and no /mcp to serve the planner on, so the switch is refused by
+// name; the block itself may still land, disabled, as it does in every config copy.
+func TestHumanLocalModeRefusesThePlanner(t *testing.T) {
+	if _, err := Load(write(t, localConfig+"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n")); err == nil ||
+		!strings.Contains(err.Error(), "human.intake.plan.enabled: mode local") {
+		t.Fatalf("local mode must refuse the planner's switch: %v", err)
+	}
+	if _, err := Load(write(t, localConfig+"  intake:\n    plan:\n      enabled: false\n")); err != nil {
+		t.Fatalf("disabled must land: %v", err)
+	}
+	// The class table is validated in every mode, local included: a typo fails the rollout either way.
+	if _, err := Load(write(t, localConfig+"  intake:\n    plan:\n      classes:\n        docs: {roles: [admin], ceilingUSD: 2, source: class:docs.taskUSD}\n")); err == nil ||
+		!strings.Contains(err.Error(), "human.intake.plan.classes") {
+		t.Fatalf("local mode must check the class table: %v", err)
+	}
+}
+
+// A planner that is on has to be one that can answer: the allowlist and the class table are what a
+// plan may name and what it costs, /mcp is the only listener both tools exist on, and human.access
+// is the write check the candidate set is drawn from. Each is refused by the field it is about, so
+// a switch flipped ahead of its parts fails the rollout rather than every call.
+func TestThePlannerNeedsWhatItServes(t *testing.T) {
+	// The parts an operator must land, one per line, in the shape ai-native-ref's copy will carry.
+	parts := []struct{ name, want string }{
+		{"the allowlist", "human.intake.plan.repositories: is required"},
+		{"the class table", "human.intake.plan.classes: is required"},
+		{"the /mcp listener", "human.intake.plan.enabled needs human.mcp.enabled"},
+		{"the write check", "human.intake.plan.enabled needs human.access"},
+	}
+	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n" +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
+		"      repositories: [Smana/ai-native-ref]\n" +
+		"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"
+	if _, err := Load(write(t, base)); err != nil {
+		t.Fatalf("the parts together must load: %v", err)
+	}
+	for _, c := range parts {
+		t.Run(c.name, func(t *testing.T) {
+			// The part's own line is replaced by the one that removes it, so every other part stays.
+			without := base
+			switch c.name {
+			case "the allowlist":
+				without = strings.Replace(base, "      repositories: [Smana/ai-native-ref]\n", "", 1)
+			case "the class table":
+				without = strings.Replace(base,
+					"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n", "", 1)
+			case "the /mcp listener":
+				without = strings.Replace(base, "  mcp:\n    enabled: true\n", "  mcp:\n    enabled: false\n", 1)
+			case "the write check":
+				without = strings.Replace(base, "  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n", "", 1)
+			}
+			if without == base {
+				t.Fatalf("%s: the fixture does not carry the part", c.name)
+			}
+			if _, err := Load(write(t, without)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+}

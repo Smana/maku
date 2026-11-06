@@ -21,14 +21,17 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/github"
 	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
+	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/roomctrl"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
@@ -574,8 +577,11 @@ func TestHumanServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	actor := &humanapi.Actor{}
-	s := humanServer(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", fakeRoomLog{},
-		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, actor, m, log)
+	s, err := humanServer(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", fakeRoomLog{},
+		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, actor, nil, m, log)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if s.Groups != (policy.Groups{Admin: "agents-admin", Member: "agents-member"}) || s.Namespace != "agent-system" || s.Metrics != m ||
 		s.Actor != actor {
 		t.Fatalf("groups %+v, namespace %q, metrics %p, actor %p", s.Groups, s.Namespace, s.Metrics, s.Actor)
@@ -651,5 +657,220 @@ func TestWithSuspend(t *testing.T) {
 		slog.New(slog.DiscardHandler))
 	if s, ok := rc.Suspend.(*suspend.Suspender); !ok || s.After != 7*time.Minute || s.Kind != native {
 		t.Fatalf("on: %#v", rc.Suspend)
+	}
+}
+
+// intakeVisibility is the factory App's visibility read in these tests: the repositories listed are
+// public, every other one private, and one named in failed cannot be read at all.
+type intakeVisibility struct {
+	mu     sync.Mutex
+	public map[string]bool
+	failed map[string]bool
+	reads  map[string]int
+}
+
+func (v *intakeVisibility) Repository(_ context.Context, owner, repo string) (github.Repository, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	key := strings.ToLower(owner + "/" + repo)
+	if v.reads == nil {
+		v.reads = map[string]int{}
+	}
+	v.reads[key]++
+	switch {
+	case v.failed[key]:
+		return github.Repository{}, errors.New("github: HTTP 502")
+	case v.public[key]:
+		return github.Repository{Visibility: "public"}, nil
+	}
+	return github.Repository{Private: true, Visibility: "private"}, nil
+}
+
+// read is how many times repository was asked about.
+func (v *intakeVisibility) read(repository string) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.reads[strings.ToLower(repository)]
+}
+
+// plannerConfig is a broker config with human.intake.plan on, shaped as ai-native-ref's copy will
+// carry it: the route, the key file, one allowlist entry and one class, beside the /mcp listener and
+// the human.access block the tools and the guard both need.
+func plannerConfig() config.Config {
+	return config.Config{Human: config.HumanConfig{
+		Issuer: humanIssuer, Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"},
+		RoomctlClientIDFile: "/etc/room-broker/maku/client-id",
+		MCP:                 config.MCPConfig{Enabled: true},
+		Access: &config.AccessConfig{ReaderFile: "/etc/room-broker/zitadel/reader.json",
+			TTL: config.Duration{Duration: 90 * time.Second}},
+		Intake: config.IntakeConfig{Plan: config.PlanConfig{
+			Enabled: true, URL: "http://ai-gateway.envoy-gateway-system.svc:8080/v1",
+			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, Fallback: "composer",
+			Repositories: []string{"Smana/AI-Native-Ref"},
+			Classes: map[string]config.PlanClass{"docs-links": {
+				Roles: []string{"scoper", "implementer", "reviewer"}, CeilingUSD: 2, Source: "class:docs-links.taskUSD"}},
+		}},
+	}}
+}
+
+// buildHumans is the server serveBroker builds, through the constructor it builds it with
+// (humanSide): the planner a config asks for and the planner the server gets cannot drift.
+func buildHumans(t *testing.T, cfg config.Config, vis gitHubVisibilities) (*humanapi.Server, error) {
+	t.Helper()
+	red, err := redact.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, m := newMetrics(t)
+	log := slog.New(slog.DiscardHandler)
+	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
+	return humanSide(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{}, red,
+		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, &fakeGitHubUsers{}, vis, func(manager.Runnable) error { return nil }, m, log)
+}
+
+// The switch builds nothing when it is off: no model, no tool, no metric, no route (CD18). The
+// listener both tools are reachable on is on, so their absence is the switch's own.
+func TestIntakeIsOffByDefault(t *testing.T) {
+	cfg := plannerConfig()
+	cfg.Human.Intake = config.IntakeConfig{}
+	s, err := buildHumans(t, cfg, &intakeVisibility{public: map[string]bool{"smana/ai-native-ref": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Intake != nil {
+		t.Fatalf("a config with no human.intake.plan block served %+v", s.Intake)
+	}
+	if !s.MCP {
+		t.Fatal("/mcp must be on here, so the planner's absence is its own switch")
+	}
+}
+
+// The switch, wired (CD5, CD17, CD18, CD27): the class table and the allowlist from config, the one
+// bounded call through the audited egress client, GitHub's visibility for the public-only guard, the
+// daily cap, the composer's switch, and the redactor plan_check runs.
+func TestIntakeIsWiredFromConfig(t *testing.T) {
+	vis := &intakeVisibility{
+		public: map[string]bool{"smana/ai-native-ref": true},
+		failed: map[string]bool{"smana/flaky": true},
+	}
+	s, err := buildHumans(t, plannerConfig(), vis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := s.Intake
+	if in == nil {
+		t.Fatal("human.intake.plan.enabled served no planner")
+	}
+	// The allowlist is lowercased as sessionStart is: GitHub's names are case-insensitive, and the
+	// candidate set is a map of keys.
+	if !in.Allow["smana/ai-native-ref"] || in.Allow["Smana/AI-Native-Ref"] {
+		t.Fatalf("allow = %v", in.Allow)
+	}
+	if c := in.Classes["docs-links"]; !slices.Equal(c.Roles, []string{"scoper", "implementer", "reviewer"}) ||
+		c.CeilingUSD != 2 || c.Source != "class:docs-links.taskUSD" {
+		t.Fatalf("classes = %+v", in.Classes)
+	}
+	if in.Model == nil || in.Model.URL != "http://ai-gateway.envoy-gateway-system.svc:8080/v1" ||
+		in.Model.Alias != config.PlanModel || in.Model.APIKeyFile != "/etc/room-broker/planner/api-key" ||
+		in.Model.Deadline != config.DefaultPlanDeadline || in.Model.HC == nil {
+		t.Fatalf("model = %+v", in.Model)
+	}
+	if in.Daily != 7 || in.Fallback != "composer" || in.Now == nil {
+		t.Fatalf("cap %d, fallback %q, now set %v", in.Daily, in.Fallback, in.Now != nil)
+	}
+	// plan_check runs the redactor issue_draft does, so a server whose actor has none would refuse
+	// every plan it was shown.
+	if s.Actor == nil || s.Actor.Redactor == nil {
+		t.Fatal("the planner's re-validation door needs Actor.Redactor")
+	}
+	// The public-only read is the App's, cached as the access check caches a permission: one read per
+	// repository inside human.access's window, and an error that is never cached.
+	if in.Public == nil {
+		t.Fatal("no visibility read: the guard would refuse every plan")
+	}
+	for range 2 {
+		if public, err := in.Public.Public(t.Context(), "Smana/AI-Native-Ref"); err != nil || !public {
+			t.Fatalf("a public repository: %v, %v", public, err)
+		}
+	}
+	if n := vis.read("smana/ai-native-ref"); n != 1 {
+		t.Fatalf("%d reads of one repository inside the TTL", n)
+	}
+	if public, err := in.Public.Public(t.Context(), "Smana/private"); err != nil || public {
+		t.Fatalf("a private repository: %v, %v", public, err)
+	}
+	// GitHub cannot answer: refused, and asked again rather than remembered as public.
+	for range 2 {
+		if _, err := in.Public.Public(t.Context(), "Smana/flaky"); err == nil {
+			t.Fatal("a repository GitHub cannot answer for must not be an answer")
+		}
+	}
+	if n := vis.read("smana/flaky"); n != 2 {
+		t.Fatalf("%d reads of an unanswerable repository: a failure is never cached", n)
+	}
+}
+
+// The planner's visibility cache is human.access's window: a repository that went private lapses
+// where a revoked permission does, and with no human.access it is the access default.
+func TestThePlannerReadsOnTheAccessWindow(t *testing.T) {
+	if got := accessTTL(config.HumanConfig{}); got != config.MaxAccessTTL {
+		t.Fatalf("no human.access: %s", got)
+	}
+	h := config.HumanConfig{Access: &config.AccessConfig{TTL: config.Duration{Duration: 90 * time.Second}}}
+	if got := accessTTL(h); got != 90*time.Second {
+		t.Fatalf("human.access's TTL: %s", got)
+	}
+}
+
+// The visibility cache is the access one: a repository is asked about once per TTL, and one GitHub
+// cannot answer for is never cached as public.
+func TestIntakePublicityCachesLikeAccess(t *testing.T) {
+	vis := &intakeVisibility{
+		public: map[string]bool{"smana/ai-native-ref": true},
+		failed: map[string]bool{"smana/flaky": true},
+	}
+	public := intakePublicity(vis, 5*time.Minute)
+	if public == nil {
+		t.Fatal("no GitHub App, no visibility read")
+	}
+	for range 2 {
+		if ok, err := public.Public(t.Context(), "Smana/ai-native-ref"); err != nil || !ok {
+			t.Fatalf("%v %v", ok, err)
+		}
+	}
+	if n := vis.read("smana/ai-native-ref"); n != 1 {
+		t.Fatalf("%d lookups, want one", n)
+	}
+	if ok, err := public.Public(t.Context(), "Smana/hidden"); err != nil || ok {
+		t.Fatalf("an unlisted repository: %v %v", ok, err)
+	}
+	for range 2 {
+		if _, err := public.Public(t.Context(), "Smana/flaky"); err == nil {
+			t.Fatal("an error must not be an answer")
+		}
+	}
+	if n := vis.read("smana/flaky"); n != 2 {
+		t.Fatalf("%d lookups of an unanswerable repository", n)
+	}
+	if intakePublicity(nil, time.Minute) != nil {
+		t.Fatal("no App must be no visibility read, never one that answers nothing")
+	}
+}
+
+// A planner with no visibility read or no redactor is a switch that reads as on and answers every
+// call with a refusal: the broker refuses to start half-wired instead (review 4.4 M2's rule).
+func TestIntakeRefusesToStartHalfWired(t *testing.T) {
+	if _, err := buildHumans(t, plannerConfig(), nil); err == nil || !strings.Contains(err.Error(), "ROOMS_GITHUB_APP_DIR") {
+		t.Fatalf("no App: %v", err)
+	}
+	_, m := newMetrics(t)
+	log := slog.New(slog.DiscardHandler)
+	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
+	// humanServer is where the parts meet: an actor with no redactor is the one part no config can
+	// supply, and every plan_check would run it.
+	if _, err := humanServer(plannerConfig(), humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{},
+		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, &humanapi.Actor{}, &intakeVisibility{}, m, log); err == nil ||
+		!strings.Contains(err.Error(), "Actor.Redactor") {
+		t.Fatalf("no redactor: %v", err)
 	}
 }

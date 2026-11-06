@@ -431,3 +431,21 @@ func TestAPrivateOrUnverifiableRepositoryIsRefusedBeforeTheCall(t *testing.T) {
 		t.Fatalf("%d calls for an allowed request", got)
 	}
 }
+
+// CD17: the classes the plan may carry are the broker's table, and the model is told them. A reply
+// that has to guess the vocabulary makes invalid_class the default outcome rather than the exception.
+func TestTheAllowedClassesReachThePrompt(t *testing.T) {
+	f := fakeGateway(t, okReply)
+	m := modelFor(f)
+	req := req()
+	req.Classes = []string{"ci", "docs-links"}
+	if _, _, err := m.Draft(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	body := f.rawBody()
+	for _, want := range []string{"ci", "docs-links"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the prompt does not name the class %q: %s", want, body)
+		}
+	}
+}

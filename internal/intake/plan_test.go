@@ -155,6 +155,24 @@ func TestCheckRefusesEachRule(t *testing.T) {
 		{name: "a draft CheckDraft refuses, verbatim",
 			change: func(p *intake.Plan) { p.Issues[0].Title = "no area prefix" },
 			want:   intake.ReasonInvalidDraft, detail: "invalid_draft: the title is one line"},
+		// The indices are the contract's numbering, not a label the plan carries: a consumer files by
+		// them, so a duplicate, a zero and a gap are three ways one issue is filed twice or out of
+		// order.
+		{name: "an index that is not its position",
+			change: func(p *intake.Plan) { p.Issues[0].Index = 2 },
+			want:   intake.ReasonPlannerInvalid, detail: "issue 1: index 2, the contract numbers its issues from 1 in order"},
+		{name: "a zero index",
+			change: func(p *intake.Plan) { p.Issues[0].Index = 0 },
+			want:   intake.ReasonPlannerInvalid, detail: "issue 1: index 0"},
+		{name: "two issues of one index",
+			change: func(p *intake.Plan) { p.Issues = append(p.Issues, p.Issues[0]) },
+			want:   intake.ReasonPlannerInvalid, detail: "issue 2: index 1"},
+		{name: "a dependency on a later issue",
+			change: func(p *intake.Plan) { p.Issues[0].DependsOn = []int{2} },
+			want:   intake.ReasonPlannerInvalid, detail: "dependsOn 2, which is not an earlier issue"},
+		{name: "a dependency on issue zero",
+			change: func(p *intake.Plan) { p.Issues[0].DependsOn = []int{0} },
+			want:   intake.ReasonPlannerInvalid, detail: "dependsOn 0, which is not an earlier issue"},
 		{name: "a class the config does not define",
 			change: func(p *intake.Plan) { p.Issues[0].Class = "admin" },
 			want:   intake.ReasonInvalidClass, detail: `issue 1: class "admin" is not in the class table`},
@@ -223,6 +241,16 @@ func TestCheckRefusesEachRule(t *testing.T) {
 				t.Fatalf("the error does not open with its reason: %q", r.Error())
 			}
 		})
+	}
+}
+
+// The three-issue fixture is the contract at its count: consecutive indices, dependencies on earlier
+// issues only. Check holds it, which is what makes the numbering rows above rules and not accidents
+// of a one-issue golden.
+func TestCheckHoldsTheThreeIssueFixture(t *testing.T) {
+	p := planFixture(t, "three")
+	if r := intake.Check(p, []string{"smana/ai-native-ref", "smana/cloud-native-ref"}, classes()); r != nil {
+		t.Fatalf("%+v", r)
 	}
 }
 

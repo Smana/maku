@@ -17,6 +17,7 @@ import (
 	"github.com/Smana/maku/internal/ghidentity"
 	"github.com/Smana/maku/internal/github"
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/repoaccess"
 )
 
@@ -29,13 +30,72 @@ type gitHubUsers interface {
 	Permission(ctx context.Context, owner, repo, login string) (string, error)
 }
 
-// accessApp is the factory App D7 reads through, mounted at dir (ROOMS_GITHUB_APP_DIR); nil when
-// unset. Its own instance: an access check never waits on the verdict poster's token mint.
-func accessApp(dir string) gitHubUsers {
+// gitHubVisibilities is what the planner's public-only guard asks the factory App (CD5): one
+// repository's visibility. *github.App has it, and it is a second interface beside gitHubUsers so a
+// consumer names the one method it reads.
+type gitHubVisibilities interface {
+	Repository(ctx context.Context, owner, repo string) (github.Repository, error)
+}
+
+// factoryApp is the factory App mounted at dir (ROOMS_GITHUB_APP_DIR); nil when unset.
+func factoryApp(dir string) *github.App {
 	if dir == "" {
 		return nil
 	}
 	return &github.App{Dir: dir, API: githubAPI, HC: httpx.New(posterGitHubTimeout, nil), Now: time.Now}
+}
+
+// accessApp is the factory App D7 reads through, mounted at dir (ROOMS_GITHUB_APP_DIR); nil when
+// unset. Its own instance: an access check never waits on the verdict poster's token mint.
+func accessApp(dir string) gitHubUsers {
+	if a := factoryApp(dir); a != nil {
+		return a
+	}
+	return nil
+}
+
+// visibilityApp is the factory App the planner's public-only read goes through, mounted at dir
+// (ROOMS_GITHUB_APP_DIR); nil when unset. Its own instance too: a visibility read never waits behind
+// a permission check's token mint.
+func visibilityApp(dir string) gitHubVisibilities {
+	if a := factoryApp(dir); a != nil {
+		return a
+	}
+	return nil
+}
+
+// accessTTL is the window a GitHub answer is trusted: human.access's TTL, which config.Load defaults
+// to MaxAccessTTL. The planner's visibility cache reads through the same window, so a repository gone
+// private and a permission revoked lapse together.
+func accessTTL(h config.HumanConfig) time.Duration {
+	if h.Access != nil && h.Access.TTL.Duration > 0 {
+		return h.Access.TTL.Duration
+	}
+	return config.MaxAccessTTL
+}
+
+// intakePublicity is the planner's public-only guard over the GitHub App (CD5, §security): one
+// visibility read per repository per ttl, cached as repoaccess caches a permission, so the delay
+// between a repository going private and the planner refusing it is the one already documented for
+// a revoked permission. A repository the App cannot see, or a reply with no visibility word, is an
+// error — never cached — and the guard then refuses rather than planning on a guess.
+//
+// Nil gh is no visibility read at all: the broker refuses to start a planner without it, since a
+// guard that can verify nothing refuses every plan.
+func intakePublicity(gh gitHubVisibilities, ttl time.Duration) intake.Publicity {
+	if gh == nil {
+		return nil
+	}
+	lookup := func(ctx context.Context, repository string) (bool, error) {
+		// intake.CachedPublicity checks owner/name before it calls, so the split holds here.
+		owner, repo, _ := strings.Cut(repository, "/")
+		r, err := gh.Repository(ctx, owner, repo)
+		if err != nil {
+			return false, err
+		}
+		return !r.Private && r.Visibility == "public", nil
+	}
+	return intake.NewPublicity(lookup, ttl, time.Now)
 }
 
 // roomAccess is D7's check from human.access: the caller's GitHub login from their ZITADEL

@@ -21,6 +21,10 @@ const (
 	RoomWait     = "room_wait"
 	RoomCheckout = "room_checkout"
 	RoomChanges  = "room_changes"
+	// IntakePlan and PlanCheck are the broker's governed planner: the plan a sentence becomes, and
+	// the door every consumer re-validates one through before anything is filed.
+	IntakePlan = "intake_plan"
+	PlanCheck  = "plan_check"
 )
 
 // The JSON-RPC 2.0 error codes the servers answer with.

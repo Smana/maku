@@ -411,3 +411,50 @@ func TestMakuGathererRenames(t *testing.T) {
 		t.Fatalf("families %v, want %v", got, want)
 	}
 }
+
+// The planner's series are the spec's maku_intake_* ones, and MakuName can only produce those from
+// intake_* instruments: a rooms_intake_plan_total would be served as maku_rooms_intake_plan_total,
+// which the dashboard would query in vain.
+func TestIntakeSeriesAreTheSpecsNames(t *testing.T) {
+	for in, want := range map[string]string{
+		"intake_plan_total":   "maku_intake_plan_total",
+		"intake_plan_seconds": "maku_intake_plan_seconds",
+		"intake_plan_tokens":  "maku_intake_plan_tokens",
+		"intake":              "",
+		"rooms_intake_plan":   "maku_rooms_intake_plan",
+	} {
+		if got := MakuName(in); got != want {
+			t.Errorf("MakuName(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "v0.34.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.IntakePlan(ctx, "session", "planned", "")
+	s.IntakePlan(ctx, "slack", "refused", "repository_not_allowed")
+	s.IntakePlanSeconds(ctx, "session", "planned", 250*time.Millisecond)
+	s.IntakePlanTokens(ctx, "session", "prompt", 1200)
+	s.IntakePlanTokens(ctx, "session", "completion", 0) // nothing spent is no series
+	got := series(scrape(t, exp.Handler()))
+	for key, want := range map[string]string{
+		`maku_intake_plan_total{outcome="planned",surface="session"}`:                               "1",
+		`maku_intake_plan_total{outcome="refused",reason="repository_not_allowed",surface="slack"}`: "1",
+		`maku_intake_plan_seconds_sum{outcome="planned",surface="session"}`:                         "0.25",
+		`maku_intake_plan_tokens{kind="prompt",surface="session"}`:                                  "1200",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q: %v", key, got[key], want, got)
+		}
+	}
+	if _, ok := got[`maku_intake_plan_tokens{kind="completion",surface="session"}`]; ok {
+		t.Error("a zero token count made a series")
+	}
+}
