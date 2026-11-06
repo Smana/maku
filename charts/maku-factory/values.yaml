@@ -25,6 +25,9 @@ api:
   tls:
     secretName: ""
     issuerRef: {kind: ClusterIssuer, name: ""}
+# The laptop demo: no OIDC volume (the factory takes no human tokens) and, in the runs namespace,
+# the Secret access the demo token writer needs for the one Secret agent-git.
+demo: false
 oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake
 # v2 D4: the ZITADEL reader ({"pat", "githubIdpId"}) that resolves an API caller to their GitHub

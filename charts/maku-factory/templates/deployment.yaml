@@ -56,7 +56,9 @@ spec:
             - {name: github, mountPath: /etc/agent-factory-github, readOnly: true}
             - {name: merger, mountPath: /etc/agent-factory-merger, readOnly: true}
             - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
+            {{- if not .Values.demo }}
             - {name: oidc, mountPath: /etc/agent-factory-oidc, readOnly: true}
+            {{- end }}
             - {name: intake, mountPath: /etc/agent-factory-intake, readOnly: true}
             - {name: zitadel-reader, mountPath: /etc/agent-factory-zitadel-reader, readOnly: true}
             - {name: sponsored, mountPath: /etc/agent-factory-sponsored, readOnly: true}
@@ -79,8 +81,10 @@ spec:
           projected:
             sources:
               - serviceAccountToken: {audience: {{ .Values.roomsAudience }}, expirationSeconds: 3600, path: token}
+        {{- if not .Values.demo }}
         - name: oidc
           secret: {secretName: {{ .Values.oidcSecret }}, defaultMode: 0444}
+        {{- end }}
         - name: intake
           # 0440, not the plan's 0400: a 0400 Secret is root-only for uid 65532 — the chart's own
           # render test refuses it (review C1). Group bit plus fsGroup, as the App keys.
