@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Smana/maku/internal/roomview"
+	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
 
@@ -63,6 +65,11 @@ type BrokerAPI interface {
 	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
 	// thing the App decides, and only for forge.push.
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)
+	// The three reads a filed thread's questions make (CD25): the room's summary, its changes and its
+	// needs, each one sponsored call for the room the thread's Filed line named.
+	RoomSummary(ctx context.Context, room string) (summary.Summary, error)
+	RoomChanges(ctx context.Context, room string) (roomview.ChangeSet, error)
+	NeedsList(ctx context.Context, room string) ([]summary.Need, error)
 }
 
 // Recorder counts requests for factory_slack_requests_total{route, outcome}, the proposal actions
@@ -636,7 +643,8 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 // With proposals on the thread's message is a proposal, not a draft: the reply is a re-plan, and the
 // same message becomes its next revision (replan). One thread on this App is one or the other — a
 // proposal is what a mention posts with the switch on — so the two branches never contend for one
-// thread, and the draft path below is whatever it always was.
+// thread, and the draft path below is whatever it always was. A thread whose proposal was filed or
+// cancelled answers the five questions instead (answer, CD25).
 func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	ch, ok := a.Channels[ev.Channel]
 	if !ok || ev.Subtype != "" || ev.ThreadTS == "" || ev.ThreadTS == ev.TS || ev.User == a.BotUserID ||
@@ -665,8 +673,19 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	// the one the message shows, and two replies in flight cannot each plan from the revision they saw.
 	if a.Proposals.Enabled {
 		prop, closed := a.threadProposal(msgs)
+		if closed && a.threadCancelled(msgs) {
+			return "ignored" // a cancelled proposal filed nothing: its own message says so, and there is no room to ask about
+		}
 		if closed {
-			return "ignored" // a filed or cancelled proposal says so in its own message
+			// CD25: a thread whose task is filed answers the five questions, and nothing else — the
+			// room is the one its own Filed line names, never a guess from the issue number. Still a
+			// reply and still no command: the answer says where approving, steering and stopping happen.
+			line := a.answer(ctx, ev, ev.ThreadTS, a.threadRoom(msgs))
+			if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); err != nil {
+				a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
+				return "error"
+			}
+			return "answered"
 		}
 		if prop != nil {
 			if p, ok := prop.Metadata.proposalPayload(); ok {

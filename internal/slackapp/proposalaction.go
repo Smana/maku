@@ -259,7 +259,7 @@ func (a *App) cancelInPlace(ctx context.Context, in interaction, thread string, 
 		return code, line
 	}
 	line = fmt.Sprintf(proposalCancelledLine, in.User)
-	mark, err := metaPayload(MarkerPayload{Repo: p.Plan.Repository}) // no room: a cancellation starts none
+	mark, err := metaPayload(MarkerPayload{Repo: p.Plan.Repository, Cancelled: true}) // no room: a cancellation starts none
 	if err != nil {
 		a.log().Error("cancel mark payload: the proposal stays editable", "err", err)
 		mark = json.RawMessage(`{}`)

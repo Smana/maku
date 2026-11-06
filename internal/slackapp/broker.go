@@ -19,6 +19,8 @@ import (
 
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/roomview"
+	"github.com/Smana/maku/internal/summary"
 )
 
 const (
@@ -234,6 +236,52 @@ func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult,
 		return IntakeResult{}, fmt.Errorf("slackapp: intake_plan result: %w", err)
 	}
 	return IntakeResult(out), nil
+}
+
+// RoomSummary is room_summary: the room's summary/v1 object, the one object the room page and maku
+// status render, so a thread that asks where its task is reads what those two read (CD25). The room is
+// the id the thread's Filed line named; the App never asks for a room it guessed.
+func (b Broker) RoomSummary(ctx context.Context, room string) (summary.Summary, error) {
+	sc, err := b.call(ctx, "room_summary", map[string]any{"room": room})
+	if err != nil {
+		return summary.Summary{}, err
+	}
+	var out summary.Summary
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return summary.Summary{}, fmt.Errorf("slackapp: room_summary result: %w", err)
+	}
+	return out, nil
+}
+
+// RoomChanges is room_changes: the room's milestones since a cursor, which for a question is the last
+// twenty-four hours without one — the same view 4 the room page's changes tab renders.
+func (b Broker) RoomChanges(ctx context.Context, room string) (roomview.ChangeSet, error) {
+	sc, err := b.call(ctx, "room_changes", map[string]any{"room": room})
+	if err != nil {
+		return roomview.ChangeSet{}, err
+	}
+	var out roomview.ChangeSet
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return roomview.ChangeSet{}, fmt.Errorf("slackapp: room_changes result: %w", err)
+	}
+	return out, nil
+}
+
+// NeedsList is needs_list for one room: the needs/v1 items alone, out of the envelope the route and the
+// tool share. A sponsored caller reads a room's needs, never a login's, and each item's action is a link
+// it cannot follow for anyone (CD26).
+func (b Broker) NeedsList(ctx context.Context, room string) ([]summary.Need, error) {
+	sc, err := b.call(ctx, "needs_list", map[string]any{"room": room})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Items []summary.Need `json:"items"`
+	}
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return nil, fmt.Errorf("slackapp: needs_list result: %w", err)
+	}
+	return out.Items, nil
 }
 
 // linkPath is the page a link code opens on the broker's public URL.

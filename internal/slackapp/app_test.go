@@ -2211,14 +2211,21 @@ func TestReplyBounds(t *testing.T) {
 			Text:     "Filed #42 for <@U02DEF>; the factory starts it. Room: https://rooms.example/r/26zfnuxm",
 			Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref", Room: "26zfnuxm"})})
 		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
-		if n := len(rig.posts()); n != 0 || len(rig.slack.proposalEdits()) != 0 {
-			t.Fatalf("a filed thread was edited: %+v %+v", rig.posts(), rig.slack.proposalEdits())
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a filed thread was edited: %+v", rig.slack.proposalEdits())
+		}
+		// CD25: the filed thread is not edited and not re-planned, and a reply that is no question of
+		// the five is answered with where things happen rather than left silent.
+		want := "Progress is in this thread; approvals and steering are on the room page: " +
+			"<https://rooms.example/r/26zfnuxm|the room page>. Ask `status`, `needs me`, `what changed` or `the pull request`."
+		if posts := rig.posts(); len(posts) != 1 || posts[0].text != want || posts[0].meta != nil {
+			t.Fatalf("a filed thread answered %+v, want the one pointer line", posts)
 		}
 		if n := len(rig.broker.intakeCalls()); n != 0 {
 			t.Fatalf("a filed thread planned %d times", n)
 		}
-		if got := rig.metrics.count("events", "ignored"); got != 1 {
-			t.Fatalf("the reply was counted %d times as ignored", got)
+		if got := rig.metrics.count("events", "answered"); got != 1 {
+			t.Fatalf("the answer was counted %d times as answered", got)
 		}
 	})
 
