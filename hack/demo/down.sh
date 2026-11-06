@@ -22,7 +22,7 @@ kind_made=''
 [[ ! -s $DEMO_DIR/cluster ]] || kind_made=$(<"$DEMO_DIR/cluster")
 case $kind_made in
 k3d) k3d cluster delete "$NAME" ;;
-kind) kind delete cluster --name "$NAME" ;;
+kind) kind delete cluster --name "$NAME" --kubeconfig "$DEMO_DIR/kubeconfig" ;;
 current) echo "left the current kubeconfig's cluster alone: uninstall with  helm uninstall af -n maku  and  kubectl delete ns maku agents" ;;
 *) echo "no cluster was created by task demo" ;;
 esac
@@ -32,6 +32,7 @@ if [[ $all == 1 ]]; then
   rm -rf "$DEMO_DIR"
   echo "removed .demo"
 else
-  for f in state cluster kubeconfig values.yaml port-forward.pid port-forward.log answers.env; do rm -f "${DEMO_DIR:?}/$f"; done
+  rm -rf "${DEMO_DIR:?}/bin"
+  for f in state cluster context kubeconfig values.yaml port-forward.pid port-forward.log answers.env; do rm -f "${DEMO_DIR:?}/$f"; done
   echo "kept .demo/app (task demo:down -- --all removes it)"
 fi

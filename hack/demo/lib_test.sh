@@ -74,6 +74,26 @@ yq -e -p json '.rules[] | select(.type == "required_status_checks") | .parameter
 # pid guard
 no demo_pid_is_forward 'abc'
 no demo_pid_is_forward $$
+sleep 30 & fake=$!
+no demo_pid_is_forward "$fake"
+kill "$fake" 2>/dev/null || true
+# a process whose command line is the port-forward we start passes; another port-forward does not
+(exec -a "kubectl -n maku port-forward --address 127.0.0.1 deploy/room-broker 8080:8080" sleep 30) & ours=$!
+(exec -a "kubectl -n maku port-forward svc/other 9090:9090" sleep 30) & other=$!
+sleep 0.3
+ok demo_pid_is_forward "$ours"; no demo_pid_is_forward "$other"
+kill "$ours" "$other" 2>/dev/null || true; wait 2>/dev/null || true
+
+# which maku runs `demo app`; the confirmed context; digests
+eq "$(demo_maku_choice 1 1)" bin "the fetched maku wins"
+eq "$(demo_maku_choice 0 1)" go "go is the fallback"
+no demo_maku_choice 0 0
+[[ $(demo_maku_choice 0 0 2>&1) == *"MAKU_VERSION"*"GITHUB_APP_ID"* ]] || { echo "FAIL: the refusal names both ways out" >&2; fail=1; }
+ok demo_context_ok kind-a kind-a
+no demo_context_ok kind-a kind-b
+no demo_context_ok '' kind-a
+ok demo_digest_ok "sha256:$(printf 'a%.0s' {1..64})"
+no demo_digest_ok 'sha256:abc'; no demo_digest_ok ''; no demo_digest_ok 'error: not found'
 
 # the values file renders, is 0600, leaks nothing odd, and the chart's config parses (plan B's Parse test)
 openssl genrsa -out "$tmp/app.pem" 2048 2>/dev/null

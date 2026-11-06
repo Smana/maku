@@ -14,6 +14,8 @@
 #   DEMO_LIVE=1                               turn the docs-links class live (Q13)
 #   DEMO_NO_GH=1                              never use gh, never write to GitHub
 #   DEMO_LOGIN                                the GitHub login allowed to file work
+# .demo/answers.env (0600) keeps your answers, the model key included, so a re-run does not ask again;
+# task demo:down removes it. .demo/values.yaml (0600) holds the model key and the App key too.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT="$PWD"
@@ -32,6 +34,10 @@ umask 077
 mkdir -p "$DEMO_DIR"
 chmod 700 "$DEMO_DIR"
 
+KCTX=''
+# kc ARGS: kubectl against the confirmed context when CLUSTER=current (never the default's drift).
+kc() { if [[ -n $KCTX ]]; then kubectl --context "$KCTX" "$@"; else kubectl "$@"; fi; }
+hl() { if [[ -n $KCTX ]]; then helm --kube-context "$KCTX" "$@"; else helm "$@"; fi; }
 die() { echo "FAIL: $*" >&2; exit 1; }
 warn() { echo "WARN: $*" >&2; }
 interactive() { [[ -t 0 ]]; }
@@ -68,6 +74,13 @@ preflight() {
   esac
   for t in docker helm kubectl curl; do command -v "$t" >/dev/null || die "$t is not installed"; done
   docker info >/dev/null 2>&1 || die "the Docker daemon is not reachable"
+  docker buildx version >/dev/null 2>&1 || die "docker buildx is not installed (it resolves the images' digests)"
+  MAKU_VERSION=${MAKU_VERSION:-}
+  if [[ -z $MAKU_VERSION ]]; then
+    MAKU_VERSION=$(curl -fsS https://api.github.com/repos/Smana/maku/releases/latest | sed -n -E 's/.*"tag_name": *"([^"]*)".*/\1/p' | head -1) || true
+    [[ -n $MAKU_VERSION ]] || die "could not find the latest release: set MAKU_VERSION"
+  fi
+  echo "    maku $MAKU_VERSION"
   local have_k3d=0 have_kind=0
   command -v k3d >/dev/null && have_k3d=1
   command -v kind >/dev/null && have_kind=1
@@ -89,11 +102,21 @@ model() {
   took
 }
 
-# maku_demo_app: this checkout's `maku demo app`, from a binary that has it, else go run.
+# maku_demo_app ARGS: `maku demo app` from the release's maku (fetched into .demo/bin, checksum-verified)
+# when it has the command, else go run ./cmd/maku if go is on PATH, else die naming the ways out.
 maku_demo_app() {
-  if command -v maku >/dev/null && maku demo app --help 2>&1 | grep -q -- '-dir'; then maku demo app "$@"
-  elif command -v go >/dev/null; then go run ./cmd/maku demo app "$@"
-  else die "no maku with 'demo app' on PATH and no go to build one: install maku, or set GITHUB_APP_ID and GITHUB_APP_KEY_FILE"; fi
+  local bin="$DEMO_DIR/bin/maku" bin_ok=0 go_ok=0
+  if [[ $(cat "$DEMO_DIR/bin/maku.version" 2>/dev/null) != "$MAKU_VERSION" ]]; then
+    rm -f "$bin"
+    if demo_fetch_maku "$MAKU_VERSION" "$bin"; then printf '%s' "$MAKU_VERSION" >"$DEMO_DIR/bin/maku.version"; fi
+  fi
+  if [[ -x $bin ]] && "$bin" demo app --help 2>&1 | grep -q -- '-dir'; then bin_ok=1; fi
+  command -v go >/dev/null && [[ -d cmd/maku ]] && go_ok=1
+  case $(demo_maku_choice "$bin_ok" "$go_ok") in
+  bin) "$bin" demo app "$@" ;;
+  go) go run ./cmd/maku demo app "$@" ;;
+  *) exit 1 ;;
+  esac
 }
 
 github_app() {
@@ -136,19 +159,20 @@ github_app() {
 # ---------------------------------------------------------------------------------------------
 repo_private() { # prints true/false/empty
   if [[ $HAVE_GH == 1 ]]; then gh api "repos/$DEMO_REPO" --jq .private 2>/dev/null || true
-  else curl -fsS "https://api.github.com/repos/$DEMO_REPO" 2>/dev/null | sed -n 's/.*"private": *\(true\|false\).*/\1/p' | head -1 || true; fi
+  else curl -fsS "https://api.github.com/repos/$DEMO_REPO" 2>/dev/null | sed -n -E 's/.*"private": *(true|false).*/\1/p' | head -1 || true; fi
 }
 
 seed_github() {
-  local n i title body
+  local open i title body
   local labels=(factory/ready class:docs-links documentation)
   local existing
   existing=$(gh label list -R "$DEMO_REPO" -L 200 --json name --jq '.[].name' 2>/dev/null || gh label list -R "$DEMO_REPO" -L 200 | cut -f1)
   for l in "${labels[@]}"; do
     grep -qxF "$l" <<<"$existing" || gh label create "$l" -R "$DEMO_REPO" >/dev/null 2>&1 || warn "could not create the label $l"
   done
-  n=$(gh issue list -R "$DEMO_REPO" --state open --limit 1 | wc -l | tr -d ' ')
-  if [[ $n == 0 ]]; then
+  open=$(gh issue list -R "$DEMO_REPO" --state open --limit 1) || { warn "could not list the issues of $DEMO_REPO: none seeded"; open=skip; }
+  if [[ $open == skip ]]; then :
+  elif [[ -z $open ]]; then
     local f="$ROOT/examples/demo-repo/ISSUES.md"
     for ((i = 1; i <= $(demo_issue_count "$f"); i++)); do
       title=$(demo_issue_field "$f" "$i" title)
@@ -194,10 +218,13 @@ repository() {
   demo_public_only "${priv:-}" || exit 1
   if [[ -z ${DEMO_LOGIN:-} && $HAVE_GH == 1 ]]; then DEMO_LOGIN=$(gh api user --jq .login 2>/dev/null || true); fi
   resolve DEMO_LOGIN "Your GitHub login (who may file work for the factory)"
-  if [[ $HAVE_GH == 1 ]]; then seed_github
+  local admin=false
+  [[ $HAVE_GH != 1 ]] || admin=$(gh api "repos/$DEMO_REPO" --jq .permissions.admin 2>/dev/null || echo false)
+  if [[ $admin == true ]]; then seed_github
   else
+    [[ $HAVE_GH != 1 ]] || echo "    gh is logged in but has no admin rights on $DEMO_REPO."
     cat <<MSG
-    By hand on https://github.com/$DEMO_REPO (no gh in use):
+    By hand on https://github.com/$DEMO_REPO:
       - create the labels factory/ready, class:docs-links and documentation
       - open the issues of examples/demo-repo/ISSUES.md if the repository has none
       - add a ruleset on the default branch: require pull requests and the status check "ci"
@@ -219,9 +246,11 @@ cluster() {
   step "cluster"
   case $CLUSTER_KIND in
   current)
-    local ctx
+    local ctx stored=''
     ctx=$(kubectl config current-context) || die "no current kubectl context"
-    if ! demo_state_done "$DEMO_DIR" cluster; then
+    [[ ! -s $DEMO_DIR/context ]] || stored=$(<"$DEMO_DIR/context")
+    if ! demo_context_ok "$stored" "$ctx"; then
+      [[ -z $stored ]] || echo "    the current context is now '$ctx', not the '$stored' you confirmed."
       echo "    CLUSTER=current: the demo will install into the context '$ctx'."
       if interactive; then
         read -rp "    Type the context name to confirm: " a
@@ -229,7 +258,9 @@ cluster() {
       else
         [[ ${DEMO_CONFIRM_CONTEXT:-} == "$ctx" ]] || die "set DEMO_CONFIRM_CONTEXT=$ctx to confirm the context without a terminal"
       fi
+      printf '%s' "$ctx" >"$DEMO_DIR/context"
     fi
+    KCTX=$ctx
     ;;
   k3d | kind)
     export KUBECONFIG="$DEMO_DIR/kubeconfig"
@@ -259,7 +290,7 @@ cluster() {
     ;;
   esac
   printf '%s' "$CLUSTER_KIND" >"$DEMO_DIR/cluster"
-  kubectl wait --for=condition=Ready node --all --timeout=120s >/dev/null 2>&1
+  kc wait --for=condition=Ready node --all --timeout=120s >/dev/null 2>&1 || die "the cluster's nodes are not Ready after 120s (kubectl get nodes)"
   demo_state_mark "$DEMO_DIR" cluster
   took
 }
@@ -267,15 +298,11 @@ cluster() {
 # ---------------------------------------------------------------------------------------------
 install_chart() {
   step "install"
-  local v=${MAKU_VERSION:-}
-  if [[ -z $v ]]; then
-    v=$(curl -fsS https://api.github.com/repos/Smana/maku/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1) || true
-    [[ -n $v ]] || die "could not find the latest release: set MAKU_VERSION"
-  fi
-  echo "    maku $v"
+  local v=$MAKU_VERSION
   pin() {
     local d
     d=$(docker buildx imagetools inspect "ghcr.io/smana/$1:$v" --format '{{.Manifest.Digest}}') || die "ghcr.io/smana/$1:$v not found"
+    demo_digest_ok "$d" || die "ghcr.io/smana/$1:$v gave '$d', not a sha256 digest"
     printf '%s@%s' "$v" "$d"
   }
   DEMO_TAG_BROKER=$(pin maku-broker)
@@ -286,24 +313,24 @@ install_chart() {
   export DEMO_TAG_BROKER DEMO_TAG_RUN_CONTROLLER DEMO_TAG_HARNESS DEMO_TAG_BRIDGE DEMO_TAG_FACTORY
   DEMO_SHADOW=true
   [[ ${DEMO_LIVE:-} != 1 ]] || DEMO_SHADOW=false
-  export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME MODEL_API_KEY
+  export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
   demo_render_values "$DEMO_DIR/values.yaml"
-  helm dependency build charts/agent-factory >/dev/null
-  helm upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
+  hl dependency build charts/agent-factory >/dev/null
+  hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
   echo "    waiting for the workloads"
-  kubectl -n "$NS" rollout status sts/rooms-db --timeout=240s
-  kubectl -n "$NS" rollout status deploy/room-broker --timeout=240s
-  kubectl -n "$NS" rollout status deploy/run-controller --timeout=240s
+  kc -n "$NS" rollout status sts/rooms-db --timeout=240s
+  kc -n "$NS" rollout status deploy/room-broker --timeout=240s
+  kc -n "$NS" rollout status deploy/run-controller --timeout=240s
   FACTORY_OK=0
   local i
   for ((i = 0; i < 40; i++)); do
-    if [[ $(kubectl -n "$NS" get deploy agent-factory -o jsonpath='{.status.readyReplicas}' 2>/dev/null) == 1 ]]; then FACTORY_OK=1; break; fi
+    if [[ $(kc -n "$NS" get deploy agent-factory -o jsonpath='{.status.readyReplicas}' 2>/dev/null) == 1 ]]; then FACTORY_OK=1; break; fi
     sleep 3
   done
   if [[ $FACTORY_OK == 1 ]]; then echo "    the factory is Ready"
   else
     warn "the factory is not Ready; its last log lines:"
-    kubectl -n "$NS" logs deploy/agent-factory --tail=8 2>&1 | sed 's/^/      /' >&2 || true
+    kc -n "$NS" logs deploy/agent-factory --tail=8 2>&1 | sed 's/^/      /' >&2 || true
     warn "if it says it cannot find the App's installation, install the App on $DEMO_REPO, then run task demo again"
   fi
   demo_state_mark "$DEMO_DIR" install
@@ -313,18 +340,23 @@ install_chart() {
 # ---------------------------------------------------------------------------------------------
 room_page() {
   step "room page"
-  local pidf="$DEMO_DIR/port-forward.pid" pid=''
+  local pidf="$DEMO_DIR/port-forward.pid" pid='' i
   [[ ! -s $pidf ]] || pid=$(<"$pidf")
   if demo_pid_is_forward "$pid" && curl -fs -o /dev/null --max-time 3 "http://127.0.0.1:$PORT/"; then
     echo "    the port-forward is running (pid $pid)"
   else
-    demo_pid_is_forward "$pid" && kill "$pid" 2>/dev/null || true
+    if demo_pid_is_forward "$pid"; then
+      kill "$pid" 2>/dev/null || true
+      for ((i = 0; i < 50; i++)); do demo_pid_is_forward "$pid" || break; sleep 0.1; done
+    fi
     if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then die "port $PORT is in use by something else: free it, the room page needs it"; fi
-    local start=(kubectl -n "$NS" port-forward --address 127.0.0.1 deploy/room-broker "$PORT:8080")
+    local start=(kubectl)
+    [[ -z $KCTX ]] || start+=(--context "$KCTX")
+    start+=(-n "$NS" port-forward --address 127.0.0.1 deploy/room-broker "$PORT:8080")
     if command -v setsid >/dev/null; then setsid nohup "${start[@]}" </dev/null >"$DEMO_DIR/port-forward.log" 2>&1 &
     else nohup "${start[@]}" </dev/null >"$DEMO_DIR/port-forward.log" 2>&1 & fi
     echo $! >"$pidf"
-    local i ok=0
+    local ok=0
     for ((i = 0; i < 30; i++)); do
       if curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/"; then ok=1; break; fi
       sleep 1
@@ -340,6 +372,7 @@ next_step() {
   local issue=''
   if [[ $HAVE_GH == 1 ]]; then
     issue=$(gh issue list -R "$DEMO_REPO" --label class:docs-links --state open --limit 1 --json url --jq '.[0].url' 2>/dev/null || true)
+    [[ -n $issue ]] || warn "could not look up the issue to label: use the issues page"
   fi
   [[ -n $issue ]] || issue="https://github.com/$DEMO_REPO/issues"
   cat <<MSG

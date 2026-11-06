@@ -163,5 +163,51 @@ demo_pid_is_forward() {
   [[ $1 =~ ^[0-9]+$ ]] || return 1
   local cmd
   cmd=$(ps -p "$1" -o args= 2>/dev/null) || return 1
-  [[ $cmd == *kubectl*port-forward* ]]
+  [[ $cmd == *kubectl*port-forward*deploy/room-broker*8080:8080* ]]
 }
+
+# demo_sha256_check FILE: `sha256sum -c` on Linux, `shasum -a 256 -c` on macOS (reads the sums on stdin).
+demo_sha256_check() {
+  if command -v sha256sum >/dev/null; then sha256sum -c - >/dev/null; else shasum -a 256 -c - >/dev/null; fi
+}
+
+# demo_fetch_maku VERSION DEST: the release's maku for this OS and CPU, checked against the release's
+# maku.sha256, installed 0755 at DEST. Linux and macOS, amd64 and arm64.
+demo_fetch_maku() {
+  local os arch tmp base rc=0
+  case $(uname -s) in Linux) os=linux ;; Darwin) os=darwin ;; *) echo "no maku release for $(uname -s)" >&2; return 1 ;; esac
+  case $(uname -m) in
+  x86_64) arch=amd64 ;;
+  aarch64 | arm64) arch=arm64 ;;
+  *) echo "no maku release for $(uname -m)" >&2; return 1 ;;
+  esac
+  base="https://github.com/Smana/maku/releases/download/$1"
+  tmp=$(mktemp -d)
+  if ! {
+    curl -fsSL -o "$tmp/maku-$os-$arch" "$base/maku-$os-$arch" &&
+      curl -fsSL -o "$tmp/maku.sha256" "$base/maku.sha256" &&
+      (cd "$tmp" && grep " maku-$os-$arch\$" maku.sha256 | demo_sha256_check) &&
+      mkdir -p "$(dirname "$2")" && install -m 0755 "$tmp/maku-$os-$arch" "$2"
+  }; then
+    rc=1
+  fi
+  rm -rf "$tmp" # this function's own temp dir
+  ((rc == 0)) || echo "could not fetch maku $1 for $os-$arch (or its checksum did not match)" >&2
+  return "$rc"
+}
+
+# demo_maku_choice BIN_OK GO_OK: how to run `maku demo app`. BIN_OK=1 when the fetched maku has it,
+# GO_OK=1 when go is on PATH. Prints bin, go, or fails naming the two ways out.
+demo_maku_choice() {
+  if [[ $1 == 1 ]]; then echo bin; return 0; fi
+  if [[ $2 == 1 ]]; then echo go; return 0; fi
+  echo "this MAKU_VERSION's maku has no 'demo app' and go is not installed: use a MAKU_VERSION whose maku has 'demo app', or set GITHUB_APP_ID and GITHUB_APP_KEY_FILE" >&2
+  return 1
+}
+
+# demo_context_ok STORED CURRENT: a CLUSTER=current run may go on only against the context the reader
+# confirmed (STORED empty means none confirmed yet: ask).
+demo_context_ok() { [[ -n $1 && $1 == "$2" ]]; }
+
+# demo_digest_ok VALUE: a manifest digest.
+demo_digest_ok() { [[ $1 =~ ^sha256:[0-9a-f]{64}$ ]]; }
