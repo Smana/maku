@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // localRelay is a relay served on stdio, with the client's side of that stdio: a test reads what the
@@ -72,16 +73,50 @@ func TestCapsStoreSaysNothingAboutAnUnseenClient(t *testing.T) {
 	}
 }
 
-// The file is written by whatever agent the developer runs, so it is bounded: past maxClients the
-// entry measured longest ago goes, and no field is longer than one line.
+// The file is written by whatever agent the developer runs, so it is bounded: a name or a version is
+// one printable line of at most maxCapsField runes, and the entry is keyed by that bounded name —
+// never by the raw one, which nothing else would match.
 func TestCapsStoreIsBounded(t *testing.T) {
 	path := CapsPath(t.TempDir())
 	store := CapsStore{Path: path}
-	for i := range maxClients + 1 {
-		name := "client-" + strconv.Itoa(i)
-		if err := store.Put(Caps{Client: name + "\n" + strings.Repeat("x", maxCapsField), Version: "1"}); err != nil {
-			t.Fatal(err)
-		}
+	raw := "claude\tcode\n" + strings.Repeat("x", maxCapsField)
+	bounded := "claude code " + strings.Repeat("x", 52) // one line, cut at 64 runes
+	if err := store.Put(Caps{Client: raw, Version: "2.0\n1"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := store.Get(bounded)
+	if !ok || got.Client != bounded || got.Version != "2.0 1" {
+		t.Fatalf("%+v %v", got, ok)
+	}
+	var f capsFile
+	if err := LoadJSON(path, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Clients) != 1 {
+		t.Fatalf("%d entries", len(f.Clients))
+	}
+	if _, ok := f.Clients[bounded]; !ok || len([]rune(bounded)) != maxCapsField {
+		t.Fatalf("keys are %v, %d runes", f.Clients, len([]rune(bounded)))
+	}
+}
+
+// Past maxClients the client measured longest ago goes — not the newest, and not the one just
+// written. The seeded entries carry their own At, so eviction is decided by the record, not by how
+// fast the test wrote them.
+func TestCapsStoreEvictsTheClientMeasuredLongestAgo(t *testing.T) {
+	path := CapsPath(t.TempDir())
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seeded := capsFile{Clients: map[string]Caps{}}
+	for i := range maxClients {
+		name := "client-" + strconv.Itoa(i) // oldest first: client-0 was measured longest ago
+		seeded.Clients[name] = Caps{Client: name, Version: "1", At: base.Add(time.Duration(i) * time.Hour)}
+	}
+	if err := SaveJSON(path, seeded); err != nil {
+		t.Fatal(err)
+	}
+	store := CapsStore{Path: path}
+	if err := store.Put(Caps{Client: "codex", Version: "0.9.0"}); err != nil { // the newest entry, now
+		t.Fatal(err)
 	}
 	var f capsFile
 	if err := LoadJSON(path, &f); err != nil {
@@ -90,13 +125,14 @@ func TestCapsStoreIsBounded(t *testing.T) {
 	if len(f.Clients) != maxClients {
 		t.Fatalf("%d entries", len(f.Clients))
 	}
-	for name := range f.Clients {
-		if strings.ContainsAny(name, "\n") || len([]rune(name)) > maxCapsField {
-			t.Fatalf("unbounded %q", name)
-		}
-	}
 	if _, ok := store.Get("client-0"); ok {
 		t.Fatal("the oldest entry was kept")
+	}
+	if _, ok := store.Get("client-1"); !ok {
+		t.Fatal("the second oldest was evicted: eviction is not by At")
+	}
+	if got, ok := store.Get("codex"); !ok || got.Version != "0.9.0" {
+		t.Fatalf("the entry just written went: %+v %v", got, ok)
 	}
 }
 
