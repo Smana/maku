@@ -2116,6 +2116,50 @@ func TestReplyBounds(t *testing.T) {
 		}
 	})
 
+	// The planner's text on a re-plan is the thread's first message, so the 16 KiB bound that guards a
+	// mention guards it too (CD1): a thread rooted in the mention that planned it, and a thread rooted
+	// in someone else's message the mention was typed into, both refuse before the broker is called —
+	// a plan drawn from part of a request is a plan nobody read.
+	t.Run("an overlong parent mention is refused before the planner", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, 1)
+		rig.slack.seed(Message{TS: proposalThreadTS, User: "U02DEF",
+			Text: "<@U0BOT> " + strings.Repeat("a", maxProposalRequestBytes+1)})
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+		if p := rig.lastPost(); p.text != RequestedTextTooLong.Error() || p.meta != nil {
+			t.Fatalf("the thread says %+v, want %q", p, RequestedTextTooLong.Error())
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("an oversized request planned %d times", n)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("an oversized request edited the proposal %d times", n)
+		}
+		if got := rig.metrics.count("events", "too_large"); got != 1 {
+			t.Fatalf("the refusal was counted %d times as too_large", got)
+		}
+	})
+
+	t.Run("an overlong thread root is refused before the planner", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, 1)
+		// A thread the mention was typed into: its root is the other person's message, and nothing
+		// bounded it when they wrote it.
+		rig.slack.seed(Message{TS: proposalThreadTS, User: "U07GHI",
+			Text: strings.Repeat("a pasted log line\n", maxProposalRequestBytes/len("a pasted log line\n")+1)})
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+		if p := rig.lastPost(); p.text != RequestedTextTooLong.Error() || p.meta != nil {
+			t.Fatalf("the thread says %+v, want %q", p, RequestedTextTooLong.Error())
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("an oversized thread root planned %d times", n)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("an oversized thread root edited the proposal %d times", n)
+		}
+		if got := rig.metrics.count("events", "too_large"); got != 1 {
+			t.Fatalf("the refusal was counted %d times as too_large", got)
+		}
+	})
+
 	t.Run("a reply that is not the author's is ignored", func(t *testing.T) {
 		rig, _, _ := proposalAt(t, 1)
 		rig.replySaid("U07GHI", "1729.9001", "it belongs in owner/docs")

@@ -535,10 +535,11 @@ func cutRunes(s string, limit int) []string {
 // ---- the mention: a plan through the broker, and one proposal (CD1, CD18) ----
 
 const (
-	// maxProposalRequestBytes is intake_plan's text bound, measured on the planner's input —
-	// commandless's answer, the mention with the bot's <@…> taken out and trimmed — and never on the
-	// HTTP body Slack posts, which the verifier already caps at 1 MiB. A request past it is refused
-	// before the broker is called, with its own line.
+	// maxProposalRequestBytes is intake_plan's text bound, measured on the planner's input — the
+	// commandless answer of the message the request comes from, either the mention itself or the
+	// thread's first message a reply re-plans — and never on the HTTP body Slack posts, which the
+	// verifier already caps at 1 MiB. A request past it is refused before the broker is called, with
+	// its own line.
 	maxProposalRequestBytes = 16 << 10
 	// maxProposalContextBytes is intake_plan's context bound, measured in bytes on what the reply flow
 	// sends as context — the requester's replies, numbered — so a thread's whole history never has to
@@ -560,18 +561,21 @@ const (
 	replyNoRequest = "Not re-planned: this thread's first message is not in Slack's answer; mention me again with what should change."
 )
 
-// RequestedTextTooLong is a mention whose planner input is past intake_plan's 16 KiB bound. Its text
-// is the one line the thread shows: the person's fix is to hand the request off, not to shorten it in
-// Slack, since a plan drawn from part of a request is a plan nobody read. The name and the prose are
-// this package's interface rather than a caller's error to test, which is why they are not Go's
-// Err-something form.
+// RequestedTextTooLong is a planner request past intake_plan's 16 KiB bound: a mention whose own text
+// is, or a reply whose thread's first message is. Its text is the one line the thread shows: the
+// person's fix is to hand the request off, not to shorten it in Slack, since a plan drawn from part of
+// a request is a plan nobody read. The name and the prose are this package's interface rather than a
+// caller's error to test, which is why they are not Go's Err-something form.
 //
 //nolint:revive,staticcheck // the name and the words are the plan's: RequestedTextTooLong, one line for the person
 var RequestedTextTooLong = errors.New("Not proposed: that request is longer than 16 KB; hand it off from your coding agent or the web UI.")
 
-// commandless is a mention as the planner reads it: the bot's <@…> taken out and the rest trimmed. It
-// is the one place a mention becomes intake_plan's text, and therefore the one place the 16 KiB bound
-// is measured (CD1: the person's own words are the request).
+// commandless is a message as the planner reads it: the bot's <@…> taken out and the rest trimmed. It
+// has two entry points, and both are the same transformation: the mention's own text (propose) and the
+// thread's first message (parentRequest, which is what a reply re-plans from). Each caller measures
+// intake_plan's 16 KiB bound on this answer before it calls the broker — never on the HTTP body Slack
+// posts or on the rendered message — because the bound is intake_plan's, and the person's own words are
+// the request (CD1).
 func commandless(text, bot string) string {
 	return strings.TrimSpace(strings.ReplaceAll(text, "<@"+bot+">", ""))
 }
@@ -857,6 +861,14 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	if !ok {
 		a.log().Warn("thread's first message is not in Slack's answer", "channel", ev.Channel)
 		return a.refusedLine(ctx, ev.Channel, thread, replyNoRequest)
+	}
+	// The re-plan's text is the thread's first message, and it was written under no bound of this App's
+	// — a mention from before the switch, or the message a mention was typed into — so it is held to
+	// intake_plan's 16 KiB bound here, before the broker is called, exactly as a mention's text is
+	// (CD1). A request past it is refused whole: a plan drawn from part of a request is a plan nobody
+	// read, and the one line says where to hand it off instead.
+	if len(text) > maxProposalRequestBytes {
+		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large")
 	}
 	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{
 		Text:       text,
