@@ -15,6 +15,9 @@ answer client replies 202 itself (F29's gateway half); the harness does not depe
 cloud-native-ref#2283: each MCP request carries the traceparent of the span that sent it; see
 patch_traceparent.
 
+Task 6: the room tools bearer agent-run put on the platform entry is re-read per request; see
+patch_bearer.
+
 #187: a run conversation loads no repository or user plugin; see patch_ambient_plugins.
 
 Internal runs' Anthropic prompt caching reaches the gateway in the field it converts; see
@@ -99,6 +102,37 @@ def patch_traceparent(session_module, transport, trace) -> bool:
 
     session_module.SessionMessage = TracedSessionMessage
     transport._handle_post_request = _handle_post_request
+    transport._prepare_headers = _prepare_headers
+    return True
+
+
+def patch_bearer(transport) -> bool:
+    """Sends each request to the platform MCP server with the current MCP_TOKEN_FILE token (task 6).
+
+    agent-run puts the run's room tools token on the platform entry as Authorization when the conversation
+    starts, and fastmcp sets that config on the httpx client, once. The kubelet rotates the projected token
+    every few minutes and :8090 refuses an expired one, so each POST re-reads the file; mcp merges these
+    headers over the client's. Only the transport whose url is MCP_URL gets it: the token never reaches
+    another MCP server. An unreadable file keeps the configured header."""
+    prepare = getattr(transport, "_prepare_headers", None)
+    if prepare is None:
+        print("agent-harness: room tools bearer refresh NOT applied: no _prepare_headers (an mcp upgrade?); "
+              "the room tools stop answering once the conversation's token expires", file=sys.stderr, flush=True)
+        return False
+
+    def _prepare_headers(self):
+        headers = prepare(self)
+        path, url = os.environ.get("MCP_TOKEN_FILE"), os.environ.get("MCP_URL")
+        if path and url and getattr(self, "url", None) == url:
+            try:
+                with open(path) as f:
+                    token = f.read().strip()
+            except (OSError, ValueError):
+                token = ""
+            if token:
+                headers["Authorization"] = "Bearer " + token
+        return headers
+
     transport._prepare_headers = _prepare_headers
     return True
 
@@ -355,6 +389,12 @@ def _install() -> None:
         print("agent-harness: #2283 traceparent NOT applied: %s" % exc, file=sys.stderr, flush=True)
     else:
         patch_traceparent(mcp.shared.session, StreamableHTTPTransport, trace)
+    try:
+        from mcp.client.streamable_http import StreamableHTTPTransport
+    except ImportError as exc:
+        print("agent-harness: room tools bearer refresh NOT applied: %s" % exc, file=sys.stderr, flush=True)
+    else:
+        patch_bearer(StreamableHTTPTransport)
     try:
         import openai
         from openhands.sdk.llm.exceptions import LLMTimeoutError

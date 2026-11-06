@@ -1338,3 +1338,27 @@ class ModelMcpConfigTest(unittest.TestCase):
         env = {"MODEL": "agent-default", "LLM_BASE_URL": "http://127.0.0.1:1/v1", "MCP_URL": "http://127.0.0.1:1/mcp"}
         platform = agent_run.build_request(env, "t", "r")["agent"]["mcp_config"]["platform"]
         self.assertNotIn("x-agent-harness", {k.lower() for k in platform.get("headers", {})})
+
+
+class PlatformBearerTest(unittest.TestCase):
+    def test_the_room_tools_token_is_a_bearer_on_the_platform_entry(self):
+        # Task 6: the portable runtime's :8090 verifies the run's own token; read at conversation start.
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write("tok\n")
+        self.addCleanup(os.unlink, f.name)
+        env = dict(ENV, MCP_TOKEN_FILE=f.name)
+        platform = agent_run.build_request(env, "t", "r")["agent"]["mcp_config"]["platform"]
+        self.assertEqual(platform["headers"], {"Authorization": "Bearer tok"})
+        from opentelemetry.sdk.trace import TracerProvider
+        span = TracerProvider().get_tracer("t").start_span("agent-run")
+        headers = agent_run.build_request(env, "t", "r", span)["agent"]["mcp_config"]["platform"]["headers"]
+        self.assertEqual(set(headers), {"Authorization", "traceparent"})
+        # agent-server hands the header to fastmcp's client as given.
+        from openhands.sdk import Agent
+        from openhands.sdk.mcp.utils import _prepare_mcp_config
+        agent = Agent.model_validate(agent_run.build_request(env, "t", "r")["agent"])
+        self.assertEqual(_prepare_mcp_config(agent.mcp_config).mcpServers["platform"].headers, {"Authorization": "Bearer tok"})
+
+    def test_without_the_file_no_authorization(self):
+        platform = agent_run.build_request(ENV, "t", "r")["agent"]["mcp_config"]["platform"]
+        self.assertNotIn("authorization", {k.lower() for k in platform.get("headers", {})})
