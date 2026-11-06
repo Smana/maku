@@ -21,6 +21,8 @@
   src: url("/assets/fonts/space-grotesk-latin-700-normal.woff2") format("woff2");
 }
 :root {
+  /* The log's measure: every row, and on a wide screen the conversation's column and the composer. */
+  --log-w: 72ch;
   color-scheme: light;
 
   --flow-writer: #0e7490; /* the run rail: a writer's lane */
@@ -185,7 +187,7 @@ a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-ra
    both in the DOM; .dark (theme.ts), not the OS media query, picks one, so a manual choice
    and the system choice agree. */
 .brand {
-  display: flex; align-items: center; gap: 16px; align-self: center;
+  display: flex; align-items: center; gap: 16px; align-self: start;
   color: var(--brand-header-foreground); text-decoration: none;
 }
 .page-header a.brand { text-decoration: none; }
@@ -256,14 +258,16 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 .page-dock .notice { color: var(--destructive-text); overflow-wrap: anywhere; }
 @media (max-width: 640px) {
   :root { --hit: 44px; }
-  .page-header { padding: 14px; row-gap: 14px; }
+  /* Static, not sticky: pinned, the header and the dock took two thirds of an 844 px screen. */
+  .page-header { position: static; padding: 14px; row-gap: 14px; }
   .brand { gap: 14px; }
   .brand img { width: 28px; height: 28px; }
   .brand-wordmark { font-size: 22px; }
   .page-header .strip { grid-column: 1 / -1; }
   .page-dock { grid-template-columns: minmax(0, 1fr); }
-  .dock-meta { justify-content: space-between; }
-  .composer-write { flex-direction: column; }
+  .dock-meta { flex-wrap: nowrap; justify-content: space-between; }
+  .dock-meta .theme-toggle { flex: none; white-space: nowrap; }
+  .page-dock .status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .composer-row .keys { display: none; }
   .seg input { inset: -8px 0; }
   /* Touch: every form control is a full target, not only the dock's. */
@@ -407,7 +411,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 /* Chat view */
-.msg { margin: 14px 0; max-width: 72ch; }
+.msg { margin: 14px 0; max-width: var(--log-w); }
 .msg-head { color: var(--muted-foreground); font-size: 13px; display: flex; gap: 8px; align-items: baseline; margin-bottom: 3px; }
 .msg-head time, .t-time { margin-left: auto; color: var(--placeholder); white-space: nowrap; }
 /* --bubble-bg is the bubble's own surface: a long message's fade (below) ends in it. */
@@ -441,7 +445,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* A tool row: one line, the detail behind the toggle */
 .tool {
   background: var(--card); color: var(--card-foreground);
-  border-radius: 8px; margin: 6px 0; max-width: 72ch;
+  border-radius: 8px; margin: 6px 0; max-width: var(--log-w);
   box-shadow: var(--shadow-border);
 }
 .tool summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; list-style: none; flex-wrap: wrap; border-radius: 8px; }
@@ -501,22 +505,22 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 /* Timeline markers and system lines */
-.handoff > .md { margin: -2px 0 8px 14px; max-width: 72ch; }
+.handoff > .md { margin: -2px 0 8px 14px; max-width: var(--log-w); }
 .mark, .sys { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; display: flex; gap: 8px; align-items: baseline; }
 .mark .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--placeholder); align-self: center; flex: none; }
 .mark-text { overflow-wrap: anywhere; }
 .sys { font-style: italic; }
 .sys::before { content: "·"; }
 .mk-harness_error .mark-text, .mk-limit .mark-text { color: var(--destructive); }
-.mark { max-width: 72ch; }
+.mark { max-width: var(--log-w); }
 /* U7: a run of plumbing rows reads as one "· N changes" line, open on click. */
-.fold { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; max-width: 72ch; }
+.fold { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; max-width: var(--log-w); }
 .fold > summary { cursor: pointer; list-style: none; }
 .fold > summary::-webkit-details-marker { display: none; }
 .fold-body { padding-left: 14px; }
 .notes details > summary, .fold > summary, .step-calls > summary, .t-sec { font-variant-numeric: tabular-nums; }
 /* A step (P1): an agent's message, then its calls behind one line, on a rail under it. */
-.step { margin: 12px 0; max-width: 72ch; }
+.step { margin: 12px 0; max-width: var(--log-w); }
 .step > .msg, .step > .row > .msg { margin: 0; }
 .step-calls { margin: 6px 0 0 3px; padding-left: 12px; border-left: 2px solid var(--border); }
 .step[data-state="failed"] > .step-calls { border-left-color: color-mix(in srgb, var(--destructive) 65%, var(--card)); }
@@ -544,7 +548,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .swatch-3 { background: var(--destructive); }
 .swatch-4 { background: var(--link); }
 .swatch-5 { background: var(--muted-foreground); }
-.other { max-width: 72ch; color: var(--muted-foreground); }
+.other { max-width: var(--log-w); color: var(--muted-foreground); }
 .other summary { cursor: pointer; }
 
 /* Raw view */
@@ -616,7 +620,7 @@ button.deny { color: var(--destructive-text); border-color: var(--destructive-te
 .new-room { padding: 8px 16px; } .new-room .notice { color: var(--destructive); }
 .fork-here { font-size: 13px; padding: 0 6px; }
 /* U7: fork here sits in a toolbar beside a message or a handoff, shown on hover and focus. */
-.row { position: relative; max-width: 72ch; }
+.row { position: relative; max-width: var(--log-w); }
 .row-tools { position: absolute; right: -4px; top: 0; opacity: 0; visibility: hidden; pointer-events: none; transition-property: opacity, visibility; transition-duration: 150ms; transition-timing-function: ease-out; }
 .row:hover .row-tools, .row:focus-within .row-tools { opacity: 1; visibility: visible; pointer-events: auto; }
 /* No hover, no reveal: on touch the control stays visible, in the flow under the row where it
@@ -681,7 +685,7 @@ button.deny { color: var(--destructive-text); border-color: var(--destructive-te
 .raw-events { margin-top: 8px; }
 .raw-events > summary { cursor: pointer; padding: 4px 0; }
 /* Until the first frame (P9): three message shapes, pulsing where motion is welcome. */
-.skeleton { padding: 8px 16px; display: grid; gap: 12px; max-width: 72ch; }
+.skeleton { padding: 8px 16px; display: grid; gap: 12px; max-width: var(--log-w); }
 .sk-msg { height: 56px; border-radius: 12px; background: var(--card); box-shadow: var(--shadow-border); }
 .sk-msg:nth-child(2) { width: 70%; }
 .sk-msg:nth-child(3) { width: 85%; }
@@ -873,7 +877,10 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   .room-body.has-rail > .rail:not(.open) { display: none; }
 }
 @media (min-width: 1100px) {
-  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
+  /* The column is the log's measure plus the main's padding, so the rail sits beside the rows
+     rather than across an empty band; the composer takes the same measure. */
+  .page-dock { grid-template-columns: minmax(0, var(--log-w)) 300px; column-gap: 32px; }
+  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, calc(var(--log-w) + 32px)) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
   .room-body.has-rail > :not(.rail) { grid-column: 1; }
   .room-body.has-rail > .rail {
     grid-column: 2; grid-row: 1 / span 6; position: sticky; top: var(--header-h, 0px);

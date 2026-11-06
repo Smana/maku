@@ -200,3 +200,36 @@ describe("phone clamps and long tokens", () => {
     expect(decl(outside, "pre")).toMatch(/overflow-wrap:\s*anywhere/);
   });
 });
+
+// The layout pass (2026-11-06): a phone's first screen goes to the conversation, the lockup
+// sits on the title's row, and a wide screen keeps the log, the rail and the composer together.
+const wide = media("(min-width: 1100px)");
+describe("layout", () => {
+  it("lets the header scroll away on a phone, so the chrome never pins two thirds of the screen", () => {
+    expect(decl(phone, ".page-header")).toMatch(/position:\s*static/);
+  });
+  it("keeps Send beside the text on a phone rather than a full-width row under it", () => {
+    expect(phone).not.toMatch(/\.composer-write\s*{[^}]*flex-direction:\s*column/);
+  });
+  it("keeps the theme button and the connection on one line on a phone", () => {
+    const m = decl(phone, ".dock-meta");
+    expect(m).toMatch(/flex-wrap:\s*nowrap/);
+    expect(decl(phone, ".dock-meta .theme-toggle")).toMatch(/white-space:\s*nowrap/);
+    const s = decl(phone, ".page-dock .status");
+    expect(s).toMatch(/text-overflow:\s*ellipsis/);
+    expect(s).toMatch(/min-width:\s*0/);
+  });
+  it("aligns the lockup with the title's row, not the middle of the whole header", () => {
+    expect(decl(outside, ".brand")).toMatch(/align-self:\s*start/);
+  });
+  it("sizes the conversation's column to the log's measure on a wide screen, the rail beside it", () => {
+    expect(decl(outside, ":root")).toMatch(/--log-w:\s*72ch/);
+    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*calc\(var\(--log-w\)\s*\+\s*32px\)\)\s*300px/);
+  });
+  it("gives the composer the log's measure on a wide screen", () => {
+    const d = decl(wide, ".page-dock");
+    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*var\(--log-w\)\)\s*300px/);
+    // 16 px of the main's padding past the measure, plus the room body's 16 px gap: the meta sits under the rail.
+    expect(d).toMatch(/column-gap:\s*32px/);
+  });
+});
