@@ -1153,7 +1153,9 @@ func proposalMeta(p ProposalPayload) (*Metadata, error) {
 // file). Then the thread is read, and it decides: a thread whose proposal was already filed or
 // cancelled is ignored — its message already says so, and a second line would be noise — and only the
 // thread's newest proposal files, so a ✅ or a press on a message an edit replaced files nothing. That
-// read is under the App's edit lock, so a re-plan cannot land between the check and the filing.
+// read is under the App's edit lock, and so is the comparison of the thread's own payload with the
+// caller's: a re-plan that landed between the caller's read and this one keeps the ts and changes the
+// plan, so the hash is what tells them apart (CD14, CD20) — a plan that moved is refused, never filed.
 //
 // The filing carries the plan and its hash, so the broker recomposes and re-hashes it before it acts: a
 // plan edited after it was shown is `plan_changed` and files nothing, whatever this App believes. On
@@ -1232,7 +1234,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		// line to add, exactly as a ✅ on a message that is not the App's draft. A press was still
 		// made, so its presser is told that the message no longer means anything.
 		if confirm {
-			return "ignored", proposalClosedPressLine
+			return refuse("closed", proposalClosedPressLine)
 		}
 		return "ignored", ""
 	}
@@ -1241,12 +1243,21 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		// whose inert write Slack refused, and its buttons bind a hash its metadata no longer holds
 		// (Review Focus 1). A ✅ says which message is the live one; a press is refused in the
 		// presser's own line, which is the same sentence proposalPress reads for the same reason.
-		replaced := "This draft was replaced by a newer one: react on the latest draft."
 		if confirm {
-			replaced = proposalStaleLine
+			return refuse("replaced", proposalStaleLine)
 		}
-		refuse("replaced", replaced)
-		return "ignored", answer
+		refuse("replaced", "This draft was replaced by a newer one: react on the latest draft.")
+		return "ignored", ""
+	}
+	// The thread is the truth about which plan is live (CD14, CD20). A revision is written in place, so
+	// the ts this ✅ or press names is the same ts a re-plan that landed after the caller's read used:
+	// the ts check above cannot tell the plan the person acted on from the one the message now shows.
+	// The payload read here, under the lock, is what is compared with the caller's — a plan that moved
+	// is refused rather than filed blind, and nothing is filed from either version of it.
+	current, ok := latest.Metadata.proposalPayload()
+	if !ok || current.Hash != p.Hash {
+		a.log().Info("proposal plan changed under the filing", "channel", channel, "ts", itemTS)
+		return refuse("hash", planChangedLine)
 	}
 
 	raw, err := p.Plan.JSON()

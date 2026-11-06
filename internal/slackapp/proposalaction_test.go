@@ -3,10 +3,13 @@
 package slackapp
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Smana/maku/internal/intake"
@@ -274,6 +277,78 @@ func TestProposalConfirmRefusals(t *testing.T) {
 			t.Fatalf("the re-render's payload: %+v (%v)", p, ok)
 		}
 	})
+
+	// Review Focus 1 again, from the thread's side: an edit in place keeps the ts, so a message the
+	// thread has moved past is the one case the ts cannot catch. The press is refused, never filed,
+	// and nothing is rewritten — the newer message is the live one and already shows the plan.
+	t.Run("a Confirm on a message the thread replaced", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		newer, err := newProposal(plan, intake.Hash(plan), proposalAuthor, 2)
+		if err != nil {
+			t.Fatalf("newProposal: %v", err)
+		}
+		rig.slack.seed(Message{TS: "1729.0003", ThreadTS: proposalThreadTS, User: "U0BOT",
+			Text: "Proposal v2 · " + newer.Hash, Metadata: metaOf(t, proposalEventType, newer)})
+		if st := rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		pressSaid(t, rig, proposalPresser, proposalThreadTS, proposalStaleLine)
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a replaced message reached the broker: %+v", calls)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a replaced message was rewritten %d times", n)
+		}
+		if n := rig.metrics.count("interactions", "refused"); n != 1 {
+			t.Fatalf("interactions/refused counted %d times, want 1", n)
+		}
+		if n := rig.metrics.count("interactions", "ignored"); n != 0 {
+			t.Fatalf("a press with an answer was counted ignored %d times", n)
+		}
+	})
+
+	// A thread whose task was filed or cancelled closes to presses too: the message a person pressed
+	// may still decode as a proposal (a reposted card's metadata survives the close), so the thread's
+	// marker decides, and the presser is told rather than left with silence.
+	t.Run("a Confirm on a closed thread", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		rig.slack.seed(Message{TS: "1729.0003", ThreadTS: proposalThreadTS, User: "U0BOT",
+			Text:     "Filed #42 for <@" + proposalAuthor + ">; the factory starts it. Room: https://rooms.example/r/26zfnuxm",
+			Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: plan.Repository, Room: "26zfnuxm"})})
+		if st := rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		pressSaid(t, rig, proposalPresser, proposalThreadTS, proposalClosedPressLine)
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("a closed thread reached the broker: %+v", calls)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a closed thread was rewritten %d times", n)
+		}
+		if n := rig.metrics.count("interactions", "refused"); n != 1 {
+			t.Fatalf("interactions/refused counted %d times, want 1", n)
+		}
+	})
+
+	// A message the App cannot read: the press is answered as a passing failure, so the press is its
+	// own retry, and nothing is filed from a message nobody read.
+	t.Run("a message Slack will not answer for", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		rig.slack.msgErr = errors.New("slack is down")
+		if st := rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		pressSaid(t, rig, proposalPresser, "", proposalUnreadableLine)
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("an unreadable message reached the broker: %+v", calls)
+		}
+		if n := rig.metrics.count("interactions", "error"); n != 1 {
+			t.Fatalf("interactions/error counted %d times, want 1", n)
+		}
+	})
 }
 
 // Cancel is the author's and nobody else's, and a cancelled proposal cannot be filed afterwards.
@@ -341,6 +416,48 @@ func TestProposalCancel(t *testing.T) {
 		}
 		if n := len(rig.broker.all()); n != 0 {
 			t.Fatalf("a bystander's cancel reached the broker: %+v", rig.broker.all())
+		}
+	})
+
+	// A thread the App cannot read is not a thread it closes: the author is told, the message keeps
+	// its buttons, and the press is the retry.
+	t.Run("a thread Slack will not answer for", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		rig.slack.threadErr = errors.New("slack is down")
+		if st := rig.interact(proposalPressOf(t, ts, proposalAuthor, actionProposalCancel,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		pressSaid(t, rig, proposalAuthor, proposalThreadTS, proposalUnreadableLine)
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("an unreadable thread was rewritten %d times", n)
+		}
+		if n := rig.metrics.count("interactions", "error"); n != 1 {
+			t.Fatalf("interactions/error counted %d times, want 1", n)
+		}
+	})
+
+	// A Cancel Slack refuses to write leaves the proposal live and its buttons working, and its author
+	// is told the one thing to do — never that it was cancelled.
+	t.Run("a cancel Slack refuses to write", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		rig.slack.failProposalUpdates = 1
+		if st := rig.interact(proposalPressOf(t, ts, proposalAuthor, actionProposalCancel,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		pressSaid(t, rig, proposalAuthor, proposalThreadTS, proposalCancelFailedLine)
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a refused cancel was recorded as %d edits", n)
+		}
+		if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != ts {
+			t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+		}
+		if n := rig.metrics.count("interactions", "error"); n != 1 {
+			t.Fatalf("interactions/error counted %d times, want 1", n)
+		}
+		if n := rig.metrics.count("interactions", "cancelled"); n != 0 {
+			t.Fatalf("a refused cancel was counted cancelled %d times", n)
 		}
 	})
 }
@@ -433,6 +550,80 @@ func TestProposalInteractionDispatch(t *testing.T) {
 		}
 		if got := rig.broker.decided(); len(got) != 0 {
 			t.Fatalf("a proposal's value on a card reached the decide route: %+v", got)
+		}
+	})
+}
+
+// replannedSlack is the seam a re-plan needs to be put inside one filing: it answers the read a press
+// (or a ✅) makes with the message as that person saw it, and then lets an in-place revision land —
+// same ts, next rev, another plan — before the filing path reads the thread under the App's edit lock.
+type replannedSlack struct {
+	*fakeSlack
+	once    sync.Once
+	inPlace Message
+}
+
+func (s *replannedSlack) Message(ctx context.Context, channel, ts string) (Message, error) {
+	m, err := s.fakeSlack.Message(ctx, channel, ts)
+	s.once.Do(func() { s.seed(s.inPlace) }) // the revision lands in place, at the same ts
+	return m, err
+}
+
+// A revision is written in place, so a re-plan that lands between the caller's read and the locked
+// thread read keeps the ts the press named: only the payload the thread holds says which plan is live
+// (CD14, CD20). Neither path files the plan the message no longer shows — the filing path is the one
+// place the comparison is made, so both are covered by the same check.
+func TestProposalPlanChangedUnderTheLock(t *testing.T) {
+	// replanned is the rig with the seam in place: the message at ts gains a revision carrying another
+	// plan the first time anything reads it.
+	replanned := func(t *testing.T, rig *appRig, plan intake.Plan, ts string) {
+		t.Helper()
+		next := clonePlan(t, plan)
+		next.Issues[0].Title = "docs: the plan the thread's reply produced"
+		p, err := newProposal(next, intake.Hash(next), proposalAuthor, 2)
+		if err != nil {
+			t.Fatalf("newProposal: %v", err)
+		}
+		rig.app.Slack = &replannedSlack{fakeSlack: rig.slack, inPlace: Message{
+			TS: ts, ThreadTS: proposalThreadTS, User: "U0BOT",
+			Text: "Proposal v2 · " + p.Hash, Metadata: metaOf(t, proposalEventType, p)}}
+	}
+
+	t.Run("a Confirm refuses a plan the thread re-planned under it", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		replanned(t, rig, plan, ts)
+		if st := rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		pressSaid(t, rig, proposalPresser, proposalThreadTS, planChangedLine)
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("the plan moved under the press and %+v was filed", calls)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a refused filing rewrote the message %d times", n)
+		}
+		if n := rig.metrics.count("interactions", "refused"); n != 1 {
+			t.Fatalf("interactions/refused counted %d times, want 1", n)
+		}
+	})
+
+	t.Run("a ✅ refuses a plan the thread re-planned under it", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		replanned(t, rig, plan, ts)
+		rig.react("C03", ts, proposalAuthor, "white_check_mark")
+		posts := rig.posts()
+		if len(posts) != 1 || posts[0].text != planChangedLine || posts[0].thread != proposalThreadTS {
+			t.Fatalf("the thread was told %+v, want one %q in its thread", posts, planChangedLine)
+		}
+		if calls := rig.broker.all(); len(calls) != 0 {
+			t.Fatalf("the plan moved under the ✅ and %+v was filed", calls)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a refused ✅ rewrote the message %d times", n)
+		}
+		if n := rig.metrics.count("events", "refused"); n != 1 {
+			t.Fatalf("events/refused counted %d times, want 1", n)
 		}
 	})
 }
