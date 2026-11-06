@@ -77,8 +77,7 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 	// The ceiling the plan is charged against: the sum of its issues' class ceilings — a plan of two
 	// issues spends two classes' taskUSD, not the larger of them (controller ruling, fix round 1) —
 	// then the channel's when that is lower. Issues in array order, so two processes agree.
-	ceiling := 0.0
-	sources := make([]string, 0, len(d.Issues))
+	chosen := make([]Class, 0, len(d.Issues))
 	for i, is := range d.Issues {
 		class, ok := in.Classes[is.Class]
 		if !ok {
@@ -95,12 +94,9 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		if is.BudgetUSD != 0 {
 			dropped = append(dropped, fmt.Sprintf("budgetUSD@%d", i+1))
 		}
-		ceiling += class.CeilingUSD
-		// The source names where the money came from: one entry per class that contributed, in
-		// issue order and once each, so the string is the sum's own account of itself.
-		if !slices.Contains(sources, class.Source) {
-			sources = append(sources, class.Source)
-		}
+		// The classes the money comes from, in issue order: sumCeilings adds them up, once, for
+		// this path and for the composer's (CD17).
+		chosen = append(chosen, class)
 		p.Issues = append(p.Issues, Issue{
 			Index:     i + 1,
 			Title:     checked.Title,
@@ -110,7 +106,7 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 			DependsOn: earlier(is.DependsOn, i+1),
 		})
 	}
-	source := strings.Join(sources, "+")
+	ceiling, source := sumCeilings(chosen)
 	if in.CeilingUSD > 0 && in.CeilingUSD < ceiling {
 		ceiling, source = in.CeilingUSD, in.CeilingSource
 	}
@@ -128,6 +124,26 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		in.log().Warn("intake: the reply named values the config owns; dropped", "dropped", dropped)
 	}
 	return p, nil
+}
+
+// sumCeilings is what a plan of these classes is charged against, and the source that names where the
+// money came from: the sum of the class ceilings — a plan of two issues spends two classes' taskUSD,
+// not the larger of them (controller ruling, fix round 1) — and one source entry per class that
+// contributed, in issue order and once each, so the string is the sum's own account of itself.
+//
+// It is the one place this package adds money up: Compose hands it every issue's class and the
+// composer hands it the one class it files in, so the two paths cannot disagree about a ceiling
+// (CD17).
+func sumCeilings(chosen []Class) (float64, string) {
+	ceiling := 0.0
+	sources := make([]string, 0, len(chosen))
+	for _, class := range chosen {
+		ceiling += class.CeilingUSD
+		if !slices.Contains(sources, class.Source) {
+			sources = append(sources, class.Source)
+		}
+	}
+	return ceiling, strings.Join(sources, "+")
 }
 
 // earlier is deps when every entry names an issue before index, and nil otherwise: a dependency the

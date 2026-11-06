@@ -9,7 +9,8 @@ import (
 
 // The request bounds the contract sets (§model-call): text ≤ 16 KiB, context ≤ 4 KiB, candidates ≤
 // 20. A request over a bound is refused with it before the call — the model is never shown a body
-// the contract does not allow, and nothing is truncated into a question nobody asked.
+// the contract does not allow, and nothing is truncated into a question nobody asked. The composer
+// holds a request to the same two bounds, so a request either path may carry is one both refuse.
 const (
 	maxText    = 16 << 10
 	maxContext = 4 << 10
