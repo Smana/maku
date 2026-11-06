@@ -113,6 +113,7 @@ var reasonPhrases = map[string]string{
 	"waiting_review_wip":        "waiting for a review slot",
 	"waiting_room_log":          "waiting for the room's log",
 	"waiting_run_slot":          "waiting for a run slot",
+	"waiting_revision_first":    "letting a revision run first",
 }
 
 // reasonWords is a wait reason as a short phrase, at most 40 runes: summary's sentence for it is

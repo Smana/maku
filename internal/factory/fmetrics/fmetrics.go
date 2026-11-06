@@ -157,6 +157,7 @@ type Set struct {
 	scoperRuns           metric.Int64Counter
 	splits               metric.Int64Counter
 	splitChildren        metric.Int64Counter
+	revisionDeferred     metric.Int64Counter
 	scopeBounces         metric.Int64Counter
 	loopRuns             metric.Int64Counter
 	contracts            metric.Int64Counter
@@ -365,6 +366,11 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.splitChildren, err = meter.Int64Counter("agent_factory_split_children_total",
 		metric.WithDescription("Parts of a split, counted once when their parent ends: landed, dropped or reverted (splitter design SL14)."))
+	check(err)
+	// Served as maku_revision_deferred_total, the design's own family name (MakuName's revision_
+	// case): the spec's table and PR 12's live proof query it as written.
+	s.revisionDeferred, err = meter.Int64Counter("revision_deferred_total",
+		metric.WithDescription("First runs that gave up a slot-time to a revision (CD22)."))
 	check(err)
 	s.resumes, err = meter.Int64Counter("agent_factory_resumes_total",
 		metric.WithDescription("Runs the factory resumed on its own after their pod was disrupted or lost, by the AgentRun's reason."))
@@ -913,6 +919,10 @@ func (s *Set) RoomClosedAtCap(ctx context.Context, reason string) {
 
 // TraceExportAbandoned counts a task span given up unexported (ruling ST2).
 func (s *Set) TraceExportAbandoned(ctx context.Context) { s.traceAbandoned.Add(ctx, 1) }
+
+// RevisionDeferred counts a first run that waited one slot-time for a revision (CD22), by no label:
+// the counter answers how often the preference bites, and the room's row says which task.
+func (s *Set) RevisionDeferred(ctx context.Context) { s.revisionDeferred.Add(ctx, 1) }
 
 // GitHubUp sets agent_factory_github_up: whether GitHub answered recently (forge.Healthy).
 func (s *Set) GitHubUp(ctx context.Context, up bool) {

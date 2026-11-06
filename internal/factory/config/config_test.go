@@ -729,6 +729,23 @@ func TestParseRefusesTheMetricsSwitch(t *testing.T) {
 	}
 }
 
+// CD22: revision preference is a switch of its own, off unless the file sets it, and a misspelling
+// fails its rollout like any other key.
+func TestPreferRevisionsIsOffByDefault(t *testing.T) {
+	caps := "caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}"
+	c, err := Parse([]byte(good))
+	if err != nil || c.Caps.PreferRevisions {
+		t.Fatalf("off by default: %+v %v", c.Caps, err)
+	}
+	c, err = Parse([]byte(strings.Replace(good, caps, strings.Replace(caps, "5}", "5, preferRevisions: true}", 1), 1)))
+	if err != nil || !c.Caps.PreferRevisions {
+		t.Fatalf("set: %+v %v", c.Caps, err)
+	}
+	if _, err = Parse([]byte(strings.Replace(good, caps, strings.Replace(caps, "5}", "5, preferRevision: true}", 1), 1))); err == nil {
+		t.Fatal("a misspelled switch must fail the rollout (§4)")
+	}
+}
+
 // S-1, D6: api.tls is optional; set, it carries the pair the API serves.
 func TestAPITLSIsOptional(t *testing.T) {
 	c, err := Parse([]byte(good))

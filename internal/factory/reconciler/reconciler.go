@@ -119,6 +119,8 @@ type metrics interface {
 	ScopeBounce(ctx context.Context, class, exit string)
 	Split(ctx context.Context, class, outcome string)
 	SplitChild(ctx context.Context, class, outcome string)
+	// RevisionDeferred counts a first run that yielded its slot-time to a revision (CD22).
+	RevisionDeferred(ctx context.Context)
 }
 
 // A task's span unexported at its end is retried every spanRetry, and given up spanGiveUp after

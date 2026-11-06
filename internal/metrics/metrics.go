@@ -66,8 +66,8 @@ type Exporter struct {
 }
 
 // MakuName is name's maku_ spelling: rooms and rooms_x become maku_rooms and maku_rooms_x, needs_x
-// becomes maku_needs_x, and agent_factory_x becomes maku_factory_x. It is "" for any other name, which
-// keeps only its own.
+// becomes maku_needs_x, intake_x becomes maku_intake_x, revision_x becomes maku_revision_x, and
+// agent_factory_x becomes maku_factory_x. It is "" for any other name, which keeps only its own.
 func MakuName(name string) string {
 	switch {
 	case name == "rooms" || strings.HasPrefix(name, "rooms_"):
@@ -82,6 +82,10 @@ func MakuName(name string) string {
 		// The planner's family is intake_*, served as maku_intake_*: the spec's series name, which
 		// an instrument spelled rooms_intake_* could not produce (it would read
 		// maku_rooms_intake_*), and which the dashboard queries byte for byte.
+		return "maku_" + name
+	case strings.HasPrefix(name, "revision_"):
+		// CD22's counter is maku_revision_deferred_total, as the design's table and its live proof
+		// write it: an agent_factory_* instrument would be served as maku_factory_revision_deferred_*.
 		return "maku_" + name
 	}
 	return ""

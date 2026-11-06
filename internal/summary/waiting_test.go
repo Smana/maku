@@ -123,6 +123,17 @@ func TestNoRepositoryNoGhCommand(t *testing.T) {
 	}
 }
 
+// CD22: a first run yielding to a revision says so in words of its own, and what comes next.
+func TestTheRevisionFirstReasonHasProseAndAStep(t *testing.T) {
+	why, next := summary.Waiting(&envelope.TaskFacts{Phase: "Queued", Reason: "waiting_revision_first"})
+	if why == "" || why == "waiting_revision_first" || next == "" {
+		t.Fatalf("%q %q", why, next)
+	}
+	if !strings.Contains(why, "revision") || !strings.Contains(next, "revision") {
+		t.Fatalf("the words name what it waits for: %q %q", why, next)
+	}
+}
+
 func TestTheIssueTitleIsCarried(t *testing.T) {
 	s := taskView(envelope.TaskFacts{Phase: "Implementing", Issue: &envelope.IssueFact{Number: 1, URL: issueURL, Title: "docs: fix it"}}, watcher())
 	if s.Status.Issue.Title != "docs: fix it" {
