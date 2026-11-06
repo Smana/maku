@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,7 +20,11 @@ import (
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/runwatch"
 )
@@ -164,4 +170,52 @@ func TestTaskSink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	shutdown(ctx)
+}
+
+func TestDemoStartupChoices(t *testing.T) {
+	demo := &config.Config{Demo: true, Broker: config.Broker{URL: "https://broker:8443"}}
+	hc, err := brokerClient(demo)
+	if err != nil || hc == nil {
+		t.Fatalf("brokerClient without a CA = %v, %v; want system roots", hc, err)
+	}
+	src, err := usageSource(demo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := src.(meter.Off); !ok {
+		t.Fatalf("usageSource = %T, want meter.Off", src)
+	}
+	if throttle(demo) != nil {
+		t.Fatal("no logsUrl, no throttle reader")
+	}
+	v, err := humanVerifier(t.Context(), demo)
+	if v != nil || err != nil {
+		t.Fatalf("humanVerifier in demo = %v, %v; want none and no error", v, err)
+	}
+	a := &api.Authenticator{ClientIDs: func() []string { return nil }}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer x.y.z")
+	if _, err := a.Authenticate(r); err == nil || !strings.Contains(err.Error(), "demo_no_human_tokens") ||
+		!errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("Authenticate = %v, want demo_no_human_tokens", err)
+	}
+}
+
+// Outside demo mode today's path holds: an unreadable CA, a bad meter.url and an unreachable
+// JWKS fail at start.
+func TestNonDemoStartupStillFailsFast(t *testing.T) {
+	cfg := &config.Config{Broker: config.Broker{CAFile: filepath.Join(t.TempDir(), "absent.pem")},
+		API: config.API{HumanIssuer: "http://127.0.0.1:1", HumanJWKS: "http://127.0.0.1:1/keys"}}
+	if _, err := brokerClient(cfg); err == nil {
+		t.Fatal("a set but unreadable caFile must fail")
+	}
+	cfg.Meter.URL = "ftp://vm"
+	if _, err := usageSource(cfg); err == nil {
+		t.Fatal("a bad meter.url must fail")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := humanVerifier(ctx, cfg); err == nil {
+		t.Fatal("an unreachable JWKS must fail construction")
+	}
 }

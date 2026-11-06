@@ -20,7 +20,7 @@ const AudienceSystem = "agent-factory"
 // two rooms clients (the broker forwards rooms-proxy's token, maku sends its
 // own), or an allowlisted system caller on the cluster's issuer.
 type Authenticator struct {
-	Humans      *authn.Verifier   // ZITADEL, offline against its JWKS
+	Humans      *authn.Verifier   // ZITADEL, offline against its JWKS; nil in demo mode: every human token is refused
 	Groups      policy.Groups     // the two agents groups; a human must be in one (R23)
 	ClientIDs   func() []string   // rooms-proxy (the broker forwards it) and maku (the CLI)
 	Systems     *authn.Verifier   // the cluster's issuer; nil when no system caller is allowed
@@ -39,7 +39,7 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 		return authn.Principal{}, err
 	}
 	for _, id := range a.ClientIDs() {
-		if id == "" {
+		if id == "" || a.Humans == nil {
 			continue
 		}
 		// A refusal here is only a client mismatch until every id failed; it must
@@ -69,6 +69,9 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 			}
 			return authn.Principal{Kind: envelope.ActorSystem, ID: id, Sub: c.Subject, Expiry: c.ExpiresAt.Time}, nil
 		}
+	}
+	if a.Humans == nil {
+		return authn.Principal{}, fmt.Errorf("%w: demo_no_human_tokens", authn.ErrUnauthenticated)
 	}
 	return authn.Principal{}, fmt.Errorf("%w: no accepted issuer or client", authn.ErrUnauthenticated)
 }

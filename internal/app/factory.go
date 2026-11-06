@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -128,6 +129,44 @@ func warnConfig(log *slog.Logger, cfg *config.Config, m *fmetrics.Set) {
 	}
 }
 
+// brokerClient is the HTTP client for the broker: its CA when broker.caFile is set, the system
+// roots otherwise (demo mode, where the chart's CA is not mounted).
+func brokerClient(cfg *config.Config) (*http.Client, error) {
+	var roots *x509.CertPool
+	if cfg.Broker.CAFile != "" {
+		var err error
+		if roots, err = rooms.LoadCA(cfg.Broker.CAFile); err != nil {
+			return nil, err
+		}
+	}
+	return httpx.New(brokerTimeout, roots), nil
+}
+
+// usageSource reads run usage from meter.url, or is meter.Off when none is set (demo mode).
+func usageSource(cfg *config.Config) (meter.Source, error) {
+	if cfg.Meter.URL == "" {
+		return meter.Off{}, nil
+	}
+	return meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs, httpx.New(vmTimeout, nil))
+}
+
+// throttle maps gateway 429s to runs; nil without meter.logsUrl.
+func throttle(cfg *config.Config) meter.Throttled {
+	if cfg.Meter.LogsURL == "" {
+		return nil
+	}
+	return meter.VL{Kind: cfg.Runs, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)}
+}
+
+// humanVerifier fetches the humans' JWKS. In demo mode there is none: nil, and the Authenticator
+// refuses every human token with demo_no_human_tokens.
+func humanVerifier(ctx context.Context, cfg *config.Config) (*authn.Verifier, error) {
+	if cfg.Demo {
+		return nil, nil
+	}
+	return authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+}
+
 func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) error {
 	cfgPath, ns, err := factoryEnv(getenv)
 	if err != nil {
@@ -149,15 +188,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	defer shutdownTrace(context.WithoutCancel(ctx))
 
-	roots, err := rooms.LoadCA(cfg.Broker.CAFile)
+	bc, err := brokerClient(cfg)
 	if err != nil {
 		return err
 	}
-	broker, err := rooms.New(cfg.Broker.URL, cfg.Broker.TokenFile, httpx.New(brokerTimeout, roots), tp)
+	broker, err := rooms.New(cfg.Broker.URL, cfg.Broker.TokenFile, bc, tp)
 	if err != nil {
 		return err
 	}
-	vm, err := meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs, httpx.New(vmTimeout, nil))
+	vm, err := usageSource(cfg)
 	if err != nil {
 		return err
 	}
@@ -233,7 +272,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		on, err := killswitch.Engaged(ctx, mgr.GetClient(), ns)
 		return on || err != nil // intake pauses on doubt
 	}
-	humansV, err := authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+	humansV, err := humanVerifier(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -257,7 +296,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	people, _ := access.(api.PersonResolver) // D1: the login the write check reads is the person charged
 	auth := &api.Authenticator{Humans: humansV, Groups: groups, ClientIDs: clientIDs,
 		Systems: systemsV, SystemAllow: cfg.API.SystemPrincipals}
-	if len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4: the third branch, only while a principal is declared
+	if humansV != nil && len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4: the third branch, only while a principal is declared
 		clients := make([]authn.SponsoredClient, 0, len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals))
 		client := func(sp config.Sponsored, internal bool) authn.SponsoredClient {
 			return authn.SponsoredClient{Name: sp.Name, Internal: internal, ClientID: func() string {
@@ -341,7 +380,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: m.RunCost, OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
-			Throttle: meter.VL{Kind: cfg.Runs, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)},
+			Throttle: throttle(cfg),
 			Budgets:  cfg.Budgets, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,
