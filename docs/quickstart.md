@@ -18,8 +18,8 @@ task demo
 | System | Linux with Docker is the proven path. macOS with Docker Desktop is best effort. Runs use the default container runtime (runc), not a sandbox |
 | GitHub | An account. The repository must be **public**: the agent can read the model key and the App's token, so the demo refuses a private one |
 | Model | An OpenAI-compatible endpoint: its base URL, a model name and an API key. One model serves every role |
-| Version | `task demo` installs images whose tag matches your checkout. On a release tag checkout it follows the tag. On a checkout ahead of a release it **refuses to guess and stops**: set `MAKU_VERSION` to a matching pre-release tag (for example `vX.Y.Z-prN.<sha8>`, which must exist in `ghcr.io/smana`), or `git checkout` a release tag |
-| App step | Until a release ships `maku demo app`, the browser step needs Go on your `PATH` (the script runs `go run ./cmd/maku demo app`), or an existing App's id and key (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG`) |
+| Version | `task demo` installs images whose tag matches your checkout. On a release tag checkout it follows the tag. On a checkout ahead of a release it **refuses to guess and stops**: set `MAKU_VERSION` to a pull-request pre-release tag that exists in `ghcr.io/smana`, or `git checkout` a release tag. The tag's base version follows the latest tag on `main`, so it looks like `v0.36.1-prN.<sha8>`; find yours with `docker buildx imagetools inspect ghcr.io/smana/maku-broker:<tag>` |
+| App step | Until a release ships `maku demo app`, the browser step needs Go on your `PATH` (the script runs `go run ./cmd/maku demo app`), or an existing App's id and key (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG`). The script first tries to fetch the release's `maku`: in that case the `curl: (22) ... 404` and "could not fetch maku <version> ..." lines it prints are expected, and it falls back to `go run` |
 | Network | Pulls from `ghcr.io/smana`, and the GitHub API (60 unauthenticated requests per hour is enough) |
 
 ## Run it
@@ -30,12 +30,12 @@ Without a terminal it never asks: it stops and names the variable.
 
 | Step | What happens |
 |---|---|
-| preflight | Checks Docker, Helm, kubectl, curl and buildx, finds the latest `maku` release, and picks k3d or kind |
+| preflight | Checks Docker, Helm, kubectl, curl and buildx, settles `MAKU_VERSION`, and picks k3d or kind |
 | model | Asks for the model's base URL, name and key (the key is not echoed) |
 | GitHub App | Serves a page on `127.0.0.1`; your browser should open by itself (if not, open the address it prints). **Click Create** on GitHub's page, and the key comes back to the script on localhost. It then prints "Now install the App on your repository: ..." Skipped when you give an existing App |
 | repository | Creates `DEMO_REPO` from the template [`Smana/maku-demo`](https://github.com/Smana/maku-demo) (public), seeds its issues and labels, and adds a ruleset (below). Then asks you to **Install** the App on that repository and press Enter |
 | cluster | Creates the cluster `maku-demo` with its own kubeconfig in `.demo/`, or uses your current context (`CLUSTER=current`) |
-| install | Installs `charts/agent-factory` with `profile: demo`, with the release's images pinned by digest, and waits for the broker, the run controller and the factory |
+| install | Installs `charts/agent-factory` with `profile: demo`, with the `MAKU_VERSION` images pinned by digest, and waits for the rooms database, the broker, the run controller and the factory |
 | room page | Forwards the broker to `http://localhost:8080`, in the background |
 
 With `gh` logged in and admin rights on the repository, the script creates the repository, the labels
@@ -47,7 +47,7 @@ name, Public), waits for you to press Enter, and lists what to add by hand: the 
 The repository must carry `.github/agent-factory.yaml` on its default branch, containing exactly `factory: demo`. The template has it. Without it the factory ignores the repository and its labels. With `gh`, the script warns when the file is missing.
 
 It ends by printing the time per step, the room page, and the issue to label. It never prints a key.
-Re-running it resumes where it stopped (the state is in `.demo/`).
+Re-running it resumes: it skips the steps already finished (the state is in `.demo/`), and when `MAKU_VERSION` changed it upgrades the install in place.
 
 Each variable below can be exported or written in `.env` at the root of the clone; an exported value wins.
 
@@ -60,7 +60,7 @@ Each variable below can be exported or written in `.env` at the root of the clon
 | `DEMO_LOGIN` | your `gh` login, else asked | The GitHub login allowed to file work for the factory |
 | `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG` | unset | An existing App (its id, its PEM, its slug as in `github.com/apps/<slug>`): skips the browser step. The App needs the permissions in [the factory page](factory.md#demo) |
 | `CLUSTER` | `k3d` if installed, else `kind` | `k3d`, `kind` or `current` (your kubeconfig's current context, which you must confirm by typing its name, or with `DEMO_CONFIRM_CONTEXT=<context>` without a terminal) |
-| `MAKU_VERSION` | this checkout's release tag, else your last answer | The images' tag, and the `maku` release whose CLI the demo uses. Kept in `.demo/answers.env`. A checkout ahead of a release needs it set |
+| `MAKU_VERSION` | this checkout's release tag, else your last answer | The images' tag, and the `maku` release whose CLI the demo uses. Kept in `.demo/answers.env`. A checkout ahead of a release needs a pull-request pre-release tag (see Version above) |
 | `DEMO_LIVE` | your last answer, else off | `1` turns the `docs-links` class live: the gate merges. Kept in `.demo/answers.env` for the next run: `DEMO_LIVE=0 task demo` undoes it |
 | `DEMO_NO_GH` | unset | Any value: never use `gh` and never write to GitHub |
 | `K3S_IMAGE`, `KIND_NODE_IMAGE` | pinned | The node image of k3d or kind |
@@ -74,7 +74,7 @@ merger and every run.
 1. Open the issue the script printed (the one labelled `class:docs-links`) and add the label
    **`factory/ready`**. The factory polls every minute.
 2. Open the room page, **http://localhost:8080**. A room appears for the issue, with its steps in order:
-   the scoper, the implementer, the judge, the reviewer. The implementer's pod runs under the **Not
+   the scoper, the implementer, the judge, the reviewer (which records its verdict with `room_verdict`). The implementer's pod runs under the **Not
    sandboxed** banner: the demo has no sandbox, and you are told.
 3. The pull request appears on your repository, opened by `<slug>[bot]`. Its `ci` check runs.
 4. The gate posts the commit status **`maku/merge-gate`** on the pull request, naming the class and the
@@ -82,7 +82,8 @@ merger and every run.
    and merges nothing. You can merge the pull request yourself.
 5. The second seeded issue is labelled `documentation`, not `class:docs-links`, so the gate classes it
    `review` and hands it to a human: it posts that a human decides, and you merge the pull request by hand
-   on GitHub (the demo does not configure approve-to-merge).
+   on GitHub (the demo does not configure approve-to-merge). If a task escalates, a maintainer's comment
+   `/factory retry` on the issue re-runs it from the implementer.
 6. To see a merge with no human, run `DEMO_LIVE=1 task demo` again: it reuses the cluster and your
    answers and turns the `docs-links` class live. Then open a **new** issue labelled `class:docs-links`
    (for example: retarget the other link in `docs/guide.md`, or any one-link fix in a `.md` file) and add
@@ -103,6 +104,7 @@ table names what you have not proven by running it.
 | Runs under runc, with the room's "Not sandboxed" banner | Runs in a gVisor sandbox |
 | Network policies on the rooms database (the broker only) and the factory's API (the broker only; the ops port stays open); **runs keep their egress** | Default-deny egress with a per-run FQDN allow-list |
 | With `gh`, a ruleset requires pull requests and your CI's `ci` check. The gate's `maku/merge-gate` verdict is **advisory** against an agent that holds the token: the one App backs the factory, the merger and every run | `main` requires the gate's verdict, and no run holds the merger's key |
+| Runs reach the broker's room tools on `:8090`, which verifies each run's own token (`roomTools.auth: tokenreview`); the bridge lets the five room tools through (`MCP_BARE_SERVER`, `MCP_READ_ONLY_TOOLS`) | An agent gateway in front of `:8090` authenticates the run and injects a key |
 | One local user, no login | OIDC login, roles, room access following GitHub permissions |
 | TLS from a CA the chart generates; the database hop is plain inside the cluster | TLS from your CA, database included |
 | Public repositories only | Private repositories, with models chosen per data class |
