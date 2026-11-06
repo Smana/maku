@@ -40,6 +40,9 @@ type BriefIn struct {
 	Since   time.Time // the cursor's time; zero: no "Changed since" header
 	Changed ChangeSet
 	Blocker *summary.Need
+	// Sealed is the room's seal ("" while open; summary.State.Sealed's two values): a sealed log takes
+	// no event, so its dollar figure is the last a reader will see and is not settling (CD23).
+	Sealed string
 	// Cause is summary.Cause's code and is rendered as one "Fix:" line. It is empty here: the table
 	// that produces it lands with brief.ciEvidence (PR 7), and until then the line never appears.
 	Cause string
@@ -156,10 +159,42 @@ func (c *card) briefPlan(in BriefIn) {
 	if in.Plan.CeilingMicroUSD > 0 {
 		parts = append(parts, "budget "+dollars(in.Plan.CeilingMicroUSD)+" ceiling")
 	}
+	// CD23: the dollars' state, as the card says it. The brief has no Summary, so it reads the facts:
+	// a finished task names its figure only once the factory has claimed it final, says it is settling
+	// until then, and says it is unpriced when the meter priced none of its runs — the case where no
+	// final figure is ever posted, so "settling" would promise a change that never comes.
+	if w := briefSpend(in.Facts, in.Sealed != ""); w != "" {
+		parts = append(parts, w)
+	}
 	if len(parts) == 0 {
 		return
 	}
 	c.line("Plan: " + strings.Join(parts, " · "))
+}
+
+// briefSpend is a task's dollars for the brief's plan line: the figure once it is final (or once the
+// room is sealed and can take no other), else the two words the card uses (CD23), "" while the task runs
+// or has nothing to report.
+func briefSpend(f *envelope.TaskFacts, sealedRoom bool) string {
+	if f == nil || !over(summary.Coarse(f.Phase, f.Phase, false)) {
+		return ""
+	}
+	used := int64(0)
+	if f.Spend != nil {
+		used = f.Spend.UsedMicroUSD
+	}
+	switch {
+	case f.SpendFinal || sealedRoom:
+		if used > 0 {
+			return "spend " + dollars(used)
+		}
+		return ""
+	case used > 0:
+		return spendSettling
+	case unpriced(f.Spend, f.Budget):
+		return spendUnpriced
+	}
+	return ""
 }
 
 // briefChanged is what happened since the cursor, one line per milestone, through the card's own

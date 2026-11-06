@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { changesSummary, fetchSummary, needsItems, renderNotes, type Summary } from "../src/summary";
+import { changesSummary, fetchSummary, needsItems, renderNotes, spendWords, type Summary } from "../src/summary";
 
 const base = (): Summary => ({
   apiVersion: "summary/v1", room: "3kq7x2ma", url: "https://rooms.example/r/3kq7x2ma",
@@ -226,5 +226,31 @@ describe("fetchSummary", () => {
   });
   it("explains a 503", async () => {
     await expect(fetchSummary("x", get(503, {}))).rejects.toThrow(/cannot be verified|unreadable/i);
+  });
+});
+
+// CD23: the panel says what the room says about its dollars. A finished task names a figure only once
+// the factory has claimed it final — before that the words stand in its place, so the page never shows
+// a number it would have to change, and never promises one that cannot come.
+describe("the dollars a room shows", () => {
+  const status = (over: Partial<Summary["status"]> = {}): Summary["status"] => ({ ...base().status, ...over });
+  const spent = { usedMicroUSD: 310_000, limitMicroUSD: 1_500_000 };
+  it("names a live figure while the task runs", () => {
+    expect(spendWords(status({ spend: spent }))).toBe("$0.31 of $1.50 (21 %)");
+    expect(spendWords(status())).toBe(""); // no figure, no words
+  });
+  it("says the dollars are settling instead of a figure that may still move", () => {
+    expect(spendWords(status({ state: "done", phase: "Done", spend: spent }))).toBe("spend settling");
+    expect(spendWords(status({ state: "failed", phase: "Rejected", spend: spent }))).toBe("spend settling");
+    expect(spendWords(status({ phase: "Done", spend: spent }))).toBe("spend settling"); // the phase alone decides
+  });
+  it("names the figure once it is final, or once the sealed log froze it", () => {
+    expect(spendWords(status({ state: "done", phase: "Done", spend: spent, spendFinal: true }))).toBe("$0.31 of $1.50 (21 %)");
+    expect(spendWords(status({ state: "stopped", phase: "Closed", spend: spent }))).toBe("$0.31 of $1.50 (21 %)");
+  });
+  it("says the dollars are unpriced when the meter priced none of its runs", () => {
+    expect(spendWords(status({ state: "done", phase: "Done", spend: { usedMicroUSD: 0, limitMicroUSD: 1_500_000 } }))).toBe("spend unpriced");
+    // A finished task that spent nothing has nothing to say.
+    expect(spendWords(status({ state: "done", phase: "Done", budget: null }))).toBe("");
   });
 });

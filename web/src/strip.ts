@@ -14,7 +14,7 @@ import { type Dashboard, expandDashboards } from "./dashboards";
 import { statusIcon } from "./icons";
 import type { Latest } from "./room-state";
 import { type RunStatus, statusLine } from "./run-status";
-import { ago, safeLink, type Summary, when } from "./summary";
+import { ago, safeLink, spendWords, type Summary, when } from "./summary";
 
 export { shortPrincipal };
 
@@ -185,6 +185,15 @@ function chips(i: StripInput, now: number, status: boolean): HTMLElement[] {
       if (used >= limit) b.dataset.level = "over"; else if (used >= limit * 0.8) b.dataset.level = "warn";
     }
     out.push(b);
+  }
+  // CD23: the dollars, in the room's own words — a figure only once it is the task's last, else the
+  // state that stands in its place (summary.ts's spendWords, which reads an absent spend as the
+  // unpriced case). Nothing to say, no chip.
+  const spend = st ? spendWords(st) : "";
+  if (st && spend) {
+    const c = chip("chip-spend", spend);
+    if (spend === "spend settling") c.title = "the factory prices a finished task's runs again, after the settle window";
+    out.push(c);
   }
   if (st?.pr) out.push(chip("chip-pr", safeLink(`PR #${st.pr.number}`, st.pr.url)));
   // The title links the issue when it names it; an issue with no title keeps its own link here.

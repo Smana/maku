@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Smana/maku/internal/envelope"
 )
 
 // briefGoldens are the three briefs golden 4 draws: a full read, one with no cursor, and the hostile
@@ -42,6 +45,53 @@ func TestBriefGoldens(t *testing.T) {
 			}
 			golden(t, "brief/"+name+".md", b.String())
 			assertInert(t, b.String(), rooms, in.Untrusted())
+		})
+	}
+}
+
+// The same words in the brief, whose plan line reads the facts and not a Summary.
+func TestTheBriefSaysSpendSettling(t *testing.T) {
+	in := BriefIn{Room: "26zfnuxm", RoomURL: "https://rooms.example/r/26zfnuxm",
+		Facts: &envelope.TaskFacts{Phase: "Done", Spend: &envelope.SpendFact{UsedMicroUSD: 3_100_000, LimitMicroUSD: 5_000_000}},
+		Plan:  PlanVersion{Source: "scope", CeilingMicroUSD: 5_000_000}, Now: time.Now()}
+	var b strings.Builder
+	if err := Brief(&b, in, Options{Format: Text, Now: in.Now}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "spend settling") {
+		t.Fatalf("%s", b.String())
+	}
+}
+
+// CD23: once the factory's final fact has landed the plan line names the figure, a task whose runs the
+// meter could not price says its dollars are unpriced rather than settling for ever, and a sealed room
+// — whose log takes no other fact — names the figure it froze.
+func TestTheBriefSaysTheSpendState(t *testing.T) {
+	plan := PlanVersion{Source: "scope", CeilingMicroUSD: 5_000_000}
+	for _, tc := range []struct {
+		name      string
+		spend     *envelope.SpendFact
+		budget    *envelope.BudgetFact
+		final     bool
+		sealed    string
+		want      string
+		notWanted string
+	}{
+		{"the final figure", &envelope.SpendFact{UsedMicroUSD: 3_100_000, LimitMicroUSD: 5_000_000}, nil, true, "", "spend $3.10", "settling"},
+		{"no figure", nil, &envelope.BudgetFact{UsedTokens: 182_000, LimitTokens: 1_500_000}, false, "", "spend unpriced", "settling"},
+		{"a sealed room froze its figure", &envelope.SpendFact{UsedMicroUSD: 3_100_000, LimitMicroUSD: 5_000_000}, nil, false, "Closed", "spend $3.10", "settling"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := BriefIn{Room: "26zfnuxm", RoomURL: "https://rooms.example/r/26zfnuxm", Sealed: tc.sealed,
+				Facts: &envelope.TaskFacts{Phase: "Done", Spend: tc.spend, Budget: tc.budget, SpendFinal: tc.final},
+				Plan:  plan, Now: now}
+			var b strings.Builder
+			if err := Brief(&b, in, Options{Format: Text, Now: in.Now}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(b.String(), tc.want) || strings.Contains(b.String(), tc.notWanted) {
+				t.Fatalf("want %q, not %q in\n%s", tc.want, tc.notWanted, b.String())
+			}
 		})
 	}
 }

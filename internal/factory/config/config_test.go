@@ -746,6 +746,22 @@ func TestPreferRevisionsIsOffByDefault(t *testing.T) {
 	}
 }
 
+// CD23: the final spend is a switch of its own, off unless the file sets facts.finalSpend, and a
+// misspelling fails its rollout like any other key.
+func TestFinalSpendIsOffByDefault(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil || c.Facts.FinalSpend {
+		t.Fatalf("off by default: %+v %v", c.Facts, err)
+	}
+	c, err = Parse([]byte(good + "facts: {finalSpend: true}\n"))
+	if err != nil || !c.Facts.FinalSpend {
+		t.Fatalf("set: %+v %v", c.Facts, err)
+	}
+	if _, err = Parse([]byte(good + "facts: {finalSpend: true}\nfinalSpend: true\n")); err == nil {
+		t.Fatal("a switch outside facts must fail the rollout (§4)")
+	}
+}
+
 // S-1, D6: api.tls is optional; set, it carries the pair the API serves.
 func TestAPITLSIsOptional(t *testing.T) {
 	c, err := Parse([]byte(good))

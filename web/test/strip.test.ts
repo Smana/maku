@@ -661,3 +661,26 @@ describe("plainText", () => {
     expect(plainText(src)).toBe(want);
   });
 });
+
+// CD23: the strip's one dollars chip, in the room's own words: a settled figure, or the state that
+// stands in its place. An absent `spend` is the unpriced case, exactly as the Go card reads it, so the
+// chip does not depend on the field being there.
+describe("the strip's dollars", () => {
+  it("shows a final figure, and says settling or unpriced instead of a figure that may change", () => {
+    const { h, strip } = mount();
+    const done = (over: Partial<Summary["status"]> = {}) =>
+      input({ summary: summary({ state: "done", phase: "Done", ...over }) });
+    strip.update(done({ spend: { usedMicroUSD: 310_000, limitMicroUSD: 1_500_000 } }));
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("spend settling");
+    strip.update(done({ spend: { usedMicroUSD: 310_000, limitMicroUSD: 1_500_000 }, spendFinal: true }));
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("$0.31 of $1.50 (21 %)");
+    strip.update(done({ spend: { usedMicroUSD: 0, limitMicroUSD: 1_500_000 } }));
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("spend unpriced");
+    // No `spend` at all, tokens spent: the same words the card uses, not silence.
+    strip.update(done());
+    expect(h.querySelector(".chip-spend")?.textContent).toBe("spend unpriced");
+    // A finished task that spent nothing has nothing to say.
+    strip.update(done({ budget: null }));
+    expect(h.querySelector(".chip-spend")).toBeNull();
+  });
+});

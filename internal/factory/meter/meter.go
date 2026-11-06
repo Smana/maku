@@ -131,25 +131,51 @@ type Cost struct {
 	Served []string
 }
 
+// costsRetain is how long a run's last priced cost stays readable after the tick that dropped it:
+// the reconciler's final re-price lands endSettle after the last run's end, and the meter drops an
+// ended run from its active set at that same moment (CD23).
+const costsRetain = 15 * time.Minute
+
 // Costs hands each tick's run costs to the reconciler, which sums a task's for its USD cap
-// (OD-6 (b)). Safe for concurrent use: the meter writes it, the reconciler reads it.
+// (OD-6 (b)) and re-prices a terminal task's runs from them (CD23). Safe for concurrent use: the
+// meter writes it, the reconciler reads it.
 type Costs struct {
 	mu sync.RWMutex
-	m  map[string]Cost
+	m  map[string]costEntry
 }
 
-// Get is a run's cost as of the meter's last tick; false when the meter has no word on it.
+// costEntry is a run's last priced cost, and the tick that last held it: the one Put saw it in.
+type costEntry struct {
+	Cost
+	at time.Time // the tick that last held the run
+}
+
+// Get is a run's cost as of the meter's last tick that held it; false when the meter has no word on
+// it, or when that tick is costsRetain ago (CD23) and the next Put has dropped it.
 func (c *Costs) Get(id string) (Cost, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	v, ok := c.m[id]
-	return v, ok
+	e, ok := c.m[id]
+	return e.Cost, ok
 }
 
-func (c *Costs) put(m map[string]Cost) {
+// Put records one tick's run costs, with the tick's clock (CD23); it is the only writer. A run in m
+// is stamped as the tick that held it; a run absent from m is kept, unrefreshed, while the tick
+// that last held it is less than costsRetain ago, and dropped from then on: a task's final re-price
+// reads the cost its last run settled at, which the tick that dropped that run no longer names.
+func (c *Costs) Put(m map[string]Cost, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.m = m
+	next := make(map[string]costEntry, len(m))
+	for id, e := range c.m {
+		if now.Sub(e.at) < costsRetain {
+			next[id] = e
+		}
+	}
+	for id, v := range m {
+		next[id] = costEntry{Cost: v, at: now}
+	}
+	c.m = next
 }
 
 // cost prices a typed reading in micro-USD: tokens times USD per million is micro-USD.
@@ -779,7 +805,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 		}
 	}
 	if m.Costs != nil {
-		m.Costs.put(costs)
+		m.Costs.Put(costs, m.now())
 	}
 	var spent map[string]int64
 	settleErr := learnErr

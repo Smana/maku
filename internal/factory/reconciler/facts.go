@@ -162,7 +162,7 @@ func factsKey(f envelope.TaskFacts) string {
 		}
 		f.Budget = &step
 	}
-	if sp := f.Spend; sp != nil {
+	if sp := f.Spend; sp != nil && !f.SpendFinal { // the final figure is a claim about money: never bucketed (CD23)
 		step := *sp
 		if step.LimitMicroUSD > 0 {
 			step.UsedMicroUSD = min(step.UsedMicroUSD*10/step.LimitMicroUSD, 10)
@@ -218,16 +218,23 @@ func (r *Reconciler) factsDue(t *v1alpha1.Task) bool {
 	if t.Status.RoomRef == "" || r.Rooms == nil {
 		return false
 	}
+	return !r.factsPosted(t, r.factsFor(t))
+}
+
+// factsPosted: the room's ledger records exactly these facts, posted.
+func (r *Reconciler) factsPosted(t *v1alpha1.Task, f envelope.TaskFacts) bool {
 	l := t.Status.Facts
-	return l == nil || !l.Posted || l.Hash != factsKey(r.factsFor(t))
+	return l != nil && l.Posted && l.Hash == factsKey(f)
 }
 
 // factsFor is factsOf with what only the reconciler's config knows: whether an approval returns
-// an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says.
+// an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says,
+// and whether the task's dollars are final (CD23), which is what stops the key bucketing them.
 func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 	f := factsOf(t)
 	f.Plan = r.planOf(t)
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(t, t.Status.Reason)
+	f.SpendFinal = r.spendIsFinal(t)
 	return f
 }
 
