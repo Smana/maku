@@ -218,6 +218,10 @@ repository() {
   demo_public_only "${priv:-}" || exit 1
   if [[ -z ${DEMO_LOGIN:-} && $HAVE_GH == 1 ]]; then DEMO_LOGIN=$(gh api user --jq .login 2>/dev/null || true); fi
   resolve DEMO_LOGIN "Your GitHub login (who may file work for the factory)"
+  if [[ $HAVE_GH == 1 ]] && ! gh api "repos/$DEMO_REPO/contents/.github/agent-factory.yaml" >/dev/null 2>&1; then
+    warn "$DEMO_REPO has no .github/agent-factory.yaml (it is not from the template): the factory will ignore it."
+    warn "add that file on the default branch, containing exactly:  factory: demo"
+  fi
   local admin=false
   [[ $HAVE_GH != 1 ]] || admin=$(gh api "repos/$DEMO_REPO" --jq .permissions.admin 2>/dev/null || echo false)
   if [[ $admin == true ]]; then seed_github
@@ -226,6 +230,8 @@ repository() {
     cat <<MSG
     By hand on https://github.com/$DEMO_REPO:
       - create the labels factory/ready, class:docs-links and documentation
+      - add .github/agent-factory.yaml containing exactly  factory: demo  (the factory only works on a
+        repository that names it; the template already has it)
       - open the issues of examples/demo-repo/ISSUES.md if the repository has none
       - add a ruleset on the default branch: require pull requests and the status check "ci"
         from GitHub Actions (never maku/merge-gate)
