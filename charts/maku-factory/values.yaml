@@ -45,5 +45,5 @@ sponsoredSecret: agent-factory-sponsored
 monitor:
   flux:
     enabled: false
-# The factory config, rendered verbatim: README.md#config, docs/factory.md#the-config-file.
+# The factory config, passed through `tpl` (so `{{ .Release.Namespace }}` works): README.md#config, docs/factory.md#the-config-file.
 config: {}

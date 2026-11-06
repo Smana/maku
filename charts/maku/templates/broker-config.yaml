@@ -31,7 +31,7 @@ data:
     {{- end }}
     {{- with $b.systemPrincipals }}
     systemPrincipals:
-      {{- toYaml . | nindent 6 }}
+      {{- tpl (toYaml .) $ | nindent 6 }}
     {{- end }}
     {{- with $b.factoryURL }}
     factoryURL: {{ . | quote }}

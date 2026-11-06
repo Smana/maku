@@ -83,7 +83,9 @@ spec:
               valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_retention}}
           readinessProbe:
             exec:
-              command: [pg_isready, -U, postgres, -d, postgres]
+              # -h 127.0.0.1: the TCP port, which only the real server opens. Over the socket the
+              # entrypoint's init-only server would answer too, and the pod would turn ready early.
+              command: [pg_isready, -h, 127.0.0.1, -U, postgres, -d, postgres]
             periodSeconds: 5
             timeoutSeconds: 3
           livenessProbe:

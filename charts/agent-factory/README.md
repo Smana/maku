@@ -9,5 +9,14 @@ and adds what such a cluster lacks:
   `rooms_retention`, the database `rooms`, and the DSN Secrets `rooms-owner-dsn` and `rooms-broker-dsn`
   (`sslmode=disable`: the hop stays inside the cluster).
 
+`profile: demo` makes it the laptop demo: no Cilium (`maku.networkPolicies.enabled: false`), the broker
+in local human mode with the apiserver vouching for runs and for the factory (`system:factory`), runc
+(`allowUnsandboxed`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
+mode on one GitHub App. The two Secrets come from `demo.model` (`agent-model`, in the runs namespace)
+and `demo.githubApp` (`agent-factory-github`), or exist already (`existingSecret`, which must carry the
+name the subchart reads). `agent-git` is the factory's to write. Name your repository, maintainers,
+the App's bot login and your CI's check names under `maku-factory.config` (`owner/repo` and `ci` are
+placeholders). An unset `profile` fails: production values arrive with stage 2.
+
 Not for production: no backups, no HA, no database TLS.
-`clusterDomain` must equal `maku.clusterDomain`.
+`clusterDomain` must equal `maku.clusterDomain` and `maku-factory.clusterDomain`.

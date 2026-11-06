@@ -1,13 +1,121 @@
-# The umbrella adds what a plain cluster lacks: the broker's TLS (no cert-manager) and a
-# single-replica Postgres (no CNPG). Everything under `maku` and `maku-factory` is those charts' own.
+# One value selects what the chart is for: `demo` is the laptop install (kind or k3d, no Cilium, no
+# cert-manager, no CNPG, no OIDC). Left unset the chart fails: production values arrive with stage 2.
+# A subchart's values cannot depend on a parent value, so the demo's values are the ones below and
+# `profile` is the gate: an unset profile renders nothing and says why.
+profile: ""
+
+# The two Secrets the demo needs, rendered by this chart unless an existing Secret is named. Their
+# names are the subcharts' (agent-model, agent-factory-github): existingSecret must equal that name.
+demo:
+  # agent-model in the runs namespace: keys base_url, model, api_key.
+  model:
+    existingSecret: ""
+    baseURL: ""
+    name: ""
+    apiKey: ""
+  # agent-factory-github in the release namespace: keys app_id, private_key. ONE GitHub App backs
+  # the factory, the merger and the run token (docs/factory.md#demo).
+  githubApp:
+    existingSecret: ""
+    id: ""
+    privateKey: ""
+
 maku:
   enabled: true
+  # The cluster has no Cilium: nothing confines the network.
+  networkPolicies:
+    enabled: false
+  runs:
+    group: maku.ogenki.io
+    namespace: agents
+    namePrefix: run-
   broker:
+    # One loopback user behind a port-forward, no identity provider; no :8090 room tools.
+    human: {mode: local}
+    roomTools: {enabled: false}
+    # The apiserver vouches for the runs and for the factory (kind's issuer is not reachable).
+    runIssuer: {mode: tokenreview}
+    systemIssuer: {mode: tokenreview}
+    # `{{ .Release.Namespace }}` is rendered by the maku chart.
+    systemPrincipals:
+      "system:serviceaccount:{{ .Release.Namespace }}:agent-factory": system:factory
+    # The factory's API has no TLS in the demo, and nothing reaches it but the broker.
+    factoryURL: http://agent-factory:8082
+    factoryInsecure: true
     database:
       brokerSecret: rooms-broker-dsn
       ownerSecret: rooms-owner-dsn
+    # The certificate is the umbrella's (tls.yaml), not cert-manager's.
+    tls:
+      issuerRef: {name: ""}
+  runController:
+    runtimeClassName: ""
+    allowUnsandboxed: true
+    createRuntimeClass: false
 maku-factory:
   enabled: true
+  demo: true
+  replicas: 1
+  # The demo's config, passed through `tpl`: `{{ .Release.Namespace }}` and the cluster domain are
+  # the release's. Name the repository, the maintainers and the App's three bot logins (the slug of
+  # the one App, as `<slug>[bot]`) to match yours, and the check names its CI reports.
+  config:
+    demo: true
+    factory: demo
+    factoryLogin: maku-demo[bot]
+    agentsLogin: maku-demo[bot]
+    roomsURL: http://localhost:8080
+    broker:
+      url: https://room-broker.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:8443
+      caFile: /etc/agent-factory/openbao-ca/ca.crt
+      tokenFile: /var/run/secrets/agents/rooms/token
+    # The same portable kind as maku.runs.
+    runs:
+      group: maku.ogenki.io
+      namespace: agents
+      namePrefix: run-
+    # One App: the merger signs with the factory's own files.
+    github:
+      appIDFile: /etc/agent-factory-github/app_id
+      privateKeyFile: /etc/agent-factory-github/private_key
+      mergerAppIDFile: /etc/agent-factory-github/app_id
+      mergerKeyFile: /etc/agent-factory-github/private_key
+    poll: {issues: 60s, tasks: 30s, meter: 30s}
+    defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
+    repositories:
+      - name: owner/repo
+        maintainers: [owner]
+        triggerLabel: factory/ready
+        # Shadow: the factory judges and posts the gate's status, and merges nothing. Every class
+        # carries allowedFiles, which is what bounds a merge with no policy-bot.
+        classes:
+          docs-links: {shadow: true, allowedFiles: ['^.+\.(md|mdx|adoc|rst)$']}
+          revert: {shadow: true, allowedFiles: ['^.+$']}
+        merge:
+          requiredChecks: [ci]
+          verifyChecks: [ci]
+          leakScanCheck: ci
+          gateStatus: true
+          policyBot: false
+          mergerLogin: maku-demo[bot]
+          autoMergesPerDay: 5
+          fixRuns: 2
+          checkReruns: 1
+          verifyFor: 30m
+          revertWindow: 168h
+          breaker: {window: 10, maxReverts: 1}
+    tiers:
+      light: {model: agent-default, runTokens: 300000, taskTokens: 600000, runMinutes: 20}
+      standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45}
+      frontier: {model: agent-default, runTokens: 4000000, taskTokens: 8000000, runMinutes: 90}
+    templates:
+      solo: {roles: [implementer]}
+      pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
+      trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
+      investigate: {roles: [triager]}
+    caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
+    api:
+      listen: ":8082"
 
 # Must equal `maku.clusterDomain`: the broker certificate's SANs are built from it.
 clusterDomain: cluster.local
