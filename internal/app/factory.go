@@ -593,13 +593,10 @@ func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Ma
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig: %w", err)
 	}
-	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, factoryv1.AddToScheme, v1alpha1.AddToScheme} {
-		if err := add(scheme); err != nil {
-			return nil, err
-		}
+	scheme, err := factoryScheme(kind)
+	if err != nil {
+		return nil, err
 	}
-	runs.Scheme(scheme, kind)
 	opts := factoryManagerOptions(ns, kind)
 	opts.Scheme, opts.Logger = scheme, lr
 	mgr, err := ctrl.NewManager(restCfg, opts)
@@ -607,6 +604,19 @@ func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Ma
 		return nil, fmt.Errorf("manager: %w", err)
 	}
 	return mgr, nil
+}
+
+// factoryScheme is the manager's scheme: client-go's, the factory's own types, Maku's (for Room),
+// and the runs kind.
+func factoryScheme(kind runwatch.Kind) (*runtime.Scheme, error) {
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{clientgoscheme.AddToScheme, factoryv1.AddToScheme, v1alpha1.AddToScheme} {
+		if err := add(scheme); err != nil {
+			return nil, err
+		}
+	}
+	runs.Scheme(scheme, kind)
+	return scheme, nil
 }
 
 // pinger probes GitHub on every replica, leader or not: a follower makes no other call to it. A
