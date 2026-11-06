@@ -10,7 +10,8 @@
 #   DEMO_REPO=owner/name                      your repository (public); created from Smana/maku-demo
 #   GITHUB_APP_ID GITHUB_APP_KEY_FILE         an existing App (with DEMO_SLUG): skips the browser
 #   CLUSTER=k3d|kind|current                  default k3d if installed, else kind
-#   MAKU_VERSION                              default: the latest release
+#   MAKU_VERSION                              the images' tag; default: this checkout's tag, else the last answer.
+#                                             A checkout ahead of a release needs a matching one (a PR pre-release tag)
 #   DEMO_LIVE=1                               turn the docs-links class live (Q13)
 #   DEMO_NO_GH=1                              never use gh, never write to GitHub
 #   DEMO_LOGIN                                the GitHub login allowed to file work
@@ -77,9 +78,11 @@ preflight() {
   docker buildx version >/dev/null 2>&1 || die "docker buildx is not installed (it resolves the images' digests)"
   MAKU_VERSION=${MAKU_VERSION:-}
   if [[ -z $MAKU_VERSION ]]; then
-    MAKU_VERSION=$(curl -fsS https://api.github.com/repos/Smana/maku/releases/latest | sed -n -E 's/.*"tag_name": *"([^"]*)".*/\1/p' | head -1) || true
-    [[ -n $MAKU_VERSION ]] || die "could not find the latest release: set MAKU_VERSION"
+    MAKU_VERSION=$(git describe --tags --exact-match 2>/dev/null || true)
+    [[ -n $MAKU_VERSION ]] || MAKU_VERSION=$(demo_env_get MAKU_VERSION "$DEMO_DIR/answers.env")
+    [[ -n $MAKU_VERSION ]] || die "this checkout is not at a release tag, and the chart here may need images newer than the latest release (the release's run-controller refuses a chart it does not know). Set MAKU_VERSION to images that match this checkout, e.g. a pull request pre-release tag vX.Y.Z-prN.<sha8> that exists in ghcr.io/smana (docker buildx imagetools inspect ghcr.io/smana/maku-broker:<tag>), or git checkout a release tag."
   fi
+  save_answer MAKU_VERSION
   echo "    maku $MAKU_VERSION"
   local have_k3d=0 have_kind=0
   command -v k3d >/dev/null && have_k3d=1
@@ -302,6 +305,14 @@ cluster() {
 }
 
 # ---------------------------------------------------------------------------------------------
+# rollout KIND/NAME: wait for it; when it fails, show its last logs and die.
+rollout() {
+  kc -n "$NS" rollout status "$1" --timeout=240s && return 0
+  warn "$1 did not roll out; its last log lines:"
+  kc -n "$NS" logs "$1" --tail=40 --all-containers 2>&1 | sed 's/^/      /' >&2 || true
+  die "$1 did not roll out (kubectl -n $NS get pods; with a MAKU_VERSION older than this chart, the images refuse its values)"
+}
+
 install_chart() {
   step "install"
   local v=$MAKU_VERSION
@@ -324,9 +335,9 @@ install_chart() {
   hl dependency build charts/agent-factory >/dev/null
   hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
   echo "    waiting for the workloads"
-  kc -n "$NS" rollout status sts/rooms-db --timeout=240s
-  kc -n "$NS" rollout status deploy/room-broker --timeout=240s
-  kc -n "$NS" rollout status deploy/run-controller --timeout=240s
+  rollout sts/rooms-db
+  rollout deploy/room-broker
+  rollout deploy/run-controller
   FACTORY_OK=0
   local i
   for ((i = 0; i < 40; i++)); do
