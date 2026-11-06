@@ -660,7 +660,9 @@ func TestIntakePlanConfig(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	cfg, err := Load(write(t, valid+"\n  intake:\n    plan:\n"+
+	cfg, err := Load(write(t, valid+"\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n"+
+		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n"+
+		"  intake:\n    plan:\n"+
 		"      enabled: true\n      url: http://ai-gateway.envoy-gateway-system.svc.cluster.local:8080/v1\n"+
 		"      apiKeyFile: /etc/room-broker/planner/api-key\n      repositories: [Smana/ai-native-ref]\n"+
 		"      classes:\n        docs-links: {roles: [scoper, implementer, reviewer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"))
@@ -756,5 +758,50 @@ func TestHumanLocalModeRefusesThePlanner(t *testing.T) {
 	if _, err := Load(write(t, localConfig+"  intake:\n    plan:\n      classes:\n        docs: {roles: [admin], ceilingUSD: 2, source: class:docs.taskUSD}\n")); err == nil ||
 		!strings.Contains(err.Error(), "human.intake.plan.classes") {
 		t.Fatalf("local mode must check the class table: %v", err)
+	}
+}
+
+// A planner that is on has to be one that can answer: the allowlist and the class table are what a
+// plan may name and what it costs, /mcp is the only listener both tools exist on, and human.access
+// is the write check the candidate set is drawn from. Each is refused by the field it is about, so
+// a switch flipped ahead of its parts fails the rollout rather than every call.
+func TestThePlannerNeedsWhatItServes(t *testing.T) {
+	// The parts an operator must land, one per line, in the shape ai-native-ref's copy will carry.
+	parts := []struct{ name, want string }{
+		{"the allowlist", "human.intake.plan.repositories: is required"},
+		{"the class table", "human.intake.plan.classes: is required"},
+		{"the /mcp listener", "human.intake.plan.enabled needs human.mcp.enabled"},
+		{"the write check", "human.intake.plan.enabled needs human.access"},
+	}
+	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n" +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
+		"      repositories: [Smana/ai-native-ref]\n" +
+		"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"
+	if _, err := Load(write(t, base)); err != nil {
+		t.Fatalf("the parts together must load: %v", err)
+	}
+	for _, c := range parts {
+		t.Run(c.name, func(t *testing.T) {
+			// The part's own line is replaced by the one that removes it, so every other part stays.
+			without := base
+			switch c.name {
+			case "the allowlist":
+				without = strings.Replace(base, "      repositories: [Smana/ai-native-ref]\n", "", 1)
+			case "the class table":
+				without = strings.Replace(base,
+					"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n", "", 1)
+			case "the /mcp listener":
+				without = strings.Replace(base, "  mcp:\n    enabled: true\n", "  mcp:\n    enabled: false\n", 1)
+			case "the write check":
+				without = strings.Replace(base, "  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n", "", 1)
+			}
+			if without == base {
+				t.Fatalf("%s: the fixture does not carry the part", c.name)
+			}
+			if _, err := Load(write(t, without)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error naming %q", err, c.want)
+			}
+		})
 	}
 }

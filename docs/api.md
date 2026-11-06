@@ -544,6 +544,8 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `room_queue` | collaborator | `room`, `text` | `{room, queued}`: the message's `seq`. Its text is machine-sent |
 | `room_fork` | as the `fork` action | `room`, `at`, `role?`, `prUrl?`, `egress?`, `note?` | `{room, url, run?, runError?}`. The note is machine-sent |
 | `issue_draft` | any member | `repo`, `title`, `body` | `{repo, title, body, stripped, canStart, canStartWhy?}`: the draft with hidden and control characters stripped (`stripped` counts them). `canStart` is true when `repo` is in `human.mcp.sessionStart` and the caller writes to it on GitHub; else `canStartWhy` is `off` (not listed, no GitHub check wired, or a sponsored caller), `not_linked`, `no_write` (read only, or the GitHub App cannot see the repository) or `unverified` (the check failed). Refused unless the title reads `<area>: <what is wrong>` (at most 256 characters), the body holds `## What is wrong`, `## What it should be` and `## Acceptance check` in that order (at most 16 KiB), and the redactor finds no secret. It files nothing: `maku mcp`'s `issue_file` does |
+| `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, the one question to ask first, `canStart`. One public-text-only model call; it files nothing ([the planner](#the-planner-on-mcp)) |
+| `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, `on_behalf_of?` | The plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
 
 The view tools (`rooms_list`, `room_summary`, `room_changes`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
 
@@ -576,15 +578,83 @@ Another person's task id, or a malformed one, is `-32602 no such task`. A room r
 a while is `-32603`: poll again. There is no `tasks/list` or `tasks/cancel` (`-32601`), and no task
 is `input_required`: that state belongs to [`run_create`](#sponsored-principals-on-mcp).
 
+### The planner on `/mcp`
+
+`intake_plan` and `plan_check` are the governed planner (CD5, CD17, CD18, CD27): a sentence becomes
+`plan/v1` through one bounded call to the AI Gateway, and the plan's hash is the value every later
+door re-validates before anything is filed. They are **off** unless the broker's config sets
+`human.intake.plan.enabled`; off, both are unknown tools (`unknown tool: intake_plan`), as
+`run_create` is to a human token. `config.Load` refuses the switch unless it also has
+`human.mcp.enabled` (both tools exist on this listener alone), `human.access` (the write check the
+candidate set is drawn from), a non-empty `human.intake.plan.repositories` and a non-empty
+`human.intake.plan.classes` — each named by its own error, so the switch cannot land ahead of its
+parts. The broker in turn refuses to start with `ROOMS_GITHUB_APP_DIR` unset (no repository's
+visibility can be read, so the guard would refuse every plan) or without an `Actor` redactor
+(`plan_check` scans a plan's text as `issue_draft` does).
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `intake_plan` | `text` (one sentence about what is wrong, required, at most 16 KiB); `repository?` and `candidates?` (owner/name, at most 20 candidates); `context?` (at most 4 KiB) and `evidence?` (at most 5 items of at most 280 characters, counted against the same 4 KiB); `on_behalf_of?` (`slack:<team>/<user>`) and `ceiling?` (USD, 0 or absent means the class's), both a sponsored principal's alone | `{plan, hash, question, canStart, canStartWhy?, degraded}`: the plan, the hash the broker computed over it, the one question to ask first, whether this caller may start the factory on it, and whether a template rather than the planner wrote it (`degraded`, `human.intake.plan.fallback: composer`) |
+| `plan_check` | `plan` (the `plan/v1` object as it was shown), `hash` (`sha256:<64 hex>`), `on_behalf_of?` (a sponsored principal's, as above) | `{plan, hash, canStart, canStartWhy?}`: the plan re-validated with the hash recomputed over it. It files nothing, calls no model, spends no daily plan and writes no record |
+
+`plan/v1` is `{apiVersion: "plan/v1", rev, planner: {model, surface, at}, repository,
+repositoryEvidence, alternatives, issues, budget: {ceilingUSD, source}, question, hash}`; each issue
+is `{index, title, body, class, roles, dependsOn}`, numbered 1..n in order, one to three per plan,
+with `sanitize`'s draft bounds. `repositoryEvidence` (at most 5 items of at most 280 characters),
+`alternatives` and `planner` are display and untrusted; the hashed set is
+`{apiVersion, repository, budget, issues}` (CD27), so `hash` — computed by the broker, never by a
+caller — is what a plan *is*.
+
+**What the model decides, and what it does not.** The reply names the class and drafts the issues;
+roles, the ceiling and the hash are the config's and the broker's. A reply naming a role or a budget
+has it dropped and logged, a class the config does not define is refused (`invalid_class`), and a
+repository outside the candidate set refuses the plan whole (`repository_not_in_candidates`) without
+being named back. The candidate set is `human.intake.plan.repositories` ∩ what was asked ∩ what the
+requester may write ∩ what GitHub reports **public**: a private repository is refused
+(`private_repository_unsupported`) before any call, and a repository GitHub cannot answer for is
+`repository_unverified`, never planned on. Visibility is read once per repository and cached for
+`human.access`'s TTL, the same window a revoked permission lapses in.
+
+Each refusal is a tool error whose text starts with one reason of a closed list:
+
+| Reason | One line |
+|---|---|
+| `private_repository_unsupported` | the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route |
+| `repository_not_allowed` | no repository the allowlist serves and you may write in matches this request; name one of the repositories listed |
+| `no_write` | you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it |
+| `invalid_draft` | the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order |
+| `planner_invalid` | the plan is not the shape the contract asks for (`<field>: <value>, the bound is …`); ask again |
+| `planner_unavailable` | the plan service is unavailable; try again later |
+| `planner_timeout` | the plan service did not answer inside its deadline; try again |
+| `plan_changed` | the plan was superseded; the newer one is the one to confirm |
+| `repository_unverified` | GitHub could not confirm this repository, so the planner will not guess; try again later |
+| `repository_not_in_candidates` | the plan names a repository outside the ones this request may use; name one of them |
+| `invalid_class` | the class is not one this broker's config defines; name one of the classes it serves |
+| `not_linked` | your account is not linked to GitHub, so the broker cannot tell what you may write; link it first |
+| `daily_plans_reached` | you have used today's plans; the cap resets at 00:00 UTC |
+| `plan_too_large` | the plan is longer than a bound the contract sets; nothing was truncated |
+
+The cap is `human.intake.plan.dailyPlans` per **effective requester** — a human's GitHub login, a
+Slack user's `slack:<team>/<user>` — per UTC day, counted on this replica, and one plan costs one
+call: there is no retry loop. Neither tool files, stores or approves anything: the plan is shown,
+and the coding agent's `issue_file` (or the Slack proposal, later) re-validates it through
+`plan_check` first. Both count in `maku_rooms_human_mcp_calls_total{tool, outcome}`, and
+`intake_plan` also feeds `maku_intake_plan_total`, `maku_intake_plan_seconds` and
+`maku_intake_plan_tokens`.
+
+**For the operator:** the planner's model call is the only place the broker reaches a model; it sends
+public text only, refuses a private repository before the call, and logs the hash, never the text.
+
 ### Sponsored principals on `/mcp`
 
 A sponsored principal (a ZITADEL machine user declared in the broker's `human.mcp.sponsored` and the
 factory's `api.sponsored`, [factory](factory.md#sponsored-principals)) reaches `/mcp` with its own
 client-credentials token, whose audience must hold the project (`human.projectIDFile`). Nothing
-else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees five tools:
-`run_create`, `issue_draft`, `room_summary`, `room_tail` and `room_changes`; `room_queue`, `room_fork` and
-`rooms_list` are unknown tools to it. It reads a room only as one of its `watcher` members, which
-the factory adds when it creates its task's room, with no GitHub check.
+else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees five tools
+plus the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`,
+`room_summary`, `room_tail`, `room_changes`, `intake_plan` and `plan_check`; `room_queue`,
+`room_fork` and `rooms_list` are unknown tools to it. It reads a room only as one of its `watcher`
+members, which the factory adds when it creates its task's room, with no GitHub check.
 
 | Tool | Arguments | Result |
 |---|---|---|

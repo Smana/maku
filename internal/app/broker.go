@@ -207,7 +207,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	api.Hub, api.LastAck = hub, st.LastAck // the stream's deliveries (phase 4)
 	humans, err := humanSide(cfg, a.humans, mgr.GetClient(), ns, logStore, red, hub, rw.watch, accessApp(getenv("ROOMS_GITHUB_APP_DIR")),
-		mgr.Add, m, log)
+		visibilityApp(getenv("ROOMS_GITHUB_APP_DIR")), mgr.Add, m, log)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
@@ -330,10 +330,12 @@ func humanListenAddr(cfg config.Config) string {
 }
 
 // humanServer is the :8080 API over the broker's parts, its acts served by
-// actor. The client ids are read at use (Ruling AS-a); the group names are literals.
+// actor. The client ids are read at use (Ruling AS-a); the group names are literals. vis is the
+// factory App the planner's public-only read goes through; nil is a broker whose planner cannot
+// verify anything, which intakeServer refuses rather than serving.
 func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.Reader, ns string, roomLog humanapi.Log,
-	hub humanapi.Hub, runs humanapi.Runs, actor *humanapi.Actor, m *metrics.Set, log *slog.Logger,
-) *humanapi.Server {
+	hub humanapi.Hub, runs humanapi.Runs, actor *humanapi.Actor, vis gitHubVisibilities, m *metrics.Set, log *slog.Logger,
+) (*humanapi.Server, error) {
 	h := cfg.Human
 	start := make(map[string]bool, len(h.MCP.SessionStart))
 	for _, r := range h.MCP.SessionStart {
@@ -359,27 +361,40 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	for _, d := range h.Dashboards {
 		dashboards = append(dashboards, humanapi.Dashboard{Label: d.Label, URL: d.URL})
 	}
+	in, err := intakeServer(cfg, vis, actor)
+	if err != nil {
+		return nil, err
+	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Intake:    intakeServer(cfg.IntakePlan()),
+		Intake:    in,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID: projectID,
 		Rooms:     rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, SessionStart: start, Dashboards: dashboards}
+		MCP: h.MCP.Enabled, SessionStart: start, Dashboards: dashboards}, nil
 }
 
 // intakeServer is human.intake.plan as the human API serves it (v3.x conversational intake): the
 // class table and the allowlist from config, the one bounded model call through the audited egress
-// client, the per-requester daily cap and the degraded composer's switch. Nil when the switch is off,
-// so neither tool is on any list a switched-off deployment serves.
+// client, GitHub's visibility for the public-only guard, the per-requester daily cap and the
+// degraded composer's switch. Nil when the switch is off, so neither tool is on any list a
+// switched-off deployment serves.
 //
-// Its visibility read (Intake.Public) is the GitHub App's, wired where the store and the App are
-// (internal/app/access.go's intakePublicity): until it is set, the guard can verify nothing and
-// refuses every plan with repository_unverified before any model call, which is the fail-closed
-// answer rather than a plan nobody checked.
-func intakeServer(plan config.PlanConfig) *humanapi.Intake {
+// Its two preconditions are refused here rather than per call, because a planner missing either is a
+// switch that reads as on and answers every request with a refusal: the visibility read (no App, no
+// way to tell a public repository from a private one, so the guard refuses everything with
+// repository_unverified) and Actor.Redactor (plan_check scans a plan's text as issue_draft does, and
+// checkDraft fails closed without it).
+func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Actor) (*humanapi.Intake, error) {
+	plan := cfg.IntakePlan()
 	if !plan.Enabled {
-		return nil
+		return nil, nil
+	}
+	if vis == nil {
+		return nil, errors.New("human.intake.plan needs the factory App: ROOMS_GITHUB_APP_DIR is not set, so no repository's visibility can be read")
+	}
+	if actor == nil || actor.Redactor == nil {
+		return nil, errors.New("human.intake.plan needs Actor.Redactor: a plan's text is scanned as issue_draft's is")
 	}
 	allow := make(map[string]bool, len(plan.Repositories))
 	for _, repository := range plan.Repositories {
@@ -392,7 +407,10 @@ func intakeServer(plan config.PlanConfig) *humanapi.Intake {
 	return &humanapi.Intake{Classes: classes, Allow: allow,
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
 			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration},
-		Daily: plan.DailyPlans, Fallback: plan.Fallback}
+		Public:   intakePublicity(vis, accessTTL(cfg.Human)),
+		Daily:    plan.DailyPlans,
+		Fallback: plan.Fallback,
+		Now:      time.Now}, nil
 }
 
 // roomRuns is the one watch method roomObserver reads; *runwatch.Watcher has it.

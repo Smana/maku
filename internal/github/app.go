@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -385,8 +386,9 @@ func (a *App) Comment(ctx context.Context, pr, marker, body string) (string, err
 }
 
 // retry401 runs call, and once more after a 401: a revoked token, or a rotated key, gets one
-// fresh token and one retry.
-func (a *App) retry401(owner, repo string, call func() (string, error)) (string, error) {
+// fresh token and one retry. It is generic over what a call answers, so the replies that are a
+// struct — the repository's visibility — retry exactly as a login or a permission does.
+func retry401[T any](a *App, owner, repo string, call func() (T, error)) (T, error) {
 	out, err := call()
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
@@ -394,6 +396,11 @@ func (a *App) retry401(owner, repo string, call func() (string, error)) (string,
 		out, err = call()
 	}
 	return out, err
+}
+
+// retry401 is retry401's string-answering shape, which most reads have.
+func (a *App) retry401(owner, repo string, call func() (string, error)) (string, error) {
+	return retry401(a, owner, repo, call)
 }
 
 // UserLogin is the current login of the GitHub user with the numeric id, read with owner/repo's
@@ -430,6 +437,53 @@ func (a *App) UserLogin(ctx context.Context, owner, repo string, id int64) (stri
 
 // githubLogin is GitHub's login syntax; checked before a login is spliced into an API path.
 var githubLogin = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+
+// Repository is one repository as GitHub's repository API states it: Private whether GitHub reports
+// it private, and Visibility GitHub's own word for it — "public", "private", or an enterprise's
+// "internal", which is private to everyone outside it however much a token can see.
+type Repository struct {
+	Private    bool   `json:"private"`
+	Visibility string `json:"visibility"`
+}
+
+// visibilityWords are the words GitHub's repository API may answer with; any other is not an answer.
+var visibilityWords = []string{"public", "private", "internal"}
+
+// Repository is owner/repo's visibility, read with its installation token, which metadata: read
+// covers. It is the planner's public-only read (CD5, v3.x conversational intake): public text only,
+// decided once per repository by the caller's cache rather than by a model.
+//
+// A repository GitHub does not show the App — no installation, or a 404 for its scoped token — is
+// ErrNoInstallation, and a reply with no visibility word is an error: neither is an answer, so the
+// caller refuses rather than planning on a guess.
+func (a *App) Repository(ctx context.Context, owner, repo string) (Repository, error) {
+	if !validRepo(owner, repo) {
+		return Repository{}, ErrNotAPullRequest
+	}
+	api, err := a.api()
+	if err != nil {
+		return Repository{}, err
+	}
+	return retry401(a, owner, repo, func() (Repository, error) {
+		tok, _, err := a.installation(ctx, api, owner, repo)
+		if err != nil {
+			return Repository{}, err
+		}
+		var out Repository
+		err = a.do(ctx, api, http.MethodGet, "repos/"+owner+"/"+repo, "", tok, nil, &out, maxReply)
+		var ae *APIError
+		switch {
+		case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+			// Installed, but its scoped token cannot read the repository: the App cannot see it.
+			return Repository{}, fmt.Errorf("%w: %w", ErrNoInstallation, err)
+		case err != nil:
+			return Repository{}, err
+		case !slices.Contains(visibilityWords, out.Visibility):
+			return Repository{}, errors.New("github: the repository reply has no visibility")
+		}
+		return out, nil
+	})
+}
 
 // Permission is login's permission on owner/repo as GitHub's collaborator API states it (admin,
 // write, read or none), read with owner/repo's installation token, which metadata: read covers.

@@ -75,8 +75,12 @@ func TestHumanServerModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := func(cfg config.Config, humans humanapi.Authenticator) *humanapi.Server {
-		return humanServer(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", fakeRoomLog{},
-			fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, &humanapi.Actor{}, m, log)
+		s, err := humanServer(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", fakeRoomLog{},
+			fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, &humanapi.Actor{}, nil, m, log)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
 	local := config.Config{PublicURL: "http://localhost:8080", Human: config.HumanConfig{Mode: config.HumanModeLocal}}
 	s := server(local, authn.NewLocal(local.PublicURL, []string{"admin", "member"}))

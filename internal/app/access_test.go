@@ -231,12 +231,12 @@ func TestHumanSideWiresRoomAccess(t *testing.T) {
 	add := func(manager.Runnable) error { return nil }
 	cfg := config.Config{Human: config.HumanConfig{Issuer: humanIssuer, Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"},
 		Access: &config.AccessConfig{ReaderFile: "/r.json", TTL: config.Duration{Duration: time.Minute}}}}
-	s, err := humanSide(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{}, red, hub, fakeRuns{}, &fakeGitHubUsers{}, add, m, log)
+	s, err := humanSide(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{}, red, hub, fakeRuns{}, &fakeGitHubUsers{}, nil, add, m, log)
 	if err != nil || s.Identity == nil || s.Access == nil || s.Identity.Links == nil || s.Identity.LoginOf == nil || s.Identity.Now == nil ||
 		s.Access.Perm == nil || s.Access.Now == nil {
 		t.Fatalf("%+v %+v %v", s.Identity, s.Access, err)
 	}
-	if _, err := humanSide(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{}, red, hub, fakeRuns{}, nil, add, m, log); err == nil {
+	if _, err := humanSide(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{}, red, hub, fakeRuns{}, nil, nil, add, m, log); err == nil {
 		t.Fatal("human.access without ROOMS_GITHUB_APP_DIR must stop start-up")
 	}
 }

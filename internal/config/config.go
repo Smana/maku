@@ -210,6 +210,15 @@ func (i IntakeConfig) validate() []error {
 		if p.APIKeyFile == "" {
 			errs = append(errs, errors.New("human.intake.plan.apiKeyFile: is required when the planner is enabled: a planner with no key would 401 every plan"))
 		}
+		// A planner with nothing to serve is a switch that reads as on and refuses every request:
+		// the allowlist is the candidate set's whole supply (CD5) and the class table is every
+		// issue's roles and money (CD17).
+		if len(p.Repositories) == 0 {
+			errs = append(errs, errors.New("human.intake.plan.repositories: is required when the planner is enabled: the allowlist is every repository a plan may name (CD5)"))
+		}
+		if len(p.Classes) == 0 {
+			errs = append(errs, errors.New("human.intake.plan.classes: is required when the planner is enabled: a plan's roles and ceiling come from its class (CD17)"))
+		}
 	}
 	if p.URL != "" {
 		if u, err := url.Parse(p.URL); err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
@@ -743,6 +752,15 @@ func (h HumanConfig) validate(system []string) []error {
 	}
 	if h.MCP.Enabled && h.RoomctlClientIDFile == "" {
 		errs = append(errs, errors.New("human.mcp.enabled: needs human.roomctlClientIDFile, since /mcp takes maku's tokens only"))
+	}
+	// The planner's two tools exist on /mcp alone, and its candidate set is the write check
+	// human.access carries: enabled without either is a switch that reads as on and answers every
+	// call with a refusal, so it is refused by the part it is missing.
+	if h.Intake.Plan.Enabled && !h.MCP.Enabled {
+		errs = append(errs, errors.New("human.intake.plan.enabled needs human.mcp.enabled: both planner tools are on /mcp"))
+	}
+	if h.Intake.Plan.Enabled && h.Access == nil {
+		errs = append(errs, errors.New("human.intake.plan.enabled needs human.access: without the GitHub write check no repository is a candidate"))
 	}
 	if len(h.MCP.Sponsored) > 0 && !h.MCP.Enabled {
 		errs = append(errs, errors.New("human.mcp.sponsored needs human.mcp.enabled"))
