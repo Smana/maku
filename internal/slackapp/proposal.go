@@ -74,9 +74,25 @@ type ProposalPayload struct {
 	Rev    int         `json:"rev"`
 }
 
-// newProposal is p as the proposal at this revision, or errProposalTooLarge when the plan's
-// canonical JSON is past the bound. The plan is marshalled once, here, and never measured again.
+// errProposalHash and errProposalRev are a caller's mistake, not a refusal the thread shows: a
+// proposal whose hash does not bind its plan, or whose revision is outside the cap, is a message no
+// Confirm could ever trust, and no decoder would read it back as a proposal.
+var (
+	errProposalHash = errors.New("slackapp: proposal: the hash does not bind the plan")
+	errProposalRev  = errors.New("slackapp: proposal: the revision is outside 1.." + strconv.Itoa(maxProposalRevisions))
+)
+
+// newProposal is p as the proposal at this revision. It refuses what the message could not carry or
+// could not be read back from: a hash that is not the plan's own (errProposalHash), a revision
+// outside 1..maxProposalRevisions (errProposalRev), and a plan whose canonical JSON is past the
+// 7 KiB bound (errProposalTooLarge). The plan is marshalled once, here, and never measured again.
 func newProposal(p intake.Plan, hash, author string, rev int) (ProposalPayload, error) {
+	if want := intake.Hash(p); hash != want {
+		return ProposalPayload{}, fmt.Errorf("%w: %q is not %q", errProposalHash, hash, want)
+	}
+	if rev < 1 || rev > maxProposalRevisions {
+		return ProposalPayload{}, fmt.Errorf("%w: %d", errProposalRev, rev)
+	}
 	raw, err := p.JSON()
 	if err != nil {
 		return ProposalPayload{}, fmt.Errorf("slackapp: proposal: %w", err)
@@ -269,8 +285,10 @@ func proposalQuestion(p ProposalPayload, q *intake.Question) *roomview.ProposalQ
 // ever parsed back into a plan, and the buttons' value is the hash and the revision this message
 // shows, so a click binds exactly what was read (CD7, CD20).
 //
-// channel is optional: the payload carries none, and it is the one fact a block wants that a plan
-// does not have. A proposal has no room yet, so its context block links no room.
+// channel is optional here and required in practice: the payload carries none, and it is the one
+// fact a block wants that a plan does not have, so every poster (Task 4's postProposal and
+// updateProposal, and Task 6's replan) calls it as proposalSections(p, q, changed, channel). A
+// proposal has no room yet, so its context block links no room.
 func proposalSections(p ProposalPayload, q *intake.Question, changed []string, channel ...string) (text string, blocks json.RawMessage, err error) {
 	sections, err := roomview.Proposal(proposalView(p, q, changed), roomview.Options{Format: roomview.Slack})
 	if err != nil {
@@ -318,21 +336,29 @@ type slackBlockText struct {
 }
 
 // slackBlock is one Block Kit block. Only the fields this package writes are declared; the empty
-// ones are omitted, so a section block carries its text and nothing else.
+// ones are omitted, so a section block carries its text and nothing else. Elements is typed by the
+// block that holds it: an actions block carries buttons, whose text is a text object, and a context
+// block carries mrkdwn elements, whose text is the string itself.
 type slackBlock struct {
 	Type     string          `json:"type"`
 	Text     *slackBlockText `json:"text,omitempty"`
-	Elements []slackElement  `json:"elements,omitempty"`
+	Elements any             `json:"elements,omitempty"`
 }
 
-// slackElement is a block's element: a button in an actions block, a piece of text in a context
-// block.
-type slackElement struct {
+// slackButton is an actions block's element: Slack reads its text as a text object (`plain_text`).
+type slackButton struct {
 	Type     string          `json:"type"`
-	Text     *slackBlockText `json:"text,omitempty"`
-	ActionID string          `json:"action_id,omitempty"`
-	Value    string          `json:"value,omitempty"`
+	Text     *slackBlockText `json:"text"`
+	ActionID string          `json:"action_id"`
+	Value    string          `json:"value"`
 	Style    string          `json:"style,omitempty"`
+}
+
+// slackContextText is a context block's element: `{"type":"mrkdwn","text":"<#C…>"}`. Its text is a
+// plain string, not a text object — a nested object is refused by Slack and renders nothing.
+type slackContextText struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 // proposalBlocks is the message's blocks: a header block naming the revision, the header's other
@@ -357,16 +383,7 @@ func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, c
 			blocks = append(blocks, sectionBlock(chunk))
 		}
 	}
-	value := proposalValue(hash, rev)
-	blocks = append(blocks, slackBlock{Type: "actions", Elements: []slackElement{
-		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Confirm"},
-			ActionID: actionProposalConfirm, Value: value, Style: "primary"},
-		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Cancel"},
-			ActionID: actionProposalCancel, Value: value, Style: "danger"},
-	}})
-	blocks = append(blocks, slackBlock{Type: "context", Elements: []slackElement{
-		{Type: "mrkdwn", Text: &slackBlockText{Type: "mrkdwn", Text: proposalContextText(channel)}},
-	}})
+	blocks = append(blocks, actionsBlock(proposalValue(hash, rev)), contextBlock(channel))
 	if len(blocks) > maxSlackBlocks {
 		return nil, errProposalTooLarge
 	}
@@ -380,6 +397,25 @@ func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, c
 		return nil, errProposalTooLarge
 	}
 	return raw, nil
+}
+
+// actionsBlock is the two controls: Confirm and Cancel, both carrying the value the message showed, so
+// a click binds the revision it read.
+func actionsBlock(value string) slackBlock {
+	return slackBlock{Type: "actions", Elements: []slackButton{
+		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Confirm"},
+			ActionID: actionProposalConfirm, Value: value, Style: "primary"},
+		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Cancel"},
+			ActionID: actionProposalCancel, Value: value, Style: "danger"},
+	}}
+}
+
+// contextBlock names the channel the proposal is in, in Slack's context shape: one mrkdwn element
+// whose text is the string itself.
+func contextBlock(channel string) slackBlock {
+	return slackBlock{Type: "context", Elements: []slackContextText{
+		{Type: "mrkdwn", Text: proposalContextText(channel)},
+	}}
 }
 
 // sectionBlock is one section block of mrkdwn.
@@ -424,7 +460,7 @@ func proposalContextText(channel string) string {
 // and inside a line only when one line is longer than a whole block. Nothing is dropped: what a
 // Confirm binds is shown whole.
 func splitSlackText(text string, limit int) []string {
-	if text == "" {
+	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	if utf8.RuneCountInString(text) <= limit {
@@ -434,10 +470,15 @@ func splitSlackText(text string, limit int) []string {
 	var cur []string
 	used := 0
 	flush := func() {
-		if len(cur) > 0 {
-			out = append(out, strings.Join(cur, "\n"))
-			cur, used = nil, 0
+		if len(cur) == 0 {
+			return
 		}
+		// A chunk of nothing but whitespace is no block: Slack refuses a section whose text is
+		// empty, and a blank line between two blocks is not a section.
+		if chunk := strings.Join(cur, "\n"); strings.TrimSpace(chunk) != "" {
+			out = append(out, chunk)
+		}
+		cur, used = nil, 0
 	}
 	for _, line := range strings.Split(text, "\n") {
 		for _, piece := range cutRunes(line, limit) {

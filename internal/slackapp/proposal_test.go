@@ -59,14 +59,55 @@ func clonePlan(t *testing.T, p intake.Plan) intake.Plan {
 	return out
 }
 
+// testBlock is a block as Slack reads it: its own text, and its elements left raw because a block's
+// elements are not one shape — a button's text is a text object, a context element's is a string.
+type testBlock struct {
+	Type     string          `json:"type"`
+	Text     *slackBlockText `json:"text"`
+	Elements json.RawMessage `json:"elements"`
+}
+
+// buttons is an actions block's elements, decoded as the buttons Slack reads.
+func (b testBlock) buttons(t *testing.T) []slackButton {
+	t.Helper()
+	var out []slackButton
+	if err := json.Unmarshal(b.Elements, &out); err != nil {
+		t.Fatalf("decode the buttons: %v", err)
+	}
+	return out
+}
+
+// context is a context block's elements, decoded as the text elements Slack reads.
+func (b testBlock) context(t *testing.T) []slackContextText {
+	t.Helper()
+	var out []slackContextText
+	if err := json.Unmarshal(b.Elements, &out); err != nil {
+		t.Fatalf("decode the context elements: %v", err)
+	}
+	return out
+}
+
 // blocksOf decodes a message's blocks, in order.
-func blocksOf(t *testing.T, raw json.RawMessage) []slackBlock {
+func blocksOf(t *testing.T, raw json.RawMessage) []testBlock {
 	t.Helper()
 	var doc struct {
-		Blocks []slackBlock `json:"blocks"`
+		Blocks []testBlock `json:"blocks"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("decode the blocks: %v", err)
+	}
+	return doc.Blocks
+}
+
+// wireBlocks is each block as Slack's own JSON parser sees it: a map, so a test can assert the shape
+// of a value rather than the Go type this package happens to declare for it.
+func wireBlocks(t *testing.T, raw json.RawMessage) []map[string]any {
+	t.Helper()
+	var doc struct {
+		Blocks []map[string]any `json:"blocks"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode the blocks as JSON: %v", err)
 	}
 	return doc.Blocks
 }
@@ -351,13 +392,13 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 
 	// Two buttons, one value: the hash and the revision the message showed.
 	actions := blocks[len(blocks)-2]
-	if actions.Type != "actions" || len(actions.Elements) != 2 {
+	if actions.Type != "actions" || len(actions.buttons(t)) != 2 {
 		t.Fatalf("the actions block is %+v", actions)
 	}
 	value := proposalValue(p.Hash, p.Rev)
 	wantStyle := map[string]string{actionProposalConfirm: "primary", actionProposalCancel: "danger"}
 	seen := map[string]bool{}
-	for _, e := range actions.Elements {
+	for _, e := range actions.buttons(t) {
 		style, ok := wantStyle[e.ActionID]
 		if !ok {
 			t.Errorf("an unexpected button %q", e.ActionID)
@@ -374,11 +415,44 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 	if !seen[actionProposalConfirm] || !seen[actionProposalCancel] {
 		t.Errorf("the buttons are %v", seen)
 	}
+	// A button's text is a text object — the opposite of the context element's string — so the two
+	// shapes are asserted where Slack reads them.
+	actionElements, ok := wireBlocks(t, raw)[len(blocks)-2]["elements"].([]any)
+	if !ok || len(actionElements) != 2 {
+		t.Fatalf("the actions block's elements are %+v", actionElements)
+	}
+	if button, ok := actionElements[0].(map[string]any); !ok {
+		t.Fatalf("the first button is %T", actionElements[0])
+	} else if text, ok := button["text"].(map[string]any); !ok || text["type"] != "plain_text" {
+		t.Errorf("the first button's text is %T (%v), want a plain_text text object", button["text"], button["text"])
+	}
 
-	// The context block names the channel: a proposal has no room yet, so it links none.
-	if ctx := blocks[len(blocks)-1]; ctx.Type != "context" || len(ctx.Elements) != 1 ||
-		ctx.Elements[0].Text == nil || ctx.Elements[0].Text.Text != "<#C03>" {
-		t.Errorf("the context block is %+v", blocks[len(blocks)-1])
+	// The context block names the channel: a proposal has no room yet, so it links none. Its element
+	// is Slack's shape — `{"type":"mrkdwn","text":"<#C03>"}`, the text a string — and not a text
+	// object nested inside it, which Slack refuses and renders as nothing.
+	last := len(blocks) - 1
+	if blocks[last].Type != "context" {
+		t.Errorf("the last block is %+v", blocks[last])
+	}
+	if ctx := blocks[last].context(t); len(ctx) != 1 || ctx[0].Type != "mrkdwn" || ctx[0].Text != "<#C03>" {
+		t.Errorf("the context elements are %+v", ctx)
+	}
+	// On the wire the text is a JSON string, not an object: Slack refuses the nested shape, and the
+	// bug it caused was invisible to a typed decode that only read the fields it expected.
+	wire := wireBlocks(t, raw)[last]
+	elements, ok := wire["elements"].([]any)
+	if !ok || len(elements) != 1 {
+		t.Fatalf("the context block's elements are %+v", wire["elements"])
+	}
+	element, ok := elements[0].(map[string]any)
+	if !ok {
+		t.Fatalf("the context element is %T", elements[0])
+	}
+	if text, ok := element["text"].(string); !ok || text != "<#C03>" {
+		t.Errorf("the context element's text is %T (%v), want the JSON string \"<#C03>\"", element["text"], element["text"])
+	}
+	if element["type"] != "mrkdwn" {
+		t.Errorf("the context element's type is %v", element["type"])
 	}
 
 	// The fallback text is the sections joined: plain headings, no markup, never parsed back.
@@ -458,6 +532,97 @@ func TestProposalSectionsCarryTheQuestion(t *testing.T) {
 	}
 	if !shown {
 		t.Error("the plan's own question was not shown")
+	}
+}
+
+// A proposal the App could not read back is never built: the hash is the plan's own and the revision
+// is inside the cap, or newProposal refuses. A message tagged with a hash that does not bind its plan
+// would be posted and then read as a foreign message by the very App that posted it.
+func TestNewProposalRefusesWhatItCannotReadBack(t *testing.T) {
+	plan := planFixture(t, "slack-one-issue")
+	hash := intake.Hash(plan)
+	moved := clonePlan(t, plan)
+	moved.Issues[0].Title += "!"
+
+	for _, tc := range []struct {
+		name string
+		hash string
+		rev  int
+		want error
+	}{
+		{"another plan's hash", intake.Hash(moved), 1, errProposalHash},
+		{"no hash", "", 1, errProposalHash},
+		{"an off-shape hash", "sha256:" + strings.Repeat("A", 64), 1, errProposalHash},
+		{"revision 0", hash, 0, errProposalRev},
+		{"a revision past the cap", hash, maxProposalRevisions + 1, errProposalRev},
+		{"a negative revision", hash, -1, errProposalRev},
+	} {
+		p, err := newProposal(plan, tc.hash, "U07JY4EQNDN", tc.rev)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+		if !reflect.DeepEqual(p, ProposalPayload{}) {
+			t.Errorf("%s: a refused proposal was still built: %+v", tc.name, p)
+		}
+	}
+
+	// The cap's own edges are proposals: the first revision and the last.
+	for _, rev := range []int{1, maxProposalRevisions} {
+		if _, err := newProposal(plan, hash, "U07JY4EQNDN", rev); err != nil {
+			t.Errorf("revision %d was refused: %v", rev, err)
+		}
+	}
+}
+
+// A chunk of nothing but whitespace is no block: Slack refuses a section whose text is empty, and a
+// blank run inside a long section is not a section of its own.
+func TestSplitSlackTextDropsWhitespaceOnlyChunks(t *testing.T) {
+	blank := strings.Repeat("\n", 2*slackSectionLimit)
+	chunks := splitSlackText(blank, slackSectionLimit)
+	if len(chunks) != 0 {
+		t.Errorf("blank text produced %d chunks: %q", len(chunks), chunks)
+	}
+	for _, chunk := range splitSlackText("start"+strings.Repeat(" ", 2*slackSectionLimit)+"end", slackSectionLimit) {
+		if strings.TrimSpace(chunk) == "" {
+			t.Errorf("a chunk is blank: %q", chunk)
+		}
+		if n := utf8.RuneCountInString(chunk); n > slackSectionLimit {
+			t.Errorf("a chunk is %d characters", n)
+		}
+	}
+
+	// A heading with no body is still a section: the heading is text.
+	if got := splitSlackText(slackSectionText("Roles", ""), slackSectionLimit); len(got) != 1 || !strings.HasPrefix(got[0], "*Roles*") {
+		t.Errorf("a heading with no body produced %q", got)
+	}
+}
+
+// The same at the message's level: a plan whose issue text is mostly whitespace yields no empty
+// section block, and what the plan did say is still there.
+func TestProposalSectionsEmitNoBlankBlock(t *testing.T) {
+	plan := planFixture(t, "slack-one-issue")
+	plan.Issues[0].Body = "## What is wrong\nfirst" + strings.Repeat(" ", 2*slackSectionLimit) + "last" +
+		"\n\n## What it should be\nit resolves\n\n## Acceptance check\nit passes"
+	p, err := newProposal(plan, intake.Hash(plan), "U07JY4EQNDN", 1)
+	if err != nil {
+		t.Fatalf("newProposal: %v", err)
+	}
+
+	blocks := blocksOf(t, mustBlocks(t, p, nil))
+	var carried strings.Builder
+	for i, b := range blocks {
+		if b.Text == nil {
+			continue
+		}
+		if strings.TrimSpace(b.Text.Text) == "" {
+			t.Errorf("block %d (%s) is blank", i, b.Type)
+		}
+		if strings.Contains(b.Text.Text, "first") {
+			carried.WriteString(b.Text.Text)
+		}
+	}
+	if !strings.Contains(carried.String(), "last") {
+		t.Error("the text after the blank run was dropped with it")
 	}
 }
 
