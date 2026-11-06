@@ -98,6 +98,182 @@ type HumanConfig struct {
 	// SlackDecide turns on POST /api/slack/decisions: the Slack App's Approve/Deny buttons decide a
 	// forge.push approval. Off unless set: the path is then the mux's 404.
 	SlackDecide *SlackDecideConfig `json:"slackDecide,omitempty"`
+	// Intake is the governed planner (v3.x conversational intake, CD5, CD17, CD18). Off unless the
+	// block turns it on: no block, no tool on any list.
+	Intake IntakeConfig `json:"intake,omitzero"`
+}
+
+// IntakeConfig is human.intake. It holds one block today; it exists so the planner's switch has a
+// name of its own beside the other v3 switches, rather than growing on the listener's config.
+type IntakeConfig struct {
+	Plan PlanConfig `json:"plan,omitzero"`
+}
+
+// The planner's one route, and the values that are not a deployment's to choose.
+const (
+	// PlanModel is the one alias the planner may name: the gateway serves `tier-frontier` to the
+	// `planner` client, and any other alias is a different, unreviewed spend (CD17).
+	PlanModel = "tier-frontier"
+	// DefaultPlanDeadline is 20 s, under /mcp's 25 s bound (mcp.go:64): a plan that outlives it is
+	// refused with planner_timeout rather than hanging the tool.
+	DefaultPlanDeadline = 20 * time.Second
+	// DefaultDailyPlans is the per-requester daily cap (spec §budget): one call per plan attempt,
+	// never a retry loop.
+	DefaultDailyPlans = 50
+)
+
+// The degraded composer's two positions (CD18): it is off unless a deployment says `composer`, and
+// every surface that renders it labels it as not the natural-language experience.
+const (
+	PlanFallbackOff      = "off"
+	PlanFallbackComposer = "composer"
+)
+
+// planRoles are the roles the factory runs. A class's template names them, and a role the factory
+// does not have would be a plan it cannot run.
+var planRoles = []string{"scoper", "tester", "implementer", "reviewer", "triager"}
+
+// PlanConfig is human.intake.plan: the switch, the route to the gateway, the cap, the repositories
+// the planner may ever name (CD5) and the class table its roles and money come from (CD17).
+type PlanConfig struct {
+	// Enabled serves intake_plan and plan_check. Off unless set: neither tool is on any list, so a
+	// deployment that has not declared the block answers `unknown tool`, as run_create does to a
+	// human token today.
+	Enabled bool `json:"enabled,omitempty"`
+	// URL is the in-cluster AI Gateway data-plane Service, straight to it: a package never
+	// hard-codes a platform endpoint, and factoryURL is configured the same way.
+	URL string `json:"url,omitempty"`
+	// Model is the pinned alias, and the only value it may hold (CD17); empty takes PlanModel.
+	Model string `json:"model,omitempty"`
+	// APIKeyFile is the mounted `planner` key, read at use so a rotation needs no restart.
+	APIKeyFile string `json:"apiKeyFile,omitempty"`
+	// Deadline bounds the one model call; empty takes DefaultPlanDeadline.
+	Deadline Duration `json:"deadline,omitzero"`
+	// DailyPlans is the cap per requester per UTC day; empty takes DefaultDailyPlans.
+	DailyPlans int `json:"dailyPlans,omitempty"`
+	// Fallback is "off" or "composer": only the second reaches the degraded deterministic composer,
+	// and it is unreachable otherwise (CD18).
+	Fallback string `json:"fallback,omitempty"`
+	// Repositories is the allowlist the candidate set is drawn from (CD5): the planner never plans
+	// for a repository this list does not carry. It is deliberately not human.mcp.sessionStart,
+	// which means "the form may offer to start the factory here".
+	Repositories []string `json:"repositories,omitempty"`
+	// Classes is the class table: the roles a plan's issues carry and the money they are charged
+	// against both come from here, never from the model (CD17).
+	Classes map[string]PlanClass `json:"classes,omitempty"`
+}
+
+// PlanClass is one class's template: the roles the factory runs for it, the ceiling the class's
+// `taskUSD` sets, and the source string the plan displays as where that ceiling came from.
+type PlanClass struct {
+	Roles      []string `json:"roles"`
+	CeilingUSD float64  `json:"ceilingUSD"`
+	Source     string   `json:"source"`
+}
+
+// IntakePlan is the planner's config with its defaults applied: `tier-frontier`, 20 s, 50 plans a day
+// and the degraded composer off. A caller reads this rather than re-spelling a default, so an absent
+// block and a block that leaves the four out serve the same values.
+func (c Config) IntakePlan() PlanConfig { return c.Human.Intake.Plan.withDefaults() }
+
+// withDefaults fills what a file may leave out. Only the absent value is defaulted: an explicit
+// `deadline: -5s` stays negative and is refused, so no typo hides behind a default.
+func (p PlanConfig) withDefaults() PlanConfig {
+	if p.Model == "" {
+		p.Model = PlanModel
+	}
+	if p.Deadline.Duration == 0 {
+		p.Deadline.Duration = DefaultPlanDeadline
+	}
+	if p.DailyPlans == 0 {
+		p.DailyPlans = DefaultDailyPlans
+	}
+	if p.Fallback == "" {
+		p.Fallback = PlanFallbackOff
+	}
+	return p
+}
+
+// validate reports every problem in human.intake.plan at once, reading the defaulted values: a file
+// that leaves out the deadline, the cap or the fallback is validated as the broker would serve it.
+//
+// A switch that is off is still checked for shape: ai-native-ref's config copies carry the block
+// before any deployment flips it, so a route with no scheme or an alias other than `tier-frontier`
+// fails the rollout that wrote it, not the first plan it serves.
+func (i IntakeConfig) validate() []error {
+	p := i.Plan.withDefaults()
+	var errs []error
+	if p.Enabled {
+		if p.URL == "" {
+			errs = append(errs, errors.New("human.intake.plan.url: is required when the planner is enabled: the route is named, never guessed"))
+		}
+		if p.APIKeyFile == "" {
+			errs = append(errs, errors.New("human.intake.plan.apiKeyFile: is required when the planner is enabled: a planner with no key would 401 every plan"))
+		}
+	}
+	if p.URL != "" {
+		if u, err := url.Parse(p.URL); err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			errs = append(errs, fmt.Errorf("human.intake.plan.url: %q must be an absolute http(s)://host[:port]/ URL with no userinfo", p.URL))
+		}
+	}
+	if p.Model != PlanModel {
+		errs = append(errs, fmt.Errorf("human.intake.plan.model: %q is not %s, the one alias the gateway serves this client (CD17)", p.Model, PlanModel))
+	}
+	if p.Deadline.Duration <= 0 || p.Deadline.Duration > DefaultPlanDeadline {
+		errs = append(errs, fmt.Errorf("human.intake.plan.deadline: %s must be above 0 and at most %s, under /mcp's 25 s bound", p.Deadline.Duration, DefaultPlanDeadline))
+	}
+	if p.DailyPlans < 1 {
+		errs = append(errs, fmt.Errorf("human.intake.plan.dailyPlans: %d must be at least 1 per requester", p.DailyPlans))
+	}
+	if p.Fallback != PlanFallbackOff && p.Fallback != PlanFallbackComposer {
+		errs = append(errs, fmt.Errorf("human.intake.plan.fallback: %q is not %q or %q (CD18)", p.Fallback, PlanFallbackOff, PlanFallbackComposer))
+	}
+	seen := map[string]bool{}
+	for n, r := range p.Repositories {
+		key := strings.ToLower(r)
+		switch {
+		case !repositoryRE.MatchString(r):
+			errs = append(errs, fmt.Errorf("human.intake.plan.repositories[%d]: %q is not owner/name", n, r))
+		case seen[key]:
+			errs = append(errs, fmt.Errorf("human.intake.plan.repositories: %q is declared twice", r))
+		}
+		seen[key] = true
+	}
+	// In name order, so two runs of the same file report the same lines in the same order.
+	for _, name := range slices.Sorted(maps.Keys(p.Classes)) {
+		errs = append(errs, p.Classes[name].validate(name)...)
+	}
+	return errs
+}
+
+// validate is one class's row: a template the factory can run, and money that says where it came
+// from. Roles and budget are the config's alone (CD17) — a reply naming either changes neither.
+func (c PlanClass) validate(name string) []error {
+	at := fmt.Sprintf("human.intake.plan.classes[%q]", name)
+	var errs []error
+	if name == "" {
+		errs = append(errs, errors.New("human.intake.plan.classes: a class needs a name: a reply names it and the plan hashes it"))
+	}
+	if len(c.Roles) == 0 {
+		errs = append(errs, fmt.Errorf("%s: roles is empty: a plan's roles are its class's template (CD17)", at))
+	}
+	seen := map[string]bool{}
+	for _, r := range c.Roles {
+		switch {
+		case !slices.Contains(planRoles, r):
+			errs = append(errs, fmt.Errorf("%s: role %q is not one of %s: the factory runs no such role", at, r, strings.Join(planRoles, ", ")))
+		case seen[r]:
+			errs = append(errs, fmt.Errorf("%s: role %q is declared twice", at, r))
+		}
+		seen[r] = true
+	}
+	if c.CeilingUSD <= 0 {
+		errs = append(errs, fmt.Errorf("%s: ceilingUSD %g must be above 0: a plan with no ceiling has no budget", at, c.CeilingUSD))
+	}
+	if c.Source == "" {
+		errs = append(errs, fmt.Errorf("%s: source is required: the plan displays where its ceiling came from", at))
+	}
+	return errs
 }
 
 // EffectiveMode is the mode the broker serves: an empty mode is the OIDC deployment every existing
@@ -501,10 +677,15 @@ func (c *Config) runIssuerMatchesKind() []error {
 }
 
 func (h HumanConfig) validate(system []string) []error {
+	// human.intake.plan is checked in every mode, local included: the class table and the route are
+	// a config file's, and a typo in one must fail the rollout, not the first plan.
+	errs := h.Intake.validate()
 	if h.EffectiveMode() == HumanModeLocal {
+		if h.Intake.Plan.Enabled {
+			errs = append(errs, errors.New("human.intake.plan.enabled: mode local serves no /mcp, and the planner is a tool on it"))
+		}
 		// One field per line, each named: a typo in a local block fails the rollout with the field
 		// that does not belong there, not a sentence listing four.
-		var errs []error
 		for _, f := range []struct {
 			name    string
 			refused bool
@@ -540,7 +721,7 @@ func (h HumanConfig) validate(system []string) []error {
 	if h.EffectiveMode() != HumanModeOIDC {
 		return []error{fmt.Errorf("human: mode %q is not oidc or local", h.Mode)}
 	}
-	errs := issuer("human", IssuerConfig{Issuer: h.Issuer, JWKSURL: h.JWKSURL}, false)
+	errs = append(errs, issuer("human", IssuerConfig{Issuer: h.Issuer, JWKSURL: h.JWKSURL}, false)...)
 	if h.ClientIDFile == "" {
 		errs = append(errs, errors.New("human.clientIDFile: is required"))
 	}
