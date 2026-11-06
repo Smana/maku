@@ -732,6 +732,40 @@ func TestMakuDoctorReadsTheRepositorySkillDirs(t *testing.T) {
 	}
 }
 
+// Fast-follow 4: `maku doctor --client <name>` reports what that client declared at initialize, and
+// says a client maku never met was not measured rather than describing it (the flag's only test).
+func TestMakuDoctorReportsTheClientFlag(t *testing.T) {
+	b := newLocalBroker(t)
+	r, _ := configuredLocal(t, b)
+	if err := (maku.CapsStore{Path: maku.CapsPath(r.Dir)}).Put(maku.Caps{Client: "claude-code",
+		Version: "2.0.1", Protocol: "2025-06-18", Forms: true, Prompts: true}); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	r.Out = &out
+	if err := r.Run(t.Context(), []string{"doctor", "--client", "claude-code"}); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	if !strings.Contains(out.String(), "factory capabilities (claude-code 2.0.1, MCP 2025-06-18)") ||
+		!strings.Contains(out.String(), "forms yes") {
+		t.Fatalf("doctor:\n%s", &out)
+	}
+
+	// A client the record does not hold: doctor says so and describes nothing.
+	out.Reset()
+	if err := r.Run(t.Context(), []string{"doctor", "--client", "codex"}); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	if !strings.Contains(out.String(), "factory capabilities (codex)") || !strings.Contains(out.String(), "not measured yet") {
+		t.Fatalf("doctor:\n%s", &out)
+	}
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.Contains(l, "factory capabilities") && strings.Contains(l, "forms") {
+			t.Errorf("a client maku never met is described: %s", l)
+		}
+	}
+}
+
 func TestRoomsBase(t *testing.T) {
 	for _, tc := range []struct{ name, url, room, want string }{
 		{"the broker's public URL", "https://rooms.example/r/26zfnuxm", "26zfnuxm", "https://rooms.example"},

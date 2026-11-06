@@ -620,3 +620,211 @@ func TestDoctorOpenCodeExecutionTimeout(t *testing.T) {
 		})
 	}
 }
+
+// Fast-follow 4: doctor reports what the client declared, and never "unconfirmed" about one it has seen.
+func TestDoctorReportsTheMeasuredClient(t *testing.T) {
+	dir := t.TempDir()
+	store := CapsStore{Path: CapsPath(dir)}
+	if err := store.Put(Caps{Client: "claude-code", Version: "2.0.1", Protocol: "2025-06-18",
+		Forms: true, Roots: true, Prompts: true, At: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)}); err != nil {
+		t.Fatal(err)
+	}
+	r := newDoctorRig(t)
+	r.d.Caps, r.d.Client = store, "claude-code"
+	var out strings.Builder
+	if err := r.d.Run(t.Context(), &out); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	if strings.Contains(out.String(), "unconfirmed") || !strings.Contains(out.String(), "forms yes") {
+		t.Fatalf("%s", &out)
+	}
+}
+
+// A client never seen says so once, and says what to do.
+func TestDoctorSaysWhenAClientIsNotMeasured(t *testing.T) {
+	dir := t.TempDir()
+	r := newDoctorRig(t)
+	r.d.Caps, r.d.Client = CapsStore{Path: CapsPath(dir)}, "codex"
+	var out strings.Builder
+	if err := r.d.Run(t.Context(), &out); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	if !strings.Contains(out.String(), "not measured yet") {
+		t.Fatalf("%s", &out)
+	}
+	for _, l := range capabilityLines(&out) {
+		if strings.Contains(l, "forms") || strings.Contains(l, "MCP") {
+			t.Errorf("a client maku never met is described: %s", l)
+		}
+	}
+}
+
+// seedCaps writes the record directly: Put stamps time.Now(), and the day a client was measured is
+// half the line doctor prints.
+func seedCaps(t *testing.T, dir string, cs ...Caps) {
+	t.Helper()
+	f := capsFile{Clients: map[string]Caps{}}
+	for _, c := range cs {
+		f.Clients[c.Client] = c
+	}
+	if err := SaveJSON(CapsPath(dir), f); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// capabilityLines are the lines that report one client's capabilities, whichever verdict they carry;
+// the bound's own "N more measured" line names no client and is not one.
+func capabilityLines(out *strings.Builder) []string {
+	var lines []string
+	for _, l := range strings.Split(out.String(), "\n") {
+		if strings.Contains(l, "factory capabilities (") {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// The whole line, verbatim: the client, the version it gave, the protocol revision it asked for,
+// the four capabilities it declared, and the day it was measured (fast-follow 4).
+func TestDoctorCapabilitiesLine(t *testing.T) {
+	for name, tc := range map[string]struct {
+		caps Caps
+		want string
+	}{
+		"everything declared": {Caps{Client: "claude-code", Version: "2.0.1", Protocol: "2025-06-18",
+			Forms: true, Roots: true, Prompts: true, At: time.Date(2026, 11, 4, 9, 30, 0, 0, time.UTC)},
+			"ok   factory capabilities (claude-code 2.0.1, MCP 2025-06-18): forms yes · url mode no · roots yes · prompts yes — measured 2026-11-04"},
+		"nothing declared": {Caps{Client: "gemini", At: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)},
+			"ok   factory capabilities (gemini): forms no · url mode no · roots no · prompts no — measured 2026-11-04"},
+		"no day recorded": {Caps{Client: "codex", Version: "0.9.0", Forms: true},
+			"ok   factory capabilities (codex 0.9.0): forms yes · url mode no · roots no · prompts no"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			seedCaps(t, dir, tc.caps)
+			r := newDoctorRig(t)
+			r.d.Caps, r.d.Client = CapsStore{Path: CapsPath(dir)}, tc.caps.Client
+			var out strings.Builder
+			if err := r.d.Run(t.Context(), &out); err != nil {
+				t.Fatalf("%v\n%s", err, &out)
+			}
+			got := capabilityLines(&out)
+			if len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("got %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Names are bounded and made inert like every other declared field: a client name carrying an escape
+// must not drive the terminal, and must still match the entry written under its bounded name.
+func TestDoctorCapabilitiesBoundTheClientName(t *testing.T) {
+	dir := t.TempDir()
+	seedCaps(t, dir, Caps{Client: "claude code", Version: "2.0.1", Forms: true})
+	r := newDoctorRig(t)
+	r.d.Caps, r.d.Client = CapsStore{Path: CapsPath(dir)}, "claude\tcode\n"
+	var out strings.Builder
+	if err := r.d.Run(t.Context(), &out); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	if !strings.Contains(out.String(), "factory capabilities (claude code 2.0.1): forms yes") {
+		t.Fatalf("%s", &out)
+	}
+}
+
+// Without --client, one line per measured client, the one measured last first: the reference page's
+// table is filled from this output, and a client measured today must not be pushed out by an old one.
+func TestDoctorNamesEveryMeasuredClientWithoutAClient(t *testing.T) {
+	dir := t.TempDir()
+	seedCaps(t, dir,
+		Caps{Client: "gemini", Forms: true, At: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)},
+		Caps{Client: "claude-code", Prompts: true, At: time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)},
+		Caps{Client: "codex", Roots: true, At: time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)})
+	r := newDoctorRig(t)
+	r.d.Caps = CapsStore{Path: CapsPath(dir)}
+	var out strings.Builder
+	if err := r.d.Run(t.Context(), &out); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	got := capabilityLines(&out)
+	if len(got) != 3 {
+		t.Fatalf("got %d lines:\n%s", len(got), &out)
+	}
+	for i, want := range []string{"claude-code", "codex", "gemini"} {
+		if !strings.Contains(got[i], "("+want) {
+			t.Errorf("line %d is %q, want %s first", i, got[i], want)
+		}
+	}
+}
+
+// The list is bounded to five, and says how many it left out rather than pretending there are five.
+func TestDoctorBoundsTheMeasuredClients(t *testing.T) {
+	dir := t.TempDir()
+	var cs []Caps
+	for i := range 7 {
+		cs = append(cs, Caps{Client: fmt.Sprintf("client-%d", i), Forms: true,
+			At: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Hour)})
+	}
+	seedCaps(t, dir, cs...)
+	r := newDoctorRig(t)
+	r.d.Caps = CapsStore{Path: CapsPath(dir)}
+	var out strings.Builder
+	if err := r.d.Run(t.Context(), &out); err != nil {
+		t.Fatalf("%v\n%s", err, &out)
+	}
+	got := capabilityLines(&out)
+	if len(got) != maxCapsReport {
+		t.Fatalf("got %d lines, want %d:\n%s", len(got), maxCapsReport, &out)
+	}
+	for i, l := range got {
+		// Most recently measured first: client-6 was measured last, so it leads.
+		if want := fmt.Sprintf("(client-%d)", 6-i); !strings.Contains(l, want) {
+			t.Errorf("line %d is %q, want %s", i, l, want)
+		}
+	}
+	if !strings.Contains(out.String(), "skip factory capabilities: 2 more measured") {
+		t.Errorf("the two left out are not named:\n%s", &out)
+	}
+}
+
+// A record nobody has written yet, and one that cannot be read, are both "not measured": doctor
+// never describes a client it has no measurement for.
+func TestDoctorSaysNoClientWasMeasured(t *testing.T) {
+	for name, write := range map[string]func(t *testing.T, dir string){
+		"no file": func(*testing.T, string) {},
+		"unreadable record": func(t *testing.T, dir string) {
+			if err := os.WriteFile(CapsPath(dir), []byte("{not json"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, dir)
+			r := newDoctorRig(t)
+			r.d.Caps = CapsStore{Path: CapsPath(dir)}
+			var out strings.Builder
+			if err := r.d.Run(t.Context(), &out); err != nil {
+				t.Fatalf("%v\n%s", err, &out)
+			}
+			if len(capabilityLines(&out)) != 0 {
+				t.Fatalf("a client nobody measured is described:\n%s", &out)
+			}
+			if !strings.Contains(out.String(), "skip factory capabilities: not measured yet") {
+				t.Fatalf("\n%s", &out)
+			}
+		})
+	}
+}
+
+// Defense in depth: the record bounds what it keeps, but capsHead is the last place a client-chosen
+// string becomes a terminal line, so it makes each part one inert line itself.
+func TestCapsHeadMakesItsValuesOneLine(t *testing.T) {
+	got := capsHead(Caps{Client: "claude\tcode", Version: "2.0\n1", Protocol: "2025\x1b-06-18"})
+	if want := "factory capabilities (claude code 2.0 1, MCP 2025-06-18)"; got != want {
+		t.Fatalf("%q, want %q", got, want)
+	}
+	if got := capsHead(Caps{Client: "gemini"}); got != "factory capabilities (gemini)" {
+		t.Fatalf("%q", got)
+	}
+}

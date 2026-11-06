@@ -164,6 +164,10 @@ type Doctor struct {
 	ServiceStart    func() (time.Time, bool)
 	// LegacyMCP are the agents' factory entries that still run roomctl (LegacyEntries).
 	LegacyMCP []LegacyEntry
+	// Caps is what each coding client declared at initialize; Client names the one to report, and
+	// empty reports every measured client (fast-follow 4).
+	Caps   CapsStore
+	Client string
 }
 
 // Run prints one line per check and returns an error if any failed.
@@ -182,7 +186,8 @@ func (d Doctor) Run(ctx context.Context, out io.Writer) error {
 	u, err := url.Parse(d.Config.URL)
 	if err != nil || u.Hostname() == "" {
 		report(false, "dns", fmt.Sprintf("%q is not a URL: run maku configure --url https://rooms.<domain>", d.Config.URL))
-		d.skill(report, skip) // needs no network
+		d.skill(report, skip) // neither needs the network
+		d.caps(report, skip)
 		return errors.New("doctor: the configuration is unusable")
 	}
 	lookup := d.Lookup
@@ -233,6 +238,7 @@ func (d Doctor) Run(ctx context.Context, out io.Writer) error {
 		d.github(ctx, tok, report, warn)
 	}
 	d.skill(report, skip)
+	d.caps(report, skip)
 	d.opencode(report, warn)
 	d.opencodeCodeMode(warn)
 	for _, e := range d.LegacyMCP {
@@ -340,6 +346,90 @@ func (d Doctor) skill(report func(bool, string, string), skip func(string, strin
 	if !found {
 		skip("skill", "no factory-handoff skill installed: run maku setup <client>")
 	}
+}
+
+// maxCapsReport is how many measured clients one run names without --client. The record holds
+// maxClients entries, and a diagnostic line per client is a report, not a listing.
+const maxCapsReport = 5
+
+// notMeasured is what maku says about a client no initialize ever named: the one honest answer, and
+// what to do about it.
+const notMeasured = "not measured yet — run a session and ask again"
+
+// caps reports what each coding client declared at initialize, and says nothing about a client maku
+// has not met (fast-follow 4): a named client with no entry, an unreadable record and an empty one
+// all read "not measured yet", and no capability is ever filled in from the relay's own behaviour.
+// The record is a file on disk, so the line is printed even when the broker cannot be reached.
+func (d Doctor) caps(report func(bool, string, string), skip func(string, string)) {
+	if d.Client != "" {
+		c, ok := d.Caps.Get(d.Client)
+		if !ok {
+			skip("factory capabilities ("+capsField(d.Client)+")", notMeasured)
+			return
+		}
+		report(true, capsHead(c), capsBody(c))
+		return
+	}
+	seen := make([]Caps, 0, maxClients)
+	for _, c := range d.Caps.load().Clients {
+		seen = append(seen, c)
+	}
+	if len(seen) == 0 {
+		skip("factory capabilities", notMeasured)
+		return
+	}
+	// The client measured last comes first, so the session the developer just ran is never the one
+	// the bound pushes out; the name breaks a tie, so two runs print the same order.
+	slices.SortStableFunc(seen, func(a, b Caps) int {
+		if c := b.At.Compare(a.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Client, b.Client)
+	})
+	shown := seen[:min(len(seen), maxCapsReport)]
+	for _, c := range shown {
+		report(true, capsHead(c), capsBody(c))
+	}
+	if rest := len(seen) - len(shown); rest > 0 {
+		skip("factory capabilities", fmt.Sprintf("%d more measured: maku doctor --client <name> names one", rest))
+	}
+}
+
+// capsHead is the line's subject: the client and the parts of itself it declared — its version and
+// the protocol revision it asked for. A client that declared neither reads as its name alone: maku
+// prints nothing where the client said nothing. Each part is a string the client chose, so each is
+// made one inert line here, the last place it becomes terminal output, even though the record
+// already bounds and flattens what it keeps.
+func capsHead(c Caps) string {
+	name, version, protocol := OneLine(c.Client), OneLine(c.Version), OneLine(c.Protocol)
+	switch {
+	case version != "" && protocol != "":
+		name += " " + version + ", MCP " + protocol
+	case version != "":
+		name += " " + version
+	case protocol != "":
+		name += ", MCP " + protocol
+	}
+	return "factory capabilities (" + name + ")"
+}
+
+// capsBody is the four capabilities the relay acts on, in one fixed order, then the day the client
+// was measured. A capability the client did not declare reads "no", which is the relay's own
+// behaviour rather than a gap: with no forms, issue_file refuses and hands the draft back; with no
+// roots, a run works in the process's directory. A record with no day says nothing about when.
+func capsBody(c Caps) string {
+	yes := func(b bool) string {
+		if b {
+			return "yes"
+		}
+		return "no"
+	}
+	line := "forms " + yes(c.Forms) + " · url mode " + yes(c.URLs) + " · roots " + yes(c.Roots) +
+		" · prompts " + yes(c.Prompts)
+	if !c.At.IsZero() {
+		line += " — measured " + c.At.UTC().Format(time.DateOnly)
+	}
+	return line
 }
 
 // github asks the room list, whose X-Rooms-Access says whether the caller's GitHub link works. A

@@ -341,6 +341,22 @@ func locals(t *testing.T, b *mcpBroker, opts ...func(*Relay)) (session, *Relay) 
 	return relayTo(t, b, tok, append([]func(*Relay){func(r *Relay) { rel = r }}, opts...)...), rel
 }
 
+// A client that declared itself is measured even when the broker refuses its initialize: the record
+// is about the client, and a broker that says no has not made the client unknown.
+func TestTheInitializeIsRecordedWhenTheBrokerRefuses(t *testing.T) {
+	b := newMCPBroker(t)
+	b.status = http.StatusInternalServerError
+	dir := t.TempDir()
+	s := relayTo(t, b, tok, func(r *Relay) { r.Dir = dir })
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{"roots": map[string]any{}}, "clientInfo": map[string]any{"name": "codex", "version": "0.9.0"}}})
+	s.next(t)
+	got, ok := (CapsStore{Path: CapsPath(dir)}).Get("codex")
+	if !ok || got.Version != "0.9.0" || got.Protocol != "2025-06-18" || !got.Roots {
+		t.Fatalf("%+v %v", got, ok)
+	}
+}
+
 // The client's elicitation modes (R12): the empty object is form mode, as the spec says.
 func TestRelayReadsElicitationModes(t *testing.T) {
 	for name, tc := range map[string]struct {
