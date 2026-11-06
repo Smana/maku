@@ -5,8 +5,8 @@
 # repository from the template, the umbrella chart with profile=demo, and the room page.
 # Resumes where it stopped (.demo/state), prints the time per step, never prints a key.
 #
-# Environment. From .env, then the answers of an earlier run, else asked: MODEL_BASE_URL, MODEL_NAME,
-# MODEL_API_KEY, DEMO_REPO, DEMO_LOGIN, DEMO_SLUG. Every other variable is read from the environment only:
+# Environment, then .env, for every variable below; the six asked ones (MODEL_BASE_URL, MODEL_NAME,
+# MODEL_API_KEY, DEMO_REPO, DEMO_LOGIN, DEMO_SLUG) then fall back to the answers of an earlier run, else ask:
 #   MODEL_BASE_URL MODEL_NAME MODEL_API_KEY   an OpenAI-compatible model
 #   DEMO_REPO=owner/name                      your repository (public); created from Smana/maku-demo
 #   GITHUB_APP_ID GITHUB_APP_KEY_FILE         an existing App (with DEMO_SLUG): skips the browser
@@ -25,6 +25,9 @@ ROOT="$PWD"
 . hack/quickstart/versions.env
 # shellcheck source=hack/demo/lib.sh
 . hack/demo/lib.sh
+demo_env_load "$ROOT/.env" MODEL_BASE_URL MODEL_NAME MODEL_API_KEY DEMO_REPO DEMO_LOGIN DEMO_SLUG \
+  GITHUB_APP_ID GITHUB_APP_KEY_FILE CLUSTER MAKU_VERSION DEMO_LIVE DEMO_NO_GH DEMO_CONFIRM_CONTEXT \
+  K3S_IMAGE KIND_NODE_IMAGE
 
 DEMO_DIR="$ROOT/.demo"
 NS=maku

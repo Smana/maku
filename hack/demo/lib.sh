@@ -12,6 +12,17 @@ demo_state_mark() {
   demo_state_done "$1" "$2" || printf '%s\n' "$2" >>"$1/state"
 }
 
+# demo_env_load FILE VAR...: export each VAR the environment leaves unset from FILE (.env), so every
+# variable task demo documents can live there; the environment still wins.
+demo_env_load() {
+  local file=$1 var v; shift
+  for var in "$@"; do
+    [[ -z ${!var:-} ]] || continue
+    v=$(demo_env_get "$var" "$file")
+    [[ -z $v ]] || export "$var=$v"
+  done
+}
+
 # demo_env_get KEY FILE: the value of KEY in a .env file (KEY=value, optional `export `, one pair of
 # surrounding quotes dropped, # lines ignored). Prints nothing and succeeds when absent.
 demo_env_get() {

@@ -28,6 +28,19 @@ EMPTY=
 MODEL_NAME_X=other
 ENV
 eq "$(demo_env_get MODEL_NAME "$tmp/.env")" glm-5 "plain value (a longer name does not match)"
+# demo_env_load: .env fills what the environment leaves unset, never overrides it
+printf '%s\n' 'LOAD_A=from-file' 'export LOAD_B="quoted"' 'LOAD_C=from-file' 'LOAD_E=' >"$tmp/load.env"
+(
+  LOAD_C=from-env
+  demo_env_load "$tmp/load.env" LOAD_A LOAD_B LOAD_C LOAD_E LOAD_ABSENT
+  eq "${LOAD_A-}" from-file "demo_env_load sets an unset variable"
+  eq "${LOAD_B-}" quoted "demo_env_load reads an export line"
+  eq "$LOAD_C" from-env "demo_env_load keeps the environment's value"
+  eq "${LOAD_E-unset}" unset "demo_env_load leaves an empty value unset"
+  eq "${LOAD_ABSENT-unset}" unset "demo_env_load leaves an absent variable unset"
+  eq "$(bash -c 'echo "$LOAD_A"')" from-file "demo_env_load exports"
+  exit $fail
+) || fail=1
 eq "$(demo_env_get MODEL_BASE_URL "$tmp/.env")" https://api.example.com/v1 "export and double quotes"
 eq "$(demo_env_get MODEL_API_KEY "$tmp/.env")" 'sk-a=b c' "single quotes, = and a space kept"
 eq "$(demo_env_get EMPTY "$tmp/.env")" '' "an empty value"
