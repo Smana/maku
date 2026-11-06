@@ -77,7 +77,9 @@ func TestRoomRowStatusIsTheStatusLine(t *testing.T) {
 		{shared: "queued", task: &v1alpha1.TaskStatus{Phase: "Queued"}},
 		{shared: "one approval for the viewer", task: &v1alpha1.TaskStatus{Phase: "AwaitingHuman"}, pending: 1, approvals: live},
 		{shared: "approvals only others decide", task: &v1alpha1.TaskStatus{Phase: "Implementing"}, pending: 2, approvals: live, watcher: true},
-		{shared: "a pr to review and merge", task: &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 42}},
+		{shared: "a pr to review and merge", task: &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 42},
+			evs: []envelope.Event{{V: 1, Seq: 2, RoomID: roomID, Type: envelope.StateChanged, TS: now,
+				Payload: envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman", PR: &envelope.PRFact{Number: 42}})}}},
 		{shared: "escalated with a failure reason still waits", task: &v1alpha1.TaskStatus{Phase: "Escalated"}, evs: facts("Escalated", "budget-task")},
 		{shared: "escalated for a maintainer", task: &v1alpha1.TaskStatus{Phase: "Escalated"}, evs: facts("Escalated", "contract_disputed")},
 		{shared: "idle room", room: "Idle"},
@@ -92,7 +94,9 @@ func TestRoomRowStatusIsTheStatusLine(t *testing.T) {
 		{shared: "an unknown state says nothing", room: "Whatever"},
 	} {
 		t.Run(tc.shared, func(t *testing.T) {
-			e := setup(t, func(s *Server, _ *fanout.Hub, v *hubView) {
+			w := world(nil) // boss may write Smana/a: the pull request's merge is theirs (CD26)
+			w.set(func() { w.writes = map[string][]string{"Smana/a": {"boss"}} })
+			e := setup(t, w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
 				a := repoRoom(roomID, "Smana/a")
 				if tc.room != "" {
 					a.Status.Phase = tc.room
@@ -201,7 +205,8 @@ func TestRoomRowStatusIsTheSummarysStatus(t *testing.T) {
 	}
 }
 
-// The failed rows' reason codes come from one store read for the whole list, never one per row.
+// The failed rows' reason codes come from one store read for the whole list, never one per row; the
+// rows' facts are one read each, which needs/v1 derives every row's needs from (CD21).
 func TestRoomRowsReadFailureCodesInOneCall(t *testing.T) {
 	var log *memLog
 	e := setup(t, func(s *Server, _ *fanout.Hub, v *hubView) {
@@ -224,7 +229,7 @@ func TestRoomRowsReadFailureCodesInOneCall(t *testing.T) {
 	if words[roomID] != "Failed — CI stayed red" || words[roomB] != "Failed — the merge was reverted" {
 		t.Fatalf("statuses: %v", words)
 	}
-	if log.reasonReads != 1 || log.factsReads != 0 {
-		t.Fatalf("%d batch reads and %d per-room reads, want one batch and none per room", log.reasonReads, log.factsReads)
+	if log.reasonReads != 1 || log.factsReads != len(rows) {
+		t.Fatalf("%d batch reads and %d per-room facts reads, want one batch and one per room", log.reasonReads, log.factsReads)
 	}
 }

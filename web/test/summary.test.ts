@@ -121,7 +121,7 @@ describe("needsItems", () => {
   // linked to the issue, each backticked command set as code.
   it("renders an answer need with its instruction and the issue link", () => {
     const s = base();
-    s.needsYou = [{ kind: "answer", id: "3", url: "https://github.com/o/r/issues/3", author: "alice",
+    s.needsYou = [{ kind: "question", id: "3", url: "https://github.com/o/r/issues/3", author: "alice",
       what: "@alice answers the scoper's question by editing issue #3, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption" }];
     const items = needsItems(s);
     expect(items).toHaveLength(1);
@@ -165,7 +165,7 @@ describe("needsItems", () => {
   it("links only https URLs", () => {
     const s = base();
     s.needsYou = [{ kind: "merge", id: "7", what: "merge PR #7", url: "javascript:alert(1)" },
-      { kind: "answer", id: "3", what: "answer on issue #3", url: "http://github.com/o/r/issues/3" }];
+      { kind: "question", id: "3", what: "answer on issue #3", url: "http://github.com/o/r/issues/3" }];
     const r = needs(s);
     const hrefs = [...r.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(hrefs.some((h) => h?.startsWith("javascript:") || h?.startsWith("http:"))).toBe(false);

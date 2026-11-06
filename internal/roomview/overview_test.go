@@ -290,8 +290,8 @@ func TestOverviewTerminalWidth(t *testing.T) {
 // deadline that is not today's (spec, Time rule).
 func TestOverviewNeedPhrasesAndDatedDeadline(t *testing.T) {
 	rows := []Row{
-		{ID: "merge001", State: summary.StateWaiting, Need: &summary.Need{Kind: "merge", ID: "2239", What: summary.MergeHow("Smana/a", 2239)}, LastEventAt: now},
-		{ID: "answer01", State: summary.StateWaiting, Need: &summary.Need{Kind: "answer", ID: "42", What: "@alice answers the scoper's question by editing issue #42, then a maintainer re-applies `factory/ready`"}, LastEventAt: now},
+		{ID: "merge001", State: summary.StateWaiting, Need: &summary.Need{Kind: "merge", ID: "2239", What: summary.MergeHow("Smana/a", 2239, false)}, LastEventAt: now},
+		{ID: "answer01", State: summary.StateWaiting, Need: &summary.Need{Kind: summary.NeedQuestion, ID: "42", What: "@alice answers the scoper's question by editing issue #42, then a maintainer re-applies `factory/ready`"}, LastEventAt: now},
 		{ID: "hold0001", State: summary.StateQueued, Need: &summary.Need{Kind: "hold", ID: "waiting_human_driver", What: "the factory's task waits while a person drives this room: hand the driver back to start its next run"}, LastEventAt: now},
 		{ID: "appr0001", State: summary.StateWaiting, Need: &summary.Need{Kind: "approval", What: "make test", Deadline: now.Add(10 * time.Minute)}, LastEventAt: now},
 		{ID: "appr0002", State: summary.StateWaiting, Need: &summary.Need{Kind: "approval", What: "make lint", Deadline: now.Add(24 * time.Hour)}, LastEventAt: now},

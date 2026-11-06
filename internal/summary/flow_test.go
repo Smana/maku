@@ -402,7 +402,7 @@ func TestFlowView(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := View(Fold(tt.evs), "r", "https://rooms.example/r/r", policy.Subject{Kind: envelope.ActorHuman}, 0, fat(100))
+			s := View(Fold(tt.evs), "r", "https://rooms.example/r/r", policy.Subject{Kind: envelope.ActorHuman}, GitHubStanding{}, 0, fat(100))
 			tt.check(t, s.Flow)
 		})
 	}
@@ -416,7 +416,7 @@ func TestARoomSealedMidRunHasNoGhosts(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			evs := append(fruns(envelope.TaskFacts{Phase: "Implementing", Plan: plan}, frun("a", "implementer", "implementer", 0)), seal)
-			s := View(Fold(evs), "r", "u", policy.Subject{Kind: envelope.ActorHuman}, 0, fat(100))
+			s := View(Fold(evs), "r", "u", policy.Subject{Kind: envelope.ActorHuman}, GitHubStanding{}, 0, fat(100))
 			if s.Flow == nil || len(s.Flow.Nodes) != 1 || len(s.Flow.Ghosts) != 0 {
 				t.Fatalf("flow = %+v", s.Flow)
 			}
@@ -427,7 +427,7 @@ func TestARoomSealedMidRunHasNoGhosts(t *testing.T) {
 func TestASealedRoomKeepsItsFlow(t *testing.T) {
 	evs := append(fruns(envelope.TaskFacts{Phase: "Done"}, frun("a", "implementer", "implementer", 0)),
 		fev(90, "", envelope.StateChanged, fSys, envelope.StatePayload("room_phase", map[string]any{"phase": "Closed"})))
-	s := View(Fold(evs), "r", "u", policy.Subject{Kind: envelope.ActorHuman}, 0, fat(100))
+	s := View(Fold(evs), "r", "u", policy.Subject{Kind: envelope.ActorHuman}, GitHubStanding{}, 0, fat(100))
 	if s.Flow == nil || len(s.Flow.Nodes) != 1 {
 		t.Fatalf("flow = %+v", s.Flow)
 	}

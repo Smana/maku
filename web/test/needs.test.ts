@@ -55,7 +55,7 @@ describe("the needs-you panel", () => {
   // U-2: the answer a bounced task waits for is listed, linked to the issue, and counted in the pill.
   it("lists an answer need from the summary and counts it", () => {
     const { root, needs } = mount();
-    needs.setSummary(sum([{ kind: "answer", id: "3", what: "@alice answers the scoper's question by editing issue #3",
+    needs.setSummary(sum([{ kind: "question", id: "3", what: "@alice answers the scoper's question by editing issue #3",
       url: "https://github.com/o/r/issues/3", author: "alice" }]));
     expect([...root.querySelectorAll("li")].map((l) => l.textContent))
       .toEqual(["Answer: @alice answers the scoper's question by editing issue #3 · open the issue"]);

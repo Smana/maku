@@ -51,11 +51,13 @@ export interface Summary {
   };
   // A hold (N3): a factory task waits on the viewer's hold on this room; id is its wait reason.
   runs?: { id: string; role: string; provenance?: { servedModels?: string[] } }[]; // the task's run history, oldest first
-  // approve: a merge need a maintainer's approval settles (approveToMerge); absent otherwise.
-  // answer: a task the scoper bounced waits on its issue's author (scoper SC8); id is the issue
-  // number, url the issue, author its author's GitHub login. Absent for every other kind.
-  needsYou: { kind: "approval" | "hold" | "merge" | "answer"; id: string; what: string; deadline?: string; url: string;
-    author?: string; approve?: boolean }[];
+  // needs/v1's eight kinds, in the order the broker lists them (CD21); the page renders the ones a
+  // viewer acts on, silently aware of the rest until the needs panel reads them (PR 3).
+  // question: a task the scoper bounced waits on its issue's author (scoper SC8); id is the issue
+  // number, url the issue, author its author's GitHub login. approve: a merge need a maintainer's
+  // approval settles (approveToMerge).
+  needsYou: { kind: "plan_confirmation" | "approval" | "question" | "merge" | "review" | "failed_check" | "recovery" | "hold";
+    id: string; what: string; deadline?: string; url: string; author?: string; approve?: boolean }[];
   // The one thing to do for the room and where: "pr" and "answer" are on GitHub, "approve" on this page.
   // approve: the pr step is an approval of the current commit, not a merge by hand.
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
@@ -140,7 +142,7 @@ function linkedNeed(label: string, what: string, link: Node): HTMLLIElement {
   return li;
 }
 
-// needsItems is the summary's merges, answers and holds, one list item each; the approvals come
+// needsItems is the summary's merges, questions and holds, one list item each; the approvals come
 // from the live log instead (needs.ts), so the summary's approval entries are skipped.
 export function needsItems(s: Summary): HTMLLIElement[] {
   const out: HTMLLIElement[] = [];
@@ -148,7 +150,7 @@ export function needsItems(s: Summary): HTMLLIElement[] {
     if (n.kind === "hold") out.push(el("li", { textContent: `Hold: ${n.what}` })); // the page is the room: nothing to link to
     // approve: under approveToMerge an approval of the current commit merges it (#308, #310).
     if (n.kind === "merge") out.push(linkedNeed(n.approve ? "Approve" : "Merge", n.what, safeLink("open the PR", n.url)));
-    if (n.kind === "answer") out.push(linkedNeed("Answer", n.what, safeLink("open the issue", n.url)));
+    if (n.kind === "question") out.push(linkedNeed("Answer", n.what, safeLink("open the issue", n.url)));
   }
   return out;
 }

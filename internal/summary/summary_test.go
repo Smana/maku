@@ -21,6 +21,12 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
+// view is View for a caller with no GitHub link: the standing is zero, which is what a member who has
+// not linked GitHub gets, and is itself worth keeping as a case (CD26).
+func view(st summary.State, room, url string, sub policy.Subject, after int64, now time.Time) summary.Summary {
+	return summary.View(st, room, url, sub, summary.GitHubStanding{}, after, now)
+}
+
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.json want fields from the current fold")
 
 var goldens = []string{"normal", "resumed", "expired_approval", "sealed", "no_facts", "runs_and_spend", "hostile"}
@@ -42,7 +48,7 @@ func TestFoldGolden(t *testing.T) {
 			readJSON(t, "testdata/"+name+".json", &tc)
 			v := policy.Subject{Kind: envelope.ActorHuman, Role: policy.ParseRole(tc.Viewer.Role),
 				Approver: tc.Viewer.Approver, Driver: tc.Viewer.Driver, WebUI: tc.Viewer.WebUI}
-			got := summary.View(summary.Fold(tc.Events), "26zfnuxm", "https://rooms.example/r/26zfnuxm", v, 0, tc.Now)
+			got := view(summary.Fold(tc.Events), "26zfnuxm", "https://rooms.example/r/26zfnuxm", v, 0, tc.Now)
 			if *updateGolden { // a flag run rewrites instead of asserting; the next plain run checks
 				if err := rewriteWant("testdata/"+name+".json", tc.Want, got); err != nil {
 					t.Fatal(err)
@@ -184,7 +190,7 @@ func TestAForkStartsItsSummaryAfresh(t *testing.T) {
 	}
 	forked := ev(7, envelope.StateChanged, envelope.Actor{Kind: envelope.ActorHuman, ID: "human:o"},
 		envelope.StatePayload("forked_from", map[string]any{"room": "src", "seq": 6}))
-	s := summary.View(summary.Fold(slices.Concat(source, []envelope.Event{forked})), "r", "u", owner(), 0, time.Now())
+	s := view(summary.Fold(slices.Concat(source, []envelope.Event{forked})), "r", "u", owner(), 0, time.Now())
 	if s.Status.Phase != "Open" || s.Status.Issue != nil || s.Status.LastVerdict != nil || len(s.NeedsYou) != 0 ||
 		len(s.Notes.Items) != 0 || s.Cursor != "seq:7" {
 		t.Fatalf("the fork shows its source's state: %+v", s)
@@ -193,7 +199,7 @@ func TestAForkStartsItsSummaryAfresh(t *testing.T) {
 		t.Fatalf("actions %v: want the open fork's, and no stop for the source's issue", kinds)
 	}
 	own := ev(8, envelope.StateChanged, factory, envelope.TaskStatePayload(envelope.TaskFacts{Phase: "Queued"}))
-	s = summary.View(summary.Fold(slices.Concat(source, []envelope.Event{forked, own})), "r", "u", owner(), 0, time.Now())
+	s = view(summary.Fold(slices.Concat(source, []envelope.Event{forked, own})), "r", "u", owner(), 0, time.Now())
 	if s.Status.Phase != "Queued" {
 		t.Fatalf("phase %q: the fork's own facts count", s.Status.Phase)
 	}
@@ -217,7 +223,7 @@ func TestTheLimitSealAlsoClosesTheRoom(t *testing.T) {
 		approvalRequested(5, "01M4A", "git push", time.Now().Add(time.Hour)),
 		ev(6, envelope.StateChanged, broker, envelope.StatePayload("limit", map[string]any{"events": 10000, "bytes": 1})),
 	}
-	s := summary.View(summary.Fold(evs), "r", "u", owner(), 0, time.Now())
+	s := view(summary.Fold(evs), "r", "u", owner(), 0, time.Now())
 	if len(s.NeedsYou) != 0 || len(s.Actions) != 0 {
 		t.Fatalf("a sealed room offers needs %+v / actions %+v", s.NeedsYou, s.Actions)
 	}
@@ -230,21 +236,21 @@ func TestTheLimitSealAlsoClosesTheRoom(t *testing.T) {
 func TestAConcurrentRunLimitDoesNotSeal(t *testing.T) {
 	evs := []envelope.Event{ev(6, envelope.StateChanged, envelope.Actor{Kind: envelope.ActorSystem, ID: "system:room-broker"},
 		envelope.StatePayload("limit", map[string]any{"reason": "concurrent_run", "running": "x"}))}
-	if s := summary.View(summary.Fold(evs), "r", "u", owner(), 0, time.Now()); len(s.Actions) == 0 {
+	if s := view(summary.Fold(evs), "r", "u", owner(), 0, time.Now()); len(s.Actions) == 0 {
 		t.Fatal("a concurrent-run refusal sealed the room")
 	}
 }
 
 func TestNotesAfterTheCursor(t *testing.T) {
 	evs := []envelope.Event{note(10, "planning"), note(20, "edited line 12"), note(30, "checks pass")}
-	s := summary.View(summary.Fold(evs), "r", "u", watcher(), 20, time.Now())
+	s := view(summary.Fold(evs), "r", "u", watcher(), 20, time.Now())
 	if len(s.Notes.Items) != 1 || s.Notes.Items[0].Text != "checks pass" || s.Cursor != "seq:30" || !s.Notes.Untrusted {
 		t.Fatalf("%+v", s.Notes)
 	}
 }
 
 func TestAWatcherSeesNoActions(t *testing.T) {
-	s := summary.View(summary.Fold(nil), "r", "u", watcher(), 0, time.Now())
+	s := view(summary.Fold(nil), "r", "u", watcher(), 0, time.Now())
 	if len(s.Actions) != 0 {
 		t.Fatalf("watcher actions %+v", s.Actions)
 	}
@@ -253,10 +259,10 @@ func TestAWatcherSeesNoActions(t *testing.T) {
 func TestApprovalsNeedAnApproverAndCarryNoCommand(t *testing.T) {
 	evs := []envelope.Event{approvalRequested(5, "01M4A", "git push", time.Now().Add(time.Hour))}
 	st := summary.Fold(evs)
-	if got := summary.View(st, "r", "u", watcher(), 0, time.Now()).NeedsYou; len(got) != 0 {
+	if got := view(st, "r", "u", watcher(), 0, time.Now()).NeedsYou; len(got) != 0 {
 		t.Fatalf("a watcher is asked to approve: %+v", got)
 	}
-	got := summary.View(st, "r", "u", approverCLI(), 0, time.Now()).NeedsYou
+	got := view(st, "r", "u", approverCLI(), 0, time.Now()).NeedsYou
 	if len(got) != 1 || got[0].URL != "u#01M4A" || got[0].What != "git push" {
 		t.Fatalf("approval need %+v: wants a link to the room (D4)", got)
 	}
@@ -276,21 +282,21 @@ func TestAHumanHoldNeedsWhoeverCanReleaseIt(t *testing.T) {
 	for _, reason := range []string{"waiting_human_driver", "waiting_room_busy"} {
 		st := summary.Fold([]envelope.Event{facts(1, "Queued", reason)})
 		for name, sub := range map[string]policy.Subject{"driver": driverWeb(), "owner": owner()} {
-			got := summary.View(st, "r", "u", sub, 0, time.Now()).NeedsYou
+			got := view(st, "r", "u", sub, 0, time.Now()).NeedsYou
 			if len(got) != 1 || got[0].Kind != "hold" || got[0].ID != reason || got[0].URL != "u" || got[0].What == "" {
 				t.Fatalf("%s, %s: %+v", reason, name, got)
 			}
 		}
-		if got := summary.View(st, "r", "u", watcher(), 0, time.Now()).NeedsYou; len(got) != 0 {
+		if got := view(st, "r", "u", watcher(), 0, time.Now()).NeedsYou; len(got) != 0 {
 			t.Fatalf("%s: a watcher cannot release a hold: %+v", reason, got)
 		}
 		st.Add([]envelope.Event{facts(2, "Implementing", "")})
-		if got := summary.View(st, "r", "u", driverWeb(), 0, time.Now()).NeedsYou; len(got) != 0 {
+		if got := view(st, "r", "u", driverWeb(), 0, time.Now()).NeedsYou; len(got) != 0 {
 			t.Fatalf("%s: the hold ended: %+v", reason, got)
 		}
 	}
 	other := summary.Fold([]envelope.Event{facts(1, "Queued", "waiting_run_slot")})
-	if got := summary.View(other, "r", "u", owner(), 0, time.Now()).NeedsYou; len(got) != 0 {
+	if got := view(other, "r", "u", owner(), 0, time.Now()).NeedsYou; len(got) != 0 {
 		t.Fatalf("the factory's own waits need no one: %+v", got)
 	}
 }
@@ -298,7 +304,7 @@ func TestAHumanHoldNeedsWhoeverCanReleaseIt(t *testing.T) {
 func TestSteeringHasNoCLIAndIsWebOnly(t *testing.T) {
 	running := summary.Fold([]envelope.Event{ev(1, envelope.Participant, envelope.Actor{Kind: envelope.ActorSystem, ID: "system:room-broker"},
 		map[string]any{"principal": "agent:cf4ato2x", "change": "joined"})})
-	web := summary.View(running, "r", "u", driverWeb(), 0, time.Now())
+	web := view(running, "r", "u", driverWeb(), 0, time.Now())
 	steer := false
 	for _, a := range web.Actions {
 		if a.Kind == "steer" {
@@ -313,7 +319,7 @@ func TestSteeringHasNoCLIAndIsWebOnly(t *testing.T) {
 	}
 	cli := driverWeb()
 	cli.WebUI = false
-	for _, a := range summary.View(running, "r", "u", cli, 0, time.Now()).Actions {
+	for _, a := range view(running, "r", "u", cli, 0, time.Now()).Actions {
 		if a.Kind == "steer" {
 			t.Fatal("a CLI caller is offered steering")
 		}
@@ -325,7 +331,7 @@ func TestNotesAreBounded(t *testing.T) {
 	for i := int64(1); i <= 50; i++ {
 		evs = append(evs, note(i, "n"))
 	}
-	if n := len(summary.View(summary.Fold(evs), "r", "u", watcher(), 0, time.Now()).Notes.Items); n != 20 {
+	if n := len(view(summary.Fold(evs), "r", "u", watcher(), 0, time.Now()).Notes.Items); n != 20 {
 		t.Fatalf("%d notes", n)
 	}
 }
@@ -399,7 +405,7 @@ func TestASealedRoomCarriesNoWaitingLine(t *testing.T) {
 		ev(1, envelope.StateChanged, factory, envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "policy_pending"})),
 		ev(2, envelope.StateChanged, broker, envelope.StatePayload("room_phase", map[string]any{"phase": "Closed", "reason": "owner"})),
 	}
-	s := summary.View(summary.Fold(evs), "r", "u", owner(), 0, time.Now())
+	s := view(summary.Fold(evs), "r", "u", owner(), 0, time.Now())
 	if s.Status.Reason != "" || s.Status.Next != "" {
 		t.Fatalf("a sealed room waits: reason %q next %q", s.Status.Reason, s.Status.Next)
 	}
@@ -430,7 +436,7 @@ func TestSteerNeedsARunningRun(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := slices.Contains(actionKinds(summary.View(summary.Fold(tc.evs), "r", "u", driverWeb(), 0, time.Now())), "steer")
+			got := slices.Contains(actionKinds(view(summary.Fold(tc.evs), "r", "u", driverWeb(), 0, time.Now())), "steer")
 			if got != tc.want {
 				t.Fatalf("steer offered = %v, want %v", got, tc.want)
 			}
@@ -438,12 +444,12 @@ func TestSteerNeedsARunningRun(t *testing.T) {
 	}
 }
 
-// Scoper design SC8: a bounced task shows the room's owner an answer need naming the issue's author.
-func TestABouncedTaskNeedsAnAnswer(t *testing.T) {
+// Scoper design SC8: a bounced task shows the room's owner a question need naming the issue's author.
+func TestABouncedTaskNeedsAQuestion(t *testing.T) {
 	f := &envelope.TaskFacts{Phase: "Escalated", Reason: "needs_author",
 		Issue: &envelope.IssueFact{Number: 7, URL: "https://github.com/Smana/cloud-native-ref/issues/7", Author: "octocat"}}
 	n, ok := summary.Answer(f, owner())
-	if !ok || n.Kind != "answer" || n.ID != "7" || !strings.Contains(n.What, "@octocat") || n.URL != f.Issue.URL {
+	if !ok || n.Kind != summary.NeedQuestion || n.ID != "7" || !strings.Contains(n.What, "@octocat") || n.URL != f.Issue.URL {
 		t.Fatalf("%+v %v", n, ok)
 	}
 	if _, ok := summary.Answer(&envelope.TaskFacts{Phase: "Escalated", Reason: "stuck", Issue: f.Issue}, owner()); ok {
@@ -461,7 +467,7 @@ func TestFoldKeepsTheLastJudgeVerdict(t *testing.T) {
 			envelope.MessagePayload{Kind: envelope.KindJudgeVerdict, Verdict: verdict, Text: reason, Evidence: []string{"check:validate"}, Delivery: envelope.DeliveryNone})
 	}
 	st := summary.Fold([]envelope.Event{judge(1, "not_yet", "validate fails"), note(2, "n"), judge(3, "impossible", "cannot pass")})
-	s := summary.View(st, "r", "https://x/r/r", policy.Subject{Kind: envelope.ActorHuman, Role: policy.ParseRole("owner")}, 0, time.Unix(1_760_000_100, 0))
+	s := view(st, "r", "https://x/r/r", policy.Subject{Kind: envelope.ActorHuman, Role: policy.ParseRole("owner")}, 0, time.Unix(1_760_000_100, 0))
 	j := s.Status.LastJudge
 	if j == nil || j.Verdict != "impossible" || j.Reason != "cannot pass" || len(j.Evidence) != 1 || len(s.Notes.Items) != 1 {
 		t.Fatalf("%+v %+v", j, s.Notes)
@@ -481,7 +487,7 @@ func TestViewTask(t *testing.T) {
 		"no facts": {nil, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := summary.View(summary.Fold(c.evs), "26zfnuxm", "https://rooms.example/r/26zfnuxm", policy.Subject{}, 0, time.Time{})
+			got := view(summary.Fold(c.evs), "26zfnuxm", "https://rooms.example/r/26zfnuxm", policy.Subject{}, 0, time.Time{})
 			if got.Status.Task != c.want {
 				t.Fatalf("status.task = %q, want %q", got.Status.Task, c.want)
 			}
@@ -539,7 +545,7 @@ func TestTheRunsModelAndEffort(t *testing.T) {
 			effort(3, "aaaaaaaa", "turbo")}, nil, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := summary.View(summary.Fold(c.evs), "26zfnuxm", "https://rooms.example/r/26zfnuxm", policy.Subject{}, 0, time.Time{})
+			got := view(summary.Fold(c.evs), "26zfnuxm", "https://rooms.example/r/26zfnuxm", policy.Subject{}, 0, time.Time{})
 			if !reflect.DeepEqual(got.Status.RunModel, c.current) || !reflect.DeepEqual(got.Status.LastRunModel, c.last) {
 				t.Fatalf("runModel %+v lastRunModel %+v, want %+v and %+v", got.Status.RunModel, got.Status.LastRunModel, c.current, c.last)
 			}

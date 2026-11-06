@@ -635,7 +635,7 @@ func WaitingForHuman(t *v1alpha1.Task, reason string) Event {
 	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, Reason(reason))
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
 		// The ruleset blocks a plain merge, whoever approved (#51).
-		body += "\n\nTo merge: " + summ.MergeHow(t.Spec.Repository, pr.Number) + "."
+		body += "\n\nTo merge: " + summ.MergeHow(t.Spec.Repository, pr.Number, false) + "."
 	}
 	return Event{Key: "human-" + reason + "-" + fmt.Sprint(len(t.Status.Runs)), Body: body}
 }
