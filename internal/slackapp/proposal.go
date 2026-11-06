@@ -1142,45 +1142,62 @@ func proposalMeta(p ProposalPayload) (*Metadata, error) {
 // ---- filing a proposal: the ✅ fallback and, from PR 6, the Confirm ----
 
 // fileProposal files the thread's proposal through run_create's plan validation (CD8, acceptance 10):
-// a maintainer's ✅ on the message (confirm false) and, from PR 6, the Confirm button (confirm true) are
-// one code path, differing only in the verb of the passing failures' line — a check mark is reacted, a
-// button is pressed.
+// a maintainer's ✅ on the message (confirm false) and the Confirm button (confirm true) are one code
+// path, differing only in where the verdict goes — the thread for a ✅, the presser alone for a press
+// — and in the verb of the passing failures' line, since a check mark is reacted and a button is
+// pressed.
 //
 // The plan is the message's own metadata, re-checked here before anything is sent: a hash that does not
 // bind the plan is refused with its own line rather than filed, and the repository the plan names must
 // still be one the channel serves (CD24: a channel re-pointed under a live proposal refuses, it does not
 // file). Then the thread is read, and it decides: a thread whose proposal was already filed or
 // cancelled is ignored — its message already says so, and a second line would be noise — and only the
-// thread's newest proposal files, so a ✅ on a message an edit replaced files nothing.
+// thread's newest proposal files, so a ✅ or a press on a message an edit replaced files nothing. That
+// read is under the App's edit lock, so a re-plan cannot land between the check and the filing.
 //
 // The filing carries the plan and its hash, so the broker recomposes and re-hashes it before it acts: a
 // plan edited after it was shown is `plan_changed` and files nothing, whatever this App believes. On
 // success the proposal message becomes the Filed line in place, which is what makes a thread one
 // message from its mention to its room.
-func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user string, p ProposalPayload, confirm bool) string {
-	sayMeta := func(text string, meta *Metadata) { // the verdict goes to the thread; a failure to say it is logged, not retried
+//
+// The two returns are the outcome the caller counts and the line its author is owed: for a ✅ the line
+// has already been posted into the thread (answer is empty), for a press it is the one
+// chat.postEphemeral the caller sends to the person who pressed.
+func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user string, p ProposalPayload, confirm bool) (outcome, answer string) {
+	// say is where a verdict goes: a ✅'s into the thread, which watched the plan and reacted on it;
+	// a press's into answer — one line to the presser alone, because a press is one person's act on
+	// one message and nothing it decides or refuses belongs in the thread.
+	say := func(text string, meta *Metadata) {
+		if confirm {
+			answer = text
+			return
+		}
 		if _, err := a.Slack.Post(ctx, channel, thread, text, meta); err != nil {
 			a.log().Warn("slack post failed", "channel", channel, "err", err)
 		}
 	}
-	// refuse says a refusal once per message, user and reason: a re-added ✅ does not repeat it.
-	refuse := func(reason, text string) string {
-		if a.answered.add(itemTS + "/" + user + "/" + reason) {
-			sayMeta(text, nil)
+	// refuse says a refusal once per message, user and reason: a re-added ✅ does not repeat it. A
+	// press is answered every time it is made — its own dedup key is what stops a repeat — and its
+	// line is the caller's to send.
+	refuse := func(reason, text string) (string, string) {
+		if confirm || a.answered.add(itemTS+"/"+user+"/"+reason) {
+			say(text, nil)
 		}
-		return "refused"
+		return "refused", answer
 	}
 	// retry says a passing failure, the fix being to react again: at most once per retryEvery for a
-	// message, user and reason, so a burst of ✅ does not spam the thread.
-	retry := func(reason, text string) string {
-		if a.retried.allow(itemTS+"/"+user+"/"+reason, a.now()) {
-			sayMeta(text, nil)
+	// message, user and reason, so a burst of ✅ does not spam the thread. Pressing again is its own
+	// retry, so a press is never throttled.
+	retry := func(reason, text string) (string, string) {
+		if confirm || a.retried.allow(itemTS+"/"+user+"/"+reason, a.now()) {
+			say(text, nil)
 		}
-		return "error"
+		return "error", answer
 	}
 
 	// again is the verb of the passing failures below: a ✅ is reacted, a Confirm is pressed, and that
-	// is the whole of what confirm changes about the two callers (CD8's fallback and PR 6's button).
+	// is the whole of what confirm changes about the two callers' wording (CD8's fallback and PR 6's
+	// button).
 	again := "react again to retry"
 	if confirm {
 		again = "press Confirm again to retry"
@@ -1212,12 +1229,24 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	latest, closed := a.threadProposal(msgs)
 	if closed {
 		// The thread's proposal was filed or cancelled and its message says so: nothing to file, no
-		// line to add, exactly as a ✅ on a message that is not the App's draft.
-		return "ignored"
+		// line to add, exactly as a ✅ on a message that is not the App's draft. A press was still
+		// made, so its presser is told that the message no longer means anything.
+		if confirm {
+			return "ignored", proposalClosedPressLine
+		}
+		return "ignored", ""
 	}
 	if latest == nil || latest.TS != itemTS {
-		refuse("replaced", "This draft was replaced by a newer one: react on the latest draft.")
-		return "ignored"
+		// Only the thread's newest proposal files: an earlier one was replaced by an edit or a repost
+		// whose inert write Slack refused, and its buttons bind a hash its metadata no longer holds
+		// (Review Focus 1). A ✅ says which message is the live one; a press is refused in the
+		// presser's own line, which is the same sentence proposalPress reads for the same reason.
+		replaced := "This draft was replaced by a newer one: react on the latest draft."
+		if confirm {
+			replaced = proposalStaleLine
+		}
+		refuse("replaced", replaced)
+		return "ignored", answer
 	}
 
 	raw, err := p.Plan.JSON()
@@ -1247,7 +1276,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	})
 	var r Refused
 	if errors.As(err, &r) {
-		code, text, passing := notFiled(string(r), user, p.Plan.Repository)
+		code, text, passing := notFiled(string(r), user, p.Plan.Repository, confirm)
 		if passing {
 			return retry(code, text)
 		}
@@ -1259,8 +1288,8 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	}
 	if !roomRE.MatchString(res.Room) {
 		a.log().Warn("run_create answered an unusable room id")
-		sayMeta(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), mark(""))
-		return "error"
+		say(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), mark(""))
+		return "error", answer
 	}
 	// Put on a duplicate too (idempotent): a Put that failed the first time is retried by the next ✅.
 	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.now()}); err != nil {
@@ -1275,13 +1304,13 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		// Slack refused the edit: today's separate Filed line still tells the thread, and the outcome
 		// says the message was not the one that said it.
 		a.log().Warn("proposal filed update failed", "channel", channel, "ts", itemTS, "err", err)
-		sayMeta(line, filed)
-		return "unrewritten"
+		say(line, filed)
+		return "unrewritten", line
 	}
 	if res.Duplicate {
-		return "duplicate"
+		return "duplicate", line
 	}
-	return "filed"
+	return "filed", line
 }
 
 // filedText is the thread's line for a filed run: today's Filed line, or the duplicate's one, built

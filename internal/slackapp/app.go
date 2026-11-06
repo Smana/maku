@@ -717,7 +717,8 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	// so a proposal that no longer binds its plan is refused with its own line instead of being read as
 	// a foreign message nobody answers.
 	if p, ok := m.proposalTaggedPayload(); ok {
-		return a.fileProposal(ctx, channel, thread, itemTS, user, p, false)
+		code, _ := a.fileProposal(ctx, channel, thread, itemTS, user, p, false) // a ✅'s verdict goes to the thread
+		return code
 	}
 	p, ok := m.draftPayload()
 	if !ok {
@@ -786,7 +787,7 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	})
 	var r Refused
 	if errors.As(err, &r) {
-		code, text, passing := notFiled(string(r), user, p.Repo)
+		code, text, passing := notFiled(string(r), user, p.Repo, false)
 		if viaReply && !passing && code != "not_a_maintainer" {
 			text += " A maintainer reacts :white_check_mark: to file it."
 		}
@@ -821,7 +822,11 @@ var githubLoginRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 // notFiled is a run_create refusal as the thread says it: the reason and its fix in one line. A
 // passing one (the factory could not check just now) is said on every ✅, since reacting again is
 // its fix; any other is said once. Codes outside the list are shown as the broker gave them.
-func notFiled(refusal, user, repo string) (code, text string, passing bool) {
+//
+// confirm is the surface's verb, not a second vocabulary: a ✅ is reacted and a Confirm is pressed, so
+// the one line that names who may file names it in the caller's own word (CD8's two callers are one
+// code path).
+func notFiled(refusal, user, repo string, confirm bool) (code, text string, passing bool) {
 	code, coded := strings.CutPrefix(refusal, "rejected: ")
 	who := "<@" + user + ">"
 	switch {
@@ -830,15 +835,20 @@ func notFiled(refusal, user, repo string) (code, text string, passing bool) {
 	case code == "not_linked":
 		return code, "Not filed: " + who + " is not linked to a GitHub account here; mention me with `link` to link it, then react again.", false
 	case code == "not_a_maintainer":
-		return code, "Not filed: " + who + "'s GitHub account is not a maintainer of " + slackText(repo) + "; a maintainer must react.", false
+		must := "a maintainer must react."
+		if confirm {
+			must = "a maintainer must confirm it."
+		}
+		return code, "Not filed: " + who + "'s GitHub account is not a maintainer of " + slackText(repo) + "; " + must, false
 	case code == "repository_not_allowed" || code == "repository_not_owned":
 		return code, "Not filed: the factory does not take tasks on " + slackText(repo) + " from Slack; ask an operator to add it to the Slack App's repositories.", false
 	case code == "kill_switch":
 		return code, "Not filed: the factory is paused (kill switch); react again once an operator resumes it.", true
 	case code == "plan_changed":
 		// The broker recomposes the plan from the submitted fields and re-hashes it (CD20, CD27): the
-		// message's plan is no longer the one it was asked about, so nothing is filed from it.
-		return code, "Not filed: the plan changed after this was drawn; mention me again to re-plan it.", false
+		// message's plan is no longer the one it was asked about, so nothing is filed from it. The
+		// same sentence this family's own hash check says before the broker is called.
+		return code, planChangedLine, false
 	case code == "principal_budget_exhausted":
 		return code, "Not filed: the Slack App's budget for today is spent; react again tomorrow.", false
 	case code == "daily_task_cap":

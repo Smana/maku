@@ -22,14 +22,18 @@ import (
 // answer: the clicker alone is told, in one fixed line (card.go), what became of the press, and a
 // recorded decision leaves the card inert behind it.
 
-// The two action ids a card carries (§5). No other press is read.
+// The two action ids a card carries (§5), and the two a proposal message carries (CD7). No other
+// press is read: the dispatcher accepts the union and each family decodes its own value.
 const (
 	actionApprove = "factory_approval_approve"
 	actionDeny    = "factory_approval_deny"
 )
 
-// The button's value (§5): pressVersion|pressClass|<approvalId>|<branch>. The version and the class
-// are literals, so a value the App did not write is refused rather than read as one of its own.
+// The value's version prefix: the one part of a button's value the dispatcher reads, because both
+// families write it (§5's card value is pressVersion|pressClass|<approvalId>|<branch>, CD7's proposal
+// value is pressVersion|proposal|<hash>|<rev>) and everything after it belongs to the family whose
+// action id the press carries. It is a literal, so a value the App did not write is refused rather
+// than read as one of its own.
 const (
 	pressVersion = "v1"
 	pressClass   = "forge.push"
@@ -78,13 +82,14 @@ type interactionPayload struct {
 	} `json:"message"`
 }
 
-// interaction is one press the App accepts: §6's shapes are already checked, and the card's own
-// values — the approval, the branch it binds, the decision — come from the button's value, never
-// from the message's text.
+// interaction is one press the App accepts: §6's shapes are already checked, and each family decodes
+// its own value — the card's approval, branch and decision, or the proposal's hash and revision —
+// from Value, never from the message's text.
 type interaction struct {
 	Team, User, Channel, MessageTS string
-	ActionID, ActionTS             string
-	ApprovalID, Branch, Decision   string
+	ActionID, ActionTS, Value      string
+	// The card's own three, filled by approvalAction from Value: no other family reads them.
+	ApprovalID, Branch, Decision string
 }
 
 // handleInteraction is §6's second body shape of the one door: the body is already verified, so
@@ -108,20 +113,49 @@ func (a *App) handleInteraction(w http.ResponseWriter, r *http.Request, body []b
 	}
 }
 
-// interaction reads one press from the signed body and hands it to a worker: §6 step 3's shapes,
-// step 4's dedup, step 5's enqueue. Its return value is the door's own outcome — ignored,
-// not_enabled, duplicate, busy, or queued, whose outcome the worker counts instead.
+// interaction reads one press from the signed body and hands it to the family whose action id it
+// carries: §6 step 3's common checks, step 4's dedup and step 5's enqueue inside that family. Its
+// return value is the door's own outcome — ignored, not_enabled, duplicate, busy, or queued, whose
+// outcome the worker counts instead.
+//
+// The common checks stop at the shape of the click (the design's §6 step 3, the conversational
+// design's interactivity row): the value's version prefix, the team, the person, the channel, one
+// message ts and an action id in the union of the two families' ids. Which family a click belongs to,
+// and what its value means, is decoded inside that family's own case — so a value one family cannot
+// read is that family's refusal, never this dispatcher's silence.
 func (a *App) interaction(ctx context.Context, body []byte) string {
 	in, ok := parseInteraction(body)
 	// One workspace: a Slack Connect peer's press carries its own team_id, as its events do.
 	if !ok || !teamRE.MatchString(in.Team) || in.Team != a.TeamID {
 		return "ignored"
 	}
-	ch, served := a.Channels[in.Channel]
-	if !served {
+	if _, served := a.Channels[in.Channel]; !served {
 		return "ignored" // a channel the App does not serve: the same silence an unknown event gets
 	}
-	if !ch.Approvals {
+	switch in.ActionID {
+	case actionApprove, actionDeny:
+		return a.approvalAction(ctx, in)
+	case actionProposalConfirm, actionProposalCancel:
+		return a.proposalAction(ctx, in) // CD7's controls: a different family, the same door
+	}
+	return "ignored"
+}
+
+// approvalAction is the card's press (§6 steps 3-5): its value, the channel's approvals flag and its
+// dedup key are this family's, decoded and read here rather than by the shared parser. A value this
+// family cannot read is §6 step 3's ignored — 200, no broker call, no message — exactly as it was
+// when the parser read it.
+func (a *App) approvalAction(ctx context.Context, in interaction) string {
+	approvalID, branch, ok := parseCardValue(in.Value)
+	if !ok {
+		return "ignored"
+	}
+	decision, ok := decisionOf(in.ActionID)
+	if !ok {
+		return "ignored"
+	}
+	in.ApprovalID, in.Branch, in.Decision = approvalID, branch, decision
+	if !a.Channels[in.Channel].Approvals {
 		// Answered locally, with no broker call (§6 step 3): the flag is off, so no card with a
 		// button was drawn here and the clicker alone is told where the decision lives.
 		a.sayNotEnabled(ctx, in)
@@ -245,8 +279,11 @@ func (a *App) inert(ctx context.Context, in interaction, line string) error {
 }
 
 // parseInteraction reads Slack's interactivity body — the form already verified — into one press:
-// one payload field under 64 KiB, block_actions from a person in a channel, one action whose value
-// is a card's. false is §6 step 3's "anything else": 200 ignored, no broker call, no message.
+// one payload field under 64 KiB, block_actions from a person in a channel, one action whose id is
+// one of the two families' and whose value carries the version prefix. Nothing of the value's class
+// is read here: that is each family's own decode (approvalAction, proposalAction), and a value one
+// family cannot read is its refusal rather than this parser's. false is §6 step 3's "anything else":
+// 200 ignored, no broker call, no message.
 func parseInteraction(body []byte) (interaction, bool) {
 	q, err := url.ParseQuery(string(body))
 	if err != nil {
@@ -265,12 +302,7 @@ func parseInteraction(body []byte) (interaction, bool) {
 	if !userRE.MatchString(p.User.ID) || !channelRE.MatchString(p.Channel.ID) || !tsRE.MatchString(act.ActionTS) {
 		return interaction{}, false
 	}
-	decision, ok := decisionOf(act.ActionID)
-	if !ok {
-		return interaction{}, false
-	}
-	approvalID, branch, ok := parseCardValue(act.Value)
-	if !ok {
+	if !knownAction(act.ActionID) || !strings.HasPrefix(act.Value, pressVersion+"|") {
 		return interaction{}, false
 	}
 	ts := messageTSOf(p)
@@ -278,8 +310,17 @@ func parseInteraction(body []byte) (interaction, bool) {
 		return interaction{}, false
 	}
 	return interaction{Team: p.Team.ID, User: p.User.ID, Channel: p.Channel.ID, MessageTS: ts,
-		ActionID: act.ActionID, ActionTS: act.ActionTS,
-		ApprovalID: approvalID, Branch: branch, Decision: decision}, true
+		ActionID: act.ActionID, ActionTS: act.ActionTS, Value: act.Value}, true
+}
+
+// knownAction is the union the common checks accept: the card's two decisions and the proposal's two
+// controls (CD7). Any other id is §6 step 3's ignored, as it always was.
+func knownAction(actionID string) bool {
+	switch actionID {
+	case actionApprove, actionDeny, actionProposalConfirm, actionProposalCancel:
+		return true
+	}
+	return false
 }
 
 // decisionOf maps a card's two action ids to §1's decision values.
