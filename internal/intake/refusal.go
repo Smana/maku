@@ -107,10 +107,14 @@ func refuse(reason, detail string) *Refusal {
 		// at a call site is what this table exists to prevent.
 		panic("intake: refusal reason outside the closed list: " + reason)
 	}
-	if detail != "" {
-		if !strings.Contains(s, "%s") {
-			panic("intake: refusal " + reason + " takes no diagnostic")
-		}
+	switch scope := strings.Contains(s, "%s"); {
+	case detail == "" && scope:
+		// The sentence names its diagnostic's place, so it is never emitted unfilled: "(%s)" in a
+		// person's line is the same defect as a reason nobody can label.
+		panic("intake: refusal " + reason + " takes a diagnostic")
+	case detail != "" && !scope:
+		panic("intake: refusal " + reason + " takes no diagnostic")
+	case detail != "":
 		// detail is the format's argument, never its format.
 		s = fmt.Sprintf(s, detail)
 	}
