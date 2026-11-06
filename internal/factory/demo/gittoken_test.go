@@ -132,3 +132,50 @@ func TestStartMintsAtOnceAndStopsWithTheContext(t *testing.T) {
 		t.Fatal("only the leader writes")
 	}
 }
+
+// A new leader keeps a fresh Secret and renews one that is due, missing or unreadable.
+func TestExistingWaitAfterALeaderChange(t *testing.T) {
+	r := newRig()
+	ctx := t.Context()
+	if w := r.g.existingWait(ctx); w != 0 {
+		t.Fatalf("no Secret: wait %v, want 0", w)
+	}
+	r.g.tick(ctx) // expires in 1h
+	if w := r.g.existingWait(ctx); w <= 0 || w > r.g.every() {
+		t.Fatalf("fresh Secret: wait %v, want in (0, %v]", w, r.g.every())
+	}
+	r.clk.t = r.clk.t.Add(51 * time.Minute) // within the early-refresh window
+	if w := r.g.existingWait(ctx); w != 0 {
+		t.Fatalf("due Secret: wait %v, want 0", w)
+	}
+	for name, ann := range map[string]string{"missing": "", "unparsable": "soon"} {
+		s := r.secret(t)
+		if s.Annotations == nil {
+			s.Annotations = map[string]string{}
+		}
+		if ann == "" {
+			delete(s.Annotations, ExpiresAnnotation)
+		} else {
+			s.Annotations[ExpiresAnnotation] = ann
+		}
+		if err := r.c.Update(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		if w := r.g.existingWait(ctx); w != 0 {
+			t.Fatalf("%s annotation: wait %v, want 0", name, w)
+		}
+	}
+}
+
+// One App backs the runs and the merger: a run token must not post the gate's commit status.
+func TestRunTokenCannotWriteStatusesOrIssues(t *testing.T) {
+	p := Permissions()
+	for _, k := range []string{"statuses", "issues"} {
+		if v, ok := p[k]; ok {
+			t.Errorf("%s: %s in the run token", k, v)
+		}
+	}
+	if p["contents"] != "write" || p["pull_requests"] != "write" {
+		t.Errorf("permissions %v", p)
+	}
+}
