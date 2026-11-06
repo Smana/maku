@@ -29,18 +29,39 @@ type card struct {
 
 func (c *card) md() bool { return c.o.Format == Markdown }
 
-// text is untrusted words as plain text: escaped in Markdown, cleaned on a terminal.
+// slack is whether the view is the one Slack reads: Slack's mrkdwn, where a < opens a link or a
+// mention unless it is escaped (CD7).
+func (c *card) slack() bool { return c.o.Format == Slack }
+
+// slackEscaper is slackapp's own escaping of user text (slackText), character for character: a
+// message built here is as inert as one built there, and the two cannot disagree about which
+// characters are.
+var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "```", "'''")
+
+// slackInert is s on one line and escaped: the state a piece of untrusted text is in before it
+// reaches a Slack message, when it must not be cut.
+func slackInert(s string) string { return slackEscaper.Replace(strip(s)) }
+
+// text is untrusted words as plain text: escaped in Markdown, cleaned on a terminal, and escaped
+// with Slack's three in Slack.
 func (c *card) text(s string, cell bool) string {
-	if c.md() {
+	switch {
+	case c.md():
 		return escapeTitle(s, cell)
+	case c.slack():
+		return slackEscaper.Replace(clean(s))
 	}
 	return clean(s)
 }
 
-// quoted is untrusted text, quoted: in a code span in Markdown, in double quotes on a terminal.
+// quoted is untrusted text, quoted: in a code span in Markdown, in double quotes on a terminal, and
+// on one uncut line in Slack, whose text is inert by escaping rather than by a code span.
 func (c *card) quoted(s string, cell bool) string {
-	if c.md() {
+	switch {
+	case c.md():
 		return code(s, cell)
+	case c.slack():
+		return slackInert(s)
 	}
 	return quote(s)
 }
@@ -70,13 +91,15 @@ func (c *card) words(raw, got string, cell bool) string {
 	return got
 }
 
-// bold marks s in Markdown, and in a terminal that shows colour.
+// bold marks s in Markdown, in a terminal that shows colour, and with Slack's single asterisk.
 func (c *card) bold(s string) string {
 	switch c.o.Format {
 	case Markdown:
 		return "**" + s + "**"
 	case TextColor:
 		return "\x1b[1m" + s + "\x1b[0m"
+	case Slack:
+		return "*" + s + "*"
 	}
 	return s
 }
@@ -94,8 +117,11 @@ func (c *card) url(text, url string) string {
 	if !allowed(url, c.o) {
 		return text
 	}
-	if c.md() {
+	switch {
+	case c.md():
 		return "[" + text + "](" + url + ")"
+	case c.slack():
+		return "<" + url + "|" + text + ">"
 	}
 	return text + " (" + url + ")"
 }
