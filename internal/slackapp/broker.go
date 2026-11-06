@@ -18,6 +18,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/intake"
 )
 
 const (
@@ -69,9 +70,15 @@ type Broker struct {
 	HC     *http.Client // httpx.New in production
 }
 
-// RunCreate is a draft filed as a run for the person who asked.
+// RunCreate is a draft filed as a run for the person who asked. Plan and PlanHash are set when the
+// run is a proposal: the plan the message showed and the hash it bound, so the broker recomposes the
+// plan from the fields it is sent, recomputes the hash over the plan's material set and refuses
+// `plan_changed` when they disagree (CD20, CD27). A draft sets neither, and its arguments stay
+// exactly what they were.
 type RunCreate struct {
 	Draft
+	Plan       json.RawMessage // the plan/v1 the proposal bound, as its message carried it
+	PlanHash   string          // intake.Hash of that plan
 	MaxCostUSD float64
 	OnBehalfOf string // slack:<team>/<user>
 	Ref        string // slack/<team>/<channel>/<thread_ts>
@@ -151,11 +158,17 @@ func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
 }
 
 // RunCreate files the run. Its arguments are run_create's schema exactly: `text` is the draft's
-// body and dataClass is always public.
+// body and dataClass is always public. A proposal adds `plan` and `plan_hash` — the pair the tool
+// checks the confirmation against — and nothing else: a draft's arguments are the ones they always
+// were, so an App that has no plan sends the call it always sent.
 func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
-	sc, err := b.call(ctx, "run_create", map[string]any{"repo": c.Repo, "title": c.Title, "text": c.Body,
+	args := map[string]any{"repo": c.Repo, "title": c.Title, "text": c.Body,
 		"dataClass": "public", "max_cost": c.MaxCostUSD, "on_behalf_of": c.OnBehalfOf, "ref": c.Ref,
-		"idempotency_key": c.Key})
+		"idempotency_key": c.Key}
+	if len(c.Plan) > 0 {
+		args["plan"], args["plan_hash"] = c.Plan, c.PlanHash
+	}
+	sc, err := b.call(ctx, "run_create", args)
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -169,6 +182,58 @@ func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 		return RunResult{}, fmt.Errorf("slackapp: run_create result: %w", err)
 	}
 	return RunResult(out), nil
+}
+
+// IntakeRequest is intake_plan's arguments, as the App has them: the requester's own words, the
+// channel's repositories as the candidate set, the linked Slack user the plan is made for and the
+// channel's ceiling. It carries no repository the App picked — the candidate set is the whole of
+// what the App chooses, and which of it a plan names is the planner's, checked by the broker (CD5).
+type IntakeRequest struct {
+	Text       string
+	Context    string
+	OnBehalfOf string
+	Candidates []string
+	CeilingUSD float64
+}
+
+// IntakeResult is intake_plan's data: the plan the planner drew, the hash the broker computed over it,
+// the at-most-one question to ask first, whether this caller may start the factory on it, and whether
+// a template rather than the planner wrote it (CD18).
+type IntakeResult struct {
+	Plan        intake.Plan
+	Hash        string
+	Question    *intake.Question
+	CanStart    bool
+	CanStartWhy string
+	Degraded    bool
+}
+
+// IntakePlan is that tool's one call. The arguments are its schema's, and a key it does not have is
+// never sent: a sponsored principal states whom it plans for and the channel's ceiling, and an
+// argument the tool refuses would turn a plan into a transport failure. ErrUnknownTool comes back
+// untouched, so an older broker answers the mention's own line rather than a draft (CD1).
+func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error) {
+	args := map[string]any{"text": in.Text, "candidates": in.Candidates, "on_behalf_of": in.OnBehalfOf,
+		"ceiling": in.CeilingUSD}
+	if in.Context != "" { // a mention has none; a reply's context is PR 6's second flow
+		args["context"] = in.Context
+	}
+	sc, err := b.call(ctx, "intake_plan", args)
+	if err != nil {
+		return IntakeResult{}, err
+	}
+	var out struct {
+		Plan        intake.Plan      `json:"plan"`
+		Hash        string           `json:"hash"`
+		Question    *intake.Question `json:"question"`
+		CanStart    bool             `json:"canStart"`
+		CanStartWhy string           `json:"canStartWhy"`
+		Degraded    bool             `json:"degraded"`
+	}
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return IntakeResult{}, fmt.Errorf("slackapp: intake_plan result: %w", err)
+	}
+	return IntakeResult(out), nil
 }
 
 // linkPath is the page a link code opens on the broker's public URL.

@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/sponsored"
 )
 
@@ -122,6 +124,52 @@ func TestBrokerRunCreate(t *testing.T) {
 	}
 	if !sponsored.ValidRef(ref) {
 		t.Fatalf("broker would refuse ref %q", ref)
+	}
+}
+
+// A draft's run_create arguments are exactly today's; a proposal's add the plan and its hash and
+// nothing else moves. run_create recomputes the hash over the plan it is sent, so a plan edited after
+// it was shown is `plan_changed` and files nothing (CD19, CD27).
+func TestRunCreateSendsThePlan(t *testing.T) {
+	f := newFakeBroker(t, "", `{"structuredContent":{"room":"r-1","issue":42}}`)
+	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
+	body := "## What is wrong\nx\n## What it should be\ny\n## Acceptance check\nz"
+	draft := RunCreate{
+		Draft:      Draft{Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body},
+		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: "slack/T01ABC/C03/1729.0001", Key: "T01ABC/C03/1729.0001"}
+
+	if _, err := b.RunCreate(context.Background(), draft); err != nil {
+		t.Fatalf("run_create: %v", err)
+	}
+	plain := map[string]any{"repo": "Smana/ai-native-ref", "title": "docs(agents): the link is dead",
+		"text": body, "dataClass": "public", "max_cost": 2.0, "on_behalf_of": "slack:T01ABC/U02DEF",
+		"ref": "slack/T01ABC/C03/1729.0001", "idempotency_key": "T01ABC/C03/1729.0001"}
+	if got := f.calls[0].Params.Arguments; !reflect.DeepEqual(got, plain) {
+		t.Fatalf("the draft's arguments moved: %+v", got)
+	}
+
+	plan := planFixture(t, "slack-one-issue")
+	raw, err := plan.JSON()
+	if err != nil {
+		t.Fatalf("the plan's JSON: %v", err)
+	}
+	proposal := draft
+	proposal.Plan, proposal.PlanHash = raw, intake.Hash(plan)
+	if _, err := b.RunCreate(context.Background(), proposal); err != nil {
+		t.Fatalf("run_create with a plan: %v", err)
+	}
+	var planArg any
+	if err := json.Unmarshal(raw, &planArg); err != nil {
+		t.Fatalf("decode the plan: %v", err)
+	}
+	want := maps.Clone(plain)
+	want["plan"], want["plan_hash"] = planArg, intake.Hash(plan)
+	got := f.calls[1].Params.Arguments
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("a proposal's arguments: %+v, want %+v", got, want)
+	}
+	if len(got) != len(plain)+2 {
+		t.Fatalf("%d arguments, want the draft's and the two the plan adds", len(got))
 	}
 }
 
@@ -299,5 +347,53 @@ func TestBrokerSlackLink(t *testing.T) {
 	b.URL, b.HC = off.URL, off.Client()
 	if _, err := b.SlackLinkCode(context.Background(), "T01ABC", "U02DEF", "", ""); !errors.Is(err, ErrUnknownTool) {
 		t.Fatalf("off: %v", err)
+	}
+}
+
+// intake_plan's schema exactly: the requester's words, the channel's repositories as the candidate
+// set, the App's principal and the channel's ceiling — a context key only when the App has one, and
+// no repository the App picked. Its data decodes into the App's own result.
+func TestIntakePlanCall(t *testing.T) {
+	plan := planFixture(t, "slack-one-issue")
+	raw, err := plan.JSON()
+	if err != nil {
+		t.Fatalf("the plan's JSON: %v", err)
+	}
+	hash := intake.Hash(plan)
+	question := `{"text":"Which repository should this go to?","recommended":{"answer":"Smana/ai-native-ref","why":"the thread is about it"}}`
+	f := newFakeBroker(t, "", `{"structuredContent":{"plan":`+string(raw)+`,"hash":"`+hash+`","question":`+question+
+		`,"canStart":true,"canStartWhy":"a channel ceiling binds","degraded":true}}`)
+	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
+
+	got, err := b.IntakePlan(context.Background(), IntakeRequest{Text: "the install link in the README is dead",
+		OnBehalfOf: "slack:T01ABC/U02DEF", Candidates: []string{"Smana/ai-native-ref"}, CeilingUSD: 1.5})
+	wantPlan := plan
+	wantPlan.Hash = hash // a plan sent without one gains the hash it computes
+	want := IntakeResult{Plan: wantPlan, Hash: hash,
+		Question: &intake.Question{Text: "Which repository should this go to?",
+			Recommended: intake.Answer{Answer: "Smana/ai-native-ref", Why: "the thread is about it"}},
+		CanStart: true, CanStartWhy: "a channel ceiling binds", Degraded: true}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("the result is %+v (%v), want %+v", got, err, want)
+	}
+
+	c := f.calls[0]
+	if c.Method != "tools/call" || c.Params.Name != "intake_plan" {
+		t.Fatalf("%+v", c)
+	}
+	wantArgs := map[string]any{"text": "the install link in the README is dead",
+		"candidates": []any{"Smana/ai-native-ref"}, "on_behalf_of": "slack:T01ABC/U02DEF", "ceiling": 1.5}
+	if !reflect.DeepEqual(c.Params.Arguments, wantArgs) {
+		t.Fatalf("the arguments are %+v, want exactly %+v", c.Params.Arguments, wantArgs)
+	}
+
+	// A context the App does have is the one extra key; nothing else moves.
+	if _, err := b.IntakePlan(context.Background(), IntakeRequest{Text: "x", Context: "the thread says the link is dead",
+		Candidates: []string{"Smana/ai-native-ref"}}); err != nil {
+		t.Fatalf("intake_plan with a context: %v", err)
+	}
+	more := f.calls[1].Params.Arguments
+	if len(more) != 5 || more["context"] != "the thread says the link is dead" {
+		t.Fatalf("the arguments with a context: %+v", more)
 	}
 }

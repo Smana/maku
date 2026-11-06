@@ -31,11 +31,20 @@ type Config struct {
 	ProjectIDFile     string             `json:"projectIDFile"`
 	Namespace         string             `json:"namespace"`
 	Channels          map[string]Channel `json:"channels"`
+	// Proposals is the proposal message's switch (CD7): off, a mention drafts as it does today.
+	Proposals Proposals `json:"proposals,omitempty"`
 	// The three listeners (M11): Slack's events (public), the broker's webhooks (cluster only),
 	// and metrics with the probes. Defaults :8080, :8081 and :9090; a test passes 127.0.0.1:0.
 	EventsAddr   string `json:"eventsAddr,omitempty"`
 	WebhooksAddr string `json:"webhooksAddr,omitempty"`
 	OpsAddr      string `json:"opsAddr,omitempty"`
+}
+
+// Proposals is the proposal message's switch (CD7, CD20): on, a mention is planned by the broker and
+// posted as one proposal edited in place; off, a mention drafts exactly as it does today. Absent is
+// off, so a deployment that says nothing gets the behaviour it has.
+type Proposals struct {
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // Channel is a channel the App serves: the repositories a draft there may name, the max_cost a ✅

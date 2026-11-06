@@ -259,12 +259,18 @@ func newSlackApp(cfg slackapp.Config, cl client.Client, rec slackapp.Recorder, l
 			return webhook.ReadKeys(cfg.WebhookKeyFile)
 		},
 		TeamID: cfg.TeamID, BotUserID: fileValue(cfg.BotUserIDFile), RoomsURL: cfg.RoomsURL, Channels: cfg.Channels,
-		Now: time.Now, Metrics: rec, Logger: log,
+		Proposals: cfg.Proposals, Now: time.Now, Metrics: rec, Logger: log,
 	}
 }
 
-// slackRecorder is factory_slack_requests_total{route, outcome}.
-type slackRecorder struct{ requests metric.Int64Counter }
+// slackRecorder is factory_slack_requests_total{route, outcome}, plus the App's two proposal families
+// (CD7's maku_slack_proposal_updates_total{action}, CD25's maku_slack_thread_answers_total{question}),
+// whose names, serving and closed label vocabularies metrics owns. The App holds those two and not a
+// metrics.Set: the set is the broker's, and its room gauges are not the App's to serve.
+type slackRecorder struct {
+	requests  metric.Int64Counter
+	proposals *metrics.SlackProposals
+}
 
 func newSlackRecorder(exp *metrics.Exporter) (*slackRecorder, error) {
 	c, err := exp.Meter().Int64Counter("factory_slack_requests_total",
@@ -272,9 +278,24 @@ func newSlackRecorder(exp *metrics.Exporter) (*slackRecorder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("metrics: factory_slack_requests_total: %w", err)
 	}
-	return &slackRecorder{requests: c}, nil
+	proposals, err := metrics.NewSlackProposals(exp.Meter())
+	if err != nil {
+		return nil, fmt.Errorf("metrics: slack recorder: %w", err)
+	}
+	return &slackRecorder{requests: c, proposals: proposals}, nil
 }
 
 func (r *slackRecorder) Request(ctx context.Context, route, outcome string) {
 	r.requests.Add(ctx, 1, metric.WithAttributes(attribute.String("route", route), attribute.String("outcome", outcome)))
+}
+
+// ProposalUpdate counts one proposal action under maku_slack_proposal_updates_total{action}.
+func (r *slackRecorder) ProposalUpdate(ctx context.Context, action string) {
+	r.proposals.ProposalUpdate(ctx, action)
+}
+
+// ThreadAnswer counts one answer of a filed proposal's thread under
+// maku_slack_thread_answers_total{question}.
+func (r *slackRecorder) ThreadAnswer(ctx context.Context, question string) {
+	r.proposals.ThreadAnswer(ctx, question)
 }

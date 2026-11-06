@@ -57,15 +57,35 @@ type BrokerAPI interface {
 	RunCreate(ctx context.Context, c RunCreate) (RunResult, error)
 	SlackLinkCode(ctx context.Context, team, user, handle, name string) (string, error)
 	SlackUnlink(ctx context.Context, team, user string) (bool, error)
+	// IntakePlan is the governed planner (CD18): a mention's words become the plan/v1 the proposal
+	// message carries. It files nothing, and ErrUnknownTool is a broker without the tool.
+	IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error)
 	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
 	// thing the App decides, and only for forge.push.
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)
 }
 
-// Recorder counts requests for factory_slack_requests_total{route, outcome}.
+// Recorder counts requests for factory_slack_requests_total{route, outcome}, the proposal actions
+// (proposal_updates_total{action}) and the answers a filed proposal's thread gives
+// (thread_answers_total{question}). The two last are closed vocabularies the App passes: the
+// instruments' names and their serving are metrics' (CD7, CD25).
 type Recorder interface {
 	Request(ctx context.Context, route, outcome string)
+	ProposalUpdate(ctx context.Context, action string)
+	ThreadAnswer(ctx context.Context, question string)
 }
+
+// The six actions maku_slack_proposal_updates_total{action} is labelled with (CD7): a closed set, one
+// word per action the App takes on a proposal. The flows pass these and never a refusal code, a hash,
+// a repository or a person's word, so a series stays one of six.
+const (
+	countMention     = "mention"     // a mention reached the planner
+	countReply       = "reply"       // the author's reply reached the re-plan
+	countConfirm     = "confirm"     // a press was taken up as a Confirm
+	countCancel      = "cancel"      // a press was taken up as a Cancel
+	countRepost      = "repost"      // an edit Slack refused was reposted beside the message it replaced
+	countUnrewritten = "unrewritten" // the Filed line could not be written in place and went to the thread
+)
 
 // App is the flows: a mention drafts, the draft's author amends it with replies in its thread, a
 // maintainer's check mark files, the broker's webhooks tell the thread, and — for forge.push only,
@@ -81,6 +101,7 @@ type App struct {
 	BotUserID   string
 	RoomsURL    string
 	Channels    map[string]Channel
+	Proposals   Proposals    // the proposal flow's switch (CD7): on, a mention is planned and posted as one proposal
 	Async       func(func()) // runs an event's handling after the 200 (tests); nil means the App's workers
 	Now         func() time.Time
 	Metrics     Recorder
@@ -178,6 +199,16 @@ func draftHash(repo, title, body string) string {
 func (a *App) count(ctx context.Context, route, outcome string) {
 	if a.Metrics != nil {
 		a.Metrics.Request(ctx, route, outcome)
+	}
+}
+
+// proposalUpdate counts one proposal action (CD7), with one of the six closed values above. A path that
+// answered nothing counts nothing, which is why the call sites are where an action is actually taken —
+// the mention's flow, the author's re-plan, the press taken up, the repost a refusal forced — and never
+// a dedup hit, an ignored message or a value the family could not read.
+func (a *App) proposalUpdate(ctx context.Context, action string) {
+	if a.Metrics != nil {
+		a.Metrics.ProposalUpdate(ctx, action)
 	}
 }
 
@@ -398,6 +429,14 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	case "unlink":
 		return a.unlink(ctx, ev, thread)
 	}
+	// CD1, §the Slack journey: with proposals on, a mention in plain words is planned by the broker and
+	// posted as one proposal. The App parses no repository line and guesses no repository: the person's
+	// own words are the planner's input (commandless), which is where the 16 KiB bound is measured.
+	if a.Proposals.Enabled {
+		code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
+		return code
+	}
 	d, err := ParseMention(ev.Text, a.BotUserID, ch.Repositories)
 	if err != nil {
 		return refuse(err.Error())
@@ -581,6 +620,11 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 	}
 	latest, _ := a.threadDraft(msgs)
 	if latest == nil {
+		// A thread whose message is a proposal: the same fallback, typed. The filing path re-checks the
+		// payload and the thread, so finding it here is the only thing this adds.
+		if prop, closed := a.threadProposal(msgs); prop != nil && !closed {
+			return a.file(ctx, a.TeamID, ev.Channel, prop.TS, ev.User, true)
+		}
 		return "ignored"
 	}
 	return a.file(ctx, a.TeamID, ev.Channel, latest.TS, ev.User, true)
@@ -588,6 +632,11 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 
 // reply amends the thread's pending draft with a reply from the author of the mention. Anyone
 // else's reply, a reply on a filed draft or in a thread without a draft is ignored without a word.
+//
+// With proposals on the thread's message is a proposal, not a draft: the reply is a re-plan, and the
+// same message becomes its next revision (replan). One thread on this App is one or the other — a
+// proposal is what a mention posts with the switch on — so the two branches never contend for one
+// thread, and the draft path below is whatever it always was.
 func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	ch, ok := a.Channels[ev.Channel]
 	if !ok || ev.Subtype != "" || ev.ThreadTS == "" || ev.ThreadTS == ev.TS || ev.User == a.BotUserID ||
@@ -610,6 +659,20 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			return "refused"
 		}
 		return "error"
+	}
+	// With proposals on, a thread's reply re-plans its one proposal (CD7, CD14). The branch is taken
+	// above the draft path and below the read, which is under a.editMu: the proposal a reply edits is
+	// the one the message shows, and two replies in flight cannot each plan from the revision they saw.
+	if a.Proposals.Enabled {
+		prop, closed := a.threadProposal(msgs)
+		if closed {
+			return "ignored" // a filed or cancelled proposal says so in its own message
+		}
+		if prop != nil {
+			if p, ok := prop.Metadata.proposalPayload(); ok {
+				return a.replan(ctx, ev, ch, ev.ThreadTS, msgs, prop, p)
+			}
+		}
 	}
 	latest, filed := a.threadDraft(msgs)
 	if latest == nil || filed {
@@ -671,15 +734,23 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	if msg.User == "" || msg.User != a.BotUserID || m == nil {
 		return "ignored"
 	}
-	p, ok := m.draftPayload()
-	if !ok {
-		return "ignored"
-	}
 	thread := msg.ThreadTS
 	if thread == "" {
 		thread = msg.TS
 	}
 	if !tsRE.MatchString(thread) {
+		return "ignored"
+	}
+	// CD8's fallback: a ✅ on a proposal files the plan the message showed through the same run_create
+	// validation the Confirm uses. The branch is on the tag alone — the plan's hash is checked there,
+	// so a proposal that no longer binds its plan is refused with its own line instead of being read as
+	// a foreign message nobody answers.
+	if p, ok := m.proposalTaggedPayload(); ok {
+		code, _ := a.fileProposal(ctx, channel, thread, itemTS, user, p, false) // a ✅'s verdict goes to the thread
+		return code
+	}
+	p, ok := m.draftPayload()
+	if !ok {
 		return "ignored"
 	}
 	sayMeta := func(text string, meta *Metadata) { // the verdict goes to the thread; a failure to say it is logged, not retried
@@ -745,7 +816,7 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	})
 	var r Refused
 	if errors.As(err, &r) {
-		code, text, passing := notFiled(string(r), user, p.Repo)
+		code, text, passing := notFiled(string(r), user, p.Repo, false)
 		if viaReply && !passing && code != "not_a_maintainer" {
 			text += " A maintainer reacts :white_check_mark: to file it."
 		}
@@ -763,20 +834,14 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		sayMeta(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), filedMark)
 		return "error"
 	}
-	url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + res.Room
 	// Put on a duplicate too (idempotent): a Put that failed the first time is retried by the next ✅.
 	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.Now()}); err != nil {
 		a.log().Warn("thread map put failed", "room", res.Room, "err", err)
 	}
+	sayMeta(a.filedText(res, user), filedMark)
 	if res.Duplicate {
-		sayMeta("Already filed: "+url, filedMark)
 		return "duplicate"
 	}
-	by := ""
-	if githubLoginRE.MatchString(res.Sponsor) { // named so a wrong link is seen at its first use
-		by = ", sponsored by GitHub @" + res.Sponsor
-	}
-	sayMeta(fmt.Sprintf("Filed #%d for <@%s>%s; the factory starts it. Room: %s", res.Issue, user, by, url), filedMark)
 	return "filed"
 }
 
@@ -786,7 +851,11 @@ var githubLoginRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 // notFiled is a run_create refusal as the thread says it: the reason and its fix in one line. A
 // passing one (the factory could not check just now) is said on every ✅, since reacting again is
 // its fix; any other is said once. Codes outside the list are shown as the broker gave them.
-func notFiled(refusal, user, repo string) (code, text string, passing bool) {
+//
+// confirm is the surface's verb, not a second vocabulary: a ✅ is reacted and a Confirm is pressed, so
+// the one line that names who may file names it in the caller's own word (CD8's two callers are one
+// code path).
+func notFiled(refusal, user, repo string, confirm bool) (code, text string, passing bool) {
 	code, coded := strings.CutPrefix(refusal, "rejected: ")
 	who := "<@" + user + ">"
 	switch {
@@ -795,11 +864,20 @@ func notFiled(refusal, user, repo string) (code, text string, passing bool) {
 	case code == "not_linked":
 		return code, "Not filed: " + who + " is not linked to a GitHub account here; mention me with `link` to link it, then react again.", false
 	case code == "not_a_maintainer":
-		return code, "Not filed: " + who + "'s GitHub account is not a maintainer of " + slackText(repo) + "; a maintainer must react.", false
+		must := "a maintainer must react."
+		if confirm {
+			must = "a maintainer must confirm it."
+		}
+		return code, "Not filed: " + who + "'s GitHub account is not a maintainer of " + slackText(repo) + "; " + must, false
 	case code == "repository_not_allowed" || code == "repository_not_owned":
 		return code, "Not filed: the factory does not take tasks on " + slackText(repo) + " from Slack; ask an operator to add it to the Slack App's repositories.", false
 	case code == "kill_switch":
 		return code, "Not filed: the factory is paused (kill switch); react again once an operator resumes it.", true
+	case code == "plan_changed":
+		// The broker recomposes the plan from the submitted fields and re-hashes it (CD20, CD27): the
+		// message's plan is no longer the one it was asked about, so nothing is filed from it. The
+		// same sentence this family's own hash check says before the broker is called.
+		return code, planChangedLine, false
 	case code == "principal_budget_exhausted":
 		return code, "Not filed: the Slack App's budget for today is spent; react again tomorrow.", false
 	case code == "daily_task_cap":

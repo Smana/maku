@@ -54,6 +54,15 @@ type ApprovalPayload struct {
 // approvalEventType marks a card the App posted for an approval.
 const approvalEventType = "factory_approval"
 
+// MarkerPayload is the "Filed" line's tag: the repository that was filed and the room it started,
+// so a thread that lost its map can still tell where the work went. Today's Filed lines carry the
+// repository alone, which is why Room is optional — a decoder that required one would read every
+// Filed line posted so far as a foreign message.
+type MarkerPayload struct {
+	Repo string `json:"repo"`
+	Room string `json:"room,omitempty"`
+}
+
 // draftPayload decodes the payload as the draft the event type claims; false when it is anything
 // else, which reads as "not a draft", the branch a foreign message already takes.
 func (m *Metadata) draftPayload() (DraftPayload, bool) {
@@ -75,6 +84,46 @@ func (m *Metadata) approvalPayload() (ApprovalPayload, bool) {
 	var p ApprovalPayload
 	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
 		return ApprovalPayload{}, false
+	}
+	return p, true
+}
+
+// proposalPayload decodes the payload as the proposal the event type claims — the plan, the hash, its
+// author and its revision — and only when the plan is the one the hash covers. False for anything
+// else, which reads exactly as a foreign message already reads (CD20): the text is never parsed to
+// recover a plan.
+func (m *Metadata) proposalPayload() (ProposalPayload, bool) {
+	p, ok := m.proposalTaggedPayload()
+	if !ok || !proposalHashHolds(p) {
+		return ProposalPayload{}, false
+	}
+	return p, true
+}
+
+// proposalTaggedPayload decodes the payload of a message that says it is a proposal, without requiring
+// the hash to bind the plan. The ✅ fallback is the one caller: a proposal whose hash no longer holds
+// is no proposal to file, but it is a message the person is looking at, so the filing path refuses it
+// with its own line instead of reading it as a foreign message and saying nothing.
+func (m *Metadata) proposalTaggedPayload() (ProposalPayload, bool) {
+	if m == nil || m.EventType != proposalEventType {
+		return ProposalPayload{}, false
+	}
+	var p ProposalPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return ProposalPayload{}, false
+	}
+	return p, true
+}
+
+// markerPayload decodes a Filed line's tag: the repository filed and the room it started, either of
+// which may be absent on a line posted before this shape existed.
+func (m *Metadata) markerPayload() (MarkerPayload, bool) {
+	if m == nil || m.EventType != filedEventType {
+		return MarkerPayload{}, false
+	}
+	var p MarkerPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return MarkerPayload{}, false
 	}
 	return p, true
 }
@@ -108,6 +157,9 @@ type Slack interface {
 	// Update rewrites a message the App posted (chat.update), for a card that must turn inert. Slack
 	// refuses a message the App does not own; the error carries Slack's code.
 	Update(ctx context.Context, channel, ts, text string, blocks json.RawMessage) error
+	// UpdateProposal rewrites the one proposal message in place, its metadata included (CD7, CD20):
+	// an edit never reposts, and the message the App reads back is the whole proposal.
+	UpdateProposal(ctx context.Context, channel, ts, text string, blocks json.RawMessage, meta *Metadata) error
 	Message(ctx context.Context, channel, ts string) (Message, error)
 	// PostEphemeral is a message only user sees, in channel (and threadTS, when set).
 	PostEphemeral(ctx context.Context, channel, user, threadTS, text string) error
@@ -219,6 +271,31 @@ func (c *SlackClient) Update(ctx context.Context, channel, ts, text string, bloc
 	body := map[string]any{"channel": channel, "ts": ts, "text": text, "unfurl_links": false, "unfurl_media": false}
 	if len(blocks) > 0 {
 		body["blocks"] = blocks
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("chat.update"), bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	_, err = c.do(req)
+	return err
+}
+
+// UpdateProposal is chat.update for the proposal message (CD7, CD20): the App's own edit of its own
+// message, carrying the metadata the message must hold afterwards. The blocks go when there are
+// some, as on Update; the metadata is what makes the edited message still the proposal, so an edit
+// that Slack refuses is the caller's to fall back from, never a silent repost.
+func (c *SlackClient) UpdateProposal(ctx context.Context, channel, ts, text string, blocks json.RawMessage, meta *Metadata) error {
+	body := map[string]any{"channel": channel, "ts": ts, "text": text, "unfurl_links": false, "unfurl_media": false}
+	if len(blocks) > 0 {
+		body["blocks"] = blocks
+	}
+	if meta != nil {
+		body["metadata"] = meta
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
