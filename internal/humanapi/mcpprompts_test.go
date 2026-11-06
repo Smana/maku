@@ -4,9 +4,43 @@ package humanapi
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Smana/maku/internal/maku/skill"
 )
+
+// PromptFor is prompts/get's message text for the prompt named name, filled with args: it renders
+// through this package's own table, so a test asserts on the text a client is served rather than on
+// a copy of it.
+func PromptFor(t *testing.T, name string, args map[string]string) string {
+	t.Helper()
+	for _, p := range mcpPrompts {
+		if p.name == name {
+			return p.text(args)
+		}
+	}
+	t.Fatalf("no prompt %q", name)
+	return ""
+}
+
+// skillText is the factory-handoff SKILL.md as a developer receives it, read back through the
+// skill package's own Install: a helper declared in a test file belongs to that package's test
+// binary alone, so this is the one way to hold the text the model is given rather than a copy of it.
+func skillText(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := skill.Install(dir, "v1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "factory-handoff", "SKILL.md")) //nolint:gosec // the directory the test just made
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 // promptList is prompts/list's prompts, as {name: [argument names]}.
 func promptList(t *testing.T, out map[string]any) map[string][]string {
@@ -37,7 +71,7 @@ func TestPromptsList(t *testing.T) {
 	}
 	_, out := rpc(t, e, viaRoomctl("dev"), "prompts/list", nil)
 	got := promptList(t, out)
-	want := map[string]string{"handoff": "what", "status": "room", "inbox": ""}
+	want := map[string]string{"handoff": "what", "plan": "what", "status": "room", "inbox": ""}
 	if len(got) != len(want) {
 		t.Fatalf("prompts: %v", got)
 	}
@@ -71,10 +105,14 @@ func TestPromptsGetFillsArguments(t *testing.T) {
 	if m["role"] != "user" || c["type"] != "text" || !strings.Contains(text, "fix the dead link") || res["description"] == "" {
 		t.Fatalf("handoff: %v", res)
 	}
-	for _, w := range []string{"issue_draft", "issue_file", "never apply a label"} {
+	for _, w := range []string{"intake_plan", "issue_file", "never apply a label"} {
 		if !strings.Contains(text, w) {
 			t.Errorf("handoff lacks %q", w)
 		}
+	}
+	_, plan := rpc(t, e, h, "prompts/get", map[string]any{"name": "plan", "arguments": map[string]string{"what": "fix the dead link"}})
+	if txt := fmt.Sprint(plan["result"]); !strings.Contains(txt, "intake_plan") || !strings.Contains(txt, "fix the dead link") || !strings.Contains(txt, "stop there") {
+		t.Errorf("plan: %v", plan)
 	}
 	for name, params := range map[string]map[string]any{
 		"unknown prompt":   {"name": "nope"},
@@ -132,6 +170,51 @@ func TestInstructionsFirst512(t *testing.T) {
 	for _, w := range []string{"as it is", "untrusted", "never apply a label", "Approvals stay on the room page", "room_wait", "if `room_wait` is listed"} {
 		if !strings.Contains(head, w) {
 			t.Errorf("the first 512 bytes lack %q:\n%s", w, head)
+		}
+	}
+}
+
+// flat is s lowercased with every run of whitespace collapsed to one space: these texts are
+// hard-wrapped, so a rule has to hold across a line break exactly as it does within one, and a test
+// reading the raw bytes would pin the wrapping instead of the rule.
+func flat(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
+// CD1, CD6: the model that runs in the session is not a second planner. The prompt says so, and
+// the skill says so, and both name the tool that is.
+func TestTheHandoffPromptPassesContextInsteadOfWriting(t *testing.T) {
+	for _, text := range []string{PromptFor(t, "handoff", map[string]string{"what": "the install link"}),
+		skillText(t)} {
+		flatText := flat(text)
+		for _, want := range []string{"intake_plan", "issue_file", "never write the plan"} {
+			if !strings.Contains(flatText, want) {
+				t.Errorf("lacks %q", want)
+			}
+		}
+		for _, gone := range []string{"draft one issue", "check it with `issue_draft`, fix what it reports"} {
+			if strings.Contains(flatText, gone) {
+				t.Errorf("still instructs the model to write the plan: %q", gone)
+			}
+		}
+	}
+}
+
+// issue_file files the plan's first issue and nothing else (CD19; its schema has no issue
+// selector), so neither text may read as one call for a whole plan.
+func TestNeitherTextPromisesEveryIssueAtOnce(t *testing.T) {
+	for name, text := range map[string]string{
+		"the handoff prompt": PromptFor(t, "handoff", map[string]string{"what": "the install link"}),
+		"SKILL.md":           skillText(t),
+	} {
+		flatText := flat(text)
+		if !strings.Contains(flatText, "first issue") {
+			t.Errorf("%s does not say which issue one call files", name)
+		}
+		for _, gone := range []string{"files every issue", "files the whole plan", "every issue of the plan is filed"} {
+			if strings.Contains(flatText, gone) {
+				t.Errorf("%s claims one call files them all: %q", name, gone)
+			}
 		}
 	}
 }

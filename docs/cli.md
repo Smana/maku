@@ -110,8 +110,8 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 - The tools: `rooms_list`, `room_summary`, `room_tail`, `room_changes`, `room_queue`, `room_fork` and
   `issue_draft` from the broker, and `issue_file`, `room_wait` and `room_checkout`, maku's own.
   `room_tail` also runs as an MCP Task that waits for the room's next events; `maku mcp` polls it
-  for your agent. The broker also serves the prompts `handoff` (`what`), `status` (`room`) and
-  `inbox`, which your agent offers as slash commands (see [Short commands](#short-commands) for how to type them).
+  for your agent. The broker also serves the prompts `handoff` (`what`), `plan` (`what`), `status`
+  (`room`) and `inbox`, which your agent offers as slash commands (see [Short commands](#short-commands) for how to type them).
 - `issue_file` files a draft with your `gh`, as you, only after you accept it in a prompt your agent
   shows you (MCP elicitation). The broker's `issue_draft` checks the draft first, and the prompt
   shows exactly what is filed. An agent that cannot prompt you is refused: file the draft yourself
