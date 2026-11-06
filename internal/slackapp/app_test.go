@@ -596,10 +596,14 @@ type stubBroker struct {
 	fence        bool
 	fenced       bool
 	// intake is every intake_plan the App asked for, oldest first; intakeResult is the planner's
-	// answer and intakeErr the failure it answers instead.
+	// answer and intakeErr the failure it answers instead. intakeAnswer, when set, answers each
+	// request itself, so a test can tell one plan from the next; intakeGate, when set, blocks the
+	// call until the test releases it, which is how two replies are put inside one re-plan.
 	intake       []IntakeRequest
 	intakeResult IntakeResult
 	intakeErr    error
+	intakeAnswer func(IntakeRequest) IntakeResult
+	intakeGate   func()
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {
@@ -688,14 +692,25 @@ func (b *stubBroker) Decide(_ context.Context, d Decision) (DecisionResult, erro
 }
 
 // IntakePlan records the plan request and answers what the test told it to: withProposals sets the
-// fixture's plan, and a refusal or a failure is the one line each.
+// fixture's plan, intakeAnswer answers each request itself, and a refusal or a failure is the one line
+// each. intakeGate blocks the call outside the fake's lock, so the test that set it can seed the
+// thread while the plan is in flight.
 func (b *stubBroker) IntakePlan(_ context.Context, in IntakeRequest) (IntakeResult, error) {
+	b.mu.Lock()
+	gate, answer := b.intakeGate, b.intakeAnswer
+	b.mu.Unlock()
+	if gate != nil {
+		gate()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, in)
 	b.intake = append(b.intake, in)
 	if b.intakeErr != nil {
 		return IntakeResult{}, b.intakeErr
+	}
+	if answer != nil {
+		return answer(in), nil
 	}
 	return b.intakeResult, nil
 }
@@ -1850,6 +1865,341 @@ func TestProposalRefusals(t *testing.T) {
 			t.Fatalf("the payload does not carry the label a restart reads: %+v (%v)", prop, ok)
 		}
 	})
+}
+
+// ---- a reply re-plans the one proposal message (CD7, CD14) ----
+
+// proposalThreadTS is the parent's ts in every proposal test: the mention's own message, which is
+// what a re-plan reads as the request.
+const proposalThreadTS = "1729.0001"
+
+// proposalAt is a rig with the proposal flow on, holding the thread an App that has just restarted
+// reads: the mention as the parent and one proposal at rev carrying the fixture's plan. Nothing of
+// the thread is in the App's memory, so every assertion below is about the metadata alone (CD20).
+func proposalAt(t *testing.T, rev int) (rig *appRig, plan intake.Plan, ts string) {
+	t.Helper()
+	rig, plan = withProposals(t)
+	rig.slack.seed(Message{TS: proposalThreadTS, User: "U02DEF", Text: "<@U0BOT> " + mentionWords})
+	p, err := newProposal(plan, intake.Hash(plan), "U02DEF", rev)
+	if err != nil {
+		t.Fatalf("newProposal: %v", err)
+	}
+	ts = "1729.0002"
+	rig.slack.seed(Message{TS: ts, ThreadTS: proposalThreadTS, User: "U0BOT",
+		Text: "Proposal v" + strconv.Itoa(rev) + " · " + p.Hash, Metadata: metaOf(t, proposalEventType, p)})
+	return rig, plan, ts
+}
+
+// replySaid is a reply the thread really holds: the message is in the fake, as conversations.replies
+// returns it, and the event that carries it arrives after, as Slack's does.
+func (r *appRig) replySaid(user, ts, text string) {
+	r.t.Helper()
+	r.slack.seed(Message{TS: ts, ThreadTS: proposalThreadTS, User: user, Text: text})
+	r.seq++
+	r.event(`{"type":"message","channel":"C03","user":"` + user + `","thread_ts":"` + proposalThreadTS +
+		`","ts":"` + ts + `","text":` + jsonString(text) + `}`)
+}
+
+// replyEvent is a reply as the events door decodes it: what a worker hands the flow, so a test can
+// run two of them at once.
+func replyEvent(user, ts, text string) slackEvent {
+	return slackEvent{Type: "message", Channel: "C03", User: user, ThreadTS: proposalThreadTS, TS: ts, Text: text}
+}
+
+// CD7 and CD14: a reply is the same message's next revision, with the sections that moved marked and
+// the header saying a new confirmation is required; five replies are still one message.
+func TestReplyReplansInPlace(t *testing.T) {
+	t.Run("a reply re-plans the one message and marks what moved", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		moved := clonePlan(t, plan)
+		moved.Repository = "Smana/cloud-native-ref" // the channel's other repository: what the reply named
+		rig.broker.intakeResult = IntakeResult{Plan: moved, Hash: intake.Hash(moved)}
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+
+		if n := len(rig.posts()); n != 0 {
+			t.Fatalf("%d posts: a re-plan edits the message, it does not post beside it", n)
+		}
+		edits := rig.slack.proposalEdits()
+		if len(edits) != 1 || edits[0].ts != ts || edits[0].channel != "C03" {
+			t.Fatalf("the proposal was not edited in place: %+v", edits)
+		}
+		next, ok := edits[0].meta.proposalPayload()
+		if !ok || next.Rev != 2 || next.Hash != intake.Hash(moved) || next.Author != "U02DEF" {
+			t.Fatalf("the edit's payload: %+v (%v)", next, ok)
+		}
+		if next.Hash == intake.Hash(plan) {
+			t.Fatal("the reply did not move the plan")
+		}
+		// The material set moved, so the section a click would file differently is marked and the
+		// header asks for a new confirmation (CD14, CD27).
+		if !strings.Contains(string(edits[0].blocks), "*Repository ‹changed›*") {
+			t.Fatalf("the repository section is not marked: %s", edits[0].blocks)
+		}
+		if !strings.Contains(string(edits[0].blocks), "requires a new confirmation") {
+			t.Fatalf("the header does not ask for a new confirmation: %s", edits[0].blocks)
+		}
+		// The planner is called with the thread's own request and the reply as context: one text, the
+		// channel's candidates, the requester's principal and ceiling, and the reply said back to it.
+		calls := rig.broker.intakeCalls()
+		if len(calls) != 1 {
+			t.Fatalf("%d intake_plan calls, want one", len(calls))
+		}
+		want := IntakeRequest{Text: mentionWords, Context: "Reply 1: it belongs in owner/docs",
+			OnBehalfOf: "slack:T01ABC/U02DEF", Candidates: []string{"Smana/ai-native-ref", "Smana/cloud-native-ref"},
+			CeilingUSD: 2}
+		if !reflect.DeepEqual(calls[0], want) {
+			t.Fatalf("the plan request is %+v, want %+v", calls[0], want)
+		}
+		if n := len(rig.broker.runCreates()); n != 0 {
+			t.Fatalf("a re-plan filed %d issues", n)
+		}
+		if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != ts {
+			t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+		}
+		if got := rig.metrics.count("events", "updated"); got != 1 {
+			t.Fatalf("the re-plan was counted %d times as updated", got)
+		}
+	})
+
+	t.Run("five replies are still one message", func(t *testing.T) {
+		rig, _, ts := proposalAt(t, 1)
+		for i := 1; i <= 5; i++ {
+			rig.replySaid("U02DEF", fmt.Sprintf("1729.900%d", i), fmt.Sprintf("and the table, note %d", i))
+		}
+		if n := len(rig.posts()); n != 0 {
+			t.Fatalf("%d posts: five replies posted beside the proposal", n)
+		}
+		edits := rig.slack.proposalEdits()
+		if len(edits) != 5 {
+			t.Fatalf("%d edits, want one per reply: %+v", len(edits), edits)
+		}
+		for i, e := range edits {
+			p, ok := e.meta.proposalPayload()
+			if !ok || p.Rev != i+2 || e.ts != ts {
+				t.Fatalf("edit %d is %+v (%v) on %q", i, p, ok, e.ts)
+			}
+		}
+		if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != ts {
+			t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+		}
+		if n := len(rig.broker.runCreates()); n != 0 {
+			t.Fatalf("five revisions filed %d issues", n)
+		}
+	})
+
+	// Review Focus 1, reached through the reply: an edit Slack refuses is reposted and the message it
+	// replaced is made inert, so the thread still holds one live proposal and one set of buttons.
+	t.Run("an edit Slack refuses is reposted, and the thread still holds one proposal", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		moved := clonePlan(t, plan)
+		moved.Repository = "Smana/cloud-native-ref"
+		rig.broker.intakeResult = IntakeResult{Plan: moved, Hash: intake.Hash(moved)}
+		rig.slack.failProposalUpdates = 1
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+
+		posts := rig.posts()
+		if len(posts) != 1 {
+			t.Fatalf("%d posts, want the repost beside the card it replaced", len(posts))
+		}
+		if p, ok := posts[0].meta.proposalPayload(); !ok || p.Rev != 2 || p.Hash != intake.Hash(moved) {
+			t.Fatalf("the repost's payload: %+v (%v)", p, ok)
+		}
+		var inert []post
+		for _, u := range rig.slack.updatesMade() {
+			if u.ts == ts {
+				inert = append(inert, u)
+			}
+		}
+		if len(inert) != 1 || inert[0].text != proposalReplacedLine || string(inert[0].blocks) != "[]" {
+			t.Fatalf("the replaced card: %+v", inert)
+		}
+		if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != posts[0].ts {
+			t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+		}
+		if got := rig.metrics.count("events", "reposted"); got != 1 {
+			t.Fatalf("the repost was counted %d times", got)
+		}
+	})
+}
+
+// Review Focus 2: two replies inside one re-plan serialise on the App's edit lock; the thread ends
+// with one message carrying the last plan at revision N+2, and neither word is lost from the
+// planner's context — the second reply's re-plan reads the thread again under the lock.
+func TestReplySerialised(t *testing.T) {
+	rig, plan, ts := proposalAt(t, 1)
+	// The planner answers a plan whose title is how many replies its context held, so the message's
+	// final plan is the last call's and not the first's.
+	rig.broker.intakeAnswer = func(in IntakeRequest) IntakeResult {
+		next := plan
+		next.Issues = append([]intake.Issue(nil), plan.Issues...)
+		next.Issues[0].Title = fmt.Sprintf("docs: planned from %d replies", strings.Count(in.Context, "Reply "))
+		return IntakeResult{Plan: next, Hash: intake.Hash(next)}
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	rig.broker.intakeGate = func() { once.Do(func() { close(entered); <-release }) } // the first plan blocks
+
+	const first, second = "it belongs in owner/docs", "and the acceptance check is one click"
+	rig.slack.seed(Message{TS: "1729.9001", ThreadTS: proposalThreadTS, User: "U02DEF", Text: first})
+	// The waits are bounded so a reply that stopped re-planning fails this test instead of hanging it.
+	bounded, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	outcomes := make(chan string, 2)
+	go func() { outcomes <- rig.app.reply(bounded, replyEvent("U02DEF", "1729.9001", first)) }()
+	select {
+	case <-entered: // the first re-plan is inside the planner, holding the lock
+	case <-bounded.Done():
+		t.Fatal("the first re-plan never reached the planner: a reply no longer re-plans")
+	}
+	// The second reply lands while the first plan is in flight: its re-plan's read is after the first
+	// one's write, so its context holds both words and its revision is the one the message shows.
+	rig.slack.seed(Message{TS: "1729.9002", ThreadTS: proposalThreadTS, User: "U02DEF", Text: second})
+	go func() { outcomes <- rig.app.reply(bounded, replyEvent("U02DEF", "1729.9002", second)) }()
+	close(release)
+	for range 2 {
+		select {
+		case code := <-outcomes:
+			if code != "updated" {
+				t.Fatalf("a re-plan answered %q, want updated", code)
+			}
+		case <-bounded.Done():
+			t.Fatal("a re-plan never finished")
+		}
+	}
+
+	calls := rig.broker.intakeCalls()
+	if len(calls) != 2 {
+		t.Fatalf("%d intake_plan calls, want two: %+v", len(calls), calls)
+	}
+	if calls[0].Text != mentionWords || calls[1].Text != mentionWords {
+		t.Fatalf("the requests' text: %q, %q", calls[0].Text, calls[1].Text)
+	}
+	if calls[0].Context != "Reply 1: "+first {
+		t.Fatalf("the first re-plan's context is %q, want its own reply alone", calls[0].Context)
+	}
+	if want := "Reply 1: " + first + "\nReply 2: " + second; calls[1].Context != want {
+		t.Fatalf("the second re-plan's context is %q, want %q", calls[1].Context, want)
+	}
+
+	edits := rig.slack.proposalEdits()
+	if len(edits) != 2 || edits[0].ts != ts || edits[1].ts != ts {
+		t.Fatalf("the edits: %+v", edits)
+	}
+	second2, ok := edits[0].meta.proposalPayload()
+	if !ok || second2.Rev != 2 {
+		t.Fatalf("the first edit's revision: %+v (%v)", second2, ok)
+	}
+	last, ok := edits[1].meta.proposalPayload()
+	if !ok || last.Rev != 3 || last.Plan.Issues[0].Title != "docs: planned from 2 replies" {
+		t.Fatalf("the last edit holds %+v (%v), want revision 3 of the second plan", last, ok)
+	}
+	if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != ts {
+		t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+	}
+}
+
+// CD14's bound, and the rules the draft path already has: over maxProposalRevisions the thread says to
+// confirm, only the proposal's author's replies edit it, a closed thread is never edited, and a
+// deployment that closed the switch re-plans nothing.
+func TestReplyBounds(t *testing.T) {
+	t.Run("a thread at the revision cap says to confirm", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, maxProposalRevisions)
+		rig.replySaid("U02DEF", "1729.9001", "one more change")
+		if p := rig.lastPost(); p.text != replyPlannedMost || p.meta != nil {
+			t.Fatalf("%q, want %q", p.text, replyPlannedMost)
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("a capped thread planned %d times", n)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a capped thread was edited %d times", n)
+		}
+	})
+
+	t.Run("a reply that is not the author's is ignored", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, 1)
+		rig.replySaid("U07GHI", "1729.9001", "it belongs in owner/docs")
+		if n := len(rig.posts()); n != 0 {
+			t.Fatalf("someone else's reply was answered: %+v", rig.posts())
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("someone else's reply planned %d times", n)
+		}
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("someone else's reply edited the proposal %d times", n)
+		}
+		if got := rig.metrics.count("events", "ignored"); got != 1 {
+			t.Fatalf("the reply was counted %d times as ignored", got)
+		}
+	})
+
+	t.Run("a closed thread is never edited", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, 1)
+		rig.slack.seed(Message{TS: "1729.0003", ThreadTS: proposalThreadTS, User: "U0BOT",
+			Text:     "Filed #42 for <@U02DEF>; the factory starts it. Room: https://rooms.example/r/26zfnuxm",
+			Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref", Room: "26zfnuxm"})})
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+		if n := len(rig.posts()); n != 0 || len(rig.slack.proposalEdits()) != 0 {
+			t.Fatalf("a filed thread was edited: %+v %+v", rig.posts(), rig.slack.proposalEdits())
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("a filed thread planned %d times", n)
+		}
+		if got := rig.metrics.count("events", "ignored"); got != 1 {
+			t.Fatalf("the reply was counted %d times as ignored", got)
+		}
+	})
+
+	t.Run("the switch off re-plans nothing", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, 1)
+		rig.app.Proposals = Proposals{}
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+		if n := len(rig.posts()); n != 0 || len(rig.slack.proposalEdits()) != 0 {
+			t.Fatalf("with proposals off the thread was edited: %+v", rig.slack.proposalEdits())
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("with proposals off the reply planned %d times", n)
+		}
+		if got := rig.metrics.count("events", "ignored"); got != 1 {
+			t.Fatalf("the reply was counted %d times as ignored", got)
+		}
+	})
+}
+
+// The context intake_plan is given is the requester's own words: the parent is the request and not a
+// reply, the App's messages are not words at all, a bystander's reply is not the requester's, and the
+// 4 KiB bound keeps the most recent replies whole and cuts an oversized one rather than dropping it.
+func TestFollowUps(t *testing.T) {
+	const bot, author = "U0BOT", "U02DEF"
+	msgs := []Message{
+		{TS: "1.1", User: author, Text: "<@U0BOT> the install link is dead"},
+		{TS: "1.2", ThreadTS: "1.1", User: bot, Text: "Proposal v1 · sha256:…"},
+		{TS: "1.3", ThreadTS: "1.1", User: author, Text: "  it belongs in owner/docs  "},
+		{TS: "1.4", ThreadTS: "1.1", User: "U07GHI", Text: "and while you are there, ship it"},
+		{TS: "1.5", ThreadTS: "1.1", User: author, Text: "the acceptance check is one click"},
+	}
+	if got, want := followUps(msgs, "1.1", bot, author, maxProposalContextBytes),
+		"Reply 1: it belongs in owner/docs\nReply 2: the acceptance check is one click"; got != want {
+		t.Fatalf("the context is %q, want %q", got, want)
+	}
+	// The bound keeps the most recent whole replies: the oldest goes first.
+	last := "Reply 1: the acceptance check is one click"
+	if got := followUps(msgs, "1.1", bot, author, len(last)); got != last {
+		t.Fatalf("the trimmed context is %q, want %q", got, last)
+	}
+	// One reply larger than the whole bound is cut to it, never dropped: it is the word the re-plan
+	// was asked for. Nothing longer than the bound ever leaves here.
+	long := []Message{
+		{TS: "1.1", User: author, Text: "the link"},
+		{TS: "1.2", ThreadTS: "1.1", User: author, Text: strings.Repeat("a", 64)},
+	}
+	if got := followUps(long, "1.1", bot, author, 32); len(got) != 32 || !strings.HasPrefix(got, "Reply 1: aaa") {
+		t.Fatalf("an oversized reply: %q (%d bytes)", got, len(got))
+	}
+	// No replies at all is no context: the thread's opening message is the request, never a reply.
+	if got := followUps(msgs[:1], "1.1", bot, author, maxProposalContextBytes); got != "" {
+		t.Fatalf("a thread with no reply has the context %q", got)
+	}
 }
 
 // liveProposals is every message in the fake a person could still confirm: the App's own, its metadata

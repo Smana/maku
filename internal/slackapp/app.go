@@ -603,6 +603,11 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 
 // reply amends the thread's pending draft with a reply from the author of the mention. Anyone
 // else's reply, a reply on a filed draft or in a thread without a draft is ignored without a word.
+//
+// With proposals on the thread's message is a proposal, not a draft: the reply is a re-plan, and the
+// same message becomes its next revision (replan). One thread on this App is one or the other — a
+// proposal is what a mention posts with the switch on — so the two branches never contend for one
+// thread, and the draft path below is whatever it always was.
 func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	ch, ok := a.Channels[ev.Channel]
 	if !ok || ev.Subtype != "" || ev.ThreadTS == "" || ev.ThreadTS == ev.TS || ev.User == a.BotUserID ||
@@ -625,6 +630,20 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			return "refused"
 		}
 		return "error"
+	}
+	// With proposals on, a thread's reply re-plans its one proposal (CD7, CD14). The branch is taken
+	// above the draft path and below the read, which is under a.editMu: the proposal a reply edits is
+	// the one the message shows, and two replies in flight cannot each plan from the revision they saw.
+	if a.Proposals.Enabled {
+		prop, closed := a.threadProposal(msgs)
+		if closed {
+			return "ignored" // a filed or cancelled proposal says so in its own message
+		}
+		if prop != nil {
+			if p, ok := prop.Metadata.proposalPayload(); ok {
+				return a.replan(ctx, ev, ch, ev.ThreadTS, msgs, prop, p)
+			}
+		}
 	}
 	latest, filed := a.threadDraft(msgs)
 	if latest == nil || filed {

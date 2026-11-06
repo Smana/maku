@@ -64,6 +64,13 @@ var errProposalTooLarge = errors.New("the plan is too long for Slack; use your c
 // refused it, so the mention that drew the plan and the reply that re-planned it say the same thing.
 func notPostedLine(err error) string { return "Proposal not posted: " + err.Error() + "." }
 
+// notPostedIssueLine is a plan covering more than one issue, as the thread says it: Slack files one, and
+// a plan with more is never trimmed to fit (CD19). The mention's post and the reply's re-plan meet it
+// with this one sentence.
+func notPostedIssueLine(n int) string {
+	return fmt.Sprintf("Proposal not posted: this plan covers %d issues and Slack files one: use your coding agent or the web UI.", n)
+}
+
 // proposalHashRE is the shape of a plan hash: a Confirm binds one of these, and anything else binds
 // nothing.
 var proposalHashRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -533,9 +540,24 @@ const (
 	// HTTP body Slack posts, which the verifier already caps at 1 MiB. A request past it is refused
 	// before the broker is called, with its own line.
 	maxProposalRequestBytes = 16 << 10
+	// maxProposalContextBytes is intake_plan's context bound, measured in bytes on what the reply flow
+	// sends as context — the requester's replies, numbered — so a thread's whole history never has to
+	// fit and nothing is sent that the tool would refuse whole.
+	maxProposalContextBytes = 4 << 10
 	// planUnsupported is the mention's answer on a broker that has no planner. The old grammar still
 	// works there, and saying so is better than a refusal the person cannot act on.
 	planUnsupported = "This deployment does not plan from Slack yet; mention me in the old grammar."
+	// replyPlannedMost is the reply's answer in a thread whose proposal has reached the revision cap:
+	// one message is all a thread edits, and the two things left are the two the line names.
+	replyPlannedMost = "This proposal was planned the most it can be here: confirm it, or start a new mention."
+	// proposalCappedLine is the mention's answer in a thread whose live proposal has all the revisions
+	// one may have: its pre-check and a plan the broker answered at the cap say the same sentence.
+	proposalCappedLine = "Not proposed: this thread has all the revisions one proposal may have; confirm it, or start a new mention."
+	// replyNoRequest is the reply's answer when Slack's answer does not hold the thread's first
+	// message. The request lives nowhere but that message — the proposal's metadata is the plan, its
+	// hash, its author and its revision (CD20) — so the App says it cannot re-plan rather than
+	// composing a request out of the plan it shows.
+	replyNoRequest = "Not re-planned: this thread's first message is not in Slack's answer; mention me again with what should change."
 )
 
 // RequestedTextTooLong is a mention whose planner input is past intake_plan's 16 KiB bound. Its text
@@ -576,18 +598,9 @@ func commandless(text, bot string) string {
 // "error"), updateProposal's ("updated", "reposted"), "refused" for a refusal whose fix is a new
 // mention, and "error" for a passing one.
 func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) string {
-	say := func(line string) bool {
-		if _, err := a.Slack.Post(ctx, ev.Channel, thread, line, nil); err != nil {
-			a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
-			return false
-		}
-		return true
-	}
+	say := func(line string) bool { return a.sayLine(ctx, ev.Channel, thread, line) }
 	if len(text) > maxProposalRequestBytes {
-		if !say(RequestedTextTooLong.Error()) {
-			return "error"
-		}
-		return "too_large"
+		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large")
 	}
 	// The read, the plan and the write are one step, as a filing is: two mentions that both read "no
 	// proposal" would post two live ones, and the whole point of the branch below is that a thread has
@@ -619,7 +632,7 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		}
 	}
 	if prev != nil && prev.Rev >= maxProposalRevisions {
-		if !say("Not proposed: this thread has all the revisions one proposal may have; confirm it, or start a new mention.") {
+		if !say(proposalCappedLine) {
 			return "error"
 		}
 		return "refused"
@@ -631,29 +644,8 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
 		CeilingUSD: ch.MaxCostUSD,
 	})
-	var r Refused
-	switch {
-	case errors.Is(err, ErrUnknownTool):
-		if !say(planUnsupported) {
-			return "error"
-		}
-		return "refused"
-	case errors.As(err, &r):
-		code, line, passing := notProposed(string(r), ev.User, ch.Repositories...)
-		a.log().Info("proposal refused", "code", code, "channel", ev.Channel) // the reason, never the request's text
-		if !say(line) {
-			return "error"
-		}
-		if passing {
-			return "error" // a passing failure, whose fix the line states: mention again
-		}
-		return "refused"
-	case err != nil:
-		a.log().Warn("intake_plan failed", "err", err)
-		if !say("Not proposed: the planner could not be reached; mention me again in a minute.") {
-			return "error"
-		}
-		return "error"
+	if code := a.planFailed(ctx, ev.Channel, thread, ev.User, ch.Repositories, err); code != "" {
+		return code
 	}
 
 	// The broker's answer is held to the message's own contract before a byte of it is posted: a plan
@@ -665,31 +657,8 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		nextRev = prev.Rev + 1 // the live proposal's next revision, whatever the caller passed
 	}
 	prop, err := newProposal(res.Plan, res.Hash, ev.User, nextRev)
-	switch {
-	case err == nil:
-	case errors.Is(err, errProposalTooLarge):
-		if !say(notPostedLine(errProposalTooLarge)) {
-			return "error"
-		}
-		return "too_large"
-	case errors.Is(err, errProposalRev):
-		a.log().Warn("intake_plan answered a plan past the revision cap", "channel", ev.Channel)
-		if !say("Not proposed: this thread has all the revisions one proposal may have; confirm it, or start a new mention.") {
-			return "error"
-		}
-		return "refused"
-	case errors.Is(err, errProposalHash):
-		a.log().Warn("intake_plan answered a plan that does not hold", "channel", ev.Channel)
-		if !say("Not proposed: the plan the planner answered does not match its check; mention me again.") {
-			return "error"
-		}
-		return "refused"
-	default:
-		a.log().Warn("intake_plan answered a plan that cannot be shown", "channel", ev.Channel, "err", err)
-		if !say("Not proposed: the plan the planner answered cannot be shown here; mention me again.") {
-			return "error"
-		}
-		return "refused"
+	if err != nil {
+		return a.notShown(ctx, ev.Channel, thread, err)
 	}
 	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
 	if prev != nil {
@@ -774,6 +743,224 @@ func notProposed(refusal, user string, served ...string) (code, text string, pas
 	return code, "Not proposed: " + shown(refusal), false
 }
 
+// ---- the reply: the same one message, planned again from the person's words (CD7, CD14) ----
+
+// followUps is a thread as intake_plan's context: the requester's own replies, in order, each on its
+// own line as `Reply 1: …`, so the planner reads which words came when (CD14's "a reply re-plans").
+//
+// Only the requester's words are an edit of their request, so a bystander's reply is not in it — the
+// App reads no one else's message into a plan it files for this one — and the App's own messages are
+// not words at all: the proposal, the Filed line and every refusal line it wrote stay out.
+//
+// budget is intake_plan's context bound, measured in bytes on what is sent. The most recent replies
+// are the ones the person just wrote, so those are kept and the older ones go; a reply larger than the
+// whole bound is cut to it rather than dropped, because the word that asked for the re-plan is the one
+// the plan is re-made from. Nothing longer than the bound ever leaves here.
+func followUps(msgs []Message, thread, bot, author string, budget int) string {
+	var said []string
+	for i := range msgs {
+		m := &msgs[i]
+		// The parent is the request itself, passed as the plan's text, never a reply.
+		if m.TS == "" || m.TS == thread || m.User == "" || m.User == bot || m.User != author {
+			continue
+		}
+		if text := strings.TrimSpace(m.Text); text != "" {
+			said = append(said, text)
+		}
+	}
+	if len(said) == 0 || budget <= 0 {
+		return ""
+	}
+	for {
+		out := numberReplies(said)
+		if len(out) <= budget {
+			return out
+		}
+		if len(said) == 1 {
+			return clipReply(out, budget)
+		}
+		said = said[1:]
+	}
+}
+
+// numberReplies is the replies as the planner reads them: in order, each `Reply n: ` and its text.
+func numberReplies(said []string) string {
+	lines := make([]string, len(said))
+	for i, text := range said {
+		lines[i] = "Reply " + strconv.Itoa(i+1) + ": " + text
+	}
+	return strings.Join(lines, "\n")
+}
+
+// clipReply is s cut to budget bytes without splitting a character: half a rune is noise to the
+// planner, and the bound is measured in bytes, as intake_plan measures it.
+func clipReply(s string, budget int) string {
+	if len(s) <= budget {
+		return s
+	}
+	cut := 0
+	for i := range s {
+		if i > budget {
+			break
+		}
+		cut = i
+	}
+	return s[:cut]
+}
+
+// parentRequest is the request the thread was planned from: its first message, read from Slack's
+// answer alone, with the bot's <@…> taken out as the mention's text is (commandless). ok is false when
+// that answer does not hold it, which is a thread the App cannot re-plan: the request is in no
+// message, and nothing is composed out of the plan the proposal carries (CD20).
+func parentRequest(msgs []Message, thread, bot string) (string, bool) {
+	for i := range msgs {
+		if msgs[i].TS != thread {
+			continue
+		}
+		if text := commandless(msgs[i].Text, bot); text != "" {
+			return text, true
+		}
+		return "", false
+	}
+	return "", false
+}
+
+// replan answers a reply in a proposal's thread: the thread's request, planned again with the
+// requester's replies as context, written back onto the one message that holds the proposal (CD7,
+// CD14). A revision is never a new message, so the thread's buttons always bind the plan its metadata
+// carries; when Slack refuses the edit, updateProposal reposts and makes the old card inert, which is
+// Review Focus 1 reached from here.
+//
+// It is called by reply with a.editMu held and with the thread read under it, and it takes no lock of
+// its own: two replies cannot interleave, so the second one's read already holds the first one's reply
+// and the revision it wrote, and the revision it plans is the one the message shows. Everything is
+// read from the messages — the request from the thread's parent, the plan, its hash, its author and
+// its revision from the proposal's metadata — so an App that has just restarted re-plans exactly as
+// one that watched the mention.
+//
+// Nothing is planned, and the thread says why in one line each, when the reply is not the mention's
+// author's (that is "ignored": only their words edit their proposal), when the message has reached
+// the revision cap, and when the answer does not hold the thread's first message. The broker's own
+// refusals are the mention's lines, one spelling per reason.
+//
+// The outcome is updateProposal's ("updated", "reposted"), the plan's own ("multi_issue",
+// "too_large"), "refused" for a refusal whose fix is a new mention, "error" for a passing one, and
+// "ignored" for a reply that is not this proposal's author's.
+func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread string, msgs []Message, latest *Message, p ProposalPayload) string {
+	if p.Author == "" || p.Author != ev.User {
+		return "ignored" // only the mention's author's replies edit it, as the draft path's do
+	}
+	if p.Rev >= maxProposalRevisions {
+		return a.refusedLine(ctx, ev.Channel, thread, replyPlannedMost)
+	}
+	text, ok := parentRequest(msgs, thread, a.BotUserID)
+	if !ok {
+		a.log().Warn("thread's first message is not in Slack's answer", "channel", ev.Channel)
+		return a.refusedLine(ctx, ev.Channel, thread, replyNoRequest)
+	}
+	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{
+		Text:       text,
+		Context:    followUps(msgs, thread, a.BotUserID, p.Author, maxProposalContextBytes),
+		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
+		Candidates: ch.Repositories,
+		CeilingUSD: ch.MaxCostUSD,
+	})
+	if code := a.planFailed(ctx, ev.Channel, thread, ev.User, ch.Repositories, err); code != "" {
+		return code
+	}
+	// The reply is the mention's author, so the plan keeps the author it was made for however many
+	// times it is revised: who may file it does not move with who last typed.
+	next, err := newProposal(res.Plan, res.Hash, p.Author, p.Rev+1)
+	if err != nil {
+		return a.notShown(ctx, ev.Channel, thread, err)
+	}
+	next.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
+	// Slack files one issue and a re-plan is never a trimmed plan (CD19): the reply path meets the
+	// same refusal the mention's post does, in the same words.
+	if n := len(next.Plan.Issues); n > 1 {
+		return a.refusedWith(ctx, ev.Channel, thread, notPostedIssueLine(n), "multi_issue")
+	}
+	return a.updateProposal(ctx, ev.Channel, latest.TS, p, next, res.Question)
+}
+
+// sayLine posts one line in a thread, reporting whether Slack took it: a failure is logged with the
+// channel and the flow's answer to it is always "error", never a retry.
+func (a *App) sayLine(ctx context.Context, channel, thread, line string) bool {
+	if _, err := a.Slack.Post(ctx, channel, thread, line, nil); err != nil {
+		a.log().Warn("slack post failed", "channel", channel, "err", err)
+		return false
+	}
+	return true
+}
+
+// refusedLine says one refusal in the thread and answers "refused", or "error" when the line itself
+// could not be said.
+func (a *App) refusedLine(ctx context.Context, channel, thread, line string) string {
+	if !a.sayLine(ctx, channel, thread, line) {
+		return "error"
+	}
+	return "refused"
+}
+
+// refusedWith is refusedLine for a refusal with an outcome of its own: a plan Slack cannot file
+// counts apart from one it could plan.
+func (a *App) refusedWith(ctx context.Context, channel, thread, line, code string) string {
+	if !a.sayLine(ctx, channel, thread, line) {
+		return "error"
+	}
+	return code
+}
+
+// planFailed answers a broker call that gave no plan, as the thread says it (CD18): the refusal's own
+// line, the old grammar where the broker has no planner, and the planner being unreachable each have
+// one sentence. "" means the call did not fail; otherwise the answer is the outcome the caller counts
+// — "refused" for a decision, "error" for a passing failure whose fix is to ask again.
+func (a *App) planFailed(ctx context.Context, channel, thread, user string, served []string, err error) string {
+	var r Refused
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, ErrUnknownTool):
+		return a.refusedLine(ctx, channel, thread, planUnsupported)
+	case errors.As(err, &r):
+		code, line, passing := notProposed(string(r), user, served...)
+		a.log().Info("proposal refused", "code", code, "channel", channel) // the reason, never the request's text
+		if passing {
+			return a.refusedWith(ctx, channel, thread, line, "error") // a passing failure: the line states the fix
+		}
+		return a.refusedWith(ctx, channel, thread, line, "refused")
+	}
+	a.log().Warn("intake_plan failed", "err", err)
+	if !a.sayLine(ctx, channel, thread, "Not proposed: the planner could not be reached; mention me again in a minute.") {
+		return "error"
+	}
+	return "error"
+}
+
+// notShown answers a plan the message cannot hold, with the thread's one line and the outcome the
+// caller counts: too long for Slack, past the revision cap, a hash that does not bind the plan, or a
+// reason this package has no line of its own for. Nothing is filed from a plan that could not be shown
+// (CD20), and the mention and the re-plan say it the same way.
+func (a *App) notShown(ctx context.Context, channel, thread string, err error) string {
+	switch {
+	case errors.Is(err, errProposalTooLarge):
+		a.log().Warn("intake_plan answered a plan Slack cannot carry", "channel", channel)
+		return a.refusedWith(ctx, channel, thread, notPostedLine(errProposalTooLarge), "too_large")
+	case errors.Is(err, errProposalRev):
+		// Unreachable from the re-plan, whose cap is its own pre-check: a caller passing a bad
+		// revision is the mention's case.
+		a.log().Warn("intake_plan answered a plan past the revision cap", "channel", channel)
+		return a.refusedLine(ctx, channel, thread, proposalCappedLine)
+	case errors.Is(err, errProposalHash):
+		a.log().Warn("intake_plan answered a plan that does not hold", "channel", channel)
+		return a.refusedLine(ctx, channel, thread,
+			"Not proposed: the plan the planner answered does not match its check; mention me again.")
+	}
+	a.log().Warn("intake_plan answered a plan that cannot be shown", "channel", channel, "err", err)
+	return a.refusedLine(ctx, channel, thread,
+		"Not proposed: the plan the planner answered cannot be shown here; mention me again.")
+}
+
 // ---- the message in the thread: posted once, edited in place, found again ----
 
 // proposalReplacedLine is what the proposal a repost replaced says afterwards: the message keeps its
@@ -791,13 +978,7 @@ const proposalReplacedLine = "This proposal was replaced below."
 //
 // The outcome is what the caller counts: "proposed", "too_large", "multi_issue" or "error".
 func (a *App) postProposal(ctx context.Context, channel, thread string, p ProposalPayload, q *intake.Question) string {
-	say := func(text string) bool {
-		if _, err := a.Slack.Post(ctx, channel, thread, text, nil); err != nil {
-			a.log().Warn("slack post failed", "channel", channel, "err", err)
-			return false
-		}
-		return true
-	}
+	say := func(text string) bool { return a.sayLine(ctx, channel, thread, text) }
 	tooLarge := func() string {
 		if !say(notPostedLine(errProposalTooLarge)) {
 			return "error"
@@ -817,7 +998,7 @@ func (a *App) postProposal(ctx context.Context, channel, thread string, p Propos
 	}
 	prop.Degraded = p.Degraded // display, and the one field newProposal does not take (CD18)
 	if n := len(prop.Plan.Issues); n > 1 {
-		if !say(fmt.Sprintf("Proposal not posted: this plan covers %d issues and Slack files one: use your coding agent or the web UI.", n)) {
+		if !say(notPostedIssueLine(n)) {
 			return "error"
 		}
 		return "multi_issue"
