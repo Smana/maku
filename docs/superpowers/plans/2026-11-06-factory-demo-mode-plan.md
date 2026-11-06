@@ -226,3 +226,19 @@ The demo uses one App: `github.mergerAppIDFile` and `github.mergerKeyFile` name 
 - Spec coverage: Q8 (no login: Task 2's no human tokens, the broker keeps `human:local`), Q12 (Task 5), Q13 (shadow default is config; Task 5 posts the shadow verdict), Q14 (Tasks 2, 3 and 6), Q15 (Task 4). Q4's roles: Task 1 lifts the scoper and loop refusals. The chart, `task demo`, the template repository, CI and docs are plans B to D.
 - Production unchanged: each task carries a non-demo test.
 - Open at execution: whether the run-controller passes the judge model (Task 1's loop row). The implementer verifies and the ruling goes in the ledger.
+
+---
+
+### Task 7: The portable AgentRun carries the loop policy (added at execution)
+
+Added by the controller after Task 1 found that the portable AgentRun's `spec.loop` carries only `checks` and `search`. Q4 puts the completion judge in the demo's loop, and the judge only runs when the harness receives the loop policy.
+
+**Files:**
+- Modify: `api/v1alpha1/agentrun_types.go` (`Loop`: `StallSteps int32`, `Continuations int32`, `JudgeModel string`, each `omitempty`, with the same validation bounds as `api/factory/v1alpha1/task_types.go:199-207`), the generated CRD and deepcopy (`task crd:gen`)
+- Modify: `internal/runctl/pod.go` (`AGENT_LOOP` as the harness README describes: `images/maku-harness/README.md:27-56`, a JSON object of the set fields; and whatever the judge needs to reach a model: read the README's judge proxy section and `images/maku-harness/agent_run.py` around `JUDGE_TIMEOUT_S`)
+- Modify: `internal/factory/runs/runs.go` (`Build`: the loop fields reach the portable kind exactly as they reach `cloud.ogenki.io`)
+- Modify: `internal/factory/config/config.go` (drop Task 1's demo refusals for the fields now passed)
+- Tests: `internal/runctl` (envtest: a run with a loop gets `AGENT_LOOP` with exactly its fields; none without a loop), `internal/factory/runs` (Build carries the fields), `internal/factory/config/demo_test.go` (the refusals are gone)
+
+- [ ] Step 1: read how the reference host's composition gives the harness its loop and its judge (the harness README is the contract). If the judge needs a component the portable runtime lacks (a proxy sidecar, a gateway route), report BLOCKED with what it needs rather than building it.
+- [ ] Step 2: failing tests. Step 3: run, fail. Step 4: implement. Step 5: `go test -race ./internal/runctl/ ./internal/factory/runs/ ./internal/factory/config/ -count=1`. Step 6: `task check`; commit `feat(runctl): the portable AgentRun carries the loop policy`.
