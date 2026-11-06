@@ -46,7 +46,9 @@ const makuUsage = `usage: maku <command>
   configure --from URL [--yes]    replace the whole config with the values the broker serves (a rooms page
                                   URL works): the fix for a stale client id after a rebuild
   login                           sign in with the device flow
-  doctor                          check the VPN, the CA, your login and your GitHub link, with the fix of each
+  doctor [--client <name>]        check the VPN, the CA, your login and your GitHub link, with the fix of each;
+                                  --client adds what that coding client declared at initialize (forms, URL
+                                  mode, roots, prompts, protocol revision), or that it is not measured yet
   token                           print a valid access token, for scripts (task agent:run)
   status <room> [--json] [--after seq:N] [--format md|text]
                                   where a room stands: status, what needs you, notes
@@ -194,6 +196,12 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return err
 	}
 	if cmd == "doctor" {
+		fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+		var client string
+		fs.StringVar(&client, "client", "", "the coding client whose declared capabilities to report (claude-code, codex, ...)")
+		if _, err := flags(fs, args); err != nil {
+			return err
+		}
 		dirs, err := r.skillDirs(ctx)
 		if err != nil {
 			return err
@@ -209,7 +217,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return maku.Doctor{Config: cfg, HC: r.HC, TokenPath: tokPath,
 			SkillDirs: dirs, Version: version.Version,
 			OpenCodeConfigs: maku.OpenCodeConfigs(home), ServiceStart: opencodeServiceStart(ctx),
-			LegacyMCP: maku.LegacyEntries(home, top)}.Run(ctx, r.Out)
+			LegacyMCP: maku.LegacyEntries(home, top),
+			Caps:      maku.CapsStore{Path: maku.CapsPath(r.Dir)}, Client: client}.Run(ctx, r.Out)
 	}
 	if cmd == "mcp" {
 		return r.mcp(ctx, cfg, tokPath, args)
