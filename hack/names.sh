@@ -20,8 +20,8 @@ legacy='/api/roomctl|/\.well-known/roomctl|mcp_needs_roomctl|ViaRoomctl|roomctlC
 # The signer identity releases before v0.30.0 carry, which the cosign examples still accept.
 history='carry the `Smana/agent-platform` identity'
 old='room-broker|room-bridge|agent-factory|agent-harness|run-controller|factory-slack-app'
-# charts/agent-factory is the umbrella chart again (maku + maku-factory + a demo database), not the pre-v0.30.0 chart.
-artifacts="Smana/agent-platform|ghcr\\.io/smana/($old)([^a-z-]|\$)|charts/agent-platform([^a-z-]|\$)|(cmd|images)/(roomctl|$old)([^a-z-]|\$)"
+# charts/agent-factory is the umbrella chart again (maku + maku-factory + a demo database), not the pre-v0.30.0 chart; only its retired published path (ghcr.io/smana/charts/...) stays guarded.
+artifacts="Smana/agent-platform|ghcr\\.io/smana/($old)([^a-z-]|\$)|charts/agent-platform([^a-z-]|\$)|ghcr\\.io/smana/charts/(agent-factory|agent-platform)|(cmd|images)/(roomctl|$old)([^a-z-]|\$)"
 # Phase 2: agents.ogenki.io as an API group, never as a key prefix (agents.ogenki.io/<key> stays, plan D1).
 group='(^|[^.a-z-])agents\.ogenki\.io(/v1alpha1|_[a-z]+\.yaml|`)|(rooms|tasks|agentruns)\.agents\.ogenki\.io|groupName=agents\.ogenki\.io|apiGroups:.*agents\.ogenki\.io|group: *"?agents\.ogenki\.io|Group: "agents\.ogenki\.io"'
 # The migration must name the group it moves from.
