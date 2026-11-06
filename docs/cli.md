@@ -34,7 +34,7 @@ maku doctor                                   # check the setup
 - A local broker needs no `login` and takes no token: `login` says so, `token` says so, and no request carries an `Authorization` header.
 - The config and token files sit in `<user config dir>/maku/` (`config.json`, `token.json`), owner-only. The directory a CLI before v0.30.0 wrote (formerly `roomctl/`, beside it) is copied there once, the first time `maku` runs without one; the old directory stays.
 - `login` prints `Open <verification URL> and enter the code …` (the URL is the one your identity provider returns), then `logged in; …`.
-- `doctor` prints one line per check, `ok` or the failure with its fix: `dns`, `tls`, `login`, `github`, `skill`. The room list cannot tell an admin without a GitHub link from one with it, so `github` asks `issue_draft` (the check `issue_file` relies on) (on up to three of your rooms' repositories) and prints a `warn` line, which does not fail the run, when none can answer: it never says "linked" unproven. A broker that stated the link in the room list would make this probe unnecessary; the probe stays as the fallback for brokers that do not.
+- `doctor` prints one line per check, `ok` or the failure with its fix: `dns`, `tls`, `login`, `github`, `skill`. The room list cannot tell an admin without a GitHub link from one with it, so `github` asks `issue_draft` (the check `issue_file` relies on when it is given no plan) (on up to three of your rooms' repositories) and prints a `warn` line, which does not fail the run, when none can answer: it never says "linked" unproven. A broker that stated the link in the room list would make this probe unnecessary; the probe stays as the fallback for brokers that do not.
 
 ## Commands
 
@@ -108,15 +108,19 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 
 - The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
 - The tools: `rooms_list`, `room_summary`, `room_tail`, `room_changes`, `room_queue`, `room_fork` and
-  `issue_draft` from the broker, and `issue_file`, `room_wait` and `room_checkout`, maku's own.
+  `issue_draft` from the broker; `intake_plan` and `plan_check` too, when the broker's operator has
+  turned the planner on ([below](#the-plan)); and `issue_file`, `room_wait` and `room_checkout`, maku's own.
   `room_tail` also runs as an MCP Task that waits for the room's next events; `maku mcp` polls it
-  for your agent. The broker also serves the prompts `handoff` (`what`), `status` (`room`) and
-  `inbox`, which your agent offers as slash commands (see [Short commands](#short-commands) for how to type them).
+  for your agent. The broker also serves the prompts `handoff` (`what`), `plan` (`what`), `status`
+  (`room`) and `inbox`, which your agent offers as slash commands (see [Short commands](#short-commands) for how to type them).
 - `issue_file` files a draft with your `gh`, as you, only after you accept it in a prompt your agent
-  shows you (MCP elicitation). The broker's `issue_draft` checks the draft first, and the prompt
-  shows exactly what is filed. An agent that cannot prompt you is refused: file the draft yourself
+  shows you (MCP elicitation). Pass it a plan and the hash `intake_plan` answered with, and the
+  broker's `plan_check` re-validates both before the prompt is built: the prompt then shows the
+  plan's own issue and its ceiling, and a plan edited after it was shown is refused (`plan_changed`)
+  instead of filed. A call with no plan is checked by the broker's `issue_draft`, as it always was;
+  either way the prompt shows exactly what is filed. An agent that cannot prompt you is refused: file the draft yourself
   with `gh issue create`. The form's "file" toggle defaults to no (so Claude Code shows it set, not "required"), and a second field, "start", defaults to no too and appears
-  only when the broker's `issue_draft` says `canStart`: yes labels the issue `factory/ready` with
+  only when `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`: yes labels the issue `factory/ready` with
   your `gh`, which starts the factory. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
   call `issue_file` but cannot answer the form.
 - Every tool and prompt that takes a room (`room_summary`, `room_changes`, `room_queue`, `room_tail`,
@@ -142,6 +146,98 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 
 The [factory-handoff skill](#the-factory-handoff-skill) does the same jobs through the shell, for an
 agent with no MCP configuration. Configure one of the two.
+
+### The plan
+
+`intake_plan` and `plan_check` are the broker's governed planner: your own sentence about what is
+wrong becomes a plan of factory work, and the plan's hash is what every door after it re-validates
+before anything is filed. The broker's operator turns them on (`human.intake.plan.enabled`); off,
+both are unknown tools, as `run_create` is to your token, and the skill's switch-off route takes
+over.
+
+| Tool | What it does | What it answers |
+|---|---|---|
+| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it | `plan/v1`, the hash the broker computed over it, at most one question to put to you, and `canStart`: whether you may start the factory on it. One model call, on public text only; it files nothing |
+| `plan_check` | Re-validates a plan you were shown, against the hash the broker answered with | The plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
+
+`issue_file` calls `plan_check` itself, so you never call it by hand: it is there so an agent can
+re-check a plan before showing you a form for it, and so a plan that changed after it was shown
+files nothing rather than something else.
+
+What a plan shows, as `intake_plan` answers and your agent shows it back:
+
+````text
+**Plan** · Smana/maku · `sha256:1c99586a84c6b989c46ff70880ee92f709be6db398101b25241fca552fd8363f`
+Ceiling $2.00 · class:docs
+Planner tier-frontier on session · 09:12 UTC
+
+1. `docs: the install link in the coding-agent guide 404s` · class docs · roles scoper, implementer, reviewer
+
+Issue 1
+```
+## What is wrong
+`docs/cli.md` links to
+`https://github.com/Smana/maku/releases/latest/download/maku-linux`, which 404s since the
+assets were renamed.
+
+## What it should be
+The link points at the release asset the page describes, `maku-linux-amd64`.
+
+## Acceptance check
+The page's link resolves, and `hack/docs.sh` passes.
+```
+
+Question `Should the link point at the latest release, or at a pinned version?`
+Recommended `the latest release, as the rest of the page does` · `the page already reads as a live guide`
+
+Why this repository
+- `docs/cli.md is the page that carries the install section`
+- `nothing else in the repository names that asset`
+````
+
+Its sections, in the order they are read:
+
+- **The repository, and its evidence.** The head line names the one repository the plan files into
+  and the plan's hash. `Why this repository` is the planner's own reading — a path, a thread, a
+  channel — one quoted item per line and never a link: the links are the broker's to build, never
+  the model's. A repository outside the ones this request may use refuses the plan whole, and is
+  not named back.
+- **The issue.** One numbered line per issue (one to three), then `Issue 1`, `Issue 2` … with each
+  draft as it will be filed. One call files the **first**: with a longer plan, say the others are
+  not filed.
+- **The roles.** `roles scoper, implementer, reviewer` and `class docs` on the issue's line, from
+  the class's template in the broker's config, never from the model: a role the reply names is
+  dropped and logged. `waits for #1` says an issue comes after an earlier one.
+- **The acceptance check.** `## Acceptance check`, the third heading inside the issue's block, with
+  `## What is wrong` and `## What it should be` before it: the factory reads the same three sections
+  on a hand-written issue, and a draft without them is refused before a plan exists.
+- **The ceiling.** `Ceiling $2.00 · class:docs`: the money this plan's work is charged against and
+  where that number came from, both from the broker's config. The roles and the money are the
+  config's whatever the reply says, and a class the config does not define makes no plan.
+
+A plan may carry one question, with the broker's recommendation and why. It is the one thing the
+planner needs from you to plan the rest of the work, and the answer is yours. A plan marked
+`degraded` came from the broker's deterministic template rather than the model
+(`human.intake.plan.fallback: composer`): it says so in its first line, and it is not the
+natural-language planner.
+
+Each attempt costs one of your day's plans (`human.intake.plan.dailyPlans` per requester, reset at
+00:00 UTC) and one model call: there is no retry loop. Neither tool files, labels, stores or
+approves anything: the plan is shown, and `issue_file` files its first issue once you answer its
+form.
+
+The refusals you can meet, with the next step. The broker answers a plan or a check it will not make
+with one reason of a closed list, each with its own sentence; the whole list is
+[the planner on `/mcp`](api.md#the-planner-on-mcp).
+
+| Reason | Next step |
+|---|---|
+| `private_repository_unsupported` | The planner reads public text only, so a private repository is refused before any call. Have your agent write the issue itself in the template's three sections and file it through `issue_file`'s form with no plan (`issue_draft` checks it), or wait for the internal route |
+| `repository_not_allowed` | Name the repository as `owner/name`, or pick one of the ones the refusal lists: those are the repositories you may file into. A candidate that is private is left out of that list without a word |
+| `no_write` | Your GitHub access to that repository is read-only, and the planner plans only what you may push to. Ask for one you may write in, or show the plan to someone who can file it |
+| `planner_timeout` | The one call outlived its deadline (20 s, under `/mcp`'s 25 s). Ask again, with the same words or a shorter context |
+| `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository |
+| `plan_changed` | The plan and the hash you passed do not hold together: it was edited after it was shown. Show the newer plan and confirm that one, never the older text |
 
 ### OpenCode's background service
 
@@ -183,7 +279,7 @@ also write one command file, `factory.md`, that calls the same prompts' tools:
 
 | Type | Does |
 |---|---|
-| `/factory handoff [what]` | drafts the issue, checks it with `issue_draft`, files it with `issue_file` |
+| `/factory handoff [what]` | plans it with `intake_plan` and shows the plan, then files its first issue with `issue_file` and the plan's hash; with the planner off, writes the issue, has `issue_draft` check it, and files it |
 | `/factory status [room]` | `room_summary` of the room; none: your most recently updated room |
 | `/factory inbox` | `rooms_list` with `needsMe`, then `mine` |
 
@@ -257,11 +353,18 @@ removed and made again, unless you locked it (`git worktree lock`).
 
 `maku skill install` writes an Agent Skill that lets a local coding agent hand a side task to the [factory](factory.md) and follow it. The skill is embedded in the binary, so it always matches the CLI that runs its commands (`internal/maku/skill`).
 
-It works MCP first. With the `factory` MCP server registered (`maku setup <client>`), it uses `rooms_list`, `room_summary`, `room_changes`, `room_wait`, `room_checkout`, `issue_draft` and `issue_file`, and shows each tool's text as it is. Without the server, a shell fallback section runs the same jobs through `gh` and `maku`.
+It works MCP first. With the `factory` MCP server registered (`maku setup <client>`), it uses
+`intake_plan`, `plan_check`, `rooms_list`, `room_summary`, `room_changes`, `room_wait`,
+`room_checkout`, `issue_draft` and `issue_file`, and shows each tool's text as it is. Without the
+server, a shell fallback section runs the same jobs through `gh` and `maku`.
 
 It does:
 
-- Draft one issue per defect from a template, show it, and file it only after you confirm.
+- Hand your own words, and the context it has read, to the broker's planner (`intake_plan`), show the
+  plan as it is — its question included — and file its first issue with `issue_file`, plan and hash
+  together, only once you answer the form. With the planner off, or in a shell with no MCP server, it
+  writes the issue in the template's three sections, has `issue_draft` check it, and says the broker
+  planned nothing rather than passing a plan it wrote as the planner's.
 - Follow a task: find the room, and report phase, run, PR and the newest notes.
 - Say "it needs you" first when something waits on you, giving the link: approvals stay on the room page.
 - Answer "anything waiting on me?".

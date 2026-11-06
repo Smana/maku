@@ -43,7 +43,7 @@ const mcpInstructions = "Show a view tool's text as it is. " +
 	"Approvals stay on the room page, through the link; never apply a label unless the developer asks for that exact label in that message. " +
 	"Run `" + mcpwire.RoomWait + "` in a background task where the client can (if `" + mcpwire.RoomWait + "` is listed). " +
 	"The agent factory's rooms, as the developer running maku mcp may see them. " +
-	"No tool approves, steers, stops or labels: only the developer's answer to issue_file's form, offered when issue_draft says canStart, starts factory work."
+	"No tool approves, steers, stops or labels: only the developer's answer to issue_file's form, offered when plan_check (or, with no plan, issue_draft) says canStart, starts factory work."
 
 // sponsoredInstructions is what a sponsored principal's model is told (C28): it has no developer,
 // no maku and no room page, only its own tasks' rooms.

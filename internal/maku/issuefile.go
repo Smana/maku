@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -29,15 +30,81 @@ type Labeler func(ctx context.Context, repo string, issue int, label string) err
 // readyLabel is the label that starts the factory: the developer's own, never run_create.
 const readyLabel = "factory/ready"
 
-// issueFileEntry is issue_file's tools/list entry.
+// issueFileEntry is issue_file's tools/list entry. The plan and its hash are properties, never
+// required: a client that has no plan sends the three it always sent, and an older broker refuses a
+// call that names no plan_check only if one was named (CD3, CD27).
 var issueFileEntry = map[string]any{
 	"name": issueFileTool,
 	"description": "File a factory issue as the developer, with their gh, once they confirm it in a prompt this tool shows them. " +
-		"The draft is checked by issue_draft first. It labels nothing itself: the form offers to start the factory only when issue_draft says canStart, and the label is the developer's, applied with their gh.",
-	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","title","body"],"properties":{"repo":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"}}}`),
+		"When the developer was shown a plan, pass it with the hash intake_plan answered: plan_check re-validates both, the form shows the plan's issue and its ceiling, and the issue filed is the plan's as it was validated. " +
+		"Without a plan the draft is checked by issue_draft. It labels nothing itself: the form offers to start the factory only when plan_check (or, with no plan, issue_draft) says canStart, and the label is the developer's, applied with their gh.",
+	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","title","body"],` +
+		`"properties":{"repo":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"},` +
+		`"plan":{"type":"object","description":"the plan/v1 intake_plan answered with"},` +
+		`"hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$","description":"the hash intake_plan answered with; plan_check recomputes it over the plan"}}}`),
 }
 
-// draftShape is the broker's issue_draft result, which issue_file files as is.
+// planShape is plan_check's answer: the plan the broker re-validated, the hash it recomputed over it,
+// and whether this developer may start the factory on it. It is the relay's second source of truth,
+// and never a second planner (CD1, CD3, CD27).
+type planShape struct {
+	Plan        json.RawMessage `json:"plan"`
+	Hash        string          `json:"hash"`
+	CanStart    bool            `json:"canStart"`    // whether this developer may start the factory
+	CanStartWhy string          `json:"canStartWhy"` // why not, when it is false
+}
+
+// planView is what the form shows of a validated plan: the repository it files into, the issue it
+// files first, and the ceiling its work is charged against. All three are display: the hash binds the
+// plan, and plan_check is what re-validated it.
+type planView struct {
+	Repository string `json:"repository"`
+	Issues     []struct {
+		Index int    `json:"index"`
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	} `json:"issues"`
+	Budget struct {
+		CeilingUSD float64 `json:"ceilingUSD"`
+		Source     string  `json:"source"`
+	} `json:"budget"`
+}
+
+// governed is a plan the broker re-validated and the view of it the form shows.
+type governed struct {
+	planShape
+	view planView
+}
+
+// draft is the plan's first issue as plan_check validated it: what the form shows and the only thing
+// that is filed. The plan wins over the arguments on purpose — a caller's own copy of the text is not
+// a second source of truth for what was validated (CD27).
+func (g *governed) draft() draftShape {
+	return draftShape{Repo: g.view.Repository, Title: g.view.Issues[0].Title, Body: g.view.Issues[0].Body,
+		CanStart: g.CanStart, CanStartWhy: g.CanStartWhy}
+}
+
+// ceiling is the money this plan's work is charged against, as the form says it: the number and
+// where it came from, both from config through the broker (CD17). Empty when the plan carries none.
+func (g *governed) ceiling() string {
+	if g.view.Budget.CeilingUSD <= 0 {
+		return ""
+	}
+	s := " (" + dollars(g.view.Budget.CeilingUSD) + " ceiling"
+	if g.view.Budget.Source != "" {
+		s += ", from " + OneLine(g.view.Budget.Source)
+	}
+	return s + ")"
+}
+
+// dollars is a plan's USD ceiling as a person reads it: two decimals, from the cent up.
+func dollars(usd float64) string {
+	cents := int64(math.Round(usd * 100))
+	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
+}
+
+// draftShape is the draft the form shows and issue_file files as it stands: the broker's issue_draft
+// result, or the plan's issue as plan_check re-validated it.
 type draftShape struct {
 	Repo        string `json:"repo"`
 	Title       string `json:"title"`
@@ -52,24 +119,37 @@ var (
 	titleRE = regexp.MustCompile(`^[A-Za-z0-9]`)
 )
 
-// issueFile is issue_file: the broker's issue_draft checks the arguments, the client asks the
-// developer through an elicitation, and only an accepted one is filed. A client that cannot ask
-// is refused: nothing else stands for the developer's yes.
+// issueFile is issue_file: the broker's plan_check re-validates the plan and its hash when the call
+// carries them (issue_draft, when it does not), the client asks the developer through an elicitation,
+// and only an accepted draft is filed. A client that cannot ask is refused: nothing else stands for
+// the developer's yes.
 func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 	r.mu.Lock()
 	elicit := r.forms
 	r.mu.Unlock()
-	draft, refused := r.draft(ctx, args)
+	// A plan is re-validated before anything else the tool does, whatever this client can ask: the
+	// form shows what plan_check validated and files nothing else, and a plan that no longer holds is
+	// refused before a form is shown (CD3, CD27, offline proof 4).
+	plan, refused := r.planned(ctx, args)
+	if refused != nil {
+		return refused
+	}
+	draft, draftRefusal := draftShape{}, any(nil)
+	if plan != nil {
+		draft = plan.draft()
+	} else {
+		draft, draftRefusal = r.draft(ctx, args)
+	}
 	if !elicit || r.File == nil {
 		msg := "needs_confirmation: issue_file asks the developer to confirm, and this client cannot ask (no elicitation); " +
 			"show them the draft and let them file it with gh issue create"
-		if refused == nil {
+		if draftRefusal == nil {
 			msg += "\n" + fallbackNext(draft)
 		}
 		return mcpwire.ToolError(msg)
 	}
-	if refused != nil {
-		return refused
+	if draftRefusal != nil {
+		return draftRefusal
 	}
 	offer := draft.CanStart && r.Label != nil
 	// A default, or Claude Code shows the required toggle as unset with "This field is required"
@@ -83,8 +163,15 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 	} else if why := OneLine(draft.CanStartWhy); why != "" {
 		tail = "The factory cannot be started from here (" + why + "). It gets no label: label it " + readyLabel + " yourself to start the factory."
 	}
+	ceiling, more := "", ""
+	if plan != nil {
+		ceiling = plan.ceiling()
+		if n := len(plan.view.Issues); n > 1 { // one call files one issue; the form says which (CD19)
+			more = fmt.Sprintf("The plan holds %d issues: this files the first. ", n)
+		}
+	}
 	ans, err := r.ask(ctx, "elicitation/create", map[string]any{
-		"message":         fmt.Sprintf("File this issue on %s as you, with gh? %s\n\n%s\n\n%s", draft.Repo, tail, draft.Title, draft.Body),
+		"message":         fmt.Sprintf("File this issue on %s%s as you, with gh? %s\n\n%s%s\n\n%s", draft.Repo, ceiling, tail, more, draft.Title, draft.Body),
 		"requestedSchema": map[string]any{"type": "object", "required": []string{"file"}, "properties": props},
 	})
 	if err != nil {
@@ -269,6 +356,40 @@ func GHLabel(ctx context.Context, repo string, issue int, label string) error {
 		return fmt.Errorf("gh issue edit: %w: %s", err, OneLine(errOut.String()))
 	}
 	return nil
+}
+
+// planned re-validates the plan the call carries through the broker's plan_check, before anything
+// else the tool does (CD3, CD27): the plan a developer was shown is the one that gets filed, and a
+// plan edited after it was shown is refused plan_changed, its text as the broker wrote it. A call
+// with no plan, or a null one, gets nil and issue_file behaves as it always has.
+func (r *Relay) planned(ctx context.Context, args json.RawMessage) (*governed, any) {
+	var a struct {
+		Plan json.RawMessage `json:"plan"`
+		Hash string          `json:"hash"`
+	}
+	_ = json.Unmarshal(args, &a) // the arguments are issue_draft's too: these two are this check's
+	if !present(a.Plan) {
+		return nil, nil
+	}
+	text, sc, isErr, err := r.callBroker(ctx, mcpwire.PlanCheck, map[string]any{"plan": a.Plan, "hash": a.Hash})
+	if err != nil {
+		return nil, mcpwire.ToolError(explainRelay(err))
+	}
+	if isErr {
+		return nil, mcpwire.ToolError(text) // the broker's refusal, as the model would read plan_check
+	}
+	var p planShape
+	if json.Unmarshal(sc, &p) != nil || !present(p.Plan) || p.Hash == "" {
+		return nil, mcpwire.ToolError("unavailable: the broker's plan_check answer is unreadable")
+	}
+	var v planView
+	// The plan_check answer is what gh's arguments come from: a plan that does not read as a
+	// repository and an issue is one this tool cannot file, whatever the broker validated.
+	if json.Unmarshal(p.Plan, &v) != nil || !repoRE.MatchString(v.Repository) || len(v.Issues) == 0 ||
+		!titleRE.MatchString(v.Issues[0].Title) || strings.TrimSpace(v.Issues[0].Body) == "" {
+		return nil, mcpwire.ToolError("unavailable: the plan plan_check validated is not a draft this tool can file")
+	}
+	return &governed{planShape: p, view: v}, nil
 }
 
 // draft asks the broker's issue_draft for the draft to file, or returns the refusal to answer with.

@@ -47,15 +47,36 @@ func refText(s string) string {
 }
 
 // mcpPrompts are the prompts a human's maku is offered; a sponsored principal has none.
+//
+// The handoff prompt is CD1 and CD6 in one message: the session's model passes the developer's
+// words and the context it has to `intake_plan`, the broker's one governed planner, and files what
+// comes back through `issue_file` — it is not a second planner, and a plan it composed itself would
+// be a plan no guard and no hash ever held. One exception, ratified: `human.intake.plan.enabled` is
+// false by default, so where the tool is absent the prompt falls back to the pre-planner route, and
+// says the broker planned nothing rather than letting a hand-written issue pass as a plan.
 var mcpPrompts = []mcpPrompt{
 	{
 		name: "handoff", description: "Hand a side task to the agent factory as one issue.",
 		args: []promptArg{{"what", "the side task; default: the one just discussed"}},
 		text: func(a map[string]string) string {
-			return "Draft one issue for " + orElse(a["what"], "the side task we just discussed") +
-				" in the template's three sections (`## What is wrong`, `## What it should be`, `## Acceptance check`). " +
-				"Check it with `issue_draft`, fix what it reports, then call `issue_file`. " +
-				"Show each tool's text as it is, and never apply a label."
+			return "Call `intake_plan` with the developer's own words, " + orElse(a["what"], "the side task we just discussed") +
+				", and the context you have: the repository you are in and the paths you read. " +
+				"Show its text as it is. Then call `issue_file` with the plan and its hash, once the developer answers its form; " +
+				"it files the plan's first issue, so with a longer plan say the others are not filed. " +
+				"Only if `intake_plan` is not listed, the planner is off: write the issue in the template's three sections " +
+				"(`## What is wrong`, `## What it should be`, `## Acceptance check`), have `issue_draft` check it, then call " +
+				"`issue_file`, and say the broker planned nothing rather than passing a plan you wrote as the planner's. " +
+				"Never write the plan yourself and never apply a label."
+		},
+	},
+	{
+		name: "plan", description: "Plan a side task for the agent factory, without filing it.",
+		args: []promptArg{{"what", "the side task; default: the one just discussed"}},
+		text: func(a map[string]string) string {
+			return "Call `intake_plan` with the developer's own words, " + orElse(a["what"], "the side task we just discussed") +
+				", and the context you have: the repository you are in and the paths you read. " +
+				"Show its text and the hash it answered with, and stop there: filing is the developer's. " +
+				"Never write the plan yourself."
 		},
 	},
 	{

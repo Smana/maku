@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +18,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/mcpwire"
 )
 
 // withFile files through f.
@@ -137,6 +143,7 @@ func TestIssueFileSchemaHasNoStart(t *testing.T) {
 	var sch struct {
 		AdditionalProperties bool                       `json:"additionalProperties"`
 		Properties           map[string]json.RawMessage `json:"properties"`
+		Required             []string                   `json:"required"`
 	}
 	if err := json.Unmarshal(issueFileEntry["inputSchema"].(json.RawMessage), &sch); err != nil {
 		t.Fatal(err)
@@ -146,8 +153,13 @@ func TestIssueFileSchemaHasNoStart(t *testing.T) {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	if sch.AdditionalProperties || strings.Join(names, ",") != "body,repo,title" {
+	if sch.AdditionalProperties || strings.Join(names, ",") != "body,hash,plan,repo,title" {
 		t.Fatalf("start is a form field, never a tool argument: %v %v", names, sch.AdditionalProperties)
+	}
+	// The required list is what an older client and an older broker still send: the plan and its
+	// hash are the caller's to add, never a field a call without one has to supply.
+	if strings.Join(sch.Required, ",") != "repo,title,body" {
+		t.Fatalf("a plan is optional: required %v", sch.Required)
 	}
 }
 
@@ -503,5 +515,324 @@ func TestFallbackCommandQuoting(t *testing.T) {
 	}
 	if strings.Contains(cmd, "--add-label") {
 		t.Fatalf("filed only: %s", cmd)
+	}
+}
+
+// fakeBrokerServer is the broker's /mcp as issue_file calls it: the plan_check answers are the
+// results queued here, in order (the last one repeats), and every other tool answers as an older
+// broker would — with an issue_draft that is not the plan's, which a governed call must never show.
+type fakeBrokerServer struct {
+	srv         *httptest.Server
+	mu          sync.Mutex
+	calls       []string // the tools called, in order
+	checks      int      // the plan_check calls
+	planResults []string
+}
+
+func fakeBroker(t *testing.T, planCheckResults ...string) *fakeBrokerServer {
+	t.Helper()
+	b := &fakeBrokerServer{planResults: planCheckResults}
+	b.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m message
+		if json.NewDecoder(r.Body).Decode(&m) != nil || len(m.ID) == 0 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		var c struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(m.Params, &c)
+		b.mu.Lock()
+		b.calls = append(b.calls, c.Name)
+		var res any
+		switch c.Name {
+		case mcpwire.PlanCheck:
+			b.checks++
+			if n := min(b.checks, len(b.planResults)); n > 0 {
+				res = json.RawMessage(b.planResults[n-1])
+			}
+		case "issue_draft":
+			res = map[string]any{"content": []any{}, "structuredContent": map[string]any{
+				"repo": "Smana/other", "title": "not the plan's", "body": "x", "canStart": false}}
+		case "rooms_list":
+			res = map[string]any{"content": []any{}, "structuredContent": map[string]any{"rooms": []any{}}}
+		}
+		b.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": res})
+	}))
+	t.Cleanup(b.srv.Close)
+	return b
+}
+
+func (b *fakeBrokerServer) planChecks() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.checks
+}
+
+// recording is the relay issue_file runs on when the test calls it directly, and the developer on
+// the other side of its form: it counts the forms shown and the gh filings, and keeps the last of
+// each. The relay's own requests are answered inline, so the call stays on one goroutine.
+type recording struct {
+	*Relay
+	t      *testing.T
+	b      *fakeBrokerServer
+	filed  int            // the gh filings
+	what   string         // the last draft handed to gh, as gh's three arguments
+	asked  int            // the forms shown
+	form   map[string]any // the last form's params
+	answer map[string]any // the developer's answer; accept and file, by default
+}
+
+// relay is a relay whose broker is b and whose developer answers every form: issue_file is called
+// directly, so a test can read the form and count the filings.
+func relay(t *testing.T, b *fakeBrokerServer) *recording {
+	t.Helper()
+	rec := &recording{t: t, b: b, answer: map[string]any{"action": "accept", "content": map[string]any{"file": true}}}
+	rec.Relay = &Relay{URL: b.srv.URL, HC: b.srv.Client(), Token: tok, RoomWait: 100 * time.Millisecond,
+		After: func(time.Duration) <-chan time.Time { c := make(chan time.Time, 1); c <- time.Now(); return c }}
+	rec.File = func(_ context.Context, repo, title, body string) (string, error) {
+		rec.filed++
+		rec.what = repo + "|" + title + "|" + body
+		return "https://github.com/" + repo + "/issues/7", nil
+	}
+	rec.Label = func(context.Context, string, int, string) error { return nil }
+	rec.forms, rec.waiting = true, map[string]chan json.RawMessage{}
+	rec.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec.out = writerFunc(rec.client)
+	return rec
+}
+
+// lastForm is the form the relay showed, as the client received it.
+func (r *recording) lastForm() map[string]any { return r.form }
+
+// writerFunc is the relay's client half: it reads what the relay writes to its client.
+type writerFunc func(p []byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// client is the other end of the relay's stdout: it records a form and answers it as the developer
+// would, and drops the relay's other lines (a cancellation, if a form went unanswered).
+func (r *recording) client(line []byte) (int, error) {
+	var m message
+	if json.Unmarshal(line, &m) == nil && m.Method == "elicitation/create" {
+		var p map[string]any
+		_ = json.Unmarshal(m.Params, &p)
+		r.asked, r.form = r.asked+1, p
+		raw, err := json.Marshal(r.answer)
+		if err != nil {
+			r.t.Fatal(err)
+		}
+		r.answered(message{ID: m.ID, Result: raw})
+	}
+	return len(line), nil
+}
+
+// planFixture is a golden plan/v1, decoded through encoding/json from the planner package's own
+// testdata: the plan these tests hand issue_file is the plan plan_check's own tests use, so a
+// change to plan/v1 breaks one place.
+func planFixture(t *testing.T, name string) intake.Plan {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "internal", "intake", "testdata", "plan", name+".json"))
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	var p intake.Plan
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return p
+}
+
+// checked is plan_check's structuredContent for the fixture: the plan it validated, the hash it
+// recomputed over it, and whether the developer may start the factory on it.
+func checked(t *testing.T, name string) string {
+	t.Helper()
+	return checkedStart(t, name, true, "")
+}
+
+// checkedStart is that same structuredContent with the canStart the broker answered: false carries
+// the broker's own why, which the form repeats to the developer.
+func checkedStart(t *testing.T, name string, canStart bool, why string) string {
+	t.Helper()
+	p := planFixture(t, name)
+	d := map[string]any{"plan": p, "hash": intake.Hash(p), "canStart": canStart}
+	if why != "" {
+		d["canStartWhy"] = why
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// planCheckAccepted is the broker accepting a plan_check: the whole tools/call result, isError false.
+func planCheckAccepted(t *testing.T) string {
+	return planCheckResult(checked(t, "single"))
+}
+
+// planCheckCannotStart is the same acceptance where the developer may not start the factory, for the
+// reason the broker gives.
+func planCheckCannotStart(t *testing.T, why string) string {
+	return planCheckResult(checkedStart(t, "single", false, why))
+}
+
+// planCheckResult is a plan_check tools/call result around structuredContent, as the broker sends it.
+func planCheckResult(structured string) string {
+	return `{"isError":false,"content":[{"type":"text","text":"plan"}],"structuredContent":` + structured + `}`
+}
+
+// planCheckRefused is the broker refusing one: the whole tools/call result, isError true, whose text
+// is the refusal the model reads.
+func planCheckRefused(text string) string {
+	b, _ := json.Marshal(map[string]any{"isError": true, "content": []map[string]string{{"type": "text", "text": text}}})
+	return string(b)
+}
+
+// planCall is issue_file's arguments for p, carrying hash as the hash the caller holds: the plan's
+// own repository and first issue, so the call is one a plan can govern, plus anything in extra.
+func planCall(t *testing.T, p intake.Plan, hash string, extra map[string]any) json.RawMessage {
+	t.Helper()
+	a := map[string]any{"repo": p.Repository, "title": p.Issues[0].Title, "body": p.Issues[0].Body, "plan": p, "hash": hash}
+	for k, v := range extra {
+		a[k] = v
+	}
+	b, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// planArgs is a call governed by the plan intake_plan answered, with the hash it answered with.
+func planArgs(t *testing.T) json.RawMessage {
+	p := planFixture(t, "single")
+	return planCall(t, p, intake.Hash(p), nil)
+}
+
+// planArgsChanged is that plan edited after it was shown, with the hash of the plan that was shown:
+// the shape that must be refused plan_changed.
+func planArgsChanged(t *testing.T) json.RawMessage {
+	p := planFixture(t, "single")
+	hash := intake.Hash(p)
+	p.Issues[0].Body += "\n- one line more, added after the developer was shown the plan\n"
+	return planCall(t, p, hash, nil)
+}
+
+// Offline proof 4, second half: issue_file re-validates through the broker. A plan whose hash no
+// longer holds files nothing and shows no form.
+func TestIssueFileRefusesAChangedPlan(t *testing.T) {
+	r := relay(t, fakeBroker(t, planCheckRefused("plan_changed: the plan is not the one that was shown")))
+	got := r.issueFile(t.Context(), planArgsChanged(t))
+	if !strings.Contains(fmt.Sprint(got), "plan_changed") || r.filed != 0 || r.asked != 0 {
+		t.Fatalf("%v filed=%d asked=%d", got, r.filed, r.asked)
+	}
+	if r.b.planChecks() != 1 {
+		t.Fatalf("plan_check was called %d times", r.b.planChecks())
+	}
+}
+
+// A plan the broker accepts is filed as it was validated, and the form shows the repository, the
+// issue and the ceiling — and the start field stays what FA4 made it.
+func TestIssueFileShowsThePlansCeilingAndKeepsTheStartField(t *testing.T) {
+	r := relay(t, fakeBroker(t, planCheckAccepted(t)))
+	got := r.issueFile(t.Context(), planArgs(t))
+	msg := fmt.Sprint(r.lastForm())
+	for _, want := range []string{"Smana/ai-native-ref", "$2.00 ceiling", "Start the factory now", "File this issue"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the form lacks %q: %s", want, msg)
+		}
+	}
+	if r.filed != 1 || !strings.Contains(fmt.Sprint(got), "filed") {
+		t.Fatalf("%v filed=%d", got, r.filed)
+	}
+}
+
+// The plan wins over the arguments: what is filed is the issue plan_check validated, never a second
+// copy of the text the caller sent beside it.
+func TestIssueFileFilesThePlansIssue(t *testing.T) {
+	r := relay(t, fakeBroker(t, planCheckAccepted(t)))
+	args := planCall(t, planFixture(t, "single"), intake.Hash(planFixture(t, "single")), map[string]any{
+		"repo": "Smana/elsewhere", "title": "docs: not the plan's issue", "body": "x"})
+	r.issueFile(t.Context(), args)
+	p := planFixture(t, "single")
+	if want := p.Repository + "|" + p.Issues[0].Title + "|" + p.Issues[0].Body; r.what != want {
+		t.Fatalf("filed %q, want %q", r.what, want)
+	}
+	if !strings.Contains(fmt.Sprint(r.lastForm()), p.Issues[0].Title) {
+		t.Fatalf("the form does not show the plan's issue: %v", r.lastForm())
+	}
+}
+
+// Without a plan the tool is exactly today's tool: no plan_check call, no ceiling line.
+func TestIssueFileWithoutAPlanIsUnchanged(t *testing.T) {
+	r := relay(t, fakeBroker(t))
+	got := r.issueFile(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "title": "docs: a dead link", "body": "x"}))
+	msg := fmt.Sprint(r.lastForm())
+	if r.b.planChecks() != 0 || r.asked != 1 || r.filed != 1 {
+		t.Fatalf("planChecks=%d asked=%d filed=%d", r.b.planChecks(), r.asked, r.filed)
+	}
+	if strings.Contains(msg, "ceiling") {
+		t.Fatalf("a call with no plan says nothing about money: %s", msg)
+	}
+	// The draft is still the broker's issue_draft, which is what an older broker answers with.
+	if !strings.Contains(msg, "not the plan's") || r.what != "Smana/other|not the plan's|x" {
+		t.Fatalf("the form %s, filed %q", msg, r.what)
+	}
+	if !strings.Contains(fmt.Sprint(got), "filed") {
+		t.Fatalf("%v", got)
+	}
+}
+
+// mustArgs marshals a tool call's arguments.
+func mustArgs(t *testing.T, a map[string]any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// An older broker serves no plan_check: a call that names a plan is refused saying so — the tool's
+// own name, from the broker's JSON-RPC error — and nothing is shown or filed.
+func TestIssueFileRefusesAPlanOnABrokerWithoutThePlanner(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m message
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		if len(m.ID) == 0 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID,
+			"error": map[string]any{"code": mcpwire.InvalidParams, "message": "unknown tool: plan_check"}})
+	}))
+	t.Cleanup(srv.Close)
+	r := relay(t, &fakeBrokerServer{srv: srv})
+	got := r.issueFile(t.Context(), planArgs(t))
+	if !strings.Contains(fmt.Sprint(got), "unknown tool: plan_check") || r.filed != 0 || r.asked != 0 {
+		t.Fatalf("%v filed=%d asked=%d", got, r.filed, r.asked)
+	}
+}
+
+// FA4: a plan this developer may not start still files, the form offers no start field at all, and
+// plan_check's own why survives into the message the developer reads.
+func TestIssueFileOffersNoStartOnAPlanItCannotStart(t *testing.T) {
+	r := relay(t, fakeBroker(t, planCheckCannotStart(t, "your repository is not in sessionStart")))
+	got := r.issueFile(t.Context(), planArgs(t))
+	form := r.lastForm()
+	props := form["requestedSchema"].(map[string]any)["properties"].(map[string]any)
+	if _, has := props["start"]; has {
+		t.Fatalf("start offered on a plan canStart says no: %v", props)
+	}
+	msg := fmt.Sprint(form)
+	if !strings.Contains(msg, "your repository is not in sessionStart") || !strings.Contains(msg, "factory/ready") {
+		t.Fatalf("the form says neither why nor how the developer starts it: %s", msg)
+	}
+	if r.filed != 1 || !strings.Contains(fmt.Sprint(got), "filed") || strings.Contains(fmt.Sprint(got), `"started":true`) {
+		t.Fatalf("%v filed=%d", got, r.filed)
 	}
 }
