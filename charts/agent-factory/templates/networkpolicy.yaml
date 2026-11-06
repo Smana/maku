@@ -38,4 +38,9 @@ spec:
               app.kubernetes.io/name: room-broker
       ports:
         - {protocol: TCP, port: 8082}
+    # The probes (startup, liveness, readiness) and the metrics are on the named port `ops` (9090):
+    # the kubelet and any scraper reach it, so no `from`.
+    - ports:
+        - {protocol: TCP, port: ops}
+    # Port 8080 (intake) is deliberately admitted by no rule: the demo configures no intake.
 {{- end }}

@@ -10,7 +10,7 @@ and adds what such a cluster lacks:
   (`sslmode=disable`: the hop stays inside the cluster).
 
 `networkPolicies.plain` (default true) renders two plain NetworkPolicies: `rooms-db` admits 5432 only from
-the broker's pods, and the factory's API (8082) only from the broker. Egress is untouched (runs need GitHub
+the broker's pods, and the factory's pod admits the broker to the API port (8082) and anyone to the ops/probe port (9090); the intake port (8080) is closed, as the demo configures none. Egress is untouched (runs need GitHub
 and the model). The install test asserts a run-labelled pod in `agents` cannot reach `rooms-db` on both
 k3d (kube-router) and kind v0.33 (kindnet enforces NetworkPolicy; the test only notes it, not fails, if a kind node does not).
 
