@@ -111,18 +111,18 @@ Details, ports and trust boundaries are in [Architecture](docs/architecture.md).
 
 | You want | Start at | What you get |
 |---|---|---|
-| To try it | [Quickstart](docs/quickstart.md): Linux and Docker, no cloud | A room and a real sandboxed run. No factory, budgets or sign-in: [what differs from production](docs/quickstart.md#what-differs-from-production) |
+| To try it | [Quickstart](docs/quickstart.md): `task demo`, a laptop and Docker, no cloud | The whole factory loop in about 15 minutes: label an issue, get a reviewed pull request and the merge gate's verdict. A demo, not production: [what production adds](docs/quickstart.md#what-production-adds) |
 | The whole platform | [ai-native-ref](https://github.com/Smana/ai-native-ref) | The factory with its gateway, identities, policies and dashboards, deployed with GitOps |
 | To fit it into your own cluster | [Integration](docs/integration.md) | What each piece needs and what to pin |
 
 ```bash
 git clone https://github.com/Smana/maku && cd maku
-export MODEL_API_KEY=… GITHUB_TOKEN=… REPO=owner/throwaway
-task quickstart    # kind, Cilium, gVisor, cert-manager, CNPG, the chart and maku
+task demo          # a cluster, a GitHub App, your repository from a template, the chart, the room page
 ```
 
-Use a token scoped to a throwaway repository: on a laptop, the agent can read it. The
-[quickstart](docs/quickstart.md#start-a-run) continues from there.
+It asks for an OpenAI-compatible model and two GitHub clicks, and runs on a public repository you own: on a
+laptop, the agent can read the model key. The [quickstart](docs/quickstart.md) walks the loop; its last
+section is the older one-run path, `task quickstart`.
 
 ## Status
 
