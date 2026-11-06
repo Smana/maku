@@ -1738,11 +1738,21 @@ func TestProposalRefusals(t *testing.T) {
 			outcome: "refused",
 		},
 		{
-			name: "an unknown refusal is shown as the broker gave it",
+			// The one refusal whose fix is a command the App itself answers: the broker's sentence names
+			// no way to link, so the line does.
+			name: "not_linked says to mention me with `link`",
 			setup: func(_ *testing.T, b *stubBroker) {
 				b.intakeErr = Refused("not_linked: your account is not linked to GitHub, so the broker cannot tell what you may write; link it first")
 			},
-			want:    "Not proposed: not_linked: your account is not linked to GitHub, so the broker cannot tell what you may write; link it first",
+			want:    "Not proposed: <@U02DEF> is not linked to a GitHub account here; mention me with `link` to link it, then mention me again.",
+			outcome: "refused",
+		},
+		{
+			name: "an unknown refusal is shown as the broker gave it",
+			setup: func(_ *testing.T, b *stubBroker) {
+				b.intakeErr = Refused(`invalid_class: the class is not one this broker's config defines (issue 1: class "nope")`)
+			},
+			want:    `Not proposed: invalid_class: the class is not one this broker's config defines (issue 1: class "nope")`,
 			outcome: "refused",
 		},
 		{
@@ -1838,6 +1848,122 @@ func TestProposalRefusals(t *testing.T) {
 		prop, ok := posts[0].meta.proposalPayload()
 		if !ok || !prop.Degraded {
 			t.Fatalf("the payload does not carry the label a restart reads: %+v (%v)", prop, ok)
+		}
+	})
+}
+
+// liveProposals is every message in the fake a person could still confirm: the App's own, its metadata
+// decoding as a proposal with the hash holding, and not the inert line a repost leaves behind in the
+// message it replaced.
+func liveProposals(t *testing.T, f *fakeSlack) []Message {
+	t.Helper()
+	var out []Message
+	for _, m := range f.thread() {
+		if m.Metadata == nil || m.Text == proposalReplacedLine {
+			continue
+		}
+		if _, ok := m.Metadata.proposalPayload(); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// CD7 and Review Focus 1: a thread holds one live proposal, so a second mention revises the message it
+// already has instead of posting a second card whose buttons bind another hash.
+func TestSecondMentionUpdatesTheProposal(t *testing.T) {
+	// revised changes the plan the planner answers with, so the update has something material to mark.
+	revised := func(t *testing.T, b *stubBroker) intake.Plan {
+		t.Helper()
+		plan := clonePlan(t, b.intakeResult.Plan)
+		plan.Issues[0].Title = "docs: the install link points at the page it moved to"
+		b.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+		return plan
+	}
+
+	t.Run("a second mention is the same message's next revision", func(t *testing.T) {
+		rig, _ := withProposals(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+		first := rig.lastPost()
+		plan := revised(t, rig.broker)
+		rig.mention("C03", "1729.0001", "<@U0BOT> the install link still points at the moved page")
+
+		if n := len(rig.posts()); n != 1 {
+			t.Fatalf("%d posts: a second mention posted a second proposal", n)
+		}
+		edits := rig.slack.proposalEdits()
+		if len(edits) != 1 || edits[0].ts != first.ts || edits[0].channel != "C03" {
+			t.Fatalf("the live proposal was not edited in place: %+v", edits)
+		}
+		prop, ok := edits[0].meta.proposalPayload()
+		if !ok || prop.Rev != 2 || prop.Hash != intake.Hash(plan) {
+			t.Fatalf("the edit's payload: %+v (%v)", prop, ok)
+		}
+		if !strings.Contains(edits[0].text, plan.Issues[0].Title) {
+			t.Fatalf("the revised message does not show the new plan: %q", edits[0].text)
+		}
+		if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != first.ts {
+			t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+		}
+		if n := len(rig.broker.runCreates()); n != 0 {
+			t.Fatalf("a revision filed %d issues", n)
+		}
+		if got := rig.metrics.count("events", "updated"); got != 1 {
+			t.Fatalf("the revision went uncounted: %d", got)
+		}
+	})
+
+	t.Run("an edit Slack refuses is reposted, and the old card is made inert", func(t *testing.T) {
+		rig, _ := withProposals(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+		first := rig.lastPost()
+		plan := revised(t, rig.broker)
+		rig.slack.failProposalUpdates = 1
+		rig.mention("C03", "1729.0001", "<@U0BOT> the install link still points at the moved page")
+
+		posts := rig.posts()
+		if len(posts) != 2 {
+			t.Fatalf("%d posts, want the repost beside the card it replaced", len(posts))
+		}
+		newest := posts[1]
+		if p, ok := newest.meta.proposalPayload(); !ok || p.Rev != 2 || p.Hash != intake.Hash(plan) {
+			t.Fatalf("the repost's payload: %+v (%v)", p, ok)
+		}
+		// The replaced card keeps its place in the thread and loses its buttons, so no click binds a
+		// hash its metadata no longer holds.
+		var inert []post
+		for _, u := range rig.slack.updatesMade() {
+			if u.ts == first.ts {
+				inert = append(inert, u)
+			}
+		}
+		if len(inert) != 1 || inert[0].text != proposalReplacedLine || string(inert[0].blocks) != "[]" {
+			t.Fatalf("the replaced card: %+v", inert)
+		}
+		if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != newest.ts {
+			t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
+		}
+		if n := len(rig.broker.runCreates()); n != 0 {
+			t.Fatalf("a revision filed %d issues", n)
+		}
+	})
+
+	// The cap is the thread's, not a mention's, so the reply flow's re-plan meets the same line.
+	t.Run("a thread at the revision cap refuses another revision", func(t *testing.T) {
+		rig, plan := withProposals(t)
+		full, err := newProposal(plan, intake.Hash(plan), "U02DEF", maxProposalRevisions)
+		if err != nil {
+			t.Fatalf("newProposal: %v", err)
+		}
+		rig.slack.seed(Message{TS: "1729.0002", ThreadTS: "1729.0001", User: "U0BOT", Text: "Proposal v40",
+			Metadata: metaOf(t, proposalEventType, full)})
+		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
+		want := "Not proposed: this thread has all the revisions one proposal may have; confirm it, or start a new mention."
+		if p := rig.lastPost(); p.text != want || p.meta != nil {
+			t.Fatalf("%q, want %q", p.text, want)
+		}
+		if n := len(rig.broker.intakeCalls()); n != 0 {
+			t.Fatalf("a capped thread planned %d times", n)
 		}
 	})
 }

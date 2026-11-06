@@ -559,12 +559,22 @@ func commandless(text, bot string) string {
 // repository, parses no grammar and files nothing — the plan, its hash and its author are the
 // message's, and the person confirms it there.
 //
-// Two things are refused before the broker is called, each with its own line: a request past
-// intake_plan's 16 KiB bound, and a thread whose task is already filed or cancelled — the
-// idempotency key is the thread, so a second plan there would be a second message about one filing.
+// A thread has one live proposal, not one per mention: when the thread already holds one, the plan is
+// that message's next revision, written by the same updateProposal the reply flow uses — edited in
+// place, or reposted with the old card made inert when Slack refuses the edit. A second mention is how
+// a person revises, so it must not leave two cards whose buttons bind two hashes (Review Focus 1, CD7).
+//
+// Three things are refused before a plan is shown, each with its own line: a request past
+// intake_plan's 16 KiB bound, a thread whose task is already filed or cancelled — the idempotency key is
+// the thread, so a second plan there would be a second message about one filing — and a thread whose
+// live proposal has reached the revision cap.
+//
+// rev is the revision a thread's first proposal takes: a thread that already has one continues from
+// its own revision, never from the caller's.
 //
 // The outcome is what the caller counts: postProposal's ("proposed", "too_large", "multi_issue",
-// "error"), "refused" for a refusal whose fix is a new mention, and "error" for a passing one.
+// "error"), updateProposal's ("updated", "reposted"), "refused" for a refusal whose fix is a new
+// mention, and "error" for a passing one.
 func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) string {
 	say := func(line string) bool {
 		if _, err := a.Slack.Post(ctx, ev.Channel, thread, line, nil); err != nil {
@@ -579,13 +589,37 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		}
 		return "too_large"
 	}
-	// The thread decides before a plan is drawn, because its message is what says the task is filed:
-	// a thread the App cannot read is planned anyway rather than left with no answer at all — the
-	// broker's idempotency key is still what refuses a second filing.
-	if msgs, err := a.Slack.Thread(ctx, ev.Channel, thread); err != nil {
+	// The read, the plan and the write are one step, as a filing is: two mentions that both read "no
+	// proposal" would post two live ones, and the whole point of the branch below is that a thread has
+	// one. The lock is held across the planner call, exactly as fileProposal holds it across
+	// run_create — the cost is that a slow plan waits out its predecessor, and the alternative is two
+	// cards binding two hashes.
+	a.editMu.Lock()
+	defer a.editMu.Unlock()
+	msgs, err := a.Slack.Thread(ctx, ev.Channel, thread)
+	if err != nil {
+		// The App cannot see whether the thread is closed, so it plans anyway rather than leaving the
+		// person with no answer at all: the broker's idempotency key is still what refuses a second
+		// filing on a thread that already has one.
 		a.log().Warn("slack thread fetch failed", "channel", ev.Channel, "err", err)
-	} else if _, closed := a.threadProposal(msgs); closed {
+	}
+	latest, closed := a.threadProposal(msgs)
+	if closed {
 		if !say(a.proposalClosedLine(a.threadRoom(msgs))) {
+			return "error"
+		}
+		return "refused"
+	}
+	// The live proposal this mention revises, when there is one: its payload is the plan the message
+	// shows, so the update marks what moved against it (CD14, CD27) and the revision continues.
+	var prev *ProposalPayload
+	if latest != nil {
+		if p, ok := latest.Metadata.proposalPayload(); ok {
+			prev = &p
+		}
+	}
+	if prev != nil && prev.Rev >= maxProposalRevisions {
+		if !say("Not proposed: this thread has all the revisions one proposal may have; confirm it, or start a new mention.") {
 			return "error"
 		}
 		return "refused"
@@ -626,7 +660,11 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	// whose hash does not bind it is a proposal no Confirm could trust (CD20), one Slack cannot carry is
 	// refused whole with the same line postProposal uses, and one at the revision cap is refused with the
 	// line the reply flow's re-plan meets too.
-	prop, err := newProposal(res.Plan, res.Hash, ev.User, rev)
+	nextRev := rev
+	if prev != nil {
+		nextRev = prev.Rev + 1 // the live proposal's next revision, whatever the caller passed
+	}
+	prop, err := newProposal(res.Plan, res.Hash, ev.User, nextRev)
 	switch {
 	case err == nil:
 	case errors.Is(err, errProposalTooLarge):
@@ -654,6 +692,12 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		return "refused"
 	}
 	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
+	if prev != nil {
+		// One proposal per thread: the live message becomes this revision in place, or is reposted and
+		// made inert when Slack refuses the edit. Nothing is posted beside it, so the thread never has
+		// two cards binding two hashes (Review Focus 1, CD7).
+		return a.updateProposal(ctx, ev.Channel, latest.TS, *prev, prop, res.Question)
+	}
 	return a.postProposal(ctx, ev.Channel, thread, prop, res.Question)
 }
 
@@ -705,6 +749,11 @@ func notProposed(refusal, user string, served ...string) (code, text string, pas
 	case code == "no_write" && what != "":
 		return code, "Not proposed: <@" + user + "> cannot write to " + slackText(what) +
 			", the repositories this channel serves; ask an operator for one you may write in.", false
+	case code == "not_linked":
+		// The one refusal that sends the person somewhere they can act here: `link` is the App's own
+		// command, and the broker's sentence for it ("link it first") names no way to do that.
+		return code, "Not proposed: <@" + user + "> is not linked to a GitHub account here; mention me with " +
+			"`link` to link it, then mention me again.", false
 	case code == "private_repository_unsupported":
 		return code, "Not proposed: the planner reads public repositories only; use your coding agent " +
 			"(`issue_draft` then `issue_file`), or wait for the internal route.", false
