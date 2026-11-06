@@ -1621,10 +1621,12 @@ NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
 
 def ask_judge(env: dict, model: str, message: str) -> tuple[str, str] | None:
     """The judge's answer and the model that gave it, in a fresh context with no tools (loops L2), or
-    None when no answer came. It goes to the identity proxy's /judge/v1 beside LLM_BASE_URL's /v1, on
-    the run's token, so the gateway meters it against the run's cap. The proxy pins the alias from its
-    own JUDGE_MODEL (profiles P4), so model is a hint; before P4, or with JUDGE_MODEL none, the path
-    answers 404 or 403, and the run ends as it would with no judge."""
+    None when no answer came. By default it goes to the identity proxy's /judge/v1 beside LLM_BASE_URL's
+    /v1, on the run's token, so the gateway meters it against the run's cap. The proxy pins the alias from
+    its own JUDGE_MODEL (profiles P4), so model is a hint; before P4, or with JUDGE_MODEL none, the path
+    answers 404 or 403, and the run ends as it would with no judge. With JUDGE_BASE_URL set (the portable
+    runtime, no proxy) it is a direct chat-completions call whose model is the environment's JUDGE_MODEL,
+    not model."""
     direct = env.get("JUDGE_BASE_URL")
     if direct:
         # No identity proxy (the portable runtime): the judge calls a chat-completions endpoint directly,

@@ -1477,11 +1477,11 @@ changes exactly this:
 | `api.humanIssuer`, `api.humanJWKS`, `api.clientIDFiles`, `api.groups.*` required | optional, and must all be empty (no group default is applied): `demo: the factory API takes no human tokens` |
 | `api.access` optional | must be unset: `demo: api.access needs an identity provider` |
 | `scope: scoper` refused off the default runs group | accepted |
-| a loop policy refused off the default runs group | still refused for `stallSteps`, `continuations` and `judge`, which the run-controller does not pass to the harness (the portable AgentRun's `spec.loop` carries `checks` and `search` only); the message names the fields set |
-| `merge.policyBotLogin` required for a live or shadow class | not required when `merge.policyBot: false` |
+| a loop policy refused off the default runs group | `stallSteps`, `continuations` and `judge` are accepted: the portable AgentRun carries the loop policy. A judge calls the run's own model (`JUDGE_BASE_URL` and `JUDGE_MODEL` on the harness), not the alias |
+| `merge.policyBotLogin` must be a bot login | always required, except under `demo` with `merge.policyBot: false`, where it may be empty (a value that is set must still be a bot login) |
 
-`demo` adds two rules: `merge.policyBot: false` is refused without `demo: true`, and `demo: true`
-requires `merge.gateStatus: true` on every repository. `merge.gateStatus` is allowed without `demo`.
+`demo` adds three rules: `merge.policyBot: false` is refused without `demo: true`, and `demo: true`
+requires `merge.gateStatus: true` on every repository. `merge.gateStatus` is allowed without `demo`. With `merge.policyBot: false`, every live class of the repository needs `allowedFiles`: policy-bot's gate-path human row goes with it, and nothing else keeps a gate path from merging.
 
 **The demo runs on one GitHub App.** `github.mergerAppIDFile` and `github.mergerKeyFile` may name
 the factory App's own files (`github.appIDFile`, `github.privateKeyFile`): the merger connection
@@ -1490,10 +1490,14 @@ the union of every permission asked on the demo's behalf, as one list: `actions:
 for check re-runs), `checks: read`, `contents: write`, `issues: write`, `metadata: read`,
 `pull_requests: write`, `statuses: write`. It covers the factory App's own set (contents read,
 issues write, pull_requests write, metadata read), the merger's (checks read, statuses read,
-contents write, pull_requests write, metadata read, plus the optional actions and issues writes),
-`statuses: write` for the gate's verdict, and the run token's (contents write, pull_requests write,
-issues write). A token minted for a narrower profile asks for a subset, which an App holding the
-union grants.
+contents write, pull_requests write, metadata read, plus the optional actions and issues writes
+and `statuses: write` for the gate's verdict) and the run token's (contents write, pull_requests
+write, metadata read). `statuses: write` is the merger's alone: the run token does not ask for it,
+since one App backs every run and a run that could post a status could forge `maku/merge-gate`. A
+token minted for a narrower profile asks for a subset, which an App holding the union grants.
+
+The public-only check runs at start-up and on each labelled issue, so a repository made private
+after start-up is caught only when an issue is labelled.
 
 **The legacy single-repository shape still loads**, for one minor release: top-level `repository`,
 `maintainers`, `triggerLabel`, `controlIssue`, `classes`, `merge` and `schedules` read as a

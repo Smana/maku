@@ -116,6 +116,7 @@ type AgentRunLoop struct {
 	Search bool `json:"search,omitempty"`
 	// StallSteps, Continuations and JudgeModel are the harness's loop policy (AGENT_LOOP), the same
 	// keys cloud.ogenki.io's spec.loop carries; the run-controller writes AGENT_LOOP when any is set.
+
 	// StallSteps is the steps an implementer may take before its first commit (harness default 80).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=500
