@@ -284,6 +284,8 @@ func (c *card) span(s string) string {
 // mergeLine is the merge need as a sentence built here, from its parts: the repository is read from
 // the pull request's URL (a GitHub one), the number from the need's id. Summary's own text
 // interpolates both unescaped, and a repository may be named "_www.x" or "_x_", so it is not used.
+// The one answer it takes from the need is Need.Approve: an approve-to-merge hand-off's line says
+// approve and never the bypass, so no path through here prints --admin for one (AM3, fast-follow 1).
 // ok is false for a need whose parts are not what they should be.
 func (c *card) mergeLine(n summary.Need) (string, bool) {
 	if !digits(n.ID) {
@@ -432,7 +434,11 @@ func (c *card) needs(s summary.Summary) {
 				item += " by " + stamp(n.Deadline, c.o.Now)
 			}
 		case "merge":
-			item, label = c.needLine(n, c.mergeLine), "open the pull request"
+			item = c.needLine(n, c.mergeLine)
+			label = "open the pull request"
+			if n.Approve { // an approval of the head is the action, and the merger does the merge (AM3)
+				label = "approve the head on the pull request"
+			}
 		case summary.NeedQuestion:
 			item, label = c.needLine(n, c.answerLine), "answer on the issue"
 		case "hold":

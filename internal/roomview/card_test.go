@@ -667,3 +667,64 @@ func TestAQuestionNeedRendersAsTheAnswerLine(t *testing.T) {
 		t.Fatalf("%s", b.String())
 	}
 }
+
+// Fast-follow 1: an approve-to-merge hand-off never sees the admin bypass — not in the card, not in
+// the step it renders, not in the sentence MergeHow builds for it. The one action is the approval.
+func TestNoRendererSaysAdminMergeForApproveToMerge(t *testing.T) {
+	sum := summary.Summary{NeedsYou: []summary.Need{{
+		Kind:    summary.NeedMerge,
+		ID:      "42",
+		Approve: true,
+		What:    summary.MergeHow("Smana/ai-native-ref", 42, true),
+		URL:     "https://github.com/Smana/ai-native-ref/pull/42",
+		Action:  summary.NeedAction{Kind: "merge", Label: "approve the head on the pull request", URL: "https://github.com/Smana/ai-native-ref/pull/42"},
+	}}}
+	sum.Status.Phase = "AwaitingHuman"
+	sum.Step = summary.StepFor(summary.StepIn{Phase: "AwaitingHuman", Reason: "policy_pending", PR: 42,
+		PRURL: "https://github.com/Smana/ai-native-ref/pull/42", CanClose: true, MergeByApproval: true})
+	if sum.Step == nil || !sum.Step.Approve {
+		t.Fatalf("the step of an approve-to-merge room: %+v", sum.Step)
+	}
+	for _, f := range []Format{Markdown, Text} {
+		got := card1(t, sum, Options{Format: f, Now: now, Rooms: rooms})
+		for _, never := range []string{"--admin", "bypass rules", "a repository admin"} {
+			if strings.Contains(got, never) {
+				t.Errorf("format %d: %q in\n%s", f, never, got)
+			}
+		}
+		if !strings.Contains(got, "approve the head you read on the PR page") {
+			t.Errorf("format %d: the merge line does not say approve in\n%s", f, got)
+		}
+	}
+	// In Markdown the need's own link names the action; a terminal shows the URL, as for every need.
+	if md := card1(t, sum, Options{Format: Markdown, Now: now, Rooms: rooms}); !strings.Contains(md,
+		"[approve the head on the pull request](https://github.com/Smana/ai-native-ref/pull/42)") {
+		t.Errorf("the need's link does not say approve in\n%s", md)
+	}
+	if got := summary.MergeHow("Smana/ai-native-ref", 42, true); strings.Contains(got, "--admin") {
+		t.Fatalf("the byApproval sentence is %q", got)
+	}
+	if got := summary.MergeHow("Smana/ai-native-ref", 42, false); !strings.Contains(got, "--admin") {
+		t.Fatalf("the bypass sentence is %q", got)
+	}
+}
+
+// Where a repository admin's merge is the only path, the card says why (the step) and how (the merge
+// line): the bypass is reserved for that hand-off, and it never stands without its reason.
+func TestTheCardOfACommitTheFactoryCannotVouchForSaysWhyAnAdminMerges(t *testing.T) {
+	sum := summary.Summary{Room: "r", URL: rooms + "/r/r"}
+	sum.Status.Phase = "AwaitingHuman"
+	sum.Status.Reason = "it holds a commit no run of the task reported"
+	sum.NeedsYou = []summary.Need{{Kind: summary.NeedMerge, ID: "42", What: summary.MergeHow("o/r", 42, false),
+		URL: "https://github.com/o/r/pull/42"}}
+	sum.Step = summary.StepFor(summary.StepIn{Phase: "AwaitingHuman", Reason: "human_commit_in_pr", PR: 42,
+		PRURL: "https://github.com/o/r/pull/42", CanClose: true})
+	for _, f := range []Format{Markdown, Text} {
+		got := card1(t, sum, Options{Format: f, Now: now, Rooms: rooms})
+		for _, want := range []string{"a repository admin merges PR #42: a person pushed a commit the factory cannot vouch for", "--admin"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("format %d: no %q in\n%s", f, want, got)
+			}
+		}
+	}
+}

@@ -56,7 +56,10 @@ func urlOfIssue(i *envelope.IssueFact) string {
 // blocked"): only a repository admin can bypass it, so the text names who (#51). Without a
 // repository it gives the bypass box alone rather than a gh command that would act on whichever
 // checkout it runs from (#59). byApproval selects the approval's sentence instead (ApproveHow): the
-// gate merges the head a maintainer approved, so no renderer can print the bypass for it (AM3).
+// gate merges the head a maintainer approved, so no renderer can print the bypass for it (AM3,
+// fast-follow 1). The bypass sentence is the by-hand hand-offs' alone — human_commit_in_pr above all,
+// where the push check reads the same head the same way after any approval, so only an admin's merge
+// takes it — and nextStep says that reason in so many words.
 func MergeHow(repo string, n int, byApproval bool) string {
 	if byApproval {
 		return ApproveHow(repo, n)
@@ -234,6 +237,12 @@ const escalatedNext = "a maintainer comments `/factory retry` on the issue to ru
 // approveNext is an AwaitingHuman pull request's next step when a maintainer's approval returns it.
 const approveNext = "a maintainer reviews, then approves the current commit or closes the pull request on GitHub; the merger App merges that commit"
 
+// humanCommitNext is an AwaitingHuman pull request holding a commit no run of the task reported. The
+// factory neither fixes nor merges on top of it (human_commit_in_pr, a by-hand reason no approval
+// returns), so a repository admin's bypass is the one path left, and the sentence says why before how:
+// the bypass never stands alone for this hand-off (fast-follow 1).
+const humanCommitNext = "a person pushed a commit the factory cannot vouch for, so only a repository admin can merge it: read that commit, then tick \"bypass rules\" on the PR page, or run `gh pr merge --admin`"
+
 // nextStep is the next step a reason has of its own; "" leaves it to the phase's default. byApproval
 // is TaskFacts.MergeByApproval: a step that would merge by hand says approve instead.
 func nextStep(reason string, byApproval bool) string {
@@ -257,6 +266,8 @@ func nextStep(reason string, byApproval bool) string {
 		return "a maintainer takes it from here: check the workflow of the checks named in the pull request comment, then merge it or re-run them"
 	case "verdict_stale":
 		return "a maintainer reviews the current head, or the factory asks for a new review"
+	case "human_commit_in_pr":
+		return humanCommitNext
 	case "contract_unread", "contract_push_unrecorded":
 		return "nothing to do: the task goes on when GitHub answers"
 	case "contract_modified":
@@ -273,10 +284,14 @@ func nextStep(reason string, byApproval bool) string {
 	return ""
 }
 
-// waiting is the reason and next step of a task that waits on something other than its own run;
+// Waiting is the reason and next step of a task that waits on something other than its own run;
 // both are "" while it works or once it ended in a way that needs no one. A reason the map does
 // not know is shown as written, bounded: it is the factory's own string, never an agent's.
-func waiting(f *envelope.TaskFacts) (reason, next string) {
+//
+// It is exported because the factory's hand-off comment reads the same sentence the room's NEXT box
+// does (narrate reads it): a maintainer who reads GitHub and the room about one hand-off must not be
+// told two things (CD21, fast-follow 1).
+func Waiting(f *envelope.TaskFacts) (reason, next string) {
 	if f == nil {
 		return "", ""
 	}

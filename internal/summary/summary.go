@@ -451,7 +451,7 @@ func View(st State, room, url string, sub policy.Subject, standing GitHubStandin
 		s.Status.Phase = st.Sealed // the sealed room refuses new facts, so the last task phase would be stale
 		return s                   // read-only: no wait, no needs, no actions
 	}
-	s.Status.Reason, s.Status.Next = waiting(st.Facts)
+	s.Status.Reason, s.Status.Next = Waiting(st.Facts)
 	// Deciding happens in the web UI: judge "could decide" as the web UI would, so a CLI caller
 	// still learns an approval is needed, with a link and no command (D4).
 	web := sub

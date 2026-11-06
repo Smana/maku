@@ -45,13 +45,19 @@ type StepIn struct {
 // class_unarmed, maintainer_approved, changes_requested, ...), and an Escalated needs_author task
 // waits for an answer on its issue: both only for a caller who may close, as Merge and Answer.
 // Under approveToMerge the pull request's step is an approval of its current commit, which the
-// merger App then merges, as Merge's need says.
+// merger App then merges, as Merge's need says. A hand-off holding a commit no run of the task
+// reported is the exception that keeps the by-hand merge: no approval returns that head, so the step
+// names the repository admin's bypass and the reason it is the only path (fast-follow 1). The cases
+// are ordered so that the reason-specific sentence wins over both the approve and the plain merge.
 func StepFor(in StepIn) *Step {
 	switch {
 	case in.Sealed:
 		return nil
 	case in.Approvals:
 		return &Step{Kind: StepApprove, Label: "approve here", URL: in.RoomURL}
+	case in.CanClose && in.Phase == "AwaitingHuman" && in.PR > 0 && in.Reason == "human_commit_in_pr":
+		return &Step{Kind: StepPR, URL: in.PRURL,
+			Label: fmt.Sprintf("a repository admin merges PR #%d: a person pushed a commit the factory cannot vouch for", in.PR)}
 	case in.CanClose && in.Phase == "AwaitingHuman" && in.PR > 0 && in.MergeByApproval:
 		return &Step{Kind: StepPR, Label: fmt.Sprintf("review, then approve the current commit or close PR #%d", in.PR), URL: in.PRURL, Approve: true}
 	case in.CanClose && in.Phase == "AwaitingHuman" && in.PR > 0:
