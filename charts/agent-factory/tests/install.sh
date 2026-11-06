@@ -121,6 +121,32 @@ objs=$(kubectl get all,cm,secret -A -o name) || die "kubectl could not list the 
 ! grep -E 'ciliumnetworkpolic|cert-manager' <<<"$objs" || die "a Cilium or cert-manager object exists"
 echo "ok: the cluster has none of those APIs, and the install needed none"
 
+step "plain NetworkPolicies: a run-labelled pod cannot reach rooms-db, the broker's pods can"
+kubectl -n "$NS" get networkpolicy rooms-db agent-factory-api
+# probe NAMESPACE LABELS: a short-lived pod connects to rooms-db:5432; 0 when it connects.
+probe() {
+  local rc=0
+  kubectl -n "$1" run "np-probe-$RANDOM" --image="$PROBE_IMAGE" --restart=Never --rm -i --quiet --labels="$2" \
+    --command -- nc -z -w 5 "rooms-db.$NS.svc" 5432 >/dev/null 2>&1 || rc=$?
+  return "$rc"
+}
+# control: the broker's label from the release namespace connects (so a failure below is the policy, not DNS or the image)
+probe "$NS" app.kubernetes.io/name=room-broker || die "the control pod labelled like the broker cannot reach rooms-db:5432"
+echo "ok: a broker-labelled pod reaches rooms-db:5432"
+# a run in the runs namespace, labelled as the run controller labels it
+if probe agents agents.ogenki.io/run-id=np-probe,agents.ogenki.io/role=implementer,app.kubernetes.io/managed-by=run-controller; then
+  case "$CLUSTER_KIND" in
+    # kindnet enforces NetworkPolicy from kind v0.24; if this node does not, say so rather than fail
+    kind) echo "NOTE: kind did not enforce the NetworkPolicy here: enforcement is asserted on k3d only" ;;
+    *) die "a run-labelled pod reached rooms-db:5432 although the policy admits only the broker" ;;
+  esac
+else
+  echo "ok: a run-labelled pod in agents cannot reach rooms-db:5432 ($CLUSTER_KIND enforces NetworkPolicy)"
+fi
+kubectl get pods -A -o name | grep -F np-probe- && die "a probe pod was left behind"
+# the broker's own DB link still works
+kubectl -n "$NS" rollout status deploy/room-broker --timeout=60s
+
 step "a second helm upgrade with the same values keeps the CA, the certificate and both DSNs"
 snap() {
   for s in room-broker-ca room-broker-tls rooms-broker-dsn rooms-owner-dsn; do

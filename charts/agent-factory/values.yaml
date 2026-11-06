@@ -151,3 +151,9 @@ postgres:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "1", memory: 512Mi}
+
+networkPolicies:
+  # Plain Kubernetes NetworkPolicies (no Cilium in the demo): ingress to rooms-db only from the
+  # broker, and to the factory's API only from the broker. Runs keep their egress. Needs a CNI that
+  # enforces NetworkPolicy (k3s does; kind from v0.24 with kindnet).
+  plain: true
