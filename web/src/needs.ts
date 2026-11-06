@@ -1,25 +1,58 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The needs-you panel sits in the room's lead, under the title strip: one card per
-// pending approval, command first, decided right there, then the summary's merges,
-// answers and holds. This page is still the only place every approval class is decided;
-// a `forge.push` approval is also decidable from its Slack card, under the same fence. A
-// card leaves when the log decides it (approval_decided), whoever decided, so a decide
-// that lost the race (already_decided) leaves no dead button. Every string here may be
-// agent-written: all of it enters the DOM as text.
+// pending approval, command first, decided right there, then the list the needs route answers for
+// this room — the same list the CLI and the tools read (CD21) — with the summary's merges, answers
+// and holds standing in until the first read lands. This page is still the only place every approval
+// class is decided; a `forge.push` approval is also decidable from its Slack card, under the same
+// fence. A card leaves when the log decides it (approval_decided), whoever decided, so a decide that
+// lost the race (already_decided) leaves no dead button. Every string here may be agent-written: all
+// of it enters the DOM as text.
 
+import type { NeedItem, NeedsPage } from "./api";
 import { decideStatus, deadlineText, ruleFor } from "./approval-help";
 import { focusRow } from "./chat";
 import type { Snapshot } from "./conn";
 import { act, approvalAnchor, approvalCard, button, el, keyed, named, type Sender } from "./controls";
 import type { RoomState } from "./room-state";
-import { needsItems, type Summary } from "./summary";
+import { inlineCode, needsItems, safeLink, type Summary } from "./summary";
+
+// routeEvery is how often the panel asks the route. refresh runs on every frame the page draws — the
+// ticker's one a second, and each event a replay delivers — and one read is a scan of every room the
+// caller may read, so a burst of frames costs one read, not one each.
+const routeEvery = 5000;
+
+// needList is one item the route lists: the broker's own kind, its one sentence (a need's what names a
+// command, so its backticked spans are code), and the action's label linked where the action happens —
+// https only, as every link on this page. The route ordered the items (CD21): this list never reorders
+// them.
+function needList(n: NeedItem): HTMLLIElement {
+  const li = el("li", { className: "need" });
+  li.dataset.kind = n.kind;
+  li.append(`${n.kind}: `);
+  if (n.what) li.append(...inlineCode(n.what), " · ");
+  const label = n.action?.label || n.what;
+  const url = n.action?.url || n.url;
+  li.append(url ? safeLink(label, url) : document.createTextNode(label));
+  return li;
+}
+
+// unreadLine is the one line for the rooms whose state could not be read (Review Focus 1). They
+// contribute no item, and the route names only rooms the caller may read: a refusal never reveals
+// another room's existence.
+function unreadLine(rooms: string[]): string {
+  return rooms.length === 1
+    ? `Room ${rooms[0]}: its state could not be read, so it lists nothing here.`
+    : `Rooms ${rooms.join(", ")}: their state could not be read, so they list nothing here.`;
+}
 
 // mountNeeds renders the panel into root. you reads the viewer as the latest state frame
-// has it; chat finds a call's row for the card's link.
+// has it; chat finds a call's row for the card's link; opts.needs reads the route's list for this
+// room, and no reader leaves the summary's items as the list (the preview, which has no broker).
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
-  chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined):
-  { refresh(): void; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
+  chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined,
+  opts: { needs?: () => Promise<NeedsPage> } = {}):
+  { refresh(): Promise<void>; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
   const approvals = el("ul", { className: "approvals" });
@@ -34,6 +67,14 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   type Approval = ReturnType<RoomState["approvals"]>[number];
   const standing = (a: Approval) => decideStatus({ you: you(), sealed: state.sealed, fourEyes: fourEyes(), prompters: a.prompters });
   let others = 0;
+  // The list under the cards: the route's items once a read answered (listed), the summary's until
+  // then (summarised), and two lines — why a read failed, and the rooms the route could not read.
+  let listed: HTMLLIElement[] | undefined;
+  let summarised: HTMLLIElement[] = [];
+  let unread: string[] = [];
+  let stale = "";
+  let reading: Promise<void> | undefined; // one read at a time
+  let readAt = 0; // when the last read started, for routeEvery
 
   const card = (a: Approval, st: { can: boolean; text: string }) => {
     const li = approvalCard(a, "li");
@@ -85,34 +126,79 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     return li;
   };
 
+  // render draws what the panel holds now: the cards, then the list and its two lines. It never reads
+  // the route: a frame that draws cannot wait, and a replay draws hundreds of them.
+  const render = () => {
+    const pending = state.approvals();
+    rows(pending.map((a) => { const st = standing(a); return { key: a.approvalId, sig: st.text, build: () => card(a, st) }; }));
+    // The deadline counts down without a rebuild, which would drop a reason being typed.
+    for (const d of approvals.querySelectorAll<HTMLElement>("p.approval-deadline")) {
+      const text = deadlineText(d.dataset.expires ?? "");
+      if (d.textContent !== text) d.textContent = text;
+    }
+    // A call's row comes and goes (it leaves at the chat's cap): the link follows it
+    // without a rebuild, which would drop a reason being typed.
+    for (const l of approvals.querySelectorAll<HTMLAnchorElement>("a.approval-call")) {
+      const row = chat.rowFor(l.dataset.callId ?? "");
+      l.hidden = !row;
+      const text = row ? `see the call #${row.dataset.seq ?? "?"}` : "see the call";
+      if (l.textContent !== text) l.textContent = text;
+    }
+    // The list the route answered, the summary's until then; and under it, one line each for a read
+    // that failed and for a room the route could not read. A failure is itself something to show: the
+    // line is the panel's, and it is never suppressed, so an unreadable list cannot pass for a quiet
+    // one. The heading stays the count's — with nothing to count it reads "Waiting for an approver",
+    // never "Needs you" over a single warning.
+    const items = listed ?? summarised;
+    const notes: HTMLLIElement[] = [];
+    if (stale) notes.push(el("li", { className: "needs-stale", textContent: stale }));
+    if (unread.length) notes.push(el("li", { className: "needs-unread", textContent: unreadLine(unread) }));
+    other.replaceChildren(...items, ...notes);
+    others = items.length;
+    const show = items.length + pending.length + unread.length + (stale ? 1 : 0) > 0;
+    // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
+    // someone else's turn.
+    const heading = panel.count() > 0 ? "Needs you" : "Waiting for an approver";
+    if (title.textContent !== heading) title.textContent = heading;
+    root.hidden = !show;
+  };
+
+  // read asks the route for this room's list and renders the answer: the items become the list, and a
+  // failure leaves the list it could not refresh in place with its one line, never a blank panel.
+  const read = (): Promise<void> => {
+    if (!opts.needs) return Promise.resolve();
+    readAt = Date.now();
+    const p = opts.needs()
+      .then((page) => {
+        // Deciding is the cards': the route lists an approval for every door, and a second one here
+        // would not know four-eyes or the policy.
+        listed = (page.items ?? []).filter((n) => n.kind !== "approval").map(needList);
+        unread = page.unread ?? [];
+        stale = "";
+      })
+      .catch((e: unknown) => {
+        stale = e instanceof Error ? e.message : String(e);
+      })
+      .finally(() => {
+        reading = undefined;
+        render();
+      });
+    reading = p;
+    return p;
+  };
+
   const panel = {
-    refresh(): void {
-      const pending = state.approvals();
-      rows(pending.map((a) => { const st = standing(a); return { key: a.approvalId, sig: st.text, build: () => card(a, st) }; }));
-      // The deadline counts down without a rebuild, which would drop a reason being typed.
-      for (const d of approvals.querySelectorAll<HTMLElement>("p.approval-deadline")) {
-        const text = deadlineText(d.dataset.expires ?? "");
-        if (d.textContent !== text) d.textContent = text;
-      }
-      // A call's row comes and goes (it leaves at the chat's cap): the link follows it
-      // without a rebuild, which would drop a reason being typed.
-      for (const l of approvals.querySelectorAll<HTMLAnchorElement>("a.approval-call")) {
-        const row = chat.rowFor(l.dataset.callId ?? "");
-        l.hidden = !row;
-        const text = row ? `see the call #${row.dataset.seq ?? "?"}` : "see the call";
-        if (l.textContent !== text) l.textContent = text;
-      }
-      // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
-      // someone else's turn.
-      const heading = panel.count() > 0 ? "Needs you" : "Waiting for an approver";
-      if (title.textContent !== heading) title.textContent = heading;
-      root.hidden = pending.length === 0 && others === 0;
+    // refresh draws the panel and, on its cadence, reads the route beside it: the page calls it on
+    // every frame, and the one read it starts is the promise a caller can wait on.
+    refresh(): Promise<void> {
+      render();
+      if (reading) return reading;
+      if (Date.now() - readAt < routeEvery) return Promise.resolve();
+      return read();
     },
     setSummary(s: Summary): void {
-      const items = needsItems(s);
-      other.replaceChildren(...items);
-      others = items.length;
-      panel.refresh();
+      summarised = needsItems(s);
+      render();
     },
     // count is what needs this viewer: the approvals it may decide, then merges, answers and holds.
     count(): number { return panel.approvalCounts().mine + others; },

@@ -135,6 +135,43 @@ func TestRoomToolsDefaultAndStrictDecode(t *testing.T) {
 	}
 }
 
+// CD28: human.needs.enabled turns the human needs door on, and it ships on — the list is read-only, so
+// the spec turns it on with the release. An absent block is on, and an explicit false is the opt-out the
+// decoder keeps rather than overrides.
+func TestNeedsSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       bool
+	}{
+		{"the existing bytes, no block: on", valid, true},
+		{"an empty block is on", valid + "  needs: {}\n", true},
+		{"enabled: true is explicit", valid + "  needs:\n    enabled: true\n", true},
+		{"enabled: false is the opt-out", valid + "  needs:\n    enabled: false\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Load(write(t, tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Human.NeedsEnabled(); got != tc.want {
+				t.Fatalf("human.needs enabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// Strict decoding reaches the new block too: a typo, or a "boolean" that is a string, fails the
+	// rollout rather than silently serving or closing a door the operator meant otherwise.
+	for _, tc := range []struct{ name, body string }{
+		{"a misspelt key", valid + "  needs:\n    enable: false\n"},
+		{"a string boolean", valid + "  needs:\n    enabled: \"false\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Load(write(t, tc.body)); err == nil {
+				t.Fatal("want a decode error")
+			}
+		})
+	}
+}
+
 func TestLoadRefuses(t *testing.T) {
 	replace := func(old, repl string) string { return strings.Replace(valid, old, repl, 1) }
 	for _, c := range []struct {

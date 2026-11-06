@@ -371,7 +371,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID: projectID,
 		Rooms:     rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, SessionStart: start, Dashboards: dashboards}, nil
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards}, nil
 }
 
 // intakeServer is human.intake.plan as the human API serves it (v3.x conversational intake): the

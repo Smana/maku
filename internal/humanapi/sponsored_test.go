@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,27 +65,67 @@ func sponsoredRooms(t *testing.T, w *gitHubWorld) option {
 // toolNames is tools/list's names, in order, as h sees them.
 func toolNames(t *testing.T, e env, h http.Header) string {
 	t.Helper()
-	_, out := rpc(t, e, h, "tools/list", nil)
-	var res struct{ Tools []struct{ Name string } }
-	b, _ := json.Marshal(out["result"])
-	_ = json.Unmarshal(b, &res)
-	names := make([]string, 0, len(res.Tools))
-	for _, tool := range res.Tools {
-		names = append(names, tool.Name)
+	list := tools(t, e, h)
+	names := make([]string, 0, len(list))
+	for _, tool := range list {
+		name, _ := tool["name"].(string)
+		names = append(names, name)
 	}
 	return strings.Join(names, ",")
 }
 
+// tools is tools/list's entries, as h sees them.
+func tools(t *testing.T, e env, h http.Header) []map[string]any {
+	t.Helper()
+	_, out := rpc(t, e, h, "tools/list", nil)
+	b, _ := json.Marshal(out["result"])
+	var res struct{ Tools []map[string]any }
+	if err := json.Unmarshal(b, &res); err != nil {
+		t.Fatalf("%s: %v", b, err)
+	}
+	return res.Tools
+}
+
+// toolEntry is tools/list's entry for name, as h sees it: the whole tool, schema and outputSchema included.
+func toolEntry(t *testing.T, e env, h http.Header, name string) map[string]any {
+	t.Helper()
+	for _, tool := range tools(t, e, h) {
+		if tool["name"] == name {
+			return tool
+		}
+	}
+	t.Fatalf("%s: no %s", toolNames(t, e, h), name)
+	return nil
+}
+
+// sponsoredMergeRoom is the sponsored door's fixture: roomID's pull request waits for a maintainer's
+// merge, and system:slack-app is one of the room's watchers, as the factory makes it — the App has no
+// login, and no GitHub check is made for it.
+func sponsoredMergeRoom(t *testing.T) option {
+	t.Helper()
+	return func(s *Server, _ *fanout.Hub, v *hubView) {
+		mine := repoRoom(roomID, "Smana/a")
+		mine.Spec.Members = []v1alpha1.Member{{Principal: sponsoredP.ID, Role: "watcher"}}
+		mine.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
+		s.Rooms = roomClient(t, mine)
+		s.PublicURL = "https://rooms.test"
+		v.evs = append(v.evs, needsFacts(roomID, 11, envelope.TaskFacts{Phase: "AwaitingHuman",
+			PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}}))
+	}
+}
+
 // R13, invariant 8: a sponsored principal's tools read, and none labels, approves, steers, queues,
-// forks or stops; a call to a human's tool is an unknown tool (C2).
+// forks or stops; a call to a human's tool is an unknown tool (C2). CD28: adding needs_list to the
+// sponsored set is a deliberate, tested amendment — the list is closed and read-only, and the two
+// legacy room reads stay need-free.
 func TestSponsoredToolList(t *testing.T) {
 	// human.intake.plan on: the planner's two tools join both lists, the App's last and the human's
 	// after issue_draft (PR 2): intake_plan, then plan_check, the door a consumer re-validates through.
-	e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"))
-	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,issue_draft,room_summary,room_tail,room_changes,intake_plan,plan_check" {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "slack"))
+	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,issue_draft,room_summary,room_tail,room_changes,needs_list,intake_plan,plan_check" {
 		t.Fatalf("%s", got)
 	}
-	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,intake_plan,plan_check" {
+	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check" {
 		t.Fatalf("a human's list changed: %s", got)
 	}
 	for _, name := range []string{"room_queue", "room_fork", "rooms_list"} {
@@ -92,6 +134,64 @@ func TestSponsoredToolList(t *testing.T) {
 		if rpcCode(out) != -32602 || !strings.Contains(fmt.Sprint(out["error"]), "unknown tool: "+name) {
 			t.Errorf("%s: %v", name, out)
 		}
+	}
+}
+
+// CD28: the schema is the whole surface on the App's door too. Nothing outside {since, room, repo} is
+// accepted, so no sponsored call can carry a decision — and what it does not accept, it refuses.
+func TestSponsoredNeedsListRefusesAFieldOutsideTheSchema(t *testing.T) {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
+	for _, args := range []map[string]any{{"decide": "01JBX3K8"}, {"approve": true}, {"merge": "01JBX3K8"}} {
+		if got := call(t, e, bearer("slack-app"), "needs_list", args); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+			t.Errorf("%v: %+v", args, got)
+		}
+	}
+}
+
+// CD28 with CD26: a sponsored list is the room's, not a login's. The maintainer's merge is in it —
+// with a link to the pull request and no decision — although the App has no login and may not write
+// the repository. The rows and room_summary keep saying nothing (B1): this is the one room-scoped read.
+func TestSponsoredNeedsListIsTheRooms(t *testing.T) {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
+	got := call(t, e, bearer("slack-app"), "needs_list", map[string]any{})
+	var data struct{ Items []summary.Need }
+	if got.isError || json.Unmarshal([]byte(got.structured), &data) != nil {
+		t.Fatalf("%+v", got)
+	}
+	if keys := needKeys(data.Items); !slices.Equal(keys, []string{roomID + "/merge/2239"}) {
+		t.Fatalf("%v, want the room's merge alone", keys)
+	}
+	if n := data.Items[0]; n.Action.Kind != "merge" || n.Action.URL != "https://github.com/Smana/a/pull/2239" {
+		t.Fatalf("%+v, want a link to the pull request", n)
+	}
+	if !strings.Contains(got.text, "https://github.com/Smana/a/pull/2239") {
+		t.Fatalf("%s, want the pull request's link", got.text)
+	}
+}
+
+// CD28: one tool, one schema. The App's needs_list and the human's are one entry in tools/list, so a
+// field cannot appear on one door and not the other — the closed schema is the whole surface on both, and
+// so is the outputSchema the answer is declared against.
+func TestSponsoredNeedsListIsTheSameTool(t *testing.T) {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
+	human, app := toolEntry(t, e, viaRoomctl("dev"), "needs_list"), toolEntry(t, e, bearer("slack-app"), "needs_list")
+	if !reflect.DeepEqual(human, app) {
+		t.Fatalf("the App's needs_list is another tool:\nhuman %v\napp   %v", human, app)
+	}
+}
+
+// R13, C28: another room's needs are not the App's. Only the rooms it is a watcher of are read, so a
+// room it is not a member of contributes nothing — here the split proposal the same log holds.
+func TestSponsoredNeedsListStaysInItsRooms(t *testing.T) {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), needsWorld(t, nil),
+		func(s *Server, _ *fanout.Hub, _ *hubView) {
+			mine := repoRoom(roomID, "Smana/a")
+			mine.Spec.Members = []v1alpha1.Member{{Principal: sponsoredP.ID, Role: "watcher"}}
+			mine.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
+			s.Rooms = roomClient(t, mine, repoRoom(splitRoom, "Smana/a"), repoRoom(roomC, "Smana/a"))
+		})
+	if keys := needKeysOf(t, call(t, e, bearer("slack-app"), "needs_list", map[string]any{})); !slices.Equal(keys, []string{roomID + "/merge/2239"}) {
+		t.Fatalf("%v, want its own room's merge alone", keys)
 	}
 }
 
@@ -198,8 +298,9 @@ func TestSponsoredSummaryAdvertisesNothing(t *testing.T) {
 // R13 with CD21 and B1: one sponsored principal, one room, and one answer on both surfaces. A pull
 // request whose reviewers name someone else would be a merge — or a review — for a caller GitHub lets
 // write; a sponsored principal has no login and only reads, so the room's rows and its room_summary both
-// list no need. The rows' derivation (needsFor) leaves summary.Caller.RoomScoped to PR 3's needs_list,
-// whose room-scoped read is its own contract: the two legacy surfaces say what View says.
+// list no need. The rows' derivation (needsFor) takes the login's door and leaves
+// summary.Caller.RoomScoped false, so the two legacy surfaces say what View says; needs_list asks for the
+// room-scoped read, which its own test pins.
 func TestSponsoredRowsAndSummaryAgreeOnNoNeeds(t *testing.T) {
 	e := setup(t, mcpOn, withSponsored(sponsoredP), func(s *Server, _ *fanout.Hub, v *hubView) {
 		mine := repoRoom(roomID, "Smana/a")

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, fetchEvents, nav, SignInRequired } from "../src/api";
+import { api, fetchEvents, fetchNeeds, nav, SignInRequired } from "../src/api";
 import { listRooms, newRoomForm } from "../src/view";
 
 const answer = (status: number, body = "") => (() => Promise.resolve(new Response(body, { status }))) as typeof fetch;
@@ -84,6 +84,31 @@ describe("newRoomForm", () => {
     const form = submit(answer(201, JSON.stringify({ id: "../oauth2/sign_out" })));
     await vi.waitFor(() => expect(form.querySelector(".notice")?.textContent).toMatch(/unexpected/));
     expect(go).not.toHaveBeenCalled();
+  });
+});
+
+describe("fetchNeeds", () => {
+  it("asks the route for one room's list and returns it", async () => {
+    const page = { apiVersion: "needs/v1", cursor: "2026-11-04T19:10:00Z", items: [{ kind: "hold", id: "r", what: "w", url: "u" }] };
+    let url = "";
+    const get = (async (u: string) => { url = u; return new Response(JSON.stringify(page), { status: 200 }); }) as unknown as typeof fetch;
+    expect((await fetchNeeds("3kq7x2ma", undefined, get)).items).toHaveLength(1);
+    expect(url).toBe("/api/needs?room=3kq7x2ma");
+    await fetchNeeds("3kq7x2ma", "2026-11-04T19:10:00Z", get);
+    expect(url).toBe("/api/needs?room=3kq7x2ma&since=2026-11-04T19%3A10%3A00Z");
+  });
+
+  // Review Focus 3: the route's 400 names the format, and the panel says the route's own sentence.
+  it("relays the route's refusal and its outage", async () => {
+    for (const [status, copy] of [[400, /RFC 3339/], [503, /cannot be verified/], [502, /502/]] as const) {
+      await expect(fetchNeeds("3kq7x2ma", undefined, answer(status))).rejects.toThrow(copy);
+    }
+  });
+
+  // A broker that predates needs/v1 answers something else: the panel says it cannot read it rather
+  // than rendering an empty list, which would read as nothing needs you.
+  it("refuses an answer in a format the page does not know", async () => {
+    await expect(fetchNeeds("3kq7x2ma", undefined, answer(200, JSON.stringify({ apiVersion: "summary/v1" })))).rejects.toThrow(/does not know/);
   });
 });
 

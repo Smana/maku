@@ -39,6 +39,7 @@ type makuBroker struct {
 	bearer []string
 	query  string // the last REST query
 	access string // the X-Rooms-Access the room list sends
+	needs  string // the answer to GET /api/needs; empty answers an empty list
 	// tool answers a tools/call to /mcp: the tool's name, its arguments, and the answer's JSON-RPC
 	// body after the id; nil answers every call with an empty result.
 	tool  func(name string, args map[string]any) string
@@ -92,6 +93,15 @@ func newMakuBroker(t *testing.T) *makuBroker {
 					w.Header().Set("X-Rooms-Access", b.access)
 				}
 				_, _ = w.Write([]byte(`[{"id":"3kq7x2ma","repository":"Smana/a","phase":"Active","owner":"human:own","lastSeq":42,"you":{"role":"watcher"}}]`))
+			case r.URL.Path == "/api/needs":
+				if b.access != "" {
+					w.Header().Set("X-Rooms-Access", b.access)
+				}
+				if b.needs != "" {
+					_, _ = w.Write([]byte(b.needs))
+					return
+				}
+				_, _ = w.Write([]byte(`{"apiVersion":"needs/v1","items":[],"cursor":"2026-11-04T19:10:00Z"}`))
 			case strings.Contains(r.URL.Path, "/gone/"):
 				http.Error(w, "no such room", http.StatusNotFound)
 			default:
@@ -362,6 +372,124 @@ func TestMakuRoomsFiltersAndHint(t *testing.T) {
 	}
 	if got := r.Err.(*strings.Builder).String(); !strings.Contains(got, "https://auth.example") {
 		t.Fatalf("the hint goes to stderr and names the issuer: %q", got)
+	}
+}
+
+// needsAnswer is GET /api/needs' answer: one merge in one room, and the cursor to ask from next.
+const needsAnswer = `{"apiVersion":"needs/v1","access":"ok","items":[{"kind":"merge","id":"2239","room":"3kq7x2ma",` +
+	`"what":"a maintainer approves PR #2239","why":"the pull request waits for a maintainer",` +
+	`"url":"https://github.com/Smana/a/pull/2239","action":{"kind":"merge","label":"open the pull request",` +
+	`"url":"https://github.com/Smana/a/pull/2239"}}],"cursor":"2026-11-04T19:10:00Z"}`
+
+// CD21, CD28: the CLI's list is the route's, rendered by the one view package, and its empty case says so
+// once. What an item asks is quoted, as the room card quotes an agent's words.
+func TestMakuNeeds(t *testing.T) {
+	b := newMakuBroker(t)
+	b.needs = needsAnswer
+	r, out := configured(t, b)
+	if err := r.Run(t.Context(), []string{"needs"}); err != nil {
+		t.Fatal(err)
+	}
+	if b.query != "/api/needs?" {
+		t.Fatalf("query %q", b.query)
+	}
+	for _, want := range []string{"Needs across rooms · 1 needs you", `merge — "a maintainer approves PR #2239"`,
+		"→ open the pull request (https://github.com/Smana/a/pull/2239)"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("the output lacks %q:\n%s", want, out)
+		}
+	}
+	// Nothing to list says so once, and takes no argument.
+	b.needs = ""
+	out.Reset()
+	if err := r.Run(t.Context(), []string{"needs"}); err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Split(strings.TrimSpace(out.String()), "\n"); len(lines) != 1 || !strings.Contains(lines[0], "nothing needs you") {
+		t.Fatalf("%q", out)
+	}
+	// Review Focus 1: a room whose state could not be read is named, from the answer's own unread list, so
+	// the CLI never passes an unreadable room off as quiet.
+	b.needs = `{"apiVersion":"needs/v1","items":[],"cursor":"2026-11-04T19:10:00Z","unread":["5kq7x2mc"]}`
+	out.Reset()
+	if err := r.Run(t.Context(), []string{"needs"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "1 room's state could not be read: 5kq7x2mc") {
+		t.Fatalf("%q", out)
+	}
+	if err := r.Run(t.Context(), []string{"needs", "3kq7x2ma"}); err == nil || !strings.Contains(err.Error(), "--since") {
+		t.Fatalf("a positional argument: %v", err)
+	}
+}
+
+// `maku needs` asks from the cursor the last call stored (cursors.json's "needs" entry) unless --since names
+// an instant, stores the answer's own cursor, and narrows by --room and --repo.
+func TestMakuNeedsAsksFromTheStoredCursor(t *testing.T) {
+	b := newMakuBroker(t)
+	b.needs = needsAnswer
+	r, _ := configured(t, b)
+	run := func(args ...string) string {
+		t.Helper()
+		if err := r.Run(t.Context(), args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return b.query
+	}
+	if got := run("needs", "--room", "3kq7x2ma", "--repo", "Smana/a"); got != "/api/needs?repo=Smana%2Fa&room=3kq7x2ma" {
+		t.Fatalf("the filters: %q", got)
+	}
+	store := maku.Cursors{Path: filepath.Join(r.Dir, "cursors.json")}
+	if got := store.Get("needs"); got != "2026-11-04T19:10:00Z" {
+		t.Fatalf("the answer's cursor was not stored: %q", got)
+	}
+	if got := run("needs"); got != "/api/needs?since=2026-11-04T19%3A10%3A00Z" {
+		t.Fatalf("the stored cursor: %q", got)
+	}
+	if got := run("needs", "--since", "2026-11-01T00:00:00Z"); got != "/api/needs?since=2026-11-01T00%3A00%3A00Z" {
+		t.Fatalf("--since overrides the stored cursor: %q", got)
+	}
+	// The file is a convenience, never a source of truth: a cursor it no longer holds as an instant reads as
+	// none, rather than sending a `since` the route would refuse.
+	if err := maku.SaveJSON(store.Path, map[string]any{"cursors": []map[string]string{{"room": "needs", "cursor": "yesterday"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := run("needs"); got != "/api/needs?" {
+		t.Fatalf("a corrupt stored cursor: %q", got)
+	}
+}
+
+// Review Focus 3: a --since that is not an instant is refused with the format the answer's own cursor has,
+// before any request — never read as everything, never as nothing.
+func TestMakuNeedsRefusesAMalformedSince(t *testing.T) {
+	b := newMakuBroker(t)
+	b.needs = needsAnswer
+	r, _ := configured(t, b)
+	before := b.reqs
+	for _, bad := range []string{"yesterday", "2026-11-04", "2026-11-04T19:10:00", "2026-11-04T19:10:00Zjunk"} {
+		if err := r.Run(t.Context(), []string{"needs", "--since", bad}); err == nil || !strings.Contains(err.Error(), "RFC 3339") {
+			t.Errorf("--since %q: %v", bad, err)
+		}
+	}
+	if b.reqs != before {
+		t.Fatalf("%d requests were made before a malformed --since was refused", b.reqs-before)
+	}
+}
+
+// --json is the route's answer as sent: a script reads what the browser reads, apiVersion and access
+// included, and the stored cursor still moves on.
+func TestMakuNeedsJSONIsTheBrokersAnswer(t *testing.T) {
+	b := newMakuBroker(t)
+	b.needs = needsAnswer
+	r, out := configured(t, b)
+	if err := r.Run(t.Context(), []string{"needs", "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != needsAnswer+"\n" {
+		t.Fatalf("%q", out)
+	}
+	if got := (maku.Cursors{Path: filepath.Join(r.Dir, "cursors.json")}).Get("needs"); got != "2026-11-04T19:10:00Z" {
+		t.Fatalf("--json did not store the answer's cursor: %q", got)
 	}
 }
 

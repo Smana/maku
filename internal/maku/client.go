@@ -188,6 +188,60 @@ func (c Client) Rooms(ctx context.Context, out io.Writer, f RoomFilter) error {
 	return nil
 }
 
+// needsBody is GET /api/needs as the broker sent it, with its X-Rooms-Access. It is roomsBody's shape: one
+// token header, one query the broker applies, and the same refusal for a caller the broker turns away.
+func (c Client) needsBody(ctx context.Context, f NeedsFilter) (body []byte, access string, err error) {
+	h, err := c.header(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/api/needs"+withQuery(f.query()), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header = h
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("needs: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		// A filter that matches nothing is an empty list, never a 404: the broker does not mount the route,
+		// which is the operator's switch off or a broker older than needs/v1.
+		return nil, "", errors.New("needs: the broker serves no /api/needs: human.needs.enabled is off, or the broker predates needs/v1 (maku rooms lists the rooms)")
+	case http.StatusBadRequest:
+		// The route's one 400 is a `since` it would not read, and its sentence names the format: relay the
+		// broker's words rather than "Bad Request", as Summary does for access_unverified.
+		msg, _ := httpx.ReadBody(resp.Body, 1<<10)
+		return nil, "", fmt.Errorf("needs: %s", OneLine(string(msg)))
+	default:
+		return nil, "", refusal("needs", resp)
+	}
+	body, err = httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return nil, "", fmt.Errorf("needs: %w", err)
+	}
+	return body, resp.Header.Get("X-Rooms-Access"), nil
+}
+
+// Needs reads GET /api/needs: what needs the developer across the rooms they may read, in needs/v1's one
+// order (CD21, CD28). The list may be short for a reason they can fix, so the access value's hint goes to the
+// error stream as the room list's does: a page is data, and stdout stays the list.
+func (c Client) Needs(ctx context.Context, f NeedsFilter) (NeedsPage, error) {
+	body, access, err := c.needsBody(ctx, f)
+	if err != nil {
+		return NeedsPage{}, err
+	}
+	page := NeedsPage{raw: body}
+	if err := json.Unmarshal(body, &page); err != nil {
+		return NeedsPage{}, fmt.Errorf("needs: %w", err)
+	}
+	c.hint(access)
+	return page, nil
+}
+
 func withQuery(q string) string {
 	if q == "" {
 		return ""

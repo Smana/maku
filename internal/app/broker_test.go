@@ -589,6 +589,21 @@ func TestHumanServer(t *testing.T) {
 	if want := []humanapi.Dashboard{{Label: "Room", URL: "https://grafana.example.com/d/r?var-room={room}"}}; !slices.Equal(s.Dashboards, want) {
 		t.Fatalf("dashboards %+v, want the config's", s.Dashboards)
 	}
+	// CD28: the door follows the decoded switch, which is on while the file says nothing.
+	if !s.Needs {
+		t.Fatal("human.needs.enabled: an absent block serves /api/needs")
+	}
+	off := false
+	cfg.Human.Needs.Enabled = &off
+	// Upstream's error is the intake planner's preconditions, which this config does not switch on.
+	offServer, err := humanServer(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", fakeRoomLog{},
+		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, actor, nil, m, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offServer.Needs {
+		t.Fatal("human.needs.enabled: false is the opt-out")
+	}
 	writeID(t, clientFile, "web-2")
 	if got := s.WebClient(); got != "web-2" {
 		t.Fatalf("web client %q, want the file's current id", got)

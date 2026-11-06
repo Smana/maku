@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -64,11 +65,16 @@ type Exporter struct {
 	handler  http.Handler
 }
 
-// MakuName is name's maku_ spelling: rooms and rooms_x become maku_rooms and maku_rooms_x, and
-// agent_factory_x becomes maku_factory_x. It is "" for any other name, which keeps only its own.
+// MakuName is name's maku_ spelling: rooms and rooms_x become maku_rooms and maku_rooms_x, needs_x
+// becomes maku_needs_x, and agent_factory_x becomes maku_factory_x. It is "" for any other name, which
+// keeps only its own.
 func MakuName(name string) string {
 	switch {
 	case name == "rooms" || strings.HasPrefix(name, "rooms_"):
+		return "maku_" + name
+	case strings.HasPrefix(name, "needs_"):
+		// needs/v1's own family (CD21): the spec's dashboard queries maku_needs_*, which a rooms_needs_*
+		// instrument would have been served as maku_rooms_needs_* — not the name either.
 		return "maku_" + name
 	case strings.HasPrefix(name, "agent_factory_"):
 		return "maku_factory_" + strings.TrimPrefix(name, "agent_factory_")
@@ -174,6 +180,10 @@ type Set struct {
 	// decides through, by the closed code it answered with and the decision it recorded (empty when
 	// it recorded none).
 	SlackDecisions metric.Int64Counter
+	// needsList is needs_list_total{surface,principal,outcome}, counted by NeedsList: the needs/v1 lists
+	// served, by the door they came through (GET /api/needs or the needs_list tool), the caller and what
+	// became of them. Served as maku_needs_list_total (MakuName's needs_ case).
+	needsList metric.Int64Counter
 
 	meter             metric.Meter
 	appended          metric.Int64Counter
@@ -195,6 +205,8 @@ type Set struct {
 	mu    sync.Mutex
 	rooms map[string]roomGauge
 	runs  map[string]string // run -> the effort its harness reported
+	// needsKinds is the copy Needs left: what the last needs list held, by kind (needs_items reads it).
+	needsKinds map[string]int
 	// watch is the claim's model of a run and whether it is still live (TrackRuns).
 	watch          func(run string) (model string, live bool)
 	runInfoDropped metric.Int64Counter
@@ -269,6 +281,11 @@ func New(meter metric.Meter) (*Set, error) {
 	// intake_plan_tokens{surface,kind}: the call's cost, from the response's own usage.
 	s.intakePlanTokens, err = meter.Int64Counter("intake_plan_tokens", metric.WithDescription("Tokens the planner spent, by kind."))
 	check(err)
+	// needs_list_total{surface,principal,outcome} -> maku_needs_list_total (MakuName's needs_ case):
+	// needs/v1's adoption, per door and per caller.
+	s.needsList, err = meter.Int64Counter("needs_list_total", metric.WithDescription("Needs lists served, by surface, principal and outcome."))
+	check(err)
+	check(s.registerNeeds())
 	// Ruling AP: counted by the broker from the events bridges append, since
 	// nothing dials into a sandbox to scrape a bridge.
 	s.bridgeStalls, err = meter.Int64Counter("rooms_bridge_harness_stalls_total",
@@ -357,6 +374,39 @@ func (s *Set) registerRunInfo() error {
 		return nil
 	}, info)
 	return err
+}
+
+// registerNeeds exposes needs_items{kind} = what the last needs list held, by kind: the inbox's
+// composition, which is how a kind that no longer appears at all is seen (CD21).
+func (s *Set) registerNeeds() error {
+	items, err := s.meter.Int64ObservableGauge("needs_items", metric.WithDescription("Items the last needs list held, by kind."))
+	if err != nil {
+		return err
+	}
+	_, err = s.meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for kind, n := range s.needsKinds {
+			o.ObserveInt64(items, int64(n), metric.WithAttributes(attribute.String("kind", kind)))
+		}
+		return nil
+	}, items)
+	return err
+}
+
+// Needs records what the list just served is made of, by kind. The copy replaces the last list's
+// wholesale, so a kind no list holds any more has no series: the gauge is the last list, not a total.
+func (s *Set) Needs(kinds map[string]int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.needsKinds = maps.Clone(kinds)
+}
+
+// NeedsList counts one needs list served: surface is the door it came through (api, tool), principal
+// the caller, and outcome ok, unread, refused or error.
+func (s *Set) NeedsList(ctx context.Context, surface, principal, outcome string) {
+	s.needsList.Add(ctx, 1, metric.WithAttributes(attribute.String("surface", surface),
+		attribute.String("principal", principal), attribute.String("outcome", outcome)))
 }
 
 // pruneRuns drops the runs the watch says are no longer live. The caller holds s.mu.
