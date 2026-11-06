@@ -69,6 +69,9 @@ jobs:
         with:
           # k3d is fetched by mise from its aqua-registry entry: a pinned version, checksum-verified.
           install_args: aqua:go-task/task go kubectl helm aqua:k3d-io/k3d@5.9.0
+      # Installed is not active: the repository's mise.toml names no k3d, so its shim has no version
+      # ("No version is set for shim: k3d") until the runner's global config names one.
+      - run: mise use -g aqua:k3d-io/k3d@5.9.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - run: task chart:install:k3d
 
@@ -115,6 +118,8 @@ jobs:
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
           install_args: aqua:go-task/task go kubectl helm aqua:kubernetes-sigs/kind
+      - if: steps.gate.outputs.run == 'true'
+        run: mise use -g aqua:kubernetes-sigs/kind # as k3d above: installed is not active
       - if: steps.gate.outputs.run == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - if: steps.gate.outputs.run == 'true'
