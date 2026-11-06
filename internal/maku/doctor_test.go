@@ -816,3 +816,15 @@ func TestDoctorSaysNoClientWasMeasured(t *testing.T) {
 		})
 	}
 }
+
+// Defense in depth: the record bounds what it keeps, but capsHead is the last place a client-chosen
+// string becomes a terminal line, so it makes each part one inert line itself.
+func TestCapsHeadMakesItsValuesOneLine(t *testing.T) {
+	got := capsHead(Caps{Client: "claude\tcode", Version: "2.0\n1", Protocol: "2025\x1b-06-18"})
+	if want := "factory capabilities (claude code 2.0 1, MCP 2025-06-18)"; got != want {
+		t.Fatalf("%q, want %q", got, want)
+	}
+	if got := capsHead(Caps{Client: "gemini"}); got != "factory capabilities (gemini)" {
+		t.Fatalf("%q", got)
+	}
+}

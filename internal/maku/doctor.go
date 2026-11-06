@@ -397,16 +397,18 @@ func (d Doctor) caps(report func(bool, string, string), skip func(string, string
 
 // capsHead is the line's subject: the client and the parts of itself it declared — its version and
 // the protocol revision it asked for. A client that declared neither reads as its name alone: maku
-// prints nothing where the client said nothing.
+// prints nothing where the client said nothing. Each part is a string the client chose, so each is
+// made one inert line here, the last place it becomes terminal output, even though the record
+// already bounds and flattens what it keeps.
 func capsHead(c Caps) string {
-	name := c.Client
+	name, version, protocol := OneLine(c.Client), OneLine(c.Version), OneLine(c.Protocol)
 	switch {
-	case c.Version != "" && c.Protocol != "":
-		name += " " + c.Version + ", MCP " + c.Protocol
-	case c.Version != "":
-		name += " " + c.Version
-	case c.Protocol != "":
-		name += ", MCP " + c.Protocol
+	case version != "" && protocol != "":
+		name += " " + version + ", MCP " + protocol
+	case version != "":
+		name += " " + version
+	case protocol != "":
+		name += ", MCP " + protocol
 	}
 	return "factory capabilities (" + name + ")"
 }
