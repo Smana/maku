@@ -78,6 +78,9 @@ type Fake struct {
 	blameErr     map[string]error
 	subErr       error
 	createErr    error
+	private      bool  // Public answers false when set; a Fake is public by default
+	publicErr    error // Public fails with it
+	publicCalls  int
 	render       func(string) (string, error)
 	rendered     []string
 	listErr      error
@@ -1034,4 +1037,36 @@ func (f *Fake) BlameCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.blameCalls
+}
+
+// SetPublic sets what Public answers; a Fake is public until told otherwise.
+func (f *Fake) SetPublic(public bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.private = !public
+}
+
+// FailPublic makes Public fail with err; nil restores the answer.
+func (f *Fake) FailPublic(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.publicErr = err
+}
+
+// PublicCalls counts the Public calls.
+func (f *Fake) PublicCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.publicCalls
+}
+
+// Public implements the forge's Public.
+func (f *Fake) Public(context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.publicCalls++
+	if f.publicErr != nil {
+		return false, f.publicErr
+	}
+	return !f.private, nil
 }

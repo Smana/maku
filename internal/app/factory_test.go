@@ -234,3 +234,25 @@ func TestDemoGitTokenServesTheListedRepositories(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Demo mode serves public repositories only: one private repository stops the start, naming it;
+// a failed read stops it too (fail closed).
+func TestDemoRequiresPublicRepositories(t *testing.T) {
+	answers := map[string]bool{"o/open": true, "o/closed": false}
+	pub := func(_ context.Context, name string) (bool, error) {
+		if name == "o/broken" {
+			return false, errors.New("boom")
+		}
+		return answers[name], nil
+	}
+	if err := requirePublic(t.Context(), []string{"o/open"}, pub); err != nil {
+		t.Fatal(err)
+	}
+	err := requirePublic(t.Context(), []string{"o/open", "o/closed"}, pub)
+	if err == nil || err.Error() != "demo: o/closed is private; the demo serves public repositories only" {
+		t.Fatalf("private: %v", err)
+	}
+	if err := requirePublic(t.Context(), []string{"o/broken"}, pub); err == nil || !strings.Contains(err.Error(), "o/broken") {
+		t.Fatalf("broken: %v", err)
+	}
+}

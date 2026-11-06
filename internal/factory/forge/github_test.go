@@ -115,16 +115,17 @@ const rollupJSON = `{"data":{"repository":{"pullRequest":{"commits":{"nodes":[{"
 // current public key, mints installation tokens, and serves the REST and GraphQL calls only to
 // a request carrying the current token.
 type fakeGitHub struct {
-	t      *testing.T
-	srv    *httptest.Server
-	mu     sync.Mutex
-	pub    *rsa.PublicKey
-	token  string
-	mints  int
-	ttl    time.Duration
-	now    func() time.Time
-	calls  []string
-	bodies []string // the POST /graphql bodies, in order
+	t         *testing.T
+	srv       *httptest.Server
+	mu        sync.Mutex
+	pub       *rsa.PublicKey
+	token     string
+	mints     int
+	repoReply string // the repository document GET /repos/Smana/demo answers; "500" fails
+	ttl       time.Duration
+	now       func() time.Time
+	calls     []string
+	bodies    []string // the POST /graphql bodies, in order
 	// mergeReply: every mergePullRequest answers 200 with it (F-1).
 	mergeReply string
 	open       []string                         // the open pull requests GET /pulls lists (state=open, no head filter)
@@ -361,6 +362,20 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		default:
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 		}
+	}))
+	// Demo mode: the repository's visibility, from the repository document's private flag.
+	mux.HandleFunc("GET /repos/Smana/demo", g.authed(func(w http.ResponseWriter, _ *http.Request) {
+		g.mu.Lock()
+		reply := g.repoReply
+		g.mu.Unlock()
+		if reply == "" {
+			reply = `{"name":"demo","private":false}`
+		}
+		if reply == "500" {
+			http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, reply)
 	}))
 	mux.HandleFunc("GET /user/{id}", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("id") != "583231" {
@@ -2115,5 +2130,29 @@ func TestOpenPullRequestsCarryTheirLabels(t *testing.T) {
 	}
 	if !slices.Equal(prs[0].Labels, []string{"ready-to-merge", "kb"}) || len(prs[1].Labels) != 0 {
 		t.Fatalf("labels %v, %v", prs[0].Labels, prs[1].Labels)
+	}
+}
+
+func (g *fakeGitHub) setRepoReply(r string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.repoReply = r
+}
+
+// Public is the repository's private flag read live; a failed or malformed read is an error,
+// never "public".
+func TestPublicReadsTheRepositoryVisibility(t *testing.T) {
+	r := newRig(t)
+	for reply, want := range map[string]bool{`{"private":false}`: true, `{"private":true}`: false} {
+		r.gh.setRepoReply(reply)
+		if got, err := r.g.Public(t.Context()); got != want || err != nil {
+			t.Errorf("%s: %v %v, want %v", reply, got, err, want)
+		}
+	}
+	for _, reply := range []string{"500", `{"name":"demo"}`} {
+		r.gh.setRepoReply(reply)
+		if got, err := r.g.Public(t.Context()); got || err == nil {
+			t.Errorf("%s: %v %v, want an error and not public", reply, got, err)
+		}
 	}
 }

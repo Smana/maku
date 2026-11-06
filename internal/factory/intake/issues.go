@@ -66,6 +66,8 @@ type issueForge interface {
 	IssuesLabelled(ctx context.Context, label string) ([]forge.Issue, error)
 	// RenderMarkdown is the publish gate's reading of a draft, as GitHub would show it.
 	RenderMarkdown(ctx context.Context, text string) (string, error)
+	// Public reports whether the repository is public (demo mode serves public repositories only).
+	Public(ctx context.Context) (bool, error)
 }
 
 // errorCounter counts a failed poll, a label left for the next one, and a label refused on its
@@ -98,6 +100,9 @@ type IssuePoller struct {
 	Stopped func(context.Context) bool
 	Errors  errorCounter
 	Log     *slog.Logger
+	// Demo is demo mode (config demo): a private repository's label is refused before any Task
+	// exists, and a failed visibility read leaves the label for the next poll.
+	Demo bool
 	// Ticker starts the period; nil means a time.Ticker.
 	Ticker func(d time.Duration) (c <-chan time.Time, stop func())
 	// Sanitize is the snapshot's sanitiser; nil means sanitize.Text. A test forces a withheld text.
@@ -308,6 +313,14 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 		return err // no answer is no refusal: the label waits for the next poll
 	case !w:
 		return p.refuse(ctx, n, last, "unauthorised_labeller")
+	}
+	if p.Demo { // the demo serves public repositories only; no answer is no refusal (fail closed)
+		switch public, err := p.Forge.Public(ctx); {
+		case err != nil:
+			return fmt.Errorf("repository visibility: %w", err)
+		case !public:
+			return p.refuse(ctx, n, last, "private_repository")
+		}
 	}
 	iss, err := p.Forge.Issue(ctx, n)
 	if err != nil {

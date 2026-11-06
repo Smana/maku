@@ -188,6 +188,22 @@ func demoGitToken(cfg *config.Config, c client.Client, log *slog.Logger) (*demo.
 		Mint: func(ctx context.Context) (forge.Token, error) { return forge.Mint(ctx, hc, githubAPI, opts) }}, nil
 }
 
+// requirePublic stops a demo start when a served repository is private or its visibility cannot
+// be read: the demo's agents can read the model key and the GitHub token, so nothing private is
+// served. public answers for one repository.
+func requirePublic(ctx context.Context, names []string, public func(ctx context.Context, name string) (bool, error)) error {
+	for _, name := range names {
+		ok, err := public(ctx, name)
+		if err != nil {
+			return fmt.Errorf("demo: reading the visibility of %s: %w", name, err)
+		}
+		if !ok {
+			return fmt.Errorf("demo: %s is private; the demo serves public repositories only", name)
+		}
+	}
+	return nil
+}
+
 func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) error {
 	cfgPath, ns, err := factoryEnv(getenv)
 	if err != nil {
@@ -224,6 +240,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	conns, err := connectRepositories(ctx, log, cfg)
 	if err != nil {
 		return err
+	}
+	if cfg.Demo {
+		err := requirePublic(ctx, conns.names(), func(ctx context.Context, name string) (bool, error) {
+			c, _ := conns.get(name)
+			return c.gh.Public(ctx)
+		})
+		if err != nil {
+			return err
+		}
 	}
 	mgr, err := newFactoryManager(log, ns, cfg.Runs)
 	if err != nil {
@@ -377,7 +402,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		c, _ := conns.get(rp.Name)
 		name := rp.Name
 		poller := &intake.IssuePoller{Forge: c.gh, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
-			Repository: name, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: live,
+			Repository: name, Demo: cfg.Demo, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: live,
 			CanWrite: func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
 			Proposal: proposal}
 		poller.Redact = redactor

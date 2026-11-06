@@ -240,6 +240,7 @@ func reasons() map[string]string {
 		"stopped_by_annotation":     "an operator stopped it",
 		"superseded":                "a new factory/ready replaced it",
 		"family_dropped":            "the family was dropped because another part was dropped or reverted",
+		"private_repository":        "This factory runs as a demo, which serves public repositories only: in the demo, an agent can read the model key and the GitHub token",
 		"unauthorised_labeller":     "only a maintainer's factory/ready starts a task",
 		"edited_after_label":        "the issue was edited after it was labelled",
 		"task_active":               "a task for this issue is still running",
