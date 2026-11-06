@@ -1,4 +1,4 @@
-{{- if .Values.runController.enabled }}
+{{- if and .Values.runController.enabled .Values.networkPolicies.enabled }}
 # Default deny; the controller talks to the apiserver and DNS only.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy

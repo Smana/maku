@@ -16,6 +16,10 @@ data:
     runtimeClassName: {{ . | quote }}
     {{- end }}
     allowUnsandboxed: {{ $c.allowUnsandboxed }}
+    {{- if not .Values.networkPolicies.enabled }}
+    # No Cilium: the controller creates no CiliumNetworkPolicy per run.
+    networkPolicy: none
+    {{- end }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
     gitSecret: {{ required "runController.gitSecret is required" $c.gitSecret | quote }}
     broker:

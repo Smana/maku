@@ -289,6 +289,23 @@ func TestEnvtestMissingSecretRequeues(t *testing.T) {
 	}
 }
 
+func TestEnvtestNoNetworkPolicyCreatesNoCNP(t *testing.T) {
+	e := startEnv(t)
+	e.modelSecret(t)
+	e.r.Cfg.NetworkPolicy = "none"
+	create(t, e, run("run-jjjjjjjj"))
+	e.reconcile(t, "run-jjjjjjjj")
+	if err := e.c.Get(e.ctx, key("run-jjjjjjjj"), &corev1.Pod{}); err != nil {
+		t.Fatalf("pod: %v", err)
+	}
+	cnp := &unstructured.Unstructured{}
+	cnp.SetAPIVersion("cilium.io/v2")
+	cnp.SetKind("CiliumNetworkPolicy")
+	if err := e.c.Get(e.ctx, key("run-jjjjjjjj"), cnp); !apierrors.IsNotFound(err) {
+		t.Fatalf("with networkPolicy none no CNP may exist, got %v", err)
+	}
+}
+
 func TestEnvtestUnsandboxedIsMarked(t *testing.T) {
 	e := startEnv(t)
 	e.modelSecret(t)

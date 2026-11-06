@@ -6,8 +6,11 @@ metadata:
   annotations:
     # Uninstall must not delete the runs and the Secrets in them.
     helm.sh/resource-policy: keep
+{{- if .Values.networkPolicies.enabled }}
 ---
-{{ end -}}
+{{ end }}
+{{- end }}
+{{- if .Values.networkPolicies.enabled }}
 # An empty rule selects no peer: enforcement on in both directions, nothing allowed. Each run's own
 # CiliumNetworkPolicy adds its allowances.
 apiVersion: cilium.io/v2
@@ -19,3 +22,4 @@ spec:
   endpointSelector: {}
   ingress: [{}]
   egress: [{}]
+{{- end }}

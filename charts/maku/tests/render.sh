@@ -203,6 +203,18 @@ ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.ya
 ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-ca")' 'no factory CA Secret, no mount'
 bad 'broker.factoryURL "http://agent-factory.x.svc:8082" is http' --set broker.factoryURL=http://agent-factory.x.svc:8082
 
+# networkPolicies.enabled=false: a cluster without Cilium. No CiliumNetworkPolicy, no CNP verb for
+# the controller, and its config says none; the default renders as before.
+nonp="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.enabled=false)"
+out="$nonp"
+ynone 'select(.kind == "CiliumNetworkPolicy")' 'networkPolicies.enabled=false renders no CiliumNetworkPolicy'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .networkPolicy == "none"' 'networkPolicies.enabled=false: the controller config says networkPolicy none'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'networkPolicies.enabled=false: no ciliumnetworkpolicies verb'
+ykind Namespace '.metadata.name == "agents"' 'networkPolicies.enabled=false keeps the runs namespace'
+ykind Deployment 'select(.metadata.name=="run-controller") | .spec.template.spec.serviceAccountName == "run-controller"' 'the controller still renders'
+out="$q"
+ynone 'select(.kind == "ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | select(has("networkPolicy"))' 'the default config carries no networkPolicy key (cilium is the controller default)'
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -215,7 +227,8 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
-go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" || fail=1
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
+go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" || fail=1
 
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then

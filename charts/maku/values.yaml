@@ -4,9 +4,16 @@ runs:
   group: maku.ogenki.io
   namespace: agents
   namePrefix: run-
-# Create the runs.namespace object. The default-deny CiliumNetworkPolicy is rendered either way:
+# Create the runs.namespace object. The default-deny CiliumNetworkPolicy is rendered either way
+# (unless networkPolicies.enabled is false):
 # turn this off when the namespace exists already (Helm cannot adopt an unowned one).
 createRunsNamespace: true
+
+# Render the CiliumNetworkPolicies (default-deny in the runs namespace, the broker's, the run
+# controller's) and let the run controller create one per run. Turn it off on a cluster without
+# Cilium (plain kind or k3d, no CiliumNetworkPolicy CRD): nothing then confines the network.
+networkPolicies:
+  enabled: true
 
 # Where the kube-apiserver listens AFTER Cilium's service translation: 443 on EKS/GKE, 6443 on
 # kind and kubeadm. Every CiliumNetworkPolicy that reaches the apiserver renders these.
