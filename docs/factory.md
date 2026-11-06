@@ -1483,6 +1483,18 @@ changes exactly this:
 `demo` adds two rules: `merge.policyBot: false` is refused without `demo: true`, and `demo: true`
 requires `merge.gateStatus: true` on every repository. `merge.gateStatus` is allowed without `demo`.
 
+**The demo runs on one GitHub App.** `github.mergerAppIDFile` and `github.mergerKeyFile` may name
+the factory App's own files (`github.appIDFile`, `github.privateKeyFile`): the merger connection
+then signs with the same key, and a shadow or live class still has its merger. That one App needs
+the union of every permission asked on the demo's behalf, as one list: `actions: write` (optional,
+for check re-runs), `checks: read`, `contents: write`, `issues: write`, `metadata: read`,
+`pull_requests: write`, `statuses: write`. It covers the factory App's own set (contents read,
+issues write, pull_requests write, metadata read), the merger's (checks read, statuses read,
+contents write, pull_requests write, metadata read, plus the optional actions and issues writes),
+`statuses: write` for the gate's verdict, and the run token's (contents write, pull_requests write,
+issues write). A token minted for a narrower profile asks for a subset, which an App holding the
+union grants.
+
 **The legacy single-repository shape still loads**, for one minor release: top-level `repository`,
 `maintainers`, `triggerLabel`, `controlIssue`, `classes`, `merge` and `schedules` read as a
 one-entry `repositories` with `control` on that repository, and its `api.repositories` stays the

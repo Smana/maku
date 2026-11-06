@@ -4,10 +4,15 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -23,6 +28,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/tracing"
@@ -254,5 +260,39 @@ func TestDemoRequiresPublicRepositories(t *testing.T) {
 	}
 	if err := requirePublic(t.Context(), []string{"o/broken"}, pub); err == nil || !strings.Contains(err.Error(), "o/broken") {
 		t.Fatalf("broken: %v", err)
+	}
+}
+
+// The demo's one App: with the merger files naming the factory App's own, connectMerger takes the
+// connect path (no Absent merger) and reads the same key. The context is cancelled so no request
+// leaves; the error is the cancelled mint, past the key and id reads.
+func TestConnectMergerOverTheFactoryAppsFiles(t *testing.T) {
+	dir := t.TempDir()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idFile, keyFile := filepath.Join(dir, "app_id"), filepath.Join(dir, "private_key")
+	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(idFile, []byte("12345\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pemKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Demo: true,
+		GitHub:  config.GitHub{AppIDFile: idFile, PrivateKeyFile: keyFile, MergerAppIDFile: idFile, MergerKeyFile: keyFile},
+		Classes: map[string]config.Class{"docs": {Shadow: true}}}
+	if !cfg.NeedsMerger() {
+		t.Fatal("a shadow class must need the merger")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	m, err := connectMerger(ctx, slog.New(slog.DiscardHandler), cfg, "Smana/demo")
+	if _, absent := m.(forge.Absent); absent {
+		t.Fatal("connectMerger returned Absent over the factory App's files")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancelled mint (the key and id were read and signed)", err)
 	}
 }

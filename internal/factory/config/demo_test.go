@@ -129,3 +129,23 @@ func TestDemoMeterAllOrNone(t *testing.T) {
 		t.Errorf("malformed policyBotLogin: %v", err)
 	}
 }
+
+// The demo has one GitHub App: the merger files name the factory App's own files, with a class in
+// shadow (which needs the merger).
+func TestDemoOneAppIsTheMerger(t *testing.T) {
+	const own = "mergerAppIDFile: /etc/agent-factory-merger/app_id, mergerKeyFile: /etc/agent-factory-merger/private_key"
+	raw := strings.Replace(demoGood, own, "mergerAppIDFile: /etc/agent-factory-github/app_id, mergerKeyFile: /etc/agent-factory-github/private_key", 1)
+	if raw == demoGood {
+		t.Fatal("the edit changed nothing")
+	}
+	c, err := Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GitHub.MergerAppIDFile != c.GitHub.AppIDFile || c.GitHub.MergerKeyFile != c.GitHub.PrivateKeyFile {
+		t.Errorf("merger files %+v, want the factory App's", c.GitHub)
+	}
+	if !c.NeedsMerger() {
+		t.Error("a shadow class needs the merger")
+	}
+}
