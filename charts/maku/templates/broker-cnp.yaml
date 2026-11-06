@@ -28,6 +28,16 @@ spec:
             - {key: agents.ogenki.io/run-id, operator: Exists}
       toPorts:
         - ports: [{port: "8443", protocol: TCP}]
+    {{- if include "ap.roomToolsTokenReview" . }}
+    # The runs' harnesses call the room tools with their own token (roomTools.auth tokenreview).
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Values.runs.namespace }}
+          matchExpressions:
+            - {key: agents.ogenki.io/run-id, operator: Exists}
+      toPorts:
+        - ports: [{port: "8090", protocol: TCP}]
+    {{- end }}
     # Kubelet's probes.
     - fromEntities: [host]
       toPorts:

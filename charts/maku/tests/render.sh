@@ -215,6 +215,28 @@ ykind Deployment 'select(.metadata.name=="run-controller") | .spec.template.spec
 out="$q"
 ynone 'select(.kind == "ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | select(has("networkPolicy"))' 'the default config carries no networkPolicy key (cilium is the controller default)'
 
+# roomTools.auth (task 6): key, the default, is today's render, byte for byte: no :8090 Service port,
+# no ingress to it, no roomToolsURL. tokenreview opens :8090 to the runs, on the Service and the
+# broker CNP, and hands the run controller the URL its harnesses call.
+out="$p"
+ynone 'select(.kind=="ConfigMap" and .metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools | select(has("auth"))' 'key mode: the config carries no auth key'
+for r in "$q" "$ctl"; do
+  out="$r"
+  ynone 'select(.kind=="Service" and .metadata.name=="room-broker") | .spec.ports[] | select(.port == 8090)' 'key mode: the Service does not expose :8090'
+  ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.ingress[] | select(.toPorts[0].ports[0].port == "8090")' 'key mode: no CNP ingress to :8090'
+  ynone 'select(.kind=="ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | select(has("roomToolsURL"))' 'key mode: no roomToolsURL'
+done
+rt="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.roomTools.enabled=true --set broker.roomTools.auth=tokenreview)"
+out="$rt"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.roomTools.enabled == true and .roomTools.auth == "tokenreview")' 'tokenreview mode reaches the broker config'
+ykind Service 'select(.metadata.name=="room-broker") | .spec.ports[] | select(.name == "room-tools") | (.port == 8090 and .targetPort == 8090)' 'tokenreview mode: the Service exposes :8090'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.ingress[] | select(.toPorts[0].ports[0].port == "8090") | (.fromEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "agents" and .fromEndpoints[0].matchExpressions[0].key == "agents.ogenki.io/run-id")' 'tokenreview mode: the runs reach :8090'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .roomToolsURL == "http://room-broker.maku.svc.cluster.local:8090/mcp"' 'tokenreview mode: the controller hands runs the :8090 URL, by its FQDN'
+ykind ClusterRoleBinding 'select(.roleRef.name=="system:auth-delegator") | .subjects[0].name == "room-broker"' 'tokenreview mode reuses the run issuer'"'"'s auth-delegator binding'
+bad 'broker.roomTools.auth "oauth" is not key or tokenreview' --set broker.roomTools.auth=oauth
+bad 'broker.roomTools.auth tokenreview needs broker.runIssuer.mode tokenreview' --set broker.roomTools.auth=tokenreview \
+  --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -227,8 +249,11 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/roomtools-tokenreview.yaml"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/rc-roomtools.yaml"
+go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenreview.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
-go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" || fail=1
+go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" || fail=1
 
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then

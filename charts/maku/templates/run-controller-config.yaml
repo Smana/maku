@@ -29,6 +29,11 @@ data:
       # version label would cut in-flight runs off from the broker on upgrade.
       labels: {app.kubernetes.io/name: room-broker}
       caSecret: {{ required "broker.tls.caSecretName is required" .Values.broker.tls.caSecretName | quote }}
+    {{- if include "ap.roomToolsTokenReview" . }}
+    # The broker verifies each run's own token on :8090 (roomTools.auth tokenreview). Plain HTTP:
+    # in-cluster, broker to run pod, with no TLS on that listener.
+    roomToolsURL: {{ printf "http://room-broker.%s.svc.%s:8090/mcp" .Release.Namespace .Values.clusterDomain | quote }}
+    {{- end }}
     images:
       harness: {{ include "ap.image" (dict "root" . "image" $c.images.harness) | quote }}
       bridge: {{ include "ap.image" (dict "root" . "image" $c.images.bridge) | quote }}

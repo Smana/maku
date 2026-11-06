@@ -98,6 +98,7 @@ The quickstart page carries this table, so a reader knows exactly what the demo 
 | No branch protection; the gate's status is informational for humans | `main` requires the gate's verdict |
 | One local user, no login | OIDC login, roles, room access following GitHub permissions |
 | TLS from a CA the chart generates; the database hop is plain inside the cluster | TLS from your CA, database included |
+| Runs call the broker's `:8090` room tools over plain HTTP in the cluster, and the broker checks each run's own token with the apiserver (`roomTools.auth: tokenreview`) | A gateway verifies the run, holds the room tools key and fronts `:8090` (`roomTools.auth: key`) |
 | Public repositories only | Private repositories, with models chosen per data class |
 
 ## New work, by component

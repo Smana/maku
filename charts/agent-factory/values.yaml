@@ -33,9 +33,13 @@ maku:
     namespace: agents
     namePrefix: run-
   broker:
-    # One loopback user behind a port-forward, no identity provider; no :8090 room tools.
+    # One loopback user behind a port-forward, no identity provider.
     human: {mode: local}
-    roomTools: {enabled: false}
+    # The :8090 room tools, where a reviewer records its verdict. No gateway stands in front, so the
+    # broker verifies each run's own token (audience room-tools) through the apiserver, and the run
+    # controller hands the harness http://room-broker.<ns>.svc.<clusterDomain>:8090/mcp: plain HTTP,
+    # in-cluster only, acceptable for the demo; production keeps a gateway and its key (auth: key).
+    roomTools: {enabled: true, auth: tokenreview}
     # The apiserver vouches for the runs and for the factory (kind's issuer is not reachable).
     runIssuer: {mode: tokenreview}
     systemIssuer: {mode: tokenreview}

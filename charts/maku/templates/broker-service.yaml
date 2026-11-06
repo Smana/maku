@@ -10,6 +10,10 @@ spec:
     - {name: bridge, port: 8443, targetPort: bridge}
     - {name: metrics, port: 9090, targetPort: ops}
     {{- /* Local mode serves humans on a port-forward only; the broker binds 127.0.0.1 there. */}}
+    {{- /* roomTools.auth tokenreview: the runs call :8090 themselves, no gateway between. */}}
+    {{- if include "ap.roomToolsTokenReview" . }}
+    - {name: room-tools, port: 8090, targetPort: 8090}
+    {{- end }}
     {{- if not (include "ap.local" .) }}
     - {name: human, port: 8080, targetPort: human}
     {{- end }}
