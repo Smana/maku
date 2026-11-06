@@ -6,6 +6,9 @@
 #            by <slug>[bot] bearing a `maku/merge-gate` commit status. `task demo:down` always runs.
 #            The nightly installs this checkout's chart with the LATEST RELEASE's images (up.sh has no
 #            way to load images built in CI), so it proves released images, not the checkout's.
+#            It stays RED until a release carries the chart's requirements (the release's run-controller
+#            decodes its values strictly and refuses a chart newer than itself). It passes MAKU_VERSION
+#            explicitly, resolved with the job's read-only token.
 #
 # The nightly's Actions secrets (all required; one missing and the job skips, loudly, in its summary):
 #   DEMO_MODEL_BASE_URL  an OpenAI-compatible base URL (https://.../v1)
@@ -35,6 +38,11 @@ on:
       - hack/demo/**
       - internal/runctl/**
       - internal/factory/**
+      - internal/app/**
+      - internal/broker/**
+      - images/**
+      - hack/quickstart/versions.env
+      - examples/demo-repo/**
       - cmd/maku/**
       - .github/workflows/demo-e2e.yaml
   schedule:
@@ -42,7 +50,7 @@ on:
   workflow_dispatch:
 permissions: {}
 concurrency:
-  group: demo-e2e-${{ github.event_name }}-${{ github.ref }}
+  group: demo-e2e-${{ github.event_name == 'pull_request' && github.ref || 'nightly' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   k3d:
@@ -120,13 +128,17 @@ jobs:
           DEMO_SLUG: ${{ secrets.DEMO_APP_SLUG }}
           DEMO_REPO: ${{ secrets.DEMO_REPO }}
           GH_TOKEN: ${{ secrets.DEMO_LABEL_TOKEN }}
+          READ_TOKEN: ${{ github.token }} # read-only (contents: read): the unauthenticated rate limit is shared
         run: |
           umask 077
+          MAKU_VERSION=$(curl -fsS -H "Authorization: Bearer $READ_TOKEN" https://api.github.com/repos/Smana/maku/releases/latest | sed -n -E 's/.*"tag_name": *"([^"]*)".*/\1/p' | head -1)
+          [[ -n $MAKU_VERSION ]] || { echo "::error::could not resolve the latest release"; exit 1; }
+          export MAKU_VERSION GITHUB_TOKEN=$READ_TOKEN
           printf '%s' "$DEMO_APP_KEY" >"$RUNNER_TEMP/app-key.pem"
           unset DEMO_APP_KEY
           DEMO_LOGIN=$(gh api user --jq .login)
           export DEMO_LOGIN
-          unset GH_TOKEN # up.sh must not use gh: DEMO_NO_GH keeps it off, this keeps it out
+          unset GH_TOKEN READ_TOKEN # up.sh must not use gh: DEMO_NO_GH keeps it off, this keeps it out
           export GITHUB_APP_KEY_FILE="$RUNNER_TEMP/app-key.pem" CLUSTER=kind DEMO_NO_GH=1
           task demo
       - if: steps.gate.outputs.run == 'true'
