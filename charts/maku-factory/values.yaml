@@ -47,3 +47,7 @@ monitor:
     enabled: false
 # The factory config, passed through `tpl` (so `{{ .Release.Namespace }}` works): README.md#config, docs/factory.md#the-config-file.
 config: {}
+
+# CI only: images loaded into the node have no registry digest. Accepts a bare tag and never pulls.
+e2e:
+  unpinnedImages: false

@@ -157,5 +157,9 @@ for bad in "" "v0.0.0" "latest"; do
     echo "FAIL: image.tag '$bad' must not render: only <version>@sha256:<digest>" >&2; fail=1
   fi
 done
+# e2e.unpinnedImages accepts a bare tag and never pulls
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)
+ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:e2e\"" "e2e.unpinnedImages: a bare tag renders"
+ykind Deployment "$ctr.imagePullPolicy == \"Never\"" "e2e.unpinnedImages: imagePullPolicy Never"
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"
