@@ -1329,10 +1329,10 @@ func (c *Config) Validate() error {
 	demoMeterSet := c.Meter.URL != "" || c.Meter.Query != "" || c.Meter.LogsURL != "" || c.Meter.ThrottleQuery != ""
 	for _, f := range []struct {
 		key, value   string
-		demoOptional bool // demo: the laptop has no CA and no metrics backend
+		demoOptional bool // demo: the laptop has no metrics backend
 	}{
 		{"factoryLogin", c.FactoryLogin, false}, {"agentsLogin", c.AgentsLogin, false},
-		{"roomsURL", c.RoomsURL, false}, {"broker.url", c.Broker.URL, false}, {"broker.caFile", c.Broker.CAFile, true},
+		{"roomsURL", c.RoomsURL, false}, {"broker.url", c.Broker.URL, false}, {"broker.caFile", c.Broker.CAFile, false},
 		{"broker.tokenFile", c.Broker.TokenFile, false}, {"github.appIDFile", c.GitHub.AppIDFile, false},
 		{"github.privateKeyFile", c.GitHub.PrivateKeyFile, false}, {"meter.url", c.Meter.URL, true}, {"meter.query", c.Meter.Query, true},
 		{"meter.logsURL", c.Meter.LogsURL, true}, {"meter.throttleQuery", c.Meter.ThrottleQuery, true},
@@ -1342,17 +1342,10 @@ func (c *Config) Validate() error {
 			bad("%s is required", f.key)
 		}
 	}
-	// GP-18: the broker serves TLS only, and the factory never talks to it in the clear.
-	// demo: a laptop broker may serve http, and then has no CA to name.
-	if u, err := url.Parse(c.Broker.URL); c.Broker.URL != "" && (err != nil || u.Host == "" ||
-		(u.Scheme != "https" && (!c.Demo || u.Scheme != "http"))) {
-		if c.Demo {
-			bad("broker.url %q must be an http:// or https:// URL", c.Broker.URL)
-		} else {
-			bad("broker.url %q must be an https:// URL", c.Broker.URL)
-		}
-	} else if c.Demo && err == nil && u.Scheme == "http" && c.Broker.CAFile != "" {
-		bad("demo: broker.caFile must be empty with an http broker.url")
+	// GP-18: the broker serves TLS only, and the factory never talks to it in the clear; the demo too
+	// (its chart generates the broker's CA).
+	if u, err := url.Parse(c.Broker.URL); c.Broker.URL != "" && (err != nil || u.Host == "" || u.Scheme != "https") {
+		bad("broker.url %q must be an https:// URL", c.Broker.URL)
 	}
 	c.validateDemoMeter(bad)
 	// Narration posts roomsURL on public issues as the watch link: the rooms UI's origin over TLS,
