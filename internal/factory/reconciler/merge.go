@@ -175,6 +175,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	if d.Verdict == "arm" && closesParent(t, pr.Body) { // a part closes its own issue only: the parent closes with the last part
 		d = ArmDecision{Verdict: "human", Reason: "closes_parent", Rows: d.Rows}
 	}
+	if r.repo(t).Merge.GateStatus {
+		r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
+	}
 	if d.Verdict != "wait" {
 		class, verdict, reason := t.Spec.PredictedClass, d.Verdict, cmp.Or(d.Reason, "armed")
 		record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, class, verdict, reason) })

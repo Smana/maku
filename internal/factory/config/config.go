@@ -355,6 +355,12 @@ func (c *Config) AnyCheckReruns() bool {
 	return slices.ContainsFunc(c.Repos(), func(r Repository) bool { return r.Merge.CheckReruns > 0 })
 }
 
+// AnyGateStatus reports whether any repository posts the gate's commit status, which needs the
+// merger App's statuses: write.
+func (c *Config) AnyGateStatus() bool {
+	return slices.ContainsFunc(c.Repos(), func(r Repository) bool { return r.Merge.GateStatus })
+}
+
 // Poll is how often each loop runs.
 type Poll struct {
 	Issues Duration `json:"issues"`

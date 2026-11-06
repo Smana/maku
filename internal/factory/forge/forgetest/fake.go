@@ -59,6 +59,8 @@ type Fake struct {
 	created      []string
 	armed        []string
 	reruns       []int64
+	statuses     map[string][]forge.Status
+	statusErr    error
 	rerunFail    map[int64]error
 	disarmed     []string
 	reverts      []string
@@ -757,7 +759,52 @@ func (f *Fake) Merge(_ context.Context, nodeID, head string) error {
 func (f *Fake) PullRequestChecks(_ context.Context, n int) (forge.Checks, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.checks[n], nil
+	c := f.checks[n]
+	// A status SetStatus posted on the pull request's head reads back as GitHub's rollup does:
+	// state in capitals, the latest of a context replacing the one it supersedes.
+	posted := f.statuses[f.prs[n].HeadSHA]
+	if len(posted) == 0 {
+		return c, nil
+	}
+	c.Statuses = slices.Clone(c.Statuses)
+	for _, s := range posted {
+		s.State = strings.ToUpper(s.State)
+		if i := slices.IndexFunc(c.Statuses, func(x forge.Status) bool { return x.Context == s.Context }); i >= 0 {
+			c.Statuses[i] = s
+		} else {
+			c.Statuses = append(c.Statuses, s)
+		}
+	}
+	return c, nil
+}
+
+// SetStatus implements the Merger's SetStatus: it records the status on sha, and
+// PullRequestChecks reads it back on that head; SetStatusError makes it fail.
+func (f *Fake) SetStatus(_ context.Context, sha, state, statusContext, description string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.statusErr != nil {
+		return f.statusErr
+	}
+	if f.statuses == nil {
+		f.statuses = map[string][]forge.Status{}
+	}
+	f.statuses[sha] = append(f.statuses[sha], forge.Status{Context: statusContext, State: state, Description: description})
+	return nil
+}
+
+// SetStatusError makes SetStatus fail with err; nil clears it.
+func (f *Fake) SetStatusError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statusErr = err
+}
+
+// Statuses are the commit statuses SetStatus posted on sha, in order.
+func (f *Fake) Statuses(sha string) []forge.Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.statuses[sha])
 }
 
 // CommitChecks implements the Merger's CommitChecks.

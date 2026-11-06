@@ -47,9 +47,13 @@ func permissions() map[string]string {
 // merge.checkReruns is on, so an App that was not granted it keeps minting. label adds issues:
 // write for the breaker's labels (v2 D1) and the monitor's outcome labels (merge gate R30),
 // written once a class is live or declares a monitor: an App with neither keeps minting without
-// it, and still reads them (pull_requests covers the read).
-func MergerPermissions(rerun, label bool) map[string]string {
+// it, and still reads them (pull_requests covers the read). status raises statuses to write for
+// the gate's own commit status, asked only when merge.gateStatus is on.
+func MergerPermissions(rerun, label, status bool) map[string]string {
 	p := map[string]string{"checks": "read", "statuses": "read", "contents": "write", "pull_requests": "write", "metadata": "read"}
+	if status {
+		p["statuses"] = "write"
+	}
 	if rerun {
 		p["actions"] = "write"
 	}

@@ -21,6 +21,9 @@ var _ Merger = Absent{}
 // PullRequestChecks implements the Merger's PullRequestChecks and fails closed.
 func (Absent) PullRequestChecks(context.Context, int) (Checks, error) { return Checks{}, ErrNoMerger }
 
+// SetStatus implements the Merger's SetStatus and fails closed.
+func (Absent) SetStatus(context.Context, string, string, string, string) error { return ErrNoMerger }
+
 // CommitChecks implements the Merger's CommitChecks and fails closed.
 func (Absent) CommitChecks(context.Context, string) ([]Check, error) { return nil, ErrNoMerger }
 
