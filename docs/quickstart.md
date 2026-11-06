@@ -49,6 +49,8 @@ The repository must carry `.github/agent-factory.yaml` on its default branch, co
 It ends by printing the time per step, the room page, and the issue to label. It never prints a key.
 Re-running it resumes where it stopped (the state is in `.demo/`).
 
+Each variable below can be exported or written in `.env` at the root of the clone; an exported value wins.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `MODEL_BASE_URL` | asked | The OpenAI-compatible endpoint, for example `https://api.example.com/v1` |
