@@ -243,9 +243,17 @@ func (r *Relay) callBroker(ctx context.Context, tool string, args any) (text str
 		} `json:"content"`
 		Structured json.RawMessage `json:"structuredContent"`
 		IsError    bool            `json:"isError"`
+		// Error is a JSON-RPC error rather than a tool result: an older broker's `unknown tool`, a
+		// refused argument set. It is an error here, never an empty successful answer.
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(res, &out); err != nil {
 		return "", nil, false, fmt.Errorf("%s: %w", tool, err)
+	}
+	if out.Error != nil {
+		return "", nil, false, fmt.Errorf("%s: %s", tool, out.Error.Message)
 	}
 	for _, c := range out.Content {
 		if c.Type == "text" {
