@@ -83,7 +83,8 @@ merger and every run.
 5. The second seeded issue is labelled `documentation`, not `class:docs-links`, so the gate classes it
    `review` and hands it to a human: it posts that a human decides, and you merge the pull request by hand
    on GitHub (the demo does not configure approve-to-merge). If a task escalates, a maintainer's comment
-   `/factory retry` on the issue re-runs it from the implementer.
+   `/factory retry` on the issue re-runs it from the implementer. The factory reads an escalated task's
+   comments every 5 minutes, so the new run can take that long to start.
 6. To see a merge with no human, run `DEMO_LIVE=1 task demo` again: it reuses the cluster and your
    answers and turns the `docs-links` class live. Then open a **new** issue labelled `class:docs-links`
    (for example: retarget the other link in `docs/guide.md`, or any one-link fix in a `.md` file) and add
