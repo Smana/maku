@@ -47,3 +47,41 @@ func TestLoopSearchReachesTheHarnessAndTheBridge(t *testing.T) {
 		}
 	}
 }
+
+func i32(v int32) *int32 { return &v }
+
+// The loop policy reaches the harness as AGENT_LOOP, a JSON object of the fields the run sets; a
+// judge also gets the pod's own model endpoint (no identity proxy here). No loop, no AGENT_LOOP.
+func TestLoopPolicyReachesTheHarness(t *testing.T) {
+	cases := map[string]struct {
+		set       func(*v1alpha1.AgentRun)
+		loop      string
+		judgeBase bool
+	}{
+		"stall only":        {func(r *v1alpha1.AgentRun) { r.Spec.Loop.StallSteps = i32(90) }, `{"judgeModel":"none","stallSteps":90}`, false},
+		"zero continuation": {func(r *v1alpha1.AgentRun) { r.Spec.Loop.Continuations = i32(0) }, `{"continuations":0,"judgeModel":"none"}`, false},
+		"all three": {func(r *v1alpha1.AgentRun) {
+			r.Spec.Loop = v1alpha1.AgentRunLoop{StallSteps: i32(60), Continuations: i32(3), JudgeModel: "tier-light"}
+		}, `{"continuations":3,"judgeModel":"tier-light","stallSteps":60}`, true},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := harnessEnv(Pod(run("run-abcdefgh", c.set), testConfig(t), testModel, "abcdefgh"))
+			if env["AGENT_LOOP"] != c.loop {
+				t.Fatalf("AGENT_LOOP %q, want %q", env["AGENT_LOOP"], c.loop)
+			}
+			if c.judgeBase {
+				if env["JUDGE_BASE_URL"] != env["LLM_BASE_URL"] || env["JUDGE_MODEL"] != env["MODEL"] || env["JUDGE_MODEL"] == "" {
+					t.Fatalf("judge env %q %q, want the pod's base URL and model", env["JUDGE_BASE_URL"], env["JUDGE_MODEL"])
+				}
+			} else if _, ok := env["JUDGE_BASE_URL"]; ok {
+				t.Fatal("JUDGE_BASE_URL without a judge")
+			}
+		})
+	}
+	for _, k := range []string{"AGENT_LOOP", "JUDGE_BASE_URL", "JUDGE_MODEL"} {
+		if _, ok := harnessEnv(Pod(run("run-abcdefgh"), testConfig(t), testModel, "abcdefgh"))[k]; ok {
+			t.Fatalf("%s set with no loop", k)
+		}
+	}
+}

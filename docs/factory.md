@@ -1457,10 +1457,47 @@ Each `repositories` entry:
 | `triggerLabel` | The start label, `factory/ready` | Required |
 | `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` never declared | Required |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin`, `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
+| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin` (required unless `policyBot: false`, which only `demo` allows), `policyBot` (false drops policy-bot from the gate: production refuses it, nil is true), `gateStatus` (true posts the gate's verdict as a commit status on the pull request; `demo` requires it), `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `schedules` | `[{name, cron, class, text, dataClass?, probe?, probeAuthor?}]`; `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
 
 `api.repositories`, the run-request API's allowlist, is the entries' names.
+
+#### `demo`
+
+`demo: true` labels a factory on a laptop cluster: no OIDC issuer, no metrics backend, an http
+broker, one GitHub App. Absent, every rule is production's. Under `demo: true`, `Validate`
+changes exactly this:
+
+| Rule today | Under `demo: true` |
+|---|---|
+| `broker.url` must be `https://` | `http://` also accepted |
+| `broker.caFile` required | optional; with an `http` URL it must be empty |
+| `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery` required | optional. If any is set, the existing rules apply. If `meter.url` is empty, any USD cap (`meter.prices`, sponsored USD ceilings, `split.familyUSD`, tier `runUSD` or `taskUSD`) is refused: `demo: %s needs a meter, and the demo has none` |
+| `roomsURL` must be `https://` | `http://localhost[:port]` and `http://127.0.0.1[:port]` also accepted |
+| `api.humanIssuer`, `api.humanJWKS`, `api.clientIDFiles`, `api.groups.*` required | optional, and must all be empty (no group default is applied): `demo: the factory API takes no human tokens` |
+| `api.access` optional | must be unset: `demo: api.access needs an identity provider` |
+| `scope: scoper` refused off the default runs group | accepted |
+| a loop policy refused off the default runs group | `stallSteps`, `continuations` and `judge` are accepted: the portable AgentRun carries the loop policy. A judge calls the run's own model (`JUDGE_BASE_URL` and `JUDGE_MODEL` on the harness), not the alias |
+| `merge.policyBotLogin` must be a bot login | always required, except under `demo` with `merge.policyBot: false`, where it may be empty (a value that is set must still be a bot login) |
+
+`demo` adds three rules: `merge.policyBot: false` is refused without `demo: true`, and `demo: true`
+requires `merge.gateStatus: true` on every repository. `merge.gateStatus` is allowed without `demo`. With `merge.policyBot: false`, every live class of the repository needs `allowedFiles`: policy-bot's gate-path human row goes with it, and nothing else keeps a gate path from merging.
+
+**The demo runs on one GitHub App.** `github.mergerAppIDFile` and `github.mergerKeyFile` may name
+the factory App's own files (`github.appIDFile`, `github.privateKeyFile`): the merger connection
+then signs with the same key, and a shadow or live class still has its merger. That one App needs
+the union of every permission asked on the demo's behalf, as one list: `actions: write` (optional,
+for check re-runs), `checks: read`, `contents: write`, `issues: write`, `metadata: read`,
+`pull_requests: write`, `statuses: write`. It covers the factory App's own set (contents read,
+issues write, pull_requests write, metadata read), the merger's (checks read, statuses read,
+contents write, pull_requests write, metadata read, plus the optional actions and issues writes
+and `statuses: write` for the gate's verdict) and the run token's (contents write, pull_requests
+write, metadata read). `statuses: write` is the merger's alone: the run token does not ask for it,
+since one App backs every run and a run that could post a status could forge `maku/merge-gate`. A
+token minted for a narrower profile asks for a subset, which an App holding the union grants.
+
+The public-only check runs at start-up and on each labelled issue, so a repository made private
+after start-up is caught only when an issue is labelled.
 
 **The legacy single-repository shape still loads**, for one minor release: top-level `repository`,
 `maintainers`, `triggerLabel`, `controlIssue`, `classes`, `merge` and `schedules` read as a

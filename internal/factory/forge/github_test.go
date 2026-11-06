@@ -115,16 +115,17 @@ const rollupJSON = `{"data":{"repository":{"pullRequest":{"commits":{"nodes":[{"
 // current public key, mints installation tokens, and serves the REST and GraphQL calls only to
 // a request carrying the current token.
 type fakeGitHub struct {
-	t      *testing.T
-	srv    *httptest.Server
-	mu     sync.Mutex
-	pub    *rsa.PublicKey
-	token  string
-	mints  int
-	ttl    time.Duration
-	now    func() time.Time
-	calls  []string
-	bodies []string // the POST /graphql bodies, in order
+	t         *testing.T
+	srv       *httptest.Server
+	mu        sync.Mutex
+	pub       *rsa.PublicKey
+	token     string
+	mints     int
+	repoReply string // the repository document GET /repos/Smana/demo answers; "500" fails
+	ttl       time.Duration
+	now       func() time.Time
+	calls     []string
+	bodies    []string // the POST /graphql bodies, in order
 	// mergeReply: every mergePullRequest answers 200 with it (F-1).
 	mergeReply string
 	open       []string                         // the open pull requests GET /pulls lists (state=open, no head filter)
@@ -361,6 +362,20 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		default:
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 		}
+	}))
+	// Demo mode: the repository's visibility, from the repository document's private flag.
+	mux.HandleFunc("GET /repos/Smana/demo", g.authed(func(w http.ResponseWriter, _ *http.Request) {
+		g.mu.Lock()
+		reply := g.repoReply
+		g.mu.Unlock()
+		if reply == "" {
+			reply = `{"name":"demo","private":false}`
+		}
+		if reply == "500" {
+			http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, reply)
 	}))
 	mux.HandleFunc("GET /user/{id}", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		if r.PathValue("id") != "583231" {
@@ -1575,9 +1590,9 @@ func write(t *testing.T, s string) string {
 // refuses it (the fail-loud contract of app.go's permissions()).
 func TestEachConnectionMintsItsOwnScope(t *testing.T) {
 	r := newRig(t) // the factory connection: its mint pins the factory scope
-	r.gh.setWantPerms(MergerPermissions(false, false))
+	r.gh.setWantPerms(MergerPermissions(false, false, false))
 	o := r.opts
-	o.Permissions = MergerPermissions(false, false)
+	o.Permissions = MergerPermissions(false, false, false)
 	if _, err := Connect(t.Context(), o); err != nil {
 		t.Fatal(err)
 	}
@@ -1588,7 +1603,7 @@ func TestEachConnectionMintsItsOwnScope(t *testing.T) {
 	if !maps.Equal(got[0], permissions()) {
 		t.Fatalf("the factory connection mints its App's scope: %v", got[0])
 	}
-	if !maps.Equal(got[1], MergerPermissions(false, false)) {
+	if !maps.Equal(got[1], MergerPermissions(false, false, false)) {
 		t.Fatalf("the merger connection mints the merger profile: %v", got[1])
 	}
 }
@@ -1596,7 +1611,7 @@ func TestEachConnectionMintsItsOwnScope(t *testing.T) {
 func TestATokenBeyondTheAppsScopeFailsToMint(t *testing.T) {
 	r := newRig(t)
 	o := r.opts
-	o.Permissions = MergerPermissions(false, false) // checks:read is beyond the factory App
+	o.Permissions = MergerPermissions(false, false, false) // checks:read is beyond the factory App
 	if _, err := Connect(t.Context(), o); err == nil || !strings.Contains(err.Error(), "mint an installation token") {
 		t.Fatalf("a token beyond the App's scope must fail the mint: %v", err)
 	}
@@ -1619,10 +1634,10 @@ func TestRerunCheckPostsTheJobRerun(t *testing.T) {
 }
 
 func TestMergerPermissionsAskForActionsOnlyToRerun(t *testing.T) {
-	if _, ok := MergerPermissions(false, false)["actions"]; ok {
+	if _, ok := MergerPermissions(false, false, false)["actions"]; ok {
 		t.Fatal("re-run off must not ask for actions")
 	}
-	if got := MergerPermissions(true, false)["actions"]; got != "write" {
+	if got := MergerPermissions(true, false, false)["actions"]; got != "write" {
 		t.Fatalf("actions: %q", got)
 	}
 }
@@ -1630,10 +1645,10 @@ func TestMergerPermissionsAskForActionsOnlyToRerun(t *testing.T) {
 // v2 D1: the breaker's labels are written only once a class is live, so a shadow-only App that
 // was never granted issues: write keeps minting.
 func TestMergerPermissionsAskForIssuesOnlyToLabel(t *testing.T) {
-	if _, ok := MergerPermissions(false, false)["issues"]; ok {
+	if _, ok := MergerPermissions(false, false, false)["issues"]; ok {
 		t.Fatal("no live class must not ask for issues")
 	}
-	if got := MergerPermissions(false, true)["issues"]; got != "write" {
+	if got := MergerPermissions(false, true, false)["issues"]; got != "write" {
 		t.Fatalf("issues: %q", got)
 	}
 }
@@ -2115,5 +2130,38 @@ func TestOpenPullRequestsCarryTheirLabels(t *testing.T) {
 	}
 	if !slices.Equal(prs[0].Labels, []string{"ready-to-merge", "kb"}) || len(prs[1].Labels) != 0 {
 		t.Fatalf("labels %v, %v", prs[0].Labels, prs[1].Labels)
+	}
+}
+
+func (g *fakeGitHub) setRepoReply(r string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.repoReply = r
+}
+
+// Public is the repository's private flag read live; a failed or malformed read is an error,
+// never "public".
+func TestPublicReadsTheRepositoryVisibility(t *testing.T) {
+	r := newRig(t)
+	for reply, want := range map[string]bool{`{"private":false}`: true, `{"private":true}`: false} {
+		r.gh.setRepoReply(reply)
+		if got, err := r.g.Public(t.Context()); got != want || err != nil {
+			t.Errorf("%s: %v %v, want %v", reply, got, err, want)
+		}
+	}
+	for _, reply := range []string{"500", `{"name":"demo"}`} {
+		r.gh.setRepoReply(reply)
+		if got, err := r.g.Public(t.Context()); got || err == nil {
+			t.Errorf("%s: %v %v, want an error and not public", reply, got, err)
+		}
+	}
+}
+
+func TestMergerPermissionsAskForStatusesWriteOnlyForTheGateStatus(t *testing.T) {
+	if got := MergerPermissions(false, false, false)["statuses"]; got != "read" {
+		t.Fatalf("statuses = %q, want read", got)
+	}
+	if got := MergerPermissions(false, false, true)["statuses"]; got != "write" {
+		t.Fatalf("statuses = %q, want write", got)
 	}
 }

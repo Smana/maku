@@ -400,6 +400,9 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	if in.NotOwned {
 		return ArmDecision{Verdict: "human", Reason: "not_owned"}, true
 	}
+	if !rc.Merge.UsesPolicyBot() {
+		return ArmDecision{}, false // demo: no policy-bot, the gate's own rows decide
+	}
 	state, creator := in.Checks.StatusOf("policy-bot: main")
 	if !forge.SameLogin(creator, rc.Merge.PolicyBotLogin) {
 		return ArmDecision{Verdict: "human", Reason: "policy_absent"}, true // policy-bot down, or a status someone else posted

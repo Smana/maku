@@ -136,11 +136,37 @@ spec:
                       Checks runs the repository's checks in the sandbox (v3 feature 3): the harness gets
                       AGENT_CHECKS=1 and the pod's deadline as AGENT_RUN_SECONDS. A public run only.
                     type: boolean
+                  continuations:
+                    description: |-
+                      Continuations is the messages sent to a run that finished unmet (harness default 2); a pointer,
+                      so an explicit 0 survives.
+                    format: int32
+                    maximum: 5
+                    minimum: 0
+                    type: integer
+                  judgeModel:
+                    description: |-
+                      JudgeModel switches the completion judge on; empty: no judge. This runtime resolves no alias:
+                      the judge calls the run's own model (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
+                    enum:
+                    - agent-default
+                    - tier-light
+                    - tier-standard
+                    - tier-frontier
+                    - mistral-light
+                    type: string
                   search:
                     description: |-
                       Search offers the search tool (v3 feature 5) to an implementer only: the harness and the room
                       bridge both get AGENT_SEARCH=1, the bridge so it classes the harness's own search as plain.
                     type: boolean
+                  stallSteps:
+                    description: StallSteps is the steps an implementer may take before
+                      its first commit (harness default 80).
+                    format: int32
+                    maximum: 500
+                    minimum: 1
+                    type: integer
                 type: object
               model:
                 default: agent-default

@@ -1621,21 +1621,33 @@ NO_REDIRECT = urllib.request.build_opener(_NoRedirect)
 
 def ask_judge(env: dict, model: str, message: str) -> tuple[str, str] | None:
     """The judge's answer and the model that gave it, in a fresh context with no tools (loops L2), or
-    None when no answer came. It goes to the identity proxy's /judge/v1 beside LLM_BASE_URL's /v1, on
-    the run's token, so the gateway meters it against the run's cap. The proxy pins the alias from its
-    own JUDGE_MODEL (profiles P4), so model is a hint; before P4, or with JUDGE_MODEL none, the path
-    answers 404 or 403, and the run ends as it would with no judge."""
-    try:
-        parts = urllib.parse.urlsplit(env.get("LLM_BASE_URL") or "")
-    except ValueError as exc:  # a malformed base is no answer
-        print("agent-run judge unavailable: %s" % _short(exc, 200), file=sys.stderr, flush=True)
-        return None
-    if not JUDGE_PATH.search(parts.path):
-        print("agent-run judge unavailable: LLM_BASE_URL has no /v1 to put the judge's path beside", file=sys.stderr, flush=True)
-        return None
-    # Only the path changes: the scheme and host stay the proxy's.
-    url = urllib.parse.urlunsplit(parts._replace(path=JUDGE_PATH.sub("/judge/v1", parts.path) + "/chat/completions",
-                                                 query="", fragment=""))
+    None when no answer came. By default it goes to the identity proxy's /judge/v1 beside LLM_BASE_URL's
+    /v1, on the run's token, so the gateway meters it against the run's cap. The proxy pins the alias from
+    its own JUDGE_MODEL (profiles P4), so model is a hint; before P4, or with JUDGE_MODEL none, the path
+    answers 404 or 403, and the run ends as it would with no judge. With JUDGE_BASE_URL set (the portable
+    runtime, no proxy) it is a direct chat-completions call whose model is the environment's JUDGE_MODEL,
+    not model."""
+    direct = env.get("JUDGE_BASE_URL")
+    if direct:
+        # No identity proxy (the portable runtime): the judge calls a chat-completions endpoint directly,
+        # on the agent's key file, with the model JUDGE_MODEL names.
+        model = env.get("JUDGE_MODEL") or ""
+        if not model:
+            print("agent-run judge unavailable: JUDGE_BASE_URL is set without JUDGE_MODEL", file=sys.stderr, flush=True)
+            return None
+        url = direct.rstrip("/") + "/chat/completions"
+    else:
+        try:
+            parts = urllib.parse.urlsplit(env.get("LLM_BASE_URL") or "")
+        except ValueError as exc:  # a malformed base is no answer
+            print("agent-run judge unavailable: %s" % _short(exc, 200), file=sys.stderr, flush=True)
+            return None
+        if not JUDGE_PATH.search(parts.path):
+            print("agent-run judge unavailable: LLM_BASE_URL has no /v1 to put the judge's path beside", file=sys.stderr, flush=True)
+            return None
+        # Only the path changes: the scheme and host stay the proxy's.
+        url = urllib.parse.urlunsplit(parts._replace(path=JUDGE_PATH.sub("/judge/v1", parts.path) + "/chat/completions",
+                                                     query="", fragment=""))
     body = {"model": model, "max_tokens": JUDGE_MAX_TOKENS, "reasoning_effort": JUDGE_EFFORT,
             "messages": [{"role": "system", "content": loop_policy.JUDGE_SYSTEM}, {"role": "user", "content": message}]}
     try:

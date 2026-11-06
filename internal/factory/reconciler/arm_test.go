@@ -101,6 +101,33 @@ func TestHeadAndVerdictMustBeFresh(t *testing.T) {
 	}
 }
 
+// Demo: with policyBot false there is no policy-bot to read, so a green PR is not policy_absent.
+func TestDecideArmWithoutPolicyBot(t *testing.T) {
+	off, on := false, true
+	noStatus := green("SUCCESS")
+	noStatus.Statuses = nil
+	for name, c := range map[string]struct {
+		bot    *bool
+		checks forge.Checks
+		reason string
+	}{
+		"off, no status":     {&off, noStatus, ""},
+		"off, status red":    {&off, green("ERROR"), ""},
+		"on, no status":      {&on, noStatus, "policy_absent"},
+		"default, no status": {nil, noStatus, "policy_absent"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cf := armCfg()
+			cf.Merge.PolicyBot = c.bot
+			d := DecideArm(ArmInputs{PR: agentPR(), Checks: c.checks, Task: armTask("docs-links", "solo", ""), Cfg: cf,
+				ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
+			if d.Reason != c.reason {
+				t.Fatalf("got %+v, want reason %q", d, c.reason)
+			}
+		})
+	}
+}
+
 func TestDecideArm(t *testing.T) {
 	approved := agentPR()
 	approved.Reviews = []forge.Review{{Author: "Smana", State: "APPROVED"}}

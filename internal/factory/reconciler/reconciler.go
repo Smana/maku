@@ -85,6 +85,8 @@ type TaskForge interface {
 	IssuesLabelledSince(ctx context.Context, label string, since time.Time) ([]forge.Issue, error)
 	AddSubIssue(ctx context.Context, parent int, childID int64) error
 	CloseIssue(ctx context.Context, number int) error
+	// Public reports whether the repository is public: demo mode serves public repositories only.
+	Public(ctx context.Context) (bool, error)
 }
 
 // metrics is the part of fmetrics.Set the reconciler records.

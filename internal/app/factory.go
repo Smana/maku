@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -36,6 +37,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
@@ -128,6 +130,80 @@ func warnConfig(log *slog.Logger, cfg *config.Config, m *fmetrics.Set) {
 	}
 }
 
+// brokerClient is the HTTP client for the broker: its CA when broker.caFile is set, the system
+// roots otherwise (demo mode, where the chart's CA is not mounted).
+func brokerClient(cfg *config.Config) (*http.Client, error) {
+	var roots *x509.CertPool
+	if cfg.Broker.CAFile != "" {
+		var err error
+		if roots, err = rooms.LoadCA(cfg.Broker.CAFile); err != nil {
+			return nil, err
+		}
+	}
+	return httpx.New(brokerTimeout, roots), nil
+}
+
+// usageSource reads run usage from meter.url, or is meter.Off when none is set (demo mode).
+func usageSource(cfg *config.Config) (meter.Source, error) {
+	if cfg.Meter.URL == "" {
+		return meter.Off{}, nil
+	}
+	return meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs, httpx.New(vmTimeout, nil))
+}
+
+// throttle maps gateway 429s to runs; nil without meter.logsUrl.
+func throttle(cfg *config.Config) meter.Throttled {
+	if cfg.Meter.LogsURL == "" {
+		return nil
+	}
+	return meter.VL{Kind: cfg.Runs, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)}
+}
+
+// humanVerifier fetches the humans' JWKS. In demo mode there is none: nil, and the Authenticator
+// refuses every human token with demo_no_human_tokens.
+func humanVerifier(ctx context.Context, cfg *config.Config) (*authn.Verifier, error) {
+	if cfg.Demo {
+		return nil, nil
+	}
+	return authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+}
+
+// demoGitToken keeps the runs' shared git Secret filled with a token from the factory App, on
+// the served repositories (demo mode: one App does both the factory's and the runs' work).
+func demoGitToken(cfg *config.Config, c client.Client, log *slog.Logger) (*demo.GitToken, error) {
+	var owner string
+	var names []string
+	for _, r := range cfg.Repos() {
+		o, n, _ := strings.Cut(r.Name, "/")
+		if owner != "" && !strings.EqualFold(o, owner) {
+			return nil, fmt.Errorf("demo: repositories %q and %q have different owners: one App installation serves one account", owner+"/"+names[0], r.Name)
+		}
+		owner = o
+		names = append(names, n)
+	}
+	hc := httpx.New(githubTimeout, nil)
+	opts := forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
+		Owner: owner, Repositories: names, Permissions: demo.Permissions()}
+	return &demo.GitToken{Client: c, Namespace: cfg.Runs.Namespace, Every: 30 * time.Minute, Log: log,
+		Mint: func(ctx context.Context) (forge.Token, error) { return forge.Mint(ctx, hc, githubAPI, opts) }}, nil
+}
+
+// requirePublic stops a demo start when a served repository is private or its visibility cannot
+// be read: the demo's agents can read the model key and the GitHub token, so nothing private is
+// served. public answers for one repository.
+func requirePublic(ctx context.Context, names []string, public func(ctx context.Context, name string) (bool, error)) error {
+	for _, name := range names {
+		ok, err := public(ctx, name)
+		if err != nil {
+			return fmt.Errorf("demo: reading the visibility of %s: %w", name, err)
+		}
+		if !ok {
+			return fmt.Errorf("demo: %s is private; the demo serves public repositories only", name)
+		}
+	}
+	return nil
+}
+
 func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) error {
 	cfgPath, ns, err := factoryEnv(getenv)
 	if err != nil {
@@ -149,21 +225,30 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	defer shutdownTrace(context.WithoutCancel(ctx))
 
-	roots, err := rooms.LoadCA(cfg.Broker.CAFile)
+	bc, err := brokerClient(cfg)
 	if err != nil {
 		return err
 	}
-	broker, err := rooms.New(cfg.Broker.URL, cfg.Broker.TokenFile, httpx.New(brokerTimeout, roots), tp)
+	broker, err := rooms.New(cfg.Broker.URL, cfg.Broker.TokenFile, bc, tp)
 	if err != nil {
 		return err
 	}
-	vm, err := meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs, httpx.New(vmTimeout, nil))
+	vm, err := usageSource(cfg)
 	if err != nil {
 		return err
 	}
 	conns, err := connectRepositories(ctx, log, cfg)
 	if err != nil {
 		return err
+	}
+	if cfg.Demo {
+		err := requirePublic(ctx, conns.names(), func(ctx context.Context, name string) (bool, error) {
+			c, _ := conns.get(name)
+			return c.gh.Public(ctx)
+		})
+		if err != nil {
+			return err
+		}
 	}
 	mgr, err := newFactoryManager(log, ns, cfg.Runs)
 	if err != nil {
@@ -233,7 +318,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		on, err := killswitch.Engaged(ctx, mgr.GetClient(), ns)
 		return on || err != nil // intake pauses on doubt
 	}
-	humansV, err := authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+	humansV, err := humanVerifier(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -257,7 +342,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	people, _ := access.(api.PersonResolver) // D1: the login the write check reads is the person charged
 	auth := &api.Authenticator{Humans: humansV, Groups: groups, ClientIDs: clientIDs,
 		Systems: systemsV, SystemAllow: cfg.API.SystemPrincipals}
-	if len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4: the third branch, only while a principal is declared
+	if humansV != nil && len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4: the third branch, only while a principal is declared
 		clients := make([]authn.SponsoredClient, 0, len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals))
 		client := func(sp config.Sponsored, internal bool) authn.SponsoredClient {
 			return authn.SponsoredClient{Name: sp.Name, Internal: internal, ClientID: func() string {
@@ -306,11 +391,18 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return text, err
 	}
 	var runnables []manager.Runnable
+	if cfg.Demo {
+		g, err := demoGitToken(cfg, live, log)
+		if err != nil {
+			return err
+		}
+		runnables = append(runnables, g)
+	}
 	for _, rp := range cfg.Repos() {
 		c, _ := conns.get(rp.Name)
 		name := rp.Name
 		poller := &intake.IssuePoller{Forge: c.gh, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
-			Repository: name, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: live,
+			Repository: name, Demo: cfg.Demo, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: live,
 			CanWrite: func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
 			Proposal: proposal}
 		poller.Redact = redactor
@@ -341,7 +433,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: m.RunCost, OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
-			Throttle: meter.VL{Kind: cfg.Runs, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)},
+			Throttle: throttle(cfg),
 			Budgets:  cfg.Budgets, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,
@@ -423,7 +515,7 @@ func connectMerger(ctx context.Context, log *slog.Logger, cfg *config.Config, re
 	}
 	return forge.Connect(ctx, forge.Options{Repository: repository, AppIDFile: cfg.GitHub.MergerAppIDFile,
 		PrivateKeyFile: cfg.GitHub.MergerKeyFile, APIURL: githubAPI, UserAgent: "agent-factory-merger/" + version.Version,
-		HTTP: httpx.New(githubTimeout, nil), Now: time.Now, Permissions: forge.MergerPermissions(cfg.AnyCheckReruns(), cfg.AnyLive() || cfg.AnyMonitored())})
+		HTTP: httpx.New(githubTimeout, nil), Now: time.Now, Permissions: forge.MergerPermissions(cfg.AnyCheckReruns(), cfg.AnyLive() || cfg.AnyMonitored(), cfg.AnyGateStatus())})
 }
 
 // taskSink exports task spans (R46) when tracing.otlpEndpoint is set, and is a nil interface

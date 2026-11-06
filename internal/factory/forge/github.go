@@ -868,6 +868,17 @@ func (g *GitHub) RerunCheck(ctx context.Context, id int64) error {
 	return nil
 }
 
+// SetStatus posts a commit status on sha. It needs statuses: write.
+func (g *GitHub) SetStatus(ctx context.Context, sha, state, statusContext, description string) error {
+	_, _, err := g.rest.Repositories.CreateStatus(ctx, g.owner, g.name, sha,
+		github.RepoStatus{State: &state, Context: &statusContext, Description: &description})
+	g.mark(err)
+	if err != nil {
+		return wrap("post a commit status", err)
+	}
+	return nil
+}
+
 // PullRequestChecks is the head commit's rollup, one GraphQL query. It needs checks: read and
 // statuses: read (R16), hence the merger App's own method.
 func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, error) {
@@ -892,9 +903,10 @@ func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, err
 											}
 										} `graphql:"... on CheckRun"`
 										StatusContext struct {
-											Context string
-											State   string
-											Creator *actor
+											Context     string
+											State       string
+											Description string
+											Creator     *actor
 										} `graphql:"... on StatusContext"`
 									}
 								} `graphql:"contexts(first: 100)"`
@@ -932,7 +944,7 @@ func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, err
 			}
 			out.Runs = append(out.Runs, c)
 		case "StatusContext":
-			out.Statuses = append(out.Statuses, Status{Context: n.StatusContext.Context, State: n.StatusContext.State, Creator: n.StatusContext.Creator.login()})
+			out.Statuses = append(out.Statuses, Status{Context: n.StatusContext.Context, State: n.StatusContext.State, Description: n.StatusContext.Description, Creator: n.StatusContext.Creator.login()})
 		}
 	}
 	return out, nil

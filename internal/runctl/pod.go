@@ -3,6 +3,7 @@
 package runctl
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -116,6 +117,26 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	searchOn := s.Loop.Search && s.Role == "implementer"
 	if searchOn {
 		env = append(env, corev1.EnvVar{Name: "AGENT_SEARCH", Value: "1"})
+	}
+	// The loop policy: AGENT_LOOP holds the fields the run sets (the harness fills the rest), and an
+	// unset judgeModel is "none": the harness's default would switch a judge on. An implementer only
+	// reads it. The portable runtime has no identity proxy and resolves no judge alias, so a judge
+	// calls the pod's own model endpoint directly (JUDGE_BASE_URL) with the run's model (JUDGE_MODEL):
+	// the demo has one model for every role.
+	if l := s.Loop; l.StallSteps != nil || l.Continuations != nil || l.JudgeModel != "" {
+		policy := map[string]any{"judgeModel": "none"}
+		if l.StallSteps != nil {
+			policy["stallSteps"] = *l.StallSteps
+		}
+		if l.Continuations != nil {
+			policy["continuations"] = *l.Continuations
+		}
+		if l.JudgeModel != "" {
+			policy["judgeModel"] = l.JudgeModel
+			env = append(env, corev1.EnvVar{Name: "JUDGE_BASE_URL", Value: m.BaseURL}, corev1.EnvVar{Name: "JUDGE_MODEL", Value: m.Name})
+		}
+		raw, _ := json.Marshal(policy) // a map of numbers and strings
+		env = append(env, corev1.EnvVar{Name: "AGENT_LOOP", Value: string(raw)})
 	}
 	harness := corev1.Container{
 		Name: "harness", Image: c.Images.Harness, Env: env,

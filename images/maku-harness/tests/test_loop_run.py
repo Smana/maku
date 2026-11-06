@@ -240,6 +240,25 @@ class AskJudgeTest(FakeProxy, unittest.TestCase):
         self.assertNotIn("tools", body)
         self.assertNotIn("temperature", body)
 
+    def test_judge_base_url_goes_direct_with_judge_model_and_the_agents_key(self):
+        with tempfile.NamedTemporaryFile("w") as key:
+            key.write("sk-real\n")
+            key.flush()
+            env = {"LLM_BASE_URL": "http://127.0.0.1:1/v1", "JUDGE_BASE_URL": self.url + "/v1/", "JUDGE_MODEL": "glm-5.3",
+                   "LLM_API_KEY_FILE": key.name}
+            answer = agent_run.ask_judge(env, "tier-light", "evidence")
+        self.assertEqual(answer, ('{"verdict": "met"}', "glm-5.3-flash"))
+        [(path, headers, body)] = FakeLLM.requests
+        self.assertEqual(path, "/v1/chat/completions")
+        self.assertEqual(headers["Authorization"], "Bearer sk-real")
+        self.assertEqual(body["model"], "glm-5.3", "JUDGE_MODEL, not the loop's alias")
+
+    def test_judge_base_url_without_judge_model_is_no_answer(self):
+        with mock.patch("sys.stderr", new=io.StringIO()) as err:
+            self.assertIsNone(agent_run.ask_judge({"JUDGE_BASE_URL": self.url + "/v1"}, "tier-light", "e"))
+        self.assertIn("without JUDGE_MODEL", err.getvalue())
+        self.assertEqual(FakeLLM.requests, [])
+
     def test_a_refused_or_missing_judge_path_is_no_answer(self):
         # 403: JUDGE_MODEL none, or outside the profile. 404: a proxy before P4. 429: the run's budget.
         for status in (403, 404, 429):

@@ -296,6 +296,8 @@ type Status struct {
 	Context string
 	State   string
 	Creator string
+	// Description is the status's own line, as its poster wrote it.
+	Description string
 }
 
 // Checks is a head commit's rollup: check runs (CI) and commit statuses (policy-bot).
@@ -304,6 +306,16 @@ type Checks struct {
 	Statuses []Status
 	// Truncated: the rollup has more contexts than the one page read, so a check may be unseen.
 	Truncated bool
+}
+
+// DescriptionOf is the description of the named commit status; "" when it is absent.
+func (c Checks) DescriptionOf(context string) string {
+	for _, s := range c.Statuses {
+		if s.Context == context {
+			return s.Description
+		}
+	}
+	return ""
 }
 
 // StatusOf is the state and creator of the named commit status; "", "" when it is absent.
@@ -494,6 +506,10 @@ type PRSummary struct {
 // no push can move it after the arm.
 type Merger interface {
 	PullRequestChecks(ctx context.Context, number int) (Checks, error)
+	// SetStatus posts a classic commit status on sha (state: error, failure, pending or success;
+	// description at most 140 characters). It needs statuses: write, asked only with
+	// merge.gateStatus.
+	SetStatus(ctx context.Context, sha, state, context, description string) error
 	CommitChecks(ctx context.Context, sha string) ([]Check, error)
 	// IsAncestor reports whether ancestor is sha or one of its ancestors: the monitor asks it
 	// whether a later main commit carries a merge.

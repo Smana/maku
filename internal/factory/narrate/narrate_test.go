@@ -638,3 +638,10 @@ func TestTheHumanCommitHandOffCarriesTheRoomsSentence(t *testing.T) {
 		t.Fatalf("an approve-to-merge comment for a by-hand reason:\n%s", body)
 	}
 }
+
+func TestPrivateRepositoryReason(t *testing.T) {
+	want := "The agent factory did not start a task for #7: This factory runs as a demo, which serves public repositories only: in the demo, an agent can read the model key and the GitHub token."
+	if got := Refused(7, "private_repository", time.Time{}).Body; got != want {
+		t.Fatalf("%q", got)
+	}
+}

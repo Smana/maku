@@ -47,9 +47,13 @@ func permissions() map[string]string {
 // merge.checkReruns is on, so an App that was not granted it keeps minting. label adds issues:
 // write for the breaker's labels (v2 D1) and the monitor's outcome labels (merge gate R30),
 // written once a class is live or declares a monitor: an App with neither keeps minting without
-// it, and still reads them (pull_requests covers the read).
-func MergerPermissions(rerun, label bool) map[string]string {
+// it, and still reads them (pull_requests covers the read). status raises statuses to write for
+// the gate's own commit status, asked only when merge.gateStatus is on.
+func MergerPermissions(rerun, label, status bool) map[string]string {
 	p := map[string]string{"checks": "read", "statuses": "read", "contents": "write", "pull_requests": "write", "metadata": "read"}
+	if status {
+		p["statuses"] = "write"
+	}
 	if rerun {
 		p["actions"] = "write"
 	}
@@ -84,16 +88,21 @@ func (s *tokens) get(ctx context.Context) (string, error) {
 	if s.token != "" && s.now().Before(s.expires.Add(-refreshBefore)) {
 		return s.token, nil
 	}
-	appJWT, err := s.sign()
+	c := appCaller{api: s.api, hc: s.hc, agent: s.agent, now: s.now}
+	appJWT, err := c.sign(s.idFile, s.keyFile)
 	if err != nil {
 		return "", err
 	}
 	if s.installation == 0 {
-		if s.installation, err = s.find(ctx, appJWT); err != nil {
+		if s.installation, err = c.find(ctx, appJWT, s.owner, s.name); err != nil {
 			return "", err
 		}
 	}
-	tok, exp, err := s.mint(ctx, appJWT)
+	perms := s.perms
+	if perms == nil {
+		perms = permissions()
+	}
+	tok, exp, err := c.mint(ctx, appJWT, s.installation, []string{s.name}, perms)
 	if err != nil {
 		return "", err
 	}
@@ -101,9 +110,62 @@ func (s *tokens) get(ctx context.Context) (string, error) {
 	return tok, nil
 }
 
+// MintOptions names the App, the repositories and the permissions of one installation token.
+type MintOptions struct {
+	AppIDFile, KeyFile string
+	Owner              string            // the installation's account
+	Repositories       []string          // names only, no owner
+	Permissions        map[string]string // e.g. {"contents": "write"}
+}
+
+// Token is an installation token and when GitHub says it expires.
+type Token struct {
+	Value     string
+	ExpiresAt time.Time
+}
+
+// Mint signs a JWT from the App's files, finds the installation and mints one token, uncached.
+// The installation is looked up on the first repository; every repository must belong to Owner.
+func Mint(ctx context.Context, c *http.Client, apiURL string, o MintOptions) (Token, error) {
+	api, err := url.Parse(apiURL)
+	switch {
+	case err != nil || api.Scheme != "https" || api.Host == "" || api.User != nil:
+		return Token{}, errors.New("forge: the API URL must be https://<host>/, without credentials")
+	case c == nil || c.Transport == nil:
+		return Token{}, errors.New("forge: an HTTP client from httpx.New is required")
+	case o.Owner == "" || len(o.Repositories) == 0:
+		return Token{}, errors.New("forge: a mint needs an owner and at least one repository")
+	}
+	if !strings.HasSuffix(api.Path, "/") {
+		api.Path += "/"
+	}
+	ac := appCaller{api: api, hc: c, agent: "agent-factory", now: time.Now}
+	appJWT, err := ac.sign(o.AppIDFile, o.KeyFile)
+	if err != nil {
+		return Token{}, err
+	}
+	id, err := ac.find(ctx, appJWT, o.Owner, o.Repositories[0])
+	if err != nil {
+		return Token{}, err
+	}
+	tok, exp, err := ac.mint(ctx, appJWT, id, o.Repositories, o.Permissions)
+	if err != nil {
+		return Token{}, err
+	}
+	return Token{Value: tok, ExpiresAt: exp}, nil
+}
+
+// appCaller is App-authenticated access to the API: what tokens and Mint share.
+type appCaller struct {
+	api   *url.URL
+	hc    *http.Client
+	agent string
+	now   func() time.Time
+}
+
 // sign is the App JWT: RS256, issued by the App id.
-func (s *tokens) sign() (string, error) {
-	raw, err := os.ReadFile(filepath.Clean(s.idFile))
+func (s appCaller) sign(idFile, keyFile string) (string, error) {
+	raw, err := os.ReadFile(filepath.Clean(idFile))
 	if err != nil {
 		return "", fmt.Errorf("app id: %w", err)
 	}
@@ -111,7 +173,7 @@ func (s *tokens) sign() (string, error) {
 	if err != nil || id < 1 {
 		return "", errors.New("app id: not a positive integer")
 	}
-	pemKey, err := os.ReadFile(filepath.Clean(s.keyFile))
+	pemKey, err := os.ReadFile(filepath.Clean(keyFile))
 	if err != nil {
 		return "", fmt.Errorf("private key: %w", err)
 	}
@@ -131,14 +193,14 @@ func (s *tokens) sign() (string, error) {
 }
 
 // find is the App's installation on the repository.
-func (s *tokens) find(ctx context.Context, appJWT string) (int64, error) {
+func (s appCaller) find(ctx context.Context, appJWT, owner, name string) (int64, error) {
 	var out struct {
 		ID int64 `json:"id"`
 	}
-	status, err := s.call(ctx, http.MethodGet, "repos/"+s.owner+"/"+s.name+"/installation", appJWT, nil, &out)
+	status, err := s.call(ctx, http.MethodGet, "repos/"+owner+"/"+name+"/installation", appJWT, nil, &out)
 	switch {
 	case status == http.StatusNotFound:
-		return 0, fmt.Errorf("the App is not installed on %s/%s", s.owner, s.name)
+		return 0, fmt.Errorf("the App is not installed on %s/%s", owner, name)
 	case err != nil:
 		return 0, fmt.Errorf("find the App's installation: %w", err)
 	case out.ID < 1:
@@ -147,19 +209,14 @@ func (s *tokens) find(ctx context.Context, appJWT string) (int64, error) {
 	return out.ID, nil
 }
 
-// mint is a new installation token, scoped to the repository and to the connection's
-// permissions: the factory App's, unless Options said otherwise.
-func (s *tokens) mint(ctx context.Context, appJWT string) (string, time.Time, error) {
+// mint is a new installation token, scoped to the repositories and permissions.
+func (s appCaller) mint(ctx context.Context, appJWT string, installation int64, repos []string, perms map[string]string) (string, time.Time, error) {
 	var out struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	perms := s.perms
-	if perms == nil {
-		perms = permissions()
-	}
-	in := map[string]any{"repositories": []string{s.name}, "permissions": perms}
-	path := "app/installations/" + strconv.FormatInt(s.installation, 10) + "/access_tokens"
+	in := map[string]any{"repositories": repos, "permissions": perms}
+	path := "app/installations/" + strconv.FormatInt(installation, 10) + "/access_tokens"
 	if _, err := s.call(ctx, http.MethodPost, path, appJWT, in, &out); err != nil {
 		return "", time.Time{}, fmt.Errorf("mint an installation token: %w", err)
 	}
@@ -171,7 +228,7 @@ func (s *tokens) mint(ctx context.Context, appJWT string) (string, time.Time, er
 
 // call is one App-authenticated request. Its errors name the status only: a reply body may
 // quote a credential.
-func (s *tokens) call(ctx context.Context, method, path, appJWT string, in, out any) (int, error) {
+func (s appCaller) call(ctx context.Context, method, path, appJWT string, in, out any) (int, error) {
 	var body bytes.Buffer
 	if in != nil {
 		if err := json.NewEncoder(&body).Encode(in); err != nil {

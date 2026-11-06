@@ -4,8 +4,15 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,7 +25,12 @@ import (
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/runwatch"
 )
@@ -164,4 +176,123 @@ func TestTaskSink(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	shutdown(ctx)
+}
+
+func TestDemoStartupChoices(t *testing.T) {
+	demo := &config.Config{Demo: true, Broker: config.Broker{URL: "https://broker:8443"}}
+	hc, err := brokerClient(demo)
+	if err != nil || hc == nil {
+		t.Fatalf("brokerClient without a CA = %v, %v; want system roots", hc, err)
+	}
+	src, err := usageSource(demo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := src.(meter.Off); !ok {
+		t.Fatalf("usageSource = %T, want meter.Off", src)
+	}
+	if throttle(demo) != nil {
+		t.Fatal("no logsUrl, no throttle reader")
+	}
+	v, err := humanVerifier(t.Context(), demo)
+	if v != nil || err != nil {
+		t.Fatalf("humanVerifier in demo = %v, %v; want none and no error", v, err)
+	}
+	a := &api.Authenticator{ClientIDs: func() []string { return nil }}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer x.y.z")
+	if _, err := a.Authenticate(r); err == nil || !strings.Contains(err.Error(), "demo_no_human_tokens") ||
+		!errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("Authenticate = %v, want demo_no_human_tokens", err)
+	}
+}
+
+// Outside demo mode today's path holds: an unreadable CA, a bad meter.url and an unreachable
+// JWKS fail at start.
+func TestNonDemoStartupStillFailsFast(t *testing.T) {
+	cfg := &config.Config{Broker: config.Broker{CAFile: filepath.Join(t.TempDir(), "absent.pem")},
+		API: config.API{HumanIssuer: "http://127.0.0.1:1", HumanJWKS: "http://127.0.0.1:1/keys"}}
+	if _, err := brokerClient(cfg); err == nil {
+		t.Fatal("a set but unreadable caFile must fail")
+	}
+	cfg.Meter.URL = "ftp://vm"
+	if _, err := usageSource(cfg); err == nil {
+		t.Fatal("a bad meter.url must fail")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := humanVerifier(ctx, cfg); err == nil {
+		t.Fatal("an unreachable JWKS must fail construction")
+	}
+}
+
+// Demo mode's git token is for the served repositories of one account, written in the runs'
+// namespace; two accounts cannot share one installation.
+func TestDemoGitTokenServesTheListedRepositories(t *testing.T) {
+	cfg := &config.Config{Demo: true, Runs: runwatch.Kind{Namespace: "runs"},
+		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}}
+	g, err := demoGitToken(cfg, nil, slog.New(slog.DiscardHandler))
+	if err != nil || g.Namespace != "runs" || g.NeedLeaderElection() != true {
+		t.Fatalf("%+v %v", g, err)
+	}
+	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Other/c"})
+	if _, err := demoGitToken(cfg, nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Demo mode serves public repositories only: one private repository stops the start, naming it;
+// a failed read stops it too (fail closed).
+func TestDemoRequiresPublicRepositories(t *testing.T) {
+	answers := map[string]bool{"o/open": true, "o/closed": false}
+	pub := func(_ context.Context, name string) (bool, error) {
+		if name == "o/broken" {
+			return false, errors.New("boom")
+		}
+		return answers[name], nil
+	}
+	if err := requirePublic(t.Context(), []string{"o/open"}, pub); err != nil {
+		t.Fatal(err)
+	}
+	err := requirePublic(t.Context(), []string{"o/open", "o/closed"}, pub)
+	if err == nil || err.Error() != "demo: o/closed is private; the demo serves public repositories only" {
+		t.Fatalf("private: %v", err)
+	}
+	if err := requirePublic(t.Context(), []string{"o/broken"}, pub); err == nil || !strings.Contains(err.Error(), "o/broken") {
+		t.Fatalf("broken: %v", err)
+	}
+}
+
+// The demo's one App: with the merger files naming the factory App's own, connectMerger takes the
+// connect path (no Absent merger) and reads the same key. The context is cancelled so no request
+// leaves; the error is the cancelled mint, past the key and id reads.
+func TestConnectMergerOverTheFactoryAppsFiles(t *testing.T) {
+	dir := t.TempDir()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idFile, keyFile := filepath.Join(dir, "app_id"), filepath.Join(dir, "private_key")
+	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	if err := os.WriteFile(idFile, []byte("12345\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pemKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{Demo: true,
+		GitHub:  config.GitHub{AppIDFile: idFile, PrivateKeyFile: keyFile, MergerAppIDFile: idFile, MergerKeyFile: keyFile},
+		Classes: map[string]config.Class{"docs": {Shadow: true}}}
+	if !cfg.NeedsMerger() {
+		t.Fatal("a shadow class must need the merger")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	m, err := connectMerger(ctx, slog.New(slog.DiscardHandler), cfg, "Smana/demo")
+	if _, absent := m.(forge.Absent); absent {
+		t.Fatal("connectMerger returned Absent over the factory App's files")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancelled mint (the key and id were read and signed)", err)
+	}
 }

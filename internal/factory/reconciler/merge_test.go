@@ -1248,3 +1248,76 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 		t.Fatalf("the revert is narrated on the pull request: %q", c)
 	}
 }
+
+// Demo: with merge.gateStatus the gate posts its verdict as maku/merge-gate on the head, once per
+// (head, state, description); without it SetStatus is never called.
+func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Merge.GateStatus = true
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.RefuseMerge("PR_12", forge.ErrHeadMoved) // stays at the gate: the same head is read again
+	g.reconcile(t, "3buqdlot", 1)
+	g.reconcile(t, "3buqdlot", 1)
+	got := g.f.Statuses("abc")
+	if len(got) != 1 || got[0].Context != GateStatusContext || got[0].State != "success" || got[0].Description != "docs-links: merging" {
+		t.Fatalf("one success per head, got %+v", got)
+	}
+}
+
+func TestTheGatePostsAChangedVerdictOnTheSameHead(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Merge.GateStatus = true
+	_ = g.f.SetStatus(t.Context(), "abc", "success", GateStatusContext, "docs-links: merging") // an earlier pass
+	g.f.SetChecks(12, forge.Checks{Runs: green("SUCCESS").Runs[:1]})                           // a required check unreported
+	g.reconcile(t, "3buqdlot", 1)
+	got := g.f.Statuses("abc")
+	if len(got) != 2 || got[1].State != "pending" || got[1].Description != "docs-links: waiting, ci_pending" {
+		t.Fatalf("a changed verdict is posted, got %+v", got)
+	}
+}
+
+func TestTheGatePostsEachDecisionPath(t *testing.T) {
+	red := green("SUCCESS")
+	red.Runs[1].State = "FAILURE"
+	for name, c := range map[string]struct {
+		checks      forge.Checks
+		state, desc string
+	}{
+		"human": {green("PENDING"), "pending", "docs-links: a human decides, policy_pending"},
+		"wait":  {forge.Checks{Runs: green("SUCCESS").Runs[:1]}, "pending", "docs-links: waiting, ci_pending"},
+		"red":   {red, "failure", "docs-links: ci_red"},
+		"arm":   {green("SUCCESS"), "success", "docs-links: merging"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+			g.r.Cfg.Merge.GateStatus = true
+			g.f.SetChecks(12, c.checks)
+			g.reconcile(t, "3buqdlot", 1)
+			got := g.f.Statuses("abc")
+			if len(got) != 1 || got[0].State != c.state || got[0].Description != c.desc {
+				t.Fatalf("got %+v, want %s %q", got, c.state, c.desc)
+			}
+		})
+	}
+}
+
+func TestTheGatePostsNothingWithoutGateStatus(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.reconcile(t, "3buqdlot", 1)
+	if got := g.f.Statuses("abc"); len(got) != 0 {
+		t.Fatalf("gateStatus is off: %+v", got)
+	}
+}
+
+func TestAFailedStatusPostDoesNotChangeTheDecision(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Merge.GateStatus = true
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetStatusError(errors.New("403: statuses: write"))
+	g.reconcile(t, "3buqdlot", 1)
+	pr, _ := g.f.PullRequest(t.Context(), 12)
+	if pr.State != "MERGED" {
+		t.Fatalf("the merge went on regardless: %s", pr.State)
+	}
+}
