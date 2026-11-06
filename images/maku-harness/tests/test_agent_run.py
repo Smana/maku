@@ -46,6 +46,14 @@ class RedactTest(unittest.TestCase):
             out = agent_run.redact("a plainpat b sk-plain c")
         self.assertEqual(out, "a %s b %s c" % (agent_run.REDACTED, agent_run.REDACTED_KEY))
 
+    def test_the_room_tools_token_is_redacted(self):
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "mcp-token")
+        with open(path, "w") as f:
+            f.write("eyJroomtools.token\n")
+        with mock.patch.dict(os.environ, {"MCP_TOKEN_FILE": path}):
+            self.assertEqual(agent_run.redact("t eyJroomtools.token"), "t " + agent_run.REDACTED)
+
     def test_unreadable_files_are_tolerated(self):
         with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": "/nonexistent", "LLM_API_KEY_FILE": ""}):
             self.assertEqual(agent_run.redact("hello"), "hello")

@@ -89,7 +89,9 @@ func (t *TokenReview) Verify(ctx context.Context, raw, audience string) (*Claims
 	if !out.Status.Authenticated {
 		return nil, fmt.Errorf("%w: the cluster does not authenticate this token", ErrWrongIssuer)
 	}
-	// Exactly the one audience: a token minted for another path, or for both, is not this path's.
+	// Exactly the one audience: a token minted for another path is not this path's. The apiserver
+	// answers with the overlap of the token's audiences and the one asked for, so a token minted for
+	// both paths passes on each; minting one takes serviceaccounts/token create in the runs namespace.
 	if len(out.Status.Audiences) != 1 || out.Status.Audiences[0] != audience {
 		return nil, fmt.Errorf("%w: the token's audiences are not exactly %s", ErrWrongAudience, audience)
 	}

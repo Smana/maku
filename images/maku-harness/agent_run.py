@@ -174,7 +174,7 @@ def redact(text: str) -> str:
         cached = None
     if cached:
         text = text.replace(cached, REDACTED)
-    for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY)):
+    for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("MCP_TOKEN_FILE", REDACTED)):
         value = _read_secret(os.environ.get(var) or os.devnull)
         if value:
             text = text.replace(value, marker)
