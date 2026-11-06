@@ -12,7 +12,8 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 )
 
-// NetworkPolicy is the run's default-deny CNP: DNS for its names only, the broker on 8443,
+// NetworkPolicy is the run's default-deny CNP: DNS for its names only, the broker on 8443 (and
+// roomToolsURL's port when set),
 // github and its profiles on 443, the model host on its port. Nothing dials in except the
 // kubelet's probe of the bridge (C4).
 func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstructured.Unstructured {
@@ -42,7 +43,12 @@ func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstr
 		for k, v := range c.Broker.Labels {
 			sel[k] = v
 		}
-		roomEgress = []any{map[string]any{"toEndpoints": []any{map[string]any{"matchLabels": sel}}, "toPorts": port(8443)}}
+		toPorts := port(8443)
+		if c.RoomToolsURL != "" { // the harness's room tools, on the same broker pods
+			toPorts = []any{map[string]any{"ports": []any{map[string]any{"port": "8443", "protocol": "TCP"},
+				map[string]any{"port": strconv.Itoa(c.roomToolsPort()), "protocol": "TCP"}}}}
+		}
+		roomEgress = []any{map[string]any{"toEndpoints": []any{map[string]any{"matchLabels": sel}}, "toPorts": toPorts}}
 		ingress = []any{map[string]any{"fromEntities": []any{"host"}, "toPorts": port(BridgeHealthPort)}}
 	}
 	egress := []any{

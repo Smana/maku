@@ -45,6 +45,10 @@ type Config struct {
 	Broker         Broker              `json:"broker"`
 	Images         Images              `json:"images"`
 	EgressProfiles map[string][]string `json:"egressProfiles,omitempty"`
+	// RoomToolsURL is the broker's :8090 room tools, by broker.url's host, for a broker serving
+	// roomTools.auth tokenreview. Set, a run with a room gets MCP_URL and a projected token of audience
+	// room-tools for the harness alone. Unset, the harness wires no MCP server.
+	RoomToolsURL string `json:"roomToolsURL,omitempty"`
 }
 
 // Broker is where the bridge connects, and what the CNP lets it reach.
@@ -125,6 +129,7 @@ func (c Config) validate() error {
 	case !brokerHostRE.MatchString(u.Hostname()):
 		errs = append(errs, fmt.Errorf("broker.url host %q must be <service>.<namespace>.svc.<cluster-domain>, e.g. room-broker.agent-platform.svc.cluster.local", u.Hostname()))
 	}
+	errs = append(errs, c.roomToolsURL()...)
 	if len(c.Broker.Labels) == 0 {
 		errs = append(errs, errors.New("broker.labels: the CNP needs at least one to select the broker"))
 	}
@@ -132,6 +137,33 @@ func (c Config) validate() error {
 		errs = append(errs, errors.New("egressProfiles.github is required: every run clones from GitHub"))
 	}
 	return errors.Join(errs...)
+}
+
+// roomToolsURL checks roomToolsURL: the broker's own host, so the run CNP's broker rule and DNS
+// allowlist cover it, and a path, the MCP endpoint. http is for an in-cluster listener with no TLS.
+func (c Config) roomToolsURL() []error {
+	if c.RoomToolsURL == "" {
+		return nil
+	}
+	b, _ := url.Parse(c.Broker.URL)
+	u, err := url.Parse(c.RoomToolsURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Path == "" || u.Path == "/" ||
+		b == nil || u.Hostname() != b.Hostname() || !brokerHostRE.MatchString(u.Hostname()) {
+		return []error{fmt.Errorf("roomToolsURL %q must be an http(s) URL with a path on broker.url's host", c.RoomToolsURL)}
+	}
+	return nil
+}
+
+// roomToolsPort is roomToolsURL's port, by its scheme when the URL names none.
+func (c Config) roomToolsPort() int {
+	u, _ := url.Parse(c.RoomToolsURL) // validated at load
+	if p, err := strconv.Atoi(u.Port()); err == nil {
+		return p
+	}
+	if u.Scheme == "https" {
+		return 443
+	}
+	return 80
 }
 
 // RunID is the run's C2 id, or "" for a name this controller does not own.
