@@ -16,11 +16,17 @@
 #                        "The demo runs on one GitHub App"
 #   DEMO_APP_SLUG        the App's slug (github.com/apps/<slug>); its pull requests are by <slug>[bot]
 #   DEMO_REPO            owner/name of a PUBLIC repository created from Smana/maku-demo, App installed
-#   DEMO_LABEL_TOKEN     a fine-grained PAT of the repository's owner, on DEMO_REPO only: Issues write,
-#                        Administration write (the ruleset), Metadata read. It seeds the issues and
-#                        labels the docs-links one factory/ready; its owner is the demo's maintainer,
-#                        because the factory acts only on a label set by a user with write access
+#   DEMO_LABEL_TOKEN     a fine-grained PAT of the repository's owner, on DEMO_REPO only: Issues write, Pull requests
+#                        write (to close the last night's PRs), Metadata read. No Administration. Its owner is the
+#                        demo's maintainer: the factory acts only on a label set by a user with write access
 #                        (a bot's `write` answer is not something to rely on).
+#
+# One-time setup by the repository's owner, before adding the secrets: run `task demo` once by hand against
+# DEMO_REPO with your own gh login (it creates the labels, the seeded issues and the `maku-demo` ruleset),
+# then install the test App on DEMO_REPO. The nightly itself runs `task demo` with DEMO_NO_GH=1 (no seeding,
+# which needs admin) and does its own issue, label and pull request steps with the PAT. Each night it closes the
+# bot's open PRs and the `nightly` issues, files a fresh docs-links issue, labels it, and accepts only a PR
+# created after that and referencing that issue.
 name: demo-e2e
 on:
   pull_request:
@@ -64,17 +70,17 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-    env:
-      DEMO_MODEL_BASE_URL: ${{ secrets.DEMO_MODEL_BASE_URL }}
-      DEMO_MODEL_NAME: ${{ secrets.DEMO_MODEL_NAME }}
-      DEMO_MODEL_API_KEY: ${{ secrets.DEMO_MODEL_API_KEY }}
-      DEMO_APP_ID: ${{ secrets.DEMO_APP_ID }}
-      DEMO_APP_KEY: ${{ secrets.DEMO_APP_KEY }}
-      DEMO_APP_SLUG: ${{ secrets.DEMO_APP_SLUG }}
-      DEMO_REPO: ${{ secrets.DEMO_REPO }}
-      DEMO_LABEL_TOKEN: ${{ secrets.DEMO_LABEL_TOKEN }}
     steps:
       - id: gate
+        env:
+          DEMO_MODEL_BASE_URL: ${{ secrets.DEMO_MODEL_BASE_URL }}
+          DEMO_MODEL_NAME: ${{ secrets.DEMO_MODEL_NAME }}
+          DEMO_MODEL_API_KEY: ${{ secrets.DEMO_MODEL_API_KEY }}
+          DEMO_APP_ID: ${{ secrets.DEMO_APP_ID }}
+          DEMO_APP_KEY: ${{ secrets.DEMO_APP_KEY }}
+          DEMO_APP_SLUG: ${{ secrets.DEMO_APP_SLUG }}
+          DEMO_REPO: ${{ secrets.DEMO_REPO }}
+          DEMO_LABEL_TOKEN: ${{ secrets.DEMO_LABEL_TOKEN }}
         run: |
           missing=()
           for s in DEMO_MODEL_BASE_URL DEMO_MODEL_NAME DEMO_MODEL_API_KEY DEMO_APP_ID DEMO_APP_KEY DEMO_APP_SLUG DEMO_REPO DEMO_LABEL_TOKEN; do
@@ -104,45 +110,77 @@ jobs:
       - if: steps.gate.outputs.run == 'true'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - if: steps.gate.outputs.run == 'true'
-        # The PAT is gh's login: up.sh then seeds the labels, the issues and the ruleset, and its owner is
-        # the maintainer allowed to file work.
         name: task demo
+        env:
+          MODEL_BASE_URL: ${{ secrets.DEMO_MODEL_BASE_URL }}
+          MODEL_NAME: ${{ secrets.DEMO_MODEL_NAME }}
+          MODEL_API_KEY: ${{ secrets.DEMO_MODEL_API_KEY }}
+          GITHUB_APP_ID: ${{ secrets.DEMO_APP_ID }}
+          DEMO_APP_KEY: ${{ secrets.DEMO_APP_KEY }}
+          DEMO_SLUG: ${{ secrets.DEMO_APP_SLUG }}
+          DEMO_REPO: ${{ secrets.DEMO_REPO }}
+          GH_TOKEN: ${{ secrets.DEMO_LABEL_TOKEN }}
         run: |
           umask 077
           printf '%s' "$DEMO_APP_KEY" >"$RUNNER_TEMP/app-key.pem"
-          export GH_TOKEN="$DEMO_LABEL_TOKEN"
+          unset DEMO_APP_KEY
           DEMO_LOGIN=$(gh api user --jq .login)
           export DEMO_LOGIN
-          MODEL_BASE_URL="$DEMO_MODEL_BASE_URL" MODEL_NAME="$DEMO_MODEL_NAME" MODEL_API_KEY="$DEMO_MODEL_API_KEY" \
-          GITHUB_APP_ID="$DEMO_APP_ID" GITHUB_APP_KEY_FILE="$RUNNER_TEMP/app-key.pem" DEMO_SLUG="$DEMO_APP_SLUG" \
-          CLUSTER=kind task demo
+          unset GH_TOKEN # up.sh must not use gh: DEMO_NO_GH keeps it off, this keeps it out
+          export GITHUB_APP_KEY_FILE="$RUNNER_TEMP/app-key.pem" CLUSTER=kind DEMO_NO_GH=1
+          task demo
       - if: steps.gate.outputs.run == 'true'
-        name: label the seeded issue, wait for the pull request and its gate status
+        name: file a fresh issue, label it, wait for its pull request and the gate status
         env:
           GH_TOKEN: ${{ secrets.DEMO_LABEL_TOKEN }}
+          DEMO_APP_SLUG: ${{ secrets.DEMO_APP_SLUG }}
+          DEMO_REPO: ${{ secrets.DEMO_REPO }}
         run: |
-          issue=$(gh issue list -R "$DEMO_REPO" --label class:docs-links --state open --limit 1 --json number --jq '.[0].number')
-          [[ -n $issue && $issue != null ]] || { echo "::error::no open class:docs-links issue on $DEMO_REPO"; exit 1; }
-          gh issue edit "$issue" -R "$DEMO_REPO" --add-label factory/ready
-          echo "labelled $DEMO_REPO#$issue factory/ready"
           bot="${DEMO_APP_SLUG}[bot]"
+          # Last night's leftovers must not pass for tonight's work.
+          for n in $(gh api "repos/$DEMO_REPO/pulls?state=open&per_page=100" --jq ".[] | select(.user.login == \"$bot\") | .number"); do
+            gh pr close "$n" -R "$DEMO_REPO" -c "closed by the nightly demo run" || true
+          done
+          for n in $(gh issue list -R "$DEMO_REPO" --label nightly --state open --limit 100 --json number --jq '.[].number'); do
+            gh issue close "$n" -R "$DEMO_REPO" -c "closed by the nightly demo run" || true
+          done
+          gh label create nightly -R "$DEMO_REPO" >/dev/null 2>&1 || true
+          # shellcheck source=hack/demo/lib.sh
+          . hack/demo/lib.sh
+          f=examples/demo-repo/ISSUES.md
+          for ((i = 1; i <= $(demo_issue_count "$f"); i++)); do
+            labels=$(demo_issue_field "$f" "$i" labels)
+            grep -qxF class:docs-links <<<"$labels" && break
+          done
+          title=$(demo_issue_field "$f" "$i" title)
+          body=$(demo_issue_field "$f" "$i" body)
+          start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          url=$(gh issue create -R "$DEMO_REPO" -t "$title" -b "$body" -l class:docs-links -l nightly)
+          issue=${url##*/}
+          [[ $issue =~ ^[0-9]+$ ]] || { echo "::error::could not file the issue: $url"; exit 1; }
+          gh issue edit "$issue" -R "$DEMO_REPO" --add-label factory/ready # its own step: the label event must fire
+          echo "filed and labelled $DEMO_REPO#$issue factory/ready at $start"
           deadline=$((SECONDS + 1800))
           while ((SECONDS < deadline)); do
-            sha=$(gh api "repos/$DEMO_REPO/pulls?state=all&sort=created&direction=desc&per_page=20" \
-              --jq "[.[] | select(.user.login == \"$bot\")][0].head.sha // empty")
-            if [[ -n $sha ]] && gh api "repos/$DEMO_REPO/commits/$sha/statuses" --jq '.[].context' | grep -qxF maku/merge-gate; then
-              echo "a pull request by $bot has the status maku/merge-gate on $sha"
+            sha=$(gh api "repos/$DEMO_REPO/pulls?state=all&sort=created&direction=desc&per_page=30" \
+              --jq "[.[] | select(.user.login == \"$bot\" and .created_at > \"$start\" and ((.body // \"\") | test(\"#$issue\\\\b\")))][0].head.sha // empty" 2>/dev/null || true)
+            if [[ -n $sha ]] && { gh api "repos/$DEMO_REPO/commits/$sha/statuses" --jq '.[].context' 2>/dev/null || true; } | grep -qxF maku/merge-gate; then
+              echo "a new pull request by $bot for #$issue has the status maku/merge-gate on $sha"
               {
                 echo "### demo-e2e nightly passed"
                 echo
-                echo "$DEMO_REPO#$issue labelled, a pull request by \`$bot\` with \`maku/merge-gate\` on \`${sha:0:12}\` within $((SECONDS / 60)) min of the whole job."
+                echo "$DEMO_REPO#$issue filed and labelled; a pull request by \`$bot\` created after that, referencing it, has \`maku/merge-gate\` on \`${sha:0:12}\`."
               } >>"$GITHUB_STEP_SUMMARY"
+              echo "This nightly proves the latest released images, not this commit's." >>"$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 20
           done
-          echo "::error::no pull request by $bot with a maku/merge-gate status within 30 minutes of labelling $DEMO_REPO#$issue"
-          echo "### demo-e2e nightly FAILED: no pull request by \`$bot\` with \`maku/merge-gate\` within 30 minutes" >>"$GITHUB_STEP_SUMMARY"
+          echo "::error::no new pull request by $bot for #$issue with a maku/merge-gate status within 30 minutes"
+          {
+            echo "### demo-e2e nightly FAILED: no new pull request by \`$bot\` for #$issue with \`maku/merge-gate\` within 30 minutes"
+            echo "This nightly proves the latest released images, not this commit's."
+          } >>"$GITHUB_STEP_SUMMARY"
           exit 1
       - if: failure() && steps.gate.outputs.run == 'true'
         name: diagnostics
@@ -154,5 +192,5 @@ jobs:
       - if: always() && steps.gate.outputs.run == 'true'
         name: task demo:down
         run: |
-          task demo:down -- --all
           rm -f "$RUNNER_TEMP/app-key.pem"
+          task demo:down -- --all
