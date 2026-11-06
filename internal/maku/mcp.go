@@ -48,6 +48,10 @@ type Relay struct {
 	File  IssueFiler                            // files an accepted draft; nil refuses issue_file
 	// Label puts a label on the issue just filed, as the developer; nil refuses to start one.
 	Label Labeler
+	// Dir is the directory maku keeps its files in: what the client declares at initialize is
+	// recorded beside config.json there. Empty records nothing, so a relay built as a probe (maku
+	// doctor's) leaves no trace and claims nothing about a client it did not meet.
+	Dir string
 	// RoomWait bounds how long issue_file waits for the room of an issue it started; zero is roomWait.
 	RoomWait time.Duration
 	// After waits d; nil is time.After. Tests step their own.
@@ -158,16 +162,22 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 	switch m.Method {
 	case "initialize":
 		var p struct {
-			Capabilities struct {
+			ProtocolVersion string `json:"protocolVersion"`
+			Capabilities    struct {
 				Elicitation json.RawMessage `json:"elicitation"`
 				Roots       json.RawMessage `json:"roots"`
+				Prompts     json.RawMessage `json:"prompts"`
 			} `json:"capabilities"`
+			ClientInfo struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"clientInfo"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
 		forms, urls := elicitationModes(p.Capabilities.Elicitation)
+		roots, prompts := present(p.Capabilities.Roots), present(p.Capabilities.Prompts)
 		r.mu.Lock()
-		r.forms, r.urls = forms, urls
-		r.roots = present(p.Capabilities.Roots)
+		r.forms, r.urls, r.roots = forms, urls, roots
 		r.mu.Unlock()
 		res, err := r.relay(ctx, raw)
 		if err == nil {
@@ -180,6 +190,10 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 				r.mu.Unlock()
 			}
 		}
+		// Whatever the broker answered, this client has now declared itself: what a later
+		// `maku doctor --client <name>` may say about it is what is recorded here (fast-follow 4).
+		r.recordCaps(Caps{Client: p.ClientInfo.Name, Version: p.ClientInfo.Version, Protocol: p.ProtocolVersion,
+			Forms: forms, URLs: urls, Roots: roots, Prompts: prompts})
 		r.reply(m, res, err)
 	case "tools/list":
 		res, err := r.relay(ctx, raw)
