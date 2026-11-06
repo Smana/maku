@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -76,10 +77,19 @@ const (
 	ReasonPodFailed = "PodFailed"
 )
 
-// Scheme registers k's AgentRun as an unstructured kind (the XRD has no Go types).
+// Scheme registers k's AgentRun as an unstructured kind (the XRD has no Go types). The portable
+// AgentRun (maku.ogenki.io, the demo's kind) has Go types the scheme may already hold: it is left
+// typed, since registering it again panics, and the factory's unstructured reads and writes do not
+// need it registered.
 func Scheme(s *runtime.Scheme, k runwatch.Kind) {
-	s.AddKnownTypeWithName(k.GVK(), &unstructured.Unstructured{})
-	s.AddKnownTypeWithName(k.GVK().GroupVersion().WithKind("AgentRunList"), &unstructured.UnstructuredList{})
+	for gvk, obj := range map[schema.GroupVersionKind]runtime.Object{
+		k.GVK(): &unstructured.Unstructured{},
+		k.GVK().GroupVersion().WithKind("AgentRunList"): &unstructured.UnstructuredList{},
+	} {
+		if !s.Recognizes(gvk) {
+			s.AddKnownTypeWithName(gvk, obj)
+		}
+	}
 }
 
 // Spec is what the factory decides about one run. TaskText and TaskURL are exclusive, as the
