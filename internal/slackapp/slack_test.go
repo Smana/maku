@@ -289,3 +289,77 @@ func TestMetaPayloadRefusesWhatItCannotMarshal(t *testing.T) {
 		t.Fatalf("%s %v", raw, err)
 	}
 }
+
+// CD20: chat.update carries the metadata, so an edit never reposts and a restart never re-reads the
+// text. The blocks go only when there are some, and a refused update is Slack's code — never the
+// token.
+func TestUpdateProposalWire(t *testing.T) {
+	const blocks = `{"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Proposal v2"}}]}`
+	meta := &Metadata{EventType: proposalEventType,
+		EventPayload: json.RawMessage(`{"plan":{},"hash":"sha256:1111111111111111111111111111111111111111111111111111111111111111","author":"U07JY4EQNDN","rev":2}`)}
+	const wantMeta = `{"event_type":"factory_proposal","event_payload":{"plan":{},` +
+		`"hash":"sha256:1111111111111111111111111111111111111111111111111111111111111111",` +
+		`"author":"U07JY4EQNDN","rev":2}}`
+
+	t.Run("chat.update with the metadata", func(t *testing.T) {
+		var path string
+		var got map[string]json.RawMessage
+		// slackServer fails the test itself when a call does not carry "Authorization: Bearer
+		// <Token()>", so the answer's ts is unused here.
+		c := slackServer(t, func(p string, _ *http.Request, raw []byte) string {
+			path = p
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Errorf("%s: body %q: %v", p, raw, err)
+			}
+			return `{"ok":true,"ts":"1729.0001"}`
+		})
+		if err := c.UpdateProposal(context.Background(), "C03", "1729.0001", "text", json.RawMessage(blocks), meta); err != nil {
+			t.Fatal(err)
+		}
+		if path != "/api/chat.update" {
+			t.Fatalf("path %s", path)
+		}
+		keys := make([]string, 0, len(got))
+		for k := range got {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if have, want := strings.Join(keys, ","), "blocks,channel,metadata,text,ts,unfurl_links,unfurl_media"; have != want {
+			t.Fatalf("fields %s, want %s", have, want)
+		}
+		for k, want := range map[string]string{
+			"channel": `"C03"`, "ts": `"1729.0001"`, "text": `"text"`, "blocks": blocks,
+			"metadata": wantMeta, "unfurl_links": "false", "unfurl_media": "false",
+		} {
+			if string(got[k]) != want {
+				t.Errorf("%s = %s, want %s", k, got[k], want)
+			}
+		}
+	})
+
+	t.Run("no blocks, no blocks key", func(t *testing.T) {
+		var got map[string]json.RawMessage
+		c := slackServer(t, func(_ string, _ *http.Request, raw []byte) string {
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Errorf("body %q: %v", raw, err)
+			}
+			return `{"ok":true}`
+		})
+		if err := c.UpdateProposal(context.Background(), "C03", "1729.0001", "text", nil, meta); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got["blocks"]; ok {
+			t.Fatalf("an update with no blocks carried the key: %+v", got)
+		}
+	})
+
+	t.Run("a refused update is Slack's code, never the token", func(t *testing.T) {
+		c := slackServer(t, func(string, *http.Request, []byte) string {
+			return `{"ok":false,"error":"invalid_metadata"}`
+		})
+		err := c.UpdateProposal(context.Background(), "C03", "1729.0001", "text", json.RawMessage(blocks), meta)
+		if err == nil || !strings.Contains(err.Error(), "invalid_metadata") || strings.Contains(err.Error(), "xoxb-test") {
+			t.Fatalf("%v", err)
+		}
+	})
+}

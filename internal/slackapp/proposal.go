@@ -3,6 +3,7 @@
 package slackapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,6 +73,10 @@ type ProposalPayload struct {
 	Hash   string      `json:"hash"`
 	Author string      `json:"author"`
 	Rev    int         `json:"rev"`
+	// Degraded says the composer wrote this plan, not the planner (CD18). It rides the payload so the
+	// message says it, and says it again after a restart that only has the message. It is display, not
+	// material: the hash binds the plan, and the label is in no section's material set.
+	Degraded bool `json:"degraded,omitempty"`
 }
 
 // errProposalHash and errProposalRev are a caller's mistake, not a refusal the thread shows: a
@@ -239,11 +244,12 @@ func proposalView(p ProposalPayload, q *intake.Question, changed []string) roomv
 			CeilingUSD: p.Plan.Budget.CeilingUSD,
 			Source:     p.Plan.Budget.Source,
 		},
-		Hash:    p.Hash,
-		Rev:     p.Rev,
-		Author:  p.Author,
-		Confirm: len(changed) > 0,
-		Changed: changed,
+		Hash:     p.Hash,
+		Rev:      p.Rev,
+		Author:   p.Author,
+		Degraded: p.Degraded,
+		Confirm:  len(changed) > 0,
+		Changed:  changed,
 	}
 	for _, e := range p.Plan.RepositoryEvidence {
 		v.Evidence = append(v.Evidence, roomview.ProposalEvidence{Text: e.Text, URL: e.URL})
@@ -513,4 +519,167 @@ func cutRunes(s string, limit int) []string {
 		r = r[n:]
 	}
 	return out
+}
+
+// ---- the message in the thread: posted once, edited in place, found again ----
+
+// proposalReplacedLine is what the proposal a repost replaced says afterwards: the message keeps its
+// place in the thread and its buttons are gone, so no click can bind a hash its metadata no longer
+// holds (Review Focus 1).
+const proposalReplacedLine = "This proposal was replaced below."
+
+// postProposal posts the proposal as one thread reply (CD7): the plan's sections as Slack blocks, and
+// the whole plan, its hash, its author and its revision in the message's metadata. Nothing about the
+// plan's text is logged, and nothing a refusal says quotes it.
+//
+// Two plans Slack cannot carry are refused with their one pointer line and nothing else: one past the
+// 7 KiB bound (errProposalTooLarge) and one covering more than one issue (CD19). A refusal is never a
+// trimmed plan: nothing may be filed from a message that showed part of one.
+//
+// The outcome is what the caller counts: "proposed", "too_large", "multi_issue" or "error".
+func (a *App) postProposal(ctx context.Context, channel, thread string, p ProposalPayload, q *intake.Question) string {
+	say := func(text string) bool {
+		if _, err := a.Slack.Post(ctx, channel, thread, text, nil); err != nil {
+			a.log().Warn("slack post failed", "channel", channel, "err", err)
+			return false
+		}
+		return true
+	}
+	tooLarge := func() string {
+		if !say("Proposal not posted: " + errProposalTooLarge.Error() + ".") {
+			return "error"
+		}
+		return "too_large"
+	}
+
+	// The payload is checked against its own plan before a byte of it is posted: a proposal the
+	// message cannot carry, or one no decoder would read back, is never posted (CD20).
+	prop, err := newProposal(p.Plan, p.Hash, p.Author, p.Rev)
+	if err != nil {
+		if errors.Is(err, errProposalTooLarge) {
+			return tooLarge()
+		}
+		a.log().Warn("proposal not built", "channel", channel, "err", err)
+		return "error"
+	}
+	prop.Degraded = p.Degraded // display, and the one field newProposal does not take (CD18)
+	if n := len(prop.Plan.Issues); n > 1 {
+		if !say(fmt.Sprintf("Proposal not posted: this plan covers %d issues and Slack files one: use your coding agent or the web UI.", n)) {
+			return "error"
+		}
+		return "multi_issue"
+	}
+	text, blocks, err := proposalSections(prop, q, nil, channel)
+	if err != nil {
+		if errors.Is(err, errProposalTooLarge) {
+			return tooLarge()
+		}
+		a.log().Warn("proposal render failed", "channel", channel, "err", err)
+		return "error"
+	}
+	meta, err := proposalMeta(prop)
+	if err != nil {
+		if errors.Is(err, errProposalTooLarge) {
+			return tooLarge()
+		}
+		a.log().Warn("proposal metadata failed", "channel", channel, "err", err)
+		return "error"
+	}
+	if _, err := a.Slack.PostCard(ctx, channel, thread, text, blocks, meta); err != nil {
+		a.log().Warn("slack post failed", "channel", channel, "err", err)
+		return "error"
+	}
+	return "proposed"
+}
+
+// updateProposal rewrites the thread's proposal in place with its next revision (CD7): the sections
+// mark what moved since prev (CD14, CD27), and the metadata carries the new plan, so a click on the
+// message binds the revision it shows.
+//
+// Slack refuses an edit it cannot make — an edit window, a metadata shape it rejects, a message
+// deleted. The person is then never left with two live proposals and never with buttons binding a
+// hash the metadata no longer holds: a fresh proposal is posted and the old one is made inert, once
+// (Review Focus 1, D10's rule).
+//
+// The outcome is "updated", the repost's own code, or "error".
+func (a *App) updateProposal(ctx context.Context, channel, ts string, prev, next ProposalPayload, q *intake.Question) string {
+	// The next revision is checked against its own plan first, as the first post was: a message no
+	// decoder would read back is worse than a message one revision behind, so the old one stands.
+	prop, err := newProposal(next.Plan, next.Hash, next.Author, next.Rev)
+	if err != nil {
+		a.log().Warn("proposal not built", "channel", channel, "ts", ts, "err", err)
+		return "error"
+	}
+	prop.Degraded = next.Degraded
+	text, blocks, err := proposalSections(prop, q, proposalChanged(prev, prop), channel)
+	if err != nil {
+		a.log().Warn("proposal render failed", "channel", channel, "ts", ts, "err", err)
+		return "error"
+	}
+	meta, err := proposalMeta(prop)
+	if err != nil {
+		a.log().Warn("proposal metadata failed", "channel", channel, "ts", ts, "err", err)
+		return "error"
+	}
+	if err := a.Slack.UpdateProposal(ctx, channel, ts, text, blocks, meta); err != nil {
+		a.log().Warn("proposal update failed", "channel", channel, "ts", ts, "err", err)
+		return a.repostProposal(ctx, channel, ts, prop, q)
+	}
+	return "updated"
+}
+
+// repostProposal posts the proposal again when it cannot be edited, and makes the message it replaces
+// inert. The new message goes first: a failed repost leaves the old one live rather than none at all.
+// The inert update is best effort and never retried into a loop — its failure is logged with the
+// channel and the ts, and the newest message is the thread's live proposal either way.
+func (a *App) repostProposal(ctx context.Context, channel, oldTS string, p ProposalPayload, q *intake.Question) string {
+	// The old message's own ts is the thread handle here: Slack resolves a reply's ts to the thread
+	// it is in, so the repost lands beside the proposal it replaces.
+	if code := a.postProposal(ctx, channel, oldTS, p, q); code != "proposed" {
+		return code
+	}
+	if err := a.Slack.Update(ctx, channel, oldTS, proposalReplacedLine, nil); err != nil {
+		a.log().Warn("proposal inert update failed", "channel", channel, "ts", oldTS, "err", err)
+	}
+	return "reposted"
+}
+
+// threadProposal is the thread's newest proposal the App posted, its hash holding, and whether a
+// "Filed" line of its own closes the thread (CD20). It reads the messages alone, so an App that has
+// just restarted knows the whole proposal: a message with no metadata, with another tag, or whose
+// hash does not bind its plan is not a proposal — exactly how a foreign message already reads — and
+// no rendered text is ever parsed to recover a plan.
+func (a *App) threadProposal(msgs []Message) (latest *Message, closed bool) {
+	for i := range msgs {
+		m := &msgs[i]
+		if m.User == "" || m.User != a.BotUserID || m.Metadata == nil {
+			continue
+		}
+		if _, ok := m.Metadata.proposalPayload(); ok {
+			latest = m
+			continue
+		}
+		if _, ok := m.Metadata.markerPayload(); ok {
+			closed = true
+		}
+	}
+	return latest, closed
+}
+
+// proposalMeta is the message's metadata: one tag and the payload, measured against maxMetadata
+// because a message whose metadata Slack refuses is a proposal nothing could ever find again.
+func proposalMeta(p ProposalPayload) (*Metadata, error) {
+	payload, err := metaPayload(p)
+	if err != nil {
+		return nil, err
+	}
+	meta := &Metadata{EventType: proposalEventType, EventPayload: payload}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		return nil, fmt.Errorf("slackapp: proposal: the message metadata: %w", err)
+	}
+	if len(raw) > maxMetadata {
+		return nil, errProposalTooLarge
+	}
+	return meta, nil
 }

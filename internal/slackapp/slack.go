@@ -148,6 +148,9 @@ type Slack interface {
 	// Update rewrites a message the App posted (chat.update), for a card that must turn inert. Slack
 	// refuses a message the App does not own; the error carries Slack's code.
 	Update(ctx context.Context, channel, ts, text string, blocks json.RawMessage) error
+	// UpdateProposal rewrites the one proposal message in place, its metadata included (CD7, CD20):
+	// an edit never reposts, and the message the App reads back is the whole proposal.
+	UpdateProposal(ctx context.Context, channel, ts, text string, blocks json.RawMessage, meta *Metadata) error
 	Message(ctx context.Context, channel, ts string) (Message, error)
 	// PostEphemeral is a message only user sees, in channel (and threadTS, when set).
 	PostEphemeral(ctx context.Context, channel, user, threadTS, text string) error
@@ -259,6 +262,31 @@ func (c *SlackClient) Update(ctx context.Context, channel, ts, text string, bloc
 	body := map[string]any{"channel": channel, "ts": ts, "text": text, "unfurl_links": false, "unfurl_media": false}
 	if len(blocks) > 0 {
 		body["blocks"] = blocks
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url("chat.update"), bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	_, err = c.do(req)
+	return err
+}
+
+// UpdateProposal is chat.update for the proposal message (CD7, CD20): the App's own edit of its own
+// message, carrying the metadata the message must hold afterwards. The blocks go when there are
+// some, as on Update; the metadata is what makes the edited message still the proposal, so an edit
+// that Slack refuses is the caller's to fall back from, never a silent repost.
+func (c *SlackClient) UpdateProposal(ctx context.Context, channel, ts, text string, blocks json.RawMessage, meta *Metadata) error {
+	body := map[string]any{"channel": channel, "ts": ts, "text": text, "unfurl_links": false, "unfurl_media": false}
+	if len(blocks) > 0 {
+		body["blocks"] = blocks
+	}
+	if meta != nil {
+		body["metadata"] = meta
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {

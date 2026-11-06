@@ -377,18 +377,28 @@ type post struct {
 	blocks                    json.RawMessage
 }
 
+// update is one chat.update that carried a proposal's metadata: recorded apart from the card edits,
+// so a test can tell "the message was edited" from "the message was made inert".
+type update struct {
+	channel, ts, text string
+	blocks            json.RawMessage
+	meta              *Metadata
+}
+
 type fakeSlack struct {
-	mu          sync.Mutex
-	posts       []post
-	updates     []post // chat.update calls, oldest first
-	ephemerals  []ephemeral
-	msgs        map[string]Message
-	failPosts   int // the next n Posts fail
-	failUpdates int // the next n Updates fail
-	threadErr   error
-	msgErr      error
-	names       map[string][2]string // user -> handle, display name
-	reads       []string             // every conversations.replies the App made: "message" or "thread"
+	mu                  sync.Mutex
+	posts               []post
+	updates             []post // chat.update calls, oldest first
+	proposalUpdates     []update
+	ephemerals          []ephemeral
+	msgs                map[string]Message
+	failPosts           int // the next n Posts fail
+	failUpdates         int // the next n Updates fail
+	failProposalUpdates int // the next n UpdateProposals fail
+	threadErr           error
+	msgErr              error
+	names               map[string][2]string // user -> handle, display name
+	reads               []string             // every conversations.replies the App made: "message" or "thread"
 }
 
 type ephemeral struct{ channel, user, thread, text string }
@@ -478,6 +488,47 @@ func (f *fakeSlack) Update(_ context.Context, channel, ts, text string, blocks j
 		f.msgs[ts] = m
 	}
 	return nil
+}
+
+// UpdateProposal records a chat.update that carried a proposal's metadata, and replaces the seeded
+// message's metadata with it: the edit keeps the message findable, which is what makes a restart read
+// the last plan without parsing a word of the rendered text. failProposalUpdates stands in for
+// Slack's refusal of the edit itself (invalid_metadata, cant_update_message, a deleted message).
+func (f *fakeSlack) UpdateProposal(_ context.Context, channel, ts, text string, blocks json.RawMessage, meta *Metadata) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failProposalUpdates > 0 {
+		f.failProposalUpdates--
+		return errors.New("invalid_metadata")
+	}
+	m, ok := f.msgs[ts]
+	if !ok {
+		return errors.New("message_not_found")
+	}
+	f.proposalUpdates = append(f.proposalUpdates, update{channel: channel, ts: ts, text: text, blocks: blocks, meta: meta})
+	m.Text, m.Metadata = text, meta
+	f.msgs[ts] = m
+	return nil
+}
+
+// proposalEdits is every chat.update that carried a proposal's metadata, oldest first.
+func (f *fakeSlack) proposalEdits() []update {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]update(nil), f.proposalUpdates...)
+}
+
+// thread is every message the fake holds, oldest first: what an App that has just restarted reads
+// back, without asking the fake for a channel and a thread ts first.
+func (f *fakeSlack) thread() []Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]Message, 0, len(f.msgs))
+	for _, m := range f.msgs {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
+	return out
 }
 
 func (f *fakeSlack) Message(_ context.Context, _, ts string) (Message, error) {

@@ -3,6 +3,7 @@
 package slackapp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -769,4 +770,271 @@ func mustBlocks(t *testing.T, p ProposalPayload, q *intake.Question) json.RawMes
 		t.Fatalf("proposalSections: %v", err)
 	}
 	return blocks
+}
+
+// ---- the message in the thread: posted once, edited in place, found again after a restart ----
+
+// proposalApp is an App that remembers nothing but Slack: no thread map, no store, the bot's own id
+// the fake posts as (CD20).
+func proposalApp(fake *fakeSlack) *App { return &App{Slack: fake, BotUserID: "U0BOT"} }
+
+// revision is p at another revision: the same plan, its own hash, the same author.
+func revision(t *testing.T, p ProposalPayload, rev int) ProposalPayload {
+	t.Helper()
+	next, err := newProposal(p.Plan, p.Hash, p.Author, rev)
+	if err != nil {
+		t.Fatalf("newProposal at rev %d: %v", rev, err)
+	}
+	next.Degraded = p.Degraded
+	return next
+}
+
+// CD7: forty revisions are one message. The thread ends with one ts, four chat.update calls, and the
+// last message's metadata carrying the last plan — and when Slack refuses an edit, the App reposts
+// and makes the old message inert, so the thread holds one live proposal and never two (Review
+// Focus 1, D10's rule: made inert once, never retried into a loop).
+func TestOneProposalMessageAcrossRevisions(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSlack{msgs: map[string]Message{}}
+	app := proposalApp(fake)
+	const channel, thread = "C03", "1729.0001"
+
+	first := proposalFixture(t)
+	if got := app.postProposal(ctx, channel, thread, first, nil); got != "proposed" {
+		t.Fatalf("postProposal: %q", got)
+	}
+	if n := len(fake.posts); n != 1 {
+		t.Fatalf("%d posts, want the one proposal message", n)
+	}
+	ts := fake.posts[0].ts
+	if fake.posts[0].thread != thread || len(fake.posts[0].blocks) == 0 {
+		t.Fatalf("the proposal is not a thread reply with blocks: %+v", fake.posts[0])
+	}
+	if fake.posts[0].meta == nil || fake.posts[0].meta.EventType != proposalEventType {
+		t.Fatalf("the proposal carries no metadata: %+v", fake.posts[0].meta)
+	}
+
+	prev := first
+	for rev := 2; rev <= 5; rev++ {
+		next := revision(t, prev, rev)
+		if got := app.updateProposal(ctx, channel, ts, prev, next, nil); got != "updated" {
+			t.Fatalf("updateProposal at rev %d: %q", rev, got)
+		}
+		prev = next
+	}
+
+	// One message, four edits on it: a revision never makes a second message.
+	if n := len(fake.posts); n != 1 {
+		t.Fatalf("%d messages after four revisions, want one", n)
+	}
+	edits := fake.proposalEdits()
+	if len(edits) != 4 {
+		t.Fatalf("%d proposal updates, want four", len(edits))
+	}
+	for _, e := range edits {
+		if e.ts != ts || e.channel != channel {
+			t.Fatalf("an update named %s/%s, want %s/%s", e.channel, e.ts, channel, ts)
+		}
+		if e.meta == nil || len(e.blocks) == 0 || e.text == "" {
+			t.Fatalf("an update carried no metadata, blocks or text: %+v", e)
+		}
+		// Only the revision moved: nothing material did, so no section is marked (CD14, CD27).
+		if strings.Contains(e.text, "‹changed›") {
+			t.Fatalf("a revision alone marked a section: %q", e.text)
+		}
+	}
+
+	// The last revision's plan is the message's metadata: a restart reads the whole plan back.
+	m, ok := fake.msgs[ts]
+	if !ok {
+		t.Fatal("the proposal message is gone")
+	}
+	last, ok := m.Metadata.proposalPayload()
+	if !ok || last.Rev != 5 || last.Hash != prev.Hash || !reflect.DeepEqual(last.Plan, prev.Plan) {
+		t.Fatalf("the message's metadata after five revisions: %+v %v", last, ok)
+	}
+	if latest, closed := app.threadProposal(fake.thread()); latest == nil || latest.TS != ts || closed {
+		t.Fatalf("the thread's one live proposal: %+v %v", latest, closed)
+	}
+
+	// Slack refuses the sixth edit — an edit window, a metadata shape it will not take, a message
+	// deleted. The person is never left with two live proposals and never with buttons binding a
+	// hash the metadata no longer holds (Review Focus 1).
+	fake.failProposalUpdates = 1
+	sixth := revision(t, prev, 6)
+	if got := app.updateProposal(ctx, channel, ts, prev, sixth, nil); got != "reposted" {
+		t.Fatalf("updateProposal over a refused edit: %q", got)
+	}
+	if n := len(fake.posts); n != 2 {
+		t.Fatalf("%d messages, want the repost: %+v", n, fake.posts)
+	}
+	// The repost is a reply in the same conversation: without the thread's root ts to hand, the
+	// replaced message's own ts is the handle Slack resolves to the thread it is in.
+	fresh := fake.posts[1]
+	if fresh.ts == ts || len(fresh.blocks) == 0 || fresh.thread != ts {
+		t.Fatalf("the reposted proposal: %+v", fresh)
+	}
+	if p, ok := fresh.meta.proposalPayload(); !ok || p.Rev != 6 || !reflect.DeepEqual(p.Plan, sixth.Plan) {
+		t.Fatalf("the reposted metadata: %+v %v", p, ok)
+	}
+
+	// The old message is made inert, once, with no blocks: its buttons are gone.
+	inert := fake.updatesMade()
+	if len(inert) != 1 || inert[0].ts != ts || inert[0].channel != channel ||
+		inert[0].text != "This proposal was replaced below." || len(inert[0].blocks) != 0 {
+		t.Fatalf("the replaced message: %+v", inert)
+	}
+	if latest, closed := app.threadProposal(fake.thread()); latest == nil || latest.TS != fresh.ts || closed {
+		t.Fatalf("the newest message is the one live proposal: %+v %v", latest, closed)
+	}
+}
+
+// CD20 and acceptance 5: an App built from nothing — no memory of the thread — recovers the same plan
+// and hash from the message's metadata. A message whose metadata is absent, or whose hash does not
+// hold, is not a proposal; a Filed marker closes the thread.
+func TestProposalRecoveredFromMetadataAlone(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeSlack{msgs: map[string]Message{}}
+	app := proposalApp(fake)
+	p := proposalFixture(t)
+	if got := app.postProposal(ctx, "C03", "1729.0001", p, nil); got != "proposed" {
+		t.Fatalf("postProposal: %q", got)
+	}
+
+	// A second App that has never seen this thread: the message is the whole of what it knows.
+	restarted := proposalApp(fake)
+	latest, closed := restarted.threadProposal(fake.thread())
+	if latest == nil || closed {
+		t.Fatalf("a restarted App reads %+v, closed %v", latest, closed)
+	}
+	if latest.Metadata == nil || latest.Metadata.EventType != proposalEventType {
+		t.Fatalf("the recovered message's tag: %+v", latest.Metadata)
+	}
+	back, ok := latest.Metadata.proposalPayload()
+	if !ok {
+		t.Fatal("the message's metadata is not a proposal")
+	}
+	if back.Hash != intake.Hash(back.Plan) {
+		t.Fatalf("the recovered hash %q is not the hash of the recovered plan", back.Hash)
+	}
+	if !reflect.DeepEqual(back.Plan, p.Plan) || back.Rev != p.Rev || back.Author != p.Author {
+		t.Fatalf("the recovered plan: %+v", back)
+	}
+
+	// A hash of a different plan is not a proposal, whatever the tag says.
+	other := clonePlan(t, p.Plan)
+	other.Issues[0].Title = "docs: another plan entirely"
+	forged := ProposalPayload{Plan: p.Plan, Hash: intake.Hash(other), Author: p.Author, Rev: 1}
+	if latest, closed := restarted.threadProposal([]Message{{TS: "1729.2000", ThreadTS: "1729.0001",
+		User: "U0BOT", Text: "a proposal", Metadata: metaOf(t, proposalEventType, forged)}}); latest != nil || closed {
+		t.Fatalf("a proposal whose hash does not hold: %+v %v", latest, closed)
+	}
+
+	// No metadata at all: the rendered text is not a proposal (nothing here parses it).
+	if latest, _ := restarted.threadProposal([]Message{{TS: "1729.2001", ThreadTS: "1729.0001",
+		User: "U0BOT", Text: "Proposal v1 · sha256:…"}}); latest != nil {
+		t.Fatalf("a message with no metadata: %+v", latest)
+	}
+
+	// A Filed marker in the thread closes it: the proposal is no longer the thread's live one.
+	msgs := append(fake.thread(), Message{TS: "1729.2002", ThreadTS: "1729.0001", User: "U0BOT",
+		Text:     "Filed: Smana/ai-native-ref",
+		Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref", Room: "26zfnuxm"})})
+	if latest, closed := restarted.threadProposal(msgs); latest == nil || !closed {
+		t.Fatalf("a filed thread: %+v closed=%v", latest, closed)
+	}
+}
+
+// CD18: a plan the composer wrote, not the planner's, says so in the message — the label rides the
+// payload so the message says it, and a restart that reads the metadata back still says it. A
+// degraded plan is never shown as the planner's.
+func TestProposalCarriesTheDegradedComposerLabel(t *testing.T) {
+	p := proposalFixture(t)
+	plain := mustBlocks(t, p, nil)
+	for _, b := range blocksOf(t, plain) {
+		if b.Text != nil && strings.Contains(b.Text.Text, intake.TemplateLabel) {
+			t.Fatalf("a plan the planner wrote says it is a template draft: %q", b.Text.Text)
+		}
+	}
+
+	degraded := p
+	degraded.Degraded = true
+	text, raw, err := proposalSections(degraded, nil, nil, "C03")
+	if err != nil {
+		t.Fatalf("proposalSections: %v", err)
+	}
+	if !strings.Contains(text, intake.TemplateLabel) {
+		t.Errorf("the fallback text does not carry the label: %q", text)
+	}
+	found := false
+	for _, b := range blocksOf(t, raw) {
+		if b.Text != nil && strings.Contains(b.Text.Text, intake.TemplateLabel) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no block carries the degraded composer's label")
+	}
+
+	// The label rides the payload, so the message read back after a restart says it too.
+	meta := &Metadata{EventType: proposalEventType, EventPayload: mustJSON(t, degraded)}
+	back, ok := meta.proposalPayload()
+	if !ok || !back.Degraded || !proposalHashHolds(back) {
+		t.Fatalf("the recovered degraded proposal: %+v %v", back, ok)
+	}
+	// It is display, not material: the hash still binds the plan, and the label marks no section.
+	if back.Hash != intake.Hash(back.Plan) {
+		t.Fatalf("the degraded payload's hash does not bind its plan")
+	}
+	// A payload that never says it is not degraded, and the tag's wire bytes keep their shape.
+	if raw, err := json.Marshal(ProposalPayload{Plan: p.Plan, Hash: p.Hash, Author: p.Author, Rev: p.Rev}); err != nil ||
+		strings.Contains(string(raw), "degraded") {
+		t.Fatalf("a non-degraded payload carries the key: %s (%v)", raw, err)
+	}
+}
+
+// CD19 and §plan's Slack bound: a plan Slack cannot carry, or one covering more than one issue, is
+// refused with its one pointer line — nothing is filed from a message that showed part of a plan.
+func TestPostProposalRefusesWhatSlackCannotFile(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("a plan past the 7 KiB bound", func(t *testing.T) {
+		fake := &fakeSlack{msgs: map[string]Message{}}
+		app := proposalApp(fake)
+		plan := planFixture(t, "slack-one-issue")
+		padding := strings.Repeat("x", maxProposalPlanBytes)
+		plan.Issues[0].Body = proposalBody(padding)
+		p := ProposalPayload{Plan: plan, Hash: intake.Hash(plan), Author: "U07JY4EQNDN", Rev: 1}
+
+		if got := app.postProposal(ctx, "C03", "1729.0001", p, nil); got != "too_large" {
+			t.Fatalf("postProposal = %q", got)
+		}
+		if len(fake.posts) != 1 || len(fake.posts[0].blocks) != 0 || fake.posts[0].meta != nil {
+			t.Fatalf("the pointer line: %+v", fake.posts)
+		}
+		if !strings.Contains(fake.posts[0].text, "use your coding agent or the web UI") {
+			t.Fatalf("the line is %q", fake.posts[0].text)
+		}
+	})
+
+	t.Run("a plan covering two issues", func(t *testing.T) {
+		fake := &fakeSlack{msgs: map[string]Message{}}
+		app := proposalApp(fake)
+		plan := planFixture(t, "slack-one-issue")
+		second := plan.Issues[0]
+		second.Index, second.Title = 2, "docs: a second issue"
+		plan.Issues = append(plan.Issues, second)
+		p := ProposalPayload{Plan: plan, Hash: intake.Hash(plan), Author: "U07JY4EQNDN", Rev: 1}
+
+		if got := app.postProposal(ctx, "C03", "1729.0001", p, nil); got != "multi_issue" {
+			t.Fatalf("postProposal = %q", got)
+		}
+		if len(fake.posts) != 1 || len(fake.posts[0].blocks) != 0 || fake.posts[0].meta != nil {
+			t.Fatalf("the pointer line: %+v", fake.posts)
+		}
+		if !strings.Contains(fake.posts[0].text, "2 issues") ||
+			!strings.Contains(fake.posts[0].text, "Slack files one") {
+			t.Fatalf("the line is %q", fake.posts[0].text)
+		}
+	})
 }
