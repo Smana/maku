@@ -18,6 +18,8 @@ ARG MISE_SHA256_ARM64=e79866e32624b346f6854d93ca8a24294516cd7c0b48ce0e80af508fb7
 ARG TARGETARCH
 
 USER root
+# apt: the base image pins snapshot.debian.org, whose outages last hours (504 on every request).
+# On failure, rsync and ripgrep come from deb.debian.org instead, and the pin is restored after.
 # gh, checksum-pinned per architecture. The upstream image gives its user
 # passwordless sudo; nothing here needs it and NoNewPrivileges is not reliable
 # under gVisor (design §1), so sudo and every setuid and setgid bit go.
@@ -38,8 +40,18 @@ RUN set -eux; \
     tar -xzf /tmp/mise.tgz -C /tmp; \
     install -D -m 0755 /tmp/mise/bin/mise /opt/agent/bin/mise; \
     rm -rf /tmp/mise.tgz /tmp/mise; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends rsync ripgrep; \
+    apt_install() { \
+      apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \
+      && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends rsync ripgrep; \
+    }; \
+    if ! apt_install; then \
+      echo "snapshot.debian.org failed; retrying rsync and ripgrep on deb.debian.org" >&2; \
+      cp -a /etc/apt /tmp/apt.pinned; \
+      find /etc/apt \( -name '*.list' -o -name '*.sources' \) -exec sed -i -E \
+        's#https?://snapshot\.debian\.org/archive/([a-z-]+)/[0-9]{8}T[0-9]{6}Z/?#http://deb.debian.org/\1/#g' {} +; \
+      apt_install; \
+      rm -rf /etc/apt; mv /tmp/apt.pinned /etc/apt; \
+    fi; \
     rm -rf /var/lib/apt/lists/*; \
     rm -f /etc/sudoers.d/*; \
     if [ -f /etc/sudoers ]; then sed -i '/NOPASSWD/d' /etc/sudoers; fi; \
