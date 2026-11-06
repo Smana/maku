@@ -19,6 +19,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/mcp"
@@ -154,5 +155,66 @@ func TestACallEndsAtItsTimeout(t *testing.T) {
 	}
 	if mcpCallTimeout != 15*time.Second {
 		t.Fatalf("the call timeout is %s", mcpCallTimeout)
+	}
+}
+
+// Task 6: roomTools.auth picks :8090's credential. key reads ROOMS_MCP_KEY and the router's subject;
+// tokenreview never reads the key, and admits the run's own room tools token alone.
+func TestRoomToolsServerAuth(t *testing.T) {
+	red, err := redact.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := metrics.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs := runwatch.New(runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "run-"})
+	runs.Upsert(t.Context(), &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "run-7f3cq2xz", "namespace": "agents"},
+		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "reviewer"},
+		"status":   map[string]any{"phase": "Running"},
+	}})
+	const runSub = "system:serviceaccount:agents:run-7f3cq2xz"
+	cfg := config.Config{RunIssuers: []config.IssuerConfig{{Mode: config.IssuerModeTokenReview,
+		SubPattern: `^system:serviceaccount:agents:run-([a-z2-7]{8})$`}}, Human: localHuman()}
+	api := &reviews{status: authenticated(runSub, authn.AudienceRoomTools)}
+	provide := func() (authn.TokenReviewer, error) { return api, nil }
+	getenv := func(k string) string { return map[string]string{"ROOMS_MCP_KEY": "k"}[k] }
+	list := func(s http.Handler, hdr map[string]string) int {
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, r)
+		return rec.Code
+	}
+	keyed := map[string]string{mcp.KeyHeader: "k", mcp.IdentityHeader: runSub}
+	bearer := map[string]string{"Authorization": "Bearer tools-token"}
+	log := slog.New(slog.DiscardHandler)
+
+	a, err := authenticators(t.Context(), cfg, m, nil, provide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := roomToolsServer(cfg, a, getenv, &fakeToolLog{}, red, runs, m, log)
+	if got := list(key, keyed); got != http.StatusOK {
+		t.Fatalf("key mode, the router's headers: %d", got)
+	}
+	if got := list(key, bearer); got != http.StatusUnauthorized {
+		t.Fatalf("key mode, a bearer token alone: %d", got)
+	}
+
+	cfg.RoomTools = &config.RoomToolsConfig{Auth: config.RoomToolsAuthTokenReview}
+	if a, err = authenticators(t.Context(), cfg, m, nil, provide); err != nil {
+		t.Fatal(err)
+	}
+	tr := roomToolsServer(cfg, a, getenv, &fakeToolLog{}, red, runs, m, log)
+	if got := list(tr, bearer); got != http.StatusOK {
+		t.Fatalf("tokenreview mode, the run's token: %d", got)
+	}
+	if got := list(tr, keyed); got != http.StatusUnauthorized {
+		t.Fatalf("tokenreview mode, the key and a subject header: %d", got)
 	}
 }

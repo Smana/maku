@@ -842,3 +842,38 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 		})
 	}
 }
+
+// Task 6: roomTools.auth is key (the default: a gateway injects ROOMS_MCP_KEY and the verified
+// subject) or tokenreview (the broker verifies the run's own token). tokenreview needs a run issuer
+// in mode tokenreview: its subject patterns are the ones :8090 maps a verified subject through.
+func TestRoomToolsAuth(t *testing.T) {
+	tr := replaceRunIssuers(valid, "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'\n")
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{"no block is key", valid, RoomToolsAuthKey},
+		{"no auth is key", valid + "roomTools: {enabled: true}\n", RoomToolsAuthKey},
+		{"key is explicit", valid + "roomTools: {auth: key}\n", RoomToolsAuthKey},
+		{"tokenreview over a tokenreview run issuer", tr + "roomTools: {auth: tokenreview}\n", RoomToolsAuthTokenReview},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := Load(write(t, tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.RoomToolsAuth(); got != tc.want {
+				t.Fatalf("roomTools auth = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, body string }{
+		{"an unknown auth", valid + "roomTools: {auth: oauth}\n"},
+		{"tokenreview with only a jwks run issuer", valid + "roomTools: {auth: tokenreview}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Load(write(t, tc.body)); err == nil || !strings.Contains(err.Error(), "roomTools.auth") {
+				t.Fatalf("want a roomTools.auth refusal, got %v", err)
+			}
+		})
+	}
+}

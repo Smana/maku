@@ -53,6 +53,10 @@ type auth struct {
 	humans    humanapi.Authenticator // *authn.Humans, or *authn.Local in local mode
 	sponsored *authn.Sponsored       // nil while human.mcp.sponsored is empty
 	verifiers []*authn.Verifier
+	// roomTokens and roomPatterns are :8090's own check in roomTools.auth tokenreview: the apiserver
+	// for the room tools audience, and the tokenreview run issuers' subject patterns. Nil in key mode.
+	roomTokens   authn.RunVerifier
+	roomPatterns []*regexp.Regexp
 }
 
 // authenticators builds the run, system and human verifiers. The machine ones
@@ -108,13 +112,24 @@ func authenticators(ctx context.Context, cfg config.Config, m *metrics.Set, buil
 		return verifier(is.Issuer, is.JWKSURL, false)
 	}
 	var issuers []authn.RunIssuer
+	var roomTokens authn.RunVerifier
+	var roomPatterns []*regexp.Regexp
+	roomReview := cfg.RoomToolsAuth() == config.RoomToolsAuthTokenReview
 	for _, is := range cfg.RunIssuers {
 		v, err := machine(is)
 		if err != nil {
 			return auth{}, err
 		}
 		// config.Load compiled it with one capture group already.
-		issuers = append(issuers, authn.RunIssuer{Verifier: v, SubPattern: regexp.MustCompile(is.SubPattern)})
+		pattern := regexp.MustCompile(is.SubPattern)
+		issuers = append(issuers, authn.RunIssuer{Verifier: v, SubPattern: pattern})
+		if roomReview && is.EffectiveMode() == config.IssuerModeTokenReview {
+			// Its own cache, over the client machine just built: config.Validate saw such an issuer.
+			if roomTokens == nil {
+				roomTokens = authn.NewTokenReview(reviewer, time.Now)
+			}
+			roomPatterns = append(roomPatterns, pattern)
+		}
 	}
 	runs, err := authn.NewRuns(issuers...)
 	if err != nil {
@@ -166,7 +181,7 @@ func authenticators(ctx context.Context, cfg config.Config, m *metrics.Set, buil
 			Audience: idFile(h.ProjectIDFile)}
 	}
 	return auth{runs: runs, systems: authn.NewSystems(sys, cfg.SystemPrincipals), humans: humans, verifiers: all,
-		sponsored: sponsored}, nil
+		sponsored: sponsored, roomTokens: roomTokens, roomPatterns: roomPatterns}, nil
 }
 
 // idFile reads an id from a mounted file on every call, so an id the IdP mints
