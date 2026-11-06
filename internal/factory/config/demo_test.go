@@ -41,7 +41,6 @@ func TestDemoStillRefuses(t *testing.T) {
 		"prices without a meter": {"runs: {group", "meter: {prices: {agent-default: {input: 1, output: 2}}}\nruns: {group", "demo: meter.prices needs a meter, and the demo has none"},
 		"gateStatus false":       {"gateStatus: true", "gateStatus: false", "demo: merge.gateStatus must be true, or no gate verdict reaches the pull request"},
 		"http broker with a CA":  {`url: "http://room-broker.maku.svc:8080", `, `url: "http://room-broker.maku.svc:8080", caFile: /ca.crt, `, "demo: broker.caFile must be empty with an http broker.url"},
-		"a loop policy":          {"loops: {docs: {scope: scoper}}", "loops: {docs: {scope: scoper, stallSteps: 90, judge: none}}", "stallSteps, judge not passed to the harness"},
 		"a plain roomsURL host":  {"roomsURL: https://rooms.priv.gcp.ogenki.io", "roomsURL: http://rooms.example.io", "roomsURL must be https://<host>"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -54,6 +53,17 @@ func TestDemoStillRefuses(t *testing.T) {
 				t.Fatalf("got %v, want %q", err, c.err)
 			}
 		})
+	}
+}
+
+// The portable AgentRun carries the whole loop policy, so demo takes it.
+func TestDemoAllowsTheLoopPolicy(t *testing.T) {
+	raw := strings.Replace(demoGood, "loops: {docs: {scope: scoper}}", "loops: {docs: {scope: scoper, stallSteps: 90, continuations: 1, judge: tier-light}}", 1)
+	if raw == demoGood {
+		t.Fatal("the edit changed nothing")
+	}
+	if _, err := Parse([]byte(raw)); err != nil {
+		t.Fatal(err)
 	}
 }
 

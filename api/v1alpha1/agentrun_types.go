@@ -114,6 +114,24 @@ type AgentRunLoop struct {
 	// bridge both get AGENT_SEARCH=1, the bridge so it classes the harness's own search as plain.
 	// +optional
 	Search bool `json:"search,omitempty"`
+	// StallSteps, Continuations and JudgeModel are the harness's loop policy (AGENT_LOOP), the same
+	// keys cloud.ogenki.io's spec.loop carries; the run-controller writes AGENT_LOOP when any is set.
+	// StallSteps is the steps an implementer may take before its first commit (harness default 80).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=500
+	// +optional
+	StallSteps *int32 `json:"stallSteps,omitempty"`
+	// Continuations is the messages sent to a run that finished unmet (harness default 2); a pointer,
+	// so an explicit 0 survives.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=5
+	// +optional
+	Continuations *int32 `json:"continuations,omitempty"`
+	// JudgeModel switches the completion judge on; empty: no judge. This runtime resolves no alias:
+	// the judge calls the run's own model (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
+	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;mistral-light
+	// +optional
+	JudgeModel string `json:"judgeModel,omitempty"`
 }
 
 // AgentRunTask is text or url. A reviewer's carries both, the factory's brief beside the pull request

@@ -1991,19 +1991,8 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		}
 		if row.On() && c.Runs.Group != runwatch.DefaultKind.Group {
 			if c.Demo {
-				// demo: the portable AgentRun's spec.loop carries checks and search only (the run-controller
-				// passes AGENT_CHECKS and AGENT_SEARCH); stallSteps, continuations and judge reach no harness.
-				var unpassed []string
-				if row.StallSteps != nil {
-					unpassed = append(unpassed, "stallSteps")
-				}
-				if row.Continuations != nil {
-					unpassed = append(unpassed, "continuations")
-				}
-				if row.Judge != "" {
-					unpassed = append(unpassed, "judge")
-				}
-				bad("loops.%s: demo: %s not passed to the harness by the portable AgentRun (runs.group %s): its spec.loop has checks and search only", name, strings.Join(unpassed, ", "), c.Runs.Group)
+				// demo: the portable AgentRun's spec.loop carries the whole loop policy (the run-controller
+				// passes AGENT_LOOP, and the judge calls the run's own model).
 				continue
 			}
 			bad("loops.%s: the loop policy needs cloud-native-ref's AgentRun (runs.group %s): this runtime's has no spec.loop", name, runwatch.DefaultKind.Group)
