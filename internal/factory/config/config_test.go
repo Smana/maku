@@ -776,3 +776,19 @@ func TestAPITLSIsOptional(t *testing.T) {
 		t.Fatalf("set: %+v %v", c.API.TLS, err)
 	}
 }
+
+// CD12: the revision brief's CI and review evidence is a switch of its own, off unless the file
+// sets brief.ciEvidence, and a misspelling fails its rollout like any other key.
+func TestCIEvidenceIsOffByDefault(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil || c.Brief.CIEvidence {
+		t.Fatalf("off by default: %+v %v", c.Brief, err)
+	}
+	c, err = Parse([]byte(good + "brief: {ciEvidence: true}\n"))
+	if err != nil || !c.Brief.CIEvidence {
+		t.Fatalf("set: %+v %v", c.Brief, err)
+	}
+	if _, err = Parse([]byte(good + "brief: {ciEvidence: true}\nciEvidence: true\n")); err == nil {
+		t.Fatal("a switch outside brief must fail the rollout (§4)")
+	}
+}

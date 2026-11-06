@@ -1,0 +1,85 @@
+{
+  "room": "6hq3tv9c",
+  "roomURL": "https://rooms.example/r/6hq3tv9c",
+  "issue": {
+    "number": 2264,
+    "url": "https://github.com/Smana/ai-native-ref/issues/2264",
+    "title": "docs: the runbook's rollback step names the old bucket"
+  },
+  "pr": {
+    "number": 2265,
+    "url": "https://github.com/Smana/ai-native-ref/pull/2265"
+  },
+  "facts": {
+    "phase": "AwaitingHuman",
+    "reason": "ci_red",
+    "pr": {
+      "number": 2265,
+      "url": "https://github.com/Smana/ai-native-ref/pull/2265"
+    }
+  },
+  "plan": {
+    "source": "scope",
+    "ceilingMicroUSD": 1500000,
+    "ceilingSource": "class"
+  },
+  "scope": {
+    "state": "ready",
+    "task": "the runbook's rollback step names a bucket that was renamed",
+    "touches": ["docs/runbooks/rollback.md"],
+    "plan": ["read the bucket the step names today", "point it at the current one"],
+    "acceptance": [
+      {
+        "check": "docs/runbooks/rollback.md names the bucket the manifest declares",
+        "proves": "the step a reader follows works"
+      }
+    ]
+  },
+  "since": "2026-11-04T22:40:00Z",
+  "changed": {
+    "room": "6hq3tv9c",
+    "url": "https://rooms.example/r/6hq3tv9c",
+    "untrusted": true,
+    "items": [
+      {
+        "seq": 38,
+        "at": "2026-11-04T23:02:00Z",
+        "kind": "run_started",
+        "run": "k3d8pw",
+        "role": "implementer",
+        "text": "the implementer started"
+      },
+      {
+        "seq": 42,
+        "at": "2026-11-04T23:19:00Z",
+        "kind": "run_ended",
+        "run": "k3d8pw",
+        "role": "implementer",
+        "text": "CI `docs` failed"
+      },
+      {
+        "seq": 43,
+        "at": "2026-11-04T23:20:00Z",
+        "kind": "note",
+        "run": "k3d8pw",
+        "role": "implementer",
+        "text": "the CI log is not readable from the sandbox: do not try to fetch it; read the check's name and your diff instead"
+      }
+    ]
+  },
+  "blocker": {
+    "kind": "failed_check",
+    "id": "ci_red",
+    "what": "a maintainer checks the failure and re-runs it, or retries the task",
+    "url": "https://github.com/Smana/ai-native-ref/pull/2265",
+    "issue": 2264,
+    "pr": 2265,
+    "action": {
+      "kind": "retry",
+      "label": "re-run the check or retry the task",
+      "url": "https://github.com/Smana/ai-native-ref/pull/2265"
+    }
+  },
+  "cause": "ci_log_egress",
+  "now": "2026-11-05T09:10:00Z"
+}

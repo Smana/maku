@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/summary"
 )
 
-// briefGoldens are the three briefs golden 4 draws: a full read, one with no cursor, and the hostile
-// title of Review Focus 4.
-var briefGoldens = []string{"normal", "no-cursor", "hostile"}
+// briefGoldens are the five briefs golden 4 draws: a full read, one with no cursor, the hostile title of
+// Review Focus 4, and the two failures fast-follow 6 turns into a fix (PR 7).
+var briefGoldens = []string{"normal", "no-cursor", "hostile", "permission-failure", "egress-failure"}
 
 // loadBrief decodes one brief fixture: the file is the renderer's whole input, its now included.
 func loadBrief(t *testing.T, name string) BriefIn {
@@ -47,6 +48,83 @@ func TestBriefGoldens(t *testing.T) {
 			assertInert(t, b.String(), rooms, in.Untrusted())
 		})
 	}
+}
+
+// Fast-follow 6: a failure the platform meets most says in one line what to change, after the blocker it
+// explains and before the next step — summary.Fix's sentence, the renderer's only source for it.
+func TestTheBriefNamesTheFix(t *testing.T) {
+	for name, cause := range map[string]string{
+		"permission-failure": summary.CauseAppPermission,
+		"egress-failure":     summary.CauseCILogEgress,
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := loadBrief(t, name)
+			if in.Cause != cause {
+				t.Fatalf("the fixture's cause is %q, want %q", in.Cause, cause)
+			}
+			var b strings.Builder
+			if err := Brief(&b, in, Options{Format: Markdown, Now: in.Now, Rooms: rooms}); err != nil {
+				t.Fatal(err)
+			}
+			got := b.String()
+			if lines := fixLines(got); len(lines) != 1 || lines[0] != "Fix: "+causeText(t, in.Cause) {
+				t.Fatalf("%q:\n%s", lines, got)
+			}
+			blocked, fix := strings.Index(got, "\nBlocked on: "), strings.Index(got, "\nFix: ")
+			if blocked < 0 || fix < blocked {
+				t.Fatalf("Fix does not follow the blocker:\n%s", got)
+			}
+		})
+	}
+}
+
+// Every cause's sentence is prose, not a quoted value: it names a file, a key and a host, and the backticks
+// around the two keys must not open a code span of their own — the brief writes `text`, never `quoted`.
+func TestEveryFixIsProse(t *testing.T) {
+	for _, cause := range []string{summary.CauseAppPermission, summary.CauseCheckUnreadable, summary.CauseCILogEgress} {
+		t.Run(cause, func(t *testing.T) {
+			// The configuration failure has no golden: its sentence is the one with backticks and dots in it.
+			in := BriefIn{Room: "26zfnuxm", RoomURL: "https://rooms.example/r/26zfnuxm",
+				Facts: &envelope.TaskFacts{Phase: "AwaitingHuman"}, Cause: cause, Now: now}
+			var b strings.Builder
+			if err := Brief(&b, in, Options{Format: Markdown, Now: in.Now, Rooms: rooms}); err != nil {
+				t.Fatal(err)
+			}
+			got := b.String()
+			if lines := fixLines(got); len(lines) != 1 || lines[0] != "Fix: "+causeText(t, cause) {
+				t.Fatalf("%q:\n%s", lines, got)
+			}
+			if spans := codeSpans(got); len(spans) != 0 {
+				t.Errorf("the fix opened a code span of its own: %q", spans)
+			}
+			assertInert(t, got, rooms, nil)
+		})
+	}
+}
+
+// causeText is a fix as the brief writes it: in Markdown the sentence's punctuation is escaped, so the
+// assertion reads it back the way a reader sees it.
+func causeText(t *testing.T, cause string) string {
+	t.Helper()
+	fix := summary.Fix(cause)
+	if fix == "" {
+		t.Fatalf("%q has no fix", cause)
+	}
+	var b strings.Builder
+	c := &card{o: Options{Format: Markdown}}
+	b.WriteString(c.text(fix, false))
+	return b.String()
+}
+
+// fixLines is the brief's Fix lines, in order: a cause earns at most one, and it is a line of its own.
+func fixLines(md string) []string {
+	var out []string
+	for _, l := range strings.Split(strings.TrimRight(md, "\n"), "\n") {
+		if strings.HasPrefix(l, "Fix: ") {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // The same words in the brief, whose plan line reads the facts and not a Summary.

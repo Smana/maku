@@ -879,6 +879,53 @@ func (g *GitHub) SetStatus(ctx context.Context, sha, state, statusContext, descr
 	return nil
 }
 
+// maxAnnotations bounds CheckAnnotations: one page of 50, more than a failing check reports in
+// practice and still one read for a brief's evidence.
+const maxAnnotations = 50
+
+// maxAnnotationMessage bounds one annotation's message, in runes: a brief quotes it, and a check
+// may write anything.
+const maxAnnotationMessage = 500
+
+// CheckAnnotations is what a check run annotated, in GitHub's order, at most maxAnnotations of
+// them: the evidence of a failure that a revision brief quotes (CD12).
+//
+// It is evidence, never a gate, so the read is bounded rather than fail-closed: one page, and each
+// message cut to maxAnnotationMessage runes on a rune boundary, marked with "…" so half a sentence
+// never reads as the whole of what the check said. Annotations past the page and messages past the
+// cut are unread, and the caller says the factory could not read a check rather than claiming it
+// said nothing. The text itself stays as GitHub wrote it: making it inert is the renderer's one
+// job (roomview, reconciler text), not this read's.
+//
+// The endpoint answers a bare array (GitHub's OpenAPI response for this operation), which is what
+// go-github's Checks.ListCheckRunAnnotations decodes, so the typed call is the whole read.
+func (g *GitHub) CheckAnnotations(ctx context.Context, id int64) ([]Annotation, error) {
+	as, _, err := g.rest.Checks.ListCheckRunAnnotations(ctx, g.owner, g.name, id,
+		&github.ListOptions{PerPage: maxAnnotations})
+	g.mark(err)
+	if err != nil {
+		return nil, wrap("list a check run's annotations", err)
+	}
+	var out []Annotation
+	for _, a := range as {
+		if len(out) == maxAnnotations { // the page is the bound; a longer answer cannot widen it
+			break
+		}
+		out = append(out, Annotation{Path: a.GetPath(), StartLine: a.GetStartLine(),
+			Level: a.GetAnnotationLevel(), Message: annotationMessage(a.GetMessage())})
+	}
+	return out, nil
+}
+
+// annotationMessage is a check's message, cut to maxAnnotationMessage runes with the cut marked.
+func annotationMessage(s string) string {
+	r := []rune(s)
+	if len(r) <= maxAnnotationMessage {
+		return s
+	}
+	return string(r[:maxAnnotationMessage-1]) + "…"
+}
+
 // PullRequestChecks is the head commit's rollup, one GraphQL query. It needs checks: read and
 // statuses: read (R16), hence the merger App's own method.
 func (g *GitHub) PullRequestChecks(ctx context.Context, number int) (Checks, error) {

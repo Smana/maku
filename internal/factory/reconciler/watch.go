@@ -78,7 +78,7 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 	if err != nil {
 		return runs.Spec{}, nil, "", err
 	}
-	text, refs := reviseBrief(t, evs, q, r.Nonce(), sc)
+	text, refs := r.revisionBrief(ctx, t, evs, q, sc)
 	return r.implementerSpec(t, resumed(t, trigger)+text), refs, trigger, nil
 }
 

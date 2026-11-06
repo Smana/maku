@@ -43,8 +43,9 @@ type BriefIn struct {
 	// Sealed is the room's seal ("" while open; summary.State.Sealed's two values): a sealed log takes
 	// no event, so its dollar figure is the last a reader will see and is not settling (CD23).
 	Sealed string
-	// Cause is summary.Cause's code and is rendered as one "Fix:" line. It is empty here: the table
-	// that produces it lands with brief.ciEvidence (PR 7), and until then the line never appears.
+	// Cause is summary.Cause's code, rendered as one "Fix:" line through summary.Fix (fast-follow 6): the
+	// permission, check or egress failure the room's facts and notes name, empty when they name none. The
+	// caller fills it, so the brief reads nothing new to say how to fix what it reports.
 	Cause string
 	Now   time.Time
 }
@@ -235,13 +236,13 @@ func (c *card) briefBlocked(in BriefIn) {
 	}
 }
 
-// briefFix is the one line a cause earns: summary.Cause's code, shown as prose. It is the hook PR 7
-// fills with summary.Fix's sentence; no golden carries it until then.
+// briefFix is the one line a cause earns (fast-follow 6): summary.Fix's sentence for the code in Cause, in
+// the broker's prose — it names a file or a host a person edits, and an agent wrote none of it. A cause the
+// table does not know prints nothing: the brief says less rather than guess.
 func (c *card) briefFix(in BriefIn) {
-	if in.Cause == "" {
-		return
+	if fix := summary.Fix(in.Cause); fix != "" {
+		c.line("Fix: " + c.text(fix, false))
 	}
-	c.line("Fix: " + c.text(in.Cause, false))
 }
 
 // briefNext is the one thing to do and where: the action's own words, whose code spans are the

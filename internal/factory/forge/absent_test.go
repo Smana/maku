@@ -37,3 +37,12 @@ func TestAbsentFailsTheFollowUpReadsClosed(t *testing.T) {
 		t.Errorf("BlameAtParent: %v", err)
 	}
 }
+
+// A revision brief's evidence on a factory without the merger App: ErrNoMerger, never an empty
+// list, which would read as "the failing check said nothing".
+func TestAbsentFailsTheAnnotationsReadClosed(t *testing.T) {
+	var a Absent
+	if as, err := a.CheckAnnotations(t.Context(), 9001); !errors.Is(err, ErrNoMerger) || as != nil {
+		t.Errorf("CheckAnnotations: %v", err)
+	}
+}

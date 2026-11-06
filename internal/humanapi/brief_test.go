@@ -12,6 +12,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/maku"
+	"github.com/Smana/maku/internal/summary"
 )
 
 // briefBody is GET /api/rooms/{id}/brief's answer, as a client reads it (CD11): the brief's own envelope,
@@ -57,6 +58,37 @@ func scopedHandoffs(padding int) option {
 			v.evs = append(v.evs, envelope.Event{V: 1, Seq: seq, RoomID: roomID, Type: envelope.Message, TS: now.Add(-time.Hour),
 				Payload: []byte(`{"kind":"chat","text":"x","delivery":"none"}`)})
 		}
+	}
+}
+
+// forbiddenNote is the last note an agent leaves when the App's token cannot do what it tried: gh's own 403
+// write, which the brief reads into the one fix line a person acts on (fast-follow 6).
+func forbiddenNote() option {
+	return func(_ *Server, _ *fanout.Hub, v *hubView) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		seq := int64(len(v.evs))
+		v.evs = append(v.evs, envelope.Event{V: 1, Seq: seq + 1, RoomID: roomID, Type: envelope.Message,
+			Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:cf4ato2x", Role: "implementer"},
+			TS:    time.Now().Add(-time.Minute),
+			Payload: envelope.Must(envelope.MessagePayload{Kind: envelope.KindProgress, Delivery: envelope.DeliveryNone,
+				Text: "gh: Resource not accessible by integration (HTTP 403)"})})
+	}
+}
+
+// Fast-follow 6: a room whose last note is the App's own 403 carries the fix line, from the notes the handler
+// already folded — the brief reads nothing new to say it.
+func TestBriefNamesTheFixOfAPermission(t *testing.T) {
+	e := setup(t, worldWithSplitAndMerge(t).gate, forbiddenNote())
+	got, code := briefAt(t, e, "", header("dev"))
+	if code != http.StatusOK {
+		t.Fatalf("%d %+v", code, got)
+	}
+	if n := strings.Count(got.Text, "\nFix: "); n != 1 {
+		t.Fatalf("%d Fix lines, want one:\n%s", n, got.Text)
+	}
+	if fix := summary.Fix(summary.CauseAppPermission); !strings.Contains(got.Text, fix) {
+		t.Errorf("no %q in\n%s", fix, got.Text)
 	}
 }
 
