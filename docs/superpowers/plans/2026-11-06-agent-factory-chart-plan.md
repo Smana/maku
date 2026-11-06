@@ -57,7 +57,7 @@ Contents:
 
 `profile: demo` sets, and the render test pins:
 - `maku`: `networkPolicies.enabled: false`; `broker.human.mode: local`; `broker.roomTools.enabled: false`; `broker.runIssuer.mode: tokenreview`; `broker.systemIssuer` in `tokenreview` mode with the factory's ServiceAccount as `system:factory`; `broker.factoryInsecure: true`; `broker.database` the two DSN Secrets; `broker.tls.issuerRef.name: ""`; `runController.runtimeClassName: ""`, `allowUnsandboxed: true`, `createRuntimeClass: false`; `runs` group `maku.ogenki.io`.
-- `maku-factory`: `demo: true`; `replicas: 1`; `brokerCASecret` the umbrella's CA Secret; `config`: `demo: true`, `broker.url` the broker's `https://…:8443` with `caFile` the mounted CA, `broker.tokenFile` the projected token, `runs` the portable kind, `merge.gateStatus: true`, `merge.policyBot: false`, `github` files for one App with the merger files pointing at the same App, and `repositories` from `.Values.demo.repositories` (one entry, `factory/ready` trigger, one class from `.Values.demo.class`, default `docs-links` in shadow, plus `revert` in shadow).
+- `maku-factory`: `demo: true`; `replicas: 1`; `brokerCASecret` the umbrella's CA Secret; `config`: `demo: true`, `broker.url` the broker's `https://…:8443` with `caFile` the mounted CA, `broker.tokenFile` the projected token, `runs` the portable kind, `merge.gateStatus: true`, `merge.policyBot: false`, `github` files for one App with the merger files pointing at the same App, and `repositories` from `.Values.demo.repositories` (one entry, `factory/ready` trigger, one class from `.Values.demo.class`, default `docs-links` in shadow, plus `revert` in shadow). Every class the profile renders carries an explicit `allowedFiles` (for `docs-links` and `revert`, copy the built-in shape's), because plan A refuses `merge.policyBot: false` when a live class has none.
 - `secrets.yaml`: `agent-model` in the runs namespace from `.Values.demo.model.{baseURL,name,apiKey}` or an `existingSecret`; `agent-factory-github` from `.Values.demo.githubApp.{id,privateKey}` or an `existingSecret`. Neither is rendered when its `existingSecret` is set. `agent-git` is not rendered: the factory writes it.
 - An unset `profile` (production) renders none of the above and fails with a message naming what production must supply (`profile is required: demo, or production values (stage 2)`), until stage 2 adds production.
 
@@ -70,6 +70,11 @@ Contents:
 - Modify: `taskfile.yaml` (`chart:install:k3d`, `chart:install:kind`, not part of `task check`)
 
 - [ ] Step 1: write `install.sh`. Step 2: run `task chart:install:k3d` and `task chart:install:kind` here (Docker, k3d and kind are available). Step 3: fix what fails, each fix in the task it belongs to, with its test. Step 4: commit `test(chart): install the demo profile on k3d and kind`.
+
+### Amendments carried from plan A's final review
+
+- The broker's `:8443` is always TLS, so the demo reaches it over `https` with the Helm-generated CA (Task 3), not the `http://` plan A allows. Task 4 also amends the design's Q22 line in `docs/superpowers/specs/2026-11-06-factory-on-a-laptop-design.md` ("plain HTTP inside the cluster") to say the broker keeps TLS with a CA the chart generates. Plan A's `http` and empty-`caFile` relaxations stay; whether to remove them is decided once Task 5 proves the install.
+- The App's run token has no `statuses: write`; the merger connection posts the gate's status. Nothing in this chart changes that.
 
 ## Self-review
 
