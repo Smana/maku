@@ -93,14 +93,23 @@ func (m *Metadata) approvalPayload() (ApprovalPayload, bool) {
 // else, which reads exactly as a foreign message already reads (CD20): the text is never parsed to
 // recover a plan.
 func (m *Metadata) proposalPayload() (ProposalPayload, bool) {
+	p, ok := m.proposalTaggedPayload()
+	if !ok || !proposalHashHolds(p) {
+		return ProposalPayload{}, false
+	}
+	return p, true
+}
+
+// proposalTaggedPayload decodes the payload of a message that says it is a proposal, without requiring
+// the hash to bind the plan. The ✅ fallback is the one caller: a proposal whose hash no longer holds
+// is no proposal to file, but it is a message the person is looking at, so the filing path refuses it
+// with its own line instead of reading it as a foreign message and saying nothing.
+func (m *Metadata) proposalTaggedPayload() (ProposalPayload, bool) {
 	if m == nil || m.EventType != proposalEventType {
 		return ProposalPayload{}, false
 	}
 	var p ProposalPayload
 	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
-		return ProposalPayload{}, false
-	}
-	if !proposalHashHolds(p) {
 		return ProposalPayload{}, false
 	}
 	return p, true

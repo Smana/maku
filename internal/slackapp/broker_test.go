@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/sponsored"
 )
 
@@ -122,6 +124,52 @@ func TestBrokerRunCreate(t *testing.T) {
 	}
 	if !sponsored.ValidRef(ref) {
 		t.Fatalf("broker would refuse ref %q", ref)
+	}
+}
+
+// A draft's run_create arguments are exactly today's; a proposal's add the plan and its hash and
+// nothing else moves. run_create recomputes the hash over the plan it is sent, so a plan edited after
+// it was shown is `plan_changed` and files nothing (CD19, CD27).
+func TestRunCreateSendsThePlan(t *testing.T) {
+	f := newFakeBroker(t, "", `{"structuredContent":{"room":"r-1","issue":42}}`)
+	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
+	body := "## What is wrong\nx\n## What it should be\ny\n## Acceptance check\nz"
+	draft := RunCreate{
+		Draft:      Draft{Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body},
+		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: "slack/T01ABC/C03/1729.0001", Key: "T01ABC/C03/1729.0001"}
+
+	if _, err := b.RunCreate(context.Background(), draft); err != nil {
+		t.Fatalf("run_create: %v", err)
+	}
+	plain := map[string]any{"repo": "Smana/ai-native-ref", "title": "docs(agents): the link is dead",
+		"text": body, "dataClass": "public", "max_cost": 2.0, "on_behalf_of": "slack:T01ABC/U02DEF",
+		"ref": "slack/T01ABC/C03/1729.0001", "idempotency_key": "T01ABC/C03/1729.0001"}
+	if got := f.calls[0].Params.Arguments; !reflect.DeepEqual(got, plain) {
+		t.Fatalf("the draft's arguments moved: %+v", got)
+	}
+
+	plan := planFixture(t, "slack-one-issue")
+	raw, err := plan.JSON()
+	if err != nil {
+		t.Fatalf("the plan's JSON: %v", err)
+	}
+	proposal := draft
+	proposal.Plan, proposal.PlanHash = raw, intake.Hash(plan)
+	if _, err := b.RunCreate(context.Background(), proposal); err != nil {
+		t.Fatalf("run_create with a plan: %v", err)
+	}
+	var planArg any
+	if err := json.Unmarshal(raw, &planArg); err != nil {
+		t.Fatalf("decode the plan: %v", err)
+	}
+	want := maps.Clone(plain)
+	want["plan"], want["plan_hash"] = planArg, intake.Hash(plan)
+	got := f.calls[1].Params.Arguments
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("a proposal's arguments: %+v, want %+v", got, want)
+	}
+	if len(got) != len(plain)+2 {
+		t.Fatalf("%d arguments, want the draft's and the two the plan adds", len(got))
 	}
 }
 

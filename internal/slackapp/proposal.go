@@ -692,3 +692,163 @@ func proposalMeta(p ProposalPayload) (*Metadata, error) {
 	}
 	return meta, nil
 }
+
+// ---- filing a proposal: the ✅ fallback and, from PR 6, the Confirm ----
+
+// fileProposal files the thread's proposal through run_create's plan validation (CD8, acceptance 10):
+// a maintainer's ✅ on the message (confirm false) and, from PR 6, the Confirm button (confirm true) are
+// one code path, differing only in the verb of the passing failures' line — a check mark is reacted, a
+// button is pressed.
+//
+// The plan is the message's own metadata, re-checked here before anything is sent: a hash that does not
+// bind the plan is refused with its own line rather than filed, and the repository the plan names must
+// still be one the channel serves (CD24: a channel re-pointed under a live proposal refuses, it does not
+// file). Then the thread is read, and it decides: a thread whose proposal was already filed or
+// cancelled is ignored — its message already says so, and a second line would be noise — and only the
+// thread's newest proposal files, so a ✅ on a message an edit replaced files nothing.
+//
+// The filing carries the plan and its hash, so the broker recomposes and re-hashes it before it acts: a
+// plan edited after it was shown is `plan_changed` and files nothing, whatever this App believes. On
+// success the proposal message becomes the Filed line in place, which is what makes a thread one
+// message from its mention to its room.
+func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user string, p ProposalPayload, confirm bool) string {
+	sayMeta := func(text string, meta *Metadata) { // the verdict goes to the thread; a failure to say it is logged, not retried
+		if _, err := a.Slack.Post(ctx, channel, thread, text, meta); err != nil {
+			a.log().Warn("slack post failed", "channel", channel, "err", err)
+		}
+	}
+	// refuse says a refusal once per message, user and reason: a re-added ✅ does not repeat it.
+	refuse := func(reason, text string) string {
+		if a.answered.add(itemTS + "/" + user + "/" + reason) {
+			sayMeta(text, nil)
+		}
+		return "refused"
+	}
+	// retry says a passing failure, the fix being to react again: at most once per retryEvery for a
+	// message, user and reason, so a burst of ✅ does not spam the thread.
+	retry := func(reason, text string) string {
+		if a.retried.allow(itemTS+"/"+user+"/"+reason, a.now()) {
+			sayMeta(text, nil)
+		}
+		return "error"
+	}
+
+	// again is the verb of the passing failures below: a ✅ is reacted, a Confirm is pressed, and that
+	// is the whole of what confirm changes about the two callers (CD8's fallback and PR 6's button).
+	again := "react again to retry"
+	if confirm {
+		again = "press Confirm again to retry"
+	}
+
+	ch, served := a.Channels[channel]
+	switch {
+	case !served:
+		return refuse("channel", "Not filed: this channel is no longer served; ask an operator to add it to the Slack App's channels.")
+	case intake.Hash(p.Plan) != p.Hash:
+		return refuse("hash", "Not filed: this proposal no longer matches its check; mention me again to re-plan it.")
+	case !slices.Contains(ch.Repositories, p.Plan.Repository):
+		return refuse("repository", fmt.Sprintf("Not filed: %s isn't served in this channel; ask an operator to add it to the channel's repositories.",
+			slackText(p.Plan.Repository)))
+	case len(p.Plan.Issues) != 1: // Slack files one issue: a proposal was posted only if it had one
+		return refuse("issue", "Not filed: this proposal does not carry exactly one issue; mention me again to re-plan it.")
+	}
+
+	a.editMu.Lock() // a re-plan in flight finishes first, so the thread's newest proposal is the one filed
+	defer a.editMu.Unlock()
+	msgs, err := a.Slack.Thread(ctx, channel, thread)
+	if err != nil {
+		a.log().Warn("slack thread fetch failed", "channel", channel, "err", err)
+		if errors.Is(err, ErrThreadTooLong) {
+			return refuse("too_long", "Not filed: this thread is too long to find its latest proposal; mention me again in a new thread.")
+		}
+		return retry("slack", "Not filed: Slack could not be read just now; "+again+".")
+	}
+	latest, closed := a.threadProposal(msgs)
+	if closed {
+		// The thread's proposal was filed or cancelled and its message says so: nothing to file, no
+		// line to add, exactly as a ✅ on a message that is not the App's draft.
+		return "ignored"
+	}
+	if latest == nil || latest.TS != itemTS {
+		refuse("replaced", "This draft was replaced by a newer one: react on the latest draft.")
+		return "ignored"
+	}
+
+	raw, err := p.Plan.JSON()
+	if err != nil {
+		a.log().Warn("proposal plan unreadable", "channel", channel, "err", err)
+		return retry("plan", "Not filed: the plan could not be read just now; "+again+".")
+	}
+	// The filed tag is what closes the thread to further edits, so a payload that will not marshal is
+	// logged with that consequence named rather than dropped: the tag still goes out, with the empty
+	// object every decoder refuses.
+	mark := func(room string) *Metadata {
+		payload, perr := metaPayload(MarkerPayload{Repo: p.Plan.Repository, Room: room})
+		if perr != nil {
+			a.log().Error("filed mark payload: the proposal stays editable", "err", perr)
+			payload = json.RawMessage(`{}`)
+		}
+		return &Metadata{EventType: filedEventType, EventPayload: payload}
+	}
+	res, err := a.Broker.RunCreate(ctx, RunCreate{
+		Draft:      Draft{Repo: p.Plan.Repository, Title: p.Plan.Issues[0].Title, Body: p.Plan.Issues[0].Body},
+		Plan:       raw,
+		PlanHash:   p.Hash,
+		MaxCostUSD: ch.MaxCostUSD,
+		OnBehalfOf: "slack:" + a.TeamID + "/" + user,
+		Ref:        "slack/" + a.TeamID + "/" + channel + "/" + thread,
+		Key:        a.TeamID + "/" + channel + "/" + thread, // one issue per thread, whatever the revision
+	})
+	var r Refused
+	if errors.As(err, &r) {
+		code, text, passing := notFiled(string(r), user, p.Plan.Repository)
+		if passing {
+			return retry(code, text)
+		}
+		return refuse(code, text)
+	}
+	if err != nil {
+		a.log().Warn("run_create failed", "err", err)
+		return retry("unreachable", "Not filed: the factory could not be reached; "+again+".")
+	}
+	if !roomRE.MatchString(res.Room) {
+		a.log().Warn("run_create answered an unusable room id")
+		sayMeta(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), mark(""))
+		return "error"
+	}
+	// Put on a duplicate too (idempotent): a Put that failed the first time is retried by the next ✅.
+	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.now()}); err != nil {
+		a.log().Warn("thread map put failed", "room", res.Room, "err", err)
+	}
+	// The Filed line replaces the proposal in place: one message from the mention to the room. An
+	// emptied block list, not none — chat.update leaves a message's blocks as they are when the key is
+	// absent, so nil would keep Confirm and Cancel live on the message that filed the plan (Review
+	// Focus 1, the same write repostProposal and App.inert make).
+	filed, line := mark(res.Room), a.filedText(res, user)
+	if err := a.Slack.UpdateProposal(ctx, channel, itemTS, line, json.RawMessage("[]"), filed); err != nil {
+		// Slack refused the edit: today's separate Filed line still tells the thread, and the outcome
+		// says the message was not the one that said it.
+		a.log().Warn("proposal filed update failed", "channel", channel, "ts", itemTS, "err", err)
+		sayMeta(line, filed)
+		return "unrewritten"
+	}
+	if res.Duplicate {
+		return "duplicate"
+	}
+	return "filed"
+}
+
+// filedText is the thread's line for a filed run: today's Filed line, or the duplicate's one, built
+// here so the ✅ fallback and PR 6's Confirm say exactly what the draft path has always said. It is a
+// method because the room link comes from the App's own rooms URL.
+func (a *App) filedText(res RunResult, user string) string {
+	url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + res.Room
+	if res.Duplicate {
+		return "Already filed: " + url
+	}
+	by := ""
+	if githubLoginRE.MatchString(res.Sponsor) { // named so a wrong link is seen at its first use
+		by = ", sponsored by GitHub @" + res.Sponsor
+	}
+	return fmt.Sprintf("Filed #%d for <@%s>%s; the factory starts it. Room: %s", res.Issue, user, by, url)
+}

@@ -69,9 +69,15 @@ type Broker struct {
 	HC     *http.Client // httpx.New in production
 }
 
-// RunCreate is a draft filed as a run for the person who asked.
+// RunCreate is a draft filed as a run for the person who asked. Plan and PlanHash are set when the
+// run is a proposal: the plan the message showed and the hash it bound, so the broker recomposes the
+// plan from the fields it is sent, recomputes the hash over the plan's material set and refuses
+// `plan_changed` when they disagree (CD20, CD27). A draft sets neither, and its arguments stay
+// exactly what they were.
 type RunCreate struct {
 	Draft
+	Plan       json.RawMessage // the plan/v1 the proposal bound, as its message carried it
+	PlanHash   string          // intake.Hash of that plan
 	MaxCostUSD float64
 	OnBehalfOf string // slack:<team>/<user>
 	Ref        string // slack/<team>/<channel>/<thread_ts>
@@ -151,11 +157,17 @@ func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
 }
 
 // RunCreate files the run. Its arguments are run_create's schema exactly: `text` is the draft's
-// body and dataClass is always public.
+// body and dataClass is always public. A proposal adds `plan` and `plan_hash` — the pair the tool
+// checks the confirmation against — and nothing else: a draft's arguments are the ones they always
+// were, so an App that has no plan sends the call it always sent.
 func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
-	sc, err := b.call(ctx, "run_create", map[string]any{"repo": c.Repo, "title": c.Title, "text": c.Body,
+	args := map[string]any{"repo": c.Repo, "title": c.Title, "text": c.Body,
 		"dataClass": "public", "max_cost": c.MaxCostUSD, "on_behalf_of": c.OnBehalfOf, "ref": c.Ref,
-		"idempotency_key": c.Key})
+		"idempotency_key": c.Key}
+	if len(c.Plan) > 0 {
+		args["plan"], args["plan_hash"] = c.Plan, c.PlanHash
+	}
+	sc, err := b.call(ctx, "run_create", args)
 	if err != nil {
 		return RunResult{}, err
 	}

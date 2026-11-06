@@ -581,6 +581,11 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 	}
 	latest, _ := a.threadDraft(msgs)
 	if latest == nil {
+		// A thread whose message is a proposal: the same fallback, typed. The filing path re-checks the
+		// payload and the thread, so finding it here is the only thing this adds.
+		if prop, closed := a.threadProposal(msgs); prop != nil && !closed {
+			return a.file(ctx, a.TeamID, ev.Channel, prop.TS, ev.User, true)
+		}
 		return "ignored"
 	}
 	return a.file(ctx, a.TeamID, ev.Channel, latest.TS, ev.User, true)
@@ -671,15 +676,22 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	if msg.User == "" || msg.User != a.BotUserID || m == nil {
 		return "ignored"
 	}
-	p, ok := m.draftPayload()
-	if !ok {
-		return "ignored"
-	}
 	thread := msg.ThreadTS
 	if thread == "" {
 		thread = msg.TS
 	}
 	if !tsRE.MatchString(thread) {
+		return "ignored"
+	}
+	// CD8's fallback: a ✅ on a proposal files the plan the message showed through the same run_create
+	// validation the Confirm uses. The branch is on the tag alone — the plan's hash is checked there,
+	// so a proposal that no longer binds its plan is refused with its own line instead of being read as
+	// a foreign message nobody answers.
+	if p, ok := m.proposalTaggedPayload(); ok {
+		return a.fileProposal(ctx, channel, thread, itemTS, user, p, false)
+	}
+	p, ok := m.draftPayload()
+	if !ok {
 		return "ignored"
 	}
 	sayMeta := func(text string, meta *Metadata) { // the verdict goes to the thread; a failure to say it is logged, not retried
@@ -763,20 +775,14 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		sayMeta(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), filedMark)
 		return "error"
 	}
-	url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + res.Room
 	// Put on a duplicate too (idempotent): a Put that failed the first time is retried by the next ✅.
 	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.Now()}); err != nil {
 		a.log().Warn("thread map put failed", "room", res.Room, "err", err)
 	}
+	sayMeta(a.filedText(res, user), filedMark)
 	if res.Duplicate {
-		sayMeta("Already filed: "+url, filedMark)
 		return "duplicate"
 	}
-	by := ""
-	if githubLoginRE.MatchString(res.Sponsor) { // named so a wrong link is seen at its first use
-		by = ", sponsored by GitHub @" + res.Sponsor
-	}
-	sayMeta(fmt.Sprintf("Filed #%d for <@%s>%s; the factory starts it. Room: %s", res.Issue, user, by, url), filedMark)
 	return "filed"
 }
 
@@ -800,6 +806,10 @@ func notFiled(refusal, user, repo string) (code, text string, passing bool) {
 		return code, "Not filed: the factory does not take tasks on " + slackText(repo) + " from Slack; ask an operator to add it to the Slack App's repositories.", false
 	case code == "kill_switch":
 		return code, "Not filed: the factory is paused (kill switch); react again once an operator resumes it.", true
+	case code == "plan_changed":
+		// The broker recomposes the plan from the submitted fields and re-hashes it (CD20, CD27): the
+		// message's plan is no longer the one it was asked about, so nothing is filed from it.
+		return code, "Not filed: the plan changed after this was drawn; mention me again to re-plan it.", false
 	case code == "principal_budget_exhausted":
 		return code, "Not filed: the Slack App's budget for today is spent; react again tomorrow.", false
 	case code == "daily_task_cap":
