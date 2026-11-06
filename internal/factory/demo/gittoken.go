@@ -31,10 +31,10 @@ const (
 )
 
 // Permissions is the demo token's scope, in one place: the runs push branches and open pull
-// requests as the factory's own App.
+// requests as the factory's own App. It has no statuses: write: one App backs the factory, the
+// merger and every run, and a run that could post a status could forge the gate's maku/merge-gate.
 func Permissions() map[string]string {
-	return map[string]string{"contents": "write", "pull_requests": "write", "issues": "write",
-		"metadata": "read", "statuses": "write"}
+	return map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read"}
 }
 
 // GitToken keeps the runs' git Secret filled with a fresh installation token minted from the
