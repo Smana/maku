@@ -1670,6 +1670,13 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if r.Merge.PolicyBot != nil && !*r.Merge.PolicyBot && !c.Demo {
 		bad("merge.policyBot: false is the demo's: production gates through policy-bot")
 	}
+	if !r.Merge.UsesPolicyBot() {
+		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
+			if cl := r.Classes[name]; cl.Live && len(cl.AllowedFiles) == 0 {
+				bad("class %s: merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging", name)
+			}
+		}
+	}
 	for _, f := range []struct{ key, value string }{
 		{"merge.policyBotLogin", r.Merge.PolicyBotLogin}, {"merge.mergerLogin", r.Merge.MergerLogin},
 	} {

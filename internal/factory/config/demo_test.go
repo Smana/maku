@@ -159,3 +159,27 @@ func TestDemoOneAppIsTheMerger(t *testing.T) {
 		t.Error("a shadow class needs the merger")
 	}
 }
+
+// Without policy-bot, allowedFiles is what keeps a gate path from merging on a live class.
+func TestDemoPolicyBotFalseNeedsAllowedFilesOnLiveClasses(t *testing.T) {
+	const want = "merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging"
+	for name, c := range map[string]struct{ class, err string }{
+		"live without allowedFiles": {"docs: {live: true}", want},
+		"live with allowedFiles":    {"docs: {live: true, allowedFiles: ['^docs/.*\\.md$']}", ""},
+		"shadow without":            {"docs: {shadow: true}", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(demoGood, "classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}", "classes: {docs-links: {shadow: true}, revert: {shadow: true}, "+c.class, 1)
+			if raw == demoGood {
+				t.Fatal("the edit changed nothing")
+			}
+			_, err := Parse([]byte(raw))
+			switch {
+			case c.err == "" && err != nil:
+				t.Fatal(err)
+			case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
+				t.Fatalf("got %v, want %q", err, c.err)
+			}
+		})
+	}
+}
