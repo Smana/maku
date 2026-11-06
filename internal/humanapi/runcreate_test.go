@@ -5,6 +5,7 @@ package humanapi
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/runrequest"
 )
 
@@ -235,6 +237,150 @@ func (c tokenCheck) CreateTask(ctx context.Context, r runrequest.TaskRequest) (r
 		return runrequest.TaskResult{}, runrequest.ErrForbidden
 	}
 	return c.f.CreateTask(ctx, r)
+}
+
+// CD19, CD27: the plan is the promise, and the four fields the App still sends are checked against it
+// before the factory is asked. Any disagreement between the call and the plan it carries files nothing,
+// and a call that agrees is filed as the plan's own issue.
+func TestRunCreateHoldsTheTaskToItsPlan(t *testing.T) {
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+	plan := planFixture(t, "slack-one-issue") // one issue, $1.50 from the channel
+	ok := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+		"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF",
+		"plan": plan, "plan_hash": intake.Hash(plan)}
+	if got := call(t, e, bearer("slack-app"), "run_create", ok); got.isError {
+		t.Fatalf("%s", got.text)
+	}
+	// What was filed is the plan's own issue: a call that agrees adds nothing to it.
+	if len(f.got) != 1 {
+		t.Fatalf("asked the factory %d times", len(f.got))
+	}
+	if got := f.got[0]; got.Repository != plan.Repository || got.Title != plan.Issues[0].Title ||
+		got.Text != plan.Issues[0].Body || got.MaxCostUSD != plan.Budget.CeilingUSD {
+		t.Fatalf("%+v", got)
+	}
+	for _, c := range []struct {
+		name   string
+		mutate func(map[string]any)
+		want   string
+	}{
+		{"a hash that moved", func(m map[string]any) { m["plan_hash"] = "sha256:" + strings.Repeat("0", 64) }, "plan_changed"},
+		{"another repository", func(m map[string]any) { m["repo"] = "Smana/cloud-native-ref" }, "plan_changed"},
+		{"a body changed", func(m map[string]any) { m["text"] = plan.Issues[0].Body + "\nand more" }, "plan_changed"},
+		{"a title changed", func(m map[string]any) { m["title"] = "docs: another title" }, "plan_changed"},
+		{"a ceiling above it", func(m map[string]any) { m["max_cost"] = 9.0 }, "invalid_arguments"},
+		{"more than one issue", func(m map[string]any) { m["plan"] = planFixture(t, "three") }, "plan_changed"},
+		{"no hash with the plan", func(m map[string]any) { delete(m, "plan_hash") }, "invalid_arguments"},
+		{"a hash that is not one", func(m map[string]any) { m["plan_hash"] = "deadbeef" }, "invalid_arguments"},
+	} {
+		args := maps.Clone(ok)
+		c.mutate(args)
+		if got := call(t, e, bearer("slack-app"), "run_create", args); !got.isError || !strings.Contains(got.text, c.want) {
+			t.Errorf("%s: %s", c.name, got.text)
+		}
+	}
+	// One filing, from the agreeing call alone: every disagreement above stopped before the factory.
+	if len(f.got) != 1 {
+		t.Fatalf("asked the factory %d times", len(f.got))
+	}
+}
+
+// CD3, CD5: the plan is re-validated through the same checks plan_check runs — the requester its guard
+// resolves, the allowlist, the class table — so a plan this broker cannot hold is refused here rather
+// than filed and left to the factory to refuse.
+func TestRunCreateRevalidatesThePlanThroughItsGuard(t *testing.T) {
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+	plan := planFixture(t, "slack-one-issue")
+	ok := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+		"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF",
+		"plan": plan, "plan_hash": intake.Hash(plan)}
+	// A repository the allowlist does not serve, carried by a plan whose hash and fields all agree:
+	// the hash proves the plan is the one the broker made, and the guard is what says this requester
+	// may not file into it.
+	other := plan
+	other.Repository = "Smana/cloud-native-ref"
+	away := maps.Clone(ok)
+	away["repo"], away["plan"], away["plan_hash"] = other.Repository, other, intake.Hash(other)
+	if got := call(t, e, bearer("slack-app"), "run_create", away); !got.isError || !strings.Contains(got.text, "repository_not_allowed") {
+		t.Fatalf("a repository the allowlist does not serve: %s", got.text)
+	}
+	// A plan is re-validated for the Slack user it was planned for: one the link table does not know
+	// names no requester, so nothing about it can be checked.
+	unlinked := maps.Clone(ok)
+	unlinked["on_behalf_of"] = "slack:T09ZZZ/U09ZZZ"
+	if got := call(t, e, bearer("slack-app"), "run_create", unlinked); !got.isError || !strings.Contains(got.text, "not_linked") {
+		t.Fatalf("an unlinked user: %s", got.text)
+	}
+	// The plan is decoded as strictly as plan_check decodes it: a field plan/v1 does not carry is not
+	// an object this broker answered with, and nothing guesses at what it was for.
+	var loose map[string]any
+	b, _ := json.Marshal(plan)
+	if err := json.Unmarshal(b, &loose); err != nil {
+		t.Fatal(err)
+	}
+	loose["approvedBy"] = "someone"
+	strict := maps.Clone(ok)
+	strict["plan"] = loose
+	if got := call(t, e, bearer("slack-app"), "run_create", strict); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		t.Fatalf("a plan with a field of its own: %s", got.text)
+	}
+	if len(f.got) != 0 {
+		t.Fatalf("asked the factory: %+v", f.got)
+	}
+	// A broker whose planner is off made no plan, so it cannot re-validate one: the call is refused
+	// rather than filed on a plan nothing checked. Its switch-off route carries no plan at all.
+	off := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withTaskFactory(f))
+	if got := call(t, off, bearer("slack-app"), "run_create", ok); !got.isError || !strings.Contains(got.text, "planner_unavailable") {
+		t.Fatalf("a broker with no planner: %s", got.text)
+	}
+	if len(f.got) != 0 {
+		t.Fatalf("asked the factory: %+v", f.got)
+	}
+}
+
+// A hash with no plan names nothing to check, and the tool files nothing on half a pair: the plan is
+// the promise, so the call that carries its hash carries the plan. A call carrying neither is the tool
+// it always was — an App that has not been updated sends neither field and keeps working.
+func TestRunCreateRefusesHalfAPlanPair(t *testing.T) {
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+	plan := planFixture(t, "slack-one-issue")
+	fields := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+		"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF"}
+	// Half the pair: a hash with no plan. It is refused, and refused as the arguments' error rather
+	// than as a plan's — there is no plan to say anything about.
+	half := maps.Clone(fields)
+	half["plan_hash"] = intake.Hash(plan)
+	if got := call(t, e, bearer("slack-app"), "run_create", half); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		t.Fatalf("a hash with no plan: %s", got.text)
+	}
+	if len(f.got) != 0 {
+		t.Fatalf("a hash with no plan filed: %+v", f.got)
+	}
+	// Neither field: today's call, filed as it always was.
+	if got := call(t, e, bearer("slack-app"), "run_create", fields); got.isError {
+		t.Fatalf("a call with no plan and no hash: %s", got.text)
+	}
+	if len(f.got) != 1 || f.got[0].Repository != plan.Repository {
+		t.Fatalf("%+v", f.got)
+	}
+}
+
+// A call carrying no plan is the tool it always was: an older App keeps working, and the broker keeps
+// no opinion it cannot check.
+func TestRunCreateWithoutAPlanIsUnchanged(t *testing.T) {
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+	got := call(t, e, bearer("slack-app"), "run_create", map[string]any{"repo": "Smana/ai-native-ref", "title": "docs(x): y",
+		"text": runDraft, "dataClass": "public", "max_cost": 2, "on_behalf_of": "slack:T01ABC/U02DEF"})
+	if got.isError {
+		t.Fatalf("%s", got.text)
+	}
+	if len(f.got) != 1 || f.got[0].Title != "docs(x): y" {
+		t.Fatalf("%+v", f.got)
+	}
 }
 
 // run_create's answer names the sponsor the factory chose, so the Slack App can say who files.

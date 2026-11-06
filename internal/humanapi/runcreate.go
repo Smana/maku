@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/sponsored"
@@ -28,12 +30,16 @@ const maxIdempotencyKey = 128
 
 // runCreateSchema requires max_cost (F4: "refused without max_cost"); additionalProperties false
 // keeps class, tier and auto-merge out (F8). idempotency_key is at most 128, so the key the
-// factory sees, system:<name>:<key>, stays under its 255.
+// factory sees, system:<name>:<key>, stays under its 255. plan and plan_hash are the pair a caller
+// that was shown a plan passes (CD19, CD27): both are optional, so an App without a plan sends the
+// four fields it always sent, and the hash's pattern is plan_check's, interpolated, so a client's copy
+// and the broker's cannot drift.
 var runCreateSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","text","dataClass","max_cost"],` +
 	`"properties":{"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},"title":{"type":"string","maxLength":1024},` +
 	`"text":{"type":"string","minLength":1,"maxLength":16384},"dataClass":{"type":"string","enum":["public"]},"max_cost":{"type":"number","exclusiveMinimum":0},` +
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"},"ref":{"type":"string","maxLength":256},` +
-	`"idempotency_key":{"type":"string","minLength":1,"maxLength":128}}}`)
+	`"idempotency_key":{"type":"string","minLength":1,"maxLength":128},` +
+	`"plan":{"type":"object"},"plan_hash":{"type":"string","pattern":"` + hashRE.String() + `"}}}`)
 
 var onBehalfRE = regexp.MustCompile(`^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$`)
 
@@ -46,13 +52,107 @@ type runCreateArgs struct {
 	OnBehalfOf     string  `json:"on_behalf_of"`
 	Ref            string  `json:"ref"`
 	IdempotencyKey string  `json:"idempotency_key"`
+	// Plan is the plan/v1 the task was confirmed from, and PlanHash the sha256: value the broker
+	// answered beside it: the App's own copy of what intake_plan said, carried from the proposal
+	// message's metadata (CD20). Neither is trusted — checkPlan recomputes the hash over the plan and
+	// re-validates it — and a call carrying neither is the tool it always was.
+	Plan     json.RawMessage `json:"plan"`
+	PlanHash string          `json:"plan_hash"`
+}
+
+// slackFiles is how many issues one run_create call files: a task is one issue's work, and a plan of
+// two or three is filed one call per issue by whoever owns the message (CD19: "Slack can file exactly
+// one").
+const slackFiles = 1
+
+// checkPlan holds a run_create call to the plan it was confirmed from, and the plan itself to the
+// broker that made it (CD19, CD27): the hash is recomputed over the plan the call carries, the four
+// fields the App still sends are checked against the plan's own, and the plan is re-validated through
+// the checks plan_check runs — the requester its guard resolves, the allowlist, the class table and
+// the issue template. Nil means the call may be filed; the existing path below then runs untouched, so
+// what passes is still checked by the one validator.
+//
+// The order is the security property, as it is in plan_check: the hash first, because it is the
+// cheapest and the whole of what plan_changed means — no GitHub read is spent on a plan that is not
+// the one anyone confirmed; then the shape and the money, which cost nothing; then the guard, which
+// asks GitHub; then the contract. The plan is decoded as strictly as plan_check decodes it, so a field
+// outside plan/v1 is refused here for the same reason it is refused there. The one half of plan_check
+// not repeated here is the redactor's, and it is not skipped: the path below runs checkDraft — the
+// template and the redactor both — on the title and body this function has just required to be the
+// plan's.
+func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Principal) *intake.Refusal {
+	var plan intake.Plan
+	if mcpwire.DecodeArgs(a.Plan, &plan) != nil {
+		return argRefusal("plan is the plan/v1 object intake_plan answered with, with no field outside it taken, " +
+			"and plan_hash the value it answered beside it")
+	}
+	if !hashRE.MatchString(a.PlanHash) {
+		return argRefusal("plan is passed with plan_hash, the sha256: value intake_plan answered with")
+	}
+	// The hash over the plan the call carries, never the plan's own claim about itself: a plan edited
+	// after it was shown is not the plan a person confirmed.
+	if intake.Hash(plan) != a.PlanHash {
+		return intake.ReasonRefusal(intake.ReasonPlanChanged)
+	}
+	if len(plan.Issues) != slackFiles {
+		return argRefusal("Slack files exactly one issue: the plan carries " + strconv.Itoa(len(plan.Issues)))
+	}
+	// The four fields the App still sends are the plan's, byte for byte: the hash covers the
+	// repository, the title and the body, so a call that spells any of them differently is a call
+	// about a different task.
+	if issue := plan.Issues[0]; a.Repo != plan.Repository || a.Title != issue.Title || a.Text != issue.Body {
+		return intake.ReasonRefusal(intake.ReasonPlanChanged)
+	}
+	if a.MaxCost > plan.Budget.CeilingUSD {
+		return argRefusal("max_cost is above the plan's ceiling: the plan's work is charged against the ceiling the broker set")
+	}
+	if s.Intake == nil {
+		// A broker whose planner is off made no plan and can re-validate none: the plan came from
+		// somewhere else, and it is refused rather than filed on checks that cannot be made. The
+		// switch-off route carries no plan at all.
+		return intake.ReasonRefusal(intake.ReasonPlannerUnavailable)
+	}
+	if a.OnBehalfOf == "" {
+		// A plan is re-validated for the Slack user it was planned for: without one, nothing says
+		// whose write access the guard should ask about, and the App's own identity is one string for
+		// a whole workspace.
+		return argRefusal("on_behalf_of is required with a plan: it is the Slack user the plan was made for")
+	}
+	_, candidates, ref := s.requester(ctx, p, intakeArgs{
+		Repository: plan.Repository, Candidates: alternativeRepos(plan), OnBehalfOf: a.OnBehalfOf})
+	if ref != nil {
+		return ref
+	}
+	return intake.Check(plan, candidates, s.Intake.Classes)
+}
+
+// argRefusal is one of run_create's argument refusals, in the shape checkPlan answers with: a call
+// whose fields disagree with the plan it carries is the call's own error rather than the planner's, so
+// its reason is the tool error's word for it and its sentence is the line a client reads, once. A
+// plan-level refusal keeps intake's own reason and sentence, which is what makes plan_changed here the
+// same value issue_file reads.
+func argRefusal(sentence string) *intake.Refusal {
+	return &intake.Refusal{Reason: "invalid_arguments", Sentence: "invalid_arguments: " + sentence}
+}
+
+// planPresent is whether the call carries a plan: an older App sends neither field, and a client that
+// sends the pair sends an object.
+func planPresent(raw json.RawMessage) bool {
+	switch strings.TrimSpace(string(raw)) {
+	case "", "null":
+		return false
+	}
+	return true
 }
 
 // createTask asks the factory for an api task with the caller's own token (C4): the factory
-// authenticates it again and decides everything (R4). Only a sponsored principal reaches it. The
-// text passes the broker's redactor whatever it is (C12: the factory has none), a titled draft
-// issue_draft's whole check. The key defaults to the arguments' hash, so a retried call creates
-// one task.
+// authenticates it again and decides everything (R4). Only a sponsored principal reaches it. A call
+// carrying a plan and its hash is held to it before anything else is asked (checkPlan, CD19/CD27), so
+// what is filed is what the person confirmed; a call carrying neither is the tool it always was; and a
+// call carrying only one of the pair is refused as the arguments' error, since a hash with no plan
+// names nothing to check. The text passes the broker's redactor whatever it is (C12: the factory has
+// none), a titled draft issue_draft's whole check. The key defaults to the arguments' hash, so a
+// retried call creates one task.
 func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.RawMessage) (runrequest.TaskResult, error) {
 	if !p.Sponsored {
 		return runrequest.TaskResult{}, toolError("unknown tool: run_create")
@@ -68,6 +168,18 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	}
 	if a.OnBehalfOf != "" && !onBehalfRE.MatchString(a.OnBehalfOf) {
 		return runrequest.TaskResult{}, toolError("invalid_arguments: on_behalf_of is slack:<team>/<user>")
+	}
+	if !planPresent(a.Plan) && a.PlanHash != "" {
+		// Half the pair names nothing to check: a hash is a claim about a plan, and there is no plan
+		// here to hold it to. Refused rather than filed, because a caller that sends the hash meant to
+		// send a plan and silently filing the arguments alone would file what nobody confirmed.
+		return runrequest.TaskResult{}, toolError("invalid_arguments: plan and plan_hash are passed together: " +
+			"a plan_hash with no plan names nothing to check")
+	}
+	if planPresent(a.Plan) {
+		if ref := s.checkPlan(ctx, a, p); ref != nil {
+			return runrequest.TaskResult{}, toolError(ref.Error())
+		}
 	}
 	if a.Title != "" {
 		d, err := s.checkDraft(ctx, a.Title, a.Text)

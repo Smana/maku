@@ -658,7 +658,7 @@ members, which the factory adds when it creates its task's room, with no GitHub 
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `run_create` | `repo`, `text`, `dataClass` (`public`), `max_cost` (USD, above 0), all required; `title?` (files the issue, with the `issue_draft` rules), `on_behalf_of?` (`slack:<team>/<user>`), `ref?`, `idempotency_key?` (at most 128 characters; default a hash of the arguments, so a retried call makes one task) | `{task, room, issue, duplicate, url, sponsor?}`: the factory's answer, the room's page, and the GitHub login that sponsors a new task |
+| `run_create` | `repo`, `text`, `dataClass` (`public`), `max_cost` (USD, above 0), all required; `title?` (files the issue, with the `issue_draft` rules), `on_behalf_of?` (`slack:<team>/<user>`), `ref?`, `idempotency_key?` (at most 128 characters; default a hash of the arguments, so a retried call makes one task); `plan?` (the `plan/v1` the task was confirmed from) with `plan_hash?` (the `sha256:` value the broker answered beside it) — both, or neither | `{task, room, issue, duplicate, url, sponsor?}`: the factory's answer, the room's page, and the GitHub login that sponsors a new task |
 | `slack_link_code` | `team`, `user` (Slack ids), `handle?`, `name?` (display only). Listed only to `human.slackLink.principal`; `team` must be `human.slackLink.teamID` (`wrong_team`) | `{url, expiresAt}`: `<publicURL>/link/slack?code=<code>`, single use, 10 minutes; it replaces the user's earlier code. `too_many_codes` past 1000 waiting ([Slack self-serve link](slack.md#self-serve-link)) |
 | `slack_unlink` | `team`, `user`. Listed only to `human.slackLink.principal` | `{unlinked}`: whether the Slack user had a self-serve link |
 
@@ -666,6 +666,18 @@ Unknown fields are refused: class, tier, template, auto-merge and egress are nev
 The text passes the broker's redactor, then [`POST /v1/tasks`](#post-v1tasks) with the caller's
 own token, which the factory verifies again. A factory refusal comes back as a tool error,
 `rejected: <reason>`.
+
+A call that carries a plan is held to it before any of that, and anything it disagrees with files
+nothing: the broker recomputes the [hash](#the-planner-on-mcp) over the plan (`plan_changed` when it
+does not match `plan_hash`, so a plan edited after it was shown is never filed), refuses a plan that
+does not carry exactly one issue (`invalid_arguments`: Slack files one issue per call, CD19),
+`plan_changed` unless `repo`, `title` and `text` are the plan's own repository, title and body, and
+`invalid_arguments` for a `max_cost` above the plan's ceiling. It then re-validates the plan through
+the same checks `plan_check` runs — the Slack user's GitHub write access, the allowlist, the class
+table and the issue template — so a plan this broker cannot hold is refused here rather than filed and
+left to the factory to refuse. `on_behalf_of` is required with a plan: the plan is re-validated for the
+Slack user it was made for, never for the App's own identity. A call with no plan is the tool it always
+was, which is why an App that has not been updated keeps working.
 
 **`run_create` as a task.** With `2025-11-25`, `run_create` lists `execution.taskSupport: optional`.
 A `tools/call` with `task: {ttl?}` creates the factory task and returns an MCP task whose id is
