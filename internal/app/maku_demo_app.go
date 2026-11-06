@@ -19,10 +19,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Smana/maku/internal/httpx"
@@ -43,6 +45,8 @@ var demoPermissions = map[string]string{
 	"statuses":      "write",
 	"metadata":      "read",
 }
+
+var demoOwnerRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 
 var demoFormPage = template.Must(template.New("form").Parse(`<!doctype html>
 <html><head><meta charset="utf-8"><title>maku demo app</title></head>
@@ -82,6 +86,9 @@ func (r Maku) demo(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if *owner != "" && !demoOwnerRE.MatchString(*owner) {
+		return errors.New("demo app: --owner is not a GitHub organization name")
+	}
 	if len(pos) > 0 || *dir == "" {
 		return errors.New("demo app: --dir is required and nothing else is positional")
 	}
@@ -115,6 +122,7 @@ func (r Maku) demo(ctx context.Context, args []string) error {
 	type result struct{ err error }
 	done := make(chan result, 1)
 	var once sync.Once
+	var used atomic.Bool // the state is good for one callback
 	finish := func(err error) { once.Do(func() { done <- result{err} }) }
 
 	mux := http.NewServeMux()
@@ -134,6 +142,10 @@ func (r Maku) demo(ctx context.Context, args []string) error {
 			http.Error(w, "no code", http.StatusBadRequest)
 			return
 		}
+		if !used.CompareAndSwap(false, true) {
+			http.Error(w, "this callback was already used", http.StatusBadRequest)
+			return
+		}
 		if err := r.demoConvert(req.Context(), *api, code, *dir); err != nil {
 			http.Error(w, "the App could not be created: see the terminal", http.StatusBadGateway)
 			finish(err)
@@ -142,7 +154,15 @@ func (r Maku) demo(ctx context.Context, args []string) error {
 		_, _ = io.WriteString(w, "The App is created. You can close this tab and go back to the terminal.")
 		finish(nil)
 	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	// A request for any other Host is a DNS-rebinding page talking to this loopback port.
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Host != ln.Addr().String() {
+			http.Error(w, "unexpected host", http.StatusMisdirectedRequest)
+			return
+		}
+		mux.ServeHTTP(w, req)
+	})
+	srv := &http.Server{Handler: guarded, ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = srv.Serve(ln) }()
 	defer func() {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -218,6 +238,7 @@ func (r Maku) demoConvert(ctx context.Context, api, code, dir string) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
+	// html_url goes last: it is the marker that the set is complete.
 	for _, f := range []struct{ name, val string }{
 		{"private_key", out.PEM}, {"app_id", strconv.FormatInt(out.ID, 10)},
 		{"slug", out.Slug}, {"html_url", out.HTMLURL},
@@ -229,12 +250,30 @@ func (r Maku) demoConvert(ctx context.Context, api, code, dir string) error {
 	return nil
 }
 
-// writeOwnerOnly writes path with mode 0600 whatever it held before.
-func writeOwnerOnly(path string, b []byte) error {
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+// writeOwnerOnly writes path with mode 0600 through a temporary file renamed over it: a rename replaces a
+// symlink at path rather than following it, and a reader never sees half a file.
+func writeOwnerOnly(path string, b []byte) (err error) {
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o600)
+	defer func() {
+		if err != nil {
+			_ = os.Remove(f.Name())
+		}
+	}()
+	if _, err = f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 func randHex(n int) (string, error) {

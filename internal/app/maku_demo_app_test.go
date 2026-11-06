@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -37,20 +38,26 @@ func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(
 func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 type demoRun struct {
-	out    *syncBuf
-	err    chan error
-	dir    string
-	base   chan string
-	conv   *httptest.Server
-	gotAPI chan string
+	out     *syncBuf
+	err     chan error
+	dir     string
+	base    chan string
+	conv    *httptest.Server
+	gotAPI  chan string
+	entered chan struct{}                 // a conversion signals here when it holds
+	hold    atomic.Pointer[chan struct{}] // when set, a conversion waits for it to close
 }
 
 // startDemo runs `maku demo app` against a fake GitHub API; open reports the page URL.
 func startDemo(t *testing.T, extra ...string) *demoRun {
 	t.Helper()
 	d := &demoRun{out: &syncBuf{}, err: make(chan error, 1), dir: filepath.Join(t.TempDir(), "app"),
-		base: make(chan string, 1), gotAPI: make(chan string, 4)}
+		base: make(chan string, 1), gotAPI: make(chan string, 4), entered: make(chan struct{}, 4)}
 	d.conv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h := d.hold.Load(); h != nil {
+			d.entered <- struct{}{}
+			<-*h
+		}
 		d.gotAPI <- r.Method + " " + r.URL.Path + " auth=" + r.Header.Get("Authorization") + " accept=" + r.Header.Get("Accept")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": 4242, "slug": "maku-demo-x", "pem": demoTestKey,
@@ -145,7 +152,9 @@ func TestDemoAppPersonalAccountAction(t *testing.T) {
 		t.Fatalf("name = %q", m.Name)
 	}
 	d.callback(t, strings.TrimSuffix(m.Redirect, "/callback"), "code=c&state="+u.Query().Get("state"))
-	<-d.err
+	if err := <-d.err; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestDemoAppWrongStateIsRefused(t *testing.T) {
@@ -239,4 +248,135 @@ func (d *demoRun) get(t *testing.T, u string) (*http.Response, error) {
 		t.Fatal(err)
 	}
 	return d.conv.Client().Do(req)
+}
+
+func (d *demoRun) getHost(t *testing.T, u, host string) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, u, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = host
+	resp, err := d.conv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+func TestDemoAppRefusesAForeignHostAndASecondCallback(t *testing.T) {
+	d := startDemo(t)
+	action, manifest := d.page(t)
+	var m struct {
+		Redirect string `json:"redirect_url"`
+	}
+	_ = json.Unmarshal([]byte(manifest), &m)
+	base := strings.TrimSuffix(m.Redirect, "/callback")
+	state := func() string { u, _ := url.Parse(action); return u.Query().Get("state") }()
+	if c := d.getHost(t, base+"/", "evil.example"); c != http.StatusMisdirectedRequest {
+		t.Fatalf("page, foreign host: %d", c)
+	}
+	if c := d.getHost(t, base+"/callback?code=c&state="+state, "evil.example:80"); c != http.StatusMisdirectedRequest {
+		t.Fatalf("callback, foreign host: %d", c)
+	}
+	hold := make(chan struct{})
+	d.hold.Store(&hold)
+	first := make(chan int, 1)
+	go func() { first <- d.callback(t, base, "code=c&state="+state) }()
+	select {
+	case <-d.entered: // the first callback is inside its conversion
+	case <-time.After(5 * time.Second):
+		t.Fatal("the conversion never started")
+	}
+	if c := d.callback(t, base, "code=c2&state="+state); c != http.StatusBadRequest {
+		t.Fatalf("second callback: %d", c)
+	}
+	close(hold)
+	if c := <-first; c != http.StatusOK {
+		t.Fatalf("first callback: %d", c)
+	}
+	if err := <-d.err; err != nil {
+		t.Fatal(err)
+	}
+	if len(d.gotAPI) != 1 {
+		t.Fatalf("conversions = %d", len(d.gotAPI))
+	}
+}
+
+func TestDemoAppWriteReplacesASymlinkAndNarrowsTheDir(t *testing.T) {
+	d := startDemo(t)
+	if err := os.MkdirAll(d.dir, 0o755); err != nil { //nolint:gosec // the test needs a loose dir
+		t.Fatal(err)
+	}
+	if err := os.Chmod(d.dir, 0o755); err != nil { //nolint:gosec // as above
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(d.dir, "private_key")); err != nil {
+		t.Fatal(err)
+	}
+	action, manifest := d.page(t)
+	var m struct {
+		Redirect string `json:"redirect_url"`
+	}
+	_ = json.Unmarshal([]byte(manifest), &m)
+	u, _ := url.Parse(action)
+	d.callback(t, strings.TrimSuffix(m.Redirect, "/callback"), "code=c&state="+u.Query().Get("state"))
+	if err := <-d.err; err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Fatalf("the symlink was followed: %q", b)
+	}
+	fi, err := os.Lstat(filepath.Join(d.dir, "private_key"))
+	if err != nil || fi.Mode()&os.ModeSymlink != 0 || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("private_key: %v, %v", fi, err)
+	}
+	if di, _ := os.Stat(d.dir); di.Mode().Perm() != 0o700 {
+		t.Fatalf("dir mode = %v", di.Mode().Perm())
+	}
+	if ents, _ := filepath.Glob(filepath.Join(d.dir, ".tmp-*")); len(ents) != 0 {
+		t.Fatalf("temp files left: %v", ents)
+	}
+}
+
+func TestDemoAppRefusedConversionLeaksNothing(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = io.WriteString(w, `{"message":"PLANTEDBODY","pem":"PLANTEDPEM"}`)
+	}))
+	defer api.Close()
+	dir := filepath.Join(t.TempDir(), "app")
+	base := make(chan string, 1)
+	out := &syncBuf{}
+	m := Maku{Dir: t.TempDir(), HC: api.Client(), Out: out, Err: io.Discard,
+		Open: func(_ context.Context, u string) { base <- u }, DemoTimeout: 10 * time.Second}
+	errc := make(chan error, 1)
+	go func() {
+		errc <- m.Run(context.Background(), []string{"demo", "app", "--dir", dir, "--api", api.URL})
+	}()
+	d := &demoRun{base: base, conv: api}
+	action, manifest := d.page(t)
+	var mf struct {
+		Redirect string `json:"redirect_url"`
+	}
+	_ = json.Unmarshal([]byte(manifest), &mf)
+	u, _ := url.Parse(action)
+	d.callback(t, strings.TrimSuffix(mf.Redirect, "/callback"), "code=c&state="+u.Query().Get("state"))
+	err := <-errc
+	if err == nil || strings.Contains(err.Error(), "PLANTED") || strings.Contains(out.String(), "PLANTED") {
+		t.Fatalf("err = %v, out = %q", err, out.String())
+	}
+}
+
+func TestDemoAppRejectsABadOwner(t *testing.T) {
+	m := Maku{Dir: t.TempDir(), Out: io.Discard, Err: io.Discard, Open: func(context.Context, string) {}}
+	err := m.Run(context.Background(), []string{"demo", "app", "--dir", t.TempDir(), "--owner", "../evil"})
+	if err == nil || !strings.Contains(err.Error(), "--owner") {
+		t.Fatalf("err = %v", err)
+	}
 }
