@@ -58,9 +58,13 @@ const approvalEventType = "factory_approval"
 // so a thread that lost its map can still tell where the work went. Today's Filed lines carry the
 // repository alone, which is why Room is optional — a decoder that required one would read every
 // Filed line posted so far as a foreign message.
+//
+// Cancelled marks the line a Cancel wrote: the proposal closed without filing anything, so its thread
+// has no room and no question to answer (CD25).
 type MarkerPayload struct {
-	Repo string `json:"repo"`
-	Room string `json:"room,omitempty"`
+	Repo      string `json:"repo"`
+	Room      string `json:"room,omitempty"`
+	Cancelled bool   `json:"cancelled,omitempty"`
 }
 
 // draftPayload decodes the payload as the draft the event type claims; false when it is anything

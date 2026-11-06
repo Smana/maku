@@ -216,11 +216,11 @@ func (a *App) decide(ctx context.Context, in interaction) string {
 		MessageTS: in.MessageTS, ApprovalID: in.ApprovalID, Branch: in.Branch, Decision: in.Decision})
 	if err != nil {
 		a.log().Warn("slack decide failed", "err", err)
-		a.answer(ctx, in, refusalLine("unavailable", in.User, page)) // false is already this outcome
-		return "error"                                               // D7: the store is the fence, so a press that never arrived decided nothing
+		a.answerPress(ctx, in, refusalLine("unavailable", in.User, page)) // false is already this outcome
+		return "error"                                                    // D7: the store is the fence, so a press that never arrived decided nothing
 	}
 	outcome, line := outcomeOf(res.Result), answerLine(res.Result, in.User, page)
-	told := a.answer(ctx, in, line)
+	told := a.answerPress(ctx, in, line)
 	if outcome == "decided" {
 		if err := a.inert(ctx, in, line); err != nil {
 			a.log().Warn("card update failed", "approval", in.ApprovalID, "channel", in.Channel, "err", err)
@@ -248,12 +248,12 @@ func outcomeOf(code string) string {
 	return "refused"
 }
 
-// answer tells the clicker alone, in the card's thread, what became of the press (§6 step 6): one
+// answerPress tells the clicker alone, in the card's thread, what became of the press (§6 step 6): one
 // chat.postEphemeral addressed to the id Slack signed the click with, always, success included. A
 // failed answer is logged and dropped — never retried, never turned into a second press — and its
 // false is the worker's `error`. The card and its thread come from the card path's one read
 // (cardAt), so a press costs Slack one conversations.replies and no more.
-func (a *App) answer(ctx context.Context, in interaction, line string) bool {
+func (a *App) answerPress(ctx context.Context, in interaction, line string) bool {
 	_, thread := a.cardAt(ctx, in.Channel, in.MessageTS)
 	if err := a.Slack.PostEphemeral(ctx, in.Channel, in.User, thread, line); err != nil {
 		a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)

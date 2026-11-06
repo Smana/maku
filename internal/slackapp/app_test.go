@@ -1120,7 +1120,7 @@ func TestWebhookRedeliveryAfterSlackFailure(t *testing.T) {
 	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
 	rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
 	rig.slack.failPosts = 1
-	body := `{"type":"room.run_started","room":"aaaaaaaa"}`
+	body := `{"type":"room.merged","room":"aaaaaaaa","pr":7}` // a transition the default channel posts
 	if st := rig.webhookStatus(body, "signed"); st != 502 {
 		t.Fatalf("%d", st)
 	}
@@ -2211,14 +2211,21 @@ func TestReplyBounds(t *testing.T) {
 			Text:     "Filed #42 for <@U02DEF>; the factory starts it. Room: https://rooms.example/r/26zfnuxm",
 			Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref", Room: "26zfnuxm"})})
 		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
-		if n := len(rig.posts()); n != 0 || len(rig.slack.proposalEdits()) != 0 {
-			t.Fatalf("a filed thread was edited: %+v %+v", rig.posts(), rig.slack.proposalEdits())
+		if n := len(rig.slack.proposalEdits()); n != 0 {
+			t.Fatalf("a filed thread was edited: %+v", rig.slack.proposalEdits())
+		}
+		// CD25: the filed thread is not edited and not re-planned, and a reply that is no question of
+		// the five is answered with where things happen rather than left silent.
+		want := "Progress is in this thread; approvals and steering are on the room page: " +
+			"<https://rooms.example/r/26zfnuxm|the room page>. Ask `status`, `needs me`, `what changed` or `the pull request`."
+		if posts := rig.posts(); len(posts) != 1 || posts[0].text != want || posts[0].meta != nil {
+			t.Fatalf("a filed thread answered %+v, want the one pointer line", posts)
 		}
 		if n := len(rig.broker.intakeCalls()); n != 0 {
 			t.Fatalf("a filed thread planned %d times", n)
 		}
-		if got := rig.metrics.count("events", "ignored"); got != 1 {
-			t.Fatalf("the reply was counted %d times as ignored", got)
+		if got := rig.metrics.count("events", "answered"); got != 1 {
+			t.Fatalf("the answer was counted %d times as answered", got)
 		}
 	})
 
@@ -2544,4 +2551,87 @@ func TestProposalActionsCounted(t *testing.T) {
 			}
 		})
 	}
+}
+
+// CD11: a run starting is not news. A default channel posts nothing for room.run_started and does
+// post for room.waiting_for_human; a channel that lists run_started posts "A run started."; a
+// transition no channel lists is dropped, and the rendering table is untouched for a subscriber
+// that asks for it. A card is the approvals switch's, not a line: a notify list that leaves the wait
+// out still draws it.
+func TestNotifyProjection(t *testing.T) {
+	base := Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2}
+	listed := base
+	listed.Notify = []string{"room.run_started"}
+	for _, tc := range []struct {
+		name    string
+		channel Channel
+		body    string
+		want    string // "" is no post
+		outcome string
+	}{
+		{"a default channel hears no run start", base, `{"type":"room.run_started","room":"aaaaaaaa"}`, "", "ignored"},
+		{"a default channel hears a wait", base, `{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"approval"}`,
+			waitLine, "posted"},
+		{"a channel that lists run_started hears it", listed, `{"type":"room.run_started","room":"aaaaaaaa"}`,
+			"A run started.", "posted"},
+		{"a channel hears nothing it does not list", listed, `{"type":"room.merged","room":"aaaaaaaa","pr":7}`, "", "ignored"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newAppRig(t, tc.channel)
+			rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1729.0001"})
+			rig.webhook(tc.body)
+			posts := rig.posts()
+			if tc.want == "" && len(posts) != 0 {
+				t.Fatalf("posted %+v, want nothing", posts)
+			}
+			if tc.want != "" && (len(posts) != 1 || posts[0].text != tc.want) {
+				t.Fatalf("posted %+v, want %q", posts, tc.want)
+			}
+			if n := rig.metrics.count("webhooks", tc.outcome); n != 1 {
+				t.Fatalf("webhooks/%s counted %d times, want 1", tc.outcome, n)
+			}
+		})
+	}
+
+	t.Run("a channel the config dropped posts nothing", func(t *testing.T) {
+		rig := newAppRig(t, base)
+		rig.threads.put("aaaaaaaa", Thread{Channel: "C99", TS: "1729.0001"})
+		rig.webhook(`{"type":"room.waiting_for_human","room":"aaaaaaaa","reason":"approval"}`)
+		if n := len(rig.posts()); n != 0 {
+			t.Fatalf("%d posts in a channel no longer served", n)
+		}
+		if n := rig.metrics.count("webhooks", "ignored"); n != 1 {
+			t.Fatalf("webhooks/ignored counted %d times, want 1: a dropped channel is not an error the broker retries", n)
+		}
+	})
+
+	t.Run("a card closes whatever the notify list says", func(t *testing.T) {
+		ch := liveCardChannel()
+		ch.Notify = []string{"room.merged"}
+		rig := newAppRig(t, ch)
+		rig.threads.put(cardRoom, Thread{Channel: "C03", TS: pressThread})
+		seedCard(t, rig, cardTS, cardApprovalID)
+		rig.webhook(closeBody("approved"))
+		if u := rig.slack.updatesMade(); len(u) != 1 || u[0].ts != cardTS {
+			t.Fatalf("the close updated %+v, want the card made inert: a live card past its decision", u)
+		}
+	})
+
+	t.Run("a card ignores the notify list", func(t *testing.T) {
+		ch := liveCardChannel()
+		ch.Notify = []string{"room.merged"}
+		rig := newAppRig(t, ch)
+		rig.threads.put(cardRoom, Thread{Channel: "C03", TS: pressThread})
+		rig.webhook(waitBody(nil))
+		if p := rig.posts(); len(p) != 1 || p[0].blocks == nil {
+			t.Fatalf("posted %+v, want the forge.push card", p)
+		}
+	})
+
+	t.Run("the table keeps run_started for a subscriber that asks", func(t *testing.T) {
+		rig := newAppRig(t, base)
+		if line, ok := rig.app.line(webhook.Event{Type: "room.run_started", Room: "aaaaaaaa"}); !ok || line != "A run started." {
+			t.Fatalf("line(run_started) = %q, %v", line, ok)
+		}
+	})
 }

@@ -8,9 +8,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/Smana/maku/internal/webhook"
 )
 
 // minMaxCost is the factory's floor: it refuses a max_cost under one cent.
@@ -48,13 +51,29 @@ type Proposals struct {
 }
 
 // Channel is a channel the App serves: the repositories a draft there may name, the max_cost a ✅
-// there sends, and whether its forge.push approvals are drawn as a card.
+// there sends, whether its forge.push approvals are drawn as a card, and which webhook transitions
+// post a line there (CD11, CD24 — declared once in ai-native-ref's slack-bindings.yaml).
 type Channel struct {
 	Repositories []string `json:"repositories"`
 	MaxCostUSD   float64  `json:"maxCostUSD"`
 	// Approvals draws this channel's forge.push approvals as a card with two buttons (v3.x Slack push
 	// approval D14). Off, the thread keeps today's line and a press answers not_enabled.
 	Approvals bool `json:"approvals,omitempty"`
+	// Notify is which webhook transitions post a line in this channel (CD11). Absent means
+	// webhook.Notify() — the nine a person is told about; an explicit empty list means none, which
+	// is a choice, not an omission.
+	Notify []string `json:"notify,omitempty"`
+}
+
+// notifies reports whether t posts a line in this channel. nil and empty are different answers: nil
+// is a deployment that said nothing (the nine webhook.Notify() names), empty is a channel where
+// nothing is news. Validation reads the decoded slice, so a declared list is checked, never the
+// default.
+func (c Channel) notifies(t string) bool {
+	if c.Notify != nil {
+		return slices.Contains(c.Notify, t)
+	}
+	return slices.Contains(webhook.Notify(), t)
 }
 
 // LoadConfig reads, strictly decodes, defaults and validates the file at path.
@@ -117,6 +136,26 @@ func (c Config) validate() error {
 		}
 		if ch.MaxCostUSD < minMaxCost {
 			errs = append(errs, fmt.Errorf("channels.%s: maxCostUSD %v is below %v", id, ch.MaxCostUSD, minMaxCost))
+		}
+		// CD11: a notify list is a closed vocabulary, and a name given twice is a generated
+		// declaration that disagrees with itself: both are refused here, not at the renderer.
+		notified := make(map[string]struct{}, len(ch.Notify))
+		for _, typ := range ch.Notify {
+			if !slices.Contains(webhook.Types(), typ) {
+				errs = append(errs, fmt.Errorf("channels.%s: notify %q is not a webhook event", id, typ))
+				continue
+			}
+			// A type the App draws no line for (room.task_received, room.run_ended,
+			// room.monitor_verdict) would be accepted and never post: line is the one table of what
+			// renders, so it is asked rather than copied here.
+			if _, renders := (&App{}).line(webhook.Event{Type: typ}); !renders {
+				errs = append(errs, fmt.Errorf("channels.%s: notify %q has no line the App posts", id, typ))
+				continue
+			}
+			if _, twice := notified[typ]; twice {
+				errs = append(errs, fmt.Errorf("channels.%s: notify lists %q more than once", id, typ))
+			}
+			notified[typ] = struct{}{}
 		}
 	}
 	return errors.Join(errs...)

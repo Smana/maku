@@ -701,6 +701,22 @@ func (a *App) threadRoom(msgs []Message) string {
 	return room
 }
 
+// threadCancelled reports whether the thread's newest marker of the App's is a Cancel's: the
+// proposal closed without filing, so the thread answers nothing (CD25).
+func (a *App) threadCancelled(msgs []Message) bool {
+	cancelled := false
+	for i := range msgs {
+		m := &msgs[i]
+		if m.User == "" || m.User != a.BotUserID || m.Metadata == nil {
+			continue
+		}
+		if mark, ok := m.Metadata.markerPayload(); ok {
+			cancelled = mark.Cancelled
+		}
+	}
+	return cancelled
+}
+
 // notProposed is an intake_plan refusal as the thread says it: one fixed line per reason of intake's
 // closed list, and for the two a person can act on by asking an operator, the repositories this
 // channel serves. passing marks the reasons whose fix is to mention again — an outage, not a decision

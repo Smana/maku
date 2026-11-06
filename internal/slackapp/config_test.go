@@ -5,8 +5,11 @@ package slackapp
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Smana/maku/internal/webhook"
 )
 
 const goodConfig = `
@@ -24,12 +27,14 @@ channels:
     maxCostUSD: 2
 `
 
-// withApprovals is goodConfig with line inserted as the C03 channel's first key; the empty string
-// is the key absent. A goodConfig that stopped matching would leave the key out, and the true
-// case below would fail rather than silently pass.
-func withApprovals(line string) string {
+// withChannelKey is goodConfig with line inserted as the C03 channel's first key. A goodConfig that
+// stopped matching would leave the key out, and every case built on it would test nothing.
+func withChannelKey(line string) string {
 	return strings.Replace(goodConfig, "channels:\n  C03:\n", "channels:\n  C03:\n"+line, 1)
 }
+
+// withApprovals is withChannelKey for the D14 switch; the empty string is the key absent.
+func withApprovals(line string) string { return withChannelKey(line) }
 
 // D14: who gets the affordance is a per-channel switch, false when absent; an unknown key is still
 // refused, so an older App refuses a config that asks for cards rather than ignoring it.
@@ -113,6 +118,69 @@ func loadConfigText(t *testing.T, text string) (Config, error) {
 		t.Fatal(err)
 	}
 	return LoadConfig(p)
+}
+
+// CD11 and CD24: a channel's notify list is which transitions post a line there. Absent means
+// webhook.Notify() (the nine); an explicit empty list means none, which is a choice, not an
+// omission. An unknown name and a name given twice are refused, so a generated declaration fails
+// here rather than silently posting nothing.
+func TestLoadNotify(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		line   string   // the C03 channel's first key; "" is the key absent
+		want   []string // the transitions that answer true; nil means "the default table"
+		errHas []string // every substring the error must carry
+	}{
+		{name: "absent, the default is the meaningful table", line: ""},
+		{name: "two of them", line: "    notify: [room.waiting_for_human, room.approval_closed]\n",
+			want: []string{"room.waiting_for_human", "room.approval_closed"}},
+		{name: "empty is none, not the default", line: "    notify: []\n", want: []string{}},
+		{name: "an unknown transition", line: "    notify: [nope]\n", errHas: []string{"nope", "C03"}},
+		{name: "the same transition twice", line: "    notify: [room.waiting_for_human, room.waiting_for_human]\n",
+			errHas: []string{"room.waiting_for_human", "C03", "more than once"}},
+		{name: "not a list", line: "    notify: room.merged\n", errHas: []string{"notify"}},
+		{name: "a transition the App draws no line for", line: "    notify: [room.monitor_verdict]\n",
+			errHas: []string{"room.monitor_verdict", "C03", "no line"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadConfigText(t, withChannelKey(tc.line))
+			if len(tc.errHas) > 0 {
+				if err == nil {
+					t.Fatalf("accepted, want an error naming %q", tc.errHas)
+				}
+				for _, want := range tc.errHas {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("error %q does not name %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch := c.Channels["C03"]
+			if tc.want == nil {
+				// The default is webhook.Meaningful's table, per type: a local list that drifted
+				// from it would fail here rather than at the renderer.
+				for _, typ := range webhook.Types() {
+					if got, want := ch.notifies(typ), webhook.Meaningful(typ); got != want {
+						t.Errorf("notifies(%q) = %v, want %v: absent must be the meaningful table", typ, got, want)
+					}
+				}
+				// The two anchors the design names, whichever way the table is spelled.
+				if ch.notifies("room.run_started") || !ch.notifies("room.task_triaged") {
+					t.Fatalf("absent: notifies(room.task_triaged) = %v, notifies(room.run_started) = %v",
+						ch.notifies("room.task_triaged"), ch.notifies("room.run_started"))
+				}
+				return
+			}
+			for _, typ := range webhook.Types() {
+				if got, want := ch.notifies(typ), slices.Contains(tc.want, typ); got != want {
+					t.Errorf("notifies(%q) = %v, want %v", typ, got, want)
+				}
+			}
+		})
+	}
 }
 
 // The App's config is strict like the broker's: no channel, a sub-cent max_cost (the factory
