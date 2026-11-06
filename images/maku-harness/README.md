@@ -25,6 +25,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | `AGENT_CHECKS` | `1`: the toolchain installs in the background after the clone, the rules gain the repository-checks rule, and a `finished` implementer run checks its head, notes the result in the room and emits the span `agent-run.checks` | today's run |
 | `AGENT_RUN_SECONDS` | the pod's deadline: the final checks are skipped (`skipped: deadline`) when less than the declaration's budget plus 2 min is left | the final checks always run |
 | `AGENT_LOOP` | an implementer runs under the [loop policy](#loop-policy): a JSON object holding any of `stallSteps`, `continuations` and `judgeModel`; `{}` is 80, 2 and `tier-light` | no judge and no stall rule: the run ends when its conversation does |
+| `JUDGE_BASE_URL` | the judge posts to `$JUDGE_BASE_URL/chat/completions` with `JUDGE_MODEL` as its model (required: without it the judge is unavailable and says so on stderr), on the key `LLM_API_KEY_FILE` names; for a runtime with no identity proxy (maku-run-controller) | the identity proxy's `/judge/v1`, as below |
 | `AGENT_SEARCH` | `1`: an implementer gets the `search` tool and its rule, once `agent_search` imports (else `agent-run: search off: …` and a run as today); the ledger's tool calls join the step count the loop policy's stall rule reads, and `agent-run search: N calls, S steps, T tokens, outcomes …` closes the log | no search tool |
 
 ## Loop policy
