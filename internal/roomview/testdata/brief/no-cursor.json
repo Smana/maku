@@ -1,0 +1,82 @@
+{
+  "room": "26zfnuxm",
+  "roomURL": "https://rooms.example/r/26zfnuxm",
+  "issue": {
+    "number": 2238,
+    "url": "https://github.com/Smana/ai-native-ref/issues/2238",
+    "title": "docs: the install link points at a moved page"
+  },
+  "pr": {
+    "number": 2239,
+    "url": "https://github.com/Smana/ai-native-ref/pull/2239"
+  },
+  "facts": {
+    "phase": "AwaitingHuman",
+    "reason": "ci_wait_expired",
+    "pr": {
+      "number": 2239,
+      "url": "https://github.com/Smana/ai-native-ref/pull/2239"
+    }
+  },
+  "plan": {
+    "source": "scope",
+    "ceilingMicroUSD": 2000000,
+    "ceilingSource": "class"
+  },
+  "scope": {
+    "state": "ready",
+    "task": "the README's install link points at a page that moved",
+    "touches": ["README.md"],
+    "plan": ["read where the link points today", "point it at the published page"],
+    "acceptance": [
+      {
+        "check": "README.md's install link returns 200",
+        "proves": "the link a reader clicks works"
+      }
+    ]
+  },
+  "changed": {
+    "room": "26zfnuxm",
+    "url": "https://rooms.example/r/26zfnuxm",
+    "untrusted": true,
+    "items": [
+      {
+        "seq": 41,
+        "at": "2026-11-04T18:31:00Z",
+        "kind": "run_started",
+        "run": "cf4ato2x",
+        "role": "implementer",
+        "text": "the reviewer requested changes → implementer started"
+      },
+      {
+        "seq": 44,
+        "at": "2026-11-04T18:52:00Z",
+        "kind": "run_ended",
+        "run": "cf4ato2x",
+        "role": "implementer",
+        "text": "CI `links` failed"
+      },
+      {
+        "seq": 47,
+        "at": "2026-11-04T19:04:00Z",
+        "kind": "run_started",
+        "run": "cf4ato2x",
+        "role": "implementer",
+        "text": "the implementer pushed a fix; CI is running"
+      }
+    ]
+  },
+  "blocker": {
+    "kind": "failed_check",
+    "id": "2239",
+    "what": "a check it waits on never reported within merge.awaitingCIFor",
+    "url": "https://github.com/Smana/ai-native-ref/pull/2239",
+    "pr": 2239,
+    "action": {
+      "kind": "retry",
+      "label": "read the failing check, then `/factory retry`",
+      "url": "https://github.com/Smana/ai-native-ref/pull/2239"
+    }
+  },
+  "now": "2026-11-05T10:20:00Z"
+}

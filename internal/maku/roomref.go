@@ -26,8 +26,11 @@ var refRE = regexp.MustCompile(`(?i)^(pr|pull request|pull)?\s*#?\s*([1-9][0-9]{
 const refHint = "the room's id, #<issue>, PR #<n>, a bare number (asked about when it is an issue in one room and a PR in another) or a fragment of its title"
 
 // roomRefTools are the broker tools whose `room` the relay resolves; room_wait and room_checkout
-// resolve their own, as local tools.
-var roomRefTools = map[string]bool{"room_summary": true, mcpwire.RoomChanges: true, "room_queue": true, "room_tail": true, "room_fork": true}
+// resolve their own, as local tools. room_brief is one of them (CD11): the resume prompt, the
+// `/factory resume` short command and the docs hand it `#<issue>`, a `PR #<n>`, a bare number or a
+// title fragment, and it is resolved here so the broker is asked about a room id.
+var roomRefTools = map[string]bool{"room_summary": true, mcpwire.RoomChanges: true, "room_queue": true,
+	"room_tail": true, "room_fork": true, "room_brief": true}
 
 // minFragment is the shortest title fragment that names a room.
 const minFragment = 3

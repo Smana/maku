@@ -1,0 +1,66 @@
+{
+  "room": "3kq7x2ma",
+  "roomURL": "https://rooms.example/r/3kq7x2ma",
+  "issue": {
+    "number": 2241,
+    "url": "https://evil.example/issues/2241",
+    "title": "docs: fix the [install] link <b>a|b</b>\u202e x\u001b[31m"
+  },
+  "pr": {
+    "number": 2242,
+    "url": "https://rooms.example/admin"
+  },
+  "facts": {
+    "phase": "AwaitingHuman",
+    "reason": "ci_wait_expired",
+    "pr": {
+      "number": 2242,
+      "url": "https://rooms.example/admin"
+    }
+  },
+  "plan": {
+    "source": "proposal",
+    "rev": 3,
+    "hash": "9f2c1e4\u202e",
+    "class": "approve-to-merge",
+    "ceilingMicroUSD": 1500000,
+    "ceilingSource": "repository"
+  },
+  "since": "2026-11-05T11:00:00Z",
+  "changed": {
+    "room": "3kq7x2ma",
+    "url": "https://rooms.example/r/3kq7x2ma",
+    "untrusted": true,
+    "items": [
+      {
+        "seq": 12,
+        "at": "2026-11-04T23:40:00Z",
+        "kind": "note",
+        "run": "cf4ato2x",
+        "role": "implementer",
+        "text": "CI `links` failed on the [old] page\u202e — see a|b"
+      },
+      {
+        "seq": 15,
+        "at": "2026-11-05T11:05:00Z",
+        "kind": "handoff",
+        "run": "cf4ato2x",
+        "role": "reviewer → implementer",
+        "text": "asked for [the] change\u202e"
+      }
+    ]
+  },
+  "blocker": {
+    "kind": "failed_check",
+    "id": "2242",
+    "what": "the check [links] <b>never ran | a\u202eb\u001b[31m",
+    "url": "https://github.com/Smana/ai-native-ref/pull/2242",
+    "pr": 2242,
+    "action": {
+      "kind": "retry",
+      "label": "read the failing check, then `/factory retry`",
+      "url": "https://evil.example/pull/2242"
+    }
+  },
+  "now": "2026-11-05T12:00:00Z"
+}

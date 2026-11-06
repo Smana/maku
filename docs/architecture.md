@@ -354,7 +354,8 @@ Every image is multi-arch (`linux/amd64`, `linux/arm64`). The Go ones are static
 maku configure --url https://rooms.<domain>                       # the broker serves the issuer and ids; maku doctor checks VPN, CA, login, GitHub
 maku login                                                        # device flow, in any browser
 maku rooms --needs-me                                             # issue, title, task, PR per room; --repo, --mine, --json
-maku status 3kq7x2ma                                              # phase, needs you, notes; --json, --after seq:N
+maku needs                                                        # what needs you across rooms, in one order; --since, --room, --repo
+maku status 3kq7x2ma                                              # the brief's head, then the card; --json, --after seq:N
 maku watch 3kq7x2ma
 maku post 3kq7x2ma --queue "address L42"
 maku fork 3kq7x2ma --at 42 --role implementer --egress pypi --note "try uv"

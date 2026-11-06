@@ -348,6 +348,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /`, `GET /r/{id}`, `GET /assets/{file...}` | The embedded UI, under a strict Content Security Policy. `/assets/` serves nested files (`/assets/svg/…`, `/assets/fonts/…`); a directory, `/assets` or `/assets/` is a `404`, never a listing. A room's page keeps its newest 5 000 events; older ones leave the page, never the log. A `401` from the API, or one behind a refused WebSocket upgrade, sends the page to `/oauth2/start?rd=<the page>` |
 | `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no GitHub link on their ZITADEL user), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
+| `GET /api/rooms/{id}/brief` | The room's resume brief: [`brief/v1`](#get-apiroomsidbrief), the text `room_brief` returns and the cursor to ask from next |
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
 | `GET /api/needs` | What needs the caller, across every room they may read: [`needs/v1`](#get-apineeds), in the one order, with the cursor to ask from next. Served while `human.needs.enabled` (the default); off, `404`, and `needs_list` is not listed either |
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
@@ -386,6 +387,34 @@ keeps only the notes after `seq` N; pass back the number of the previous answer'
 
 A sealed room has no `reason`, `next`, `needsYou` or `actions`. A fork's summary starts at its `forked_from`: the
 source's task, approvals, verdict and notes are not the fork's.
+
+### `GET /api/rooms/{id}/brief`
+
+The room's resume brief: what the work was asked for, the acceptance checks it runs under, what changed
+since a cursor, the one need that blocks it and the one next step. It is fixed prose over quoted data
+(CD11): every line is a statement, the thing to do is a link the broker built, and nothing here decides
+anything. Same log and same cursor, same text. It is a room read like the summary: the same room access,
+role check and read budget. `room_brief` serves the same envelope over `/mcp`, so an agent resuming a
+session reads what a person reads.
+
+| Param | Holds |
+|---|---|
+| `since` | `seq:N`, the `cursor` of the last brief, or an RFC 3339 instant: only what moved after it. Without one, the last 24 hours, as `room_changes` reads without a cursor. A malformed `since`, or one in the future, is `400`: it is neither everything nor nothing |
+
+| Field | Holds |
+|---|---|
+| `apiVersion` | `brief/v1`, the envelope both doors serve. A client reads `text`; `maku status` takes the tool's `text` as it is and never inspects this field |
+| `room` | The room id |
+| `text` | The brief, Markdown: `Resume:` and the room, with the issue and its title when it has one; `Asked:`; `Acceptance:`, each check of the last handoff's scope in a code span; `Plan:`; `Changed since …`, at most 20 milestones with the rest counted; `Blocked on:`; `Fix:`, one line naming the cause, and only when the broker has one — the fix table lands behind `brief.ciEvidence`, so a brief carries none today; the one `Next:` step with its action link; `Links:`. A section whose data is absent is left out. The agents' words are quoted, never an instruction |
+| `cursor` | `seq:N`, the last event the changed block covered: pass it back as `since` |
+
+| Status | When |
+|---|---|
+| `200` | The brief |
+| `400` | `since` is neither `seq:N` nor an RFC 3339 instant, or is in the future |
+| `404` | No such room, or one the caller may not read: the same `no such room` |
+| `429` | `rate_limited`: over the caller's read budget (10/s, burst 20, per replica), shared with `GET /api/rooms` |
+| `503` | `access_unverified`: ZITADEL or GitHub cannot confirm the caller's access past the cache; or the rooms or the log are unavailable. Retry |
 
 ### `GET /api/rooms/{id}/events`
 
@@ -584,11 +613,19 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `needs_list` | any member; a sponsored principal, the rooms it watches | `since?`, `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. Listed only while `human.needs.enabled` serves the route. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page |
 | `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, the one question to ask first, `canStart`. One public-text-only model call; it files nothing ([the planner](#the-planner-on-mcp)) |
 | `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, `on_behalf_of?` | The plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
+| `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
 
-The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
+The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`, `room_brief`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
 
-`prompts/list` and `prompts/get` serve the prompts `handoff` (`what`), `plan` (`what`), `status` (`room`) and `inbox`: canned
-messages the client offers as slash commands. A sponsored principal's list is empty. The prompts start nothing and compose nothing: `handoff` passes the developer's words and the session's context to `intake_plan` and then files through `issue_file`, and `plan` stops after showing what the planner answered.
+`prompts/list` and `prompts/get` serve the prompts `handoff` (`what`), `plan` (`what`), `status`
+(`room`), `resume` (`room`) and `inbox`: canned messages the client offers as slash commands. A
+sponsored principal's list is empty. The prompts start nothing and compose nothing: `handoff` passes
+the developer's words and the session's context to `intake_plan` and then files through `issue_file`,
+and `plan` stops after showing what the planner answered. `resume` is one call to the needs list, then
+`room_brief` of the room it names first — or of the room the developer passed — so a session starts
+from the brief rather than from a search of the log, and never claims a room exists before
+`room_brief` shows it. `inbox` is one `needs_list` call: when its list is empty it says so in one line
+and names `rooms_list` with `mine`, rather than making a second call.
 
 No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
 the CLI's ZITADEL client (formerly `roomctl`): the [actions](#actions)' rules, limits and rejections apply. Arguments are

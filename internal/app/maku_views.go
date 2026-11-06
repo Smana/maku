@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/Smana/maku/internal/maku"
@@ -28,6 +29,27 @@ func viewFormat(w io.Writer, name string) (roomview.Format, error) {
 		return roomview.Text, nil
 	}
 	return 0, fmt.Errorf("--format %q: md or text", name)
+}
+
+// briefHead is the brief's head for room, printed above the card (CD11): `maku status` leads with the lines
+// that say where the task stands, and the card follows. A broker that serves no room_brief leaves the card
+// alone — an older broker is not a failure of `maku status`, as it is not one of `maku changes` — and a brief
+// that fails for another reason says so in one line on stderr, because the card is still the answer the
+// developer asked for.
+func (r Maku) briefHead(ctx context.Context, c maku.Client, room string) (head string) {
+	text, err := c.Brief(ctx, room, "")
+	switch {
+	case errors.Is(err, maku.ErrUnknownTool):
+		return ""
+	case err != nil:
+		w := r.Err
+		if w == nil {
+			w = os.Stderr
+		}
+		_, _ = fmt.Fprintf(w, "the room's brief is unavailable: %s\n", maku.OneLine(err.Error()))
+		return ""
+	}
+	return maku.BriefHead(text)
 }
 
 const changesUsage = "changes <room> [--cursor seq:N] [--format md|text] [--json]"

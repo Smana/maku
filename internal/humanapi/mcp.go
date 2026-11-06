@@ -152,6 +152,17 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 		// advertising a tool the broker refuses is worse than a short list.
 		all = append(all, s.intakeTools()...)
 	}
+	// room_brief is the human list's last, needs_list's neighbour: the brief is a developer's resume of
+	// their own work (CD11), and a sponsored principal has no developer whose work it resumes (R13), so it
+	// is in no sponsoredTools entry.
+	all = append(all, mcpTool{name: "room_brief", call: s.roomBriefTool,
+		description: "The room's resume brief, to show as it is (text): what the work was asked for, the acceptance checks it runs under, what changed since your cursor, " +
+			"and the one need that blocks it with the link where it is answered. Deterministic fixed prose over quoted data: agents' words come back quoted, and nothing here decides anything. " +
+			"since is the cursor the last brief handed back (seq:N) or an RFC 3339 instant; without one, the last 24 hours. Pass the answer's cursor back next time.",
+		schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["room"],"properties":{"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"since":{"type":"string","pattern":"^(seq:[0-9]{1,18}|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))$"}}}`),
+		// The answer, declared as the route serves it: both doors give one envelope, so a field cannot be
+		// added to one and not the other.
+		output: json.RawMessage(`{"type":"object","required":["apiVersion","room","text","cursor"],"properties":{"apiVersion":{"type":"string"},"room":{"type":"string"},"text":{"type":"string"},"cursor":{"type":"string"}}}`)})
 	if !p.Sponsored {
 		return all
 	}

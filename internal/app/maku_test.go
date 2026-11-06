@@ -330,6 +330,117 @@ func TestMakuStatusFormat(t *testing.T) {
 	}
 }
 
+// rig is a configured maku over a fake broker that also serves room_brief: the two reads `maku status`
+// makes.
+type rig struct {
+	Maku
+	broker *makuBroker
+}
+
+// makuRig is a configured, logged-in maku and the fake broker behind it.
+func makuRig(t *testing.T) (*rig, *strings.Builder) {
+	t.Helper()
+	b := newMakuBroker(t)
+	m, out := configured(t, b)
+	return &rig{Maku: m, broker: b}, out
+}
+
+// stderr is what maku wrote to its hint stream so far.
+func (r *rig) stderr() string { return r.Err.(*strings.Builder).String() }
+
+// servesBrief makes the broker answer room_brief with text, as the tool hands it over: the rendered brief in
+// the result's text.
+func (r *rig) servesBrief(text string) {
+	r.broker.tool = func(name string, _ map[string]any) string {
+		if name != "room_brief" {
+			return `"error":{"code":-32602,"message":"unknown tool: ` + name + `"}`
+		}
+		return briefAnswer(text, "seq:142")
+	}
+}
+
+// briefAnswer is room_brief's result: the brief's text, as the tool's text and inside its envelope.
+func briefAnswer(text, cursor string) string {
+	quoted, _ := json.Marshal(text)
+	return `"result":{"content":[{"type":"text","text":` + string(quoted) + `}],"structuredContent":{"apiVersion":"brief/v1",` +
+		`"room":"26zfnuxm","text":` + string(quoted) + `,"cursor":"` + cursor + `"}}`
+}
+
+// briefText is a brief of the room the fake broker serves: five section lines, then one that the head leaves
+// to the full brief (Links).
+const briefText = "**Resume: 26zfnuxm · #2238 docs: the install link points at a moved page**\n\n" +
+	"Asked: #2238, the install link points at a moved page\n" +
+	"Plan: scope ready · budget $2.00 ceiling\n" +
+	"Blocked on: `failed_check` — the docs link check fails on the install page\n" +
+	"Next: read the failing check → https://github.com/Smana/a/pull/2238\n" +
+	"Links: room https://rooms.example/r/26zfnuxm\n"
+
+// CD11: maku status leads with the brief's head — the lines that say where the task stands — and the room's
+// card follows unchanged. A broker that serves no room_brief, and one whose brief fails for another reason,
+// still print the card: it is what the developer asked for.
+func TestStatusLeadsWithTheBrief(t *testing.T) {
+	const head = "**Resume: 26zfnuxm · #2238 docs: the install link points at a moved page**\n" +
+		"Asked: #2238, the install link points at a moved page\n" +
+		"Plan: scope ready · budget $2.00 ceiling\n" +
+		"Blocked on: `failed_check` — the docs link check fails on the install page\n" +
+		"Next: read the failing check → https://github.com/Smana/a/pull/2238\n"
+	t.Run("a broker that serves room_brief", func(t *testing.T) {
+		r, out := makuRig(t)
+		r.servesBrief(briefText)
+		if err := r.Run(t.Context(), []string{"status", "26zfnuxm"}); err != nil {
+			t.Fatal(err)
+		}
+		got := out.String()
+		lines := strings.Split(got, "\n")
+		if len(lines) < 8 || strings.Join(lines[:5], "\n")+"\n" != head || lines[5] != "" {
+			t.Fatalf("the head is not the brief's first section lines above the card:\n%s", got)
+		}
+		if strings.Contains(strings.Join(lines[:5], "\n"), "Links:") || strings.ContainsRune(strings.Join(lines[:5], "\n"), 0x1b) {
+			t.Fatalf("the head carries a line the full brief owns, or an escape: %q", lines[:5])
+		}
+		// The card follows, cursor last, as it did before the head existed.
+		if !strings.Contains(got, "hi[2J") || !strings.HasSuffix(got, "\ncursor: seq:142\n") {
+			t.Fatalf("the card does not follow the head:\n%s", got)
+		}
+		if len(r.broker.calls) != 1 || r.broker.calls[0]["room"] != "26zfnuxm" {
+			t.Fatalf("room_brief's arguments: %v", r.broker.calls)
+		}
+	})
+	t.Run("an older broker", func(t *testing.T) {
+		r, out := makuRig(t)
+		r.broker.tool = func(string, map[string]any) string {
+			return `"error":{"code":-32602,"message":"unknown tool: room_brief"}`
+		}
+		before := r.stderr()
+		if err := r.Run(t.Context(), []string{"status", "26zfnuxm"}); err != nil {
+			t.Fatalf("an older broker is no failure: %v", err)
+		}
+		if strings.Contains(out.String(), "Resume:") || !strings.Contains(out.String(), "hi[2J") {
+			t.Fatalf("the card alone:\n%s", out)
+		}
+		if msg := r.stderr(); msg != before {
+			t.Fatalf("a broker without room_brief says nothing: %q", strings.TrimPrefix(msg, before))
+		}
+	})
+	t.Run("a brief that fails for another reason", func(t *testing.T) {
+		r, out := makuRig(t)
+		r.broker.tool = func(string, map[string]any) string {
+			return `"error":{"code":-32603,"message":"log_unreadable"}`
+		}
+		before := r.stderr()
+		if err := r.Run(t.Context(), []string{"status", "26zfnuxm"}); err != nil {
+			t.Fatalf("the card prints anyway: %v", err)
+		}
+		if !strings.Contains(out.String(), "hi[2J") {
+			t.Fatalf("the card:\n%s", out)
+		}
+		// One line says why the head is missing, naming the tool the broker refused.
+		if msg := strings.TrimPrefix(r.stderr(), before); !strings.Contains(msg, "room_brief") || strings.Count(msg, "\n") != 1 {
+			t.Fatalf("no one-line reason: %q", msg)
+		}
+	})
+}
+
 // --after takes the summary's cursor as printed, seq:N, or the bare seq.
 func TestMakuStatusAfterTakesTheCursor(t *testing.T) {
 	b := newMakuBroker(t)
