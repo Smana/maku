@@ -12,6 +12,10 @@ demo_state_mark() {
   demo_state_done "$1" "$2" || printf '%s\n' "$2" >>"$1/state"
 }
 
+# demo_bool VALUE: print VALUE when it is exactly true or false, else nothing (an API error body, a
+# 404 page, an empty answer all mean "unknown").
+demo_bool() { [[ $1 == true || $1 == false ]] && printf '%s' "$1"; return 0; }
+
 # demo_env_load FILE VAR...: export each VAR the environment leaves unset from FILE (.env), so every
 # variable task demo documents can live there; the environment still wins.
 demo_env_load() {

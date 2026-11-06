@@ -28,6 +28,12 @@ EMPTY=
 MODEL_NAME_X=other
 ENV
 eq "$(demo_env_get MODEL_NAME "$tmp/.env")" glm-5 "plain value (a longer name does not match)"
+# demo_bool: only true or false pass; gh's 404 body on stdout means unknown
+eq "$(demo_bool true)" true "demo_bool true"
+eq "$(demo_bool false)" false "demo_bool false"
+eq "$(demo_bool '{"message":"Not Found","status":"404"}')" "" "demo_bool drops gh's 404 body"
+eq "$(demo_bool '')" "" "demo_bool empty"
+
 # demo_env_load: .env fills what the environment leaves unset, never overrides it
 printf '%s\n' 'LOAD_A=from-file' 'export LOAD_B="quoted"' 'LOAD_C=from-file' 'LOAD_E=' >"$tmp/load.env"
 (

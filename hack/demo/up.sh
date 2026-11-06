@@ -168,9 +168,11 @@ github_app() {
 }
 
 # ---------------------------------------------------------------------------------------------
-repo_private() { # prints true/false/empty
-  if [[ $HAVE_GH == 1 ]]; then gh api "repos/$DEMO_REPO" --jq .private 2>/dev/null || true
-  else demo_gh_curl "https://api.github.com/repos/$DEMO_REPO" 2>/dev/null | sed -n -E 's/.*"private": *(true|false).*/\1/p' | head -1 || true; fi
+repo_private() { # prints true/false/empty (on a 404, gh api prints the error body to stdout despite --jq)
+  local v
+  if [[ $HAVE_GH == 1 ]]; then v=$(gh api "repos/$DEMO_REPO" --jq .private 2>/dev/null || true)
+  else v=$(demo_gh_curl "https://api.github.com/repos/$DEMO_REPO" 2>/dev/null | sed -n -E 's/.*"private": *(true|false).*/\1/p' | head -1 || true); fi
+  demo_bool "$v"
 }
 
 seed_github() {
