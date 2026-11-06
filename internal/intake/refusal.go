@@ -121,6 +121,13 @@ func refuse(reason, detail string) *Refusal {
 	return &Refusal{Reason: reason, Sentence: s}
 }
 
+// invalidClass is the one sentence a class outside the config's table is refused with, wherever it is
+// found: Compose refuses it before a plan exists, and Check refuses it on a plan read back.
+func invalidClass(index int, class string) *Refusal {
+	return refuse(ReasonInvalidClass,
+		fmt.Sprintf("issue %d: class %s is not in the class table", index, strconv.Quote(class)))
+}
+
 // Check holds a plan to the contract's closed rules before anything is filed, in this order: the
 // version, the issue count, each draft through `sanitize.CheckDraft`, the repository against the
 // candidate set, each class against the config's table, the evidence bounds and the one question.
@@ -147,7 +154,7 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 	}
 	for _, is := range p.Issues {
 		if _, ok := classes[is.Class]; !ok {
-			return refuse(ReasonInvalidClass, fmt.Sprintf("issue %d: class %s is not in the class table", is.Index, strconv.Quote(is.Class)))
+			return invalidClass(is.Index, is.Class)
 		}
 	}
 	if n := len(p.RepositoryEvidence); n > maxEvidence {

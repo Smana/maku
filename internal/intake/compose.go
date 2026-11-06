@@ -1,0 +1,159 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package intake
+
+import (
+	"fmt"
+	"log/slog"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Smana/maku/internal/factory/sanitize"
+)
+
+// ComposeIn is what a plan takes from outside the reply: the surface and model it was asked on, when,
+// its revision, the config's class table, and — when the broker is answering in a Slack channel —
+// that channel's ceiling (CD17).
+type ComposeIn struct {
+	Surface Surface
+	Model   string
+	Now     time.Time
+	Rev     int
+	Classes map[string]Class
+	// CeilingUSD and CeilingSource are the channel's ceiling, when the channel has one: `maxCostUSD`
+	// and the string that says so (`channel:C1.maxCostUSD`). Zero means no channel ceiling.
+	CeilingUSD    float64
+	CeilingSource string
+	// Logger receives the one line naming every value the reply named that the config owns. A nil
+	// logger discards it: the plan is the answer, and the line is the operator's.
+	Logger *slog.Logger
+}
+
+// Compose is the strict path from a reply to a plan (CD17, CD27): the reply becomes a plan, or it
+// becomes a refusal — never half of one and never a plan config did not write the roles, the ceiling
+// and the class of.
+//
+// What config owns, config writes:
+//   - each issue's `class` is the reply's choice, checked against `in.Classes`; a class the table does
+//     not define is refused (`invalid_class`), never guessed;
+//   - each issue's `roles` are that class's template, and every role the reply named is dropped;
+//   - the plan's `ceilingUSD` is the highest of its issues' class ceilings, lowered to the channel's
+//     when the channel's is lower, and `source` says which one won;
+//   - `dependsOn` keeps only the indices of earlier issues, and an entry that names anything else
+//     drops the list: a plan is ordered, never circular.
+//
+// What the broker owns, the broker empties: an `Evidence.URL` the reply sent is dropped, because a
+// link a person clicks is one the broker built from a repository it verified (§security). The text
+// stays — it is what the reply says it read.
+//
+// The repository is the candidate's spelling: lowercased, because the guard hands candidates over
+// lowercased and a plan's hash must not depend on how the model capitalised a name.
+//
+// A plan from Compose carries its hash, and holds `Check` — the same re-validation `issue_file` runs.
+func Compose(d Draft, in ComposeIn) (Plan, error) {
+	if in.Surface != SurfaceSlack && in.Surface != SurfaceSession {
+		return Plan{}, refuse(ReasonPlannerInvalid,
+			fmt.Sprintf("surface %s, the contract's are %s and %s", strconv.Quote(string(in.Surface)), SurfaceSlack, SurfaceSession))
+	}
+	if detail := d.invalid(); detail != "" {
+		return Plan{}, refuse(ReasonPlannerInvalid, detail)
+	}
+
+	p := Plan{
+		APIVersion:   APIVersion,
+		Rev:          in.Rev,
+		Planner:      Planner{Model: in.Model, Surface: string(in.Surface), At: in.Now},
+		Repository:   strings.ToLower(strings.TrimSpace(d.Repository)),
+		Alternatives: slices.Clone(d.Alternatives),
+	}
+	// Every value the reply named that config owns, in the one line an operator reads: the fields,
+	// never the values the model chose.
+	dropped := make([]string, 0, len(d.Issues))
+
+	// The ceiling the plan is charged against: the highest of its classes', then the channel's when
+	// that is lower. Issues in array order, so two processes agree on which source won.
+	ceiling, source := 0.0, ""
+	for i, is := range d.Issues {
+		class, ok := in.Classes[is.Class]
+		if !ok {
+			return Plan{}, invalidClass(i+1, is.Class)
+		}
+		// The validator's own message is the one a person reads, so its refusal is verbatim.
+		checked, err := sanitize.CheckDraft(is.Title, is.Body)
+		if err != nil {
+			return Plan{}, &Refusal{Reason: ReasonInvalidDraft, Sentence: err.Error()}
+		}
+		if len(is.Roles) > 0 {
+			dropped = append(dropped, fmt.Sprintf("roles@%d", i+1))
+		}
+		if is.BudgetUSD != 0 {
+			dropped = append(dropped, fmt.Sprintf("budgetUSD@%d", i+1))
+		}
+		if i == 0 || class.CeilingUSD > ceiling {
+			ceiling, source = class.CeilingUSD, class.Source
+		}
+		p.Issues = append(p.Issues, Issue{
+			Index:     i + 1,
+			Title:     checked.Title,
+			Body:      checked.Body,
+			Class:     is.Class,
+			Roles:     slices.Clone(class.Roles),
+			DependsOn: earlier(is.DependsOn, i+1),
+		})
+	}
+	if in.CeilingUSD > 0 && in.CeilingUSD < ceiling {
+		ceiling, source = in.CeilingUSD, in.CeilingSource
+	}
+	p.Budget = Budget{CeilingUSD: ceiling, Source: source}
+	p.RepositoryEvidence = evidenceWithoutLinks(d.Evidence)
+	if q := d.Question; q != nil {
+		p.Question = &Question{Text: q.Text, Recommended: q.Recommended}
+	}
+	p.Hash = Hash(p)
+
+	if len(dropped) > 0 {
+		in.log().Warn("intake: the reply named values the config owns; dropped",
+			"repository", p.Repository, "dropped", dropped)
+	}
+	return p, nil
+}
+
+// earlier is deps when every entry names an issue before index, and nil otherwise: a dependency the
+// plan cannot honour is worse than no dependency, because the factory would order work that is not
+// there.
+func earlier(deps []int, index int) []int {
+	kept := make([]int, 0, len(deps))
+	for _, dep := range deps {
+		if dep < 1 || dep >= index {
+			return nil
+		}
+		kept = append(kept, dep)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
+}
+
+// evidenceWithoutLinks is the reply's evidence with every URL emptied: the model may say what it
+// read, and only the broker says where a link goes.
+func evidenceWithoutLinks(in []Evidence) []Evidence {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]Evidence, 0, len(in))
+	for _, e := range in {
+		out = append(out, Evidence{Kind: e.Kind, Text: e.Text})
+	}
+	return out
+}
+
+// log is the injected logger, or one that discards: a package never reaches the process default.
+func (in ComposeIn) log() *slog.Logger {
+	if in.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return in.Logger
+}
