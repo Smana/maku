@@ -148,10 +148,11 @@ func planPresent(raw json.RawMessage) bool {
 // createTask asks the factory for an api task with the caller's own token (C4): the factory
 // authenticates it again and decides everything (R4). Only a sponsored principal reaches it. A call
 // carrying a plan and its hash is held to it before anything else is asked (checkPlan, CD19/CD27), so
-// what is filed is what the person confirmed; a call carrying neither is the tool it always was. The
-// text passes the broker's redactor whatever it is (C12: the factory has none), a titled draft
-// issue_draft's whole check. The key defaults to the arguments' hash, so a retried call creates
-// one task.
+// what is filed is what the person confirmed; a call carrying neither is the tool it always was; and a
+// call carrying only one of the pair is refused as the arguments' error, since a hash with no plan
+// names nothing to check. The text passes the broker's redactor whatever it is (C12: the factory has
+// none), a titled draft issue_draft's whole check. The key defaults to the arguments' hash, so a
+// retried call creates one task.
 func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.RawMessage) (runrequest.TaskResult, error) {
 	if !p.Sponsored {
 		return runrequest.TaskResult{}, toolError("unknown tool: run_create")
@@ -167,6 +168,13 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	}
 	if a.OnBehalfOf != "" && !onBehalfRE.MatchString(a.OnBehalfOf) {
 		return runrequest.TaskResult{}, toolError("invalid_arguments: on_behalf_of is slack:<team>/<user>")
+	}
+	if !planPresent(a.Plan) && a.PlanHash != "" {
+		// Half the pair names nothing to check: a hash is a claim about a plan, and there is no plan
+		// here to hold it to. Refused rather than filed, because a caller that sends the hash meant to
+		// send a plan and silently filing the arguments alone would file what nobody confirmed.
+		return runrequest.TaskResult{}, toolError("invalid_arguments: plan and plan_hash are passed together: " +
+			"a plan_hash with no plan names nothing to check")
 	}
 	if planPresent(a.Plan) {
 		if ref := s.checkPlan(ctx, a, p); ref != nil {

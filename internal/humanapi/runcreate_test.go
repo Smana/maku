@@ -340,6 +340,34 @@ func TestRunCreateRevalidatesThePlanThroughItsGuard(t *testing.T) {
 	}
 }
 
+// A hash with no plan names nothing to check, and the tool files nothing on half a pair: the plan is
+// the promise, so the call that carries its hash carries the plan. A call carrying neither is the tool
+// it always was — an App that has not been updated sends neither field and keeps working.
+func TestRunCreateRefusesHalfAPlanPair(t *testing.T) {
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+	plan := planFixture(t, "slack-one-issue")
+	fields := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+		"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF"}
+	// Half the pair: a hash with no plan. It is refused, and refused as the arguments' error rather
+	// than as a plan's — there is no plan to say anything about.
+	half := maps.Clone(fields)
+	half["plan_hash"] = intake.Hash(plan)
+	if got := call(t, e, bearer("slack-app"), "run_create", half); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		t.Fatalf("a hash with no plan: %s", got.text)
+	}
+	if len(f.got) != 0 {
+		t.Fatalf("a hash with no plan filed: %+v", f.got)
+	}
+	// Neither field: today's call, filed as it always was.
+	if got := call(t, e, bearer("slack-app"), "run_create", fields); got.isError {
+		t.Fatalf("a call with no plan and no hash: %s", got.text)
+	}
+	if len(f.got) != 1 || f.got[0].Repository != plan.Repository {
+		t.Fatalf("%+v", f.got)
+	}
+}
+
 // A call carrying no plan is the tool it always was: an older App keeps working, and the broker keeps
 // no opinion it cannot check.
 func TestRunCreateWithoutAPlanIsUnchanged(t *testing.T) {
