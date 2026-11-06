@@ -824,6 +824,34 @@ func (m *fakeMetrics) count(route, outcome string) int {
 	return m.n[route+"/"+outcome]
 }
 
+// ProposalUpdate is maku_slack_proposal_updates_total{action}, recorded as its one label reads.
+func (m *fakeMetrics) ProposalUpdate(_ context.Context, action string) {
+	m.mu.Lock()
+	m.n["proposal/"+action]++
+	m.mu.Unlock()
+}
+
+// ThreadAnswer is maku_slack_thread_answers_total{question}.
+func (m *fakeMetrics) ThreadAnswer(_ context.Context, question string) {
+	m.mu.Lock()
+	m.n["answer/"+question]++
+	m.mu.Unlock()
+}
+
+// counted is every count recorded under route, by the label it was recorded with: what a test reads
+// to say "this action and nothing else".
+func (m *fakeMetrics) counted(route string) map[string]int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range m.n {
+		if label, ok := strings.CutPrefix(k, route+"/"); ok {
+			out[label] = v
+		}
+	}
+	return out
+}
+
 type appRig struct {
 	t       *testing.T
 	app     *App
@@ -2360,4 +2388,160 @@ func TestSecondMentionUpdatesTheProposal(t *testing.T) {
 			t.Fatalf("a capped thread planned %d times", n)
 		}
 	})
+}
+
+// ---- the proposal counter, one action per series (CD7) ----
+
+// CD7's evidence at the App: maku_slack_proposal_updates_total{six closed actions} says what the App
+// did with a proposal, one count per action and none on a path that answered nothing. The counter's
+// vocabulary is the six actions; a refusal code stays on factory_slack_requests_total{route, outcome},
+// where a dashboard can read both without the label values leaking into each other.
+func TestProposalActionsCounted(t *testing.T) {
+	// moved is the plan a reply or a second mention re-plans to: one the thread's message does not
+	// carry, so the update has something material to mark.
+	moved := func(t *testing.T, rig *appRig, plan intake.Plan) intake.Plan {
+		t.Helper()
+		next := clonePlan(t, plan)
+		next.Repository = "Smana/cloud-native-ref"
+		rig.broker.intakeResult = IntakeResult{Plan: next, Hash: intake.Hash(next)}
+		return next
+	}
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T) *appRig
+		want map[string]int
+	}{
+		{
+			name: "a mention counts mention",
+			run: func(t *testing.T) *appRig {
+				rig, _ := withProposals(t)
+				rig.mention("C03", proposalThreadTS, "<@U0BOT> "+mentionWords)
+				return rig
+			},
+			want: map[string]int{"mention": 1},
+		},
+		{
+			// A plan the broker refuses is still the one action the mention took: the refusal code is
+			// the other counter's business, and no other action happened.
+			name: "a refused plan counts nothing but mention",
+			run: func(t *testing.T) *appRig {
+				rig, _ := withProposals(t)
+				rig.broker.intakeErr = Refused("planner_unavailable: the plan service is unavailable; try again later")
+				rig.mention("C03", proposalThreadTS, "<@U0BOT> "+mentionWords)
+				return rig
+			},
+			want: map[string]int{"mention": 1},
+		},
+		{
+			name: "the switch off counts nothing: a mention is today's draft",
+			run: func(t *testing.T) *appRig {
+				rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+				rig.mention("C03", proposalThreadTS, "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
+				return rig
+			},
+			want: map[string]int{},
+		},
+		{
+			name: "a reply counts reply",
+			run: func(t *testing.T) *appRig {
+				rig, plan, _ := proposalAt(t, 1)
+				moved(t, rig, plan)
+				rig.replySaid(proposalAuthor, "1729.9001", "it belongs in owner/docs")
+				return rig
+			},
+			want: map[string]int{"reply": 1},
+		},
+		{
+			// Someone else's reply answered nothing: no line, no plan, and so no action to count.
+			name: "a reply that is not the author's counts nothing",
+			run: func(t *testing.T) *appRig {
+				rig, plan, _ := proposalAt(t, 1)
+				moved(t, rig, plan)
+				rig.replySaid(proposalPresser, "1729.9001", "it belongs in owner/docs")
+				return rig
+			},
+			want: map[string]int{},
+		},
+		{
+			// Review Focus 1: Slack refuses the edit and the App reposts, which is two actions — the
+			// re-plan the person asked for and the write the refusal forced.
+			name: "an edit Slack refuses counts repost as well as reply",
+			run: func(t *testing.T) *appRig {
+				rig, plan, _ := proposalAt(t, 1)
+				moved(t, rig, plan)
+				rig.slack.failProposalUpdates = 1
+				rig.replySaid(proposalAuthor, "1729.9001", "it belongs in owner/docs")
+				return rig
+			},
+			want: map[string]int{"reply": 1, "repost": 1},
+		},
+		{
+			name: "a Confirm counts confirm",
+			run: func(t *testing.T) *appRig {
+				rig, plan, ts := proposalAt(t, 1)
+				rig.broker.room = "26zfnuxm"
+				rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+					proposalValue(intake.Hash(plan), 1)))
+				return rig
+			},
+			want: map[string]int{"confirm": 1},
+		},
+		{
+			// The Filed line could not be written in place, so it went to the thread: the App did both
+			// the action the press asked for and the write Slack refused.
+			name: "a Confirm whose Filed line Slack refuses counts unrewritten as well as confirm",
+			run: func(t *testing.T) *appRig {
+				rig, plan, ts := proposalAt(t, 1)
+				rig.broker.room = "26zfnuxm"
+				rig.slack.failProposalUpdates = 1
+				rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+					proposalValue(intake.Hash(plan), 1)))
+				return rig
+			},
+			want: map[string]int{"confirm": 1, "unrewritten": 1},
+		},
+		{
+			name: "a Cancel counts cancel",
+			run: func(t *testing.T) *appRig {
+				rig, plan, ts := proposalAt(t, 1)
+				rig.interact(proposalPressOf(t, ts, proposalAuthor, actionProposalCancel,
+					proposalValue(intake.Hash(plan), 1)))
+				return rig
+			},
+			want: map[string]int{"cancel": 1},
+		},
+		{
+			// Slack retries a press it did not see answered: the dedup set answers the second one, and
+			// one press is one action whatever Slack sends.
+			name: "a second press of the same button counts nothing",
+			run: func(t *testing.T) *appRig {
+				rig, plan, ts := proposalAt(t, 1)
+				rig.broker.room = "26zfnuxm"
+				press := proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+					proposalValue(intake.Hash(plan), 1))
+				rig.interact(press)
+				rig.interact(press)
+				return rig
+			},
+			want: map[string]int{"confirm": 1},
+		},
+		{
+			// A value this family cannot read is refused before any control is taken up: the person is
+			// answered, and no action of the six is what happened.
+			name: "a press whose value is another family's counts nothing",
+			run: func(t *testing.T) *appRig {
+				rig, _, ts := proposalAt(t, 1)
+				rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm, "v1|forge.push|99|main"))
+				return rig
+			},
+			want: map[string]int{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := tc.run(t)
+			if got := rig.metrics.counted("proposal"); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("the proposal counter holds %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

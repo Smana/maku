@@ -66,8 +66,9 @@ type Exporter struct {
 }
 
 // MakuName is name's maku_ spelling: rooms and rooms_x become maku_rooms and maku_rooms_x, needs_x
-// becomes maku_needs_x, intake_x becomes maku_intake_x, revision_x becomes maku_revision_x, and
-// agent_factory_x becomes maku_factory_x. It is "" for any other name, which keeps only its own.
+// becomes maku_needs_x, intake_x becomes maku_intake_x, revision_x becomes maku_revision_x, slack_x
+// becomes maku_slack_x, and agent_factory_x becomes maku_factory_x. It is "" for any other name, which
+// keeps only its own.
 func MakuName(name string) string {
 	switch {
 	case name == "rooms" || strings.HasPrefix(name, "rooms_"):
@@ -86,6 +87,12 @@ func MakuName(name string) string {
 	case strings.HasPrefix(name, "revision_"):
 		// CD22's counter is maku_revision_deferred_total, as the design's table and its live proof
 		// write it: an agent_factory_* instrument would be served as maku_factory_revision_deferred_*.
+		return "maku_" + name
+	case strings.HasPrefix(name, "slack_"):
+		// The Slack App's proposal families (CD7, CD25) are slack_*, served as maku_slack_*: the
+		// dashboard queries maku_slack_proposal_updates_total{action} and
+		// maku_slack_thread_answers_total{question} byte for byte. The App's older factory_slack_*
+		// family does not start with slack_ and keeps its own name.
 		return "maku_" + name
 	}
 	return ""
@@ -206,6 +213,12 @@ type Set struct {
 	intakePlanSeconds metric.Float64Histogram
 	intakePlanTokens  metric.Int64Counter
 
+	// slack is the Slack App's two proposal families (CD7, CD25). The broker's Set carries them so their
+	// names, descriptions and label vocabularies have one spelling; only the App records on them, and
+	// it makes its own with NewSlackProposals rather than building a Set, whose room gauges are the
+	// broker's alone.
+	slack *SlackProposals
+
 	mu    sync.Mutex
 	rooms map[string]roomGauge
 	runs  map[string]string // run -> the effort its harness reported
@@ -272,6 +285,9 @@ func New(meter metric.Meter) (*Set, error) {
 	s.SlackDecisions, err = meter.Int64Counter("rooms_slack_decisions_total",
 		metric.WithDescription("Slack decisions on forge.push approvals, by the closed result code and the decision."))
 	check(err)
+	if s.slack, err = NewSlackProposals(meter); err != nil {
+		check(fmt.Errorf("slack proposals: %w", err))
+	}
 	// intake_plan_total{surface,outcome,reason}: whether the planner works. A rising asked means the
 	// allowlist or the evidence is weak, degraded means the route is down, and a refused plan names
 	// the one reason of the closed list.
@@ -504,6 +520,59 @@ func (s *Set) IntakePlanTokens(ctx context.Context, surface, kind string, n int6
 	s.intakePlanTokens.Add(ctx, n,
 		metric.WithAttributes(attribute.String("surface", surface), attribute.String("kind", kind)))
 }
+
+// SlackProposals is the Slack App's two proposal families (CD7, CD25), on whatever meter the binary
+// serves: what the proposal flows did, slack_proposal_updates_total{action}, and what a filed
+// proposal's thread answered, slack_thread_answers_total{question}. The instrument names carry the
+// whole served name minus the maku_ prefix MakuName adds, because this exporter appends no suffix of
+// its own; the exporter's renames are why the registered names are not the served ones.
+//
+// The App makes one with NewSlackProposals rather than building a Set: Set is the broker's, and a meter
+// that carries it serves maku_rooms_approvals_pending 0 even with no room at all.
+type SlackProposals struct {
+	updates metric.Int64Counter
+	answers metric.Int64Counter
+}
+
+// NewSlackProposals makes both proposal families on meter.
+func NewSlackProposals(meter metric.Meter) (*SlackProposals, error) {
+	if meter == nil {
+		meter = noop.NewMeterProvider().Meter(scope)
+	}
+	var p SlackProposals
+	var err error
+	if p.updates, err = meter.Int64Counter("slack_proposal_updates_total",
+		metric.WithDescription("Proposal actions the Slack App took, by the closed action (CD7).")); err != nil {
+		return nil, fmt.Errorf("metrics: slack_proposal_updates_total: %w", err)
+	}
+	// The label is a set of questions, which is why the served name is plural even though the design's
+	// prose once spelled it singular.
+	if p.answers, err = meter.Int64Counter("slack_thread_answers_total",
+		metric.WithDescription("Answers a proposal's thread gave, by the closed question (CD25).")); err != nil {
+		return nil, fmt.Errorf("metrics: slack_thread_answers_total: %w", err)
+	}
+	return &p, nil
+}
+
+// ProposalUpdate counts one proposal action (CD7): mention, reply, confirm, cancel, repost or
+// unrewritten. It refuses nothing — the six are a closed set the caller passes, and no refusal code, plan
+// field, hash, repository or person's word ever labels the series.
+func (p *SlackProposals) ProposalUpdate(ctx context.Context, action string) {
+	p.updates.Add(ctx, 1, metric.WithAttributes(attribute.String("action", action)))
+}
+
+// ThreadAnswer counts one answer a filed proposal's thread gave (CD25): status, needs, changes, pr,
+// stop or unknown, one word per question asked.
+func (p *SlackProposals) ThreadAnswer(ctx context.Context, question string) {
+	p.answers.Add(ctx, 1, metric.WithAttributes(attribute.String("question", question)))
+}
+
+// ProposalUpdate counts one proposal action on the broker's set, where the families are carried so
+// their names have one spelling (CD7).
+func (s *Set) ProposalUpdate(ctx context.Context, action string) { s.slack.ProposalUpdate(ctx, action) }
+
+// ThreadAnswer counts one answer of a filed proposal's thread on the broker's set (CD25).
+func (s *Set) ThreadAnswer(ctx context.Context, question string) { s.slack.ThreadAnswer(ctx, question) }
 
 // Appended counts a new durable event and the redaction rules it matched.
 func (s *Set) Appended(ctx context.Context, typ, origin string, rules []string) {

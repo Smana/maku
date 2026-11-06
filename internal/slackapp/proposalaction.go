@@ -155,8 +155,12 @@ func (a *App) proposalPress(ctx context.Context, in interaction) string {
 	}
 	switch in.ActionID {
 	case actionProposalConfirm:
+		// The press is taken up as a Confirm from here: one action, whatever the filing or the broker
+		// answers, and the outcome word says what came of it (CD7).
+		a.proposalUpdate(ctx, countConfirm)
 		return a.confirmProposal(ctx, in, thread, p)
 	case actionProposalCancel:
+		a.proposalUpdate(ctx, countCancel)
 		return a.cancelProposal(ctx, in, thread, p)
 	}
 	return "ignored"

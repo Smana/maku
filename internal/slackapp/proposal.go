@@ -854,6 +854,9 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	if p.Author == "" || p.Author != ev.User {
 		return "ignored" // only the mention's author's replies edit it, as the draft path's do
 	}
+	// The reply is the proposal's own from here on: one action, counted before the cap and the planner
+	// are met, since a refusal answers the person who replied and the flow still ran (CD7).
+	a.proposalUpdate(ctx, countReply)
 	if p.Rev >= maxProposalRevisions {
 		return a.refusedLine(ctx, ev.Channel, thread, replyPlannedMost)
 	}
@@ -1093,6 +1096,7 @@ func (a *App) repostProposal(ctx context.Context, channel, oldTS string, p Propo
 	if code := a.postProposal(ctx, channel, oldTS, p, q); code != "proposed" {
 		return code
 	}
+	a.proposalUpdate(ctx, countRepost) // the fresh proposal is posted; the one it replaces is made inert below
 	if err := a.Slack.Update(ctx, channel, oldTS, proposalReplacedLine, json.RawMessage("[]")); err != nil {
 		a.log().Warn("proposal inert update failed", "channel", channel, "ts", oldTS, "err", err)
 	}
@@ -1315,6 +1319,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		// Slack refused the edit: today's separate Filed line still tells the thread, and the outcome
 		// says the message was not the one that said it.
 		a.log().Warn("proposal filed update failed", "channel", channel, "ts", itemTS, "err", err)
+		a.proposalUpdate(ctx, countUnrewritten)
 		say(line, filed)
 		return "unrewritten", line
 	}

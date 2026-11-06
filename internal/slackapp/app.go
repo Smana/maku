@@ -65,10 +65,27 @@ type BrokerAPI interface {
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)
 }
 
-// Recorder counts requests for factory_slack_requests_total{route, outcome}.
+// Recorder counts requests for factory_slack_requests_total{route, outcome}, the proposal actions
+// (proposal_updates_total{action}) and the answers a filed proposal's thread gives
+// (thread_answers_total{question}). The two last are closed vocabularies the App passes: the
+// instruments' names and their serving are metrics' (CD7, CD25).
 type Recorder interface {
 	Request(ctx context.Context, route, outcome string)
+	ProposalUpdate(ctx context.Context, action string)
+	ThreadAnswer(ctx context.Context, question string)
 }
+
+// The six actions maku_slack_proposal_updates_total{action} is labelled with (CD7): a closed set, one
+// word per action the App takes on a proposal. The flows pass these and never a refusal code, a hash,
+// a repository or a person's word, so a series stays one of six.
+const (
+	countMention     = "mention"     // a mention reached the planner
+	countReply       = "reply"       // the author's reply reached the re-plan
+	countConfirm     = "confirm"     // a press was taken up as a Confirm
+	countCancel      = "cancel"      // a press was taken up as a Cancel
+	countRepost      = "repost"      // an edit Slack refused was reposted beside the message it replaced
+	countUnrewritten = "unrewritten" // the Filed line could not be written in place and went to the thread
+)
 
 // App is the flows: a mention drafts, the draft's author amends it with replies in its thread, a
 // maintainer's check mark files, the broker's webhooks tell the thread, and — for forge.push only,
@@ -182,6 +199,16 @@ func draftHash(repo, title, body string) string {
 func (a *App) count(ctx context.Context, route, outcome string) {
 	if a.Metrics != nil {
 		a.Metrics.Request(ctx, route, outcome)
+	}
+}
+
+// proposalUpdate counts one proposal action (CD7), with one of the six closed values above. A path that
+// answered nothing counts nothing, which is why the call sites are where an action is actually taken —
+// the mention's flow, the author's re-plan, the press taken up, the repost a refusal forced — and never
+// a dedup hit, an ignored message or a value the family could not read.
+func (a *App) proposalUpdate(ctx context.Context, action string) {
+	if a.Metrics != nil {
+		a.Metrics.ProposalUpdate(ctx, action)
 	}
 }
 
@@ -406,7 +433,9 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	// posted as one proposal. The App parses no repository line and guesses no repository: the person's
 	// own words are the planner's input (commandless), which is where the 16 KiB bound is measured.
 	if a.Proposals.Enabled {
-		return a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
+		return code
 	}
 	d, err := ParseMention(ev.Text, a.BotUserID, ch.Repositories)
 	if err != nil {

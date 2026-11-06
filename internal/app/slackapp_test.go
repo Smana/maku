@@ -104,6 +104,10 @@ func TestStartSlackApp(t *testing.T) {
 	}
 	if _, body := httpDo(t, http.MethodGet, run.Ops, "/metrics"); !strings.Contains(body, `factory_slack_requests_total{outcome="bad_signature",route="events"} 1`) {
 		t.Fatalf("metrics: %s", body)
+	} else if strings.Contains(body, "maku_rooms_") || strings.Contains(body, "maku_intake_") {
+		// The App's recorder holds its own two proposal families, not a metrics.Set: the broker's room
+		// gauges are not the App's to serve (CD7's scrape carries maku_slack_* alone).
+		t.Fatalf("the App serves the broker's series: %s", body)
 	}
 	cancel()
 	done := make(chan error, 1)

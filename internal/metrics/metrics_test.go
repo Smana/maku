@@ -523,3 +523,78 @@ func TestIntakeSeriesAreTheSpecsNames(t *testing.T) {
 		t.Error("a zero token count made a series")
 	}
 }
+
+// CD7 and CD25's evidence: the App's two families are served under maku_slack_*, so the names the
+// dashboard and the acceptance queries hold are the ones a scrape carries — the plural
+// maku_slack_thread_answers_total, since the label is a set of questions, and the proposal counter's
+// six actions. A factory_slack_* family keeps its own name: MakuName must not catch it.
+func TestProposalCounterName(t *testing.T) {
+	for in, want := range map[string]string{
+		"slack_proposal_updates_total": "maku_slack_proposal_updates_total",
+		"slack_thread_answers_total":   "maku_slack_thread_answers_total",
+		"factory_slack_requests_total": "",
+		"factory_slack_build_info":     "",
+	} {
+		if got := MakuName(in); got != want {
+			t.Errorf("MakuName(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	ctx := t.Context()
+	exp, err := NewExporter(SlackBuildInfo, "v0.35.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	// The App's own meter, as internal/app's slackRecorder builds it: NewSlackProposals, not a Set.
+	p, err := NewSlackProposals(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := []string{"mention", "reply", "confirm", "cancel", "repost", "unrewritten"}
+	for _, action := range actions {
+		p.ProposalUpdate(ctx, action)
+	}
+	questions := []string{"status", "needs", "changes", "pr", "stop", "unknown"}
+	for _, q := range questions {
+		p.ThreadAnswer(ctx, q)
+	}
+	got := series(scrape(t, exp.Handler()))
+	for _, action := range actions {
+		served := `maku_slack_proposal_updates_total{action="` + action + `"}`
+		if got[served] != "1" {
+			t.Errorf("%s = %q, want 1: %v", served, got[served], got)
+		}
+		if _, ok := got[strings.TrimPrefix(served, "maku_")]; ok {
+			t.Errorf("%s is also served under its instrument name", served)
+		}
+	}
+	for _, q := range questions {
+		served := `maku_slack_thread_answers_total{question="` + q + `"}`
+		if got[served] != "1" {
+			t.Errorf("%s = %q, want 1: %v", served, got[served], got)
+		}
+	}
+	// The design once spelled the answer counter singular; the served name is the plural one, and a
+	// query for the singular would read nothing.
+	if _, ok := got[`maku_slack_thread_answer_total{question="status"}`]; ok {
+		t.Error("the answer counter is served singular")
+	} else if _, ok := got[`maku_slack_thread_answers_total{question="status"}`]; !ok {
+		t.Errorf("the answer counter is not served: %v", got)
+	}
+	// The App's scrape carries the App's series alone: its meter never holds the broker's set, which
+	// would serve maku_rooms_approvals_pending 0 with no room reconciled at all.
+	for k := range got {
+		if strings.HasPrefix(k, "maku_rooms") || strings.HasPrefix(k, "maku_intake") || strings.HasPrefix(k, "rooms") {
+			t.Errorf("%s is served from an instrument this binary never recorded", k)
+		}
+	}
+	// The broker's Set carries the same two families, so the name and the label vocabulary have one
+	// spelling whoever records on them.
+	set, err := New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.ProposalUpdate(ctx, "mention")
+	set.ThreadAnswer(ctx, "status")
+}
