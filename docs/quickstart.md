@@ -18,7 +18,9 @@ task demo
 | System | Linux with Docker is the proven path. macOS with Docker Desktop is best effort. Runs use the default container runtime (runc), not a sandbox |
 | GitHub | An account. The repository must be **public**: the agent can read the model key and the App's token, so the demo refuses a private one |
 | Model | An OpenAI-compatible endpoint: its base URL, a model name and an API key. One model serves every role |
-| Network | Pulls from `ghcr.io/smana`, and the GitHub API (60 unauthenticated requests per hour is enough to find the latest release) |
+| Version | `task demo` installs images whose tag matches your checkout. On a release tag checkout it follows the tag. On a checkout ahead of a release it **refuses to guess and stops**: set `MAKU_VERSION` to a matching pre-release tag (for example `vX.Y.Z-prN.<sha8>`, which must exist in `ghcr.io/smana`), or `git checkout` a release tag |
+| App step | Until a release ships `maku demo app`, the browser step needs Go on your `PATH` (the script runs `go run ./cmd/maku demo app`), or an existing App's id and key (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG`) |
+| Network | Pulls from `ghcr.io/smana`, and the GitHub API (60 unauthenticated requests per hour is enough) |
 
 ## Run it
 
@@ -40,7 +42,9 @@ With `gh` logged in and admin rights on the repository, the script creates the r
 `factory/ready`, `class:docs-links` and `documentation`, the seeded issues, and a ruleset named
 `maku-demo` that requires pull requests and your CI's `ci` check on the default branch. Without `gh`, it
 prints the "Use this template" link (`https://github.com/Smana/maku-demo/generate`, set the owner and the
-name, Public), waits for you to press Enter, and lists the labels, issues and ruleset to add by hand.
+name, Public), waits for you to press Enter, and lists what to add by hand: the labels, the issues, the ruleset and the file `.github/agent-factory.yaml`. The ruleset needs `gh` logged in with admin rights on the repository; otherwise you add it by hand.
+
+The repository must carry `.github/agent-factory.yaml` on its default branch, containing exactly `factory: demo`. The template has it. Without it the factory ignores the repository and its labels. With `gh`, the script warns when the file is missing.
 
 It ends by printing the time per step, the room page, and the issue to label. It never prints a key.
 Re-running it resumes where it stopped (the state is in `.demo/`).
@@ -54,13 +58,13 @@ Re-running it resumes where it stopped (the state is in `.demo/`).
 | `DEMO_LOGIN` | your `gh` login, else asked | The GitHub login allowed to file work for the factory |
 | `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG` | unset | An existing App (its id, its PEM, its slug as in `github.com/apps/<slug>`): skips the browser step. The App needs the permissions in [the factory page](factory.md#demo) |
 | `CLUSTER` | `k3d` if installed, else `kind` | `k3d`, `kind` or `current` (your kubeconfig's current context, which you must confirm by typing its name, or with `DEMO_CONFIRM_CONTEXT=<context>` without a terminal) |
-| `MAKU_VERSION` | the latest release | The `maku` release whose images and CLI the demo uses |
-| `DEMO_LIVE` | unset | `1` turns the `docs-links` class live: the gate merges |
+| `MAKU_VERSION` | this checkout's release tag, else your last answer | The images' tag, and the `maku` release whose CLI the demo uses. Kept in `.demo/answers.env`. A checkout ahead of a release needs it set |
+| `DEMO_LIVE` | your last answer, else off | `1` turns the `docs-links` class live: the gate merges. Kept in `.demo/answers.env` for the next run: `DEMO_LIVE=0 task demo` undoes it |
 | `DEMO_NO_GH` | unset | Any value: never use `gh` and never write to GitHub |
 | `K3S_IMAGE`, `KIND_NODE_IMAGE` | pinned | The node image of k3d or kind |
 
-The App the browser step creates is private, has no webhook, and holds six permissions (contents,
-issues, pull requests and statuses write; checks and metadata read). One App backs the factory, the
+The App the browser step creates is private, has no webhook, and holds seven permissions (actions,
+contents, issues, pull requests and statuses write; checks and metadata read). One App backs the factory, the
 merger and every run.
 
 ## Watch the loop
@@ -117,7 +121,11 @@ Delete the repository on GitHub yourself (Settings, Danger Zone); the script nev
 
 | Symptom | Cause and fix |
 |---|---|
-| "the repository is private" or "could not tell whether the repository is public" | The demo takes public repositories only. Make it public, or use another `DEMO_REPO` |
+| "the repository is private" | The demo takes public repositories only. Make it public, or use another `DEMO_REPO` |
+| "could not tell whether the repository is public: the GitHub API did not answer (rate limit? ...)" | The API limit is hit or the repository does not exist. Set `GITHUB_TOKEN` or log in with `gh`, and check the name |
+| "this checkout is not at a release tag, and the chart here may need images newer than the latest release ..." | Your checkout is ahead of a release. Set `MAKU_VERSION` to a pre-release tag that matches it, for example `vX.Y.Z-prN.<sha8>` (check with `docker buildx imagetools inspect ghcr.io/smana/maku-broker:<tag>`), or `git checkout` a release tag |
+| "<deployment> did not roll out; its last log lines" | The script prints that deployment's logs. A `MAKU_VERSION` older than the chart is a common cause: the images refuse its values |
+| "has no .github/agent-factory.yaml (it is not from the template): the factory will ignore it" | Add that file on the default branch, containing exactly `factory: demo` |
 | `gh is logged in but has no admin rights` | You do not administer the repository: add the labels, the issues and the ruleset by hand as the script lists them |
 | The factory is not Ready, and its log says it cannot find the App's installation | The App is not installed on `DEMO_REPO` (a wrong or deleted App also shows here, as a 401 or 404 from GitHub). Install it from the App's page, then run `task demo` again |
 | "a previous run left a half-made App: a NEW App will be created" | The browser step stopped before the key came back. Delete the old App at the address the script prints, then let it create a new one |
@@ -127,7 +135,6 @@ Delete the repository on GitHub yourself (Settings, Danger Zone); the script nev
 | "a k3d cluster named maku-demo exists and this script did not create it" | Delete that cluster, or set another `CLUSTER` |
 | "port 8080 is in use by something else" | The room page needs 8080: free it, then run `task demo` again |
 | "docker buildx is not installed" or "ghcr.io/smana/... not found" | Install buildx, or set `MAKU_VERSION` to a release whose images exist |
-| "could not find the latest release" | The GitHub API limit is hit: set `MAKU_VERSION=<tag>` |
 | The nodes are not Ready after 120s | `kubectl --kubeconfig .demo/kubeconfig get nodes`, then `task demo:down` and start again |
 | Nothing happens after you label the issue | The label must be `factory/ready`, and you must be `DEMO_LOGIN`. The factory polls once a minute |
 
@@ -137,7 +144,7 @@ To install on a cluster you bring, copy
 [`charts/agent-factory/values-mine.example.yaml`](../charts/agent-factory/values-mine.example.yaml), change
 the lines marked `CHANGE` (the model, the App, your repository and your CI's check names), then
 `helm install af charts/agent-factory -n maku --create-namespace -f values-mine.yaml`. Helm replaces a list
-whole, so the values file restates the whole repository entry. The chart's
+whole, so the values file restates the whole repository entry. Your repository needs `.github/agent-factory.yaml` on its default branch, containing exactly `factory: demo`: without it the factory ignores the repository. The same holds for a repository you did not create from the template. The chart's
 [README](../charts/agent-factory/README.md) lists what it adds and its limits. Create the repository from
 [`examples/demo-repo`](../examples/demo-repo/) (published as `Smana/maku-demo`).
 
