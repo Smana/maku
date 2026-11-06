@@ -120,7 +120,7 @@ func TestDemoAppFormCarriesTheManifest(t *testing.T) {
 	}
 	delete(got, "redirect_url")
 	want := `{"name":"my-demo","url":"https://github.com/Smana/maku","hook_attributes":{"url":"https://github.com/Smana/maku","active":false},"public":false,` +
-		`"default_permissions":{"contents":"write","pull_requests":"write","issues":"write","checks":"read","statuses":"write","metadata":"read"},"default_events":[]}`
+		`"default_permissions":{"actions":"write","contents":"write","pull_requests":"write","issues":"write","checks":"read","statuses":"write","metadata":"read"},"default_events":[]}`
 	var w map[string]any
 	_ = json.Unmarshal([]byte(want), &w)
 	gb, _ := json.Marshal(got)

@@ -52,6 +52,14 @@ no demo_public_only true
 no demo_public_only ''
 [[ $(demo_public_only true 2>&1) == *"public repositories only"* ]] || { echo "FAIL: the private refusal names the reason" >&2; fail=1; }
 
+# logins and slugs; the demo app probe against fake binaries
+ok demo_login_valid octocat; ok demo_login_valid maku-demo-1
+no demo_login_valid ''; no demo_login_valid 'a b'; no demo_login_valid 'x: {y}'; no demo_login_valid "a'b"; no demo_login_valid -a
+printf '#!/bin/sh\necho "usage: maku skill install [--dir DIR]"\n' >"$tmp/old"
+printf '#!/bin/sh\necho "  -dir string"\necho "  -owner string  an organization to own the App (default: your account)"\n' >"$tmp/new"
+chmod +x "$tmp/old" "$tmp/new"
+no demo_app_probe "$tmp/old"; ok demo_app_probe "$tmp/new"; no demo_app_probe "$tmp/missing"
+
 # the seeded issues
 n="$(demo_issue_count examples/demo-repo/ISSUES.md)"
 eq "$n" 2 "two seeded issues"

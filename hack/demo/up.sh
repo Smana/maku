@@ -5,14 +5,15 @@
 # repository from the template, the umbrella chart with profile=demo, and the room page.
 # Resumes where it stopped (.demo/state), prints the time per step, never prints a key.
 #
-# Environment (each also read from .env, then from the answers of an earlier run, else asked):
+# Environment. From .env, then the answers of an earlier run, else asked: MODEL_BASE_URL, MODEL_NAME,
+# MODEL_API_KEY, DEMO_REPO, DEMO_LOGIN, DEMO_SLUG. Every other variable is read from the environment only:
 #   MODEL_BASE_URL MODEL_NAME MODEL_API_KEY   an OpenAI-compatible model
 #   DEMO_REPO=owner/name                      your repository (public); created from Smana/maku-demo
 #   GITHUB_APP_ID GITHUB_APP_KEY_FILE         an existing App (with DEMO_SLUG): skips the browser
 #   CLUSTER=k3d|kind|current                  default k3d if installed, else kind
 #   MAKU_VERSION                              the images' tag; default: this checkout's tag, else the last answer.
 #                                             A checkout ahead of a release needs a matching one (a PR pre-release tag)
-#   DEMO_LIVE=1                               turn the docs-links class live (Q13)
+#   DEMO_LIVE=1                               turn the docs-links class live (Q13); kept for the next run, DEMO_LIVE=0 undoes it
 #   DEMO_NO_GH=1                              never use gh, never write to GitHub
 #   DEMO_LOGIN                                the GitHub login allowed to file work
 # .demo/answers.env (0600) keeps your answers, the model key included, so a re-run does not ask again;
@@ -109,11 +110,11 @@ model() {
 # when it has the command, else go run ./cmd/maku if go is on PATH, else die naming the ways out.
 maku_demo_app() {
   local bin="$DEMO_DIR/bin/maku" bin_ok=0 go_ok=0
-  if [[ $(cat "$DEMO_DIR/bin/maku.version" 2>/dev/null) != "$MAKU_VERSION" ]]; then
+  if [[ $(cat "$DEMO_DIR/bin/maku.version" 2>/dev/null) != "$MAKU_VERSION" || ! -x $bin ]]; then
     rm -f "$bin"
     if demo_fetch_maku "$MAKU_VERSION" "$bin"; then printf '%s' "$MAKU_VERSION" >"$DEMO_DIR/bin/maku.version"; fi
   fi
-  if [[ -x $bin ]] && "$bin" demo app --help 2>&1 | grep -q -- '-dir'; then bin_ok=1; fi
+  if demo_app_probe "$bin"; then bin_ok=1; fi
   command -v go >/dev/null && [[ -d cmd/maku ]] && go_ok=1
   case $(demo_maku_choice "$bin_ok" "$go_ok") in
   bin) "$bin" demo app "$@" ;;
@@ -129,7 +130,11 @@ github_app() {
   if [[ -n ${GITHUB_APP_ID:-} && -n ${GITHUB_APP_KEY_FILE:-} ]]; then
     [[ -r $GITHUB_APP_KEY_FILE ]] || die "GITHUB_APP_KEY_FILE is not readable"
     resolve DEMO_SLUG "The App's slug (its name in the URL github.com/apps/<slug>)"
+    demo_login_valid "$DEMO_SLUG" || die "DEMO_SLUG must be an App slug (letters, digits, dashes), not '$DEMO_SLUG'"
     if ! demo_state_done "$DEMO_DIR" app || [[ $(cat "$app/app_id" 2>/dev/null) != "$GITHUB_APP_ID" ]]; then
+      if [[ -s $app/slug ]]; then
+        echo "    replacing the App from an earlier run; delete the old one on GitHub: https://github.com/settings/apps/$(<"$app/slug")/advanced"
+      fi
       rm -rf "$app"; mkdir -p "$app"
       printf '%s' "$GITHUB_APP_ID" >"$app/app_id"
       printf '%s' "$DEMO_SLUG" >"$app/slug"
@@ -162,7 +167,7 @@ github_app() {
 # ---------------------------------------------------------------------------------------------
 repo_private() { # prints true/false/empty
   if [[ $HAVE_GH == 1 ]]; then gh api "repos/$DEMO_REPO" --jq .private 2>/dev/null || true
-  else curl -fsS "https://api.github.com/repos/$DEMO_REPO" 2>/dev/null | sed -n -E 's/.*"private": *(true|false).*/\1/p' | head -1 || true; fi
+  else demo_gh_curl "https://api.github.com/repos/$DEMO_REPO" 2>/dev/null | sed -n -E 's/.*"private": *(true|false).*/\1/p' | head -1 || true; fi
 }
 
 seed_github() {
@@ -221,6 +226,7 @@ repository() {
   demo_public_only "${priv:-}" || exit 1
   if [[ -z ${DEMO_LOGIN:-} && $HAVE_GH == 1 ]]; then DEMO_LOGIN=$(gh api user --jq .login 2>/dev/null || true); fi
   resolve DEMO_LOGIN "Your GitHub login (who may file work for the factory)"
+  demo_login_valid "$DEMO_LOGIN" || die "DEMO_LOGIN must be a GitHub login, not '$DEMO_LOGIN'"
   if [[ $HAVE_GH == 1 ]] && ! gh api "repos/$DEMO_REPO/contents/.github/agent-factory.yaml" >/dev/null 2>&1; then
     warn "$DEMO_REPO has no .github/agent-factory.yaml (it is not from the template): the factory will ignore it."
     warn "add that file on the default branch, containing exactly:  factory: demo"
@@ -242,7 +248,7 @@ MSG
   fi
   if [[ $APP_FROM_FLOW == 1 ]]; then
     echo "    Install the App on $DEMO_REPO: $(cat "$DEMO_DIR/app/html_url")/installations/new"
-    if interactive; then read -rp "    Press Enter once it is installed: " _; fi
+    if interactive && ! demo_state_done "$DEMO_DIR" repository; then read -rp "    Press Enter once it is installed: " _; fi
   else
     echo "    Make sure the App is installed on $DEMO_REPO (without it the factory cannot find its installation)."
   fi
@@ -328,8 +334,10 @@ install_chart() {
   DEMO_TAG_BRIDGE=$(pin maku-bridge)
   DEMO_TAG_FACTORY=$(pin maku-factory)
   export DEMO_TAG_BROKER DEMO_TAG_RUN_CONTROLLER DEMO_TAG_HARNESS DEMO_TAG_BRIDGE DEMO_TAG_FACTORY
+  DEMO_LIVE=${DEMO_LIVE:-$(demo_env_get DEMO_LIVE "$DEMO_DIR/answers.env")}
+  save_answer DEMO_LIVE
   DEMO_SHADOW=true
-  [[ ${DEMO_LIVE:-} != 1 ]] || DEMO_SHADOW=false
+  [[ $DEMO_LIVE != 1 ]] || DEMO_SHADOW=false
   export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
   demo_render_values "$DEMO_DIR/values.yaml"
   hl dependency build charts/agent-factory >/dev/null

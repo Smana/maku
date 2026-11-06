@@ -49,13 +49,26 @@ demo_pick_cluster() {
 # demo_repo_valid REPO: owner/name.
 demo_repo_valid() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]+$ ]]; }
 
+# demo_login_valid NAME: a GitHub login (the owner half of demo_repo_valid); an App slug fits it too.
+demo_login_valid() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; }
+
+# demo_gh_curl URL: GET URL from the GitHub API, authenticated when GITHUB_TOKEN is set (anonymous calls
+# share a rate limit that CI runners exhaust).
+demo_gh_curl() {
+  if [[ -n ${GITHUB_TOKEN:-} ]]; then curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" "$1"; else curl -fsS "$1"; fi
+}
+
+# demo_app_probe BIN: does BIN have `maku demo app`? Matches a flag help only that command prints (an
+# older maku's usage also names -dir, for `skill install`).
+demo_app_probe() { [[ -x $1 ]] && "$1" demo app --help 2>&1 | grep -q 'to own the App'; }
+
 # demo_public_only PRIVATE: PRIVATE is the repository's "private" field. The demo takes public
 # repositories only (Q15): anything but "false" refuses.
 demo_public_only() {
   case $1 in
   false) return 0 ;;
   true) echo "the repository is private: the demo takes public repositories only" >&2; return 1 ;;
-  *) echo "could not tell whether the repository is public ('$1'): the demo takes public repositories only" >&2; return 1 ;;
+  *) echo "could not tell whether the repository is public: the GitHub API did not answer (rate limit? set GITHUB_TOKEN or log in with gh), or the repository does not exist. The demo takes public repositories only" >&2; return 1 ;;
   esac
 }
 

@@ -38,6 +38,7 @@ const (
 
 // demoPermissions is the whole of what the demo's GitHub App may do.
 var demoPermissions = map[string]string{
+	"actions":       "write",
 	"contents":      "write",
 	"pull_requests": "write",
 	"issues":        "write",

@@ -1,7 +1,7 @@
 # Agent Factory playground
 
 This repository is a playground for the Agent Factory demo. The factory works on the issues listed in
-[ISSUES.md](ISSUES.md), opens a pull request for each, and merges it once the check named `ci` passes.
+[ISSUES.md](ISSUES.md), opens a pull request for each and, once its class is live, merges it after `ci` passes.
 
 To try it, label an issue with `factory/ready`.
 
