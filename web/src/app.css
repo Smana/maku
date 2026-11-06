@@ -878,6 +878,10 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
    a drawer a row of dots opens. --header-h and --dock-h come from room.ts (CSSOM). */
 .room-body { min-width: 0; }
 .rail-dots, .rail-close { display: none; }
+/* The page fills the window: the dock stays at the bottom when the room is short. */
+#app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+#app > .room-body { flex: 1 0 auto; }
+#app > .page-dock { margin-top: auto; }
 .room-body:not(.has-rail) > .rail { display: none; }
 .rail-dots { gap: 6px; align-items: center; margin: 8px 16px 0; padding: 6px 8px; min-height: var(--hit); background: var(--card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .rail-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--flow-writer); }
@@ -894,10 +898,13 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   .room-body.has-rail > .rail:not(.open) { display: none; }
 }
 @media (min-width: 1100px) {
-  /* The column is the log's measure plus the main's padding, so the rail sits beside the rows
-     rather than across an empty band; the composer takes the same measure. */
-  .page-dock { grid-template-columns: minmax(0, var(--log-w)) 300px; column-gap: 32px; }
-  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, calc(var(--log-w) + 32px)) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
+  /* The column takes the window's width and the rail sits at its right edge; the composer shares
+     the grid (the rail's 300 px, the same 32 px gap). Cards grow with the column (no --log-w
+     cap here), prose inside them keeps a readable measure. */
+  .room-body { --log-w: none; }
+  .page-dock { grid-template-columns: minmax(0, 1fr) 300px; column-gap: 32px; }
+  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
+  .bubble .md, .handoff > .md, .notes { max-width: 100ch; }
   .room-body.has-rail > :not(.rail) { grid-column: 1; }
   .room-body.has-rail > .rail {
     grid-column: 2; grid-row: 1 / span 6; position: sticky; top: var(--header-h, 0px);
