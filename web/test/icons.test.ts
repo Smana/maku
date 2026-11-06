@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { icon } from "../src/icons";
+import { icon, statusIcon } from "../src/icons";
 
 describe("icon", () => {
   it("draws an outline glyph in currentColor on a 16 px grid", () => {
@@ -22,5 +22,21 @@ describe("icon", () => {
     for (const n of [icon("ban"), ...icon("ban").querySelectorAll("*")]) {
       for (const a of n.attributes) expect(a.name === "style" || a.name.startsWith("on"), a.name).toBe(false);
     }
+  });
+});
+
+describe("statusIcon", () => {
+  it("draws one glyph per run-status kind, decorative, and none for an unknown kind", () => {
+    const want: Record<string, string> = {
+      running: "dot", queued: "circle", "waiting-you": "clock", "waiting-other": "clock", "waiting-pr": "clock",
+      waiting: "clock", finished: "check", done: "check", failed: "x", stopped: "square",
+    };
+    for (const [kind, name] of Object.entries(want)) {
+      const svg = statusIcon(kind)!;
+      expect(svg.getAttribute("class")).toBe(`icon icon-${name}`);
+      expect(svg.getAttribute("aria-hidden")).toBe("true");
+    }
+    expect(statusIcon("")).toBeNull();
+    expect(statusIcon("nope")).toBeNull();
   });
 });

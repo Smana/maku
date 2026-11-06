@@ -52,8 +52,9 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     const status = el("p", { className: "approval-status", textContent: st.text });
     status.dataset.can = String(st.can);
     const details = el("details", { className: "approval-details" });
-    details.append(el("summary", { textContent: "details" }), ...Array.from(li.children));
-    li.replaceChildren(intent, why, outcomes, deadline, status, details);
+    // What each answer does folds too: the card leads with what, why, by when and who may.
+    details.append(el("summary", { textContent: "details" }), outcomes, ...Array.from(li.children));
+    li.replaceChildren(intent, why, deadline, status, details);
     // A same-page link to the call's row, shown while the chat holds that row; refresh
     // names it by the row's seq, which also tells two cards' links apart.
     const link = el("a", { className: "approval-call", href: "#" });

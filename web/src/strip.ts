@@ -11,6 +11,7 @@ import type { Snapshot } from "./conn";
 import { bannerText } from "./approval-help";
 import { el, shortPrincipal } from "./controls";
 import { type Dashboard, expandDashboards } from "./dashboards";
+import { statusIcon } from "./icons";
 import type { Latest } from "./room-state";
 import { type RunStatus, statusLine } from "./run-status";
 import { ago, safeLink, type Summary, when } from "./summary";
@@ -289,7 +290,10 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         statusRow.hidden = !status.kind;
         statusRow.dataset.kind = status.kind;
         statusRow.title = phaseTitle(i);
-        const icon = el("span", { className: "run-status-icon", textContent: status.icon });
+        const icon = el("span", { className: "run-status-icon" });
+        const svg = statusIcon(status.kind);
+        if (svg) icon.append(svg);
+        else icon.textContent = status.icon;
         icon.setAttribute("aria-hidden", "true"); // the words say it all
         let words: HTMLElement;
         if (toCard) {

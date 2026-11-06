@@ -3,6 +3,7 @@
 import { api, nav, SignInRequired } from "./api";
 import { type AutoRefreshOptions, mountAutoRefresh } from "./autorefresh";
 import { mountBrand } from "./brand";
+import { statusIcon } from "./icons";
 import { maxRows } from "./limits";
 import { ago } from "./summary";
 import { mountThemeButton, type ThemeController } from "./theme";
@@ -111,7 +112,9 @@ function statusCell(st: RowStatus | undefined, phase: string): HTMLElement {
   const icon = document.createElement("span");
   icon.className = "row-status-icon";
   icon.setAttribute("aria-hidden", "true"); // the words say it all
-  icon.textContent = st.icon;
+  const svg = statusIcon(st.kind);
+  if (svg) icon.append(svg);
+  else icon.textContent = st.icon; // a kind this page predates: the broker's character
   const words = document.createElement("span");
   words.className = "row-status-words";
   words.textContent = st.text;

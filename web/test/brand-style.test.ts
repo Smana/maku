@@ -46,9 +46,11 @@ describe("Maku typography", () => {
 
   it("uses the readable Maku type scale", () => {
     expect(rule("body")).toMatch(/16px\/1\.55/);
-    expect(rule(".strip-title")).toMatch(/font-size:\s*20px/);
-    expect(rule(".strip-title")).toMatch(/line-height:\s*1\.3/);
-    expect(rule(".strip-title")).toMatch(/font-weight:\s*700/);
+    // Bigger and lighter: size carries the title, not weight (the appearance pass, 2026-11-06).
+    expect(rule(".strip-title")).toMatch(/font-size:\s*26px/);
+    expect(rule(".strip-title")).toMatch(/line-height:\s*1\.2/);
+    expect(rule(".strip-title")).toMatch(/font-weight:\s*500/);
+    expect(rule(".strip-title")).toMatch(/letter-spacing:\s*-0\.02em/);
     expect(rule(".run-status")).toMatch(/font-size:\s*16px/);
     expect(rule(".run-status")).toMatch(/font-weight:\s*700/);
     expect(rule(".msg-head")).toMatch(/font-size:\s*13px/);
@@ -60,7 +62,7 @@ describe("Maku typography", () => {
   });
 
   it("keeps code, IDs, and timestamps monospace without monospacing prose", () => {
-    const mono = rule("time, .t-time, .step-dur, .page-dock .status, .replay-progress, .t-prompt");
+    const mono = rule("time, .t-time, .step-dur, .replay-progress, .t-prompt");
     expect(mono).toMatch(/font-family:\s*ui-monospace/);
     expect(mono).toMatch(/font-size:\s*13px/);
     expect(mono).toMatch(/tabular-nums/);

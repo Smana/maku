@@ -202,10 +202,11 @@ describe("the room list's layout", () => {
     expect(td.title).toBe("Reviewing");
     const line = td.querySelector<HTMLElement>(".row-status")!;
     expect(line.dataset.kind).toBe("waiting-you");
-    expect(line.querySelector(".row-status-icon")?.textContent).toBe("⏳");
+    // The broker's character is the CLI's; the page draws its own glyph for the kind.
+    expect(line.querySelector(".row-status-icon svg.icon-clock")).not.toBeNull();
     expect(line.querySelector(".row-status-icon")?.getAttribute("aria-hidden")).toBe("true");
     expect(line.querySelector(".row-status-words")?.textContent).toBe("Waiting for you — approve a pending action");
-    expect(td.textContent).toBe("⏳ Waiting for you — approve a pending action");
+    expect(td.textContent).toBe(" Waiting for you — approve a pending action");
     expect(root.querySelector("tbody [role], tbody [aria-live]")).toBeNull(); // no live region per row
     expect(td.querySelector(".chip-phase")).toBeNull();
   });

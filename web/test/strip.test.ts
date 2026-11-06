@@ -27,7 +27,8 @@ describe("the run status line", () => {
     expect(first.className).toBe("run-status");
     expect(first.getAttribute("role")).toBe("status");
     expect(first.getAttribute("aria-live")).toBe("polite");
-    expect(first.textContent).toBe("● Running — implementer, 4 min");
+    expect(first.textContent).toBe(" Running — implementer, 4 min");
+    expect(first.querySelector(".run-status-icon svg.icon-dot")).not.toBeNull();
     expect((first as HTMLElement).dataset.kind).toBe("running");
     expect(first.querySelector(".run-status-icon")?.getAttribute("aria-hidden")).toBe("true");
   });
@@ -41,7 +42,7 @@ describe("the run status line", () => {
     a.click();
     expect(jumped).toBe(1);
     strip.update(input({ summary: state({}), approvals: { total: 2, mine: 0 } }));
-    expect(h.querySelector(".run-status")?.textContent).toBe("⏳ Waiting for another approver");
+    expect(h.querySelector(".run-status")?.textContent).toBe(" Waiting for another approver");
   });
   it("links the PR to review, only on github.com", () => {
     const { h, strip } = mount();
@@ -58,22 +59,22 @@ describe("the run status line", () => {
     const { h, strip } = mount();
     const text = () => h.querySelector(".run-status")?.textContent;
     strip.update(input({ summary: state({ state: "done", phase: "Done" }) }));
-    expect(text()).toBe("✓ Done — merged");
+    expect(text()).toBe(" Done — merged");
     strip.update(input({ summary: state({ state: "failed", phase: "Rejected", reasonCode: "budget-task" }) }));
-    expect(text()).toBe("✗ Failed — budget reached"); // the code, not the prose reason
+    expect(text()).toBe(" Failed — budget reached"); // the code, not the prose reason
     strip.update(input({ summary: state({ state: "failed", phase: "Rejected", reasonCode: "ci_red" }) }));
-    expect(text()).toBe("✗ Failed — CI stayed red");
+    expect(text()).toBe(" Failed — CI stayed red");
     strip.update(input({ summary: state({ state: "waiting_for_human", phase: "Escalated", reason: "budget-task" }) }));
-    expect(text()).toBe("⏳ Waiting — a maintainer decides"); // an escalated task waits, whatever its reason
+    expect(text()).toBe(" Waiting — a maintainer decides"); // an escalated task waits, whatever its reason
     strip.update(input({ summary: undefined, sealed: true }));
-    expect(text()).toBe("■ Stopped");
+    expect(text()).toBe(" Stopped");
   });
   it("hides when nothing is known, and does not show agent text", () => {
     const { h, strip } = mount();
     strip.update(input({ summary: undefined }));
     expect((h.querySelector(".run-status") as HTMLElement).hidden).toBe(true);
     strip.update(input({ summary: state({ state: "waiting_for_human", phase: "Escalated", reason: "<img src=x onerror=alert(1)>" }) }));
-    expect(h.querySelector(".run-status")?.textContent).toBe("⏳ Waiting — a maintainer decides");
+    expect(h.querySelector(".run-status")?.textContent).toBe(" Waiting — a maintainer decides");
     expect(h.querySelector(".run-status img")).toBeNull();
   });
 });
@@ -197,7 +198,7 @@ describe("the title strip", () => {
   it("drops the phase chip under a status line, the raw phase its tooltip", () => {
     const { h, strip } = mount();
     strip.update(input({ summary: summary({ phase: "Escalated", reason: undefined, next: undefined }) }));
-    expect(h.querySelector(".run-status")?.textContent).toBe("⏳ Waiting — a maintainer decides");
+    expect(h.querySelector(".run-status")?.textContent).toBe(" Waiting — a maintainer decides");
     expect(h.querySelector(".run-status")?.getAttribute("title")).toBe("phase: Escalated · room: Active");
     expect(h.querySelector(".chip-phase")).toBeNull();
   });

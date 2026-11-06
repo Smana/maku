@@ -263,6 +263,9 @@ describe("the approval card's guidance", () => {
     const details = root.querySelector("details.approval-details")!;
     expect(details.querySelector("summary")?.textContent).toBe("details");
     expect(details.querySelector(".approval-command")?.textContent).toBe(evil);
+    // What each answer does reads on demand: the card leads with what, why, by when and who.
+    expect(details.firstElementChild?.tagName).toBe("SUMMARY");
+    expect(details.querySelector(":scope > .approval-outcomes")).not.toBeNull();
     expect(root.querySelector("img")).toBeNull();
     expect(root.querySelector(".approval-intent")?.textContent).not.toContain("img");
   });

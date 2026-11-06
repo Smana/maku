@@ -142,11 +142,11 @@ describe("text wrapping", () => {
 describe("surfaces", () => {
   it("rounds the approval card concentrically: its 6 px controls plus 8 px of padding", () => {
     const a = decl(outside, ".approval");
-    expect(a).toMatch(/border-radius:\s*14px/);
+    expect(a).toMatch(/border-radius:\s*calc\(var\(--radius-control\)\s*\+\s*8px\)/);
     expect(a).toMatch(/padding:\s*8px 12px/);
   });
   it("squares an open call's summary at the body's edge", () => {
-    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*8px 8px 0 0/);
+    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*var\(--radius-row\) var\(--radius-row\) 0 0/);
   });
 });
 
@@ -231,5 +231,44 @@ describe("layout", () => {
     expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*var\(--log-w\)\)\s*300px/);
     // 16 px of the main's padding past the measure, plus the room body's 16 px gap: the meta sits under the rail.
     expect(d).toMatch(/column-gap:\s*32px/);
+  });
+});
+
+// The appearance pass (2026-11-06): hierarchy from size and opacity, one radius scale, the
+// approval card's accent as a bar, the connection as a dot.
+describe("appearance", () => {
+  it("sets the room title bigger and lighter, smaller again on a phone", () => {
+    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*22px/);
+  });
+  it("mutes the header's secondary facts and keeps the state chips at full strength", () => {
+    expect(decl(outside, ".page-header .chip")).toMatch(/color:\s*color-mix\(in srgb, var\(--brand-header-foreground\) 68%, var\(--brand-header\)\)/);
+    expect(decl(outside, ".page-header .chip-phase, .page-header .chip-run, .page-header .chip-verdict")).toMatch(/color:\s*var\(--brand-header-foreground\)/);
+  });
+  it("draws the approval card's accent as a bar on a raised card, not a full outline", () => {
+    const a = decl(outside, ".approval");
+    expect(a).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
+    expect(a).toMatch(/box-shadow:\s*var\(--shadow-border\),\s*inset 3px 0 0 var\(--warning\)/);
+    expect(a).toMatch(/padding:\s*8px 12px 8px 15px/);
+  });
+  it("draws deny as a ghost: no outline until hovered", () => {
+    const d = decl(outside, "button.deny");
+    expect(d).toMatch(/border-color:\s*transparent/);
+    expect(d).toMatch(/background:\s*transparent/);
+    expect(decl(outside, "button.deny:hover")).toMatch(/background:\s*color-mix\(in srgb, var\(--destructive\) 10%, transparent\)/);
+  });
+  it("says the connection with a dot and the UI face, the dot's colour by state", () => {
+    const s = decl(outside, ".page-dock .status");
+    expect(s).not.toMatch(/monospace/);
+    expect(decl(outside, ".page-dock .status::before")).toMatch(/border-radius:\s*50%/);
+    expect(decl(outside, '.page-dock[data-status="live"] .status::before')).toMatch(/background:\s*var\(--success\)/);
+    expect(decl(outside, '.page-dock[data-status="reconnecting"] .status::before')).toMatch(/background:\s*var\(--warning\)/);
+  });
+  it("keeps one radius scale: controls, rows and cards", () => {
+    const root = decl(outside, ":root");
+    expect(root).toMatch(/--radius-control:\s*6px/);
+    expect(root).toMatch(/--radius-row:\s*8px/);
+    expect(root).toMatch(/--radius-card:\s*12px/);
+    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-card\)/);
   });
 });
