@@ -3,8 +3,8 @@ The broker's TLS without cert-manager. A re-render reuses what the cluster alrea
 (`lookup`), and every Secret is `keep`, so an upgrade never rotates the CA under running run pods.
 */ -}}
 {{- $ns := .Release.Namespace -}}
-{{- $tlsName := include "agent-factory.tlsSecret" . -}}
-{{- $caName := include "agent-factory.caSecret" . -}}
+{{- $tlsName := include "afumbrella.tlsSecret" . -}}
+{{- $caName := include "afumbrella.caSecret" . -}}
 {{- $existingTLS := lookup "v1" "Secret" $ns $tlsName -}}
 {{- $existingCA := lookup "v1" "Secret" $ns $caName -}}
 {{- $caCrt := "" -}}
@@ -27,7 +27,7 @@ kind: Secret
 metadata:
   name: {{ $tlsName }}
   namespace: {{ $ns }}
-  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
 type: kubernetes.io/tls
@@ -40,7 +40,7 @@ kind: Secret
 metadata:
   name: {{ $caName }}
   namespace: {{ $ns }}
-  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
 type: Opaque
@@ -50,9 +50,9 @@ data:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "agent-factory.factoryCASecret" . }}
+  name: {{ include "afumbrella.factoryCASecret" . }}
   namespace: {{ $ns }}
-  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
   annotations:
     helm.sh/resource-policy: keep
 type: Opaque

@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: rooms-db-init
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
 data:
   # Runs once, on an empty data directory. The migration GRANTs to rooms_broker and rooms_retention,
   # so both must exist first; rooms_owner owns the database and has no CREATEROLE.
@@ -26,7 +26,7 @@ kind: Service
 metadata:
   name: rooms-db
   namespace: {{ .Release.Namespace }}
-  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
 spec:
   selector:
     app.kubernetes.io/name: rooms-db
@@ -42,7 +42,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: rooms-db
-    {{- include "agent-factory.labels" . | nindent 4 }}
+    {{- include "afumbrella.labels" . | nindent 4 }}
 spec:
   replicas: 1
   serviceName: rooms-db
