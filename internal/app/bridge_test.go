@@ -406,3 +406,24 @@ func TestFinalReadCarriesTheLoopEnd(t *testing.T) {
 		})
 	}
 }
+
+// MCP_BARE_SERVER names the server a bare MCP tool name belongs to (the demo's harness calls the
+// broker directly). Like a server name it is non-empty after trimming and has no underscore.
+func TestBridgeConfigReadsTheBareServer(t *testing.T) {
+	load := func(v string) (bridgeConfig, error) {
+		env := map[string]string{"ROOM_ID": "r", "RUN_ID": "u", "CONVERSATION_ID": "c", "BROKER_URL": "b",
+			"ROOM_TOKEN_FILE": "t", "MCP_BARE_SERVER": v}
+		return loadBridgeConfig(func(k string) string { return env[k] })
+	}
+	if c, err := load(" room-broker "); err != nil || c.bareServer != "room-broker" {
+		t.Fatalf("valid: %q, %v", c.bareServer, err)
+	}
+	if c, err := load(""); err != nil || c.bareServer != "" {
+		t.Fatalf("unset: %q, %v", c.bareServer, err)
+	}
+	for _, bad := range []string{"room_broker", "   ", "a__b"} {
+		if _, err := load(bad); err == nil || !strings.Contains(err.Error(), "MCP_BARE_SERVER") {
+			t.Errorf("%q: want a MCP_BARE_SERVER refusal, got %v", bad, err)
+		}
+	}
+}

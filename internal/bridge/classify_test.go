@@ -57,6 +57,39 @@ func TestReadOnlyAcceptsBothGatewayNamings(t *testing.T) {
 	}
 }
 
+// The demo's harness reaches the broker directly, so a room tool arrives bare. BareServer names the
+// server a bare, non-builtin name belongs to; unset, a bare name never matches.
+func TestABareToolNameMapsToTheBareServer(t *testing.T) {
+	set := map[string]bool{"room-broker__room_verdict": true}
+	for name, tc := range map[string]struct {
+		bare string
+		tool string
+		want Class
+	}{
+		"unset":                {"", "room_verdict", MCPWrite},
+		"set":                  {"room-broker", "room_verdict", Plain},
+		"bare name not in set": {"room-broker", "room_post", MCPWrite},
+		"builtin unaffected":   {"room-broker", "file_editor", Plain},
+		"prefixed unaffected":  {"room-broker", "room-broker__room_verdict", Plain},
+		"gateway unaffected":   {"room-broker", "room-broker_room_verdict", Plain},
+		"other server":         {"room-broker", "other__room_post", MCPWrite},
+	} {
+		c := Classifier{ReadOnlyMCP: set, BareServer: tc.bare}
+		if got := c.Classify(tc.tool, json.RawMessage(`{}`), "LOW"); got != tc.want {
+			t.Errorf("%s: %s got %q want %q", name, tc.tool, got, tc.want)
+		}
+	}
+	if got := (Classifier{ReadOnlyMCP: map[string]bool{"room-broker__terminal": true}, BareServer: "room-broker"}).
+		Classify("terminal", json.RawMessage(`{"command":"ls"}`), "LOW"); got != Plain {
+		t.Errorf("builtin terminal: got %q", got)
+	}
+	// A builtin is never remapped, even when the set holds <server>__<builtin>.
+	c := Classifier{ReadOnlyMCP: map[string]bool{"room-broker__terminal": true}, BareServer: "room-broker"}
+	if got := c.Classify("terminal", json.RawMessage(`{"command":"git push origin evil"}`), "LOW"); got != ForgeOther {
+		t.Errorf("builtin remapped: got %q", got)
+	}
+}
+
 func TestClassify(t *testing.T) {
 	c := Classifier{Branch: "agent/3kq7x2ma", Egress: map[string]bool{"pypi": true}, ReadOnlyMCP: readOnlyTools}
 	for _, tc := range []struct {

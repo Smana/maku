@@ -126,3 +126,31 @@ func TestCNPRoomTools(t *testing.T) {
 		t.Fatalf("roomToolsURL: broker ports %q", got)
 	}
 }
+
+func bridgeEnvOf(p *corev1.Pod) map[string]string {
+	out := map[string]string{}
+	for _, c := range p.Spec.InitContainers {
+		if c.Name == "room-bridge" {
+			for _, e := range c.Env {
+				out[e.Name] = e.Value
+			}
+		}
+	}
+	return out
+}
+
+// Task 7: the harness calls the broker directly, so its room tools reach the bridge bare. With
+// roomToolsURL the bridge is told the server and the read-only set; without, neither.
+func TestRoomToolsPassTheBridgesPolicy(t *testing.T) {
+	env := bridgeEnvOf(Pod(run("run-abcdefgh"), withRoomTools(t), testModel, "abcdefgh"))
+	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict"
+	if env["MCP_BARE_SERVER"] != "room-broker" || env["MCP_READ_ONLY_TOOLS"] != tools {
+		t.Fatalf("bridge env %v", env)
+	}
+	env = bridgeEnvOf(Pod(run("run-abcdefgh"), testConfig(t), testModel, "abcdefgh"))
+	for _, k := range []string{"MCP_BARE_SERVER", "MCP_READ_ONLY_TOOLS"} {
+		if v, ok := env[k]; ok {
+			t.Errorf("unset: %s=%q", k, v)
+		}
+	}
+}

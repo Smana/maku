@@ -70,6 +70,11 @@ func emptyDir(name, size string, mem bool) corev1.Volume {
 	return corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{EmptyDir: e}}
 }
 
+// roomToolsReadOnly is the bridge's MCP_READ_ONLY_TOOLS for a run given the room tools: they only
+// append to the room.
+const roomToolsReadOnly = "room-broker__room_read,room-broker__room_post,room-broker__room_progress," +
+	"room-broker__room_handoff,room-broker__room_verdict"
+
 // Pod is the run's pod: the composition's Sandbox pod template without identity-proxy,
 // octo-sts, traces, Kueue and suspend. The model key and the PAT are files the harness reads
 // (3a R4). It is named like the run, as the Sandbox's pod is.
@@ -178,6 +183,12 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		}
 		if searchOn {
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "AGENT_SEARCH", Value: "1"})
+		}
+		if c.RoomToolsURL != "" {
+			// The harness calls the broker directly, so its room tools reach the bridge bare; the
+			// broker still enforces each tool's roles.
+			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "MCP_BARE_SERVER", Value: "room-broker"},
+				corev1.EnvVar{Name: "MCP_READ_ONLY_TOOLS", Value: roomToolsReadOnly})
 		}
 		health := corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(BridgeHealthPort)}}
 		inits = []corev1.Container{{
