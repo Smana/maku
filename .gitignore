@@ -10,3 +10,5 @@ __pycache__/
 .worktrees/
 # Claude Code's local state and its agent worktrees: full copies of the tree the gates would read.
 .claude/
+charts/agent-factory/charts/
+charts/agent-factory/Chart.lock

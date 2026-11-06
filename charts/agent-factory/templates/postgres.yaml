@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rooms-db-init
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+data:
+  # Runs once, on an empty data directory. The migration GRANTs to rooms_broker and rooms_retention,
+  # so both must exist first; rooms_owner owns the database and has no CREATEROLE.
+  # PG 15+ no longer lets a plain role CREATE in `public`.
+  init.sh: |
+    #!/bin/sh
+    set -eu
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
+    CREATE ROLE rooms_owner LOGIN PASSWORD '${ROOMS_OWNER_PASSWORD}';
+    CREATE ROLE rooms_broker LOGIN PASSWORD '${ROOMS_BROKER_PASSWORD}';
+    CREATE ROLE rooms_retention LOGIN PASSWORD '${ROOMS_RETENTION_PASSWORD}';
+    CREATE DATABASE rooms OWNER rooms_owner;
+    SQL
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname rooms <<SQL
+    GRANT CREATE, USAGE ON SCHEMA public TO rooms_owner;
+    SQL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rooms-db
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: rooms-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rooms-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: rooms-db
+    {{- include "agent-factory.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: rooms-db
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rooms-db
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: postgres}}
+            - name: ROOMS_OWNER_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_owner}}
+            - name: ROOMS_BROKER_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_broker}}
+            - name: ROOMS_RETENTION_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_retention}}
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, postgres, -d, postgres]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, postgres, -d, postgres]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: init
+          configMap:
+            name: rooms-db-init
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.postgres.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}
