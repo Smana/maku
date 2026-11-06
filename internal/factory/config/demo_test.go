@@ -83,7 +83,8 @@ func TestNonDemoUnchanged(t *testing.T) {
 		"policyBot false":                      {"  policyBotLogin: ogenki-merge-gate[bot]\n", "  policyBotLogin: ogenki-merge-gate[bot]\n  policyBot: false\n", "merge.policyBot: false is the demo's: production gates through policy-bot"},
 		"an http broker":                       {`url: "https://room-broker`, `url: "http://room-broker`, `broker.url "http://room-broker.agent-system.svc.cluster.local:8443" must be an https:// URL`},
 		"scoper on portable":                   {"poll:", "loops: {docs: {scope: scoper}}\nruns: {group: maku.ogenki.io}\npoll:", "scope: scoper needs cloud-native-ref's AgentRun"},
-		"no meter":                             {"  url: http://vmsingle", "  urlx: http://vmsingle", "unknown field"},
+		"no meter.url":                         {"  url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428\n", "", "meter.url is required"},
+		"no broker.caFile":                     {"caFile: /etc/agent-factory/openbao-ca/ca.crt, ", "", "broker.caFile is required"},
 		"an http roomsURL":                     {"roomsURL: https://rooms.priv.gcp.ogenki.io", "roomsURL: http://localhost:8080", "roomsURL must be https://<host>"},
 		"no human issuer":                      {"  humanIssuer: https://auth.ogenki.io\n", "", "api.humanIssuer is required"},
 		"no policyBotLogin":                    {"  policyBotLogin: ogenki-merge-gate[bot]\n", "", "merge.policyBotLogin"},
@@ -102,5 +103,29 @@ func TestNonDemoUnchanged(t *testing.T) {
 	}
 	if _, err := Parse([]byte(strings.Replace(good, "  policyBotLogin:", "  gateStatus: true\n  policyBotLogin:", 1))); err != nil {
 		t.Errorf("gateStatus without demo: %v", err)
+	}
+}
+
+func TestDemoMeterAllOrNone(t *testing.T) {
+	full := "meter:\n  url: http://m:8428\n  query: 'q'\n  logsURL: http://l:9428\n  throttleQuery: 'x'\n"
+	for name, c := range map[string]struct{ meter, err string }{
+		"url only":   {"meter: {url: \"http://m:8428\"}\n", "meter.query is required"},
+		"query only": {"meter: {query: q}\n", "meter.url is required"},
+		"all four":   {full, ""},
+		"none":       {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(strings.Replace(demoGood, "\nruns: {", "\n"+c.meter+"runs: {", 1)))
+			switch {
+			case c.err == "" && err != nil:
+				t.Fatal(err)
+			case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
+				t.Fatalf("got %v, want %q", err, c.err)
+			}
+		})
+	}
+	// a malformed policyBotLogin is still refused under demo with policyBot false
+	if _, err := Parse([]byte(strings.Replace(demoGood, "  policyBot: false\n", "  policyBot: false\n  policyBotLogin: notabot\n", 1))); err == nil || !strings.Contains(err.Error(), "merge.policyBotLogin") {
+		t.Errorf("malformed policyBotLogin: %v", err)
 	}
 }

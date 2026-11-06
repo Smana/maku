@@ -1290,6 +1290,7 @@ func (c *Config) Validate() error {
 	} else if ctl.Issue > 0 && !seenRepo[strings.ToLower(ctl.Repository)] {
 		bad("control.repository %q is not a listed repository", ctl.Repository)
 	}
+	demoMeterSet := c.Meter.URL != "" || c.Meter.Query != "" || c.Meter.LogsURL != "" || c.Meter.ThrottleQuery != ""
 	for _, f := range []struct {
 		key, value   string
 		demoOptional bool // demo: the laptop has no CA and no metrics backend
@@ -1300,7 +1301,8 @@ func (c *Config) Validate() error {
 		{"github.privateKeyFile", c.GitHub.PrivateKeyFile, false}, {"meter.url", c.Meter.URL, true}, {"meter.query", c.Meter.Query, true},
 		{"meter.logsURL", c.Meter.LogsURL, true}, {"meter.throttleQuery", c.Meter.ThrottleQuery, true},
 	} {
-		if f.value == "" && (!c.Demo || !f.demoOptional) {
+		// demo: a meter is all four keys or none; any one set brings the production rules.
+		if f.value == "" && (!c.Demo || !f.demoOptional || (strings.HasPrefix(f.key, "meter.") && demoMeterSet)) {
 			bad("%s is required", f.key)
 		}
 	}
@@ -1665,7 +1667,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	for _, f := range []struct{ key, value string }{
 		{"merge.policyBotLogin", r.Merge.PolicyBotLogin}, {"merge.mergerLogin", r.Merge.MergerLogin},
 	} {
-		if f.key == "merge.policyBotLogin" && !r.Merge.UsesPolicyBot() && c.Demo {
+		if f.key == "merge.policyBotLogin" && !r.Merge.UsesPolicyBot() && c.Demo && f.value == "" {
 			continue // demo: no policy-bot, so no status creator to expect
 		}
 		if !strings.HasSuffix(strings.ToLower(f.value), "[bot]") {
