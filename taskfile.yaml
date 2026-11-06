@@ -105,6 +105,16 @@ tasks:
       - bash charts/agent-factory/tests/render.sh
       - git diff --exit-code -- config/crd api
 
+  chart:install:k3d:
+    desc: Install the demo profile on a throwaway k3d cluster and assert it (docker, k3d; not part of check)
+    cmds:
+      - bash charts/agent-factory/tests/install.sh k3d
+
+  chart:install:kind:
+    desc: Install the demo profile on a throwaway kind cluster and assert it (docker, kind; not part of check)
+    cmds:
+      - bash charts/agent-factory/tests/install.sh kind
+
   quickstart:
     desc: kind + Cilium + gVisor + cert-manager + CNPG + the chart + maku (Linux, docker; MODEL_API_KEY, GITHUB_TOKEN, REPO)
     cmds:
