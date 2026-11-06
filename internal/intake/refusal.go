@@ -165,11 +165,16 @@ func diagnostic(err error) string {
 }
 
 // Check holds a plan to the contract's closed rules before anything is filed, in this order: the
-// version, the issue count, each draft through `sanitize.CheckDraft`, the repository and every
-// alternative against the candidate set, each class against the config's table, the evidence bounds
-// and the one question.
+// version, the issue count, the numbering and the dependency order, each draft through
+// `sanitize.CheckDraft`, the repository and every alternative against the candidate set, each class
+// against the config's table, the evidence bounds and the one question.
 // It returns nil when the plan holds. It is the re-validation every consumer runs — `issue_file` and
 // `run_create` alike — so a plan that changed after it was shown is refused here and nowhere else.
+//
+// The issues' indices are the contract's numbering, not a label a plan carries: they are 1..n in
+// array order, and a dependency names an earlier issue only. `Compose` writes them that way, so the
+// rule is a no-op on a fresh plan and the whole of what a read-back plan can get wrong — a duplicate
+// index filed twice, a gap, a dependency on work a filing pass has not reached.
 //
 // A repository outside candidates — the plan's own, or one named as an alternative — is refused whole
 // and never named (Review Focus 1): the plan may be guessing at repositories the requester does not
@@ -181,6 +186,18 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 	}
 	if n := len(p.Issues); n < 1 || n > maxIssues {
 		return refuse(ReasonPlannerInvalid, fmt.Sprintf("issues: %d, the contract asks for 1 to %d", n, maxIssues))
+	}
+	for i, is := range p.Issues {
+		if is.Index != i+1 {
+			return refuse(ReasonPlannerInvalid,
+				fmt.Sprintf("issue %d: index %d, the contract numbers its issues from 1 in order", i+1, is.Index))
+		}
+		for _, dep := range is.DependsOn {
+			if dep < 1 || dep >= is.Index {
+				return refuse(ReasonPlannerInvalid,
+					fmt.Sprintf("issue %d: dependsOn %d, which is not an earlier issue", is.Index, dep))
+			}
+		}
 	}
 	for _, is := range p.Issues {
 		if _, err := sanitize.CheckDraft(is.Title, is.Body); err != nil {

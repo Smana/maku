@@ -158,8 +158,8 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 }
 
 // sponsoredTools are a sponsored principal's tools besides run_create (R13, which mcpTools lists first), in tools/list order:
-// the draft check and the reads of its own tasks' rooms.
-var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, mcpwire.IntakePlan}
+// the draft check, the planner's two doors — the plan, and the re-validation of one — and the reads of its own tasks' rooms.
+var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, mcpwire.IntakePlan, mcpwire.PlanCheck}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
 // the bearer is one of theirs. Its expiry is checked as a human's is.

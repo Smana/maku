@@ -77,13 +77,13 @@ func toolNames(t *testing.T, e env, h http.Header) string {
 // R13, invariant 8: a sponsored principal's tools read, and none labels, approves, steers, queues,
 // forks or stops; a call to a human's tool is an unknown tool (C2).
 func TestSponsoredToolList(t *testing.T) {
-	// human.intake.plan on: the planner's one tool joins both lists, the App's last and the human's
-	// after issue_draft (PR 2). plan_check joins the human's list with its own tool (PR 2, Task 3).
+	// human.intake.plan on: the planner's two tools join both lists, the App's last and the human's
+	// after issue_draft (PR 2): intake_plan, then plan_check, the door a consumer re-validates through.
 	e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"))
-	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,issue_draft,room_summary,room_tail,room_changes,intake_plan" {
+	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,issue_draft,room_summary,room_tail,room_changes,intake_plan,plan_check" {
 		t.Fatalf("%s", got)
 	}
-	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,intake_plan" {
+	if got := toolNames(t, e, viaRoomctl("dev")); got != "rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,intake_plan,plan_check" {
 		t.Fatalf("a human's list changed: %s", got)
 	}
 	for _, name := range []string{"room_queue", "room_fork", "rooms_list"} {

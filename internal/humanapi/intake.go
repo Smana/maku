@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -206,22 +207,32 @@ func (a intakeArgs) check(p authn.Principal) error {
 	if n := len(a.Context) + len(a.evidence()); n > maxPlanContext {
 		return toolError("invalid_arguments: context and evidence together are at most " + strconv.Itoa(maxPlanContext>>10) + " KiB")
 	}
+	// on_behalf_of and ceiling are a sponsored principal's alone: the rule is the plan's and the
+	// re-validation's, so it lives in claims and both doors read it there.
+	return claims(p, a.OnBehalfOf, a.Ceiling)
+}
+
+// claims holds the arguments that are a principal's rather than a request's, so every door applies
+// them the same way: a session plans for its own token and cannot name a person or widen a ceiling,
+// and a sponsored principal plans for a linked user rather than for itself — which has no write
+// access to name, since its identity is one string for a whole workspace.
+func claims(p authn.Principal, onBehalfOf string, ceiling float64) error {
 	if !p.Sponsored {
-		if a.OnBehalfOf != "" {
+		if onBehalfOf != "" {
 			return toolError("invalid_arguments: on_behalf_of is a sponsored principal's: a session plans for its own token")
 		}
-		if a.Ceiling != 0 {
+		if ceiling != 0 {
 			return toolError("invalid_arguments: ceiling is a sponsored principal's: a session's ceiling is the class's, from config")
 		}
 		return nil
 	}
-	if a.OnBehalfOf == "" {
+	if onBehalfOf == "" {
 		return toolError("invalid_arguments: on_behalf_of is required: a sponsored principal plans for a linked Slack user")
 	}
-	if !onBehalfRE.MatchString(a.OnBehalfOf) {
+	if !onBehalfRE.MatchString(onBehalfOf) {
 		return toolError("invalid_arguments: on_behalf_of is slack:<team>/<user>")
 	}
-	if a.Ceiling < 0 {
+	if ceiling < 0 {
 		return toolError("invalid_arguments: ceiling is a positive amount of dollars, or absent")
 	}
 	return nil
@@ -337,6 +348,117 @@ func (s *Server) degraded(a intakeArgs, candidates []string, surface intake.Surf
 	plan.Planner.Surface = string(surface)
 	plan.Rev = planRev
 	return &plan, true
+}
+
+// planCheckArgs is plan_check's closed argument set: the plan, the hash the broker answered with, and
+// — for a sponsored principal alone — the linked Slack user the plan was made for. The App resolves
+// its requester through that link table and never through its own identity, so a plan checked by the
+// App is checked as its user.
+type planCheckArgs struct {
+	Plan       intake.Plan `json:"plan"`
+	Hash       string      `json:"hash"`
+	OnBehalfOf string      `json:"on_behalf_of"`
+}
+
+// planChecked is plan_check's structuredContent: the plan it validated with the hash recomputed over
+// it, and whether this caller may start the factory on it (the canStart issue_draft answers).
+type planChecked struct {
+	Plan        intake.Plan `json:"plan"`
+	Hash        string      `json:"hash"`
+	CanStart    bool        `json:"canStart"`
+	CanStartWhy string      `json:"canStartWhy,omitempty"`
+}
+
+// planCheckTool is plan_check, the re-validation door (CD3, CD27): the plan a person was shown, with
+// the hash the broker answered over it, held to the same validator `issue_file` and `run_create` run.
+// It files nothing, calls no model, spends no plan and writes no store record — its one side effect is
+// the metric a refusal is counted under.
+//
+// The order is the hash first, because it is the cheapest and the whole of what plan_changed means: a
+// plan edited after it was shown is not the plan anyone confirmed, and no GitHub call is spent on
+// learning that. Then the caller, then the guard, then the one validator, so nothing is read from
+// GitHub before the plan has proved it is the one the broker produced.
+func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
+	var a planCheckArgs
+	if mcpwire.DecodeArgs(args, &a) != nil || !hashRE.MatchString(a.Hash) {
+		return nil, toolError("invalid_arguments: plan is a plan/v1 object and hash is the sha256: value intake_plan answered with, " +
+			"and no field outside the schema is taken")
+	}
+	surface := intake.SurfaceSession
+	if p.Sponsored {
+		surface = intake.SurfaceSlack
+	}
+	// The hash the caller holds, recomputed over the plan it holds: an edited plan is plan_changed,
+	// and the submitted hash is never echoed as if it were the plan's.
+	if intake.Hash(a.Plan) != a.Hash {
+		return nil, s.planCheckRefused(ctx, surface, intake.ReasonRefusal(intake.ReasonPlanChanged))
+	}
+	plan := a.Plan
+	plan.Hash = a.Hash
+
+	if err := claims(p, a.OnBehalfOf, 0); err != nil {
+		return nil, err
+	}
+	_, candidates, ref := s.requester(ctx, p, intakeArgs{
+		Repository: plan.Repository, Candidates: alternativeRepos(plan), OnBehalfOf: a.OnBehalfOf})
+	if ref != nil {
+		return nil, s.planCheckRefused(ctx, surface, ref)
+	}
+	if ref := intake.Check(plan, candidates, s.Intake.Classes); ref != nil {
+		return nil, s.planCheckRefused(ctx, surface, ref)
+	}
+	// The second half of the one validator: the template and the redactor issue_draft applies, so a
+	// plan whose text a secret sits in is refused here rather than filed.
+	for _, is := range plan.Issues {
+		if _, err := s.checkDraft(ctx, is.Title, is.Body); err != nil {
+			return nil, s.planCheckRefused(ctx, surface, draftRefusal(err))
+		}
+	}
+
+	canStart, why := false, startSponsored
+	if !p.Sponsored {
+		canStart, why = s.canStart(ctx, p, plan.Repository)
+	}
+	var b strings.Builder
+	if err := roomview.Plan(&b, plan, "", roomview.Options{Format: roomview.Markdown, Now: s.Intake.now()}); err != nil {
+		return nil, err
+	}
+	return viewResult{text: b.String(), data: planChecked{Plan: plan, Hash: plan.Hash,
+		CanStart: canStart, CanStartWhy: why}}, nil
+}
+
+// planCheckRefused is a plan_check that did not answer with a plan: a closed refusal is counted under
+// its own reason, so a plan that no longer holds is visible on the planner's series rather than only
+// in one tool's answer. An argument error has no reason of the closed list, and the /mcp call counter
+// already holds it.
+func (s *Server) planCheckRefused(ctx context.Context, surface intake.Surface, err error) error {
+	if ref, ok := asRefusal(err); ok && s.Metrics != nil {
+		s.Metrics.IntakePlan(ctx, string(surface), outcomeRefused, ref.Reason)
+	}
+	return err
+}
+
+// alternativeRepos is the plan's alternatives as candidates, so the guard holds them to the same
+// allowlist, write and public checks as the plan's own repository: an alternative is display, and
+// display is shown to the person, so an outsider in it refuses the plan whole (Review Focus 1).
+func alternativeRepos(p intake.Plan) []string {
+	out := make([]string, 0, len(p.Alternatives))
+	for _, a := range p.Alternatives {
+		out = append(out, a.Repository)
+	}
+	return out
+}
+
+// draftRefusal is checkDraft's answer as the closed list's invalid_draft: the tool error already reads
+// `invalid_draft: …`, so the refusal's sentence is that message and Error() shows it once. An error
+// that is not a tool error — no redactor wired, or a redactor that failed — is not a person's to read
+// and stays the broker's own.
+func draftRefusal(err error) error {
+	var te toolError
+	if !errors.As(err, &te) {
+		return err
+	}
+	return &intake.Refusal{Reason: intake.ReasonInvalidDraft, Sentence: te.Error()}
 }
 
 // requester resolves steps 2 and 3 of the order — who is asking, and which repositories this plan
@@ -561,15 +683,39 @@ func classNames(classes map[string]intake.Class) []string {
 }
 
 // intakePlanSchema is intake_plan's arguments, closed: a schema is the client's copy of intakeArgs'
-// check, and no field outside it is taken.
+// check, and no field outside it is taken. One bound a JSON Schema cannot express — context and
+// evidence together are a single 4 KiB budget, which intakeArgs.check holds the sum of — is stated on
+// both properties, where a client reads it.
 var intakePlanSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["text"],` +
 	`"properties":{"text":{"type":"string","minLength":1,"maxLength":16384},` +
 	`"repository":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},` +
-	`"context":{"type":"string","maxLength":4096},` +
+	`"context":{"type":"string","maxLength":4096,"description":"context and evidence together are at most 4096 bytes"},` +
 	`"candidates":{"type":"array","maxItems":20,"items":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}},` +
-	`"evidence":{"type":"array","maxItems":5,"items":{"type":"string","maxLength":280}},` +
+	`"evidence":{"type":"array","maxItems":5,"items":{"type":"string","maxLength":280},` +
+	`"description":"the person's own evidence, one item each, counted against the same 4096 bytes as context"},` +
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"},` +
-	`"ceiling":{"type":"number","exclusiveMinimum":0}}}`)
+	`"ceiling":{"type":"number","minimum":0,"description":"the channel's ceiling in dollars; zero or absent means the class ceiling"}}}`)
+
+// hashRE is a plan hash's shape: what Hash answers with, and the only form plan_check's hash argument
+// may take. The schema interpolates it, so the client's pattern and the broker's cannot drift.
+var hashRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// planCheckSchema is plan_check's arguments, closed: the plan a person was shown, the hash the broker
+// answered with, and — a sponsored principal's alone — the linked Slack user the plan was made for.
+// `plan` is typed but not closed here: plan/v1 is intake's contract, and a client that round-trips the
+// object intake_plan answered cannot be given a second, staler copy of its fields.
+var planCheckSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","hash"],` +
+	`"properties":{"plan":{"type":"object"},` +
+	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
+	`"on_behalf_of":{"type":"string","pattern":"` + onBehalfRE.String() + `"}}}`)
+
+// planCheckOutput is plan_check's structuredContent, closed: the four fields a caller files from, and
+// nothing else. `plan` names the fields it always carries rather than closing a contract it does not
+// own.
+var planCheckOutput = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","hash","canStart"],` +
+	`"properties":{"plan":{"type":"object","required":["apiVersion","rev","planner","repository","issues","budget","hash"]},` +
+	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
+	`"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"}}}`)
 
 // intakeTools are the planner's tools, listed only when the switch is on and on both lists: the
 // coding agent's session and the Slack App plan through the same boundary.
@@ -581,5 +727,12 @@ func (s *Server) intakeTools() []mcpTool {
 				"with its hash. Show the text as it is; data carries the same plan, its hash, canStart (whether you may file it), the question and " +
 				"degraded (a template draft, not the planner's). It files nothing: show the plan, then use issue_file.",
 			schema: intakePlanSchema},
+		{name: mcpwire.PlanCheck, call: s.planCheckTool,
+			description: "Re-validate a plan you were shown, before anything is filed: pass the plan and the hash the broker answered with. " +
+				"It recomputes the hash (a plan edited after it was shown is plan_changed), holds the plan to the issue template and the redactor, " +
+				"checks its repository and every alternative against what you may write, and its numbering and dependencies. " +
+				"data carries the same plan, its hash and canStart (whether you may start the factory on it); text is the plan as it was shown. " +
+				"It files nothing, plans nothing and costs nothing.",
+			schema: planCheckSchema, output: planCheckOutput},
 	}
 }

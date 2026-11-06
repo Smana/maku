@@ -60,8 +60,8 @@ func TestEveryToolSchemaNodeNamesItsType(t *testing.T) {
 				t.Errorf("%s: %s", name, bad)
 			}
 		}
-		if !slices.Contains(names, mcpwire.IntakePlan) {
-			t.Errorf("%s list does not carry %s: %v", name, mcpwire.IntakePlan, names)
+		if !slices.Contains(names, mcpwire.IntakePlan) || !slices.Contains(names, mcpwire.PlanCheck) {
+			t.Errorf("%s list does not carry the planner's two tools: %v", name, names)
 		}
 	}
 }

@@ -274,6 +274,34 @@ func planArgs() map[string]any {
 	return map[string]any{"text": "the install link in the README is dead"}
 }
 
+// planFixture is a golden plan/v1, decoded through encoding/json from the planner package's own
+// testdata: the human API's tests and the plan package's goldens cannot drift, so a rule `Check`
+// gains is a rule plan_check is held to by the same bytes. It is the one explicit relative path in
+// this package's tests.
+func planFixture(t *testing.T, name string) intake.Plan {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "internal", "intake", "testdata", "plan", name+".json"))
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	var p intake.Plan
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return p
+}
+
+// metricsBody is /metrics as these tests scrape it: the series a refused plan is counted under.
+func metricsBody(t *testing.T, e env) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	e.exp.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/metrics: %d", rec.Code)
+	}
+	return rec.Body.String()
+}
+
 // CD18: one boundary, two channels, one validator. A session plans; the plan's hash is the
 // broker's; roles and ceiling are the config's.
 func TestIntakePlanFromASession(t *testing.T) {
@@ -471,6 +499,337 @@ func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 	off.intake.fail(http.StatusServiceUnavailable)
 	if got := call(t, off, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
 		!strings.Contains(got.text, "planner_unavailable") {
+		t.Fatalf("%s", got.text)
+	}
+}
+
+// plan_check is the door every consumer re-validates through, so these tests hold it to the plan
+// package's own goldens: a plan the broker answered is accepted as it is, and a plan that is not the
+// one it answered is refused before anything is filed.
+
+// Offline proof 4, first half: a plan changed after the render is refused; an unchanged one is
+// accepted and re-validated with the same validator. The refusal is the one metric plan_check writes.
+func TestPlanCheckRefusesAChangedPlan(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	shown := planFixture(t, "single")
+	hash := intake.Hash(shown)
+	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": shown, "hash": hash}); got.isError {
+		t.Fatalf("%s", got.text)
+	}
+	changed := shown
+	changed.Issues = slices.Clone(shown.Issues)
+	changed.Issues[0].Body = strings.Replace(shown.Issues[0].Body, "## What is wrong", "## What is wrong\n- sneaked in", 1)
+	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": changed, "hash": hash}); !got.isError ||
+		!strings.Contains(got.text, "plan_changed") {
+		t.Fatalf("%s", got.text)
+	}
+	if body := metricsBody(t, e); !strings.Contains(body, `maku_intake_plan_total{outcome="refused",reason="plan_changed",surface="session"} 1`) {
+		t.Fatalf("the refusal is not counted under the closed list's reason: %s", body)
+	}
+	if e.intake.calls() != 0 {
+		t.Fatalf("a plan_check called the model %d times", e.intake.calls())
+	}
+}
+
+// The answer is the plan that was given, its hash recomputed, and whether this caller may start the
+// factory on it: a caller files what it confirmed, not what a second composition produced.
+func TestPlanCheckAnswersWithThePlanItWasGiven(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	shown := planFixture(t, "single")
+	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": shown, "hash": intake.Hash(shown)})
+	if got.isError {
+		t.Fatalf("%s", got.text)
+	}
+	var d struct {
+		Plan        intake.Plan
+		Hash        string
+		CanStart    bool
+		CanStartWhy string
+	}
+	if err := json.Unmarshal(got.structured, &d); err != nil {
+		t.Fatalf("%v: %s", err, got.structured)
+	}
+	if d.Hash != intake.Hash(d.Plan) || d.Plan.Hash != d.Hash {
+		t.Fatalf("the answer's hash is not the plan's: %+v", d)
+	}
+	// The start field is issue_draft's: this session names no sessionStart repository, so it is off.
+	if d.CanStart || d.CanStartWhy != startOff {
+		t.Fatalf("a plan that may not start: %+v", d)
+	}
+	if !strings.Contains(got.text, "Plan") || !strings.Contains(got.text, d.Hash) {
+		t.Fatalf("the text is not the plan's view: %s", got.text)
+	}
+}
+
+// A plan the redactor refuses is refused here too: the one validator, whichever door. The redactor in
+// these tests refuses the word SECRET, so a body carrying it is the second of the two checks.
+func TestPlanCheckRunsCheckDraftAndTheRedactor(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	for name, mutate := range map[string]func(*intake.Plan){
+		"no acceptance section": func(p *intake.Plan) { p.Issues[0].Body = "## What is wrong\nx" },
+		"a secret":              func(p *intake.Plan) { p.Issues[0].Body += "\nSECRET" },
+	} {
+		p := planFixture(t, "single")
+		mutate(&p)
+		if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); !got.isError ||
+			!strings.Contains(got.text, "invalid_draft") {
+			t.Errorf("%s: %s", name, got.text)
+		}
+	}
+}
+
+// The plan's numbering is the contract's, and plan_check is where a read-back plan is held to it: a
+// duplicate, a zero, a gap and a dependency on later work are four ways one issue is filed twice or
+// out of order. Each hash here is the plan's own, so only the numbering can refuse it.
+func TestPlanCheckRefusesANumberingTheContractDoesNotHave(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	for name, change := range map[string]func(*intake.Plan){
+		"a duplicate index":        func(p *intake.Plan) { p.Issues = append(p.Issues, p.Issues[0]) },
+		"a zero index":             func(p *intake.Plan) { p.Issues[0].Index = 0 },
+		"an index out of sequence": func(p *intake.Plan) { p.Issues[0].Index = 2 },
+		"a forward dependency":     func(p *intake.Plan) { p.Issues[0].DependsOn = []int{2} },
+	} {
+		p := planFixture(t, "single")
+		change(&p)
+		if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); !got.isError ||
+			!strings.Contains(got.text, "planner_invalid") {
+			t.Errorf("%s: %s", name, got.text)
+		}
+	}
+}
+
+// The hash is the plan's, never the caller's word for it: a value that is not one, a hash of another
+// plan and a field outside the schema are three argument errors, and none of them is a plan_changed.
+func TestPlanCheckRefusesAHashThatIsNotThePlans(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	shown := planFixture(t, "single")
+	for name, tc := range map[string]struct {
+		args map[string]any
+		want string
+	}{
+		"not a sha256": {map[string]any{"plan": shown, "hash": "sha256:nothex"}, "invalid_arguments"},
+		"another plan's hash": {
+			map[string]any{"plan": shown, "hash": intake.Hash(planFixture(t, "three"))}, "plan_changed"},
+		"no hash": {map[string]any{"plan": shown}, "invalid_arguments"},
+		"a field outside the schema": {map[string]any{"plan": shown, "hash": intake.Hash(shown),
+			"candidates": []string{"Smana/ai-native-ref"}}, "invalid_arguments"},
+		"a field inside the plan outside plan/v1": {map[string]any{"hash": intake.Hash(shown),
+			"plan": map[string]any{"apiVersion": "plan/v1", "colour": "red"}}, "invalid_arguments"},
+	} {
+		if got := call(t, e, viaRoomctl("dev"), "plan_check", tc.args); !got.isError || !strings.Contains(got.text, tc.want) {
+			t.Errorf("%s: %s", name, got.text)
+		}
+	}
+}
+
+// The candidate set is the plan's own repository and its alternatives, held to the guard's allowlist,
+// write and public checks: a repository this broker no longer serves is not re-validated into a
+// filing, and an outsider named as an alternative refuses the plan whole without being echoed.
+func TestPlanCheckHoldsThePlansRepositoriesToTheGuard(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	for name, tc := range map[string]struct {
+		change func(*intake.Plan)
+		want   string
+	}{
+		"a repository the allowlist does not serve": {
+			func(p *intake.Plan) { p.Repository = "Smana/somewhere-else" }, "repository_not_allowed"},
+		"an outsider alternative": {
+			func(p *intake.Plan) {
+				p.Alternatives = []intake.Alternative{{Repository: "Smana/private-one", Why: "it fits"}}
+			}, "repository_not_in_candidates"},
+	} {
+		p := planFixture(t, "single")
+		tc.change(&p)
+		got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
+		if !got.isError || !strings.Contains(got.text, tc.want) {
+			t.Errorf("%s: %s", name, got.text)
+			continue
+		}
+		for _, named := range []string{"somewhere-else", "private-one"} {
+			if strings.Contains(got.text, named) {
+				t.Errorf("%s: the refusal names %s: %s", name, named, got.text)
+			}
+		}
+	}
+}
+
+// plan_check is a read that costs the requester nothing and asks nobody anything: two checks spend no
+// plan — the day's one plan is still there afterwards — and no check reached the model.
+func TestPlanCheckSpendsNoPlanAndCallsNoModel(t *testing.T) {
+	e := setup(t, mcpOn, withIntakeDaily(t, 1), actorOn(&actLog{}))
+	p := planFixture(t, "single")
+	for i := range 2 {
+		if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); got.isError {
+			t.Fatalf("check %d: %s", i+1, got.text)
+		}
+	}
+	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+		t.Fatalf("a check spent the day's plan: %s", got.text)
+	}
+	if e.intake.calls() != 1 {
+		t.Fatalf("the model was called %d times for one plan and two checks", e.intake.calls())
+	}
+}
+
+// The caller is resolved by the same requester() intake_plan uses: a sponsored plan_check asks GitHub
+// about the linked login the plan was made for, never about the App, which has no write access to
+// name. A session cannot check a plan on someone else's behalf, which is the same rule.
+func TestPlanCheckResolvesTheRequesterAsIntakePlanDoes(t *testing.T) {
+	e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"), actorOn(&actLog{}))
+	p := planFixture(t, "single")
+	args := func(onBehalfOf string) map[string]any {
+		m := map[string]any{"plan": p, "hash": intake.Hash(p)}
+		if onBehalfOf != "" {
+			m["on_behalf_of"] = onBehalfOf
+		}
+		return m
+	}
+	// u2 writes the repository and is linked; the App resolves no login of its own, so an answer that
+	// holds is the link being read.
+	got := call(t, e, bearer("slack-app"), "plan_check", args("slack:T01ABC/U02DEF"))
+	if got.isError {
+		t.Fatalf("%s", got.text)
+	}
+	var d struct {
+		CanStart    bool
+		CanStartWhy string
+	}
+	_ = json.Unmarshal(got.structured, &d)
+	if d.CanStart || d.CanStartWhy != startSponsored {
+		t.Fatalf("a sponsored plan_check offered a start: %+v", d)
+	}
+	for name, tc := range map[string]struct {
+		h    http.Header
+		args map[string]any
+		want string
+	}{
+		"an unlinked user":       {bearer("slack-app"), args("slack:T01ABC/U09XYZ"), "not_linked"},
+		"no linked user named":   {bearer("slack-app"), args(""), "invalid_arguments"},
+		"a session for a person": {viaRoomctl("dev"), args("slack:T01ABC/U02DEF"), "invalid_arguments"},
+	} {
+		if got := call(t, e, tc.h, "plan_check", tc.args); !got.isError || !strings.Contains(got.text, tc.want) {
+			t.Errorf("%s: %s", name, got.text)
+		}
+	}
+	if e.intake.calls() != 0 {
+		t.Fatalf("plan_check called the model %d times", e.intake.calls())
+	}
+}
+
+// The schema is the client's copy of the check, so it must not disagree with it: each bound is the
+// broker's own constant, and a ceiling of zero is "no channel ceiling" — a value the broker accepts,
+// so a schema refusing it would refuse a request the broker answers.
+func TestTheIntakeSchemasAgreeWithTheBroker(t *testing.T) {
+	type property struct {
+		MaxLength        *int     `json:"maxLength"`
+		MaxItems         *int     `json:"maxItems"`
+		Minimum          *float64 `json:"minimum"`
+		ExclusiveMinimum *float64 `json:"exclusiveMinimum"`
+		Pattern          string   `json:"pattern"`
+		Items            *property
+	}
+	var plan struct {
+		AdditionalProperties *bool               `json:"additionalProperties"`
+		Required             []string            `json:"required"`
+		Properties           map[string]property `json:"properties"`
+	}
+	if err := json.Unmarshal(intakePlanSchema, &plan); err != nil {
+		t.Fatalf("%v: %s", err, intakePlanSchema)
+	}
+	if plan.AdditionalProperties == nil || *plan.AdditionalProperties {
+		t.Error("intake_plan's schema is not closed")
+	}
+	for name, want := range map[string]struct {
+		got *int
+		n   int
+	}{
+		"text":            {plan.Properties["text"].MaxLength, maxPlanText},
+		"context":         {plan.Properties["context"].MaxLength, maxPlanContext},
+		"candidates":      {plan.Properties["candidates"].MaxItems, maxPlanCandidates},
+		"evidence":        {plan.Properties["evidence"].MaxItems, maxPlanEvidence},
+		"evidence[].text": {plan.Properties["evidence"].Items.MaxLength, maxPlanEvidenceRunes},
+	} {
+		if want.got == nil || *want.got != want.n {
+			t.Errorf("%s: the schema holds %v, the broker %d", name, want.got, want.n)
+		}
+	}
+	if c := plan.Properties["ceiling"]; c.Minimum == nil || *c.Minimum != 0 || c.ExclusiveMinimum != nil {
+		t.Errorf("ceiling: the broker takes 0 as absent and refuses below it; the schema says %+v", c)
+	}
+
+	var check struct {
+		AdditionalProperties *bool               `json:"additionalProperties"`
+		Required             []string            `json:"required"`
+		Properties           map[string]property `json:"properties"`
+	}
+	if err := json.Unmarshal(planCheckSchema, &check); err != nil {
+		t.Fatalf("%v: %s", err, planCheckSchema)
+	}
+	if check.AdditionalProperties == nil || *check.AdditionalProperties {
+		t.Error("plan_check's schema is not closed")
+	}
+	if !slices.Equal(check.Required, []string{"plan", "hash"}) {
+		t.Errorf("plan_check requires %v", check.Required)
+	}
+	if got := check.Properties["hash"].Pattern; got != hashRE.String() {
+		t.Errorf("hash pattern %q, the broker's is %q", got, hashRE.String())
+	}
+	if got := check.Properties["on_behalf_of"].Pattern; got != onBehalfRE.String() {
+		t.Errorf("on_behalf_of pattern %q, the broker's is %q", got, onBehalfRE.String())
+	}
+}
+
+// The answer's shape is a contract, not a habit: plan_check declares it, and declares it closed, so a
+// client validating structuredContent sees the four fields and nothing else.
+func TestPlanCheckDeclaresAClosedOutputSchema(t *testing.T) {
+	e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "session"))
+	for name, h := range map[string]http.Header{"a human's": viaRoomctl("dev"), "the App's": bearer("slack-app")} {
+		_, out := rpc(t, e, h, "tools/list", nil)
+		b, _ := json.Marshal(out["result"])
+		var r struct {
+			Tools []struct {
+				Name         string
+				OutputSchema map[string]any
+			}
+		}
+		if err := json.Unmarshal(b, &r); err != nil {
+			t.Fatalf("%s: %s", name, string(b))
+		}
+		i := slices.IndexFunc(r.Tools, func(tool struct {
+			Name         string
+			OutputSchema map[string]any
+		}) bool {
+			return tool.Name == "plan_check"
+		})
+		if i < 0 {
+			t.Fatalf("%s list does not carry plan_check", name)
+		}
+		schema := r.Tools[i].OutputSchema
+		if schema == nil || schema["additionalProperties"] != false {
+			t.Fatalf("%s: plan_check's outputSchema is not closed: %v", name, schema)
+		}
+		props, _ := schema["properties"].(map[string]any)
+		for _, field := range []string{"plan", "hash", "canStart", "canStartWhy"} {
+			if _, ok := props[field]; !ok {
+				t.Errorf("%s: the outputSchema does not name %s: %v", name, field, schema)
+			}
+		}
+		required, _ := schema["required"].([]any)
+		for _, field := range []string{"plan", "hash", "canStart"} {
+			if !slices.Contains(required, any(field)) {
+				t.Errorf("%s: the outputSchema does not require %s: %v", name, field, schema)
+			}
+		}
+	}
+}
+
+// A broker with no redactor wired refuses rather than accepting a plan nobody scanned: checkDraft's
+// own fail-closed rule, which is what makes every other test in this block wire an actor.
+func TestPlanCheckWithoutARedactorRefuses(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"))
+	p := planFixture(t, "single")
+	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
+	if !got.isError || !strings.Contains(got.text, "unavailable") {
 		t.Fatalf("%s", got.text)
 	}
 }
