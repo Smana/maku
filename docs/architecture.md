@@ -76,6 +76,18 @@ flowchart LR
 | Broker → database | Postgres `:5432` | The `rooms_broker` role: append and read events; no update or delete |
 | Broker → Kubernetes | The API server | Read and delete `AgentRun`s, never create; CRUD on `Room`s; no cluster-admin |
 
+One boundary crosses out to a model, and only one. A broker's planner reaches an LLM: `intake_plan`
+— off unless the broker's config turns it on — makes **one** `chat/completions` call per attempt,
+in-cluster and straight to the AI Gateway's data-plane Service (no vendor egress from the broker, and
+the gateway sees the client `planner`), on the pinned alias `tier-frontier`, with a 20 s deadline
+that stays under `/mcp`'s 25 s bound and a reply capped at 64 KiB. What it sends is public text
+only: the requester's own sentence, the context the agent read and the evidence it passed, for a
+repository GitHub reports public — a private one is refused before the call. The answer becomes a
+plan only through the strict decode, the roles and the money come from the config rather than from
+the model, and the call is audited by the plan's hash, the model, the token counts and the outcome,
+never by the text. It files nothing and stores nothing: the plan is shown, and the consumer that
+owns the message re-validates it through `plan_check` before anything is filed.
+
 ## One task's life
 
 A maintainer labels an issue; the factory opens a room, starts runs in it, narrates on the issue

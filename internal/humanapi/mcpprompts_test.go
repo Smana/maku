@@ -174,6 +174,25 @@ func TestInstructionsFirst512(t *testing.T) {
 	}
 }
 
+// mcpInstructions is the first thing every client reads, and it names where the `start` field of
+// issue_file's form comes from: with a plan that is `plan_check`, which re-validated the plan and
+// checked the caller's access to the repository it names; with none it is `issue_draft`. It named
+// `issue_draft` alone, which stopped being the whole answer when issue_file took a plan and its hash
+// (CD3, CD27).
+func TestTheInstructionsNameBothSourcesOfCanStart(t *testing.T) {
+	flatText := flat(mcpInstructions)
+	for _, want := range []string{"plan_check (or, with no plan, issue_draft)", "canstart"} {
+		if !strings.Contains(flatText, want) {
+			t.Errorf("the instructions lack %q:\n%s", want, mcpInstructions)
+		}
+	}
+	// The no-plan source is still there: a client on a broker without the planner reads the same
+	// sentence, and the form it describes is the one issue_draft gates.
+	if !strings.Contains(flatText, "issue_draft") {
+		t.Errorf("the instructions lost the planner-off source:\n%s", mcpInstructions)
+	}
+}
+
 // flat is s lowercased with every run of whitespace collapsed to one space: these texts are
 // hard-wrapped, so a rule has to hold across a line break exactly as it does within one, and a test
 // reading the raw bytes would pin the wrapping instead of the rule.

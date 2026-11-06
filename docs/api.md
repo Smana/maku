@@ -552,7 +552,7 @@ The view tools (`rooms_list`, `room_summary`, `room_changes`) return their text 
 `prompts/list` and `prompts/get` serve the prompts `handoff` (`what`), `plan` (`what`), `status` (`room`) and `inbox`: canned
 messages the client offers as slash commands. A sponsored principal's list is empty. The prompts start nothing and compose nothing: `handoff` passes the developer's words and the session's context to `intake_plan` and then files through `issue_file`, and `plan` stops after showing what the planner answered.
 
-No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `issue_draft` says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
+No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
 the CLI's ZITADEL client (formerly `roomctl`): the [actions](#actions)' rules, limits and rejections apply. Arguments are
 strict: an unknown field is refused. Every string an agent wrote comes back under `untrusted: true`,
 as the summary's notes do. A refused call is a tool result with `isError: true` whose text starts
