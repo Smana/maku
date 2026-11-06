@@ -1,3 +1,6 @@
+# STAGE 2 PRECONDITION: the defaults below ARE the demo. Before production values are added they move
+# to a values-demo.yaml, because Helm deep-merges maps: a production file would otherwise inherit
+# demo: true, factoryInsecure, allowUnsandboxed and the rest of the demo's settings.
 # One value selects what the chart is for: `demo` is the laptop install (kind or k3d, no Cilium, no
 # cert-manager, no CNPG, no OIDC). Left unset the chart fails: production values arrive with stage 2.
 # A subchart's values cannot depend on a parent value, so the demo's values are the ones below and
@@ -111,6 +114,8 @@ maku-factory:
     templates:
       solo: {roles: [implementer]}
       pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
+      # Triage chooses `trio` by class and tier, so it must exist; the tester role is deprecated, so
+      # in the demo it is a pair.
       trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
       investigate: {roles: [triager]}
     caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}

@@ -14,4 +14,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if ne (.Values.profile | default "") "demo" -}}
 {{- fail (printf "profile is required: demo, or production values (stage 2); got %q" (.Values.profile | default "")) -}}
 {{- end -}}
+{{- $d := .Values.clusterDomain -}}
+{{- if or (ne $d (.Values.maku.clusterDomain | default "cluster.local")) (ne $d (index .Values "maku-factory" "clusterDomain" | default "cluster.local")) -}}
+{{- fail (printf "clusterDomain, maku.clusterDomain and maku-factory.clusterDomain must be equal (got %q, %q, %q): the broker certificate's names and the factory's broker URL are built from them" $d .Values.maku.clusterDomain (index .Values "maku-factory" "clusterDomain")) -}}
+{{- end -}}
 {{- end }}
