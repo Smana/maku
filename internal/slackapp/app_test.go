@@ -1704,6 +1704,98 @@ func TestMentionProposes(t *testing.T) {
 	})
 }
 
+// A broker with no planner answers intake_plan with ErrUnknownTool. With proposals on, that mention is
+// drafted exactly as if the switch were off: the same grammar, the same issue_draft, the same draft
+// message, and its thread is a draft thread from then on — a reply amends the draft rather than
+// re-planning, and a ✅ files it.
+func TestMentionWithoutPlannerDrafts(t *testing.T) {
+	noPlanner := func(t *testing.T) *appRig {
+		t.Helper()
+		rig, _ := withProposals(t)
+		rig.broker.intakeErr = ErrUnknownTool
+		return rig
+	}
+
+	t.Run("the mention posts a draft, a reply amends it and a check mark files it", func(t *testing.T) {
+		rig := noPlanner(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
+		posts := rig.posts()
+		if len(posts) != 1 {
+			t.Fatalf("%d posts, want the one draft: %+v", len(posts), posts)
+		}
+		d := posts[0]
+		if d.meta == nil || d.meta.EventType != draftEventType || len(d.blocks) != 0 || !strings.HasPrefix(d.text, "Draft for Smana/ai-native-ref") {
+			t.Fatalf("the mention is not a draft: %+v", d)
+		}
+		if n := len(rig.broker.intakeCalls()); n != 1 {
+			t.Fatalf("%d intake_plan calls, want the one that found no planner", n)
+		}
+		if got := rig.metrics.count("events", "drafted"); got != 1 {
+			t.Fatalf("events/drafted counted %d times, want 1: %v", got, rig.metrics.counted("events"))
+		}
+		if got := rig.metrics.counted("proposal"); len(got) != 0 {
+			t.Fatalf("a draft counted as a proposal action: %v", got)
+		}
+
+		rig.reply("U02DEF", "Acceptance: the link resolves")
+		edit := rig.lastPost()
+		if p := rig.payload(edit); p.Rev != 2 || !strings.Contains(p.Body, "the link resolves") {
+			t.Fatalf("the reply did not amend the draft: %+v", p)
+		}
+		if n := len(rig.broker.intakeCalls()); n != 1 {
+			t.Fatalf("the reply re-planned: %d intake_plan calls", n)
+		}
+		if got := rig.metrics.count("events", "edited"); got != 1 {
+			t.Fatalf("events/edited counted %d times, want 1", got)
+		}
+
+		rig.react("C03", edit.ts, "U02DEF", "white_check_mark")
+		calls := rig.broker.runCreates()
+		if len(calls) != 1 || !strings.Contains(calls[0].Body, "the link resolves") || !strings.Contains(rig.lastPost().text, "Filed #42") {
+			t.Fatalf("the ✅ did not file the amended draft: %+v, %q", calls, rig.lastPost().text)
+		}
+	})
+
+	t.Run("the draft's own refusal is said, not the planner's", func(t *testing.T) {
+		rig := noPlanner(t)
+		rig.mention("C03", "1729.0001", "<@U0BOT> Smana/other-repo docs: fix a dead link")
+		p := rig.lastPost()
+		if len(rig.posts()) != 1 || p.meta != nil || !strings.HasPrefix(p.text, "Draft refused: ") {
+			t.Fatalf("the thread says %+v, want the draft path's refusal", rig.posts())
+		}
+		if got := rig.metrics.count("events", "refused"); got != 1 {
+			t.Fatalf("events/refused counted %d times, want 1", got)
+		}
+	})
+
+	// The planner went away after a proposal was posted: a reply cannot re-plan it, and says so with
+	// the two ways left. A mention in the same thread drafts, and from then on the draft is the
+	// thread's newest message, so a reply amends it instead of meeting the re-plan line again.
+	t.Run("a proposal thread whose planner went away", func(t *testing.T) {
+		rig, _, _ := proposalAt(t, 1)
+		rig.broker.intakeErr = ErrUnknownTool
+		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
+		if p := rig.lastPost(); p.text != planUnsupported || p.meta != nil {
+			t.Fatalf("the reply got %+v, want %q", p, planUnsupported)
+		}
+		if got := rig.metrics.count("events", "refused"); got != 1 {
+			t.Fatalf("events/refused counted %d times, want 1", got)
+		}
+
+		rig.mention("C03", proposalThreadTS, "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
+		if p := rig.lastPost(); p.meta == nil || p.meta.EventType != draftEventType {
+			t.Fatalf("the mention did not draft: %+v", p)
+		}
+		rig.replySaid("U02DEF", "1729.9002", "Acceptance: the link resolves")
+		if p := rig.payload(rig.lastPost()); p.Rev != 2 || !strings.Contains(p.Body, "the link resolves") {
+			t.Fatalf("the reply did not amend the newer draft: %+v", p)
+		}
+		if n := len(rig.broker.intakeCalls()); n != 2 { // the first reply and the mention, never the last reply
+			t.Fatalf("%d intake_plan calls, want 2", n)
+		}
+	})
+}
+
 // The refusals a person actually meets, one fixed line each, and the one that names where to go
 // instead: a private repository, a model that is down, a plan too large, more than one issue.
 func TestProposalRefusals(t *testing.T) {
@@ -1768,16 +1860,6 @@ func TestProposalRefusals(t *testing.T) {
 				b.intakeErr = Refused("daily_plans_reached: you have used today's plans; the cap resets at 00:00 UTC")
 			},
 			want:    "Not proposed: you have used today's plans; mention me again after 00:00 UTC, or hand it off from your coding agent.",
-			outcome: "refused",
-		},
-		{
-			// The broker predates the planner: the old grammar still works there, so the line names it
-			// rather than leaving the person with a refusal they cannot act on.
-			name: "a broker without the planner keeps the old grammar",
-			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = ErrUnknownTool
-			},
-			want:    planUnsupported,
 			outcome: "refused",
 		},
 		{

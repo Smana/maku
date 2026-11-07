@@ -423,13 +423,6 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	if !ok || ev.User == a.BotUserID || !userRE.MatchString(ev.User) || !tsRE.MatchString(thread) {
 		return "ignored"
 	}
-	refuse := func(why string) string {
-		if _, err := a.Slack.Post(ctx, ev.Channel, thread, "Draft refused: "+shown(why), nil); err != nil {
-			a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
-			return "error"
-		}
-		return "refused"
-	}
 	switch command(ev.Text, a.BotUserID) {
 	case "link":
 		return a.link(ctx, ev, thread)
@@ -439,10 +432,29 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	// CD1, §the Slack journey: with proposals on, a mention in plain words is planned by the broker and
 	// posted as one proposal. The App parses no repository line and guesses no repository: the person's
 	// own words are the planner's input (commandless), which is where the 16 KiB bound is measured.
+	//
+	// A broker with no planner (intake_plan unknown) is the switch off for this mention: the draft path
+	// below, word for word, so a deployment that turned proposals on ahead of its broker still files.
+	// The mention counts as a draft then, not as a proposal action, since no proposal was posted.
 	if a.Proposals.Enabled {
-		code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
-		a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
-		return code
+		code, noPlanner := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		if !noPlanner {
+			a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
+			return code
+		}
+	}
+	return a.draftMention(ctx, ev, ch, thread)
+}
+
+// draftMention is the mention as a draft (R22): the old grammar parsed, issue_draft checking it, and
+// the draft posted in the thread for a reply to amend and a ✅ to file.
+func (a *App) draftMention(ctx context.Context, ev slackEvent, ch Channel, thread string) string {
+	refuse := func(why string) string {
+		if _, err := a.Slack.Post(ctx, ev.Channel, thread, "Draft refused: "+shown(why), nil); err != nil {
+			a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
+			return "error"
+		}
+		return "refused"
 	}
 	d, err := ParseMention(ev.Text, a.BotUserID, ch.Repositories)
 	if err != nil {
@@ -640,11 +652,11 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 // reply amends the thread's pending draft with a reply from the author of the mention. Anyone
 // else's reply, a reply on a filed draft or in a thread without a draft is ignored without a word.
 //
-// With proposals on the thread's message is a proposal, not a draft: the reply is a re-plan, and the
-// same message becomes its next revision (replan). One thread on this App is one or the other — a
-// proposal is what a mention posts with the switch on — so the two branches never contend for one
-// thread, and the draft path below is whatever it always was. A thread whose proposal was filed or
-// cancelled answers the five questions instead (answer, CD25).
+// With proposals on the thread's message is usually a proposal, not a draft: the reply is a re-plan,
+// and the same message becomes its next revision (replan). A broker without a planner drafts the
+// mention instead (mention), so a thread may hold a draft, or a proposal and a newer draft: the newer
+// of the two is what the reply edits, and the draft path below is whatever it always was. A thread
+// whose task was filed or cancelled answers the five questions instead (answer, CD25).
 func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	ch, ok := a.Channels[ev.Channel]
 	if !ok || ev.Subtype != "" || ev.ThreadTS == "" || ev.ThreadTS == ev.TS || ev.User == a.BotUserID ||
@@ -687,7 +699,10 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			}
 			return "answered"
 		}
-		if prop != nil {
+		// The thread's newer message decides: a mention on a broker without a planner posts a draft,
+		// even in a thread that holds a proposal, and a reply then amends that draft. Slack's ts is
+		// fixed-width seconds and microseconds, so the strings order as the times do.
+		if draft, _ := a.threadDraft(msgs); prop != nil && (draft == nil || prop.TS > draft.TS) {
 			if p, ok := prop.Metadata.proposalPayload(); ok {
 				return a.replan(ctx, ev, ch, ev.ThreadTS, msgs, prop, p)
 			}

@@ -545,9 +545,10 @@ const (
 	// sends as context — the requester's replies, numbered — so a thread's whole history never has to
 	// fit and nothing is sent that the tool would refuse whole.
 	maxProposalContextBytes = 4 << 10
-	// planUnsupported is the mention's answer on a broker that has no planner. The old grammar still
-	// works there, and saying so is better than a refusal the person cannot act on.
-	planUnsupported = "This deployment does not plan from Slack yet; mention me in the old grammar."
+	// planUnsupported is the reply's answer in a proposal thread whose broker no longer plans. A mention
+	// needs no line there — it is drafted instead (mention) — but a proposal already posted cannot be
+	// re-planned, so the line names the two ways left: confirm it as shown, or draft it with a mention.
+	planUnsupported = "Not re-planned: this deployment no longer plans from Slack; confirm the proposal as it is, or mention me with the repository and a title to draft it instead."
 	// replyPlannedMost is the reply's answer in a thread whose proposal has reached the revision cap:
 	// one message is all a thread edits, and the two things left are the two the line names.
 	replyPlannedMost = "This proposal was planned the most it can be here: confirm it, or start a new mention."
@@ -581,9 +582,9 @@ func commandless(text, bot string) string {
 }
 
 // propose plans a mention through intake_plan and posts the answer as the thread's one proposal
-// (CD1, CD7, CD20). It is the whole of the mention flow with proposals on: the App picks no
-// repository, parses no grammar and files nothing — the plan, its hash and its author are the
-// message's, and the person confirms it there.
+// (CD1, CD7, CD20). It is the whole of the mention flow with proposals on and a broker that plans:
+// the App picks no repository, parses no grammar and files nothing — the plan, its hash and its
+// author are the message's, and the person confirms it there.
 //
 // A thread has one live proposal, not one per mention: when the thread already holds one, the plan is
 // that message's next revision, written by the same updateProposal the reply flow uses — edited in
@@ -600,11 +601,12 @@ func commandless(text, bot string) string {
 //
 // The outcome is what the caller counts: postProposal's ("proposed", "too_large", "multi_issue",
 // "error"), updateProposal's ("updated", "reposted"), "refused" for a refusal whose fix is a new
-// mention, and "error" for a passing one.
-func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) string {
+// mention, and "error" for a passing one. noPlanner is a broker without intake_plan: nothing was said
+// in the thread, and the caller drafts the mention instead.
+func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) (code string, noPlanner bool) {
 	say := func(line string) bool { return a.sayLine(ctx, ev.Channel, thread, line) }
 	if len(text) > maxProposalRequestBytes {
-		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large")
+		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large"), false
 	}
 	// The read, the plan and the write are one step, as a filing is: two mentions that both read "no
 	// proposal" would post two live ones, and the whole point of the branch below is that a thread has
@@ -623,9 +625,9 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	latest, closed := a.threadProposal(msgs)
 	if closed {
 		if !say(a.proposalClosedLine(a.threadRoom(msgs))) {
-			return "error"
+			return "error", false
 		}
-		return "refused"
+		return "refused", false
 	}
 	// The live proposal this mention revises, when there is one: its payload is the plan the message
 	// shows, so the update marks what moved against it (CD14, CD27) and the revision continues.
@@ -637,9 +639,9 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	}
 	if prev != nil && prev.Rev >= maxProposalRevisions {
 		if !say(proposalCappedLine) {
-			return "error"
+			return "error", false
 		}
-		return "refused"
+		return "refused", false
 	}
 
 	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{
@@ -648,8 +650,11 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
 		CeilingUSD: ch.MaxCostUSD,
 	})
+	if errors.Is(err, ErrUnknownTool) {
+		return "", true // nothing said: the caller drafts the mention instead
+	}
 	if code := a.planFailed(ctx, ev.Channel, thread, ev.User, ch.Repositories, err); code != "" {
-		return code
+		return code, false
 	}
 
 	// The broker's answer is held to the message's own contract before a byte of it is posted: a plan
@@ -662,16 +667,16 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	}
 	prop, err := newProposal(res.Plan, res.Hash, ev.User, nextRev)
 	if err != nil {
-		return a.notShown(ctx, ev.Channel, thread, err)
+		return a.notShown(ctx, ev.Channel, thread, err), false
 	}
 	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
 	if prev != nil {
 		// One proposal per thread: the live message becomes this revision in place, or is reposted and
 		// made inert when Slack refuses the edit. Nothing is posted beside it, so the thread never has
 		// two cards binding two hashes (Review Focus 1, CD7).
-		return a.updateProposal(ctx, ev.Channel, latest.TS, *prev, prop, res.Question)
+		return a.updateProposal(ctx, ev.Channel, latest.TS, *prev, prop, res.Question), false
 	}
-	return a.postProposal(ctx, ev.Channel, thread, prop, res.Question)
+	return a.postProposal(ctx, ev.Channel, thread, prop, res.Question), false
 }
 
 // proposalClosedLine is the mention's answer in a thread whose task is filed or cancelled: one line,
@@ -943,7 +948,7 @@ func (a *App) refusedWith(ctx context.Context, channel, thread, line, code strin
 }
 
 // planFailed answers a broker call that gave no plan, as the thread says it (CD18): the refusal's own
-// line, the old grammar where the broker has no planner, and the planner being unreachable each have
+// line, a broker that no longer plans, and the planner being unreachable each have
 // one sentence. "" means the call did not fail; otherwise the answer is the outcome the caller counts
 // — "refused" for a decision, "error" for a passing failure whose fix is to ask again.
 func (a *App) planFailed(ctx context.Context, channel, thread, user string, served []string, err error) string {
