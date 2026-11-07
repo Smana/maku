@@ -88,29 +88,26 @@ func (b testBlock) context(t *testing.T) []slackContextText {
 	return out
 }
 
-// blocksOf decodes a message's blocks, in order.
+// blocksOf decodes a message's blocks, in order. They are the array chat.postMessage takes as its
+// `blocks` field: an object there is Slack's invalid_blocks_format, and no proposal is posted.
 func blocksOf(t *testing.T, raw json.RawMessage) []testBlock {
 	t.Helper()
-	var doc struct {
-		Blocks []testBlock `json:"blocks"`
+	var blocks []testBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		t.Fatalf("decode the blocks as Slack's array: %v", err)
 	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("decode the blocks: %v", err)
-	}
-	return doc.Blocks
+	return blocks
 }
 
 // wireBlocks is each block as Slack's own JSON parser sees it: a map, so a test can assert the shape
 // of a value rather than the Go type this package happens to declare for it.
 func wireBlocks(t *testing.T, raw json.RawMessage) []map[string]any {
 	t.Helper()
-	var doc struct {
-		Blocks []map[string]any `json:"blocks"`
+	var blocks []map[string]any
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		t.Fatalf("decode the blocks as Slack's JSON array: %v", err)
 	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("decode the blocks as JSON: %v", err)
-	}
-	return doc.Blocks
+	return blocks
 }
 
 // CD20: the metadata is the whole proposal. It round-trips unchanged, and a payload whose hash does
