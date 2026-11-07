@@ -106,7 +106,7 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 		}
 		links[c.ID] = issueURL(c.Repository, n)
 	}
-	if err := s.repost(ctx, forges[p.Primary.Repository], parentTask, parentIssue, p, hash, links); err != nil {
+	if err := s.repost(ctx, forges[p.Primary.Repository], parentTask, parentIssue, p, hash, links, Materiality{}); err != nil {
 		return err
 	}
 	return s.setStatus(ctx, parentTask, func(t *v1alpha1.Task) { t.Status.Reason = ReasonFiled })
@@ -155,7 +155,7 @@ func (s *Service) fileOnce(ctx context.Context, f IssueForge, label, title, body
 
 // repost comments the plan once per (parent, version, hash) on the parent issue. A comment is
 // recovery evidence only: none is ever read back as control input.
-func (s *Service) repost(ctx context.Context, f IssueForge, task string, issue int, p v1alpha1.CoordinationPlan, hash string, links map[string]string) error {
+func (s *Service) repost(ctx context.Context, f IssueForge, task string, issue int, p v1alpha1.CoordinationPlan, hash string, links map[string]string, m Materiality) error {
 	marker := narrate.CoordinationRepostMarker(task, p.Version, hash)
 	cs, err := f.RecentComments(ctx, issue)
 	if err != nil {
@@ -166,7 +166,7 @@ func (s *Service) repost(ctx context.Context, f IssueForge, task string, issue i
 			return nil
 		}
 	}
-	return f.Comment(ctx, issue, narrate.CoordinationRepost(task, p, hash, nil, nil, false, links))
+	return f.Comment(ctx, issue, narrate.CoordinationRepost(task, p, hash, m.ChangedSections, m.Reauthorize, m.ParentRequired, links))
 }
 
 // linkParentIssue records the parent issue on the parent Task, as the api intake links its issue.

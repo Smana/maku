@@ -389,7 +389,7 @@ func (r *Reconciler) step(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		return r.coordinating(ctx, t)
 	case v1alpha1.TaskKindIntegration:
-		return r.integrationHeld(ctx, t)
+		return r.integrating(ctx, t)
 	}
 	// A terminal task reaches step only for its revert (§6.4); the stop machinery must not
 	// rewrite an ended task into Stopped, and its runs are already over.
@@ -1195,6 +1195,9 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 				return err
 			}
 		}
+	}
+	if t.Spec.Kind == v1alpha1.TaskKindIntegration { // MR10: its own spec, never a verifier's or implementerSpec
+		return r.startIntegration(ctx, t)
 	}
 	if late && t.Status.NextRole != "" {
 		return r.startVerifier(ctx, t, pr)

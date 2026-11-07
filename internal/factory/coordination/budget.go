@@ -5,9 +5,7 @@ package coordination
 import (
 	"context"
 	"errors"
-
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
+	"slices"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
@@ -84,21 +82,23 @@ func AllocationLeft(t *v1alpha1.Task) int64 {
 	return t.Spec.Budget.TaskMicroUSD - AllocationSpent(t) - runReservation(t.Spec.Budget)
 }
 
-// checkReductions refuses next reducing a child's allocation below its current Task's spend.
+// checkReductions refuses next reducing a child's allocation below what every generation of it
+// has settled plus what a live run still holds (MR8): the reduction floor is lifetime spend, so a
+// replacement generation can never be given back an allocation its predecessor already used.
 func (s *Service) checkReductions(ctx context.Context, old *v1alpha1.CoordinationStatus, next v1alpha1.CoordinationPlan) error {
+	if !slices.ContainsFunc(old.Children, func(st v1alpha1.CoordinationChildStatus) bool { return st.Task != "" }) {
+		return nil
+	}
+	tasks, err := ChildTasks(ctx, s.Client, s.Namespace, next.ID)
+	if err != nil {
+		return err
+	}
 	for _, st := range old.Children {
 		c, ok := find(next, st.ID)
-		if !ok || st.Task == "" {
+		if !ok {
 			continue
 		}
-		var t v1alpha1.Task
-		switch err := s.Client.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: st.Task}, &t); {
-		case apierrors.IsNotFound(err):
-			continue
-		case err != nil:
-			return err
-		}
-		if spent := AllocationSpent(&t); c.BudgetMicroUSD < spent {
+		if spent := LifetimeSpent(tasks, st.ID); c.BudgetMicroUSD < spent {
 			return refuse(ErrAllocationBelowSpend, "children."+c.ID+".budgetMicroUSD", "below the %d already spent or held", spent)
 		}
 	}

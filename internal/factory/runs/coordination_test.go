@@ -122,3 +122,79 @@ func TestCoordinationAnnotationsRefuseWhatTheyCannotVouchFor(t *testing.T) {
 		}
 	}
 }
+
+// integrationSpec is a read-only integration run's claim: triager, no branch, one manifest.
+func integrationSpec() Spec {
+	s := spec()
+	s.Role, s.Branch = "triager", ""
+	s.CoordinationManifest = `{"parentTask":"p4zt6wce","purpose":"final"}`
+	s.CoordinationManifestHash = fmt.Sprintf("%x", sha256.Sum256([]byte(s.CoordinationManifest)))
+	return s
+}
+
+// v4 MR10, MR17: an integration run's claim carries its immutable manifest and the SHA-256 of its
+// exact bytes at CREATE only, on a triager claim with no branch; another manifest under the same
+// run id is another run.
+func TestIntegrationRunClaimCarriesOnlyItsManifest(t *testing.T) {
+	s := integrationSpec()
+	u := Build(runwatch.DefaultKind, s)
+	a := u.GetAnnotations()
+	if a[AnnCoordinationManifest] != s.CoordinationManifest || a[AnnCoordinationManifestHash] != s.CoordinationManifestHash {
+		t.Fatalf("annotations %v", a)
+	}
+	if _, ok, _ := unstructured.NestedString(u.Object, "spec", "branch"); ok {
+		t.Fatal("an integration claim names a branch")
+	}
+	if role, _, _ := unstructured.NestedString(u.Object, "spec", "role"); role != "triager" {
+		t.Fatalf("role %q", role)
+	}
+	if _, ok := Build(runwatch.DefaultKind, spec()).GetAnnotations()[AnnCoordinationManifest]; ok {
+		t.Fatal("a claim without a manifest carries the annotation")
+	}
+	c := newClient()
+	if err := c.Create(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create(t.Context(), s); err != nil {
+		t.Fatalf("the replay of the same manifest: %v", err)
+	}
+	other := integrationSpec()
+	other.CoordinationManifest = `{"parentTask":"p4zt6wce","purpose":"beforeDependentMerge"}`
+	other.CoordinationManifestHash = fmt.Sprintf("%x", sha256.Sum256([]byte(other.CoordinationManifest)))
+	if err := c.Create(t.Context(), other); err == nil {
+		t.Fatal("another manifest under the same run id is another run")
+	}
+}
+
+// A manifest rides only a triager claim without a branch, under its exact hash and bound.
+func TestIntegrationRunClaimRefusesWhatItCannotVouchFor(t *testing.T) {
+	for name, edit := range map[string]func(*Spec){
+		"an implementer": func(s *Spec) { s.Role = "implementer" },
+		"a branch":       func(s *Spec) { s.Branch = "agent/3buqdlot" },
+		"a wrong hash":   func(s *Spec) { s.CoordinationManifestHash = strings.Repeat("0", 64) },
+		"no hash":        func(s *Spec) { s.CoordinationManifestHash = "" },
+		"a hash alone":   func(s *Spec) { s.CoordinationManifest = "" },
+		"not JSON": func(s *Spec) {
+			s.CoordinationManifest = "{"
+			s.CoordinationManifestHash = fmt.Sprintf("%x", sha256.Sum256([]byte("{")))
+		},
+		"landed references":  func(s *Spec) { s.CoordinationArtifacts = []v1alpha1.LandedArtifact{landed()} },
+		"an oversized value": func(s *Spec) { big(s) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := integrationSpec()
+			edit(&s)
+			if err := s.Validate(); err == nil {
+				t.Fatal("valid")
+			}
+		})
+	}
+	if err := integrationSpec().Validate(); err != nil {
+		t.Fatalf("the integration claim: %v", err)
+	}
+}
+
+func big(s *Spec) {
+	s.CoordinationManifest = `{"x":"` + strings.Repeat("x", 9000) + `"}`
+	s.CoordinationManifestHash = fmt.Sprintf("%x", sha256.Sum256([]byte(s.CoordinationManifest)))
+}

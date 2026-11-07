@@ -19,7 +19,8 @@ import (
 // only beside the SHA-256 of its exact bytes. Artifacts are a dependent child's landed references:
 // its sandbox fetches each public file anonymously at the recorded repository/commit/path and
 // verifies contentSHA256 before use, so neither the bytes nor a producer token ride the claim.
-// The manifest is an integration run's immutable subjects (read by PR 6's integration path).
+// The manifest is an integration run's immutable subjects, plan hash and acceptance: the v4 item 4
+// runtime, not shipped, is what writes it to a read-only file and exports MAKU_COORDINATION_MANIFEST.
 const (
 	AnnCoordinationArtifacts     = "agents.ogenki.io/coordination-artifacts"
 	AnnCoordinationArtifactsHash = "agents.ogenki.io/coordination-artifacts-hash"
@@ -81,6 +82,26 @@ func (s Spec) validArtifacts() error {
 		errs = append(errs, fmt.Errorf("coordination artifacts are %d bytes, at most %d", len(b), maxCoordinationJSON))
 	}
 	return errors.Join(errs...)
+}
+
+// validManifest refuses a manifest the claim cannot vouch for (MR10, MR17): only a triager claim
+// with no branch and no landed references carries one, as bounded JSON under its exact SHA-256.
+func (s Spec) validManifest() error {
+	if s.CoordinationManifest == "" && s.CoordinationManifestHash == "" {
+		return nil
+	}
+	b := []byte(s.CoordinationManifest)
+	switch {
+	case s.Role != "triager" || s.Branch != "":
+		return fmt.Errorf("a coordination manifest rides a triager claim with no branch, not %q on %q", s.Role, s.Branch)
+	case len(s.CoordinationArtifacts) > 0:
+		return errors.New("an integration claim carries no landed references beside its manifest")
+	case len(b) == 0 || len(b) > maxCoordinationJSON || !json.Valid(b):
+		return fmt.Errorf("the coordination manifest is not 1..%d bytes of JSON", maxCoordinationJSON)
+	case s.CoordinationManifestHash != fmt.Sprintf("%x", sha256.Sum256(b)):
+		return errors.New("the coordination manifest hash is not the SHA-256 of its bytes")
+	}
+	return nil
 }
 
 // artifactsJSON is the annotation value and its SHA-256; "" for none.

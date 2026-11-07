@@ -56,3 +56,10 @@ func ScheduleKey(name string, at time.Time) string {
 func CoordinationChildKey(parent, childID string, version, generation int) string {
 	return fmt.Sprintf("coordination:%s/%s:v%d:gen%d", parent, childID, version, generation)
 }
+
+// CoordinationIntegrationKey keys one integration attempt of a coordination parent (v4 MR10): its
+// purpose, the hash of its immutable manifest and its attempt number, so another subject byte is
+// another Task and a replay of the same attempt creates nothing twice.
+func CoordinationIntegrationKey(parent, purpose, manifestHash string, attempt int) string {
+	return fmt.Sprintf("coordination:%s/integration:%s:%s:a%d", parent, purpose, manifestHash, attempt)
+}
