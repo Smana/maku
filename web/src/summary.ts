@@ -25,7 +25,17 @@ export interface SplitPart { index: number; issue: number; room: string; outcome
 export interface Flow {
   untrusted?: boolean; plan?: string[]; nodes: FlowNode[]; ghosts?: string[]; milestones?: Milestone[];
   split?: { of: number; parts?: SplitPart[] }; parent?: { room: string; issue: number; index: number; of: number };
+  coordination?: CoordinationFlow;
 }
+
+// A coordination parent's family (internal/summary CoordinationFlow), filtered for this viewer by
+// the broker: a withheld child is only restrictedChildren. Drawn apart from split/parent.
+export interface CoordinationNode {
+  id: string; kind: "child" | "integration"; childID?: string; repository?: string; phase?: string; reason?: string;
+  roles: string[]; room?: string; issueURL?: string; prURL?: string; disabled: boolean; requiredConfirmation?: "parent" | "child";
+}
+export interface CoordinationEdge { from: string; to: string; kind: "artifact" | "integration"; name?: string; state: string }
+export interface CoordinationFlow { planVersion: number; planHash: string; nodes: CoordinationNode[]; edges: CoordinationEdge[]; restrictedChildren: number }
 
 export interface Summary {
   apiVersion: "summary/v1";
