@@ -48,6 +48,7 @@ func TestTaskFactsValidate(t *testing.T) {
 		"approver not a login":     {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedBy: "a b"}}, "approvedBy"},
 		"approved commit not hex":  {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedBy: "smana", ApprovedCommit: "`x`"}}, "approvedCommit"},
 		"commit without approver":  {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedCommit: "abc"}}, "approvedBy"},
+		"stale without approver":   {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovalStale: true}}, "approvedBy"},
 		"negative used":            {TaskFacts{Phase: "Queued", Spend: &SpendFact{UsedMicroUSD: -1}}, "usedMicroUSD"},
 		"negative limit":           {TaskFacts{Phase: "Queued", Spend: &SpendFact{LimitMicroUSD: -1}}, "limitMicroUSD"},
 		"negative run":             {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", MicroUSD: -1}}, "microUSD"},

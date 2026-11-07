@@ -248,6 +248,19 @@ human fixes on the pull request itself (`not_agent_authored`, `gate_path`, `cont
 `changes_requested` hand-off returns on an approval once no maintainer's newest review requests
 changes.
 
+With `merge.approveToMerge` off, an approval merges nothing and returns nothing to the gate, but
+the factory shows it on agents pull requests only (an adopted class keeps today's path). The task
+keeps its hand-off reason, whatever it is (`shadow_would_arm`, `policy_pending`, `not_mergeable`,
+`human_commit_in_pr`…), so every return and every reason's own next step stand; the room's NEXT
+line is prefixed with "approved by @login at commit `<sha>`", apart from the agent reviewer's "last
+verdict". Once commits land after the approval, or when it came before the task's last pushing run
+ended (a force push moves a review onto the new head), it reads "@login's approval is of commit
+`<sha>`, an older commit: new commits since". Each approval is one issue comment, and one more once
+stale; the merge instructions go with a current approval only, and no comment repeats a
+`maintainer_approved` hand-off. A dismissed or vetoed approval is no longer shown. The task's
+`status.pullRequest.approval{by, commit, stale}` holds it, and the room's facts carry it as
+`pr.approvedBy`, `pr.approvedCommit` and `pr.approvalStale`.
+
 **Approve the commit you read.** GitHub binds an approval sent without a commit to whatever the
 head is when the approval arrives. If a run pushes while you read, `gh pr review --approve` approves
 a commit you never saw. Approve from the web UI, which sends the commit you are looking at, or
@@ -272,8 +285,8 @@ returns it.
 | `merge_gate_off` | No class is live or in shadow, so the factory does not gate the pull request |
 | `policy_pending` | policy-bot's `policy-bot: main` status needs a maintainer's approval |
 | `policy_absent` | policy-bot has not evaluated the pull request, or the status is not from `merge.policyBotLogin` |
-| `maintainer_approved` | A maintainer approved it. With `merge.approveToMerge` off, a human merges it, and the factory shows any maintainer's approval of the current head this way, whatever the hand-off's reason was (a shadow class's `shadow_would_arm` included): the room says "approved by @login at commit `<sha>`", apart from the agent reviewer's "last verdict", and the issue gets one comment per approval. Nothing merges and the gate decides nothing again. On, an approval of the current head arms the merger, so this reason is left for adopted classes and for a task handed off before the switch was turned on: that approval predates the hand-off, so a fresh approval of the head returns the task to the gate |
-| `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity, or when no run reported the head. Next step: approve the current head. With `merge.approveToMerge` off, it is what a shown approval becomes once commits land after it: the room says "@login's approval is of commit `<sha>`, an older commit: new commits since", once per approval |
+| `maintainer_approved` | A maintainer approved it. With `merge.approveToMerge` off, a human merges it; on, an approval of the current head arms the merger, so this reason is left for adopted classes and for a task handed off before the switch was turned on: that approval predates the hand-off, so a fresh approval of the head returns the task to the gate |
+| `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity, or when no run reported the head. Next step: approve the current head |
 | `gate_path` | It touches a gate path, so an agent can never merge it; a human re-authors the change |
 | `steering_path` | Steering is on for some class and the pull request changes a [steering note](#steering); a human merges it |
 | `not_mergeable` | GitHub refused the merge as the pull request stands |

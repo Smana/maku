@@ -322,11 +322,13 @@ type PRFact struct {
 	URL       string   `json:"url"`
 	Author    string   `json:"author,omitempty"`
 	Reviewers []string `json:"reviewers,omitempty"`
-	// ApprovedBy and ApprovedCommit are a maintainer's approval of an AwaitingHuman pull request the
-	// factory shows with merge.approveToMerge off (reason maintainer_approved, or approval_stale once
-	// newer commits landed): who, a GitHub login, and the commit approved, empty when GitHub named none.
+	// ApprovedBy, ApprovedCommit and ApprovalStale are a maintainer's approval of an AwaitingHuman
+	// pull request the factory shows with merge.approveToMerge off, beside the hand-off's reason,
+	// which stands: who, a GitHub login; the commit approved; and whether newer commits landed since
+	// (or the approval came before the task's last pushing run ended).
 	ApprovedBy     string `json:"approvedBy,omitempty"`
 	ApprovedCommit string `json:"approvedCommit,omitempty"`
+	ApprovalStale  bool   `json:"approvalStale,omitempty"`
 }
 
 // commitRE is a git object id as GitHub writes it: lowercase hex, SHA-1 or SHA-256.
@@ -389,7 +391,7 @@ func (f TaskFacts) Validate() error {
 		return errors.New("task facts: the issue URL is a github.com issue")
 	case f.PR != nil && !githubURL.MatchString(f.PR.URL):
 		return errors.New("task facts: the PR URL is a github.com pull request")
-	case f.PR != nil && (f.PR.ApprovedBy != "" || f.PR.ApprovedCommit != "") && !ValidLogin(f.PR.ApprovedBy):
+	case f.PR != nil && (f.PR.ApprovedBy != "" || f.PR.ApprovedCommit != "" || f.PR.ApprovalStale) && !ValidLogin(f.PR.ApprovedBy):
 		return errors.New("task facts: the PR's approvedBy is a GitHub login")
 	case f.PR != nil && !ValidCommit(f.PR.ApprovedCommit):
 		return errors.New("task facts: the PR's approvedCommit is a commit id")

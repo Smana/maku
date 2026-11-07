@@ -272,12 +272,13 @@ func newestReviews(pr forge.PR, rc *config.Repository) map[string]forge.Review {
 
 // shownApproval is what an AwaitingHuman task shows of its pull request's reviews with
 // merge.approveToMerge off, where nothing merges on it: approval's newest review of each
-// maintainer, veto as approval reads one, approved when an approval names the current head, stale
-// when the approvals name older commits, "" without an approval that names a commit, or when the
-// head is unknown. It reads the pull request alone: no approval binds here, so the push and the
-// runs' end are not asked. Among several, the oldest review id is shown, so every reconcile shows
-// the same one.
-func shownApproval(pr forge.PR, rc *config.Repository) (forge.Review, string) {
+// maintainer; veto as approval reads one; approved when an approval names the current head and came
+// after ended, the end of the task's last pushing run (a force push moves a review's commit to the
+// new head, so the commit alone does not say the maintainer read it); stale for any other approval
+// naming a commit; "" without one, or when the head is unknown. It reads the pull request and the
+// task's status only: no approval binds here, so the head's push is not asked. Among several, the
+// oldest review id is shown, so every reconcile shows the same one.
+func shownApproval(pr forge.PR, rc *config.Repository, ended time.Time) (forge.Review, string) {
 	if pr.ReviewsTruncated {
 		return forge.Review{}, "veto"
 	}
@@ -291,7 +292,7 @@ func shownApproval(pr forge.PR, rc *config.Repository) (forge.Review, string) {
 			continue // no commit to name: nothing to show
 		}
 		got := "stale"
-		if rv.Commit == pr.HeadSHA {
+		if rv.Commit == pr.HeadSHA && !ended.IsZero() && rv.At.After(ended) {
 			got = "approved"
 		}
 		if st == "" || (got == "approved" && st == "stale") || (got == st && rv.ID < shown.ID) {

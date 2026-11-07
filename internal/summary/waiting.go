@@ -287,28 +287,22 @@ func nextStep(reason string, byApproval bool) string {
 	return ""
 }
 
-// approvalShown is the reason and next step of a maintainer's approval the factory shows with
-// merge.approveToMerge off (PRFact.ApprovedBy): who approved which commit, a human's approval and
-// not the agent reviewer's verdict, and what remains, since no approval merges here. "" when the
-// facts name no approver.
-func approvalShown(f *envelope.TaskFacts) (why, next string) {
-	if f.Phase != "AwaitingHuman" || f.MergeByApproval || f.PR == nil || !envelope.ValidLogin(f.PR.ApprovedBy) {
-		return "", ""
+// ApprovalLine is the maintainer's approval the factory shows with merge.approveToMerge off
+// (PRFact.ApprovedBy), in words: who approved which commit — a human's approval, not the agent
+// reviewer's verdict — or that it is of an older commit. "" when the facts name no approver.
+func ApprovalLine(f *envelope.TaskFacts) string {
+	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || !envelope.ValidLogin(f.PR.ApprovedBy) {
+		return ""
 	}
 	commit := f.PR.ApprovedCommit[:min(len(f.PR.ApprovedCommit), shortCommit)]
-	switch f.Reason {
-	case "maintainer_approved":
-		return fmt.Sprintf("approved by @%s at commit `%s`", f.PR.ApprovedBy, commit),
-			"a maintainer merges it on GitHub: the factory does not merge on an approval here (merge.approveToMerge is off)"
-	case "approval_stale":
-		of := "an older commit"
-		if commit != "" {
-			of = fmt.Sprintf("commit `%s`, an older commit", commit)
-		}
-		return fmt.Sprintf("@%s's approval is of %s: new commits since", f.PR.ApprovedBy, of),
-			"a maintainer reviews the new commits, then merges or closes the pull request on GitHub"
+	if !f.PR.ApprovalStale {
+		return fmt.Sprintf("approved by @%s at commit `%s`", f.PR.ApprovedBy, commit)
 	}
-	return "", ""
+	of := "an older commit"
+	if commit != "" {
+		of = fmt.Sprintf("commit `%s`, an older commit", commit)
+	}
+	return fmt.Sprintf("@%s's approval is of %s: new commits since", f.PR.ApprovedBy, of)
 }
 
 // shortCommit is how many characters of a commit id a sentence shows, as GitHub does.
@@ -339,9 +333,6 @@ func Waiting(f *envelope.TaskFacts) (reason, next string) {
 		}
 	}
 	next = nextStep(f.Reason, f.MergeByApproval)
-	if w, n := approvalShown(f); w != "" {
-		why, next = w, n
-	}
 	switch f.Phase {
 	case "Queued":
 		if why == "" {
@@ -382,6 +373,9 @@ func Waiting(f *envelope.TaskFacts) (reason, next string) {
 		}
 	default:
 		return "", ""
+	}
+	if line := ApprovalLine(f); line != "" { // the reason's own next step stands, after who approved what
+		next = line + "; " + next
 	}
 	return why, next
 }

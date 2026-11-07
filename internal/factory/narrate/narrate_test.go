@@ -646,17 +646,18 @@ func TestPrivateRepositoryReason(t *testing.T) {
 	}
 }
 
-// With approveToMerge off, a maintainer's approval is shown once per review: the room's own words
-// (who approved which commit, what remains), and the bypass that merges it.
+// With approveToMerge off, a maintainer's approval is shown once per review beside the hand-off's
+// reason, which keeps its own words; the bypass goes with a current approval only.
 func TestAnApprovalShownSaysWhoAndWhatRemains(t *testing.T) {
 	tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"}, Spec: v1alpha1.TaskSpec{Repository: "Smana/x"},
-		Status: v1alpha1.TaskStatus{PullRequest: &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/x/pull/12"}}}
+		Status: v1alpha1.TaskStatus{Reason: "not_mergeable", PullRequest: &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/x/pull/12"}}}
 	e := ApprovalShown(tk, 77, "Smana", "abc", false)
-	if !strings.Contains(e.Body, "approved by @Smana at commit `abc`") || !strings.Contains(e.Body, "a maintainer merges it on GitHub") ||
+	if !strings.Contains(e.Body, "approved by @Smana at commit `abc`") || !strings.Contains(e.Body, "GitHub does not allow merging it as it stands") ||
 		!strings.Contains(e.Body, "--admin") {
 		t.Fatalf("%q", e.Body)
 	}
-	if s := ApprovalShown(tk, 77, "Smana", "abc", true); s.Key == e.Key || !strings.Contains(s.Body, "an older commit: new commits since") {
+	if s := ApprovalShown(tk, 77, "Smana", "abc", true); s.Key == e.Key || !strings.Contains(s.Body, "an older commit: new commits since") ||
+		strings.Contains(s.Body, "--admin") {
 		t.Fatalf("stale: %q %q", s.Key, s.Body)
 	}
 	if ApprovalShown(tk, 78, "Smana", "abc", false).Key == e.Key {

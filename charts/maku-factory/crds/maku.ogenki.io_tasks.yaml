@@ -887,19 +887,22 @@ spec:
                 properties:
                   approval:
                     description: |-
-                      Approval is the maintainer's approval an AwaitingHuman task shows with merge.approveToMerge
-                      off (reason maintainer_approved, or approval_stale once the head moved past it), for the
-                      room's facts. Cleared by the task's next transition.
+                      Approval is a maintainer's approval an AwaitingHuman agents pull request shows with
+                      merge.approveToMerge off, for the room's facts and narration. It never changes the reason, so
+                      every return and by-hand guidance stands. Cleared when no maintainer's approval stands (a
+                      dismissal, a veto) and by the task's next transition.
                     properties:
+                      by:
+                        maxLength: 64
+                        type: string
                       commit:
-                        description: Empty when GitHub named no commit.
                         maxLength: 64
                         type: string
-                      login:
-                        maxLength: 64
-                        type: string
+                      stale:
+                        type: boolean
                     required:
-                    - login
+                    - by
+                    - commit
                     type: object
                   approvedBy:
                     description: |-
