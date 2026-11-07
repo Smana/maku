@@ -702,6 +702,10 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 .notes .note-latest .hint { margin-left: 8px; }
 .notes details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; }
 .notes ul { margin: 4px 0 0; padding-left: 18px; }
+.policy { overflow-wrap: anywhere; font-size: 13px; }
+.policy > summary { cursor: pointer; color: var(--muted-foreground); }
+.policy p { margin: 4px 0 0; }
+.policy ul { margin: 2px 0 0; padding-left: 18px; }
 .raw-events { margin-top: 8px; }
 .raw-events > summary { cursor: pointer; padding: 4px 0; }
 /* Until the first frame (P9): three message shapes, pulsing where motion is welcome. */
