@@ -1,0 +1,172 @@
+{
+  "description": "",
+  "want": "refuse",
+  "layer": "crd",
+  "task": {
+    "apiVersion": "maku.ogenki.io/v1alpha1",
+    "kind": "Task",
+    "metadata": {
+      "name": "cfbaaxyz",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "kind": "coordination",
+      "source": {
+        "kind": "coordination",
+        "ref": "Smana/public-contracts#coordination/p4zt6wce",
+        "key": "coordination/p4zt6wce",
+        "requestedBy": "github:smana",
+        "trust": "untrusted",
+        "contentSHA256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "repository": "Smana/public-contracts",
+      "text": "Add and consume the v1 consumer schema",
+      "dataClass": "public",
+      "coordination": {
+        "maxChildren": 2,
+        "publicOnly": true
+      }
+    },
+    "status": {
+      "phase": "Coordinating",
+      "reason": "awaiting_confirmation",
+      "coordination": {
+        "planVersion": 3,
+        "planHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "plan": {
+          "apiVersion": "maku.ogenki.io/v1alpha1",
+          "kind": "CoordinationPlan",
+          "id": "p4zt6wce",
+          "title": "Add and consume the v1 consumer schema",
+          "version": 3,
+          "primary": {
+            "repository": "Smana/public-contracts",
+            "rationale": "The integration fixture and the consumer contract live here."
+          },
+          "children": [
+            {
+              "id": "contract",
+              "repository": "Smana/public-contracts",
+              "maintainer": "github:Smana",
+              "rationale": "Publish the schema the consumer will read.",
+              "class": "scripts",
+              "tier": "standard",
+              "roles": [
+                "implementer",
+                "reviewer"
+              ],
+              "budgetMicroUSD": 5100000,
+              "scope": {
+                "state": "ready",
+                "task": "Add the consumer v1 JSON schema and nothing else.",
+                "touches": [
+                  "schemas/consumer-v1.json"
+                ],
+                "leave": [
+                  ".github",
+                  "docs/superpowers"
+                ],
+                "plan": [
+                  "Define the schema",
+                  "validate its fixtures"
+                ],
+                "acceptance": [
+                  {
+                    "check": "task test",
+                    "proves": "The schema and fixtures validate"
+                  }
+                ]
+              },
+              "produces": [
+                {
+                  "name": "consumer-v1-schema",
+                  "kind": "file",
+                  "path": "schemas/consumer-v1.json",
+                  "mediaType": "application/json",
+                  "maxBytes": 65536
+                }
+              ]
+            },
+            {
+              "id": "consumer",
+              "repository": "Smana/public-consumer",
+              "maintainer": "github:other-maintainer",
+              "rationale": "Read the published schema instead of duplicating it.",
+              "class": "scripts",
+              "tier": "standard",
+              "roles": [
+                "implementer",
+                "reviewer"
+              ],
+              "budgetMicroUSD": 5100000,
+              "scope": {
+                "state": "ready",
+                "task": "Validate the consumer against the landed v1 schema.",
+                "touches": [
+                  "internal/consumer"
+                ],
+                "leave": [
+                  ".github"
+                ],
+                "plan": [
+                  "Fetch the recorded schema commit",
+                  "add the compatibility check"
+                ],
+                "acceptance": [
+                  {
+                    "check": "go test ./internal/consumer",
+                    "proves": "The consumer accepts the v1 schema"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "contract"
+              ],
+              "consumes": [
+                {
+                  "from": "contract",
+                  "artifact": "consumer-v1-schema",
+                  "required": true
+                }
+              ]
+            }
+          ],
+          "mergeOrder": [
+            "contract",
+            "consumer"
+          ],
+          "integration": {
+            "role": "triager",
+            "beforeDependents": true,
+            "runMicroUSD": 510000,
+            "maxRuns": 4,
+            "acceptance": [
+              {
+                "check": "tests/integration/consumer \"$MAKU_COORDINATION_MANIFEST\"",
+                "proves": "The exact proposed heads work together, then the exact merged heads still do"
+              }
+            ]
+          },
+          "budget": {
+            "planningMicroUSD": 510000,
+            "totalMicroUSD": 12750000
+          }
+        },
+        "budget": {
+          "planningMicroUSD": 510000,
+          "totalMicroUSD": 12750000,
+          "allocatedMicroUSD": 12750000
+        },
+        "history": [
+          {
+            "version": 3,
+            "planHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "acceptedAt": "2026-11-07T10:00:00Z"
+          }
+        ]
+      },
+      "nextRole": "reviewer"
+    }
+  },
+  "message": "a coordination parent has no run, pull request, next role or next trigger (MR2)"
+}

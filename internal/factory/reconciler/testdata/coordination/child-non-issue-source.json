@@ -1,0 +1,70 @@
+{
+  "description": "",
+  "want": "refuse",
+  "layer": "crd",
+  "task": {
+    "apiVersion": "maku.ogenki.io/v1alpha1",
+    "kind": "Task",
+    "metadata": {
+      "name": "cfcdaxyz",
+      "namespace": "agent-system",
+      "labels": {
+        "agents.ogenki.io/coordination-parent": "p4zt6wce"
+      }
+    },
+    "spec": {
+      "source": {
+        "kind": "schedule",
+        "ref": "Smana/public-contracts#12",
+        "key": "Smana/public-contracts#12",
+        "requestedBy": "github:smana",
+        "trust": "untrusted",
+        "contentSHA256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "repository": "Smana/public-contracts",
+      "issue": 12,
+      "text": "Add the consumer v1 JSON schema and nothing else.",
+      "dataClass": "public",
+      "predictedClass": "scripts",
+      "template": "pair",
+      "budget": {
+        "tier": "standard",
+        "taskMicroUSD": 5100000
+      },
+      "scope": {
+        "state": "ready",
+        "task": "Add the consumer v1 JSON schema and nothing else.",
+        "touches": [
+          "schemas/consumer-v1.json"
+        ],
+        "leave": [
+          ".github",
+          "docs/superpowers"
+        ],
+        "plan": [
+          "Define the schema",
+          "validate its fixtures"
+        ],
+        "acceptance": [
+          {
+            "check": "task test",
+            "proves": "The schema and fixtures validate"
+          }
+        ]
+      },
+      "coordinationParent": {
+        "task": "p4zt6wce",
+        "planVersion": 3,
+        "childID": "contract"
+      }
+    },
+    "status": {
+      "coordination": {
+        "planVersion": 3,
+        "childID": "contract",
+        "allocationMicroUSD": 5100000
+      }
+    }
+  },
+  "message": "a coordination child is an issue task"
+}

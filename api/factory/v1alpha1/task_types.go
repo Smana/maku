@@ -34,6 +34,12 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 // +kubebuilder:printcolumn:name="PR",type=string,JSONPath=`.status.pullRequest.url`
 // +kubebuilder:printcolumn:name="Tokens",type=integer,JSONPath=`.status.usage.tokens`
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z2-7]{8}$')",message="a Task is named with a C2 id: 8 characters of [a-z2-7]"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.kind) || self.spec.kind != 'coordination' || !has(self.status) || (!has(self.status.nextRole) && !has(self.status.nextTrigger) && !has(self.status.pullRequest) && !has(self.status.runs))",message="a coordination parent has no run, pull request, next role or next trigger (MR2)"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.kind) || self.spec.kind != 'integration' || !has(self.status) || !has(self.status.pullRequest)",message="an integration task has no implementation pull request (MR10)"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.kind) || self.spec.kind != 'integration' || !has(self.status) || !has(self.status.runs) || self.status.runs.all(r, r.role == 'triager')",message="an integration task runs only triager (MR10, MR17)"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.phase) || self.status.phase != 'Coordinating' || (has(self.spec.kind) && self.spec.kind == 'coordination')",message="only a coordination parent is Coordinating"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.coordination) || (has(self.status.coordination.childID) ? (!has(self.spec.kind) && has(self.spec.coordinationParent) && has(self.spec.coordinationParent.childID) && self.status.coordination.childID == self.spec.coordinationParent.childID) : (has(self.spec.kind) && self.spec.kind == 'coordination'))",message="status.coordination is a parent's record, or a child's lineage under its own childID"
+// +kubebuilder:validation:XValidation:rule="!has(self.status) || !has(self.status.result) || (has(self.spec.kind) && self.spec.kind == 'integration')",message="status.result is an integration task's"
 type Task struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -56,7 +62,28 @@ type TaskList struct {
 // +kubebuilder:validation:XValidation:rule="self.source.kind != 'api' || (has(self.maxMicroUSD) && self.maxMicroUSD > 0)",message="an api task carries maxMicroUSD"
 // +kubebuilder:validation:XValidation:rule="self.source.kind != 'api' || !has(self.budget) || (has(self.maxMicroUSD) && (!has(self.budget.runMicroUSD) || self.budget.runMicroUSD <= self.maxMicroUSD) && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <= self.maxMicroUSD))",message="an api task's budget stays under its ceiling"
 // +kubebuilder:validation:XValidation:rule="!has(self.loop) || !has(self.loop.judgeModel) || self.loop.judgeModel != 'mistral-light' || self.dataClass == 'public'",message="a provider judgeModel is a public task's only"
+// +kubebuilder:validation:XValidation:rule="has(self.kind) == has(oldSelf.kind) && (!has(self.kind) || self.kind == oldSelf.kind)",message="spec.kind is fixed at creation"
+// +kubebuilder:validation:XValidation:rule="has(self.coordinationParent) == has(oldSelf.coordinationParent) && (!has(self.coordinationParent) || self.coordinationParent == oldSelf.coordinationParent)",message="spec.coordinationParent is fixed at creation"
+// +kubebuilder:validation:XValidation:rule="has(self.coordination) == has(oldSelf.coordination) && (!has(self.coordination) || self.coordination == oldSelf.coordination)",message="spec.coordination is fixed at creation"
+// +kubebuilder:validation:XValidation:rule="has(self.integration) == has(oldSelf.integration) && (!has(self.integration) || self.integration == oldSelf.integration)",message="spec.integration is fixed at creation"
+// +kubebuilder:validation:XValidation:rule="has(self.coordinationArtifacts) == has(oldSelf.coordinationArtifacts) && (!has(self.coordinationArtifacts) || self.coordinationArtifacts == oldSelf.coordinationArtifacts)",message="spec.coordinationArtifacts are fixed at creation"
+// +kubebuilder:validation:XValidation:rule="has(self.kind) == (self.source.kind == 'coordination')",message="a coordination or integration task, and only one, has source kind coordination (MR2)"
+// +kubebuilder:validation:XValidation:rule="has(self.coordination) == (has(self.kind) && self.kind == 'coordination')",message="a coordination parent, and only one, has spec.coordination"
+// +kubebuilder:validation:XValidation:rule="has(self.integration) == (has(self.kind) && self.kind == 'integration')",message="an integration task, and only one, has spec.integration"
+// +kubebuilder:validation:XValidation:rule="!has(self.kind) || self.kind != 'coordination' || (!has(self.template) && (!has(self.budget) || (!has(self.budget.tier) && !has(self.budget.model) && !has(self.budget.runTokens) && !has(self.budget.taskTokens) && !has(self.budget.runMinutes) && !has(self.budget.runMicroUSD) && !has(self.budget.taskMicroUSD))))",message="a coordination parent has no template, tier or implementation budget (MR2)"
+// +kubebuilder:validation:XValidation:rule="!has(self.kind) || self.kind != 'coordination' || (!has(self.coordinationParent) && !has(self.parent) && !has(self.split) && !has(self.scope))",message="a coordination parent has no lineage or scope of its own (MR2)"
+// +kubebuilder:validation:XValidation:rule="!has(self.coordinationParent) || has(self.kind) || has(self.coordinationParent.childID)",message="a coordination child names its childID"
+// +kubebuilder:validation:XValidation:rule="!has(self.coordinationParent) || has(self.kind) || (!has(self.parent) && !has(self.split))",message="a coordination child is never a splitter part: no spec.parent, no spec.split (MR2)"
+// +kubebuilder:validation:XValidation:rule="!has(self.coordinationParent) || has(self.kind) || self.source.kind == 'issue'",message="a coordination child is an issue task"
+// +kubebuilder:validation:XValidation:rule="!has(self.kind) || self.kind != 'integration' || (has(self.coordinationParent) && !has(self.coordinationParent.childID) && !has(self.parent) && !has(self.split) && !has(self.scope))",message="an integration task names its parent and no childID (MR10)"
+// +kubebuilder:validation:XValidation:rule="!has(self.coordinationArtifacts) || (has(self.coordinationParent) && !has(self.kind))",message="only a coordination child consumes landed artifacts (MR7)"
+// +kubebuilder:validation:XValidation:rule="(!has(self.kind) && !has(self.coordinationParent)) || self.dataClass == 'public'",message="a coordination family is public only (MR16)"
 type TaskSpec struct {
+	// Kind is coordination for a parent and integration for an integration attempt (MR2); absent,
+	// the Task is an ordinary work Task, a coordination child included.
+	// +kubebuilder:validation:Enum=coordination;integration
+	// +optional
+	Kind   string `json:"kind,omitempty"`
 	Source Source `json:"source"`
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`
 	// +kubebuilder:validation:MaxLength=140
@@ -132,6 +159,19 @@ type TaskSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="origin never changes"
 	// +optional
 	Origin string `json:"origin,omitempty"`
+	// Coordination is a parent's switch values (MR1, MR16), fixed at creation.
+	// +optional
+	Coordination *CoordinationSpec `json:"coordination,omitempty"`
+	// CoordinationParent is a child's or an integration Task's parent (MR2), fixed at creation.
+	// +optional
+	CoordinationParent *CoordinationParent `json:"coordinationParent,omitempty"`
+	// Integration is an integration Task's exact subjects (MR10), fixed at creation.
+	// +optional
+	Integration *IntegrationSpec `json:"integration,omitempty"`
+	// CoordinationArtifacts are the landed references a dependent child was created with (MR7).
+	// +kubebuilder:validation:MaxItems=8
+	// +optional
+	CoordinationArtifacts []LandedArtifact `json:"coordinationArtifacts,omitempty"`
 }
 
 // Published records the issue the factory filed from an investigate task's proposal (RA9): once
@@ -301,7 +341,8 @@ type TaskAcceptance struct {
 // +kubebuilder:validation:XValidation:rule="has(self.onBehalfOf) == has(oldSelf.onBehalfOf) && (!has(self.onBehalfOf) || self.onBehalfOf == oldSelf.onBehalfOf)",message="source.onBehalfOf never changes"
 type Source struct {
 	// adopt: another author's pull request the factory decides (merge gate MC10).
-	// +kubebuilder:validation:Enum=issue;runlore;schedule;api;adopt
+	// coordination: a coordination parent or integration Task (MR2); a child is an issue.
+	// +kubebuilder:validation:Enum=issue;runlore;schedule;api;adopt;coordination
 	Kind string `json:"kind"`
 	// Smana/cloud-native-ref#2112 (owner/name#<n>), runlore:<alert>/<resource>, or the schedule name.
 	// +kubebuilder:validation:MaxLength=512
@@ -361,7 +402,7 @@ type Budget struct {
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.trace) || has(self.trace)",message="a task's trace is never removed: its runs are parented on it"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.usageSettled) || !oldSelf.usageSettled || (has(self.usageSettled) && self.usageSettled)",message="settled usage stays settled"
 type TaskStatus struct {
-	// +kubebuilder:validation:Enum=Received;Rejected;Triaged;Queued;Implementing;NoOp;Reviewing;AwaitingCI;AutoMerging;AwaitingHuman;Merged;Verifying;Done;Reverted;Escalated;Closed;Stopped;Split
+	// +kubebuilder:validation:Enum=Received;Rejected;Triaged;Queued;Implementing;NoOp;Reviewing;AwaitingCI;AutoMerging;AwaitingHuman;Merged;Verifying;Done;Reverted;Escalated;Closed;Stopped;Split;Coordinating
 	// +optional
 	Phase string `json:"phase,omitempty"`
 	// +kubebuilder:validation:MaxLength=1024
@@ -486,6 +527,12 @@ type TaskStatus struct {
 	// The task's root span (R46): minted at acceptance, exported once when the task ends.
 	// +optional
 	Trace *TraceRef `json:"trace,omitempty"`
+	// Coordination is a parent's family record or a child's lineage (MR2).
+	// +optional
+	Coordination *CoordinationStatus `json:"coordination,omitempty"`
+	// Result is an integration Task's outcome (MR10).
+	// +optional
+	Result *IntegrationResult `json:"result,omitempty"`
 }
 
 // ScopeStatus is the scoper's outcome on its task.
