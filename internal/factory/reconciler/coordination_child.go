@@ -16,6 +16,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 )
 
@@ -31,6 +32,9 @@ var (
 	errCoordinationParent = errors.New("coordination_parent_missing")
 	// errCoordinationScopeChanged is a child whose frozen snapshot is not the confirmed plan's.
 	errCoordinationScopeChanged = errors.New("coordination_scope_changed")
+	// errCoordinationSuperseded is an affected old generation after a material edit: it stops
+	// through the ordinary stop machinery as superseded, never Rejected (MR12).
+	errCoordinationSuperseded = errors.New("superseded")
 	// errCoordinationArtifacts is a child whose landed references are not exactly its required
 	// consumes as its parent recorded them (MR7).
 	errCoordinationArtifacts = coordination.ErrArtifactUnverified
@@ -56,6 +60,9 @@ func lineageReason(err error) string {
 // template, scope and budget are the plan's. A refused authority holds this child alone.
 func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.Task) error {
 	p, err := r.checkCoordinationLineage(ctx, t)
+	if errors.Is(err, errCoordinationSuperseded) {
+		return r.stop(ctx, t, "superseded")
+	}
 	if reason := lineageReason(err); reason != "" {
 		return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
 	}
@@ -72,7 +79,8 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.
 	cp := t.Spec.CoordinationParent
 	c, _ := coordination.PlanChild(p.Status.Coordination, cp.ChildID)
 	t.Status.Classification = &v1alpha1.Classification{Tier: c.Tier, Classifier: "coordination", Fallback: "static"}
-	t.Status.Coordination = &v1alpha1.CoordinationStatus{PlanVersion: cp.PlanVersion, ChildID: cp.ChildID, AllocationMicroUSD: c.BudgetMicroUSD}
+	// The generation's own share of the lifetime allocation: its Task's cap (MR8).
+	t.Status.Coordination = &v1alpha1.CoordinationStatus{PlanVersion: cp.PlanVersion, ChildID: cp.ChildID, AllocationMicroUSD: t.Spec.Budget.TaskMicroUSD}
 	t.Status.ConfigHash = r.Cfg.Hash
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
@@ -106,6 +114,9 @@ func (r *Reconciler) coordinationHold(ctx context.Context, t *v1alpha1.Task) (bo
 		return r.integrationHold(ctx, t)
 	}
 	p, err := r.checkCoordinationLineage(ctx, t)
+	if errors.Is(err, errCoordinationSuperseded) {
+		return true, r.stop(ctx, t, "superseded")
+	}
 	if reason := lineageReason(err); reason != "" {
 		return true, r.end(ctx, t, v1alpha1.PhaseRejected, reason)
 	}
@@ -113,6 +124,27 @@ func (r *Reconciler) coordinationHold(ctx context.Context, t *v1alpha1.Task) (bo
 		return true, err
 	}
 	return r.coordinationAuthority(ctx, t, p)
+}
+
+// currentGeneration is whether child t is st's current generation under a fingerprint the current
+// plan preserves (MR12): the Task the parent recorded, or, before that record is written, the one
+// this version's admission names; its hash is the accepted version it was created under. An
+// unaffected child keeps its Task across versions; an affected one never runs on.
+func currentGeneration(parent string, cs *v1alpha1.CoordinationStatus, st v1alpha1.CoordinationChildStatus, t *v1alpha1.Task) bool {
+	cp := t.Spec.CoordinationParent
+	switch {
+	case st.Fingerprint != coordination.ChildFingerprint(*cs.Plan, st.ID):
+		return false
+	case st.Task == "":
+		if t.Name != taskid.Name(taskid.CoordinationChildKey(parent, st.ID, int(cs.Plan.Version), int(max(st.Generation, 1)))) {
+			return false
+		}
+	case st.Task != t.Name:
+		return false
+	}
+	return slices.ContainsFunc(cs.History, func(v v1alpha1.CoordinationPlanVersion) bool {
+		return v.Version == cp.PlanVersion && v.PlanHash == t.Spec.Source.ContentSHA256
+	}) || (cp.PlanVersion == cs.Plan.Version && t.Spec.Source.ContentSHA256 == cs.PlanHash)
 }
 
 // checkCoordinationLineage proves child t is one lineage in one repository (MR2): no splitter
@@ -144,20 +176,21 @@ func (r *Reconciler) checkCoordinationLineage(ctx context.Context, t *v1alpha1.T
 	if !ok {
 		return nil, errCoordinationParent
 	}
-	issue := 0
-	for _, s := range cs.Children {
-		if s.ID == c.ID {
-			issue = s.Issue
-			if s.Repository != c.Repository {
-				return nil, errCrossRepositoryLineage
-			}
-		}
+	i := slices.IndexFunc(cs.Children, func(s v1alpha1.CoordinationChildStatus) bool { return s.ID == c.ID })
+	if i < 0 {
+		return nil, errCoordinationParent
 	}
-	if c.Repository != t.Spec.Repository || t.Spec.Source.Ref != fmt.Sprintf("%s#%d", c.Repository, t.Spec.Issue) || issue != t.Spec.Issue {
+	st := cs.Children[i]
+	if st.Repository != c.Repository {
 		return nil, errCrossRepositoryLineage
 	}
-	if t.Spec.Source.ContentSHA256 != cs.PlanHash || cp.PlanVersion != cs.Plan.Version || t.Spec.Scope == nil ||
-		!equality.Semantic.DeepEqual(*t.Spec.Scope, c.Scope) {
+	if c.Repository != t.Spec.Repository || t.Spec.Source.Ref != fmt.Sprintf("%s#%d", c.Repository, t.Spec.Issue) || st.Issue != t.Spec.Issue {
+		return nil, errCrossRepositoryLineage
+	}
+	if pg := coordination.Pending(cs, c.ID); pg != nil && pg.StoppingTask == t.Name {
+		return nil, errCoordinationSuperseded
+	}
+	if !currentGeneration(p.Name, cs, st, t) || t.Spec.Scope == nil || !equality.Semantic.DeepEqual(*t.Spec.Scope, c.Scope) {
 		return nil, errCoordinationScopeChanged
 	}
 	if want, ok := coordination.ConsumedArtifacts(c, cs.Artifacts); !ok || !slices.Equal(want, t.Spec.CoordinationArtifacts) {

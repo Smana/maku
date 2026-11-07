@@ -49,6 +49,17 @@ func ChildTask(ns string, cfg *config.Config, parent *v1alpha1.Task, c v1alpha1.
 	}
 }
 
+// LimitAllocation caps replacement generation t at left, what its child's lifetime allocation still
+// holds after every earlier generation (MR8), never below zero: queued then refuses a run that does
+// not fit as allocation_exhausted, never borrowing a sibling's share.
+func LimitAllocation(t *v1alpha1.Task, left int64) {
+	left = max(left, 0)
+	t.Spec.Budget.TaskMicroUSD = left
+	if lt := int64(float64(left) / config.RefUSDPerMToken); lt < t.Spec.Budget.TaskTokens {
+		t.Spec.Budget.TaskTokens = lt
+	}
+}
+
 // templateFor is the config template whose roles are exactly roles, by name order; the default
 // template when none is.
 func templateFor(cfg *config.Config, roles []string) string {
