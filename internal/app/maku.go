@@ -72,7 +72,9 @@ const makuUsage = `usage: maku <command>
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
-  policy export|check   write or check a repository's merge policy file, offline
+  policy export|check|simulate|diff
+                                  write, check, simulate or diff a repository's merge policy file, offline;
+                                  simulate and diff need policyManagement.simulation
   mcp                             the factory's MCP tools on stdio, for a local coding agent:
                                   claude mcp add factory -- maku mcp
   setup <claude|opencode|codex|gemini|cursor|copilot> [--project] [--print] [--restart-service]
