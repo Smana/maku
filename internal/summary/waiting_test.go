@@ -210,3 +210,31 @@ func TestTheHumanCommitStepSaysWhy(t *testing.T) {
 		t.Fatalf("a watcher's step: %+v", got)
 	}
 }
+
+// A maintainer's approval the factory shows with merge.approveToMerge off says who approved which
+// commit, apart from the agent reviewer's verdict, and that a maintainer merges it on GitHub; an
+// older commit's says new commits landed since. Without the approver the words are the reason's own.
+func TestAShownApprovalNamesWhoAndWhichCommit(t *testing.T) {
+	pr := func(by, commit string) *envelope.PRFact {
+		return &envelope.PRFact{Number: 2267, URL: prURL, ApprovedBy: by, ApprovedCommit: commit}
+	}
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	for name, tc := range map[string]struct {
+		f         envelope.TaskFacts
+		why, next string
+	}{
+		"approved": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "maintainer_approved", PR: pr("smana", sha)},
+			"approved by @smana at commit `0123456`", "a maintainer merges it on GitHub"},
+		"stale": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "approval_stale", PR: pr("smana", sha)},
+			"@smana's approval is of commit `0123456`, an older commit: new commits since", "a maintainer reviews the new commits"},
+		"stale, no commit": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "approval_stale", PR: pr("smana", "")},
+			"@smana's approval is of an older commit: new commits since", "a maintainer reviews the new commits"},
+		"no approver": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "maintainer_approved", PR: pr("", "")},
+			"a maintainer approved it", "a maintainer reviews and merges or closes the pull request on GitHub"},
+	} {
+		why, next := summary.Waiting(&tc.f)
+		if why != tc.why || !strings.HasPrefix(next, tc.next) {
+			t.Errorf("%s: %q → %q", name, why, next)
+		}
+	}
+}

@@ -645,3 +645,21 @@ func TestPrivateRepositoryReason(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// With approveToMerge off, a maintainer's approval is shown once per review: the room's own words
+// (who approved which commit, what remains), and the bypass that merges it.
+func TestAnApprovalShownSaysWhoAndWhatRemains(t *testing.T) {
+	tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"}, Spec: v1alpha1.TaskSpec{Repository: "Smana/x"},
+		Status: v1alpha1.TaskStatus{PullRequest: &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/x/pull/12"}}}
+	e := ApprovalShown(tk, 77, "Smana", "abc", false)
+	if !strings.Contains(e.Body, "approved by @Smana at commit `abc`") || !strings.Contains(e.Body, "a maintainer merges it on GitHub") ||
+		!strings.Contains(e.Body, "--admin") {
+		t.Fatalf("%q", e.Body)
+	}
+	if s := ApprovalShown(tk, 77, "Smana", "abc", true); s.Key == e.Key || !strings.Contains(s.Body, "an older commit: new commits since") {
+		t.Fatalf("stale: %q %q", s.Key, s.Body)
+	}
+	if ApprovalShown(tk, 78, "Smana", "abc", false).Key == e.Key {
+		t.Fatal("a new review is a new narration")
+	}
+}

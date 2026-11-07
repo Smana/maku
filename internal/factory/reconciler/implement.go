@@ -920,7 +920,28 @@ func (r *Reconciler) awaitingHuman(ctx context.Context, t *v1alpha1.Task) error 
 	} else if back {
 		return nil
 	}
+	r.showApproval(t, pr)
 	return r.remind(ctx, t, pr)
+}
+
+// showApproval says a maintainer's approval of an agents pull request with merge.approveToMerge off,
+// where an approval returns nothing to the gate (AM2) and so would go unsaid: the status reason
+// becomes maintainer_approved, or approval_stale once newer commits landed, the room's facts name
+// who approved which commit, and the approval is narrated once per review (its key). Nothing merges
+// and no gate input changes: reenter has already passed, and none of its returns reads either
+// reason. It reads the pull request awaitingHuman already holds: no GitHub call of its own. With
+// approveToMerge on, an approval of the head is a return (approvalReturn) and the merger merges it.
+func (r *Reconciler) showApproval(t *v1alpha1.Task, pr forge.PR) {
+	if r.repo(t).Merge.ApproveToMerge {
+		return
+	}
+	rv, st := shownApproval(pr, r.repo(t))
+	if st != "approved" && st != "stale" {
+		return
+	}
+	t.Status.Reason = map[string]string{"approved": "maintainer_approved", "stale": "approval_stale"}[st]
+	t.Status.PullRequest.Approval = &v1alpha1.ApprovalRef{Login: rv.Author, Commit: rv.Commit}
+	narrateLater(t, narrate.ApprovalShown(t, rv.ID, rv.Author, rv.Commit, st == "stale"))
 }
 
 // countApproves counts each maintainer's APPROVED review once (§7: how dark the factory is):

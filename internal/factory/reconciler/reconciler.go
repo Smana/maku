@@ -468,6 +468,9 @@ func (r *Reconciler) to(t *v1alpha1.Task, phase, reason string) {
 		t.Status.PhaseSince = &now
 	}
 	t.Status.Phase, t.Status.Reason = phase, reason
+	if ref := t.Status.PullRequest; ref != nil {
+		ref.Approval = nil // what showApproval showed stands with its reason only
+	}
 	// AM9: the pull request's first hand-off to a human starts its hand-off to merge clock, from
 	// every site that hands off.
 	if ref := t.Status.PullRequest; phase == v1alpha1.PhaseAwaitingHuman && ref != nil && ref.HandedOffAt == nil {

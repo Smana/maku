@@ -885,6 +885,22 @@ spec:
                 description: PullRequestRef is the task's pull request and what happened
                   to it.
                 properties:
+                  approval:
+                    description: |-
+                      Approval is the maintainer's approval an AwaitingHuman task shows with merge.approveToMerge
+                      off (reason maintainer_approved, or approval_stale once the head moved past it), for the
+                      room's facts. Cleared by the task's next transition.
+                    properties:
+                      commit:
+                        description: Empty when GitHub named no commit.
+                        maxLength: 64
+                        type: string
+                      login:
+                        maxLength: 64
+                        type: string
+                    required:
+                    - login
+                    type: object
                   approvedBy:
                     description: |-
                       ApprovedBy is the maintainer whose approval of the head the merger merged on (AM1); empty

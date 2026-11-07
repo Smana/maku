@@ -25,6 +25,8 @@ func TestTaskStatePayloadCarriesKindAndFacts(t *testing.T) {
 	}
 }
 
+const prURL = "https://github.com/Smana/cloud-native-ref/pull/1"
+
 func TestTaskFactsValidate(t *testing.T) {
 	t0 := time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
 	runs := func(n int) []RunFact {
@@ -43,6 +45,9 @@ func TestTaskFactsValidate(t *testing.T) {
 		"no phase":                 {TaskFacts{}, ""},
 		"negative usage":           {TaskFacts{Phase: "Implementing", Budget: &BudgetFact{UsedTokens: -1}}, ""},
 		"non-github pr":            {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: "https://evil.example/pull/1"}}, ""},
+		"approver not a login":     {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedBy: "a b"}}, "approvedBy"},
+		"approved commit not hex":  {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedBy: "smana", ApprovedCommit: "`x`"}}, "approvedCommit"},
+		"commit without approver":  {TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedCommit: "abc"}}, "approvedBy"},
 		"negative used":            {TaskFacts{Phase: "Queued", Spend: &SpendFact{UsedMicroUSD: -1}}, "usedMicroUSD"},
 		"negative limit":           {TaskFacts{Phase: "Queued", Spend: &SpendFact{LimitMicroUSD: -1}}, "limitMicroUSD"},
 		"negative run":             {TaskFacts{Phase: "Queued", Run: &RunFact{ID: "r", MicroUSD: -1}}, "microUSD"},
@@ -110,6 +115,11 @@ func TestTaskFactsValidate(t *testing.T) {
 	}
 	if err := (TaskFacts{Phase: "Queued"}).Validate(); err != nil {
 		t.Fatalf("minimal facts refused: %v", err)
+	}
+	for _, c := range []string{"", "abc", strings.Repeat("f", 64)} { // an approval with no commit is an older commit's
+		if err := (TaskFacts{Phase: "AwaitingHuman", PR: &PRFact{Number: 1, URL: prURL, ApprovedBy: "smana", ApprovedCommit: c}}).Validate(); err != nil {
+			t.Fatalf("approval of %q refused: %v", c, err)
+		}
 	}
 }
 
