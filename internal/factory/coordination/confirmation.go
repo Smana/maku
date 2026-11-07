@@ -76,6 +76,8 @@ type Service struct {
 	Checks        RepositoryChecks
 	Prerequisites ExecutionPrerequisites
 	Now           func() time.Time
+	// Forges is each repository's own factory App connection for filing, nil when it has none.
+	Forges func(repository string) IssueForge
 }
 
 func (s *Service) mode() string {

@@ -382,7 +382,20 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
 	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
 	// confirms only.
-	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now}
+	// Each repository's checks and filing go through that repository's own App connection.
+	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now,
+		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil // a nil interface, never a typed-nil *forge.GitHub
+		}},
+		Forges: func(repo string) coordination.IssueForge {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil
+		}}
 	apiSrv.Coordination = coord
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()

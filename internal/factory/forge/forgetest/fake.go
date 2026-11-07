@@ -91,6 +91,10 @@ type Fake struct {
 	listErr       error
 	closeErr      error
 	nextID        int64
+	repoInfo      *forge.RepositoryInfo // RepositoryInfo's answer; nil answers a public "owner/repo"
+	repoInfoErr   error
+	perms         map[string]string // Permission's answer by lower-case login; absent is "none"
+	permErr       error
 }
 
 // NewFake returns an empty Fake.
@@ -1155,4 +1159,62 @@ func (f *Fake) Public(context.Context) (bool, error) {
 		return false, f.publicErr
 	}
 	return !f.private, nil
+}
+
+// SetRepositoryInfo sets what RepositoryInfo answers.
+func (f *Fake) SetRepositoryInfo(i forge.RepositoryInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoInfo = &i
+}
+
+// FailRepositoryInfo makes RepositoryInfo fail with err, as an absent App installation does; nil
+// restores the answer.
+func (f *Fake) FailRepositoryInfo(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoInfoErr = err
+}
+
+// RepositoryInfo implements the forge's RepositoryInfo.
+func (f *Fake) RepositoryInfo(context.Context) (forge.RepositoryInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.repoInfoErr != nil {
+		return forge.RepositoryInfo{}, f.repoInfoErr
+	}
+	if f.repoInfo != nil {
+		return *f.repoInfo, nil
+	}
+	return forge.RepositoryInfo{FullName: "owner/repo", DefaultBranch: "main", Private: f.private}, nil
+}
+
+// SetPermission sets login's permission on the repository.
+func (f *Fake) SetPermission(login, permission string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.perms == nil {
+		f.perms = map[string]string{}
+	}
+	f.perms[strings.ToLower(login)] = permission
+}
+
+// FailPermission makes Permission fail with err; nil restores the answer.
+func (f *Fake) FailPermission(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.permErr = err
+}
+
+// Permission implements the forge's Permission: "none" for a login never set.
+func (f *Fake) Permission(_ context.Context, login string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.permErr != nil {
+		return "", f.permErr
+	}
+	if p, ok := f.perms[strings.ToLower(login)]; ok {
+		return p, nil
+	}
+	return "none", nil
 }

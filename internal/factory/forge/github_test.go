@@ -2256,3 +2256,19 @@ func TestMergerPermissionsAskForStatusesWriteOnlyForTheGateStatus(t *testing.T) 
 		t.Fatalf("statuses = %q, want write", got)
 	}
 }
+
+// RepositoryInfo is the repository document as GitHub states it; a failed read or one missing its
+// full name or private flag is an error, never an answer (v4 MR6's installation check).
+func TestRepositoryInfoReadsTheRepositoryDocument(t *testing.T) {
+	r := newRig(t)
+	r.gh.setRepoReply(`{"full_name":"Smana/demo","default_branch":"main","private":true}`)
+	if got, err := r.g.RepositoryInfo(t.Context()); err != nil || got != (RepositoryInfo{FullName: "Smana/demo", DefaultBranch: "main", Private: true}) {
+		t.Fatalf("%+v %v", got, err)
+	}
+	for _, reply := range []string{"500", `{"full_name":"Smana/demo"}`, `{"private":false}`} {
+		r.gh.setRepoReply(reply)
+		if _, err := r.g.RepositoryInfo(t.Context()); err == nil {
+			t.Errorf("%s: no error", reply)
+		}
+	}
+}
