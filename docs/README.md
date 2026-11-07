@@ -13,7 +13,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 
 | Page | Answers |
 |---|---|
-| [Quickstart](quickstart.md) | One command to a sandboxed run on a laptop, and what differs from production |
+| [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), what production adds, and the older one-run path |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
 | [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
