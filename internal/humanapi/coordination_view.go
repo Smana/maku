@@ -24,28 +24,55 @@ type CoordinationViews interface {
 // the family filtered by each child's repository for this viewer. A parent's room is named as its
 // task. There is no route serving the unfiltered view.
 func (s *Server) coordinationRoute(w http.ResponseWriter, r *http.Request) {
+	if v, ok := s.filteredRoute(w, r); ok {
+		writeJSON(w, v)
+	}
+}
+
+// coordinationCheckoutRoute is GET /api/coordinations/{task}/checkout (MR14): the family's checkout
+// document, all or nothing. A viewer missing any child gets the 404 an unreadable room gets, naming
+// nothing; a family not at one exact commit per child is a 409.
+func (s *Server) coordinationCheckoutRoute(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.filteredRoute(w, r)
+	if !ok {
+		return
+	}
+	d, err := coordinationview.Checkout(v)
+	switch {
+	case errors.Is(err, coordinationview.ErrCheckoutRestricted):
+		http.Error(w, errNoSuchRoom.Error(), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, coordinationview.ErrCheckoutNotReady.Error(), http.StatusConflict)
+	default:
+		writeJSON(w, d)
+	}
+}
+
+// filteredRoute is the {task} parent's family as the request's caller may read it, having written
+// the refusal when there is none.
+func (s *Server) filteredRoute(w http.ResponseWriter, r *http.Request) (coordinationview.View, bool) {
 	p, ok := s.principal(w, r)
 	if !ok || !s.readAllowed(w, r, p) {
-		return
+		return coordinationview.View{}, false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
 	defer cancel()
 	task := r.PathValue("task")
 	if _, _, _, err := s.readRoom(ctx, task, p); err != nil {
 		http.Error(w, err.Error(), roomStatus(err))
-		return
+		return coordinationview.View{}, false
 	}
 	raw, err := s.CoordinationViews.View(ctx, task)
 	switch {
 	case errors.Is(err, coordinationview.ErrNoCoordination):
 		http.Error(w, errNoSuchRoom.Error(), http.StatusNotFound)
-		return
+		return coordinationview.View{}, false
 	case err != nil:
 		s.log().Warn("coordination: view unreadable", "room", task, "err", err)
 		http.Error(w, coordinationview.ErrCoordinationUnavailable.Error(), http.StatusServiceUnavailable)
-		return
+		return coordinationview.View{}, false
 	}
-	writeJSON(w, s.filterCoordination(ctx, raw, p))
+	return s.filterCoordination(ctx, raw, p), true
 }
 
 // coordinationFor is room id's family as p may read it, when it is a coordination parent whose view

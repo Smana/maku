@@ -171,3 +171,39 @@ func TestSponsoredRepositoriesAreOnlyAnUpperBound(t *testing.T) {
 func sponsoredPrincipal(id string) authn.Principal {
 	return authn.Principal{Kind: "system", ID: id, Sponsored: true}
 }
+
+func checkoutFamily() coordination.CoordinationView {
+	v := coordFamily()
+	v.Children[0].IssueURL, v.Children[0].PRURL = "https://github.com/Smana/maku/issues/1", "https://github.com/Smana/maku/pull/2"
+	v.Children[0].MergeCommitSHA = strings.Repeat("a", 40)
+	v.Children[1].Task, v.Children[1].Reason = "ccccdddd", ""
+	v.Children[1].IssueURL, v.Children[1].PRURL = "https://github.com/acme/consumer/issues/3", "https://github.com/acme/consumer/pull/4"
+	v.Children[1].HeadSHA = strings.Repeat("b", 40)
+	v.Plan.Children[1].Rationale = ""
+	return v
+}
+
+func TestCoordinationCheckoutRoute(t *testing.T) {
+	f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: checkoutFamily()}}
+	e := setup(t, coordOn(f, coordWorld()))
+	path := "/api/coordinations/" + roomID + "/checkout"
+
+	code, body := get(t, e, path, as("alice", false))
+	var d coordinationview.CheckoutDocument
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &d) != nil || d.APIVersion != coordinationview.CheckoutAPIVersion || len(d.Children) != 2 {
+		t.Fatalf("%d %s", code, body)
+	}
+	if code, body := get(t, e, path, as("bob", false)); code != http.StatusNotFound || strings.Contains(body, coordRepoB) || strings.Contains(body, "contract") {
+		t.Fatalf("a reader of one child: %d %s", code, body)
+	}
+	v := checkoutFamily()
+	v.Children[1].HeadSHA = ""
+	f.views[roomID] = v
+	if code, _ := get(t, e, path, as("alice", false)); code != http.StatusConflict {
+		t.Fatalf("an unready family: %d", code)
+	}
+	off := setup(t, coordWorld().option())
+	if code, _ := get(t, off, path, as("alice", false)); code != http.StatusNotFound {
+		t.Fatalf("off: %d", code)
+	}
+}
