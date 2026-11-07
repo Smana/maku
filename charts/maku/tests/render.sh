@@ -48,6 +48,8 @@ ykind Service 'select(.metadata.name=="room-broker") | (.spec.ports | map(.port)
 ykind ClusterRoleBinding 'select(.roleRef.name=="system:auth-delegator") | .subjects[0].name == "room-broker"' 'tokenreview RBAC'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="room-broker") | .rules[] | select(.resources[]=="agentruns") | (.apiGroups[0] == "maku.ogenki.io" and ((.verbs|sort|join(",")) == "delete,get,list,patch,watch"))' 'AgentRun verbs in the runs namespace'
 ykind Role 'select(.metadata.namespace==null) | .rules[] | select(.resources[]=="rooms") | ((.verbs|sort|join(",")) == "create,get,list,update,watch")' 'Room verbs (create: new room and fork)'
+ykind Role 'select(.metadata.namespace==null and .metadata.name=="room-broker") | .rules[] | select(.resources[]=="tasks") | (.apiGroups[0] == "maku.ogenki.io" and (.resources|join(",")) == "tasks" and (.verbs|sort|join(",")) == "get,list")' 'coordination reads Tasks: get and list only (v4 MR13)'
+ykind Role 'select(.metadata.namespace==null and .metadata.name=="room-broker") | .rules[] | select(.resources[]=="configmaps") | ((.resources|join(",")) == "configmaps" and (.verbs|sort|join(",")) == "get,list")' 'coordination reads the day ledgers: get and list only'
 ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "443,6443"' 'the apiserver on 443 and kind'
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.metadata.annotations."checksum/config" | length == 64' 'a config change rolls the broker'
 ykind Certificate '.spec.issuerRef.name == "quickstart-ca"' 'the Certificate issuer'
