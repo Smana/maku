@@ -27,6 +27,7 @@ import (
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -1126,6 +1127,12 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 		if handed, err := r.humanCommit(ctx, t, pr.HeadSHA); err != nil || handed {
 			return err
 		}
+	}
+	// MR8: a coordination child's confirmed allocation is a bound, never a shadow: its next run's
+	// whole reservation fits over its own settled spend or it does not start. The daily ledger
+	// below still reserves the run; neither widens the other.
+	if t.Spec.CoordinationParent != nil && coordination.AllocationLeft(t) < 0 {
+		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
 	}
 	if !runFits(t) {
 		limit := taskLimit(t)

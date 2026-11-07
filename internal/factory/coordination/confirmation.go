@@ -215,6 +215,9 @@ func (s *Service) record(ctx context.Context, t *v1alpha1.Task, next v1alpha1.Co
 	if old == nil {
 		old = &v1alpha1.CoordinationStatus{}
 	}
+	if err := s.checkReductions(ctx, old, next); err != nil {
+		return err
+	}
 	b, err := plannedBudget(old.Budget, next, planning)
 	if err != nil {
 		return err
@@ -271,11 +274,7 @@ func plannedBudget(prev *v1alpha1.CoordinationBudgetStatus, p v1alpha1.Coordinat
 		b = prev.DeepCopy()
 	}
 	b.PlanningMicroUSD, b.TotalMicroUSD = p.Budget.PlanningMicroUSD, p.Budget.TotalMicroUSD
-	alloc, _ := mul(int64(p.Integration.MaxRuns), p.Integration.RunMicroUSD) // Validate held the sum
-	for _, c := range p.Children {
-		alloc += c.BudgetMicroUSD
-	}
-	b.AllocatedMicroUSD = alloc
+	b.AllocatedMicroUSD, _ = Allocated(p) // Validate held the sum within the total
 	if a.AttemptID == "" || !slices.Contains(b.PlanningAttempts, a.AttemptID) {
 		ok := add(&b.PlanningReservedMicroUSD, a.ReservedMicroUSD) && add(&b.PlanningSettledMicroUSD, a.SettledMicroUSD)
 		if !ok {

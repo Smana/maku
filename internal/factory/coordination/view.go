@@ -68,6 +68,7 @@ func View(parent v1alpha1.Task, children, integrations []v1alpha1.Task, ledger L
 		TotalMicroUSD:      cs.Plan.Budget.TotalMicroUSD,
 		IntegrationMaxRuns: int(cs.Plan.Integration.MaxRuns),
 	}
+	v.Budget.AllocatedMicroUSD, _ = Allocated(*cs.Plan) // the confirmed plan's static allocations (MR8)
 	if cs.Budget != nil {
 		v.Budget.AllocatedMicroUSD = cs.Budget.AllocatedMicroUSD
 		v.Budget.PlanningReservedMicroUSD = cs.Budget.PlanningReservedMicroUSD
@@ -107,6 +108,9 @@ func View(parent v1alpha1.Task, children, integrations []v1alpha1.Task, ledger L
 				cv.IntegrationAcceptedHead = lc.IntegrationAcceptedHead
 			}
 			cv.ReservedMicroUSD, cv.SettledMicroUSD = ledger.of(t.Status.Runs)
+			if b := t.Spec.Budget.TaskMicroUSD; b > 0 { // the cap the child's runs are held to
+				cv.AllocationMicroUSD = b
+			}
 		}
 		v.Budget.ChildrenReservedMicroUSD += cv.ReservedMicroUSD
 		v.Budget.ChildrenSettledMicroUSD += cv.SettledMicroUSD

@@ -36,6 +36,10 @@ var (
 	errCoordinationArtifacts = coordination.ErrArtifactUnverified
 )
 
+// reasonAllocationExhausted is a coordination child whose own allocation no longer holds a
+// whole run (MR8): distinct from waiting_daily_budget and from every authority refusal.
+const reasonAllocationExhausted = "allocation_exhausted"
+
 // lineageReason is err's bounded reason when it is a lineage refusal.
 func lineageReason(err error) string {
 	for _, s := range []error{errCrossRepositoryLineage, errCoordinationLineage, errCoordinationParent, errCoordinationScopeChanged, errCoordinationArtifacts} {
