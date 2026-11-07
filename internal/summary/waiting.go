@@ -206,6 +206,7 @@ func reasons() map[string]string {
 		"parent_not_split":          "its parent task is no longer waiting on its parts",
 		"parent_missing":            "its parent task no longer exists",
 		"no_pr":                     "the agent opened no pull request",
+		"scope_changed":             "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
 		"loop_unsupported":          "the cluster does not support the loop policy or repository checks yet, so no run started",
 	}
 }
@@ -269,6 +270,11 @@ func nextStep(reason string, byApproval bool) string {
 		return "a maintainer takes it from here: check the workflow of the checks named in the pull request comment, then merge it or re-run them"
 	case "verdict_stale":
 		return "a maintainer reviews the current head, or the factory asks for a new review"
+	case "scope_changed":
+		if byApproval {
+			return "a maintainer reads the revision's comment on the pull request and confirms the scope change by approving the current commit, or requests changes again"
+		}
+		return "a maintainer reads the revision's comment on the pull request and confirms the scope change by merging it, or requests changes again"
 	case "human_commit_in_pr":
 		return humanCommitNext
 	case "contract_unread", "contract_push_unrecorded":

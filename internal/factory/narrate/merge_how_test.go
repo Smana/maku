@@ -17,7 +17,7 @@ var waitReasons = []string{
 	"ci_pending", "merge_gate_off", "policy_pending", "policy_absent", "not_mergeable", "gate_path", "steering_path", "verdict_stale",
 	"human_commit_in_pr", "shadow_would_arm", "auto_merge_cap", "stuck", "ci_red", "secret_scan_red", "review_rounds_exhausted",
 	"no_verdict", "budget-task", "resume_budget", "run_unschedulable", "pod_lost", "deadline", "agent_error", "agent_stuck",
-	"no_pr", "waiting_human_driver", "waiting_room_busy", "waiting_run_slot", "waiting_active_tasks", "waiting_review_wip", "waiting_revision_first",
+	"no_pr", "scope_changed", "waiting_human_driver", "waiting_room_busy", "waiting_run_slot", "waiting_active_tasks", "waiting_review_wip", "waiting_revision_first",
 	"release_age_pending", "release_age_red", "push_unrecorded", "changes_requested", "fork_pull_request",
 	"not_adopted_author", "branch_not_allowed", "adoption_unread", "ci_cancelled", "adopted_head_moved", "adopt_ref_invalid",
 	"approval_stale", "contract_invalid", "contract_too_large", "contract_check_unset", "contract_disputed", "contract_modified", "contract_unread", "contract_push_unrecorded",
