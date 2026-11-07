@@ -21,6 +21,9 @@ const (
 	RoomWait     = "room_wait"
 	RoomCheckout = "room_checkout"
 	RoomChanges  = "room_changes"
+	// CoordinationCheckout is maku mcp's parent checkout (v4 MR14): every child of a family at its
+	// exact commit. Local, like RoomCheckout; it confirms, files, merges and recovers nothing.
+	CoordinationCheckout = "coordination_checkout"
 	// IntakePlan and PlanCheck are the broker's governed planner: the plan a sentence becomes, and
 	// the door every consumer re-validates one through before anything is filed.
 	IntakePlan = "intake_plan"

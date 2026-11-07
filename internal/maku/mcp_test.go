@@ -47,7 +47,9 @@ type mcpBroker struct {
 	rooms []map[string]any
 	// roomsFn, when set, answers rooms_list: it gets the call's number (1 first) and its arguments.
 	roomsFn func(n int, args map[string]any) []map[string]any
-	listed  int
+	// checkoutDoc, when set, answers GET /api/coordinations/{parent}/checkout.
+	checkoutDoc any
+	listed      int
 	// calls records each tools/call but rooms_list: the tool and its arguments.
 	calls []toolCall
 	// card, when set, is room_summary's structuredContent.
@@ -61,6 +63,17 @@ func newMCPBroker(t *testing.T) *mcpBroker {
 	t.Helper()
 	b := &mcpBroker{}
 	b.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/coordinations/") {
+			b.mu.Lock()
+			doc := b.checkoutDoc
+			b.mu.Unlock()
+			if doc == nil || r.Header.Get("Authorization") != "Bearer tok" {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(doc)
+			return
+		}
 		var m message
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		if len(m.ID) == 0 {
@@ -442,7 +455,7 @@ func TestRelayListsLocalTools(t *testing.T) {
 	for _, tl := range s.request(t, 1, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if got := strings.Join(names, ","); got != "rooms_list,room_summary,issue_file,room_wait,room_checkout" {
+	if got := strings.Join(names, ","); got != "rooms_list,room_summary,issue_file,room_wait,room_checkout,coordination_checkout" {
 		t.Fatalf("%s", got)
 	}
 }
