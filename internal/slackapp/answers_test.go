@@ -344,6 +344,7 @@ func TestAnswerLinksAndInvisibles(t *testing.T) {
 	for _, raw := range []string{
 		"https://github.com/x|evil>", "https://github.com/x>y", "javascript:alert(1)",
 		"https://user:pw@github.com/x", "https://github.com/a b", "",
+		"http://github.com/Smana/maku/pull/7", // plain http: a link the App shows is TLS or none
 	} {
 		if got := brokerLink(raw, "open it"); got != "" {
 			t.Fatalf("brokerLink(%q) = %q, want no link", raw, got)

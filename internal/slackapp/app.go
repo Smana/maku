@@ -30,8 +30,12 @@ const (
 	// filedEventType marks the App's "Filed" line: a draft whose thread has one is no longer edited.
 	filedEventType = "factory_filed"
 	// maxRevisions bounds the drafts one thread can hold (each edit posts a new one).
-	maxRevisions  = 20
-	handleTimeout = 30 * time.Second
+	maxRevisions = 20
+	// threadTooLongLine is a reply's answer, with proposals on, in a thread Slack will not return
+	// whole. Unread, the thread may hold a proposal, a filed task or a fallback draft, so the line
+	// names none of them: the room page has a filed task, and a new mention starts anything else.
+	threadTooLongLine = "This thread is too long for me to read: open the task's room page from the Filed line, or start a new thread with a mention."
+	handleTimeout     = 30 * time.Second
 	// maxMetadata bounds the draft's metadata JSON, well under Slack's message-metadata cap.
 	maxMetadata    = 8 << 10
 	maxWebhookBody = 64 << 10
@@ -423,13 +427,6 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	if !ok || ev.User == a.BotUserID || !userRE.MatchString(ev.User) || !tsRE.MatchString(thread) {
 		return "ignored"
 	}
-	refuse := func(why string) string {
-		if _, err := a.Slack.Post(ctx, ev.Channel, thread, "Draft refused: "+shown(why), nil); err != nil {
-			a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
-			return "error"
-		}
-		return "refused"
-	}
 	switch command(ev.Text, a.BotUserID) {
 	case "link":
 		return a.link(ctx, ev, thread)
@@ -439,10 +436,30 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	// CD1, §the Slack journey: with proposals on, a mention in plain words is planned by the broker and
 	// posted as one proposal. The App parses no repository line and guesses no repository: the person's
 	// own words are the planner's input (commandless), which is where the 16 KiB bound is measured.
+	//
+	// A broker with no planner (intake_plan unknown) is the switch off for a mention whose thread
+	// holds no proposal: the draft path below, word for word, so a deployment that turned proposals on
+	// ahead of its broker still files.
+	// The mention counts as a draft then, not as a proposal action, since no proposal was posted.
 	if a.Proposals.Enabled {
-		code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
-		a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
-		return code
+		code, noPlanner := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		if !noPlanner {
+			a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
+			return code
+		}
+	}
+	return a.draftMention(ctx, ev, ch, thread)
+}
+
+// draftMention is the mention as a draft (R22): the old grammar parsed, issue_draft checking it, and
+// the draft posted in the thread for a reply to amend and a ✅ to file.
+func (a *App) draftMention(ctx context.Context, ev slackEvent, ch Channel, thread string) string {
+	refuse := func(why string) string {
+		if _, err := a.Slack.Post(ctx, ev.Channel, thread, "Draft refused: "+shown(why), nil); err != nil {
+			a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
+			return "error"
+		}
+		return "refused"
 	}
 	d, err := ParseMention(ev.Text, a.BotUserID, ch.Repositories)
 	if err != nil {
@@ -640,10 +657,10 @@ func (a *App) checkMarkReply(ctx context.Context, ev slackEvent) string {
 // reply amends the thread's pending draft with a reply from the author of the mention. Anyone
 // else's reply, a reply on a filed draft or in a thread without a draft is ignored without a word.
 //
-// With proposals on the thread's message is a proposal, not a draft: the reply is a re-plan, and the
-// same message becomes its next revision (replan). One thread on this App is one or the other — a
-// proposal is what a mention posts with the switch on — so the two branches never contend for one
-// thread, and the draft path below is whatever it always was. A thread whose proposal was filed or
+// With proposals on the thread's message is usually a proposal, not a draft: the reply is a re-plan,
+// and the same message becomes its next revision (replan). A thread is the kind it started as: a
+// broker without a planner drafts a mention that starts a thread with no proposal (mention), and that
+// thread takes the draft path below, whatever it always was. A thread whose task was filed or
 // cancelled answers the five questions instead (answer, CD25).
 func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	ch, ok := a.Channels[ev.Channel]
@@ -661,7 +678,11 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	if err != nil {
 		a.log().Warn("slack thread fetch failed", "channel", ev.Channel, "err", err)
 		if errors.Is(err, ErrThreadTooLong) {
-			if _, perr := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, "This thread is too long to edit the draft: start a new one with a mention.", nil); perr != nil {
+			line := "This thread is too long to edit the draft: start a new one with a mention."
+			if a.Proposals.Enabled {
+				line = threadTooLongLine // unread, the thread may be a proposal, a filed task or a draft
+			}
+			if _, perr := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); perr != nil {
 				return "error"
 			}
 			return "refused"
@@ -680,13 +701,15 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			// CD25: a thread whose task is filed answers the five questions, and nothing else — the
 			// room is the one its own Filed line names, never a guess from the issue number. Still a
 			// reply and still no command: the answer says where approving, steering and stopping happen.
-			line := a.answer(ctx, ev, ev.ThreadTS, a.threadRoom(msgs))
+			line := a.answer(ctx, ev, a.threadRoom(msgs))
 			if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); err != nil {
 				a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
 				return "error"
 			}
 			return "answered"
 		}
+		// A thread with a proposal is a proposal thread, whatever else it holds: a mention on a broker
+		// without a planner drafts only a thread that has none (propose), so its draft never sits here.
 		if prop != nil {
 			if p, ok := prop.Metadata.proposalPayload(); ok {
 				return a.replan(ctx, ev, ch, ev.ThreadTS, msgs, prop, p)
@@ -817,15 +840,18 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		refuse("replaced", "This draft was replaced by a newer one: react on the latest draft.")
 		return "ignored"
 	}
-	// The mark's tag is what stops the draft being edited; its payload is inert, nothing decodes a
-	// factory_filed. A marshal error is therefore logged with that consequence named rather than
-	// dropped: the tag still goes out, the payload is the empty object every decoder refuses.
-	filedPayload, perr := metaPayload(DraftPayload{Repo: p.Repo})
-	if perr != nil {
-		a.log().Error("filed mark payload: the draft stays editable", "err", perr)
-		filedPayload = json.RawMessage(`{}`)
+	// The mark's tag is what stops the draft being edited, and its payload is the marker a proposal's
+	// Filed line writes too: the room it names is where a later reply's answers are read (CD25). A
+	// marshal error is therefore logged with that consequence named rather than dropped: the tag still
+	// goes out, the payload is the empty object every decoder refuses.
+	filedMark := func(room string) *Metadata {
+		payload, perr := metaPayload(MarkerPayload{Repo: p.Repo, Room: room})
+		if perr != nil {
+			a.log().Error("filed mark payload: the draft stays editable", "err", perr)
+			payload = json.RawMessage(`{}`)
+		}
+		return &Metadata{EventType: filedEventType, EventPayload: payload}
 	}
-	filedMark := &Metadata{EventType: filedEventType, EventPayload: filedPayload}
 	res, err := a.Broker.RunCreate(ctx, RunCreate{
 		Draft:      Draft{Repo: p.Repo, Title: p.Title, Body: p.Body},
 		MaxCostUSD: ch.MaxCostUSD,
@@ -850,14 +876,14 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	}
 	if !roomRE.MatchString(res.Room) {
 		a.log().Warn("run_create answered an unusable room id")
-		sayMeta(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), filedMark)
+		sayMeta(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), filedMark(""))
 		return "error"
 	}
 	// Put on a duplicate too (idempotent): a Put that failed the first time is retried by the next ✅.
 	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.Now()}); err != nil {
 		a.log().Warn("thread map put failed", "room", res.Room, "err", err)
 	}
-	sayMeta(a.filedText(res, user), filedMark)
+	sayMeta(a.filedText(res, user), filedMark(res.Room))
 	if res.Duplicate {
 		return "duplicate"
 	}

@@ -104,7 +104,7 @@ func questionOf(text string) Question {
 // Nothing here is an instruction: every value the room supplies is answerText'd, and the only links the
 // answer builds are the App's own room page and the URLs the broker built (summary.Summary,
 // summary.Need.Action and roomview.Milestone carry the ones its own views link).
-func (a *App) answer(ctx context.Context, ev slackEvent, thread, room string) string {
+func (a *App) answer(ctx context.Context, ev slackEvent, room string) string {
 	q := questionOf(ev.Text)
 	a.answerCount(ctx, q)
 	if !roomRE.MatchString(room) { // no marker names a room, or one this App could not have minted
@@ -119,7 +119,7 @@ func (a *App) answer(ctx context.Context, ev slackEvent, thread, room string) st
 	case QuestionStatus, QuestionPR:
 		sum, err := a.Broker.RoomSummary(ctx, room)
 		if err != nil {
-			a.answerFailed(ctx, ev, thread, q, err)
+			a.answerFailed(ctx, ev, q, err)
 			return unreadRoomLine
 		}
 		if q == QuestionPR {
@@ -129,14 +129,14 @@ func (a *App) answer(ctx context.Context, ev slackEvent, thread, room string) st
 	case QuestionNeeds:
 		needs, err := a.Broker.NeedsList(ctx, room)
 		if err != nil {
-			a.answerFailed(ctx, ev, thread, q, err)
+			a.answerFailed(ctx, ev, q, err)
 			return unreadRoomLine
 		}
 		return needsAnswer(needs)
 	case QuestionChanges:
 		set, err := a.Broker.RoomChanges(ctx, room)
 		if err != nil {
-			a.answerFailed(ctx, ev, thread, q, err)
+			a.answerFailed(ctx, ev, q, err)
 			return unreadRoomLine
 		}
 		return changesAnswer(set)
@@ -156,8 +156,8 @@ func (a *App) answerCount(ctx context.Context, q Question) {
 
 // answerFailed logs a read the broker could not serve. Ids and the question only: the error may carry a
 // room's payload, and the thread gets unreadRoomLine rather than any of it.
-func (a *App) answerFailed(ctx context.Context, ev slackEvent, thread string, q Question, err error) {
-	a.log().WarnContext(ctx, "slack room read failed", "channel", ev.Channel, "thread", thread,
+func (a *App) answerFailed(ctx context.Context, ev slackEvent, q Question, err error) {
+	a.log().WarnContext(ctx, "slack room read failed", "channel", ev.Channel, "thread", ev.ThreadTS,
 		"question", string(q), "err", err)
 }
 
@@ -277,12 +277,12 @@ func answerText(s string) string {
 	return slackText(s)
 }
 
-// brokerLink is a URL the broker built, as a Slack link: only an http(s) URL with a host and no byte
-// Slack's own markup reads is a destination. Anything else is dropped rather than shown, so no quoted
-// value ever becomes a link the App did not build.
+// brokerLink is a URL the broker built, as a Slack link: only an https URL with a host and no byte
+// Slack's own markup reads is a destination. Anything else, plain http included, is dropped rather
+// than shown, so no quoted value ever becomes a link the App did not build.
 func brokerLink(raw, label string) string {
 	u, err := url.Parse(raw)
-	if err != nil || raw == "" || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+	if err != nil || raw == "" || u.Scheme != "https" || u.Host == "" ||
 		u.User != nil || strings.ContainsAny(raw, "<>| \t\n") {
 		return ""
 	}
