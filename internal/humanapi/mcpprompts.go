@@ -95,7 +95,7 @@ var mcpPrompts = []mcpPrompt{
 		text: func(a map[string]string) string { return resumeText(refText(a["room"])) },
 	},
 	{
-		name: "inbox", description: "Show the rooms that need you, then your other rooms.",
+		name: "inbox", description: "Show what waits on you, from one needs_list call; when nothing does, point to rooms_list.",
 		text: func(map[string]string) string {
 			return "Call `needs_list`. Show its text as it is. If it is empty, say so in one line and name " +
 				"`rooms_list` with `mine` for the rest."
