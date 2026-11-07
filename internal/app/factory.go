@@ -37,6 +37,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
@@ -272,9 +273,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// v2 D7: a repository is acted on only while its default branch names this factory.
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names(), Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
-	// Stage 1 (merge policy): observed and compared, deciding nothing.
+	// Stages 1 and 3 (merge policy): observed and compared, then each merge decision decided again
+	// under it; neither decides anything.
+	var snapshots func(string) (mergepolicy.Snapshot, bool)
 	if cfg.PolicyManagement.Read {
-		fenced.OnFile = (&mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log}).Observe
+		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now}
+		fenced.OnFile = w.Observe
+		if cfg.PolicyManagement.DualEvaluation {
+			snapshots = w.Snapshot
+		}
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	runUSD := map[string]float64{}
@@ -299,7 +306,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
 	}
 	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
-		CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
+		Policy: snapshots, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage: triage.Classify{Cfg: cfg, C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
@@ -377,6 +384,25 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			}
 			return c.gh
 		}}
+	// Coordination (v4 MR16): Prerequisites stays nil because neither capability it must prove,
+	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
+	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
+	// confirms only.
+	// Each repository's checks and filing go through that repository's own App connection.
+	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now,
+		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil // a nil interface, never a typed-nil *forge.GitHub
+		}},
+		Forges: func(repo string) coordination.IssueForge {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil
+		}}
+	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
 	if err != nil {

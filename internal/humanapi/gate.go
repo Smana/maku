@@ -4,13 +4,18 @@ package humanapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/store"
+	"github.com/Smana/maku/internal/summary"
 )
 
 // A room read's refusals. Each reads the same whatever the room, so none tells an unreadable room
@@ -40,7 +45,12 @@ func (s *Server) gateRoom(ctx context.Context, id string, p authn.Principal) (*v
 		return nil, store.RoomState{}, errRoomsUnavailable
 	}
 	if !found {
-		return nil, store.RoomState{}, errNoSuchRoom
+		if room, err = s.closedRoom(ctx, id); err != nil {
+			return nil, store.RoomState{}, errLogUnavailable
+		}
+		if room == nil {
+			return nil, store.RoomState{}, errNoSuchRoom
+		}
 	}
 	// Before the log: a log error must not tell an unreadable room from a missing one.
 	actx, acancel := context.WithTimeout(ctx, accessWait)
@@ -75,4 +85,61 @@ func (s *Server) readRoom(ctx context.Context, id string, p authn.Principal) (*v
 		return nil, st, policy.Subject{}, errNoSuchRoom
 	}
 	return room, st, sub, nil
+}
+
+// closedPage is how many events closedRoom reads per call while it looks for the factory's facts.
+const closedPage = 100
+
+// closedRoom stands in for a Room the factory deleted when its task ended (roomclose.go): the log
+// is sealed and retained, and the issue may still send its maintainer to read it. It carries only the
+// repository the factory's own task facts name, so D7 decides on the repository as it did while the
+// Room existed, and the standing rules see no owner and no member. Facts any other writer appended
+// name nothing (as in the webhook emitter's fromLog). Nil, with no error, when the log is not sealed
+// (a Room not in the cache yet), names no repository, or there is no factory principal.
+func (s *Server) closedRoom(ctx context.Context, id string) (*v1alpha1.Room, error) {
+	if s.FactoryPrincipal == "" || !envelope.ValidID(id) {
+		return nil, nil
+	}
+	st, err := s.Log.Room(ctx, id)
+	if errors.Is(err, store.ErrNoRoom) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !st.Sealed {
+		return nil, nil
+	}
+	for after := int64(0); ; {
+		evs, err := s.Log.Range(ctx, id, after, closedPage)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range evs {
+			after = ev.Seq
+			if repo := s.factoryRepo(ev); repo != "" {
+				return &v1alpha1.Room{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: s.Namespace},
+					Spec: v1alpha1.RoomSpec{Repository: repo}}, nil
+			}
+		}
+		if len(evs) < closedPage {
+			return nil, nil
+		}
+	}
+}
+
+// factoryRepo is the repository ev's task facts name, when the factory wrote them.
+func (s *Server) factoryRepo(ev envelope.Event) string {
+	if ev.Type != envelope.StateChanged || ev.Actor.Kind != envelope.ActorSystem || ev.Actor.ID != s.FactoryPrincipal ||
+		ev.Origin != envelope.OriginClient {
+		return ""
+	}
+	var f struct {
+		Kind string `json:"kind"`
+		envelope.TaskFacts
+	}
+	if json.Unmarshal(ev.Payload, &f) != nil || f.Kind != "task" {
+		return ""
+	}
+	return summary.Repo(&f.TaskFacts)
 }

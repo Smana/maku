@@ -6,8 +6,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/yaml"
 )
@@ -217,5 +219,30 @@ func TestTaskCRDOrigin(t *testing.T) {
 	}
 	if ev := pub.Properties["evidence"]; ev.MaxLength == nil || *ev.MaxLength != 16384 {
 		t.Errorf("status.published.evidence = %+v", ev)
+	}
+}
+
+// MR2: a coordination parent waits on its family in Coordinating, neither active nor terminal, and
+// spends no daily task slot; its integration Tasks run, so they do.
+func TestCoordinationPhaseSets(t *testing.T) {
+	if ActivePhase(PhaseCoordinating) || TerminalPhase(PhaseCoordinating) {
+		t.Error("Coordinating is neither active nor terminal")
+	}
+	day := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	task := func(kind string) *Task {
+		return &Task{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(day)},
+			Spec:   TaskSpec{Kind: kind, Source: Source{Kind: SourceKindCoordination}},
+			Status: TaskStatus{Phase: PhaseCoordinating}}
+	}
+	if SpendsDailyCap(task(TaskKindCoordination), day) {
+		t.Error("a coordination parent spends a daily task slot")
+	}
+	in := task(TaskKindIntegration)
+	in.Status.Phase = PhaseImplementing
+	if !SpendsDailyCap(in, day) {
+		t.Error("an integration task spends no daily task slot")
+	}
+	if LabelCoordinationParent == LabelParent || LabelCoordinationParent != "agents.ogenki.io/coordination-parent" {
+		t.Errorf("label %q", LabelCoordinationParent)
 	}
 }

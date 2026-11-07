@@ -26,6 +26,10 @@ const (
 	// is met, not_yet or impossible, Text its reason, Evidence the ids it cited. The judge read the
 	// agent's work, so the text is data, never an instruction.
 	KindJudgeVerdict MessageKind = "judge_verdict"
+	// KindIntegrationResult is a coordination integration run's one typed outcome (v4 MR10):
+	// Integration carries it. Only the factory reads it, and only from the broker-stamped run it
+	// started; Text is never part of the result.
+	KindIntegrationResult MessageKind = "integration_result"
 )
 
 // Delivery is how a message reaches a running agent.
@@ -50,6 +54,48 @@ type MessagePayload struct {
 	// PullRequest is the pull request a review_verdict is about (SP2 design §3).
 	// Additive: C4 v1's envelope is unchanged, and SP3 reads it (ruling P29).
 	PullRequest string `json:"pullRequest,omitempty"`
+	// Integration is an integration_result's outcome (v4 MR10).
+	Integration *IntegrationResult `json:"integration,omitempty"`
+}
+
+// The integration states, as the Task CRD's status.result enumerates them. A run reports only a
+// terminal one.
+const (
+	IntegrationPending = "pending"
+	IntegrationPassed  = "passed"
+	IntegrationFailed  = "failed"
+)
+
+// IntegrationStates are the values IntegrationResult.State may hold on the Task.
+func IntegrationStates() []string {
+	return []string{IntegrationPending, IntegrationPassed, IntegrationFailed}
+}
+
+// IntegrationResult mirrors the Task CRD's status.result field for field: this package imports no
+// Kubernetes types, as it mirrors TaskScope, and the reconciler asserts the two agree.
+type IntegrationResult struct {
+	State        string `json:"state"`
+	Reason       string `json:"reason,omitempty"`
+	ManifestHash string `json:"manifestHash,omitempty"`
+}
+
+var (
+	integrationReason = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	manifestHash      = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+// Validate refuses a result that is not passed or failed with a bounded snake_case reason and the
+// exact 64-hex manifest hash: no prose ever becomes a result.
+func (r IntegrationResult) Validate() error {
+	switch {
+	case r.State != IntegrationPassed && r.State != IntegrationFailed:
+		return fmt.Errorf("integration state %q is not passed or failed", r.State)
+	case r.Reason != "" && !integrationReason.MatchString(r.Reason):
+		return errors.New("integration reason is at most 64 bytes of snake_case")
+	case !manifestHash.MatchString(r.ManifestHash):
+		return errors.New("integration manifest hash is not 64-hex")
+	}
+	return nil
 }
 
 // TurnPayload is a turn event's payload.
@@ -167,6 +213,8 @@ type TaskFacts struct {
 	// Monitor is the post-merge monitor's verdict (one of MonitorVerdicts), set only for a task with
 	// an origin. A verdict is final once set; the webhook tracker sends it once as room.monitor_verdict.
 	Monitor string `json:"monitor,omitempty"`
+	// Policy is the merge policy that governs the task, as the factory's config declares it.
+	Policy *PolicyFact `json:"policy,omitempty"`
 }
 
 // MaxPlan bounds TaskFacts.Plan.
@@ -414,6 +462,11 @@ func (f TaskFacts) Validate() error {
 	for i, p := range f.Plan {
 		if !ValidPersona(p) {
 			return fmt.Errorf("task facts: plan[%d] is a persona name", i)
+		}
+	}
+	if f.Policy != nil {
+		if err := f.Policy.validate(); err != nil {
+			return fmt.Errorf("task facts: policy: %w", err)
 		}
 	}
 	if f.Split != nil {

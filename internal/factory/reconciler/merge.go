@@ -98,6 +98,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	in := ArmInputs{PR: pr, Checks: checks, Task: t, Cfg: r.Cfg, ArmedToday: today, ClassArmedToday: classToday, Paused: paused,
 		NotOwned: r.Owned == nil || !r.Owned(t.Spec.Repository)}
+	if in.Integration, err = r.integrationGate(ctx, t, pr.HeadSHA); err != nil {
+		return err
+	}
 	cl := gateOf(r.repo(t), t.Spec.PredictedClass)
 	adopted := cl.Adopted()
 	if adopted && CIState(checks, requiredFor(r.repo(t), t)) == "SUCCESS" {
@@ -132,6 +135,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		}
 	}
 	d := DecideArm(in)
+	evaluated := d // the evaluator's own decision, before the rows read after it, for dual evaluation
 	// A maintainer's approval arms on a human's judgement of the head, never on its diff: reading it
 	// again could only hand the approved head off for the diff the approval already covered (AM1).
 	approved := d.Verdict == "arm" && d.Reason == "maintainer_approved"
@@ -150,6 +154,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
 			d = DecideArm(in)
+			evaluated = d
 		}
 	}
 	if adopted && d.Reason == "push_unrecorded" && r.pushRecordWait(t, pr) {
@@ -164,13 +169,11 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		if err != nil {
 			return err
 		}
-		switch {
-		case pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)):
+		if pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)) {
 			r.log().Info("the head's push is not recorded yet: waiting", "task.id", t.Name, "head", pr.HeadSHA)
 			return nil
-		case pushed != pushFactory:
-			d = ArmDecision{Verdict: "human", Reason: "human_commit_in_pr", Rows: d.Rows}
 		}
+		d = provenance(d, adopted, pushed)
 	}
 	if d.Verdict == "arm" && closesParent(t, pr.Body) { // a part closes its own issue only: the parent closes with the last part
 		d = ArmDecision{Verdict: "human", Reason: "closes_parent", Rows: d.Rows}
@@ -181,6 +184,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	if d.Verdict != "wait" {
 		class, verdict, reason := t.Spec.PredictedClass, d.Verdict, cmp.Or(d.Reason, "armed")
 		record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, class, verdict, reason) })
+		r.dual(ctx, t, in, evaluated, &d)
 		r.log().Info("merge decision", "task.id", t.Name, "head", pr.HeadSHA, "verdict", d.Verdict, "reason", reason, "rows", d.Rows)
 	}
 	switch d.Verdict {
@@ -194,7 +198,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 				b = max(b, releaseAgeWaitMax)
 			}
 		}
-		if b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
+		if b > 0 && d.Reason != reasonIntegrationPending && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
 			// #182: a check that never reports (a typo in a holdout, a workflow not set up) must not
 			// hold the task silently. Nothing merged: the hand-off says what is missing.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
@@ -250,6 +254,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		narrateOn(t, pr.Number, withRecord(narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
 		return nil
+	}
+	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
+		return err
 	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
 	// read refuses the merge (409) and the new head is decided again — never merged on this
@@ -609,6 +616,16 @@ func (r *Reconciler) factoryCommits(ctx context.Context, t *v1alpha1.Task, head 
 // pushRecordGrace is how long after the task's last implementer run finished the gate waits for
 // GitHub's activity to record the run's push; past it, an unrecorded head hands off.
 const pushRecordGrace = 2 * time.Minute
+
+// provenance is the gate's last row on an agents pull request, after the evaluator: every move of
+// its branch the factory App's (#82). An unrecorded push has waited out its deadline before this.
+// Simulation applies it as the gate does, so a fixture's decision includes it (MP16).
+func provenance(d ArmDecision, adopted bool, pushed pushCheck) ArmDecision {
+	if !adopted && (d.Verdict == "arm" || d.Verdict == "shadow") && pushed != pushFactory {
+		return ArmDecision{Verdict: "human", Reason: "human_commit_in_pr", Rows: d.Rows}
+	}
+	return d
+}
 
 // pushCheck is factoryPushed's answer.
 type pushCheck int
@@ -1065,6 +1082,7 @@ func (r *Reconciler) revert(ctx context.Context, t *v1alpha1.Task, why string) e
 		}
 	}
 	r.tellParent(ctx, t, ref.RevertNumber)
+	r.tellCoordinationParent(ctx, t, ref.RevertNumber)
 	return r.end(ctx, t, v1alpha1.PhaseReverted, why)
 }
 

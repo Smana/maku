@@ -1,0 +1,64 @@
+{
+  "description": "",
+  "want": "refuse",
+  "layer": "crd",
+  "task": {
+    "apiVersion": "maku.ogenki.io/v1alpha1",
+    "kind": "Task",
+    "metadata": {
+      "name": "cfceaxyz",
+      "namespace": "agent-system",
+      "labels": {
+        "agents.ogenki.io/coordination-parent": "p4zt6wce"
+      }
+    },
+    "spec": {
+      "kind": "integration",
+      "source": {
+        "kind": "coordination",
+        "ref": "Smana/public-contracts#coordination/p4zt6wce",
+        "key": "coordination/p4zt6wce/integration/1",
+        "requestedBy": "github:smana",
+        "trust": "untrusted",
+        "contentSHA256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "repository": "Smana/public-contracts",
+      "text": "Integration check",
+      "dataClass": "public",
+      "coordinationParent": {
+        "task": "p4zt6wce",
+        "planVersion": 3,
+        "childID": "contract"
+      },
+      "integration": {
+        "purpose": "beforeDependentMerge",
+        "planHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "subjects": [
+          {
+            "childID": "contract",
+            "repository": "Smana/public-contracts",
+            "mergeCommitSHA": "1111111111111111111111111111111111111111"
+          },
+          {
+            "childID": "consumer",
+            "repository": "Smana/public-consumer",
+            "headSHA": "2222222222222222222222222222222222222222"
+          }
+        ]
+      }
+    },
+    "status": {
+      "result": {
+        "state": "pending"
+      },
+      "runs": [
+        {
+          "id": "r2un7abc",
+          "role": "triager",
+          "trigger": "initial"
+        }
+      ]
+    }
+  },
+  "message": "an integration task names its parent and no childID (MR10)"
+}

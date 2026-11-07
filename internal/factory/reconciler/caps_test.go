@@ -198,7 +198,7 @@ func TestARequestChangesPastTheCapIsQueuedNotAnnounced(t *testing.T) {
 				if !slices.Equal(g.log.reviews(), []int64{901}) {
 					t.Fatalf("the review is queued in the room either way: %v", g.log.reviews())
 				}
-				say := strings.Join(g.f.Comments(7), "\n")
+				say := strings.Join(g.f.Comments(12), "\n")
 				announced := strings.Contains(say, "is revising after @Smana's review")
 				_, started := g.runs.specs[rid(1)]
 				if enforce {

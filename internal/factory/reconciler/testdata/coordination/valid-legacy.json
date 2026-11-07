@@ -1,0 +1,27 @@
+{
+  "description": "an ordinary issue task needs no new field",
+  "want": "accept",
+  "layer": "crd",
+  "task": {
+    "apiVersion": "maku.ogenki.io/v1alpha1",
+    "kind": "Task",
+    "metadata": {
+      "name": "cfaaaxyz",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "source": {
+        "kind": "issue",
+        "ref": "Smana/public-contracts#7",
+        "key": "k",
+        "requestedBy": "github:smana",
+        "trust": "untrusted",
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "repository": "Smana/public-contracts",
+      "issue": 7,
+      "text": "Fix the dead link.",
+      "dataClass": "public"
+    }
+  }
+}

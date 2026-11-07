@@ -70,7 +70,7 @@ func TestRequestChangesStartsARevision(t *testing.T) {
 		!slices.Equal(tk.Status.Handled, []int64{901}) {
 		t.Fatalf("%s %s %+v %v", tk.Status.Phase, tk.Status.NextTrigger, g.log.queue, tk.Status.Handled)
 	}
-	if c := g.f.Comments(7); len(c) != 1 || !strings.Contains(c[0], "revising after @Smana's review") {
+	if c := g.f.Comments(12); len(c) != 1 || !strings.Contains(c[0], "revising after @Smana's review") {
 		t.Fatalf("%q", c)
 	}
 	if !strings.Contains(g.log.queue[0].Text, untrustedHeader) || g.log.ref(901) == 0 {
@@ -123,7 +123,7 @@ func TestEveryNewMaintainerReviewIsQueued(t *testing.T) {
 		tk.Status.Phase != v1alpha1.PhaseQueued {
 		t.Fatalf("queued %v, handled %v, %s", refs, tk.Status.Handled, tk.Status.Phase)
 	}
-	if c := g.f.Comments(7); len(c) != 1 {
+	if c := g.f.Comments(12); len(c) != 1 {
 		t.Fatalf("one narration for the round: %q", c)
 	}
 }
@@ -175,7 +175,7 @@ func TestARevisionConsumesOnlyWhatItQuoted(t *testing.T) {
 	if next := g.runs.specs[rid(2)]; !strings.Contains(next.TaskText, fmt.Sprintf("Queued message seq %d ", left[0])) || g.log.consumed[left[0]] != rid(2) {
 		t.Fatalf("seq %d waited and is quoted next: %v", left[0], g.log.consumed)
 	}
-	if n := strings.Count(strings.Join(g.f.Comments(7), "\n"), "is revising after @Smana's review"); n != 2 {
+	if n := strings.Count(strings.Join(g.f.Comments(12), "\n"), "is revising after @Smana's review"); n != 2 {
 		t.Fatalf("each round is narrated: %d", n)
 	}
 }

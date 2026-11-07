@@ -21,6 +21,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
 	"github.com/Smana/maku/internal/webhook"
@@ -132,6 +133,11 @@ const (
 	PlanFallbackComposer = "composer"
 )
 
+// planEfforts are the reasoning efforts the planner may ask for: OpenAI's chat-completions
+// `reasoning_effort` values. Whether the model behind `tier-frontier` takes each is the provider's:
+// Z.ai's glm-5.3 names low, high and max.
+var planEfforts = []string{"low", "medium", "high"}
+
 // planRoles are the roles the factory runs. A class's template names them, and a role the factory
 // does not have would be a plan it cannot run.
 var planRoles = []string{"scoper", "tester", "implementer", "reviewer", "triager"}
@@ -152,6 +158,10 @@ type PlanConfig struct {
 	APIKeyFile string `json:"apiKeyFile,omitempty"`
 	// Deadline bounds the one model call; empty takes DefaultPlanDeadline.
 	Deadline Duration `json:"deadline,omitzero"`
+	// ReasoningEffort is sent as the call's `reasoning_effort` when set (low, medium or high); empty
+	// sends nothing and the model's default stands. A model that always reasons (glm-5.3) spends the
+	// whole 20 s deadline thinking at its default, and answers in about 4 s at "low".
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	// DailyPlans is the cap per requester per UTC day; empty takes DefaultDailyPlans.
 	DailyPlans int `json:"dailyPlans,omitempty"`
 	// Fallback is "off" or "composer": only the second reaches the degraded deterministic composer,
@@ -233,6 +243,9 @@ func (i IntakeConfig) validate() []error {
 	}
 	if p.Deadline.Duration <= 0 || p.Deadline.Duration > DefaultPlanDeadline {
 		errs = append(errs, fmt.Errorf("human.intake.plan.deadline: %s must be above 0 and at most %s, under /mcp's 25 s bound", p.Deadline.Duration, DefaultPlanDeadline))
+	}
+	if p.ReasoningEffort != "" && !slices.Contains(planEfforts, p.ReasoningEffort) {
+		errs = append(errs, fmt.Errorf("human.intake.plan.reasoningEffort: %q is not one of %s, or unset", p.ReasoningEffort, strings.Join(planEfforts, ", ")))
 	}
 	if p.DailyPlans < 1 {
 		errs = append(errs, fmt.Errorf("human.intake.plan.dailyPlans: %d must be at least 1 per requester", p.DailyPlans))
@@ -470,6 +483,9 @@ type Config struct {
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Webhooks are the subscribers to room events (factory interfaces F6).
 	Webhooks []WebhookConfig `json:"webhooks,omitempty"`
+	// Coordination is the factory's multi-repository switch, read here with the factory's own type
+	// and rules (v4 MR16): coordination_plan is listed only while it is not off.
+	Coordination fconfig.Coordination `json:"coordination,omitzero"`
 }
 
 // WebhookConfig is one subscriber (factory interfaces F6, O7): declared here because subscribers
@@ -609,6 +625,7 @@ func (c *Config) ApplyDefaults() {
 		c.TLS.KeyFile = DefaultKeyFile
 	}
 	c.Runs = c.Runs.WithDefaults()
+	c.Coordination.ApplyDefaults()
 	if c.Suspend.After.Duration == 0 {
 		c.Suspend.After.Duration = DefaultSuspendAfter
 	}
@@ -684,6 +701,12 @@ func (c *Config) Validate() error {
 	seen := map[string]bool{}
 	for i, w := range c.Webhooks {
 		errs = append(errs, w.validate(i, seen)...)
+	}
+	c.Coordination.Validate(func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) })
+	if c.Coordination.Mode != fconfig.CoordinationOff && !c.Human.Intake.Plan.Enabled {
+		// coordination_plan plans through the governed intake route: a switch on with no route is a
+		// tool that would refuse every request.
+		errs = append(errs, fmt.Errorf("coordination.mode %s needs human.intake.plan.enabled: coordination_plan plans through its route", c.Coordination.Mode))
 	}
 	return errors.Join(errs...)
 }

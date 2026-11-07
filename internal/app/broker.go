@@ -361,12 +361,18 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	if err != nil {
 		return nil, err
 	}
+	// coordination_plan rides the planner's route and allowance, so it exists only beside it.
+	var coord *humanapi.CoordinationPlanner
+	if in != nil {
+		coord = &humanapi.CoordinationPlanner{Mode: cfg.Coordination.Mode, Resolve: humanapi.ClassPolicy(in.Classes)}
+	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Intake:    in,
+		Intake: in, Coordination: coord,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
-		ProjectID: projectID,
-		Rooms:     rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
+		ProjectID:        projectID,
+		FactoryPrincipal: fconfig.PrincipalFactory,
+		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
 		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards}, nil
 }
 
@@ -402,7 +408,7 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 	}
 	return &humanapi.Intake{Classes: classes, Allow: allow,
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
-			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration},
+			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort},
 		Public:   intakePublicity(vis, accessTTL(cfg.Human)),
 		Daily:    plan.DailyPlans,
 		Fallback: plan.Fallback,

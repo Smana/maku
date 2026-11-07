@@ -177,6 +177,7 @@ type Set struct {
 	owned                metric.Int64Gauge
 	policyLoadErrors     metric.Int64Counter
 	policyDivergence     metric.Int64Gauge
+	policyDual           metric.Int64Counter
 	refusals             metric.Int64Counter
 	unpricedModels       metric.Int64Counter
 	excludesCache        metric.Int64Counter
@@ -428,6 +429,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.policyDivergence, err = meter.Int64Gauge("agent_factory_policy_central_divergence",
 		metric.WithDescription("Classes on which a repository's merge policy differs from the central config, as last compared: 0 is equivalent. A repository never compared has no series; the value is the last comparison's."))
 	check(err)
+	s.policyDual, err = meter.Int64Counter("agent_factory_policy_dual_decisions_total",
+		metric.WithDescription("Merge decisions decided again under the repository's policy (stage 3), by agreement: agree, explained (the policy differs where the comparison says), unread (the diff it needed was not read), unexplained, or no_policy. Nothing is decided on it."))
+	check(err)
 	s.refusals, err = meter.Int64Counter("agent_factory_admission_refusals_total",
 		metric.WithDescription("Run requests refused on their repository: bound to another, no write on GitHub, or not this factory's."))
 	check(err)
@@ -564,6 +568,21 @@ func (s *Set) PolicyLoadError(ctx context.Context, repository, reason string) {
 // PolicyDivergence records how many classes differ from the central config (stage 1's exit: 0).
 func (s *Set) PolicyDivergence(ctx context.Context, repository string, n int) {
 	s.policyDivergence.Record(ctx, int64(n), metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+// PolicyAgreements are dual evaluation's agreement values (merge policy stage 3, MP18).
+func PolicyAgreements() []string {
+	return []string{"agree", "explained", "unread", "unexplained", "no_policy"}
+}
+
+// PolicyDualDecision counts one merge decision decided again under the repository's policy, by
+// the class's name and whether the two agreed; an agreement outside the list is not counted.
+func (s *Set) PolicyDualDecision(ctx context.Context, repository, class, agreement string) {
+	if !slices.Contains(PolicyAgreements(), agreement) {
+		return
+	}
+	s.policyDual.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class), attribute.String("agreement", agreement)))
 }
 
 // AdmissionRefused counts a run request refused on its repository, the one ctx names. Other

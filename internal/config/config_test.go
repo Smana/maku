@@ -729,6 +729,11 @@ func TestIntakePlanIsOffByDefault(t *testing.T) {
 	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.Fallback != "off" {
 		t.Fatalf("%+v", p)
 	}
+	// Unset, no effort is defaulted: the request carries no reasoning_effort and the model's own
+	// default stands.
+	if p.ReasoningEffort != "" {
+		t.Fatalf("reasoningEffort defaulted to %q", p.ReasoningEffort)
+	}
 }
 
 // Every rule the brief names, on its own, with the field it is about: a class's roles are the
@@ -740,19 +745,21 @@ func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 		return intake("      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n      classes:\n        docs-links:\n" + body)
 	}
 	for name, c := range map[string]struct{ body, want string }{
-		"a role twice":                  {class("          roles: [implementer, implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "declared twice"},
-		"no roles":                      {class("          roles: []\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "roles is empty"},
-		"a ceiling of zero":             {class("          roles: [implementer]\n          ceilingUSD: 0\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
-		"a negative ceiling":            {class("          roles: [implementer]\n          ceilingUSD: -2\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
-		"no source":                     {class("          roles: [implementer]\n          ceilingUSD: 2\n"), "source is required"},
-		"a class with no name":          {intake("      classes:\n        \"\": {roles: [implementer], ceilingUSD: 2, source: class:x.taskUSD}\n"), "a class needs a name"},
-		"a repository twice":            {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
-		"a route with no scheme":        {intake("      url: gw/v1\n"), "http(s)"},
-		"a route with userinfo":         {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
-		"a route that is not http":      {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
-		"a deadline over the bound":     {intake("      deadline: 21s\n"), "deadline"},
-		"a negative daily cap":          {intake("      dailyPlans: -1\n"), "dailyPlans"},
-		"the alias, while switched off": {intake("      model: glm-5.3\n"), "tier-frontier"},
+		"a role twice":                   {class("          roles: [implementer, implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "declared twice"},
+		"no roles":                       {class("          roles: []\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "roles is empty"},
+		"a ceiling of zero":              {class("          roles: [implementer]\n          ceilingUSD: 0\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
+		"a negative ceiling":             {class("          roles: [implementer]\n          ceilingUSD: -2\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
+		"no source":                      {class("          roles: [implementer]\n          ceilingUSD: 2\n"), "source is required"},
+		"a class with no name":           {intake("      classes:\n        \"\": {roles: [implementer], ceilingUSD: 2, source: class:x.taskUSD}\n"), "a class needs a name"},
+		"a repository twice":             {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
+		"a route with no scheme":         {intake("      url: gw/v1\n"), "http(s)"},
+		"a route with userinfo":          {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
+		"a route that is not http":       {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
+		"a deadline over the bound":      {intake("      deadline: 21s\n"), "deadline"},
+		"a negative daily cap":           {intake("      dailyPlans: -1\n"), "dailyPlans"},
+		"the alias, while switched off":  {intake("      model: glm-5.3\n"), "tier-frontier"},
+		"an unknown reasoning effort":    {intake("      reasoningEffort: max\n"), "reasoningEffort"},
+		"a reasoning effort in capitals": {intake("      reasoningEffort: Low\n"), "reasoningEffort"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(write(t, c.body)); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -768,6 +775,9 @@ func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 		"one plan a day":            {intake("      dailyPlans: 1\n"), func(p PlanConfig) bool { return p.DailyPlans == 1 }},
 		"the degraded composer":     {intake("      fallback: composer\n"), func(p PlanConfig) bool { return p.Fallback == "composer" }},
 		"two repositories":          {intake("      repositories: [Smana/a, Smana/b]\n"), func(p PlanConfig) bool { return len(p.Repositories) == 2 }},
+		"a low reasoning effort":    {intake("      reasoningEffort: low\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "low" }},
+		"a medium reasoning effort": {intake("      reasoningEffort: medium\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "medium" }},
+		"a high reasoning effort":   {intake("      reasoningEffort: high\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "high" }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, err := Load(write(t, c.body))
@@ -875,5 +885,46 @@ func TestRoomToolsAuth(t *testing.T) {
 				t.Fatalf("want a roomTools.auth refusal, got %v", err)
 			}
 		})
+	}
+}
+
+// v4 MR16: the broker reads the same coordination switch as the factory, strictly and with the same
+// defaults: off, public only, two children. A mode other than off needs the planner it plans through.
+func TestCoordinationConfig(t *testing.T) {
+	cfg, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := cfg.Coordination; c.Mode != "off" || c.MaxChildren != 2 || !c.EffectivePublicOnly() {
+		t.Fatalf("omitted: %+v", c)
+	}
+	planner := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n" +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
+		"      repositories: [Smana/a, Smana/b]\n" +
+		"      classes:\n        scripts: {roles: [implementer, reviewer], ceilingUSD: 5.1, source: class:scripts.taskUSD}\n"
+	for _, mode := range []string{"plan", "execute", "off"} {
+		cfg, err := Load(write(t, planner+"coordination:\n  mode: "+mode+"\n  publicOnly: true\n  maxChildren: 2\n"))
+		if err != nil || cfg.Coordination.Mode != mode {
+			t.Fatalf("%s: %+v %v", mode, cfg.Coordination, err)
+		}
+	}
+	for name, body := range map[string]string{
+		"a mode that is none":         planner + "coordination:\n  mode: bogus\n",
+		"one child":                   planner + "coordination:\n  mode: plan\n  maxChildren: 1\n",
+		"three children":              planner + "coordination:\n  mode: plan\n  maxChildren: 3\n",
+		"private repositories":        planner + "coordination:\n  mode: plan\n  publicOnly: false\n",
+		"an unknown key":              planner + "coordination:\n  mode: plan\n  slack: true\n",
+		"a key written twice":         planner + "coordination:\n  mode: plan\n  mode: off\n",
+		"the block written twice":     planner + "coordination:\n  mode: plan\ncoordination:\n  mode: off\n",
+		"plan without the planner":    valid + "coordination:\n  mode: plan\n",
+		"execute without the planner": valid + "coordination:\n  mode: execute\n",
+	} {
+		if _, err := Load(write(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if !strings.Contains(err.Error(), "coordination") && !strings.Contains(err.Error(), "duplicate") &&
+			!strings.Contains(err.Error(), "already set") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

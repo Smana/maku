@@ -75,6 +75,7 @@ var reasonPhrases = map[string]string{
 	"merge_gate_off":            "the merge gate is off",
 	"needs_author":              "the issue's author must answer",
 	"no_pr":                     "the agent opened no pull request",
+	"scope_changed":             "the revision changed the task's scope",
 	"no_verdict":                "the review gave no verdict",
 	"not_adopted_author":        "the pull request's author is not adopted",
 	"not_mergeable":             "the pull request is not mergeable",

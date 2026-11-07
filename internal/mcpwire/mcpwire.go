@@ -25,6 +25,8 @@ const (
 	// the door every consumer re-validates one through before anything is filed.
 	IntakePlan = "intake_plan"
 	PlanCheck  = "plan_check"
+	// CoordinationPlan is the multi-repository planner on the same route (v4 MR4): side-effect free.
+	CoordinationPlan = "coordination_plan"
 )
 
 // The JSON-RPC 2.0 error codes the servers answer with.
