@@ -2,9 +2,11 @@
 
 // Package mcp is the room's MCP port, :8090 (§3). It is reachable only from the
 // agent-router data plane (CNP), which authenticates the run first (MCPRoute
-// oauth), injects X-Room-Mcp-Key, and sets X-Ar-Agent from the verified token. The
-// run comes from that subject and its room and role from the AgentRun, never from
-// a header or an argument. Tools only: Agent Router authorizes tools/call and
+// oauth), injects X-Room-Mcp-Key, and sets X-Ar-Agent from the verified token.
+// Where no gateway stands in front (roomTools.auth tokenreview, the demo), the
+// server verifies the run's own bearer token itself instead. The run comes from
+// that subject and its room and role from the AgentRun, never from a header or
+// an argument. Tools only: Agent Router authorizes tools/call and
 // tools/list and nothing else, so resources and prompts must not exist (§3). The
 // server never sends a request of its own (agent-router#2715 drops
 // server-to-client pings), so it answers POST only and opens no stream.
@@ -24,6 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/policy"
@@ -83,11 +86,14 @@ type Runs interface {
 	Live(id string) (run runwatch.Run, live, known bool)
 }
 
-// Server is the :8090 handler. Key, Runs and SubPatterns (every run issuer's,
-// each with one capture group: the run id) are required. OnReject counts a
-// refusal by a bounded reason.
+// Server is the :8090 handler. Runs and SubPatterns (each with one capture
+// group: the run id) are required, and Key unless Tokens is set. OnReject counts
+// a refusal by a bounded reason.
 type Server struct {
-	Key         func() string
+	Key func() string
+	// Tokens, when set, is roomTools.auth tokenreview: the caller's own bearer token, verified for
+	// authn.AudienceRoomTools, names the subject, and Key and the gateway's headers are never read.
+	Tokens      authn.RunVerifier
 	Runs        Runs
 	SubPatterns []*regexp.Regexp
 	Tools       []Tool
@@ -154,21 +160,17 @@ func (s *Server) allow(runID string) bool {
 	return true
 }
 
-// caller maps the router's headers to a live run, or answers the refusal.
+// caller maps the request's credential to a live run, or answers the refusal.
 func (s *Server) caller(w http.ResponseWriter, r *http.Request) (runwatch.Run, bool) {
-	key, keys := s.Key(), r.Header.Values(KeyHeader)
-	// An unset key must not admit a request that sends none.
-	if key == "" || len(keys) != 1 || subtle.ConstantTimeCompare([]byte(keys[0]), []byte(key)) != 1 {
+	subject, ok := s.subject(r)
+	if !ok {
 		s.reject(r.Context(), "mcp_key")
 		w.WriteHeader(http.StatusUnauthorized)
 		return runwatch.Run{}, false
 	}
-	// Exactly one subject: a second value, forged beside the gateway's, is
-	// refused rather than guessed between (review M1).
-	subjects := r.Header.Values(IdentityHeader)
 	id := ""
-	if len(subjects) == 1 {
-		id = s.runID(subjects[0])
+	if subject != "" {
+		id = s.runID(subject)
 	}
 	if id == "" {
 		s.reject(r.Context(), "mcp_identity")
@@ -182,6 +184,37 @@ func (s *Server) caller(w http.ResponseWriter, r *http.Request) (runwatch.Run, b
 		return runwatch.Run{}, false
 	}
 	return run, true
+}
+
+// subject is the caller's verified subject: false when the credential is refused, "" when it is
+// accepted but names no single subject. Key mode: the router's key, then its one X-Ar-Agent. Token
+// mode: the bearer token's subject, whatever the headers say.
+func (s *Server) subject(r *http.Request) (string, bool) {
+	if s.Tokens != nil {
+		raw, err := authn.Bearer(r)
+		if err != nil {
+			return "", false
+		}
+		c, err := s.Tokens.Verify(r.Context(), raw, authn.AudienceRoomTools)
+		if err != nil {
+			if errors.Is(err, authn.ErrReviewUnavailable) { // not the caller's fault: say so apart
+				s.log().Warn("room tools token review failed", "err", err.Error())
+			}
+			return "", false
+		}
+		return c.Subject, true
+	}
+	key, keys := s.Key(), r.Header.Values(KeyHeader)
+	// An unset key must not admit a request that sends none.
+	if key == "" || len(keys) != 1 || subtle.ConstantTimeCompare([]byte(keys[0]), []byte(key)) != 1 {
+		return "", false
+	}
+	// Exactly one subject: a second value, forged beside the gateway's, is
+	// refused rather than guessed between (review M1).
+	if subjects := r.Header.Values(IdentityHeader); len(subjects) == 1 {
+		return subjects[0], true
+	}
+	return "", true
 }
 
 // runID is the run the subject names under the first issuer pattern that

@@ -20,6 +20,8 @@ const (
 	BridgeHealthPort = 8085
 	HarnessPort      = 8000
 	roomTokenTTL     = 600
+	// roomToolsDir holds the harness's :8090 token (audience room-tools), apart from the bridge's.
+	roomToolsDir     = "/var/run/secrets/agents/room-tools"
 	roomGraceSeconds = 45
 	bridgeFlushGrace = "12s"
 	runUID           = 10001
@@ -67,6 +69,11 @@ func emptyDir(name, size string, mem bool) corev1.Volume {
 	}
 	return corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{EmptyDir: e}}
 }
+
+// roomToolsReadOnly is the bridge's MCP_READ_ONLY_TOOLS for a run given the room tools: they only
+// append to the room.
+const roomToolsReadOnly = "room-broker__room_read,room-broker__room_post,room-broker__room_progress," +
+	"room-broker__room_handoff,room-broker__room_verdict"
 
 // Pod is the run's pod: the composition's Sandbox pod template without identity-proxy,
 // octo-sts, traces, Kueue and suspend. The model key and the PAT are files the harness reads
@@ -177,6 +184,12 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		if searchOn {
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "AGENT_SEARCH", Value: "1"})
 		}
+		if c.RoomToolsURL != "" {
+			// The harness calls the broker directly, so its room tools reach the bridge bare; the
+			// broker still enforces each tool's roles.
+			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "MCP_BARE_SERVER", Value: "room-broker"},
+				corev1.EnvVar{Name: "MCP_READ_ONLY_TOOLS", Value: roomToolsReadOnly})
+		}
 		health := corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(BridgeHealthPort)}}
 		inits = []corev1.Container{{
 			Name: "room-bridge", Image: c.Images.Bridge, RestartPolicy: &always, Env: bridgeEnv,
@@ -200,6 +213,17 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "room-broker", ExpirationSeconds: &ttl, Path: "token"}}}}}},
 			corev1.Volume{Name: "room-broker-ca", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: r.Name + "-ca"}}}})
+	}
+	// Room tools act on the run's room: a run with none gets no MCP server. The token is the harness's
+	// own, audience room-tools, which the broker's :8090 alone accepts: the bridge's room-broker token,
+	// which opens :8443, never enters the container where the model's commands run.
+	if c.RoomToolsURL != "" && s.RoomRef != "" {
+		ttl := int64(roomTokenTTL)
+		harness.Env = append(harness.Env, corev1.EnvVar{Name: "MCP_URL", Value: c.RoomToolsURL},
+			corev1.EnvVar{Name: "MCP_TOKEN_FILE", Value: roomToolsDir + "/token"})
+		harness.VolumeMounts = append(harness.VolumeMounts, corev1.VolumeMount{Name: "room-tools-token", MountPath: roomToolsDir, ReadOnly: true})
+		vols = append(vols, corev1.Volume{Name: "room-tools-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: &mode,
+			Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "room-tools", ExpirationSeconds: &ttl, Path: "token"}}}}}})
 	}
 	var rc *string
 	if c.RuntimeClassName != "" {

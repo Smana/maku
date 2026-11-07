@@ -54,6 +54,8 @@ type bridgeConfig struct {
 	egress map[string]bool // the run's egress profiles
 	// readOnlyMCP is MCP_READ_ONLY_TOOLS: the <server>__<tool> names that classify as plain.
 	readOnlyMCP map[string]bool
+	// bareServer is MCP_BARE_SERVER: the server a bare MCP tool name belongs to. Unset, none does.
+	bareServer string
 	// suspendable is AGENT_SUSPENDABLE=true, the composition's mark of a run that may be suspended.
 	suspendable bool
 	// searchBuiltin is AGENT_SEARCH=1: the run has the harness's search tool (v3 feature 5).
@@ -84,6 +86,11 @@ func loadBridgeConfig(getenv func(string) string) (bridgeConfig, error) {
 		}
 	}
 	var missing []error
+	if v := getenv("MCP_BARE_SERVER"); v != "" {
+		if c.bareServer = strings.TrimSpace(v); c.bareServer == "" || strings.Contains(c.bareServer, "_") {
+			missing = append(missing, fmt.Errorf("MCP_BARE_SERVER %q must be a server name: non-empty, with no underscore", v))
+		}
+	}
 	if v := getenv("FLUSH_GRACE"); v != "" {
 		d, err := time.ParseDuration(v)
 		switch {
@@ -183,7 +190,7 @@ func wireBridge(b *bridge.Bridge, approvals bridge.ApprovalRequester, cfg bridge
 		log.Info("read-only MCP tools configured", "count", len(cfg.readOnlyMCP))
 	}
 	confirm := &bridge.Confirmer{Harness: b.Harness, Broker: approvals, RunID: b.RunID, Push: b.Push, Logger: log,
-		Classifier: bridge.Classifier{Branch: cfg.branch, Egress: cfg.egress, ReadOnlyMCP: cfg.readOnlyMCP, SearchBuiltin: cfg.searchBuiltin}, PastCap: b.PastCap,
+		Classifier: bridge.Classifier{Branch: cfg.branch, Egress: cfg.egress, ReadOnlyMCP: cfg.readOnlyMCP, BareServer: cfg.bareServer, SearchBuiltin: cfg.searchBuiltin}, PastCap: b.PastCap,
 		Suspendable: cfg.suspendable}
 	steer := &bridge.Steering{Harness: b.Harness, RunID: b.RunID, Push: b.Push, Gate: confirm.Gate}
 	b.OnDeliver, b.OnInterrupt = steer.Deliver, steer.Interrupt

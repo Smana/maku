@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command loadconfig loads each file through a component's real config loader:
-// `loadconfig broker|broker-roomtools-on|broker-roomtools-off|run-controller FILE...`. render.sh feeds
+// `loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|run-controller FILE...`. render.sh feeds
 // it the chart's rendered config.yaml, so a template edit the component would refuse — or a roomTools
 // switch that disagrees with the values — fails chart:check, not a rollout.
 package main
@@ -16,7 +16,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-roomtools-on|broker-roomtools-off|run-controller FILE...")
+		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|run-controller FILE...")
 		os.Exit(2)
 	}
 	var load func(string) error
@@ -34,6 +34,18 @@ func main() {
 			}
 			if got := c.RoomToolsEnabled(); got != want {
 				return fmt.Errorf("roomTools enabled = %v, want %v", got, want)
+			}
+			return nil
+		}
+	case "broker-roomtools-tokenreview":
+		// Task 6: :8090 on, verifying the runs' own tokens.
+		load = func(p string) error {
+			c, err := config.Load(p)
+			if err != nil {
+				return err
+			}
+			if !c.RoomToolsEnabled() || c.RoomToolsAuth() != config.RoomToolsAuthTokenReview {
+				return fmt.Errorf("roomTools enabled %v auth %q, want true and tokenreview", c.RoomToolsEnabled(), c.RoomToolsAuth())
 			}
 			return nil
 		}

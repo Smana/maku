@@ -14,4 +14,4 @@ metadata:
   labels: {{- include "agent-factory.labels" . | nindent 4 }}
 data:
   config.yaml: |
-    {{- toYaml $cfg | nindent 4 }}
+    {{- tpl (toYaml $cfg) . | nindent 4 }}

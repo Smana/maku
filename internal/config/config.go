@@ -361,6 +361,26 @@ type RoomToolsConfig struct {
 	// edit. An explicit false binds no port at all — not even one to close again — and starts no
 	// server, so a broker with no room-tool client stays clean.
 	Enabled *bool `json:"enabled,omitempty"`
+	// Auth is who vouches for a caller: "" or "key", a gateway that verified the run's token and
+	// injects ROOMS_MCP_KEY and the subject (production); "tokenreview", the broker itself asks the
+	// apiserver about the run's own bearer token, where no gateway stands in front (the demo).
+	Auth string `json:"auth,omitempty"`
+}
+
+// How :8090 authenticates a run. An empty auth is key: the bytes a deployed broker carries need no edit.
+const (
+	// RoomToolsAuthKey trusts a gateway's injected key and verified subject.
+	RoomToolsAuthKey = "key"
+	// RoomToolsAuthTokenReview verifies the run's own token (audience room-tools) through the apiserver.
+	RoomToolsAuthTokenReview = "tokenreview"
+)
+
+// RoomToolsAuth is the auth :8090 serves: key unless tokenreview is set.
+func (c Config) RoomToolsAuth() string {
+	if c.RoomTools == nil || c.RoomTools.Auth == "" {
+		return RoomToolsAuthKey
+	}
+	return c.RoomTools.Auth
 }
 
 // RoomToolsEnabled is the listener's switch: absent block or nil enabled means true, as every
@@ -625,6 +645,7 @@ func (c *Config) Validate() error {
 			errs = append(errs, fmt.Errorf("runIssuers[%d] %s: subPattern must compile with one capture group (the runId)", i, is.Issuer))
 		}
 	}
+	errs = append(errs, c.roomToolsAuth()...)
 	if err := c.Runs.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("runs: %w", err))
 	} else {
@@ -665,6 +686,24 @@ func (c *Config) Validate() error {
 		errs = append(errs, w.validate(i, seen)...)
 	}
 	return errors.Join(errs...)
+}
+
+// roomToolsAuth checks roomTools.auth. tokenreview needs a run issuer in mode tokenreview: :8090 asks
+// the apiserver through it and maps the subject with its subPattern, so a broker whose run issuers are
+// all JWKS has nothing that could vouch for a room tools caller that way.
+func (c *Config) roomToolsAuth() []error {
+	switch c.RoomToolsAuth() {
+	case RoomToolsAuthKey:
+		return nil
+	case RoomToolsAuthTokenReview:
+		for _, is := range c.RunIssuers {
+			if is.EffectiveMode() == IssuerModeTokenReview {
+				return nil
+			}
+		}
+		return []error{errors.New("roomTools.auth: tokenreview needs a run issuer in mode tokenreview")}
+	}
+	return []error{fmt.Errorf("roomTools.auth: %q is not key or tokenreview", c.RoomTools.Auth)}
 }
 
 // checkFactoryURL is D6: the broker forwards each human's bearer token to the factory, so its URL

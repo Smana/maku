@@ -70,6 +70,16 @@ func TestLoadConfigDefaultsTheEgressProfiles(t *testing.T) {
 	}
 }
 
+func TestLoadConfigNetworkPolicy(t *testing.T) {
+	if got := testConfig(t).NetworkPolicy; got != "cilium" {
+		t.Errorf("default networkPolicy = %q, want cilium", got)
+	}
+	c, err := cfgFrom(t, goodConfig+"networkPolicy: none\n")
+	if err != nil || c.NetworkPolicy != "none" {
+		t.Errorf("none: %q %v", c.NetworkPolicy, err)
+	}
+}
+
 func TestLoadConfigRefuses(t *testing.T) {
 	for name, body := range map[string]string{
 		"no images":     strings.Replace(goodConfig, "images:", "imagesX:", 1),
@@ -78,6 +88,7 @@ func TestLoadConfigRefuses(t *testing.T) {
 		"bad prefix":    strings.Replace(goodConfig, "namePrefix: run-", "namePrefix: run", 1),
 		"unknown field": goodConfig + "surprise: 1\n",
 		"no model":      strings.Replace(goodConfig, "modelSecret: agent-model\n", "", 1),
+		"bad policy":    goodConfig + "networkPolicy: calico\n",
 	} {
 		if _, err := cfgFrom(t, body); err == nil {
 			t.Errorf("%s: want an error", name)

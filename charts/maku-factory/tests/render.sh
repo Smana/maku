@@ -119,6 +119,22 @@ ykind ConfigMap '.data."config.yaml" | from_yaml | (.api.tls.certFile == "/etc/a
 ykind ConfigMap '.data."config.yaml" | from_yaml | .repository == "Smana/cloud-native-ref"' "the rest of the config is still rendered verbatim"
 ykind Service '.spec.ports[] | select(.port == 8082) | .name == "https"' "the API's Service port is named https"
 out="$base"
+# demo: no OIDC volume (no human tokens), and in the runs namespace exactly the Secret access the
+# demo token writer needs: create (unscopable by name) and get, update on agent-git only.
+ykind Role 'select(.metadata.namespace == "agents") | [.rules[] | select(.resources[] == "secrets")] | length == 0' "default: no Secret rule in the runs namespace"
+demo="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref --set demo=true)"
+out="$demo"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' "demo: no oidc volume"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "oidc")' "demo: no oidc mount"
+ykind Deployment "$(vol broker-ca).secret.secretName == \"openbao-ca\"" "demo: the broker CA stays required"
+runsrole=$(yq eval-all 'select(.kind == "Role" and .metadata.namespace == "agents")' - <<<"$out")
+yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] == "create")] | (length == 1 and ((.[0] | has("resourceNames")) == false) and ((.[0].verbs | join(",")) == "create"))' - <<<"$runsrole" >/dev/null \
+  || { echo "FAIL: demo: create on secrets, unscoped, alone" >&2; fail=1; }
+yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] != "create")] | (length == 1 and ((.[0].verbs | sort | join(",")) == "get,update") and ((.[0].resourceNames | join(",")) == "agent-git"))' - <<<"$runsrole" >/dev/null \
+  || { echo "FAIL: demo: get, update on agent-git only" >&2; fail=1; }
+ynone 'select(.kind == "ClusterRole") | .rules[] | select(.resources[] == "secrets")' "demo: no cluster-wide Secret access"
+ynone 'select(.kind == "Role" and .metadata.namespace == null) | .rules[] | select(.resources[] == "secrets")' "demo: no Secret access in the factory's own namespace"
+out="$base"
 # refuse 'message' --set ...: the render must fail, naming message
 refuse() {
   local want="$1" err; shift
@@ -141,5 +157,9 @@ for bad in "" "v0.0.0" "latest"; do
     echo "FAIL: image.tag '$bad' must not render: only <version>@sha256:<digest>" >&2; fail=1
   fi
 done
+# e2e.unpinnedImages accepts a bare tag and never pulls
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)
+ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:e2e\"" "e2e.unpinnedImages: a bare tag renders"
+ykind Deployment "$ctr.imagePullPolicy == \"Never\"" "e2e.unpinnedImages: imagePullPolicy Never"
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"

@@ -59,7 +59,7 @@ const (
 // readOnly reports whether the run's configured read-only set holds the tool.
 // It matches the last server__tool pair (Agent Router) or, in the last segment,
 // server_tool (agentgateway, ADR-0053), so a prefix the harness adds cannot
-// hide the server, and a bare tool name never matches. Server names hold no
+// hide the server, and a bare tool name matches only under BareServer. Server names hold no
 // underscore, so the first one ends the server. The set is the composition's
 // (MCP_READ_ONLY_TOOLS): the harness event carries no readOnlyHint, and an
 // empty set makes every MCP tool mcp.write.
@@ -69,7 +69,11 @@ func (c Classifier) readOnly(tool string) bool {
 		return true
 	}
 	server, name, ok := strings.Cut(p[len(p)-1], "_")
-	return ok && c.ReadOnlyMCP[server+"__"+name]
+	if ok && c.ReadOnlyMCP[server+"__"+name] {
+		return true
+	}
+	// A harness that calls the server directly sends the bare name: BareServer says whose it is.
+	return c.BareServer != "" && len(p) == 1 && c.ReadOnlyMCP[c.BareServer+"__"+tool]
 }
 
 // Classifier knows the run's own branch, the egress profiles it was given and
@@ -80,6 +84,9 @@ type Classifier struct {
 	// ReadOnlyMCP holds the MCP tools that only read, as <server>__<tool>.
 	// Anything else is mcp.write; the zero value gates every MCP tool.
 	ReadOnlyMCP map[string]bool
+	// BareServer is MCP_BARE_SERVER: the server a tool name with no "__" belongs to, for a harness
+	// that reaches it directly (the demo's room tools). Unset, a bare name never matches.
+	BareServer string
 	// SearchBuiltin is AGENT_SEARCH=1: the run was given the harness's search tool, so a bare
 	// "search" is that tool and plain. Without it a bare "search" is an MCP tool like any other.
 	// It assumes MCP tools reach the bridge prefixed (server_tool): an unprefixed MCP "search" on a

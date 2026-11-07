@@ -56,6 +56,13 @@ capabilities: {drop: [ALL]}
 {{- if not (has $b.runIssuer.mode (list "jwks" "tokenreview")) -}}
 {{- fail (printf "broker.runIssuer.mode %q is not jwks or tokenreview" $b.runIssuer.mode) -}}
 {{- end -}}
+{{- $rtAuth := ($b.roomTools | default dict).auth | default "key" -}}
+{{- if not (has $rtAuth (list "key" "tokenreview")) -}}
+{{- fail (printf "broker.roomTools.auth %q is not key or tokenreview" $rtAuth) -}}
+{{- end -}}
+{{- if and (eq $rtAuth "tokenreview") (ne $b.runIssuer.mode "tokenreview") -}}
+{{- fail "broker.roomTools.auth tokenreview needs broker.runIssuer.mode tokenreview: :8090 asks the apiserver through the run issuer, and maps the subject with its pattern" -}}
+{{- end -}}
 {{- if not .Values.apiServerPorts -}}
 {{- fail "apiServerPorts is empty: every CiliumNetworkPolicy that reaches the apiserver would render no port" -}}
 {{- end -}}
@@ -79,4 +86,11 @@ capabilities: {drop: [ALL]}
 {{- if and $b.factoryURL (hasPrefix "http://" $b.factoryURL) (not $b.factoryInsecure) -}}
 {{- fail (printf "broker.factoryURL %q is http: the broker forwards human tokens to it; serve the factory chart's api.tls and use https, or set broker.factoryInsecure: true" $b.factoryURL) -}}
 {{- end -}}
+{{- end -}}
+
+{{/* "true" when the broker serves :8090 and verifies the runs' own tokens there (roomTools.auth
+tokenreview): the Service, the broker CNP and the run controller then open it to the runs. */}}
+{{- define "ap.roomToolsTokenReview" -}}
+{{- $rt := .Values.broker.roomTools | default dict -}}
+{{- if and (ne (toString $rt.enabled) "false") (eq ($rt.auth | default "key") "tokenreview") -}}true{{- end -}}
 {{- end -}}

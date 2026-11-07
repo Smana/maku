@@ -235,17 +235,13 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		humans.Tasks = runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 	}
 	// :8090 is the agents' listener and the config names it (I8). Absent it starts, as every existing
-	// deployment expects, and ROOMS_MCP_KEY alone decides whether calls are accepted; an explicit
-	// roomTools.enabled: false opens no port, starts no server and counts no refusal, so the key is
-	// not even read.
+	// deployment expects, and ROOMS_MCP_KEY alone decides whether calls are accepted (under
+	// roomTools.auth tokenreview, the run's own token does); an explicit roomTools.enabled: false opens
+	// no port, starts no server and counts no refusal, so the key is not even read.
 	roomToolsEnabled := cfg.RoomToolsEnabled()
 	var tools http.Handler
 	if roomToolsEnabled {
-		key := mcpKey(getenv)
-		if key == "" {
-			log.Warn("ROOMS_MCP_KEY is not set: :8090 refuses every room tool call")
-		}
-		tools = roomMCP(key, subPatterns(cfg.RunIssuers), logStore, red, rw.watch, m, log)
+		tools = roomToolsServer(cfg, a, getenv, logStore, red, rw.watch, m, log)
 	} else {
 		log.Info(":8090 not started: roomTools.enabled is false")
 	}

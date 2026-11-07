@@ -58,7 +58,7 @@ Taken one question at a time, in this order. Later answers supersede earlier one
 | Q19 | **One chart:** the demo installs the umbrella chart with `profile: demo`. Production differs only by values |
 | Q20 | **Home:** the chart is `charts/agent-factory` in this repository, and this design lives here. ai-native-ref keeps the reference host's values and its own gates |
 | Q21 | *Superseded by Q24* (a ruleset created with the reader's `gh`) |
-| Q22 | **A minimal cluster:** no Cilium, cert-manager, CNPG or gVisor; plain HTTP inside the cluster; a Postgres pod from the chart; runc. The script creates a kind or a k3d cluster (`CLUSTER=kind\|k3d`), or installs into the current kubeconfig. kind and k3d are both tested in CI. The room page is served on localhost with no port-forward |
+| Q22 | **A minimal cluster:** no Cilium, cert-manager, CNPG or gVisor; the broker keeps TLS, with a CA the chart generates (the database hop is plain inside the cluster); a Postgres pod from the chart; runc. The script creates a kind or a k3d cluster (`CLUSTER=kind\|k3d`), or installs into the current kubeconfig. kind and k3d are both tested in CI. The room page is served on localhost with no port-forward |
 | Q23 | **GitHub identity:** a GitHub App created from a manifest in two clicks (Create, Install). The pull requests are its bot's, so you can approve them; a PAT or your `gh` token would make them yours, and GitHub refuses self-approval |
 | Q24 | **No branch protection, `gh` optional:** the status shows the gate's verdict and the gate merges by itself when live. With `gh` logged in, the script creates the repository from the template; otherwise it prints the "Use this template" link and waits for the name |
 | Q25 | **One command:** `task demo` asks for the model endpoint and key (or reads them from the environment or `.env`), opens the App page, creates the cluster and the repository, installs, and ends by printing the room page's URL and the issue to label. Re-running it resumes where it stopped |
@@ -97,7 +97,8 @@ The quickstart page carries this table, so a reader knows exactly what the demo 
 | No egress control | Default-deny egress with a per-run FQDN allow-list |
 | No branch protection; the gate's status is informational for humans | `main` requires the gate's verdict |
 | One local user, no login | OIDC login, roles, room access following GitHub permissions |
-| Plain HTTP inside the cluster | TLS from your CA |
+| TLS from a CA the chart generates; the database hop is plain inside the cluster | TLS from your CA, database included |
+| Runs call the broker's `:8090` room tools over plain HTTP in the cluster, and the broker checks each run's own token with the apiserver (`roomTools.auth: tokenreview`) | A gateway verifies the run, holds the room tools key and fronts `:8090` (`roomTools.auth: key`) |
 | Public repositories only | Private repositories, with models chosen per data class |
 
 ## New work, by component

@@ -1,0 +1,60 @@
+{{- /*
+The broker's TLS without cert-manager. A re-render reuses what the cluster already holds
+(`lookup`), and every Secret is `keep`, so an upgrade never rotates the CA under running run pods.
+*/ -}}
+{{- $ns := .Release.Namespace -}}
+{{- $tlsName := include "afumbrella.tlsSecret" . -}}
+{{- $caName := include "afumbrella.caSecret" . -}}
+{{- $existingTLS := lookup "v1" "Secret" $ns $tlsName -}}
+{{- $existingCA := lookup "v1" "Secret" $ns $caName -}}
+{{- $caCrt := "" -}}
+{{- $crt := "" -}}
+{{- $key := "" -}}
+{{- if and $existingTLS $existingCA -}}
+{{- $caCrt = index $existingCA.data "ca.crt" -}}
+{{- $crt = index $existingTLS.data "tls.crt" -}}
+{{- $key = index $existingTLS.data "tls.key" -}}
+{{- else -}}
+{{- $ca := genCA .Values.tls.caName (int .Values.tls.days) -}}
+{{- $sans := list (printf "room-broker.%s.svc" $ns) (printf "room-broker.%s.svc.%s" $ns .Values.clusterDomain) -}}
+{{- $cert := genSignedCert "room-broker" nil $sans (int .Values.tls.days) $ca -}}
+{{- $caCrt = b64enc $ca.Cert -}}
+{{- $crt = b64enc $cert.Cert -}}
+{{- $key = b64enc $cert.Key -}}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $tlsName }}
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $crt }}
+  tls.key: {{ $key }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $caName }}
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  ca.crt: {{ $caCrt }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "afumbrella.factoryCASecret" . }}
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  ca.crt: {{ $caCrt }}

@@ -33,9 +33,11 @@ rules:
   - apiGroups: [""]
     resources: [serviceaccounts, configmaps]
     verbs: [get, create]
+  {{- if .Values.networkPolicies.enabled }}
   - apiGroups: [cilium.io]
     resources: [ciliumnetworkpolicies]
     verbs: [get, create]
+  {{- end }}
   - apiGroups: [""]
     resources: [secrets]
     resourceNames: [{{ $c.modelSecret | quote }}, {{ $c.gitSecret | quote }}]

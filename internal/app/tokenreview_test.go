@@ -303,3 +303,51 @@ func TestMixedIssuersNameOnlyTheJWKSIssuer(t *testing.T) {
 		t.Fatalf("%d key-gauge series, want only the JWKS issuer's:\n%s", n, body)
 	}
 }
+
+// Task 6: roomTools.auth tokenreview gives :8090 a verifier of its own over the same apiserver
+// client, asking for the room tools audience, with the tokenreview run issuers' patterns. Key mode
+// builds none, so its :8090 is the key and the gateway's subject as before.
+func TestRoomToolsTokenReview(t *testing.T) {
+	m, err := metrics.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		RunIssuers: []config.IssuerConfig{{Mode: config.IssuerModeTokenReview,
+			SubPattern: `^system:serviceaccount:agents:run-([a-z2-7]{8})$`}},
+		Human: localHuman(),
+	}
+	api := &reviews{}
+	var provided int
+	provide := func() (authn.TokenReviewer, error) { provided++; return api, nil }
+	noJWKS := func(context.Context, string, string, bool) (*authn.Verifier, error) {
+		return nil, errors.New("no JWKS")
+	}
+	a, err := authenticators(t.Context(), cfg, m, noJWKS, provide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.roomTokens != nil || a.roomPatterns != nil {
+		t.Fatal("key mode: :8090 gets no verifier")
+	}
+
+	cfg.RoomTools = &config.RoomToolsConfig{Auth: config.RoomToolsAuthTokenReview}
+	provided = 0
+	a, err = authenticators(t.Context(), cfg, m, noJWKS, provide)
+	switch {
+	case err != nil:
+		t.Fatal(err)
+	case a.roomTokens == nil || len(a.roomPatterns) != 1:
+		t.Fatalf("tokenreview mode: verifier %v, patterns %v", a.roomTokens, a.roomPatterns)
+	case provided != 1:
+		t.Fatalf("the client provider ran %d times, want once: :8090 shares it", provided)
+	}
+	api.status = authenticated("system:serviceaccount:agents:run-7f3cq2xz", authn.AudienceRoomTools)
+	c, err := a.roomTokens.Verify(t.Context(), "tools-token", authn.AudienceRoomTools)
+	if err != nil || c.Subject != "system:serviceaccount:agents:run-7f3cq2xz" {
+		t.Fatalf("%+v, %v", c, err)
+	}
+	if last := api.specs[len(api.specs)-1]; !slices.Equal(last.Audiences, []string{authn.AudienceRoomTools}) {
+		t.Fatalf(":8090 asks for %v", last.Audiences)
+	}
+}

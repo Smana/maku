@@ -227,8 +227,11 @@ func (r *Reconciler) create(ctx context.Context, run *v1alpha1.AgentRun, runID s
 	if err != nil {
 		return "", err
 	}
-	for _, o := range []client.Object{ServiceAccount(run), task, CAConfigMap(run, ca),
-		NetworkPolicy(run, r.Cfg, m, runID), Pod(run, r.Cfg, m, runID)} {
+	objs := []client.Object{ServiceAccount(run), task, CAConfigMap(run, ca)}
+	if r.Cfg.NetworkPolicy != NetworkPolicyNone {
+		objs = append(objs, NetworkPolicy(run, r.Cfg, m, runID))
+	}
+	for _, o := range append(objs, Pod(run, r.Cfg, m, runID)) {
 		if err := controllerutil.SetControllerReference(run, o, r.Client.Scheme()); err != nil {
 			return "", err
 		}

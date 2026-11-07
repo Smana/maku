@@ -151,6 +151,21 @@ def _read_secret(path: str) -> str:
         return ""
 
 
+def mcp_bearer(env) -> str | None:
+    """The Authorization value for the run's MCP server, or None. MCP_TOKEN_FILE is the portable runtime's
+    room tools token (audience room-tools), which the broker's :8090 verifies itself (roomTools.auth
+    tokenreview). The kubelet rotates it, so it is read on every call, never cached like a Secret."""
+    path = env.get("MCP_TOKEN_FILE")
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            token = f.read().strip()
+    except (OSError, ValueError):
+        return None
+    return "Bearer " + token if token else None
+
+
 def redact(text: str) -> str:
     try:
         with open(TOKEN_CACHE) as f:
@@ -159,7 +174,7 @@ def redact(text: str) -> str:
         cached = None
     if cached:
         text = text.replace(cached, REDACTED)
-    for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY)):
+    for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("MCP_TOKEN_FILE", REDACTED)):
         value = _read_secret(os.environ.get(var) or os.devnull)
         if value:
             text = text.replace(value, marker)
@@ -369,9 +384,16 @@ def build_request(env: dict, task: str, rules: str, span=None, search: bool = Fa
     mcp_url = env.get("MCP_URL")
     if mcp_url:
         platform = {"url": mcp_url, "transport": "http"}
+        headers = {}
         tp = span_traceparent(span)
         if tp:
-            platform["headers"] = {"traceparent": tp}
+            headers["traceparent"] = tp
+        # Read at conversation start; agent-server's client re-reads the file per POST (sitecustomize).
+        bearer = mcp_bearer(env)
+        if bearer:
+            headers["Authorization"] = bearer
+        if headers:
+            platform["headers"] = headers
         agent["mcp_config"] = {"platform": platform}
     extra = {"tool_module_qualnames": {SEARCH_TOOL: SEARCH_MODULE}} if search else {}
     request = StartConversationRequest.model_validate({
@@ -561,8 +583,11 @@ class ProgressNotes:
     MCP route. Each milestone is noted once, at most one note per MIN_NOTE_GAP_S and MAX_NOTES a
     run. The text is fixed: nothing the agent wrote reaches the room through here. Best effort."""
 
-    def __init__(self, url: str, role: str = "agent", resumed: bool = False, clock=time.monotonic, start_span=None):
+    def __init__(self, url: str, role: str = "agent", resumed: bool = False, clock=time.monotonic, start_span=None,
+                 token_file: str | None = None):
         self.url, self.role, self.resumed, self.clock = url, role, resumed, clock
+        # MCP_TOKEN_FILE: the bearer :8090 verifies itself where no gateway does (read per RPC: it rotates).
+        self.token_file = token_file
         # Each note is a span under the run's, and its RPCs carry it, so the gateway's spans for the
         # note nest under it (cloud-native-ref#2283). None when tracing is off.
         self.start_span, self.traceparent = start_span, None
@@ -660,6 +685,9 @@ class ProgressNotes:
             headers["Mcp-Session-Id"] = self.session
         if self.traceparent:
             headers["traceparent"] = self.traceparent
+        bearer = mcp_bearer({"MCP_TOKEN_FILE": self.token_file})
+        if bearer:
+            headers["Authorization"] = bearer
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), method="POST", headers=headers)
         with urllib.request.urlopen(req, timeout=NOTE_TIMEOUT_S) as resp:
             self.session = resp.headers.get("Mcp-Session-Id") or self.session
@@ -2198,7 +2226,7 @@ def main() -> int:
             save_state(state, LOOP_STATE)
         cid = http("POST", "/api/conversations", request)["id"]
         notes = ProgressNotes(env["MCP_URL"], env.get("ROLE") or "agent", resumed,
-                              start_span=child_spans(provider, span)) if env.get("MCP_URL") else None
+                              start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
         # A scoper's StepLog raises CallLimit, which only scoper_poll catches: a triager has no policy and no hold.
         steps = StepLog(cid, trace_id, notes, SEARCH_LEDGER if search else None,
                        nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed)

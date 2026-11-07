@@ -46,7 +46,7 @@ uid and nobody else.
 | `api.tls.secretName` | `""` | The run-request API's key pair (`tls.crt`, `tls.key`), mounted at `/etc/agent-factory-api-tls`; the chart writes `config.api.tls` to read it and names the Service port `https`. Empty: plaintext, and the broker needs `factoryInsecure: true` |
 | `api.tls.issuerRef` | `{kind: ClusterIssuer, name: ""}` | `name` set: a cert-manager `Certificate` `agent-factory-api-tls` for `agent-factory.<ns>.svc[.<clusterDomain>]` writes `api.tls.secretName`; empty: bring the Secret yourself |
 | `clusterDomain` | `cluster.local` | The cluster's DNS domain, for the Certificate's names |
-| `config` | `{}` | The factory config, rendered verbatim; an empty config fails the start |
+| `config` | `{}` | The factory config, rendered through `tpl` (`{{ .Release.Namespace }}` works); an empty config fails the start |
 
 ## Ports
 

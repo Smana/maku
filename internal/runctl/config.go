@@ -23,6 +23,12 @@ import (
 	"github.com/Smana/maku/internal/runwatch"
 )
 
+// The values of Config.NetworkPolicy.
+const (
+	NetworkPolicyCilium = "cilium"
+	NetworkPolicyNone   = "none"
+)
+
 // Config is the run-controller's file, from the chart.
 type Config struct {
 	Namespace        string `json:"namespace"`
@@ -30,12 +36,19 @@ type Config struct {
 	RuntimeClassName string `json:"runtimeClassName,omitempty"`
 	// AllowUnsandboxed places pods without a RuntimeClass; each run then carries condition
 	// Unsandboxed, so the room can say so (3a R5).
-	AllowUnsandboxed bool                `json:"allowUnsandboxed,omitempty"`
-	ModelSecret      string              `json:"modelSecret"`
-	GitSecret        string              `json:"gitSecret"`
-	Broker           Broker              `json:"broker"`
-	Images           Images              `json:"images"`
-	EgressProfiles   map[string][]string `json:"egressProfiles,omitempty"`
+	AllowUnsandboxed bool `json:"allowUnsandboxed,omitempty"`
+	// NetworkPolicy is "cilium" (default: each run gets a CiliumNetworkPolicy) or "none", for a
+	// cluster without Cilium: no policy is created, so nothing confines a run's network.
+	NetworkPolicy  string              `json:"networkPolicy,omitempty"`
+	ModelSecret    string              `json:"modelSecret"`
+	GitSecret      string              `json:"gitSecret"`
+	Broker         Broker              `json:"broker"`
+	Images         Images              `json:"images"`
+	EgressProfiles map[string][]string `json:"egressProfiles,omitempty"`
+	// RoomToolsURL is the broker's :8090 room tools, by broker.url's host, for a broker serving
+	// roomTools.auth tokenreview. Set, a run with a room gets MCP_URL and a projected token of audience
+	// room-tools for the harness alone. Unset, the harness wires no MCP server.
+	RoomToolsURL string `json:"roomToolsURL,omitempty"`
 }
 
 // Broker is where the bridge connects, and what the CNP lets it reach.
@@ -80,6 +93,9 @@ func LoadConfig(path string) (Config, error) {
 	if c.EgressProfiles == nil {
 		c.EgressProfiles = defaultProfiles
 	}
+	if c.NetworkPolicy == "" {
+		c.NetworkPolicy = NetworkPolicyCilium
+	}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -92,6 +108,9 @@ func (c Config) validate() error {
 		if v == "" {
 			errs = append(errs, fmt.Errorf("%s is required", name))
 		}
+	}
+	if c.NetworkPolicy != NetworkPolicyCilium && c.NetworkPolicy != NetworkPolicyNone {
+		errs = append(errs, fmt.Errorf("networkPolicy %q must be %q or %q", c.NetworkPolicy, NetworkPolicyCilium, NetworkPolicyNone))
 	}
 	req("namespace", c.Namespace)
 	req("modelSecret", c.ModelSecret)
@@ -110,6 +129,7 @@ func (c Config) validate() error {
 	case !brokerHostRE.MatchString(u.Hostname()):
 		errs = append(errs, fmt.Errorf("broker.url host %q must be <service>.<namespace>.svc.<cluster-domain>, e.g. room-broker.agent-platform.svc.cluster.local", u.Hostname()))
 	}
+	errs = append(errs, c.roomToolsURL()...)
 	if len(c.Broker.Labels) == 0 {
 		errs = append(errs, errors.New("broker.labels: the CNP needs at least one to select the broker"))
 	}
@@ -117,6 +137,33 @@ func (c Config) validate() error {
 		errs = append(errs, errors.New("egressProfiles.github is required: every run clones from GitHub"))
 	}
 	return errors.Join(errs...)
+}
+
+// roomToolsURL checks roomToolsURL: the broker's own host, so the run CNP's broker rule and DNS
+// allowlist cover it, and a path, the MCP endpoint. http is for an in-cluster listener with no TLS.
+func (c Config) roomToolsURL() []error {
+	if c.RoomToolsURL == "" {
+		return nil
+	}
+	b, _ := url.Parse(c.Broker.URL)
+	u, err := url.Parse(c.RoomToolsURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Path == "" || u.Path == "/" ||
+		b == nil || u.Hostname() != b.Hostname() || !brokerHostRE.MatchString(u.Hostname()) {
+		return []error{fmt.Errorf("roomToolsURL %q must be an http(s) URL with a path on broker.url's host", c.RoomToolsURL)}
+	}
+	return nil
+}
+
+// roomToolsPort is roomToolsURL's port, by its scheme when the URL names none.
+func (c Config) roomToolsPort() int {
+	u, _ := url.Parse(c.RoomToolsURL) // validated at load
+	if p, err := strconv.Atoi(u.Port()); err == nil {
+		return p
+	}
+	if u.Scheme == "https" {
+		return 443
+	}
+	return 80
 }
 
 // RunID is the run's C2 id, or "" for a name this controller does not own.

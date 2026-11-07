@@ -1,0 +1,42 @@
+# A values file for a real install of the demo: copy it to values-mine.yaml, change every line
+# marked CHANGE, then
+#   helm install af charts/agent-factory -n maku --create-namespace -f values-mine.yaml ...
+# Helm replaces a list whole, so `repositories` restates the entire entry from values.yaml.
+profile: demo
+
+demo:
+  model:
+    baseURL: https://api.example.com/v1   # CHANGE: an OpenAI-compatible endpoint
+    name: my-model                        # CHANGE
+    apiKey: sk-change-me                  # CHANGE (or existingSecret: agent-model)
+  githubApp:
+    id: "123456"                          # CHANGE: the App's id (or existingSecret: agent-factory-github)
+    privateKey: |                         # CHANGE: the App's PEM
+      -----BEGIN RSA PRIVATE KEY-----
+      change-me
+      -----END RSA PRIVATE KEY-----
+
+maku-factory:
+  config:
+    factoryLogin: my-app[bot]             # CHANGE: the App's slug, as <slug>[bot]
+    agentsLogin: my-app[bot]              # CHANGE: the same App
+    repositories:
+      - name: owner/repo                  # CHANGE: your repository
+        maintainers: [owner]              # CHANGE: GitHub logins allowed to file work
+        triggerLabel: factory/ready
+        classes:
+          docs-links: {shadow: true, allowedFiles: ['^.+\.(md|mdx|adoc|rst)$']}
+          revert: {shadow: true, allowedFiles: ['^.+$']}
+        merge:
+          requiredChecks: [ci]            # CHANGE: your CI's check names
+          verifyChecks: [ci]              # CHANGE
+          leakScanCheck: ci               # CHANGE
+          gateStatus: true
+          policyBot: false
+          mergerLogin: my-app[bot]        # CHANGE: the App's slug again
+          autoMergesPerDay: 5
+          fixRuns: 2
+          checkReruns: 1
+          verifyFor: 30m
+          revertWindow: 168h
+          breaker: {window: 10, maxReverts: 1}

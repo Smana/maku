@@ -30,6 +30,9 @@ import (
 const (
 	AudienceRun    = "room-broker"  // fixed by SP1 (C2); Kyverno reserves it to namespace agents
 	AudienceSystem = "rooms-system" // ruling P3
+	// AudienceRoomTools is a run's :8090 token in roomTools.auth tokenreview. It is apart from
+	// AudienceRun: the harness, where the model's commands run, holds it, and it must not open :8443.
+	AudienceRoomTools = "room-tools"
 )
 
 var (

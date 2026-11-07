@@ -289,6 +289,48 @@ func TestEnvtestMissingSecretRequeues(t *testing.T) {
 	}
 }
 
+func TestEnvtestNoNetworkPolicyCreatesNoCNP(t *testing.T) {
+	e := startEnv(t)
+	e.modelSecret(t)
+	e.r.Cfg.NetworkPolicy = "none"
+	create(t, e, run("run-jjjjjjjj"))
+	e.reconcile(t, "run-jjjjjjjj")
+	if err := e.c.Get(e.ctx, key("run-jjjjjjjj"), &corev1.Pod{}); err != nil {
+		t.Fatalf("pod: %v", err)
+	}
+	cnp := &unstructured.Unstructured{}
+	cnp.SetAPIVersion("cilium.io/v2")
+	cnp.SetKind("CiliumNetworkPolicy")
+	if err := e.c.Get(e.ctx, key("run-jjjjjjjj"), cnp); !apierrors.IsNotFound(err) {
+		t.Fatalf("with networkPolicy none no CNP may exist, got %v", err)
+	}
+}
+
+// Task 6: with roomToolsURL the apiserver accepts the pod and keeps the harness's room tools token.
+func TestEnvtestRoomToolsPod(t *testing.T) {
+	e := startEnv(t)
+	e.modelSecret(t)
+	e.r.Cfg.RoomToolsURL = "http://room-broker.agent-platform.svc.cluster.local:8090/mcp"
+	create(t, e, run("run-kkkkkkkk"))
+	e.reconcile(t, "run-kkkkkkkk")
+	p := &corev1.Pod{}
+	if err := e.c.Get(e.ctx, key("run-kkkkkkkk"), p); err != nil {
+		t.Fatalf("pod: %v", err)
+	}
+	if env := harnessEnv(p); env["MCP_URL"] != e.r.Cfg.RoomToolsURL || env["MCP_TOKEN_FILE"] == "" {
+		t.Fatalf("harness env %v", env)
+	}
+	var aud string
+	for _, v := range p.Spec.Volumes {
+		if v.Name == "room-tools-token" && v.Projected != nil {
+			aud = v.Projected.Sources[0].ServiceAccountToken.Audience
+		}
+	}
+	if aud != "room-tools" {
+		t.Fatalf("room tools token audience %q", aud)
+	}
+}
+
 func TestEnvtestUnsandboxedIsMarked(t *testing.T) {
 	e := startEnv(t)
 	e.modelSecret(t)

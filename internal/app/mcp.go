@@ -55,6 +55,26 @@ func roomMCP(key string, patterns []*regexp.Regexp, roomLog mcp.Log, red mcp.Red
 		Logger: log, Now: time.Now}
 }
 
+// roomToolsServer is :8090's handler under roomTools.auth. key (the default) is the router's injected
+// ROOMS_MCP_KEY and verified subject over every run issuer's pattern, as every deployment has it.
+// tokenreview never reads the key: the run's own token, reviewed by the apiserver for the room tools
+// audience, names the subject, matched by the tokenreview run issuers' patterns alone.
+func roomToolsServer(cfg config.Config, a auth, getenv func(string) string, roomLog mcp.Log, red mcp.Redactor, runs mcp.Runs,
+	m *metrics.Set, log *slog.Logger,
+) *mcp.Server {
+	if cfg.RoomToolsAuth() == config.RoomToolsAuthTokenReview {
+		log.Info(":8090 verifies each run's own token (roomTools.auth tokenreview): ROOMS_MCP_KEY is not read")
+		s := roomMCP("", a.roomPatterns, roomLog, red, runs, m, log)
+		s.Tokens = a.roomTokens
+		return s
+	}
+	key := mcpKey(getenv)
+	if key == "" {
+		log.Warn("ROOMS_MCP_KEY is not set: :8090 refuses every room tool call")
+	}
+	return roomMCP(key, subPatterns(cfg.RunIssuers), roomLog, red, runs, m, log)
+}
+
 // mcpServer bounds :8090. Nothing on it streams, so WriteTimeout is set, and
 // each call's context ends at callTimeout (mcpCallTimeout in the broker).
 func mcpServer(h http.Handler, callTimeout time.Duration, log *slog.Logger) *http.Server {
