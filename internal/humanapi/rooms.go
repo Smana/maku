@@ -330,6 +330,9 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 		Caller: summary.Caller{WebUI: web.WebUI, CanDecide: policy.Allowed(web, policy.Decide),
 			CanClose: policy.Allowed(sub, policy.Close), CanRelease: policy.Allowed(sub, policy.StartRun),
 			RoomScoped: roomScoped}}
+	if !in.Sealed {
+		in.Coordination, in.CoordinationStanding = s.coordinationNeedsIn(ctx, room.Name, p)
+	}
 	return summary.Ordered(summary.Items(in)), r.facts() != nil
 }
 

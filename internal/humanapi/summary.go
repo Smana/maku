@@ -86,6 +86,12 @@ func (s *Server) summaryOf(ctx context.Context, id string, p authn.Principal, af
 	}
 	if v, ok := s.coordinationFor(ctx, id, p); ok {
 		coordinationview.Attach(&view, v)
+		if fold.Sealed == "" { // the parent's own items, by the one derivation and the one order (CD21)
+			in := summary.NeedsIn{Room: id, URL: s.PublicURL + "/r/" + id, FactsRead: true, Now: s.now(),
+				GitHub: s.standing(ctx, room, p), Caller: summary.Caller{WebUI: true},
+				Coordination: coordinationview.NeedsOf(v), CoordinationStanding: s.childStanding(ctx, v, p)}
+			view.NeedsYou = summary.Ordered(append(view.NeedsYou, summary.Items(in)...))
+		}
 	}
 	return view, nil
 }
