@@ -50,3 +50,9 @@ func RunloreKey(alert, resourceRef string) string {
 func ScheduleKey(name string, at time.Time) string {
 	return fmt.Sprintf("schedule:%s:%s", name, at.UTC().Format(time.RFC3339))
 }
+
+// CoordinationChildKey keys one generation of a coordination child (v4 MR2): one Task per parent,
+// child, plan version and generation, whatever replays. Generation 1 is a child's first.
+func CoordinationChildKey(parent, childID string, version, generation int) string {
+	return fmt.Sprintf("coordination:%s/%s:v%d:gen%d", parent, childID, version, generation)
+}

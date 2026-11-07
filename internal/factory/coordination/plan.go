@@ -119,12 +119,17 @@ func ReasonOf(err error) string {
 }
 
 // RepositoryPolicy is one repository's resolved facts for one child: its class, tier and the
-// class harness's roles in order, the fence blob they were read at, and the run and task ceilings
-// of that tier in micro-USD (MR6, MR8).
+// class harness's roles in order, the fence blob they were read at, the run and task ceilings of
+// that tier in micro-USD (MR6, MR8), and what a RepositoryChecks read alongside.
 type RepositoryPolicy struct {
 	Repository, Class, Tier, FenceSHA string
 	Roles                             []string
 	RunMicroUSD, TaskMicroUSD         int64
+	// Public is the repository's live visibility, AppRepository the full name its App connection
+	// answered for, and Permission the actor's GitHub permission when an actor was checked.
+	Public        bool
+	AppRepository string
+	Permission    string
 }
 
 // ResolvePolicy resolves a class and tier at repository's confirmed policy and the central

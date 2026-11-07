@@ -109,6 +109,9 @@ type Server struct {
 	Redact interface {
 		String(s string) (string, []string)
 	}
+	// Coordination is the multi-repository draft and confirmation flow (v4 MR4, MR5), served only
+	// while coordination.mode is plan or execute; nil or off serves no coordination route.
+	Coordination CoordinationService
 }
 
 // SlackLinkReader is the broker's self-serve link records: the ZITADEL sub a Slack user linked;
@@ -146,8 +149,8 @@ var (
 // NeedLeaderElection is false: every replica serves intake.
 func (s *Server) NeedLeaderElection() bool { return false }
 
-// Handler is the API's mux: POST /v1/runs, admission in §4's order, and POST /v1/tasks while a
-// sponsored principal is declared.
+// Handler is the API's mux: POST /v1/runs, admission in §4's order, POST /v1/tasks while a
+// sponsored principal is declared, and the coordination routes while the switch is on.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
@@ -156,6 +159,10 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.anyVerifies() { // RA11, D4: a 404 until an internal principal may send verdicts
 		mux.HandleFunc("POST /v1/tasks/{task}/verification", s.recordVerification)
+	}
+	if s.coordinationOn() { // MR16: off lists no coordination route, so each is a 404
+		mux.HandleFunc("PUT /v1/coordinations/{task}/draft", s.draftCoordination)
+		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
 	}
 	return mux
 }
@@ -480,6 +487,15 @@ func resumeBranchValid(b string) bool {
 // own rule, and it has no live run (SP2 §1: one Running run per room). Cross-replica exclusion
 // is the ledger's (R50). attended reports an admitted room's approval profile.
 func (s *Server) admitRoom(ctx context.Context, p authn.Principal, in RunRequest, all []runs.Run) (code int, reason string, attended bool) {
+	// v4 MR2: a coordination parent's Room is for planning and progress, and an integration Task's
+	// runs are the factory's: neither takes a run from this API, so no branch, token or PR follows.
+	var task factoryv1.Task
+	switch err := s.Rooms.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: in.RoomRef}, &task); {
+	case err == nil && task.Spec.Kind != "":
+		return http.StatusForbidden, "coordination_read_only", false
+	case err != nil && !apierrors.IsNotFound(err):
+		return http.StatusServiceUnavailable, "tasks_unavailable", false
+	}
 	var room v1alpha1.Room
 	err := s.Rooms.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: in.RoomRef}, &room)
 	if apierrors.IsNotFound(err) {

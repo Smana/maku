@@ -326,6 +326,10 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 	if err != nil {
 		return err
 	}
+	// v4 MR2: a coordination issue never becomes a work Task from its own text.
+	if handled, err := p.coordinationIssue(ctx, n, iss, last); handled || err != nil {
+		return err
+	}
 	if iss.LastEditedAt.After(last.At) || iss.TitleEditedAt.After(last.At) {
 		return p.refuse(ctx, n, last, "edited_after_label") // R5: the body and the title are the snapshot
 	}
