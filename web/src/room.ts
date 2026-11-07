@@ -4,7 +4,7 @@
 // the chat and raw views, and the dock (the session's controls behind a toggle, the
 // composer, the connection), all fed by one RoomConnection.
 
-import { api, fetchEvents, fetchNeeds } from "./api";
+import { api, confirmCoordination, fetchEvents, fetchNeeds } from "./api";
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
@@ -95,7 +95,10 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   footer.append(session, composerEl, meta);
   // The rail beside the conversation, not in main: mountViews wipes main's children.
   const coordinationRegion = document.createElement("div");
-  const coordination = mountCoordinationPanel(coordinationRegion);
+  const coordination = mountCoordinationPanel(coordinationRegion, {
+    confirm: (c) => confirmCoordination(id, c, o.get),
+    refresh: () => loadSummary(),
+  });
   const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
@@ -220,7 +223,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
         showRail(sum);
-        coordination.set(sum.flow?.coordination);
+        coordination.set(sum.flow?.coordination, sum.coordination);
         runView.set(sum.flow?.nodes ?? []);
         shown = key;
       }

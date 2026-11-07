@@ -21,6 +21,9 @@ const (
 	RoomWait     = "room_wait"
 	RoomCheckout = "room_checkout"
 	RoomChanges  = "room_changes"
+	// CoordinationOpen is maku mcp's draft opener (v4): a coordination_plan result stored as its
+	// parent's draft, as the developer. It confirms nothing.
+	CoordinationOpen = "coordination_open"
 	// IntakePlan and PlanCheck are the broker's governed planner: the plan a sentence becomes, and
 	// the door every consumer re-validates one through before anything is filed.
 	IntakePlan = "intake_plan"

@@ -86,3 +86,18 @@ export async function fetchNeeds(room: string, since?: string, get: typeof fetch
   if (p?.apiVersion !== "needs/v1") throw new Error("The needs list is in a format this page does not know. Reload the page.");
   return p;
 }
+
+// confirmCoordination posts one parent confirmation or child authorization for the room's family.
+// The broker forwards it, with the viewer's own session, to the factory, which decides; a refusal's
+// bounded code ("stale_plan", "repository_permission", …) is the error's message.
+export async function confirmCoordination(room: string, c: unknown, get: typeof fetch = fetch): Promise<void> {
+  const r = await api(`/api/coordinations/${encodeURIComponent(room)}/confirmations`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) }, get);
+  if (r.ok) return;
+  let code = `HTTP ${r.status}`;
+  try {
+    const body = (await r.json()) as { error?: unknown };
+    if (typeof body.error === "string" && /^[a-z][a-z_]{0,47}$/.test(body.error)) code = body.error;
+  } catch { /* not JSON: the status says it */ }
+  throw new Error(code);
+}

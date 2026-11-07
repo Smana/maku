@@ -8,7 +8,7 @@
 import { el } from "./controls";
 import { personaLabel, tone } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
-import type { CoordinationEdge, CoordinationFlow, CoordinationNode } from "./summary";
+import type { CoordinationConfirmation, CoordinationEdge, CoordinationFlow, CoordinationNode, CoordinationView } from "./summary";
 
 const roomId = /^[a-z2-7]{8}$/;
 const githubURL = /^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/(issues|pull)\/\d+$/;
@@ -60,26 +60,65 @@ function renderEdge(e: CoordinationEdge, names: Map<string, string>): HTMLLIElem
   return li;
 }
 
-export interface CoordinationPanel { el: HTMLElement; set(f?: CoordinationFlow): HTMLElement }
+export interface CoordinationPanel { el: HTMLElement; set(f?: CoordinationFlow, v?: CoordinationView): HTMLElement }
+
+// The page's two hands: confirm posts one confirmation, refresh reads the summary again. A
+// confirmation's answer is never applied here: the next summary is what the page shows.
+export interface CoordinationControls {
+  confirm(c: CoordinationConfirmation): Promise<void>;
+  refresh(): void;
+}
+
+function confirmation(v: CoordinationView, part: Pick<CoordinationConfirmation, "parent" | "child">): CoordinationConfirmation {
+  return { plan: v.plan, planHash: v.planHash, ...part, planning: { attemptID: "", effectiveRequester: "",
+    reservedMicroUSD: v.budget.planningReservedMicroUSD ?? 0, settledMicroUSD: v.budget.planningSettledMicroUSD ?? 0 } };
+}
 
 // mountCoordinationPanel appends a hidden panel to root; set draws a family, or hides the panel
-// when the room is not a coordination parent.
-export function mountCoordinationPanel(root: HTMLElement): CoordinationPanel {
+// when the room is not a coordination parent. With controls and a fully readable view, a node that
+// waits for a confirmation offers it, bound to the exact plan, hash and fingerprint shown.
+export function mountCoordinationPanel(root: HTMLElement, controls?: CoordinationControls): CoordinationPanel {
   const section = el("section", { className: "rail-coordination", hidden: true });
   section.setAttribute("aria-label", "Coordination");
   root.append(section);
   return {
     el: section,
-    set(f) {
+    set(f, v) {
       section.hidden = !f;
       if (!f) { section.replaceChildren(); return section; }
+      const status = el("p", { className: "rail-coordination-status" });
+      status.setAttribute("role", "status");
+      const decide = controls && v && v.restrictedChildren === 0 && f.restrictedChildren === 0 && v.planHash === f.planHash ? controls : undefined;
+      const act = (label: string, name: string, c: CoordinationConfirmation): HTMLButtonElement => {
+        const b = el("button", { type: "button", textContent: label, className: "rail-coordination-act" });
+        b.dataset.act = name;
+        b.onclick = () => {
+          b.disabled = true;
+          status.textContent = "";
+          decide!.confirm(c).catch((e: unknown) => { status.textContent = `Not recorded: ${e instanceof Error ? e.message : String(e)}`; })
+            .finally(() => decide!.refresh());
+        };
+        return b;
+      };
       const head = el("h2", { className: "rail-coordination-title", textContent: `Coordination · plan v${f.planVersion} ${f.planHash.slice(0, 7)}` });
       const nodes = el("ol", { className: "rail-coordination-nodes" });
-      nodes.append(...f.nodes.map(renderCoordinationNode));
+      nodes.append(...f.nodes.map((n) => {
+        const li = renderCoordinationNode(n);
+        const fp = v?.children.find((c) => c.id === n.childID)?.fingerprint;
+        if (decide && v && n.requiredConfirmation === "child" && n.childID && fp) {
+          li.append(act(`Authorize ${n.childID}`, "coordination-authorize",
+            confirmation(v, { child: { childID: n.childID, childFingerprint: fp, planVersion: v.plan.version } })));
+        }
+        return li;
+      }));
       const names = new Map(f.nodes.map((n) => [n.id, label(n)]));
       const edges = el("ul", { className: "rail-coordination-edges" });
       edges.append(...f.edges.map((e) => renderEdge(e, names)));
-      section.replaceChildren(head, nodes);
+      section.replaceChildren(head);
+      if (decide && v && f.nodes.some((n) => n.requiredConfirmation === "parent")) {
+        section.append(act(`Confirm plan v${v.plan.version}`, "coordination-confirm", confirmation(v, { parent: { planHash: v.planHash } })));
+      }
+      section.append(nodes, status);
       if (f.edges.length) section.append(edges);
       if (f.restrictedChildren > 0) {
         const n = f.restrictedChildren;
