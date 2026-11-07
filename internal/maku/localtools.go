@@ -21,8 +21,9 @@ import (
 // The local tools maku mcp serves beside the broker's, named once by mcpwire so the broker's
 // instructions and this relay cannot drift (L16).
 const (
-	toolRoomWait     = mcpwire.RoomWait
-	toolRoomCheckout = mcpwire.RoomCheckout
+	toolRoomWait             = mcpwire.RoomWait
+	toolRoomCheckout         = mcpwire.RoomCheckout
+	toolCoordinationCheckout = mcpwire.CoordinationCheckout
 )
 
 // localCall is one tools/call the relay serves itself.
@@ -44,6 +45,9 @@ func buildHandlers() map[string]localTool {
 		issueFileTool:    func(ctx context.Context, r *Relay, c localCall) any { return r.issueFile(ctx, c.Args) },
 		toolRoomWait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
 		toolRoomCheckout: func(ctx context.Context, r *Relay, c localCall) any { return r.roomCheckout(ctx, c) },
+		toolCoordinationCheckout: func(ctx context.Context, r *Relay, c localCall) any {
+			return r.coordinationCheckout(ctx, c)
+		},
 	}
 }
 
@@ -52,6 +56,7 @@ var localEntries = []any{
 	issueFileEntry,
 	roomWaitEntry,
 	roomCheckoutEntry,
+	coordinationCheckoutEntry,
 }
 
 // withLocalTools adds the local tools to the broker's tools/list result.
