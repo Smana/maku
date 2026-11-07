@@ -651,16 +651,20 @@ func TestPrivateRepositoryReason(t *testing.T) {
 func TestAnApprovalShownSaysWhoAndWhatRemains(t *testing.T) {
 	tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"}, Spec: v1alpha1.TaskSpec{Repository: "Smana/x"},
 		Status: v1alpha1.TaskStatus{Reason: "not_mergeable", PullRequest: &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/x/pull/12"}}}
-	e := ApprovalShown(tk, 77, "Smana", "abc", false)
+	e := ApprovalShown(tk, 77, "Smana", "abc", "")
 	if !strings.Contains(e.Body, "approved by @Smana at commit `abc`") || !strings.Contains(e.Body, "GitHub does not allow merging it as it stands") ||
 		!strings.Contains(e.Body, "--admin") {
 		t.Fatalf("%q", e.Body)
 	}
-	if s := ApprovalShown(tk, 77, "Smana", "abc", true); s.Key == e.Key || !strings.Contains(s.Body, "an older commit: new commits since") ||
+	if s := ApprovalShown(tk, 77, "Smana", "abc", envelope.ApprovalOlderCommit); s.Key == e.Key || !strings.Contains(s.Body, "an older commit: new commits since") ||
 		strings.Contains(s.Body, "--admin") {
 		t.Fatalf("stale: %q %q", s.Key, s.Body)
 	}
-	if ApprovalShown(tk, 78, "Smana", "abc", false).Key == e.Key {
+	if s := ApprovalShown(tk, 77, "Smana", "abc", envelope.ApprovalBeforeRunsEnded); !strings.Contains(s.Body, "before the factory's last push ended: approve it again") ||
+		strings.Contains(s.Body, "new commits since") || strings.Contains(s.Body, "--admin") {
+		t.Fatalf("early: %q", s.Body)
+	}
+	if ApprovalShown(tk, 78, "Smana", "abc", "").Key == e.Key {
 		t.Fatal("a new review is a new narration")
 	}
 }

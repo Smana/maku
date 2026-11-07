@@ -899,7 +899,10 @@ spec:
                         maxLength: 64
                         type: string
                       stale:
-                        type: boolean
+                        enum:
+                        - older_commit
+                        - before_runs_ended
+                        type: string
                     required:
                     - by
                     - commit

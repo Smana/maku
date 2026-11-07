@@ -289,14 +289,18 @@ func nextStep(reason string, byApproval bool) string {
 
 // ApprovalLine is the maintainer's approval the factory shows with merge.approveToMerge off
 // (PRFact.ApprovedBy), in words: who approved which commit — a human's approval, not the agent
-// reviewer's verdict — or that it is of an older commit. "" when the facts name no approver.
+// reviewer's verdict — or why it is stale: of an older commit, or before the factory's last push
+// ended. "" when the facts name no approver.
 func ApprovalLine(f *envelope.TaskFacts) string {
 	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || !envelope.ValidLogin(f.PR.ApprovedBy) {
 		return ""
 	}
 	commit := f.PR.ApprovedCommit[:min(len(f.PR.ApprovedCommit), shortCommit)]
-	if !f.PR.ApprovalStale {
+	switch f.PR.ApprovalStale {
+	case "":
 		return fmt.Sprintf("approved by @%s at commit `%s`", f.PR.ApprovedBy, commit)
+	case envelope.ApprovalBeforeRunsEnded: // the head's commit, approved before the push of it was the factory's last
+		return fmt.Sprintf("@%s approved commit `%s` before the factory's last push ended: approve it again", f.PR.ApprovedBy, commit)
 	}
 	of := "an older commit"
 	if commit != "" {

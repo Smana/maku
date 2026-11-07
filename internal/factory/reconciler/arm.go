@@ -11,6 +11,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -274,8 +275,9 @@ func newestReviews(pr forge.PR, rc *config.Repository) map[string]forge.Review {
 // merge.approveToMerge off, where nothing merges on it: approval's newest review of each
 // maintainer; veto as approval reads one; approved when an approval names the current head and came
 // after ended, the end of the task's last pushing run (a force push moves a review's commit to the
-// new head, so the commit alone does not say the maintainer read it); stale for any other approval
-// naming a commit; "" without one, or when the head is unknown. It reads the pull request and the
+// new head, so the commit alone does not say the maintainer read it); envelope.ApprovalBeforeRunsEnded
+// for an approval of the head before that; envelope.ApprovalOlderCommit for one of another commit;
+// "" without one naming a commit, or when the head is unknown. It reads the pull request and the
 // task's status only: no approval binds here, so the head's push is not asked. Among several, the
 // oldest review id is shown, so every reconcile shows the same one.
 func shownApproval(pr forge.PR, rc *config.Repository, ended time.Time) (forge.Review, string) {
@@ -291,11 +293,16 @@ func shownApproval(pr forge.PR, rc *config.Repository, ended time.Time) (forge.R
 		if rv.State != "APPROVED" || rv.Commit == "" || pr.HeadSHA == "" {
 			continue // no commit to name: nothing to show
 		}
-		got := "stale"
-		if rv.Commit == pr.HeadSHA && !ended.IsZero() && rv.At.After(ended) {
+		got := envelope.ApprovalOlderCommit
+		switch {
+		case rv.Commit != pr.HeadSHA:
+		case !ended.IsZero() && rv.At.After(ended):
 			got = "approved"
+		default:
+			got = envelope.ApprovalBeforeRunsEnded
 		}
-		if st == "" || (got == "approved" && st == "stale") || (got == st && rv.ID < shown.ID) {
+		if st == "" || (got == "approved" && st != "approved") || (got == st && rv.ID < shown.ID) ||
+			(st == envelope.ApprovalOlderCommit && got == envelope.ApprovalBeforeRunsEnded) {
 			shown, st = rv, got
 		}
 	}

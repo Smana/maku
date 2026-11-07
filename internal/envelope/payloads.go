@@ -324,12 +324,19 @@ type PRFact struct {
 	Reviewers []string `json:"reviewers,omitempty"`
 	// ApprovedBy, ApprovedCommit and ApprovalStale are a maintainer's approval of an AwaitingHuman
 	// pull request the factory shows with merge.approveToMerge off, beside the hand-off's reason,
-	// which stands: who, a GitHub login; the commit approved; and whether newer commits landed since
-	// (or the approval came before the task's last pushing run ended).
+	// which stands: who, a GitHub login; the commit approved; and why it is stale, empty while it is
+	// current: ApprovalOlderCommit or ApprovalBeforeRunsEnded.
 	ApprovedBy     string `json:"approvedBy,omitempty"`
 	ApprovedCommit string `json:"approvedCommit,omitempty"`
-	ApprovalStale  bool   `json:"approvalStale,omitempty"`
+	ApprovalStale  string `json:"approvalStale,omitempty"`
 }
+
+// Why a shown approval is stale (PRFact.ApprovalStale): it is of an older commit than the head, or
+// of the head but submitted before the task's last pushing run ended, so before that push landed.
+const (
+	ApprovalOlderCommit     = "older_commit"
+	ApprovalBeforeRunsEnded = "before_runs_ended"
+)
 
 // commitRE is a git object id as GitHub writes it: lowercase hex, SHA-1 or SHA-256.
 var commitRE = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
@@ -391,10 +398,12 @@ func (f TaskFacts) Validate() error {
 		return errors.New("task facts: the issue URL is a github.com issue")
 	case f.PR != nil && !githubURL.MatchString(f.PR.URL):
 		return errors.New("task facts: the PR URL is a github.com pull request")
-	case f.PR != nil && (f.PR.ApprovedBy != "" || f.PR.ApprovedCommit != "" || f.PR.ApprovalStale) && !ValidLogin(f.PR.ApprovedBy):
+	case f.PR != nil && (f.PR.ApprovedBy != "" || f.PR.ApprovedCommit != "" || f.PR.ApprovalStale != "") && !ValidLogin(f.PR.ApprovedBy):
 		return errors.New("task facts: the PR's approvedBy is a GitHub login")
 	case f.PR != nil && !ValidCommit(f.PR.ApprovedCommit):
 		return errors.New("task facts: the PR's approvedCommit is a commit id")
+	case f.PR != nil && f.PR.ApprovalStale != "" && f.PR.ApprovalStale != ApprovalOlderCommit && f.PR.ApprovalStale != ApprovalBeforeRunsEnded:
+		return errors.New("task facts: the PR's approvalStale is older_commit or before_runs_ended")
 	case f.Origin != "" && !ValidID(f.Origin):
 		return errors.New("task facts: the origin is a room id")
 	case f.Monitor != "" && !slices.Contains(MonitorVerdicts(), f.Monitor):

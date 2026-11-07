@@ -845,14 +845,16 @@ type PullRequestRef struct {
 }
 
 // ApprovalRef is a maintainer's APPROVED review as the room shows it: who, the commit approved, and
-// whether it is stale: newer commits landed since, or it came before the task's last pushing run ended.
+// why it is stale: older_commit, newer commits landed since; before_runs_ended, it names the head but
+// came before the task's last pushing run ended. Empty while it is current.
 type ApprovalRef struct {
 	// +kubebuilder:validation:MaxLength=64
 	By string `json:"by"`
 	// +kubebuilder:validation:MaxLength=64
 	Commit string `json:"commit"`
+	// +kubebuilder:validation:Enum=older_commit;before_runs_ended
 	// +optional
-	Stale bool `json:"stale,omitempty"`
+	Stale string `json:"stale,omitempty"`
 }
 
 // Usage is the task's token spend.

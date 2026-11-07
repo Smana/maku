@@ -937,13 +937,17 @@ func (r *Reconciler) showApproval(t *v1alpha1.Task, pr forge.PR) {
 	}
 	ref := t.Status.PullRequest
 	rv, st := shownApproval(pr, r.repo(t), runsEnded(t))
-	if st != "approved" && st != "stale" {
+	if st != "approved" && st != envelope.ApprovalOlderCommit && st != envelope.ApprovalBeforeRunsEnded {
 		ref.Approval = nil
 		return
 	}
 	first := ref.Approval == nil
-	ref.Approval = &v1alpha1.ApprovalRef{By: rv.Author, Commit: rv.Commit, Stale: st == "stale"}
-	ev := narrate.ApprovalShown(t, rv.ID, rv.Author, rv.Commit, st == "stale")
+	stale := st // the cause of a stale approval; a current one has none
+	if st == "approved" {
+		stale = ""
+	}
+	ref.Approval = &v1alpha1.ApprovalRef{By: rv.Author, Commit: rv.Commit, Stale: stale}
+	ev := narrate.ApprovalShown(t, rv.ID, rv.Author, rv.Commit, stale)
 	if first && st == "approved" && t.Status.Reason == "maintainer_approved" {
 		// The gate's own hand-off already said a maintainer approved: record the key, post nothing.
 		if !slices.Contains(t.Status.Narrated, ev.Key) {

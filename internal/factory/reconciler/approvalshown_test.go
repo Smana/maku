@@ -56,7 +56,7 @@ func TestAnApprovalIsShownWithApproveToMergeOff(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "shadow_would_arm" {
 		t.Fatalf("the reason stands: %s %s", got.Status.Phase, got.Status.Reason)
 	}
-	if a := approvalOf(got); a == nil || a.By != "Smana" || a.Commit != "abc" || a.Stale {
+	if a := approvalOf(got); a == nil || a.By != "Smana" || a.Commit != "abc" || a.Stale != "" {
 		t.Fatalf("shown: %+v", a)
 	}
 	if a := g.f.Armed(); len(a) != 0 {
@@ -65,7 +65,7 @@ func TestAnApprovalIsShownWithApproveToMergeOff(t *testing.T) {
 	if n := count(g, "approved by @Smana at commit `abc`"); n != 1 {
 		t.Fatalf("narrated %d times: %q", n, g.f.Comments(7))
 	}
-	if pr := lastFacts(g).PR; pr == nil || pr.ApprovedBy != "Smana" || pr.ApprovedCommit != "abc" || pr.ApprovalStale {
+	if pr := lastFacts(g).PR; pr == nil || pr.ApprovedBy != "Smana" || pr.ApprovedCommit != "abc" || pr.ApprovalStale != "" {
 		t.Fatalf("the room's facts: %+v", pr)
 	}
 	got = g.reconcile(t, "3buqdlot", 2)
@@ -84,7 +84,7 @@ func TestAPushAfterAShownApprovalShowsItStale(t *testing.T) {
 	pr.HeadSHA = "def"
 	g.f.SetPR(pr)
 	got := g.reconcile(t, "3buqdlot", 2)
-	if a := approvalOf(got); got.Status.Reason != "shadow_would_arm" || a == nil || !a.Stale || a.Commit != "abc" {
+	if a := approvalOf(got); got.Status.Reason != "shadow_would_arm" || a == nil || a.Stale != "older_commit" || a.Commit != "abc" {
 		t.Fatalf("stale: %s %+v", got.Status.Reason, a)
 	}
 	var stale []string
@@ -101,7 +101,7 @@ func TestAPushAfterAShownApprovalShowsItStale(t *testing.T) {
 	}
 	// Approving the new head shows it again, as a new approval.
 	approve(g, t, 78, "def")
-	if got = g.reconcile(t, "3buqdlot", 1); approvalOf(got) == nil || approvalOf(got).Stale || count(g, "approved by @Smana at commit `def`") != 1 {
+	if got = g.reconcile(t, "3buqdlot", 1); approvalOf(got) == nil || approvalOf(got).Stale != "" || count(g, "approved by @Smana at commit `def`") != 1 {
 		t.Fatalf("re-approved: %+v %q", approvalOf(got), g.f.Comments(7))
 	}
 }
@@ -187,8 +187,13 @@ func TestAnApprovalBeforeTheRunsEndedIsStale(t *testing.T) {
 	pr, _ := g.f.PullRequest(t.Context(), 12)
 	pr.Reviews[0].At = now.Add(-time.Hour) // the run ended at now-30m
 	g.f.SetPR(pr)
-	if a := approvalOf(g.reconcile(t, "3buqdlot", 1)); a == nil || !a.Stale {
+	if a := approvalOf(g.reconcile(t, "3buqdlot", 1)); a == nil || a.Stale != "before_runs_ended" || a.Commit != "abc" {
 		t.Fatalf("%+v", a)
+	}
+	c := strings.Join(g.f.Comments(7), "\n")
+	if !strings.Contains(c, "@Smana approved commit `abc` before the factory's last push ended: approve it again") ||
+		strings.Contains(c, "new commits since") || strings.Contains(c, "--admin") {
+		t.Fatalf("the early approval's words: %q", c)
 	}
 }
 
