@@ -49,7 +49,8 @@ var (
 
 // serviceReasons are the sentinels Reason looks for after the repository checks'.
 var serviceReasons = []error{ErrCoordinationOff, ErrParentConflict, ErrParentNotFound, ErrParentTerminal,
-	ErrPlanningBudgetExhausted, ErrPrerequisites, ErrNotExecuting, ErrArtifactUnverified}
+	ErrPlanningBudgetExhausted, ErrPrerequisites, ErrNotExecuting, ErrArtifactUnverified, ErrRecoveryNotProposed,
+	ErrPlanRevisionRequired, ErrIntegrationStale, ErrIntegrationManifest}
 
 // Reason is err's bounded reason code: a repository check's first, since a resolver failure
 // carries one under policy_unresolved, then the service's, then the plan's; "" for none.

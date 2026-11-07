@@ -1071,6 +1071,7 @@ func (r *Reconciler) revert(ctx context.Context, t *v1alpha1.Task, why string) e
 		}
 	}
 	r.tellParent(ctx, t, ref.RevertNumber)
+	r.tellCoordinationParent(ctx, t, ref.RevertNumber)
 	return r.end(ctx, t, v1alpha1.PhaseReverted, why)
 }
 

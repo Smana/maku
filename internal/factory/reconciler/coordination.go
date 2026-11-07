@@ -10,7 +10,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -18,6 +20,7 @@ import (
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/ledger"
+	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 )
@@ -59,6 +62,12 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 	if err := r.supersede(ctx, cs); err != nil {
 		return err
 	}
+	// MR11: a parent factory/stop pauses the family's future scheduling and integration releases
+	// (integrationGate reads it too); it borrows no repository's authority to revoke a running
+	// child, whose own stop and the global kill switch keep theirs.
+	if parentStopped(t) {
+		return nil
+	}
 	if r.Coordination == nil || r.Cfg.Coordination.Mode != config.CoordinationExecute || !coordination.Complete(cs) {
 		return nil
 	}
@@ -84,7 +93,87 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 	if err := r.admitCoordinationChildren(ctx, t); err != nil {
 		return err
 	}
-	return r.coordinateIntegration(ctx, t)
+	if err := r.coordinateIntegration(ctx, t); err != nil {
+		return err
+	}
+	return r.proposeRecovery(ctx, t)
+}
+
+// parentStopped is a coordination parent a maintainer's factory/stop, or a hand-set stop, paused.
+func parentStopped(t *v1alpha1.Task) bool { return t.Annotations[v1alpha1.AnnotationStop] != "" }
+
+// proposeRecovery persists the parent's one proposed recovery (MR11), selected by
+// coordination.ProposeRecovery from the current child and integration Tasks; a standing proposal
+// keeps its createdAt.
+func (r *Reconciler) proposeRecovery(ctx context.Context, t *v1alpha1.Task) error {
+	cs := t.Status.Coordination
+	var kids, its []v1alpha1.Task
+	get := func(name string, into *[]v1alpha1.Task) error {
+		if name == "" {
+			return nil
+		}
+		var x v1alpha1.Task
+		switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: name}, &x); {
+		case apierrors.IsNotFound(err):
+			return nil
+		case err != nil:
+			return err
+		}
+		*into = append(*into, x)
+		return nil
+	}
+	for _, st := range cs.Children {
+		if err := get(st.Task, &kids); err != nil {
+			return err
+		}
+	}
+	for _, a := range cs.IntegrationAttempts {
+		if a.PlanHash != cs.PlanHash {
+			continue
+		}
+		if err := get(a.Task, &its); err != nil {
+			return err
+		}
+	}
+	p := coordination.ProposeRecovery(t, kids, its, r.Now())
+	if !coordination.SameRecovery(p, cs.Recovery) {
+		cs.Recovery = p
+	}
+	return nil
+}
+
+// tellCoordinationParent records child t's revert on its coordination parent once that parent is
+// Done (MR11): one bounded post-completion incident and its narration on the parent issue, by a
+// conflict-retried status write that never changes the terminal phase or reverts a sibling. Before
+// Done the parent reads the Reverted child itself: it pauses downstream work and proposes
+// revise_plan.
+func (r *Reconciler) tellCoordinationParent(ctx context.Context, t *v1alpha1.Task, revert int) {
+	cp := t.Spec.CoordinationParent
+	if cp == nil || cp.ChildID == "" || t.Spec.Kind != "" {
+		return
+	}
+	sha := ""
+	if pr := t.Status.PullRequest; pr != nil && sha40.MatchString(pr.MergeCommitSHA) {
+		sha = pr.MergeCommitSHA
+	}
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var p v1alpha1.Task // fresh on every attempt: the conflict is a newer write
+		if err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: cp.Task}, &p); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		cs := p.Status.Coordination
+		if p.Spec.Kind != v1alpha1.TaskKindCoordination || p.Status.Phase != v1alpha1.PhaseDone || cs == nil ||
+			slices.ContainsFunc(cs.Incidents, func(i v1alpha1.CoordinationIncident) bool { return i.ChildID == cp.ChildID && i.MergeCommitSHA == sha }) {
+			return nil
+		}
+		cs.Incidents = v1alpha1.AppendNewest(cs.Incidents, v1alpha1.CoordinationIncident{ChildID: cp.ChildID, Reason: "reverted",
+			MergeCommitSHA: sha, At: metav1.NewTime(r.Now())}, v1alpha1.MaxCoordinationIncidents)
+		narrateOn(&p, p.Spec.Issue, narrate.CoordinationIncident(p.Name, cp.ChildID, revert)) // through the primary's own App
+		return r.Client.Status().Update(ctx, &p)
+	})
+	if err != nil {
+		r.log().Warn("the coordination parent was not told of a reverted child", "task.id", t.Name, "parent", cp.Task, "err", err)
+	}
 }
 
 // supersede marks each pending generation's old Task superseded, once: the stop the reconciler
@@ -320,8 +409,8 @@ func (r *Reconciler) producerMerge(ctx context.Context, cs *v1alpha1.Coordinatio
 		return "", err
 	}
 	pr := p.Status.PullRequest
-	if pr == nil || pr.MergedAt == nil || p.Spec.Repository != cs.Children[i].Repository {
-		return "", nil
+	if pr == nil || pr.MergedAt == nil || p.Spec.Repository != cs.Children[i].Repository || p.Status.Phase == v1alpha1.PhaseReverted {
+		return "", nil // MR11: a reverted producer no longer stands for anything downstream
 	}
 	return pr.MergeCommitSHA, nil
 }
