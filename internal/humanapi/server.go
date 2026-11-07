@@ -156,6 +156,9 @@ type Server struct {
 	// Intake is the governed planner (human.intake.plan). Nil is the switch off: neither intake_plan
 	// nor plan_check exists on any /mcp list, so the list a deployment sees is the list it has.
 	Intake *Intake
+	// Coordination is coordination_plan (v4 MR4): listed beside the planner while its mode is not
+	// off. Nil, or off, lists nothing.
+	Coordination *CoordinationPlanner
 
 	// Connection bounds; zero takes the default.
 	HelloWait time.Duration // the first frame must arrive within it (10 s)
