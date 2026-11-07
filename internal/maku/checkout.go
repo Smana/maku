@@ -648,11 +648,17 @@ func CodeSpans(files []string, more int) []string {
 // confirmCheckout asks the developer, in a form, whether to create a worktree that holds files
 // which run code. The answer defaults to no.
 func (r *Relay) confirmCheckout(ctx context.Context, repo, room string, files []string, more int) (bool, error) {
+	return r.confirmForm(ctx, fmt.Sprintf("Check out agent/%s of %s into a new worktree? The branch changes files that run code on your machine "+
+		"when a tool opens that folder or you commit there. Nothing runs now.\n\n%s", room, repo, "- "+strings.Join(CodeSpans(files, more), "\n- ")),
+		"Create the worktree")
+}
+
+// confirmForm asks message with one yes/no field titled title, defaulting to no.
+func (r *Relay) confirmForm(ctx context.Context, message, title string) (bool, error) {
 	ans, err := r.ask(ctx, "elicitation/create", map[string]any{
-		"message": fmt.Sprintf("Check out agent/%s of %s into a new worktree? The branch changes files that run code on your machine "+
-			"when a tool opens that folder or you commit there. Nothing runs now.\n\n%s", room, repo, "- "+strings.Join(CodeSpans(files, more), "\n- ")),
+		"message": message,
 		"requestedSchema": map[string]any{"type": "object", "required": []string{"create"}, "properties": map[string]any{
-			"create": map[string]any{"type": "boolean", "title": "Create the worktree", "default": false},
+			"create": map[string]any{"type": "boolean", "title": title, "default": false},
 		}},
 	})
 	if err != nil {

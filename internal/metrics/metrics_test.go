@@ -598,3 +598,34 @@ func TestProposalCounterName(t *testing.T) {
 	set.ProposalUpdate(ctx, "mention")
 	set.ThreadAnswer(ctx, "status")
 }
+
+// v4 coordination: what a parent's views and checkout documents became, by a closed outcome only;
+// no repository, viewer, family or plan text is a label.
+func TestCoordinationInstruments(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.CoordinationView(ctx, "restricted")
+	s.CoordinationView(ctx, "repository:acme/secret") // not a closed outcome: counted as other
+	s.CoordinationCheckout(ctx, "served")
+	body := scrape(t, exp.Handler())
+	for _, want := range []string{
+		`maku_rooms_coordination_views_total{outcome="restricted"} 1`,
+		`maku_rooms_coordination_views_total{outcome="other"} 1`,
+		`maku_rooms_coordination_checkout_manifests_total{outcome="served"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, "acme/secret") {
+		t.Fatal("an unbounded value reached a label")
+	}
+}

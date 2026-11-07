@@ -226,6 +226,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/rooms/{id}/brief", s.roomBriefRoute)
 	if s.CoordinationViews != nil { // coordination off registers no route (MR16)
 		mux.HandleFunc("GET /api/coordinations/{task}", s.coordinationRoute)
+		mux.HandleFunc("GET /api/coordinations/{task}/checkout", s.coordinationCheckoutRoute)
 	}
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)

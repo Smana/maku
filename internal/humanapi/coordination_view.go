@@ -24,28 +24,85 @@ type CoordinationViews interface {
 // the family filtered by each child's repository for this viewer. A parent's room is named as its
 // task. There is no route serving the unfiltered view.
 func (s *Server) coordinationRoute(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.filteredRoute(w, r)
+	if !ok {
+		return
+	}
+	outcome := "ok"
+	if v.RestrictedChildren > 0 {
+		outcome = "restricted"
+	}
+	s.countCoordination(r.Context(), outcome)
+	writeJSON(w, v)
+}
+
+// countCoordination and countCheckout count a view or a checkout document by its closed outcome.
+func (s *Server) countCoordination(ctx context.Context, outcome string) {
+	if s.Metrics != nil {
+		s.Metrics.CoordinationView(ctx, outcome)
+	}
+}
+
+func (s *Server) countCheckout(ctx context.Context, outcome string) {
+	if s.Metrics != nil {
+		s.Metrics.CoordinationCheckout(ctx, outcome)
+	}
+}
+
+// coordinationCheckoutRoute is GET /api/coordinations/{task}/checkout (MR14): the family's checkout
+// document, all or nothing. A viewer missing any child gets the 404 an unreadable room gets, naming
+// nothing; a family not at one exact commit per child is a 409.
+func (s *Server) coordinationCheckoutRoute(w http.ResponseWriter, r *http.Request) {
+	v, ok := s.filteredRoute(w, r)
+	if !ok {
+		return
+	}
+	d, err := coordinationview.Checkout(v)
+	switch {
+	case errors.Is(err, coordinationview.ErrCheckoutRestricted):
+		s.countCheckout(r.Context(), "restricted")
+		http.Error(w, errNoSuchRoom.Error(), http.StatusNotFound)
+	case err != nil:
+		s.countCheckout(r.Context(), "not_ready")
+		http.Error(w, coordinationview.ErrCheckoutNotReady.Error(), http.StatusConflict)
+	default:
+		s.countCheckout(r.Context(), "served")
+		writeJSON(w, d)
+	}
+}
+
+// filteredRoute is the {task} parent's family as the request's caller may read it, having written
+// the refusal when there is none.
+func (s *Server) filteredRoute(w http.ResponseWriter, r *http.Request) (coordinationview.View, bool) {
 	p, ok := s.principal(w, r)
 	if !ok || !s.readAllowed(w, r, p) {
-		return
+		return coordinationview.View{}, false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
 	defer cancel()
 	task := r.PathValue("task")
 	if _, _, _, err := s.readRoom(ctx, task, p); err != nil {
+		outcome := "unverified"
+		if roomStatus(err) == http.StatusNotFound {
+			outcome = "not_found"
+		}
+		s.countCoordination(ctx, outcome)
 		http.Error(w, err.Error(), roomStatus(err))
-		return
+		return coordinationview.View{}, false
 	}
 	raw, err := s.CoordinationViews.View(ctx, task)
 	switch {
 	case errors.Is(err, coordinationview.ErrNoCoordination):
+		s.countCoordination(ctx, "not_found")
 		http.Error(w, errNoSuchRoom.Error(), http.StatusNotFound)
-		return
+		return coordinationview.View{}, false
 	case err != nil:
+		s.countCoordination(ctx, "unverified")
 		s.log().Warn("coordination: view unreadable", "room", task, "err", err)
 		http.Error(w, coordinationview.ErrCoordinationUnavailable.Error(), http.StatusServiceUnavailable)
-		return
+		return coordinationview.View{}, false
 	}
-	writeJSON(w, s.filterCoordination(ctx, raw, p))
+	return s.filterCoordination(ctx, raw, p), true
 }
 
 // coordinationFor is room id's family as p may read it, when it is a coordination parent whose view
