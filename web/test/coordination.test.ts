@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+import { mountCoordinationPanel, renderCoordinationNode } from "../src/coordination";
+import type { CoordinationFlow, CoordinationNode } from "../src/summary";
+
+const child = (o: Partial<CoordinationNode>): CoordinationNode => ({
+  id: "contract", kind: "child", childID: "contract", repository: "acme/api", roles: ["implementer", "reviewer"], disabled: true, ...o,
+});
+
+const planned: CoordinationFlow = {
+  planVersion: 2, planHash: "0123456789abcdef", restrictedChildren: 0,
+  nodes: [
+    child({ requiredConfirmation: "parent" }),
+    child({ id: "consumer", childID: "consumer", repository: "acme/web", requiredConfirmation: "parent", reason: "artifact_pending" }),
+    { id: "integration:beforeDependentMerge", kind: "integration", roles: ["triager"], disabled: true },
+    { id: "integration:final", kind: "integration", roles: ["triager"], disabled: true },
+  ],
+  edges: [
+    { from: "contract", to: "consumer", kind: "artifact", name: "contract/consumer-v1-schema", state: "pending" },
+    { from: "integration:beforeDependentMerge", to: "consumer", kind: "integration", state: "pending" },
+  ],
+};
+
+const filed: CoordinationFlow = {
+  ...planned,
+  nodes: [
+    child({ disabled: false, phase: "Merged", reason: "merged", room: "abcdefgh", issueURL: "https://github.com/acme/api/issues/1", prURL: "https://github.com/acme/api/pull/2" }),
+    child({ id: "consumer", childID: "consumer", repository: "acme/web", disabled: false, phase: "AwaitingHuman", room: "bcdefghi", prURL: "https://github.com/acme/web/pull/4" }),
+    { id: "integration:beforeDependentMerge", kind: "integration", roles: ["triager"], disabled: false, phase: "passed" },
+    { id: "integration:final", kind: "integration", roles: ["triager"], disabled: true },
+  ],
+  edges: [
+    { from: "contract", to: "consumer", kind: "artifact", name: "contract/consumer-v1-schema", state: "landed" },
+    { from: "integration:beforeDependentMerge", to: "consumer", kind: "integration", state: "released" },
+  ],
+};
+
+function mount() {
+  const root = document.createElement("div");
+  document.body.replaceChildren(root);
+  return { root, panel: mountCoordinationPanel(root) };
+}
+
+describe("coordination panel", () => {
+  it("draws a distinct plan and live coordination diagram", () => {
+    const { root, panel } = mount();
+    panel.set(planned);
+    const nodes = [...root.querySelectorAll<HTMLElement>(".rail-coordination-node")];
+    expect(nodes.map((n) => n.dataset.node)).toEqual(["contract", "consumer", "integration:beforeDependentMerge", "integration:final"]);
+    for (const n of nodes) expect(n.querySelector("button")?.disabled).toBe(true);
+    expect(root.textContent).toContain("contract/consumer-v1-schema");
+    expect(root.textContent).toContain("awaiting parent confirmation");
+    expect(root.querySelector("a")).toBeNull();
+
+    panel.set(filed);
+    const links = [...root.querySelectorAll<HTMLAnchorElement>("a")].map((a) => a.getAttribute("href"));
+    expect(links).toContain("/r/abcdefgh");
+    expect(links).toContain("https://github.com/acme/api/pull/2");
+    expect(root.querySelector('.rail-coordination-edge[data-kind="artifact"]')?.getAttribute("data-state")).toBe("landed");
+    expect(root.textContent).toContain("released");
+    // No parent run or merge node, and nothing of the splitter's vocabulary.
+    expect(root.textContent).not.toMatch(/\bmerge node\b|parent run/);
+    expect(root.querySelector(".rail-part, .rail-parent, .rail-chip")).toBeNull();
+    expect(root.querySelector('[data-node="parent"]')).toBeNull();
+  });
+
+  it("renders only the restricted count for a denied child", () => {
+    const { root, panel } = mount();
+    panel.set({ ...filed, restrictedChildren: 1, nodes: filed.nodes.slice(0, 1), edges: [] });
+    expect(root.querySelectorAll(".rail-coordination-node")).toHaveLength(1);
+    expect(root.querySelector(".rail-coordination-restricted")?.textContent).toBe("1 child you cannot read");
+    expect(root.innerHTML).not.toContain("acme/web");
+    expect(root.innerHTML).not.toContain("consumer");
+  });
+
+  it("hides itself without a family", () => {
+    const { root, panel } = mount();
+    panel.set(planned);
+    panel.set(undefined);
+    expect(root.querySelector<HTMLElement>(".rail-coordination")!.hidden).toBe(true);
+  });
+
+  it("never links a room id or URL it did not validate", () => {
+    const li = renderCoordinationNode(child({ disabled: false, room: "../../x", prURL: "javascript:alert(1)", phase: "<img src=x>" }));
+    expect(li.querySelector("a")).toBeNull();
+    expect(li.querySelector("img")).toBeNull();
+    expect(li.textContent).toContain("<img src=x>");
+  });
+});
