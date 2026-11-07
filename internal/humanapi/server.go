@@ -145,7 +145,10 @@ type Server struct {
 	// principal id system:<name> (human.mcp.sponsored[].repositories): the only reach it has into
 	// a family's children.
 	SponsoredRepositories map[string]map[string]bool
-	Logger                *slog.Logger
+	// CoordinationWrites forwards a parent's draft and confirmations to the factory with the
+	// caller's own token; nil serves neither route. Only beside CoordinationViews.
+	CoordinationWrites CoordinationGateway
+	Logger             *slog.Logger
 	// Dashboards are the room page's link templates (human.dashboards), served on GET
 	// /api/roomctl; none shows no group.
 	Dashboards []Dashboard
@@ -226,6 +229,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/rooms/{id}/brief", s.roomBriefRoute)
 	if s.CoordinationViews != nil { // coordination off registers no route (MR16)
 		mux.HandleFunc("GET /api/coordinations/{task}", s.coordinationRoute)
+		if s.CoordinationWrites != nil { // the factory's coordination routes, forwarded (v4 MR4, MR5)
+			mux.HandleFunc("PUT /api/coordinations/{task}/draft", s.coordinationDraftRoute)
+			mux.HandleFunc("POST /api/coordinations/{task}/confirmations", s.coordinationConfirmRoute)
+		}
 	}
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
