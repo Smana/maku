@@ -545,10 +545,10 @@ const (
 	// sends as context — the requester's replies, numbered — so a thread's whole history never has to
 	// fit and nothing is sent that the tool would refuse whole.
 	maxProposalContextBytes = 4 << 10
-	// planUnsupported is the reply's answer in a proposal thread whose broker no longer plans. A mention
-	// needs no line there — it is drafted instead (mention) — but a proposal already posted cannot be
-	// re-planned, so the line names the two ways left: confirm it as shown, or draft it with a mention.
-	planUnsupported = "Not re-planned: this deployment no longer plans from Slack; confirm the proposal as it is, or mention me with the repository and a title to draft it instead."
+	// planUnsupported is the answer, to a reply or a mention, in a proposal thread whose broker no
+	// longer plans. A thread is the kind it started as, so no draft is posted beside the proposal: the
+	// line names the two ways left, confirm it as shown, or draft it with a mention in a new thread.
+	planUnsupported = "Not re-planned: this deployment no longer plans from Slack; confirm the proposal as it is, or mention me in a new thread with the repository and a title to draft it instead."
 	// replyPlannedMost is the reply's answer in a thread whose proposal has reached the revision cap:
 	// one message is all a thread edits, and the two things left are the two the line names.
 	replyPlannedMost = "This proposal was planned the most it can be here: confirm it, or start a new mention."
@@ -651,6 +651,11 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		CeilingUSD: ch.MaxCostUSD,
 	})
 	if errors.Is(err, ErrUnknownTool) {
+		// A thread is the kind it started as: one that holds a proposal never gets a draft beside it,
+		// so its mention is told what its reply is. A thread without one is drafted by the caller.
+		if latest != nil {
+			return a.refusedLine(ctx, ev.Channel, thread, planUnsupported), false
+		}
 		return "", true // nothing said: the caller drafts the mention instead
 	}
 	if code := a.planFailed(ctx, ev.Channel, thread, ev.User, ch.Repositories, err); code != "" {

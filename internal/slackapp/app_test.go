@@ -1784,30 +1784,58 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		}
 	})
 
-	// The planner went away after a proposal was posted: a reply cannot re-plan it, and says so with
-	// the two ways left. A mention in the same thread drafts, and from then on the draft is the
-	// thread's newest message, so a reply amends it instead of meeting the re-plan line again.
-	t.Run("a proposal thread whose planner went away", func(t *testing.T) {
+	// A filed fallback draft's Filed line names its room, so the thread answers the five questions from
+	// it, as a filed proposal's thread does, instead of saying it cannot tell which room it filed.
+	t.Run("a filed fallback draft answers from its room", func(t *testing.T) {
+		rig := noPlanner(t)
+		rig.mention("C03", proposalThreadTS, "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
+		rig.react("C03", rig.lastPost().ts, "U02DEF", "white_check_mark")
+		ab := &answerBroker{stubBroker: rig.broker, sum: answerSummary()}
+		rig.app.Broker = ab
+		rig.replySaid("U02DEF", "1729.9001", "status")
+		if p := rig.lastPost(); !strings.Contains(p.text, "Phase: Running") {
+			t.Fatalf("the filed draft's thread answered %q, want the room's status", p.text)
+		}
+		if !reflect.DeepEqual(ab.rooms, []string{"room_summary/aaaaaaaa"}) {
+			t.Fatalf("read %v, want the room run_create answered", ab.rooms)
+		}
+	})
+
+	// A thread is the kind it started as. The planner went away after a proposal was posted: a reply
+	// cannot re-plan it, and a mention there drafts nothing beside it — both say the same line, which
+	// names the two ways left.
+	t.Run("a proposal thread whose planner went away drafts nothing", func(t *testing.T) {
 		rig, _, _ := proposalAt(t, 1)
 		rig.broker.intakeErr = ErrUnknownTool
 		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
 		if p := rig.lastPost(); p.text != planUnsupported || p.meta != nil {
 			t.Fatalf("the reply got %+v, want %q", p, planUnsupported)
 		}
-		if got := rig.metrics.count("events", "refused"); got != 1 {
-			t.Fatalf("events/refused counted %d times, want 1", got)
-		}
-
 		rig.mention("C03", proposalThreadTS, "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
-		if p := rig.lastPost(); p.meta == nil || p.meta.EventType != draftEventType {
-			t.Fatalf("the mention did not draft: %+v", p)
+		posts := rig.posts()
+		if len(posts) != 2 || posts[1].text != planUnsupported || posts[1].meta != nil {
+			t.Fatalf("the mention got %+v, want the one line %q and no draft", posts, planUnsupported)
 		}
-		rig.replySaid("U02DEF", "1729.9002", "Acceptance: the link resolves")
-		if p := rig.payload(rig.lastPost()); p.Rev != 2 || !strings.Contains(p.Body, "the link resolves") {
-			t.Fatalf("the reply did not amend the newer draft: %+v", p)
+		if n := len(rig.broker.calls); n != 2 { // the two plans asked for; no issue_draft
+			t.Fatalf("%d broker calls, want the two intake_plan: %+v", n, rig.broker.all())
 		}
-		if n := len(rig.broker.intakeCalls()); n != 2 { // the first reply and the mention, never the last reply
-			t.Fatalf("%d intake_plan calls, want 2", n)
+		if got := rig.metrics.count("events", "refused"); got != 2 {
+			t.Fatalf("events/refused counted %d times, want 2", got)
+		}
+	})
+
+	// The thread's proposal decides, wherever a draft-tagged message sits in it: a reply re-plans the
+	// proposal and never amends a draft beside it.
+	t.Run("a reply in a proposal thread re-plans even beside a draft", func(t *testing.T) {
+		rig, _, ts := proposalAt(t, 1)
+		rig.slack.seed(Message{TS: "1729.0003", ThreadTS: proposalThreadTS, User: "U0BOT", Text: "Draft for …",
+			Metadata: metaOf(t, draftEventType, draftPayload("Smana/ai-native-ref", "docs: fix", composeBody("docs: fix", "x")))})
+		rig.replySaid("U02DEF", "1729.9001", "Acceptance: the link resolves")
+		if n := len(rig.posts()); n != 0 {
+			t.Fatalf("%d posts: the reply amended the draft instead of re-planning", n)
+		}
+		if edits := rig.slack.proposalEdits(); len(edits) != 1 || edits[0].ts != ts {
+			t.Fatalf("the proposal was not re-planned in place: %+v", edits)
 		}
 	})
 }
