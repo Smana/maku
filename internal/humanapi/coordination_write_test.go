@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -48,6 +49,11 @@ func (g *fakeGateway) CoordinationConfirm(_ context.Context, token, parent strin
 	}
 	g.calls = append(g.calls, "confirm "+token+" "+parent+" "+kind)
 	return in, g.refuse
+}
+
+func (g *fakeGateway) CoordinationRecover(_ context.Context, token, parent, code string, planVersion int32) error {
+	g.calls = append(g.calls, "recover "+token+" "+parent+" "+code+" v"+strconv.Itoa(int(planVersion)))
+	return g.refuse
 }
 
 func writesOn(g *fakeGateway) option {
@@ -185,5 +191,28 @@ func TestCoordinationDraftToolIsSponsoredAndDraftOnly(t *testing.T) {
 	}
 	if trips.touched() != 0 {
 		t.Fatal("a draft touched a task, run or room")
+	}
+}
+
+func TestCoordinationRecoverIsTheWebUIsAlone(t *testing.T) {
+	g := &fakeGateway{}
+	e := setup(t, writesOn(g))
+	path := "/api/coordinations/" + roomID + "/recovery"
+	body := map[string]any{"code": "retry_child", "planVersion": 2}
+	if code, b := sendJSON(t, e, http.MethodPost, path, withClient(as("alice", false), "maku-cli"), body); code != http.StatusForbidden || !strings.Contains(b, "web_only") {
+		t.Fatalf("%d %s", code, b)
+	}
+	if code, b := sendJSON(t, e, http.MethodPost, path, as("alice", false), body); code != http.StatusNoContent {
+		t.Fatalf("%d %s", code, b)
+	}
+	if len(g.calls) != 1 || g.calls[0] != "recover tok-alice "+roomID+" retry_child v2" {
+		t.Fatalf("%v", g.calls)
+	}
+	if code, _ := sendJSON(t, e, http.MethodPost, path, as("alice", false), `{"code":"retry_child","planVersion":2,"child":"x"}`); code != http.StatusBadRequest || len(g.calls) != 1 {
+		t.Fatalf("an unknown field reached the factory: %d", code)
+	}
+	g.refuse = runrequest.ErrRefused{Status: http.StatusConflict, Reason: "stale_plan"}
+	if code, b := sendJSON(t, e, http.MethodPost, path, as("alice", false), body); code != http.StatusConflict || !strings.Contains(b, "stale_plan") {
+		t.Fatalf("%d %s", code, b)
 	}
 }

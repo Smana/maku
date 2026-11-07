@@ -232,6 +232,7 @@ func (s *Server) Routes() http.Handler {
 		if s.CoordinationWrites != nil { // the factory's coordination routes, forwarded (v4 MR4, MR5)
 			mux.HandleFunc("PUT /api/coordinations/{task}/draft", s.coordinationDraftRoute)
 			mux.HandleFunc("POST /api/coordinations/{task}/confirmations", s.coordinationConfirmRoute)
+			mux.HandleFunc("POST /api/coordinations/{task}/recovery", s.coordinationRecoverRoute)
 		}
 	}
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
