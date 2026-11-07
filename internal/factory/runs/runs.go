@@ -118,6 +118,10 @@ type Spec struct {
 	// CoordinationArtifacts are a dependent coordination child's landed references (v4 MR7),
 	// written as AnnCoordinationArtifacts at CREATE only.
 	CoordinationArtifacts []v1alpha1.LandedArtifact
+	// CoordinationManifest is an integration run's canonical manifest JSON and
+	// CoordinationManifestHash the SHA-256 of its exact bytes (v4 MR10), written as
+	// AnnCoordinationManifest and its hash at CREATE only, on a triager claim with no branch.
+	CoordinationManifest, CoordinationManifestHash string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -173,6 +177,9 @@ func (s Spec) Validate() error {
 	if err := s.validArtifacts(); err != nil {
 		errs = append(errs, err)
 	}
+	if err := s.validManifest(); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -189,6 +196,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 		"role": s.Role, "repository": s.Repository, "principal": s.Principal, "dataClass": s.DataClass,
 		"size": "small", "model": s.Model, "baseRef": s.BaseRef, "branch": s.Branch, "task": task,
 		"budget": map[string]any{"maxTokens": s.MaxTokens, "maxMinutes": s.MaxMinutes},
+	}
+	if s.Branch == "" && s.CoordinationManifest != "" { // MR10: an integration run writes no branch
+		delete(spec, "branch")
 	}
 	if s.RoomRef != "" {
 		spec["roomRef"] = s.RoomRef
@@ -260,6 +270,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if b, h := artifactsJSON(s.CoordinationArtifacts); h != "" {
 		ann[AnnCoordinationArtifacts], ann[AnnCoordinationArtifactsHash] = string(b), h
+	}
+	if s.CoordinationManifest != "" {
+		ann[AnnCoordinationManifest], ann[AnnCoordinationManifestHash] = s.CoordinationManifest, s.CoordinationManifestHash
 	}
 	u.SetAnnotations(ann)
 	return u
@@ -394,7 +407,8 @@ func (c Client) replayOf(ctx context.Context, s Spec) bool {
 		start = strconv.FormatInt(s.StartSeq, 10)
 	}
 	_, h := artifactsJSON(s.CoordinationArtifacts)
-	return a[AnnStartSeq] == start && a[AnnHead] == s.Head && a[AnnCoordinationArtifactsHash] == h
+	return a[AnnStartSeq] == start && a[AnnHead] == s.Head && a[AnnCoordinationArtifactsHash] == h &&
+		a[AnnCoordinationManifestHash] == s.CoordinationManifestHash
 }
 
 // validID refuses an id that names no run, before it reaches the API as <prefix><id>.

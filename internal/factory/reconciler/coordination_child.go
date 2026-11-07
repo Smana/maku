@@ -99,8 +99,12 @@ func (r *Reconciler) coordinationAuthority(ctx context.Context, t *v1alpha1.Task
 }
 
 // coordinationHold is queued's re-check before every new run or resume of a coordination child:
-// its lineage, then its authority. held is true when it does not start.
+// its lineage, then its authority; an integration Task's is integrationHold. held is true when it
+// does not start.
 func (r *Reconciler) coordinationHold(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+	if t.Spec.Kind == v1alpha1.TaskKindIntegration {
+		return r.integrationHold(ctx, t)
+	}
 	p, err := r.checkCoordinationLineage(ctx, t)
 	if reason := lineageReason(err); reason != "" {
 		return true, r.end(ctx, t, v1alpha1.PhaseRejected, reason)

@@ -24,11 +24,8 @@ type coordinationPort interface {
 	ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationStatus, ids []string) error
 }
 
-// The parent's and the held integration Task's own reasons.
-const (
-	reasonWaitingDependency = "waiting_dependency"
-	reasonIntegrationHeld   = "integration_held"
-)
+// reasonWaitingDependency is a dependent child's entry while a producer has not landed.
+const reasonWaitingDependency = "waiting_dependency"
 
 // coordinating is a coordination parent's whole path (MR2): it is Coordinating with a bounded
 // reason, gets one human planning and progress Room on the primary, and never runs, triages,
@@ -71,7 +68,10 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		t.Status.Reason = reason
 		return nil
 	}
-	return r.admitCoordinationChildren(ctx, t)
+	if err := r.admitCoordinationChildren(ctx, t); err != nil {
+		return err
+	}
+	return r.coordinateIntegration(ctx, t)
 }
 
 // admitCoordinationChildren creates each filed child's Task once and records it on the parent.
@@ -188,11 +188,4 @@ func (r *Reconciler) forgeFor(repository string) (TaskForge, bool) {
 	}
 	f, _, ok := r.Clients(repository)
 	return f, ok
-}
-
-// integrationHeld holds an integration Task (MR10): its admission is the integration PR's, so
-// until then it runs nothing.
-func (r *Reconciler) integrationHeld(_ context.Context, t *v1alpha1.Task) error {
-	t.Status.Reason = reasonIntegrationHeld
-	return nil
 }
