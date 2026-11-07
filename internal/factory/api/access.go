@@ -52,3 +52,13 @@ func (a GitHubAccess) Person(ctx context.Context, p authn.Principal, repository 
 	}
 	return factoryv1.Person(login), nil
 }
+
+// CanWriteLogin is write or higher for an already-resolved login: a sponsored principal's
+// onBehalfOf maintainer, who drafts a coordination plan on the primary (v4 MR4) as the planner
+// requires of the effective requester.
+func (a GitHubAccess) CanWriteLogin(ctx context.Context, repository, login string) (bool, error) {
+	if login == "" {
+		return false, nil
+	}
+	return a.Perms.CanWrite(ctx, repository, login)
+}

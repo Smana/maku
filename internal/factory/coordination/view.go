@@ -70,6 +70,8 @@ func View(parent v1alpha1.Task, children, integrations []v1alpha1.Task, ledger L
 	}
 	if cs.Budget != nil {
 		v.Budget.AllocatedMicroUSD = cs.Budget.AllocatedMicroUSD
+		v.Budget.PlanningReservedMicroUSD = cs.Budget.PlanningReservedMicroUSD
+		v.Budget.PlanningSettledMicroUSD = cs.Budget.PlanningSettledMicroUSD
 	}
 
 	byName := map[string]*v1alpha1.Task{}

@@ -109,6 +109,9 @@ type Server struct {
 	Redact interface {
 		String(s string) (string, []string)
 	}
+	// Coordination is the multi-repository draft and confirmation flow (v4 MR4, MR5), served only
+	// while coordination.mode is plan or execute; nil or off serves no coordination route.
+	Coordination CoordinationService
 }
 
 // SlackLinkReader is the broker's self-serve link records: the ZITADEL sub a Slack user linked;
@@ -146,8 +149,8 @@ var (
 // NeedLeaderElection is false: every replica serves intake.
 func (s *Server) NeedLeaderElection() bool { return false }
 
-// Handler is the API's mux: POST /v1/runs, admission in §4's order, and POST /v1/tasks while a
-// sponsored principal is declared.
+// Handler is the API's mux: POST /v1/runs, admission in §4's order, POST /v1/tasks while a
+// sponsored principal is declared, and the coordination routes while the switch is on.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
@@ -156,6 +159,10 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.anyVerifies() { // RA11, D4: a 404 until an internal principal may send verdicts
 		mux.HandleFunc("POST /v1/tasks/{task}/verification", s.recordVerification)
+	}
+	if s.coordinationOn() { // MR16: off lists no coordination route, so each is a 404
+		mux.HandleFunc("PUT /v1/coordinations/{task}/draft", s.draftCoordination)
+		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
 	}
 	return mux
 }
