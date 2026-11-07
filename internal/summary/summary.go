@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/policy"
 )
@@ -246,10 +245,11 @@ type Summary struct {
 	} `json:"queued,omitzero"`
 	// Flow is the task's path: absent in a room without a task until its second run.
 	Flow *Flow `json:"flow,omitempty"`
-	// Coordination is a coordination parent's view as this viewer may read it, attached by the
-	// caller (AttachCoordination): the fold of a log never holds one.
-	Coordination *coordinationview.View `json:"coordination,omitempty"`
-	Cursor       string                 `json:"cursor"`
+	// Coordination is a coordination parent's view as this viewer may read it, as JSON: the caller
+	// attaches it (coordinationview.Attach), the fold of a log never holds one, and summary stays
+	// free of the factory's types.
+	Coordination json.RawMessage `json:"coordination,omitempty"`
+	Cursor       string          `json:"cursor"`
 }
 
 // Fold is the state of a whole log; Add folds the same log a page at a time.

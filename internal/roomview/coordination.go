@@ -28,7 +28,7 @@ func CoordinationLines(v coordinationview.View, o Options) []string {
 	}
 	lines := []string{c.bold(head)}
 
-	f := summary.CoordinationFlowOf(v)
+	f := coordinationview.FlowOf(v)
 	for _, n := range f.Nodes {
 		if n.Kind != summary.NodeChild {
 			continue
@@ -85,11 +85,12 @@ func CoordinationLines(v coordinationview.View, o Options) []string {
 
 // coordination writes a parent's family after its facts.
 func (c *card) coordination(s summary.Summary) {
-	if s.Coordination == nil {
+	v, ok := coordinationview.Of(s)
+	if !ok {
 		return
 	}
 	c.line("")
-	for _, l := range CoordinationLines(*s.Coordination, c.o) {
+	for _, l := range CoordinationLines(v, c.o) {
 		c.line(l)
 	}
 }

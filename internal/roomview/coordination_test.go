@@ -79,7 +79,7 @@ func TestCoordinationLinesRestricted(t *testing.T) {
 
 func TestCardShowsCoordination(t *testing.T) {
 	s := summary.Summary{Room: "parent-1"}
-	summary.AttachCoordination(&s, coordFamily())
+	coordinationview.Attach(&s, coordFamily())
 	var b bytes.Buffer
 	if err := Card(&b, s, Options{Format: Text}); err != nil {
 		t.Fatal(err)
