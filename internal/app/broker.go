@@ -26,9 +26,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	factoryv1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/config"
+	"github.com/Smana/maku/internal/coordinationview"
 	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/httpx"
@@ -225,6 +227,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 			OnDecided: func(d time.Duration) { m.DecisionSeconds.Record(context.Background(), d.Seconds()) }}
 		// Groups stays zero on purpose (D15): standing is the Room CR's alone, never a ZITADEL grant the
 		// broker would have to hold a token for.
+	}
+	if v := coordinationViews(cfg, mgr.GetAPIReader(), ns); v != nil {
+		humans.CoordinationViews = v
 	}
 	if humans.Intake != nil {
 		// A sponsored plan resolves the Slack user to the account it is linked to, so the link tables
@@ -475,6 +480,10 @@ func newManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Manager, 
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
+	// The factory's Task, read (never watched) by the coordination reader.
+	if err := factoryv1alpha1.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
 	opts := managerOptions(ns, kind)
 	opts.Scheme, opts.Logger = scheme, lr
 	mgr, err := ctrl.NewManager(restCfg, opts)
@@ -557,4 +566,15 @@ func roomRepository(rooms client.Reader, ns string) webhook.RoomRepo {
 		}
 		return r.Spec.Repository, nil
 	}
+}
+
+// coordinationViews is the human API's coordination reader: the uncached API reader, since a stale
+// informer must never decide what a viewer sees of a family (v4 MR13), in the namespace the
+// factory's Tasks and day ledgers share with the broker; nil while coordination is off, which
+// serves no coordination route.
+func coordinationViews(cfg config.Config, r client.Reader, ns string) humanapi.CoordinationViews {
+	if cfg.Coordination.Mode == "" || cfg.Coordination.Mode == fconfig.CoordinationOff {
+		return nil
+	}
+	return coordinationview.Source{Reader: r, Namespace: ns}
 }
