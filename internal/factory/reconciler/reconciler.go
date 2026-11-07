@@ -129,6 +129,12 @@ type metrics interface {
 	// TaskSpendFinal records how long a terminal task's dollars took to settle, from its last
 	// run's end to the pass that posted them (CD23).
 	TaskSpendFinal(ctx context.Context, d time.Duration)
+	// The coordination series (v4 observability), each on the repository it is about.
+	CoordinationFamily(ctx context.Context, repository, outcome string)
+	CoordinationAdmissionRefused(ctx context.Context, repository, reason string)
+	CoordinationChild(ctx context.Context, repository, class, outcome string)
+	CoordinationIntegrationRun(ctx context.Context, repository, purpose, result string)
+	CoordinationWait(ctx context.Context, repository, reason string, d time.Duration)
 }
 
 // A task's span unexported at its end is retried every spanRetry, and given up spanGiveUp after
@@ -872,7 +878,7 @@ func (r *Reconciler) endTrace(ctx context.Context, t *v1alpha1.Task) {
 	}
 	tr := t.Status.Trace
 	err := r.Trace.Export(ctx, tracing.Task{TraceID: tr.TraceID, SpanID: tr.SpanID, TaskID: t.Name, Tier: t.Spec.Budget.Tier,
-		Phase: t.Status.Phase, Reason: t.Status.Reason, Start: t.CreationTimestamp.Time, End: end})
+		Phase: t.Status.Phase, Reason: t.Status.Reason, Start: t.CreationTimestamp.Time, End: end, Coordination: r.coordinationSpan(ctx, t)})
 	if err != nil {
 		if r.Now().Sub(end) >= spanGiveUp {
 			tr.ExportAbandoned = true

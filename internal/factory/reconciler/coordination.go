@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -23,6 +24,7 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/tracing"
 )
 
 // coordinationPort is the coordination service the reconciler drives (v4 MR2):
@@ -41,6 +43,10 @@ const reasonWaitingDependency = "waiting_dependency"
 // present, it files through the service, whose gate re-reads every authority first; once filed,
 // it creates each independent child Task in its own repository. It holds no active slot.
 func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
+	if t.Status.Trace == nil { // the parent's root span, exported at its end with its family's links
+		tr, sp := tracing.Mint()
+		t.Status.Trace = &v1alpha1.TraceRef{TraceID: tr, SpanID: sp}
+	}
 	if t.Status.Phase != v1alpha1.PhaseCoordinating {
 		r.to(t, v1alpha1.PhaseCoordinating, coordination.ReasonAwaitingConfirmation)
 		return nil
@@ -84,7 +90,7 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		case reason == "" || t.Status.Reason == coordination.ReasonFilingIncomplete:
 			return err // visible issues keep the parent filing_incomplete until a replay completes it
 		}
-		t.Status.Reason = reason
+		r.coordinationRefused(ctx, t.Spec.Repository, &t.Status.Reason, reason)
 		return nil
 	}
 	if err := r.replaceGenerations(ctx, t); err != nil {
@@ -99,8 +105,51 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 	return r.proposeRecovery(ctx, t)
 }
 
+// coordinationSpan is a parent's span data (v4 observability): its plan version and hash, which
+// tracing cuts to a prefix, and links to each child's and integration Task's root span; nil for any
+// other Task. A family Task not found is left out: its span is no evidence of anything.
+func (r *Reconciler) coordinationSpan(ctx context.Context, t *v1alpha1.Task) *tracing.Coordination {
+	cs := t.Status.Coordination
+	if t.Spec.Kind != v1alpha1.TaskKindCoordination || cs == nil {
+		return nil
+	}
+	c := &tracing.Coordination{PlanVersion: cs.PlanVersion, PlanHash: cs.PlanHash}
+	var names []string
+	for _, st := range cs.Children {
+		names = append(names, st.Task)
+	}
+	for _, a := range cs.IntegrationAttempts {
+		names = append(names, a.Task)
+	}
+	for _, n := range names {
+		var k v1alpha1.Task
+		if n == "" || r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: n}, &k) != nil || k.Status.Trace == nil {
+			continue
+		}
+		c.Links = append(c.Links, tracing.Link{TraceID: k.Status.Trace.TraceID, SpanID: k.Status.Trace.SpanID})
+	}
+	return c
+}
+
 // parentStopped is a coordination parent a maintainer's factory/stop, or a hand-set stop, paused.
 func parentStopped(t *v1alpha1.Task) bool { return t.Annotations[v1alpha1.AnnotationStop] != "" }
+
+// coordinationRejected ends coordination Task t Rejected for a lineage refusal, counted once on its
+// repository with the end.
+func (r *Reconciler) coordinationRejected(ctx context.Context, t *v1alpha1.Task, reason string) error {
+	repo := t.Spec.Repository
+	record(ctx, func(ctx context.Context) { r.Metrics.CoordinationAdmissionRefused(ctx, repo, reason) })
+	return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+}
+
+// coordinationRefused sets *reason to code, counting the refusal on repository once: when the
+// reason changes, not on every pass that finds it standing.
+func (r *Reconciler) coordinationRefused(ctx context.Context, repository string, reason *string, code string) {
+	if *reason != code {
+		record(ctx, func(ctx context.Context) { r.Metrics.CoordinationAdmissionRefused(ctx, repository, code) })
+	}
+	*reason = code
+}
 
 // proposeRecovery persists the parent's one proposed recovery (MR11), selected by
 // coordination.ProposeRecovery from the current child and integration Tasks; a standing proposal
@@ -137,6 +186,11 @@ func (r *Reconciler) proposeRecovery(ctx context.Context, t *v1alpha1.Task) erro
 	}
 	p := coordination.ProposeRecovery(t, kids, its, r.Now())
 	if !coordination.SameRecovery(p, cs.Recovery) {
+		if old := cs.Recovery; old != nil { // the proposal stood until now: that is the recovery wait
+			record(ctx, func(ctx context.Context) {
+				r.Metrics.CoordinationWait(ctx, t.Spec.Repository, "recovery", r.Now().Sub(old.CreatedAt.Time))
+			})
+		}
 		cs.Recovery = p
 	}
 	return nil
@@ -152,6 +206,8 @@ func (r *Reconciler) tellCoordinationParent(ctx context.Context, t *v1alpha1.Tas
 	if cp == nil || cp.ChildID == "" || t.Spec.Kind != "" {
 		return
 	}
+	repo, class := t.Spec.Repository, t.Spec.PredictedClass
+	record(ctx, func(ctx context.Context) { r.Metrics.CoordinationChild(ctx, repo, class, "reverted") })
 	sha := ""
 	if pr := t.Status.PullRequest; pr != nil && sha40.MatchString(pr.MergeCommitSHA) {
 		sha = pr.MergeCommitSHA
@@ -314,7 +370,7 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 				if reason == "" {
 					return err
 				}
-				st.Reason = reason
+				r.coordinationRefused(ctx, c.Repository, &st.Reason, reason)
 				continue
 			}
 			refs, _ = coordination.ConsumedArtifacts(c, cs.Artifacts)
@@ -331,7 +387,7 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 					if reason == "" {
 						return err
 					}
-					st.Reason = reason
+					r.coordinationRefused(ctx, c.Repository, &st.Reason, reason)
 					continue
 				}
 			}
@@ -344,8 +400,37 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 		if err := r.Client.Create(ctx, child); err != nil && !apierrors.IsAlreadyExists(err) {
 			return err
 		}
+		if err := r.recordAdmitted(ctx, t, c); err != nil {
+			return err
+		}
 		st.Task, st.Generation, st.Reason = child.Name, gen, ""
 		st.Fingerprint, st.AllocationMicroUSD = coordination.ChildFingerprint(*cs.Plan, c.ID), child.Spec.Budget.TaskMicroUSD
+	}
+	return nil
+}
+
+// recordAdmitted counts child c admitted once its parent's write records it and, for a dependent,
+// the artifact wait it ends: from its earliest producer's admission (that Task's creation) to now.
+func (r *Reconciler) recordAdmitted(ctx context.Context, parent *v1alpha1.Task, c v1alpha1.CoordinationChild) error {
+	record(ctx, func(ctx context.Context) { r.Metrics.CoordinationChild(ctx, c.Repository, c.Class, "admitted") })
+	if len(c.DependsOn) == 0 {
+		return nil
+	}
+	tasks, err := coordination.ChildTasks(ctx, r.Client, r.Namespace, parent.Name)
+	if err != nil {
+		return err
+	}
+	var since time.Time
+	for _, k := range tasks {
+		if cp := k.Spec.CoordinationParent; cp != nil && slices.Contains(c.DependsOn, cp.ChildID) &&
+			(since.IsZero() || k.CreationTimestamp.Before(&metav1.Time{Time: since})) {
+			since = k.CreationTimestamp.Time
+		}
+	}
+	if !since.IsZero() {
+		record(ctx, func(ctx context.Context) {
+			r.Metrics.CoordinationWait(ctx, parent.Spec.Repository, "artifact", r.Now().Sub(since))
+		})
 	}
 	return nil
 }

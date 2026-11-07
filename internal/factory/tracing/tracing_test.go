@@ -193,3 +193,50 @@ func TestProviderExportsThroughTheExporter(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// v4 observability: a coordination parent's span adds its plan version and a 12-hex prefix of its
+// plan hash, and links to its children's and integration Tasks' root spans; never plan text,
+// artifact bytes or acceptance. A hash or a link id that is not one is dropped.
+func TestACoordinationParentSpanCarriesHashPrefixAndLinksOnly(t *testing.T) {
+	tr, sp := Mint()
+	childTrace, childSpan := Mint()
+	intTrace, intSpan := Mint()
+	mem := tracetest.NewInMemoryExporter()
+	start := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	hash := strings.Repeat("0123456789abcdef", 4)
+	task := Task{TraceID: tr, SpanID: sp, TaskID: "p4zt6wce", Phase: "Done", Reason: "integration_passed", Start: start, End: start.Add(time.Hour),
+		Coordination: &Coordination{PlanVersion: 3, PlanHash: hash,
+			Links: []Link{{TraceID: childTrace, SpanID: childSpan}, {TraceID: intTrace, SpanID: intSpan}, {TraceID: "nothex", SpanID: sp}}}}
+	if err := New(mem).Export(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	got := mem.GetSpans()
+	if len(got) != 1 {
+		t.Fatalf("%d spans", len(got))
+	}
+	attrs := map[string]string{}
+	for _, kv := range got[0].Attributes {
+		attrs[string(kv.Key)] = kv.Value.String()
+	}
+	if attrs["agent.coordination.plan_version"] != "3" || attrs["agent.coordination.plan_hash_prefix"] != "0123456789ab" ||
+		attrs["agent.task.reason"] != "integration_passed" || len(attrs) != 6 {
+		t.Fatalf("attributes %v", attrs)
+	}
+	if len(got[0].Links) != 2 || got[0].Links[0].SpanContext.TraceID().String() != childTrace ||
+		got[0].Links[1].SpanContext.SpanID().String() != intSpan || len(got[0].Links[0].Attributes) != 0 {
+		t.Fatalf("links %+v", got[0].Links)
+	}
+	if len(got[0].Events) != 0 {
+		t.Fatal("no events")
+	}
+	task.Coordination.PlanHash = "the plan's title"
+	mem.Reset()
+	if err := New(mem).Export(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range mem.GetSpans()[0].Attributes {
+		if kv.Key == "agent.coordination.plan_hash_prefix" {
+			t.Fatalf("a hash that is not one reached the span: %q", kv.Value.String())
+		}
+	}
+}

@@ -109,7 +109,11 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 	if err := s.repost(ctx, forges[p.Primary.Repository], parentTask, parentIssue, p, hash, links, Materiality{}); err != nil {
 		return err
 	}
-	return s.setStatus(ctx, parentTask, func(t *v1alpha1.Task) { t.Status.Reason = ReasonFiled })
+	if err := s.setStatus(ctx, parentTask, func(t *v1alpha1.Task) { t.Status.Reason = ReasonFiled }); err != nil {
+		return err
+	}
+	s.observe(func(m Metrics) { m.CoordinationFamily(ctx, p.Primary.Repository, "filed") })
+	return nil
 }
 
 // parent is name's coordination parent with its current plan.
