@@ -160,6 +160,14 @@ func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, sinc
 		// caller names it here too and the state cannot go missing between one field and the next.
 		in.Plan = roomview.PlanVersion{Source: "scope"}
 	}
+	if v, ok := s.coordinationFor(ctx, id, p); ok {
+		hash := v.PlanHash
+		if len(hash) > 7 {
+			hash = hash[:7]
+		}
+		in.Plan = roomview.PlanVersion{Source: "coordination", Rev: int(v.Plan.Version), Hash: hash, CeilingMicroUSD: v.Budget.TotalMicroUSD}
+		in.Coordination = &v
+	}
 	if items, _ := s.needsFor(ctx, room, p, sub, false); len(items) > 0 {
 		in.Blocker = &items[0]
 	}

@@ -51,6 +51,11 @@ type NeedsIn struct {
 	GitHub     GitHubStanding // what only the server can resolve
 	Caller     Caller         // what the policy says, and how the caller reads the room
 	Now        time.Time
+	// Coordination is the room's family as this caller may read it, when the room is a coordination
+	// parent (coordinationview.NeedsOf); CoordinationStanding is the caller's standing in each
+	// visible child's repository.
+	Coordination         *CoordinationNeeds
+	CoordinationStanding map[string]GitHubStanding
 }
 
 // GitHubStanding is the caller's standing where a merge, a review and an answer happen (CD26): their
@@ -104,7 +109,7 @@ func Items(in NeedsIn) []Need {
 	if in.Caller.CanDecide {
 		out = append(out, approvalNeeds(in)...)
 	}
-	return out
+	return append(out, coordinationNeeds(in)...)
 }
 
 // factsNeed is the one need a room's task facts imply: the phase and the reason say which, and the

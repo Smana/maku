@@ -95,3 +95,27 @@ func TestCardShowsCoordination(t *testing.T) {
 		t.Fatal("a room without a family shows coordination")
 	}
 }
+
+func TestCoordinationBriefUsesPlanAndOneRecovery(t *testing.T) {
+	v := coordFamily()
+	v.Plan.Children = v.Plan.Children[:1]
+	v.Children = v.Children[:1]
+	v.Recovery = &v1alpha1.RecoveryProposal{Code: "retry_child", ChildID: "contract"}
+	v.RestrictedChildren = 1
+	in := BriefIn{Room: "parent-1", Coordination: &v,
+		Plan: PlanVersion{Source: "coordination", Rev: 3, Hash: "0123456", CeilingMicroUSD: 12_750_000}}
+	var b bytes.Buffer
+	if err := Brief(&b, in, Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	for _, want := range []string{"Plan: coordination v3 0123456 · budget $12.75 ceiling", "contract (acme/api): Merged",
+		"Recovery: retry_child (contract)", "1 restricted child"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "Recovery:") != 1 || strings.Contains(got, "Changed since") || strings.Contains(got, "acme/web") {
+		t.Fatalf("brief:\n%s", got)
+	}
+}

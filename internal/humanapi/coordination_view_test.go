@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,4 +171,68 @@ func TestSponsoredRepositoriesAreOnlyAnUpperBound(t *testing.T) {
 
 func sponsoredPrincipal(id string) authn.Principal {
 	return authn.Principal{Kind: "system", ID: id, Sponsored: true}
+}
+
+// The parent's items reach every needs door from the one derivation: the route, the tool, the room
+// summary and the row agree item for item, and nothing of a child is derived from the parent.
+func TestCoordinationNeedsAreUnifiedAndDoNotDuplicateChildren(t *testing.T) {
+	v := coordFamily()
+	v.ParentConfirmation = &coordination.ParentConfirmation{PlanHash: v.PlanHash}
+	v.ChildAuthorizations = []coordination.ChildAuthorization{{ChildID: "contract", PlanVersion: 1}}
+	v.Recovery = &v1alpha1.RecoveryProposal{Code: "retry_child", ChildID: "consumer", PlanVersion: 1}
+	f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: v}}
+	w := coordWorld()
+	w.writes = map[string][]string{"Smana/maku": {"alice"}, coordRepoB: {"alice"}}
+	e := setup(t, mcpOn, needsOn, coordOn(f, w))
+	want := []string{roomID + "/plan_confirmation/" + roomID + "/consumer/v1", roomID + "/recovery/" + roomID + "/retry_child/v1"}
+
+	if got := needKeys(mustNeeds(t, e, "", as("alice", false)).Items); !slices.Equal(got, want) {
+		t.Fatalf("/api/needs %v, want %v", got, want)
+	}
+	if got := needKeysOf(t, call(t, e, viaRoomctl("alice"), "needs_list", map[string]any{})); !slices.Equal(got, want) {
+		t.Fatalf("needs_list %v, want %v", got, want)
+	}
+	_, body := get(t, e, "/api/rooms/"+roomID+"/summary", as("alice", false))
+	var s summary.Summary
+	if err := json.Unmarshal([]byte(body), &s); err != nil {
+		t.Fatal(err)
+	}
+	if got := needKeys(s.NeedsYou); !slices.Equal(got, want) {
+		t.Fatalf("summary %v, want %v", got, want)
+	}
+	_, body = get(t, e, "/api/rooms", as("alice", false))
+	type row struct {
+		ID       string        `json:"id"`
+		NeedsYou int           `json:"needsYou"`
+		Need     *summary.Need `json:"need"`
+	}
+	var rows []row
+	if err := json.Unmarshal([]byte(body), &rows); err != nil {
+		t.Fatalf("%v: %s", err, body)
+	}
+	i := slices.IndexFunc(rows, func(r row) bool { return r.ID == roomID })
+	if i < 0 || rows[i].NeedsYou != 2 || rows[i].Need == nil || rows[i].Need.Key() != want[0] {
+		t.Fatalf("row %s", body)
+	}
+}
+
+// A reader of the primary only sees the parent's items, never the withheld child's authorization or
+// the recovery naming it.
+func TestCoordinationNeedsAndRowsHideRestrictedChild(t *testing.T) {
+	v := coordFamily()
+	v.ParentConfirmation = &coordination.ParentConfirmation{PlanHash: v.PlanHash}
+	v.ChildAuthorizations = []coordination.ChildAuthorization{{ChildID: "contract", PlanVersion: 1}}
+	v.Recovery = &v1alpha1.RecoveryProposal{Code: "retry_child", ChildID: "consumer", PlanVersion: 1}
+	f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: v}}
+	w := coordWorld()
+	w.writes = map[string][]string{"Smana/maku": {"bob"}}
+	e := setup(t, needsOn, coordOn(f, w))
+	got := mustNeeds(t, e, "", as("bob", false))
+	if len(got.Items) != 0 {
+		t.Fatalf("bob got %v", needKeys(got.Items))
+	}
+	_, body := get(t, e, "/api/rooms", as("bob", false))
+	if strings.Contains(body, "consumer") || strings.Contains(body, coordRepoB) || strings.Contains(body, "CMARK") {
+		t.Fatalf("rows leak the withheld child: %s", body)
+	}
 }
