@@ -677,6 +677,32 @@ func ArmedByApproval(t *v1alpha1.Task, login string) Event {
 		"a moved one. It counts as a human merge: no automatic revert, the monitor watches it.", t.Name, login)}
 }
 
+// ApprovalShown says a maintainer's review approved the pull request, with merge.approveToMerge off
+// where no approval merges: login approved commit, or why it is stale (stale, an
+// envelope.Approval* cause; "" while current). The
+// hand-off's reason stands, with its own words and next step: the room's NEXT box's (summary.Waiting
+// reads the same facts), so GitHub and the room say one thing (CD21). The merge instructions go with a
+// current approval only: a stale one asks for a review of the new commits first. Its key is the
+// review's id, so each approval is said once, and once more stale.
+func ApprovalShown(t *v1alpha1.Task, review int64, login, commit, stale string) Event {
+	key := fmt.Sprintf("approval-%d", review)
+	if stale != "" {
+		key = fmt.Sprintf("approval-stale-%d", review)
+	}
+	f := envelope.TaskFacts{Phase: v1alpha1.PhaseAwaitingHuman, Reason: t.Status.Reason}
+	n := 0
+	if pr := t.Status.PullRequest; pr != nil {
+		n = pr.Number
+		f.PR = &envelope.PRFact{Number: pr.Number, URL: pr.URL, ApprovedBy: login, ApprovedCommit: commit, ApprovalStale: stale}
+	}
+	why, next := summ.Waiting(&f)
+	body := fmt.Sprintf("Agent factory task `%s`: %s. It waits for a maintainer: %s.", t.Name, next, why)
+	if n > 0 && stale == "" {
+		body += "\n\nTo merge: " + howAMaintainerMerges(t, t.Status.Reason, n) + "."
+	}
+	return Event{Key: key, Body: body}
+}
+
 // ChecksNeverReported says the wait in AwaitingCI outlasted merge.awaitingCIFor (#182), naming
 // the checks that have not reported as completed; waited is the caller's measure, on its own
 // clock. Nothing was merged.

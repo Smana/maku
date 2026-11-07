@@ -920,7 +920,42 @@ func (r *Reconciler) awaitingHuman(ctx context.Context, t *v1alpha1.Task) error 
 	} else if back {
 		return nil
 	}
+	r.showApproval(t, pr)
 	return r.remind(ctx, t, pr)
+}
+
+// showApproval shows a maintainer's approval of an agents pull request with merge.approveToMerge off,
+// where an approval returns nothing to the gate (AM2) and so would go unsaid: status.pullRequest
+// .approval names who approved which commit, and whether it is stale, for the room's facts, and the
+// approval is narrated once per review (its key). It never changes the reason: reenter's returns and
+// every by-hand reason's guidance read it. A dismissed or vetoed approval is shown no longer. It
+// reads the pull request awaitingHuman already holds: no GitHub call of its own. With approveToMerge
+// on, or an adopted class, an approval is the gate's to read (approvalReturn, reenter).
+func (r *Reconciler) showApproval(t *v1alpha1.Task, pr forge.PR) {
+	if r.repo(t).Merge.ApproveToMerge || gateOf(r.repo(t), t.Spec.PredictedClass).Adopted() {
+		return
+	}
+	ref := t.Status.PullRequest
+	rv, st := shownApproval(pr, r.repo(t), runsEnded(t))
+	if st != "approved" && st != envelope.ApprovalOlderCommit && st != envelope.ApprovalBeforeRunsEnded {
+		ref.Approval = nil
+		return
+	}
+	first := ref.Approval == nil
+	stale := st // the cause of a stale approval; a current one has none
+	if st == "approved" {
+		stale = ""
+	}
+	ref.Approval = &v1alpha1.ApprovalRef{By: rv.Author, Commit: rv.Commit, Stale: stale}
+	ev := narrate.ApprovalShown(t, rv.ID, rv.Author, rv.Commit, stale)
+	if first && st == "approved" && t.Status.Reason == "maintainer_approved" {
+		// The gate's own hand-off already said a maintainer approved: record the key, post nothing.
+		if !slices.Contains(t.Status.Narrated, ev.Key) {
+			narrate.Abandon(t, ev.Key)
+		}
+		return
+	}
+	narrateLater(t, ev)
 }
 
 // countApproves counts each maintainer's APPROVED review once (§7: how dark the factory is):

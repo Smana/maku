@@ -836,6 +836,25 @@ type PullRequestRef struct {
 	// +kubebuilder:validation:items:MaxLength=64
 	// +optional
 	Reviewers []string `json:"reviewers,omitempty"`
+	// Approval is a maintainer's approval an AwaitingHuman agents pull request shows with
+	// merge.approveToMerge off, for the room's facts and narration. It never changes the reason, so
+	// every return and by-hand guidance stands. Cleared when no maintainer's approval stands (a
+	// dismissal, a veto) and by the task's next transition.
+	// +optional
+	Approval *ApprovalRef `json:"approval,omitempty"`
+}
+
+// ApprovalRef is a maintainer's APPROVED review as the room shows it: who, the commit approved, and
+// why it is stale: older_commit, newer commits landed since; before_runs_ended, it names the head but
+// came before the task's last pushing run ended. Empty while it is current.
+type ApprovalRef struct {
+	// +kubebuilder:validation:MaxLength=64
+	By string `json:"by"`
+	// +kubebuilder:validation:MaxLength=64
+	Commit string `json:"commit"`
+	// +kubebuilder:validation:Enum=older_commit;before_runs_ended
+	// +optional
+	Stale string `json:"stale,omitempty"`
 }
 
 // Usage is the task's token spend.

@@ -885,6 +885,28 @@ spec:
                 description: PullRequestRef is the task's pull request and what happened
                   to it.
                 properties:
+                  approval:
+                    description: |-
+                      Approval is a maintainer's approval an AwaitingHuman agents pull request shows with
+                      merge.approveToMerge off, for the room's facts and narration. It never changes the reason, so
+                      every return and by-hand guidance stands. Cleared when no maintainer's approval stands (a
+                      dismissal, a veto) and by the task's next transition.
+                    properties:
+                      by:
+                        maxLength: 64
+                        type: string
+                      commit:
+                        maxLength: 64
+                        type: string
+                      stale:
+                        enum:
+                        - older_commit
+                        - before_runs_ended
+                        type: string
+                    required:
+                    - by
+                    - commit
+                    type: object
                   approvedBy:
                     description: |-
                       ApprovedBy is the maintainer whose approval of the head the merger merged on (AM1); empty

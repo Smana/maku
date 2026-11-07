@@ -90,6 +90,11 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	}
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
 		f.PR = &envelope.PRFact{Number: pr.Number, URL: pr.URL, Author: pr.Author, Reviewers: pr.Reviewers}
+		// The facts' validation would refuse a login outside GitHub's shape, or a commit not hex, for
+		// good: such an approval is left out, and the reason's own words stand.
+		if a := pr.Approval; a != nil && envelope.ValidLogin(a.By) && envelope.ValidCommit(a.Commit) {
+			f.PR.ApprovedBy, f.PR.ApprovedCommit, f.PR.ApprovalStale = a.By, a.Commit, a.Stale
+		}
 	}
 	return f
 }

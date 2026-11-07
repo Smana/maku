@@ -882,15 +882,19 @@ func TestAnApprovalReturnsATaskToTheGate(t *testing.T) {
 	}
 }
 
-// AM2 with the switch off: an approval returns nothing.
+// AM2 with the switch off: an approval returns nothing and merges nothing. It is shown beside the
+// reason, which stands (TestAnApprovalIsShownWithApproveToMergeOff).
 func TestAnApprovalReturnsNothingWithTheSwitchOff(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
 	g.handedOff(t, "class_unarmed", 0)
 	pr, _ := g.f.PullRequest(t.Context(), 12)
 	pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now}}
 	g.f.SetPR(pr)
-	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "class_unarmed" {
-		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "class_unarmed" || got.Status.GateReentries != 0 ||
+		len(g.f.Armed()) != 0 || got.Status.PullRequest.Approval == nil {
+		t.Fatalf("%s %s reentries %d merged %q approval %+v", got.Status.Phase, got.Status.Reason, got.Status.GateReentries, g.f.Armed(),
+			got.Status.PullRequest.Approval)
 	}
 }
 

@@ -100,8 +100,8 @@ maku-factory:
       - name: owner/repo
         maintainers: [owner]
         triggerLabel: factory/ready
-        # Shadow: the factory judges and posts the gate's status, and merges nothing. Every class
-        # carries allowedFiles, which is what bounds a merge with no policy-bot.
+        # Shadow: the factory judges and posts the gate's status, and merges nothing on its own. Every
+        # class carries allowedFiles, which is what bounds a merge with no policy-bot.
         classes:
           docs-links: {shadow: true, allowedFiles: ['^.+\.(md|mdx|adoc|rst)$']}
           revert: {shadow: true, allowedFiles: ['^.+$']}
@@ -111,6 +111,10 @@ maku-factory:
           leakScanCheck: ci
           gateStatus: true
           policyBot: false
+          # Approve-to-merge: a maintainer's approval of the current head is the merge, shadow class
+          # or not. The merger merges that head as a human merge (factory/approved-merge, no
+          # automatic revert); off, the room shows the approval and a maintainer merges on GitHub.
+          approveToMerge: true
           mergerLogin: maku-demo[bot]
           autoMergesPerDay: 5
           fixRuns: 2

@@ -248,6 +248,21 @@ human fixes on the pull request itself (`not_agent_authored`, `gate_path`, `cont
 `changes_requested` hand-off returns on an approval once no maintainer's newest review requests
 changes.
 
+With `merge.approveToMerge` off, an approval merges nothing and returns nothing to the gate, but
+the factory shows it on agents pull requests only (an adopted class keeps today's path). The task
+keeps its hand-off reason, whatever it is (`shadow_would_arm`, `policy_pending`, `not_mergeable`,
+`human_commit_in_pr`…), so every return and every reason's own next step stand; the room's NEXT
+line is prefixed with "approved by @login at commit `<sha>`", apart from the agent reviewer's "last
+verdict". Once commits land after the approval, it reads "@login's approval is of commit `<sha>`, an
+older commit: new commits since". An approval of the head submitted before the task's last pushing
+run ended (a force push moves a review onto the new head) reads "@login approved commit `<sha>`
+before the factory's last push ended: approve it again". Each approval is one issue comment, and one more once
+stale; the merge instructions go with a current approval only, and no comment repeats a
+`maintainer_approved` hand-off. A dismissed or vetoed approval is no longer shown. The task's
+`status.pullRequest.approval{by, commit, stale}` holds it (`stale`: `older_commit` or
+`before_runs_ended`, empty while current), and the room's facts carry it as
+`pr.approvedBy`, `pr.approvedCommit` and `pr.approvalStale`.
+
 **Approve the commit you read.** GitHub binds an approval sent without a commit to whatever the
 head is when the approval arrives. If a run pushes while you read, `gh pr review --approve` approves
 a commit you never saw. Approve from the web UI, which sends the commit you are looking at, or

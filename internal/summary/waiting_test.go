@@ -210,3 +210,34 @@ func TestTheHumanCommitStepSaysWhy(t *testing.T) {
 		t.Fatalf("a watcher's step: %+v", got)
 	}
 }
+
+// A maintainer's approval the factory shows with merge.approveToMerge off prefixes the reason's own
+// next step with who approved which commit, apart from the agent reviewer's verdict; an older
+// commit's says new commits landed since. The reason's own words and next step stand.
+func TestAShownApprovalNamesWhoAndWhichCommit(t *testing.T) {
+	pr := func(by, commit, stale string) *envelope.PRFact {
+		return &envelope.PRFact{Number: 2267, URL: prURL, ApprovedBy: by, ApprovedCommit: commit, ApprovalStale: stale}
+	}
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	const merges = "a maintainer reviews and merges or closes the pull request on GitHub"
+	for name, tc := range map[string]struct {
+		f         envelope.TaskFacts
+		why, next string
+	}{
+		"approved": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", PR: pr("smana", sha, "")},
+			"it would auto-merge, and the merge gate is in shadow", "approved by @smana at commit `0123456`; " + merges},
+		"stale": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", PR: pr("smana", sha, "older_commit")},
+			"it would auto-merge, and the merge gate is in shadow", "@smana's approval is of commit `0123456`, an older commit: new commits since; " + merges},
+		"before the runs ended": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", PR: pr("smana", sha, "before_runs_ended")},
+			"it would auto-merge, and the merge gate is in shadow", "@smana approved commit `0123456` before the factory's last push ended: approve it again; " + merges},
+		"by hand": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "human_commit_in_pr", PR: pr("smana", sha, "")},
+			"it holds a commit no run of the task reported", "approved by @smana at commit `0123456`; a person pushed a commit"},
+		"no approver": {envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "maintainer_approved", PR: pr("", "", "")},
+			"a maintainer approved it", merges},
+	} {
+		why, next := summary.Waiting(&tc.f)
+		if why != tc.why || !strings.HasPrefix(next, tc.next) {
+			t.Errorf("%s: %q → %q", name, why, next)
+		}
+	}
+}

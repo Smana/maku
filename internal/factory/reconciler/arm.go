@@ -11,6 +11,7 @@ import (
 	"time"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -229,20 +230,8 @@ func approval(in ArmInputs, rc *config.Repository) (forge.Review, string) {
 	if in.PR.ReviewsTruncated {
 		return forge.Review{}, "veto"
 	}
-	newest := map[string]forge.Review{}
-	for _, rv := range in.PR.Reviews {
-		if !rc.IsMaintainer(rv.Author) || rv.State == "COMMENTED" {
-			continue
-		}
-		login := strings.ToLower(rv.Author)
-		// GitHub's times are whole seconds: two reviews in one second are ordered by id, so a
-		// request for changes right after an approval is the newest.
-		if cur, ok := newest[login]; !ok || rv.At.After(cur.At) || (rv.At.Equal(cur.At) && rv.ID > cur.ID) {
-			newest[login] = rv
-		}
-	}
 	var approved forge.Review
-	for _, rv := range newest {
+	for _, rv := range newestReviews(in.PR, rc) {
 		switch rv.State {
 		case "CHANGES_REQUESTED":
 			return rv, "veto"
@@ -262,6 +251,62 @@ func approval(in ArmInputs, rc *config.Repository) (forge.Review, string) {
 	default:
 		return approved, "stale"
 	}
+}
+
+// newestReviews is each maintainer's newest review that is not a comment, by login folded to lower
+// case: what approval and shownApproval read.
+func newestReviews(pr forge.PR, rc *config.Repository) map[string]forge.Review {
+	newest := map[string]forge.Review{}
+	for _, rv := range pr.Reviews {
+		if !rc.IsMaintainer(rv.Author) || rv.State == "COMMENTED" {
+			continue
+		}
+		login := strings.ToLower(rv.Author)
+		// GitHub's times are whole seconds: two reviews in one second are ordered by id, so a
+		// request for changes right after an approval is the newest.
+		if cur, ok := newest[login]; !ok || rv.At.After(cur.At) || (rv.At.Equal(cur.At) && rv.ID > cur.ID) {
+			newest[login] = rv
+		}
+	}
+	return newest
+}
+
+// shownApproval is what an AwaitingHuman task shows of its pull request's reviews with
+// merge.approveToMerge off, where nothing merges on it: approval's newest review of each
+// maintainer; veto as approval reads one; approved when an approval names the current head and came
+// after ended, the end of the task's last pushing run (a force push moves a review's commit to the
+// new head, so the commit alone does not say the maintainer read it); envelope.ApprovalBeforeRunsEnded
+// for an approval of the head before that; envelope.ApprovalOlderCommit for one of another commit;
+// "" without one naming a commit, or when the head is unknown. It reads the pull request and the
+// task's status only: no approval binds here, so the head's push is not asked. Among several, the
+// oldest review id is shown, so every reconcile shows the same one.
+func shownApproval(pr forge.PR, rc *config.Repository, ended time.Time) (forge.Review, string) {
+	if pr.ReviewsTruncated {
+		return forge.Review{}, "veto"
+	}
+	var shown forge.Review
+	st := ""
+	for _, rv := range newestReviews(pr, rc) {
+		if rv.State == "CHANGES_REQUESTED" {
+			return rv, "veto"
+		}
+		if rv.State != "APPROVED" || rv.Commit == "" || pr.HeadSHA == "" {
+			continue // no commit to name: nothing to show
+		}
+		got := envelope.ApprovalOlderCommit
+		switch {
+		case rv.Commit != pr.HeadSHA:
+		case !ended.IsZero() && rv.At.After(ended):
+			got = "approved"
+		default:
+			got = envelope.ApprovalBeforeRunsEnded
+		}
+		if st == "" || (got == "approved" && st != "approved") || (got == st && rv.ID < shown.ID) ||
+			(st == envelope.ApprovalOlderCommit && got == envelope.ApprovalBeforeRunsEnded) {
+			shown, st = rv, got
+		}
+	}
+	return shown, st
 }
 
 // approvesHead: rv names the current head, a run of the task reported that head, GitHub recorded

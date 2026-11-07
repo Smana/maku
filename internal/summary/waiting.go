@@ -287,6 +287,31 @@ func nextStep(reason string, byApproval bool) string {
 	return ""
 }
 
+// ApprovalLine is the maintainer's approval the factory shows with merge.approveToMerge off
+// (PRFact.ApprovedBy), in words: who approved which commit — a human's approval, not the agent
+// reviewer's verdict — or why it is stale: of an older commit, or before the factory's last push
+// ended. "" when the facts name no approver.
+func ApprovalLine(f *envelope.TaskFacts) string {
+	if f == nil || f.Phase != "AwaitingHuman" || f.PR == nil || !envelope.ValidLogin(f.PR.ApprovedBy) {
+		return ""
+	}
+	commit := f.PR.ApprovedCommit[:min(len(f.PR.ApprovedCommit), shortCommit)]
+	switch f.PR.ApprovalStale {
+	case "":
+		return fmt.Sprintf("approved by @%s at commit `%s`", f.PR.ApprovedBy, commit)
+	case envelope.ApprovalBeforeRunsEnded: // the head's commit, approved before the push of it was the factory's last
+		return fmt.Sprintf("@%s approved commit `%s` before the factory's last push ended: approve it again", f.PR.ApprovedBy, commit)
+	}
+	of := "an older commit"
+	if commit != "" {
+		of = fmt.Sprintf("commit `%s`, an older commit", commit)
+	}
+	return fmt.Sprintf("@%s's approval is of %s: new commits since", f.PR.ApprovedBy, of)
+}
+
+// shortCommit is how many characters of a commit id a sentence shows, as GitHub does.
+const shortCommit = 7
+
 // Waiting is the reason and next step of a task that waits on something other than its own run;
 // both are "" while it works or once it ended in a way that needs no one. A reason the map does
 // not know is shown as written, bounded: it is the factory's own string, never an agent's.
@@ -352,6 +377,9 @@ func Waiting(f *envelope.TaskFacts) (reason, next string) {
 		}
 	default:
 		return "", ""
+	}
+	if line := ApprovalLine(f); line != "" { // the reason's own next step stands, after who approved what
+		next = line + "; " + next
 	}
 	return why, next
 }

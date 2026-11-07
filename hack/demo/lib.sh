@@ -143,6 +143,7 @@ demo_render_values() {
       echo "          leakScanCheck: ci"
       echo "          gateStatus: true"
       echo "          policyBot: false"
+      echo "          approveToMerge: true"
       echo "          mergerLogin: $($q "$bot")"
       echo "          autoMergesPerDay: 5"
       echo "          fixRuns: 2"
