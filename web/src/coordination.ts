@@ -66,6 +66,8 @@ export interface CoordinationPanel { el: HTMLElement; set(f?: CoordinationFlow, 
 // confirmation's answer is never applied here: the next summary is what the page shows.
 export interface CoordinationControls {
   confirm(c: CoordinationConfirmation): Promise<void>;
+  // recover performs the parent's one proposed recovery; absent, the panel offers none.
+  recover?(r: { code: string; planVersion: number }): Promise<void>;
   refresh(): void;
 }
 
@@ -89,17 +91,18 @@ export function mountCoordinationPanel(root: HTMLElement, controls?: Coordinatio
       const status = el("p", { className: "rail-coordination-status" });
       status.setAttribute("role", "status");
       const decide = controls && v && v.restrictedChildren === 0 && f.restrictedChildren === 0 && v.planHash === f.planHash ? controls : undefined;
-      const act = (label: string, name: string, c: CoordinationConfirmation): HTMLButtonElement => {
+      const press = (label: string, name: string, run: () => Promise<void>): HTMLButtonElement => {
         const b = el("button", { type: "button", textContent: label, className: "rail-coordination-act" });
         b.dataset.act = name;
         b.onclick = () => {
           b.disabled = true;
           status.textContent = "";
-          decide!.confirm(c).catch((e: unknown) => { status.textContent = `Not recorded: ${e instanceof Error ? e.message : String(e)}`; })
+          run().catch((e: unknown) => { status.textContent = `Not recorded: ${e instanceof Error ? e.message : String(e)}`; })
             .finally(() => decide!.refresh());
         };
         return b;
       };
+      const act = (label: string, name: string, c: CoordinationConfirmation) => press(label, name, () => decide!.confirm(c));
       const head = el("h2", { className: "rail-coordination-title", textContent: `Coordination · plan v${f.planVersion} ${f.planHash.slice(0, 7)}` });
       const nodes = el("ol", { className: "rail-coordination-nodes" });
       nodes.append(...f.nodes.map((n) => {
@@ -117,6 +120,11 @@ export function mountCoordinationPanel(root: HTMLElement, controls?: Coordinatio
       section.replaceChildren(head);
       if (decide && v && f.nodes.some((n) => n.requiredConfirmation === "parent")) {
         section.append(act(`Confirm plan v${v.plan.version}`, "coordination-confirm", confirmation(v, { parent: { planHash: v.planHash } })));
+      }
+      const rec = v?.recovery;
+      if (decide?.recover && rec && /^[a-z][a-z_]{0,47}$/.test(rec.code)) {
+        const r = { code: rec.code, planVersion: rec.planVersion };
+        section.append(press(`Recover: ${rec.code}`, "coordination-recover", () => decide.recover!(r)));
       }
       section.append(nodes, status);
       if (f.edges.length) section.append(edges);

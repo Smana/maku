@@ -44,6 +44,8 @@ export interface CoordinationView {
   plan: { id: string; version: number; [k: string]: unknown };
   children: { id: string; repository: string; fingerprint: string }[];
   budget: { planningReservedMicroUSD?: number; planningSettledMicroUSD?: number };
+  // The core's one proposed next action, when there is one (MR11): performed only on this page.
+  recovery?: { code: string; planVersion: number; childID?: string };
 }
 
 // One confirmation as the factory takes it (internal/factory/coordination CoordinationConfirmation):

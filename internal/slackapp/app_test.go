@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/sponsored"
+	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
 
@@ -604,6 +605,13 @@ type stubBroker struct {
 	intakeErr    error
 	intakeAnswer func(IntakeRequest) IntakeResult
 	intakeGate   func()
+	// coordPlans is every coordination_plan, coordDrafts every coordination_draft (parent id and
+	// on_behalf_of), coordResult the planner's answer, coordErr its failure; summary is room_summary's.
+	coordPlans  []CoordinationPlanRequest
+	coordDrafts []string
+	coordResult func(CoordinationPlanRequest) CoordinationPlanResult
+	coordErr    error
+	summary     *summary.Summary
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {

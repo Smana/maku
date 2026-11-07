@@ -32,7 +32,8 @@ func (f Factory) CoordinationDraft(ctx context.Context, accessToken, parent stri
 		Planning   coordination.PlanningReconciliation `json:"planning"`
 		OnBehalfOf string                              `json:"onBehalfOf,omitempty"`
 	}{in.Plan, in.PlanHash, in.Planning, onBehalfOf}
-	return f.coordination(ctx, http.MethodPut, accessToken, parent, "draft", body)
+	var out coordination.CoordinationConfirmation
+	return out, f.coordination(ctx, http.MethodPut, accessToken, parent, "draft", body, &out)
 }
 
 // CoordinationConfirm is POST /v1/coordinations/{parent}/confirmations (MR5) with the caller's own
@@ -40,48 +41,69 @@ func (f Factory) CoordinationDraft(ctx context.Context, accessToken, parent stri
 // factory against that repository's maintainer and its current write.
 func (f Factory) CoordinationConfirm(ctx context.Context, accessToken, parent string,
 	in coordination.CoordinationConfirmation) (coordination.CoordinationConfirmation, error) {
-	return f.coordination(ctx, http.MethodPost, accessToken, parent, "confirmations", in)
+	var out coordination.CoordinationConfirmation
+	return out, f.coordination(ctx, http.MethodPost, accessToken, parent, "confirmations", in, &out)
 }
 
-func (f Factory) coordination(ctx context.Context, method, accessToken, parent, route string, payload any) (coordination.CoordinationConfirmation, error) {
-	var out coordination.CoordinationConfirmation
+// CoordinationRecover is POST /v1/coordinations/{parent}/recovery (MR11) with the caller's own
+// token: the parent's one proposed action at the plan version it was proposed under. The factory
+// re-reads who may perform it and answers 204; the broker asserts nothing.
+func (f Factory) CoordinationRecover(ctx context.Context, accessToken, parent, code string, planVersion int32) error {
+	if !coordinationCode.MatchString(code) {
+		return fmt.Errorf("runrequest: %q is no recovery code", code)
+	}
+	return f.coordination(ctx, http.MethodPost, accessToken, parent, "recovery", struct {
+		Code        string `json:"code"`
+		PlanVersion int32  `json:"planVersion"`
+	}{code, planVersion}, nil)
+}
+
+// coordination is one call of the factory's coordination routes: out, when set, is a 200's
+// document; a 204 is success with none.
+func (f Factory) coordination(ctx context.Context, method, accessToken, parent, route string, payload, out any) error {
 	if accessToken == "" { // never an unauthenticated or asserted request (C4)
-		return out, ErrForbidden
+		return ErrForbidden
 	}
 	if !envelope.ValidID(parent) {
-		return out, fmt.Errorf("runrequest: %q is no task id", parent)
+		return fmt.Errorf("runrequest: %q is no task id", parent)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return out, fmt.Errorf("runrequest: %w", err)
+		return fmt.Errorf("runrequest: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, f.URL+"/v1/coordinations/"+parent+"/"+route, bytes.NewReader(body))
 	if err != nil {
-		return out, fmt.Errorf("runrequest: %w", err)
+		return fmt.Errorf("runrequest: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 	hc, err := f.client()
 	if err != nil {
-		return out, err
+		return err
 	}
 	if f.HC == nil {
 		defer hc.CloseIdleConnections()
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return out, fmt.Errorf("runrequest: factory: %w", err)
+		return fmt.Errorf("runrequest: factory: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := httpx.ReadBody(resp.Body, maxResponse)
 	if err != nil {
-		return out, fmt.Errorf("runrequest: factory: %w", err)
+		return fmt.Errorf("runrequest: factory: %w", err)
 	}
-	if resp.StatusCode == http.StatusOK {
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return out, fmt.Errorf("runrequest: factory answer: %w", err)
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return nil
+	case http.StatusOK:
+		if out == nil {
+			return nil
 		}
-		return out, nil
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("runrequest: factory answer: %w", err)
+		}
+		return nil
 	}
 	var refusal struct {
 		Error string `json:"error"`
@@ -91,5 +113,5 @@ func (f Factory) coordination(ctx context.Context, method, accessToken, parent, 
 	if coordinationCode.MatchString(refusal.Error) {
 		reason = refusal.Error
 	}
-	return out, ErrRefused{Status: resp.StatusCode, Reason: reason}
+	return ErrRefused{Status: resp.StatusCode, Reason: reason}
 }

@@ -146,3 +146,30 @@ function mountWith(confirm: (c: CoordinationConfirmation) => Promise<void>, refr
   document.body.replaceChildren(root);
   return { root, panel: mountCoordinationPanel(root, { confirm, refresh }) };
 }
+
+describe("coordination recovery", () => {
+  const view: CoordinationView = {
+    parentTask: "pppppppp", phase: "Coordinating", planHash: "0123456789abcdef", restrictedChildren: 0,
+    plan: { id: "pppppppp", version: 3, title: "t" }, children: [], budget: {},
+    recovery: { code: "retry_integration", planVersion: 3 },
+  };
+  it("offers the one proposed recovery, bound to its code and version", () => {
+    const sent: { code: string; planVersion: number }[] = [];
+    const root = document.createElement("div");
+    document.body.replaceChildren(root);
+    const panel = mountCoordinationPanel(root, { confirm: () => Promise.resolve(), recover: (r) => { sent.push(r); return Promise.resolve(); }, refresh: () => {} });
+    panel.set(filed, view);
+    const b = root.querySelector<HTMLButtonElement>('button[data-act="coordination-recover"]')!;
+    expect(b.textContent).toBe("Recover: retry_integration");
+    b.click();
+    expect(sent).toEqual([{ code: "retry_integration", planVersion: 3 }]);
+  });
+  it("offers none without a proposal or with a child withheld", () => {
+    const root = document.createElement("div");
+    const panel = mountCoordinationPanel(root, { confirm: () => Promise.resolve(), recover: () => Promise.resolve(), refresh: () => {} });
+    panel.set(filed, { ...view, recovery: undefined });
+    expect(root.querySelector('button[data-act="coordination-recover"]')).toBeNull();
+    panel.set({ ...filed, restrictedChildren: 1 }, { ...view, restrictedChildren: 1 });
+    expect(root.querySelector('button[data-act="coordination-recover"]')).toBeNull();
+  });
+});

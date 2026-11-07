@@ -4,7 +4,7 @@
 // the chat and raw views, and the dock (the session's controls behind a toggle, the
 // composer, the connection), all fed by one RoomConnection.
 
-import { api, confirmCoordination, fetchEvents, fetchNeeds } from "./api";
+import { api, confirmCoordination, fetchEvents, fetchNeeds, recoverCoordination } from "./api";
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
@@ -97,6 +97,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   const coordinationRegion = document.createElement("div");
   const coordination = mountCoordinationPanel(coordinationRegion, {
     confirm: (c) => confirmCoordination(id, c, o.get),
+    recover: (r) => recoverCoordination(id, r, o.get),
     refresh: () => loadSummary(),
   });
   const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);

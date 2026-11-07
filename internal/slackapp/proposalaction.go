@@ -136,6 +136,10 @@ func (a *App) proposalPress(ctx context.Context, in interaction) string {
 	// Only the App's own message carrying a proposal whose hash binds its plan, and whose author is an
 	// id this workspace could hold, is one: the same decoder the thread's flows read, so a draft, a
 	// Filed line or a foreign message is no more a proposal to a press than to a reply.
+	// A coordination proposal has no Confirm or Cancel: a press on one is forged, and decides nothing.
+	if line := a.coordinationPress(ctx, msg.Metadata); line != "" && msg.User == a.BotUserID {
+		return a.pressAnswer(ctx, in, thread, line, "refused")
+	}
 	p, ok := msg.Metadata.proposalPayload()
 	if msg.User != a.BotUserID || !ok || !userRE.MatchString(p.Author) {
 		return a.pressAnswer(ctx, in, thread, proposalGoneLine, "refused")
