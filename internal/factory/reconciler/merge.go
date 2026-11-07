@@ -132,6 +132,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		}
 	}
 	d := DecideArm(in)
+	evaluated := d // the evaluator's own decision, before the rows read after it, for dual evaluation
 	// A maintainer's approval arms on a human's judgement of the head, never on its diff: reading it
 	// again could only hand the approved head off for the diff the approval already covered (AM1).
 	approved := d.Verdict == "arm" && d.Reason == "maintainer_approved"
@@ -150,6 +151,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
 			d = DecideArm(in)
+			evaluated = d
 		}
 	}
 	if adopted && d.Reason == "push_unrecorded" && r.pushRecordWait(t, pr) {
@@ -179,6 +181,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	if d.Verdict != "wait" {
 		class, verdict, reason := t.Spec.PredictedClass, d.Verdict, cmp.Or(d.Reason, "armed")
 		record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, class, verdict, reason) })
+		r.dual(ctx, t, in, evaluated, &d)
 		r.log().Info("merge decision", "task.id", t.Name, "head", pr.HeadSHA, "verdict", d.Verdict, "reason", reason, "rows", d.Rows)
 	}
 	switch d.Verdict {

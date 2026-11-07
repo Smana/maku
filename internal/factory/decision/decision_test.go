@@ -44,3 +44,18 @@ func TestUnreadPausedAndCappedAreDashes(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Dual evaluation (merge policy stage 3) binds the decision to the repository policy it was
+// compared with, and says whether the two agreed. Off, the marker is as it was.
+func TestTheDualFieldsPrintOnlyWhenRead(t *testing.T) {
+	if got := Marker("abc", "c", "human", "r", Rows{}); strings.Contains(got, "policy=") || strings.Contains(got, "dual=") {
+		t.Fatal(got)
+	}
+	got := Marker("abc", "c", "human", "r", Rows{Reviewer: "none", Policy: "0123456789ab", Dual: "agree"})
+	if !strings.HasSuffix(got, " policy=0123456789ab dual=agree reviewer=none -->") {
+		t.Fatal(got)
+	}
+	if got := Marker("abc", "c", "human", "r", Rows{Dual: "no_policy"}); !strings.Contains(got, " policy=- dual=no_policy ") {
+		t.Fatal(got)
+	}
+}
