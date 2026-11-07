@@ -67,6 +67,9 @@ var (
 	ErrPrimaryRequiresNewParent = errors.New("primary_requires_new_parent")
 	// ErrInvalidConfirmation is a confirmation naming neither, or both, a parent and a child.
 	ErrInvalidConfirmation = errors.New("invalid_confirmation")
+	// ErrPlanningCostUnverified is a planning attempt carrying a reservation or settlement
+	// identifier without its amount: a cost nobody can reconcile against planningMicroUSD.
+	ErrPlanningCostUnverified = errors.New("planning_cost_unverified")
 )
 
 // PlanError is one refusal: its bounded reason code (one of the sentinels above), the field it
