@@ -4,7 +4,7 @@
 // the chat and raw views, and the dock (the session's controls behind a toggle, the
 // composer, the connection), all fed by one RoomConnection.
 
-import { api, fetchEvents, fetchNeeds } from "./api";
+import { api, confirmCoordination, fetchEvents, fetchNeeds, recoverCoordination } from "./api";
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
@@ -17,6 +17,7 @@ import { RoomState } from "./room-state";
 import { mountViews } from "./roomview";
 import type { Dashboard } from "./dashboards";
 import { mountRailPane } from "./railpane";
+import { mountCoordinationPanel } from "./coordination";
 import { mountRunView, mountScrollIndex } from "./runview";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
@@ -93,7 +94,13 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   meta.append(status);
   footer.append(session, composerEl, meta);
   // The rail beside the conversation, not in main: mountViews wipes main's children.
-  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, skeleton, main, forkPanel);
+  const coordinationRegion = document.createElement("div");
+  const coordination = mountCoordinationPanel(coordinationRegion, {
+    confirm: (c) => confirmCoordination(id, c, o.get),
+    recover: (r) => recoverCoordination(id, r, o.get),
+    refresh: () => loadSummary(),
+  });
+  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
   const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
@@ -217,6 +224,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
         showRail(sum);
+        coordination.set(sum.flow?.coordination, sum.coordination);
         runView.set(sum.flow?.nodes ?? []);
         shown = key;
       }

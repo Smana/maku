@@ -68,3 +68,35 @@ func TestCoordinationDraftAndConfirmForwardTheCallersToken(t *testing.T) {
 		t.Fatal("a hostile parent reached a URL")
 	}
 }
+
+func TestCoordinationRecoverForwardsOneAction(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		seen = append(seen, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization")+" "+string(body))
+		if strings.Contains(string(body), `"planVersion":1`) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"stale_plan"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	f := Factory{URL: srv.URL, HC: srv.Client()}
+	if err := f.CoordinationRecover(t.Context(), "tok", "pppppppp", "retry_child", 2); err != nil {
+		t.Fatal(err)
+	}
+	if seen[0] != `POST /v1/coordinations/pppppppp/recovery Bearer tok {"code":"retry_child","planVersion":2}` {
+		t.Fatalf("%s", seen[0])
+	}
+	var ref ErrRefused
+	if err := f.CoordinationRecover(t.Context(), "tok", "pppppppp", "retry_child", 1); !errors.As(err, &ref) || ref.Reason != "stale_plan" {
+		t.Fatalf("%v", err)
+	}
+	if err := f.CoordinationRecover(t.Context(), "", "pppppppp", "retry_child", 2); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("no token: %v", err)
+	}
+	if err := f.CoordinationRecover(t.Context(), "tok", "pppppppp", "<b>", 2); err == nil || len(seen) != 2 {
+		t.Fatalf("a hostile code reached the factory: %v %v", err, seen)
+	}
+}

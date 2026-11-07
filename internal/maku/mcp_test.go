@@ -442,7 +442,7 @@ func TestRelayListsLocalTools(t *testing.T) {
 	for _, tl := range s.request(t, 1, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if got := strings.Join(names, ","); got != "rooms_list,room_summary,issue_file,room_wait,room_checkout" {
+	if got := strings.Join(names, ","); got != "rooms_list,room_summary,issue_file,room_wait,room_checkout,coordination_open" {
 		t.Fatalf("%s", got)
 	}
 }

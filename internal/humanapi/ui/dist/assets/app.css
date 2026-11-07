@@ -929,3 +929,18 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-replays[hidden], .rail-replay[hidden] { display: none; }
 .rail-replay { font: inherit; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .rail-replay:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* The coordination panel: a parent's family, apart from the run rail and its split parts. */
+.rail-coordination { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.rail-coordination-title { margin: 0; font-size: 0.95rem; }
+.rail-coordination-nodes, .rail-coordination-edges { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rail-coordination-node { --lane: var(--flow-writer); border-left: 3px solid var(--lane); padding-left: 8px; }
+.rail-coordination-node[data-tone="judge"] { --lane: var(--flow-judge); }
+.rail-coordination-head { display: flex; gap: 6px; align-items: center; background: none; border: 0; padding: 0; font: inherit; color: inherit; }
+.rail-coordination-head:disabled { color: var(--muted-foreground); opacity: 0.7; }
+.rail-coordination-meta, .rail-coordination-links { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted-foreground); font-size: 0.85rem; }
+.rail-coordination-edge { color: var(--muted-foreground); font-size: 0.85rem; }
+.rail-coordination-edge[data-state="pending"] { opacity: 0.7; }
+.rail-coordination-restricted { margin: 0; color: var(--muted-foreground); font-style: italic; }
+.rail-coordination-act { justify-self: start; }
+.rail-coordination-status:empty { display: none; }
