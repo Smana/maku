@@ -189,6 +189,9 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 	case c.RuntimeClassName == "" && !c.AllowUnsandboxed:
 		return "runtimeClassName is empty and allowUnsandboxed is false: refusing to run unsandboxed"
 	}
+	if why := invalidManifest(r); why != "" {
+		return why
+	}
 	for _, p := range r.Spec.Egress.Profiles {
 		if _, ok := c.EgressProfiles[string(p)]; !ok {
 			return fmt.Sprintf("spec.egress.profiles: profile %q is not configured", p)

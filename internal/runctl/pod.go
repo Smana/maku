@@ -114,6 +114,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if s.Task.URL != "" {
 		env = append(env, corev1.EnvVar{Name: "TASK_URL", Value: s.Task.URL})
 	}
+	env = append(env, manifestEnv(r)...)
 	// v3 feature 3: the repository's checks, and the pod's deadline for the final run's margin (RC9).
 	if s.Loop.Checks {
 		env = append(env, corev1.EnvVar{Name: "AGENT_CHECKS", Value: "1"},
