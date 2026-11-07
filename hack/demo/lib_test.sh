@@ -135,6 +135,7 @@ yq -e '.maku-factory.config.factoryLogin == "maku-demo-it[bot]" and .maku-factor
 yq -e '.maku-factory.config.repositories[0].name == "octocat/it" and .maku-factory.config.repositories[0].maintainers[0] == "octocat"' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: repository and maintainer" >&2; fail=1; }
 yq -e '.demo.model.name == "m'"'"'1" and (.demo.githubApp.privateKey | test("BEGIN"))' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: quoting and the key" >&2; fail=1; }
 yq -e '.maku-factory.config.repositories[0].classes.docs-links.shadow == true' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: shadow by default" >&2; fail=1; }
+yq -e '.maku-factory.config.repositories[0].merge.approveToMerge == true' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: approve-to-merge on" >&2; fail=1; }
 DEMO_SHADOW=false demo_render_values "$tmp/live.yaml"
 yq -e '.maku-factory.config.repositories[0].classes.docs-links.shadow == false and .maku-factory.config.repositories[0].classes.revert.shadow == true' "$tmp/live.yaml" >/dev/null 2>&1 || { echo "FAIL: values: DEMO_SHADOW=false" >&2; fail=1; }
 # the renderer's repositories[0] entry is the example's, key for key (apart from what the reader sets)
