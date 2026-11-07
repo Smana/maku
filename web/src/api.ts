@@ -91,7 +91,17 @@ export async function fetchNeeds(room: string, since?: string, get: typeof fetch
 // The broker forwards it, with the viewer's own session, to the factory, which decides; a refusal's
 // bounded code ("stale_plan", "repository_permission", …) is the error's message.
 export async function confirmCoordination(room: string, c: unknown, get: typeof fetch = fetch): Promise<void> {
-  const r = await api(`/api/coordinations/${encodeURIComponent(room)}/confirmations`,
+  return postCoordination(room, "confirmations", c, get);
+}
+
+// recoverCoordination performs the parent's one proposed recovery, {code, planVersion}, as
+// confirmCoordination posts a confirmation: forwarded with the viewer's session, decided by the factory.
+export async function recoverCoordination(room: string, r: { code: string; planVersion: number }, get: typeof fetch = fetch): Promise<void> {
+  return postCoordination(room, "recovery", r, get);
+}
+
+async function postCoordination(room: string, route: string, c: unknown, get: typeof fetch): Promise<void> {
+  const r = await api(`/api/coordinations/${encodeURIComponent(room)}/${route}`,
     { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) }, get);
   if (r.ok) return;
   let code = `HTTP ${r.status}`;

@@ -21,6 +21,7 @@ import (
 type CoordinationGateway interface {
 	CoordinationDraft(ctx context.Context, accessToken, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
 	CoordinationConfirm(ctx context.Context, accessToken, parent string, in coordination.CoordinationConfirmation) (coordination.CoordinationConfirmation, error)
+	CoordinationRecover(ctx context.Context, accessToken, parent, code string, planVersion int32) error
 }
 
 // maxCoordinationWrite bounds a draft or a confirmation body: the plan's own bound and its envelope.
@@ -71,6 +72,37 @@ func (s *Server) coordinationConfirmRoute(w http.ResponseWriter, r *http.Request
 	}
 	out, err := s.CoordinationWrites.CoordinationConfirm(r.Context(), p.AccessToken, task, in)
 	answerFactory(w, out, err)
+}
+
+// coordinationRecoverRoute is POST /api/coordinations/{task}/recovery: the parent's one proposed
+// recovery (MR11), from the web UI alone, forwarded with the human's own token. The factory decides
+// whose authority it needs and binds the current plan version; 204 on success.
+func (s *Server) coordinationRecoverRoute(w http.ResponseWriter, r *http.Request) {
+	p, task, ok := s.coordinationWriter(w, r)
+	if !ok {
+		return
+	}
+	if s.WebClient == nil || p.ClientID == "" || p.ClientID != s.WebClient() {
+		refuseJSON(w, http.StatusForbidden, "web_only")
+		return
+	}
+	var in struct {
+		Code        string `json:"code"`
+		PlanVersion int32  `json:"planVersion"`
+	}
+	if !decodeCoordination(w, r, &in) {
+		return
+	}
+	if in.PlanVersion < 1 {
+		refuseJSON(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	err := s.CoordinationWrites.CoordinationRecover(r.Context(), p.AccessToken, task, in.Code, in.PlanVersion)
+	if err != nil {
+		answerFactory(w, coordination.CoordinationConfirmation{}, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // coordinationWriter is a human caller with a token, admitted to the {task} parent's room.
