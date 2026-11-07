@@ -179,9 +179,9 @@ func (r *Reconciler) startIntegration(ctx context.Context, t *v1alpha1.Task) err
 
 // integrationSpec is an integration run (MR10, MR17): triager on the primary, in the integration
 // Task's own Room, with no branch, no PR, no landed references and the canonical manifest, whose
-// exact subject SHAs are the only inputs. The v4 item 4 runtime that writes it to a read-only file,
-// exports MAKU_COORDINATION_MANIFEST and checks out the exact SHAs is not shipped: execute stays
-// gated until it is.
+// exact subject SHAs are the only inputs. The harness's integration runtime writes it to a
+// read-only file, exports MAKU_COORDINATION_MANIFEST and checks out the exact SHAs; v4 item 4's
+// hardened output and threat checks are not shipped, so execute stays gated until they are.
 func (r *Reconciler) integrationSpec(t *v1alpha1.Task, m coordination.IntegrationManifest) runs.Spec {
 	b, _ := coordination.CanonicalManifest(m) // strings and integers: never fails
 	return runs.Spec{TaskID: t.Name, Role: "triager", Repository: t.Spec.Repository, BaseRef: "main",
@@ -201,8 +201,8 @@ func IntegrationBrief(t *v1alpha1.Task, m coordination.IntegrationManifest) stri
 }
 
 // integrationRunning follows the one run: a typed pass of a run that succeeded is passed, a typed
-// failure or no result is failed, and a run its infrastructure lost escalates integration_pending
-// with no acceptance.
+// failure or a run that succeeded with no result is failed, and a run its infrastructure lost, or
+// that failed with no result, escalates integration_pending with no acceptance.
 func (r *Reconciler) integrationRunning(ctx context.Context, t *v1alpha1.Task) error {
 	run, found, err := r.observe(ctx, t)
 	if err != nil {
@@ -242,6 +242,10 @@ func (r *Reconciler) integrationRunning(ctx context.Context, t *v1alpha1.Task) e
 		return r.end(ctx, t, v1alpha1.PhaseDone, reasonIntegrationPassed)
 	case ok && res.State == coordination.ResultFailed:
 		t.Status.Result = &res
+	case !ok && run.Phase == "Failed" && run.Revoked == "":
+		// The harness reports nothing typed and exits non-zero when it cannot fetch, check out or
+		// verify a subject: the sandbox failed, not the acceptance.
+		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
 	default:
 		t.Status.Result = &v1alpha1.IntegrationResult{State: coordination.ResultFailed, Reason: reasonIntegrationNoResult, ManifestHash: want}
 	}
