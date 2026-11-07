@@ -365,8 +365,9 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		Intake:    in,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
-		ProjectID: projectID,
-		Rooms:     rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
+		ProjectID:        projectID,
+		FactoryPrincipal: fconfig.PrincipalFactory,
+		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
 		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards}, nil
 }
 
