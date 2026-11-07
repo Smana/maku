@@ -164,13 +164,11 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		if err != nil {
 			return err
 		}
-		switch {
-		case pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)):
+		if pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)) {
 			r.log().Info("the head's push is not recorded yet: waiting", "task.id", t.Name, "head", pr.HeadSHA)
 			return nil
-		case pushed != pushFactory:
-			d = ArmDecision{Verdict: "human", Reason: "human_commit_in_pr", Rows: d.Rows}
 		}
+		d = provenance(d, adopted, pushed)
 	}
 	if d.Verdict == "arm" && closesParent(t, pr.Body) { // a part closes its own issue only: the parent closes with the last part
 		d = ArmDecision{Verdict: "human", Reason: "closes_parent", Rows: d.Rows}
@@ -609,6 +607,16 @@ func (r *Reconciler) factoryCommits(ctx context.Context, t *v1alpha1.Task, head 
 // pushRecordGrace is how long after the task's last implementer run finished the gate waits for
 // GitHub's activity to record the run's push; past it, an unrecorded head hands off.
 const pushRecordGrace = 2 * time.Minute
+
+// provenance is the gate's last row on an agents pull request, after the evaluator: every move of
+// its branch the factory App's (#82). An unrecorded push has waited out its deadline before this.
+// Simulation applies it as the gate does, so a fixture's decision includes it (MP16).
+func provenance(d ArmDecision, adopted bool, pushed pushCheck) ArmDecision {
+	if !adopted && (d.Verdict == "arm" || d.Verdict == "shadow") && pushed != pushFactory {
+		return ArmDecision{Verdict: "human", Reason: "human_commit_in_pr", Rows: d.Rows}
+	}
+	return d
+}
 
 // pushCheck is factoryPushed's answer.
 type pushCheck int

@@ -57,8 +57,8 @@ func withApproval(d ArmDecision, in ArmInputs, approval []string) ArmDecision {
 		return d
 	}
 	if d.Verdict == "shadow" {
-		d.Reason = "shadow_would_require_approval"
+		d.Reason = reasonShadowApproval
 		return d
 	}
-	return ArmDecision{Verdict: "human", Reason: "approval_required", Matched: d.Matched, Rows: d.Rows}
+	return ArmDecision{Verdict: "human", Reason: reasonApprovalRequired, Matched: d.Matched, Rows: d.Rows}
 }

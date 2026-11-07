@@ -27,7 +27,7 @@ type ArmInputs struct {
 	PR           forge.PR
 	Checks       forge.Checks
 	Task         *v1alpha1.Task
-	Cfg          *config.Config
+	Cfg          *config.Config `json:"-"` // a fixture is decided under the config it is run with
 	ArmedToday   int
 	Paused       bool
 	ReportedHead string
