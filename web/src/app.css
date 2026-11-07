@@ -178,8 +178,13 @@ a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-ra
    and the bare selector made each of them a sticky navy bar (review 2026-10-15, U1). */
 .page-header, .page-dock { position: sticky; }
 .page-dock { padding: 8px 16px; }
+/* The unsandboxed banner is pinned with the header (room.ts: --banner-h, and --header-h counts both),
+   so the rail's sticky top and height clear everything pinned above it. */
+@media (min-width: 641px) {
+  .banner-unsandboxed { position: sticky; top: 0; z-index: 2; }
+}
 .page-header {
-  top: 0; z-index: 2;
+  top: var(--banner-h, 0px); z-index: 2;
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 16px; align-items: start;
   padding: 16px;
   background: var(--brand-header); color: var(--brand-header-foreground);
@@ -908,8 +913,11 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   .room-body.has-rail > :not(.rail) { grid-column: 1; }
   .room-body.has-rail > .rail {
     grid-column: 2; grid-row: 1 / span 6; position: sticky; top: var(--header-h, 0px);
-    max-height: calc(100vh - var(--header-h, 0px) - var(--dock-h, 0px)); overflow-y: auto; align-self: start;
-    padding-top: 8px;
+    /* border-box: the 8 px of padding is inside the height, or the rail's last 8 px sit under the dock. */
+    box-sizing: border-box; padding: 8px 0;
+    max-height: calc(100vh - var(--header-h, 0px) - var(--dock-h, 0px));
+    max-height: calc(100dvh - var(--header-h, 0px) - var(--dock-h, 0px));
+    overflow-y: auto; overscroll-behavior: contain; align-self: start;
   }
 }
 

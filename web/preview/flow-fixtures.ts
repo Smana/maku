@@ -7,7 +7,7 @@
 import { ghostsAfter } from "../src/flow";
 import type { Flow, FlowNode, Milestone } from "../src/summary";
 
-export type FlowName = "default" | "finished" | "split" | "part";
+export type FlowName = "default" | "finished" | "split" | "part" | "many";
 
 export interface FlowFixture { flow: Flow; phase: string }
 
@@ -54,6 +54,13 @@ export function flowFixture(name: FlowName): FlowFixture {
       return { phase: "Done", flow: { plan: ["scoper"], nodes: [s], ghosts: [], split: { of: 3, parts: [
         { index: 1, issue: 52, room: "k2mqx7ba", outcome: "landed" }, { index: 2, issue: 53, room: "p4zt6wce" }] } } };
     }
+    case "many": {
+      // A long task: retries and several reviewers, so the rail is taller than a window.
+      const rev = (i: number): FlowNode => ({ ...reviewer, run: `review${i}`, edge: "PR #41", startedAt: `2026-10-04T14:${10 + i}:00Z`, endedAt: `2026-10-04T14:${11 + i}:00Z` });
+      const retry = (i: number): FlowNode => ({ ...ended(implementer), run: `implret${i}`, edge: "retry", startedAt: `2026-10-04T14:${10 + i}:30Z` });
+      const nodes = [scoper, tester, ended(implementer), rev(1), rev(2), rev(3), retry(4), rev(5), retry(6), rev(7)];
+      return { phase: "AwaitingHuman", flow: { plan, nodes, ghosts: ["merge"], milestones: milestones.slice(0, 2) } };
+    }
     case "part":
       return { phase: "Implementing", flow: { ...flow([{ ...implementer, edge: undefined }]), plan: ["implementer", "reviewer"], ghosts: ["reviewer"], parent: { room: "m3pq6xzb", issue: 50, index: 2, of: 3 } } };
     default:
@@ -61,8 +68,8 @@ export function flowFixture(name: FlowName): FlowFixture {
   }
 }
 
-// flowName reads the page's query: ?finished, ?split or ?part, else the default.
+// flowName reads the page's query: ?finished, ?split, ?part or ?many, else the default.
 export function flowName(params: URLSearchParams): FlowName {
-  for (const n of ["finished", "split", "part"] as const) if (params.has(n)) return n;
+  for (const n of ["finished", "split", "part", "many"] as const) if (params.has(n)) return n;
   return "default";
 }

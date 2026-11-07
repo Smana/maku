@@ -97,15 +97,18 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
   const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
-  // Header and dock heights place the sticky rail between them.
+  // The pinned block (the unsandboxed banner, then the header) and the dock place the sticky rail between them.
   let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {
     const size = () => {
-      app.style.setProperty("--header-h", `${header.offsetHeight}px`);
+      const banner = sandbox.hidden ? 0 : sandbox.offsetHeight;
+      app.style.setProperty("--banner-h", `${banner}px`);
+      app.style.setProperty("--header-h", `${banner + header.offsetHeight}px`);
       app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
     };
     ro = new ResizeObserver(size);
     ro.observe(header);
+    ro.observe(sandbox);
     ro.observe(footer);
     size();
   }

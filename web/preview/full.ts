@@ -10,6 +10,7 @@
 // One rail fixture (flow-fixtures.ts), the first of:
 //   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
 //   ?split        a scoper whose handoff split into three parts
+//   ?many         a long task: retries and reviewers, a rail taller than the window, the unsandboxed banner above the header
 //   ?part         a part's room, linked back to its parent
 //   (none)        a task in flight: scoper, tester, the live implementer, a ghost reviewer
 
@@ -52,7 +53,7 @@ async function run() {
   // The fixture's events are weeks old: the rail's clock starts at the last one.
   const loaded = Date.now();
   const lastAt = Date.parse(events[events.length - 1].ts);
-  const page = mountPreviewPage(document.getElementById("app")!, { snap,
+  const page = mountPreviewPage(document.getElementById("app")!, { snap, unsandboxed: params.has("many"),
     summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
     count: events.length, dashboards, now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });
