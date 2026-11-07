@@ -207,3 +207,27 @@ func TestCoordinationCheckoutRoute(t *testing.T) {
 		t.Fatalf("off: %d", code)
 	}
 }
+
+// The route counts what it served by a closed outcome, never the repository or the viewer.
+func TestCoordinationRouteCountsOutcomes(t *testing.T) {
+	f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: checkoutFamily()}}
+	e := setup(t, coordOn(f, coordWorld()))
+	get(t, e, "/api/coordinations/"+roomID, as("alice", false))
+	get(t, e, "/api/coordinations/"+roomID, as("bob", false))
+	get(t, e, "/api/coordinations/"+roomID, as("carol", false))
+	get(t, e, "/api/coordinations/"+roomID+"/checkout", as("bob", false))
+	body := metricsBody(t, e)
+	for _, want := range []string{
+		`maku_rooms_coordination_views_total{outcome="ok"} 1`,
+		`maku_rooms_coordination_views_total{outcome="restricted"} 1`,
+		`maku_rooms_coordination_views_total{outcome="not_found"} 1`,
+		`maku_rooms_coordination_checkout_manifests_total{outcome="restricted"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, coordRepoB) || strings.Contains(body, "alice") {
+		t.Fatal("a repository or a viewer reached a label")
+	}
+}

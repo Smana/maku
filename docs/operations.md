@@ -38,6 +38,8 @@ events.
 |---|---|---|--- |
 | `maku_rooms_build_info` | gauge | `version` | Always 1; carries the running version |
 | `rooms` | gauge | `phase` | Rooms per phase |
+| `maku_rooms_coordination_views_total` | counter | `outcome` (`ok`, `restricted`, `not_found`, `unverified`, `other`) | Coordination parent views asked for, and whether a child was withheld |
+| `maku_rooms_coordination_checkout_manifests_total` | counter | `outcome` (`served`, `restricted`, `not_ready`, `unavailable`, `other`) | Coordination checkout documents asked for |
 | `maku_rooms_events_appended_total` | counter | `type`, `origin` | Durable events appended |
 | `maku_rooms_append_seconds` | histogram | — | Append latency |
 | `maku_rooms_append_errors_total` | counter | — | Appends that failed on the database: not refusals of the value (SQLSTATE class 22), the room or the lease |

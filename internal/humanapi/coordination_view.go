@@ -24,8 +24,28 @@ type CoordinationViews interface {
 // the family filtered by each child's repository for this viewer. A parent's room is named as its
 // task. There is no route serving the unfiltered view.
 func (s *Server) coordinationRoute(w http.ResponseWriter, r *http.Request) {
-	if v, ok := s.filteredRoute(w, r); ok {
-		writeJSON(w, v)
+	v, ok := s.filteredRoute(w, r)
+	if !ok {
+		return
+	}
+	outcome := "ok"
+	if v.RestrictedChildren > 0 {
+		outcome = "restricted"
+	}
+	s.countCoordination(r.Context(), outcome)
+	writeJSON(w, v)
+}
+
+// countCoordination and countCheckout count a view or a checkout document by its closed outcome.
+func (s *Server) countCoordination(ctx context.Context, outcome string) {
+	if s.Metrics != nil {
+		s.Metrics.CoordinationView(ctx, outcome)
+	}
+}
+
+func (s *Server) countCheckout(ctx context.Context, outcome string) {
+	if s.Metrics != nil {
+		s.Metrics.CoordinationCheckout(ctx, outcome)
 	}
 }
 
@@ -40,10 +60,13 @@ func (s *Server) coordinationCheckoutRoute(w http.ResponseWriter, r *http.Reques
 	d, err := coordinationview.Checkout(v)
 	switch {
 	case errors.Is(err, coordinationview.ErrCheckoutRestricted):
+		s.countCheckout(r.Context(), "restricted")
 		http.Error(w, errNoSuchRoom.Error(), http.StatusNotFound)
 	case err != nil:
+		s.countCheckout(r.Context(), "not_ready")
 		http.Error(w, coordinationview.ErrCheckoutNotReady.Error(), http.StatusConflict)
 	default:
+		s.countCheckout(r.Context(), "served")
 		writeJSON(w, d)
 	}
 }
@@ -59,15 +82,22 @@ func (s *Server) filteredRoute(w http.ResponseWriter, r *http.Request) (coordina
 	defer cancel()
 	task := r.PathValue("task")
 	if _, _, _, err := s.readRoom(ctx, task, p); err != nil {
+		outcome := "unverified"
+		if roomStatus(err) == http.StatusNotFound {
+			outcome = "not_found"
+		}
+		s.countCoordination(ctx, outcome)
 		http.Error(w, err.Error(), roomStatus(err))
 		return coordinationview.View{}, false
 	}
 	raw, err := s.CoordinationViews.View(ctx, task)
 	switch {
 	case errors.Is(err, coordinationview.ErrNoCoordination):
+		s.countCoordination(ctx, "not_found")
 		http.Error(w, errNoSuchRoom.Error(), http.StatusNotFound)
 		return coordinationview.View{}, false
 	case err != nil:
+		s.countCoordination(ctx, "unverified")
 		s.log().Warn("coordination: view unreadable", "room", task, "err", err)
 		http.Error(w, coordinationview.ErrCoordinationUnavailable.Error(), http.StatusServiceUnavailable)
 		return coordinationview.View{}, false
