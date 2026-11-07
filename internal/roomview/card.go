@@ -139,6 +139,7 @@ func Card(w io.Writer, s summary.Summary, o Options) error {
 	c.stateLine(s, needs)
 	c.step(s)
 	c.facts(s)
+	c.coordination(s)
 	c.needs(s)
 	c.runs(s)
 	c.notes(s)
