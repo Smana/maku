@@ -69,6 +69,9 @@ const makuUsage = `usage: maku <command>
   watch <room> [--tail N]         follow a room
   post <room> [--queue] <text>    chat, or queue it for the next run's brief
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
+  demo app --dir DIR [--owner ORG] [--name NAME]
+                                  create the laptop demo's GitHub App through GitHub's manifest flow and write its
+                                  app_id, private_key and slug into DIR
   policy export|check   write or check a repository's merge policy file, offline
   mcp                             the factory's MCP tools on stdio, for a local coding agent:
                                   claude mcp add factory -- maku mcp
@@ -103,6 +106,11 @@ type Maku struct {
 
 	// Capture runs a command and returns its output (setup's OpenCode service check); nil runs it.
 	Capture func(ctx context.Context, argv []string) (string, error)
+
+	// Open opens a URL in the browser (demo app); nil runs xdg-open or open. DemoTimeout bounds the
+	// wait for GitHub's callback; zero is five minutes. Tests set both.
+	Open        func(ctx context.Context, url string)
+	DemoTimeout time.Duration
 
 	// Ask puts a yes/no question to the developer; nil asks on the terminal when In is one, else
 	// nothing is asked. Tests set it.
@@ -165,6 +173,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.policy(args)
 	case "setup":
 		return r.setup(ctx, args)
+	case "demo":
+		return r.demo(ctx, args)
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err

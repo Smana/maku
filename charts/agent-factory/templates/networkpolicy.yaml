@@ -1,0 +1,46 @@
+{{- if .Values.networkPolicies.plain }}
+{{- /* The demo has no Cilium: plain NetworkPolicies restore a little of the platform's default-deny.
+Only ingress is restricted; runs keep their egress (GitHub and the model). */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rooms-db
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-factory-api
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-factory
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {protocol: TCP, port: 8082}
+    # The probes (startup, liveness, readiness) and the metrics are on the named port `ops` (9090):
+    # the kubelet and any scraper reach it, so no `from`.
+    - ports:
+        - {protocol: TCP, port: ops}
+    # Port 8080 (intake) is deliberately admitted by no rule: the demo configures no intake.
+{{- end }}

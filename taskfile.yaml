@@ -12,6 +12,7 @@ tasks:
       - task: crd:check
       - task: chart:check
       - task: quickstart:check
+      - task: demo:check
       - task: migrations
       - task: docs
       - task: names
@@ -129,6 +130,23 @@ tasks:
     desc: Offline drift check of the quickstart scripts against the chart (no cluster, no docker)
     cmds:
       - bash hack/quickstart/check.sh
+
+  demo:
+    desc: The Agent Factory on your laptop in one command (kind or k3d, Docker, Helm, kubectl); resumes where it stopped
+    interactive: true
+    cmds:
+      - hack/demo/up.sh
+
+  demo:down:
+    desc: Stop the demo's port-forward and delete its cluster; keeps the GitHub App unless `-- --all`
+    cmds:
+      - hack/demo/down.sh {{.CLI_ARGS}}
+
+  demo:check:
+    desc: Offline check of the demo scripts (shellcheck and the unit tests of hack/demo/lib.sh)
+    cmds:
+      - shellcheck -x hack/demo/*.sh
+      - bash hack/demo/lib_test.sh
 
   harness:test:
     desc: The agent harness image's test stage (needs docker; kept out of check, which does not)

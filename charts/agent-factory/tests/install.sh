@@ -121,6 +121,50 @@ objs=$(kubectl get all,cm,secret -A -o name) || die "kubectl could not list the 
 ! grep -E 'ciliumnetworkpolic|cert-manager' <<<"$objs" || die "a Cilium or cert-manager object exists"
 echo "ok: the cluster has none of those APIs, and the install needed none"
 
+step "plain NetworkPolicies: a run-labelled pod cannot reach rooms-db, the broker's pods can"
+kubectl -n "$NS" get networkpolicy rooms-db agent-factory-api
+# probe NAMESPACE LABELS: a short-lived pod connects to rooms-db:5432. Returns 0 when nc connected and
+# 1 when nc itself failed (refused or timed out); a kubectl or image-pull failure, where the pod never
+# printed its marker, dies instead of passing as "cannot reach".
+probe() {
+  local pod="np-probe-$RANDOM" out phase="" rc=0 _
+  kubectl -n "$1" run "$pod" --image="$PROBE_IMAGE" --restart=Never --labels="$2" \
+    --command -- sh -c "echo np-probe-started; nc -z -w 5 rooms-db.$NS.svc 5432" >/dev/null || die "kubectl could not create the probe pod in $1"
+  for _ in $(seq 60); do
+    phase=$(kubectl -n "$1" get pod "$pod" -o jsonpath='{.status.phase}') || phase=""
+    [[ $phase == Succeeded || $phase == Failed ]] && break
+    sleep 2
+  done
+  out=$(kubectl -n "$1" logs "$pod" 2>&1) || out=""
+  kubectl -n "$1" delete pod "$pod" --now --wait=false >/dev/null 2>&1 || true
+  grep -qF np-probe-started <<<"$out" || die "the probe pod in $1 did not run (phase '$phase'; image pull or kubectl failure): $out"
+  [[ $phase == Succeeded ]] || rc=1
+  return "$rc"
+}
+kubectl get ns agents >/dev/null || die "the runs namespace agents does not exist"
+# control: the broker's label from the release namespace connects (so a failure below is the policy, not DNS or the image)
+# (the policy engine syncs a new pod's labels a moment after it starts: retry the control)
+ctl=0
+for _ in 1 2 3 4 5; do
+  probe "$NS" app.kubernetes.io/name=room-broker && { ctl=1; break; }
+  sleep 3
+done
+((ctl)) || die "the control pod labelled like the broker cannot reach rooms-db:5432"
+echo "ok: a broker-labelled pod reaches rooms-db:5432"
+# a run in the runs namespace, labelled as the run controller labels it
+if probe agents agents.ogenki.io/run-id=np-probe,agents.ogenki.io/role=implementer,app.kubernetes.io/managed-by=run-controller; then
+  case "$CLUSTER_KIND" in
+    # kindnet enforces NetworkPolicy from kind v0.24; if this node does not, say so rather than fail
+    kind) echo "NOTE: kind did not enforce the NetworkPolicy here: enforcement is asserted on k3d only" ;;
+    *) die "a run-labelled pod reached rooms-db:5432 although the policy admits only the broker" ;;
+  esac
+else
+  echo "ok: a run-labelled pod in agents cannot reach rooms-db:5432 ($CLUSTER_KIND enforces NetworkPolicy)"
+fi
+kubectl get pods -A -o name | grep -F np-probe- && die "a probe pod was left behind"
+# Not asserted here: the factory's ops port (9090, probes) stays open. The factory crash-loops on the
+# dummy GitHub App, so nothing serves 9090 and a live check could not pass; render.sh asserts the rule.
+
 step "a second helm upgrade with the same values keeps the CA, the certificate and both DSNs"
 snap() {
   for s in room-broker-ca room-broker-tls rooms-broker-dsn rooms-owner-dsn; do

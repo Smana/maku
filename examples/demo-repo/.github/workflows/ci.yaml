@@ -1,0 +1,15 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions: {}
+
+# The factory's merge gate waits for this check by its name, `ci`. It checks nothing on purpose: a link
+# checker would turn this repository's own main red, because docs/guide.md carries a deliberate broken link.
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo ok

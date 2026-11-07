@@ -12,3 +12,6 @@ __pycache__/
 .claude/
 charts/agent-factory/charts/
 charts/agent-factory/Chart.lock
+# task demo: its state, kubeconfig and values file (secrets), and a local .env
+.demo/
+.env
