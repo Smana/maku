@@ -30,8 +30,12 @@ const (
 	// filedEventType marks the App's "Filed" line: a draft whose thread has one is no longer edited.
 	filedEventType = "factory_filed"
 	// maxRevisions bounds the drafts one thread can hold (each edit posts a new one).
-	maxRevisions  = 20
-	handleTimeout = 30 * time.Second
+	maxRevisions = 20
+	// threadTooLongLine is a reply's answer, with proposals on, in a thread Slack will not return
+	// whole. Unread, the thread may hold a proposal, a filed task or a fallback draft, so the line
+	// names none of them: the room page has a filed task, and a new mention starts anything else.
+	threadTooLongLine = "This thread is too long for me to read: open the task's room page from the Filed line, or start a new thread with a mention."
+	handleTimeout     = 30 * time.Second
 	// maxMetadata bounds the draft's metadata JSON, well under Slack's message-metadata cap.
 	maxMetadata    = 8 << 10
 	maxWebhookBody = 64 << 10
@@ -673,7 +677,11 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	if err != nil {
 		a.log().Warn("slack thread fetch failed", "channel", ev.Channel, "err", err)
 		if errors.Is(err, ErrThreadTooLong) {
-			if _, perr := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, "This thread is too long to edit the draft: start a new one with a mention.", nil); perr != nil {
+			line := "This thread is too long to edit the draft: start a new one with a mention."
+			if a.Proposals.Enabled {
+				line = threadTooLongLine // unread, the thread may be a proposal, a filed task or a draft
+			}
+			if _, perr := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); perr != nil {
 				return "error"
 			}
 			return "refused"

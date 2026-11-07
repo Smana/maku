@@ -1402,6 +1402,22 @@ func TestLongThreadFailsClosed(t *testing.T) {
 	}
 }
 
+// With proposals on, a thread too long to read may be a proposal, a filed one asking a question, or a
+// draft: the App cannot tell which, so its one line names none of them and says where to go instead.
+func TestLongProposalThreadSaysNoDraft(t *testing.T) {
+	rig, _, _ := proposalAt(t, 1)
+	rig.slack.seed(Message{TS: "1729.0003", ThreadTS: proposalThreadTS, User: "U0BOT", Text: "Filed #42",
+		Metadata: metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref", Room: "26zfnuxm"})})
+	rig.slack.threadErr = ErrThreadTooLong
+	rig.replySaid("U02DEF", "1729.9001", "status")
+	if p := rig.lastPost(); p.text != threadTooLongLine || strings.Contains(p.text, "draft") {
+		t.Fatalf("the reply got %q, want %q", p.text, threadTooLongLine)
+	}
+	if got := rig.metrics.count("events", "refused"); got != 1 {
+		t.Fatalf("events/refused counted %d times, want 1", got)
+	}
+}
+
 // ---- a check mark typed as a reply ----
 
 func TestCheckMarkReplyFilesTheLatestDraft(t *testing.T) {
