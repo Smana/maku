@@ -253,7 +253,19 @@ func coordinationOnce(raw []byte) error {
 // EffectivePublicOnly is PublicOnly with its default, true.
 func (c Coordination) EffectivePublicOnly() bool { return c.PublicOnly == nil || *c.PublicOnly }
 
-func (c Coordination) validate(bad func(string, ...any)) {
+// ApplyDefaults fills what a file may leave out: off and two children. The broker's config applies
+// the same, so both strict decoders read one switch (MR16).
+func (c *Coordination) ApplyDefaults() {
+	if c.Mode == "" {
+		c.Mode = CoordinationOff
+	}
+	if c.MaxChildren == 0 {
+		c.MaxChildren = coordinationMaxChildren
+	}
+}
+
+// Validate reports the block's problems through bad, the same rules for the factory and the broker.
+func (c Coordination) Validate(bad func(string, ...any)) {
 	switch c.Mode {
 	case CoordinationOff, CoordinationPlan, CoordinationExecute:
 	default:
@@ -1283,12 +1295,7 @@ func Parse(raw []byte) (*Config, error) {
 		c.Resume.MaxPerTask = defaultResumesPerTask
 	}
 	c.Scoper = c.Scoper.WithDefaults()
-	if c.Coordination.Mode == "" {
-		c.Coordination.Mode = CoordinationOff
-	}
-	if c.Coordination.MaxChildren == 0 {
-		c.Coordination.MaxChildren = coordinationMaxChildren
-	}
+	c.Coordination.ApplyDefaults()
 	if len(c.Meter.Prices) > 0 { // without prices, a tier keeps its token cap (one release of compatibility)
 		for name, t := range c.Tiers {
 			if t.RunUSD == 0 {
@@ -1408,7 +1415,7 @@ func (c *Config) EscalatedLimit() time.Duration {
 func (c *Config) Validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
-	c.Coordination.validate(bad)
+	c.Coordination.Validate(bad)
 	rs := c.Repos()
 	switch {
 	case len(rs) == 0:

@@ -132,38 +132,74 @@ type DraftQuestion struct {
 }
 
 // Usage is what the call cost, from the reply's own `usage`: the broker attributes a spend it can
-// see, and a reply without usage is refused.
+// see, and a reply without usage is refused. The planning attempt's reconciliation identifiers and
+// amounts ride along when the governed route supplies them (v4 MR4); today's gateway supplies none,
+// and a broker-side call has no AgentRun id to invent in their place.
 type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
+	AttemptID        string
+	ReservationID    string
+	SettlementID     string
+	ReservedMicroUSD int64
+	SettledMicroUSD  int64
 }
 
-// Draft is the one call: the governed request, the strict decode, and the three ways it fails. It
-// makes exactly one attempt — no retry, no fallback, no second model — because the daily cap and the
-// per-attempt accounting are the caller's, and a client that retried would spend a budget nobody
-// approved.
+// GovernedRequest is one call on the governed route for any typed output (v4 MR4): what the person
+// asked, their context, the candidate repositories the guard allowed, the classes the config defines,
+// and the system prompt naming the output's one JSON shape. DraftRequest is this with plan/v1's
+// prompt; the coordination planner is this with its own.
+type GovernedRequest struct {
+	Text         string
+	Context      string
+	Candidates   []string
+	Classes      []string
+	SystemPrompt string
+}
+
+// Draft is the one call for plan/v1: the governed request, the strict decode, and the three ways it
+// fails. It makes exactly one attempt — no retry, no fallback, no second model — because the daily
+// cap and the per-attempt accounting are the caller's, and a client that retried would spend a budget
+// nobody approved.
 func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, error) {
-	user, err := userMessage(req)
+	var d Draft
+	usage, err := m.Generate(ctx, GovernedRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
+		Classes: req.Classes, SystemPrompt: systemPrompt}, &d)
 	if err != nil {
 		return Draft{}, Usage{}, err
 	}
-	if m.HC == nil || m.URL == "" || m.Alias == "" {
-		// Nothing to call, or nowhere to call it: a configuration error, not a plan.
-		return Draft{}, Usage{}, errPlannerUnavailable("the planner's client, route or alias is unset")
+	if detail := d.invalid(); detail != "" {
+		return Draft{}, Usage{}, errPlannerInvalid(detail)
+	}
+	return d, usage, nil
+}
+
+// Generate is the governed call itself, for every typed output the route serves (CD18, v4 MR4): the
+// pinned alias, temperature 0, the token and reply bounds, the deadline, the key read at use, one
+// attempt. The answer is decoded strictly into out, unknown fields and trailing content refused, so
+// each caller's own type is its contract; the bounds of its fields are the caller's to hold.
+func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usage, error) {
+	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates, Classes: req.Classes})
+	if err != nil {
+		return Usage{}, err
+	}
+	if m.HC == nil || m.URL == "" || m.Alias == "" || strings.TrimSpace(req.SystemPrompt) == "" {
+		// Nothing to call, nowhere to call it, or no shape to ask for: a configuration error, not a plan.
+		return Usage{}, errPlannerUnavailable("the planner's client, route, alias or prompt is unset")
 	}
 	key, err := m.apiKey()
 	if err != nil {
-		return Draft{}, Usage{}, err
+		return Usage{}, err
 	}
 	payload, err := json.Marshal(chatRequest{
 		Model:          m.Alias,
 		Temperature:    0,
 		MaxTokens:      replyTokens,
 		ResponseFormat: responseFormat{Type: "json_object"},
-		Messages:       []message{{Role: "system", Content: systemPrompt}, {Role: "user", Content: user}},
+		Messages:       []message{{Role: "system", Content: req.SystemPrompt}, {Role: "user", Content: user}},
 	})
 	if err != nil {
-		return Draft{}, Usage{}, errPlannerUnavailable(fmt.Sprintf("marshal the request: %v", err))
+		return Usage{}, errPlannerUnavailable(fmt.Sprintf("marshal the request: %v", err))
 	}
 
 	deadline := m.Deadline
@@ -176,7 +212,7 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 	url := strings.TrimSuffix(m.URL, "/") + "/chat/completions"
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return Draft{}, Usage{}, errPlannerUnavailable(fmt.Sprintf("build the call: %v", err))
+		return Usage{}, errPlannerUnavailable(fmt.Sprintf("build the call: %v", err))
 	}
 	hr.Header.Set("Content-Type", "application/json")
 	hr.Header.Set("Accept", "application/json")
@@ -185,23 +221,23 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 	resp, err := m.HC.Do(hr)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
-			return Draft{}, Usage{}, errPlannerTimeout(fmt.Sprintf("the call outlived its %s deadline", deadline))
+			return Usage{}, errPlannerTimeout(fmt.Sprintf("the call outlived its %s deadline", deadline))
 		}
-		return Draft{}, Usage{}, errPlannerUnavailable(fmt.Sprintf("the call failed: %v", err))
+		return Usage{}, errPlannerUnavailable(fmt.Sprintf("the call failed: %v", err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return Draft{}, Usage{}, errPlannerUnavailable(fmt.Sprintf("the gateway answered %s", resp.Status))
+		return Usage{}, errPlannerUnavailable(fmt.Sprintf("the gateway answered %s", resp.Status))
 	}
 	body, err := httpx.ReadBody(resp.Body, maxReply)
 	if err != nil {
 		if errors.Is(err, httpx.ErrBodyTooLarge) {
-			return Draft{}, Usage{}, errPlannerInvalid(fmt.Sprintf("the reply is over the %d KiB bound, and nothing was truncated", maxReply>>10))
+			return Usage{}, errPlannerInvalid(fmt.Sprintf("the reply is over the %d KiB bound, and nothing was truncated", maxReply>>10))
 		}
-		return Draft{}, Usage{}, errPlannerUnavailable(fmt.Sprintf("read the reply: %v", err))
+		return Usage{}, errPlannerUnavailable(fmt.Sprintf("read the reply: %v", err))
 	}
-	return decodeReply(body)
+	return decodeReply(body, out)
 }
 
 // apiKey reads the planner's key at use and trims it: a file that is not there, or is empty, is a
@@ -256,41 +292,37 @@ type chatReply struct {
 	} `json:"usage"`
 }
 
-// decodeReply turns the reply body into a Draft: the envelope, the one choice, the usage the cost is
-// attributed from, then the answer itself with unknown fields refused, then the contract's bounds.
-// Every failure is ErrInvalid with the field named.
-func decodeReply(body []byte) (Draft, Usage, error) {
+// decodeReply reads the reply body into out: the envelope, the one choice, the usage the cost is
+// attributed from, then the answer itself with unknown fields refused. Every failure is ErrInvalid
+// with the field named.
+func decodeReply(body []byte, out any) (Usage, error) {
 	var reply chatReply
 	if err := json.Unmarshal(body, &reply); err != nil {
-		return Draft{}, Usage{}, errPlannerInvalid(fmt.Sprintf("the reply is not the gateway's JSON: %v", err))
+		return Usage{}, errPlannerInvalid(fmt.Sprintf("the reply is not the gateway's JSON: %v", err))
 	}
 	if n := len(reply.Choices); n != 1 {
-		return Draft{}, Usage{}, errPlannerInvalid(fmt.Sprintf("choices: %d, the reply names the one answer it composed", n))
+		return Usage{}, errPlannerInvalid(fmt.Sprintf("choices: %d, the reply names the one answer it composed", n))
 	}
 	if reply.Usage == nil {
 		// A cost the broker cannot attribute is a cost it may not spend.
-		return Draft{}, Usage{}, errPlannerInvalid("usage: the reply carries no token counts, and the broker attributes every plan's cost from them")
+		return Usage{}, errPlannerInvalid("usage: the reply carries no token counts, and the broker attributes every plan's cost from them")
 	}
 	content := reply.Choices[0].Message.Content
 	if strings.TrimSpace(content) == "" {
-		return Draft{}, Usage{}, errPlannerInvalid("choices[0].message.content: empty, the reply is the one JSON object the prompt asks for")
+		return Usage{}, errPlannerInvalid("choices[0].message.content: empty, the reply is the one JSON object the prompt asks for")
 	}
 
-	var d Draft
 	dec := json.NewDecoder(strings.NewReader(content))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&d); err != nil {
-		return Draft{}, Usage{}, errPlannerInvalid(fmt.Sprintf("the reply is not the shape the prompt asks for: %v", err))
+	if err := dec.Decode(out); err != nil {
+		return Usage{}, errPlannerInvalid(fmt.Sprintf("the reply is not the shape the prompt asks for: %v", err))
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		// Trailing content is not the one object either: a second value could carry a field the
 		// strict decode above never saw.
-		return Draft{}, Usage{}, errPlannerInvalid("the reply carries more than the one JSON object")
+		return Usage{}, errPlannerInvalid("the reply carries more than the one JSON object")
 	}
-	if detail := d.invalid(); detail != "" {
-		return Draft{}, Usage{}, errPlannerInvalid(detail)
-	}
-	return d, Usage{PromptTokens: reply.Usage.PromptTokens, CompletionTokens: reply.Usage.CompletionTokens}, nil
+	return Usage{PromptTokens: reply.Usage.PromptTokens, CompletionTokens: reply.Usage.CompletionTokens}, nil
 }
 
 // invalid is "" when the reply is the shape and the bounds the contract sets, and otherwise the field

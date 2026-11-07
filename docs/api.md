@@ -613,6 +613,7 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `needs_list` | any member; a sponsored principal, the rooms it watches | `since?`, `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. Listed only while `human.needs.enabled` serves the route. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page |
 | `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, the one question to ask first, `canStart`. One public-text-only model call; it files nothing ([the planner](#the-planner-on-mcp)) |
 | `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, `on_behalf_of?` | The plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
+| `coordination_plan` | any caller, when `human.intake.plan.enabled` and `coordination.mode` is not `off` | `text`, `candidates` (2 to 20), `primary`, `context?`, `id?`, `version?`, and a sponsored principal's `on_behalf_of` | A validated two-repository `CoordinationPlan`, its hash, diagnostics and the attempt's planning record. One call on the planner's route; it files nothing ([coordination](#coordination-on-mcp)) |
 | `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
 
 The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`, `room_brief`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
@@ -719,6 +720,30 @@ and the coding agent's `issue_file` (or the Slack proposal, later) re-validates 
 
 **For the operator:** the planner's model call is the only place the broker reaches a model; it sends
 public text only, refuses a private repository before the call, and logs the hash, never the text.
+
+### Coordination on `/mcp`
+
+`coordination_plan` (v4 MR4) plans one change across two public repositories on the planner's own
+route: the same call, the same requester resolution, the same guard and the same daily counter as
+`intake_plan`. It is listed only while `human.intake.plan.enabled` and the top-level
+`coordination.mode` is `plan` or `execute`; `off`, the default, lists nothing. The block is the
+factory's (`{mode, publicOnly: true, maxChildren: 2}`), read with the same rules, and `config.Load`
+refuses a mode other than `off` without the planner.
+
+| Step | What happens | Refusal |
+|---|---|---|
+| Arguments | Closed: no file, confirm, merge, role or budget argument | `invalid_arguments` |
+| Requester and primary | Resolved as `intake_plan` does; the requester must write `primary` | `not_linked`, `no_write`, `repository_not_allowed` |
+| Every other candidate | Served by `human.intake.plan.repositories` and public, before any text leaves | `private_repository_unsupported`, `repository_not_allowed`, `repository_unverified` |
+| Daily slot | One of `human.intake.plan.dailyPlans`, shared with `intake_plan` | `daily_plans_reached` |
+| One call | The model proposes the reading only; it may not name roles, a tier, a maintainer or money | `planner_invalid`, `planner_timeout`, `planner_unavailable` |
+| Composition | Children's roles (the class's, without `scoper`) and allocation (its ceiling) from the class table; one run is a tenth of it; planning and each of 4 integration runs cost one run of the primary's class; `coordination.Validate` in plan mode | a coordination reason, such as `policy_unresolved` or `invalid_plan`, with its field |
+
+The result is `{plan, hash, diagnostics, planning}`: `hash` is the plan's canonical SHA-256 (64 hex,
+no prefix), `diagnostics` notes an incomplete one-child draft and each maintainer proposed as the
+requester, and `planning` is `{attemptID, effectiveRequester}`. It writes nothing: no issue, Task,
+run, room, label or record. The factory re-resolves every child at its own repository's policy when
+the plan is confirmed; that, and filing, are not on `/mcp`.
 
 ### Sponsored principals on `/mcp`
 
