@@ -2,8 +2,9 @@
 
 // Package coordination is the multi-repository coordination core (v4 design MR1–MR17): one
 // confirmed change across exactly two public repositories, each child under its own repository's
-// authority. This release holds the neutral data contracts and the execute gate only; the plan,
-// its canonical hash, materiality and the controllers come later, switched off by default.
+// authority. It holds the neutral data contracts, the execute gate, the plan's strict decoding and
+// deterministic validation, its canonical hash and child fingerprints, and the fixed materiality
+// table (MR12); the planner tool and the controllers come later, switched off by default.
 package coordination
 
 import (
