@@ -121,13 +121,16 @@ type Server struct {
 	RoomctlClient func() string
 	ProjectID     func() string
 	Rooms         client.Reader
-	Namespace     string
-	Log           Log
-	Hub           Hub
-	Runs          Runs
-	Metrics       *metrics.Set
-	UI            fs.FS  // Task 2.5; nil serves 404
-	Actor         *Actor // serves act frames (phase 4); nil refuses every one
+	// FactoryPrincipal is the system principal whose task facts name a closed room's repository,
+	// once the factory has deleted its Room; "" leaves a closed room unreadable.
+	FactoryPrincipal string
+	Namespace        string
+	Log              Log
+	Hub              Hub
+	Runs             Runs
+	Metrics          *metrics.Set
+	UI               fs.FS  // Task 2.5; nil serves 404
+	Actor            *Actor // serves act frames (phase 4); nil refuses every one
 	// Identity and Access are D7's GitHub check: who the caller is on GitHub, and
 	// whether they may read a room's repository. Either nil shows rooms to admins only.
 	// SessionStart holds the repositories, lowercased owner/name, whose issue_draft says canStart
