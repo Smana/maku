@@ -1465,14 +1465,12 @@ Each `repositories` entry:
 
 #### `demo`
 
-`demo: true` labels a factory on a laptop cluster: no OIDC issuer, no metrics backend, an http
-broker, one GitHub App. Absent, every rule is production's. Under `demo: true`, `Validate`
+`demo: true` labels a factory on a laptop cluster: no OIDC issuer, no metrics backend, one
+GitHub App. The broker keeps TLS: the umbrella chart generates its CA. Absent, every rule is production's. Under `demo: true`, `Validate`
 changes exactly this:
 
 | Rule today | Under `demo: true` |
 |---|---|
-| `broker.url` must be `https://` | `http://` also accepted |
-| `broker.caFile` required | optional; with an `http` URL it must be empty |
 | `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery` required | optional. If any is set, the existing rules apply. If `meter.url` is empty, any USD cap (`meter.prices`, sponsored USD ceilings, `split.familyUSD`, tier `runUSD` or `taskUSD`) is refused: `demo: %s needs a meter, and the demo has none` |
 | `roomsURL` must be `https://` | `http://localhost[:port]` and `http://127.0.0.1[:port]` also accepted |
 | `api.humanIssuer`, `api.humanJWKS`, `api.clientIDFiles`, `api.groups.*` required | optional, and must all be empty (no group default is applied): `demo: the factory API takes no human tokens` |

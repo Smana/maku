@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// demoGood is good as a laptop demo: demo true, an http broker without a CA, no meter, no human
+// demoGood is good as a laptop demo: demo true, the broker over TLS with its CA, no meter, no human
 // API keys, the gate's verdict as a commit status and no policy-bot, the portable runs group and
 // a scoper row.
 var demoGood = func() string {
 	s := "demo: true\n" + good
 	for _, r := range [][2]string{
-		{`broker: {url: "https://room-broker.agent-system.svc.cluster.local:8443", caFile: /etc/agent-factory/openbao-ca/ca.crt, `, `broker: {url: "http://room-broker.maku.svc:8080", `},
+		{`broker: {url: "https://room-broker.agent-system.svc.cluster.local:8443", caFile: /etc/agent-factory/openbao-ca/ca.crt, `, `broker: {url: "https://room-broker.maku.svc:8443", caFile: /etc/agent-factory/broker-ca/ca.crt, `},
 		{"  policyBotLogin: ogenki-merge-gate[bot]\n", "  gateStatus: true\n  policyBot: false\n"},
 		{"  humanIssuer: https://auth.ogenki.io\n  humanJWKS: https://auth.ogenki.io/oauth/v2/keys\n  clientIDFiles: [/etc/agent-factory-oidc/rooms-proxy-client-id, /etc/agent-factory-oidc/roomctl-client-id]\n", ""},
 	} {
@@ -40,7 +40,8 @@ func TestDemoStillRefuses(t *testing.T) {
 		"a humanIssuer":          {"  repositories: [Smana/cloud-native-ref]\n", "  repositories: [Smana/cloud-native-ref]\n  humanIssuer: https://auth.ogenki.io\n", "demo: the factory API takes no human tokens"},
 		"prices without a meter": {"runs: {group", "meter: {prices: {agent-default: {input: 1, output: 2}}}\nruns: {group", "demo: meter.prices needs a meter, and the demo has none"},
 		"gateStatus false":       {"gateStatus: true", "gateStatus: false", "demo: merge.gateStatus must be true, or no gate verdict reaches the pull request"},
-		"http broker with a CA":  {`url: "http://room-broker.maku.svc:8080", `, `url: "http://room-broker.maku.svc:8080", caFile: /ca.crt, `, "demo: broker.caFile must be empty with an http broker.url"},
+		"an http broker":         {`url: "https://room-broker.maku.svc:8443"`, `url: "http://room-broker.maku.svc:8080"`, `broker.url "http://room-broker.maku.svc:8080" must be an https:// URL`},
+		"no broker.caFile":       {"caFile: /etc/agent-factory/broker-ca/ca.crt, ", "", "broker.caFile is required"},
 		"a plain roomsURL host":  {"roomsURL: https://rooms.priv.gcp.ogenki.io", "roomsURL: http://rooms.example.io", "roomsURL must be https://<host>"},
 	} {
 		t.Run(name, func(t *testing.T) {
