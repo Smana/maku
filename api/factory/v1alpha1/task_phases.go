@@ -29,6 +29,8 @@ const (
 	PhaseStopped       = "Stopped"
 	// a parent waiting on its children: neither active nor terminal (splitter design SL12)
 	PhaseSplit = "Split"
+	// a coordination parent waiting on its family: neither active nor terminal (MR2)
+	PhaseCoordinating = "Coordinating"
 )
 
 // AnnotationStop asks the factory to stop one task (§6.1): "true" set by hand, "label" set by
@@ -54,6 +56,10 @@ const LabelPublishedIssue = "agents.ogenki.io/published-issue"
 // LabelParent carries a child task's parent's name (splitter design SL14): a family's cost is a
 // selector sum, and the parent finds its children by it.
 const LabelParent = "agents.ogenki.io/parent"
+
+// LabelCoordinationParent carries a coordination child's or integration Task's parent name (MR2),
+// independent of the splitter's LabelParent so the two lineages never collide.
+const LabelCoordinationParent = "agents.ogenki.io/coordination-parent"
 
 // childOfPrefix is the GitHub label a child's issue carries, with its parent issue's number (SL8).
 const childOfPrefix = "factory/child-of:#"
@@ -95,8 +101,10 @@ func ActivePhase(p string) bool {
 
 // SpendsDailyCap reports whether t counts against the factory's daily task cap (§6.2) on now's UTC day:
 // created that day, past its first reconcile (a phase is set) and not rejected, and not an adopted pull
-// request (R39), which starts no run. The reconciler's admission and the API's refusal both read it.
+// request (R39), which starts no run, and not a coordination parent (MR2), which runs nothing itself:
+// its children and integration Tasks spend their own slots. The reconciler's admission and the API's
+// refusal both read it.
 func SpendsDailyCap(t *Task, now time.Time) bool {
-	return t.Spec.Source.Kind != "adopt" && t.Status.Phase != "" && t.Status.Phase != PhaseRejected &&
+	return t.Spec.Source.Kind != "adopt" && t.Spec.Kind != TaskKindCoordination && t.Status.Phase != "" && t.Status.Phase != PhaseRejected &&
 		t.CreationTimestamp.UTC().Format(time.DateOnly) == now.UTC().Format(time.DateOnly)
 }

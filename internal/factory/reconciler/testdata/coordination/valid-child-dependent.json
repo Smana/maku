@@ -1,0 +1,80 @@
+{
+  "description": "a dependent child given its landed artifact",
+  "want": "accept",
+  "layer": "crd",
+  "task": {
+    "apiVersion": "maku.ogenki.io/v1alpha1",
+    "kind": "Task",
+    "metadata": {
+      "name": "cfadaxyz",
+      "namespace": "agent-system",
+      "labels": {
+        "agents.ogenki.io/coordination-parent": "p4zt6wce"
+      }
+    },
+    "spec": {
+      "source": {
+        "kind": "issue",
+        "ref": "Smana/public-consumer#4",
+        "key": "Smana/public-consumer#4",
+        "requestedBy": "github:smana",
+        "trust": "untrusted",
+        "contentSHA256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "repository": "Smana/public-consumer",
+      "issue": 4,
+      "text": "Validate the consumer against the landed v1 schema.",
+      "dataClass": "public",
+      "predictedClass": "scripts",
+      "template": "pair",
+      "budget": {
+        "tier": "standard",
+        "taskMicroUSD": 5100000
+      },
+      "scope": {
+        "state": "ready",
+        "task": "Validate the consumer against the landed v1 schema.",
+        "touches": [
+          "internal/consumer"
+        ],
+        "leave": [
+          ".github"
+        ],
+        "plan": [
+          "Fetch the recorded schema commit",
+          "add the compatibility check"
+        ],
+        "acceptance": [
+          {
+            "check": "go test ./internal/consumer",
+            "proves": "The consumer accepts the v1 schema"
+          }
+        ]
+      },
+      "coordinationParent": {
+        "task": "p4zt6wce",
+        "planVersion": 3,
+        "childID": "consumer"
+      },
+      "coordinationArtifacts": [
+        {
+          "childID": "contract",
+          "name": "consumer-v1-schema",
+          "repository": "Smana/public-contracts",
+          "path": "schemas/consumer-v1.json",
+          "mergeCommitSHA": "1111111111111111111111111111111111111111",
+          "blobSHA": "3333333333333333333333333333333333333333",
+          "contentSHA256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "sizeBytes": 18234
+        }
+      ]
+    },
+    "status": {
+      "coordination": {
+        "planVersion": 3,
+        "childID": "consumer",
+        "allocationMicroUSD": 5100000
+      }
+    }
+  }
+}

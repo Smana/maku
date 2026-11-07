@@ -97,6 +97,96 @@ spec:
                     - frontier
                     type: string
                 type: object
+              coordination:
+                description: Coordination is a parent's switch values (MR1, MR16),
+                  fixed at creation.
+                properties:
+                  maxChildren:
+                    format: int32
+                    type: integer
+                    x-kubernetes-validations:
+                    - message: maxChildren is 2 in this release (MR1)
+                      rule: self == 2
+                  publicOnly:
+                    type: boolean
+                    x-kubernetes-validations:
+                    - message: publicOnly is true in this release (MR16)
+                      rule: self
+                required:
+                - maxChildren
+                - publicOnly
+                type: object
+              coordinationArtifacts:
+                description: CoordinationArtifacts are the landed references a dependent
+                  child was created with (MR7).
+                items:
+                  description: |-
+                    LandedArtifact is a produced file as read at the producer's landed merge commit: the only
+                    thing a dependency consumes (MR7).
+                  properties:
+                    blobSHA:
+                      maxLength: 40
+                      pattern: ^[0-9a-f]{40}$
+                      type: string
+                    childID:
+                      maxLength: 32
+                      type: string
+                    contentSHA256:
+                      maxLength: 64
+                      pattern: ^[0-9a-f]{64}$
+                      type: string
+                    mergeCommitSHA:
+                      maxLength: 40
+                      pattern: ^[0-9a-f]{40}$
+                      type: string
+                    name:
+                      maxLength: 64
+                      type: string
+                    path:
+                      maxLength: 512
+                      minLength: 1
+                      type: string
+                    repository:
+                      maxLength: 140
+                      pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                      type: string
+                    sizeBytes:
+                      format: int64
+                      maximum: 65536
+                      minimum: 0
+                      type: integer
+                  required:
+                  - blobSHA
+                  - childID
+                  - contentSHA256
+                  - mergeCommitSHA
+                  - name
+                  - path
+                  - repository
+                  - sizeBytes
+                  type: object
+                maxItems: 8
+                type: array
+              coordinationParent:
+                description: CoordinationParent is a child's or an integration Task's
+                  parent (MR2), fixed at creation.
+                properties:
+                  childID:
+                    maxLength: 32
+                    pattern: ^[a-z][a-z0-9-]{0,31}$
+                    type: string
+                  planVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  task:
+                    maxLength: 8
+                    pattern: ^[a-z2-7]{8}$
+                    type: string
+                required:
+                - planVersion
+                - task
+                type: object
               dataClass:
                 description: Every run of the task gets it as spec.dataClass (C3,
                   OD-13).
@@ -136,6 +226,56 @@ spec:
                   type: object
                 maxItems: 16
                 type: array
+              integration:
+                description: Integration is an integration Task's exact subjects (MR10),
+                  fixed at creation.
+                properties:
+                  planHash:
+                    maxLength: 64
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  purpose:
+                    enum:
+                    - beforeDependentMerge
+                    - final
+                    type: string
+                  subjects:
+                    items:
+                      description: |-
+                        IntegrationSubject is one child at an exact commit: a PR head before its merge, or its landed
+                        merge commit, never both.
+                      properties:
+                        childID:
+                          maxLength: 32
+                          type: string
+                        headSHA:
+                          maxLength: 40
+                          pattern: ^[0-9a-f]{40}$
+                          type: string
+                        mergeCommitSHA:
+                          maxLength: 40
+                          pattern: ^[0-9a-f]{40}$
+                          type: string
+                        repository:
+                          maxLength: 140
+                          pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                          type: string
+                      required:
+                      - childID
+                      - repository
+                      type: object
+                      x-kubernetes-validations:
+                      - message: an integration subject names exactly one of headSHA
+                          or mergeCommitSHA
+                        rule: has(self.headSHA) != has(self.mergeCommitSHA)
+                    maxItems: 2
+                    minItems: 1
+                    type: array
+                required:
+                - planHash
+                - purpose
+                - subjects
+                type: object
               issue:
                 description: The issue the factory narrates on; 0 for a task without
                   one (R28).
@@ -145,6 +285,14 @@ spec:
                 description: The issue's author on GitHub, for the room list's "mine"
                   filter.
                 maxLength: 64
+                type: string
+              kind:
+                description: |-
+                  Kind is coordination for a parent and integration for an integration attempt (MR2); absent,
+                  the Task is an ordinary work Task, a coordination child included.
+                enum:
+                - coordination
+                - integration
                 type: string
               loop:
                 description: |-
@@ -331,14 +479,16 @@ spec:
                     maxLength: 512
                     type: string
                   kind:
-                    description: 'adopt: another author''s pull request the factory
-                      decides (merge gate MC10).'
+                    description: |-
+                      adopt: another author's pull request the factory decides (merge gate MC10).
+                      coordination: a coordination parent or integration Task (MR2); a child is an issue.
                     enum:
                     - issue
                     - runlore
                     - schedule
                     - api
                     - adopt
+                    - coordination
                     type: string
                   onBehalfOf:
                     description: 'The external user a link made the sponsor (R9):
@@ -475,6 +625,57 @@ spec:
             - message: a provider judgeModel is a public task's only
               rule: '!has(self.loop) || !has(self.loop.judgeModel) || self.loop.judgeModel
                 != ''mistral-light'' || self.dataClass == ''public'''
+            - message: spec.kind is fixed at creation
+              rule: has(self.kind) == has(oldSelf.kind) && (!has(self.kind) || self.kind
+                == oldSelf.kind)
+            - message: spec.coordinationParent is fixed at creation
+              rule: has(self.coordinationParent) == has(oldSelf.coordinationParent)
+                && (!has(self.coordinationParent) || self.coordinationParent == oldSelf.coordinationParent)
+            - message: spec.coordination is fixed at creation
+              rule: has(self.coordination) == has(oldSelf.coordination) && (!has(self.coordination)
+                || self.coordination == oldSelf.coordination)
+            - message: spec.integration is fixed at creation
+              rule: has(self.integration) == has(oldSelf.integration) && (!has(self.integration)
+                || self.integration == oldSelf.integration)
+            - message: spec.coordinationArtifacts are fixed at creation
+              rule: has(self.coordinationArtifacts) == has(oldSelf.coordinationArtifacts)
+                && (!has(self.coordinationArtifacts) || self.coordinationArtifacts
+                == oldSelf.coordinationArtifacts)
+            - message: a coordination or integration task, and only one, has source
+                kind coordination (MR2)
+              rule: has(self.kind) == (self.source.kind == 'coordination')
+            - message: a coordination parent, and only one, has spec.coordination
+              rule: has(self.coordination) == (has(self.kind) && self.kind == 'coordination')
+            - message: an integration task, and only one, has spec.integration
+              rule: has(self.integration) == (has(self.kind) && self.kind == 'integration')
+            - message: a coordination parent has no template, tier or implementation
+                budget (MR2)
+              rule: '!has(self.kind) || self.kind != ''coordination'' || (!has(self.template)
+                && (!has(self.budget) || (!has(self.budget.tier) && !has(self.budget.model)
+                && !has(self.budget.runTokens) && !has(self.budget.taskTokens) &&
+                !has(self.budget.runMinutes) && !has(self.budget.runMicroUSD) && !has(self.budget.taskMicroUSD))))'
+            - message: a coordination parent has no lineage or scope of its own (MR2)
+              rule: '!has(self.kind) || self.kind != ''coordination'' || (!has(self.coordinationParent)
+                && !has(self.parent) && !has(self.split) && !has(self.scope))'
+            - message: a coordination child names its childID
+              rule: '!has(self.coordinationParent) || has(self.kind) || has(self.coordinationParent.childID)'
+            - message: 'a coordination child is never a splitter part: no spec.parent,
+                no spec.split (MR2)'
+              rule: '!has(self.coordinationParent) || has(self.kind) || (!has(self.parent)
+                && !has(self.split))'
+            - message: a coordination child is an issue task
+              rule: '!has(self.coordinationParent) || has(self.kind) || self.source.kind
+                == ''issue'''
+            - message: an integration task names its parent and no childID (MR10)
+              rule: '!has(self.kind) || self.kind != ''integration'' || (has(self.coordinationParent)
+                && !has(self.coordinationParent.childID) && !has(self.parent) && !has(self.split)
+                && !has(self.scope))'
+            - message: only a coordination child consumes landed artifacts (MR7)
+              rule: '!has(self.coordinationArtifacts) || (has(self.coordinationParent)
+                && !has(self.kind))'
+            - message: a coordination family is public only (MR16)
+              rule: (!has(self.kind) && !has(self.coordinationParent)) || self.dataClass
+                == 'public'
           status:
             description: |-
               TaskStatus is the task's audit record: the whole §4 record, including the fields later
@@ -584,6 +785,843 @@ spec:
                 - ids
                 - runId
                 type: object
+              coordination:
+                description: Coordination is a parent's family record or a child's
+                  lineage (MR2).
+                properties:
+                  acceptance:
+                    description: The final integration that let the parent be Done
+                      (MR10).
+                    properties:
+                      acceptedAt:
+                        format: date-time
+                        type: string
+                      integrationTask:
+                        maxLength: 8
+                        pattern: ^[a-z2-7]{8}$
+                        type: string
+                      manifestHash:
+                        maxLength: 64
+                        pattern: ^[0-9a-f]{64}$
+                        type: string
+                    required:
+                    - acceptedAt
+                    - integrationTask
+                    - manifestHash
+                    type: object
+                  allocationMicroUSD:
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  artifacts:
+                    items:
+                      description: |-
+                        LandedArtifact is a produced file as read at the producer's landed merge commit: the only
+                        thing a dependency consumes (MR7).
+                      properties:
+                        blobSHA:
+                          maxLength: 40
+                          pattern: ^[0-9a-f]{40}$
+                          type: string
+                        childID:
+                          maxLength: 32
+                          type: string
+                        contentSHA256:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                        mergeCommitSHA:
+                          maxLength: 40
+                          pattern: ^[0-9a-f]{40}$
+                          type: string
+                        name:
+                          maxLength: 64
+                          type: string
+                        path:
+                          maxLength: 512
+                          minLength: 1
+                          type: string
+                        repository:
+                          maxLength: 140
+                          pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                          type: string
+                        sizeBytes:
+                          format: int64
+                          maximum: 65536
+                          minimum: 0
+                          type: integer
+                      required:
+                      - blobSHA
+                      - childID
+                      - contentSHA256
+                      - mergeCommitSHA
+                      - name
+                      - path
+                      - repository
+                      - sizeBytes
+                      type: object
+                    maxItems: 16
+                    type: array
+                  authorizations:
+                    items:
+                      description: |-
+                        ChildAuthorization is a child repository's linked maintainer authorizing one child fingerprint,
+                        with the write permission and fence read at that time (MR5, MR6).
+                      properties:
+                        actor:
+                          maxLength: 128
+                          type: string
+                        childFingerprint:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                        childID:
+                          maxLength: 32
+                          type: string
+                        confirmedAt:
+                          format: date-time
+                          type: string
+                        fenceSHA:
+                          description: The repository's fence file blob on its default
+                            branch when they authorized.
+                          maxLength: 40
+                          pattern: ^[0-9a-f]{40}$
+                          type: string
+                        permission:
+                          description: The maintainer's GitHub permission on Repository
+                            when they authorized.
+                          enum:
+                          - write
+                          - maintain
+                          - admin
+                          type: string
+                        planVersion:
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        repository:
+                          maxLength: 140
+                          pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                          type: string
+                      required:
+                      - actor
+                      - childFingerprint
+                      - childID
+                      - confirmedAt
+                      - fenceSHA
+                      - permission
+                      - planVersion
+                      - repository
+                      type: object
+                    maxItems: 16
+                    type: array
+                  budget:
+                    description: |-
+                      CoordinationBudgetStatus is the family's confirmed lifetime ceiling and its static allocations
+                      (MR8); per-run spend stays on the ledger and the runs.
+                    properties:
+                      allocatedMicroUSD:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      planningMicroUSD:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      totalMicroUSD:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    required:
+                    - allocatedMicroUSD
+                    - planningMicroUSD
+                    - totalMicroUSD
+                    type: object
+                  childID:
+                    maxLength: 32
+                    pattern: ^[a-z][a-z0-9-]{0,31}$
+                    type: string
+                  children:
+                    items:
+                      description: 'CoordinationChildStatus is a parent''s lineage
+                        record of one child: its newest generation.'
+                      properties:
+                        allocationMicroUSD:
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        fingerprint:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                        generation:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        id:
+                          maxLength: 32
+                          type: string
+                        integrationRelease:
+                          description: |-
+                            IntegrationRelease is a passing integration's release of one exact dependent head to that
+                            repository's own gate. A head change makes it stale; it is never a merge approval (MR9).
+                          properties:
+                            childID:
+                              maxLength: 32
+                              type: string
+                            headSHA:
+                              maxLength: 40
+                              pattern: ^[0-9a-f]{40}$
+                              type: string
+                            integrationTask:
+                              maxLength: 8
+                              pattern: ^[a-z2-7]{8}$
+                              type: string
+                            manifestHash:
+                              maxLength: 64
+                              pattern: ^[0-9a-f]{64}$
+                              type: string
+                          required:
+                          - childID
+                          - headSHA
+                          - integrationTask
+                          - manifestHash
+                          type: object
+                        issue:
+                          minimum: 0
+                          type: integer
+                        phase:
+                          maxLength: 32
+                          type: string
+                        reason:
+                          maxLength: 64
+                          type: string
+                        repository:
+                          maxLength: 140
+                          pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                          type: string
+                        task:
+                          maxLength: 8
+                          pattern: ^[a-z2-7]{8}$
+                          type: string
+                      required:
+                      - id
+                      - repository
+                      type: object
+                    maxItems: 2
+                    type: array
+                  confirmations:
+                    items:
+                      description: |-
+                        ParentConfirmation is a primary maintainer's confirmation of one plan hash. It authorizes no
+                        child (MR5).
+                      properties:
+                        actor:
+                          description: The authenticated principal that confirmed.
+                          maxLength: 128
+                          type: string
+                        confirmedAt:
+                          format: date-time
+                          type: string
+                        linkedGitHubLogin:
+                          maxLength: 39
+                          pattern: ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$
+                          type: string
+                        planHash:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                      required:
+                      - actor
+                      - confirmedAt
+                      - linkedGitHubLogin
+                      - planHash
+                      type: object
+                    maxItems: 16
+                    type: array
+                  history:
+                    description: The accepted versions, newest last; full snapshots
+                      are reposted on the parent issue.
+                    items:
+                      description: CoordinationPlanVersion is one accepted plan version.
+                      properties:
+                        acceptedAt:
+                          format: date-time
+                          type: string
+                        planHash:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                        version:
+                          format: int32
+                          minimum: 1
+                          type: integer
+                      required:
+                      - acceptedAt
+                      - planHash
+                      - version
+                      type: object
+                    maxItems: 16
+                    type: array
+                  incidents:
+                    items:
+                      description: |-
+                        CoordinationIncident is a child's revert after its parent is Done: recorded, never reopening
+                        the parent (MR11).
+                      properties:
+                        at:
+                          format: date-time
+                          type: string
+                        childID:
+                          maxLength: 32
+                          type: string
+                        mergeCommitSHA:
+                          maxLength: 40
+                          pattern: ^[0-9a-f]{40}$
+                          type: string
+                        reason:
+                          maxLength: 64
+                          type: string
+                      required:
+                      - at
+                      - childID
+                      - reason
+                      type: object
+                    maxItems: 4
+                    type: array
+                  integrationAcceptedHead:
+                    description: 'The head integration last accepted for this child:
+                      stale once the PR head moves (MR9).'
+                    maxLength: 40
+                    pattern: ^[0-9a-f]{40}$
+                    type: string
+                  integrationAttempts:
+                    items:
+                      description: IntegrationAttempt is a parent's record of one
+                        integration Task.
+                      properties:
+                        costMicroUSD:
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        manifestHash:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                        planHash:
+                          maxLength: 64
+                          pattern: ^[0-9a-f]{64}$
+                          type: string
+                        purpose:
+                          enum:
+                          - beforeDependentMerge
+                          - final
+                          type: string
+                        reason:
+                          maxLength: 64
+                          type: string
+                        runMicroUSD:
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        state:
+                          enum:
+                          - pending
+                          - passed
+                          - failed
+                          type: string
+                        subjects:
+                          items:
+                            description: |-
+                              IntegrationSubject is one child at an exact commit: a PR head before its merge, or its landed
+                              merge commit, never both.
+                            properties:
+                              childID:
+                                maxLength: 32
+                                type: string
+                              headSHA:
+                                maxLength: 40
+                                pattern: ^[0-9a-f]{40}$
+                                type: string
+                              mergeCommitSHA:
+                                maxLength: 40
+                                pattern: ^[0-9a-f]{40}$
+                                type: string
+                              repository:
+                                maxLength: 140
+                                pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                                type: string
+                            required:
+                            - childID
+                            - repository
+                            type: object
+                            x-kubernetes-validations:
+                            - message: an integration subject names exactly one of
+                                headSHA or mergeCommitSHA
+                              rule: has(self.headSHA) != has(self.mergeCommitSHA)
+                          maxItems: 2
+                          type: array
+                        task:
+                          maxLength: 8
+                          pattern: ^[a-z2-7]{8}$
+                          type: string
+                      required:
+                      - planHash
+                      - purpose
+                      - state
+                      - subjects
+                      - task
+                      type: object
+                    maxItems: 16
+                    type: array
+                  mergeOrder:
+                    description: The child ids in the order their pull requests landed.
+                    items:
+                      maxLength: 32
+                      type: string
+                    maxItems: 2
+                    type: array
+                  pendingGenerations:
+                    description: |-
+                      Affected generations waiting for their old generation to stop and its reservation to be
+                      accounted before a replacement starts.
+                    items:
+                      description: PendingGeneration is one affected child's replacement
+                        barrier after a material edit.
+                      properties:
+                        childID:
+                          maxLength: 32
+                          type: string
+                        generation:
+                          description: The generation waiting to start.
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        planVersion:
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        stoppingTask:
+                          description: The old generation's Task, stopping.
+                          maxLength: 8
+                          pattern: ^[a-z2-7]{8}$
+                          type: string
+                      required:
+                      - childID
+                      - generation
+                      - planVersion
+                      type: object
+                    maxItems: 2
+                    type: array
+                  plan:
+                    description: The current full plan snapshot.
+                    properties:
+                      apiVersion:
+                        enum:
+                        - maku.ogenki.io/v1alpha1
+                        type: string
+                      budget:
+                        description: CoordinationPlanBudget is the family's planning
+                          allocation and lifetime ceiling (MR8).
+                        properties:
+                          planningMicroUSD:
+                            format: int64
+                            maximum: 1000000000
+                            minimum: 0
+                            type: integer
+                          totalMicroUSD:
+                            format: int64
+                            maximum: 1000000000
+                            minimum: 0
+                            type: integer
+                        required:
+                        - planningMicroUSD
+                        - totalMicroUSD
+                        type: object
+                      children:
+                        description: At most two children (MR1); a plan-mode draft
+                          may hold one.
+                        items:
+                          description: |-
+                            CoordinationChild is one repository-local change of the plan, with its own maintainer,
+                            resolved class, roles and lifetime allocation (MR5, MR8).
+                          properties:
+                            budgetMicroUSD:
+                              description: The lifetime allocation across every generation
+                                and retry of the child (MR8).
+                              format: int64
+                              maximum: 1000000000
+                              minimum: 0
+                              type: integer
+                            class:
+                              description: Resolved from the repository's own allowance,
+                                never declared by the plan.
+                              maxLength: 64
+                              type: string
+                            consumes:
+                              items:
+                                description: ArtifactConsumer names a producer child's
+                                  artifact this child requires (MR7).
+                                properties:
+                                  artifact:
+                                    maxLength: 64
+                                    type: string
+                                  from:
+                                    maxLength: 32
+                                    type: string
+                                  required:
+                                    type: boolean
+                                required:
+                                - artifact
+                                - from
+                                - required
+                                type: object
+                              maxItems: 8
+                              type: array
+                            dependsOn:
+                              description: The child ids whose landing orders this
+                                child's admission (MR7).
+                              items:
+                                maxLength: 32
+                                type: string
+                              maxItems: 1
+                              type: array
+                            id:
+                              maxLength: 32
+                              pattern: ^[a-z][a-z0-9-]{0,31}$
+                              type: string
+                            maintainer:
+                              description: The linked maintainer who authorizes this
+                                child, github:<login> (MR5).
+                              maxLength: 46
+                              pattern: ^github:[A-Za-z0-9][A-Za-z0-9-]{0,38}$
+                              type: string
+                            produces:
+                              items:
+                                description: ArtifactSpec is a file a child produces,
+                                  consumable only at its landed merge commit (MR7).
+                                properties:
+                                  kind:
+                                    description: The only initial artifact kind.
+                                    enum:
+                                    - file
+                                    type: string
+                                  maxBytes:
+                                    format: int64
+                                    maximum: 65536
+                                    minimum: 1
+                                    type: integer
+                                  mediaType:
+                                    maxLength: 128
+                                    type: string
+                                  name:
+                                    maxLength: 64
+                                    pattern: ^[a-z][a-z0-9-]{0,63}$
+                                    type: string
+                                  path:
+                                    maxLength: 512
+                                    minLength: 1
+                                    type: string
+                                required:
+                                - kind
+                                - maxBytes
+                                - name
+                                - path
+                                type: object
+                              maxItems: 8
+                              type: array
+                            rationale:
+                              maxLength: 1024
+                              type: string
+                            repository:
+                              maxLength: 140
+                              pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                              type: string
+                            roles:
+                              description: Derived from the class's harness, in its
+                                order.
+                              items:
+                                enum:
+                                - implementer
+                                - reviewer
+                                - tester
+                                - triager
+                                type: string
+                              maxItems: 4
+                              minItems: 1
+                              type: array
+                            scope:
+                              description: |-
+                                TaskScope mirrors envelope.Scope, with its bounds, in state ready (a part never asks): the CRD
+                                cannot import the envelope.
+                              properties:
+                                acceptance:
+                                  items:
+                                    description: TaskAcceptance is one acceptance
+                                      check of a part.
+                                    properties:
+                                      check:
+                                        maxLength: 300
+                                        minLength: 1
+                                        type: string
+                                      proves:
+                                        maxLength: 200
+                                        minLength: 1
+                                        type: string
+                                    required:
+                                    - check
+                                    - proves
+                                    type: object
+                                  maxItems: 5
+                                  minItems: 1
+                                  type: array
+                                assumptions:
+                                  items:
+                                    maxLength: 300
+                                    type: string
+                                  maxItems: 5
+                                  type: array
+                                leave:
+                                  items:
+                                    maxLength: 200
+                                    type: string
+                                  maxItems: 10
+                                  type: array
+                                plan:
+                                  items:
+                                    maxLength: 300
+                                    type: string
+                                  maxItems: 7
+                                  minItems: 1
+                                  type: array
+                                state:
+                                  enum:
+                                  - ready
+                                  type: string
+                                task:
+                                  maxLength: 1000
+                                  minLength: 1
+                                  type: string
+                                touches:
+                                  items:
+                                    maxLength: 200
+                                    type: string
+                                  maxItems: 10
+                                  minItems: 1
+                                  type: array
+                              required:
+                              - acceptance
+                              - plan
+                              - state
+                              - task
+                              - touches
+                              type: object
+                            tier:
+                              enum:
+                              - light
+                              - standard
+                              - frontier
+                              type: string
+                          required:
+                          - budgetMicroUSD
+                          - class
+                          - id
+                          - maintainer
+                          - repository
+                          - roles
+                          - scope
+                          - tier
+                          type: object
+                          x-kubernetes-validations:
+                          - message: an artifact name is unique within its child
+                            rule: '!has(self.produces) || self.produces.all(a, self.produces.exists_one(b,
+                              b.name == a.name))'
+                        maxItems: 2
+                        minItems: 1
+                        type: array
+                      id:
+                        description: The stable draft and parent Task id, a C2 id.
+                        maxLength: 8
+                        pattern: ^[a-z2-7]{8}$
+                        type: string
+                      integration:
+                        description: |-
+                          IntegrationPlan is the family's read-only acceptance, run by triager in the primary
+                          repository (MR10, MR17).
+                        properties:
+                          acceptance:
+                            items:
+                              description: TaskAcceptance is one acceptance check
+                                of a part.
+                              properties:
+                                check:
+                                  maxLength: 300
+                                  minLength: 1
+                                  type: string
+                                proves:
+                                  maxLength: 200
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - check
+                              - proves
+                              type: object
+                            maxItems: 5
+                            minItems: 1
+                            type: array
+                          beforeDependents:
+                            description: |-
+                              Nil is true: a dependent merge waits for a passing integration (MR9). Read it through
+                              EffectiveBeforeDependents.
+                            type: boolean
+                          beforeDependentsRationale:
+                            maxLength: 1024
+                            type: string
+                          maxRuns:
+                            format: int32
+                            maximum: 16
+                            minimum: 1
+                            type: integer
+                          role:
+                            enum:
+                            - triager
+                            type: string
+                          runMicroUSD:
+                            format: int64
+                            maximum: 1000000000
+                            minimum: 0
+                            type: integer
+                        required:
+                        - acceptance
+                        - maxRuns
+                        - role
+                        - runMicroUSD
+                        type: object
+                        x-kubernetes-validations:
+                        - message: 'beforeDependents: false needs a rationale'
+                          rule: '!has(self.beforeDependents) || self.beforeDependents
+                            || (has(self.beforeDependentsRationale) && size(self.beforeDependentsRationale)
+                            > 0)'
+                      kind:
+                        enum:
+                        - CoordinationPlan
+                        type: string
+                      mergeOrder:
+                        description: The child ids in merge order.
+                        items:
+                          maxLength: 32
+                          type: string
+                        maxItems: 2
+                        type: array
+                      primary:
+                        description: |-
+                          CoordinationPrimary is the user-confirmed primary repository: a child's, where the parent issue
+                          and the integration check live (MR3). Changing it starts a new parent.
+                        properties:
+                          rationale:
+                            maxLength: 1024
+                            type: string
+                          repository:
+                            maxLength: 140
+                            pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                            type: string
+                        required:
+                        - repository
+                        type: object
+                      title:
+                        maxLength: 200
+                        minLength: 1
+                        type: string
+                      version:
+                        description: Strictly +1 per accepted edit.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - apiVersion
+                    - budget
+                    - children
+                    - id
+                    - integration
+                    - kind
+                    - primary
+                    - title
+                    - version
+                    type: object
+                    x-kubernetes-validations:
+                    - message: primary.repository is one child repository (MR3)
+                      rule: self.children.exists(c, c.repository == self.primary.repository)
+                    - message: a child id is unique
+                      rule: self.children.all(a, self.children.exists_one(b, b.id
+                        == a.id))
+                    - message: a repository holds one child (MR1)
+                      rule: self.children.all(a, self.children.exists_one(b, b.repository
+                        == a.repository))
+                    - message: mergeOrder names only children
+                      rule: '!has(self.mergeOrder) || self.mergeOrder.all(id, self.children.exists(c,
+                        c.id == id))'
+                  planHash:
+                    maxLength: 64
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  planVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  recovery:
+                    description: |-
+                      RecoveryProposal is the one deterministic next action a failure proposes, never a playbook
+                      and never executed by the parent (MR11).
+                    properties:
+                      childID:
+                        maxLength: 32
+                        type: string
+                      code:
+                        enum:
+                        - retry_child
+                        - resume_child
+                        - revise_plan
+                        - increase_budget
+                        - retry_producer
+                        - retry_dependent
+                        - retry_integration
+                        - rerun_integration
+                        - authorize_child
+                        type: string
+                      createdAt:
+                        format: date-time
+                        type: string
+                      integrationTask:
+                        maxLength: 8
+                        pattern: ^[a-z2-7]{8}$
+                        type: string
+                      planVersion:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      reason:
+                        maxLength: 64
+                        type: string
+                      requiresConfirmation:
+                        type: boolean
+                    required:
+                    - code
+                    - createdAt
+                    - planVersion
+                    - reason
+                    - requiresConfirmation
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: a child's status.coordination is lineage only
+                  rule: '!has(self.childID) || (!has(self.plan) && !has(self.planHash)
+                    && !has(self.history) && !has(self.confirmations) && !has(self.authorizations)
+                    && !has(self.budget) && !has(self.children) && !has(self.artifacts)
+                    && !has(self.integrationAttempts) && !has(self.mergeOrder) &&
+                    !has(self.acceptance) && !has(self.recovery) && !has(self.incidents)
+                    && !has(self.pendingGenerations))'
+                - message: an allocation and an accepted head are a child's
+                  rule: has(self.childID) || (!has(self.allocationMicroUSD) && !has(self.integrationAcceptedHead))
               facts:
                 description: 'The task facts last written to the room: their seq comes
                   from the roomSeq ledger (ruling SK).'
@@ -840,6 +1878,7 @@ spec:
                 - Closed
                 - Stopped
                 - Split
+                - Coordinating
                 type: string
               phaseSince:
                 format: date-time
@@ -990,6 +2029,25 @@ spec:
               reason:
                 maxLength: 1024
                 type: string
+              result:
+                description: Result is an integration Task's outcome (MR10).
+                properties:
+                  manifestHash:
+                    maxLength: 64
+                    pattern: ^[0-9a-f]{64}$
+                    type: string
+                  reason:
+                    maxLength: 64
+                    type: string
+                  state:
+                    enum:
+                    - pending
+                    - passed
+                    - failed
+                    type: string
+                required:
+                - state
+                type: object
               resumes:
                 description: |-
                   Automatic resumes of runs lost to their infrastructure (disruption design §4), every role
@@ -1301,6 +2359,29 @@ spec:
         x-kubernetes-validations:
         - message: 'a Task is named with a C2 id: 8 characters of [a-z2-7]'
           rule: self.metadata.name.matches('^[a-z2-7]{8}$')
+        - message: a coordination parent has no run, pull request, next role or next
+            trigger (MR2)
+          rule: '!has(self.spec.kind) || self.spec.kind != ''coordination'' || !has(self.status)
+            || (!has(self.status.nextRole) && !has(self.status.nextTrigger) && !has(self.status.pullRequest)
+            && !has(self.status.runs))'
+        - message: an integration task has no implementation pull request (MR10)
+          rule: '!has(self.spec.kind) || self.spec.kind != ''integration'' || !has(self.status)
+            || !has(self.status.pullRequest)'
+        - message: an integration task runs only triager (MR10, MR17)
+          rule: '!has(self.spec.kind) || self.spec.kind != ''integration'' || !has(self.status)
+            || !has(self.status.runs) || self.status.runs.all(r, r.role == ''triager'')'
+        - message: only a coordination parent is Coordinating
+          rule: '!has(self.status) || !has(self.status.phase) || self.status.phase
+            != ''Coordinating'' || (has(self.spec.kind) && self.spec.kind == ''coordination'')'
+        - message: status.coordination is a parent's record, or a child's lineage
+            under its own childID
+          rule: '!has(self.status) || !has(self.status.coordination) || (has(self.status.coordination.childID)
+            ? (!has(self.spec.kind) && has(self.spec.coordinationParent) && has(self.spec.coordinationParent.childID)
+            && self.status.coordination.childID == self.spec.coordinationParent.childID)
+            : (has(self.spec.kind) && self.spec.kind == ''coordination''))'
+        - message: status.result is an integration task's
+          rule: '!has(self.status) || !has(self.status.result) || (has(self.spec.kind)
+            && self.spec.kind == ''integration'')'
     served: true
     storage: true
     subresources:
