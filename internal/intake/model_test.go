@@ -478,3 +478,57 @@ func TestTheAllowedClassesReachThePrompt(t *testing.T) {
 		}
 	}
 }
+
+// MR4, CD18: the coordination planner is a second typed output of the one governed call, not a second
+// route. Generate sends the caller's system prompt through the same alias, key, bounds and deadline,
+// decodes the answer strictly into the caller's own type, and makes exactly one attempt.
+func TestCoordinationModelRouteIsTheGovernedCall(t *testing.T) {
+	type answer struct {
+		Title string `json:"title"`
+	}
+	f := fakeGateway(t, replyBody(`{"title":"two repositories"}`))
+	m := modelFor(f)
+	var out answer
+	usage, err := m.Generate(t.Context(), intake.GovernedRequest{Text: "add and consume the v1 schema",
+		Candidates: []string{"smana/public-contracts", "smana/public-consumer"}, SystemPrompt: "COORDINATION PROMPT"}, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Title != "two repositories" || usage.PromptTokens != 120 || usage.CompletionTokens != 340 {
+		t.Fatalf("%+v %+v", out, usage)
+	}
+	if got := f.header("Authorization"); got != "Bearer "+plannerKey {
+		t.Fatalf("authorization: %q", got)
+	}
+	body := f.body()
+	if body["model"] != "tier-frontier" || body["temperature"] != float64(0) || body["max_tokens"] != float64(4000) {
+		t.Fatalf("%v", body)
+	}
+	msgs, _ := body["messages"].([]any)
+	if len(msgs) != 2 || msgs[0].(map[string]any)["content"] != "COORDINATION PROMPT" {
+		t.Fatalf("the caller's system prompt is the one sent: %v", msgs)
+	}
+	if f.n() != 1 {
+		t.Fatalf("%d calls", f.n())
+	}
+
+	// The strict decode is the caller's type: a field it does not declare is planner_invalid, whole.
+	g := fakeGateway(t, replyBody(`{"title":"x","roles":["admin"]}`))
+	gm := modelFor(g)
+	if _, err := gm.Generate(t.Context(), intake.GovernedRequest{Text: "x", Candidates: []string{"a/b"}, SystemPrompt: "P"}, &out); !errors.Is(err, intake.ErrInvalid) || g.n() != 1 {
+		t.Fatalf("%v after %d calls", err, g.n())
+	}
+	// No prompt is no governed request: refused before the call.
+	h := fakeGateway(t, okReply)
+	hm := modelFor(h)
+	if _, err := hm.Generate(t.Context(), intake.GovernedRequest{Text: "x", Candidates: []string{"a/b"}}, &out); !errors.Is(err, intake.ErrUnavailable) || h.n() != 0 {
+		t.Fatalf("%v after %d calls", err, h.n())
+	}
+	// The deadline ends the call as it ends Draft's: planner_timeout, never a hang.
+	slowGW := fakeGateway(t, okReply, slow(5*time.Second))
+	sm := modelFor(slowGW)
+	start := time.Now()
+	if _, err := sm.Generate(t.Context(), intake.GovernedRequest{Text: "x", Candidates: []string{"a/b"}, SystemPrompt: "P"}, &out); !errors.Is(err, intake.ErrTimeout) || time.Since(start) > 2*time.Second {
+		t.Fatalf("%v after %s", err, time.Since(start))
+	}
+}

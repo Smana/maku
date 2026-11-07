@@ -887,3 +887,44 @@ func TestRoomToolsAuth(t *testing.T) {
 		})
 	}
 }
+
+// v4 MR16: the broker reads the same coordination switch as the factory, strictly and with the same
+// defaults: off, public only, two children. A mode other than off needs the planner it plans through.
+func TestCoordinationConfig(t *testing.T) {
+	cfg, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := cfg.Coordination; c.Mode != "off" || c.MaxChildren != 2 || !c.EffectivePublicOnly() {
+		t.Fatalf("omitted: %+v", c)
+	}
+	planner := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n" +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
+		"      repositories: [Smana/a, Smana/b]\n" +
+		"      classes:\n        scripts: {roles: [implementer, reviewer], ceilingUSD: 5.1, source: class:scripts.taskUSD}\n"
+	for _, mode := range []string{"plan", "execute", "off"} {
+		cfg, err := Load(write(t, planner+"coordination:\n  mode: "+mode+"\n  publicOnly: true\n  maxChildren: 2\n"))
+		if err != nil || cfg.Coordination.Mode != mode {
+			t.Fatalf("%s: %+v %v", mode, cfg.Coordination, err)
+		}
+	}
+	for name, body := range map[string]string{
+		"a mode that is none":         planner + "coordination:\n  mode: bogus\n",
+		"one child":                   planner + "coordination:\n  mode: plan\n  maxChildren: 1\n",
+		"three children":              planner + "coordination:\n  mode: plan\n  maxChildren: 3\n",
+		"private repositories":        planner + "coordination:\n  mode: plan\n  publicOnly: false\n",
+		"an unknown key":              planner + "coordination:\n  mode: plan\n  slack: true\n",
+		"a key written twice":         planner + "coordination:\n  mode: plan\n  mode: off\n",
+		"the block written twice":     planner + "coordination:\n  mode: plan\ncoordination:\n  mode: off\n",
+		"plan without the planner":    valid + "coordination:\n  mode: plan\n",
+		"execute without the planner": valid + "coordination:\n  mode: execute\n",
+	} {
+		if _, err := Load(write(t, body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if !strings.Contains(err.Error(), "coordination") && !strings.Contains(err.Error(), "duplicate") &&
+			!strings.Contains(err.Error(), "already set") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

@@ -151,6 +151,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 		// The planner's tools exist only when the switch that would serve them does: a list
 		// advertising a tool the broker refuses is worse than a short list.
 		all = append(all, s.intakeTools()...)
+		// coordination_plan plans through the same route, so it exists only beside it, and only while
+		// the coordination switch is not off (v4 MR16).
+		if s.Coordination.on() {
+			all = append(all, s.coordinationTool())
+		}
 	}
 	// room_brief is the human list's last, needs_list's neighbour: the brief is a developer's resume of
 	// their own work (CD11), and a sponsored principal has no developer whose work it resumes (R13), so it
@@ -186,10 +191,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 }
 
 // sponsoredTools are a sponsored principal's tools besides run_create (R13, which mcpTools lists first), in tools/list order:
-// the draft check, the planner's two doors, the reads of its own tasks' rooms, and needs_list — the one
+// the draft check, the planner's two doors and coordination_plan, the reads of its own tasks' rooms, and needs_list — the one
 // room-scoped read, which lists what the room has to act on with a link and no decision (CD28). The two
 // legacy room reads stay need-free.
-var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck}
+var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
+	mcpwire.CoordinationPlan}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
 // the bearer is one of theirs. Its expiry is checked as a human's is.

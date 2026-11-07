@@ -68,6 +68,10 @@ type fakeIntake struct {
 	now     time.Time
 	reply   []byte
 	prompts []string
+	// coordReply answers a call made with coordination_plan's system prompt, so one gateway serves
+	// both tools, as the one governed route does; delay makes every answer late.
+	coordReply []byte
+	delay      time.Duration
 }
 
 func newFakeIntake(t *testing.T, surface string, at time.Time) *fakeIntake {
@@ -87,8 +91,18 @@ func newFakeIntake(t *testing.T, surface string, at time.Time) *fakeIntake {
 		f.mu.Lock()
 		f.n++
 		f.prompts = append(f.prompts, userTurn(raw))
-		status, reply := f.status, f.reply
+		status, reply, delay := f.status, f.reply, f.delay
+		if f.coordReply != nil && strings.Contains(string(raw), "You plan one coherent change") {
+			reply = f.coordReply
+		}
 		f.mu.Unlock()
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-r.Context().Done():
+				return
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = w.Write(reply)

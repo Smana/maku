@@ -21,6 +21,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
 	"github.com/Smana/maku/internal/webhook"
@@ -482,6 +483,9 @@ type Config struct {
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Webhooks are the subscribers to room events (factory interfaces F6).
 	Webhooks []WebhookConfig `json:"webhooks,omitempty"`
+	// Coordination is the factory's multi-repository switch, read here with the factory's own type
+	// and rules (v4 MR16): coordination_plan is listed only while it is not off.
+	Coordination fconfig.Coordination `json:"coordination,omitzero"`
 }
 
 // WebhookConfig is one subscriber (factory interfaces F6, O7): declared here because subscribers
@@ -621,6 +625,7 @@ func (c *Config) ApplyDefaults() {
 		c.TLS.KeyFile = DefaultKeyFile
 	}
 	c.Runs = c.Runs.WithDefaults()
+	c.Coordination.ApplyDefaults()
 	if c.Suspend.After.Duration == 0 {
 		c.Suspend.After.Duration = DefaultSuspendAfter
 	}
@@ -696,6 +701,12 @@ func (c *Config) Validate() error {
 	seen := map[string]bool{}
 	for i, w := range c.Webhooks {
 		errs = append(errs, w.validate(i, seen)...)
+	}
+	c.Coordination.Validate(func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) })
+	if c.Coordination.Mode != fconfig.CoordinationOff && !c.Human.Intake.Plan.Enabled {
+		// coordination_plan plans through the governed intake route: a switch on with no route is a
+		// tool that would refuse every request.
+		errs = append(errs, fmt.Errorf("coordination.mode %s needs human.intake.plan.enabled: coordination_plan plans through its route", c.Coordination.Mode))
 	}
 	return errors.Join(errs...)
 }

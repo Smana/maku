@@ -26,6 +26,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/envelope"
+	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/github"
 	"github.com/Smana/maku/internal/humanapi"
@@ -888,5 +889,28 @@ func TestIntakeRefusesToStartHalfWired(t *testing.T) {
 		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, &humanapi.Actor{}, &intakeVisibility{}, m, log); err == nil ||
 		!strings.Contains(err.Error(), "Actor.Redactor") {
 		t.Fatalf("no redactor: %v", err)
+	}
+}
+
+// v4 MR16: coordination_plan is wired beside the planner with the config's mode, and not at all
+// without the planner, so no switch reaches a tool with no route.
+func TestCoordinationPlannerWiredBesideIntake(t *testing.T) {
+	vis := &intakeVisibility{public: map[string]bool{"smana/ai-native-ref": true}}
+	cfg := plannerConfig()
+	cfg.Coordination = fconfig.Coordination{Mode: fconfig.CoordinationPlan}
+	s, err := buildHumans(t, cfg, vis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Coordination == nil || s.Coordination.Mode != fconfig.CoordinationPlan || s.Coordination.Resolve == nil {
+		t.Fatalf("%+v", s.Coordination)
+	}
+	pol, err := s.Coordination.Resolve(t.Context(), "smana/ai-native-ref", "docs-links", "standard")
+	if err != nil || strings.Join(pol.Roles, ",") != "implementer,reviewer" || pol.TaskMicroUSD != 2_000_000 || pol.RunMicroUSD != 200_000 {
+		t.Fatalf("%+v %v", pol, err)
+	}
+	cfg.Human.Intake = config.IntakeConfig{}
+	if s, err := buildHumans(t, cfg, vis); err != nil || s.Coordination != nil {
+		t.Fatalf("%+v %v", s.Coordination, err)
 	}
 }

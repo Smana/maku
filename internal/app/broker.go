@@ -361,8 +361,13 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	if err != nil {
 		return nil, err
 	}
+	// coordination_plan rides the planner's route and allowance, so it exists only beside it.
+	var coord *humanapi.CoordinationPlanner
+	if in != nil {
+		coord = &humanapi.CoordinationPlanner{Mode: cfg.Coordination.Mode, Resolve: humanapi.ClassPolicy(in.Classes)}
+	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Intake:    in,
+		Intake: in, Coordination: coord,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID:        projectID,
