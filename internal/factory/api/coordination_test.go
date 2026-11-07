@@ -13,6 +13,10 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
@@ -238,5 +242,26 @@ func TestCoordinationRefusalsNameTheirReason(t *testing.T) {
 		if w.Code != tc.code || strings.TrimSpace(w.Body.String()) != `{"error":"`+tc.reason+`"}` {
 			t.Errorf("%v: %d %s, want %d %s", tc.err, w.Code, w.Body, tc.code, tc.reason)
 		}
+	}
+}
+
+// MR2: the bare-run endpoint refuses a coordination parent's Room before any claim, reservation,
+// branch or token, whatever the caller's rights in the Room.
+func TestParentRunRequestIsReadOnly(t *testing.T) {
+	parent := &factoryv1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3kq7x2ma", Namespace: "agent-system"},
+		Spec: factoryv1.TaskSpec{Kind: factoryv1.TaskKindCoordination, Source: factoryv1.Source{Kind: factoryv1.SourceKindCoordination},
+			Repository: "Smana/cloud-native-ref", DataClass: "public"}}
+	st := &store{}
+	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(parent, aliceRoom()).Build()
+	s := mkServer(t, st, c, false, false, "7f3cq2xz", 5_000_000)
+	body := base()
+	body["roomRef"] = "3kq7x2ma"
+	w := post(s.Handler(), "alice", body)
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), `"error":"coordination_read_only"`) || len(st.created) != 0 {
+		t.Fatalf("%d %s, %d runs", w.Code, w.Body, len(st.created))
+	}
+	var cms corev1.ConfigMapList
+	if err := c.List(t.Context(), &cms); err != nil || len(cms.Items) != 0 {
+		t.Fatalf("a ledger was written: %d %v", len(cms.Items), err)
 	}
 }

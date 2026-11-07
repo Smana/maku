@@ -396,7 +396,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			}
 			return nil
 		}}
-	apiSrv.Coordination = coord
+	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
 	if err != nil {
