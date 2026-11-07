@@ -39,6 +39,8 @@ const (
 	// reasonIntegrationNoResult is the result reason of a run that reported no typed result of its
 	// own manifest: prose, another run's result or another hash is none.
 	reasonIntegrationNoResult = "integration_result_missing"
+	// reasonCoordinationStopped is a dependent head held because its parent was stopped.
+	reasonCoordinationStopped = "coordination_stopped"
 )
 
 // integrating is an integration Task's whole path (MR10, MR17): its lineage and manifest checked
@@ -298,7 +300,9 @@ func (r *Reconciler) childFacts(ctx context.Context, cs *v1alpha1.CoordinationSt
 			return nil, err
 		}
 		f := childFact{task: &c}
-		if pr := c.Status.PullRequest; pr != nil && pr.MergedAt != nil && pr.MergeCommitSHA != "" && c.Spec.Repository == st.Repository {
+		// A reverted child has not landed: final integration and completion wait (MR11).
+		if pr := c.Status.PullRequest; pr != nil && pr.MergedAt != nil && pr.MergeCommitSHA != "" && c.Spec.Repository == st.Repository &&
+			c.Status.Phase != v1alpha1.PhaseReverted {
 			f.mergeCommitSHA, f.mergedAt = pr.MergeCommitSHA, pr.MergedAt.Time
 		}
 		out[st.ID] = f
@@ -529,6 +533,10 @@ func (r *Reconciler) integrationAccepted(ctx context.Context, t *v1alpha1.Task, 
 		g.Required, g.Reason = false, ""
 		return false, nil
 	}
+	if parentStopped(&p) {
+		g.Reason = reasonCoordinationStopped // MR11: a stopped parent releases nothing
+		return false, nil
+	}
 	i := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == c.ID })
 	if i < 0 || head == "" {
 		return false, nil
@@ -623,6 +631,7 @@ func (r *Reconciler) completeCoordination(ctx context.Context, t *v1alpha1.Task)
 			return err
 		}
 	}
+	t.Status.Coordination.Recovery = nil // nothing left to recover: a later revert is an incident
 	r.to(t, v1alpha1.PhaseDone, reasonIntegrationPassed)
 	return nil
 }

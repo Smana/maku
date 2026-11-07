@@ -62,25 +62,31 @@ func TestCoordinationAllocationLeftBudget(t *testing.T) {
 	}
 }
 
-// An edit may not reduce a child's allocation below what its Task has settled plus what its live
-// run holds, and an increase needs the parent's and that child's maintainer's new confirmations.
+// An edit may not reduce a child's allocation below what its generations have settled plus what a
+// live run holds, and an increase needs the parent's and that child's maintainer's new confirmations.
 func TestCoordinationBudgetEditsRefuse(t *testing.T) {
 	ctx := context.Background()
 	p := draftPlan(t)
-	spent := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "c0nsumer", Namespace: ns},
-		Spec: v1alpha1.TaskSpec{Repository: repoB, Budget: v1alpha1.Budget{RunTokens: 1_500_000, TaskMicroUSD: 5_100_000}},
-		Status: v1alpha1.TaskStatus{Runs: []v1alpha1.RunRecord{
-			{ID: "aaaaaaaa", Phase: "Succeeded", CostMicroUSD: 1_000_000}, {ID: "bbbbbbbb", Phase: "Running"}}}} // 1.00 + 2.55 held
+	gen := func(name string, runs ...v1alpha1.RunRecord) *v1alpha1.Task {
+		return &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{v1alpha1.LabelCoordinationParent: p.ID}},
+			Spec: v1alpha1.TaskSpec{Repository: repoB, Budget: v1alpha1.Budget{RunTokens: 1_500_000, TaskMicroUSD: 5_100_000},
+				CoordinationParent: &v1alpha1.CoordinationParent{Task: p.ID, PlanVersion: 1, ChildID: "consumer"}},
+			Status: v1alpha1.TaskStatus{Runs: runs}}
+	}
+	// The floor is lifetime spend: a superseded generation's settled 0.40 counts with the live
+	// one's 1.00 settled and 2.55 held.
+	old := gen("c0nsumeo", v1alpha1.RunRecord{ID: "cccccccc", Phase: "Succeeded", CostMicroUSD: 400_000})
+	spent := gen("c0nsumer", v1alpha1.RunRecord{ID: "aaaaaaaa", Phase: "Succeeded", CostMicroUSD: 1_000_000}, v1alpha1.RunRecord{ID: "bbbbbbbb", Phase: "Running"})
 	for _, tc := range []struct {
 		name   string
 		budget int64
 		want   error
 	}{
-		{name: "below settled plus reserved", budget: 3_549_999, want: ErrAllocationBelowSpend},
-		{name: "exactly settled plus reserved", budget: 3_550_000},
+		{name: "below settled plus reserved", budget: 3_949_999, want: ErrAllocationBelowSpend},
+		{name: "exactly settled plus reserved", budget: 3_950_000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, _ := testService(t, config.CoordinationPlan, []client.Object{spent.DeepCopy()}...)
+			s, _ := testService(t, config.CoordinationPlan, []client.Object{spent.DeepCopy(), old.DeepCopy()}...)
 			mustDraft(t, s, p)
 			task := parentOf(t, s, p.ID)
 			task.Status.Coordination.Children = []v1alpha1.CoordinationChildStatus{{ID: "consumer", Repository: repoB, Task: "c0nsumer", Generation: 1}}

@@ -4,17 +4,25 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/killswitch"
+	"github.com/Smana/maku/internal/factory/ledger"
+	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
+	"github.com/Smana/maku/internal/factory/runs"
 )
 
 // coordinationPort is the coordination service the reconciler drives (v4 MR2):
@@ -38,7 +46,7 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		return nil
 	}
 	if t.Status.RoomRef == "" {
-		switch err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository); {
+		switch err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, coordinationWatchers(r.Cfg)...); {
 		case errors.Is(err, rooms.ErrForeignRoom):
 			t.Status.Reason = "foreign_room" // never adopted: an operator removes it
 			return nil
@@ -49,6 +57,17 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		return nil
 	}
 	cs := t.Status.Coordination
+	// MR12: an affected old generation stops through the ordinary stop machinery at once, whatever
+	// else holds the family; stopping widens nothing.
+	if err := r.supersede(ctx, cs); err != nil {
+		return err
+	}
+	// MR11: a parent factory/stop pauses the family's future scheduling and integration releases
+	// (integrationGate reads it too); it borrows no repository's authority to revoke a running
+	// child, whose own stop and the global kill switch keep theirs.
+	if parentStopped(t) {
+		return nil
+	}
 	if r.Coordination == nil || r.Cfg.Coordination.Mode != config.CoordinationExecute || !coordination.Complete(cs) {
 		return nil
 	}
@@ -68,10 +87,206 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		t.Status.Reason = reason
 		return nil
 	}
+	if err := r.replaceGenerations(ctx, t); err != nil {
+		return err
+	}
 	if err := r.admitCoordinationChildren(ctx, t); err != nil {
 		return err
 	}
-	return r.coordinateIntegration(ctx, t)
+	if err := r.coordinateIntegration(ctx, t); err != nil {
+		return err
+	}
+	return r.proposeRecovery(ctx, t)
+}
+
+// parentStopped is a coordination parent a maintainer's factory/stop, or a hand-set stop, paused.
+func parentStopped(t *v1alpha1.Task) bool { return t.Annotations[v1alpha1.AnnotationStop] != "" }
+
+// proposeRecovery persists the parent's one proposed recovery (MR11), selected by
+// coordination.ProposeRecovery from the current child and integration Tasks; a standing proposal
+// keeps its createdAt.
+func (r *Reconciler) proposeRecovery(ctx context.Context, t *v1alpha1.Task) error {
+	cs := t.Status.Coordination
+	var kids, its []v1alpha1.Task
+	get := func(name string, into *[]v1alpha1.Task) error {
+		if name == "" {
+			return nil
+		}
+		var x v1alpha1.Task
+		switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: name}, &x); {
+		case apierrors.IsNotFound(err):
+			return nil
+		case err != nil:
+			return err
+		}
+		*into = append(*into, x)
+		return nil
+	}
+	for _, st := range cs.Children {
+		if err := get(st.Task, &kids); err != nil {
+			return err
+		}
+	}
+	for _, a := range cs.IntegrationAttempts {
+		if a.PlanHash != cs.PlanHash {
+			continue
+		}
+		if err := get(a.Task, &its); err != nil {
+			return err
+		}
+	}
+	p := coordination.ProposeRecovery(t, kids, its, r.Now())
+	if !coordination.SameRecovery(p, cs.Recovery) {
+		cs.Recovery = p
+	}
+	return nil
+}
+
+// tellCoordinationParent records child t's revert on its coordination parent once that parent is
+// Done (MR11): one bounded post-completion incident and its narration on the parent issue, by a
+// conflict-retried status write that never changes the terminal phase or reverts a sibling. Before
+// Done the parent reads the Reverted child itself: it pauses downstream work and proposes
+// revise_plan.
+func (r *Reconciler) tellCoordinationParent(ctx context.Context, t *v1alpha1.Task, revert int) {
+	cp := t.Spec.CoordinationParent
+	if cp == nil || cp.ChildID == "" || t.Spec.Kind != "" {
+		return
+	}
+	sha := ""
+	if pr := t.Status.PullRequest; pr != nil && sha40.MatchString(pr.MergeCommitSHA) {
+		sha = pr.MergeCommitSHA
+	}
+	err := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		var p v1alpha1.Task // fresh on every attempt: the conflict is a newer write
+		if err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: cp.Task}, &p); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		cs := p.Status.Coordination
+		if p.Spec.Kind != v1alpha1.TaskKindCoordination || p.Status.Phase != v1alpha1.PhaseDone || cs == nil ||
+			slices.ContainsFunc(cs.Incidents, func(i v1alpha1.CoordinationIncident) bool { return i.ChildID == cp.ChildID && i.MergeCommitSHA == sha }) {
+			return nil
+		}
+		cs.Incidents = v1alpha1.AppendNewest(cs.Incidents, v1alpha1.CoordinationIncident{ChildID: cp.ChildID, Reason: "reverted",
+			MergeCommitSHA: sha, At: metav1.NewTime(r.Now())}, v1alpha1.MaxCoordinationIncidents)
+		narrateOn(&p, p.Spec.Issue, narrate.CoordinationIncident(p.Name, cp.ChildID, revert)) // through the primary's own App
+		return r.Client.Status().Update(ctx, &p)
+	})
+	if err != nil {
+		r.log().Warn("the coordination parent was not told of a reverted child", "task.id", t.Name, "parent", cp.Task, "err", err)
+	}
+}
+
+// supersede marks each pending generation's old Task superseded, once: the stop the reconciler
+// already honors revokes its live run and ends it Stopped/superseded. An unaffected sibling is
+// never named, so its authority is untouched.
+func (r *Reconciler) supersede(ctx context.Context, cs *v1alpha1.CoordinationStatus) error {
+	if cs == nil {
+		return nil
+	}
+	for _, pg := range cs.PendingGenerations {
+		if pg.StoppingTask == "" {
+			continue
+		}
+		var old v1alpha1.Task
+		switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: pg.StoppingTask}, &old); {
+		case apierrors.IsNotFound(err):
+			continue
+		case err != nil:
+			return err
+		}
+		if v1alpha1.TerminalPhase(old.Status.Phase) || old.Annotations[v1alpha1.AnnotationStop] != "" {
+			continue
+		}
+		patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{v1alpha1.AnnotationStop: "superseded"}}})
+		if err := r.Client.Patch(ctx, &old, client.RawPatch(types.MergePatchType, patch)); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// replaceGenerations releases each pending generation whose old generation has drained (MR8): the
+// child's entry is reset to the new generation under the current fingerprint, and the ordinary
+// admission below creates CoordinationChildKey(parent, id, version, generation) with the execute
+// gate re-read and only what the child's lifetime allocation still holds. It is reached only once
+// the current version's confirmations exist.
+func (r *Reconciler) replaceGenerations(ctx context.Context, t *v1alpha1.Task) error {
+	cs := t.Status.Coordination
+	var kept []v1alpha1.PendingGeneration
+	for _, pg := range cs.PendingGenerations {
+		drained, err := r.generationDrained(ctx, t, pg.ChildID)
+		if err != nil {
+			return err
+		}
+		i := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == pg.ChildID })
+		if _, inPlan := coordination.PlanChild(cs, pg.ChildID); i < 0 || !inPlan {
+			continue // a child the plan dropped: nothing replaces it
+		}
+		if !drained {
+			cs.Children[i].Reason = coordination.ReasonGenerationPending
+			kept = append(kept, pg)
+			continue
+		}
+		st := &cs.Children[i]
+		st.Task, st.Generation, st.Reason = "", pg.Generation, ""
+		st.Fingerprint = coordination.ChildFingerprint(*cs.Plan, st.ID)
+		st.IntegrationRelease = nil
+	}
+	cs.PendingGenerations = kept
+	return nil
+}
+
+// generationDrained is whether child id's pending generation may start (MR8): its old Task is
+// terminal, no AgentRun of it is live, the day ledger holds no reservation for any of its runs or
+// its deterministic next one, and its usage has settled. Only then are its spend and allocation
+// final, so the replacement's share never overlaps it.
+func (r *Reconciler) generationDrained(ctx context.Context, parent *v1alpha1.Task, id string) (bool, error) {
+	pg := coordination.Pending(parent.Status.Coordination, id)
+	if pg == nil {
+		return true, nil
+	}
+	var old v1alpha1.Task
+	switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: pg.StoppingTask}, &old); {
+	case apierrors.IsNotFound(err):
+		return false, nil // never assumed gone: its runs and reservation are unaccounted
+	case err != nil:
+		return false, err
+	}
+	if !v1alpha1.TerminalPhase(old.Status.Phase) || (len(old.Status.Runs) > 0 && !old.Status.UsageSettled) {
+		return false, nil
+	}
+	all, err := r.Runs.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	if slices.ContainsFunc(all, func(run runs.Run) bool { return run.TaskID == old.Name && !runs.Terminal(run.Phase) }) {
+		return false, nil
+	}
+	held, err := r.reservationHeld(ctx, &old)
+	return !held, err
+}
+
+// reservationHeld is whether any day ledger still holds a reservation for one of t's runs or its
+// deterministic next run, read live through the ledger client.
+func (r *Reconciler) reservationHeld(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+	if r.Ledger == nil {
+		return true, nil // unread is held
+	}
+	var l corev1.ConfigMapList
+	if err := r.Ledger.List(ctx, &l, client.InNamespace(r.Namespace)); err != nil {
+		return true, err
+	}
+	for _, cm := range l.Items {
+		if _, ok := ledger.Day(cm.Name, ledger.Prefix); !ok {
+			continue
+		}
+		for n := 0; n <= len(t.Status.Runs); n++ {
+			if _, ok := cm.Data[ledger.Reserved+runID(t.Name, n)]; ok {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // admitCoordinationChildren creates each filed child's Task once and records it on the parent.
@@ -107,10 +322,30 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 		gen := max(st.Generation, 1)
 		child := coordination.ChildTask(r.Namespace, r.Cfg, t, c, st.Issue, gen)
 		child.Spec.CoordinationArtifacts = refs
+		if gen > 1 {
+			// A replacement: the execute gate is re-read for it, and it holds only what every
+			// earlier generation left of the lifetime allocation (MR8).
+			if len(c.DependsOn) == 0 {
+				if err := r.Coordination.ExecuteReady(ctx, cs, []string{c.ID}); err != nil {
+					reason := coordination.Reason(err)
+					if reason == "" {
+						return err
+					}
+					st.Reason = reason
+					continue
+				}
+			}
+			tasks, err := coordination.ChildTasks(ctx, r.Client, r.Namespace, t.Name)
+			if err != nil {
+				return err
+			}
+			coordination.LimitAllocation(child, c.BudgetMicroUSD-coordination.LifetimeSpent(tasks, c.ID))
+		}
 		if err := r.Client.Create(ctx, child); err != nil && !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 		st.Task, st.Generation, st.Reason = child.Name, gen, ""
+		st.Fingerprint, st.AllocationMicroUSD = coordination.ChildFingerprint(*cs.Plan, c.ID), child.Spec.Budget.TaskMicroUSD
 	}
 	return nil
 }
@@ -174,8 +409,8 @@ func (r *Reconciler) producerMerge(ctx context.Context, cs *v1alpha1.Coordinatio
 		return "", err
 	}
 	pr := p.Status.PullRequest
-	if pr == nil || pr.MergedAt == nil || p.Spec.Repository != cs.Children[i].Repository {
-		return "", nil
+	if pr == nil || pr.MergedAt == nil || p.Spec.Repository != cs.Children[i].Repository || p.Status.Phase == v1alpha1.PhaseReverted {
+		return "", nil // MR11: a reverted producer no longer stands for anything downstream
 	}
 	return pr.MergeCommitSHA, nil
 }

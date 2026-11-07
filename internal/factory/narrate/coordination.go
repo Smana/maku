@@ -125,3 +125,12 @@ func orEmpty(s []string) []string {
 	}
 	return s
 }
+
+// CoordinationIncident says on the parent issue that child of a Done coordination was reverted by
+// pull request revert: a post-completion incident, recorded without reopening the parent or
+// reverting any sibling (MR11). Once per child and revert.
+func CoordinationIncident(parent, child string, revert int) Event {
+	return Event{Key: fmt.Sprintf("coordination-incident-%s-%d", child, revert), Body: fmt.Sprintf("Child `%s` of agent factory "+
+		"coordination `%s` was reverted by #%d after the coordination completed. The coordination stays done, and no sibling is "+
+		"reverted: this is recorded as a post-completion incident.", child, parent, revert)}
+}

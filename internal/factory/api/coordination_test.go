@@ -35,11 +35,23 @@ type fakeCoordination struct {
 	drafts   []factoryv1.CoordinationPlan
 	confirms []coordination.CoordinationConfirmation
 	err      error
+
+	recoveries []string
+	repoErr    error
 }
 
 func (f *fakeCoordination) Draft(_ context.Context, a coordination.Actor, p factoryv1.CoordinationPlan, hash string, pl coordination.PlanningReconciliation) (coordination.CoordinationConfirmation, error) {
 	f.actors, f.drafts = append(f.actors, a), append(f.drafts, p)
 	return coordination.CoordinationConfirmation{Plan: p, PlanHash: hash, Planning: pl}, f.err
+}
+
+func (f *fakeCoordination) RecoveryRepository(context.Context, string) (string, error) {
+	return coordOther, f.repoErr
+}
+
+func (f *fakeCoordination) Recover(_ context.Context, a coordination.Actor, task, code string, version int32) error {
+	f.actors, f.recoveries = append(f.actors, a), append(f.recoveries, fmt.Sprintf("%s %s v%d", task, code, version))
+	return f.err
 }
 
 func (f *fakeCoordination) Confirm(_ context.Context, a coordination.Actor, in coordination.CoordinationConfirmation) (coordination.CoordinationConfirmation, error) {
@@ -263,5 +275,59 @@ func TestParentRunRequestIsReadOnly(t *testing.T) {
 	var cms corev1.ConfigMapList
 	if err := c.List(t.Context(), &cms); err != nil || len(cms.Items) != 0 {
 		t.Fatalf("a ledger was written: %d %v", len(cms.Items), err)
+	}
+}
+
+// MR11: POST /v1/coordinations/{task}/recovery takes {code, planVersion} from a linked human only,
+// resolves their login on the repository the proposed action's authority is on, and answers 204;
+// refusals are {"error": reason}. Off, it does not exist.
+func TestCoordinationRecoveryRoute(t *testing.T) {
+	p := coordPlan(t)
+	path := "/v1/coordinations/" + p.ID + "/recovery"
+	body := map[string]any{"code": "retry_child", "planVersion": 3}
+	for _, mode := range []string{"", config.CoordinationOff} {
+		s, f := coordServer(mode)
+		if w := coordDo(s, http.MethodPost, path, "human", body); w.Code != http.StatusNotFound || len(f.recoveries) != 0 {
+			t.Fatalf("mode %q: %d", mode, w.Code)
+		}
+	}
+	for _, tc := range []struct {
+		name, tok string
+		body      any
+		err       error
+		repoErr   error
+		code      int
+		reason    string
+		login     string
+	}{
+		{name: "the child's linked maintainer", tok: "reader", body: body, code: http.StatusNoContent, login: "reader"},
+		{name: "a sponsored principal", tok: "slack", body: body, code: http.StatusForbidden, reason: "human_only"},
+		{name: "an unlinked human", tok: "unlinked", body: body, code: http.StatusForbidden, reason: "not_linked"},
+		{name: "an unknown field", tok: "human", body: map[string]any{"code": "retry_child", "planVersion": 3, "childID": "consumer"},
+			code: http.StatusBadRequest, reason: "bad_json"},
+		{name: "a stale version", tok: "human", body: body, err: &coordination.PlanError{Code: "stale_plan"}, code: http.StatusConflict, reason: "stale_plan"},
+		{name: "nothing proposed", tok: "human", body: body, repoErr: coordination.ErrRecoveryNotProposed, code: http.StatusConflict, reason: "recovery_not_proposed"},
+		{name: "no authority", tok: "human", body: body, err: coordination.ErrRepositoryPermission, code: http.StatusForbidden, reason: "repository_permission"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := coordServer(config.CoordinationExecute)
+			f.err, f.repoErr = tc.err, tc.repoErr
+			w := coordDo(s, http.MethodPost, path, tc.tok, tc.body)
+			if w.Code != tc.code {
+				t.Fatalf("%d %s, want %d", w.Code, w.Body, tc.code)
+			}
+			if tc.reason != "" {
+				var got map[string]string
+				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["error"] != tc.reason || len(got) != 1 {
+					t.Fatalf("body %s, want {\"error\":%q}", w.Body, tc.reason)
+				}
+			}
+			if tc.code == http.StatusNoContent {
+				if w.Body.Len() != 0 || len(f.recoveries) != 1 || f.recoveries[0] != p.ID+" retry_child v3" ||
+					f.actors[0] != (coordination.Actor{Principal: coordReader.ID, LinkedGitHubLogin: tc.login}) {
+					t.Fatalf("recoveries %v actors %+v body %q", f.recoveries, f.actors, w.Body)
+				}
+			}
+		})
 	}
 }
