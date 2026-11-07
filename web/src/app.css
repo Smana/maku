@@ -908,8 +908,11 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   .room-body.has-rail > :not(.rail) { grid-column: 1; }
   .room-body.has-rail > .rail {
     grid-column: 2; grid-row: 1 / span 6; position: sticky; top: var(--header-h, 0px);
-    max-height: calc(100vh - var(--header-h, 0px) - var(--dock-h, 0px)); overflow-y: auto; align-self: start;
-    padding-top: 8px;
+    /* border-box: the 8 px of padding is inside the height, or the rail's last 8 px sit under the dock. */
+    box-sizing: border-box; padding: 8px 0;
+    max-height: calc(100vh - var(--header-h, 0px) - var(--dock-h, 0px));
+    max-height: calc(100dvh - var(--header-h, 0px) - var(--dock-h, 0px));
+    overflow-y: auto; overscroll-behavior: contain; align-self: start;
   }
 }
 

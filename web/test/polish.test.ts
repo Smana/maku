@@ -232,6 +232,15 @@ describe("layout", () => {
     expect(decl(outside, "#app")).toMatch(/min-height:\s*100dvh/);
     expect(decl(outside, "#app > .page-dock")).toMatch(/margin-top:\s*auto/);
   });
+  it("keeps the whole rail reachable between the header and the dock: it scrolls on its own", () => {
+    const d = decl(wide, ".room-body.has-rail > .rail");
+    expect(d).toMatch(/top:\s*var\(--header-h/);
+    expect(d).toMatch(/max-height:\s*calc\(100dvh\s*-\s*var\(--header-h[^)]*\)\s*-\s*var\(--dock-h/);
+    expect(d).toMatch(/overflow-y:\s*auto/);
+    expect(d).toMatch(/overscroll-behavior:\s*contain/);
+    // The padding sits inside the height: content-box put the rail's last 8 px under the dock.
+    expect(d).toMatch(/box-sizing:\s*border-box/);
+  });
   it("shares the conversation's grid with the composer on a wide screen", () => {
     const d = decl(wide, ".page-dock");
     expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);

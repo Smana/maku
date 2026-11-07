@@ -10,6 +10,7 @@
 // One rail fixture (flow-fixtures.ts), the first of:
 //   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
 //   ?split        a scoper whose handoff split into three parts
+//   ?many         a long task: retries and reviewers, a rail taller than the window
 //   ?part         a part's room, linked back to its parent
 //   (none)        a task in flight: scoper, tester, the live implementer, a ghost reviewer
 
