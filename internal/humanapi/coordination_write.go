@@ -12,6 +12,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/runrequest"
 )
 
@@ -121,4 +122,40 @@ func refuseJSON(w http.ResponseWriter, status int, reason string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
+}
+
+// coordinationDraftTool is coordination_draft, a sponsored principal's tool only (the Slack App's):
+// coordination_plan's result stored as its parent's draft, forwarded to the factory with the App's
+// own token and the user it drafts for, which the factory resolves to a linked maintainer with live
+// write on the primary. It drafts only: no confirmation, issue, run or recovery is reachable here,
+// and confirmations stay on the parent's room page.
+func (s *Server) coordinationDraftTool() mcpTool {
+	return mcpTool{name: mcpwire.CoordinationDraft,
+		description: "Store a coordination_plan result as its parent's draft, for the user named in on_behalf_of. It confirms nothing: " +
+			"the parent and each child are confirmed by their maintainers on the parent's room page, and merges stay on GitHub.",
+		schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","planHash","planning","on_behalf_of"],"properties":{` +
+			`"plan":{"type":"object"},"planHash":{"type":"string","pattern":"^[0-9a-f]{64}$"},"planning":{"type":"object"},` +
+			`"on_behalf_of":{"type":"string","pattern":"` + onBehalfRE.String() + `"}}}`),
+		output: json.RawMessage(`{"type":"object","required":["parentTask","planHash","version"],"properties":{"parentTask":{"type":"string"},"planHash":{"type":"string"},"version":{"type":"integer"}}}`),
+		call: func(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
+			var a struct {
+				Plan       v1alpha1.CoordinationPlan           `json:"plan"`
+				PlanHash   string                              `json:"planHash"`
+				Planning   coordination.PlanningReconciliation `json:"planning"`
+				OnBehalfOf string                              `json:"on_behalf_of"`
+			}
+			if !p.Sponsored || mcpwire.DecodeArgs(args, &a) != nil || !envelope.ValidID(a.Plan.ID) || !onBehalfRE.MatchString(a.OnBehalfOf) {
+				return nil, toolError("invalid_arguments: plan, planHash, planning and on_behalf_of, from coordination_plan")
+			}
+			out, err := s.CoordinationWrites.CoordinationDraft(ctx, p.AccessToken, a.Plan.ID,
+				coordination.CoordinationConfirmation{Plan: a.Plan, PlanHash: a.PlanHash, Planning: a.Planning}, a.OnBehalfOf)
+			var ref runrequest.ErrRefused
+			switch {
+			case errors.As(err, &ref):
+				return nil, toolError(ref.Reason)
+			case err != nil:
+				return nil, toolError("coordination_unavailable")
+			}
+			return map[string]any{"parentTask": out.Plan.ID, "planHash": out.PlanHash, "version": out.Plan.Version}, nil
+		}}
 }

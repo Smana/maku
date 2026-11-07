@@ -30,6 +30,9 @@ const (
 	PlanCheck  = "plan_check"
 	// CoordinationPlan is the multi-repository planner on the same route (v4 MR4): side-effect free.
 	CoordinationPlan = "coordination_plan"
+	// CoordinationDraft stores a coordination_plan result as its parent's draft, for a sponsored
+	// principal's user (v4): a draft only, never a confirmation.
+	CoordinationDraft = "coordination_draft"
 )
 
 // The JSON-RPC 2.0 error codes the servers answer with.

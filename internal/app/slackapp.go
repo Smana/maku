@@ -299,3 +299,9 @@ func (r *slackRecorder) ProposalUpdate(ctx context.Context, action string) {
 func (r *slackRecorder) ThreadAnswer(ctx context.Context, question string) {
 	r.proposals.ThreadAnswer(ctx, question)
 }
+
+// CoordinationProjection counts one coordination delivery under
+// maku_slack_coordination_projection_total{outcome}.
+func (r *slackRecorder) CoordinationProjection(ctx context.Context, outcome string) {
+	r.proposals.CoordinationProjection(ctx, outcome)
+}
