@@ -77,7 +77,7 @@ func TestTheGateEvaluatesTheRepositoryPolicyBesideTheCentral(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
 	g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true}
-	g.r.Policy = func(repository string) (mergepolicy.Snapshot, bool) {
+	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) {
 		live := withShape(config.Class{Live: true}, "docs-links") // the repository would merge it
 		return snapshotOf(map[string]mergepolicy.Resolved{"docs-links": {Class: live}}, "docs-links: central {...}, repository {...}"), true
 	}
