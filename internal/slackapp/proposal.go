@@ -404,9 +404,9 @@ func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, c
 	if len(blocks) > maxSlackBlocks {
 		return nil, errProposalTooLarge
 	}
-	raw, err := json.Marshal(struct {
-		Blocks []slackBlock `json:"blocks"`
-	}{blocks})
+	// The bare array: the client puts it under the request's `blocks` key, and an object there is
+	// Slack's invalid_blocks_format.
+	raw, err := json.Marshal(blocks)
 	if err != nil {
 		return nil, fmt.Errorf("slackapp: proposal blocks: %w", err)
 	}
