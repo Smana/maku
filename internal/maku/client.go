@@ -20,6 +20,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/mcpwire"
@@ -586,4 +587,44 @@ func (c Client) Act(ctx context.Context, room string, action map[string]any) (wi
 			return f, nil
 		}
 	}
+}
+
+// CoordinationCheckout is GET /api/coordinations/{parent}/checkout (MR14): the family's whole
+// checkout document, or an error; never a partial one.
+func (c Client) CoordinationCheckout(ctx context.Context, parent string) (coordinationview.CheckoutDocument, error) {
+	var d coordinationview.CheckoutDocument
+	h, err := c.header(ctx)
+	if err != nil {
+		return d, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/api/coordinations/"+url.PathEscape(parent)+"/checkout", nil)
+	if err != nil {
+		return d, err
+	}
+	req.Header = h
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return d, fmt.Errorf("coordination checkout: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return d, errors.New("coordination checkout: no such coordination parent, or you cannot read every child")
+	case http.StatusConflict:
+		return d, errors.New("coordination checkout: not every child is at one commit yet (checkout_not_ready)")
+	default:
+		return d, refusal("coordination checkout", resp)
+	}
+	body, err := httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return d, fmt.Errorf("coordination checkout: %w", err)
+	}
+	if err := json.Unmarshal(body, &d); err != nil {
+		return d, fmt.Errorf("coordination checkout: %w", err)
+	}
+	if d.APIVersion != coordinationview.CheckoutAPIVersion || d.Kind != coordinationview.CheckoutKind {
+		return coordinationview.CheckoutDocument{}, fmt.Errorf("coordination checkout: unknown document %q", OneLine(d.APIVersion))
+	}
+	return d, nil
 }

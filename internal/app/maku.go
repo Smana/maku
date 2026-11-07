@@ -66,6 +66,11 @@ const makuUsage = `usage: maku <command>
                                   --repo narrow it. It decides nothing: each action is a link
   checkout <room>                 check the room's agent/<room> branch out into a new worktree beside this repository,
                                   never touching your checkout; it asks (y/N) before files that run code, and needs a terminal for that
+  coordination checkout <parent> [--workspace owner/name=path]...
+                                  check every child of a coordination parent out, detached at the exact commit the
+                                  parent names, under ../<this repository>.<parent>, with maku-coordination.json; this
+                                  directory is the primary's clone, --workspace names each other repository's clone.
+                                  All or nothing; it asks (y/N) once before files that run code
   watch <room> [--tail N]         follow a room
   post <room> [--queue] <text>    chat, or queue it for the next run's brief
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
@@ -180,7 +185,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "watch", "post", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -276,6 +281,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.changes(ctx, c, filepath.Join(r.Dir, "cursors.json"), args)
 	case "checkout":
 		return r.checkout(ctx, c, args)
+	case "coordination":
+		return r.coordination(ctx, c, args)
 	case "watch":
 		fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 		tail := fs.Int("tail", 50, "events to show first")
@@ -830,16 +837,7 @@ func (r Maku) checkout(ctx context.Context, c maku.Client, args []string) error 
 		in = os.Stdin
 	}
 	co := maku.Checkout{Workspace: dir, Room: pos[0], Repository: rows[i].Repository, PR: rows[i].PR}
-	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) { //nolint:gosec // a file descriptor fits an int
-		co.Confirm = func(_ context.Context, files []string, more int) (bool, error) {
-			_, _ = fmt.Fprintf(hints, "agent/%s changes files that run code on your machine:\n  %s\nCreate the worktree? [y/N] ", pos[0], strings.Join(maku.CodeSpans(files, more), "\n  "))
-			line, err := bufio.NewReader(io.LimitReader(f, 64)).ReadString('\n')
-			if err != nil && line == "" {
-				return false, err
-			}
-			return strings.EqualFold(strings.TrimSpace(line), "y"), nil
-		}
-	}
+	co.Confirm = terminalConfirm(in, hints, "agent/"+pos[0], "Create the worktree?")
 	got, err := co.Run(ctx)
 	var refusal *maku.CheckoutRefusal
 	if errors.As(err, &refusal) {
@@ -854,6 +852,85 @@ func (r Maku) checkout(ctx context.Context, c maku.Client, args []string) error 
 	}
 	_, _ = fmt.Fprintf(hints, "%s: %s%s\n", got.Branch, note, map[bool]string{true: ", " + got.PR, false: ""}[got.PR != ""])
 	_, err = fmt.Fprintln(r.Out, got.Path)
+	return err
+}
+
+// terminalConfirm asks y/N about the files that run code, on a terminal only: nil, and so a
+// refusal, when in is not one.
+func terminalConfirm(in io.Reader, hints io.Writer, what, question string) func(context.Context, []string, int) (bool, error) {
+	f, ok := in.(*os.File)
+	if !ok || !term.IsTerminal(int(f.Fd())) { //nolint:gosec // a file descriptor fits an int
+		return nil
+	}
+	return func(_ context.Context, files []string, more int) (bool, error) {
+		_, _ = fmt.Fprintf(hints, "%s changes files that run code on your machine:\n  %s\n%s [y/N] ", what, strings.Join(maku.CodeSpans(files, more), "\n  "), question)
+		line, err := bufio.NewReader(io.LimitReader(f, 64)).ReadString('\n')
+		if err != nil && line == "" {
+			return false, err
+		}
+		return strings.EqualFold(strings.TrimSpace(line), "y"), nil
+	}
+}
+
+// coordination is maku coordination checkout (v4 MR14): the parent's checkout document from the
+// broker, then every child's detached worktree at its exact commit.
+func (r Maku) coordination(ctx context.Context, c maku.Client, args []string) error {
+	if len(args) == 0 || args[0] != "checkout" {
+		return fmt.Errorf("coordination checkout <parent> [--workspace owner/name=path]...\n%s", makuUsage)
+	}
+	fs := flag.NewFlagSet("coordination checkout", flag.ContinueOnError)
+	workspaces := map[string]string{}
+	fs.Func("workspace", "owner/name=path: the clone of a non-primary repository", func(v string) error {
+		repo, path, ok := strings.Cut(v, "=")
+		if !ok || path == "" || !maku.ValidRepository(repo) {
+			return errors.New("--workspace is owner/name=path")
+		}
+		if _, dup := workspaces[repo]; dup {
+			return fmt.Errorf("--workspace %s is given twice", maku.SafeText(repo))
+		}
+		workspaces[repo] = path
+		return nil
+	})
+	pos, err := flags(fs, args[1:])
+	if err != nil || len(pos) != 1 {
+		return fmt.Errorf("coordination checkout <parent>: %w", errors.Join(err, errors.New("one parent")))
+	}
+	doc, err := c.CoordinationCheckout(ctx, pos[0])
+	if err != nil {
+		return err
+	}
+	dir := r.Cwd
+	if dir == "" {
+		if dir, err = os.Getwd(); err != nil {
+			return err
+		}
+	}
+	hints := r.Err
+	if hints == nil {
+		hints = os.Stderr
+	}
+	in := r.In
+	if in == nil {
+		in = os.Stdin
+	}
+	co := maku.CoordinationCheckout{Workspace: dir, Workspaces: workspaces, Document: doc,
+		Confirm: terminalConfirm(in, hints, "the coordination family", "Create its worktrees?")}
+	got, err := co.Run(ctx)
+	var refusal *maku.CheckoutRefusal
+	if errors.As(err, &refusal) {
+		return fmt.Errorf("coordination checkout: %s", maku.SafeText(refusal.Error()))
+	}
+	if err != nil {
+		return err
+	}
+	for _, w := range got.Children {
+		note := "created"
+		if w.Reused {
+			note = "already there"
+		}
+		_, _ = fmt.Fprintf(hints, "%s (%s) at %s: %s, %s\n", maku.SafeText(w.ChildID), maku.SafeText(w.Repository), w.SHA[:12], note, maku.SafeText(w.Path))
+	}
+	_, err = fmt.Fprintln(r.Out, maku.SafeText(got.ManifestPath))
 	return err
 }
 

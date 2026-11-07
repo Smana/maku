@@ -366,8 +366,13 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	if in != nil {
 		coord = &humanapi.CoordinationPlanner{Mode: cfg.Coordination.Mode, Resolve: humanapi.ClassPolicy(in.Classes)}
 	}
+	// A sponsored principal's reach into a family exists only while coordination is not off.
+	var sponsoredRepos map[string]map[string]bool
+	if cfg.Coordination.Mode != "" && cfg.Coordination.Mode != fconfig.CoordinationOff {
+		sponsoredRepos = h.MCP.SponsoredRepositories()
+	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Intake: in, Coordination: coord,
+		Intake: in, Coordination: coord, SponsoredRepositories: sponsoredRepos,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID:        projectID,

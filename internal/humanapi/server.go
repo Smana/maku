@@ -138,7 +138,14 @@ type Server struct {
 	SessionStart map[string]bool
 	Identity     *ghidentity.Resolver
 	Access       *repoaccess.Checker
-	Logger       *slog.Logger
+	// CoordinationViews reads coordination parents' views (v4 MR13); nil while coordination is
+	// off, which serves no coordination route and attaches no family to a summary.
+	CoordinationViews CoordinationViews
+	// SponsoredRepositories is each sponsored principal's repository upper bound, keyed by its
+	// principal id system:<name> (human.mcp.sponsored[].repositories): the only reach it has into
+	// a family's children.
+	SponsoredRepositories map[string]map[string]bool
+	Logger                *slog.Logger
 	// Dashboards are the room page's link templates (human.dashboards), served on GET
 	// /api/roomctl; none shows no group.
 	Dashboards []Dashboard
@@ -217,6 +224,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/rooms", s.createRoom)
 	mux.HandleFunc("GET /api/rooms/{id}/summary", s.roomSummary)
 	mux.HandleFunc("GET /api/rooms/{id}/brief", s.roomBriefRoute)
+	if s.CoordinationViews != nil { // coordination off registers no route (MR16)
+		mux.HandleFunc("GET /api/coordinations/{task}", s.coordinationRoute)
+		mux.HandleFunc("GET /api/coordinations/{task}/checkout", s.coordinationCheckoutRoute)
+	}
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
 	mux.HandleFunc("GET /.well-known/roomctl", s.publicSetup)

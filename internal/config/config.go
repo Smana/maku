@@ -409,6 +409,23 @@ func (c Config) RoomToolsEnabled() bool {
 type SponsoredConfig struct {
 	Name         string `json:"name"`
 	ClientIDFile string `json:"clientIDFile"`
+	// Repositories is the principal's upper bound into a coordination family (v4 MR13): it has
+	// no GitHub login, so a child outside this list is restricted. Empty reads no child.
+	Repositories []string `json:"repositories,omitempty"`
+}
+
+// SponsoredRepositories is each sponsored principal's Repositories, keyed by its principal id
+// system:<name>, as humanapi looks it up.
+func (m MCPConfig) SponsoredRepositories() map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, sp := range m.Sponsored {
+		set := map[string]bool{}
+		for _, r := range sp.Repositories {
+			set[r] = true
+		}
+		out["system:"+sp.Name] = set
+	}
+	return out
 }
 
 // repositoryRE is an owner/name, as humanapi's.
@@ -856,6 +873,16 @@ func (h HumanConfig) validate(system []string) []error {
 			errs = append(errs, fmt.Errorf("human.mcp.sponsored: %q is declared twice", sp.Name))
 		case sp.ClientIDFile == "":
 			errs = append(errs, fmt.Errorf("human.mcp.sponsored.%s: clientIDFile is required", sp.Name))
+		}
+		repos := map[string]bool{}
+		for _, r := range sp.Repositories {
+			switch {
+			case !repositoryRE.MatchString(r):
+				errs = append(errs, fmt.Errorf("human.mcp.sponsored.%s.repositories: %q is not owner/name", sp.Name, r))
+			case repos[r]:
+				errs = append(errs, fmt.Errorf("human.mcp.sponsored.%s.repositories: %q is listed twice", sp.Name, r))
+			}
+			repos[r] = true
 		}
 		seen[sp.Name] = true
 	}

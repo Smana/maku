@@ -18,6 +18,7 @@ import { RoomState } from "./room-state";
 import { mountViews } from "./roomview";
 import type { Dashboard } from "./dashboards";
 import { mountRailPane } from "./railpane";
+import { mountCoordinationPanel } from "./coordination";
 import { mountRunView, mountScrollIndex } from "./runview";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
@@ -95,7 +96,9 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   meta.append(status);
   footer.append(session, composerEl, meta);
   // The rail beside the conversation, not in main: mountViews wipes main's children.
-  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, skeleton, main, forkPanel);
+  const coordinationRegion = document.createElement("div");
+  const coordination = mountCoordinationPanel(coordinationRegion);
+  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
   const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
@@ -220,6 +223,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         renderNotes(blocks, sum);
         renderPolicy(policyBlock, sum);
         showRail(sum);
+        coordination.set(sum.flow?.coordination);
         runView.set(sum.flow?.nodes ?? []);
         shown = key;
       }

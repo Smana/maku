@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -926,5 +927,28 @@ func TestCoordinationConfig(t *testing.T) {
 			!strings.Contains(err.Error(), "already set") {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+// A sponsored principal's repositories are its upper bound into a coordination family (v4 MR13):
+// owner/name shapes, each once.
+func TestSponsoredConfigRepositoriesValidateAndKeyByPrincipal(t *testing.T) {
+	base := access + "  roomctlClientIDFile: /etc/room-broker/oidc/roomctl\n  mcp:\n    enabled: true\n" +
+		"    sponsored: [{name: slack-app, clientIDFile: /etc/slack/client-id, repositories: %s}]\n" +
+		"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+	c, err := Load(write(t, valid+fmt.Sprintf(base, "[acme/api, acme/web]")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Human.MCP.SponsoredRepositories()
+	if !got["system:slack-app"]["acme/api"] || !got["system:slack-app"]["acme/web"] || len(got["system:slack-app"]) != 2 {
+		t.Fatalf("%v", got)
+	}
+	for name, repos := range map[string]string{"a bad shape": "[acme]", "a duplicate": "[acme/api, acme/api]"} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, valid+fmt.Sprintf(base, repos))); err == nil || !strings.Contains(err.Error(), "human.mcp.sponsored.slack-app.repositories") {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }

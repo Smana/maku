@@ -809,6 +809,21 @@ describe("the room page", () => {
       expect(p.app.querySelectorAll(".rail-dots .rail-dot")).toHaveLength(2);
     });
 
+    it("a parent's family draws the coordination panel from the same frame", async () => {
+      const coordination = { planVersion: 1, planHash: "abcdef0123", restrictedChildren: 0, edges: [],
+        nodes: [{ id: "contract", kind: "child", childID: "contract", roles: ["implementer"], disabled: true, requiredConfirmation: "parent" }] };
+      const { p } = await withFlow({ nodes: [], coordination });
+      const panel = p.app.querySelector<HTMLElement>(".room-body .rail-coordination")!;
+      expect(panel.hidden).toBe(false);
+      expect(panel.querySelector('[data-node="contract"] button')!.hasAttribute("disabled")).toBe(true);
+      expect(p.app.querySelector(".rail-part, .rail-parent")).toBeNull();
+    });
+
+    it("a summary without a family hides the coordination panel", async () => {
+      const { p } = await withFlow(flow);
+      expect(p.app.querySelector<HTMLElement>(".rail-coordination")!.hidden).toBe(true);
+    });
+
     it("a summary without a flow hides it", async () => {
       const { p } = await withFlow();
       expect(p.app.querySelector(".room-body.has-rail")).toBeNull();

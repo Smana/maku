@@ -195,6 +195,10 @@ type Set struct {
 	// served, by the door they came through (GET /api/needs or the needs_list tool), the caller and what
 	// became of them. Served as maku_needs_list_total (MakuName's needs_ case).
 	needsList metric.Int64Counter
+	// coordViews and coordCheckouts are rooms_coordination_views_total{outcome} and
+	// rooms_coordination_checkout_manifests_total{outcome} (v4): a parent's filtered views and
+	// checkout documents, by a closed outcome.
+	coordViews, coordCheckouts metric.Int64Counter
 
 	meter             metric.Meter
 	appended          metric.Int64Counter
@@ -306,6 +310,11 @@ func New(meter metric.Meter) (*Set, error) {
 	s.needsList, err = meter.Int64Counter("needs_list_total", metric.WithDescription("Needs lists served, by surface, principal and outcome."))
 	check(err)
 	check(s.registerNeeds())
+	s.coordViews, err = meter.Int64Counter("rooms_coordination_views_total", metric.WithDescription("Coordination parent views served, by outcome."))
+	check(err)
+	s.coordCheckouts, err = meter.Int64Counter("rooms_coordination_checkout_manifests_total",
+		metric.WithDescription("Coordination checkout documents asked for, by outcome."))
+	check(err)
 	// Ruling AP: counted by the broker from the events bridges append, since
 	// nothing dials into a sandbox to scrape a bridge.
 	s.bridgeStalls, err = meter.Int64Counter("rooms_bridge_harness_stalls_total",
@@ -420,6 +429,31 @@ func (s *Set) Needs(kinds map[string]int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.needsKinds = maps.Clone(kinds)
+}
+
+// The closed outcomes of the coordination counters; any other value is counted as other.
+var (
+	coordViewOutcomes     = map[string]bool{"ok": true, "restricted": true, "not_found": true, "unverified": true}
+	coordCheckoutOutcomes = map[string]bool{"served": true, "restricted": true, "not_ready": true, "unavailable": true}
+)
+
+func closed(set map[string]bool, v string) string {
+	if set[v] {
+		return v
+	}
+	return "other"
+}
+
+// CoordinationView counts one coordination view served: ok (every child readable), restricted (at
+// least one withheld), not_found or unverified.
+func (s *Set) CoordinationView(ctx context.Context, outcome string) {
+	s.coordViews.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", closed(coordViewOutcomes, outcome))))
+}
+
+// CoordinationCheckout counts one checkout document asked for: served, restricted, not_ready or
+// unavailable.
+func (s *Set) CoordinationCheckout(ctx context.Context, outcome string) {
+	s.coordCheckouts.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", closed(coordCheckoutOutcomes, outcome))))
 }
 
 // NeedsList counts one needs list served: surface is the door it came through (api, tool), principal

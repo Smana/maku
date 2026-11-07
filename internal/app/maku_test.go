@@ -901,3 +901,29 @@ func TestMakuHelpNamesTheNewCommands(t *testing.T) {
 		t.Fatalf("help:\n%s", s)
 	}
 }
+
+// maku coordination checkout reads the parent's document from the broker before any git call, and
+// refuses a malformed --workspace, a missing parent and a document it does not know.
+func TestMakuCoordinationCheckout(t *testing.T) {
+	b := newMakuBroker(t)
+	r, _ := configured(t, b)
+	r.Cwd = t.TempDir()
+	for name, c := range map[string]struct {
+		args []string
+		want string
+	}{
+		"no subcommand":         {[]string{"coordination"}, "coordination checkout <parent>"},
+		"an unknown subcommand": {[]string{"coordination", "merge", "p"}, "coordination checkout <parent>"},
+		"no parent":             {[]string{"coordination", "checkout"}, "one parent"},
+		"a malformed workspace": {[]string{"coordination", "checkout", "p", "--workspace", "acme"}, "owner/name=path"},
+		"a twice-named clone":   {[]string{"coordination", "checkout", "p", "--workspace", "a/b=x", "--workspace", "a/b=y"}, "given twice"},
+		"not a parent":          {[]string{"coordination", "checkout", "gone"}, "no such coordination parent"},
+		"an unknown document":   {[]string{"coordination", "checkout", "p1"}, "unknown document"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := r.Run(t.Context(), c.args); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+}

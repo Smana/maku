@@ -914,3 +914,20 @@ func TestCoordinationPlannerWiredBesideIntake(t *testing.T) {
 		t.Fatalf("%+v %v", s.Coordination, err)
 	}
 }
+
+// v4 MR13: a sponsored principal's repositories reach the human API only while coordination is
+// on, keyed as its principal id; off, no sponsored reach into a family is wired.
+func TestSponsoredRepositoriesWiredOnlyWhileCoordinationOn(t *testing.T) {
+	vis := &intakeVisibility{public: map[string]bool{"smana/ai-native-ref": true}}
+	cfg := plannerConfig()
+	cfg.Human.MCP.Sponsored = []config.SponsoredConfig{{Name: "slack-app", ClientIDFile: "/x", Repositories: []string{"acme/api"}}}
+	cfg.Coordination = fconfig.Coordination{Mode: fconfig.CoordinationPlan}
+	s, err := buildHumans(t, cfg, vis)
+	if err != nil || !s.SponsoredRepositories["system:slack-app"]["acme/api"] {
+		t.Fatalf("%v %v", s.SponsoredRepositories, err)
+	}
+	cfg.Coordination = fconfig.Coordination{Mode: fconfig.CoordinationOff}
+	if s, err := buildHumans(t, cfg, vis); err != nil || s.SponsoredRepositories != nil || s.CoordinationViews != nil {
+		t.Fatalf("%v %v", s.SponsoredRepositories, err)
+	}
+}
