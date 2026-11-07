@@ -46,7 +46,7 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		return nil
 	}
 	if t.Status.RoomRef == "" {
-		switch err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository); {
+		switch err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, coordinationWatchers(r.Cfg)...); {
 		case errors.Is(err, rooms.ErrForeignRoom):
 			t.Status.Reason = "foreign_room" // never adopted: an operator removes it
 			return nil
