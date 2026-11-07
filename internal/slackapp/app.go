@@ -680,7 +680,7 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			// CD25: a thread whose task is filed answers the five questions, and nothing else — the
 			// room is the one its own Filed line names, never a guess from the issue number. Still a
 			// reply and still no command: the answer says where approving, steering and stopping happen.
-			line := a.answer(ctx, ev, ev.ThreadTS, a.threadRoom(msgs))
+			line := a.answer(ctx, ev, a.threadRoom(msgs))
 			if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); err != nil {
 				a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
 				return "error"
