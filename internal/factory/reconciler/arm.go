@@ -52,6 +52,9 @@ type ArmInputs struct {
 	// Contract is what row 2c reads of a task with a contract: the files changed since the tester's
 	// commit. Read is false until awaitingCI has read them, and an unread one never passes.
 	Contract ContractRead
+	// Integration is a coordination dependent's integration hold (v4 MR9), applied to every
+	// decision DecideArm returns.
+	Integration IntegrationGate
 }
 
 // ContractRead is the files a pull request changed since the tester's contract commit (row 2c).
@@ -117,7 +120,7 @@ func CIState(c forge.Checks, required []string) string {
 func DecideArm(in ArmInputs) (d ArmDecision) {
 	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
 	rows := recordOf(in, gateOf(rc, in.Task.Spec.PredictedClass))
-	defer func() { d.Rows = rows }()
+	defer func() { d.Rows = rows; d = withIntegrationHold(in.Integration, d) }() // MR9: one hold over every return
 	if d, done := baseChecks(in, rc); done {
 		return d
 	}

@@ -3,15 +3,19 @@
 package reconciler
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
@@ -276,6 +280,7 @@ func integrationResultOf(e envelope.IntegrationResult) v1alpha1.IntegrationResul
 type childFact struct {
 	task           *v1alpha1.Task
 	mergeCommitSHA string
+	mergedAt       time.Time
 }
 
 // childFacts reads each child's current Task once.
@@ -294,7 +299,7 @@ func (r *Reconciler) childFacts(ctx context.Context, cs *v1alpha1.CoordinationSt
 		}
 		f := childFact{task: &c}
 		if pr := c.Status.PullRequest; pr != nil && pr.MergedAt != nil && pr.MergeCommitSHA != "" && c.Spec.Repository == st.Repository {
-			f.mergeCommitSHA = pr.MergeCommitSHA
+			f.mergeCommitSHA, f.mergedAt = pr.MergeCommitSHA, pr.MergedAt.Time
 		}
 		out[st.ID] = f
 	}
@@ -312,16 +317,18 @@ func (r *Reconciler) coordinateIntegration(ctx context.Context, t *v1alpha1.Task
 	if err != nil {
 		return err
 	}
-	merges := map[string]string{}
+	merges, landed := map[string]string{}, []string{}
 	for _, c := range cs.Plan.Children {
 		if sha := facts[c.ID].mergeCommitSHA; sha != "" {
 			merges[c.ID] = sha
 			if !slices.Contains(cs.MergeOrder, c.ID) {
-				cs.MergeOrder = append(cs.MergeOrder, c.ID)
+				landed = append(landed, c.ID)
 			}
 		}
 	}
-	if err := r.absorbAttempts(ctx, cs); err != nil {
+	slices.SortStableFunc(landed, func(a, b string) int { return facts[a].mergedAt.Compare(facts[b].mergedAt) })
+	cs.MergeOrder = append(cs.MergeOrder, landed...)
+	if err := r.absorbAttempts(ctx, cs, merges); err != nil {
 		return err
 	}
 	for i := range cs.Children {
@@ -337,7 +344,7 @@ func (r *Reconciler) coordinateIntegration(ctx context.Context, t *v1alpha1.Task
 	}
 	if len(merges) == len(cs.Plan.Children) {
 		if cs.Acceptance != nil {
-			return nil
+			return r.completeCoordination(ctx, t)
 		}
 		m, err := coordination.FinalManifest(t.Name, cs, merges)
 		if err != nil {
@@ -400,8 +407,9 @@ func (r *Reconciler) startAttempt(ctx context.Context, t *v1alpha1.Task, m coord
 
 // absorbAttempts records each pending attempt's outcome from its Task's typed result, never a
 // comment, room message or green child: a pass for the current plan releases a pre-merge
-// dependent's exact head (MR9).
-func (r *Reconciler) absorbAttempts(ctx context.Context, cs *v1alpha1.CoordinationStatus) error {
+// dependent's exact head (MR9), and a final pass over exactly every child's current merge commit
+// is the family's acceptance (MR10).
+func (r *Reconciler) absorbAttempts(ctx context.Context, cs *v1alpha1.CoordinationStatus, merges map[string]string) error {
 	for i := range cs.IntegrationAttempts {
 		a := &cs.IntegrationAttempts[i]
 		if a.State != coordination.ResultPending {
@@ -426,16 +434,195 @@ func (r *Reconciler) absorbAttempts(ctx context.Context, cs *v1alpha1.Coordinati
 			continue
 		}
 		a.State, a.Reason = res.State, res.Reason
-		if a.State != coordination.ResultPassed || a.PlanHash != cs.PlanHash || a.Purpose != coordination.PurposeBeforeDependentMerge {
+		if a.State != coordination.ResultPassed || a.PlanHash != cs.PlanHash {
+			continue
+		}
+		if a.Purpose == coordination.PurposeFinal {
+			if finalOver(a.Subjects, merges, len(cs.Plan.Children)) {
+				cs.Acceptance = &v1alpha1.CoordinationAcceptance{IntegrationTask: a.Task, ManifestHash: a.ManifestHash, AcceptedAt: metav1.NewTime(r.Now())}
+			}
 			continue
 		}
 		for _, s := range a.Subjects {
 			j := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == s.ChildID })
-			if s.HeadSHA != "" && j >= 0 {
-				cs.Children[j].IntegrationRelease = &v1alpha1.IntegrationRelease{ChildID: s.ChildID, HeadSHA: s.HeadSHA,
-					IntegrationTask: a.Task, ManifestHash: a.ManifestHash}
+			if s.HeadSHA == "" || j < 0 {
+				continue
+			}
+			cs.Children[j].IntegrationRelease = &v1alpha1.IntegrationRelease{ChildID: s.ChildID, HeadSHA: s.HeadSHA,
+				IntegrationTask: a.Task, ManifestHash: a.ManifestHash}
+			if err := r.acceptHead(ctx, cs.Children[j].Task, s.HeadSHA); err != nil {
+				return err
 			}
 		}
 	}
+	return nil
+}
+
+// IntegrationGate is a coordination dependent's integration hold (MR9): Required while its plan
+// needs a passing pre-merge integration of its head, Accepted only for AcceptedHead, the exact
+// head a current release names. Reason is why it holds.
+type IntegrationGate struct {
+	Required, Accepted   bool
+	AcceptedHead, Reason string
+}
+
+// withIntegrationHold is the hold over one decision (MR9): for a required head no integration
+// accepted, an arm, live class or maintainer-approved alike, and a maintainer's approval hand-off
+// a human could merge past it, become wait/integration_pending. Shadow still records would-arm;
+// every refusal stands.
+func withIntegrationHold(g IntegrationGate, d ArmDecision) ArmDecision {
+	if !g.Required || g.Accepted {
+		return d
+	}
+	if d.Verdict == "arm" || (d.Verdict == "human" && d.Reason == "maintainer_approved") {
+		return ArmDecision{Verdict: "wait", Reason: cmp.Or(g.Reason, reasonIntegrationPending), Matched: d.Matched, Rows: d.Rows}
+	}
+	return d
+}
+
+// integrationGate is coordination child t's hold for head, read now and never cached: none for a
+// Task outside a coordination, an independent child, or a plan whose integration runs only after
+// the last merge. A dependent is accepted only when its parent's release names head, and the
+// release's integration Task passed that manifest under the current plan with every dependency
+// subject at its producer's current landed merge. A parent that cannot be read holds. t's
+// integrationAcceptedHead follows the answer, and a held head is recorded for the parent.
+func (r *Reconciler) integrationGate(ctx context.Context, t *v1alpha1.Task, head string) (IntegrationGate, error) {
+	cp := t.Spec.CoordinationParent
+	if cp == nil || cp.ChildID == "" || t.Spec.Kind != "" {
+		return IntegrationGate{}, nil
+	}
+	g := IntegrationGate{Required: true, Reason: reasonIntegrationPending}
+	accepted, err := r.integrationAccepted(ctx, t, head, &g)
+	if err != nil {
+		return g, err
+	}
+	g.Accepted = accepted
+	if accepted {
+		g.AcceptedHead = head
+	}
+	if st := t.Status.Coordination; st != nil && st.ChildID != "" {
+		st.IntegrationAcceptedHead = g.AcceptedHead // MR9: a moved head is never the accepted one
+	}
+	if g.Required && !g.Accepted && t.Status.PullRequest != nil {
+		t.Status.PullRequest.HeadSHA = head // the head the parent's pre-merge integration binds
+	}
+	return g, nil
+}
+
+// integrationAccepted answers integrationGate's question; it clears g.Required when no hold
+// applies.
+func (r *Reconciler) integrationAccepted(ctx context.Context, t *v1alpha1.Task, head string, g *IntegrationGate) (bool, error) {
+	cp := t.Spec.CoordinationParent
+	var p v1alpha1.Task
+	switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: cp.Task}, &p); {
+	case apierrors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	cs := p.Status.Coordination
+	c, ok := coordination.PlanChild(cs, cp.ChildID)
+	if !ok {
+		return false, nil
+	}
+	if len(c.DependsOn) == 0 || !cs.Plan.Integration.EffectiveBeforeDependents() {
+		g.Required, g.Reason = false, ""
+		return false, nil
+	}
+	i := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == c.ID })
+	if i < 0 || head == "" {
+		return false, nil
+	}
+	rel := cs.Children[i].IntegrationRelease
+	if rel == nil || rel.ChildID != c.ID || rel.HeadSHA != head {
+		return false, nil
+	}
+	var it v1alpha1.Task
+	switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: rel.IntegrationTask}, &it); {
+	case apierrors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	in, res := it.Spec.Integration, it.Status.Result
+	if it.Spec.Kind != v1alpha1.TaskKindIntegration || in == nil || res == nil || res.State != coordination.ResultPassed ||
+		res.ManifestHash != rel.ManifestHash || in.PlanHash != cs.PlanHash || in.Purpose != coordination.PurposeBeforeDependentMerge {
+		return false, nil
+	}
+	m, err := coordination.ManifestOf(&it, cs)
+	if err != nil || coordination.ManifestHash(m) != rel.ManifestHash {
+		return false, nil
+	}
+	for _, s := range m.Subjects {
+		if s.ChildID == c.ID {
+			if s.HeadSHA != head {
+				return false, nil
+			}
+			continue
+		}
+		merge, err := r.producerMerge(ctx, cs, s.ChildID)
+		if err != nil || merge == "" || merge != s.MergeCommitSHA {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// integrationRecheck reads t's gate again immediately before the merger call and holds d with
+// it, so a release gone stale since the decision merges nothing; GitHub's expected-head check
+// stays the last guard after it. held is true when no merge may be called.
+func (r *Reconciler) integrationRecheck(ctx context.Context, t *v1alpha1.Task, head string, d *ArmDecision) (bool, error) {
+	g, err := r.integrationGate(ctx, t, head)
+	if err != nil {
+		return true, err
+	}
+	if *d = withIntegrationHold(g, *d); d.Verdict != "arm" {
+		t.Status.Reason = d.Reason
+		return true, nil
+	}
+	return false, nil
+}
+
+// acceptHead records head as child task's integrationAcceptedHead, a merge patch of that field
+// alone: the child's own gate keeps it while the head stays and clears it once the head moves.
+func (r *Reconciler) acceptHead(ctx context.Context, task, head string) error {
+	if task == "" {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{"status": map[string]any{"coordination": map[string]any{"integrationAcceptedHead": head}}})
+	c := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Namespace: r.Namespace, Name: task}}
+	if err := r.Client.Status().Patch(ctx, c, client.RawPatch(types.MergePatchType, body)); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
+// finalOver is whether subjects are exactly every child at its current landed merge commit.
+func finalOver(subjects []v1alpha1.IntegrationSubject, merges map[string]string, children int) bool {
+	if len(subjects) != children || len(merges) != children {
+		return false
+	}
+	for _, s := range subjects {
+		if s.HeadSHA != "" || s.MergeCommitSHA == "" || merges[s.ChildID] != s.MergeCommitSHA {
+			return false
+		}
+	}
+	return true
+}
+
+// completeCoordination ends the parent once every child landed and the final integration passed
+// (MR10): its issue closed in the primary through the primary's own App, then Done. It merges,
+// reverts and arms nothing: each child landed through its own repository's gate.
+func (r *Reconciler) completeCoordination(ctx context.Context, t *v1alpha1.Task) error {
+	if t.Spec.Issue > 0 {
+		f, ok := r.forgeFor(t.Spec.Repository)
+		if !ok {
+			return fmt.Errorf("reconciler: no factory App for %s to close coordination %s's issue", t.Spec.Repository, t.Name)
+		}
+		if err := f.CloseIssue(ctx, t.Spec.Issue); err != nil {
+			return err
+		}
+	}
+	r.to(t, v1alpha1.PhaseDone, reasonIntegrationPassed)
 	return nil
 }
