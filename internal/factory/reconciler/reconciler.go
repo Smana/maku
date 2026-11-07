@@ -1187,6 +1187,9 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	if t.Status.Phase == v1alpha1.PhaseEscalated { // the cluster refused the loop claim: no run exists
 		return nil
 	}
+	if late && current(t).HeadSHA == "" { // the head a revision starts on: Revised lists what it changed since
+		current(t).HeadSHA = pr.HeadSHA
+	}
 	// Consumed once the run exists, and only what its brief quoted (F-A). A failure only means
 	// the next brief repeats them.
 	if err := r.Rooms.Consume(ctx, t.Status.RoomRef, refs, current(t).ID); err != nil {

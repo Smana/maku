@@ -536,8 +536,8 @@ func TestProposalPaths(t *testing.T) {
 		"ten":          {"## Files\n" + strings.Repeat("- `a.yaml`\n", 10), slices.Repeat([]string{"a.yaml"}, 10)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := proposalPaths(c.body); !slices.Equal(got, c.want) || (c.want == nil) != (got == nil) {
-				t.Fatalf("proposalPaths = %q, want %q", got, c.want)
+			if got := ProposalPaths(c.body); !slices.Equal(got, c.want) || (c.want == nil) != (got == nil) {
+				t.Fatalf("ProposalPaths = %q, want %q", got, c.want)
 			}
 		})
 	}

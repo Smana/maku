@@ -134,7 +134,7 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 		case reason != "":
 			return p.refusePublish(ctx, n, last, reason)
 		}
-		class = filefence.Infer(p.repo().Classes, proposalPaths(body))
+		class = filefence.Infer(p.repo().Classes, ProposalPaths(body))
 		// No factory/ready: the maintainer reads the issue and starts it.
 		filed, err = p.Forge.CreateIssue(ctx, title,
 			body+fmt.Sprintf("\n\n---\nPublished by @%s from agent factory task `%s`.", last.Actor, t.Name), []string{marker, "class:" + class})
@@ -145,7 +145,7 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 	}
 	if !filedNow {
 		// K14: a retry reads the filed body, whose footer ends the file list.
-		class = filefence.Infer(p.repo().Classes, proposalPaths(filed.Body))
+		class = filefence.Infer(p.repo().Classes, ProposalPaths(filed.Body))
 		if label := "class:" + class; !slices.Contains(filed.Labels, label) {
 			if err := p.Forge.AddLabels(ctx, filed.Number, label); err != nil {
 				return fmt.Errorf("label the issue: %w", err)
@@ -380,11 +380,11 @@ const (
 
 var proposalPathLine = regexp.MustCompile("^- `([^`\\s]+)`$")
 
-// proposalPaths are the repository paths a proposal's `## Files` section lists, one "- `path`" per
+// ProposalPaths are the repository paths a proposal's `## Files` section lists, one "- `path`" per
 // line. The section ends at the next "## " heading or at the footer's "---" line. A line of any
 // other form, a path with a ".." segment, a leading "/" or over maxPathBytes, or more than
 // maxProposalPaths lines, empties the list: an unreadable scope infers nothing.
-func proposalPaths(body string) []string {
+func ProposalPaths(body string) []string {
 	var paths []string
 	in := false
 	for _, line := range strings.Split(body, "\n") {

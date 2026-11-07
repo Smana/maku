@@ -284,6 +284,7 @@ returns it.
 | Reason | Why |
 |---|---|
 | *(none)* | A revision a maintainer asked for is pushed |
+| `scope_changed` | That revision changed a path the task names and the pull request no longer touches it: a maintainer confirms the scope change before merging, or requests changes again |
 | `merge_gate_off` | No class is live or in shadow, so the factory does not gate the pull request |
 | `policy_pending` | policy-bot's `policy-bot: main` status needs a maintainer's approval |
 | `policy_absent` | policy-bot has not evaluated the pull request, or the status is not from `merge.policyBotLogin` |
@@ -376,8 +377,17 @@ A task ends with one of these:
 ## Narration
 
 The factory App comments on the task's issue, or on its pull request when it has none: a run's
-start (id, branch, budget, the room link, how to stop it), the pull request, each revision, CI fix
-and resume, each hand-off with its reason and the merge command, and the end with the tokens used.
+start (id, branch, budget, the room link, how to stop it), the pull request, CI fix and resume,
+each hand-off with its reason and the merge command, and the end with the tokens used.
+
+A maintainer's **Request changes** is answered where it was made, on the pull request:
+
+| Event (key) | When | Says |
+|---|---|---|
+| Revising (`revise-<runs>`) | The review sends the task back for a revision | The next run starts on the same branch with the review in its brief |
+| Revised (`revised-<runs>`) | That revision run ends | The new head (short sha, linked) and the files GitHub says changed since the head it started on, the room link, and that the pull request is ready for re-review; or that the revision ended without a new commit. If it took a path the task names (a `## Files` line, or a path in a code span of its acceptance check) out of the pull request, a **Scope changed** line names it and the task waits as `scope_changed` |
+
+Neither quotes the review or the agent's handoff.
 Each comment carries a hidden marker and is posted at least once and never twice, from an outbox
 written with the transition that caused it. The
 outbox holds 16 comments: past that the oldest are dropped, an ending's last, and logged

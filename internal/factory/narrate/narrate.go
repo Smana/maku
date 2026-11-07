@@ -224,6 +224,7 @@ func reasons() map[string]string {
 		"budget-task":               "the task's token budget has no room left for another full run",
 		"run_lost":                  "the run disappeared",
 		"no_pr":                     "the agent opened no pull request",
+		"scope_changed":             "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
 		"no_action":                 "the triager found nothing to change",
 		"no_proposal":               "the triager's run made no proposal to publish",
 		"task_not_ended":            "the task is still running, and its proposal is final only once it ends",
@@ -467,6 +468,66 @@ func Revising(t *v1alpha1.Task, reviewer string) Event {
 	return Event{Key: fmt.Sprintf("revise-%d", len(t.Status.Runs)),
 		Body: fmt.Sprintf("Agent factory task `%s` is revising after @%s's review: the next run starts on the same branch, "+
 			"with the review in its brief.", t.Name, reviewer)}
+}
+
+// Revision is what a revision a maintainer asked for pushed, as the factory read it from GitHub: never
+// the agent's handoff nor the review, which are text a user or a model wrote.
+type Revision struct {
+	PR         int
+	Repository string // owner/name, for the commit link
+	From, Head string // the head the revision started on and the one it ended on; equal when it pushed nothing
+	Files      []string
+	FilesRead  bool     // false: GitHub would not list what changed between From and Head
+	Dropped    []string // paths the task names that the revision took out of the pull request
+}
+
+// maxRevisedFiles is how many changed files a Revised comment lists before it counts the rest.
+const maxRevisedFiles = 20
+
+// Revised says how a revision a maintainer asked for ended (Δ5), once per run, on the pull request the
+// maintainer reviewed: its new head and files, or that it pushed nothing, and, when it took a path the
+// task names out of the pull request, that the scope changed and a maintainer must confirm it.
+func Revised(t *v1alpha1.Task, rv Revision, roomsURL string) Event {
+	room := fmt.Sprintf("%s/r/%s (tailnet only)", strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
+	key := fmt.Sprintf("revised-%d", len(t.Status.Runs))
+	if rv.Head == "" || rv.Head == rv.From {
+		return Event{Key: key, Body: fmt.Sprintf("Agent factory task `%s`: the revision ended without a new commit; read the room for why: %s. "+
+			"#%d is back with the maintainer as it was.", t.Name, room, rv.PR)}
+	}
+	short := rv.Head[:min(len(rv.Head), 7)]
+	var b strings.Builder
+	fmt.Fprintf(&b, "Agent factory task `%s` revised #%d: the head is now [`%s`](https://github.com/%s/commit/%s)", t.Name, rv.PR, short,
+		rv.Repository, rv.Head)
+	switch {
+	case !rv.FilesRead:
+		b.WriteString("; the files it changed could not be listed, so check the diff against the task's scope.")
+	default:
+		shown := rv.Files[:min(len(rv.Files), maxRevisedFiles)]
+		fmt.Fprintf(&b, ", changing %s", codeList(shown))
+		if more := len(rv.Files) - len(shown); more > 0 {
+			fmt.Fprintf(&b, " and %d more", more)
+		}
+		b.WriteString(".")
+	}
+	fmt.Fprintf(&b, " The run is in the room: %s.", room)
+	if len(rv.Dropped) > 0 {
+		fmt.Fprintf(&b, "\n\n**Scope changed:** the revision took %s out of the pull request, which the task names in its `## Files` "+
+			"section or its acceptance check. A maintainer must confirm the scope change before merging, or request changes again.",
+			codeList(rv.Dropped))
+		return Event{Key: key, Body: b.String()}
+	}
+	b.WriteString(" The pull request is ready for the maintainer's re-review.")
+	return Event{Key: key, Body: b.String()}
+}
+
+// codeList renders paths as code spans, comma-separated. A path is a filename an agent chose: a
+// backtick or a line break in it would end the span, so they are replaced.
+func codeList(paths []string) string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, "`"+strings.NewReplacer("`", "'", "\n", " ", "\r", " ").Replace(p)+"`")
+	}
+	return strings.Join(out, ", ")
 }
 
 // remindPrefix starts a reminder's key: remind-<runs>-<quiet spell start, unix seconds>.

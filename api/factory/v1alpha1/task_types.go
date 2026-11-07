@@ -686,7 +686,8 @@ type RunRecord struct {
 	// +optional
 	StartSeq int64 `json:"startSeq,omitempty"`
 	// The pull request's head a reviewer or tester run was given: its approve counts for that
-	// commit only, and only while the head has not moved.
+	// commit only, and only while the head has not moved. On an implementer run started on an
+	// existing pull request, the head it started from: a revision's narration lists what it changed.
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	HeadSHA string `json:"headSHA,omitempty"`

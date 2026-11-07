@@ -240,7 +240,7 @@ func (r *Reconciler) revise(ctx context.Context, t *v1alpha1.Task, pr forge.PR, 
 	// A revision the task cap will refuse is not announced: Queued escalates it as budget-task,
 	// and the review stays queued in the room for whoever picks the task up.
 	if runFits(t) || !r.Cfg.Budgets.EnforceTask {
-		narrateLater(t, narrate.Revising(t, rvs[len(rvs)-1].Author))
+		narrateOn(t, reviewTarget(t), narrate.Revising(t, rvs[len(rvs)-1].Author))
 	}
 	return nil
 }

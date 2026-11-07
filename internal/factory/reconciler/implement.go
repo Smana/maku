@@ -854,7 +854,17 @@ func cause(t *v1alpha1.Task) string {
 // head it decides (R03), so skipping the review would hand it off as verdict_stale (N1).
 func (r *Reconciler) afterWriter(ctx context.Context, t *v1alpha1.Task) error {
 	if cause(t) == "human" {
-		r.to(t, v1alpha1.PhaseAwaitingHuman, "")
+		pr, err := r.readPR(ctx, t)
+		if err != nil {
+			return err
+		}
+		rv := r.revision(ctx, t, pr)
+		reason := ""
+		if len(rv.Dropped) > 0 { // never "ready" silently: the maintainer confirms the scope change
+			reason = "scope_changed"
+		}
+		r.to(t, v1alpha1.PhaseAwaitingHuman, reason)
+		narrateOn(t, reviewTarget(t), narrate.Revised(t, rv, r.Cfg.RoomsURL))
 		return nil
 	}
 	if cause(t) == "ci" { // a push after the fix's own is a human's: never reviewed into a merge

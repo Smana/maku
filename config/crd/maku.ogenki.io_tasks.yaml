@@ -2103,7 +2103,8 @@ spec:
                     headSHA:
                       description: |-
                         The pull request's head a reviewer or tester run was given: its approve counts for that
-                        commit only, and only while the head has not moved.
+                        commit only, and only while the head has not moved. On an implementer run started on an
+                        existing pull request, the head it started from: a revision's narration lists what it changed.
                       maxLength: 64
                       type: string
                     id:
