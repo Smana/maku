@@ -9,6 +9,7 @@ import (
 
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/store"
@@ -82,6 +83,9 @@ func (s *Server) summaryOf(ctx context.Context, id string, p authn.Principal, af
 		web := sub
 		web.WebUI = true // deciding happens in the web UI, as needsYou judges it
 		view.Status.Approvals = fold.CountApprovals(web, room.Spec.Approvals.FourEyes, s.now())
+	}
+	if v, ok := s.coordinationFor(ctx, id, p); ok {
+		coordinationview.Attach(&view, v)
 	}
 	return view, nil
 }
