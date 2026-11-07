@@ -629,3 +629,28 @@ func TestCoordinationInstruments(t *testing.T) {
 		t.Fatal("an unbounded value reached a label")
 	}
 }
+
+// v4: a coordination delivery is counted by what its channel was told, a closed outcome only.
+func TestSlackCoordinationProjectionCounter(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	p, err := NewSlackProposals(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.CoordinationProjection(ctx, "coarse")
+	p.CoordinationProjection(ctx, "C03/acme-secret")
+	body := scrape(t, exp.Handler())
+	for _, want := range []string{`maku_slack_coordination_projection_total{outcome="coarse"} 1`, `maku_slack_coordination_projection_total{outcome="other"} 1`} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, "acme-secret") {
+		t.Fatal("an unbounded value reached a label")
+	}
+}

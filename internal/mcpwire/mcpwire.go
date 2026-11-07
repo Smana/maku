@@ -24,12 +24,18 @@ const (
 	// CoordinationCheckout is maku mcp's parent checkout (v4 MR14): every child of a family at its
 	// exact commit. Local, like RoomCheckout; it confirms, files, merges and recovers nothing.
 	CoordinationCheckout = "coordination_checkout"
+	// CoordinationOpen is maku mcp's draft opener (v4): a coordination_plan result stored as its
+	// parent's draft, as the developer. It confirms nothing.
+	CoordinationOpen = "coordination_open"
 	// IntakePlan and PlanCheck are the broker's governed planner: the plan a sentence becomes, and
 	// the door every consumer re-validates one through before anything is filed.
 	IntakePlan = "intake_plan"
 	PlanCheck  = "plan_check"
 	// CoordinationPlan is the multi-repository planner on the same route (v4 MR4): side-effect free.
 	CoordinationPlan = "coordination_plan"
+	// CoordinationDraft stores a coordination_plan result as its parent's draft, for a sponsored
+	// principal's user (v4): a draft only, never a confirmation.
+	CoordinationDraft = "coordination_draft"
 )
 
 // The JSON-RPC 2.0 error codes the servers answer with.

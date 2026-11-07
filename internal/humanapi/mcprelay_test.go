@@ -94,7 +94,7 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 		}
 		return n
 	}
-	if n := len(names); n < 4 || strings.Join(names[n-4:], ",") != "issue_file,room_wait,room_checkout,coordination_checkout" ||
+	if n := len(names); n < 5 || strings.Join(names[n-5:], ",") != "issue_file,room_wait,room_checkout,coordination_checkout,coordination_open" ||
 		count("rooms_list") != 1 || count("room_summary") != 1 || count("room_changes") != 1 {
 		t.Fatalf("the broker's tools, then issue_file, room_wait, room_checkout and coordination_checkout: %v", names)
 	}

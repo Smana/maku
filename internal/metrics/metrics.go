@@ -564,8 +564,9 @@ func (s *Set) IntakePlanTokens(ctx context.Context, surface, kind string, n int6
 // The App makes one with NewSlackProposals rather than building a Set: Set is the broker's, and a meter
 // that carries it serves maku_rooms_approvals_pending 0 even with no room at all.
 type SlackProposals struct {
-	updates metric.Int64Counter
-	answers metric.Int64Counter
+	updates     metric.Int64Counter
+	answers     metric.Int64Counter
+	projections metric.Int64Counter
 }
 
 // NewSlackProposals makes both proposal families on meter.
@@ -585,7 +586,25 @@ func NewSlackProposals(meter metric.Meter) (*SlackProposals, error) {
 		metric.WithDescription("Answers a proposal's thread gave, by the closed question (CD25).")); err != nil {
 		return nil, fmt.Errorf("metrics: slack_thread_answers_total: %w", err)
 	}
+	if p.projections, err = meter.Int64Counter("slack_coordination_projection_total",
+		metric.WithDescription("Coordination deliveries, by what the thread's channel may see: full, coarse or dropped (v4).")); err != nil {
+		return nil, fmt.Errorf("metrics: slack_coordination_projection_total: %w", err)
+	}
 	return &p, nil
+}
+
+// projectionOutcome is outcome when slack_coordination_projection_total knows it, else "other".
+func projectionOutcome(outcome string) string {
+	switch outcome {
+	case "full", "coarse", "dropped":
+		return outcome
+	}
+	return "other"
+}
+
+// CoordinationProjection counts one coordination delivery by its channel's projection.
+func (p *SlackProposals) CoordinationProjection(ctx context.Context, outcome string) {
+	p.projections.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", projectionOutcome(outcome))))
 }
 
 // ProposalUpdate counts one proposal action (CD7): mention, reply, confirm, cancel, repost or

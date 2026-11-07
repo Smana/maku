@@ -946,3 +946,5 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-coordination-edge { color: var(--muted-foreground); font-size: 0.85rem; }
 .rail-coordination-edge[data-state="pending"] { opacity: 0.7; }
 .rail-coordination-restricted { margin: 0; color: var(--muted-foreground); font-style: italic; }
+.rail-coordination-act { justify-self: start; }
+.rail-coordination-status:empty { display: none; }

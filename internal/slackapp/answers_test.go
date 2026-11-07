@@ -78,6 +78,11 @@ func (b *answerBroker) NeedsList(_ context.Context, room string) ([]summary.Need
 // The three reads on the plain stub, which every other flow uses: an empty room, so a test about
 // something else never depends on them. The tests below use answerBroker.
 func (b *stubBroker) RoomSummary(context.Context, string) (summary.Summary, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.summary != nil {
+		return *b.summary, nil
+	}
 	return summary.Summary{}, nil
 }
 

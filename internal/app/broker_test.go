@@ -35,6 +35,7 @@ import (
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/roomctrl"
+	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/suspend"
@@ -944,5 +945,22 @@ func TestCoordinationViewsOnlyWhileOn(t *testing.T) {
 	src, ok := coordinationViews(cfg, nil, "agents").(coordinationview.Source)
 	if !ok || src.Namespace != "agents" {
 		t.Fatalf("%#v", src)
+	}
+}
+
+// The coordination gateway exists only while the switch is on and a factory is configured.
+func TestCoordinationWritesOnlyWithAFactory(t *testing.T) {
+	cfg := plannerConfig()
+	cfg.FactoryURL = "https://agent-factory.agents.svc:8082"
+	if coordinationWrites(cfg) != nil {
+		t.Fatal("a gateway while off")
+	}
+	cfg.Coordination = fconfig.Coordination{Mode: fconfig.CoordinationPlan}
+	if f, ok := coordinationWrites(cfg).(runrequest.Factory); !ok || f.URL != cfg.FactoryURL {
+		t.Fatalf("%#v", f)
+	}
+	cfg.FactoryURL = ""
+	if coordinationWrites(cfg) != nil {
+		t.Fatal("a gateway without a factory")
 	}
 }

@@ -24,6 +24,7 @@ const (
 	toolRoomWait             = mcpwire.RoomWait
 	toolRoomCheckout         = mcpwire.RoomCheckout
 	toolCoordinationCheckout = mcpwire.CoordinationCheckout
+	toolCoordinationOpen     = mcpwire.CoordinationOpen
 )
 
 // localCall is one tools/call the relay serves itself.
@@ -48,6 +49,9 @@ func buildHandlers() map[string]localTool {
 		toolCoordinationCheckout: func(ctx context.Context, r *Relay, c localCall) any {
 			return r.coordinationCheckout(ctx, c)
 		},
+		toolCoordinationOpen: func(ctx context.Context, r *Relay, c localCall) any {
+			return r.coordinationOpen(ctx, c)
+		},
 	}
 }
 
@@ -57,6 +61,7 @@ var localEntries = []any{
 	roomWaitEntry,
 	roomCheckoutEntry,
 	coordinationCheckoutEntry,
+	coordinationOpenEntry,
 }
 
 // withLocalTools adds the local tools to the broker's tools/list result.

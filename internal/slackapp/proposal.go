@@ -637,6 +637,19 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 			prev = &p
 		}
 	}
+	// v4: exactly two named repositories select a coordination, planned through coordination_plan
+	// and confirmed on the parent's room page; any other count keeps this single-repository flow.
+	coordLatest, _, coordThread := a.coordinationThread(msgs)
+	repos, code := a.coordinationRoute(ctx, ev, ch, thread, text, latest != nil)
+	if code != "" {
+		return code, false
+	}
+	if repos != nil {
+		return a.proposeCoordination(ctx, ev, thread, text, repos, coordLatest), false
+	}
+	if coordThread {
+		return a.refusedLine(ctx, ev.Channel, thread, coordinationTooManyLine), false
+	}
 	if prev != nil && prev.Rev >= maxProposalRevisions {
 		if !say(proposalCappedLine) {
 			return "error", false
