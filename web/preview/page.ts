@@ -38,6 +38,7 @@ export interface PreviewOptions {
   homeHref?: string; // the brand link target; "/" unless the demo keeps it on its own page
   assetBase?: string; // where the brand marks are served; "/assets" unless the demo serves them relative
   theme: ThemeController; // initialised by the caller, so a ?theme override can follow it
+  unsandboxed?: boolean; // the page's "Not sandboxed" banner above the header, as room.ts shows it
   dashboards?: Dashboard[]; // the strip's link templates; none by default
   now?: () => number; // the rail's clock; Date.now unless the fixture's events are not recent
 }
@@ -80,15 +81,23 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   footer.append(session, composerEl, meta);
   const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, main, forkPanel);
   const { rail } = pane;
-  app.replaceChildren(header, pane.body, footer);
+  const sandbox = document.createElement("div");
+  sandbox.className = "banner-unsandboxed";
+  sandbox.setAttribute("role", "alert");
+  sandbox.hidden = !o.unsandboxed;
+  sandbox.textContent = "Not sandboxed: run ikely2yk runs without gVisor (ALLOW_UNSANDBOXED=1). Use only on a machine you trust.";
+  app.replaceChildren(sandbox, header, pane.body, footer);
   // The sticky rail sits between the header and the dock, as room.ts measures them.
   if (typeof ResizeObserver !== "undefined") {
     const size = () => {
-      app.style.setProperty("--header-h", `${header.offsetHeight}px`);
+      const banner = sandbox.hidden ? 0 : sandbox.offsetHeight;
+      app.style.setProperty("--banner-h", `${banner}px`);
+      app.style.setProperty("--header-h", `${banner + header.offsetHeight}px`);
       app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
     };
     const ro = new ResizeObserver(size);
     ro.observe(header);
+    ro.observe(sandbox);
     ro.observe(footer);
     size();
   }

@@ -241,6 +241,13 @@ describe("layout", () => {
     // The padding sits inside the height: content-box put the rail's last 8 px under the dock.
     expect(d).toMatch(/box-sizing:\s*border-box/);
   });
+  it("pins the unsandboxed banner with the header, so the rail clears both", () => {
+    expect(decl(outside, ".page-header")).toMatch(/top:\s*var\(--banner-h/);
+    expect(decl(media("(min-width: 641px)"), ".banner-unsandboxed")).toMatch(/position:\s*sticky;\s*top:\s*0/);
+    const room = readFileSync(join(__dirname, "../src/room.ts"), "utf8");
+    expect(room).toMatch(/--header-h",\s*`\$\{banner \+ header\.offsetHeight\}px`/);
+    expect(room).toMatch(/ro\.observe\(sandbox\)/);
+  });
   it("shares the conversation's grid with the composer on a wide screen", () => {
     const d = decl(wide, ".page-dock");
     expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
