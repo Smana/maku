@@ -206,6 +206,8 @@ type Flow struct {
 	Milestones []Milestone          `json:"milestones,omitempty"`
 	Split      *envelope.SplitFact  `json:"split,omitempty"`
 	Parent     *envelope.ParentFact `json:"parent,omitempty"`
+	// Coordination is a parent's family (AttachCoordination), drawn apart from Split and Parent.
+	Coordination *CoordinationFlow `json:"coordination,omitempty"`
 }
 
 // FlowNode is one run on the path. ToSeq and EndedAt are zero while the run is live; Edge names
