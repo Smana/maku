@@ -123,6 +123,17 @@ claim except the client that issued it.
 | Reads | `/mcp` only, four tools, and a room only as one of its `watcher` members |
 | Never | `/v1/runs`, `room_queue`, `room_fork`, `rooms_list`, approvals, class, tier or auto-merge. Its text is machine-sent, redacted and stored as untrusted |
 
+### Coordination parents
+
+A family spans repositories, so the parent room's gate is not enough (v4 MR13). Every read of a
+parent — its view, its summary, its needs, its brief and its checkout document — filters each child
+by the caller's own GitHub read of that child's repository, at the time of the read, with nothing
+cached: `agents-admin` widens nothing, and a missing link, a lookup error or a GitHub error
+withholds the child. A sponsored principal reads only the repositories its
+`human.mcp.sponsored[].repositories` lists. A withheld child is a count, and the family-wide fields
+that could reveal it by prose or by subtraction are cleared with it. The checkout document is served
+only to a caller who reads every child. The unfiltered view never leaves the broker.
+
 ## TLS on :8443
 
 The bridge-to-broker hop serves TLS **on both clouds**. gcp-0's Cilium has no WireGuard to

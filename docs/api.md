@@ -434,6 +434,34 @@ access and role check as `GET /v1/ws`, whose replay filters nothing per viewer e
 | `404` | No such room, or one the caller may not read: the same `no such room` |
 | `503` | `access_unverified`, or the rooms or the log are unavailable (`room log unreadable`). Retry |
 
+### `GET /api/coordinations/{task}`
+
+A coordination parent's family (v4 MR13), as this caller may read it. Registered only while the
+broker has a coordination reader (`coordination.mode` not `off`); off, the path is a 404.
+
+| Step | What happens | Refusal |
+|---|---|---|
+| Parent | The parent room's ordinary gate, as `GET /api/rooms/{id}/summary` applies it (an admin passes) | the room's 404 or 503 |
+| Core view | Read live, uncached, never served as read | 404 not a parent; 503 `coordination view unavailable` |
+| Each child | A human's own linked login and GitHub read of **that child's** repository; a sponsored principal's `human.mcp.sponsored[].repositories`. No admin path; a missing link or any error withholds the child | — |
+
+The answer is the core `CoordinationView` with `restrictedChildren` added. A withheld child is only
+counted: its plan entry, authorization, live state, artifacts, merge-order entry, incidents, any
+recovery naming it, every integration attempt with it as a subject and every reference to it are
+removed, and with one withheld the family budget, the primary rationale, the integration acceptance
+and every child's integration acceptance and release are cleared too. The room summary carries the
+same value as `coordination`, and its flow as `flow.coordination`; `needs/v1` adds the parent's own
+`plan_confirmation` and `recovery` items, anchored on `<parent room>#coordination`.
+
+### `GET /api/coordinations/{task}/checkout`
+
+The family's `coordination-checkout/v1` document (MR14), all or nothing: the core
+`CheckoutManifest` (each child's repository, room, issue and PR URL, dependencies, produced and
+consumed landed artifacts, and exactly one of `headSHA` or `mergeCommitSHA`) plus the integration
+attempts. `worktree` is the child id until `maku` fills its path. A caller missing any child gets
+the 404 an unreadable room gets; a family not at one valid commit per child is a 409
+`checkout_not_ready`.
+
 ### `GET /api/needs`
 
 What needs the caller, across every room they may read: one list, one order. `needs/v1` is one
