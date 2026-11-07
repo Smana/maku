@@ -33,6 +33,7 @@ maku-factory:
           leakScanCheck: ci               # CHANGE
           gateStatus: true
           policyBot: false
+          approveToMerge: true            # your approval of the current head merges it
           mergerLogin: my-app[bot]        # CHANGE: the App's slug again
           autoMergesPerDay: 5
           fixRuns: 2

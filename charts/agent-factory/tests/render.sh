@@ -144,6 +144,7 @@ fq '.loops."docs-links".scope == "scoper" and (.loops."docs-links".judge | lengt
 fq '.templates.solo.roles | contains(["reviewer"])' 'solo carries the reviewer'
 fq '.repositories | length == 1' 'one repository'
 fq '.repositories[0].merge.gateStatus == true and .repositories[0].merge.policyBot == false' 'gateStatus on, policy-bot off'
+fq '.repositories[0].merge.approveToMerge == true' "approve-to-merge on: a maintainer's approval of the head merges it"
 fq '.repositories[0].triggerLabel == "factory/ready"' 'the factory/ready trigger'
 fq '.repositories[0].classes | (has("docs-links") and has("revert"))' 'docs-links and revert'
 fq '[.repositories[0].classes[] | select(.shadow != true)] | length == 0' 'every class is in shadow'
@@ -172,6 +173,7 @@ mine="$(helm template af . -n maku "${img[@]}" -f "$tmp/mine.yaml")" || { echo "
 if [[ -n $mine ]]; then
   yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$mine" >"$tmp/mine-config.yaml"
   yq -e '.repositories | length == 1' "$tmp/mine-config.yaml" >/dev/null 2>&1 || { echo "FAIL: the example's config lacks its repository" >&2; fail=1; }
+  yq -e '.repositories[0].merge.approveToMerge == true' "$tmp/mine-config.yaml" >/dev/null 2>&1 || { echo "FAIL: the example's repository drops approve-to-merge" >&2; fail=1; }
   (cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/mine-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse2.log" 2>&1) || { echo "FAIL: the example's config does not parse:" >&2; cat "$tmp/parse2.log" >&2; fail=1; }
 fi
 

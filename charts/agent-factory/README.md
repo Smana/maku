@@ -25,7 +25,10 @@ must restate the whole `maku-factory.config.repositories[0]` entry, not one fiel
 placeholders to change are `name` (`owner/repo`), `maintainers`, `merge.mergerLogin`,
 `merge.requiredChecks`, `merge.verifyChecks` and `merge.leakScanCheck` (`ci`), plus `factoryLogin` and
 `agentsLogin` (the App's `<slug>[bot]`). The demo loop is scoper, implementer, completion judge,
-reviewer, gate (`maku-factory.config.loops`). An unset `profile` fails: production values arrive with stage 2.
+reviewer, gate (`maku-factory.config.loops`). Its classes are in shadow and `merge.approveToMerge` is
+on: the factory merges nothing on its own, and a maintainer's approval of the current head is the
+merge (the merger merges that head, as a human merge with no automatic revert). With it off, the room
+shows the approval (`maintainer_approved`) and a maintainer merges on GitHub. An unset `profile` fails: production values arrive with stage 2.
 
 Not for production: no backups, no HA, no database TLS.
 `clusterDomain` must equal `maku.clusterDomain` and `maku-factory.clusterDomain`.
