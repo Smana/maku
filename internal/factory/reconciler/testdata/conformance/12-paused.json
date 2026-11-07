@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "name": "paused",
+  "inputs": {
+    "PR": {
+      "Number": 0,
+      "NodeID": "",
+      "URL": "",
+      "Title": "",
+      "Body": "",
+      "State": "",
+      "Author": "ogenki-agents[bot]",
+      "HeadRef": "",
+      "HeadSHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "HeadMessage": "docs: fix\n\nAgent-Run: 7f3cq2xz",
+      "ReviewsTruncated": false,
+      "CrossRepository": false,
+      "HeadCommittedAt": "0001-01-01T00:00:00Z",
+      "MergedBy": "",
+      "MergedAt": "0001-01-01T00:00:00Z",
+      "MergeCommitSHA": "",
+      "AutoMerge": false,
+      "Labels": null,
+      "Reviews": null,
+      "Comments": null
+    },
+    "Checks": {
+      "Runs": [
+        {
+          "ID": 0,
+          "Name": "Pre-commit checks",
+          "State": "SUCCESS",
+          "App": 0,
+          "Conclusion": ""
+        },
+        {
+          "ID": 0,
+          "Name": "Kubernetes validation",
+          "State": "SUCCESS",
+          "App": 0,
+          "Conclusion": ""
+        },
+        {
+          "ID": 0,
+          "Name": "External links 🔗",
+          "State": "SUCCESS",
+          "App": 15368,
+          "Conclusion": "SUCCESS"
+        }
+      ],
+      "Statuses": [
+        {
+          "Context": "policy-bot: main",
+          "State": "SUCCESS",
+          "Creator": "ogenki-merge-gate[bot]",
+          "Description": ""
+        }
+      ],
+      "Truncated": false
+    },
+    "Task": {
+      "metadata": {},
+      "spec": {
+        "source": {
+          "kind": "",
+          "ref": "",
+          "key": "",
+          "requestedBy": "",
+          "trust": "",
+          "contentSHA256": ""
+        },
+        "repository": "",
+        "text": "",
+        "dataClass": "",
+        "predictedClass": "dead-links",
+        "template": "solo",
+        "budget": {}
+      },
+      "status": {
+        "runs": [
+          {
+            "id": "7f3cq2xz",
+            "role": "implementer",
+            "trigger": "initial",
+            "finished": "2026-09-27T09:10:00Z",
+            "provenance": {}
+          },
+          {
+            "id": "3buqdlot",
+            "role": "implementer",
+            "trigger": "review",
+            "finished": "2026-09-27T09:30:00Z",
+            "provenance": {}
+          }
+        ],
+        "usage": {}
+      }
+    },
+    "ArmedToday": 0,
+    "Paused": true,
+    "ReportedHead": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "HeadPushedAt": "0001-01-01T00:00:00Z",
+    "Verifiers": null,
+    "Files": {
+      "Base": {
+        "website/content/docs/a.md": "[x](https://example.com/old)"
+      },
+      "Head": {
+        "website/content/docs/a.md": "[x](https://example.com/new)"
+      }
+    },
+    "NotOwned": false,
+    "Stats": [
+      {
+        "Path": "website/content/docs/a.md",
+        "Previous": "",
+        "Status": "modified",
+        "Additions": 1,
+        "Deletions": 1
+      }
+    ],
+    "DiffRead": true,
+    "ClassArmedToday": 0,
+    "Adoption": {
+      "Read": false,
+      "CommitAuthors": null,
+      "Pushed": 0,
+      "LabelledBy": ""
+    },
+    "Contract": {
+      "Read": false,
+      "Changed": null
+    }
+  },
+  "pushed": "factory",
+  "want": {
+    "verdict": "human",
+    "reason": "class_paused"
+  }
+}

@@ -34,7 +34,7 @@ func retainedTask(phase, hash string) *v1alpha1.Task {
 }
 
 // An upgrade must not rewrite the rooms of the tasks it retains: the rail's new fields are left out
-// of an ended task's hash, so its ledger still matches and nothing is posted.
+// (and the policy) of an ended task's hash, so its ledger still matches and nothing is posted.
 func TestAnUpgradeLeavesAnEndedTasksFactsAlone(t *testing.T) {
 	for _, tc := range []struct {
 		phase, pin string
@@ -50,7 +50,9 @@ func TestAnUpgradeLeavesAnEndedTasksFactsAlone(t *testing.T) {
 			}
 			g := newRig(t, tk)
 			g.r.Cfg.Templates["pair"] = config.Template{Roles: []string{"implementer", "reviewer"}}
-			if f := g.r.factsFor(tk); len(f.Plan) == 0 || f.Runs[0].Persona == "" || (f.Split != nil) != tc.split || f.Parent == nil {
+			rc := g.r.Cfg.RepositoryFor(tk.Spec.Repository)
+			rc.Classes = map[string]config.Class{"scripts": {Live: true, AllowedFiles: []string{`^scripts/`}}}
+			if f := g.r.factsFor(tk); f.Policy == nil || len(f.Plan) == 0 || f.Runs[0].Persona == "" || (f.Split != nil) != tc.split || f.Parent == nil {
 				t.Fatalf("the fixture must carry the rail's fields: %+v", f)
 			}
 			if got := factsKey(g.r.factsFor(tk)); got != tc.pin {

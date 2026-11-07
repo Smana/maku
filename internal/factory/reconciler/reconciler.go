@@ -33,6 +33,7 @@ import (
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/ledger"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -112,6 +113,7 @@ type metrics interface {
 	TraceExportAbandoned(ctx context.Context)
 	ClassMismatch(ctx context.Context, predicted, matched string)
 	MergeDecision(ctx context.Context, class, verdict, reason string)
+	PolicyDualDecision(ctx context.Context, repository, class, agreement string)
 	ClassPaused(ctx context.Context, repository, class string, paused bool)
 	Resumed(ctx context.Context, reason string)
 	LoopRun(ctx context.Context, class, end string)
@@ -176,7 +178,11 @@ type Reconciler struct {
 	// Owned is v2 D7's fence: the merge gate hands a repository this factory does not own to a
 	// human. nil owns nothing.
 	Owned func(repository string) bool
-	Runs  RunClient
+	// Policy is a repository's merge policy as the fence last read it (mergepolicy.Watch), which
+	// policyManagement.dualEvaluation decides each merge decision under a second time, deciding
+	// nothing on it (stage 3). nil: no dual evaluation.
+	Policy func(repository string) (mergepolicy.Snapshot, bool)
+	Runs   RunClient
 	// Kind is the runs kind, required: SetupWithManager watches its AgentRuns.
 	Kind    runwatch.Kind
 	Rooms   RoomLog

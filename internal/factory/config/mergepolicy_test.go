@@ -35,6 +35,9 @@ func TestHarnessProfilesAndGuardrailsValidate(t *testing.T) {
 		"negative cap":     {Config{MergeGuardrails: MergeGuardrails{MaxPerDay: -1}}, "maxPerDay"},
 		"bad protected":    {Config{MergeGuardrails: MergeGuardrails{ProtectedFiles: []string{"("}}}, "protectedFiles"},
 		"blank check":      {Config{MergeGuardrails: MergeGuardrails{MandatoryChecks: []string{""}}}, "mandatoryChecks"},
+		"simulation alone": {Config{PolicyManagement: PolicyManagement{Simulation: true}}, ""},
+		"dual with read":   {Config{PolicyManagement: PolicyManagement{Read: true, DualEvaluation: true}}, ""},
+		"dual alone":       {Config{PolicyManagement: PolicyManagement{DualEvaluation: true}}, "dualEvaluation needs read"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := policyProblems(&tc.cfg)

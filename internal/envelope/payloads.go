@@ -213,6 +213,8 @@ type TaskFacts struct {
 	// Monitor is the post-merge monitor's verdict (one of MonitorVerdicts), set only for a task with
 	// an origin. A verdict is final once set; the webhook tracker sends it once as room.monitor_verdict.
 	Monitor string `json:"monitor,omitempty"`
+	// Policy is the merge policy that governs the task, as the factory's config declares it.
+	Policy *PolicyFact `json:"policy,omitempty"`
 }
 
 // MaxPlan bounds TaskFacts.Plan.
@@ -460,6 +462,11 @@ func (f TaskFacts) Validate() error {
 	for i, p := range f.Plan {
 		if !ValidPersona(p) {
 			return fmt.Errorf("task facts: plan[%d] is a persona name", i)
+		}
+	}
+	if f.Policy != nil {
+		if err := f.Policy.validate(); err != nil {
+			return fmt.Errorf("task facts: policy: %w", err)
 		}
 	}
 	if f.Split != nil {
