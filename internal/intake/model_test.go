@@ -221,6 +221,35 @@ func TestTheModelCallIsTheGovernedOne(t *testing.T) {
 	}
 }
 
+// reasoning_effort is sent only when configured: unset, the body carries no such field and the
+// model's own default stands; set, it carries the configured value verbatim.
+func TestTheReasoningEffortIsSentOnlyWhenSet(t *testing.T) {
+	for name, c := range map[string]struct{ effort, want string }{
+		"unset sends nothing": {"", ""},
+		"low is sent":         {"low", "low"},
+		"high is sent":        {"high", "high"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := fakeGateway(t, okReply)
+			m := modelFor(f)
+			m.ReasoningEffort = c.effort
+			if _, _, err := m.Draft(t.Context(), intake.DraftRequest{Text: "the install link is dead", Candidates: []string{"Smana/ai-native-ref"}}); err != nil {
+				t.Fatal(err)
+			}
+			got, present := f.body()["reasoning_effort"]
+			if c.want == "" {
+				if present || strings.Contains(f.rawBody(), "reasoning_effort") {
+					t.Fatalf("an unset effort reached the body: %s", f.rawBody())
+				}
+				return
+			}
+			if got != c.want || !strings.Contains(f.rawBody(), `"reasoning_effort":"`+c.want+`"`) {
+				t.Fatalf("reasoning_effort = %v, body %s", got, f.rawBody())
+			}
+		})
+	}
+}
+
 // Review Focus 4: the reply at the bound decodes; one byte over is planner_invalid, never truncated.
 func TestAReplyAtTheBoundIsAcceptedAndOneByteOverIsRefused(t *testing.T) {
 	body := replyWithIssueBody(16<<10 - 1) // a legal 16 KiB issue body, the whole reply at 64 KiB

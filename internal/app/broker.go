@@ -408,7 +408,7 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 	}
 	return &humanapi.Intake{Classes: classes, Allow: allow,
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
-			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration},
+			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort},
 		Public:   intakePublicity(vis, accessTTL(cfg.Human)),
 		Daily:    plan.DailyPlans,
 		Fallback: plan.Fallback,

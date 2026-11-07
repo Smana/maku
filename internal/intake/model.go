@@ -86,6 +86,9 @@ type Model struct {
 	HC *http.Client
 	// Deadline bounds the one call. Zero means the contract's 20 s.
 	Deadline time.Duration
+	// ReasoningEffort is the call's `reasoning_effort` (`human.intake.plan.reasoningEffort`); empty
+	// sends no such field.
+	ReasoningEffort string
 }
 
 // DraftRequest is one governed question: what the person asked, the context they brought (both
@@ -192,11 +195,12 @@ func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usa
 		return Usage{}, err
 	}
 	payload, err := json.Marshal(chatRequest{
-		Model:          m.Alias,
-		Temperature:    0,
-		MaxTokens:      replyTokens,
-		ResponseFormat: responseFormat{Type: "json_object"},
-		Messages:       []message{{Role: "system", Content: req.SystemPrompt}, {Role: "user", Content: user}},
+		Model:           m.Alias,
+		Temperature:     0,
+		MaxTokens:       replyTokens,
+		ReasoningEffort: m.ReasoningEffort,
+		ResponseFormat:  responseFormat{Type: "json_object"},
+		Messages:        []message{{Role: "system", Content: req.SystemPrompt}, {Role: "user", Content: user}},
 	})
 	if err != nil {
 		return Usage{}, errPlannerUnavailable(fmt.Sprintf("marshal the request: %v", err))
@@ -255,13 +259,15 @@ func (m *Model) apiKey() (string, error) {
 }
 
 // chatRequest is the request body, and the whole of it: the alias, temperature 0, the token cap, the
-// JSON object mode the reply shape needs, and the two messages. No provider hint, no key.
+// JSON object mode the reply shape needs, the reasoning effort when one is configured, and the two
+// messages. No provider hint, no key.
 type chatRequest struct {
-	Model          string         `json:"model"`
-	Temperature    int            `json:"temperature"`
-	MaxTokens      int            `json:"max_tokens"`
-	ResponseFormat responseFormat `json:"response_format"`
-	Messages       []message      `json:"messages"`
+	Model           string         `json:"model"`
+	Temperature     int            `json:"temperature"`
+	MaxTokens       int            `json:"max_tokens"`
+	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
+	ResponseFormat  responseFormat `json:"response_format"`
+	Messages        []message      `json:"messages"`
 }
 
 // responseFormat asks for one JSON object, which is the only shape a strict decode can read.
