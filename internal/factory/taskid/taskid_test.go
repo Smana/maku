@@ -37,3 +37,11 @@ func TestRandomIsAC2Id(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// A coordination child's key is its own lineage's, never a splitter part's.
+func TestCoordinationChildKey(t *testing.T) {
+	k := CoordinationChildKey("p4zt6wce", "consumer", 1, 1)
+	if k != "coordination:p4zt6wce/consumer:v1:gen1" || k == SplitKey("p4zt6wce", 1) || Name(k) == Name(CoordinationChildKey("p4zt6wce", "consumer", 1, 2)) {
+		t.Fatalf("key %q", k)
+	}
+}

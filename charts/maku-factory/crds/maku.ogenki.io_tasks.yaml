@@ -924,7 +924,34 @@ spec:
                         format: int64
                         minimum: 0
                         type: integer
+                      planningAttempts:
+                        description: The planning attempts already counted, newest
+                          last, so a replayed attempt counts once.
+                        items:
+                          maxLength: 128
+                          type: string
+                        maxItems: 16
+                        type: array
+                      planningCost:
+                        description: |-
+                          PlanningCost is supplied when the newest attempt carried its reservation or settlement
+                          identifiers, notSupplied when the shared contract gave none: never an invented AgentRun id.
+                        enum:
+                        - supplied
+                        - notSupplied
+                        type: string
                       planningMicroUSD:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      planningReservedMicroUSD:
+                        description: |-
+                          The planning attempts' cost as the shared intake route reconciled it, summed over distinct
+                          attempts; at confirmation reserved plus settled fits planningMicroUSD (MR8).
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      planningSettledMicroUSD:
                         format: int64
                         minimum: 0
                         type: integer

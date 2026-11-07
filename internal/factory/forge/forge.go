@@ -48,9 +48,18 @@ var (
 	ErrNotMergeable = errors.New("forge: GitHub does not allow the merge as it stands")
 )
 
-// ErrNotAFile is DefaultBranchFile at a path that is never a readable file: a directory, a file
-// over the contents API's 1 MB, a symlink or a submodule. It does not heal by retrying.
+// ErrNotAFile is DefaultBranchFile or FileAtCommit at a path that is never a readable file: a
+// directory, a file over the contents API's 1 MB, a symlink or a submodule. It does not heal by
+// retrying.
 var ErrNotAFile = errors.New("forge: the path is not a readable file")
+
+// FileContent is one file as the contents API served it at a ref: its path, git blob sha, bytes
+// and the size GitHub declared (v4 MR7). A caller that needs proof recomputes the digests.
+type FileContent struct {
+	Path, BlobSHA string
+	Bytes         []byte
+	SizeBytes     int64
+}
 
 // ErrMergedTruncated is MergedSince filling its window of 100: pull requests past it are unread,
 // so the caller narrows since and reads again.

@@ -59,6 +59,13 @@ type PolicyManagement struct {
 	// Read observes each owned repository's class policy and compares it with this config. It
 	// decides nothing.
 	Read bool `json:"read,omitempty"`
+	// Simulation lets `maku policy simulate` and `maku policy diff` run against this config: the
+	// switch a simulator that disagrees with the gate turns off (stage 2). Offline, decides nothing.
+	Simulation bool `json:"simulation,omitempty"`
+	// DualEvaluation decides every merge decision a second time under the repository's policy, as
+	// Read last observed it, and records whether the two agree (stage 3). It decides nothing: the
+	// central decision is the one acted on. Needs Read.
+	DualEvaluation bool `json:"dualEvaluation,omitempty"`
 }
 
 var profileRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
@@ -84,6 +91,9 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		if p.Template == TemplateNone && (p.Checks || p.TestFirst || p.Tier != "" || p.Loop != "") {
 			bad("harnessProfiles.%s: template none runs nothing, so it takes no other key", name)
 		}
+	}
+	if pm := c.PolicyManagement; pm.DualEvaluation && !pm.Read {
+		bad("policyManagement.dualEvaluation needs read: it evaluates the policy read observes")
 	}
 	g := c.MergeGuardrails
 	for _, f := range []struct {

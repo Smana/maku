@@ -81,7 +81,6 @@ func TestParseRefuses(t *testing.T) {
 		"an unknown leaf":     {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{sizeBelow: 3}]}}"), "sizeBelow"},
 		"protected under all": {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{protectedFiles: [a]}]}}"), "protectedFiles"},
 		"changed under deny":  {cl("{mode: shadow, author: agents, harness: p, conditions: {deny: [{changedFiles: [a]}]}}"), "changedFiles"},
-		"any, until stage 2":  {cl("{mode: shadow, author: agents, harness: p, conditions: {any: []}}"), "any"},
 		"two keys in a leaf":  {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{maxPatchFiles: 1, maxModifiedLines: 1}]}}"), "exactly one"},
 		"an empty leaf":       {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{}]}}"), "exactly one"},
 		"a repeated leaf":     {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{maxPatchFiles: 1}, {maxPatchFiles: 2}]}}"), "twice"},

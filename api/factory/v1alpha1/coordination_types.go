@@ -487,7 +487,31 @@ type CoordinationBudgetStatus struct {
 	TotalMicroUSD int64 `json:"totalMicroUSD"`
 	// +kubebuilder:validation:Minimum=0
 	AllocatedMicroUSD int64 `json:"allocatedMicroUSD"`
+	// The planning attempts' cost as the shared intake route reconciled it, summed over distinct
+	// attempts; at confirmation reserved plus settled fits planningMicroUSD (MR8).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	PlanningReservedMicroUSD int64 `json:"planningReservedMicroUSD,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	PlanningSettledMicroUSD int64 `json:"planningSettledMicroUSD,omitempty"`
+	// PlanningCost is supplied when the newest attempt carried its reservation or settlement
+	// identifiers, notSupplied when the shared contract gave none: never an invented AgentRun id.
+	// +kubebuilder:validation:Enum=supplied;notSupplied
+	// +optional
+	PlanningCost string `json:"planningCost,omitempty"`
+	// The planning attempts already counted, newest last, so a replayed attempt counts once.
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MaxLength=128
+	// +optional
+	PlanningAttempts []string `json:"planningAttempts,omitempty"`
 }
+
+// The PlanningCost values.
+const (
+	PlanningCostSupplied    = "supplied"
+	PlanningCostNotSupplied = "notSupplied"
+)
 
 // CoordinationChildStatus is a parent's lineage record of one child: its newest generation.
 type CoordinationChildStatus struct {

@@ -225,6 +225,8 @@ type Summary struct {
 		// last run's when none is present. Each absent until a run tells them.
 		RunModel     *RunModel `json:"runModel,omitempty"`
 		LastRunModel *RunModel `json:"lastRunModel,omitempty"`
+		// Policy is the merge policy that governs the task, absent until the factory posts one.
+		Policy *PolicyView `json:"policy,omitempty"`
 	} `json:"status"`
 	// Runs is the task's run history, oldest first: the factory's facts, so a sealed room keeps it.
 	Runs     []envelope.RunFact `json:"runs,omitempty"`
@@ -444,6 +446,9 @@ func View(st State, room, url string, sub policy.Subject, standing GitHubStandin
 			s.Status.Spend = &sp
 		}
 		s.Status.SpendFinal = f.SpendFinal // CD23: the factory's claim that the figure above is the last
+		if p := f.Policy; p != nil {
+			s.Status.Policy = &PolicyView{PolicyFact: *p, How: PolicyHow(*p), Decision: PolicyDecision(f)}
+		}
 	}
 	s.Status.LastVerdict = st.Verdict
 	s.Status.LastJudge = st.Judge

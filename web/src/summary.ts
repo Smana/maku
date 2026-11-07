@@ -64,6 +64,18 @@ export interface Summary {
     // present). Absent until the log says.
     runModel?: RunModel;
     lastRunModel?: RunModel;
+    // The merge policy that governs the task, the factory's config (policy.ts renders it): how is what
+    // it takes to merge, decision the gate's word on the task. Absent until the factory posts one.
+    policy?: {
+      class?: string; mode: "live" | "shadow" | "unarmed"; gateOff?: boolean; approveToMerge?: boolean; adopted?: boolean;
+      conditions?: {
+        allowedFiles?: string[]; protectedFiles?: string[]; modifyOnly?: boolean; maxPatchFiles?: number;
+        maxModifiedLines?: number; diffShape?: string; holdoutChecks?: string[]; maxPerDay?: number;
+        adoptLogins?: string[]; requiredLabel?: string; oracle?: boolean;
+      };
+      classes?: { name: string; mode: string; adopted?: boolean }[];
+      mergedHow?: "class" | "approved"; truncated?: boolean; how: string; decision?: string;
+    };
   };
   // A hold (N3): a factory task waits on the viewer's hold on this room; id is its wait reason.
   runs?: { id: string; role: string; provenance?: { servedModels?: string[] } }[]; // the task's run history, oldest first

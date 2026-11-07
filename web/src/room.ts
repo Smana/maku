@@ -11,6 +11,7 @@ import { RoomConnection, type Options, type Snapshot } from "./conn";
 import { hasControls, mountComposer, mountControls, rejection, shortPrincipal } from "./controls";
 import { mountFork } from "./fork";
 import { mountNeeds } from "./needs";
+import { renderPolicy } from "./policy";
 import { changesSummary, fetchSummary, focusApproval, renderNotes, type Summary } from "./summary";
 import { PendingActs } from "./pending";
 import { RoomState } from "./room-state";
@@ -47,11 +48,12 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // The blocks and the error line are separate, so a failed refresh adds a line and
   // keeps what the page already shows. No aria-live: a rebuild would re-read every block.
   const blocks = document.createElement("div");
+  const policyBlock = document.createElement("div");
   const summaryError = document.createElement("p");
   summaryError.className = "summary-error";
   summaryError.setAttribute("role", "status");
   summaryError.hidden = true;
-  lead.append(blocks, summaryError);
+  lead.append(blocks, policyBlock, summaryError);
   // Until the first frame, three grey message shapes stand where the stream will be:
   // an empty page reads as broken (P9).
   const skeleton = document.createElement("div");
@@ -219,6 +221,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         controls?.setSummary(sum);
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
+        renderPolicy(policyBlock, sum);
         showRail(sum);
         coordination.set(sum.flow?.coordination);
         runView.set(sum.flow?.nodes ?? []);

@@ -86,10 +86,14 @@ func exportClass(cl config.Class, c *config.Config) (ClassPolicy, error) {
 	return p, nil
 }
 
-// profileFor is the first profile by name that runs the class as it runs today.
+// profileFor is the first profile by name that runs the class as it runs today: one pinning a
+// template, a tier or a loop would change how it runs, so it is never picked.
 func profileFor(cl config.Class, c *config.Config) (string, bool) {
 	for _, name := range slices.Sorted(maps.Keys(c.HarnessProfiles)) {
 		p := c.HarnessProfiles[name]
+		if p.Tier != "" || p.Loop != "" || (p.Template != "" && p.Template != config.TemplateNone) {
+			continue
+		}
 		if (p.Template == config.TemplateNone) == cl.Adopted() && p.Checks == cl.Checks && p.TestFirst == cl.TestFirst {
 			return name, true
 		}
@@ -125,6 +129,9 @@ func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 			if err != nil {
 				out = append(out, fmt.Sprintf("%s: %v", name, err))
 				continue
+			}
+			if r.Branches != nil {
+				out = append(out, name+": any has no central form")
 			}
 			if len(r.Approval) > 0 {
 				out = append(out, name+": requiresApproval has no central form")

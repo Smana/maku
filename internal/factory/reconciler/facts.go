@@ -177,12 +177,12 @@ func factsKey(f envelope.TaskFacts) string {
 		f.Spend = &step
 	}
 	// An ended task's key leaves out what only the room's rail reads, the config-derived plan among
-	// them. Every retained task would otherwise read as changed after an upgrade, or a config change:
+	// them, and the config-derived policy. Every retained task would otherwise read as changed after an upgrade, or a config change:
 	// each would rewrite its room, and a sealed room's would post on every reconcile. A task that
 	// ends still posts them, since its phase moves its key.
 	ended := v1alpha1.TerminalPhase(f.Phase) || f.Phase == v1alpha1.PhaseEscalated
 	if ended {
-		f.Plan, f.Parent = nil, nil
+		f.Plan, f.Parent, f.Policy = nil, nil, nil
 		// An escalated parent still waits on its parts: tellParent can revert one under it, with no
 		// other field moving, and the rail must not keep drawing that part as landed.
 		if f.Phase != v1alpha1.PhaseEscalated {
@@ -234,12 +234,14 @@ func (r *Reconciler) factsPosted(t *v1alpha1.Task, f envelope.TaskFacts) bool {
 
 // factsFor is factsOf with what only the reconciler's config knows: whether an approval returns
 // an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says,
-// and whether the task's dollars are final (CD23), which is what stops the key bucketing them.
+// whether the task's dollars are final (CD23), which is what stops the key bucketing them, and the
+// merge policy that governs the task (policyOf).
 func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 	f := factsOf(t)
 	f.Plan = r.planOf(t)
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(t, t.Status.Reason)
 	f.SpendFinal = r.spendIsFinal(t)
+	f.Policy = policyOf(r.Cfg, r.repo(t), t)
 	return f
 }
 
