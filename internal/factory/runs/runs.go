@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/runwatch"
@@ -114,6 +115,9 @@ type Spec struct {
 	// Search is spec.loop.search (v3 feature 5), written only when true, beside Loop's and Checks'
 	// keys. The composition turns it into the harness's AGENT_SEARCH=1.
 	Search bool
+	// CoordinationArtifacts are a dependent coordination child's landed references (v4 MR7),
+	// written as AnnCoordinationArtifacts at CREATE only.
+	CoordinationArtifacts []v1alpha1.LandedArtifact
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -165,6 +169,9 @@ func (s Spec) Validate() error {
 	}
 	if s.DataClass != "public" && (config.PublicOnly(s.Model) || config.PublicOnly(judge)) {
 		errs = append(errs, fmt.Errorf("a provider alias (model %q, judge %q) is for public runs only, not a %q one", s.Model, judge, s.DataClass))
+	}
+	if err := s.validArtifacts(); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
@@ -250,6 +257,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.MaxMicroUSD > 0 {
 		ann[AnnMaxMicroUSD] = strconv.FormatInt(s.MaxMicroUSD, 10)
+	}
+	if b, h := artifactsJSON(s.CoordinationArtifacts); h != "" {
+		ann[AnnCoordinationArtifacts], ann[AnnCoordinationArtifactsHash] = string(b), h
 	}
 	u.SetAnnotations(ann)
 	return u
@@ -383,7 +393,8 @@ func (c Client) replayOf(ctx context.Context, s Spec) bool {
 	if s.StartSeq != 0 {
 		start = strconv.FormatInt(s.StartSeq, 10)
 	}
-	return a[AnnStartSeq] == start && a[AnnHead] == s.Head
+	_, h := artifactsJSON(s.CoordinationArtifacts)
+	return a[AnnStartSeq] == start && a[AnnHead] == s.Head && a[AnnCoordinationArtifactsHash] == h
 }
 
 // validID refuses an id that names no run, before it reaches the API as <prefix><id>.
@@ -443,7 +454,8 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 	if err := validID("annotate", id); err != nil {
 		return err
 	}
-	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD} {
+	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
+		AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

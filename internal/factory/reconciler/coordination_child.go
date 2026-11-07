@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -30,11 +31,14 @@ var (
 	errCoordinationParent = errors.New("coordination_parent_missing")
 	// errCoordinationScopeChanged is a child whose frozen snapshot is not the confirmed plan's.
 	errCoordinationScopeChanged = errors.New("coordination_scope_changed")
+	// errCoordinationArtifacts is a child whose landed references are not exactly its required
+	// consumes as its parent recorded them (MR7).
+	errCoordinationArtifacts = coordination.ErrArtifactUnverified
 )
 
 // lineageReason is err's bounded reason when it is a lineage refusal.
 func lineageReason(err error) string {
-	for _, s := range []error{errCrossRepositoryLineage, errCoordinationLineage, errCoordinationParent, errCoordinationScopeChanged} {
+	for _, s := range []error{errCrossRepositoryLineage, errCoordinationLineage, errCoordinationParent, errCoordinationScopeChanged, errCoordinationArtifacts} {
 		if errors.Is(err, s) {
 			return s.Error()
 		}
@@ -147,6 +151,9 @@ func (r *Reconciler) checkCoordinationLineage(ctx context.Context, t *v1alpha1.T
 	if t.Spec.Source.ContentSHA256 != cs.PlanHash || cp.PlanVersion != cs.Plan.Version || t.Spec.Scope == nil ||
 		!equality.Semantic.DeepEqual(*t.Spec.Scope, c.Scope) {
 		return nil, errCoordinationScopeChanged
+	}
+	if want, ok := coordination.ConsumedArtifacts(c, cs.Artifacts); !ok || !slices.Equal(want, t.Spec.CoordinationArtifacts) {
+		return nil, errCoordinationArtifacts
 	}
 	var room roomv1.Room
 	switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: t.Name}, &room); {

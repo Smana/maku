@@ -77,6 +77,8 @@ type TaskForge interface {
 	ClosePR(ctx context.Context, number int) error
 	RemoveLabel(ctx context.Context, number int, label string) error
 	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
+	// FileAtCommit reads a producer's landed artifact at its exact merge commit (v4 MR7).
+	FileAtCommit(ctx context.Context, sha, path string) (forge.FileContent, bool, error)
 	Issue(ctx context.Context, number int) (forge.Issue, error)
 	// LabelEvents verifies who added factory/drill to a revert PR (AM6), as intake verifies factory/revert.
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)

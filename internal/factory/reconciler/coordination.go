@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
@@ -73,8 +74,9 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 	return r.admitCoordinationChildren(ctx, t)
 }
 
-// admitCoordinationChildren creates each filed, independent child's Task once and records it on
-// the parent. A dependent child waits for its producer's landed artifact.
+// admitCoordinationChildren creates each filed child's Task once and records it on the parent.
+// An independent child is created at once; a dependent child only once every required artifact
+// is landed and the execute gate passes again, and it is created with those references (MR7).
 func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.Task) error {
 	cs := t.Status.Coordination
 	for _, c := range cs.Plan.Children {
@@ -83,18 +85,109 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 			continue
 		}
 		st := &cs.Children[i]
+		var refs []v1alpha1.LandedArtifact
 		if len(c.DependsOn) > 0 {
-			st.Reason = reasonWaitingDependency
-			continue
+			landed, err := r.landDependencies(ctx, cs, c, st)
+			if err != nil {
+				return err
+			}
+			if !landed {
+				continue
+			}
+			if err := r.Coordination.ExecuteReady(ctx, cs, []string{c.ID}); err != nil {
+				reason := coordination.Reason(err)
+				if reason == "" {
+					return err
+				}
+				st.Reason = reason
+				continue
+			}
+			refs, _ = coordination.ConsumedArtifacts(c, cs.Artifacts)
 		}
 		gen := max(st.Generation, 1)
 		child := coordination.ChildTask(r.Namespace, r.Cfg, t, c, st.Issue, gen)
+		child.Spec.CoordinationArtifacts = refs
 		if err := r.Client.Create(ctx, child); err != nil && !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 		st.Task, st.Generation, st.Reason = child.Name, gen, ""
 	}
 	return nil
+}
+
+// landDependencies records each of c's required artifacts on cs once its producer's pull request
+// has landed (MR7): read through the producer repository's own client, at the merge commit the
+// producer Task recorded, never its head or the default branch. landed is false while a producer
+// has not merged (waiting_dependency) or an artifact is not the exact declared file
+// (artifact_unverified, with no reference recorded); st carries the reason.
+func (r *Reconciler) landDependencies(ctx context.Context, cs *v1alpha1.CoordinationStatus, c v1alpha1.CoordinationChild, st *v1alpha1.CoordinationChildStatus) (bool, error) {
+	merges := map[string]string{}
+	for _, from := range c.DependsOn {
+		sha, err := r.producerMerge(ctx, cs, from)
+		if err != nil || sha == "" {
+			st.Reason = reasonWaitingDependency
+			return false, err
+		}
+		merges[from] = sha
+	}
+	for _, k := range c.Consumes {
+		if _, ok := coordination.LandedRef(cs.Artifacts, k.From, k.Artifact); ok || !k.Required {
+			continue
+		}
+		pc, okc := coordination.PlanChild(cs, k.From)
+		spec, oks := coordination.ProducedSpec(pc, k.Artifact)
+		sha := merges[k.From]
+		if !okc || !oks || sha == "" { // validation forbids it: a consume of no landed producer never unlocks
+			st.Reason = coordination.ErrArtifactUnverified.Error()
+			return false, nil
+		}
+		fx, ok := r.forgeFor(pc.Repository)
+		if !ok {
+			st.Reason = coordination.ErrAccessUnverified.Error()
+			return false, nil
+		}
+		ref, err := coordination.VerifyArtifact(ctx, fx, pc, spec, sha)
+		switch {
+		case errors.Is(err, coordination.ErrArtifactUnverified):
+			st.Reason = coordination.ErrArtifactUnverified.Error()
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		cs.Artifacts = append(cs.Artifacts, ref)
+	}
+	return true, nil
+}
+
+// producerMerge is child from's landed merge commit as its own Task recorded it from GitHub; ""
+// until its pull request has merged.
+func (r *Reconciler) producerMerge(ctx context.Context, cs *v1alpha1.CoordinationStatus, from string) (string, error) {
+	i := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == from })
+	if i < 0 || cs.Children[i].Task == "" {
+		return "", nil
+	}
+	var p v1alpha1.Task
+	switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: cs.Children[i].Task}, &p); {
+	case apierrors.IsNotFound(err):
+		return "", nil
+	case err != nil:
+		return "", err
+	}
+	pr := p.Status.PullRequest
+	if pr == nil || pr.MergedAt == nil || p.Spec.Repository != cs.Children[i].Repository {
+		return "", nil
+	}
+	return pr.MergeCommitSHA, nil
+}
+
+// forgeFor is repository's own factory App connection: the one a producer's artifact is read
+// through. One repository's factory (no Clients) has only Forge.
+func (r *Reconciler) forgeFor(repository string) (TaskForge, bool) {
+	if r.Clients == nil {
+		return r.Forge, r.Forge != nil
+	}
+	f, _, ok := r.Clients(repository)
+	return f, ok
 }
 
 // integrationHeld holds an integration Task (MR10): its admission is the integration PR's, so
