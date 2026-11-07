@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/runwatch"
@@ -114,6 +115,13 @@ type Spec struct {
 	// Search is spec.loop.search (v3 feature 5), written only when true, beside Loop's and Checks'
 	// keys. The composition turns it into the harness's AGENT_SEARCH=1.
 	Search bool
+	// CoordinationArtifacts are a dependent coordination child's landed references (v4 MR7),
+	// written as AnnCoordinationArtifacts at CREATE only.
+	CoordinationArtifacts []v1alpha1.LandedArtifact
+	// CoordinationManifest is an integration run's canonical manifest JSON and
+	// CoordinationManifestHash the SHA-256 of its exact bytes (v4 MR10), written as
+	// AnnCoordinationManifest and its hash at CREATE only, on a triager claim with no branch.
+	CoordinationManifest, CoordinationManifestHash string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -166,6 +174,12 @@ func (s Spec) Validate() error {
 	if s.DataClass != "public" && (config.PublicOnly(s.Model) || config.PublicOnly(judge)) {
 		errs = append(errs, fmt.Errorf("a provider alias (model %q, judge %q) is for public runs only, not a %q one", s.Model, judge, s.DataClass))
 	}
+	if err := s.validArtifacts(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := s.validManifest(); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
 }
 
@@ -182,6 +196,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 		"role": s.Role, "repository": s.Repository, "principal": s.Principal, "dataClass": s.DataClass,
 		"size": "small", "model": s.Model, "baseRef": s.BaseRef, "branch": s.Branch, "task": task,
 		"budget": map[string]any{"maxTokens": s.MaxTokens, "maxMinutes": s.MaxMinutes},
+	}
+	if s.Branch == "" && s.CoordinationManifest != "" { // MR10: an integration run writes no branch
+		delete(spec, "branch")
 	}
 	if s.RoomRef != "" {
 		spec["roomRef"] = s.RoomRef
@@ -250,6 +267,12 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.MaxMicroUSD > 0 {
 		ann[AnnMaxMicroUSD] = strconv.FormatInt(s.MaxMicroUSD, 10)
+	}
+	if b, h := artifactsJSON(s.CoordinationArtifacts); h != "" {
+		ann[AnnCoordinationArtifacts], ann[AnnCoordinationArtifactsHash] = string(b), h
+	}
+	if s.CoordinationManifest != "" {
+		ann[AnnCoordinationManifest], ann[AnnCoordinationManifestHash] = s.CoordinationManifest, s.CoordinationManifestHash
 	}
 	u.SetAnnotations(ann)
 	return u
@@ -383,7 +406,9 @@ func (c Client) replayOf(ctx context.Context, s Spec) bool {
 	if s.StartSeq != 0 {
 		start = strconv.FormatInt(s.StartSeq, 10)
 	}
-	return a[AnnStartSeq] == start && a[AnnHead] == s.Head
+	_, h := artifactsJSON(s.CoordinationArtifacts)
+	return a[AnnStartSeq] == start && a[AnnHead] == s.Head && a[AnnCoordinationArtifactsHash] == h &&
+		a[AnnCoordinationManifestHash] == s.CoordinationManifestHash
 }
 
 // validID refuses an id that names no run, before it reaches the API as <prefix><id>.
@@ -443,7 +468,8 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 	if err := validID("annotate", id); err != nil {
 		return err
 	}
-	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD} {
+	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
+		AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

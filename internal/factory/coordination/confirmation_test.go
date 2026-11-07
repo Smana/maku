@@ -151,7 +151,7 @@ func TestCoordinationDraftCreatesAParent(t *testing.T) {
 		t.Fatal("a draft has an issue, a run or a pull request")
 	case cs.PlanHash != PlanHash(p) || cs.PlanVersion != 1 || len(cs.History) != 1:
 		t.Fatalf("status %+v", cs)
-	case cs.Budget.AllocatedMicroUSD != 5100000*2+4*510000 || cs.Budget.PlanningCost != v1alpha1.PlanningCostNotSupplied:
+	case cs.Budget.AllocatedMicroUSD != 510000+5100000*2+4*510000 || cs.Budget.PlanningCost != v1alpha1.PlanningCostNotSupplied:
 		t.Fatalf("budget %+v", cs.Budget)
 	}
 }

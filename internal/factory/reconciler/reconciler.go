@@ -27,6 +27,7 @@ import (
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -77,6 +78,8 @@ type TaskForge interface {
 	ClosePR(ctx context.Context, number int) error
 	RemoveLabel(ctx context.Context, number int, label string) error
 	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
+	// FileAtCommit reads a producer's landed artifact at its exact merge commit (v4 MR7).
+	FileAtCommit(ctx context.Context, sha, path string) (forge.FileContent, bool, error)
 	Issue(ctx context.Context, number int) (forge.Issue, error)
 	// LabelEvents verifies who added factory/drill to a revert PR (AM6), as intake verifies factory/revert.
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
@@ -386,7 +389,7 @@ func (r *Reconciler) step(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		return r.coordinating(ctx, t)
 	case v1alpha1.TaskKindIntegration:
-		return r.integrationHeld(ctx, t)
+		return r.integrating(ctx, t)
 	}
 	// A terminal task reaches step only for its revert (§6.4); the stop machinery must not
 	// rewrite an ended task into Stopped, and its runs are already over.
@@ -1125,6 +1128,12 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 			return err
 		}
 	}
+	// MR8: a coordination child's confirmed allocation is a bound, never a shadow: its next run's
+	// whole reservation fits over its own settled spend or it does not start. The daily ledger
+	// below still reserves the run; neither widens the other.
+	if t.Spec.CoordinationParent != nil && coordination.AllocationLeft(t) < 0 {
+		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
+	}
 	if !runFits(t) {
 		limit := taskLimit(t)
 		if r.Cfg.Budgets.EnforceTask || t.Sponsored() != "" { // F4: an api task's ceiling is never a shadow
@@ -1186,6 +1195,9 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 				return err
 			}
 		}
+	}
+	if t.Spec.Kind == v1alpha1.TaskKindIntegration { // MR10: its own spec, never a verifier's or implementerSpec
+		return r.startIntegration(ctx, t)
 	}
 	if late && t.Status.NextRole != "" {
 		return r.startVerifier(ctx, t, pr)

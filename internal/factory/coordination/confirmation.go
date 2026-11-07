@@ -49,7 +49,8 @@ var (
 
 // serviceReasons are the sentinels Reason looks for after the repository checks'.
 var serviceReasons = []error{ErrCoordinationOff, ErrParentConflict, ErrParentNotFound, ErrParentTerminal,
-	ErrPlanningBudgetExhausted, ErrPrerequisites, ErrNotExecuting}
+	ErrPlanningBudgetExhausted, ErrPrerequisites, ErrNotExecuting, ErrArtifactUnverified, ErrRecoveryNotProposed,
+	ErrPlanRevisionRequired, ErrIntegrationStale, ErrIntegrationManifest}
 
 // Reason is err's bounded reason code: a repository check's first, since a resolver failure
 // carries one under policy_unresolved, then the service's, then the plan's; "" for none.
@@ -142,20 +143,48 @@ func (s *Service) Draft(ctx context.Context, actor Actor, p v1alpha1.Coordinatio
 	}
 	out := CoordinationConfirmation{Plan: resolved, PlanHash: hash, Planning: planning}
 	key := types.NamespacedName{Namespace: s.Namespace, Name: p.ID}
+	var m Materiality
+	var t v1alpha1.Task
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var t v1alpha1.Task
+		t = v1alpha1.Task{}
 		switch err := s.Client.Get(ctx, key, &t); {
 		case apierrors.IsNotFound(err):
 			return s.create(ctx, actor, resolved, hash, planning)
 		case err != nil:
 			return err
 		}
-		return s.revise(ctx, &t, resolved, hash, planning)
+		var err error
+		m, err = s.revise(ctx, &t, resolved, hash, planning)
+		return err
 	})
 	if err != nil {
 		return CoordinationConfirmation{}, err
 	}
+	if err := s.repostVersion(ctx, &t, m); err != nil {
+		return CoordinationConfirmation{}, err
+	}
 	return out, nil
+}
+
+// repostVersion reposts an accepted version on a filed parent's issue with its changed sections
+// and who reconfirms (MR12), once per version and hash: a replayed draft reposts what a lost post
+// missed. Before filing there is no issue: File reposts the version it files.
+func (s *Service) repostVersion(ctx context.Context, t *v1alpha1.Task, m Materiality) error {
+	cs := t.Status.Coordination
+	if t.Spec.Kind != v1alpha1.TaskKindCoordination || t.Spec.Issue == 0 || t.Status.Reason != ReasonFiled || cs == nil || cs.Plan == nil {
+		return nil
+	}
+	f := s.issueForge(cs.Plan.Primary.Repository)
+	if f == nil {
+		return fmt.Errorf("%w: %s has no App connection", ErrAppUnavailable, cs.Plan.Primary.Repository)
+	}
+	links := map[string]string{}
+	for _, st := range cs.Children {
+		if st.Issue > 0 {
+			links[st.ID] = issueURL(st.Repository, st.Issue)
+		}
+	}
+	return s.repost(ctx, f, t.Name, t.Spec.Issue, *cs.Plan, cs.PlanHash, links, m)
 }
 
 // create makes a new parent and records its first plan version.
@@ -185,35 +214,38 @@ func (s *Service) create(ctx context.Context, actor Actor, p v1alpha1.Coordinati
 }
 
 // revise accepts next on an existing parent: a replay, or exactly the next version.
-func (s *Service) revise(ctx context.Context, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation) error {
+func (s *Service) revise(ctx context.Context, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation) (Materiality, error) {
 	if t.Spec.Kind != v1alpha1.TaskKindCoordination {
-		return ErrParentConflict
+		return Materiality{}, ErrParentConflict
 	}
 	if v1alpha1.TerminalPhase(t.Status.Phase) {
-		return ErrParentTerminal
+		return Materiality{}, ErrParentTerminal
 	}
 	cs := t.Status.Coordination
 	if cs == nil || cs.Plan == nil { // a create whose status write was lost: record the first version
-		return s.record(ctx, t, next, hash, planning, Materiality{}, nil)
+		return Materiality{}, s.record(ctx, t, next, hash, planning, Materiality{}, nil)
 	}
 	old := *cs.Plan
 	switch {
 	case old.Primary.Repository != next.Primary.Repository:
-		return refuse(ErrPrimaryRequiresNewParent, "primary.repository", "changing the primary starts a new parent (MR3)")
+		return Materiality{}, refuse(ErrPrimaryRequiresNewParent, "primary.repository", "changing the primary starts a new parent (MR3)")
 	case next.Version == old.Version && hash == cs.PlanHash:
-		return nil // the same version again: a replay changes nothing
+		return Materiality{}, nil // the same version again: a replay changes nothing
 	}
 	m, err := ComparePlans(old, next)
 	if err != nil {
-		return err
+		return Materiality{}, err
 	}
-	return s.record(ctx, t, next, hash, planning, m, cs)
+	return m, s.record(ctx, t, next, hash, planning, m, cs)
 }
 
 // record writes next as the current plan on t, carrying what m preserves of old.
 func (s *Service) record(ctx context.Context, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation, m Materiality, old *v1alpha1.CoordinationStatus) error {
 	if old == nil {
 		old = &v1alpha1.CoordinationStatus{}
+	}
+	if err := s.checkReductions(ctx, old, next); err != nil {
+		return err
 	}
 	b, err := plannedBudget(old.Budget, next, planning)
 	if err != nil {
@@ -244,8 +276,24 @@ func (s *Service) record(ctx context.Context, t *v1alpha1.Task, next v1alpha1.Co
 		t.Status.PhaseSince = &now
 	}
 	t.Status.Coordination = cs
-	t.Status.Reason, _ = s.eligibility(ctx, cs) // a refused gate is the reason; the draft stands
+	if old.Plan != nil {
+		if err := s.applyPlanVersion(ctx, t, next, m); err != nil {
+			return err
+		}
+	}
+	reason, _ := s.eligibility(ctx, cs) // a refused gate is the reason; the draft stands
+	setReason(t, reason)
 	return s.Client.Status().Update(ctx, t)
+}
+
+// setReason writes a confirmation's reason on parent t, except once filing has started: filed and
+// filing_incomplete are control state the children's lineage and the filing replay read (Review
+// Focus 1), so a later version's confirmations never rewrite them.
+func setReason(t *v1alpha1.Task, reason string) {
+	if r := t.Status.Reason; r == ReasonFiled || r == ReasonFilingIncomplete {
+		return
+	}
+	t.Status.Reason = reason
 }
 
 // planningShape refuses a planning attempt whose cost nobody can reconcile: an identifier without
@@ -271,11 +319,7 @@ func plannedBudget(prev *v1alpha1.CoordinationBudgetStatus, p v1alpha1.Coordinat
 		b = prev.DeepCopy()
 	}
 	b.PlanningMicroUSD, b.TotalMicroUSD = p.Budget.PlanningMicroUSD, p.Budget.TotalMicroUSD
-	alloc, _ := mul(int64(p.Integration.MaxRuns), p.Integration.RunMicroUSD) // Validate held the sum
-	for _, c := range p.Children {
-		alloc += c.BudgetMicroUSD
-	}
-	b.AllocatedMicroUSD = alloc
+	b.AllocatedMicroUSD, _ = Allocated(p) // Validate held the sum within the total
 	if a.AttemptID == "" || !slices.Contains(b.PlanningAttempts, a.AttemptID) {
 		ok := add(&b.PlanningReservedMicroUSD, a.ReservedMicroUSD) && add(&b.PlanningSettledMicroUSD, a.SettledMicroUSD)
 		if !ok {
@@ -358,7 +402,9 @@ func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfi
 		if err != nil {
 			return err
 		}
-		t.Status.Reason, gate = s.eligibility(ctx, cs)
+		var reason string
+		reason, gate = s.eligibility(ctx, cs)
+		setReason(&t, reason)
 		return s.Client.Status().Update(ctx, &t)
 	})
 	if err != nil {
@@ -450,8 +496,24 @@ func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationSta
 	if cs == nil || cs.Plan == nil {
 		return ErrParentNotFound
 	}
-	if !complete(cs) {
+	// The whole family needs every confirmation of the current plan; one child needs only its own
+	// standing authorization under a parent confirmation of a version it is unchanged in, so a
+	// newer version waiting for confirmations pauses only the children it affected (MR12).
+	if ids == nil && !complete(cs) {
 		return refuse(ErrInvalidConfirmation, "", "a confirmation of the current plan is missing")
+	}
+	pc := parentConfirmation(cs)
+	for _, id := range ids {
+		c := coveringConfirmation(cs, id)
+		if c == nil {
+			return refuse(ErrInvalidConfirmation, "children."+id, "a confirmation of the current plan is missing")
+		}
+		if pc == nil {
+			pc = c
+		}
+	}
+	if pc == nil {
+		return refuse(ErrInvalidConfirmation, "", "no parent confirmation")
 	}
 	p := *cs.Plan
 	increase := map[string]bool{}
@@ -468,7 +530,6 @@ func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationSta
 	if err := GateExecute(ctx, s.mode(), s.Prerequisites, repos); err != nil {
 		return err
 	}
-	pc := parentConfirmation(cs)
 	if pp, ok := find(p, primaryChildID(p)); ok {
 		if !s.Cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(pc.LinkedGitHubLogin) {
 			return fmt.Errorf("%w: the parent confirmer no longer maintains the primary", ErrRepositoryPermission)

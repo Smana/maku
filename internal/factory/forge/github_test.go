@@ -141,10 +141,40 @@ type fakeGitHub struct {
 	// fence is .github/agent-factory.yaml on the default branch: "" is absent, "!" a 500.
 	fence string
 	steer map[string]string // default-branch steering notes by path; "!" fails the read
+	// atCommit is a file at an exact commit, keyed "<sha>:<path>", in steer's body shapes.
+	atCommit map[string]string
 	// extra is more REST GETs than the snapshot serves, one read's test at a time: the body by
 	// path. A path no test added is GitHub's 404; extraQueries records their query strings.
 	extra        map[string]string
 	extraQueries []string
+}
+
+// serveContents answers a contents read of p with body's shape: "big", "dir", "symlink",
+// "submodule", "linked", "denied", "!" and absent are the unreadable or failing shapes; any other
+// body is the file.
+func serveContents(w http.ResponseWriter, p, body string, ok bool) {
+	switch {
+	case body == "big":
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "x.md", "path": p, "type": "file", "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
+			"encoding": "none", "size": 2 << 20, "content": ""})
+	case body == "dir":
+		_ = json.NewEncoder(w).Encode([]map[string]any{{"name": "x.md", "path": p + "/x.md", "type": "file"}})
+	case body == "symlink" || body == "submodule":
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "x.md", "path": p, "type": body, "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
+			"size": 12, "target": "../elsewhere.md"})
+	case body == "linked":
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "other.md", "path": "docs/other.md", "type": "file", "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
+			"encoding": "base64", "size": 2, "content": base64.StdEncoding.EncodeToString([]byte("x\n"))})
+	case body == "denied":
+		http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
+	case !ok:
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	case body == "!":
+		http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+	default:
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "x.md", "path": p, "type": "file", "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
+			"encoding": "base64", "size": len(body), "content": base64.StdEncoding.EncodeToString([]byte(body))})
+	}
 }
 
 // openPull is one open pull request as GET /pulls lists it, on this repository.
@@ -772,6 +802,9 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/contents/{path...}", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		p, ref := r.PathValue("path"), r.URL.Query().Get("ref")
+		g.mu.Lock()
+		atBody, atOK := g.atCommit[ref+":"+p]
+		g.mu.Unlock()
 		switch {
 		case p == "docs/a.md" && (ref == "old" || ref == "new"):
 			text := aBase
@@ -801,28 +834,9 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			g.mu.Lock()
 			body, ok := g.steer[p]
 			g.mu.Unlock()
-			switch {
-			case body == "big":
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": "x.md", "path": p, "type": "file", "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
-					"encoding": "none", "size": 2 << 20, "content": ""})
-			case body == "dir":
-				_ = json.NewEncoder(w).Encode([]map[string]any{{"name": "x.md", "path": p + "/x.md", "type": "file"}})
-			case body == "symlink" || body == "submodule":
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": "x.md", "path": p, "type": body, "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
-					"size": 12, "target": "../elsewhere.md"})
-			case body == "linked":
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": "other.md", "path": "docs/other.md", "type": "file", "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
-					"encoding": "base64", "size": 2, "content": base64.StdEncoding.EncodeToString([]byte("x\n"))})
-			case body == "denied":
-				http.Error(w, `{"message":"Forbidden"}`, http.StatusForbidden)
-			case !ok:
-				http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
-			case body == "!":
-				http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
-			default:
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": "x.md", "path": p, "type": "file", "sha": "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f",
-					"encoding": "base64", "size": len(body), "content": base64.StdEncoding.EncodeToString([]byte(body))})
-			}
+			serveContents(w, p, body, ok)
+		case atOK:
+			serveContents(w, p, atBody, true)
 		case p == "docs/big.png":
 			_ = json.NewEncoder(w).Encode(map[string]any{"name": "big.png", "path": p, "type": "file", "size": 2_000_000})
 		default:
@@ -2270,5 +2284,62 @@ func TestRepositoryInfoReadsTheRepositoryDocument(t *testing.T) {
 		if _, err := r.g.RepositoryInfo(t.Context()); err == nil {
 			t.Errorf("%s: no error", reply)
 		}
+	}
+}
+
+// v4 MR7: a file at an exact 40-hex commit, with its bytes, blob sha and size. The ref is that
+// commit, never a branch; anything that is not a commit is refused before any call.
+func TestFileAtCommitReadsTheExactCommit(t *testing.T) {
+	const (
+		p      = "schemas/consumer-v1.json"
+		merge  = "a1b2c3d4e5f60718293a4b5c6d7e8f9011223344"
+		head   = "2222222222222222222222222222222222222222"
+		schema = `{"type":"object"}`
+	)
+	r := newRig(t)
+	r.gh.mu.Lock()
+	r.gh.atCommit = map[string]string{merge + ":" + p: schema, head + ":" + p: `{"type":"array"}`}
+	r.gh.steer = map[string]string{p: "newer default-branch bytes"}
+	r.gh.mu.Unlock()
+	fc, found, err := r.g.FileAtCommit(t.Context(), merge, p)
+	if !found || err != nil || string(fc.Bytes) != schema || fc.Path != p || fc.SizeBytes != int64(len(schema)) ||
+		fc.BlobSHA != "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f" {
+		t.Fatalf("at the merge commit: %+v %v %v", fc, found, err)
+	}
+	if _, found, err := r.g.FileAtCommit(t.Context(), "3333333333333333333333333333333333333333", p); found || err != nil {
+		t.Fatalf("absent at another commit: %v %v", found, err)
+	}
+	for _, ref := range []string{"main", "agent/x", merge[:39], strings.ToUpper(merge), merge + "0", ""} {
+		if _, found, err := r.g.FileAtCommit(t.Context(), ref, p); err == nil || found {
+			t.Errorf("ref %q was read: %v %v", ref, found, err)
+		}
+	}
+}
+
+// A directory, symlink, submodule or withheld body at the commit is ErrNotAFile, as on the
+// default branch; a 403 or 5xx is a retryable error, never "absent".
+func TestFileAtCommitNeverReadable(t *testing.T) {
+	const (
+		p   = "schemas/consumer-v1.json"
+		sha = "1111111111111111111111111111111111111111"
+	)
+	for name, tc := range map[string]struct {
+		body     string
+		notAFile bool
+	}{
+		"a withheld body": {"big", true}, "a directory": {"dir", true}, "a symlink": {"symlink", true},
+		"a submodule": {"submodule", true}, "a symlink resolved to its target": {"linked", true},
+		"a 403": {"denied", false}, "a 500": {"!", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			r.gh.mu.Lock()
+			r.gh.atCommit = map[string]string{sha + ":" + p: tc.body}
+			r.gh.mu.Unlock()
+			_, found, err := r.g.FileAtCommit(t.Context(), sha, p)
+			if found || err == nil || errors.Is(err, ErrNotAFile) != tc.notAFile {
+				t.Fatalf("found %v err %v, want ErrNotAFile %v", found, err, tc.notAFile)
+			}
+		})
 	}
 }

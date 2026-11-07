@@ -22,6 +22,15 @@ import (
 type CoordinationService interface {
 	Draft(ctx context.Context, actor coordination.Actor, p factoryv1.CoordinationPlan, hash string, planning coordination.PlanningReconciliation) (coordination.CoordinationConfirmation, error)
 	Confirm(ctx context.Context, actor coordination.Actor, in coordination.CoordinationConfirmation) (coordination.CoordinationConfirmation, error)
+	RecoveryRepository(ctx context.Context, parentTask string) (string, error)
+	Recover(ctx context.Context, actor coordination.Actor, parentTask, code string, planVersion int32) error
+}
+
+// RecoveryRequest is POST /v1/coordinations/{task}/recovery's body: the one proposed action and
+// the plan version it was proposed under. Unknown fields are refused.
+type RecoveryRequest struct {
+	Code        string `json:"code"`
+	PlanVersion int32  `json:"planVersion"`
 }
 
 // DraftRequest is PUT /v1/coordinations/{task}/draft's body: a CoordinationConfirmation's plan,
@@ -137,6 +146,40 @@ func (s *Server) confirmCoordination(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.Coordination.Confirm(r.Context(), coordination.Actor{Principal: p.ID, LinkedGitHubLogin: login}, in)
 	s.answerCoordination(r.Context(), w, out, err)
+}
+
+// recoverCoordination performs the parent's one proposed recovery (MR11), by a human only, as the
+// login their own token links to on the repository whose authority that action needs. 204 on
+// success; the service re-reads that authority and binds the current plan version.
+func (s *Server) recoverCoordination(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.coordinationCaller(w, r)
+	if !ok {
+		return
+	}
+	if p.Sponsored || p.Kind != envelope.ActorHuman {
+		refuse(w, http.StatusForbidden, "human_only")
+		return
+	}
+	var in RecoveryRequest
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	task := r.PathValue("task")
+	repository, err := s.Coordination.RecoveryRepository(r.Context(), task)
+	if err != nil {
+		s.answerCoordination(r.Context(), w, coordination.CoordinationConfirmation{}, err)
+		return
+	}
+	login, code, reason := s.linkedLogin(r.Context(), p, repository)
+	if reason != "" {
+		refuse(w, code, reason)
+		return
+	}
+	if err := s.Coordination.Recover(r.Context(), coordination.Actor{Principal: p.ID, LinkedGitHubLogin: login}, task, in.Code, in.PlanVersion); err != nil {
+		s.answerCoordination(r.Context(), w, coordination.CoordinationConfirmation{}, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // coordinationCaller authenticates and applies the stop object, as every intake does.

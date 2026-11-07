@@ -163,6 +163,7 @@ func (s *Server) Handler() http.Handler {
 	if s.coordinationOn() { // MR16: off lists no coordination route, so each is a 404
 		mux.HandleFunc("PUT /v1/coordinations/{task}/draft", s.draftCoordination)
 		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
+		mux.HandleFunc("POST /v1/coordinations/{task}/recovery", s.recoverCoordination)
 	}
 	return mux
 }

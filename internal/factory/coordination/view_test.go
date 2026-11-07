@@ -67,3 +67,17 @@ func TestCoordinationViewOfADraftWithoutPlanIsEmptyNotNil(t *testing.T) {
 		t.Fatal("a view's lists are empty, never null on the wire")
 	}
 }
+
+// MR8: a view's allocations are the Task facts: the parent's static total when its status has no
+// budget record yet, and each child's frozen lifetime cap.
+func TestCoordinationViewBudgetAllocations(t *testing.T) {
+	p := validPlan(t)
+	parent := v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: p.ID}}
+	parent.Status.Coordination = &v1alpha1.CoordinationStatus{Plan: &p, PlanHash: PlanHash(p),
+		Children: []v1alpha1.CoordinationChildStatus{{ID: "contract", Repository: "Smana/public-contracts", Task: "aaaaaaaa"}}}
+	child := v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "aaaaaaaa"}, Spec: v1alpha1.TaskSpec{Budget: v1alpha1.Budget{TaskMicroUSD: 5_100_000}}}
+	v := View(parent, []v1alpha1.Task{child}, nil, LedgerUsage{})
+	if v.Budget.AllocatedMicroUSD != 12_750_000 || v.Children[0].AllocationMicroUSD != 5_100_000 {
+		t.Fatalf("budget %+v child %+v", v.Budget, v.Children[0])
+	}
+}
