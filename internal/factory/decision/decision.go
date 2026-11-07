@@ -22,16 +22,25 @@ type Rows struct {
 	Shape, Holdout, Oracle, Age, Evidence string
 	Paused, Capped, Gated                 bool
 	Reviewer                              string
+	// Policy and Dual are merge policy stage 3's dual evaluation: the first 12 hex digits of the
+	// repository policy's hash ("" when none was read) and whether its decision agreed with this
+	// one. Dual is "" with dual evaluation off, and then neither prints.
+	Policy, Dual string
 }
 
 // Marker is the hidden one-line record appended to the decision's comment. It is a line of its
 // own beside the comment's event marker (ruling R-m11), and class= lets the tally filter by
 // class (R-I9). An unread field prints "-" (R-m7): an empty string, and the counts of a diff not
 // read, so a replay never reads a count of 0 that nobody took. Every field is one token.
+// The dual fields sit before reviewer, which the tally reads last.
 func Marker(head, class, verdict, reason string, r Rows) string {
-	return fmt.Sprintf("<!-- agent-factory-decision head=%s class=%s decision=%s:%s files=%s/%d lines=%s/%d shape=%s holdout=%s oracle=%s age=%s evidence=%s paused=%s capped=%s reviewer=%s -->",
+	dual := ""
+	if r.Dual != "" {
+		dual = fmt.Sprintf(" policy=%s dual=%s", dash(r.Policy), r.Dual)
+	}
+	return fmt.Sprintf("<!-- agent-factory-decision head=%s class=%s decision=%s:%s files=%s/%d lines=%s/%d shape=%s holdout=%s oracle=%s age=%s evidence=%s paused=%s capped=%s%s reviewer=%s -->",
 		dash(head), dash(class), dash(verdict), dash(reason), count(r.Files, r.Counted), r.MaxFiles, count(r.Lines, r.Counted), r.MaxLines,
-		dash(r.Shape), dash(r.Holdout), dash(r.Oracle), dash(r.Age), dash(r.Evidence), flag(r.Paused, r.Gated), flag(r.Capped, r.Gated), dash(r.Reviewer))
+		dash(r.Shape), dash(r.Holdout), dash(r.Oracle), dash(r.Age), dash(r.Evidence), flag(r.Paused, r.Gated), flag(r.Capped, r.Gated), dual, dash(r.Reviewer))
 }
 
 // dash is s, or "-" for an unread value.

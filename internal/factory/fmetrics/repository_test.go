@@ -80,16 +80,19 @@ func TestPolicyMetricsAreBounded(t *testing.T) {
 	s.PolicyLoadError(t.Context(), "Smana/a", "invalid")
 	s.PolicyLoadError(t.Context(), "Smana/a", "not-a-reason")
 	s.PolicyDivergence(t.Context(), "Smana/a", 2)
+	s.PolicyDualDecision(t.Context(), "Smana/a", "docs-links", "unexplained")
+	s.PolicyDualDecision(t.Context(), "Smana/a", "docs-links", "not-an-agreement")
 	out := scrape()
 	for _, want := range []string{
 		`maku_factory_policy_load_errors_total{reason="invalid",repository="Smana/a"`,
 		`maku_factory_policy_central_divergence{repository="Smana/a"`,
+		`maku_factory_policy_dual_decisions_total{agreement="unexplained",class="docs-links",repository="Smana/a"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %s in\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "not-a-reason") {
+	if strings.Contains(out, "not-a-reason") || strings.Contains(out, "not-an-agreement") {
 		t.Fatal("a reason outside the list")
 	}
 }

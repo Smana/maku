@@ -932,6 +932,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `shape=`, `holdout=`, `oracle=`, `age=` | `ok` when held, `n/a` when the class declares none, the refusal's reason when refused, `pending` for a release age still waiting |
 | `evidence=` | `ok`, or the refusal's reason |
 | `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
+| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it |
 | `reviewer=` | The reviewer run's served models joined with `+`; `none` when the class has no reviewer run |
 
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
@@ -1473,6 +1474,8 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `harnessProfiles` | `<name>: {template (solo, pair, trio, investigate or none), tier, checks, testFirst (needs checks), loop (off or a `loops` row)}`: the centrally approved ways to run a class; `none` is an adopted class (another author's pull requests, no run) and takes no other key. Validated only: stage 1 of the repository merge policy decides nothing with it | None |
 | `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. Validated only: stage 1 decides nothing with it | None |
 | `policyManagement.read` | `true` observes each owned repository's class policy and compares it with this config. Stage 1 decides nothing: merge authority stays central | `false` |
+| `policyManagement.simulation` | `true` lets `maku policy simulate` (a policy file decided on decision fixtures by the gate's own evaluator) and `maku policy diff` (tightening or relaxation, class by class) run against this config. Offline; turned off when the simulator disagrees with the gate | `false` |
+| `policyManagement.dualEvaluation` | `true` decides each merge decision again under the repository's policy as `read` last observed it, counts the agreement and writes it into the decision record. Needs `read`. Stage 3 decides nothing: merge authority stays central | `false` |
 
 Each `repositories` entry:
 

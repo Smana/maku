@@ -23,13 +23,16 @@ import (
 	"github.com/Smana/maku/internal/factory/fence"
 )
 
-// The file's bounds. The patterns compile to RE2, linear in their input, so only their size is
-// bounded here: GitHub's contents API and the validator do the rest.
+// The file's bounds. The patterns compile to RE2, linear in the paths they match, but compiling
+// them is not free: a crafted file of 32 classes at 64 patterns a list cost 2.8 to 8 s a read. So
+// the count is bounded per list and per file, and Watch compiles a file once, not on every read.
 const (
 	MaxFileBytes    = 256 << 10
 	MaxClasses      = 32
 	MaxPatterns     = 64
+	MaxFilePatterns = 256
 	MaxPatternBytes = 512
+	MaxBranches     = 8
 )
 
 // Mode is a class's state: live merges, shadow records, off does neither.
@@ -80,9 +83,12 @@ type ClassPolicy struct {
 	Monitor          *config.Monitor `json:"monitor,omitempty"`
 }
 
-// Conditions are a class's predicates. Any leaf absent from All is not checked.
+// Conditions are a class's predicates. Any leaf absent from All and Any is not checked. Any is
+// one level of branches, each a conjunction of leaves: the class holds when All holds and one
+// branch does. A key is in All or in the branches, never both, so no branch overrides All.
 type Conditions struct {
 	All  []Leaf     `json:"all,omitempty"`
+	Any  [][]Leaf   `json:"any,omitempty"`
 	Deny []DenyLeaf `json:"deny,omitempty"`
 }
 
@@ -167,13 +173,20 @@ func Parse(raw []byte) (*File, error) {
 		return nil, fmt.Errorf("mergepolicy: at most %d classes", MaxClasses)
 	}
 	var errs []error
+	total := 0
 	for _, name := range slices.Sorted(maps.Keys(f.Classes)) {
+		for _, list := range f.Classes[name].patterns() {
+			total += len(list)
+		}
 		if err := f.Classes[name].shape(); err != nil {
 			errs = append(errs, fmt.Errorf("class %s: %w", name, err))
 		}
 		if !classRE.MatchString(name) {
 			errs = append(errs, fmt.Errorf("%q is not a class name", name))
 		}
+	}
+	if total > MaxFilePatterns {
+		errs = append(errs, fmt.Errorf("at most %d patterns in the file, not %d", MaxFilePatterns, total))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
@@ -195,40 +208,109 @@ func (p ClassPolicy) shape() error {
 	if p.Harness == "" {
 		errs = append(errs, errors.New("harness is required: a profile of the central list"))
 	}
-	seen := map[string]bool{}
-	var patterns [][]string
-	for _, l := range p.Conditions.All {
+	if p.Limits.MaxPerDay < 0 {
+		errs = append(errs, errors.New("limits.maxPerDay is 0 (the guardrail's) or more"))
+	}
+	inAll := map[string]bool{}
+	errs = append(errs, leaves(p.Conditions.All, inAll)...)
+	if b := p.Conditions.Any; b != nil {
+		switch {
+		case len(b) < 2:
+			errs = append(errs, errors.New("any holds at least two branches: one is all"))
+		case len(b) > MaxBranches:
+			errs = append(errs, fmt.Errorf("any holds at most %d branches", MaxBranches))
+		}
+	}
+	for _, branch := range p.Conditions.Any {
+		if len(branch) == 0 {
+			errs = append(errs, errors.New("a branch of any is empty: it would hold on everything"))
+		}
+		seen := map[string]bool{}
+		errs = append(errs, leaves(branch, seen)...)
+		for _, k := range slices.Sorted(maps.Keys(seen)) {
+			if inAll[k] {
+				errs = append(errs, fmt.Errorf("%s is in all and in a branch of any", k))
+			}
+		}
+	}
+	for _, d := range p.Conditions.Deny {
+		if len(d.ProtectedFiles) == 0 {
+			errs = append(errs, errors.New("a deny's protectedFiles is empty: it refuses nothing"))
+		}
+	}
+	for _, a := range p.RequiresApproval {
+		if len(a.ChangedFiles) == 0 {
+			errs = append(errs, errors.New("a requiresApproval's changedFiles is empty: it asks about nothing"))
+		}
+	}
+	for _, list := range p.patterns() {
+		if len(list) > MaxPatterns {
+			errs = append(errs, fmt.Errorf("a list holds at most %d patterns", MaxPatterns))
+		}
+		for _, pat := range list {
+			switch {
+			case pat == "":
+				errs = append(errs, errors.New("an empty pattern matches every path"))
+			case len(pat) > MaxPatternBytes:
+				errs = append(errs, fmt.Errorf("a pattern is at most %d bytes", MaxPatternBytes))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// patterns are the class's path lists, each compiled when the class is validated.
+func (p ClassPolicy) patterns() [][]string {
+	var out [][]string
+	for _, l := range slices.Concat(append([][]Leaf{p.Conditions.All}, p.Conditions.Any...)...) {
+		out = append(out, l.AllowedFiles, l.CompanionFiles)
+	}
+	for _, d := range p.Conditions.Deny {
+		out = append(out, d.ProtectedFiles)
+	}
+	for _, a := range p.RequiresApproval {
+		out = append(out, a.ChangedFiles)
+	}
+	return out
+}
+
+// leaves checks a conjunction: each leaf sets exactly one key, no key twice, and no leaf is empty,
+// since an empty value reads as absent and would pass as equivalent while checking nothing. The
+// keys go into seen.
+func leaves(ls []Leaf, seen map[string]bool) []error {
+	var errs []error
+	for _, l := range ls {
 		names := l.names()
 		if len(names) != 1 {
-			errs = append(errs, fmt.Errorf("a leaf of all sets exactly one key, not %v", names))
+			errs = append(errs, fmt.Errorf("a leaf sets exactly one key, not %v", names))
 			continue
 		}
 		if seen[names[0]] {
 			errs = append(errs, fmt.Errorf("%s is declared twice", names[0]))
 		}
 		seen[names[0]] = true
-		if l.ModifyOnly != nil && !*l.ModifyOnly {
-			errs = append(errs, errors.New("modifyOnly: false says nothing: leave it out"))
-		}
-		patterns = append(patterns, l.AllowedFiles, l.CompanionFiles)
-	}
-	for _, d := range p.Conditions.Deny {
-		patterns = append(patterns, d.ProtectedFiles)
-	}
-	for _, a := range p.RequiresApproval {
-		patterns = append(patterns, a.ChangedFiles)
-	}
-	for _, list := range patterns {
-		if len(list) > MaxPatterns {
-			errs = append(errs, fmt.Errorf("a list holds at most %d patterns", MaxPatterns))
-		}
-		for _, pat := range list {
-			if len(pat) > MaxPatternBytes {
-				errs = append(errs, fmt.Errorf("a pattern is at most %d bytes", MaxPatternBytes))
-			}
+		if err := l.empty(names[0]); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return errors.Join(errs...)
+	return errs
+}
+
+// empty is the error of a leaf whose one key holds nothing.
+func (l Leaf) empty(key string) error {
+	switch {
+	case l.ModifyOnly != nil && !*l.ModifyOnly:
+		return errors.New("modifyOnly: false says nothing: leave it out")
+	case l.AllowedFiles != nil && len(l.AllowedFiles) == 0, l.HoldoutChecks != nil && len(l.HoldoutChecks) == 0,
+		l.CompanionFiles != nil && len(l.CompanionFiles) == 0:
+		return fmt.Errorf("%s is empty: leave it out", key)
+	case l.MaxPatchFiles != nil && *l.MaxPatchFiles < 1, l.MaxModifiedLines != nil && *l.MaxModifiedLines < 1:
+		return fmt.Errorf("%s is at least 1: leave it out for the guardrail's", key)
+	case l.DiffShape != nil && *l.DiffShape == "", l.ReleaseAgeCheck != nil && *l.ReleaseAgeCheck == "",
+		l.RequiredLabel != nil && *l.RequiredLabel == "":
+		return fmt.Errorf("%s is empty: leave it out", key)
+	}
+	return nil
 }
 
 // exactKeys walks a decoded document against t: encoding/json matches keys case-insensitively, so
