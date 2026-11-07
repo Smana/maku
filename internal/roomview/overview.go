@@ -34,6 +34,9 @@ type Row struct {
 	Need        *summary.Need `json:"need,omitempty"`
 	// Step is the one thing the caller does for the room and where: the same sentence as the card's.
 	Step *summary.Step `json:"step,omitempty"`
+	// Coordination is a coordination parent's family as this caller may read it: each visible
+	// child's state, the restricted count and the one recovery. Absent for any other room.
+	Coordination *summary.CoordinationOverview `json:"coordination,omitempty"`
 }
 
 // endedAfter is how long a room may have ended before the overview hides it.
@@ -252,9 +255,36 @@ func cellWords(r Row) string {
 		raw, got = r.Reason, reasonWords(r.Reason)
 	}
 	if got == clean(raw) {
-		return escapeTitle(got, true)
+		got = escapeTitle(got, true)
+	}
+	if f := familyWords(r.Coordination); f != "" {
+		got += " · " + escapeTitle(f, true)
 	}
 	return got
+}
+
+// familyWords is a parent's family on one line: each visible child and its phase, the restricted
+// count, the recovery. Every value is cleaned: the phases are the factory's, the ids the plan's.
+func familyWords(c *summary.CoordinationOverview) string {
+	if c == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(c.Children))
+	for _, ch := range c.Children {
+		p := clean(ch.ID)
+		if ch.Phase != "" {
+			p += " " + clean(ch.Phase)
+		}
+		parts = append(parts, p)
+	}
+	s := "family v" + strconv.Itoa(int(c.PlanVersion)) + ": " + strings.Join(parts, ", ")
+	if c.RestrictedChildren > 0 {
+		s += " (+" + strconv.Itoa(c.RestrictedChildren) + " restricted)"
+	}
+	if c.RecoveryCode != "" {
+		s += ", recovery " + clean(c.RecoveryCode)
+	}
+	return s
 }
 
 // textRow is r as the cells of the terminal table.
@@ -285,6 +315,9 @@ func textRow(r Row, mixed bool, o Options) []string {
 		where = reasonWords(r.Reason)
 	default:
 		_, where = roomWords(r)
+	}
+	if f := familyWords(r.Coordination); f != "" {
+		where += " · " + f
 	}
 	pr := "-"
 	if r.PR > 0 {

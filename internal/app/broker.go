@@ -230,6 +230,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	if v := coordinationViews(cfg, mgr.GetAPIReader(), ns); v != nil {
 		humans.CoordinationViews = v
+		if g := coordinationWrites(cfg); g != nil {
+			humans.CoordinationWrites = g
+		}
 	}
 	if humans.Intake != nil {
 		// A sponsored plan resolves the Slack user to the account it is linked to, so the link tables
@@ -577,4 +580,14 @@ func coordinationViews(cfg config.Config, r client.Reader, ns string) humanapi.C
 		return nil
 	}
 	return coordinationview.Source{Reader: r, Namespace: ns}
+}
+
+// coordinationWrites is the factory's coordination routes, forwarded with the caller's own token:
+// nil while coordination is off or no factory is configured. The URL is the config's, never a
+// request's.
+func coordinationWrites(cfg config.Config) humanapi.CoordinationGateway {
+	if cfg.Coordination.Mode == "" || cfg.Coordination.Mode == fconfig.CoordinationOff || cfg.FactoryURL == "" {
+		return nil
+	}
+	return runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 }

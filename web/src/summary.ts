@@ -25,6 +25,37 @@ export interface SplitPart { index: number; issue: number; room: string; outcome
 export interface Flow {
   untrusted?: boolean; plan?: string[]; nodes: FlowNode[]; ghosts?: string[]; milestones?: Milestone[];
   split?: { of: number; parts?: SplitPart[] }; parent?: { room: string; issue: number; index: number; of: number };
+  coordination?: CoordinationFlow;
+}
+
+// A coordination parent's family (internal/summary CoordinationFlow), filtered for this viewer by
+// the broker: a withheld child is only restrictedChildren. Drawn apart from split/parent.
+export interface CoordinationNode {
+  id: string; kind: "child" | "integration"; childID?: string; repository?: string; phase?: string; reason?: string;
+  roles: string[]; room?: string; issueURL?: string; prURL?: string; disabled: boolean; requiredConfirmation?: "parent" | "child";
+}
+export interface CoordinationEdge { from: string; to: string; kind: "artifact" | "integration"; name?: string; state: string }
+export interface CoordinationFlow { planVersion: number; planHash: string; nodes: CoordinationNode[]; edges: CoordinationEdge[]; restrictedChildren: number }
+
+// The parent's filtered view (internal/coordinationview View), as much of it as the controls read:
+// the plan goes back to the factory whole and unread, so a confirmation names exactly what was shown.
+export interface CoordinationView {
+  parentTask: string; phase: string; planHash: string; restrictedChildren: number;
+  plan: { id: string; version: number; [k: string]: unknown };
+  children: { id: string; repository: string; fingerprint: string }[];
+  budget: { planningReservedMicroUSD?: number; planningSettledMicroUSD?: number };
+  // The core's one proposed next action, when there is one (MR11): performed only on this page.
+  recovery?: { code: string; planVersion: number; childID?: string };
+}
+
+// One confirmation as the factory takes it (internal/factory/coordination CoordinationConfirmation):
+// the plan and hash shown, exactly one of parent or child, and the planning the view reported. The
+// factory resolves who confirms from the caller's own token.
+export interface CoordinationConfirmation {
+  plan: CoordinationView["plan"]; planHash: string;
+  parent?: { planHash: string };
+  child?: { childID: string; childFingerprint: string; planVersion: number };
+  planning: { attemptID: string; effectiveRequester: string; reservedMicroUSD: number; settledMicroUSD: number };
 }
 
 export interface Summary {
@@ -71,6 +102,7 @@ export interface Summary {
   actions: { kind: string; what: string; cli?: string }[];
   notes: { untrusted: true; items: { at: string; run: string; text: string }[] };
   flow?: Flow;
+  coordination?: CoordinationView;
   cursor: string;
 }
 

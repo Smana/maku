@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, fetchEvents, fetchNeeds, nav, SignInRequired } from "../src/api";
+import { api, confirmCoordination, fetchEvents, fetchNeeds, nav, SignInRequired } from "../src/api";
 import { listRooms, newRoomForm } from "../src/view";
 
 const answer = (status: number, body = "") => (() => Promise.resolve(new Response(body, { status }))) as typeof fetch;
@@ -122,5 +122,21 @@ describe("fetchEvents", () => {
   it("throws on an error status", async () => {
     const get = (async () => new Response("", { status: 503 })) as unknown as typeof fetch;
     await expect(fetchEvents("3kq7x2ma", 0, 50, get)).rejects.toThrow("503");
+  });
+});
+
+describe("confirmCoordination", () => {
+  it("posts the confirmation and names a bounded refusal", async () => {
+    const calls: [string, RequestInit][] = [];
+    const answer = (status: number, body: unknown) => vi.fn(async (url: string, init: RequestInit) => {
+      calls.push([url, init]);
+      return { ok: status === 200, status, json: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    await confirmCoordination("pppppppp", { planHash: "h" }, answer(200, {}));
+    expect(calls[0][0]).toBe("/api/coordinations/pppppppp/confirmations");
+    expect(calls[0][1].method).toBe("POST");
+    expect(JSON.parse(String(calls[0][1].body))).toEqual({ planHash: "h" });
+    await expect(confirmCoordination("pppppppp", {}, answer(409, { error: "stale_plan" }))).rejects.toThrow("stale_plan");
+    await expect(confirmCoordination("pppppppp", {}, answer(409, { error: "<b>see https://x</b>" }))).rejects.toThrow("HTTP 409");
   });
 });
