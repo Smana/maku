@@ -721,7 +721,8 @@ func plannerConfig() config.Config {
 		Intake: config.IntakeConfig{Plan: config.PlanConfig{
 			Enabled: true, URL: "http://ai-gateway.envoy-gateway-system.svc:8080/v1",
 			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, Fallback: "composer",
-			Repositories: []string{"Smana/AI-Native-Ref"},
+			ReasoningEffort: "low",
+			Repositories:    []string{"Smana/AI-Native-Ref"},
 			Classes: map[string]config.PlanClass{"docs-links": {
 				Roles: []string{"scoper", "implementer", "reviewer"}, CeilingUSD: 2, Source: "class:docs-links.taskUSD"}},
 		}},
@@ -787,7 +788,7 @@ func TestIntakeIsWiredFromConfig(t *testing.T) {
 	}
 	if in.Model == nil || in.Model.URL != "http://ai-gateway.envoy-gateway-system.svc:8080/v1" ||
 		in.Model.Alias != config.PlanModel || in.Model.APIKeyFile != "/etc/room-broker/planner/api-key" ||
-		in.Model.Deadline != config.DefaultPlanDeadline || in.Model.HC == nil {
+		in.Model.Deadline != config.DefaultPlanDeadline || in.Model.HC == nil || in.Model.ReasoningEffort != "low" {
 		t.Fatalf("model = %+v", in.Model)
 	}
 	if in.Daily != 7 || in.Fallback != "composer" || in.Now == nil {

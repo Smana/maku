@@ -729,6 +729,11 @@ func TestIntakePlanIsOffByDefault(t *testing.T) {
 	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.Fallback != "off" {
 		t.Fatalf("%+v", p)
 	}
+	// Unset, no effort is defaulted: the request carries no reasoning_effort and the model's own
+	// default stands.
+	if p.ReasoningEffort != "" {
+		t.Fatalf("reasoningEffort defaulted to %q", p.ReasoningEffort)
+	}
 }
 
 // Every rule the brief names, on its own, with the field it is about: a class's roles are the
@@ -740,19 +745,21 @@ func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 		return intake("      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n      classes:\n        docs-links:\n" + body)
 	}
 	for name, c := range map[string]struct{ body, want string }{
-		"a role twice":                  {class("          roles: [implementer, implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "declared twice"},
-		"no roles":                      {class("          roles: []\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "roles is empty"},
-		"a ceiling of zero":             {class("          roles: [implementer]\n          ceilingUSD: 0\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
-		"a negative ceiling":            {class("          roles: [implementer]\n          ceilingUSD: -2\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
-		"no source":                     {class("          roles: [implementer]\n          ceilingUSD: 2\n"), "source is required"},
-		"a class with no name":          {intake("      classes:\n        \"\": {roles: [implementer], ceilingUSD: 2, source: class:x.taskUSD}\n"), "a class needs a name"},
-		"a repository twice":            {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
-		"a route with no scheme":        {intake("      url: gw/v1\n"), "http(s)"},
-		"a route with userinfo":         {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
-		"a route that is not http":      {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
-		"a deadline over the bound":     {intake("      deadline: 21s\n"), "deadline"},
-		"a negative daily cap":          {intake("      dailyPlans: -1\n"), "dailyPlans"},
-		"the alias, while switched off": {intake("      model: glm-5.3\n"), "tier-frontier"},
+		"a role twice":                   {class("          roles: [implementer, implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "declared twice"},
+		"no roles":                       {class("          roles: []\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "roles is empty"},
+		"a ceiling of zero":              {class("          roles: [implementer]\n          ceilingUSD: 0\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
+		"a negative ceiling":             {class("          roles: [implementer]\n          ceilingUSD: -2\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
+		"no source":                      {class("          roles: [implementer]\n          ceilingUSD: 2\n"), "source is required"},
+		"a class with no name":           {intake("      classes:\n        \"\": {roles: [implementer], ceilingUSD: 2, source: class:x.taskUSD}\n"), "a class needs a name"},
+		"a repository twice":             {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
+		"a route with no scheme":         {intake("      url: gw/v1\n"), "http(s)"},
+		"a route with userinfo":          {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
+		"a route that is not http":       {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
+		"a deadline over the bound":      {intake("      deadline: 21s\n"), "deadline"},
+		"a negative daily cap":           {intake("      dailyPlans: -1\n"), "dailyPlans"},
+		"the alias, while switched off":  {intake("      model: glm-5.3\n"), "tier-frontier"},
+		"an unknown reasoning effort":    {intake("      reasoningEffort: max\n"), "reasoningEffort"},
+		"a reasoning effort in capitals": {intake("      reasoningEffort: Low\n"), "reasoningEffort"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(write(t, c.body)); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -768,6 +775,9 @@ func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 		"one plan a day":            {intake("      dailyPlans: 1\n"), func(p PlanConfig) bool { return p.DailyPlans == 1 }},
 		"the degraded composer":     {intake("      fallback: composer\n"), func(p PlanConfig) bool { return p.Fallback == "composer" }},
 		"two repositories":          {intake("      repositories: [Smana/a, Smana/b]\n"), func(p PlanConfig) bool { return len(p.Repositories) == 2 }},
+		"a low reasoning effort":    {intake("      reasoningEffort: low\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "low" }},
+		"a medium reasoning effort": {intake("      reasoningEffort: medium\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "medium" }},
+		"a high reasoning effort":   {intake("      reasoningEffort: high\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "high" }},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, err := Load(write(t, c.body))

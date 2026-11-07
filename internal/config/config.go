@@ -132,6 +132,11 @@ const (
 	PlanFallbackComposer = "composer"
 )
 
+// planEfforts are the reasoning efforts the planner may ask for: OpenAI's chat-completions
+// `reasoning_effort` values. Whether the model behind `tier-frontier` takes each is the provider's:
+// Z.ai's glm-5.3 names low, high and max.
+var planEfforts = []string{"low", "medium", "high"}
+
 // planRoles are the roles the factory runs. A class's template names them, and a role the factory
 // does not have would be a plan it cannot run.
 var planRoles = []string{"scoper", "tester", "implementer", "reviewer", "triager"}
@@ -152,6 +157,10 @@ type PlanConfig struct {
 	APIKeyFile string `json:"apiKeyFile,omitempty"`
 	// Deadline bounds the one model call; empty takes DefaultPlanDeadline.
 	Deadline Duration `json:"deadline,omitzero"`
+	// ReasoningEffort is sent as the call's `reasoning_effort` when set (low, medium or high); empty
+	// sends nothing and the model's default stands. A model that always reasons (glm-5.3) spends the
+	// whole 20 s deadline thinking at its default, and answers in about 4 s at "low".
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	// DailyPlans is the cap per requester per UTC day; empty takes DefaultDailyPlans.
 	DailyPlans int `json:"dailyPlans,omitempty"`
 	// Fallback is "off" or "composer": only the second reaches the degraded deterministic composer,
@@ -233,6 +242,9 @@ func (i IntakeConfig) validate() []error {
 	}
 	if p.Deadline.Duration <= 0 || p.Deadline.Duration > DefaultPlanDeadline {
 		errs = append(errs, fmt.Errorf("human.intake.plan.deadline: %s must be above 0 and at most %s, under /mcp's 25 s bound", p.Deadline.Duration, DefaultPlanDeadline))
+	}
+	if p.ReasoningEffort != "" && !slices.Contains(planEfforts, p.ReasoningEffort) {
+		errs = append(errs, fmt.Errorf("human.intake.plan.reasoningEffort: %q is not one of %s, or unset", p.ReasoningEffort, strings.Join(planEfforts, ", ")))
 	}
 	if p.DailyPlans < 1 {
 		errs = append(errs, fmt.Errorf("human.intake.plan.dailyPlans: %d must be at least 1 per requester", p.DailyPlans))

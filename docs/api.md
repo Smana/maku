@@ -719,6 +719,11 @@ and the coding agent's `issue_file` (or the Slack proposal, later) re-validates 
 
 **For the operator:** the planner's model call is the only place the broker reaches a model; it sends
 public text only, refuses a private repository before the call, and logs the hash, never the text.
+`human.intake.plan.reasoningEffort` (`low`, `medium` or `high`; unset by default, which sends
+nothing) is sent as the call's `reasoning_effort`, and any other value fails startup. Set it for a
+model that always reasons: `glm-5.3` behind `tier-frontier` spends the whole 20 s deadline
+reasoning at its default, and answers in about 4 s at `low`. Whether a value is accepted is the
+provider's: Z.ai names `low` and `high` for `glm-5.3`, not `medium`.
 
 ### Sponsored principals on `/mcp`
 
