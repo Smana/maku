@@ -114,9 +114,15 @@ func CIState(c forge.Checks, required []string) string {
 // DecideArm is §5.1's merge-actor rule: a fixed base no class can remove, one author mode, and
 // the conditions the class declares (merge gate classes MC1). Every "no" fails towards a human
 // (property 3), each with its own reason. Every decision carries the rows it read (AM8).
-func DecideArm(in ArmInputs) (d ArmDecision) {
+func DecideArm(in ArmInputs) ArmDecision {
 	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
-	rows := recordOf(in, gateOf(rc, in.Task.Spec.PredictedClass))
+	return decide(in, rc, gateOf(rc, in.Task.Spec.PredictedClass))
+}
+
+// decide is DecideArm's rule on the class cl, wherever it was read: the central config, or a
+// repository's policy (DecideArmUnder). Everything else is read from the central config.
+func decide(in ArmInputs, rc *config.Repository, cl config.Class) (d ArmDecision) {
+	rows := recordOf(in, cl)
 	defer func() { d.Rows = rows }()
 	if d, done := baseChecks(in, rc); done {
 		return d
@@ -125,7 +131,6 @@ func DecideArm(in ArmInputs) (d ArmDecision) {
 		return ArmDecision{Verdict: "human", Reason: reason, Matched: matched}
 	}
 	class := in.Task.Spec.PredictedClass
-	cl := gateOf(rc, class)
 	if cl.Adopted() {
 		if reason := adoptAuthor(in, cl); reason != "" {
 			return human(reason, class)
@@ -394,7 +399,11 @@ func runsEnded(t *v1alpha1.Task) time.Time {
 // gateOf is the class as the gate reads it: its config, with the diff shape built into
 // docs-links and revert (R52) when the config names none.
 func gateOf(rc *config.Repository, class string) config.Class {
-	cl := rc.Classes[class]
+	return withShape(rc.Classes[class], class)
+}
+
+// withShape is cl with the built-in diff shape of its name when it declares none.
+func withShape(cl config.Class, class string) config.Class {
 	if cl.DiffShape == "" {
 		cl.DiffShape = config.BuiltInShape(class)
 	}
