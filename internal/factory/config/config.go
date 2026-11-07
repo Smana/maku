@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	yamlv3 "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/yaml"
 
 	"github.com/Smana/maku/internal/runwatch"
@@ -146,6 +147,8 @@ type Config struct {
 	API       API                 `json:"api"`
 	RunLore   RunLore             `json:"runlore"`
 	Sandbox   Sandbox             `json:"sandbox,omitzero"`
+	// Coordination is the multi-repository coordination switch (v4 MR16): off unless set.
+	Coordination Coordination `json:"coordination,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
@@ -165,6 +168,103 @@ type Config struct {
 	// Warnings are sentences about a file that loads and that a later release refuses, for the
 	// binary to log: Parse has no logger.
 	Warnings []string `json:"-"`
+}
+
+// The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and
+// execute alone may file issues or start runs, each admission still gated on the prerequisites.
+const (
+	CoordinationOff     = "off"
+	CoordinationPlan    = "plan"
+	CoordinationExecute = "execute"
+)
+
+// coordinationMaxChildren is the only family size this release accepts (MR1).
+const coordinationMaxChildren = 2
+
+// Coordination is the one logical switch for multi-repository coordination (MR16). Parse defaults
+// it to off, public only and two children. execute loads: whether it may act is the capability
+// gate's answer at every admission (coordination.ReadyForExecute), not a startup fact.
+type Coordination struct {
+	Mode string `json:"mode,omitempty"`
+	// PublicOnly refuses private and mixed families; false is refused in this release.
+	PublicOnly  *bool `json:"publicOnly,omitempty"`
+	MaxChildren int32 `json:"maxChildren,omitempty"`
+}
+
+// UnmarshalJSON decodes the block strictly. YAML 1.1 reads an unquoted mode: off as the boolean
+// false, so false reads as off; any other non-string mode is refused.
+func (c *Coordination) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Mode        json.RawMessage `json:"mode,omitempty"`
+		PublicOnly  *bool           `json:"publicOnly,omitempty"`
+		MaxChildren int32           `json:"maxChildren,omitempty"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
+		return fmt.Errorf("coordination: %w", err)
+	}
+	*c = Coordination{PublicOnly: raw.PublicOnly, MaxChildren: raw.MaxChildren}
+	switch m := string(raw.Mode); m {
+	case "", "null":
+	case "false":
+		c.Mode = CoordinationOff
+	default:
+		if err := json.Unmarshal(raw.Mode, &c.Mode); err != nil {
+			return fmt.Errorf("coordination.mode %s is none of off, plan, execute (MR16)", m)
+		}
+	}
+	return nil
+}
+
+// coordinationOnce refuses a coordination block, or a key inside it, written twice: YAMLToJSON
+// keeps the last silently, and a switch must never read differently from what its author sees.
+// The rest of the file keeps its last-key-wins reading.
+func coordinationOnce(raw []byte) error {
+	var doc yamlv3.Node
+	if err := yamlv3.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yamlv3.MappingNode {
+		return nil //nolint:nilerr // YAMLToJSON reports the malformed file; this check reads only a well-formed one
+	}
+	top := doc.Content[0].Content
+	var block *yamlv3.Node
+	for i := 0; i+1 < len(top); i += 2 {
+		if top[i].Value != "coordination" {
+			continue
+		}
+		if block != nil {
+			return errors.New("coordination is written twice")
+		}
+		block = top[i+1]
+	}
+	if block == nil || block.Kind != yamlv3.MappingNode {
+		return nil
+	}
+	seen := map[string]bool{}
+	for i := 0; i+1 < len(block.Content); i += 2 {
+		k := block.Content[i].Value
+		if seen[k] {
+			return fmt.Errorf("coordination.%s is written twice", k)
+		}
+		seen[k] = true
+	}
+	return nil
+}
+
+// EffectivePublicOnly is PublicOnly with its default, true.
+func (c Coordination) EffectivePublicOnly() bool { return c.PublicOnly == nil || *c.PublicOnly }
+
+func (c Coordination) validate(bad func(string, ...any)) {
+	switch c.Mode {
+	case CoordinationOff, CoordinationPlan, CoordinationExecute:
+	default:
+		bad("coordination.mode %q is none of off, plan, execute (MR16)", c.Mode)
+	}
+	if c.MaxChildren != coordinationMaxChildren {
+		bad("coordination.maxChildren is %d: this release coordinates exactly %d (MR1)", c.MaxChildren, coordinationMaxChildren)
+	}
+	if !c.EffectivePublicOnly() {
+		bad("coordination.publicOnly: false is refused: this release coordinates public repositories only (MR16)")
+	}
 }
 
 // Broker is SP2's room-broker system API. Its :8443 is TLS (GP-18): the URL is https and the
@@ -1143,6 +1243,9 @@ func Load(path string) (*Config, error) {
 
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
 func Parse(raw []byte) (*Config, error) {
+	if err := coordinationOnce(raw); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -1180,6 +1283,12 @@ func Parse(raw []byte) (*Config, error) {
 		c.Resume.MaxPerTask = defaultResumesPerTask
 	}
 	c.Scoper = c.Scoper.WithDefaults()
+	if c.Coordination.Mode == "" {
+		c.Coordination.Mode = CoordinationOff
+	}
+	if c.Coordination.MaxChildren == 0 {
+		c.Coordination.MaxChildren = coordinationMaxChildren
+	}
 	if len(c.Meter.Prices) > 0 { // without prices, a tier keeps its token cap (one release of compatibility)
 		for name, t := range c.Tiers {
 			if t.RunUSD == 0 {
@@ -1299,6 +1408,7 @@ func (c *Config) EscalatedLimit() time.Duration {
 func (c *Config) Validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
+	c.Coordination.validate(bad)
 	rs := c.Repos()
 	switch {
 	case len(rs) == 0:
