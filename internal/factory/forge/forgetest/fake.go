@@ -6,6 +6,7 @@ package forgetest
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // git's blob id is SHA-1: the fake computes it as GitHub does
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -71,26 +72,33 @@ type Fake struct {
 	labelErr      error
 	labelErrFor   map[string]error
 	files         map[string]string // default-branch files by path; "!" fails the read
-	calls         []string
-	merged        []forge.MergedPull
-	pullFiles     map[int][]forge.FilePatch
-	blame         map[string][]forge.BlameRange
-	blameCalls    int
-	mergedErr     error
-	labelReads    []string  // the labels PullsWithLabel was asked for, in order
-	mergedCutoff  time.Time // MergedSince truncates a read that starts before it
-	filesErr      map[int]error
-	blameErr      map[string]error
-	subErr        error
-	createErr     error
-	private       bool  // Public answers false when set; a Fake is public by default
-	publicErr     error // Public fails with it
-	publicCalls   int
-	render        func(string) (string, error)
-	rendered      []string
-	listErr       error
-	closeErr      error
-	nextID        int64
+	// atCommit is the files at exact commits, keyed "<sha>:<path>"; fileReads the reads, in order.
+	atCommit     map[string]forge.FileContent
+	fileReads    []string
+	calls        []string
+	merged       []forge.MergedPull
+	pullFiles    map[int][]forge.FilePatch
+	blame        map[string][]forge.BlameRange
+	blameCalls   int
+	mergedErr    error
+	labelReads   []string  // the labels PullsWithLabel was asked for, in order
+	mergedCutoff time.Time // MergedSince truncates a read that starts before it
+	filesErr     map[int]error
+	blameErr     map[string]error
+	subErr       error
+	createErr    error
+	private      bool  // Public answers false when set; a Fake is public by default
+	publicErr    error // Public fails with it
+	publicCalls  int
+	render       func(string) (string, error)
+	rendered     []string
+	listErr      error
+	closeErr     error
+	nextID       int64
+	repoInfo     *forge.RepositoryInfo // RepositoryInfo's answer; nil answers a public "owner/repo"
+	repoInfoErr  error
+	perms        map[string]string // Permission's answer by lower-case login; absent is "none"
+	permErr      error
 }
 
 // NewFake returns an empty Fake.
@@ -1003,6 +1011,59 @@ func (f *Fake) DefaultBranchFile(_ context.Context, path string) (string, string
 	return text, fmt.Sprintf("%x", sha256.Sum256([]byte(text)))[:40], true, nil
 }
 
+// BlobSHA is git's blob id of b, as GitHub reports a file's sha.
+func BlobSHA(b []byte) string {
+	h := sha1.New() //nolint:gosec // git's object id, not a security digest
+	_, _ = fmt.Fprintf(h, "blob %d\x00", len(b))
+	_, _ = h.Write(b)
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// SetFileAt sets path's text at commit sha, with its git blob id; "!" makes its read fail and
+// NotAFile makes it unreadable for good, as SetFile's.
+func (f *Fake) SetFileAt(sha, path, text string) {
+	f.SetFileContentAt(sha, forge.FileContent{Path: path, BlobSHA: BlobSHA([]byte(text)), Bytes: []byte(text), SizeBytes: int64(len(text))})
+}
+
+// SetFileContentAt sets fc as what a read of fc.Path at sha answers, verbatim: a test tampers a
+// digest, a size or a path with it.
+func (f *Fake) SetFileContentAt(sha string, fc forge.FileContent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.atCommit == nil {
+		f.atCommit = map[string]forge.FileContent{}
+	}
+	f.atCommit[sha+":"+fc.Path] = fc
+}
+
+// FileAtCommit is path at commit sha: a 40-hex sha only, as GitHub's.
+func (f *Fake) FileAtCommit(_ context.Context, sha, path string) (forge.FileContent, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fileReads = append(f.fileReads, sha+":"+path)
+	if len(sha) != 40 || strings.Trim(sha, "0123456789abcdef") != "" {
+		return forge.FileContent{}, false, fmt.Errorf("forgetest: %q is not a 40-hex commit", sha)
+	}
+	fc, ok := f.atCommit[sha+":"+path]
+	switch {
+	case !ok:
+		return forge.FileContent{}, false, nil
+	case string(fc.Bytes) == "!":
+		return forge.FileContent{}, false, errors.New("forgetest: read failed")
+	case string(fc.Bytes) == NotAFile:
+		return forge.FileContent{}, false, forge.ErrNotAFile
+	}
+	fc.Bytes = slices.Clone(fc.Bytes)
+	return fc, true, nil
+}
+
+// FileReads are the FileAtCommit reads, "<sha>:<path>", in order.
+func (f *Fake) FileReads() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.fileReads)
+}
+
 // SetMerged sets the pull requests MergedSince filters by time.
 func (f *Fake) SetMerged(ps ...forge.MergedPull) {
 	f.mu.Lock()
@@ -1155,4 +1216,62 @@ func (f *Fake) Public(context.Context) (bool, error) {
 		return false, f.publicErr
 	}
 	return !f.private, nil
+}
+
+// SetRepositoryInfo sets what RepositoryInfo answers.
+func (f *Fake) SetRepositoryInfo(i forge.RepositoryInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoInfo = &i
+}
+
+// FailRepositoryInfo makes RepositoryInfo fail with err, as an absent App installation does; nil
+// restores the answer.
+func (f *Fake) FailRepositoryInfo(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoInfoErr = err
+}
+
+// RepositoryInfo implements the forge's RepositoryInfo.
+func (f *Fake) RepositoryInfo(context.Context) (forge.RepositoryInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.repoInfoErr != nil {
+		return forge.RepositoryInfo{}, f.repoInfoErr
+	}
+	if f.repoInfo != nil {
+		return *f.repoInfo, nil
+	}
+	return forge.RepositoryInfo{FullName: "owner/repo", DefaultBranch: "main", Private: f.private}, nil
+}
+
+// SetPermission sets login's permission on the repository.
+func (f *Fake) SetPermission(login, permission string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.perms == nil {
+		f.perms = map[string]string{}
+	}
+	f.perms[strings.ToLower(login)] = permission
+}
+
+// FailPermission makes Permission fail with err; nil restores the answer.
+func (f *Fake) FailPermission(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.permErr = err
+}
+
+// Permission implements the forge's Permission: "none" for a login never set.
+func (f *Fake) Permission(_ context.Context, login string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.permErr != nil {
+		return "", f.permErr
+	}
+	if p, ok := f.perms[strings.ToLower(login)]; ok {
+		return p, nil
+	}
+	return "none", nil
 }

@@ -55,8 +55,8 @@ func coordinationCases(t *testing.T) map[string]coordinationCase {
 
 // MR2, MR10, MR16: the API server accepts the legacy, parent, child and integration shapes and
 // refuses every CRD-layer invariant with its message. A status-only invariant is refused on the
-// status write, the create having passed. An admission-layer case is accepted here: CRD CEL reads
-// only metadata.name, so the reconciler's admission owns it (Task 9). Installing the CRD also
+// status write, the create having passed. An admission-layer case is accepted here and refused by
+// the reconciler's lineage check: CRD CEL reads only metadata.name. Installing the CRD also
 // proves the new rules' CEL cost fits the API server's budget.
 func TestEnvtestCoordinationFixtures(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
@@ -101,7 +101,21 @@ func TestEnvtestCoordinationFixtures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := write(cc)
 			switch {
-			case cc.Want == "accept" || cc.Layer == "admission":
+			case cc.Layer == "admission":
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				// The API server accepts it; the reconciler's lineage check refuses it before any
+				// claim, whatever its parent (Task 9).
+				var got v1alpha1.Task
+				if err := c.Get(ctx, client.ObjectKeyFromObject(&cc.Task), &got); err != nil {
+					t.Fatal(err)
+				}
+				r := &Reconciler{Client: c, Namespace: "agent-system"}
+				if _, err := r.checkCoordinationLineage(ctx, &got); lineageReason(err) == "" {
+					t.Errorf("admitted, want %q: %v", cc.Message, err)
+				}
+			case cc.Want == "accept":
 				if err != nil {
 					t.Errorf("refused: %v", err)
 				}

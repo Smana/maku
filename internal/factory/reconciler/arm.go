@@ -52,6 +52,9 @@ type ArmInputs struct {
 	// Contract is what row 2c reads of a task with a contract: the files changed since the tester's
 	// commit. Read is false until awaitingCI has read them, and an unread one never passes.
 	Contract ContractRead
+	// Integration is a coordination dependent's integration hold (v4 MR9), applied to every
+	// decision DecideArm returns.
+	Integration IntegrationGate
 }
 
 // ContractRead is the files a pull request changed since the tester's contract commit (row 2c).
@@ -123,7 +126,7 @@ func DecideArm(in ArmInputs) ArmDecision {
 // repository's policy (DecideArmUnder). Everything else is read from the central config.
 func decide(in ArmInputs, rc *config.Repository, cl config.Class) (d ArmDecision) {
 	rows := recordOf(in, cl)
-	defer func() { d.Rows = rows }()
+	defer func() { d.Rows = rows; d = withIntegrationHold(in.Integration, d) }() // MR9: one hold over every return, central or repository class
 	if d, done := baseChecks(in, rc); done {
 		return d
 	}

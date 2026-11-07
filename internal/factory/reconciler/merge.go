@@ -98,6 +98,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	in := ArmInputs{PR: pr, Checks: checks, Task: t, Cfg: r.Cfg, ArmedToday: today, ClassArmedToday: classToday, Paused: paused,
 		NotOwned: r.Owned == nil || !r.Owned(t.Spec.Repository)}
+	if in.Integration, err = r.integrationGate(ctx, t, pr.HeadSHA); err != nil {
+		return err
+	}
 	cl := gateOf(r.repo(t), t.Spec.PredictedClass)
 	adopted := cl.Adopted()
 	if adopted && CIState(checks, requiredFor(r.repo(t), t)) == "SUCCESS" {
@@ -195,7 +198,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 				b = max(b, releaseAgeWaitMax)
 			}
 		}
-		if b > 0 && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
+		if b > 0 && d.Reason != reasonIntegrationPending && t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) >= b {
 			// #182: a check that never reports (a typo in a holdout, a workflow not set up) must not
 			// hold the task silently. Nothing merged: the hand-off says what is missing.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
@@ -251,6 +254,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		narrateOn(t, pr.Number, withRecord(narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
 		return nil
+	}
+	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
+		return err
 	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
 	// read refuses the merge (409) and the new head is decided again — never merged on this
@@ -1076,6 +1082,7 @@ func (r *Reconciler) revert(ctx context.Context, t *v1alpha1.Task, why string) e
 		}
 	}
 	r.tellParent(ctx, t, ref.RevertNumber)
+	r.tellCoordinationParent(ctx, t, ref.RevertNumber)
 	return r.end(ctx, t, v1alpha1.PhaseReverted, why)
 }
 

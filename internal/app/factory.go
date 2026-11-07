@@ -37,6 +37,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
@@ -383,6 +384,25 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			}
 			return c.gh
 		}}
+	// Coordination (v4 MR16): Prerequisites stays nil because neither capability it must prove,
+	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
+	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
+	// confirms only.
+	// Each repository's checks and filing go through that repository's own App connection.
+	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now,
+		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil // a nil interface, never a typed-nil *forge.GitHub
+		}},
+		Forges: func(repo string) coordination.IssueForge {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil
+		}}
+	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
 	if err != nil {

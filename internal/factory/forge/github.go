@@ -1412,34 +1412,56 @@ func (g *GitHub) FenceFile(ctx context.Context) ([]byte, bool, error) {
 // submodule) is ErrNotAFile, with the sha when GitHub gave one. Any other failure (5xx, 403,
 // network) is a retryable error: triage retries rather than read "no note" (SC4).
 func (g *GitHub) DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error) {
-	fc, _, resp, err := g.rest.Repositories.GetContents(ctx, g.owner, g.name, path, nil)
+	fc, found, err := g.file(ctx, path, nil)
+	return string(fc.Bytes), fc.BlobSHA, found, err
+}
+
+// commitSHA is a full lowercase commit id: the one ref FileAtCommit reads at.
+var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// FileAtCommit is path at commit sha exactly (v4 MR7): the contents API's semantics as
+// DefaultBranchFile's, ErrNotAFile included, but at a 40-hex commit only, so neither a branch
+// name nor a short sha can stand in for a landed merge commit.
+func (g *GitHub) FileAtCommit(ctx context.Context, sha, path string) (FileContent, bool, error) {
+	if !commitSHA.MatchString(sha) {
+		return FileContent{}, false, fmt.Errorf("forge: read %s: %q is not a 40-hex commit", path, sha)
+	}
+	return g.file(ctx, path, &github.RepositoryContentGetOptions{Ref: sha})
+}
+
+// file is path at opts' ref (the default branch when nil). The sha is set on ErrNotAFile when
+// GitHub gave one.
+func (g *GitHub) file(ctx context.Context, path string, opts *github.RepositoryContentGetOptions) (FileContent, bool, error) {
+	fc, _, resp, err := g.rest.Repositories.GetContents(ctx, g.owner, g.name, path, opts)
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
 		g.mark(nil)
-		return "", "", false, nil
+		return FileContent{}, false, nil
 	}
 	g.mark(err)
 	if err != nil {
-		return "", "", false, wrap("read "+path, err)
+		return FileContent{}, false, wrap("read "+path, err)
 	}
 	if fc == nil { // a directory listing
-		return "", "", false, fmt.Errorf("forge: %s is a directory: %w", path, ErrNotAFile)
+		return FileContent{}, false, fmt.Errorf("forge: %s is a directory: %w", path, ErrNotAFile)
 	}
+	withheld := FileContent{BlobSHA: fc.GetSHA()}
 	if t := fc.GetType(); t != "file" {
-		return "", fc.GetSHA(), false, fmt.Errorf("forge: %s is a %s: %w", path, t, ErrNotAFile)
+		return withheld, false, fmt.Errorf("forge: %s is a %s: %w", path, t, ErrNotAFile)
 	}
 	if fc.GetPath() != path { // a symlink to a file: the API answers with the target, whose bytes are not this path's
-		return "", fc.GetSHA(), false, fmt.Errorf("forge: %s resolves to %s: %w", path, fc.GetPath(), ErrNotAFile)
+		return withheld, false, fmt.Errorf("forge: %s resolves to %s: %w", path, fc.GetPath(), ErrNotAFile)
 	}
 	if fc.GetEncoding() == "none" { // the contents API withholds the body of a file over 1 MB
-		return "", fc.GetSHA(), false, fmt.Errorf("forge: %s is %d bytes and not readable through the contents API: %w", path, fc.GetSize(), ErrNotAFile)
+		return withheld, false, fmt.Errorf("forge: %s is %d bytes and not readable through the contents API: %w", path, fc.GetSize(), ErrNotAFile)
 	}
-	if text, err = fc.GetContent(); err != nil {
-		return "", "", false, wrap("decode "+path, err)
+	text, err := fc.GetContent()
+	if err != nil {
+		return FileContent{}, false, wrap("decode "+path, err)
 	}
 	if text == "" && fc.GetSize() > 0 {
-		return "", fc.GetSHA(), false, fmt.Errorf("forge: %s is %d bytes and not readable through the contents API: %w", path, fc.GetSize(), ErrNotAFile)
+		return withheld, false, fmt.Errorf("forge: %s is %d bytes and not readable through the contents API: %w", path, fc.GetSize(), ErrNotAFile)
 	}
-	return text, fc.GetSHA(), true, nil
+	return FileContent{Path: fc.GetPath(), BlobSHA: fc.GetSHA(), Bytes: []byte(text), SizeBytes: int64(fc.GetSize())}, true, nil
 }
 
 // permanent is wrap, except that a refusal GitHub will repeat forever is a *PermanentError: the

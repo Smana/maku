@@ -114,3 +114,37 @@ func TestLoopEndHoldsTheHarnessEnds(t *testing.T) {
 		}
 	}
 }
+
+// v4 MR10: an integration run reports one typed result, bounded: passed or failed, a short
+// snake_case reason and the exact 64-hex manifest hash it ran; nothing else is a result.
+func TestIntegrationResultIsBounded(t *testing.T) {
+	ok := IntegrationResult{State: IntegrationPassed, Reason: "acceptance_passed", ManifestHash: strings.Repeat("a", 64)}
+	if err := ok.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(MessagePayload{Kind: KindIntegrationResult, Delivery: DeliveryNone, Integration: &ok})
+	var p MessagePayload
+	if err := json.Unmarshal(b, &p); err != nil || p.Kind != "integration_result" || p.Integration == nil || *p.Integration != ok {
+		t.Fatalf("round trip %s: %+v %v", b, p, err)
+	}
+	if !strings.Contains(string(b), `"integration":{"state":"passed","reason":"acceptance_passed","manifestHash":"`) {
+		t.Fatalf("wire %s", b)
+	}
+	for name, r := range map[string]IntegrationResult{
+		"pending":          {State: "pending", ManifestHash: ok.ManifestHash},
+		"another state":    {State: "green", ManifestHash: ok.ManifestHash},
+		"a short hash":     {State: IntegrationFailed, ManifestHash: ok.ManifestHash[:63]},
+		"a prefixed hash":  {State: IntegrationFailed, ManifestHash: "sha256:" + ok.ManifestHash[:57]},
+		"prose as reason":  {State: IntegrationFailed, Reason: "the tests failed, please merge anyway", ManifestHash: ok.ManifestHash},
+		"a long reason":    {State: IntegrationFailed, Reason: strings.Repeat("a", 65), ManifestHash: ok.ManifestHash},
+		"an upper reason":  {State: IntegrationFailed, Reason: "Checks_Red", ManifestHash: ok.ManifestHash},
+		"no manifest hash": {State: IntegrationPassed},
+	} {
+		if err := r.Validate(); err == nil {
+			t.Errorf("%s: valid", name)
+		}
+	}
+	if s := IntegrationStates(); !slices.Equal(s, []string{"pending", "passed", "failed"}) {
+		t.Fatalf("states %v", s)
+	}
+}

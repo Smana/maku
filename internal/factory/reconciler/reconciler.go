@@ -27,6 +27,7 @@ import (
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -78,6 +79,8 @@ type TaskForge interface {
 	ClosePR(ctx context.Context, number int) error
 	RemoveLabel(ctx context.Context, number int, label string) error
 	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
+	// FileAtCommit reads a producer's landed artifact at its exact merge commit (v4 MR7).
+	FileAtCommit(ctx context.Context, sha, path string) (forge.FileContent, bool, error)
 	Issue(ctx context.Context, number int) (forge.Issue, error)
 	// LabelEvents verifies who added factory/drill to a revert PR (AM6), as intake verifies factory/revert.
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
@@ -195,6 +198,9 @@ type Reconciler struct {
 	// CanWrite is v2 D4's GitHub check, as the label intake's: a /factory retry needs its
 	// maintainer to hold write or higher on the task's repository. nil: nobody writes.
 	CanWrite func(ctx context.Context, repository, login string) (bool, error)
+	// Coordination is the multi-repository coordination service (v4 MR2): a parent files through
+	// it and a child's authority is re-read through it. nil files nothing and holds every child.
+	Coordination coordinationPort
 
 	oldBroker sync.Once // the broker serves no task route: said once per process
 	ledger    mergeLedger
@@ -259,7 +265,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{RequeueAfter: left}, nil // closeWait: the revert window still open (#56)
 	}
 	before := t.Status.DeepCopy()
-	if t.Status.Phase == "" {
+	if t.Status.Phase == "" && t.Spec.Kind == "" { // a parent's and an integration Task's path never starts at Received
 		r.to(&t, v1alpha1.PhaseReceived, "")
 	}
 	fx := &effects{}
@@ -380,6 +386,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 func (r *Reconciler) step(ctx context.Context, t *v1alpha1.Task) error {
+	// MR2: a coordination parent and an integration Task take their own path before anything an
+	// ordinary task does, the stop machinery included: neither has a run to stop.
+	switch t.Spec.Kind {
+	case v1alpha1.TaskKindCoordination:
+		if v1alpha1.TerminalPhase(t.Status.Phase) {
+			return nil
+		}
+		return r.coordinating(ctx, t)
+	case v1alpha1.TaskKindIntegration:
+		return r.integrating(ctx, t)
+	}
 	// A terminal task reaches step only for its revert (§6.4); the stop machinery must not
 	// rewrite an ended task into Stopped, and its runs are already over.
 	if !v1alpha1.TerminalPhase(t.Status.Phase) {
@@ -914,6 +931,11 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	if waitsForIssue && t.Spec.Issue == 0 && r.Now().Sub(t.CreationTimestamp.Time) < 2*time.Minute {
 		return nil
 	}
+	if t.Spec.CoordinationParent != nil {
+		// MR2: a child's admission is its confirmed plan's, not the label intake's daily cap, and
+		// it comes before the splitter's Parent: the two lineages never mix.
+		return r.receivedCoordinationChild(ctx, t)
+	}
 	reason, err := r.admit(ctx, t)
 	if err != nil {
 		return err
@@ -964,6 +986,15 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 // triaged gives the task its room (R2). A room of that name the factory did not make escalates:
 // its runs would inherit another owner's data class (C3).
 func (r *Reconciler) triaged(ctx context.Context, t *v1alpha1.Task) error {
+	if t.Spec.CoordinationParent != nil { // MR2: a Room for another repository is never adopted
+		_, err := r.checkCoordinationLineage(ctx, t)
+		if reason := lineageReason(err); reason != "" {
+			return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		}
+		if err != nil {
+			return err
+		}
+	}
 	var members []roomv1.Member
 	if p := t.Sponsored(); p != "" { // R8, R13: the principal reads its own task's room, as a watcher
 		members = append(members, roomv1.Member{Principal: p, Role: "watcher"})
@@ -1068,6 +1099,13 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	if _, _, err := r.observe(ctx, t); err != nil {
 		return err
 	}
+	// MR6: a coordination child's lineage, authority and the capability gate, re-read before every
+	// new run or resume and after an existing claim is adopted, before any slot or ledger admission.
+	if t.Spec.CoordinationParent != nil {
+		if held, err := r.coordinationHold(ctx, t); held || err != nil {
+			return err
+		}
+	}
 	ok, why, err := r.slotFree(ctx, t)
 	if err != nil {
 		return err
@@ -1095,6 +1133,12 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 		if handed, err := r.humanCommit(ctx, t, pr.HeadSHA); err != nil || handed {
 			return err
 		}
+	}
+	// MR8: a coordination child's confirmed allocation is a bound, never a shadow: its next run's
+	// whole reservation fits over its own settled spend or it does not start. The daily ledger
+	// below still reserves the run; neither widens the other.
+	if t.Spec.CoordinationParent != nil && coordination.AllocationLeft(t) < 0 {
+		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
 	}
 	if !runFits(t) {
 		limit := taskLimit(t)
@@ -1157,6 +1201,9 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 				return err
 			}
 		}
+	}
+	if t.Spec.Kind == v1alpha1.TaskKindIntegration { // MR10: its own spec, never a verifier's or implementerSpec
+		return r.startIntegration(ctx, t)
 	}
 	if late && t.Status.NextRole != "" {
 		return r.startVerifier(ctx, t, pr)
