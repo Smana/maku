@@ -6,6 +6,7 @@
 // button it hides is only a convenience. Every value is written as text.
 
 import { api, SignInRequired } from "./api";
+import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, templates } from "./policy-editor";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -19,7 +20,17 @@ export interface Evidence {
 }
 export interface Proposal { path: string; line: number; file: string; editURL: string }
 export interface ClassReport { class: string; source: string; mode: string; evidence: Evidence; proposal?: Proposal; unproposed?: string }
-export interface Report { repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string }
+export interface Report {
+  repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
+  file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null;
+  guardrails: Record<string, unknown>;
+}
+export interface Step2 { row: string; status: string; detail?: string }
+export interface Decision {
+  at: string; head: string; class: string; verdict: string; reason: string; steps: Step2[]; revisions: Step2[];
+  commentURL: string; policyURL: string;
+}
+export interface Timeline { repository: string; pullRequest: number; decisions: Decision[] }
 export interface Promotion {
   id: string; repository: string; class: string; threshold: number; exceptionId?: string;
   requestedBy: string; requestedAt: string; state: string; pullRequest?: number; closedBy?: string;
@@ -35,7 +46,7 @@ export interface RepositoryPage {
 
 // The routes this module answers, as the broker serves them.
 export function isSettings(path: string): boolean {
-  return /^\/settings(\/merge-policies(\/[^/]+\/[^/]+)?|\/evidence)?$/.test(path);
+  return /^\/settings(\/merge-policies(\/[^/]+\/[^/]+(\/decisions\/[0-9]+)?)?|\/evidence)?$/.test(path);
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
@@ -135,6 +146,8 @@ function failed(main: HTMLElement, e: unknown) {
 
 // mountSettings renders the settings page at path.
 export async function mountSettings(app: HTMLElement, path: string, get: typeof fetch = fetch, theme?: ThemeController) {
+  const dec = path.match(/^\/settings\/merge-policies\/([^/]+)\/([^/]+)\/decisions\/([0-9]+)$/);
+  if (dec) return timelinePage(app, `${decodeURIComponent(dec[1])}/${decodeURIComponent(dec[2])}`, Number(dec[3]), get, theme);
   const repo = path.match(/^\/settings\/merge-policies\/([^/]+)\/([^/]+)$/);
   if (repo) return repositoryPage(app, `${decodeURIComponent(repo[1])}/${decodeURIComponent(repo[2])}`, get, theme);
   if (path === "/settings/merge-policies") return repositories(app, get, theme);
@@ -251,6 +264,102 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
     return [x.class, String(x.minimum), x.justification, `${x.requestedBy} ${x.requestedAt}`,
       x.state + (x.decidedBy ? ` by ${x.decidedBy}` : "") + (x.expiresAt ? ` until ${x.expiresAt}` : ""), act];
   })));
+
+  main.append(el("h2", "Decision timeline"));
+  const tl = el("form", undefined, "timeline-form");
+  const pr = el("input");
+  pr.type = "number";
+  pr.min = "1";
+  pr.placeholder = "PR #";
+  pr.setAttribute("aria-label", "pull request number");
+  const go = el("button", "Open the timeline");
+  go.type = "submit";
+  tl.append(pr, go);
+  tl.onsubmit = (ev) => {
+    ev.preventDefault();
+    if (Number(pr.value) > 0) location.assign(`/settings/merge-policies/${r.repository}/decisions/${Number(pr.value)}`);
+  };
+  main.append(tl);
+
+  main.append(el("h2", "Policy editor"));
+  main.append(editor(r, page.you.maintainer, get));
+}
+
+// editor is the guided form and the expert YAML view over the repository's policy file. The form
+// starts from the file on the default branch (or the central classes as exported when it has
+// none); the expert view is the text checked. Check is the factory's, for a maintainer.
+export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLElement {
+  const box = el("section", undefined, "policy-editor");
+  const file: PolicyFile = structuredClone(r.policy ?? { factory: r.factory, classes: {} });
+  file.factory = r.factory; // read-only: Maku never edits factory:
+  file.classes ??= {};
+  const profiles = r.harnessProfiles ?? [];
+  box.append(el("p", `factory: ${r.factory} (read-only). Guardrails: ${JSON.stringify(r.guardrails)}. Harness profiles: ${profiles.join(", ") || "none"}.`));
+  const pick = el("select");
+  pick.setAttribute("aria-label", "class to edit");
+  for (const n of Object.keys(file.classes)) { const o = el("option", n); o.value = n; pick.append(o); }
+  for (const t of Object.keys(templates)) { const o = el("option", `new from template: ${t}`); o.value = `template:${t}`; pick.append(o); }
+  const name = el("input");
+  name.placeholder = "new class name";
+  name.setAttribute("aria-label", "new class name");
+  const formAt = el("div");
+  const yaml = el("textarea", undefined, "expert-yaml");
+  yaml.setAttribute("aria-label", "expert YAML view");
+  yaml.value = r.file ?? fileYAML(file);
+  const out = el("div");
+  const show = () => {
+    const v = pick.value;
+    let cls = v.startsWith("template:") ? templates[v.slice(9)]() : file.classes![v];
+    if (v.startsWith("template:") && !cls.harness) cls = { ...cls, harness: profiles[0] ?? "" };
+    const key = () => (v.startsWith("template:") ? (name.value.trim() || v.slice(9)) : v);
+    name.hidden = !v.startsWith("template:");
+    formAt.replaceChildren(classForm(cls, profiles, (c) => {
+      file.classes![key()] = cleanClass(c);
+      yaml.value = fileYAML(file);
+    }));
+  };
+  pick.onchange = show;
+  box.append(labelled2("class", pick), name, formAt);
+  box.append(el("h3", "Expert YAML view"), el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), yaml);
+  const check = el("button", "Check, compare and simulate", "primary");
+  check.type = "button";
+  check.disabled = !maintainer;
+  if (!maintainer) box.append(el("p", "Only a maintainer of the repository may check a proposal.", "notice"));
+  check.onclick = async () => {
+    check.disabled = true;
+    try {
+      const p = (await post(`/api/policy/repositories/${r.repository}/preview`, { file: yaml.value }, get)) as Preview;
+      out.replaceChildren(previewView(p));
+    } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
+    check.disabled = false;
+  };
+  box.append(check, out);
+  if (pick.options.length) show();
+  return box;
+}
+
+function labelled2(label: string, input: HTMLElement): HTMLLabelElement {
+  const l = el("label", undefined, "editor-field");
+  l.append(el("span", label), input);
+  return l;
+}
+
+async function timelinePage(app: HTMLElement, repository: string, pr: number, get: typeof fetch, theme?: ThemeController) {
+  const main = frame(app, `${repository} #${pr}: decisions`, theme);
+  try {
+    const t = await read<Timeline>(`/api/policy/repositories/${repository}/decisions/${pr}`, get);
+    main.append(link(`/settings/merge-policies/${repository}`, `Back to ${repository}`));
+    if (t.decisions.length === 0) main.append(el("p", "The factory recorded no decision on this pull request."));
+    for (const d of t.decisions) {
+      const sec = el("section", undefined, "timeline");
+      sec.append(el("h2", `${d.at} · ${d.class} · ${d.verdict}:${d.reason} · head ${d.head}`));
+      const links = el("p");
+      links.append(link(d.commentURL, "the decision's PR comment"), " · ", link(d.policyURL, "the policy file's commits"));
+      sec.append(links, table(["Row", "Status", "Detail"], d.steps.map((s) => [s.row, s.status, s.detail ?? ""])),
+        el("h3", "Bound to"), table(["Input", "Status", "Revision"], d.revisions.map((s) => [s.row, s.status, s.detail ?? ""])));
+      main.append(sec);
+    }
+  } catch (e) { failed(main, e); }
 }
 
 // showProposal shows the one-line change and where to submit it: GitHub's edit page takes no
