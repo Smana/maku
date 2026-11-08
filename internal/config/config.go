@@ -508,6 +508,10 @@ type Config struct {
 	// Coordination is the factory's multi-repository switch, read here with the factory's own type
 	// and rules (v4 MR16): coordination_plan is listed only while it is not off.
 	Coordination fconfig.Coordination `json:"coordination,omitzero"`
+	// PolicyManagement is the factory's merge-policy switches, read here with the factory's own type
+	// (merge policy stage 6): promotion serves the settings pages and the promotion records, and
+	// operators approve exceptions. The broker reads nothing else of it.
+	PolicyManagement fconfig.PolicyManagement `json:"policyManagement,omitzero"`
 }
 
 // WebhookConfig is one subscriber (factory interfaces F6, O7): declared here because subscribers
@@ -729,6 +733,10 @@ func (c *Config) Validate() error {
 		// coordination_plan plans through the governed intake route: a switch on with no route is a
 		// tool that would refuse every request.
 		errs = append(errs, fmt.Errorf("coordination.mode %s needs human.intake.plan.enabled: coordination_plan plans through its route", c.Coordination.Mode))
+	}
+	c.PolicyManagement.Validate(func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) })
+	if c.PolicyManagement.Promotion && c.FactoryURL == "" {
+		errs = append(errs, errors.New("policyManagement.promotion needs factoryURL: the evidence is the factory's GET /v1/policy/evidence"))
 	}
 	return errors.Join(errs...)
 }

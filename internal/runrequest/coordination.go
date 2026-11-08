@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 
@@ -71,7 +72,16 @@ func (f Factory) coordination(ctx context.Context, method, accessToken, parent, 
 	if err != nil {
 		return fmt.Errorf("runrequest: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, f.URL+"/v1/coordinations/"+parent+"/"+route, bytes.NewReader(body))
+	return f.call(ctx, method, accessToken, "/v1/coordinations/"+parent+"/"+route, bytes.NewReader(body), out)
+}
+
+// call is one call of the factory's routes with the caller's own token: out, when set, is a 200's
+// document; a 204 is success with none; any other status is an ErrRefused with a bounded reason.
+func (f Factory) call(ctx context.Context, method, accessToken, path string, body io.Reader, out any) error {
+	if accessToken == "" { // never an unauthenticated or asserted request (C4)
+		return ErrForbidden
+	}
+	req, err := http.NewRequestWithContext(ctx, method, f.URL+path, body)
 	if err != nil {
 		return fmt.Errorf("runrequest: %w", err)
 	}

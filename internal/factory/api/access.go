@@ -53,6 +53,25 @@ func (a GitHubAccess) Person(ctx context.Context, p authn.Principal, repository 
 	return factoryv1.Person(login), nil
 }
 
+// CanRead implements ReadChecker: read or higher, through the same link CanWrite resolves. A Perms
+// without CanRead reads nothing.
+func (a GitHubAccess) CanRead(ctx context.Context, p authn.Principal, repository string) (bool, error) {
+	r, ok := a.Perms.(interface {
+		CanRead(ctx context.Context, repository, login string) (bool, error)
+	})
+	if !ok || p.Sub == "" {
+		return false, nil
+	}
+	login, err := a.Identity.Login(ctx, p.Sub, repository)
+	if err != nil {
+		return false, fmt.Errorf("access: %w", err)
+	}
+	if login == "" {
+		return false, nil
+	}
+	return r.CanRead(ctx, repository, login)
+}
+
 // CanWriteLogin is write or higher for an already-resolved login: a sponsored principal's
 // onBehalfOf maintainer, who drafts a coordination plan on the primary (v4 MR4) as the planner
 // requires of the effective requester.

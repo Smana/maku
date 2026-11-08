@@ -39,6 +39,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/demo"
+	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
@@ -48,6 +49,7 @@ import (
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/meter"
+	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -413,6 +415,24 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return nil
 		}}
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
+	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
+	if cfg.PolicyManagement.Promotion {
+		ev := &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return evidenceSource{c.gh}, true
+		}}
+		apiSrv.Evidence = ev
+		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return commentReader(c.gh), true
+		}}}
+	}
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
 	if err != nil {
@@ -694,4 +714,36 @@ func (p *pinger) tick() (<-chan time.Time, func()) {
 	}
 	t := time.NewTicker(p.every)
 	return t.C, t.Stop
+}
+
+// evidenceSource is a repository's connection as the promotion evidence reads it: the default
+// branch is RepositoryInfo's.
+type evidenceSource struct{ *forge.GitHub }
+
+func (e evidenceSource) DefaultBranch(ctx context.Context) (string, error) {
+	info, err := e.RepositoryInfo(ctx)
+	return info.DefaultBranch, err
+}
+
+// commentReader is a pull request's 50 newest comments as the decision timeline reads them.
+func commentReader(gh *forge.GitHub) policyview.CommentReader {
+	return func(ctx context.Context, pr int) ([]policyview.Comment, error) {
+		cs, err := gh.RecentComments(ctx, pr)
+		out := make([]policyview.Comment, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, policyview.Comment{ID: c.ID, Author: c.Author, Body: c.Body, At: c.At})
+		}
+		return out, err
+	}
+}
+
+// policyEditor is the policy view as the API serves it, documents as any (api.PolicyEditor).
+type policyEditor struct{ *policyview.Service }
+
+func (e policyEditor) Preview(ctx context.Context, repository, file string) (any, error) {
+	return e.Service.Preview(ctx, repository, file)
+}
+
+func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {
+	return e.Service.Timeline(ctx, repository, pr)
 }

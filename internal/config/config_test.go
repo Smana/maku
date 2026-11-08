@@ -962,3 +962,26 @@ func TestSponsoredConfigRepositoriesValidateAndKeyByPrincipal(t *testing.T) {
 		})
 	}
 }
+
+// Stage 6: the broker reads the factory's policyManagement key, off by default; promotion needs the
+// factory, whose evidence it serves, and operators are GitHub logins.
+func TestPolicyManagementConfig(t *testing.T) {
+	cfg, err := Load(write(t, valid))
+	if err != nil || cfg.PolicyManagement.Promotion || len(cfg.PolicyManagement.Operators) != 0 {
+		t.Fatalf("omitted: %+v %v", cfg.PolicyManagement, err)
+	}
+	factory := "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+	cfg, err = Load(write(t, valid+factory+"policyManagement:\n  promotion: true\n  operators: [Smana]\n"))
+	if err != nil || !cfg.PolicyManagement.Promotion || !cfg.PolicyManagement.IsOperator("smana") {
+		t.Fatalf("%+v %v", cfg.PolicyManagement, err)
+	}
+	for name, body := range map[string]string{
+		"promotion without the factory": valid + "policyManagement:\n  promotion: true\n",
+		"an operator that is no login":  valid + factory + "policyManagement:\n  operators: [\"not a login\"]\n",
+		"an unknown key":                valid + factory + "policyManagement:\n  promote: true\n",
+	} {
+		if _, err := Load(write(t, body)); err == nil || !strings.Contains(err.Error(), "promot") && !strings.Contains(err.Error(), "operators") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

@@ -238,6 +238,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 			humans.CoordinationWrites = g
 		}
 	}
+	humans.Policy = policyWorkflow(cfg, st)
 	if humans.Intake != nil {
 		// A sponsored plan resolves the Slack user to the account it is linked to, so the link tables
 		// are the planner's too (internal/humanapi/intake.go's requester).
@@ -584,6 +585,17 @@ func coordinationViews(cfg config.Config, r client.Reader, ns string) humanapi.C
 		return nil
 	}
 	return coordinationview.Source{Reader: r, Namespace: ns}
+}
+
+// policyWorkflow is the promotion workflow (merge policy stage 6): nil while
+// policyManagement.promotion is off, which serves no settings page and no policy route. The
+// evidence is the factory's, read with the caller's own token at the config's URL, never a request's.
+func policyWorkflow(cfg config.Config, st *store.Store) *humanapi.Policy {
+	if !cfg.PolicyManagement.Promotion || cfg.FactoryURL == "" {
+		return nil
+	}
+	return &humanapi.Policy{Factory: runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile},
+		Records: st, Operator: cfg.PolicyManagement.IsOperator, NewID: runrequest.NewID}
 }
 
 // coordinationWrites is the factory's coordination routes, forwarded with the caller's own token:
