@@ -14,6 +14,8 @@
 #   MAKU_VERSION                              the images' tag; default: this checkout's tag, else the last answer.
 #                                             A checkout ahead of a release needs a matching one (a PR pre-release tag)
 #   DEMO_LIVE=1                               turn the docs-links class live (Q13); kept for the next run, DEMO_LIVE=0 undoes it
+#   DEMO_MERGE_POLICY=1                       the merge-policy switches: /settings is served, DEMO_LOGIN is the operator;
+#                                             kept for the next run, DEMO_MERGE_POLICY=0 undoes it
 #   DEMO_NO_GH=1                              never use gh, never write to GitHub
 #   DEMO_LOGIN                                the GitHub login allowed to file work
 # .demo/answers.env (0600) keeps your answers, the model key included, so a re-run does not ask again;
@@ -26,7 +28,7 @@ ROOT="$PWD"
 # shellcheck source=hack/demo/lib.sh
 . hack/demo/lib.sh
 demo_env_load "$ROOT/.env" MODEL_BASE_URL MODEL_NAME MODEL_API_KEY DEMO_REPO DEMO_LOGIN DEMO_SLUG \
-  GITHUB_APP_ID GITHUB_APP_KEY_FILE CLUSTER MAKU_VERSION DEMO_LIVE DEMO_NO_GH DEMO_CONFIRM_CONTEXT \
+  GITHUB_APP_ID GITHUB_APP_KEY_FILE CLUSTER MAKU_VERSION DEMO_LIVE DEMO_MERGE_POLICY DEMO_NO_GH DEMO_CONFIRM_CONTEXT \
   K3S_IMAGE KIND_NODE_IMAGE
 
 DEMO_DIR="$ROOT/.demo"
@@ -341,9 +343,12 @@ install_chart() {
   export DEMO_TAG_BROKER DEMO_TAG_RUN_CONTROLLER DEMO_TAG_HARNESS DEMO_TAG_BRIDGE DEMO_TAG_FACTORY
   DEMO_LIVE=${DEMO_LIVE:-$(demo_env_get DEMO_LIVE "$DEMO_DIR/answers.env")}
   save_answer DEMO_LIVE
+  DEMO_MERGE_POLICY=${DEMO_MERGE_POLICY:-$(demo_env_get DEMO_MERGE_POLICY "$DEMO_DIR/answers.env")}
+  DEMO_MERGE_POLICY=${DEMO_MERGE_POLICY:-0}
+  save_answer DEMO_MERGE_POLICY
   DEMO_SHADOW=true
   [[ $DEMO_LIVE != 1 ]] || DEMO_SHADOW=false
-  export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
+  export DEMO_SHADOW DEMO_MERGE_POLICY DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
   demo_render_values "$DEMO_DIR/values.yaml"
   hl dependency build charts/agent-factory >/dev/null
   hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
@@ -409,7 +414,7 @@ next_step() {
 
 ==> ready ($((SECONDS - T0))s in all)
 
-  Room page:   http://localhost:$PORT
+  Room page:   http://localhost:$PORT$([[ $DEMO_MERGE_POLICY == 1 ]] && printf '\n  Settings:    http://localhost:%s/settings/merge-policies/%s' "$PORT" "$DEMO_REPO")
   Label this issue factory/ready:  $issue
 
 You will see the factory pick it up in the room, open a pull request on $DEMO_REPO, and post the status

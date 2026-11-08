@@ -239,6 +239,14 @@ bad 'broker.roomTools.auth "oauth" is not key or tokenreview' --set broker.roomT
 bad 'broker.roomTools.auth tokenreview needs broker.runIssuer.mode tokenreview' --set broker.roomTools.auth=tokenreview \
   --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
 
+# policyManagement: absent by default, rendered verbatim when set
+out="$q"
+ynone 'select(.kind=="ConfigMap" and .metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | select(has("policyManagement"))' 'the default broker config has no policyManagement'
+pm="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.factoryURL=https://agent-factory.maku.svc:8082 \
+  --set broker.policyManagement.promotion=true --set 'broker.policyManagement.operators[0]=octocat')"
+out="$pm"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.policyManagement.promotion == true and .policyManagement.operators[0] == "octocat")' 'broker.policyManagement reaches the broker config'
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -254,6 +262,8 @@ go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/roomtools-tokenreview.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/rc-roomtools.yaml"
 go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenreview.yaml" || fail=1
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$pm" >"$tmp/policy.yaml"
+go run ./tests/loadconfig broker-policy-promotion "$tmp/policy.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
 go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" || fail=1
 

@@ -92,12 +92,14 @@ demo_yq_str() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
 
 # demo_render_values OUT: the demo's values file, mode 0600. From the environment: DEMO_SLUG, DEMO_REPO,
 # DEMO_LOGIN, MODEL_BASE_URL, MODEL_NAME, MODEL_API_KEY, GITHUB_APP_ID, GITHUB_APP_KEY_FILE, and
-# optionally DEMO_SHADOW (true, the default, or false: live merging for docs-links), and the five image
+# optionally DEMO_SHADOW (true, the default, or false: live merging for docs-links), DEMO_MERGE_POLICY
+# (1: the merge-policy switches, so /settings is served; DEMO_LOGIN is the operator), and the five image
 # tags DEMO_TAG_BROKER, DEMO_TAG_RUN_CONTROLLER, DEMO_TAG_HARNESS, DEMO_TAG_BRIDGE, DEMO_TAG_FACTORY
 # (`<version>@sha256:<digest>`). Helm replaces a list whole, so the whole repositories[0] entry is here.
 demo_render_values() {
-  local out=$1 q bot shadow=${DEMO_SHADOW:-true}
+  local out=$1 q bot shadow=${DEMO_SHADOW:-true} mp=${DEMO_MERGE_POLICY:-0}
   [[ $shadow == true || $shadow == false ]] || { echo "DEMO_SHADOW is true or false" >&2; return 1; }
+  [[ $mp == 0 || $mp == 1 ]] || { echo "DEMO_MERGE_POLICY is 0 or 1" >&2; return 1; }
   [[ -r ${GITHUB_APP_KEY_FILE:-} ]] || { echo "the App key file is not readable" >&2; return 1; }
   q=demo_yq_str
   bot="${DEMO_SLUG}[bot]"
@@ -116,9 +118,13 @@ demo_render_values() {
       echo "    privateKey: |"
       sed 's/^/      /' "$GITHUB_APP_KEY_FILE"
       echo
+      [[ -z ${DEMO_TAG_BROKER:-} && $mp == 0 ]] || echo "maku:"
+      if [[ -n ${DEMO_TAG_BROKER:-} || $mp == 1 ]]; then
+        echo "  broker:"
+        [[ -z ${DEMO_TAG_BROKER:-} ]] || echo "    image: {tag: $($q "$DEMO_TAG_BROKER")}"
+        [[ $mp == 0 ]] || echo "    policyManagement: {promotion: true, operators: [$($q "$DEMO_LOGIN")]}"
+      fi
       if [[ -n ${DEMO_TAG_BROKER:-} ]]; then
-        echo "maku:"
-        echo "  broker: {image: {tag: $($q "$DEMO_TAG_BROKER")}}"
         echo "  runController:"
         echo "    image: {tag: $($q "$DEMO_TAG_RUN_CONTROLLER")}"
         echo "    images:"
@@ -128,6 +134,11 @@ demo_render_values() {
       echo "maku-factory:"
       [[ -z ${DEMO_TAG_FACTORY:-} ]] || echo "  image: {tag: $($q "$DEMO_TAG_FACTORY")}"
       echo "  config:"
+      if [[ $mp == 1 ]]; then
+        echo "    policyManagement: {read: true, simulation: true, dualEvaluation: true, promotion: true}"
+        # A repository class names its harness among these: none, and no file (nor the guided form) validates.
+        echo "    harnessProfiles: {plain: {}}"
+      fi
       echo "    factoryLogin: $($q "$bot")"
       echo "    agentsLogin: $($q "$bot")"
       echo "    repositories:"

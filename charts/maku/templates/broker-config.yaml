@@ -53,3 +53,7 @@ data:
     roomTools:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- with $b.policyManagement }}
+    policyManagement:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
