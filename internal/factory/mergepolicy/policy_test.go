@@ -62,6 +62,34 @@ func TestABareOffIsTheOffMode(t *testing.T) {
 	}
 }
 
+// An unknown key names where it is and, for a near miss or another tool's name, the key meant.
+func TestAnUnknownKeySaysWhereAndWhichKeyWasMeant(t *testing.T) {
+	cl := func(body string) string { return "factory: aws-0\nclasses:\n  docs: " + body + "\n" }
+	for name, tc := range map[string]struct {
+		in   string
+		want []string
+	}{
+		"another tool's name": {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{maxFiles: 3}]}}"),
+			[]string{"classes.docs.conditions.all[0]", `"maxFiles"`, `did you mean "maxPatchFiles"`}},
+		"a typo": {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{allowedFile: ['^a$']}]}}"),
+			[]string{"classes.docs.conditions.all[0]", `did you mean "allowedFiles"`}},
+		"a cased key": {cl("{mode: shadow, author: agents, harness: p, monitor: {FollowUpWindow: 1h}}"),
+			[]string{"classes.docs.monitor", `did you mean "followUpWindow"`}},
+		"no near key": {cl("{mode: shadow, author: agents, harness: p, conditions: {all: [{sizeBelow: 3}]}}"),
+			[]string{"classes.docs.conditions.all[0]", "one of allowedFiles,"}},
+		"a top key": {"factory: aws-0\nclass: {}\n", []string{`"class"`, `did you mean "classes"`}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.in))
+			for _, w := range tc.want {
+				if err == nil || !strings.Contains(err.Error(), w) {
+					t.Fatalf("got %v, want %q", err, w)
+				}
+			}
+		})
+	}
+}
+
 func TestParseRefuses(t *testing.T) {
 	cl := func(body string) string { return "factory: aws-0\nclasses:\n  c: " + body + "\n" }
 	long := strings.Repeat("a", MaxPatternBytes+1)

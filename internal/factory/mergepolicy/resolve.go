@@ -159,6 +159,16 @@ func guard(name string, cl *config.Class, g config.MergeGuardrails) error {
 	return nil
 }
 
+// unbounded is an agents class decided (live or shadow) with a variant that names no allowed path.
+// docs-links and revert are exempt: their links-only shape is built in (R52). An adopted class's
+// diff shape bounds it.
+func unbounded(name string, p ClassPolicy, r Resolved) bool {
+	if p.Mode == ModeOff || p.Author != AuthorAgents || config.BuiltInShape(name) != "" {
+		return false
+	}
+	return slices.ContainsFunc(r.Variants(), func(v config.Class) bool { return len(v.AllowedFiles) == 0 })
+}
+
 // OnlyGuardrail is true when every fault err joins is ErrGuardrail's: a file that is also invalid
 // is invalid, whatever errors.Is finds somewhere in the join.
 func OnlyGuardrail(err error) bool {
@@ -193,7 +203,8 @@ func Validate(f *File, c *config.Config) error {
 	var errs []error
 	for _, name := range []string{"docs-links", "revert"} {
 		if _, ok := f.Classes[name]; !ok {
-			errs = append(errs, fmt.Errorf("class %s is required", name))
+			errs = append(errs, fmt.Errorf("class %s is required in a file that declares classes (OD-8): add it, "+
+				"\"%s: {mode: off, author: agents, harness: <a profile>}\" keeps it unarmed", name, name))
 		}
 	}
 	if _, ok := f.Classes["review"]; ok {
@@ -207,6 +218,10 @@ func Validate(f *File, c *config.Config) error {
 		}
 		for _, v := range r.Variants() {
 			config.ValidateClass(name, v, func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) })
+		}
+		if unbounded(name, f.Classes[name], r) {
+			errs = append(errs, fmt.Errorf("class %s: a live or shadow class needs allowedFiles, in all or in every branch of any: "+
+				"without it every path of the repository is in the class, and only policy-bot fences it", name))
 		}
 	}
 	return errors.Join(errs...)

@@ -157,7 +157,7 @@ func Parse(raw []byte) (*File, error) {
 	if err := json.Unmarshal(j, &tree); err != nil {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
 	}
-	if err := exactKeys(tree, reflect.TypeFor[File]()); err != nil {
+	if err := exactKeys(tree, reflect.TypeFor[File](), ""); err != nil {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(j))
@@ -315,8 +315,9 @@ func (l Leaf) empty(key string) error {
 
 // exactKeys walks a decoded document against t: encoding/json matches keys case-insensitively, so
 // {mode: shadow, Mode: live} would otherwise read as live. At a struct, every key must equal a
-// field's JSON name exactly. Map keys are free-form; other values end the walk.
-func exactKeys(v any, t reflect.Type) error {
+// field's JSON name exactly. Map keys are free-form; other values end the walk. at is the path
+// walked so far, for the message.
+func exactKeys(v any, t reflect.Type, at string) error {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -325,7 +326,7 @@ func exactKeys(v any, t reflect.Type) error {
 		switch t.Kind() {
 		case reflect.Map:
 			for _, k := range slices.Sorted(maps.Keys(v)) {
-				if err := exactKeys(v[k], t.Elem()); err != nil {
+				if err := exactKeys(v[k], t.Elem(), join(at, k)); err != nil {
 					return err
 				}
 			}
@@ -341,21 +342,86 @@ func exactKeys(v any, t reflect.Type) error {
 			for _, k := range slices.Sorted(maps.Keys(v)) {
 				ft, ok := fields[k]
 				if !ok {
-					return fmt.Errorf("key %q is not a field: keys are matched exactly, in their documented case", k)
+					return unknownKey(at, k, slices.Sorted(maps.Keys(fields)))
 				}
-				if err := exactKeys(v[k], ft); err != nil {
+				if err := exactKeys(v[k], ft, join(at, k)); err != nil {
 					return err
 				}
 			}
 		}
 	case []any:
 		if t.Kind() == reflect.Slice {
-			for _, e := range v {
-				if err := exactKeys(e, t.Elem()); err != nil {
+			for i, e := range v {
+				if err := exactKeys(e, t.Elem(), fmt.Sprintf("%s[%d]", at, i)); err != nil {
 					return err
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func join(at, k string) string {
+	if at == "" {
+		return k
+	}
+	return at + "." + k
+}
+
+// aliases are the names other merge tools give a predicate this vocabulary holds (policy-bot,
+// Mergify, Renovate, GitHub), lowercased, to the key meant.
+var aliases = map[string]string{
+	"maxfiles": "maxPatchFiles", "maxchangedfiles": "maxPatchFiles", "files_count": "maxPatchFiles",
+	"maxlines": "maxModifiedLines", "maxchangedlines": "maxModifiedLines", "modifiedlines": "maxModifiedLines", "modified_lines": "maxModifiedLines",
+	"files": "allowedFiles", "paths": "allowedFiles", "onlychangedfiles": "allowedFiles", "only_changed_files": "allowedFiles",
+	"protectedpaths": "protectedFiles", "denyfiles": "protectedFiles", "nochangedfiles": "protectedFiles", "no_changed_files": "protectedFiles",
+	"label": "requiredLabel", "labels": "requiredLabel", "requiredlabels": "requiredLabel",
+	"checks": "holdoutChecks", "requiredchecks": "holdoutChecks", "check-success": "holdoutChecks",
+	"minimumreleaseage": "releaseAgeCheck", "releaseage": "releaseAgeCheck",
+}
+
+// unknownKey refuses k at at, naming the key meant when k is another tool's name for it, the same
+// key in another case, or two edits from it, and every key valid there.
+func unknownKey(at, k string, valid []string) error {
+	where := ""
+	if at != "" {
+		where = at + ": "
+	}
+	low := strings.ToLower(k)
+	meant := ""
+	if a, ok := aliases[low]; ok && slices.Contains(valid, a) {
+		meant = a
+	}
+	for _, f := range valid {
+		if meant == "" && levenshtein(low, strings.ToLower(f)) <= 2 {
+			meant = f
+		}
+	}
+	hint := ""
+	if meant != "" {
+		hint = fmt.Sprintf(" (did you mean %q?)", meant)
+	}
+	return fmt.Errorf("%skey %q is not a field%s; keys are matched exactly, in their documented case: one of %s",
+		where, k, hint, strings.Join(valid, ", "))
+}
+
+// levenshtein is the edit distance of two short keys.
+func levenshtein(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
