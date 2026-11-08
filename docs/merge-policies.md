@@ -692,7 +692,7 @@ holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
 | Mode | Edits |
 |---|---|
 | Guided form | One class: mode, author and `adopt`, harness (from the central list), the `all` leaves except `oracle`, `deny`, `requiresApproval`, `limits`, `monitor.followUpWindow`. `any` branches and `oracle` are kept as they are |
-| Templates | `docs-broad`, `deps-patch`, `deps-minor` (shadow only), `generated-files`, all in shadow. The harness starts on the first central profile the template's author may take (`template: none` for the two deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote |
+| Templates | `docs-broad`, `deps-patch`, `deps-minor` (shadow only), `generated-files`, all in shadow. The harness starts on the first central profile the template's author may take (`template: none` for the two deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
 | Expert YAML | The whole file, same validation. `factory:` is refused if changed |
 
 **Check** sends the file to the factory (`POST /api/policy/repositories/<owner>/<name>/preview`): the
