@@ -3,7 +3,10 @@
 package humanapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +61,67 @@ func TestAClosedRoomStaysReadableToItsRepositoryReaders(t *testing.T) {
 			code, body := get(t, e, "/api/rooms/"+closedRoom+"/summary", c.h)
 			if code != c.want {
 				t.Fatalf("summary: %d %q, want %d", code, body, c.want)
+			}
+		})
+	}
+}
+
+// GET /api/rooms?closed=1 lists the closed rooms of the last closedWindow, each through the very gate
+// that opens one by its URL: the default list, which reads Room objects, never shows them.
+func TestTheClosedListShowsWhatItsURLWouldOpen(t *testing.T) {
+	factory := envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"}
+	withFactory := func(s *Server, _ *fanout.Hub, _ *hubView) { s.FactoryPrincipal = "system:factory" }
+	for _, c := range []struct {
+		name   string
+		actor  envelope.Actor
+		sealed bool
+		h      http.Header
+		want   []string
+	}{
+		{"a reader of the repository", factory, true, header("dev1"), []string{closedRoom}},
+		{"an admin", factory, true, admin("boss"), []string{closedRoom}},
+		{"a reader of nothing", factory, true, header("dev2"), nil},
+		{"facts another writer forged", envelope.Actor{Kind: envelope.ActorSystem, ID: "system:runlore"}, true, header("dev1"), nil},
+		{"a log not sealed", factory, false, header("dev1"), nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := world(map[string][]string{"Smana/a": {"dev1"}})
+			e := setup(t, abc(t), w.option(), withFactory)
+			closedLog(e.log, c.actor, "Smana/a")
+			e.log.mu.Lock()
+			e.log.sealed = c.sealed
+			e.log.mu.Unlock()
+			code, body := get(t, e, "/api/rooms?closed=1", c.h)
+			if code != http.StatusOK {
+				t.Fatalf("closed list: %d %q", code, body)
+			}
+			var rows []roomRow
+			if err := json.Unmarshal([]byte(body), &rows); err != nil {
+				t.Fatal(err)
+			}
+			got := []string{}
+			for _, r := range rows {
+				got = append(got, r.ID)
+			}
+			if !slices.Equal(got, append([]string{}, c.want...)) {
+				t.Fatalf("closed rows %v, want %v", got, c.want)
+			}
+			if len(rows) == 1 {
+				r := rows[0]
+				if r.URL != e.srv.PublicURL+"/r/"+closedRoom || r.Repository != "Smana/a" || r.Issue != 2740 || r.Phase != "Closed" ||
+					r.Task != "Done" || r.ClosedAt == nil {
+					t.Fatalf("closed row %+v", r)
+				}
+			}
+			e.log.mu.Lock()
+			since := e.log.sealedSince
+			e.log.mu.Unlock()
+			if d := time.Since(since); d < closedWindow-time.Minute || d > closedWindow+time.Minute {
+				t.Fatalf("window: since %v ago, want %v", d, closedWindow)
+			}
+			// The default list is unchanged: it reads Room objects, and this one is gone.
+			if _, body := get(t, e, "/api/rooms", c.h); strings.Contains(body, closedRoom) {
+				t.Fatalf("default list shows the closed room: %s", body)
 			}
 		})
 	}

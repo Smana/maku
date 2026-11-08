@@ -3,7 +3,7 @@
 // The offline room list preview: listRooms as main.ts mounts it, fed six fixture rooms
 // instead of the broker, each with the status line the broker would compute for it. `npm run preview`, then open /preview/list.html (?theme=dark for
 // the dark palette; ?cli=oidc, ?cli=local or ?cli=none opens the CLI setup fold on that
-// broker's answer). Nothing leaves the page: the fetch below answers every call itself.
+// broker's answer; ?closed starts on the closed view). Nothing leaves the page: the fetch below answers every call itself.
 
 import { applyTheme, initTheme } from "../src/theme";
 import { listRooms, type RoomRow } from "../src/view";
@@ -18,6 +18,12 @@ const rows: RoomRow[] = [
   { ...base, id: "yacoriey", phase: "Idle", lastSeq: 70, issue: 139, title: "chore: bump the chart's CRD copy", task: "Done", pr: 141, lastEventAt: ago(60 * 5), status: { kind: "done", icon: "✓", text: "Done — merged" } },
   { ...base, id: "m4tq2zxa", phase: "Idle", lastSeq: 33, issue: 131, title: "docs: name the trace router's allowlist", task: "Rejected", lastEventAt: ago(60 * 26), status: { kind: "failed", icon: "✗", text: "Failed — CI stayed red" } },
   { ...base, id: "p7wn5c3e", phase: "Idle", owner: "human:2", driver: "human:2", lastSeq: 12, lastEventAt: ago(60 * 24 * 3), status: { kind: "waiting", icon: "⏳", text: "Waiting — for the next message or run" } },
+];
+// ?closed's rows: rooms the factory closed (their Room objects deleted), as GET /api/rooms?closed=1 serves them.
+const closed: RoomRow[] = [
+  { ...base, id: "w3hq7c2a", phase: "Closed", lastSeq: 58, issue: 160, title: "investigate: the gate stalls after a forced push", task: "Done", lastEventAt: ago(60 * 20) },
+  { ...base, id: "b6tz4nmk", phase: "Closed", lastSeq: 41, issue: 158, title: "investigate: a run lost its lease mid-turn", task: "Done", lastEventAt: ago(60 * 22) },
+  { ...base, id: "r5kd2xpe", phase: "Closed", lastSeq: 77, issue: 157, title: "fix: the needs card repeats an expired approval", task: "Merged", pr: 159, lastEventAt: ago(60 * 24 * 6) },
 ];
 
 const params = new URLSearchParams(location.search);
@@ -39,13 +45,14 @@ const get = (async (url: string) => {
   run.lastEventAt = ago(0);
   run.status = { kind: "running", icon: "●", text: `Running — implementer, ${12 + reads} min` };
   const q = new URL(url, location.origin).searchParams;
+  if (q.get("closed") === "1") return new Response(JSON.stringify(closed.filter((r) => !q.get("repo") || r.repository === q.get("repo"))));
   return new Response(JSON.stringify(rows.filter((r) => (!q.has("needs_me") || (r.needsYou ?? 0) > 0) && (!q.get("repo") || r.repository === q.get("repo")))));
 }) as unknown as typeof fetch;
 
 const theme = initTheme();
 const override = params.get("theme");
 if (override === "light" || override === "dark") applyTheme(override);
-listRooms(document.getElementById("app")!, get, {}, theme)
+listRooms(document.getElementById("app")!, get, { closed: params.has("closed") }, theme)
   .then(() => {
     const fold = document.querySelector<HTMLDetailsElement>("details.cli-setup");
     if (cli && fold) fold.open = true;

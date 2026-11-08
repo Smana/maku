@@ -67,6 +67,7 @@ type memLog struct {
 	reasonReads    int
 	lastEventAt    map[string]time.Time
 	lastEventAtErr error
+	sealedSince    time.Time // the window SealedSince was last asked for
 }
 
 func (m *memLog) Queue(context.Context, string) ([]store.Queued, error) {
@@ -87,6 +88,18 @@ func (m *memLog) OpenApprovals(_ context.Context, room string) ([]store.Approval
 		}
 	}
 	return out, m.approvalErr
+}
+
+// SealedSince is the one room, closedRoom, while the log is sealed.
+func (m *memLog) SealedSince(_ context.Context, since time.Time, _ int) ([]store.RoomState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sealedSince = since
+	if !m.sealed {
+		return nil, nil
+	}
+	at := time.Now()
+	return []store.RoomState{{ID: closedRoom, Sealed: true, ClosedAt: &at, LastSeq: int64(len(m.evs))}}, nil
 }
 
 func (m *memLog) LastEventAt(_ context.Context, ids []string) (map[string]time.Time, error) {

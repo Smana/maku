@@ -53,6 +53,11 @@ repositories of the rooms the page first listed. They are the API's `mine`, `nee
 ([API](api.md#8080--human-api)). An empty table says why: `No rooms match` under a filter,
 `No rooms you can read yet` without one.
 
+**closed** lists the rooms closed in the last 30 days instead: when a task ends the factory deletes
+its Room, so its sealed room leaves the default list, though `/r/<id>` still opens it until
+retention purges the log. Each row is a room its link would open for you (the same access and role
+checks); **mine** and **needs me** are set aside while it is on. It is the API's `closed=1`.
+
 ### New room
 
 **New room**, the primary button at the right end of the filters row, opens a form above the list that creates a room you own and

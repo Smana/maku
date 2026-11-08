@@ -193,8 +193,10 @@ type roomRow struct {
 	LastSeq   int64  `json:"lastSeq"`
 	// LastEventAt is when the room's log last moved; absent when the room has no events or it could not be read.
 	LastEventAt time.Time `json:"lastEventAt,omitzero"`
-	Repository  string    `json:"repository"`
-	NeedsMe     bool      `json:"needsMe"`
+	// ClosedAt is when a closed room's log was sealed: set on the closed view's rows alone.
+	ClosedAt   *time.Time `json:"closedAt,omitempty"`
+	Repository string     `json:"repository"`
+	NeedsMe    bool       `json:"needsMe"`
 	// The task the room works on (#50): Phase above is the room's, Task the task's.
 	Issue int    `json:"issue,omitempty"`
 	Title string `json:"title,omitempty"`
@@ -439,7 +441,14 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), routeTimeout)
 	defer cancel()
 	q := r.URL.Query()
-	rows, access, err := s.roomRows(ctx, p, &roomFilter{repo: q.Get("repo"), mine: q.Get("mine") == "1", needsMe: q.Get("needs_me") == "1"})
+	var rows []roomRow
+	var access string
+	var err error
+	if q.Get("closed") == "1" { // the sealed rooms, whose Room objects are gone: closedRows
+		rows, access, err = s.closedRows(ctx, p, q.Get("repo"))
+	} else {
+		rows, access, err = s.roomRows(ctx, p, &roomFilter{repo: q.Get("repo"), mine: q.Get("mine") == "1", needsMe: q.Get("needs_me") == "1"})
+	}
 	if err != nil {
 		http.Error(w, err.Error(), roomStatus(err))
 		return

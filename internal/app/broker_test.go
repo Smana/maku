@@ -541,6 +541,10 @@ func (fakeRoomLog) Queue(context.Context, string) ([]store.Queued, error) { retu
 
 func (fakeRoomLog) OpenApprovals(context.Context, string) ([]store.Approval, error) { return nil, nil }
 
+func (fakeRoomLog) SealedSince(context.Context, time.Time, int) ([]store.RoomState, error) {
+	return nil, nil
+}
+
 func (fakeRoomLog) LastEventAt(context.Context, []string) (map[string]time.Time, error) {
 	return nil, nil
 }
