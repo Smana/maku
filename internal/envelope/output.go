@@ -21,13 +21,13 @@ const (
 // the GitHub object an applied output wrote or the one bounded reason a refused one got. The
 // payload itself, for every type but push, is Payload; a push bundle is stored beside the log.
 type OutputRecord struct {
-	ID      string         `json:"id"`
-	Type    string         `json:"type"`
-	Digest  string         `json:"digest"`
-	Bytes   int            `json:"bytes,omitempty"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Digest  string          `json:"digest"`
+	Bytes   int             `json:"bytes,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
-	Object  string         `json:"object,omitempty"`
-	Reason  string         `json:"reason,omitempty"`
+	Object  string          `json:"object,omitempty"`
+	Reason  string          `json:"reason,omitempty"`
 }
 
 var (
