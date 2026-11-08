@@ -59,6 +59,10 @@ broker:
   # /etc/room-broker/factory-ca and read on every run request. Empty: the system roots.
   factoryCA:
     secretName: ""
+  # The merge-policy switches the broker reads (internal/config's policyManagement, the factory's own
+  # type): promotion serves /settings and the policy API (needs factoryURL); operators approve
+  # exceptions. Empty renders nothing: no settings page, /settings is a 404.
+  policyManagement: {}
   # The factory's pods, for the broker CNP's two factory flows (only when factoryURL is set):
   # ingress to :8443 from them, egress to factoryURL's port on them. Their namespace is the
   # release's unless these labels set io.kubernetes.pod.namespace.

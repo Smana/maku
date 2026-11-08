@@ -62,6 +62,7 @@ Each variable below can be exported or written in `.env` at the root of the clon
 | `CLUSTER` | `k3d` if installed, else `kind` | `k3d`, `kind` or `current` (your kubeconfig's current context, which you must confirm by typing its name, or with `DEMO_CONFIRM_CONTEXT=<context>` without a terminal) |
 | `MAKU_VERSION` | this checkout's release tag, else your last answer | The images' tag, and the `maku` release whose CLI the demo uses. Kept in `.demo/answers.env`. A checkout ahead of a release needs a pull-request pre-release tag (see Version above) |
 | `DEMO_LIVE` | your last answer, else off | `1` turns the `docs-links` class live: the gate merges. Kept in `.demo/answers.env` for the next run: `DEMO_LIVE=0 task demo` undoes it |
+| `DEMO_MERGE_POLICY` | your last answer, else off | `1` turns on the [merge-policy](merge-policies.md) switches (`read`, `simulation`, `dualEvaluation`, `promotion`; a `plain` harness profile; `DEMO_LOGIN` the operator), so `/settings` is served. The demo's local user has no token, so the policy API behind the pages answers `403 human_only` for now. `DEMO_MERGE_POLICY=0 task demo` undoes it |
 | `DEMO_NO_GH` | unset | Any value: never use `gh` and never write to GitHub |
 | `K3S_IMAGE`, `KIND_NODE_IMAGE` | pinned | The node image of k3d or kind |
 

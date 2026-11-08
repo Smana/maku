@@ -138,6 +138,15 @@ yq -e '.maku-factory.config.repositories[0].classes.docs-links.shadow == true' "
 yq -e '.maku-factory.config.repositories[0].merge.approveToMerge == true' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: approve-to-merge on" >&2; fail=1; }
 DEMO_SHADOW=false demo_render_values "$tmp/live.yaml"
 yq -e '.maku-factory.config.repositories[0].classes.docs-links.shadow == false and .maku-factory.config.repositories[0].classes.revert.shadow == true' "$tmp/live.yaml" >/dev/null 2>&1 || { echo "FAIL: values: DEMO_SHADOW=false" >&2; fail=1; }
+no env DEMO_MERGE_POLICY=yes bash -c '. hack/demo/lib.sh; demo_render_values /dev/null'
+ynone() { [[ -z $(yq "$1" "$2") || $(yq "$1" "$2") == null ]] || { echo "FAIL: values: $3" >&2; fail=1; }; }
+ynone '.maku-factory.config.policyManagement' "$tmp/values.yaml" 'no factory policyManagement by default'
+ynone '.maku.broker.policyManagement' "$tmp/values.yaml" 'no broker policyManagement by default'
+ynone '.maku-factory.config.harnessProfiles' "$tmp/values.yaml" 'no harnessProfiles by default'
+DEMO_MERGE_POLICY=1 demo_render_values "$tmp/policy.yaml"
+yq -e '.maku-factory.config.harnessProfiles | has("plain")' "$tmp/policy.yaml" >/dev/null 2>&1 || { echo "FAIL: values: DEMO_MERGE_POLICY=1 harness profile" >&2; fail=1; }
+yq -e '.maku-factory.config.policyManagement | (.read and .simulation and .dualEvaluation and .promotion)' "$tmp/policy.yaml" >/dev/null 2>&1 || { echo "FAIL: values: DEMO_MERGE_POLICY=1 factory switches" >&2; fail=1; }
+yq -e '.maku.broker.policyManagement.promotion == true and (.maku.broker.policyManagement.operators | length) == 1 and .maku.broker.policyManagement.operators[0] == "octocat" and .maku.broker.image.tag == "'"$d"'"' "$tmp/policy.yaml" >/dev/null 2>&1 || { echo "FAIL: values: DEMO_MERGE_POLICY=1 broker switches (and the image tag kept)" >&2; fail=1; }
 # the renderer's repositories[0] entry is the example's, key for key (apart from what the reader sets)
 norm() { yq -o=json -I0 'del(.name, .maintainers, .merge.mergerLogin) | sort_keys(..)' - ; }
 [[ "$(yq '.maku-factory.config.repositories[0]' "$tmp/values.yaml" | norm)" == "$(yq '.maku-factory.config.repositories[0]' charts/agent-factory/values-mine.example.yaml | norm)" ]] || { echo "FAIL: the rendered repositories[0] drifted from values-mine.example.yaml" >&2; fail=1; }
@@ -148,6 +157,19 @@ if out="$(helm template af charts/agent-factory -n maku -f "$tmp/values.yaml")";
   CHART_DEMO_FACTORY_CONFIG="$tmp/factory-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse.log" 2>&1 || { echo "FAIL: the rendered config does not parse:" >&2; cat "$tmp/parse.log" >&2; fail=1; }
 else
   echo "FAIL: the values file does not render with the chart" >&2; fail=1
+fi
+# DEMO_MERGE_POLICY=1: both rendered configs load through their component's real loader
+if out="$(helm template af charts/agent-factory -n maku -f "$tmp/policy.yaml")"; then
+  yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/policy-factory.yaml"
+  yq ea 'select(.kind == "ConfigMap" and .metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/policy-broker.yaml"
+  CHART_DEMO_FACTORY_CONFIG="$tmp/policy-factory.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-policy.log" 2>&1 || { echo "FAIL: the DEMO_MERGE_POLICY factory config does not parse:" >&2; cat "$tmp/parse-policy.log" >&2; fail=1; }
+  (cd charts/maku && go run ./tests/loadconfig broker-policy-promotion "$tmp/policy-broker.yaml") || fail=1
+  # the central classes export to a repository file that checks equivalent (the guided form's round trip)
+  { go run ./cmd/maku policy export --config "$tmp/policy-factory.yaml" --repository octocat/it >"$tmp/exported.yaml" &&
+    go run ./cmd/maku policy check --config "$tmp/policy-factory.yaml" --repository octocat/it "$tmp/exported.yaml"; } >"$tmp/export.log" 2>&1 ||
+    { echo "FAIL: the DEMO_MERGE_POLICY classes do not export and check equivalent:" >&2; cat "$tmp/export.log" >&2; fail=1; }
+else
+  echo "FAIL: the DEMO_MERGE_POLICY values file does not render with the chart" >&2; fail=1
 fi
 
 [[ $fail == 0 ]] || exit 1
