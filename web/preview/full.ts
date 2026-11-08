@@ -10,6 +10,7 @@
 //   ?needs        every needs/v1 kind as the route serves it (needs-fixtures.ts), each with its one action
 //   ?briefs       the factory's task snapshot and a run's brief, as the live room posts them (folded)
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
+//   ?long         unbreakable lines (long-fixtures.ts): a sed command, a gh api needs card, a served model behind an alias
 // One rail fixture (flow-fixtures.ts), the first of:
 //   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
 //   ?split        a scoper whose handoff split into three parts
@@ -22,6 +23,7 @@ import type { Summary } from "../src/summary";
 import { applyTheme, initTheme } from "../src/theme";
 import { flowFixture, flowName } from "./flow-fixtures";
 import { NEED_FIXTURES } from "./needs-fixtures";
+import { LONG_NEED, longEvents, longFlow } from "./long-fixtures";
 import { mountPreviewPage } from "./page";
 
 const get = async <T>(path: string): Promise<T> => (await fetch(path)).json() as Promise<T>;
@@ -56,7 +58,10 @@ async function run() {
       runModel: { run: status0.run!.id, model: "agent-default", effort: "high" } }
     : status0;
   if (params.has("escalated") || running) Object.assign(snap, { driver: "system:factory", dataClass: "public" });
-  const fx = flowFixture(flowName(params));
+  const long = params.has("long");
+  const fx0 = flowFixture(flowName(params));
+  const fx = long ? { ...fx0, flow: longFlow(fx0.flow) } : fx0;
+  if (long) longEvents(events);
   const finished = params.has("finished") || params.has("split");
   const phase = params.has("escalated") ? status.phase : fx.phase;
   // The fixture's events are weeks old: the rail's clock starts at the last one.
@@ -65,7 +70,7 @@ async function run() {
   const page = mountPreviewPage(document.getElementById("app")!, { snap, unsandboxed: params.has("many"),
     summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
     count: events.length, dashboards,
-    ...(params.has("needs") ? { needs: async () => ({ apiVersion: "needs/v1", items: NEED_FIXTURES }) } : {}), now: () => lastAt + Date.now() - loaded,
+    ...(params.has("needs") || long ? { needs: async () => ({ apiVersion: "needs/v1", items: long ? [LONG_NEED, ...NEED_FIXTURES] : NEED_FIXTURES }) } : {}), now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });
   if (params.has("briefs")) {
     // The two the factory posts before a run, in their real shape (reconciler/text.go), after the fixture's last seq.

@@ -912,6 +912,15 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-chip[data-kind="live"] { color: var(--lane); }
 .rail-judge { color: var(--flow-judge); white-space: nowrap; }
 .rail-detail { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+/* Every served model, then the alias asked for, dimmer, when no served model is it. */
+.rail-models { display: flex; flex-wrap: wrap; gap: 0 4px; color: var(--muted-foreground); }
+.rail-models > :not(:first-child)::before { content: "·\00a0"; }
+.rail-model { color: var(--foreground); }
+.rail-asked { opacity: 0.8; }
+.rail-asked::after { content: " (asked)"; }
+/* A picked node's lines take its foreground: muted text on the accent was unreadable (v0.40.0). */
+.rail-button[aria-pressed="true"] :is(.rail-detail, .rail-models, .rail-model, .rail-chip, .rail-judge) { color: inherit; }
+.rail-node[data-state="done"] > .rail-button[aria-pressed="true"] { opacity: 1; }
 .rail-edge { display: flex; align-items: center; gap: 6px; padding-left: 4px; }
 .rail-edge svg { flex: none; }
 .rail-stroke { fill: none; stroke: var(--border); stroke-width: 2; }
@@ -932,9 +941,12 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-milestone::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
 .rail-milestone[data-state="ghost"] { color: var(--flow-plan); opacity: 0.6; }
 .rail-milestone[data-state="ghost"]::before { background: transparent; border: 1px dashed var(--flow-plan); }
+/* Fixed, placed by rail.ts beside its node: inside the rail's scroll box it was clipped (v0.40.0).
+   Its height is capped to the room the window has; a longer card scrolls on its own. */
 .rail-card {
-  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; padding: 8px; display: grid; gap: 2px;
-  background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-border); border-radius: 6px;
+  position: fixed; z-index: 5; box-sizing: border-box; padding: 8px; display: grid; gap: 2px; align-content: start;
+  overflow-y: auto; overscroll-behavior: contain; overflow-wrap: anywhere;
+  background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-border), var(--shadow-dock); border-radius: 6px;
 }
 .rail-card[hidden] { display: none; }
 .rail-card p { margin: 0; }
@@ -958,7 +970,9 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .room-body { min-width: 0; }
 .rail-dots, .rail-close { display: none; }
 /* The page fills the window: the dock stays at the bottom when the room is short. */
-#app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+/* overflow-x clip: a line no rule wraps is cut here, never the whole page scrolled sideways
+   (v0.40.0). clip, not hidden: hidden is a scroll box, which ends the header's and dock's stickiness. */
+#app { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; overflow-x: clip; }
 #app > .room-body { flex: 1 0 auto; }
 #app > .page-dock { margin-top: auto; }
 .room-body:not(.has-rail) > .rail { display: none; }
