@@ -57,6 +57,18 @@ class PushedHeadTest(unittest.TestCase):
         git(self.repo, "push", "-q", self.remote, "HEAD:refs/heads/agent/t1")  # an earlier run's, or a human's
         self.assertIsNone(agent_run.pushed_head(self.env, self.start))
 
+    # main reads no head before the conversation (a loop-off run is today's run): without a loop
+    # state, the start is the clone's first head, from its reflog, which a resumed pod keeps.
+    def test_without_a_start_the_clones_first_head_is_the_start(self):
+        sha = self.commit()
+        git(self.repo, "push", "-q", self.remote, "HEAD:refs/heads/agent/t1")
+        self.assertEqual(agent_run.first_head(), self.start)
+        self.assertEqual(agent_run.pushed_head(self.env, None), sha)
+
+    def test_without_a_start_an_unmoved_head_is_not_reported(self):
+        git(self.repo, "push", "-q", self.remote, "HEAD:refs/heads/agent/t1")
+        self.assertIsNone(agent_run.pushed_head(self.env, None))
+
 
 class FakeSteps:
     def __init__(self, handed_off=False):
