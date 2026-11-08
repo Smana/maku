@@ -797,7 +797,8 @@ nothing a person or an agent writes can forge one. Every webhook event of the fi
 Once a task is ready, the gate reads the pull request in `AwaitingCI` and checks, in order;
 every "no" goes to a human. Row 12 is read last, only when the others would merge or post a
 shadow decision. With no class `live` or `shadow` it reads nothing and hands off as
-`merge_gate_off`.
+`merge_gate_off`. A repository may declare its classes in its own `.github/agent-factory.yaml`:
+[merge policies](merge-policies.md) covers that file, its switches and its reasons.
 
 | # | Check | If it fails |
 |---|---|---|
@@ -1251,6 +1252,7 @@ drop an entry when the pull request it describes leaves the longest window.
 
 ### Promotion
 
+The workflow end to end, with approval memory, is in [merge policies](merge-policies.md#workflows).
 With `policyManagement.promotion` on (merge policy stage 6), the settings pages show each
 class's evidence and let a maintainer ask to promote a shadow class to live. The evidence is the
 [tally](#calibration)'s, computed in Go from the same records (`internal/factory/evidence`, tested
