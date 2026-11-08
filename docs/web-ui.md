@@ -189,12 +189,13 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 |---|---|
 | `/settings/merge-policies` | The configured repositories you read on GitHub |
 | `/settings/merge-policies/<owner>/<name>` | Each class: mode and where it is declared, the [promotion evidence](factory.md#promotion) in one line, reviewer models, the 29/46/61 ladder, eligibility; the promotion requests and exceptions |
+| `/settings/merge-policies/<owner>/<name>/decisions/<pr>` | The pull request's decision timeline |
 | `/settings/evidence` | Every class of every repository you read, in one table |
 
 | Who | May |
 |---|---|
 | A reader of the repository | Read everything above |
-| A maintainer (write on GitHub) | **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification |
+| A maintainer (write on GitHub) | **Check** a proposal in the policy editor (guided form, templates or expert YAML): validation, structural change, simulation and the file to submit with its edit link. **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification |
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
 
 The broker checks each of these on every request; a hidden button is only a convenience.

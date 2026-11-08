@@ -1279,6 +1279,24 @@ minimum; one of `policyManagement.operators` approves it (for 14 days) or refuse
 approved exception carries a promotion at its own minimum. Bad outcomes and the drill still block.
 Both tables are insert then one constrained move; `maku_rooms_policy_changes_total` counts them.
 
+**The editor.** A maintainer edits one class in a guided form (mode, author, a harness profile from
+the central list, conditions, deny, `requiresApproval`, limits, monitor), or starts one from a
+template (`docs-broad`, `deps-patch`, `generated-files`), or edits the whole file in the expert YAML
+view. **Check** is the factory's: the same `Parse`, `Validate` and `Resolve` the gate's policy read
+runs, `factory:` refused if changed, the structural change per class (a relaxation returns the class
+to shadow, MP8), and with `policyManagement.simulation` the conformance fixtures decided under the
+central config and the proposal by the gate's own evaluator (newly auto-merged, newly blocked, newly
+approval-required, unchanged), beside the strictness counterfactual of the class's recent decisions.
+The answer is the file to submit and the edit link: Maku writes nothing.
+
+**The decision timeline.** For a pull request, each decision record the factory wrote renders in
+the gate's order: fixed base, author mode, class, the recorded conditions, deny, approval subset,
+grant (reserved for approval memory, stage 5), breaker and caps, verdict; the stage that refused
+is named, the later ones are not reached. Its revisions are what the record holds: the repository
+policy's hash (with dual evaluation), the reviewer; the guardrails and profiles are the pod's
+config, bound by its checksum, not per record. It links the decision's comment and the policy
+file's commits.
+
 ### Calibration
 
 Widen a class one step only when the evidence allows it. `scripts/shadow-merge-tally.sh --class

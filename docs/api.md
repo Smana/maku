@@ -472,9 +472,11 @@ unknown fields refused (`400 bad_json`).
 
 | Method and path | Who | Does |
 |---|---|---|
-| `GET /settings`, `/settings/merge-policies`, `/settings/merge-policies/{owner}/{name}`, `/settings/evidence` | Any member | The UI, on a direct load |
+| `GET /settings`, `/settings/merge-policies`, `/settings/merge-policies/{owner}/{name}`, `/settings/merge-policies/{owner}/{name}/decisions/{pr}`, `/settings/evidence` | Any member | The UI, on a direct load |
 | `GET /api/policy/repositories` | Any member | `{repositories}`: the configured repositories the caller reads on GitHub |
 | `GET /api/policy/repositories/{owner}/{name}` | A reader of it | `{report, promotions, exceptions, you}`: each class's mode, source, evidence and proposal; the newest 100 records of each kind; the caller's `login`, `maintainer` and `operator`. `404` for a repository the caller cannot read or the factory does not list |
+| `POST /api/policy/repositories/{owner}/{name}/preview` | A maintainer (write) | `{file}` (at most 256 KiB) → the factory's check of a proposed policy file: `{valid, errors?, structural, simulation: {enabled, rows, counts}, strictness, proposal}`. Nothing is written |
+| `GET /api/policy/repositories/{owner}/{name}/decisions/{pr}` | A reader of it | The pull request's [decision timeline](factory.md#promotion): each record's stages, conditions, verdict and revisions, with the comment and policy links |
 | `POST /api/policy/promotions` | A maintainer (write) | `{repository, class, exceptionId?}` → `201 {promotion, proposal}`. `409 not_promotable` (not a shadow class of the repository's file), `not_eligible`, `promotion_open`, `exception_unusable`; `404 no_such_class` |
 | `POST /api/policy/promotions/{id}` | A maintainer | `{state: pr_opened \| merged \| abandoned, pullRequest?}`: `pr_opened` names the pull request; `409 already_moved` |
 | `POST /api/policy/exceptions` | A maintainer | `{repository, class, minimum, justification}` → `201`: `minimum` below the configured one, a justification of 20 to 2,000 characters |
@@ -1018,7 +1020,7 @@ or internal principal: `admitted`, `duplicate`, or the code of any refusal after
 `other`. The `unauthenticated`, `not_permitted` and `sponsored_only` refusals come before the
 principal is known and are **not counted**.
 
-### `GET /v1/policy/evidence` and `GET /v1/policy/repositories`
+### The policy routes on `:8082`
 
 Served on the same port only with `policyManagement.promotion` (otherwise `404`), for a human token
 (`403 human_only` otherwise). `GET /v1/policy/evidence?repository=owner/name` answers the
@@ -1026,7 +1028,13 @@ repository's promotion evidence, for a caller who reads it on GitHub: `{reposito
 policyError?, classes: [{class, source, mode, evidence, proposal?, unproposed?}], readAt}`. A
 repository the caller cannot read, or the config does not list, is `404 not_found` alike;
 `503 evidence_unavailable` when GitHub cannot be read whole. `GET /v1/policy/repositories` answers
-`{repositories}`, those of the config the caller reads.
+`{repositories}`, those of the config the caller reads. `POST /v1/policy/preview {repository, file}`,
+for a caller who writes the repository (`403 not_a_maintainer` otherwise), checks a proposed policy
+file: `mergepolicy.Parse`, `factory:` unchanged, `Validate` and `Resolve` against the guardrails and
+profiles, `Structural` against the current policy (the file's classes, else the central ones as
+exported), and, with `policyManagement.simulation`, `reconciler.Simulate` on the embedded
+conformance fixtures. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
+decision timeline from the factory's own comments, for a reader.
 
 ## Webhooks
 
