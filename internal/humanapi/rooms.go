@@ -327,6 +327,9 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 	} else {
 		r.live, _ = s.liveApprovals(ctx, room, web)
 	}
+	if r.coord == nil {
+		r.coord = s.coordinationOnce(ctx, room.Name, p)
+	}
 	in := summary.NeedsIn{Room: room.Name, URL: s.PublicURL + "/r/" + room.Name, Repository: room.Spec.Repository,
 		Sealed:    room.Status.Phase == "Closed" || room.Status.Phase == "Sealed",
 		FactsRead: true, Facts: r.facts(), FactsAt: s.foldFactsAt(room), Approvals: approvalsOf(r.live), Now: s.now(),
@@ -335,16 +338,18 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 			CanClose: policy.Allowed(sub, policy.Close), CanRelease: policy.Allowed(sub, policy.StartRun),
 			RoomScoped: roomScoped}}
 	if !in.Sealed {
-		in.Coordination, in.CoordinationStanding = s.coordinationNeedsIn(ctx, room.Name, p)
+		in.Coordination, in.CoordinationStanding = s.coordinationNeedsIn(ctx, r.coord, p)
 	}
 	return summary.Ordered(summary.Items(in)), r.facts() != nil
 }
 
 // needsRead is the room data a caller of needsFor already holds: the room list reads a room's facts and its
-// approvals once, for the reason, the count, the first need and the status line alike.
+// approvals once, for the reason, the count, the first need and the status line alike. A nil coord is read
+// by needsFor.
 type needsRead struct {
 	facts factsFn
 	live  []store.Approval
+	coord coordFn
 }
 
 // foldFactsAt is when the room's task facts last landed, from the fold this broker already keeps for it: an
@@ -501,7 +506,8 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 		facts := s.taskFacts(ctx, room) // one read serves the reason and the needs (CD21)
 		live, expired := s.liveApprovals(ctx, room, web)
 		// false: a login's door (needsFor's roomScoped), so a sponsored caller's row keeps no action need.
-		items, read := s.needsFor(ctx, room, p, sub, false, needsRead{facts: facts, live: live})
+		coord := s.coordinationOnce(ctx, room.Name, p) // one read serves the family and the needs
+		items, read := s.needsFor(ctx, room, p, sub, false, needsRead{facts: facts, live: live, coord: coord})
 		if !read && room.Status.Task != nil { // one line for a room whose state could not be read, as PR 3's list says it
 			s.log().Warn("room row: needs without facts", "room", room.Name)
 		}
@@ -525,7 +531,7 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 		}
 		row.Need = first
 		row.Step = rowStep(row, repo, first)
-		if v, ok := s.coordinationFor(ctx, room.Name, p); ok {
+		if v, ok := coord(); ok {
 			o := coordinationview.OverviewOf(v)
 			row.Coordination = &o
 		}
