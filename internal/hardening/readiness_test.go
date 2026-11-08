@@ -72,8 +72,8 @@ func TestReadinessHardened(t *testing.T) {
 // AC9 offline: each fact made false alone refuses, naming only its own Missing.
 func TestReadinessEachFact(t *testing.T) {
 	for name, tc := range map[string]struct {
-		break_ func(*Settings, fakeFiles, *fakeDrills)
-		want   Missing
+		breakIt func(*Settings, fakeFiles, *fakeDrills)
+		want    Missing
 	}{
 		"R1 audit":         {func(s *Settings, _ fakeFiles, _ *fakeDrills) { s.Mode = ModeAudit }, MissingEnforce},
 		"R2 a role writes": {func(_ *Settings, f fakeFiles, _ *fakeDrills) { f[RolePolicyPath("tester")] = writeable }, MissingWriteToken},
@@ -92,7 +92,7 @@ func TestReadinessEachFact(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f, d := hardened()
-			tc.break_(&s, f, d)
+			tc.breakIt(&s, f, d)
 			r, err := eval(s, f, d).Hardened(t.Context(), "o/r")
 			if err != nil || r.Hardened || !slices.Equal(r.Missing, []Missing{tc.want}) || r.Drill != "" {
 				t.Fatalf("%+v %v, want only %s", r, err, tc.want)

@@ -80,7 +80,7 @@ func TestHardeningRefusals(t *testing.T) {
 func TestHardeningRepositoryStricterOnly(t *testing.T) {
 	h := Hardening{Mode: hardening.ModeEnforce, Repositories: map[string]HardeningRepository{"a/b": {Mode: hardening.ModeAudit}, "c/d": {Mode: hardening.ModeEnforce}}}
 	var errs []string
-	h.validateStricter(func(f string, a ...any) { errs = append(errs, f) })
+	h.validateStricter(func(f string, _ ...any) { errs = append(errs, f) })
 	if len(errs) != 1 {
 		t.Fatalf("%v", errs)
 	}

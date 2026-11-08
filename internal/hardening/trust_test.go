@@ -43,7 +43,7 @@ func TestLevelOf(t *testing.T) {
 }
 
 func TestLevelOrderAndText(t *testing.T) {
-	if !(Blocked < None && None < Unapproved && Unapproved < Approved && Approved < Merged) {
+	if Blocked >= None || None >= Unapproved || Unapproved >= Approved || Approved >= Merged {
 		t.Fatal("levels are ordered blocked < none < unapproved < approved < merged")
 	}
 	for _, l := range []Level{Blocked, None, Unapproved, Approved, Merged} {

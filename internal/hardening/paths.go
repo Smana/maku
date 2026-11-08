@@ -105,7 +105,7 @@ func compile(e PathRule) (rule, error) {
 		case s == "":
 			return rule{}, errors.New("a pattern has an empty segment")
 		case s == "..", s == ".":
-			return rule{}, errors.New("a pattern is relative to the repository root, without . or ..")
+			return rule{}, errors.New("a pattern is relative to the repository root, with no . or .. segment")
 		case s != "**" && strings.Contains(s, "**"):
 			return rule{}, errors.New("** is a whole segment")
 		}

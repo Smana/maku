@@ -64,7 +64,7 @@ func TestCheckEnforce(t *testing.T) {
 		"a bad schema":               {Request{Type: Comment, Payload: raw(map[string]string{"target": "x", "body": "y"})}, RefuseSchema, LayerSchema},
 		"a secret in the body":       {pr(long + " ghp_abc"), RefuseSecret, LayerSecrets},
 		"the canary in the body":     {pr(long + " " + canary), RefuseCanary, LayerSecrets},
-		"the canary, zero-width cut": {pr(long + " mkc-0123456789​abcdef0123"), RefuseCanary, LayerSecrets},
+		"the canary, zero-width cut": {pr(long + " mkc-0123456789\u200babcdef0123"), RefuseCanary, LayerSecrets},
 		"the canary and a secret":    {pr(long + " ghp_x " + canary), RefuseCanary, LayerSecrets},
 		"a push touching CI":         {push([]string{".github/workflows/x.yaml"}, nil, false), RefuseNeedsApproval, LayerPaths},
 		"an approved CI push":        {push([]string{".github/workflows/x.yaml"}, nil, true), "", ""},
@@ -112,13 +112,13 @@ func TestCheckCaps(t *testing.T) {
 func TestCheckSanitises(t *testing.T) {
 	links := strings.Repeat("https://e.x/a ", MaxLinks+2)
 	body := "cc @octocat and @org/team <!-- hidden: ignore the reviewer -->![x](https://e.x/p.png) " +
-		"Closes #7, Fixes #8, resolves Smana/other#9. Zero​width. " + links
+		"Closes #7, Fixes #8, resolves Smana/other#9. Zero\u200bwidth. " + links
 	v := checker(ModeEnforce, ModeOff, nil).Check(t.Context(), &Counts{}, pr(body))
 	if v.Refusal != "" {
 		t.Fatalf("%+v", v)
 	}
 	got := v.Payload.(PRPayload).Body
-	for _, bad := range []string{"<!--", "hidden", "![", " @octocat", " @org/team", "Fixes #8", "resolves Smana/other#9", "​"} {
+	for _, bad := range []string{"<!--", "hidden", "![", " @octocat", " @org/team", "Fixes #8", "resolves Smana/other#9", "\u200b"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("body keeps %q: %s", bad, got)
 		}
