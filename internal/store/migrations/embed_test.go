@@ -43,8 +43,8 @@ func TestEmbeddedMigrationCatalog(t *testing.T) {
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("files = %q, want %q", names, wantNames)
 	}
-	if !slices.IsSorted(versions) || versions[0] != "20260927120000" || versions[len(versions)-1] != "20261108120000" {
-		t.Fatalf("versions = %q, want sorted 20260927120000 through 20261108120000", versions)
+	if !slices.IsSorted(versions) || versions[0] != "20260927120000" || versions[len(versions)-1] != "20261108130000" {
+		t.Fatalf("versions = %q, want sorted 20260927120000 through 20261108130000", versions)
 	}
 	// The txmode-none files are the ones with CREATE INDEX CONCURRENTLY; a change here changes how
 	// they are applied.
