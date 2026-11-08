@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { evidenceLine, explain, isSettings, ladderLine, mountSettings, settingsFrame, type Evidence, type RepositoryPage } from "../src/settings";
-import { fileYAML, setLeaf, toYAML } from "../src/policy-editor";
+import { fileYAML, setLeaf, templates, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 20, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [{ model: "glm-5.3", mergedUnchanged: 20, changed: 1 }] },
@@ -233,6 +233,13 @@ describe("the policy editor", () => {
     pick.dispatchEvent(new Event("change"));
     edit();
     expect(yamlOf()).toMatch(/  deps-patch:\n(    .*\n)*?    harness: "adopted-none"\n/);
+  });
+  it("holds every semver template to modifyOnly, as the factory's class check does", () => {
+    for (const name of ["deps-patch", "deps-minor"]) {
+      const all = templates[name]().conditions?.all ?? [];
+      expect(all.some((l) => "diffShape" in l)).toBe(true);
+      expect(all).toContainEqual({ modifyOnly: true });
+    }
   });
   it("lets a reader see the editor but not check: the broker would refuse it", async () => {
     const app = document.createElement("div");

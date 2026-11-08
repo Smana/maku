@@ -26,6 +26,15 @@ export interface Preview {
 }
 export interface Outcome { verdict: string; reason?: string }
 
+// deps is a Renovate lane: a semver shape needs modifyOnly (config.validateClass), and the caps,
+// release age and follow-up window are the spec's.
+function deps(shape: string, perDay: number): ClassPolicy {
+  return { mode: "shadow", author: "adopt", adopt: { logins: ["renovate[bot]"], branches: ["^renovate/"] }, harness: "",
+    conditions: { all: [{ diffShape: shape }, { modifyOnly: true }, { maxPatchFiles: 3 }, { maxModifiedLines: 10 },
+      { releaseAgeCheck: "renovate/stability-days" }] },
+    ...(perDay ? { limits: { maxPerDay: perDay } } : {}), monitor: { followUpWindow: "168h" } };
+}
+
 // The spec's class templates, all in shadow: the editor's starting points.
 export const templates: Record<string, () => ClassPolicy> = {
   "docs-broad": () => ({ mode: "shadow", author: "agents", harness: "", conditions: {
@@ -33,9 +42,9 @@ export const templates: Record<string, () => ClassPolicy> = {
       { holdoutChecks: ["Check the documentation links 🔗"] }],
     deny: [{ protectedFiles: ["^docs/superpowers/.+$", "^docs/specs/.+$", "^docs/security/.+$"] }] },
     requiresApproval: [{ changedFiles: ["^docs/architecture/.+$"] }], limits: { maxPerDay: 2 }, monitor: { followUpWindow: "168h" } }),
-  "deps-patch": () => ({ mode: "shadow", author: "adopt", adopt: { logins: ["renovate[bot]"], branches: ["^renovate/"] }, harness: "",
-    conditions: { all: [{ diffShape: "semver-patch" }, { maxPatchFiles: 3 }, { maxModifiedLines: 10 }, { releaseAgeCheck: "renovate/stability-days" }] },
-    limits: { maxPerDay: 2 }, monitor: { followUpWindow: "168h" } }),
+  "deps-patch": () => deps("semver-patch", 2),
+  // semver-minor is shadow only (M2): the template is for evidence, never promoted.
+  "deps-minor": () => deps("semver-minor", 0),
   "generated-files": () => ({ mode: "shadow", author: "agents", harness: "", conditions: {
     all: [{ allowedFiles: ["^gen/.+$"] }, { holdoutChecks: ["Regenerate and compare"] }, { modifyOnly: true }] } }),
 };
