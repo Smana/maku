@@ -296,3 +296,25 @@ func TestCoordinationNeedsAndRowsHideRestrictedChild(t *testing.T) {
 		t.Fatalf("rows leak the withheld child: %s", body)
 	}
 }
+
+// The room list carries a parent's compact family, filtered as the summary is.
+func TestRoomRowsCarryTheFilteredFamily(t *testing.T) {
+	f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: coordFamily()}}
+	e := setup(t, coordOn(f, coordWorld()))
+	_, body := get(t, e, "/api/rooms", as("bob", false))
+	var rows []struct {
+		ID           string                        `json:"id"`
+		Coordination *summary.CoordinationOverview `json:"coordination"`
+	}
+	if err := json.Unmarshal([]byte(body), &rows); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.ID == roomID && (r.Coordination == nil || r.Coordination.RestrictedChildren != 1 || len(r.Coordination.Children) != 1) {
+			t.Fatalf("%+v", r.Coordination)
+		}
+	}
+	if strings.Contains(body, coordRepoB) || strings.Contains(body, "CMARK") {
+		t.Fatalf("rows leak the withheld child: %s", body)
+	}
+}

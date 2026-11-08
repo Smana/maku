@@ -107,3 +107,27 @@ func SettledByRunDay(ctx context.Context, c client.Reader, ns string) (map[strin
 	}
 	return out, nil
 }
+
+// ReservedByRun sums each run's outstanding reserved.<runId>.maxMicroUSD over every retained day
+// ledger in ns: what admission still holds for it. Read-only; c must list ConfigMaps live. One entry
+// that does not decode fails the whole read, as SettledByRun does.
+func ReservedByRun(ctx context.Context, c client.Reader, ns string) (map[string]int64, error) {
+	var cms corev1.ConfigMapList
+	if err := c.List(ctx, &cms, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("ledger: list the day ledgers: %w", err)
+	}
+	out := map[string]int64{}
+	for i := range cms.Items {
+		if _, ok := Day(cms.Items[i].Name, Prefix); !ok {
+			continue
+		}
+		rs, err := ledgerReservations(&cms.Items[i])
+		if err != nil {
+			return nil, err
+		}
+		for id, r := range rs {
+			out[id] += r.MaxMicroUSD
+		}
+	}
+	return out, nil
+}

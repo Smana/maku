@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
@@ -74,6 +75,10 @@ type BrokerAPI interface {
 	RoomSummary(ctx context.Context, room string) (summary.Summary, error)
 	RoomChanges(ctx context.Context, room string) (roomview.ChangeSet, error)
 	NeedsList(ctx context.Context, room string) ([]summary.Need, error)
+	// CoordinationPlan and CoordinationDraft are a two-repository mention's planner and its parent's
+	// draft (v4): neither confirms, files nor runs anything.
+	CoordinationPlan(ctx context.Context, in CoordinationPlanRequest) (CoordinationPlanResult, error)
+	CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
 }
 
 // Recorder counts requests for factory_slack_requests_total{route, outcome}, the proposal actions
@@ -693,6 +698,10 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	// above the draft path and below the read, which is under a.editMu: the proposal a reply edits is
 	// the one the message shows, and two replies in flight cannot each plan from the revision they saw.
 	if a.Proposals.Enabled {
+		// v4: a coordination thread's reply revises its parent's draft, in place, by its author only.
+		if m, cp, ok := a.coordinationThread(msgs); ok {
+			return a.replanCoordination(ctx, ev, ev.ThreadTS, msgs, m, cp)
+		}
 		prop, closed := a.threadProposal(msgs)
 		if closed && a.threadCancelled(msgs) {
 			return "ignored" // a cancelled proposal filed nothing: its own message says so, and there is no room to ask about
@@ -1007,6 +1016,14 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	}
 	if !found {
 		return "ignored" // a room that was not filed from Slack
+	}
+	// v4: a coordination parent's thread is told only what its channel may see of the family now.
+	if th.Coordination {
+		ch, served := a.Channels[th.Channel]
+		if !served || !ch.notifies(e.Type) {
+			return "ignored"
+		}
+		return a.deliverCoordination(ctx, th, ch, e.Room)
 	}
 	// §5: a forge.push wait in a channel that draws cards is one card, posted or updated by its
 	// approval id. Everything else keeps today's line, with no button.

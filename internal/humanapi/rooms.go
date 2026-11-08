@@ -23,6 +23,7 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/config"
+	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/roomctrl"
@@ -211,6 +212,9 @@ type roomRow struct {
 	// data: fixed words and numbers, never agent text. Absent when the state is unknown.
 	Status *rowStatus `json:"status,omitempty"`
 	You    wire.You   `json:"you"`
+	// Coordination is a coordination parent's family as this caller may read it (v4): each visible
+	// child's state, the restricted count and the one recovery. Absent for any other room.
+	Coordination *summary.CoordinationOverview `json:"coordination,omitempty"`
 }
 
 // rowStatus is a row's status line: the kind the page colours by, its icon and its words.
@@ -521,6 +525,10 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 		}
 		row.Need = first
 		row.Step = rowStep(row, repo, first)
+		if v, ok := s.coordinationFor(ctx, room.Name, p); ok {
+			o := coordinationview.OverviewOf(v)
+			row.Coordination = &o
+		}
 		ins = append(ins, s.statusIn(room, row, web, live, expired))
 		if row.State == summary.StateFailed {
 			failed[row.ID] = roomctrl.ForkSeq(room)

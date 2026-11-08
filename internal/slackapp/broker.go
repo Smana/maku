@@ -17,8 +17,11 @@ import (
 
 	"golang.org/x/oauth2"
 
+	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
 )
@@ -416,4 +419,57 @@ func decodeResult(raw []byte) (json.RawMessage, error) {
 		return nil, errors.New("slackapp: broker result has no structuredContent")
 	}
 	return msg.Result.StructuredContent, nil
+}
+
+// CoordinationPlanRequest is coordination_plan's arguments: the mention's words, the user's primary
+// first, the two candidates, the user it plans for and, to replan, the draft's id and next version.
+type CoordinationPlanRequest struct {
+	Text, Context, Primary string
+	Candidates             []string
+	OnBehalfOf             string
+	ID                     string `json:"id,omitempty"`
+	Version                int32  `json:"version,omitempty"`
+}
+
+// CoordinationPlanResult is coordination_plan's answer, as the broker serves it.
+type CoordinationPlanResult struct {
+	Plan        v1alpha1.CoordinationPlan           `json:"plan"`
+	Hash        string                              `json:"hash"`
+	Diagnostics []coordination.Diagnostic           `json:"diagnostics"`
+	Planning    coordination.PlanningReconciliation `json:"planning"`
+}
+
+// CoordinationPlan is coordination_plan, the broker's governed multi-repository planner: it files
+// nothing.
+func (b Broker) CoordinationPlan(ctx context.Context, in CoordinationPlanRequest) (CoordinationPlanResult, error) {
+	args := map[string]any{"text": in.Text, "primary": in.Primary, "candidates": in.Candidates, "on_behalf_of": in.OnBehalfOf}
+	if in.Context != "" {
+		args["context"] = in.Context
+	}
+	if in.ID != "" {
+		args["id"], args["version"] = in.ID, in.Version
+	}
+	sc, err := b.call(ctx, mcpwire.CoordinationPlan, args)
+	if err != nil {
+		return CoordinationPlanResult{}, err
+	}
+	var out CoordinationPlanResult
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return CoordinationPlanResult{}, fmt.Errorf("slackapp: coordination_plan result: %w", err)
+	}
+	return out, nil
+}
+
+// CoordinationDraft is coordination_draft: the plan stored as its parent's draft, for the user. It
+// confirms nothing; the parent is confirmed on its room page.
+func (b Broker) CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error) {
+	if parent != in.Plan.ID {
+		return coordination.CoordinationConfirmation{}, fmt.Errorf("slackapp: coordination_draft: %q is not the plan's parent", parent)
+	}
+	_, err := b.call(ctx, mcpwire.CoordinationDraft, map[string]any{"plan": in.Plan, "planHash": in.PlanHash, "planning": in.Planning,
+		"on_behalf_of": onBehalfOf})
+	if err != nil {
+		return coordination.CoordinationConfirmation{}, err
+	}
+	return in, nil
 }

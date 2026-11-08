@@ -45,6 +45,18 @@ export interface RoomRow {
   // status is the room page's status line, computed by the broker (summary.StatusLine): fixed words
   // and numbers, never agent text. Absent from an older broker, or when it does not know the state.
   status?: RowStatus;
+  // coordination is a coordination parent's family as the broker filtered it for this viewer
+  // (internal/summary CoordinationOverview): a compact line, not a second needs list.
+  coordination?: { planVersion: number; restrictedChildren: number; recoveryCode?: string;
+    children: { id: string; phase?: string; reason?: string; issueURL?: string; prURL?: string; dependsOn: string[] }[] };
+}
+
+// familyLine is a parent's family on one line, as maku's overview writes it.
+function familyLine(c: NonNullable<RoomRow["coordination"]>): string {
+  let s = `family v${c.planVersion}: ${c.children.map((ch) => [ch.id, ch.phase].filter(Boolean).join(" ")).join(", ")}`;
+  if (c.restrictedChildren > 0) s += ` (+${c.restrictedChildren} restricted)`;
+  if (c.recoveryCode) s += `, recovery ${c.recoveryCode}`;
+  return s;
 }
 
 export interface RowStatus { kind: string; icon: string; text: string }
@@ -68,7 +80,7 @@ export function rowCells(row: RoomRow, now: Date): { needs: string; task: string
     needs: row.needsYou ? String(row.needsYou) : "",
     task: row.issue ? [`#${row.issue}`, row.title ?? ""].filter(Boolean).join(" ") : `Room ${row.id}`,
     repo: row.repository ?? "",
-    phase: row.task || row.phase || "Open",
+    phase: [row.task || row.phase || "Open", row.coordination ? familyLine(row.coordination) : ""].filter(Boolean).join(" · "),
     pr: row.pr ? `#${row.pr}` : "",
     last: t ? ago(new Date(t).toISOString(), now.getTime()) : "",
     id: row.id,
