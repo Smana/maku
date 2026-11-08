@@ -999,7 +999,7 @@ func TestTheHandOffTextFollowsTheReason(t *testing.T) {
 	approvable := []string{"class_unarmed", "patch_too_large", "policy_pending", "policy_absent", "no_approving_verdict",
 		"maintainer_approved", "approval_stale", "closes_parent", "auto_merge_cap", "class_paused", "file_not_allowed"}
 	byHand := []string{"not_agent_authored", "gate_path", "contract_modified", "not_owned", "steering_path", "foreign_trailer",
-		"not_mergeable", "changes_requested", "human_commit_in_pr"}
+		"not_mergeable", "changes_requested", "human_commit_in_pr", "head_unreported"}
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	var tk v1alpha1.Task
 	if err := g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk); err != nil {
@@ -1323,5 +1323,43 @@ func TestAFailedStatusPostDoesNotChangeTheDecision(t *testing.T) {
 	pr, _ := g.f.PullRequest(t.Context(), 12)
 	if pr.State != "MERGED" {
 		t.Fatalf("the merge went on regardless: %s", pr.State)
+	}
+}
+
+// gmmrmund (aws-0, Maku v0.39.0): the implementer pushed abc and ended agent_finished with no
+// handoff, and a maintainer approved abc after the run ended. The approval is of the head, so the
+// hand-off is head_unreported, not approval_stale, and says no approval merges it until the room
+// reports it. Once the room reports abc, the task returns to the gate and that same approval arms
+// it. Before the report, nothing merges: R02 holds under an approval too.
+func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Merge.ApproveToMerge = true
+	g.log.evs = nil // the implementer's room_progress named the commit; no handoff did
+	g.f.SetActivity("agent/3buqdlot", forge.Push{Type: "branch_creation", Actor: "ogenki-agents[bot]", After: "abc", At: now.Add(-40 * time.Minute)})
+	pr, _ := g.f.PullRequest(t.Context(), 12)
+	pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now.Add(-10 * time.Minute)}}
+	g.f.SetPR(pr)
+	g.f.SetChecks(12, green("SUCCESS"))
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "head_unreported" || len(g.f.Armed()) != 0 {
+		t.Fatalf("%s %s %v", got.Status.Phase, got.Status.Reason, g.f.Armed())
+	}
+	c := strings.Join(g.f.Comments(7), "\n")
+	if !strings.Contains(c, "never reported") || strings.Contains(c, "older head") || strings.Contains(c, "approve this pull request") {
+		t.Fatalf("the hand-off says what is missing, and that an approval does not merge it: %q", c)
+	}
+	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman || len(g.f.Armed()) != 0 {
+		t.Fatalf("no report, no return: %s %s %v", got.Status.Phase, got.Status.Reason, g.f.Armed())
+	}
+	g.log.handoff(rid(0), "abc")
+	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingCI || got.Status.Reason != "reentered_head_reported" {
+		t.Fatalf("the report returns it: %s %s", got.Status.Phase, got.Status.Reason)
+	}
+	got = g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseAutoMerging || got.Status.PullRequest.MergedHow != "approved" || got.Status.PullRequest.ApprovedBy != "Smana" {
+		t.Fatalf("the approval arms it: %s %s %+v", got.Status.Phase, got.Status.Reason, got.Status.PullRequest)
+	}
+	if a := g.f.Armed(); len(a) != 1 || a[0] != "PR_12 abc" {
+		t.Fatalf("merged %q, want the approved head", a)
 	}
 }

@@ -147,6 +147,8 @@ func decide(in ArmInputs, rc *config.Repository, cl config.Class) (d ArmDecision
 			return human("changes_requested", "review")
 		case "stale":
 			return human("approval_stale", "review")
+		case "unreported":
+			return human("head_unreported", "review")
 		case "pushed_after_runs":
 			// No approval can bind to this head: hand it off as a commit not the task's runs',
 			// with the bypass instructions, rather than asking for an approval that cannot count.
@@ -232,7 +234,9 @@ func reviewerModel(t *v1alpha1.Task) string {
 // AM1, ruling R-B1): the newest review of each maintainer. veto when one of them is a request for
 // changes, or when GitHub cut the list, so a veto may be unseen; stale when the newest approval
 // does not bind to the current head (approvesHead, fail closed), or pushed_after_runs when GitHub
-// recorded the head's push after the task's pushing runs had all ended; approved when it binds. DecideArm
+// recorded the head's push after the task's pushing runs had all ended, or unreported when it
+// names the head but no implementer run reported that head in the room (gmmrmund: that is not an
+// older approval, and only the report returns it); approved when it binds. DecideArm
 // calls it for no other pull request: off, or adopted, today's loop reads.
 func approval(in ArmInputs, rc *config.Repository) (forge.Review, string) {
 	if in.PR.ReviewsTruncated {
@@ -256,6 +260,8 @@ func approval(in ArmInputs, rc *config.Repository) (forge.Review, string) {
 		return approved, "approved"
 	case pushedAfterRuns(in):
 		return approved, "pushed_after_runs"
+	case approved.Commit != "" && approved.Commit == in.PR.HeadSHA && in.ReportedHead != in.PR.HeadSHA:
+		return approved, "unreported"
 	default:
 		return approved, "stale"
 	}

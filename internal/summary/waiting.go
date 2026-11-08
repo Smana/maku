@@ -170,6 +170,7 @@ func reasons() map[string]string {
 		"steering_path":             "it changes a steering note, which only a maintainer on the default branch may do",
 		"verdict_stale":             "the reviewer's approval was not for the pull request's current head",
 		"human_commit_in_pr":        "it holds a commit no run of the task reported",
+		"head_unreported":           "the task's implementer never reported its current head in the room: no handoff of its runs names that commit",
 		"closes_parent":             "it would close the parent issue, which only the last part may",
 		"shadow_would_arm":          "it would auto-merge, and the merge gate is in shadow",
 		"auto_merge_cap":            "today's auto-merge cap is reached",
@@ -245,6 +246,11 @@ const approveNext = "a maintainer reviews, then approves the current commit or c
 // the bypass never stands alone for this hand-off (fast-follow 1).
 const humanCommitNext = "a person pushed a commit the factory cannot vouch for, so only a repository admin can merge it: read that commit, then tick \"bypass rules\" on the PR page, or run `gh pr merge --admin`"
 
+// headUnreportedNext is head_unreported's next step (gmmrmund): the gate refuses every approval of a
+// head no implementer run reported (R02), so the sentence says an approval does not merge it, what does,
+// and the admin's bypass, the one path a maintainer has meanwhile.
+const headUnreportedNext = "an approval does not merge it until the room reports this head: the task goes back to the merge gate when a run of the task reports it, and an approval of it then merges it; meanwhile a maintainer with admin can read the diff, then tick \"bypass rules\" on the PR page, or run `gh pr merge --admin`"
+
 // nextStep is the next step a reason has of its own; "" leaves it to the phase's default. byApproval
 // is TaskFacts.MergeByApproval: a step that would merge by hand says approve instead.
 func nextStep(reason string, byApproval bool) string {
@@ -277,6 +283,8 @@ func nextStep(reason string, byApproval bool) string {
 		return "a maintainer reads the revision's comment on the pull request and confirms the scope change by merging it, or requests changes again"
 	case "human_commit_in_pr":
 		return humanCommitNext
+	case "head_unreported":
+		return headUnreportedNext
 	case "contract_unread", "contract_push_unrecorded":
 		return "nothing to do: the task goes on when GitHub answers"
 	case "contract_modified":

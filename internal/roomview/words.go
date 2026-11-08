@@ -64,6 +64,7 @@ var reasonPhrases = map[string]string{
 	"gate_path":                 "it touches a gate path",
 	"holdout_pending":           "waiting for holdout checks",
 	"human_commit_in_pr":        "a human commit is in the pull request",
+	"head_unreported":           "no run reported the head",
 	"judge_impossible":          "the judge found it cannot be done",
 	"ledger_truncated":          "the merge ledger read is incomplete",
 	"loop_unsupported":          "the cluster lacks loop support",

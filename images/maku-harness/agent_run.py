@@ -2067,6 +2067,56 @@ def checkpoint(env: dict, deadline: float) -> str:
     return refused + ("pushed a checkpoint commit" if committed else "pushed")
 
 
+# The merge gate's R02 reads the head from the implementer's own room_handoff, and the model may finish
+# without one: gmmrmund (aws-0, Maku v0.39.0) pushed, ended agent_finished, and its head stayed unreported,
+# so a maintainer's approval of it could never merge. The harness then hands off the head the run pushed.
+# This grants nothing the model lacks: it may call room_handoff with any commit itself.
+HEAD_REPORT = ("Harness (implementer): the agent finished without a room_handoff; the harness reports the head "
+               "this run pushed, %s.")
+LS_REMOTE_S = 15
+REMOTE_URL = "https://github.com/%s.git"
+
+
+def pushed_head(env: dict, start: str) -> str | None:
+    """The commit this run pushed: the clone's HEAD, when it moved past start and GitHub's branch is at it; None
+    otherwise. GitHub is asked directly, never the clone's remote-tracking refs, which the agent can write."""
+    local = head()
+    if not local or local == start:
+        return None
+    try:
+        p = subprocess.run(["git", "-C", REPO_DIR, *checks_module().GUARDS, "ls-remote",
+                            REMOTE_URL % env["REPOSITORY"], "refs/heads/" + env["BRANCH"]],
+                           capture_output=True, text=True, errors="replace", timeout=LS_REMOTE_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    remote = p.stdout.split()[0] if p.returncode == 0 and p.stdout.split() else ""
+    return local if remote == local else None
+
+
+def report_head(env: dict, steps, notes, start: str, remote=pushed_head, sleep=time.sleep) -> str | None:
+    """A finished implementer run's handoff of its pushed head, when the agent made none that the broker took
+    (steps.handed_off). Retried once past the broker's one call a second. Best effort: returns the commit
+    reported, or None."""
+    if env.get("ROLE") != "implementer" or notes is None or steps is None or steps.handed_off:
+        return None
+    commit = remote(env, start)
+    if not commit:
+        return None
+    args = {"toRole": "reviewer", "summary": HEAD_REPORT % commit, "commit": commit}
+    for attempt in range(2):
+        try:
+            notes.harness_call(HANDOFF_TOOL, args)
+            print("agent-run: the agent made no handoff: reported the pushed head %s" % commit, flush=True)
+            return commit
+        except Exception as exc:  # noqa: BLE001 -- a report never fails a finished run
+            if attempt == 0 and str(exc).startswith("rate_limited"):
+                sleep(1.1)
+                continue
+            print("agent-run: pushed head not reported: %s" % _short(exc, 200), file=sys.stderr, flush=True)
+            return None
+    return None
+
+
 def final_read(env: dict, steps=None, end: str | None = None) -> str:
     """The room's last read of the harness log (F11, the harness half): the bridge reads the log to
     its end and mirrors it before it answers, while agent-server is still up. On SIGTERM the step
@@ -2256,6 +2306,7 @@ def main() -> int:
         state = loop_policy.State.load(LOOP_STATE, head(), resumed=resumed) if policy else None
         if state:
             save_state(state, LOOP_STATE)
+        start = state.start if state else head()  # report_head's: a head this run did not move is not its to report
         cid = http("POST", "/api/conversations", request)["id"]
         notes = ProgressNotes(env["MCP_URL"], env.get("ROLE") or "agent", resumed,
                               start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
@@ -2289,6 +2340,7 @@ def main() -> int:
                 final_checks(env, decl, notes, child_spans(provider, span) if decl else None, started)
             except Exception as exc:  # noqa: BLE001 -- the checks never fail a finished run
                 print("agent-run: final checks failed: %s" % exc, file=sys.stderr, flush=True)
+            report_head(env, steps, notes, start)
         if decl and (ledger := checks_ledger()):
             print(ledger, flush=True)
         if search:
