@@ -6,7 +6,7 @@
 // it goes in as text. A field the broker omits when empty (omitempty, omitzero) is
 // optional here, and its part is skipped.
 
-import { api } from "./api";
+import { api, type NeedItem } from "./api";
 import type { RoomEvent } from "./conn";
 import { approvalAnchor, el } from "./controls";
 
@@ -221,25 +221,19 @@ export function inlineCode(text: string): Node[] {
     n % 2 ? [el("code", { textContent: part })] : part ? [document.createTextNode(part)] : []);
 }
 
-// linkedNeed is a need decided on GitHub: its label, its instruction with the backticked commands
-// as code, and the link out (https only).
-function linkedNeed(label: string, what: string, link: Node): HTMLLIElement {
-  const li = el("li");
-  li.append(`${label}: `, ...inlineCode(what), " · ", link);
-  return li;
-}
-
-// needsItems is the summary's merges, questions and holds, one list item each; the approvals come
-// from the live log instead (needs.ts), so the summary's approval entries are skipped. It is the
-// panel's list until the needs route answers (and after a read that failed), which is the list every
-// surface reads (CD21).
-export function needsItems(s: Summary): HTMLLIElement[] {
-  const out: HTMLLIElement[] = [];
+// needsItems is the summary's merges, questions and holds in the needs route's shape (NeedItem), with
+// the action each implies; the approvals come from the live log instead (needs.ts), so the summary's
+// approval entries are skipped. It is the panel's list until the needs route answers (and after a read
+// that failed), which is the list every surface reads (CD21).
+export function needsItems(s: Summary): NeedItem[] {
+  const out: NeedItem[] = [];
   for (const n of s.needsYou) {
-    if (n.kind === "hold") out.push(el("li", { textContent: `Hold: ${n.what}` })); // the page is the room: nothing to link to
+    const base = { kind: n.kind, id: n.id, what: n.what, url: n.url, ...(n.approve ? { approve: true } : {}) };
     // approve: under approveToMerge an approval of the current commit merges it (#308, #310).
-    if (n.kind === "merge") out.push(linkedNeed(n.approve ? "Approve" : "Merge", n.what, safeLink("open the PR", n.url)));
-    if (n.kind === "question") out.push(linkedNeed("Answer", n.what, safeLink("open the issue", n.url)));
+    if (n.kind === "merge") out.push({ ...base, action: { kind: "merge", label: n.approve ? "approve the head on the pull request" : "open the pull request", url: n.url } });
+    if (n.kind === "question") out.push({ ...base, action: { kind: "answer", label: "answer on the issue", url: n.url } });
+    // The summary's hold is always the room's own: the page is where it is released.
+    if (n.kind === "hold") out.push({ ...base, action: { kind: "release", label: "hand the driver back to the factory" } });
   }
   return out;
 }

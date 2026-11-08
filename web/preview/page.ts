@@ -9,6 +9,7 @@ import type { RoomEvent, Snapshot } from "../src/conn";
 import { mountComposer, mountControls } from "../src/controls";
 import type { Dashboard } from "../src/dashboards";
 import { mountFork } from "../src/fork";
+import type { NeedsPage } from "../src/api";
 import { mountNeeds } from "../src/needs";
 import { mountRailPane } from "../src/railpane";
 import { RoomState } from "../src/room-state";
@@ -41,6 +42,7 @@ export interface PreviewOptions {
   unsandboxed?: boolean; // the page's "Not sandboxed" banner above the header, as room.ts shows it
   dashboards?: Dashboard[]; // the strip's link templates; none by default
   now?: () => number; // the rail's clock; Date.now unless the fixture's events are not recent
+  needs?: () => Promise<NeedsPage>; // the needs route's answer; none: the summary's needs, as before a read
 }
 
 export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPage {
@@ -117,7 +119,9 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
     { nodes: () => summary.flow?.nodes ?? [], mark: (run) => rail.mark(run) });
   const state = new RoomState();
   state.reset(snap, o.count);
-  const needs = mountNeeds(needsPanel, sender, state, () => snap.you, views);
+  const needs = mountNeeds(needsPanel, sender, state, () => snap.you, views, () => undefined, {
+    needs: o.needs,
+    hands: { openSession: () => { session.open = true; }, focusCoordination: () => say("Offline preview: no coordination panel.") } });
   const you = { ...snap.you };
   const controls = mountControls(section, sender, state, you, say);
   const composer = mountComposer(composerEl, sender, state, you);

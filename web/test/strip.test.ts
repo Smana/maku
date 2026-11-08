@@ -87,6 +87,8 @@ describe("the title strip", () => {
     strip.update({ roomId: "3kq7x2ma", snap, phase: "Active", driver: snap.driver, needs: 0,
       now: { seq: 27, text: "terminal git log --oneline -3", status: "running", ts: new Date(Date.now() - 12_000).toISOString() } });
     expect(h.querySelector(".now")?.textContent).toBe("Now ▸ terminal git log --oneline -3 · running · 12 s ago");
+    expect([...h.querySelectorAll(".now-link > span")].map((e) => [e.className, e.textContent]))
+      .toEqual([["now-lead", "Now ▸ "], ["now-text", "terminal git log --oneline -3"], ["now-meta", " · running · 12 s ago"]]);
     (h.querySelector(".now button") as HTMLButtonElement).click();
     expect(clicked).toBe(27);
   });
@@ -313,6 +315,20 @@ describe("the title strip", () => {
     strip.update(i);
     expect(h.querySelector(".chip-run")).toBe(chip);
     expect(chip?.textContent).toBe("implementer · ikely2yk · agent-default · high · 5 min");
+  });
+  it("leads the run chip with its role, the rest as receding parts", () => {
+    const { h, strip } = mount();
+    strip.update(input({ summary: summary({ runModel: { run: "ikely2yk", model: "agent-default", effort: "high" } }) }));
+    const parts = [...h.querySelectorAll(".chip-run > :not(.sep)")].map((e) => [e.className, e.textContent]);
+    expect(parts.slice(0, 4)).toEqual([["run-role", "implementer"], ["run-id", "ikely2yk"], ["run-model", "agent-default"], ["run-model", "high"]]);
+    expect(parts[4][0]).toBe("run-age");
+  });
+  it("clusters the facts: the run, its cost, its links, who may reach it", () => {
+    const { h, strip } = mount();
+    strip.update(input({ dashboards: [{ label: "Room", url: "https://g.example.com/?r={room}" }] }));
+    const groups = [...h.querySelectorAll<HTMLElement>(".strip-chips > .fact-group")].map((g) => [g.dataset.group, [...g.children].map((c) => c.classList[1])]);
+    expect(groups).toEqual([["run", ["chip-phase", "chip-run"]], ["cost", ["chip-budget"]], ["links", ["chip-pr", "chip-dashboards"]], ["who", ["chip-class", "chip-driver"]]]);
+    expect([...h.querySelectorAll(".fact-label")].map((l) => l.textContent)).toEqual(["Tokens", "Dashboards:", "Data:", "Driven by"]);
   });
   it("puts a run's model in as text", () => {
     const { h, strip } = mount();
@@ -583,7 +599,7 @@ describe("the strip's dashboards", () => {
   it("fills the room's ids, and opens each in a new tab with no referrer", () => {
     const { h, strip } = mount();
     strip.update(input({ dashboards: templates, summary: summary({ task: "3kq7x2ma" }) }));
-    const chip = h.querySelector(".strip-chips > .chip-dashboards")!;
+    const chip = h.querySelector(".strip-chips > .fact-group[data-group=links] > .chip-dashboards")!;
     expect(chip.textContent).toBe("Dashboards: Room metrics · Run · Task");
     expect(links(h).map((a) => a.href)).toEqual([
       "https://grafana.example.com/d/agent-room/x?var-room=3kq7x2ma",

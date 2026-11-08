@@ -266,6 +266,9 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 .page-dock[data-status="live"] .status::before { background: var(--success); }
 .page-dock[data-status="reconnecting"] .status::before { background: var(--warning); }
 .page-dock .notice { color: var(--destructive-text); overflow-wrap: anywhere; }
+/* An act notice with nothing to say takes no place: as a third, empty item it pushed the phone's
+   theme button off the edge toward the middle of a space-between row. */
+.dock-meta .act-notice:empty { display: none; }
 @media (max-width: 640px) {
   :root { --hit: 44px; }
   /* Static, not sticky: pinned, the header and the dock took two thirds of an 844 px screen. */
@@ -329,13 +332,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 /* The title strip (strip.ts): rows of the header, on the brand header, so every chip and link
    takes the header's text token rather than the card's. */
-.strip { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.strip { display: grid; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 /* Size carries the title, not weight: 500 at 26 px, tracked in as display type is. */
 .strip-title { font-size: 26px; line-height: 1.2; margin: 0; font-weight: 500; letter-spacing: -0.02em; }
 /* The title links its issue: underlined on hover only, a heading first. */
 .page-header .strip-title a { text-decoration: none; }
 .page-header .strip-title a:hover, .page-header .strip-title a:focus-visible { text-decoration: underline; }
-.strip-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-variant-numeric: tabular-nums; }
+.strip-chips { display: flex; flex-wrap: wrap; gap: 6px 32px; align-items: center; font-variant-numeric: tabular-nums; }
+/* The facts in four clusters (strip.ts's group): the run, its cost, its links, who and what may
+   reach it. Proximity alone groups them, 12 px inside a cluster and 32 px between: a divider
+   would lead every wrapped line. */
+.fact-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 /* A chip's link and the Needs-you pill grow to their half of the 6 px row gap: a full --hit
    would cover the next row's chips. */
 .page-header .chip a { position: relative; }
@@ -350,10 +357,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header .needs-pill::after { content: ""; position: absolute; inset: -3px 0; }
 /* The facts read as one line of text, not a row of buttons: no outline, a middle dot between
    them; the links among them stay underlined. */
-/* Hierarchy by strength: the facts at 68% of the header's ink, the state chips at full. */
-.page-header .chip { color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); background: transparent; border-color: transparent; padding: 0; }
-.page-header .chip-phase, .page-header .chip-run, .page-header .chip-verdict { color: var(--brand-header-foreground); }
-.page-header .chip + .chip::before { content: "·"; margin-right: 6px; opacity: .6; }
+/* Hierarchy by strength: a fact's value at the header's full ink, its name, the run's id, model and
+   effort, and the separators at 68%, so the eye lands on the values. The run's role leads at 700. */
+.page-header .chip { color: var(--brand-header-foreground); background: transparent; border-color: transparent; padding: 0; font-size: 14px; }
+.page-header .fact-label, .page-header .chip-run > :not(.run-role) { color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); }
+.page-header .run-role { font-weight: 700; }
+.page-header .run-id { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .page-header .chip[title] { cursor: help; }
 /* The budget is quiet until it matters: amber from 80 %, red once spent. */
 .page-header .chip-budget[data-level="warn"] { color: var(--warning); font-weight: 700; }
@@ -361,6 +370,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header .chip-budget[data-level="over"] { color: var(--destructive-text); font-weight: 700; }
 .page-header .chip-budget[data-level="over"] .meter-bar::after { background: var(--destructive); }
 .page-header a { color: var(--brand-header-foreground); text-decoration: underline; }
+/* The facts' links underline in a quieter line, full ink on hover: four links on one row read as
+   links without striping it. */
+.page-header .chip a {
+  text-decoration-color: color-mix(in srgb, var(--brand-header-foreground) 40%, var(--brand-header)); text-underline-offset: 3px;
+  transition-property: text-decoration-color; transition-duration: 150ms; transition-timing-function: ease-out;
+}
+.page-header .chip a:hover { text-decoration-color: currentColor; }
 .meter-bar {
   display: inline-block; width: 64px; height: 6px; border-radius: 3px; vertical-align: middle;
   background: color-mix(in srgb, var(--brand-header-foreground) 12%, transparent); position: relative;
@@ -389,6 +405,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: var(--brand-header-foreground); background: transparent;
 }
 .page-header .now-link:hover { box-shadow: none; text-decoration: underline; }
+/* The Now line leads with a label in the NEXT box's voice; what runs reads first, the status and
+   age recede. */
+.now-lead { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); }
+.now-meta { color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); }
 .page-header .now-link { position: relative; }
 .page-header .now-link::after { content: ""; position: absolute; inset: min(0px, (100% - var(--hit)) / 2) 0; }
 .now-hint { font-style: italic; }
@@ -409,6 +429,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .page-header .strip-chips::-webkit-scrollbar { display: none; }
   .page-header .strip-chips > * { flex: none; } /* never squeezed: a short fact would stack a letter a line */
   .page-header .needs-pill { order: -1; }
+  .page-header .strip-chips { column-gap: 20px; }
+  .page-header .fact-group { flex-wrap: nowrap; }
   .strip-title { font-size: 22px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .page-header .waiting { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   /* The clamp's overflow clips an ::after: the button's own box grows instead, the margin
@@ -453,6 +475,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .clip-toggle:hover { box-shadow: none; text-decoration: underline; }
 .bubble .md > :first-child { margin-top: 0; } .bubble .md > :last-child { margin-bottom: 0; }
+/* A brief (chat.ts's briefKind): folded to its kind and first line on the bubble's own surface,
+   the full text under it in the DOM, so copy and find-in-page still reach it. */
+.brief { border-radius: 4px var(--radius-card) var(--radius-card) var(--radius-card); box-shadow: var(--shadow-border); background: var(--muted); }
+.from-agent .brief { background: var(--card); }
+.brief-summary {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 8px 14px; cursor: pointer; list-style: none;
+  font-size: 14px; color: var(--card-foreground); border-radius: inherit;
+}
+.brief-summary::-webkit-details-marker { display: none; }
+.brief-summary::before { content: "▸"; color: var(--placeholder); }
+.brief[open] > .brief-summary::before { content: "▾"; }
+.brief-kind { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+.brief-purpose { flex: 1 1 20ch; min-width: 0; font-weight: 400; overflow-wrap: anywhere; }
+.brief-toggle { font-size: 13px; font-weight: 700; color: var(--link); white-space: nowrap; }
+.brief-summary:hover .brief-toggle { text-decoration: underline; }
+.brief > .bubble { box-shadow: none; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-card) var(--radius-card); }
+/* A phone sets the first line under its kind, not as a narrow column beside it. */
+@media (max-width: 640px) { .brief-purpose { flex-basis: 100%; } }
 .bubble p { margin: .45em 0; }
 
 /* A tool row: one line, the detail behind the toggle */
@@ -530,6 +570,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .fold { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; max-width: var(--log-w); }
 .fold > summary { cursor: pointer; list-style: none; }
 .fold > summary::-webkit-details-marker { display: none; }
+/* The fold's marker is the step folds' (▸, ▾ open), drawn here, so its line never starts with a stray dot. */
+.fold > summary::before { content: "▸"; color: var(--placeholder); margin-right: 6px; }
+.fold[open] > summary::before { content: "▾"; }
 .fold-body { padding-left: 14px; }
 .notes details > summary, .fold > summary, .step-calls > summary, .t-sec { font-variant-numeric: tabular-nums; }
 /* A step (P1): an agent's message, then its calls behind one line, on a rail under it. */
@@ -632,6 +675,25 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .approval-json pre { margin: 4px 0 0; background: var(--muted); padding: 6px; overflow-x: auto; max-height: 16em; border-radius: 6px; }
 .approval-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .approval-decide input { flex: 1 1 12em; min-width: 0; }
+/* A need decided elsewhere or by another control (needs.ts's needCard): the approval card's surface
+   and bar, its heading, its sentence, and one action that is always there. */
+.needs-other li.need { border-radius: calc(var(--radius-control) + 8px); padding: 10px 12px 10px 15px; display: grid; gap: 4px;
+  background: var(--card); color: var(--card-foreground); min-width: 0;
+  box-shadow: var(--shadow-border), inset 3px 0 0 var(--warning); }
+.need-title { margin: 0; font-weight: 700; }
+.need-what, .need-why { margin: 0; font-size: 14px; }
+.need-why { color: var(--muted-foreground); }
+.need-act { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 4px; }
+.need-act button { font-weight: 700; padding: 0 14px; }
+/* The link out reads as the card's button: the primary fill, a full target; its arrow says it leaves. */
+a.need-go {
+  display: inline-flex; align-items: center; min-height: var(--hit); box-sizing: border-box; padding: 0 14px;
+  border-radius: var(--radius-control); background: var(--primary); color: var(--primary-foreground); font-weight: 700; text-decoration: none;
+  transition-property: box-shadow, scale; transition-duration: 150ms; transition-timing-function: ease-out;
+}
+a.need-go:hover { box-shadow: var(--shadow-border-hover); text-decoration: underline; }
+@media (prefers-reduced-motion: no-preference) { a.need-go:active { scale: .96; } }
+.need-where { color: var(--muted-foreground); font-size: 13px; }
 button.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
 /* Deny is a ghost: the destructive word, no outline; hover tints it. */
 button.deny { color: var(--destructive-text); border-color: transparent; background: transparent; }
@@ -803,13 +865,21 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 
 /* The run status (strip.ts): the first line of the strip. Icon and words say it; the accent bar
    is the colour cue, never the only one. Maku weights: 700 for the bold line. */
-.run-status { display: flex; gap: 8px; align-items: baseline; font-size: 16px; line-height: 1.4; font-weight: 700; font-variant-numeric: tabular-nums; padding-left: 10px; border-left: 4px solid var(--brand-header-foreground); }
+/* A pill tinted in the state's tone (--tone), the icon in the tone itself; the words carry it at
+   full ink, so the tint is never the only cue. */
+.run-status {
+  --tone: var(--muted-foreground);
+  display: flex; gap: 8px; align-items: baseline; justify-self: start; max-width: 100%; box-sizing: border-box;
+  font-size: 16px; line-height: 1.4; font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: 3px 14px 3px 10px; border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 14%, var(--brand-header));
+}
 .run-status[hidden] { display: none; }
-.run-status[data-kind="running"] { border-left-color: var(--primary); }
-.run-status[data-kind="waiting-you"], .run-status[data-kind="waiting-other"], .run-status[data-kind="waiting-pr"], .run-status[data-kind="waiting"] { border-left-color: var(--warning); }
-.run-status[data-kind="finished"], .run-status[data-kind="done"] { border-left-color: var(--success); }
-.run-status[data-kind="failed"] { border-left-color: var(--destructive); }
-.run-status-icon { flex: none; align-self: center; display: inline-flex; }
+.run-status[data-kind="running"] { --tone: var(--primary); }
+.run-status[data-kind="waiting-you"], .run-status[data-kind="waiting-other"], .run-status[data-kind="waiting-pr"], .run-status[data-kind="waiting"] { --tone: var(--warning-border); }
+.run-status[data-kind="finished"], .run-status[data-kind="done"] { --tone: var(--success); }
+.run-status[data-kind="failed"] { --tone: var(--destructive); }
+.run-status-icon { flex: none; align-self: center; display: inline-flex; color: var(--tone); }
 .run-status-icon .icon, .row-status-icon .icon { display: block; }
 .icon-dot { fill: currentColor; }
 

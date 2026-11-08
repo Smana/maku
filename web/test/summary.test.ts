@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { mountNeeds } from "../src/needs";
+import { RoomState } from "../src/room-state";
 import { changesSummary, fetchSummary, needsItems, renderNotes, spendWords, type Summary } from "../src/summary";
 
 const base = (): Summary => ({
@@ -24,10 +26,12 @@ const render = (s: Summary) => {
   renderNotes(root, s);
   return root;
 };
+// The summary's needs as the panel draws them (needs.ts), before any route read.
 const needs = (s: Summary) => {
-  const ul = document.createElement("ul");
-  ul.append(...needsItems(s));
-  return ul;
+  const root = document.createElement("section");
+  const panel = mountNeeds(root, { send: () => true }, new RoomState(), () => undefined, { rowFor: () => undefined });
+  panel.setSummary(s);
+  return root.querySelector("ul.needs-other")!;
 };
 
 describe("renderNotes", () => {
@@ -91,7 +95,8 @@ describe("needsItems", () => {
     const s = base();
     s.needsYou = [{ kind: "hold", id: "waiting_human_driver", what: "hand the driver back", url: "https://rooms.example/r/3kq7x2ma" }];
     const block = needs(s);
-    expect(block.textContent).toContain("Hold: hand the driver back");
+    expect(block.textContent).toContain("The task is on hold");
+    expect(block.textContent).toContain("hand the driver back");
     expect(block.textContent).not.toMatch(/Approval|Review and decide/);
     expect(block.querySelector("a")).toBeNull();
   });
@@ -101,7 +106,8 @@ describe("needsItems", () => {
     const s = base();
     s.needsYou = [{ kind: "merge", id: "7", what: "merge PR #7: tick bypass", url: "https://github.com/o/r/pull/7" }];
     const block = needs(s);
-    expect(block.textContent).toContain("Merge: merge PR #7: tick bypass");
+    expect(block.querySelector(".need-title")?.textContent).toBe("Merge the pull request");
+    expect(block.textContent).toContain("merge PR #7: tick bypass");
     expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
     expect(block.textContent).not.toMatch(/Review and decide/);
   });
@@ -123,11 +129,12 @@ describe("needsItems", () => {
     const s = base();
     s.needsYou = [{ kind: "question", id: "3", url: "https://github.com/o/r/issues/3", author: "alice",
       what: "@alice answers the scoper's question by editing issue #3, then a maintainer re-applies `factory/ready`; or a maintainer comments `/factory retry` to proceed on its assumption" }];
-    const items = needsItems(s);
+    const items = [...needs(s).children];
     expect(items).toHaveLength(1);
-    expect(items[0].textContent).toMatch(/^Answer: @alice answers the scoper's question by editing issue #3/);
+    expect(items[0].querySelector(".need-title")?.textContent).toBe("Answer the scoper's question");
+    expect(items[0].querySelector(".need-what")?.textContent).toMatch(/^@alice answers the scoper's question by editing issue #3/);
     expect(items[0].querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/issues/3");
-    expect(items[0].querySelector("a")?.textContent).toBe("open the issue");
+    expect(items[0].querySelector("a")?.textContent).toBe("Answer on the issue ↗");
     expect([...items[0].querySelectorAll("code")].map((c) => c.textContent)).toEqual(["factory/ready", "/factory retry"]);
   });
 
@@ -140,8 +147,10 @@ describe("needsItems", () => {
     const s = base();
     s.needsYou = [approveToMerge];
     const block = needs(s);
-    expect(block.textContent).toMatch(/^Approve: a maintainer approves PR #7/);
-    expect(block.textContent).not.toContain("Merge:");
+    expect(block.querySelector(".need-title")?.textContent).toBe("Approve the pull request");
+    expect(block.querySelector("a.need-go")?.textContent).toBe("Approve the head on the pull request ↗");
+    expect(block.textContent).toContain("the merge gate reads the approval of the head");
+    expect(block.textContent).not.toContain("Merge the pull request");
     expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
   });
 

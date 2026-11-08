@@ -67,12 +67,19 @@ export function plainText(src: string): string {
     .trim();
 }
 
-// nowText is the Now line: what, its status, and how long ago; with no agent present, the
-// last activity, which no longer runs.
-function nowText(n: Latest, t: number, present: boolean): string {
-  const text = plainText(n.text);
-  return present ? [`Now ▸ ${text}`, n.status, ago(n.ts, t)].filter(Boolean).join(" · ")
-    : [`No run · last: ${text}`, ago(n.ts, t)].filter(Boolean).join(" · ");
+// nowParts is the Now line: what, its status, and how long ago; with no agent present, the
+// last activity, which no longer runs. Three parts, so the lead and the meta can recede.
+function nowParts(n: Latest, t: number, present: boolean): [lead: string, text: string, meta: string] {
+  const meta = (present ? [n.status, ago(n.ts, t)] : [ago(n.ts, t)]).filter(Boolean).map((m) => ` · ${m}`).join("");
+  return [present ? "Now ▸ " : "No run · last: ", plainText(n.text), meta];
+}
+
+// setNow fills the Now button with its parts, as text, only when the line changed.
+function setNow(b: HTMLElement, n: Latest, t: number, present: boolean): void {
+  const [lead, text, meta] = nowParts(n, t, present);
+  if (b.textContent === lead + text + meta) return;
+  b.replaceChildren(el("span", { className: "now-lead", textContent: lead }), el("span", { className: "now-text", textContent: text }),
+    el("span", { className: "now-meta", textContent: meta }));
 }
 
 // nowLine says what the agent is doing: the latest activity, a button that takes the
@@ -85,7 +92,8 @@ function nowLine(i: StripInput, t: number, onNow: (seq: number) => void): HTMLEl
   const ran = i.ran || !!i.summary?.status.run;
   const n = present || ran ? i.now : undefined;
   if (n) {
-    const b = el("button", { type: "button", className: "now-link", textContent: nowText(n, t, present) });
+    const b = el("button", { type: "button", className: "now-link" });
+    setNow(b, n, t, present);
     b.dataset.status = present ? n.status : "ended";
     b.onclick = () => onNow(n.seq);
     line.append(b);
@@ -97,12 +105,22 @@ function nowLine(i: StripInput, t: number, onNow: (seq: number) => void): HTMLEl
   return lead ? [line, el("span", { className: "now-hint", textContent: "Start one under Session › Run" })] : [line];
 }
 
-// runText is the run chip: role · id · model · effort · age. The model and effort are the run's own
+// runParts is the run chip: role · id · model · effort · age. The model and effort are the run's own
 // (the present run's or the last's, matched by id), each left out when the log does not say it.
-function runText(st: Summary["status"], t: number): string {
+function runParts(st: Summary["status"], t: number): [cls: string, text: string][] {
   const r = st.run!;
   const m = [st.runModel, st.lastRunModel].find((x) => x?.run === r.id);
-  return [r.role, r.id, m?.model, m?.effort, r.startedAt ? since(r.startedAt, t) : ""].filter(Boolean).join(" · ");
+  const parts: [string, string | undefined][] = [["run-role", r.role], ["run-id", r.id], ["run-model", m?.model], ["run-model", m?.effort],
+    ["run-age", r.startedAt ? since(r.startedAt, t) : ""]];
+  return parts.filter((p): p is [string, string] => !!p[1]);
+}
+
+// setRun fills the run chip: the role leads, the id, model and effort recede. Text only; only when changed.
+function setRun(c: Element, st: Summary["status"], t: number): void {
+  const parts = runParts(st, t);
+  if (c.textContent === parts.map((p) => p[1]).join(" · ")) return;
+  c.replaceChildren(...parts.flatMap(([cls, text], n) => [
+    ...(n ? [el("span", { className: "sep", textContent: " · " })] : []), el("span", { className: cls, textContent: text })]));
 }
 
 // statusOf is the room's run status: the summary's own state, phase and facts, and the viewer's approvals.
@@ -151,6 +169,20 @@ function chip(cls: string, ...body: (string | Node)[]): HTMLElement {
   return c;
 }
 
+// label is a fact's name ("Tokens", "Data:"): it recedes so the value reads first.
+const label = (text: string) => el("span", { className: "fact-label", textContent: text });
+
+// group gathers the facts of one kind (the run, its cost, its links, who and what may reach it),
+// so the row reads as four clusters rather than one dotted sentence. None, no group.
+function group(name: string, items: (HTMLElement | undefined)[]): HTMLElement[] {
+  const kept = items.filter((x): x is HTMLElement => !!x);
+  if (kept.length === 0) return [];
+  const g = el("span", { className: "fact-group" });
+  g.dataset.group = name;
+  g.append(...kept);
+  return [g];
+}
+
 // dashboardsChip is the "Dashboards:" group, filled with the room's ids: the run is the
 // facts' current or last one, else the history's last, else the state frame's last. A chip
 // in the chip row, so a phone's strip keeps its one sideways line. Undefined when no link shows.
@@ -159,7 +191,7 @@ function dashboardsChip(i: StripInput): HTMLElement | undefined {
   const run = s?.status.run?.id || s?.runs?.at(-1)?.id || i.snap?.runs?.at(-1)?.id;
   const links = expandDashboards(i.dashboards, { room: i.roomId, run, task: s?.status.task });
   if (links.length === 0) return undefined;
-  const body: (string | Node)[] = ["Dashboards: "];
+  const body: (string | Node)[] = [label("Dashboards:"), " "];
   links.forEach((l, n) => body.push(...(n ? [" · "] : []), safeLink(l.label, l.url)));
   return chip("chip-dashboards", ...body);
 }
@@ -168,23 +200,28 @@ function dashboardsChip(i: StripInput): HTMLElement | undefined {
 // where the task stands, and the phase is its tooltip, not a chip.
 function chips(i: StripInput, now: number, status: boolean): HTMLElement[] {
   const st = i.summary?.status;
-  const out: HTMLElement[] = [];
+  const run: HTMLElement[] = [], cost: HTMLElement[] = [], links: HTMLElement[] = [], who: HTMLElement[] = [];
   const phase = st?.phase || i.phase;
-  if (phase && !status) out.push(chip("chip-phase", phase));
+  if (phase && !status) run.push(chip("chip-phase", phase));
   // The facts' run outlives it: with no agent present, its age would keep counting.
-  if (st?.run && i.running !== false) out.push(chip("chip-run", runText(st, now)));
+  if (st?.run && i.running !== false) {
+    const c = chip("chip-run");
+    setRun(c, st, now);
+    run.push(c);
+  }
+  if (st?.lastVerdict) run.push(chip("chip-verdict", `last verdict: ${st.lastVerdict.by} ${st.lastVerdict.verdict}`));
   if (st?.budget) {
     const { usedTokens: used, limitTokens: limit } = st.budget;
     const pct = limit > 0 ? Math.round((used / limit) * 100) : 0;
     const bar = el("span", { className: "meter-bar" });
     bar.style.setProperty("--fill", `${Math.min(pct, 100)}%`); // CSSOM: the CSP refuses a style attribute
     bar.setAttribute("aria-hidden", "true");
-    const b = chip("chip-budget", `Tokens ${fmtTokens(used)}${limit > 0 ? ` of ${fmtTokens(limit)}` : ""} `, bar);
+    const b = chip("chip-budget", label("Tokens"), ` ${fmtTokens(used)}${limit > 0 ? ` of ${fmtTokens(limit)}` : ""} `, bar);
     if (limit > 0) {
       b.title = `${pct} % of this task's token budget: the task stops when it is spent`;
       if (used >= limit) b.dataset.level = "over"; else if (used >= limit * 0.8) b.dataset.level = "warn";
     }
-    out.push(b);
+    cost.push(b);
   }
   // CD23: the dollars, in the room's own words — a figure only once it is the task's last, else the
   // state that stands in its place (summary.ts's spendWords, which reads an absent spend as the
@@ -193,34 +230,32 @@ function chips(i: StripInput, now: number, status: boolean): HTMLElement[] {
   if (st && spend) {
     const c = chip("chip-spend", spend);
     if (spend === "spend settling") c.title = "the factory prices a finished task's runs again, after the settle window";
-    out.push(c);
+    cost.push(c);
   }
-  if (st?.pr) out.push(chip("chip-pr", safeLink(`PR #${st.pr.number}`, st.pr.url)));
+  if (st?.pr) links.push(chip("chip-pr", safeLink(`PR #${st.pr.number}`, st.pr.url)));
   // The title links the issue when it names it; an issue with no title keeps its own link here.
-  if (st?.issue && !st.issue.title) out.push(chip("chip-issue", safeLink(`Issue #${st.issue.number}`, st.issue.url)));
-  if (st?.lastVerdict) out.push(chip("chip-verdict", `last verdict: ${st.lastVerdict.by} ${st.lastVerdict.verdict}`));
+  if (st?.issue && !st.issue.title) links.push(chip("chip-issue", safeLink(`Issue #${st.issue.number}`, st.issue.url)));
+  links.push(...[dashboardsChip(i)].filter((x): x is HTMLElement => !!x));
   if (i.snap) {
-    const c = chip("chip-class", `Data: ${i.snap.dataClass}`);
+    const c = chip("chip-class", label("Data:"), ` ${i.snap.dataClass}`);
     if (Object.hasOwn(DATA_CLASS, i.snap.dataClass)) c.title = DATA_CLASS[i.snap.dataClass];
-    out.push(c);
+    who.push(c);
   }
   if (i.driver) {
     const yours = i.snap?.you.principal === i.driver;
-    const who = yours ? "you" : i.driver === "system:factory" ? "the factory" : shortPrincipal(i.driver);
-    const d = chip("chip-driver", `Driven by ${who}`);
+    const name = yours ? "you" : i.driver === "system:factory" ? "the factory" : shortPrincipal(i.driver);
+    const d = chip("chip-driver", label("Driven by"), ` ${name}`);
     d.title = `${yours ? "You" : i.driver}: the one who may steer or interrupt the running run`;
-    out.push(d);
+    who.push(d);
   }
   // A watcher who cannot approve can only read: the one role worth saying.
   const you = i.snap?.you;
   if (you && (you.role === "watcher" || !you.role) && !you.approver) {
     const c = chip("chip-you", "View only");
     c.title = `Your role here: ${you.role || "none"}`;
-    out.push(c);
+    who.push(c);
   }
-  const dash = dashboardsChip(i);
-  if (dash) out.push(dash);
-  return out;
+  return [...group("run", run), ...group("cost", cost), ...group("links", links), ...group("who", who)];
 }
 
 // sealedText is the closed line: who closed the room and when, else what sealed it.
@@ -277,13 +312,12 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
       const status = statusOf(i, t);
       const headKey = JSON.stringify([rest, !!status.kind]);
       if (headKey !== shown.head) {
-        for (const c of [...row.querySelectorAll(":scope > .chip")]) c.remove();
+        for (const c of [...row.querySelectorAll(":scope > .fact-group")]) c.remove();
         row.prepend(...chips(i, t, !!status.kind));
         shown.head = headKey;
       } else if (st?.run) {
         const run = head.querySelector(".chip-run");
-        const r = runText(st, t);
-        if (run && run.textContent !== r) run.textContent = r;
+        if (run) setRun(run, st, t);
       }
       if (needs > 0) {
         const p = `Needs you · ${needs}`;
@@ -320,9 +354,8 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         nowRow.replaceChildren(...nowLine(i, t, (seq) => onNow(seq)));
         shown.now = nowKey;
       } else if (latest) {
-        const b = nowRow.querySelector(".now-link");
-        const n = nowText(latest, t, present);
-        if (b && b.textContent !== n) b.textContent = n;
+        const b = nowRow.querySelector<HTMLElement>(".now-link");
+        if (b) setNow(b, latest, t, present);
       }
       const tailKey = JSON.stringify([sealedBy, i.sealed, i.snap?.you.principal, st?.phase, i.phase, st?.reason, st?.next, i.summary?.step, pend?.total, pend?.mine]);
       if (tailKey !== shown.tail) {

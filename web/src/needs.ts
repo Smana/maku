@@ -15,25 +15,81 @@ import { focusRow } from "./chat";
 import type { Snapshot } from "./conn";
 import { act, approvalAnchor, approvalCard, button, el, keyed, named, type Sender } from "./controls";
 import type { RoomState } from "./room-state";
-import { inlineCode, needsItems, safeLink, type Summary } from "./summary";
+import { inlineCode, needsItems, type Summary } from "./summary";
 
 // routeEvery is how often the panel asks the route. refresh runs on every frame the page draws — the
 // ticker's one a second, and each event a replay delivers — and one read is a scan of every room the
 // caller may read, so a burst of frames costs one read, not one each.
 const routeEvery = 5000;
 
-// needList is one item the route lists: the broker's own kind, its one sentence (a need's what names a
-// command, so its backticked spans are code), and the action's label linked where the action happens —
-// https only, as every link on this page. The route ordered the items (CD21): this list never reorders
-// them.
-function needList(n: NeedItem): HTMLLIElement {
+// NeedHands are the page's hands a need may take the reader to: the session's driver group or its
+// close button, and the coordination panel. The preview has none: a need then names where to go.
+export interface NeedHands {
+  openSession?(to: "driver" | "close"): void;
+  focusCoordination?(): void;
+}
+
+// What each kind asks, in a heading's words; the item's own sentence follows it.
+const NEED_TITLE: Record<string, string> = {
+  plan_confirmation: "Confirm the proposed plan",
+  question: "Answer the scoper's question",
+  merge: "Merge the pull request",
+  review: "Review the pull request",
+  failed_check: "A check needs a re-run",
+  recovery: "Retry the task, or close the room",
+  hold: "The task is on hold",
+};
+
+const isHttps = (url?: string) => { try { return !!url && new URL(url).protocol === "https:"; } catch { return false; } };
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const primary = (b: HTMLButtonElement) => { b.classList.add("primary"); return b; };
+
+// outLink is the action done elsewhere (GitHub): a button-shaped link, marked as opening a new tab.
+// Not https: the label and the URL as text, as every link on this page.
+function outLink(label: string, url: string): Node {
+  if (!isHttps(url)) return document.createTextNode(`${cap(label)} (${url})`);
+  const a = el("a", { className: "need-go", href: url, rel: "noopener noreferrer", target: "_blank", textContent: `${cap(label)} ↗` });
+  a.setAttribute("aria-label", `${cap(label)} (opens in a new tab)`);
+  return a;
+}
+
+// needCard is one item the route lists, as a card that always ends in its one action: the control
+// on this page when the room has one (hand the driver back, close the room, the coordination panel),
+// else a link to where it is done, with a line saying the room has no button for it. The route
+// ordered the items (CD21): this list never reorders them.
+function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }): HTMLLIElement {
   const li = el("li", { className: "need" });
   li.dataset.kind = n.kind;
-  li.append(`${n.kind}: `);
-  if (n.what) li.append(...inlineCode(n.what), " · ");
-  const label = n.action?.label || n.what;
-  const url = n.action?.url || n.url;
-  li.append(url ? safeLink(label, url) : document.createTextNode(label));
+  const title = n.kind === "merge" && n.approve ? "Approve the pull request" : NEED_TITLE[n.kind] ?? cap(n.kind.replace(/_/g, " "));
+  const what = el("p", { className: "need-what" });
+  what.append(...inlineCode(n.what));
+  li.append(el("p", { className: "need-title", textContent: title }), what);
+  if (n.why) li.append(el("p", { className: "need-why", textContent: `Why: ${n.why}` }));
+  const bar = el("div", { className: "need-act" });
+  const where = (text: string) => el("span", { className: "need-where", textContent: text });
+  const a = n.action;
+  const label = a?.label || n.what;
+  if (a?.kind === "release") {
+    // A hold the driver releases: one press here, when the viewer drives; else the Driver group.
+    if (/wait for the other run/.test(label)) bar.append(where("Nothing to do here: the task starts when the other run in the room ends."));
+    else if (ctx.release) bar.append(primary(button("Hand the driver back to the factory", "need-release", ctx.release)));
+    else if (ctx.hands.openSession) bar.append(button("Open Session › Driver", "need-driver", () => ctx.hands.openSession!("driver")), where(cap(label) + ", from the Driver group."));
+    else bar.append(where(cap(label) + ", under Session › Driver."));
+  } else if (a?.kind === "decide" && a.url?.endsWith("#coordination")) {
+    const go = cap(label.replace(/ in the parent room$/, ""));
+    bar.append(ctx.hands.focusCoordination ? primary(button(go, "need-coordination", () => ctx.hands.focusCoordination!())) : where(`${go}, in the coordination panel.`));
+  } else if (n.kind === "recovery") {
+    // A retry is a comment on the issue; closing is the room's.
+    if (isHttps(n.url) && n.url !== a?.url) bar.append(outLink(n.issue ? `retry: comment /factory retry on issue #${n.issue}` : "retry on the issue", n.url!));
+    bar.append(ctx.hands.openSession ? button("Close the room…", "need-close", () => ctx.hands.openSession!("close")) : where("Close the room under Session › Room."));
+  } else {
+    const url = a?.url || n.url;
+    bar.append(url ? outLink(label, url) : where(cap(label)));
+    if (url && isHttps(url)) bar.append(where(n.kind === "merge" && n.approve
+      ? "On GitHub: the merge gate reads the approval of the head, so the room has no button for it."
+      : "On GitHub: the room has no button for it."));
+  }
+  li.append(bar);
   return li;
 }
 
@@ -51,7 +107,7 @@ function unreadLine(rooms: string[]): string {
 // room, and no reader leaves the summary's items as the list (the preview, which has no broker).
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined,
-  opts: { needs?: () => Promise<NeedsPage> } = {}):
+  opts: { needs?: () => Promise<NeedsPage>; hands?: NeedHands } = {}):
   { refresh(): Promise<void>; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
@@ -69,12 +125,16 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   let others = 0;
   // The list under the cards: the route's items once a read answered (listed), the summary's until
   // then (summarised), and two lines — why a read failed, and the rooms the route could not read.
-  let listed: HTMLLIElement[] | undefined;
-  let summarised: HTMLLIElement[] = [];
   let unread: string[] = [];
   let stale = "";
   let reading: Promise<void> | undefined; // one read at a time
   let readAt = 0; // when the last read started, for routeEvery
+  // A hold's one press: the driver hands the token back to the factory, as Session › Driver's give does.
+  const ctx = () => ({ hands: opts.hands ?? {},
+    release: you()?.driver ? () => { act(conn, state, { kind: "driver_give", to: "system:factory" }); } : undefined });
+  let listedItems: NeedItem[] | undefined;
+  let summarisedItems: NeedItem[] = [];
+  const cards = new Map<string, HTMLLIElement>();
 
   const card = (a: Approval, st: { can: boolean; text: string }) => {
     const li = approvalCard(a, "li");
@@ -149,11 +209,25 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     // line is the panel's, and it is never suppressed, so an unreadable list cannot pass for a quiet
     // one. The heading stays the count's — with nothing to count it reads "Waiting for an approver",
     // never "Needs you" over a single warning.
-    const items = listed ?? summarised;
+    // A card is rebuilt only when its item or the viewer's hands change: a frame a second would
+    // otherwise drop the keyboard focus on its button.
+    const c = ctx();
+    const items = (listedItems ?? summarisedItems).map((n) => {
+      const key = JSON.stringify([n, !!c.release]);
+      let li = cards.get(key);
+      if (!li) cards.set(key, li = needCard(n, c));
+      return li;
+    });
+    for (const k of [...cards.keys()]) if (!items.includes(cards.get(k)!)) cards.delete(k);
+    const note = (cls: string, text: string) => {
+      const kept = other.querySelector<HTMLLIElement>(`:scope > li.${cls}`);
+      return kept?.textContent === text ? kept : el("li", { className: cls, textContent: text });
+    };
     const notes: HTMLLIElement[] = [];
-    if (stale) notes.push(el("li", { className: "needs-stale", textContent: stale }));
-    if (unread.length) notes.push(el("li", { className: "needs-unread", textContent: unreadLine(unread) }));
-    other.replaceChildren(...items, ...notes);
+    if (stale) notes.push(note("needs-stale", stale));
+    if (unread.length) notes.push(note("needs-unread", unreadLine(unread)));
+    const next = [...items, ...notes];
+    if (next.length !== other.children.length || next.some((e, i) => other.children[i] !== e)) other.replaceChildren(...next);
     others = items.length;
     const show = items.length + pending.length + unread.length + (stale ? 1 : 0) > 0;
     // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
@@ -172,7 +246,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       .then((page) => {
         // Deciding is the cards': the route lists an approval for every door, and a second one here
         // would not know four-eyes or the policy.
-        listed = (page.items ?? []).filter((n) => n.kind !== "approval").map(needList);
+        listedItems = (page.items ?? []).filter((n) => n.kind !== "approval");
         unread = page.unread ?? [];
         stale = "";
       })
@@ -197,7 +271,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       return read();
     },
     setSummary(s: Summary): void {
-      summarised = needsItems(s);
+      summarisedItems = needsItems(s);
       render();
     },
     // count is what needs this viewer: the approvals it may decide, then merges, answers and holds.
