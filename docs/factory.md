@@ -1280,7 +1280,7 @@ sequenceDiagram
 One read runs per repository at a time; a failed one is tried again after a minute, a rate-limited
 one after a backoff doubling from 2 to 30 minutes, and either logs `policy evidence unread` with its
 `reason` (`rate_limited`, `deadline_exceeded`, `unreadable`). The page then shows the older evidence
-with its age and that reason; `agent_factory_policy_evidence_age_seconds` is its age on the leader.
+with its age and that reason; `maku_factory_policy_evidence_age_seconds` is its age on the leader.
 A class still pending offers no promotion, and the broker refuses one `evidence_pending`.
 
 Each class's evidence:
