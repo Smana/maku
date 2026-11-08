@@ -297,6 +297,22 @@ func TestCoordinationNeedsAndRowsHideRestrictedChild(t *testing.T) {
 	}
 }
 
+// A parent's row and its brief each read the core view once: the family and the needs share it.
+func TestCoordinationParentReadsTheViewOnce(t *testing.T) {
+	for _, path := range []string{"/api/rooms", "/api/rooms/" + roomID + "/brief"} {
+		t.Run(path, func(t *testing.T) {
+			f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: coordFamily()}}
+			e := setup(t, coordOn(f, coordWorld()))
+			if code, body := get(t, e, path, as("alice", false)); code != http.StatusOK || !strings.Contains(body, "contract") {
+				t.Fatalf("%d %s", code, body)
+			}
+			if f.reads != 1 {
+				t.Fatalf("the parent's view was read %d times, want 1", f.reads)
+			}
+		})
+	}
+}
+
 // The room list carries a parent's compact family, filtered as the summary is.
 func TestRoomRowsCarryTheFilteredFamily(t *testing.T) {
 	f := &fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: coordFamily()}}
