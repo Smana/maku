@@ -101,16 +101,37 @@ async function read<T>(path: string, get: typeof fetch): Promise<T> {
   return (await r.json()) as T;
 }
 
-function frame(app: HTMLElement, title: string, theme?: ThemeController): HTMLElement {
+// The settings' sections, as tabs: every settings page and approval memory carry the same row.
+const SECTIONS: [href: string, label: string][] = [["/", "Rooms"], ["/settings", "Settings"], ["/settings/merge-policies", "Merge policies"],
+  ["/settings/evidence", "Evidence"], ["/settings/approval-memory", "Approval memory"]];
+export type Section = (typeof SECTIONS)[number][0];
+
+// settingsNav is the tab row, the section the page belongs to marked aria-current="page": one
+// state the screen reader and the stylesheet read alike.
+export function settingsNav(current: Section): HTMLElement {
+  const nav = el("nav", undefined, "settings-nav");
+  nav.setAttribute("aria-label", "Sections");
+  for (const [href, label] of SECTIONS) {
+    const a = link(href, label);
+    if (href === current) a.setAttribute("aria-current", "page");
+    nav.append(a);
+  }
+  return nav;
+}
+
+// settingsFrame is a settings page's chrome: the header (the brand, the page's title, the theme), the
+// tabs, then the page's own main, which it returns.
+export function settingsFrame(app: HTMLElement, title: string, section: Section, theme?: ThemeController): HTMLElement {
   const header = el("header", undefined, "page-header");
   mountBrand(header);
   header.append(el("h1", title, "page-title"));
   if (theme) mountThemeButton(header, theme);
-  const crumbs = el("nav", undefined, "settings-nav");
-  crumbs.append(link("/", "Rooms"), link("/settings", "Settings"), link("/settings/merge-policies", "Merge policies"), link("/settings/evidence", "Evidence"),
-    link("/settings/approval-memory", "Approval memory"));
   const main = el("main", undefined, "settings");
-  app.replaceChildren(header, crumbs, main);
+  const nav = settingsNav(section);
+  app.replaceChildren(header, nav, main);
+  // A phone's row scrolls sideways: the current tab starts in view, never past the edge.
+  const cur = nav.querySelector<HTMLElement>('[aria-current="page"]');
+  if (cur && cur.offsetLeft + cur.offsetWidth > nav.clientWidth) nav.scrollLeft = cur.offsetLeft + cur.offsetWidth - nav.clientWidth + 24; // clear of the fade
   return main;
 }
 
@@ -153,7 +174,7 @@ export async function mountSettings(app: HTMLElement, path: string, get: typeof 
   if (repo) return repositoryPage(app, `${decodeURIComponent(repo[1])}/${decodeURIComponent(repo[2])}`, get, theme);
   if (path === "/settings/merge-policies") return repositories(app, get, theme);
   if (path === "/settings/evidence") return evidencePage(app, get, theme);
-  const main = frame(app, "Settings", theme);
+  const main = settingsFrame(app, "Settings", "/settings", theme);
   const ul = el("ul");
   for (const [href, text] of [["/settings/merge-policies", "Merge policies: each repository's classes, their evidence and promotion"],
     ["/settings/evidence", "Evidence: every class's promotion evidence"]]) {
@@ -165,7 +186,7 @@ export async function mountSettings(app: HTMLElement, path: string, get: typeof 
 }
 
 async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
-  const main = frame(app, "Merge policies", theme);
+  const main = settingsFrame(app, "Merge policies", "/settings/merge-policies", theme);
   try {
     const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
     if (repositories.length === 0) {
@@ -183,7 +204,7 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
 }
 
 async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
-  const main = frame(app, "Evidence", theme);
+  const main = settingsFrame(app, "Evidence", "/settings/evidence", theme);
   try {
     const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
     const rows: (string | Node)[][] = [];
@@ -199,7 +220,7 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
 }
 
 async function repositoryPage(app: HTMLElement, repository: string, get: typeof fetch, theme?: ThemeController) {
-  const main = frame(app, repository, theme);
+  const main = settingsFrame(app, repository, "/settings/merge-policies", theme);
   let page: RepositoryPage;
   try {
     page = await read<RepositoryPage>(`/api/policy/repositories/${repository}`, get);
@@ -346,7 +367,7 @@ function labelled2(label: string, input: HTMLElement): HTMLLabelElement {
 }
 
 async function timelinePage(app: HTMLElement, repository: string, pr: number, get: typeof fetch, theme?: ThemeController) {
-  const main = frame(app, `${repository} #${pr}: decisions`, theme);
+  const main = settingsFrame(app, `${repository} #${pr}: decisions`, "/settings/merge-policies", theme);
   try {
     const t = await read<Timeline>(`/api/policy/repositories/${repository}/decisions/${pr}`, get);
     main.append(link(`/settings/merge-policies/${repository}`, `Back to ${repository}`));

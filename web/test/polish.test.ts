@@ -211,6 +211,16 @@ describe("layout", () => {
   it("keeps Send beside the text on a phone rather than a full-width row under it", () => {
     expect(phone).not.toMatch(/\.composer-write\s*{[^}]*flex-direction:\s*column/);
   });
+  it("draws the settings tabs as tabs: the current one a primary bar and full ink, never a bolder weight", () => {
+    const tab = decl(outside, ".settings-nav a");
+    expect(tab).toMatch(/text-decoration:\s*none/);
+    expect(tab).toMatch(/min-height:\s*var\(--hit\)/);
+    expect(tab).toMatch(/transition-property:\s*color;/);
+    expect(decl(outside, '.settings-nav a[aria-current="page"]')).not.toMatch(/font-weight/);
+    expect(decl(outside, '.settings-nav a[aria-current="page"]::after')).toMatch(/background:\s*var\(--primary\)/);
+    expect(decl(outside, ".settings-nav a:focus-visible")).toMatch(/outline:\s*2px solid var\(--ring\)/);
+    expect(phone).toMatch(/\.settings-nav\s*{[^}]*overflow-x:\s*auto/);
+  });
   it("takes an empty act notice out of the dock's row, so the theme button keeps its edge", () => {
     expect(decl(outside, ".dock-meta .act-notice:empty")).toMatch(/display:\s*none/);
   });

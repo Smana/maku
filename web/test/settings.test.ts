@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { evidenceLine, explain, isSettings, ladderLine, mountSettings, type Evidence, type RepositoryPage } from "../src/settings";
+import { evidenceLine, explain, isSettings, ladderLine, mountSettings, settingsFrame, type Evidence, type RepositoryPage } from "../src/settings";
 import { fileYAML, setLeaf, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
@@ -88,6 +88,26 @@ describe("the repository page", () => {
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
     const nav = [...app.querySelectorAll("nav.settings-nav a")].map((a) => a.getAttribute("href"));
     expect(nav).toEqual(["/", "/settings", "/settings/merge-policies", "/settings/evidence", "/settings/approval-memory"]);
+  });
+
+  it("marks the page's section as the current tab, one tab at a time", async () => {
+    const current = async (path: string) => {
+      const app = document.createElement("div");
+      await mountSettings(app, path, fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/repositories": { repositories: [] } }));
+      return [...app.querySelectorAll('nav.settings-nav a[aria-current="page"]')].map((a) => a.textContent);
+    };
+    expect(await current("/settings")).toEqual(["Settings"]);
+    expect(await current("/settings/merge-policies")).toEqual(["Merge policies"]);
+    expect(await current("/settings/merge-policies/Smana/cloud-native-ref")).toEqual(["Merge policies"]);
+  });
+
+  it("frames approval memory with the same header and tabs, its own tab current", () => {
+    const app = document.createElement("div");
+    const main = settingsFrame(app, "Approval memory", "/settings/approval-memory");
+    expect(app.querySelector("header.page-header h1")?.textContent).toBe("Approval memory");
+    expect(app.querySelector("nav.settings-nav")?.getAttribute("aria-label")).toBe("Sections");
+    expect(app.querySelector('nav.settings-nav a[aria-current="page"]')?.getAttribute("href")).toBe("/settings/approval-memory");
+    expect(main.parentElement).toBe(app);
   });
 
   it("offers a reader no button: the broker would refuse it", async () => {

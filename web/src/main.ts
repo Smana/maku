@@ -3,7 +3,7 @@
 import { mountApprovalMemory } from "./approval-memory";
 import { fetchDashboards } from "./dashboards";
 import { mountRoom } from "./room";
-import { isSettings, mountSettings } from "./settings";
+import { isSettings, mountSettings, settingsFrame } from "./settings";
 import { initTheme } from "./theme";
 import { listRooms } from "./view";
 
@@ -15,6 +15,7 @@ const theme = initTheme();
 
 const m = location.pathname.match(/^\/r\/([a-z2-7]{8})$/);
 if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) });
-else if (location.pathname === "/settings/approval-memory") mountApprovalMemory(app, fetch);
+// Approval memory is a settings section: the same header and tabs, its own page in main.
+else if (location.pathname === "/settings/approval-memory") mountApprovalMemory(settingsFrame(app, "Approval memory", "/settings/approval-memory", theme), fetch);
 else if (isSettings(location.pathname)) void mountSettings(app, location.pathname, fetch, theme);
 else void listRooms(app, fetch, {}, theme);
