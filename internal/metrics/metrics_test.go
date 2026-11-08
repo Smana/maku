@@ -654,3 +654,24 @@ func TestSlackCoordinationProjectionCounter(t *testing.T) {
 		t.Fatal("an unbounded value reached a label")
 	}
 }
+
+// Stage 6: a promotion record counts by repository, class and a closed change; ids never reach a label.
+func TestPolicyChangeIsBounded(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.PolicyChange(ctx, "Smana/cloud-native-ref", "docs-links", "promotion_requested")
+	s.PolicyChange(ctx, "Smana/cloud-native-ref", "docs-links", "promotion:aaaaaaaa")
+	body := scrape(t, exp.Handler())
+	if !strings.Contains(body, `maku_rooms_policy_changes_total{change="promotion_requested",class="docs-links",repository="Smana/cloud-native-ref"} 1`+"\n") ||
+		strings.Contains(body, "aaaaaaaa") {
+		t.Fatalf("%s", body)
+	}
+}

@@ -39,6 +39,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/demo"
+	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
@@ -48,6 +49,7 @@ import (
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/meter"
+	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -273,14 +275,20 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// v2 D7: a repository is acted on only while its default branch names this factory.
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names(), Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
-	// Stages 1 and 3 (merge policy): observed and compared, then each merge decision decided again
-	// under it; neither decides anything.
+	// Stages 1, 3 and 5 (merge policy): observed and compared, each merge decision decided again
+	// under it, and its approval subset's grants consulted there. Stage 4: a cut-over repository
+	// is decided on it, and every reader reads its classes from it, aged out at the fence's window.
 	var snapshots func(string) (mergepolicy.Snapshot, bool)
+	var authority func(string) (mergepolicy.Snapshot, error)
 	if cfg.PolicyManagement.Read {
-		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now}
+		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now, Stale: fenceStale}
 		fenced.OnFile = w.Observe
-		if cfg.PolicyManagement.DualEvaluation {
+		if cfg.PolicyManagement.DualEvaluation || cfg.PolicyManagement.ApprovalMemory {
 			snapshots = w.Snapshot
+		}
+		if cfg.PolicyManagement.RepositoryAuthority {
+			cfg.SetClassSource(w.Classes)
+			authority = w.Authority
 		}
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
@@ -306,11 +314,14 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
 	}
 	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
-		Policy: snapshots, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
+		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage: triage.Classify{Cfg: cfg, C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
 		Trace: sink, Costs: costs}
+	if cfg.PolicyManagement.ApprovalMemory { // stage 5: grants read from the broker, never cached
+		rec.Grants = broker
+	}
 	if cfg.AnyFlux() {
 		// Uncached: the reader serves a few reads per monitor pass, and a cache would start an
 		// informer per Flux kind (and need watch, which the ClusterRole does not grant).
@@ -387,7 +398,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Coordination (v4 MR16): Prerequisites stays nil because neither capability it must prove,
 	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
 	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
-	// confirms only.
+	// confirms only. coordination.Prerequisites composes the two once class authority has a port;
+	// hardening.Evaluator, its second half, answers false through stage H4 (hardening design).
 	// Each repository's checks and filing go through that repository's own App connection.
 	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now, Metrics: m,
 		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
@@ -403,6 +415,24 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return nil
 		}}
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
+	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
+	if cfg.PolicyManagement.Promotion {
+		ev := &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return evidenceSource{c.gh}, true
+		}}
+		apiSrv.Evidence = ev
+		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return commentReader(c.gh), true
+		}}}
+	}
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
 	if err != nil {
@@ -684,4 +714,36 @@ func (p *pinger) tick() (<-chan time.Time, func()) {
 	}
 	t := time.NewTicker(p.every)
 	return t.C, t.Stop
+}
+
+// evidenceSource is a repository's connection as the promotion evidence reads it: the default
+// branch is RepositoryInfo's.
+type evidenceSource struct{ *forge.GitHub }
+
+func (e evidenceSource) DefaultBranch(ctx context.Context) (string, error) {
+	info, err := e.RepositoryInfo(ctx)
+	return info.DefaultBranch, err
+}
+
+// commentReader is a pull request's 50 newest comments as the decision timeline reads them.
+func commentReader(gh *forge.GitHub) policyview.CommentReader {
+	return func(ctx context.Context, pr int) ([]policyview.Comment, error) {
+		cs, err := gh.RecentComments(ctx, pr)
+		out := make([]policyview.Comment, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, policyview.Comment{ID: c.ID, Author: c.Author, Body: c.Body, At: c.At})
+		}
+		return out, err
+	}
+}
+
+// policyEditor is the policy view as the API serves it, documents as any (api.PolicyEditor).
+type policyEditor struct{ *policyview.Service }
+
+func (e policyEditor) Preview(ctx context.Context, repository, file string) (any, error) {
+	return e.Service.Preview(ctx, repository, file)
+}
+
+func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {
+	return e.Service.Timeline(ctx, repository, pr)
 }

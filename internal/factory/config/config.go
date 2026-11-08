@@ -149,6 +149,8 @@ type Config struct {
 	Sandbox   Sandbox             `json:"sandbox,omitzero"`
 	// Coordination is the multi-repository coordination switch (v4 MR16): off unless set.
 	Coordination Coordination `json:"coordination,omitzero"`
+	// Hardening is the untrusted-input hardening track (hardening design): off unless set.
+	Hardening Hardening `json:"hardening,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
@@ -168,6 +170,8 @@ type Config struct {
 	// Warnings are sentences about a file that loads and that a later release refuses, for the
 	// binary to log: Parse has no logger.
 	Warnings []string `json:"-"`
+	// classSource is a cut-over repository's classes (SetClassSource).
+	classSource func(repository string) (map[string]Class, bool)
 }
 
 // The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and
@@ -217,10 +221,10 @@ func (c *Coordination) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// coordinationOnce refuses a coordination block, or a key inside it, written twice: YAMLToJSON
-// keeps the last silently, and a switch must never read differently from what its author sees.
-// The rest of the file keeps its last-key-wins reading.
-func coordinationOnce(raw []byte) error {
+// blockOnce refuses a switch block (coordination, hardening), or a key inside it, written twice:
+// YAMLToJSON keeps the last silently, and a switch must never read differently from what its author
+// sees. The rest of the file keeps its last-key-wins reading.
+func blockOnce(raw []byte, name string) error {
 	var doc yamlv3.Node
 	if err := yamlv3.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yamlv3.MappingNode {
 		return nil //nolint:nilerr // YAMLToJSON reports the malformed file; this check reads only a well-formed one
@@ -228,11 +232,11 @@ func coordinationOnce(raw []byte) error {
 	top := doc.Content[0].Content
 	var block *yamlv3.Node
 	for i := 0; i+1 < len(top); i += 2 {
-		if top[i].Value != "coordination" {
+		if top[i].Value != name {
 			continue
 		}
 		if block != nil {
-			return errors.New("coordination is written twice")
+			return fmt.Errorf("%s is written twice", name)
 		}
 		block = top[i+1]
 	}
@@ -243,7 +247,7 @@ func coordinationOnce(raw []byte) error {
 	for i := 0; i+1 < len(block.Content); i += 2 {
 		k := block.Content[i].Value
 		if seen[k] {
-			return fmt.Errorf("coordination.%s is written twice", k)
+			return fmt.Errorf("%s.%s is written twice", name, k)
 		}
 		seen[k] = true
 	}
@@ -311,6 +315,9 @@ type Repository struct {
 	Merge        Merge            `json:"merge"`
 	Schedules    []Schedule       `json:"schedules,omitempty"`
 	Checks       Checks           `json:"checks,omitzero"`
+	// ClassAuthority is central (the default) or repository: its classes are then its
+	// .github/agent-factory.yaml's, with policyManagement.repositoryAuthority on (stage 4, MP15).
+	ClassAuthority string `json:"classAuthority,omitempty"`
 }
 
 // TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
@@ -351,6 +358,9 @@ func (r *Repository) IsMaintainer(login string) bool {
 // NeedsMerger reports whether a class of the repository is live, in shadow or monitored: a
 // monitor reads main's checks and writes labels through the merger App.
 func (r *Repository) NeedsMerger() bool {
+	if r.ClassAuthority == ClassAuthorityRepository {
+		return true // its classes arrive at run time, from its file
+	}
 	for _, cl := range r.Classes {
 		if cl.Live || cl.Shadow || cl.Monitor != nil {
 			return true
@@ -362,6 +372,9 @@ func (r *Repository) NeedsMerger() bool {
 // AnyMonitored reports whether a class of the repository declares a monitor, whose outcome
 // labels the merger writes in shadow too (merge gate R30).
 func (r *Repository) AnyMonitored() bool {
+	if r.ClassAuthority == ClassAuthorityRepository {
+		return true
+	}
 	for _, cl := range r.Classes {
 		if cl.Monitor != nil {
 			return true
@@ -384,9 +397,25 @@ func (r *Repository) AnyLive() bool {
 // as the one entry Parse would have made of it.
 func (c *Config) Repos() []Repository {
 	if len(c.Repositories) > 0 || reflect.ValueOf(c.legacyRepository()).IsZero() {
-		return c.Repositories
+		return c.withSource(c.Repositories)
 	}
 	return []Repository{c.legacyRepository()}
+}
+
+// withSource is rs with each cut-over repository's classes read from the source, on a copy: the
+// config itself is never written. Without a cut-over repository it is rs.
+func (c *Config) withSource(rs []Repository) []Repository {
+	if c.classSource == nil || !c.PolicyManagement.RepositoryAuthority ||
+		!slices.ContainsFunc(rs, func(r Repository) bool { return r.ClassAuthority == ClassAuthorityRepository }) {
+		return rs
+	}
+	out := slices.Clone(rs)
+	for i := range out {
+		if out[i].ClassAuthority == ClassAuthorityRepository {
+			out[i].Classes, _ = c.classSource(out[i].Name)
+		}
+	}
+	return out
 }
 
 func (c *Config) legacyRepository() Repository {
@@ -443,6 +472,9 @@ func (c *Config) NeedsMerger() bool {
 // Flux's objects on its cluster (MC7). None: no reader is built and nothing is read.
 func (c *Config) AnyFlux() bool {
 	for _, r := range c.Repos() {
+		if r.ClassAuthority == ClassAuthorityRepository {
+			return true // its file may declare monitor.flux
+		}
 		for _, cl := range r.Classes {
 			if cl.Monitor != nil && cl.Monitor.Flux != nil {
 				return true
@@ -1255,8 +1287,10 @@ func Load(path string) (*Config, error) {
 
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
 func Parse(raw []byte) (*Config, error) {
-	if err := coordinationOnce(raw); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
+	for _, block := range []string{"coordination", "hardening"} {
+		if err := blockOnce(raw, block); err != nil {
+			return nil, fmt.Errorf("config: %w", err)
+		}
 	}
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
@@ -1296,6 +1330,9 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	c.Scoper = c.Scoper.WithDefaults()
 	c.Coordination.ApplyDefaults()
+	if c.Hardening.Mode == "" { // the block is absent: its UnmarshalJSON applied them otherwise
+		c.Hardening.ApplyDefaults()
+	}
 	if len(c.Meter.Prices) > 0 { // without prices, a tier keeps its token cap (one release of compatibility)
 		for name, t := range c.Tiers {
 			if t.RunUSD == 0 {
@@ -1416,6 +1453,7 @@ func (c *Config) Validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	c.Coordination.Validate(bad)
+	c.validateHardening(bad)
 	rs := c.Repos()
 	switch {
 	case len(rs) == 0:
@@ -1731,8 +1769,10 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if r.TriggerLabel == "" {
 		bad("triggerLabel is required")
 	}
+	c.validateAuthority(r, bad)
+	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range []string{"docs-links", "revert"} {
-		if _, ok := r.Classes[name]; !ok {
+		if _, ok := r.Classes[name]; !ok && !cutOver {
 			bad("class %s is required (OD-8)", name)
 		}
 	}
@@ -1769,7 +1809,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		if _, err := cron.ParseStandard(e.Cron); err != nil {
 			bad("schedule %s: cron %q does not parse", e.Name, e.Cron)
 		}
-		if e.Class != "review" {
+		if e.Class != "review" && !cutOver {
 			if _, ok := r.Classes[e.Class]; !ok {
 				bad("schedule %s: class %q is review or a declared class", e.Name, e.Class)
 			}
@@ -1780,7 +1820,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		switch e.Probe {
 		case "", "renovate-red":
 		case "dead-links":
-			if o := r.Classes[e.Class].Oracle; o == nil || o.Probe != "dead-links" {
+			if o := r.Classes[e.Class].Oracle; !cutOver && (o == nil || o.Probe != "dead-links") {
 				bad("schedule %s: probe dead-links needs class %q to declare oracle.probe dead-links", e.Name, e.Class)
 			}
 		default:

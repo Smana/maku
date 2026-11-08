@@ -199,6 +199,9 @@ type Set struct {
 	// rooms_coordination_checkout_manifests_total{outcome} (v4): a parent's filtered views and
 	// checkout documents, by a closed outcome.
 	coordViews, coordCheckouts metric.Int64Counter
+	// policyChanges is rooms_policy_changes_total{repository,class,change} (merge policy stage 6):
+	// the promotion workflow's records, by a closed change.
+	policyChanges metric.Int64Counter
 
 	meter             metric.Meter
 	appended          metric.Int64Counter
@@ -310,6 +313,9 @@ func New(meter metric.Meter) (*Set, error) {
 	s.needsList, err = meter.Int64Counter("needs_list_total", metric.WithDescription("Needs lists served, by surface, principal and outcome."))
 	check(err)
 	check(s.registerNeeds())
+	s.policyChanges, err = meter.Int64Counter("rooms_policy_changes_total",
+		metric.WithDescription("Merge policy promotion records, by repository, class and change: a promotion requested, its pull request opened, merged or abandoned; an exception requested, approved or refused."))
+	check(err)
 	s.coordViews, err = meter.Int64Counter("rooms_coordination_views_total", metric.WithDescription("Coordination parent views served, by outcome."))
 	check(err)
 	s.coordCheckouts, err = meter.Int64Counter("rooms_coordination_checkout_manifests_total",
@@ -442,6 +448,22 @@ func closed(set map[string]bool, v string) string {
 		return v
 	}
 	return "other"
+}
+
+// PolicyChanges are rooms_policy_changes_total's change values.
+func PolicyChanges() []string {
+	return []string{"promotion_requested", "promotion_pr_opened", "promotion_merged", "promotion_abandoned",
+		"exception_requested", "exception_approved", "exception_refused"}
+}
+
+// PolicyChange counts one promotion record. repository and class are bounded by the caller: a
+// configured repository and a class its evidence named (MP18); a change off the list is not counted.
+func (s *Set) PolicyChange(ctx context.Context, repository, class, change string) {
+	if !slices.Contains(PolicyChanges(), change) {
+		return
+	}
+	s.policyChanges.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", repository),
+		attribute.String("class", class), attribute.String("change", change)))
 }
 
 // CoordinationView counts one coordination view served: ok (every child readable), restricted (at

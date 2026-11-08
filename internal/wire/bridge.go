@@ -91,6 +91,9 @@ const (
 	ReasonStreamingFailed = "streaming_refused" // 500: the connection cannot stream
 	ReasonBadSlackUser    = "bad_slack_user"    // 400: a Slack link read without a T… team and a U…/W… user
 	ReasonNotLinked       = "not_linked"        // 404: the Slack user has no self-serve link
+	ReasonBadGrant        = "bad_grant"         // 400: a grant lookup or move that is not one: a bad id, repository, class, hash or version
+	ReasonNoGrant         = "no_grant"          // 404: no approval grant has that id
+	ReasonGrantState      = "grant_state"       // 409: the grant's status or version does not allow the move
 )
 
 // SSE event names, broker → bridge.

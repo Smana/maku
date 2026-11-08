@@ -23,23 +23,23 @@ USER root
 # gh, checksum-pinned per architecture. The upstream image gives its user
 # passwordless sudo; nothing here needs it and NoNewPrivileges is not reliable
 # under gVisor (design §1), so sudo and every setuid and setgid bit go.
+COPY fetch_release.py /tmp/fetch_release.py
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) sum="${GH_SHA256_AMD64}" msum="${MISE_SHA256_AMD64}" march=x64 ;; \
       arm64) sum="${GH_SHA256_ARM64}" msum="${MISE_SHA256_ARM64}" march=arm64 ;; \
       *) exit 1 ;; \
     esac; \
-    fetch() { /usr/local/bin/python -c "import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], sys.argv[2])" "$1" "$2"; }; \
-    fetch "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" /tmp/gh.tgz; \
+    /usr/local/bin/python /tmp/fetch_release.py cli/cli "v${GH_VERSION}" "gh_${GH_VERSION}_linux_${TARGETARCH}.tar.gz" /tmp/gh.tgz; \
     echo "${sum}  /tmp/gh.tgz" | sha256sum -c -; \
     tar -xzf /tmp/gh.tgz -C /tmp; \
     install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${TARGETARCH}/bin/gh" /usr/local/lib/gh-real; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${TARGETARCH}"; \
-    fetch "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${march}.tar.gz" /tmp/mise.tgz; \
+    /usr/local/bin/python /tmp/fetch_release.py jdx/mise "v${MISE_VERSION}" "mise-v${MISE_VERSION}-linux-${march}.tar.gz" /tmp/mise.tgz; \
     echo "${msum}  /tmp/mise.tgz" | sha256sum -c -; \
     tar -xzf /tmp/mise.tgz -C /tmp; \
     install -D -m 0755 /tmp/mise/bin/mise /opt/agent/bin/mise; \
-    rm -rf /tmp/mise.tgz /tmp/mise; \
+    rm -rf /tmp/mise.tgz /tmp/mise /tmp/fetch_release.py; \
     apt_install() { \
       apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update \
       && apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends rsync ripgrep; \

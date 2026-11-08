@@ -105,6 +105,11 @@ type HumanConfig struct {
 	// Intake is the governed planner (v3.x conversational intake, CD5, CD17, CD18). Off unless the
 	// block turns it on: no block, no tool on any list.
 	Intake IntakeConfig `json:"intake,omitzero"`
+	// ApprovalMemory serves saved approval grants (merge policy stage 5): the
+	// /settings/approval-memory page and its API to humans, and the grant routes on :8443 to the
+	// factory. Off unless set; the factory consults grants only under its own
+	// policyManagement.approvalMemory.
+	ApprovalMemory bool `json:"approvalMemory,omitempty"`
 }
 
 // IntakeConfig is human.intake. It holds one block today; it exists so the planner's switch has a
@@ -503,6 +508,10 @@ type Config struct {
 	// Coordination is the factory's multi-repository switch, read here with the factory's own type
 	// and rules (v4 MR16): coordination_plan is listed only while it is not off.
 	Coordination fconfig.Coordination `json:"coordination,omitzero"`
+	// PolicyManagement is the factory's merge-policy switches, read here with the factory's own type
+	// (merge policy stage 6): promotion serves the settings pages and the promotion records, and
+	// operators approve exceptions. The broker reads nothing else of it.
+	PolicyManagement fconfig.PolicyManagement `json:"policyManagement,omitzero"`
 }
 
 // WebhookConfig is one subscriber (factory interfaces F6, O7): declared here because subscribers
@@ -724,6 +733,10 @@ func (c *Config) Validate() error {
 		// coordination_plan plans through the governed intake route: a switch on with no route is a
 		// tool that would refuse every request.
 		errs = append(errs, fmt.Errorf("coordination.mode %s needs human.intake.plan.enabled: coordination_plan plans through its route", c.Coordination.Mode))
+	}
+	c.PolicyManagement.Validate(func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) })
+	if c.PolicyManagement.Promotion && c.FactoryURL == "" {
+		errs = append(errs, errors.New("policyManagement.promotion needs factoryURL: the evidence is the factory's GET /v1/policy/evidence"))
 	}
 	return errors.Join(errs...)
 }

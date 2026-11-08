@@ -1997,6 +1997,13 @@ spec:
                     description: 'Drill: the revert was a maintainer''s drill (AM6);
                       the breaker does not count it.'
                     type: boolean
+                  grant:
+                    description: |-
+                      Grant is the saved approval grant the merger's merge was authorized under, "<id>:<version>"
+                      (merge policy stage 5): a revert of the merge disables it. Empty when no grant was used.
+                    maxLength: 36
+                    pattern: ^[a-z2-7]{26}:[1-9][0-9]{0,8}$
+                    type: string
                   handedOffAt:
                     description: |-
                       HandedOffAt is the first hand-off to a human (AM9): the start of the hand-off to merge

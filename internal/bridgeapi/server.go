@@ -124,6 +124,10 @@ type Server struct {
 	// either unset refuses it.
 	SlackLinks      SlackLinks
 	SlackLinkReader string
+	// Grants serves the grant routes (merge policy stage 5) to GrantClient alone (the factory,
+	// system:factory); either unset refuses them.
+	Grants      Grants
+	GrantClient string
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.
@@ -151,6 +155,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/rooms/{id}/queue", s.bounded(0, s.queueRoute(s.listQueue)))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue/consume", s.bounded(maxConsumeBytes, s.queueRoute(s.consume)))
 	mux.HandleFunc("GET /v1/links/slack", s.bounded(0, s.slackLink))
+	mux.HandleFunc("POST /v1/grants/lookup", s.bounded(maxGrantBody, s.grantLookup))
+	mux.HandleFunc("POST /v1/grants/{id}/use", s.bounded(maxGrantBody, s.grantUse))
+	mux.HandleFunc("POST /v1/grants/{id}/disable", s.bounded(maxGrantBody, s.grantDisable))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Every response, the mux's own 404 and 405 included, has a write deadline;
 		// the stream replaces it with one per write.

@@ -64,3 +64,26 @@ func TestGitHubAccessNamesThePerson(t *testing.T) {
 		t.Fatal("a failed lookup is no answer")
 	}
 }
+
+type readPerms map[string]bool // login → read
+
+func (p readPerms) CanWrite(context.Context, string, string) (bool, error) { return false, nil }
+func (p readPerms) CanRead(_ context.Context, _, login string) (bool, error) {
+	return p[login], nil
+}
+
+// Stage 6's evidence is read through the same link, at read; a Perms that cannot say reads nothing.
+func TestGitHubAccessCanRead(t *testing.T) {
+	a := GitHubAccess{Identity: logins{"291": "alice-gh", "292": "bob-gh"}, Perms: readPerms{"alice-gh": true}}
+	for sub, want := range map[string]bool{"291": true, "292": false, "999": false, "": false} {
+		if got, err := a.CanRead(t.Context(), authn.Principal{Sub: sub}, "Smana/x"); err != nil || got != want {
+			t.Fatalf("%q: %v %v", sub, got, err)
+		}
+	}
+	if _, err := a.CanRead(t.Context(), authn.Principal{Sub: "broken"}, "Smana/x"); err == nil {
+		t.Fatal("a failed lookup is an error")
+	}
+	if got, _ := (GitHubAccess{Identity: logins{"291": "alice-gh"}, Perms: perms{"alice-gh": true}}).CanRead(t.Context(), authn.Principal{Sub: "291"}, "Smana/x"); got {
+		t.Fatal("write-only Perms reads nothing")
+	}
+}

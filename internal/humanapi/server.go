@@ -160,6 +160,9 @@ type Server struct {
 	// SlackLink is the Slack self-serve link (human.slackLink): its two tools for the Slack App and
 	// the /link/slack page. Nil serves neither.
 	SlackLink *SlackLinker
+	// Grants is human.approvalMemory: the saved approval grants' page and API (merge policy stage
+	// 5). Nil serves neither.
+	Grants GrantStore
 	// SlackDecide is human.slackDecide: the App's one route that records a decision, for forge.push
 	// only (v3.x Slack push approval D2, D13). Nil serves nothing: the path is the mux's 404.
 	SlackDecide *SlackDecider
@@ -169,6 +172,9 @@ type Server struct {
 	// Coordination is coordination_plan (v4 MR4): listed beside the planner while its mode is not
 	// off. Nil, or off, lists nothing.
 	Coordination *CoordinationPlanner
+	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
+	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
+	Policy *Policy
 
 	// Connection bounds; zero takes the default.
 	HelloWait time.Duration // the first frame must arrive within it (10 s)
@@ -240,8 +246,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
 	mux.HandleFunc("GET /.well-known/roomctl", s.publicSetup)
 	mux.HandleFunc("GET /v1/ws", s.ws)
+	if s.Policy != nil {
+		s.policyRoutes(mux, index)
+	}
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)
+	}
+	if s.Grants != nil { // human.approvalMemory (merge policy stage 5): off, every path is a 404
+		s.grantRoutes(mux, index)
 	}
 	if s.SlackDecide != nil {
 		// POST only, one path, no cookie: the route has no CSRF surface because it has none.

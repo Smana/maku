@@ -964,3 +964,22 @@ func TestCoordinationWritesOnlyWithAFactory(t *testing.T) {
 		t.Fatal("a gateway without a factory")
 	}
 }
+
+// Stage 6: the workflow exists only with policyManagement.promotion on and a factory to read from.
+func TestPolicyWorkflowOnlyWhenOn(t *testing.T) {
+	cfg := plannerConfig()
+	cfg.FactoryURL = "https://agent-factory.agents.svc:8082"
+	if policyWorkflow(cfg, nil) != nil {
+		t.Fatal("a workflow while off")
+	}
+	cfg.PolicyManagement = fconfig.PolicyManagement{Promotion: true, Operators: []string{"Smana"}}
+	p := policyWorkflow(cfg, nil)
+	if f, ok := p.Factory.(runrequest.Factory); !ok || f.URL != cfg.FactoryURL || !p.Operator("smana") || p.Operator("other") ||
+		len(p.NewID()) != 8 {
+		t.Fatalf("%#v", p)
+	}
+	cfg.FactoryURL = ""
+	if policyWorkflow(cfg, nil) != nil {
+		t.Fatal("a workflow without a factory")
+	}
+}

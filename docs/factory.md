@@ -289,7 +289,7 @@ returns it.
 | `policy_pending` | policy-bot's `policy-bot: main` status needs a maintainer's approval |
 | `policy_absent` | policy-bot has not evaluated the pull request, or the status is not from `merge.policyBotLogin` |
 | `maintainer_approved` | A maintainer approved it. With `merge.approveToMerge` off, a human merges it; on, an approval of the current head arms the merger, so this reason is left for adopted classes and for a task handed off before the switch was turned on: that approval predates the hand-off, so a fresh approval of the head returns the task to the gate |
-| `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity, or when no run reported the head. Next step: approve the current head |
+| `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity. Next step: approve the current head |
 | `gate_path` | It touches a gate path, so an agent can never merge it; a human re-authors the change |
 | `steering_path` | Steering is on for some class and the pull request changes a [steering note](#steering); a human merges it |
 | `not_mergeable` | GitHub refused the merge as the pull request stands |
@@ -305,7 +305,7 @@ returns it.
 | `oracle_finding_open` | A finding of the task is still a link target in the head, was not one on the base, or the task has no findings |
 | `oracle_unrequested` | The head moves a link target no finding asked to move, or moves one anywhere but the exact snapshot its finding gave |
 | `no_approving_verdict` | The template has a reviewer and its verdict is not approve |
-| `head_unreported` | The room never reported the current head as a commit of the task's run |
+| `head_unreported` | No implementer run of the task reported the current head in the room (a `handoff` naming the commit). An approval of that head does not merge it: it returns to the gate once a run of the task reports it, and the approval then arms it. Meanwhile, a maintainer with admin merges it by bypass. The harness reports the pushed head itself when the agent finished without a handoff |
 | `verdict_stale` | The approval was for an older head. Next step: review the current head, or the factory asks for a new review |
 | `foreign_trailer` | The head commit's `Agent-Run` trailer names another task's run |
 | `human_commit_in_pr` | It holds a commit no run of the task pushed, so the factory neither fixes nor merges on top of it |
@@ -932,7 +932,8 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `shape=`, `holdout=`, `oracle=`, `age=` | `ok` when held, `n/a` when the class declares none, the refusal's reason when refused, `pending` for a release age still waiting |
 | `evidence=` | `ok`, or the refusal's reason |
 | `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
-| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it |
+| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it. For a cut-over repository, `policy=` alone: the hash of the policy that decided |
+| `grant=` | Only on a decision a saved approval grant let arm (`policyManagement.approvalMemory`): `<id>:<version>`, the grant and the version it was read at |
 | `reviewer=` | The reviewer run's served models joined with `+`; `none` when the class has no reviewer run |
 
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
@@ -1248,6 +1249,56 @@ per file both changed), so a steady state costs about 2 GitHub calls per watched
 their blames in one burst per repository. The caches hold derived line sets, never patches, and
 drop an entry when the pull request it describes leaves the longest window.
 
+### Promotion
+
+With `policyManagement.promotion` on (merge policy stage 6), the settings pages show each
+class's evidence and let a maintainer ask to promote a shadow class to live. The evidence is the
+[tally](#calibration)'s, computed in Go from the same records (`internal/factory/evidence`, tested
+on the script's fixtures), read through the repository's App connection over the last 180 days and
+cached 10 minutes:
+
+| Field | Source |
+|---|---|
+| clean | Shadow decisions merged unchanged at the head their would-arm comment judged |
+| bad | Mature, conclusive merges of the class reverted (not a drill), followed up or regressed |
+| immature, pending | Merges younger than the class's `followUpWindow`; mature ones with no verdict yet |
+| bound, ladder | Clopper-Pearson 95% upper bound on bad; the 29/46/61 widening steps, reported only |
+| reviewers | Per reviewer model, merged unchanged against changed (AM10) |
+| drill | `passed` when a `factory/drill` revert of one of the class's pull requests merged; `open`; `none` |
+
+A class is eligible with at least `mergeGuardrails.minPromotionEvidence` clean decisions (20), no
+bad mature outcome, and a passed drill. **Promote to live** reads the evidence again server side,
+records the request in `policy_promotions` with that evidence, its threshold and the requester,
+and answers the repository's `.github/agent-factory.yaml` with the class's `mode: shadow` changed
+to `mode: live` and the GitHub edit page to submit it from. Maku never opens the pull request nor
+edits `factory:` (MP1, MP14); the maintainer records its number, then `merged` or `abandoned`.
+Only a class of the repository's own file is promotable: until that repository is cut over to its
+own policy (stage 4), its merged change is comparison-only and the central config decides.
+
+Below the minimum, a maintainer asks for an exception with a written justification and a lower
+minimum; one of `policyManagement.operators` approves it (for 14 days) or refuses it, once, and an
+approved exception carries a promotion at its own minimum. Bad outcomes and the drill still block.
+Both tables are insert then one constrained move; `maku_rooms_policy_changes_total` counts them.
+
+**The editor.** A maintainer edits one class in a guided form (mode, author, a harness profile from
+the central list, conditions, deny, `requiresApproval`, limits, monitor), or starts one from a
+template (`docs-broad`, `deps-patch`, `generated-files`), or edits the whole file in the expert YAML
+view. **Check** is the factory's: the same `Parse`, `Validate` and `Resolve` the gate's policy read
+runs, `factory:` refused if changed, the structural change per class (a relaxation returns the class
+to shadow, MP8), and with `policyManagement.simulation` the conformance fixtures decided under the
+central config and the proposal by the gate's own evaluator (newly auto-merged, newly blocked, newly
+approval-required, unchanged), beside the strictness counterfactual of the class's recent decisions.
+The answer is the file to submit and the edit link: Maku writes nothing.
+
+**The decision timeline.** For a pull request, each decision record the factory wrote renders in
+the gate's order: fixed base, author mode, class, the recorded conditions, deny, approval subset,
+grant (the `grant=` a decision armed on, or "no grant used"), breaker and caps, verdict; the stage
+that refused is named, the later ones are not reached. Its revisions are what the record holds:
+the repository policy's hash (compared, with dual evaluation, or the policy that decided, under
+repository authority), the reviewer, the grant and its version; the guardrails and profiles are the pod's
+config, bound by its checksum, not per record. It links the decision's comment and the policy
+file's commits.
+
 ### Calibration
 
 Widen a class one step only when the evidence allows it. `scripts/shadow-merge-tally.sh --class
@@ -1472,10 +1523,14 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `sandbox` | `suspend: {enabled}`: a run `POST /v1/runs` starts in an attended room gets `spec.suspendable: true`, which lets the room broker suspend it while its approval waits on an idle room (the broker's `suspend` config). Fixed on the claim at create | `enabled` false |
 | `loops` | `<class>: {stallSteps (1–500), continuations (0–5), judge (an alias or none)}`, keyed by a declared class, `review` or `default` (every class without a row). A row is read whole, never merged with `default`'s (a row with only `scope` has no loop, even when `default` has one); it switches the class's [loop policy](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-21-loops-and-teams-design.md) on when it sets any of the three, and an unset one is 80, 2 or `tier-light`; `scope` (`off`, `steering`, `scoper`; unset is `off`, and a bare `off` in YAML reads as `off`) picks the class's [steering](#steering) or [scoper](#the-scoper): never part of the loop, so `{scope: steering}` alone switches no loop on; `split` (`{maxChildren 2–5, familyUSD, childTier, anyTier}`; `familyUSD` defaults to four of the child tier's `taskUSD`, `childTier` to `standard`) is refused without `scope: scoper` on the same row, on `docs-links`, `revert` or an oracle class, and without `meter.prices`; it lets the scoper of a task C7 itself rated `frontier` propose [a split](#splits); `anyTier: true` (default `false`) offers it on every task of the class, whatever tier C7 rated it (needed where no classifier is deployed, so every task is `standard`). `search: true` offers the class's implementer runs the [search tool](../images/maku-harness/README.md) (`spec.loop.search`, which the harness reads as `AGENT_SEARCH=1`); like `scope`, it never switches the loop on, and a row is read whole, so a class row without `search` is off whatever `default` says. The room-bridge classes a bare `search` as the plain built-in only on a run given it, assuming MCP tools reach it prefixed (`server_tool`): an unprefixed MCP tool named `search` would also class plain (and the SDK refuses the duplicate tool name at start). `models` (`{<role>: {<tier>: <alias>}}`) puts a role on a provider alias for a **public** task of that tier, the run's tier (the reviewer's is the other tier, the scoper's `light`): `kimi-frontier` (Moonshot's `k3.1-pro`) on `frontier`, `mistral-standard` (Mistral Medium 3.5) on `standard`, `mistral-light` (Mistral Small 4) on `light`, and no alias on another tier, so a run keeps its tier's caps. A role or tier without an entry keeps its tier's `model`, or the template's `reviewerModel`; an internal task always does, since Moonshot processes in China and Mistral in the EU, and the run's `provenance.modelSource` records `tier`, `reviewerModel` or `classModels`. `judge` may be `mistral-light` too, and an internal task of the class then gets `tier-light`. With `meter.prices` set, each alias needs a row: its served model's for a query by `gen_ai_request_model`, else its own. No tier's `model` and no `reviewerModel` may name a provider alias, `POST /v1/runs` refuses one on an internal run (`provider_alias_is_public_only`), every claim is refused one on an internal run, as its model or its judge's, and the Task and AgentRun CRDs hold the same rule; like `scope`, `models` never switches the loop on. Needs cloud-native-ref's `AgentRun` (`runs` left at its default) for the loop | None: every run as before |
 | `harnessProfiles` | `<name>: {template (solo, pair, trio, investigate or none), tier, checks, testFirst (needs checks), loop (off or a `loops` row)}`: the centrally approved ways to run a class; `none` is an adopted class (another author's pull requests, no run) and takes no other key. Validated only: stage 1 of the repository merge policy decides nothing with it | None |
-| `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. Validated only: stage 1 decides nothing with it | None |
+| `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay, maxGrantLifetime, minPromotionEvidence}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. `minPromotionEvidence` is the clean shadow decisions a [promotion](#promotion) needs, at least 20 (MP7); a lower one is refused, and a promotion on fewer needs an operator's exception. Validated only: stage 1 decides nothing with the caps | None; `minPromotionEvidence` 20 |
 | `policyManagement.read` | `true` observes each owned repository's class policy and compares it with this config. Stage 1 decides nothing: merge authority stays central | `false` |
 | `policyManagement.simulation` | `true` lets `maku policy simulate` (a policy file decided on decision fixtures by the gate's own evaluator) and `maku policy diff` (tightening or relaxation, class by class) run against this config. Offline; turned off when the simulator disagrees with the gate | `false` |
 | `policyManagement.dualEvaluation` | `true` decides each merge decision again under the repository's policy as `read` last observed it, counts the agreement and writes it into the decision record. Needs `read`. Stage 3 decides nothing: merge authority stays central | `false` |
+| `policyManagement.promotion` | `true` serves `GET /v1/policy/evidence` and `GET /v1/policy/repositories` on the API: each class's [promotion](#promotion) evidence. The broker reads the same key to serve the settings pages and record promotions. Stage 6 changes no class: a maintainer's own pull request does | `false` |
+| `policyManagement.operators` | GitHub logins who decide promotion exceptions; read by the broker | None: no exception can be approved |
+| `policyManagement.approvalMemory` | `true` consults saved approval grants where a live class's `requiresApproval` subset would ask a human (stage 5): the class's grants are read from the broker immediately before the decision and again before the merge call, never cached, and an active grant bound to the policy in force, covering every file the subset caught, lets the decision arm; the record names it (`grant=`). A failed lookup authorizes nothing, a shadow or off class never consults one, and a revert of a merge a grant authorized disables it. Needs `read`, and the broker's `human.approvalMemory`. Until repository authority (stage 4) decides merges, it changes only the dual evaluation's repository decision | `false` |
+| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its classes (every `any` branch, the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source, MP15). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
 
 Each `repositories` entry:
 
