@@ -110,6 +110,12 @@ func TestValidate(t *testing.T) {
 		"no revert":      {head + "  docs-links: {mode: live, author: agents, harness: plain}\n", "revert"},
 		"review":         {head + required + "  review: {mode: off, author: agents, harness: plain}\n", "review is implicit"},
 		"the class rule": {head + required + "  bad:\n    mode: shadow\n    author: agents\n    harness: plain\n    conditions: {all: [{allowedFiles: ['docs/.+']}]}\n", "must start with ^"},
+		"no revert, how": {head + "  docs-links: {mode: live, author: agents, harness: plain}\n", "mode: off"},
+		"unbounded":      {head + required + "  docs: {mode: shadow, author: agents, harness: plain}\n", "class docs: a live or shadow class needs allowedFiles"},
+		"unbounded any": {head + required + "  docs:\n    mode: live\n    author: agents\n    harness: plain\n    conditions: {any: [[{allowedFiles: ['^a$']}], [{maxPatchFiles: 2}]]}\n",
+			"class docs: a live or shadow class needs allowedFiles"},
+		"bounded any":   {head + required + "  docs:\n    mode: live\n    author: agents\n    harness: plain\n    conditions: {any: [[{allowedFiles: ['^a$']}], [{allowedFiles: ['^b$']}]]}\n", ""},
+		"off unbounded": {head + required + "  docs: {mode: off, author: agents, harness: plain}\n", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, err := Parse([]byte(tc.raw))
