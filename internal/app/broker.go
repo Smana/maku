@@ -220,6 +220,10 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		humans.SlackLink = &humanapi.SlackLinker{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID, Repository: l.Repository}
 		api.SlackLinks, api.SlackLinkReader = st, fconfig.PrincipalFactory
 	}
+	if cfg.Human.ApprovalMemory { // merge policy stage 5: the grants' human door, and the factory's routes
+		humans.Grants = st
+		api.Grants, api.GrantClient = st, fconfig.PrincipalFactory
+	}
 	if l := cfg.Human.SlackDecide; l != nil { // the App's one deciding route (v3.x Slack push approval D14)
 		humans.SlackDecide = &humanapi.SlackDecider{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID,
 			Rooms: mgr.GetClient(), Namespace: ns, Identity: humans.Identity, Access: humans.Access, Runs: humans.Runs,
