@@ -326,6 +326,10 @@ func (m *fakeMetrics) ClassMismatch(_ context.Context, predicted, matched string
 func (m *fakeMetrics) MergeDecision(_ context.Context, class, verdict, reason string) {
 	m.add("merge_decision " + class + " " + verdict + " " + reason)
 }
+func (m *fakeMetrics) PolicyLoadError(_ context.Context, _, reason string) {
+	m.add("policy_load " + reason)
+}
+
 func (m *fakeMetrics) PolicyDualDecision(_ context.Context, _, class, agreement string) {
 	m.add("policy_dual " + class + " " + agreement)
 }

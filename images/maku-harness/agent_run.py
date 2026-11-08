@@ -26,6 +26,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+import coordination_integration
 import loop_policy
 
 AGENT_SERVER = "http://127.0.0.1:8000"
@@ -744,27 +745,37 @@ class ProgressNotes:
             raise RuntimeError(message[:200])
         return True
 
+    def harness_call(self, tool: str, arguments: dict) -> None:
+        """Calls one of the harness's own room tools, which the broker lists only to its client: raises
+        when it is not stored. An HTTP 4xx (an expired session) redoes the handshake once."""
+        self.traceparent = None
+        for attempt in range(2):
+            try:
+                name = self.find_tool(tool)
+                if name is None:
+                    raise RuntimeError("%s is not exposed to this run" % tool)
+                result = self.rpc("tools/call", {"name": name, "arguments": arguments})
+                if result.get("isError"):
+                    raise RuntimeError(_text({"content": result.get("content")})[:200])
+                return
+            except urllib.error.HTTPError as exc:
+                if attempt or not 400 <= exc.code < 500:
+                    raise
+                self.names, self.tool, self.session = None, None, None
+
     def judge(self, kind: str, reason: str, evidence: list) -> None:
         """Posts the completion judge's verdict as a room event (O15), through the run's own MCP route.
         Best effort: a verdict that cannot be posted is still in the harness log."""
         try:
-            self.traceparent = None
-            for attempt in range(2):
-                try:
-                    name = self.find_tool("room_judge")
-                    if name is None:
-                        raise RuntimeError("room_judge is not exposed to this run")
-                    result = self.rpc("tools/call", {"name": name, "arguments": {
-                        "verdict": kind, "reason": _short(reason, loop_policy.REASON_MAX), "evidence": list(evidence)[:20]}})
-                    if result.get("isError"):
-                        raise RuntimeError(_text({"content": result.get("content")})[:200])
-                    return
-                except urllib.error.HTTPError as exc:  # an expired session redoes the handshake once
-                    if attempt or not 400 <= exc.code < 500:
-                        raise
-                    self.names, self.tool, self.session = None, None, None
+            self.harness_call("room_judge", {"verdict": kind, "reason": _short(reason, loop_policy.REASON_MAX),
+                                             "evidence": list(evidence)[:20]})
         except Exception as exc:  # noqa: BLE001 -- a verdict note must never fail the run
             print("agent-run: judge verdict not posted: %s" % exc, file=sys.stderr, flush=True)
+
+    def integration(self, state: str, reason: str, manifest_hash: str) -> None:
+        """Posts an integration run's one typed result (v4 MR10). Never best effort: it raises, and the
+        run then exits non-zero, which the factory escalates."""
+        self.harness_call("room_integration", {"state": state, "reason": reason, "manifestHash": manifest_hash})
 
 
 # v3 feature 3: the repository's checks in the sandbox, on a check-enabled run only (AGENT_CHECKS=1,
@@ -2056,6 +2067,56 @@ def checkpoint(env: dict, deadline: float) -> str:
     return refused + ("pushed a checkpoint commit" if committed else "pushed")
 
 
+# The merge gate's R02 reads the head from the implementer's own room_handoff, and the model may finish
+# without one: gmmrmund (aws-0, Maku v0.39.0) pushed, ended agent_finished, and its head stayed unreported,
+# so a maintainer's approval of it could never merge. The harness then hands off the head the run pushed.
+# This grants nothing the model lacks: it may call room_handoff with any commit itself.
+HEAD_REPORT = ("Harness (implementer): the agent finished without a room_handoff; the harness reports the head "
+               "this run pushed, %s.")
+LS_REMOTE_S = 15
+REMOTE_URL = "https://github.com/%s.git"
+
+
+def pushed_head(env: dict, start: str) -> str | None:
+    """The commit this run pushed: the clone's HEAD, when it moved past start and GitHub's branch is at it; None
+    otherwise. GitHub is asked directly, never the clone's remote-tracking refs, which the agent can write."""
+    local = head()
+    if not local or local == start:
+        return None
+    try:
+        p = subprocess.run(["git", "-C", REPO_DIR, *checks_module().GUARDS, "ls-remote",
+                            REMOTE_URL % env["REPOSITORY"], "refs/heads/" + env["BRANCH"]],
+                           capture_output=True, text=True, errors="replace", timeout=LS_REMOTE_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    remote = p.stdout.split()[0] if p.returncode == 0 and p.stdout.split() else ""
+    return local if remote == local else None
+
+
+def report_head(env: dict, steps, notes, start: str, remote=pushed_head, sleep=time.sleep) -> str | None:
+    """A finished implementer run's handoff of its pushed head, when the agent made none that the broker took
+    (steps.handed_off). Retried once past the broker's one call a second. Best effort: returns the commit
+    reported, or None."""
+    if env.get("ROLE") != "implementer" or notes is None or steps is None or steps.handed_off:
+        return None
+    commit = remote(env, start)
+    if not commit:
+        return None
+    args = {"toRole": "reviewer", "summary": HEAD_REPORT % commit, "commit": commit}
+    for attempt in range(2):
+        try:
+            notes.harness_call(HANDOFF_TOOL, args)
+            print("agent-run: the agent made no handoff: reported the pushed head %s" % commit, flush=True)
+            return commit
+        except Exception as exc:  # noqa: BLE001 -- a report never fails a finished run
+            if attempt == 0 and str(exc).startswith("rate_limited"):
+                sleep(1.1)
+                continue
+            print("agent-run: pushed head not reported: %s" % _short(exc, 200), file=sys.stderr, flush=True)
+            return None
+    return None
+
+
 def final_read(env: dict, steps=None, end: str | None = None) -> str:
     """The room's last read of the harness log (F11, the harness half): the bridge reads the log to
     its end and mirrors it before it answers, while agent-server is still up. On SIGTERM the step
@@ -2173,6 +2234,23 @@ def server_env(env: dict) -> dict:
     return out
 
 
+def integration(env: dict) -> int:
+    """A triager run carrying a coordination manifest (v4 MR10): the integration runtime instead of a
+    conversation. No model is called, nothing is cloned for the agent, pushed or opened."""
+    notes = ProgressNotes(env["MCP_URL"], "triager", token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
+
+    def post(state: str, reason: str, manifest_hash: str) -> None:
+        if notes is None:
+            raise RuntimeError("the run has no room tools")
+        notes.integration(state, reason, manifest_hash)
+
+    try:
+        return coordination_integration.run(env, post, redact=redact)
+    finally:
+        if notes:
+            notes.close()
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
     started = time.monotonic()
@@ -2187,6 +2265,10 @@ def main() -> int:
     cid, steps, code, end, signalled, read = None, None, None, None, False, False
     try:
         wait_ready(server=server)
+        # agent-server still runs: the pod's probes are its. Exit 0 latches Succeeded at once.
+        if coordination_integration.requested(env):
+            code = integration(env)
+            return code
         # A resumed suspendable run finds its clone and its conversation on its PVC. The same start
         # request reattaches the stored conversation and starts nothing. agent-run sends it nothing
         # either: it waits on a call's approval, a new message would reject that call, and a bare
@@ -2224,6 +2306,7 @@ def main() -> int:
         state = loop_policy.State.load(LOOP_STATE, head(), resumed=resumed) if policy else None
         if state:
             save_state(state, LOOP_STATE)
+        start = state.start if state else head()  # report_head's: a head this run did not move is not its to report
         cid = http("POST", "/api/conversations", request)["id"]
         notes = ProgressNotes(env["MCP_URL"], env.get("ROLE") or "agent", resumed,
                               start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
@@ -2257,6 +2340,7 @@ def main() -> int:
                 final_checks(env, decl, notes, child_spans(provider, span) if decl else None, started)
             except Exception as exc:  # noqa: BLE001 -- the checks never fail a finished run
                 print("agent-run: final checks failed: %s" % exc, file=sys.stderr, flush=True)
+            report_head(env, steps, notes, start)
         if decl and (ledger := checks_ledger()):
             print(ledger, flush=True)
         if search:

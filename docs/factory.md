@@ -289,7 +289,7 @@ returns it.
 | `policy_pending` | policy-bot's `policy-bot: main` status needs a maintainer's approval |
 | `policy_absent` | policy-bot has not evaluated the pull request, or the status is not from `merge.policyBotLogin` |
 | `maintainer_approved` | A maintainer approved it. With `merge.approveToMerge` off, a human merges it; on, an approval of the current head arms the merger, so this reason is left for adopted classes and for a task handed off before the switch was turned on: that approval predates the hand-off, so a fresh approval of the head returns the task to the gate |
-| `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity, or when no run reported the head. Next step: approve the current head |
+| `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity. Next step: approve the current head |
 | `gate_path` | It touches a gate path, so an agent can never merge it; a human re-authors the change |
 | `steering_path` | Steering is on for some class and the pull request changes a [steering note](#steering); a human merges it |
 | `not_mergeable` | GitHub refused the merge as the pull request stands |
@@ -305,7 +305,7 @@ returns it.
 | `oracle_finding_open` | A finding of the task is still a link target in the head, was not one on the base, or the task has no findings |
 | `oracle_unrequested` | The head moves a link target no finding asked to move, or moves one anywhere but the exact snapshot its finding gave |
 | `no_approving_verdict` | The template has a reviewer and its verdict is not approve |
-| `head_unreported` | The room never reported the current head as a commit of the task's run |
+| `head_unreported` | No implementer run of the task reported the current head in the room (a `handoff` naming the commit). An approval of that head does not merge it: it returns to the gate once a run of the task reports it, and the approval then arms it. Meanwhile, a maintainer with admin merges it by bypass. The harness reports the pushed head itself when the agent finished without a handoff |
 | `verdict_stale` | The approval was for an older head. Next step: review the current head, or the factory asks for a new review |
 | `foreign_trailer` | The head commit's `Agent-Run` trailer names another task's run |
 | `human_commit_in_pr` | It holds a commit no run of the task pushed, so the factory neither fixes nor merges on top of it |
@@ -932,7 +932,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `shape=`, `holdout=`, `oracle=`, `age=` | `ok` when held, `n/a` when the class declares none, the refusal's reason when refused, `pending` for a release age still waiting |
 | `evidence=` | `ok`, or the refusal's reason |
 | `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
-| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it |
+| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it. For a cut-over repository, `policy=` alone: the hash of the policy that decided |
 | `grant=` | Only on a decision a saved approval grant let arm (`policyManagement.approvalMemory`): `<id>:<version>`, the grant and the version it was read at |
 | `reviewer=` | The reviewer run's served models joined with `+`; `none` when the class has no reviewer run |
 
@@ -1478,6 +1478,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `policyManagement.simulation` | `true` lets `maku policy simulate` (a policy file decided on decision fixtures by the gate's own evaluator) and `maku policy diff` (tightening or relaxation, class by class) run against this config. Offline; turned off when the simulator disagrees with the gate | `false` |
 | `policyManagement.dualEvaluation` | `true` decides each merge decision again under the repository's policy as `read` last observed it, counts the agreement and writes it into the decision record. Needs `read`. Stage 3 decides nothing: merge authority stays central | `false` |
 | `policyManagement.approvalMemory` | `true` consults saved approval grants where a live class's `requiresApproval` subset would ask a human (stage 5): the class's grants are read from the broker immediately before the decision and again before the merge call, never cached, and an active grant bound to the policy in force, covering every file the subset caught, lets the decision arm; the record names it (`grant=`). A failed lookup authorizes nothing, a shadow or off class never consults one, and a revert of a merge a grant authorized disables it. Needs `read`, and the broker's `human.approvalMemory`. Until repository authority (stage 4) decides merges, it changes only the dual evaluation's repository decision | `false` |
+| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its classes (every `any` branch, the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source, MP15). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
 
 Each `repositories` entry:
 

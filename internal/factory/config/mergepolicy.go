@@ -88,7 +88,17 @@ type PolicyManagement struct {
 	// would ask a human (stage 5): an active grant whose predicate covers the decision lets it arm.
 	// Off, no grant is read. Needs Read: a grant is bound to the policy Read observes.
 	ApprovalMemory bool `json:"approvalMemory,omitempty"`
+	// RepositoryAuthority lets a repository whose entry says classAuthority: repository be decided
+	// on its own policy file rather than on central classes (stage 4). Invalid, unreadable or stale
+	// policy pauses its auto-merge; human merges continue. Needs Read.
+	RepositoryAuthority bool `json:"repositoryAuthority,omitempty"`
 }
+
+// The class authorities of a repository (MP15): central classes, or the repository's own file.
+const (
+	ClassAuthorityCentral    = "central"
+	ClassAuthorityRepository = "repository"
+)
 
 var profileRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
 
@@ -123,6 +133,9 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 	if l := c.MergeGuardrails.MaxGrantLifetime.Duration; l < 0 || l > MaxGrantLifetime {
 		bad("mergeGuardrails.maxGrantLifetime must be 0 (the default, %s) to %s", DefaultGrantLifetime, MaxGrantLifetime)
 	}
+	if pm := c.PolicyManagement; pm.RepositoryAuthority && !pm.Read {
+		bad("policyManagement.repositoryAuthority needs read: it decides on the policy read observes")
+	}
 	g := c.MergeGuardrails
 	for _, f := range []struct {
 		key string
@@ -142,4 +155,36 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 			bad("mergeGuardrails.mandatoryChecks names an empty check")
 		}
 	}
+}
+
+// validateAuthority is a repository's classAuthority (MP15): one authoritative source, so a
+// repository cut over to its own file declares no central class, and the cutover needs the switch.
+func (c *Config) validateAuthority(r *Repository, bad func(string, ...any)) {
+	switch r.ClassAuthority {
+	case "", ClassAuthorityCentral:
+		return
+	case ClassAuthorityRepository:
+	default:
+		bad("classAuthority %q is %s or %s", r.ClassAuthority, ClassAuthorityCentral, ClassAuthorityRepository)
+		return
+	}
+	if !c.PolicyManagement.RepositoryAuthority {
+		bad("classAuthority repository needs policyManagement.repositoryAuthority")
+	}
+	if len(r.Classes) > 0 {
+		bad("classAuthority repository: classes are declared centrally too, two authoritative sources (MP15): remove them")
+	}
+}
+
+// RepositoryAuthoritative is whether the repository's classes are its own file's (stage 4): cut
+// over, with the switch on.
+func (c *Config) RepositoryAuthoritative(r *Repository) bool {
+	return r != nil && r.ClassAuthority == ClassAuthorityRepository && c.PolicyManagement.RepositoryAuthority
+}
+
+// SetClassSource makes source the classes of every repository cut over to its own file (stage 4):
+// Repos and RepositoryFor return them, so every reader reads one set. The binary sets it once,
+// before anything reads the config; with the switch off it is never called.
+func (c *Config) SetClassSource(source func(repository string) (map[string]Class, bool)) {
+	c.classSource = source
 }

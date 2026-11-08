@@ -71,3 +71,12 @@ func TestTheGrantFieldPrintsOnlyWhenAGrantWasUsed(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Repository authority (merge policy stage 4) binds the decision to the policy that made it,
+// with nothing compared: policy= alone, before reviewer.
+func TestThePolicyPrintsAloneUnderRepositoryAuthority(t *testing.T) {
+	got := Marker("abc", "c", "arm", "", Rows{Reviewer: "none", Policy: "0123456789ab"})
+	if !strings.HasSuffix(got, " capped=- policy=0123456789ab reviewer=none -->") || strings.Contains(got, "dual=") {
+		t.Fatal(got)
+	}
+}

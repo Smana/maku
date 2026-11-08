@@ -56,6 +56,8 @@ type MessagePayload struct {
 	PullRequest string `json:"pullRequest,omitempty"`
 	// Integration is an integration_result's outcome (v4 MR10).
 	Integration *IntegrationResult `json:"integration,omitempty"`
+	// Output is a safe-output event's record (hardening UH4).
+	Output *OutputRecord `json:"output,omitempty"`
 }
 
 // The integration states, as the Task CRD's status.result enumerates them. A run reports only a

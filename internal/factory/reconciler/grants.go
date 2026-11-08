@@ -72,10 +72,10 @@ func (r *Reconciler) grantHolds(ctx context.Context, t *v1alpha1.Task, d ArmDeci
 		return true
 	}
 	id, version, ok := grantRef(d.Rows.Grant)
-	if !ok || !r.grantsOn() || r.Policy == nil {
+	if !ok || !r.grantsOn() {
 		return false
 	}
-	snap, read := r.Policy(t.Spec.Repository)
+	snap, read := r.decidingPolicy(t)
 	if !read || snap.Err != nil {
 		return false
 	}
@@ -134,4 +134,17 @@ func (r *Reconciler) disableGrant(ctx context.Context, t *v1alpha1.Task, why str
 		r.Metrics.ApprovalGrantEvent(ctx, t.Spec.Repository, class, grant.EventDisabled)
 	})
 	return nil
+}
+
+// decidingPolicy is the policy a grant of t's decision is bound to: a cut-over repository's
+// authority snapshot (stage 4), which gives none while it gives no authority, or else the snapshot
+// dual evaluation reads.
+func (r *Reconciler) decidingPolicy(t *v1alpha1.Task) (mergepolicy.Snapshot, bool) {
+	if p := r.gatePolicy(r.repo(t), t.Spec.Repository); p.on {
+		return p.snap, p.err == nil
+	}
+	if r.Policy == nil {
+		return mergepolicy.Snapshot{}, false
+	}
+	return r.Policy(t.Spec.Repository)
 }

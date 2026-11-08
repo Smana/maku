@@ -4,7 +4,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 
 | File | Role |
 |---|---|
-| `agent_run.py` → `agent-run` | Entrypoint: start agent-server, clone and resume `$BRANCH`, POST the conversation (its `tags` carry `effort`, `$LLM_REASONING_EFFORT` or `high`, which the bridge mirrors into the room's `harness_status`; never the model, which the room takes from the claim's `spec.model`), wait (under the [loop policy](#loop-policy) when it is on), revoke, exit 0/1. On SIGTERM, within 15 s: pause, checkpoint an implementer's work (`Agent-Checkpoint: disruption`; never a GitHub token, never over 200 files or 5 MiB), the room-bridge's final read, stop, revoke. A SIGTERM after the run ended keeps its exit code |
+| `agent_run.py` → `agent-run` | Entrypoint: start agent-server, clone and resume `$BRANCH`, POST the conversation (its `tags` carry `effort`, `$LLM_REASONING_EFFORT` or `high`, which the bridge mirrors into the room's `harness_status`; never the model, which the room takes from the claim's `spec.model`), wait (under the [loop policy](#loop-policy) when it is on), revoke, exit 0/1. On SIGTERM, within 15 s: pause, checkpoint an implementer's work (`Agent-Checkpoint: disruption`; never a GitHub token, never over 200 files or 5 MiB), the room-bridge's final read, stop, revoke. A SIGTERM after the run ended keeps its exit code. An implementer run that finished with no `room_handoff` the broker took gets one from the harness, naming the head it pushed (GitHub's branch at the clone's `HEAD`, moved during the run), so the merge gate's R02 never waits on a head nobody reported |
 | `loop_policy.py` | The loop policy's rules: the switch, the judge's input and verdict, the continuation, the state |
 | `agent_checks.py` → `agent-checks` | v3 feature 3: the CI's fast subset the repository declares in `.github/agent-checks.yaml` (read from the default branch), with its tools installed by mise (`/opt/agent/bin/mise`, off `PATH`) at the work tree's `mise.toml` pins into `/workspace/.toolchain`. Each step runs in its own process group without `CI` or any credential path; the result is `/workspace/.agent-checks/<sha>.json` and `.txt`. Evidence, never a gate. The run is pinned to the base and declaration blob `agent-run` read at startup (`AGENT_CHECKS_BASE`, no `refs/replace`), and a result file the agent left is moved aside, never posted as the harness's own. The harness's run prints its result on a pipe only `agent-run` holds (`agent-checks --json`), its git calls run with fsmonitor, hooks, external diff, textconv and clean/smudge filters disabled, and a non-0/1 exit, a timeout, a held lock or no result reads "unreadable result". Both `agent-run` and `agent-checks --json` mark themselves undumpable (`prctl(PR_SET_DUMPABLE, 0)`), so a leftover same-uid agent process cannot open their `/proc/<pid>/fd` or ptrace them. Residual, all under one uid: the window between the tool's exec (which resets the flag) and its first prctl call, a few Python start-up milliseconds; a live agent process that was already holding an fd or running as root-equivalent; rewriting the pinned blob's objects in `.git/objects`; swapping binaries in `/workspace/.toolchain`; and declared steps that run the branch's own scripts. The result is evidence; the CI stays the judge, and the reviewer's own run backs it |
 | `test_contract.py` → `test-contract` | v3 feature 4: whether a change's tests are a contract. Reads the `tests` section of `.github/agent-checks.yaml` from the base, runs the selected test files at the base, at the base plus the changed tests (the overlay) and at the head, each in a clean worktree, and compares JUnit ids. `red [--base SHA]` is the tester's red check, `hold [--base SHA --contract SHA]` the implementer's contract run (also fails when a contract or runner file changed since the contract commit), `ci --base --head` the "Test contract 🧪" job through `.github/actions/test-contract`. The harness must pass the base and contract shas it recorded at startup; without them `hold` falls back to the local `origin/HEAD` and a trailer search, and says so (`source`). Exit codes: 0 ok, 1 not ok, 2 no declaration, 3 outside the test paths, 4 could not run (or a bad ref), 5 no contract, 6 contract without ids, 7 contract without files, 8 base not under the contract commit, 9 declaration lost after a contract was found; `hold` never exits 2 once a contract exists. CI is the judge; `hold` is a sandbox signal that fails closed |
@@ -12,6 +12,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | `gh` | gh with that token in `GH_TOKEN`; `gh pr create` (or `new`) then appends the provenance footer (`pr_footer.py`, SP2 design §5) |
 | `commit-msg` | adds `Agent-Run: $RUN_ID`, `Agent-Task: $TASK_ID` when set, and `Agent-Checkpoint: disruption` on agent-run's SIGTERM checkpoint |
 | `pre-commit` | v3 feature 4: refuses a commit whose staged paths include a file of the test contract, naming them and the `git restore --source=<commit>` that undoes it. It reads `/workspace/.agent-contract.json`, which `agent-run` writes only for a resumed implementer branch that holds a contract commit; no file, or an unreadable one, allows every commit. A courtesy (`--no-verify` skips it): the merge gate's row 2c binds |
+| `coordination_integration.py` | v4 MR10: the [integration runtime](#coordination-integration) a triager run carrying a coordination manifest runs instead of a conversation |
 | `site/sitecustomize.py` | agent-server's start-up hook: a 4xx to the MCP client's reply to a server `ping` is logged instead of ending the session (F29, envoyproxy/ai-gateway#2715); a transient model error is retried (#99, below); an internal run's prompt-cache markers are rewritten as `prompt_cache_breakpoint`, the only one agentgateway 1.6 carries to Anthropic |
 | `site/agent_search.py` | v3 feature 5: the implementer's `search` tool, imported by agent-server from the start request's `tool_module_qualnames`. One question, one child conversation with `grep`, `glob`, `read_file`, `list_directory`, `finish` and `think` only (no terminal, no file editor, no MCP, no plugins or hooks, `NeverConfirm`), a copy of the run's LLM at effort `low`, at most 40 iterations, 300k tokens and 300 s, six calls a run, one at a time. The readers are guarded: a checked absolute path under the repository, regular files of at most 1 MiB, `grep` and `glob` on ripgrep only (the image installs it and the test stage asserts `rg --version`). The answer comes back headed and clipped at 8,000 characters; a failure is an error observation. One row per call in `/workspace/.agent-search.jsonl`, a signal the agent can write |
 
@@ -27,6 +28,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | `AGENT_RUN_SECONDS` | the pod's deadline: the final checks are skipped (`skipped: deadline`) when less than the declaration's budget plus 2 min is left | the final checks always run |
 | `AGENT_LOOP` | an implementer runs under the [loop policy](#loop-policy): a JSON object holding any of `stallSteps`, `continuations` and `judgeModel`; `{}` is 80, 2 and `tier-light` | no judge and no stall rule: the run ends when its conversation does |
 | `JUDGE_BASE_URL` | the judge posts to `$JUDGE_BASE_URL/chat/completions` with `JUDGE_MODEL` as its model (required: without it the judge is unavailable and says so on stderr), on the key `LLM_API_KEY_FILE` names; for a runtime with no identity proxy (maku-run-controller) | the identity proxy's `/judge/v1`, as below |
+| `COORDINATION_MANIFEST`, `COORDINATION_MANIFEST_SHA256` | a triager runs the [coordination integration](#coordination-integration) on these exact bytes, and no conversation | today's run |
 | `AGENT_SEARCH` | `1`: an implementer gets the `search` tool and its rule, once `agent_search` imports (else `agent-run: search off: …` and a run as today); the ledger's tool calls join the step count the loop policy's stall rule reads, and `agent-run search: N calls, S steps, T tokens, outcomes …` closes the log | no search tool |
 
 ## Loop policy
@@ -156,6 +158,40 @@ continuations, no judge and no stall rule; spent, the run ends as it would witho
 
 The tests the red check runs are the tester's code under the agent's uid and could forge their own JUnit
 report; that is why the harness's check does not bind.
+
+## Coordination integration
+
+A triager run whose claim carries `agents.ogenki.io/coordination-manifest` and its `-hash` (v4
+MR10) gets them as `COORDINATION_MANIFEST` and `COORDINATION_MANIFEST_SHA256`; the run controller
+refuses the run first when the hash is not the SHA-256 of the bytes, the role is not `triager` or
+the run has a branch. `coordination_integration.py` then calls no model, clones nothing for an
+agent and pushes nothing:
+
+```mermaid
+flowchart TD
+  A[manifest + SHA-256 from the claim] --> B{triager, hash matches,<br/>well-formed?}
+  B -- no --> X[nothing typed, exit 1]
+  B -- yes --> C["/tmp/maku-coordination/manifest.json<br/>0444, exported as MAKU_COORDINATION_MANIFEST"]
+  C --> D["per subject: anonymous fetch from github.com/&lt;repository&gt;<br/>detached worktree $MAKU_COORDINATION_ROOT/&lt;childID&gt;, HEAD == SHA"]
+  D -- fetch, worktree or SHA fails --> X
+  D --> E[each confirmed acceptance check, in order,<br/>until the first that fails]
+  E --> F["room_integration: passed or failed, reason, manifestHash"]
+  F -- not stored --> X
+  F --> G[exit 0]
+```
+
+| Step | Rule |
+|---|---|
+| Subjects | each child id, repository and exactly one 40-hex `headSHA` or `mergeCommitSHA` is checked before any git call, as `maku coordination checkout` checks its document |
+| Fetch | anonymous over https only: no credential helper, no system or global git config, `core.hooksPath=/dev/null`, no LFS smudge, no submodules. A merge commit must be on origin's default branch (`ls-remote --symref`, then `merge-base --is-ancestor`); a head is fetched by its id |
+| Worktrees | every subject is fetched and verified before any worktree exists, and verified again right before its own; then `git worktree add --detach` from a bare repository of its own, and `rev-parse HEAD` must be the SHA. No branch is created. Git calls time out at 120 s (fetch, `ls-remote`, `worktree add`) or 30 s |
+| Checks | each `acceptance[].check` verbatim through `bash -c` (no template language), at `$MAKU_COORDINATION_ROOT`, with only `PATH`, `HOME`, `LANG`, `TMPDIR` and the two `MAKU_COORDINATION_*` paths; none of the run's credential paths. Each runs in its own process group, killed when its shell exits, at most 30 minutes; the redacted tail of its output is logged |
+| Result | `passed`/`acceptance_passed`, `failed`/`acceptance_failed` or `failed`/`acceptance_timeout`, with the manifest hash, through the harness-only room tool `room_integration`. The factory reads it only from the run it started, under the hash it holds |
+| Infrastructure | a malformed manifest, a fetch, a worktree or a SHA that does not verify, or an unstored result posts nothing typed and exits 1: the factory escalates `integration_pending` |
+
+Not the v4 item 4 hardened safe-output and threat checks: a check runs the subjects' own code under
+the run's uid, which can read the room-tools token on disk. Until those checks land, the factory's
+execute gate refuses every integration admission, so this runtime is not reached in production.
 
 ## Model errors
 
