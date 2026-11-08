@@ -515,6 +515,11 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 	if err != nil {
 		return err
 	}
+	recovery, err := meter.Float64ObservableGauge("agent_factory_coordination_recovery_age_seconds",
+		metric.WithDescription("Seconds the oldest recovery proposal standing on a live coordination parent has stood, by primary (v4 RecoveryRequired)."))
+	if err != nil {
+		return err
+	}
 	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		if !leader() {
 			return nil
@@ -546,6 +551,18 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 			for k, v := range allocated {
 				o.ObserveInt64(alloc, v, metric.WithAttributes(attribute.String("repository", k[0]), attribute.String("kind", k[1])))
 			}
+			oldest := map[string]time.Time{}
+			for i := range l.Items {
+				if at, ok := standingRecovery(&l.Items[i]); ok {
+					r := repo(l.Items[i].Spec.Repository)
+					if o, seen := oldest[r]; !seen || at.Before(o) {
+						oldest[r] = at
+					}
+				}
+			}
+			for r, at := range oldest {
+				o.ObserveFloat64(recovery, max(time.Since(at), 0).Seconds(), metric.WithAttributes(attribute.String("repository", r)))
+			}
 			for _, t := range l.Items {
 				if !v1alpha1.TerminalPhase(t.Status.Phase) && t.Status.PhaseSince != nil {
 					o.ObserveFloat64(phase, time.Since(t.Status.PhaseSince.Time).Seconds(),
@@ -561,7 +578,7 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 			o.ObserveInt64(stop, v)
 		}
 		return nil
-	}, tasks, stop, phase, alloc)
+	}, tasks, stop, phase, alloc, recovery)
 	return err
 }
 
