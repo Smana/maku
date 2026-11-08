@@ -287,6 +287,9 @@ func reasons() map[string]string {
 		"steering_path":               "it changes a steering note, which only a maintainer on the default branch may do",
 		"class_mismatch":              "the diff is not the class the triage predicted",
 		"class_unarmed":               "the factory does not merge this class: a maintainer reviews and merges it",
+		"policy_unavailable":          "the repository's merge policy could not be read recently, so auto-merge waits for the next read",
+		"policy_invalid":              "the repository's merge policy on its default branch is invalid, so auto-merge is paused: a maintainer fixes .github/agent-factory.yaml or merges it",
+		"approval_required":           "it changes a file its class asks a maintainer to approve",
 		"file_not_allowed":            "it changes a file outside its class's allowed files",
 		"file_protected":              "it changes a file its class protects",
 		"file_added_or_deleted":       "it changes a file in a way other than editing its content (an add, delete, rename, copy or mode change), which its class does not allow",
@@ -299,7 +302,7 @@ func reasons() map[string]string {
 		"foreign_trailer":             "its head commit comes from another task's run",
 		"class_paused":                "auto-merge of this class is paused after a revert, a follow-up fix or a regression in its recent merges",
 		"ledger_truncated":            "the merge ledger read is incomplete (a full page of 100 labelled pull requests), so the factory does not arm",
-		"head_unreported":             "the room never reported its current head as a commit one of the task's runs pushed",
+		"head_unreported":             "the task's implementer never reported its current head in the room: no handoff of its runs names that commit",
 		"auto_merge_cap":              "today's auto-merge cap is reached",
 		"not_owned":                   "this repository's .github/agent-factory.yaml does not name this factory",
 		"policy_pending":              "the policy needs a maintainer's approval",
@@ -710,11 +713,11 @@ func WaitingForHuman(t *v1alpha1.Task, reason string) Event {
 // howAMaintainerMerges is how a by-hand hand-off's pull request is merged, in the room's own words.
 // A hand-off whose next step names this merge itself keeps summary.Waiting's sentence verbatim
 // (human_commit_in_pr: only a repository admin can take a commit the factory cannot vouch for, and the
-// sentence says why before how), so the comment a maintainer reads on GitHub and the room's NEXT box
+// sentence says why before how; head_unreported: no approval merges it until the room reports the head), so the comment a maintainer reads on GitHub and the room's NEXT box
 // cannot say two things (CD21, fast-follow 1). The other by-hand reasons keep the ruleset's bypass
 // sentence, which no approval returns (#51).
 func howAMaintainerMerges(t *v1alpha1.Task, reason string, n int) string {
-	if reason == "human_commit_in_pr" {
+	if reason == "human_commit_in_pr" || reason == "head_unreported" {
 		if _, next := summ.Waiting(&envelope.TaskFacts{Phase: v1alpha1.PhaseAwaitingHuman, Reason: reason}); next != "" {
 			return next
 		}

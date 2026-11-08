@@ -107,7 +107,8 @@ function frame(app: HTMLElement, title: string, theme?: ThemeController): HTMLEl
   header.append(el("h1", title, "page-title"));
   if (theme) mountThemeButton(header, theme);
   const crumbs = el("nav", undefined, "settings-nav");
-  crumbs.append(link("/", "Rooms"), link("/settings", "Settings"), link("/settings/merge-policies", "Merge policies"), link("/settings/evidence", "Evidence"));
+  crumbs.append(link("/", "Rooms"), link("/settings", "Settings"), link("/settings/merge-policies", "Merge policies"), link("/settings/evidence", "Evidence"),
+    link("/settings/approval-memory", "Approval memory"));
   const main = el("main", undefined, "settings");
   app.replaceChildren(header, crumbs, main);
   return main;

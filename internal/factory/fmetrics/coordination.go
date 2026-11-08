@@ -13,7 +13,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 )
 
-// Multi-repository coordination's seven series (v4 observability). Every label is a configured
+// Multi-repository coordination's eight series (v4 observability). Every label is a configured
 // repository or a closed vocabulary: family and child ids, artifact names, plan and acceptance text,
 // viewers and channels never reach one (v4 security 6). The switch off records nothing.
 
@@ -83,8 +83,8 @@ func boundClass(c string) string {
 // coordinationWaitBuckets: 1 m, 5 m, 15 m, 1 h, 4 h, 1 d, 3 d, 7 d. Waits are human-paced.
 var coordinationWaitBuckets = []float64{60, 300, 900, 3600, 14400, 86400, 259200, 604800}
 
-// coordination holds the counters and the histogram; allocated_micro_usd is collected from the
-// tasks at scrape time (registerCollected).
+// coordination holds the counters and the histogram; allocated_micro_usd and recovery_age_seconds
+// are collected from the tasks at scrape time (registerCollected).
 type coordination struct {
 	families     metric.Int64Counter
 	planVersions metric.Int64Counter
@@ -186,4 +186,15 @@ func coordinationAllocations(t *v1alpha1.Task) (planning, children, integration 
 		children += c.BudgetMicroUSD
 	}
 	return p.Budget.PlanningMicroUSD, children, int64(p.Integration.MaxRuns) * p.Integration.RunMicroUSD, true
+}
+
+// standingRecovery is when t's one recovery proposal was made, while t is a live coordination
+// parent that holds one: a proposal stands until it is replaced or cleared, and an ended family's
+// is no longer anyone's to act on.
+func standingRecovery(t *v1alpha1.Task) (time.Time, bool) {
+	cs := t.Status.Coordination
+	if t.Spec.Kind != v1alpha1.TaskKindCoordination || v1alpha1.TerminalPhase(t.Status.Phase) || cs == nil || cs.Recovery == nil {
+		return time.Time{}, false
+	}
+	return cs.Recovery.CreatedAt.Time, true
 }

@@ -82,6 +82,14 @@ describe("the repository page", () => {
     expect(edit?.getAttribute("href")).toBe(proposal.editURL);
   });
 
+  it("links every settings page from its nav, approval memory included", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
+      fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const nav = [...app.querySelectorAll("nav.settings-nav a")].map((a) => a.getAttribute("href"));
+    expect(nav).toEqual(["/", "/settings", "/settings/merge-policies", "/settings/evidence", "/settings/approval-memory"]);
+  });
+
   it("offers a reader no button: the broker would refuse it", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
@@ -196,7 +204,7 @@ describe("the decision timeline", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref/decisions/24", fakeFetch({
       "/api/policy/repositories/Smana/cloud-native-ref/decisions/24": { repository: "Smana/cloud-native-ref", pullRequest: 24, decisions: [{
         at: "2026-10-01T00:00:00Z", head: "a24", class: "docs-links", verdict: "human", reason: "patch_too_large",
-        steps: [{ row: "fixed_base", status: "passed" }, { row: "class", status: "refused", detail: "patch_too_large" }, { row: "grant", status: "reserved" }],
+        steps: [{ row: "fixed_base", status: "passed" }, { row: "class", status: "refused", detail: "patch_too_large" }, { row: "grant", status: "recorded", detail: "no grant used" }],
         revisions: [{ row: "repository policy", status: "recorded", detail: "sha256 0123456789ab, dual=agree" }],
         commentURL: "https://github.com/Smana/cloud-native-ref/pull/24#issuecomment-1", policyURL: "https://github.com/Smana/cloud-native-ref/commits/HEAD/.github/agent-factory.yaml" }] } }));
     expect(app.textContent).toContain("docs-links · human:patch_too_large");

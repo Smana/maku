@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -14,17 +15,28 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 )
 
-// The reasons a policy fails to load. Unreadable and stale arrive with repository authority: until
-// then the fence's own metric reports a failed read, and nothing depends on a fresh policy.
+// The reasons a policy fails to load. Unreadable and stale are counted by the gate of a cut-over
+// repository (stage 4), the one reader that depends on a fresh policy.
 const (
-	ReasonInvalid   = "invalid"
-	ReasonGuardrail = "guardrail_mismatch"
+	ReasonInvalid    = "invalid"
+	ReasonGuardrail  = "guardrail_mismatch"
+	ReasonUnreadable = "unreadable"
+	ReasonStale      = "stale"
+)
+
+// Why a cut-over repository's policy gives no authority (stage 4, MP13): the gate pauses its
+// auto-merge on each.
+var (
+	ErrUnreadable = errors.New("the repository policy has not been read")
+	ErrStale      = errors.New("the repository policy's last read is older than the fence's staleness window")
+	ErrInvalid    = errors.New("the repository policy is invalid or declares no class")
 )
 
 // Recorder is the part of the factory's metrics Watch writes.
 type Recorder interface {
 	PolicyLoadError(ctx context.Context, repository, reason string)
 	PolicyDivergence(ctx context.Context, repository string, n int)
+	PolicyChange(ctx context.Context, repository, class, change string)
 }
 
 // Snapshot is the last file read for a repository, and what it came to: what a decision binds to
@@ -36,6 +48,8 @@ type Snapshot struct {
 	Divergences []string
 	Classes     map[string]Resolved
 	Read        time.Time
+	// File is the parsed file of a valid snapshot, for the next one's structural comparison.
+	File *File
 }
 
 // Watch observes each owned repository's file as the fence reads it. It decides nothing: the gate
@@ -45,10 +59,15 @@ type Watch struct {
 	Metrics Recorder
 	Log     *slog.Logger
 	Now     func() time.Time
+	// Stale is how old a cut-over repository's last read may be and still decide (the fence's
+	// staleness window); 0 never ages.
+	Stale time.Duration
 
 	mu          sync.RWMutex
 	state       map[string]Snapshot
-	evaluations int // files parsed and validated, for the cache's test
+	valid       map[string]Snapshot            // each repository's last valid snapshot with classes
+	demoted     map[string]map[string][]string // a cut-over repository's relaxed live classes, and why
+	evaluations int                            // files parsed and validated, for the cache's test
 }
 
 // Observe reads one file. A file with no classes has no policy and records no divergence, and a
@@ -78,15 +97,29 @@ func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 		w.Metrics.PolicyLoadError(ctx, repository, ReasonGuardrail)
 	case s.Err != nil:
 		w.Metrics.PolicyLoadError(ctx, repository, ReasonInvalid)
-	case s.HasClasses:
+	case s.HasClasses && !w.Cfg.RepositoryAuthoritative(rc):
 		w.Metrics.PolicyDivergence(ctx, repository, len(s.Divergences))
 	}
+	var changes []Change
 	w.mu.Lock()
 	if w.state == nil {
-		w.state = map[string]Snapshot{}
+		w.state, w.valid, w.demoted = map[string]Snapshot{}, map[string]Snapshot{}, map[string]map[string][]string{}
 	}
 	w.state[key] = s
+	if s.Err == nil && s.HasClasses {
+		if last, ok := w.valid[key]; ok && last.Hash != s.Hash && w.Cfg.RepositoryAuthoritative(rc) {
+			changes = w.demote(key, last, s)
+		}
+		w.valid[key] = s
+	}
 	w.mu.Unlock()
+	for _, c := range changes {
+		w.Metrics.PolicyChange(ctx, repository, c.Class, c.Kind)
+		if c.Kind == KindRelaxation {
+			w.log().Warn("repository merge policy relaxed: the class runs in shadow", "repository", repository,
+				"class", c.Class, "hash", s.Hash, "why", c.Why)
+		}
+	}
 	if !seen || prev.Hash != s.Hash {
 		w.log().Info("repository merge policy read", "repository", repository, "hash", s.Hash,
 			"classes", s.HasClasses, "err", s.Err, "divergences", s.Divergences)
@@ -108,7 +141,10 @@ func (w *Watch) evaluate(rc *config.Repository, hash string, body []byte) Snapsh
 	if err != nil || !s.HasClasses {
 		return s
 	}
-	s.Divergences = Compare(rc, f, w.Cfg)
+	s.File = f
+	if !w.Cfg.RepositoryAuthoritative(rc) { // a cut-over repository has no central classes to compare with
+		s.Divergences = Compare(rc, f, w.Cfg)
+	}
 	s.Classes = map[string]Resolved{}
 	for name, p := range f.Classes {
 		r, rerr := Resolve(name, p, w.Cfg)
@@ -133,6 +169,89 @@ func (w *Watch) Snapshot(repository string) (Snapshot, bool) {
 	defer w.mu.RUnlock()
 	s, ok := w.state[strings.ToLower(repository)]
 	return s, ok
+}
+
+// demote compares a cut-over repository's new valid file with its last (MP8), under w.mu: a
+// relaxation of a class the new file declares live runs that class in shadow until the process
+// restarts. It returns the changes that are not unchanged, for the caller to count. A comparison
+// that fails is a relaxation of every live class: uncertainty fails toward shadow.
+func (w *Watch) demote(key string, last, next Snapshot) []Change {
+	changes, err := Structural(last.File, next.File, w.Cfg)
+	if err != nil {
+		changes = nil
+		for name := range next.Classes {
+			changes = append(changes, Change{Class: name, Kind: KindRelaxation, Why: []string{err.Error()}})
+		}
+	}
+	var out []Change
+	for _, c := range changes {
+		if c.Kind == KindUnchanged {
+			continue
+		}
+		out = append(out, c)
+		if c.Kind == KindRelaxation && next.Classes[c.Class].Class.Live {
+			if w.demoted[key] == nil {
+				w.demoted[key] = map[string][]string{}
+			}
+			w.demoted[key][c.Class] = c.Why
+		}
+	}
+	return out
+}
+
+// Authority is a cut-over repository's policy as the gate decides on it (stage 4): its current
+// snapshot, fresh within Stale, valid and declaring classes, with each relaxed class in shadow.
+// Anything else is an error the gate pauses on (MP13): ErrUnreadable, ErrStale or ErrInvalid.
+func (w *Watch) Authority(repository string) (Snapshot, error) {
+	key := strings.ToLower(repository)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	s, ok := w.state[key]
+	switch {
+	case !ok:
+		return Snapshot{}, ErrUnreadable
+	case w.Stale > 0 && w.now().Sub(s.Read) >= w.Stale:
+		return s, ErrStale
+	case s.Err != nil || !s.HasClasses:
+		return s, ErrInvalid
+	}
+	s.Classes = w.shadowed(s.Classes, w.demoted[key], false)
+	return s, nil
+}
+
+// Classes are a cut-over repository's classes for every reader but the gate's decision
+// (config.SetClassSource): the last valid file's, with relaxed classes in shadow, and every live
+// class in shadow while the current file gives no authority, so nothing merges on it.
+func (w *Watch) Classes(repository string) (map[string]config.Class, bool) {
+	_, authErr := w.Authority(repository)
+	key := strings.ToLower(repository)
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	s, ok := w.valid[key]
+	if !ok {
+		return nil, false
+	}
+	out := map[string]config.Class{}
+	for name, r := range w.shadowed(s.Classes, w.demoted[key], authErr != nil) {
+		out[name] = r.Class
+	}
+	return out, true
+}
+
+// shadowed is classes with each demoted class, or every class when all is set, live no more:
+// a live class runs in shadow, every variant of it.
+func (w *Watch) shadowed(classes map[string]Resolved, demoted map[string][]string, all bool) map[string]Resolved {
+	if !all && len(demoted) == 0 {
+		return classes
+	}
+	out := make(map[string]Resolved, len(classes))
+	for name, r := range classes {
+		if _, d := demoted[name]; all || d {
+			r = r.inShadow()
+		}
+		out[name] = r
+	}
+	return out
 }
 
 func (w *Watch) listed(repository string) *config.Repository {

@@ -113,8 +113,7 @@ func comment(id int64, author, at, body string) Comment {
 }
 
 // A decision's timeline: each stage before the deciding one passed, that one refused, the rest
-// not reached; an arm passes them all; the grant is reserved for stage 5; someone else's record
-// is not the factory's.
+// not reached; an arm passes them all; someone else's record is not the factory's.
 func TestDecisionsTimeline(t *testing.T) {
 	refused := "x <!-- agent-factory scope=task event=human-patch_too_large-2 -->\n\n<!-- agent-factory-decision head=a24 class=docs-links " +
 		"decision=human:patch_too_large files=1/3 lines=30/20 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=- capped=- reviewer=glm-5.3 -->"
@@ -134,7 +133,7 @@ func TestDecisionsTimeline(t *testing.T) {
 		status[s.Row] = s.Status
 	}
 	if d.Verdict != "human" || d.Reason != "patch_too_large" || status["fixed_base"] != "passed" || status["author_mode"] != "passed" ||
-		status["class"] != "refused" || status["deny"] != "not_reached" || status["grant"] != "reserved" || status["breaker_and_caps"] != "not_reached" ||
+		status["class"] != "refused" || status["deny"] != "not_reached" || status["grant"] != "not_reached" || status["breaker_and_caps"] != "not_reached" ||
 		d.CommentURL != "https://github.com/Smana/cloud-native-ref/pull/24#issuecomment-1" {
 		t.Fatalf("%+v", d)
 	}
@@ -147,7 +146,38 @@ func TestDecisionsTimeline(t *testing.T) {
 			t.Fatalf("a shadow decision passes every stage: %+v", s)
 		}
 	}
-	if a.Revisions[0].Detail != "sha256 0123456789ab, dual=agree" || d.Revisions[0].Detail != "not recorded: dual evaluation was off" {
+	if a.Revisions[0].Detail != "sha256 0123456789ab, dual=agree" || d.Revisions[0].Detail != "not recorded: neither dual evaluation nor repository authority was on" {
 		t.Fatalf("%+v %+v", a.Revisions, d.Revisions)
+	}
+}
+
+// Stages 4 and 5 on the timeline: a decision a grant let arm names the grant and its version, one
+// that used none says so, and a policy that decided under repository authority is that policy,
+// not a comparison.
+func TestTheTimelineShowsTheGrantAndTheDecidingPolicy(t *testing.T) {
+	granted := "<!-- agent-factory-decision head=a26 class=docs-broad decision=arm:armed files=1/10 lines=2/200 shape=ok " +
+		"holdout=ok oracle=n/a age=n/a evidence=ok paused=false capped=false policy=0123456789ab grant=g7:2 reviewer=glm-5.3 -->"
+	plain := "<!-- agent-factory-decision head=a27 class=docs-broad decision=arm:armed files=1/10 lines=2/200 shape=ok " +
+		"holdout=ok oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=glm-5.3 -->"
+	tl := Decisions("Smana/cloud-native-ref", 25, "ogenki-agent-factory[bot]", []Comment{
+		comment(1, "ogenki-agent-factory[bot]", "2026-10-01T00:00:00Z", granted),
+		comment(2, "ogenki-agent-factory[bot]", "2026-10-02T00:00:00Z", plain),
+	})
+	step := func(d Decision, row string) Step {
+		i := slices.IndexFunc(d.Steps, func(s Step) bool { return s.Row == row })
+		if i < 0 {
+			t.Fatalf("no %s in %+v", row, d.Steps)
+		}
+		return d.Steps[i]
+	}
+	g, p := tl.Decisions[0], tl.Decisions[1]
+	if s := step(g, "grant"); s.Status != "recorded" || s.Detail != "grant g7, version 2" {
+		t.Fatalf("%+v", s)
+	}
+	if s := step(p, "grant"); s.Status != "recorded" || s.Detail != "no grant used" {
+		t.Fatalf("%+v", s)
+	}
+	if g.Revisions[0].Detail != "sha256 0123456789ab, the policy that decided" || g.Revisions[3].Detail != "g7:2" || p.Revisions[3].Detail != "none" {
+		t.Fatalf("%+v", g.Revisions)
 	}
 }

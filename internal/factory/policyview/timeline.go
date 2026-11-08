@@ -20,8 +20,7 @@ type Comment struct {
 }
 
 // Step is one row of a decision's timeline: passed, refused (the row that decided), not_reached
-// (after the row that decided), recorded (a reading the record holds), or reserved (stage 5's
-// grant, not built yet).
+// (after the row that decided), or recorded (a reading the record holds).
 type Step struct {
 	Row    string `json:"row"`
 	Status string `json:"status"`
@@ -131,12 +130,16 @@ func steps(d Decision, rows map[string]string) []Step {
 	for i, s := range stages {
 		st := Step{Row: s, Status: "passed"}
 		switch {
-		case s == "grant":
-			st.Status, st.Detail = "reserved", "approval memory (stage 5) records grant use here"
 		case i == at:
 			st.Status, st.Detail = "refused", d.Reason
 		case i > at:
 			st.Status = "not_reached"
+		}
+		if s == "grant" && st.Status == "passed" { // stage 5: the grant a decision armed on, or none
+			st.Status, st.Detail = "recorded", "no grant used"
+			if id, version, ok := strings.Cut(rows["grant"], ":"); ok {
+				st.Detail = "grant " + id + ", version " + version
+			}
 		}
 		if s == "author_mode" {
 			st.Detail = strings.TrimSpace(st.Detail + " " + "class " + d.Class)
@@ -157,15 +160,22 @@ func steps(d Decision, rows map[string]string) []Step {
 
 // revisions are the inputs the decision is bound to, as its record holds them.
 func revisions(rows map[string]string) []Step {
-	policy := "not recorded: dual evaluation was off"
-	if p := rows["policy"]; p != "" {
-		policy = "sha256 " + p + ", dual=" + dash(rows["dual"])
+	policy := "not recorded: neither dual evaluation nor repository authority was on"
+	switch p := rows["policy"]; {
+	case p != "" && rows["dual"] != "":
+		policy = "sha256 " + p + ", dual=" + rows["dual"]
+	case p != "": // repository authority (stage 4): policy= alone is the policy that decided
+		policy = "sha256 " + p + ", the policy that decided"
+	}
+	grant := rows["grant"]
+	if grant == "" {
+		grant = "none"
 	}
 	return []Step{
 		{Row: "repository policy", Status: "recorded", Detail: policy},
 		{Row: "guardrails and harness profiles", Status: "recorded", Detail: "the factory config the pod ran, bound by its config checksum; not in the record"},
 		{Row: "reviewer", Status: "recorded", Detail: dash(rows["reviewer"])},
-		{Row: "grant version", Status: "reserved", Detail: "approval memory (stage 5)"},
+		{Row: "grant version", Status: "recorded", Detail: grant},
 	}
 }
 

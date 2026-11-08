@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The catalog room-broker migrate ships: eleven SQL files, sorted, five of them txmode none, and
+// The catalog room-broker migrate ships: twelve SQL files, sorted, five of them txmode none, and
 // nothing else embedded. atlas.sum is Atlas's and kustomization.yaml feeds the operator; neither
 // is read at run time, and this test stays Docker-free on purpose, so it runs everywhere.
 func TestEmbeddedMigrationCatalog(t *testing.T) {
@@ -37,8 +37,8 @@ func TestEmbeddedMigrationCatalog(t *testing.T) {
 		"20260927120000_rooms.sql", "20260929120000_verdicts.sql", "20261001120000_driver_queue.sql",
 		"20261001130000_delivery_indexes.sql", "20261001140000_brief_index.sql", "20261005120000_approvals.sql",
 		"20261005130000_approval_indexes.sql", "20261008120000_task_facts_index.sql", "20261023120000_webhooks.sql", "20261028120000_slack_links.sql",
-		"20261105120000_approval_binding.sql",
-		"20261108120000_policy_promotions.sql",
+		"20261105120000_approval_binding.sql", "20261108120000_approval_grants.sql",
+		"20261108130000_policy_promotions.sql",
 	}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("files = %q, want %q", names, wantNames)

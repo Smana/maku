@@ -160,6 +160,9 @@ type Server struct {
 	// SlackLink is the Slack self-serve link (human.slackLink): its two tools for the Slack App and
 	// the /link/slack page. Nil serves neither.
 	SlackLink *SlackLinker
+	// Grants is human.approvalMemory: the saved approval grants' page and API (merge policy stage
+	// 5). Nil serves neither.
+	Grants GrantStore
 	// SlackDecide is human.slackDecide: the App's one route that records a decision, for forge.push
 	// only (v3.x Slack push approval D2, D13). Nil serves nothing: the path is the mux's 404.
 	SlackDecide *SlackDecider
@@ -248,6 +251,9 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)
+	}
+	if s.Grants != nil { // human.approvalMemory (merge policy stage 5): off, every path is a 404
+		s.grantRoutes(mux, index)
 	}
 	if s.SlackDecide != nil {
 		// POST only, one path, no cookie: the route has no CSRF surface because it has none.

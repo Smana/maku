@@ -58,10 +58,14 @@ func readsDiff(r mergepolicy.Resolved, class string) bool {
 // a log line with both decisions, and the record's policy and dual fields. It changes nothing the
 // gate acts on: central's verdict is still the decision.
 func (r *Reconciler) dual(ctx context.Context, t *v1alpha1.Task, in ArmInputs, central ArmDecision, d *ArmDecision) {
-	if !r.Cfg.PolicyManagement.DualEvaluation || r.Policy == nil {
+	// A cut-over repository's decision is the repository's own: there is no central one to compare.
+	if !r.Cfg.PolicyManagement.DualEvaluation || r.Policy == nil || r.Cfg.RepositoryAuthoritative(r.repo(t)) {
 		return
 	}
 	snap, ok := r.Policy(t.Spec.Repository)
+	if r.grantsOn() && needsGrants(in, snap, ok) { // stage 5: read immediately before the decision
+		in.Grants = r.grantRead(ctx, t, snap.Hash)
+	}
 	repo, agreement := dualOf(central, in, snap, ok)
 	d.Rows.Policy, d.Rows.Dual = shortHash(snap.Hash), agreement
 	class := t.Spec.PredictedClass
@@ -69,7 +73,7 @@ func (r *Reconciler) dual(ctx context.Context, t *v1alpha1.Task, in ArmInputs, c
 	if agreement != dualAgree {
 		r.log().Info("merge decision under the repository policy", "task.id", t.Name, "head", in.PR.HeadSHA, "class", class,
 			"agreement", agreement, "policy", d.Rows.Policy, "central", central.Verdict+":"+central.Reason,
-			"repository", repo.Verdict+":"+repo.Reason)
+			"repository", repo.Verdict+":"+repo.Reason, "grant", repo.Rows.Grant)
 	}
 }
 

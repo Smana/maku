@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/coordinationview"
@@ -135,10 +136,25 @@ func (s *Server) filterCoordination(ctx context.Context, raw coordination.Coordi
 	return coordinationview.Filter(actx, raw, viewer, githubReader{s})
 }
 
-// coordinationNeedsIn is what needs/v1 reads of room id's family for p: the filtered view and p's
+// coordFn is a room's family as coordinationFor reads it, read at most once however many callers ask:
+// a parent's row and its brief want it for the family and for the needs alike.
+type coordFn func() (coordinationview.View, bool)
+
+// coordinationOnce is coordinationFor(ctx, id, p), read on the returned func's first call.
+func (s *Server) coordinationOnce(ctx context.Context, id string, p authn.Principal) coordFn {
+	var once sync.Once
+	var v coordinationview.View
+	var ok bool
+	return func() (coordinationview.View, bool) {
+		once.Do(func() { v, ok = s.coordinationFor(ctx, id, p) })
+		return v, ok
+	}
+}
+
+// coordinationNeedsIn is what needs/v1 reads of a room's family for p: the filtered view and p's
 // standing in each visible child's repository; nil when the room is no readable coordination parent.
-func (s *Server) coordinationNeedsIn(ctx context.Context, id string, p authn.Principal) (*summary.CoordinationNeeds, map[string]summary.GitHubStanding) {
-	v, ok := s.coordinationFor(ctx, id, p)
+func (s *Server) coordinationNeedsIn(ctx context.Context, coord coordFn, p authn.Principal) (*summary.CoordinationNeeds, map[string]summary.GitHubStanding) {
+	v, ok := coord()
 	if !ok {
 		return nil, nil
 	}

@@ -82,17 +82,28 @@ func TestPolicyMetricsAreBounded(t *testing.T) {
 	s.PolicyDivergence(t.Context(), "Smana/a", 2)
 	s.PolicyDualDecision(t.Context(), "Smana/a", "docs-links", "unexplained")
 	s.PolicyDualDecision(t.Context(), "Smana/a", "docs-links", "not-an-agreement")
+	s.ApprovalGrantsActive(t.Context(), "Smana/a", "docs-broad", 3)
+	s.ApprovalGrantEvent(t.Context(), "Smana/a", "docs-broad", "disabled")
+	s.ApprovalGrantEvent(t.Context(), "Smana/a", "docs-broad", "not-an-event")
+	s.PolicyLoadError(t.Context(), "Smana/a", "stale")
+	s.PolicyChange(t.Context(), "Smana/a", "docs-links", "relaxation")
+	s.PolicyChange(t.Context(), "Smana/a", "docs-links", "not-a-change")
 	out := scrape()
 	for _, want := range []string{
 		`maku_factory_policy_load_errors_total{reason="invalid",repository="Smana/a"`,
 		`maku_factory_policy_central_divergence{repository="Smana/a"`,
 		`maku_factory_policy_dual_decisions_total{agreement="unexplained",class="docs-links",repository="Smana/a"`,
+		`maku_factory_approval_grants_active{class="docs-broad",repository="Smana/a"`,
+		`maku_factory_approval_grant_events_total{class="docs-broad",event="disabled",repository="Smana/a"`,
+		`maku_factory_policy_load_errors_total{reason="stale",repository="Smana/a"`,
+		`maku_factory_policy_changes_total{change="relaxation",class="docs-links",repository="Smana/a"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %s in\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "not-a-reason") || strings.Contains(out, "not-an-agreement") {
+	if strings.Contains(out, "not-a-reason") || strings.Contains(out, "not-an-agreement") || strings.Contains(out, "not-an-event") ||
+		strings.Contains(out, "not-a-change") {
 		t.Fatal("a reason outside the list")
 	}
 }

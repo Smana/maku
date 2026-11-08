@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/factory/grant"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -178,6 +179,9 @@ type Set struct {
 	policyLoadErrors     metric.Int64Counter
 	policyDivergence     metric.Int64Gauge
 	policyDual           metric.Int64Counter
+	grantsActive         metric.Int64Gauge
+	grantEvents          metric.Int64Counter
+	policyChanges        metric.Int64Counter
 	refusals             metric.Int64Counter
 	unpricedModels       metric.Int64Counter
 	excludesCache        metric.Int64Counter
@@ -430,8 +434,17 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.policyDivergence, err = meter.Int64Gauge("agent_factory_policy_central_divergence",
 		metric.WithDescription("Classes on which a repository's merge policy differs from the central config, as last compared: 0 is equivalent. A repository never compared has no series; the value is the last comparison's."))
 	check(err)
+	s.policyChanges, err = meter.Int64Counter("agent_factory_policy_changes_total",
+		metric.WithDescription("Structural changes of a cut-over repository's merge policy, by class: tightening, or relaxation, which runs a live class in shadow (stage 4, MP8)."))
+	check(err)
 	s.policyDual, err = meter.Int64Counter("agent_factory_policy_dual_decisions_total",
 		metric.WithDescription("Merge decisions decided again under the repository's policy (stage 3), by agreement: agree, explained (the policy differs where the comparison says), unread (the diff it needed was not read), unexplained, or no_policy. Nothing is decided on it."))
+	check(err)
+	s.grantsActive, err = meter.Int64Gauge("agent_factory_approval_grants_active",
+		metric.WithDescription("Saved approval grants active for a repository's class as the last lookup found them (merge policy stage 5). Grant ids live in the decision record, never here."))
+	check(err)
+	s.grantEvents, err = meter.Int64Counter("agent_factory_approval_grant_events_total",
+		metric.WithDescription("Saved approval grant lifecycle events the factory caused or a lookup recorded, by event: created, used, suspended, reconfirmed, revoked, expired, disabled, renewed."))
 	check(err)
 	s.refusals, err = meter.Int64Counter("agent_factory_admission_refusals_total",
 		metric.WithDescription("Run requests refused on their repository: bound to another, no write on GitHub, or not this factory's."))
@@ -515,6 +528,11 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 	if err != nil {
 		return err
 	}
+	recovery, err := meter.Float64ObservableGauge("agent_factory_coordination_recovery_age_seconds",
+		metric.WithDescription("Seconds the oldest recovery proposal standing on a live coordination parent has stood, by primary (v4 RecoveryRequired)."))
+	if err != nil {
+		return err
+	}
 	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		if !leader() {
 			return nil
@@ -546,6 +564,18 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 			for k, v := range allocated {
 				o.ObserveInt64(alloc, v, metric.WithAttributes(attribute.String("repository", k[0]), attribute.String("kind", k[1])))
 			}
+			oldest := map[string]time.Time{}
+			for i := range l.Items {
+				if at, ok := standingRecovery(&l.Items[i]); ok {
+					r := repo(l.Items[i].Spec.Repository)
+					if o, seen := oldest[r]; !seen || at.Before(o) {
+						oldest[r] = at
+					}
+				}
+			}
+			for r, at := range oldest {
+				o.ObserveFloat64(recovery, max(time.Since(at), 0).Seconds(), metric.WithAttributes(attribute.String("repository", r)))
+			}
 			for _, t := range l.Items {
 				if !v1alpha1.TerminalPhase(t.Status.Phase) && t.Status.PhaseSince != nil {
 					o.ObserveFloat64(phase, time.Since(t.Status.PhaseSince.Time).Seconds(),
@@ -561,7 +591,7 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 			o.ObserveInt64(stop, v)
 		}
 		return nil
-	}, tasks, stop, phase, alloc)
+	}, tasks, stop, phase, alloc, recovery)
 	return err
 }
 
@@ -574,7 +604,19 @@ func (s *Set) RepositoryOwned(ctx context.Context, repository string, owned bool
 	s.owned.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
 }
 
-func policyLoadReasons() []string { return []string{"invalid", "guardrail_mismatch"} }
+func policyLoadReasons() []string {
+	return []string{"invalid", "guardrail_mismatch", "unreadable", "stale"}
+}
+
+// PolicyChange counts one structural change of a cut-over repository's class (stage 4, MP8);
+// a change outside the list is not counted. Promotion and demotion arrive with stage 6.
+func (s *Set) PolicyChange(ctx context.Context, repository, class, change string) {
+	if change != "tightening" && change != "relaxation" {
+		return
+	}
+	s.policyChanges.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class), attribute.String("change", change)))
+}
 
 // PolicyLoadError counts a failed read of repository's merge policy; a reason outside the list is
 // not counted.
@@ -603,6 +645,22 @@ func (s *Set) PolicyDualDecision(ctx context.Context, repository, class, agreeme
 	}
 	s.policyDual.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository)),
 		attribute.String("class", class), attribute.String("agreement", agreement)))
+}
+
+// ApprovalGrantsActive records the active grants a lookup found for a repository's class (MP18:
+// the count, never an id).
+func (s *Set) ApprovalGrantsActive(ctx context.Context, repository, class string, n int) {
+	s.grantsActive.Record(ctx, int64(n), metric.WithAttributes(attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class)))
+}
+
+// ApprovalGrantEvent counts one grant lifecycle event; an event outside grant.Events is not counted.
+func (s *Set) ApprovalGrantEvent(ctx context.Context, repository, class, event string) {
+	if !slices.Contains(grant.Events(), event) {
+		return
+	}
+	s.grantEvents.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class), attribute.String("event", event)))
 }
 
 // AdmissionRefused counts a run request refused on its repository, the one ctx names. Other

@@ -34,6 +34,25 @@ func (r Resolved) Variants() []config.Class {
 	return []config.Class{r.Class}
 }
 
+// inShadow is r with every live variant in shadow (stage 4's pause and MP8's demotion).
+func (r Resolved) inShadow() Resolved {
+	shadow := func(cl config.Class) config.Class {
+		if cl.Live {
+			cl.Live, cl.Shadow = false, true
+		}
+		return cl
+	}
+	r.Class = shadow(r.Class)
+	if r.Branches != nil {
+		bs := make([]config.Class, len(r.Branches))
+		for i, b := range r.Branches {
+			bs[i] = shadow(b)
+		}
+		r.Branches = bs
+	}
+	return r
+}
+
 // Resolve turns a parsed class into the config.Class the gate decides on, under the guardrails:
 // they add protected paths and mandatory checks, an undeclared cap inherits theirs, and a declared
 // cap above theirs is refused (MP6). Each branch of any is resolved the same way.
