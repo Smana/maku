@@ -343,8 +343,11 @@ const maxGateReentries = 3
 // changes_requested is refused while the request is outstanding only (see approvalReturn).
 // human_commit_in_pr is the ninth, beyond the spec's eight: the push check reads the same head
 // the same way after any approval, so only a human's merge takes it (final review I1).
+// head_unreported is the tenth: row 3 refuses every approval of a head no implementer run reported,
+// so an approval cannot return it; the room's report does (reenter), or a human's merge.
 var byHandReasons = map[string]bool{"not_agent_authored": true, "gate_path": true, "contract_modified": true, "not_owned": true,
-	"steering_path": true, "foreign_trailer": true, "not_mergeable": true, "changes_requested": true, "human_commit_in_pr": true}
+	"steering_path": true, "foreign_trailer": true, "not_mergeable": true, "changes_requested": true, "human_commit_in_pr": true,
+	"head_unreported": true}
 
 // handOff is the gate's hand-off comment (AM3): with approveToMerge, "approve this pull request"
 // for an agents pull request an approval can merge; the bypass instructions for an adopted one and

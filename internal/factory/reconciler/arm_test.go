@@ -300,7 +300,8 @@ func TestAMaintainersApprovalArmsWhenTheSwitchIsOn(t *testing.T) {
 //   - review I3/N1: a push after the task's runs ended (another task's run, a late checkpoint),
 //     the approval an hour later: no approval can bind that head, so it hands off as a commit
 //     not the task's (human_commit_in_pr, with the bypass), not as approval_stale;
-//   - anything unknown: no activity read, an unended run, a head no run reported.
+//   - anything unknown: no activity read, an unended run;
+//   - an approval of the head no run reported (gmmrmund): head_unreported, which the report returns.
 //
 // The unreported head is not redundant with row 2's head_unreported: row 3 decides before
 // agentEvidence is read, so without approvesHead's own check that approval arms (RED on fc87471f).
@@ -328,7 +329,14 @@ func TestAnApprovalBindsToTheHeadsPush(t *testing.T) {
 		"a reviewer's run never holds it": {now.Add(-10 * time.Minute), now.Add(5 * time.Minute), func(in *ArmInputs) {
 			in.Task.Status.Runs = append(in.Task.Status.Runs, v1alpha1.RunRecord{ID: "z4z4z4z4", Role: "reviewer", Trigger: "review"})
 		}, "arm", "maintainer_approved"},
-		"an approval of a head no run reported is stale": {now.Add(-10 * time.Minute), now.Add(time.Hour), func(in *ArmInputs) { in.ReportedHead = oldHead }, "human", "approval_stale"},
+		// gmmrmund (aws-0, Maku v0.39.0): the implementer pushed and ended agent_finished with no handoff, the
+		// maintainer approved that head, and the gate said approval_stale. The approval is of the head: what is
+		// missing is the room's report of it, and only that report returns the hand-off (reenter).
+		"an approval of the head when no run reported any head is head_unreported":       {now.Add(-10 * time.Minute), now.Add(time.Hour), func(in *ArmInputs) { in.ReportedHead = "" }, "human", "head_unreported"},
+		"an approval of the head when the room reported an older one is head_unreported": {now.Add(-10 * time.Minute), now.Add(time.Hour), func(in *ArmInputs) { in.ReportedHead = oldHead }, "human", "head_unreported"},
+		"an approval of an older head is stale, reported or not": {now.Add(-10 * time.Minute), now.Add(time.Hour), func(in *ArmInputs) {
+			in.ReportedHead, in.PR.Reviews[0].Commit = "", oldHead
+		}, "human", "approval_stale"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := armCfg()
