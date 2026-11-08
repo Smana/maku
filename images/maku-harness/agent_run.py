@@ -26,6 +26,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
+import coordination_integration
 import loop_policy
 
 AGENT_SERVER = "http://127.0.0.1:8000"
@@ -744,27 +745,37 @@ class ProgressNotes:
             raise RuntimeError(message[:200])
         return True
 
+    def harness_call(self, tool: str, arguments: dict) -> None:
+        """Calls one of the harness's own room tools, which the broker lists only to its client: raises
+        when it is not stored. An HTTP 4xx (an expired session) redoes the handshake once."""
+        self.traceparent = None
+        for attempt in range(2):
+            try:
+                name = self.find_tool(tool)
+                if name is None:
+                    raise RuntimeError("%s is not exposed to this run" % tool)
+                result = self.rpc("tools/call", {"name": name, "arguments": arguments})
+                if result.get("isError"):
+                    raise RuntimeError(_text({"content": result.get("content")})[:200])
+                return
+            except urllib.error.HTTPError as exc:
+                if attempt or not 400 <= exc.code < 500:
+                    raise
+                self.names, self.tool, self.session = None, None, None
+
     def judge(self, kind: str, reason: str, evidence: list) -> None:
         """Posts the completion judge's verdict as a room event (O15), through the run's own MCP route.
         Best effort: a verdict that cannot be posted is still in the harness log."""
         try:
-            self.traceparent = None
-            for attempt in range(2):
-                try:
-                    name = self.find_tool("room_judge")
-                    if name is None:
-                        raise RuntimeError("room_judge is not exposed to this run")
-                    result = self.rpc("tools/call", {"name": name, "arguments": {
-                        "verdict": kind, "reason": _short(reason, loop_policy.REASON_MAX), "evidence": list(evidence)[:20]}})
-                    if result.get("isError"):
-                        raise RuntimeError(_text({"content": result.get("content")})[:200])
-                    return
-                except urllib.error.HTTPError as exc:  # an expired session redoes the handshake once
-                    if attempt or not 400 <= exc.code < 500:
-                        raise
-                    self.names, self.tool, self.session = None, None, None
+            self.harness_call("room_judge", {"verdict": kind, "reason": _short(reason, loop_policy.REASON_MAX),
+                                             "evidence": list(evidence)[:20]})
         except Exception as exc:  # noqa: BLE001 -- a verdict note must never fail the run
             print("agent-run: judge verdict not posted: %s" % exc, file=sys.stderr, flush=True)
+
+    def integration(self, state: str, reason: str, manifest_hash: str) -> None:
+        """Posts an integration run's one typed result (v4 MR10). Never best effort: it raises, and the
+        run then exits non-zero, which the factory escalates."""
+        self.harness_call("room_integration", {"state": state, "reason": reason, "manifestHash": manifest_hash})
 
 
 # v3 feature 3: the repository's checks in the sandbox, on a check-enabled run only (AGENT_CHECKS=1,
@@ -2173,6 +2184,23 @@ def server_env(env: dict) -> dict:
     return out
 
 
+def integration(env: dict) -> int:
+    """A triager run carrying a coordination manifest (v4 MR10): the integration runtime instead of a
+    conversation. No model is called, nothing is cloned for the agent, pushed or opened."""
+    notes = ProgressNotes(env["MCP_URL"], "triager", token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
+
+    def post(state: str, reason: str, manifest_hash: str) -> None:
+        if notes is None:
+            raise RuntimeError("the run has no room tools")
+        notes.integration(state, reason, manifest_hash)
+
+    try:
+        return coordination_integration.run(env, post, redact=redact)
+    finally:
+        if notes:
+            notes.close()
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
     started = time.monotonic()
@@ -2187,6 +2215,10 @@ def main() -> int:
     cid, steps, code, end, signalled, read = None, None, None, None, False, False
     try:
         wait_ready(server=server)
+        # agent-server still runs: the pod's probes are its. Exit 0 latches Succeeded at once.
+        if coordination_integration.requested(env):
+            code = integration(env)
+            return code
         # A resumed suspendable run finds its clone and its conversation on its PVC. The same start
         # request reattaches the stored conversation and starts nothing. agent-run sends it nothing
         # either: it waits on a call's approval, a new message would reject that call, and a bare

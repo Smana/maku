@@ -76,7 +76,7 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir --root-user-action=ignor
       -r /tmp/checks-requirements.txt \
  && rm /tmp/checks-requirements.txt
 
-COPY --chmod=0755 agent_run.py agent_checks.py test_contract.py git_credential_agent.py loop_policy.py pr_footer.py /opt/agent/
+COPY --chmod=0755 agent_run.py agent_checks.py test_contract.py git_credential_agent.py loop_policy.py pr_footer.py coordination_integration.py /opt/agent/
 COPY --chmod=0755 site /opt/agent/site
 COPY --chmod=0755 gh /usr/local/bin/gh
 COPY --chmod=0755 commit-msg /etc/agent/git-hooks/commit-msg

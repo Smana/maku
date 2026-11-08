@@ -228,6 +228,10 @@ func TestIntegrationResultOnlyFromTheCurrentRun(t *testing.T) {
 			phase: "Failed", wantPhase: v1alpha1.PhaseDone, wantReason: reasonIntegrationFailed, wantState: coordination.ResultFailed},
 		{name: "infrastructure lost", phase: "Failed", reason: runs.ReasonPodLost,
 			wantPhase: v1alpha1.PhaseEscalated, wantReason: reasonIntegrationPending, wantState: coordination.ResultPending},
+		// The harness posts nothing typed and exits non-zero when a fetch, a worktree or a SHA
+		// check fails: that is the sandbox's infrastructure, not the family's acceptance.
+		{name: "the harness's infrastructure failed", phase: "Failed", reason: runs.ReasonPodFailed,
+			wantPhase: v1alpha1.PhaseEscalated, wantReason: reasonIntegrationPending, wantState: coordination.ResultPending},
 		{name: "the run vanished", lost: true,
 			wantPhase: v1alpha1.PhaseEscalated, wantReason: reasonIntegrationPending, wantState: coordination.ResultPending},
 	} {
