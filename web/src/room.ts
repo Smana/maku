@@ -141,7 +141,25 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, { rowFor: views.rowFor, reveal: () => runView.leave() }, () => snap?.fourEyes,
     // The panel's list is this room's from the route the CLI and the tools read (CD21), through the
     // page's own fetch so a test drives it as it drives the summary.
-    { needs: () => fetchNeeds(id, undefined, o.get) });
+    { needs: () => fetchNeeds(id, undefined, o.get), hands: {
+      // A need done in this room takes the reader to its control: the session opened at the group.
+      openSession(to) {
+        session.open = true;
+        const group = session.querySelector<HTMLElement>(to === "close" ? ".group-room" : ".group-driver");
+        if (group instanceof HTMLDetailsElement) group.open = true;
+        const target = to === "close" ? group?.querySelector<HTMLElement>('[data-act="close"]') : group;
+        if (!target) return;
+        if (target === group) target.tabIndex = -1;
+        target.scrollIntoView?.({ block: "nearest" });
+        target.focus({ preventScroll: true });
+      },
+      focusCoordination() {
+        const go = coordinationRegion.querySelector<HTMLElement>("button") ?? coordinationRegion;
+        if (go === coordinationRegion) go.tabIndex = -1;
+        go.scrollIntoView?.({ block: "start" });
+        go.focus({ preventScroll: true });
+      },
+    } });
   let controls: ReturnType<typeof mountControls> | undefined;
   let composer: ReturnType<typeof mountComposer> | undefined;
   const say = (text: string) => { notice.textContent = text; };

@@ -651,6 +651,25 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .approval-json pre { margin: 4px 0 0; background: var(--muted); padding: 6px; overflow-x: auto; max-height: 16em; border-radius: 6px; }
 .approval-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .approval-decide input { flex: 1 1 12em; min-width: 0; }
+/* A need decided elsewhere or by another control (needs.ts's needCard): the approval card's surface
+   and bar, its heading, its sentence, and one action that is always there. */
+.needs-other li.need { border-radius: calc(var(--radius-control) + 8px); padding: 10px 12px 10px 15px; display: grid; gap: 4px;
+  background: var(--card); color: var(--card-foreground); min-width: 0;
+  box-shadow: var(--shadow-border), inset 3px 0 0 var(--warning); }
+.need-title { margin: 0; font-weight: 700; }
+.need-what, .need-why { margin: 0; font-size: 14px; }
+.need-why { color: var(--muted-foreground); }
+.need-act { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 4px; }
+.need-act button { font-weight: 700; padding: 0 14px; }
+/* The link out reads as the card's button: the primary fill, a full target; its arrow says it leaves. */
+a.need-go {
+  display: inline-flex; align-items: center; min-height: var(--hit); box-sizing: border-box; padding: 0 14px;
+  border-radius: var(--radius-control); background: var(--primary); color: var(--primary-foreground); font-weight: 700; text-decoration: none;
+  transition-property: box-shadow, scale; transition-duration: 150ms; transition-timing-function: ease-out;
+}
+a.need-go:hover { box-shadow: var(--shadow-border-hover); text-decoration: underline; }
+@media (prefers-reduced-motion: no-preference) { a.need-go:active { scale: .96; } }
+.need-where { color: var(--muted-foreground); font-size: 13px; }
 button.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
 /* Deny is a ghost: the destructive word, no outline; hover tints it. */
 button.deny { color: var(--destructive-text); border-color: transparent; background: transparent; }

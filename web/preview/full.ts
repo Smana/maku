@@ -7,6 +7,7 @@
 //   ?session      the session toggle open
 //   ?escalated    the factory's escalated room
 //   ?stress       a long Now line and a 64-hex digest (the phone bugs)
+//   ?needs        every needs/v1 kind as the route serves it (needs-fixtures.ts), each with its one action
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 // One rail fixture (flow-fixtures.ts), the first of:
 //   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
@@ -19,6 +20,7 @@ import type { RoomEvent, Snapshot } from "../src/conn";
 import type { Summary } from "../src/summary";
 import { applyTheme, initTheme } from "../src/theme";
 import { flowFixture, flowName } from "./flow-fixtures";
+import { NEED_FIXTURES } from "./needs-fixtures";
 import { mountPreviewPage } from "./page";
 
 const get = async <T>(path: string): Promise<T> => (await fetch(path)).json() as Promise<T>;
@@ -61,7 +63,8 @@ async function run() {
   const lastAt = Date.parse(events[events.length - 1].ts);
   const page = mountPreviewPage(document.getElementById("app")!, { snap, unsandboxed: params.has("many"),
     summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
-    count: events.length, dashboards, now: () => lastAt + Date.now() - loaded,
+    count: events.length, dashboards,
+    ...(params.has("needs") ? { needs: async () => ({ apiVersion: "needs/v1", items: NEED_FIXTURES }) } : {}), now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });
   for (const e of events) page.apply(e);
   page.setStatus(`live · ${events.length} events (offline fixture)`);

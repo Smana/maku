@@ -3,7 +3,8 @@ import type { NeedsPage } from "../src/api";
 import type { Snapshot } from "../src/conn";
 import { RULES } from "../src/approval-help";
 import { approvalCard } from "../src/controls";
-import { mountNeeds } from "../src/needs";
+import { mountNeeds, type NeedHands } from "../src/needs";
+import { NEED_FIXTURES } from "../preview/needs-fixtures";
 import { RoomState } from "../src/room-state";
 import type { Summary } from "../src/summary";
 
@@ -48,7 +49,8 @@ describe("the needs-you panel", () => {
     const { root, needs } = mount();
     needs.setSummary(sum([{ kind: "merge", id: "77", what: "a maintainer with admin merges PR #77", url: "https://github.com/o/r/pull/77" },
       { kind: "hold", id: "waiting_human_driver", what: "hand the driver back", url: "u" }]));
-    expect([...root.querySelectorAll("li")].map((l) => l.textContent)).toEqual(["Merge: a maintainer with admin merges PR #77 · open the PR", "Hold: hand the driver back"]);
+    expect([...root.querySelectorAll("li.need .need-title")].map((l) => l.textContent)).toEqual(["Merge the pull request", "The task is on hold"]);
+    expect(root.querySelector("li.need a.need-go")?.textContent).toBe("Open the pull request ↗");
     expect(needs.count()).toBe(2);
     needs.setSummary(sum([])); needs.refresh();
     expect(root.hidden).toBe(true);
@@ -58,8 +60,8 @@ describe("the needs-you panel", () => {
     const { root, needs } = mount();
     needs.setSummary(sum([{ kind: "question", id: "3", what: "@alice answers the scoper's question by editing issue #3",
       url: "https://github.com/o/r/issues/3", author: "alice" }]));
-    expect([...root.querySelectorAll("li")].map((l) => l.textContent))
-      .toEqual(["Answer: @alice answers the scoper's question by editing issue #3 · open the issue"]);
+    expect(root.querySelector("li.need .need-what")?.textContent).toBe("@alice answers the scoper's question by editing issue #3");
+    expect(root.querySelector("li.need a.need-go")?.getAttribute("href")).toBe("https://github.com/o/r/issues/3");
     expect(needs.count()).toBe(1);
     expect(root.hidden).toBe(false);
   });
@@ -146,7 +148,7 @@ describe("the panel's list from the needs route", () => {
     panel.setSummary(sum([{ kind: "merge", id: "77", what: "a maintainer merges PR #77", url: "https://github.com/o/r/pull/77" }]));
     expect(root.textContent).toContain("a maintainer merges PR #77");
     await panel.refresh();
-    expect(root.textContent).toContain("comment /factory split on issue #2238");
+    expect(root.textContent).toContain("Comment /factory split on issue #2238 ↗");
     expect(root.textContent).not.toContain("a maintainer merges PR #77");
     expect(root.querySelector("ul.needs-other li.need a")?.getAttribute("href")).toBe("https://github.com/Smana/ai-native-ref/issues/2238");
     expect(panel.count()).toBe(1);
@@ -177,8 +179,8 @@ describe("the panel's list from the needs route", () => {
     const { root, needs: panel } = mount(new RoomState(), [], { needs: async () => { throw new Error("The needs list is unavailable: 503."); } });
     panel.setSummary(sum([{ kind: "hold", id: "waiting_human_driver", what: "hand the driver back", url: "u" }]));
     await panel.refresh();
-    expect([...root.querySelectorAll("ul.needs-other li")].map((l) => l.textContent))
-      .toEqual(["Hold: hand the driver back", "The needs list is unavailable: 503."]);
+    expect([...root.querySelectorAll("ul.needs-other li")].map((l) => l.className)).toEqual(["need", "needs-stale"]);
+    expect(root.querySelector("li.needs-stale")?.textContent).toBe("The needs list is unavailable: 503.");
     expect(root.hidden).toBe(false);
     expect(panel.count()).toBe(1); // the line is not a need
   });
@@ -396,6 +398,71 @@ describe("the approval card's guidance", () => {
     document.body.append(root);
     needs.focusFirst();
     expect(document.activeElement).toBe(root.querySelector("li.approval"));
+    root.remove();
+  });
+});
+
+describe("a need's one action", () => {
+  const draw = async (opts: { hands?: NeedHands; driver?: boolean } = {}) => {
+    const root = document.createElement("section");
+    const sent: Record<string, unknown>[] = [];
+    const who = { ...you, driver: opts.driver ?? false };
+    const panel = mountNeeds(root, { send: (f) => { sent.push(f); return true; } }, new RoomState(), () => who, { rowFor: () => undefined }, () => undefined,
+      { needs: async () => ({ apiVersion: "needs/v1", items: NEED_FIXTURES }), hands: opts.hands });
+    await panel.refresh();
+    const cards = [...root.querySelectorAll<HTMLElement>("li.need")];
+    return { root, panel, sent, cards, act: (i: number) => cards[i].querySelector(".need-act")! };
+  };
+
+  it("ends every card in an action: a control, a link out, or a line saying why there is none", async () => {
+    const { cards } = await draw({ hands: { openSession: () => {}, focusCoordination: () => {} }, driver: true });
+    expect(cards).toHaveLength(NEED_FIXTURES.length);
+    for (const c of cards) expect(c.querySelector(".need-act button, .need-act a.need-go, .need-act .need-where"), c.dataset.kind).not.toBeNull();
+  });
+  it("links the GitHub kinds out, as a button-shaped link, and says the room has no button for them", async () => {
+    const { act } = await draw();
+    for (const [i, href] of [[0, "https://github.com/o/r/issues/2238"], [2, "https://github.com/o/r/issues/3"], [3, "https://github.com/o/r/pull/2760"],
+      [4, "https://github.com/o/r/pull/77"], [5, "https://github.com/o/r/pull/77"]] as const) {
+      const a = act(i).querySelector<HTMLAnchorElement>("a.need-go")!;
+      expect(a.getAttribute("href")).toBe(href);
+      expect([a.target, a.rel]).toEqual(["_blank", "noopener noreferrer"]);
+      expect(a.getAttribute("aria-label")).toMatch(/\(opens in a new tab\)$/);
+      expect(act(i).querySelector(".need-where")?.textContent).toMatch(/^On GitHub/);
+    }
+    expect(act(3).textContent).toContain("Approve the head on the pull request ↗");
+    expect(act(3).textContent).toContain("the merge gate reads the approval of the head");
+  });
+  it("hands the driver back in one press, for the driver", async () => {
+    const { act, sent } = await draw({ driver: true });
+    const b = act(7).querySelector<HTMLButtonElement>("button")!;
+    expect(b.textContent).toBe("Hand the driver back to the factory");
+    b.click();
+    expect(sent.at(-1)).toMatchObject({ type: "act", action: { kind: "driver_give", to: "system:factory" } });
+    expect(act(8).querySelector("button")).toBeNull(); // a busy room: nothing to press
+    expect(act(8).textContent).toMatch(/starts when the other run in the room ends/);
+  });
+  it("takes a viewer who does not drive to Session › Driver, a recovery to the close button, a plan to the coordination panel", async () => {
+    const went: string[] = [];
+    const { act } = await draw({ hands: { openSession: (to) => went.push(to), focusCoordination: () => went.push("coordination") } });
+    act(7).querySelector<HTMLButtonElement>("button")!.click();
+    act(6).querySelector<HTMLButtonElement>("button")!.click();
+    act(1).querySelector<HTMLButtonElement>("button")!.click();
+    expect(went).toEqual(["driver", "close", "coordination"]);
+    expect(act(6).querySelector("a.need-go")?.textContent).toBe("Retry: comment /factory retry on issue #3 ↗");
+    expect(act(1).querySelector("button")?.textContent).toBe("Confirm");
+  });
+  it("never links a need back to the room page it sits on", async () => {
+    const { root } = await draw({ hands: { openSession: () => {}, focusCoordination: () => {} } });
+    expect([...root.querySelectorAll("a")].map((a) => a.getAttribute("href")).filter((h) => h?.startsWith("https://rooms.example/"))).toEqual([]);
+  });
+  it("keeps a card, and the focus on its button, across frames", async () => {
+    const { root, panel, cards } = await draw({ driver: true });
+    document.body.append(root);
+    const b = cards[7].querySelector<HTMLButtonElement>("button")!;
+    b.focus();
+    await panel.refresh();
+    expect(root.querySelectorAll("li.need")[7]).toBe(cards[7]);
+    expect(document.activeElement).toBe(b);
     root.remove();
   });
 });
