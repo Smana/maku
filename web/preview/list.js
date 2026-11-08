@@ -285,6 +285,12 @@ function ago(iso, now) {
 }
 
 // src/view.ts
+function familyLine(c) {
+  let s = `family v${c.planVersion}: ${c.children.map((ch) => [ch.id, ch.phase].filter(Boolean).join(" ")).join(", ")}`;
+  if (c.restrictedChildren > 0) s += ` (+${c.restrictedChildren} restricted)`;
+  if (c.recoveryCode) s += `, recovery ${c.recoveryCode}`;
+  return s;
+}
 function lastMs(row) {
   const t = Date.parse(row.lastEventAt ?? "");
   return isNaN(t) || t < Date.UTC(2e3, 0, 1) ? 0 : t;
@@ -298,16 +304,20 @@ function rowCells(row, now) {
     needs: row.needsYou ? String(row.needsYou) : "",
     task: row.issue ? [`#${row.issue}`, row.title ?? ""].filter(Boolean).join(" ") : `Room ${row.id}`,
     repo: row.repository ?? "",
-    phase: row.task || row.phase || "Open",
+    phase: [row.task || row.phase || "Open", row.coordination ? familyLine(row.coordination) : ""].filter(Boolean).join(" \xB7 "),
     pr: row.pr ? `#${row.pr}` : "",
     last: t ? ago(new Date(t).toISOString(), now.getTime()) : "",
     id: row.id
   };
 }
+var closedDays = 30;
 function roomsURL(f) {
   const q = new URLSearchParams();
-  if (f.mine) q.set("mine", "1");
-  if (f.needsMe) q.set("needs_me", "1");
+  if (f.closed) q.set("closed", "1");
+  else {
+    if (f.mine) q.set("mine", "1");
+    if (f.needsMe) q.set("needs_me", "1");
+  }
   if (f.repo) q.set("repo", f.repo);
   const s = q.toString();
   return s ? `/api/rooms?${s}` : "/api/rooms";
@@ -420,6 +430,11 @@ async function listRooms(app, get2 = fetch, filters = {}, theme2, refresh = {}) 
   };
   const mine = check("mine", "mine", filters.mine);
   const needsMe = check("needsMe", "needs me", filters.needsMe);
+  const closed2 = check("closed", "closed", filters.closed);
+  const setAside = () => {
+    mine.input.disabled = needsMe.input.disabled = closed2.input.checked;
+  };
+  setAside();
   const repo2 = document.createElement("select");
   repo2.name = "repo";
   repo2.setAttribute("aria-label", "repository");
@@ -448,7 +463,7 @@ async function listRooms(app, get2 = fetch, filters = {}, theme2, refresh = {}) 
   const notice = document.createElement("span");
   notice.className = "notice";
   notice.setAttribute("role", "status");
-  tools.append(mine.label, needsMe.label, repo2, notice);
+  tools.append(mine.label, needsMe.label, closed2.label, repo2, notice);
   const table = document.createElement("table");
   table.className = "rooms";
   table.setAttribute("aria-label", "Rooms");
@@ -465,7 +480,7 @@ async function listRooms(app, get2 = fetch, filters = {}, theme2, refresh = {}) 
     const now = /* @__PURE__ */ new Date();
     const sorted = sortRooms(rows2);
     const filtered = mine.input.checked || needsMe.input.checked || !!repo2.value;
-    const key = JSON.stringify([filtered, sorted.map((r) => [rowCells(r, now), r.status])]);
+    const key = JSON.stringify([filtered, closed2.input.checked, sorted.map((r) => [rowCells(r, now), r.status])]);
     if (key === shown) return;
     shown = key;
     const focused = document.activeElement instanceof HTMLAnchorElement && tbody.contains(document.activeElement) ? document.activeElement.getAttribute("href") : null;
@@ -474,7 +489,7 @@ async function listRooms(app, get2 = fetch, filters = {}, theme2, refresh = {}) 
       if (focused) [...tbody.querySelectorAll("a")].find((l) => l.getAttribute("href") === focused)?.focus();
       return;
     }
-    const td = cell("td", filtered ? "No rooms match" : "No rooms you can read yet");
+    const td = cell("td", closed2.input.checked ? `No room closed in the last ${closedDays} days` : filtered ? "No rooms match" : "No rooms you can read yet");
     td.setAttribute("colspan", String(head.childElementCount));
     const tr = document.createElement("tr");
     tr.append(td);
@@ -486,7 +501,7 @@ async function listRooms(app, get2 = fetch, filters = {}, theme2, refresh = {}) 
     const mark2 = ++seq;
     notice.textContent = "";
     const rows2 = await fetchRooms(
-      { mine: mine.input.checked, needsMe: needsMe.input.checked, repo: repo2.value || void 0 },
+      { mine: mine.input.checked, needsMe: needsMe.input.checked, repo: repo2.value || void 0, closed: closed2.input.checked },
       (m) => {
         if (mark2 === seq) notice.textContent = m;
       }
@@ -497,6 +512,10 @@ async function listRooms(app, get2 = fetch, filters = {}, theme2, refresh = {}) 
   mountAutoRefresh(tools, refetch, refresh);
   tools.append(add);
   for (const e of [mine.input, needsMe.input]) e.addEventListener("click", () => void refetch());
+  closed2.input.addEventListener("click", () => {
+    setAside();
+    void refetch();
+  });
   repo2.addEventListener("change", () => void refetch());
   app.replaceChildren(header, tools, form, table, cliSetup(get2));
 }
@@ -714,6 +733,11 @@ var rows = [
   { ...base, id: "m4tq2zxa", phase: "Idle", lastSeq: 33, issue: 131, title: "docs: name the trace router's allowlist", task: "Rejected", lastEventAt: ago2(60 * 26), status: { kind: "failed", icon: "\u2717", text: "Failed \u2014 CI stayed red" } },
   { ...base, id: "p7wn5c3e", phase: "Idle", owner: "human:2", driver: "human:2", lastSeq: 12, lastEventAt: ago2(60 * 24 * 3), status: { kind: "waiting", icon: "\u23F3", text: "Waiting \u2014 for the next message or run" } }
 ];
+var closed = [
+  { ...base, id: "w3hq7c2a", phase: "Closed", lastSeq: 58, issue: 160, title: "investigate: the gate stalls after a forced push", task: "Done", lastEventAt: ago2(60 * 20) },
+  { ...base, id: "b6tz4nmk", phase: "Closed", lastSeq: 41, issue: 158, title: "investigate: a run lost its lease mid-turn", task: "Done", lastEventAt: ago2(60 * 22) },
+  { ...base, id: "r5kd2xpe", phase: "Closed", lastSeq: 77, issue: 157, title: "fix: the needs card repeats an expired approval", task: "Merged", pr: 159, lastEventAt: ago2(60 * 24 * 6) }
+];
 var params = new URLSearchParams(location.search);
 var cli = params.get("cli");
 var maku = {
@@ -731,12 +755,13 @@ var get = (async (url) => {
   run.lastEventAt = ago2(0);
   run.status = { kind: "running", icon: "\u25CF", text: `Running \u2014 implementer, ${12 + reads} min` };
   const q = new URL(url, location.origin).searchParams;
+  if (q.get("closed") === "1") return new Response(JSON.stringify(closed.filter((r) => !q.get("repo") || r.repository === q.get("repo"))));
   return new Response(JSON.stringify(rows.filter((r) => (!q.has("needs_me") || (r.needsYou ?? 0) > 0) && (!q.get("repo") || r.repository === q.get("repo")))));
 });
 var theme = initTheme();
 var override = params.get("theme");
 if (override === "light" || override === "dark") applyTheme(override);
-listRooms(document.getElementById("app"), get, {}, theme).then(() => {
+listRooms(document.getElementById("app"), get, { closed: params.has("closed") }, theme).then(() => {
   const fold = document.querySelector("details.cli-setup");
   if (cli && fold) fold.open = true;
 }).catch((e) => {

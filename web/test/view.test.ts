@@ -117,6 +117,35 @@ describe("the room table", () => {
     await listRooms(empty, (async () => new Response("[]", { status: 200 })) as unknown as typeof fetch);
     expect(empty.querySelector("tbody")?.textContent).toBe("No rooms you can read yet");
   });
+  // The factory deletes a finished task's Room: its sealed room is only on the closed view, which
+  // the default list never asks for.
+  it("a closed filter lists the closed rooms, each linking to its page, and sets the others aside", async () => {
+    const closed: RoomRow = { id: "w3hq7c2a", phase: "Closed", owner: "", driver: "", dataClass: "", lastSeq: 40, repository: "o/a",
+      issue: 90, title: "Investigate a flaky gate", task: "Done", needsYou: 0, lastEventAt: "2026-11-07T09:00:00Z" };
+    const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("closed=1") ? [closed] : rows), { status: 200 }));
+    const root = app();
+    await listRooms(root, get as unknown as typeof fetch);
+    expect(get).toHaveBeenLastCalledWith("/api/rooms", expect.anything()); // the default view is unchanged
+    const box = root.querySelector('input[name="closed"]') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    box.click();
+    await vi.waitFor(() => expect(root.querySelectorAll("tbody tr").length).toBe(1));
+    expect(get).toHaveBeenLastCalledWith("/api/rooms?closed=1", expect.anything());
+    expect(root.querySelector("tbody")?.textContent).toContain("#90 Investigate a flaky gate");
+    expect(root.querySelector("tbody a")?.getAttribute("href")).toBe("/r/w3hq7c2a");
+    // mine and needs me mean nothing once a room is closed: set aside, not silently ignored.
+    for (const n of ["mine", "needsMe"]) expect((root.querySelector(`input[name="${n}"]`) as HTMLInputElement).disabled).toBe(true);
+    box.click();
+    await vi.waitFor(() => expect(root.querySelectorAll("tbody tr").length).toBe(3));
+    expect((root.querySelector('input[name="mine"]') as HTMLInputElement).disabled).toBe(false);
+  });
+  it("an empty closed view names its window", async () => {
+    const get = vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("closed=1") ? [] : rows), { status: 200 }));
+    const root = app();
+    await listRooms(root, get as unknown as typeof fetch);
+    (root.querySelector('input[name="closed"]') as HTMLInputElement).click();
+    await vi.waitFor(() => expect(root.querySelector("tbody")?.textContent).toBe("No room closed in the last 30 days"));
+  });
   it("filters by repository with the API's repo param", async () => {
     const get = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
     const root = app();

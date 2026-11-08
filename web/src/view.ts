@@ -87,12 +87,20 @@ export function rowCells(row: RoomRow, now: Date): { needs: string; task: string
   };
 }
 
-export interface RoomFilters { mine?: boolean; needsMe?: boolean; repo?: string }
+// closed asks for the closed rooms instead (the factory deleted their Room objects): mine and
+// needs me mean nothing there, so they are left out.
+export interface RoomFilters { mine?: boolean; needsMe?: boolean; repo?: string; closed?: boolean }
+
+// The closed view's window, as the API bounds it (humanapi closedWindow).
+const closedDays = 30;
 
 function roomsURL(f: RoomFilters): string {
   const q = new URLSearchParams();
-  if (f.mine) q.set("mine", "1");
-  if (f.needsMe) q.set("needs_me", "1");
+  if (f.closed) q.set("closed", "1");
+  else {
+    if (f.mine) q.set("mine", "1");
+    if (f.needsMe) q.set("needs_me", "1");
+  }
   if (f.repo) q.set("repo", f.repo);
   const s = q.toString();
   return s ? `/api/rooms?${s}` : "/api/rooms";
@@ -220,6 +228,9 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   };
   const mine = check("mine", "mine", filters.mine);
   const needsMe = check("needsMe", "needs me", filters.needsMe);
+  const closed = check("closed", "closed", filters.closed);
+  const setAside = () => { mine.input.disabled = needsMe.input.disabled = closed.input.checked; };
+  setAside();
   const repo = document.createElement("select");
   repo.name = "repo";
   repo.setAttribute("aria-label", "repository");
@@ -248,7 +259,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   notice.setAttribute("role", "status");
   // The filters on the left, then the refresh control, and New room, the page's one primary
   // act, at the row's end.
-  tools.append(mine.label, needsMe.label, repo, notice);
+  tools.append(mine.label, needsMe.label, closed.label, repo, notice);
 
   const table = document.createElement("table");
   table.className = "rooms";
@@ -269,7 +280,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     const now = new Date();
     const sorted = sortRooms(rows);
     const filtered = mine.input.checked || needsMe.input.checked || !!repo.value;
-    const key = JSON.stringify([filtered, sorted.map((r) => [rowCells(r, now), r.status])]);
+    const key = JSON.stringify([filtered, closed.input.checked, sorted.map((r) => [rowCells(r, now), r.status])]);
     if (key === shown) return;
     shown = key;
     const focused = document.activeElement instanceof HTMLAnchorElement && tbody.contains(document.activeElement)
@@ -280,7 +291,8 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
       return;
     }
     // An empty table says why: a filter that leaves nothing, or no room at all.
-    const td = cell("td", filtered ? "No rooms match" : "No rooms you can read yet");
+    const td = cell("td", closed.input.checked ? `No room closed in the last ${closedDays} days`
+      : filtered ? "No rooms match" : "No rooms you can read yet");
     td.setAttribute("colspan", String(head.childElementCount));
     const tr = document.createElement("tr");
     tr.append(td);
@@ -293,7 +305,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   const refetch = async (): Promise<boolean> => {
     const mark = ++seq;
     notice.textContent = "";
-    const rows = await fetchRooms({ mine: mine.input.checked, needsMe: needsMe.input.checked, repo: repo.value || undefined },
+    const rows = await fetchRooms({ mine: mine.input.checked, needsMe: needsMe.input.checked, repo: repo.value || undefined, closed: closed.input.checked },
       (m) => { if (mark === seq) notice.textContent = m; });
     if (rows && mark === seq) fill(rows);
     return !!rows;
@@ -302,6 +314,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   tools.append(add);
   // click, not change: a checkbox's change event needs a connected element; click fires either way.
   for (const e of [mine.input, needsMe.input]) e.addEventListener("click", () => void refetch());
+  closed.input.addEventListener("click", () => { setAside(); void refetch(); });
   repo.addEventListener("change", () => void refetch());
 
   app.replaceChildren(header, tools, form, table, cliSetup(get));

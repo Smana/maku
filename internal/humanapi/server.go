@@ -74,6 +74,9 @@ type Log interface {
 	TaskReasons(ctx context.Context, after map[string]int64) (map[string]string, error)
 	// LastEventAt is when each listed room's log last moved, for the room list.
 	LastEventAt(ctx context.Context, roomIDs []string) (map[string]time.Time, error)
+	// SealedSince is the rooms sealed at or after since, the last closed first, at most limit:
+	// the room list's closed view.
+	SealedSince(ctx context.Context, since time.Time, limit int) ([]store.RoomState, error)
 }
 
 // Hub is the fan-out hub's subscription side; *fanout.Hub implements it.

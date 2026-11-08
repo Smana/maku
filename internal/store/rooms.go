@@ -69,6 +69,22 @@ func (s *Store) Room(ctx context.Context, id string) (RoomState, error) {
 	return st, err
 }
 
+// SealedSince is the rooms sealed at or after since, the last closed first, at most limit: the
+// rooms list's closed view. The factory deletes a task's Room object once it ends; its sealed row
+// stays until retention purges it.
+func (s *Store) SealedSince(ctx context.Context, since time.Time, limit int) ([]RoomState, error) {
+	rows, err := s.pool.Query(ctx, `SELECT room_id, last_seq, driver, driver_epoch, fallback_driver, sealed, closed_at, last_event_at
+		FROM rooms WHERE sealed AND closed_at >= $1 ORDER BY closed_at DESC, room_id DESC LIMIT $2`, since, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: sealed rooms: %w", err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (RoomState, error) {
+		var st RoomState
+		err := r.Scan(&st.ID, &st.LastSeq, &st.Driver, &st.DriverEpoch, &st.FallbackDriver, &st.Sealed, &st.ClosedAt, &st.LastEventAt)
+		return st, err
+	})
+}
+
 // PendingApprovals counts the room's undecided approvals; a sealed room has none
 // anyone can decide.
 func (s *Store) PendingApprovals(ctx context.Context, roomID string) (int, error) {
