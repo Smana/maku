@@ -8,6 +8,7 @@
 // request. factory: is never in the form.
 
 import templateFile from "./policy-templates.json";
+import { canonical, highlight, keyFix } from "./policy-yaml";
 
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
@@ -96,9 +97,9 @@ export function toYAML(v: unknown, indent = 0): string {
   return lines.join("\n");
 }
 
-// fileYAML is the whole file, factory first, as the form writes it.
+// fileYAML is the whole file as the form writes it: keys in the file's order, so one file is one text.
 export function fileYAML(f: PolicyFile): string {
-  return toYAML({ factory: f.factory, classes: f.classes }) + "\n";
+  return toYAML(canonical({ factory: f.factory, classes: f.classes })) + "\n";
 }
 
 // normalize drops what the form must not write back as Go marshalled it: a duration's 0m0s.
@@ -229,12 +230,37 @@ export function cleanClass(c: ClassPolicy): ClassPolicy {
 
 // previewView renders the factory's answer: errors, or the structural change, the simulation, the
 // strictness counterfactual and the file to submit.
-export function previewView(p: Preview): HTMLElement {
+// at is the line of the checked text an error is about, if any; go shows that line, and fix
+// replaces a refused key on it with one the error lists.
+export function previewView(p: Preview, at: (msg: string) => number | undefined = () => undefined, go: (line: number) => void = () => {},
+  fix?: (line: number, from: string, to: string) => void): HTMLElement {
   const box = el("section", undefined, "editor-preview");
   if (!p.valid) {
     box.append(el("h3", "The file does not pass"));
     const ul = el("ul");
-    for (const e of p.errors ?? []) ul.append(el("li", e));
+    for (const e of p.errors ?? []) {
+      const li = el("li");
+      const line = at(e);
+      if (line !== undefined) {
+        const b = el("button", `Line ${line}`, "error-line");
+        b.type = "button";
+        b.onclick = () => go(line);
+        li.append(b, " ");
+      }
+      li.append(e);
+      const k = keyFix(e);
+      if (line !== undefined && fix && k?.keys.length) {
+        const keys = el("span", " Replace with: ", "key-fixes");
+        for (const to of k.keys) {
+          const b = el("button", to, "key-fix");
+          b.type = "button";
+          b.onclick = () => fix(line, k.key, to);
+          keys.append(b, " ");
+        }
+        li.append(keys);
+      }
+      ul.append(li);
+    }
     box.append(ul);
     return box;
   }
@@ -274,11 +300,106 @@ export function previewView(p: Preview): HTMLElement {
     const a = el("a", "edit the file on GitHub");
     a.href = p.proposal.editURL;
     lead.append(a);
-    box.append(lead, el("pre", p.proposal.file, "proposal-file"));
-    const copy = el("button", "Copy the file");
-    copy.type = "button";
-    copy.onclick = () => void navigator.clipboard?.writeText(p.proposal!.file);
-    box.append(copy);
+    const pre = el("pre", undefined, "proposal-file");
+    pre.append(highlight(p.proposal.file));
+    const file = p.proposal.file;
+    box.append(lead, pre, ...fileActions(() => file, p.proposal.path));
   }
   return box;
+}
+
+// fileActions copies text or downloads it as the file at path. The label says it was copied:
+// the change of word, not a motion, is the signal.
+export function fileActions(text: () => string, path: string): HTMLElement[] {
+  const copy = el("button", "Copy", "copy");
+  copy.type = "button";
+  let reset: ReturnType<typeof setTimeout> | undefined;
+  copy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(text());
+      copy.textContent = "Copied";
+    } catch {
+      copy.textContent = "Copy failed: select the text";
+    }
+    clearTimeout(reset);
+    reset = setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+  };
+  const download = el("a", "Download", "download");
+  download.setAttribute("download", path.split("/").at(-1)!);
+  download.href = "#";
+  // The href is set at the click, so the download is the text as it is then.
+  download.onclick = () => { download.href = `data:application/yaml;charset=utf-8,${encodeURIComponent(text())}`; };
+  return [copy, download];
+}
+
+export interface YamlView {
+  root: HTMLElement;
+  text: HTMLTextAreaElement;
+  set(v: string): void;
+  mark(lines: Iterable<number>): void;
+  say(...parts: (string | Node)[]): void;
+  reveal(line: number): void;
+  replaceKey(line: number, from: string, to: string): void;
+}
+
+// yamlEditor is the expert view: a textarea over its own highlighted copy, with line numbers, the
+// lines an error is about marked, a status line, and copy and download. input is each edit.
+export function yamlEditor(initial: string, path: string, input: (text: string) => void): YamlView {
+  const text = el("textarea", undefined, "expert-yaml");
+  text.setAttribute("aria-label", "expert YAML view");
+  text.spellcheck = false;
+  text.wrap = "off";
+  const gutter = el("pre", undefined, "yaml-gutter");
+  const hl = el("pre", undefined, "yaml-hl");
+  gutter.setAttribute("aria-hidden", "true");
+  hl.setAttribute("aria-hidden", "true");
+  const status = el("p", "", "yaml-status");
+  status.setAttribute("role", "status");
+  let marks = new Set<number>();
+  const paint = () => {
+    hl.replaceChildren(highlight(text.value, marks));
+    gutter.replaceChildren(...text.value.split("\n").flatMap((_, i) => [el("span", String(i + 1), marks.has(i + 1) ? "y-error" : undefined), "\n"]));
+  };
+  text.onscroll = () => {
+    hl.scrollTop = gutter.scrollTop = text.scrollTop;
+    hl.scrollLeft = text.scrollLeft;
+  };
+  text.oninput = () => {
+    marks = new Set();
+    input(text.value);
+    paint();
+  };
+  const bar = el("div", undefined, "yaml-bar");
+  bar.append(el("span", path, "yaml-name"), ...fileActions(() => text.value, path));
+  const stack = el("div", undefined, "yaml-stack");
+  stack.append(hl, text);
+  const body = el("div", undefined, "yaml-body");
+  body.append(gutter, stack);
+  const root = el("div", undefined, "yaml-editor");
+  root.append(bar, body, status);
+  text.value = initial;
+  paint();
+  return {
+    root, text,
+    set(v) { text.value = v; marks = new Set(); paint(); },
+    mark(lines) { marks = new Set(lines); paint(); },
+    say(...parts) { status.replaceChildren(...parts); },
+    reveal(line) {
+      const ls = text.value.split("\n");
+      const start = ls.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
+      text.focus();
+      text.setSelectionRange(start, start + (ls[line - 1]?.length ?? 0));
+      const lh = parseFloat(getComputedStyle(text).lineHeight);
+      if (lh) text.scrollTop = Math.max(0, (line - 3) * lh);
+      text.onscroll?.(new Event("scroll"));
+    },
+    // replaceKey renames from to to on line, as an edit of the text: the form follows.
+    replaceKey(line, from, to) {
+      const ls = text.value.split("\n");
+      const esc = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      ls[line - 1] = ls[line - 1].replace(new RegExp(`^(\\s*(?:-\\s+)*["']?)${esc}(["']?\\s*:)`), (_, a, b) => a + to + b);
+      text.value = ls.join("\n");
+      text.dispatchEvent(new Event("input"));
+    },
+  };
 }

@@ -6,7 +6,8 @@
 // button it hides is only a convenience. Every value is written as text.
 
 import { api, SignInRequired } from "./api";
-import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates } from "./policy-editor";
+import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
+import { comments, locate, parsePolicy } from "./policy-yaml";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -309,7 +310,8 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
 
 // editor is the guided form and the expert YAML view over the repository's policy file. The form
 // starts from the file on the default branch (or the central classes as exported when it has
-// none); the expert view is the text checked. Check is the factory's, for a maintainer.
+// none); the expert view is the text checked. Each follows the other: a form edit rewrites the
+// text, and text that parses refills the form. Check is the factory's, for a maintainer.
 export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLElement {
   const box = el("section", undefined, "policy-editor");
   const file: PolicyFile = structuredClone(r.policy ?? { factory: r.factory, classes: {} });
@@ -319,48 +321,91 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   box.append(el("p", `factory: ${r.factory} (read-only). Guardrails: ${JSON.stringify(r.guardrails)}. Harness profiles: ${profiles.join(", ") || "none"}.`));
   const pick = el("select");
   pick.setAttribute("aria-label", "class to edit");
-  for (const n of Object.keys(file.classes)) { const o = el("option", n); o.value = n; pick.append(o); }
-  for (const t of Object.keys(templates)) { const o = el("option", `new from template: ${t}`); o.value = `template:${t}`; pick.append(o); }
+  const fillPick = () => {
+    const was = pick.value;
+    pick.replaceChildren();
+    for (const n of Object.keys(file.classes!)) { const o = el("option", n); o.value = n; pick.append(o); }
+    for (const t of Object.keys(templates)) { const o = el("option", `new from template: ${t}`); o.value = `template:${t}`; pick.append(o); }
+    if ([...pick.options].some((o) => o.value === was)) pick.value = was;
+  };
+  fillPick();
   const name = el("input");
   name.placeholder = "new class name";
   name.setAttribute("aria-label", "new class name");
   const formAt = el("div");
-  const yaml = el("textarea", undefined, "expert-yaml");
-  yaml.setAttribute("aria-label", "expert YAML view");
-  yaml.value = r.file ?? fileYAML(file);
   const out = el("div");
+  // The form writes the file without comments: say so before an edit there drops them.
+  const warning = el("p", "", "notice comments-warning");
+  const note = (text: string) => {
+    const n = comments(text);
+    warning.textContent = n ? `The file has ${n} comment${n > 1 ? "s" : ""}. A form edit rewrites it without them: edit in the expert view to keep them.` : "";
+  };
+  const view = yamlEditor(r.file ?? fileYAML(file), ".github/agent-factory.yaml", (text) => {
+    const p = parsePolicy(text);
+    const form = formAt.querySelector("fieldset");
+    if (form) form.disabled = !p.ok;
+    if (!p.ok) {
+      view.say(`${p.line ? `Line ${p.line}: ` : ""}${p.message}. The form waits until the text parses.`);
+      if (p.line) view.mark([p.line]);
+      return;
+    }
+    view.say("");
+    note(text);
+    file.classes = p.file.classes ?? {};
+    fillPick();
+    if (!pick.value.startsWith("template:")) show();
+  });
   const show = () => {
     const v = pick.value;
     let cls = v.startsWith("template:") ? templates[v.slice(9)]() : file.classes![v];
     if (v.startsWith("template:") && !cls.harness) cls = { ...cls, harness: profilesFor(cls.author, profiles, r.adoptedProfiles)[0] ?? "" };
     const key = () => (v.startsWith("template:") ? (name.value.trim() || v.slice(9)) : v);
     name.hidden = !v.startsWith("template:");
-    formAt.replaceChildren(classForm(cls, profiles, (c) => {
-      // A file that declares classes declares docs-links and revert (OD-8): a first class brings
-      // them, unarmed, so the first check does not fail on what the maintainer never wrote.
-      for (const req of ["docs-links", "revert"]) {
-        file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
-      }
-      file.classes![key()] = cleanClass(c);
-      yaml.value = fileYAML(file);
-    }, r.adoptedProfiles));
+    try {
+      formAt.replaceChildren(classForm(cls, profiles, (c) => {
+        // A file that declares classes declares docs-links and revert (OD-8): a first class brings
+        // them, unarmed, so the first check does not fail on what the maintainer never wrote.
+        for (const req of ["docs-links", "revert"]) {
+          file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
+        }
+        file.classes![key()] = cleanClass(c);
+        const before = view.text.value;
+        const dropped = comments(before);
+        view.set(fileYAML(file));
+        note(view.text.value);
+        if (!dropped) return view.say();
+        const undo = el("button", "Undo");
+        undo.type = "button";
+        undo.onclick = () => {
+          view.text.value = before;
+          view.text.dispatchEvent(new Event("input"));
+        };
+        view.say(`The form edit dropped ${dropped} comment${dropped > 1 ? "s" : ""}. `, undo);
+      }, r.adoptedProfiles));
+    } catch {
+      formAt.replaceChildren(el("p", "The form cannot show this class as the text has it: edit it in the expert view.", "notice"));
+    }
   };
   pick.onchange = show;
-  box.append(labelled2("class", pick), name, formAt);
-  box.append(el("h3", "Expert YAML view"), el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), yaml);
+  box.append(labelled2("class", pick), name, warning, formAt);
+  box.append(el("h3", "Expert YAML view"), el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
   const check = el("button", "Check, compare and simulate", "primary");
   check.type = "button";
   check.disabled = !maintainer;
   if (!maintainer) box.append(el("p", "Only a maintainer of the repository may check a proposal.", "notice"));
   check.onclick = async () => {
     check.disabled = true;
+    const text = view.text.value;
     try {
-      const p = (await post(`/api/policy/repositories/${r.repository}/preview`, { file: yaml.value }, get)) as Preview;
-      out.replaceChildren(previewView(p));
+      const p = (await post(`/api/policy/repositories/${r.repository}/preview`, { file: text }, get)) as Preview;
+      const at = (msg: string) => locate(text, msg);
+      view.mark((p.errors ?? []).map(at).filter((n) => n !== undefined));
+      out.replaceChildren(previewView(p, at, (line) => view.reveal(line), (line, from, to) => view.replaceKey(line, from, to)));
     } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
     check.disabled = false;
   };
   box.append(check, out);
+  note(view.text.value);
   if (pick.options.length) show();
   return box;
 }

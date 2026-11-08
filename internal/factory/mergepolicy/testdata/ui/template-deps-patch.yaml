@@ -1,0 +1,20 @@
+factory: "aws-0"
+classes:
+  deps-patch:
+    mode: "shadow"
+    author: "adopt"
+    adopt:
+      logins: ["renovate[bot]"]
+      branches: ["^renovate/"]
+    harness: "docs-standard"
+    conditions:
+      all:
+        - diffShape: "semver-patch"
+        - modifyOnly: true
+        - maxPatchFiles: 3
+        - maxModifiedLines: 10
+        - releaseAgeCheck: "renovate/stability-days"
+    limits:
+      maxPerDay: 2
+    monitor:
+      followUpWindow: "168h"

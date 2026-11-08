@@ -1,0 +1,11 @@
+factory: "aws-0"
+classes:
+  generated-files:
+    mode: "shadow"
+    author: "agents"
+    harness: "docs-standard"
+    conditions:
+      all:
+        - allowedFiles: ["^gen/.+$"]
+        - holdoutChecks: ["Regenerate and compare"]
+        - modifyOnly: true

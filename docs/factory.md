@@ -1285,12 +1285,16 @@ Both tables are insert then one constrained move; `maku_rooms_policy_changes_tot
 **The editor.** A maintainer edits one class in a guided form (mode, author, a harness profile from
 the central list, conditions, deny, `requiresApproval`, limits, monitor), or starts one from a
 template (`docs-broad`, `deps-patch`, `generated-files`), or edits the whole file in the expert YAML
-view. **Check** is the factory's: the same `Parse`, `Validate` and `Resolve` the gate's policy read
+view. The two follow each other: a form edit rewrites the text in one fixed key order (the file's
+comments go: the editor says so before, and offers an undo after), and text that parses refills the
+form; while it does not, the form waits and the line is marked. **Check** is the factory's: the same `Parse`, `Validate` and `Resolve` the gate's policy read
 runs, `factory:` refused if changed, the structural change per class (a relaxation returns the class
 to shadow, MP8), and with `policyManagement.simulation` the conformance fixtures decided under the
 central config and the proposal by the gate's own evaluator (newly auto-merged, newly blocked, newly
 approval-required, unchanged), beside the strictness counterfactual of the class's recent decisions.
-The answer is the file to submit and the edit link: Maku writes nothing.
+Each error the check returns is marked on the line it names, a class's error on that class, an
+unknown key's on its path, with the keys it may be offered as replacements. The
+answer is the file to submit, to copy or download, and the edit link: Maku writes nothing.
 
 **The decision timeline.** For a pull request, each decision record the factory wrote renders in
 the gate's order: fixed base, author mode, class, the recorded conditions, deny, approval subset,

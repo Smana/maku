@@ -66,6 +66,13 @@ const pairs = (t: Tokens) => [
   // A step's line and a call's status (P1, P3).
   ["a step's exceptions on the page", t["--warning-foreground"], t["--muted"], 4.5],
   ["a rejected call's word on a card", t["--warning-foreground"], t["--card"], 4.5],
+  // The policy editor's expert view: its highlight colors (key, string, number, comment) on a
+  // card and on a line an error marks; a marked line number on the gutter.
+  ...(["--link", "--success-text", "--warning-foreground", "--muted-foreground", "--card-foreground"] as const).flatMap((k) => [
+    [`the expert view's ${k} on a card`, t[k], t["--card"], 4.5],
+    [`the expert view's ${k} on a marked line`, t[k], mix(t["--destructive"], t["--card"], 0.1), 4.5],
+  ] as const),
+  ["a marked line's number on the gutter", t["--destructive-text"], t["--muted"], 4.5],
   // The room list: a hovered row's tint, the page title on the header, the phase chip.
   ["the list's page title on the header", t["--muted-foreground"], t["--brand-header"], 4.5],
   ["muted text on a hovered room row", t["--muted-foreground"], mix(t["--primary"], t["--card"], 0.06), 4.5],

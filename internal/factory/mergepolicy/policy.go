@@ -179,7 +179,10 @@ func Parse(raw []byte) (*File, error) {
 			total += len(list)
 		}
 		if err := f.Classes[name].shape(); err != nil {
-			errs = append(errs, fmt.Errorf("class %s: %w", name, err))
+			// One error a line, each naming its class: the editor points each at the class's line.
+			for line := range strings.SplitSeq(err.Error(), "\n") {
+				errs = append(errs, fmt.Errorf("class %s: %s", name, line))
+			}
 		}
 		if !classRE.MatchString(name) {
 			errs = append(errs, fmt.Errorf("%q is not a class name", name))
