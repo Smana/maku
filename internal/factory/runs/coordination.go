@@ -19,8 +19,8 @@ import (
 // only beside the SHA-256 of its exact bytes. Artifacts are a dependent child's landed references:
 // its sandbox fetches each public file anonymously at the recorded repository/commit/path and
 // verifies contentSHA256 before use, so neither the bytes nor a producer token ride the claim.
-// The manifest is an integration run's immutable subjects, plan hash and acceptance: the v4 item 4
-// runtime, not shipped, is what writes it to a read-only file and exports MAKU_COORDINATION_MANIFEST.
+// The manifest is an integration run's immutable subjects, plan hash and acceptance: the harness's
+// integration runtime writes it to a read-only file and exports MAKU_COORDINATION_MANIFEST.
 const (
 	AnnCoordinationArtifacts     = "agents.ogenki.io/coordination-artifacts"
 	AnnCoordinationArtifactsHash = "agents.ogenki.io/coordination-artifacts-hash"

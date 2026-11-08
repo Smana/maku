@@ -450,7 +450,8 @@ class FakeMCP(http.server.BaseHTTPRequestHandler):
             return
         result = {}
         if body["method"] == "tools/list":
-            result = {"tools": [{"name": type(self).tool}, {"name": "room_read"}, {"name": type(self).judge_tool}]}
+            result = {"tools": [{"name": type(self).tool}, {"name": "room_read"}, {"name": type(self).judge_tool},
+                                {"name": "room-broker__room_integration"}]}
         if body["method"] == "tools/call":
             if type(self).limited:
                 type(self).limited -= 1
@@ -645,6 +646,36 @@ class ProgressNotesTest(unittest.TestCase):
         with mock.patch("sys.stderr", new=io.StringIO()) as err:
             broken.judge("met", "ok", ["diff"])  # no room_judge exposed: logged, never raised
         self.assertIn("judge verdict not posted", err.getvalue())
+
+    def test_an_integration_result_is_posted_through_room_integration(self):
+        # v4 MR10: the one typed outcome, from the harness's own client, with no text.
+        self.notes.integration("failed", "acceptance_failed", "a" * 64)
+        [call] = [c for c in FakeMCP.calls if c.get("method") == "tools/call"]
+        self.assertEqual(call["params"], {"name": "room-broker__room_integration", "arguments": {
+            "state": "failed", "reason": "acceptance_failed", "manifestHash": "a" * 64}})
+        self.assertTrue(FakeMCP.harness and all(h == "1" for h in FakeMCP.harness), FakeMCP.harness)
+
+    def test_an_unposted_integration_result_raises(self):
+        # Unlike a judge verdict it is never best effort: the run must then exit non-zero.
+        FakeMCP.fail = 2
+        with self.assertRaises(Exception):
+            self.notes.integration("passed", "acceptance_passed", "a" * 64)
+
+    def test_an_integration_run_posts_through_its_notes_and_never_converses(self):
+        env = {"MCP_URL": "http://127.0.0.1:%d/mcp" % self.server.server_port, "ROLE": "triager"}
+        def fake_run(e, post, redact):
+            post("passed", "acceptance_passed", "b" * 64)
+            return 0
+        with mock.patch.object(agent_run.coordination_integration, "run", side_effect=fake_run), \
+                mock.patch.object(agent_run, "http", side_effect=AssertionError("a conversation was started")):
+            self.assertEqual(agent_run.integration(env), 0)
+        [call] = [c for c in FakeMCP.calls if c.get("method") == "tools/call"]
+        self.assertEqual(call["params"]["arguments"]["state"], "passed")
+
+    def test_an_integration_run_without_room_tools_reports_nothing(self):
+        with mock.patch("sys.stdout"):
+            self.assertEqual(agent_run.integration({"ROLE": "triager", "COORDINATION_MANIFEST": "{}",
+                                                    "COORDINATION_MANIFEST_SHA256": "0" * 64}), 1)
 
     def test_a_gateway_prefixed_tool_name_is_found(self):
         FakeMCP.tool = "room-broker__room_progress"
