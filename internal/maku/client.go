@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,10 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
+	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/roomview"
@@ -628,3 +631,52 @@ func (c Client) CoordinationCheckout(ctx context.Context, parent string) (coordi
 	}
 	return d, nil
 }
+
+// CoordinationDraft is PUT /api/coordinations/{parent}/draft (v4 MR4): a plan version stored on its
+// parent as the developer, never a confirmation. The broker forwards it to the factory with the
+// developer's own token.
+func (c Client) CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation) (coordination.CoordinationConfirmation, error) {
+	var out coordination.CoordinationConfirmation
+	h, err := c.header(ctx)
+	if err != nil {
+		return out, err
+	}
+	body, err := json.Marshal(struct {
+		Plan     v1alpha1.CoordinationPlan           `json:"plan"`
+		PlanHash string                              `json:"planHash"`
+		Planning coordination.PlanningReconciliation `json:"planning"`
+	}{in.Plan, in.PlanHash, in.Planning})
+	if err != nil {
+		return out, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.URL+"/api/coordinations/"+url.PathEscape(parent)+"/draft", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	req.Header = h
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("coordination draft: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return out, fmt.Errorf("coordination draft: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var r struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &r)
+		code := "refused"
+		if coordCodeRE.MatchString(r.Error) {
+			code = r.Error
+		}
+		return out, fmt.Errorf("coordination draft: %s (%d)", code, resp.StatusCode)
+	}
+	return out, json.Unmarshal(raw, &out)
+}
+
+// coordCodeRE is a coordination refusal's bounded code; anything else is "refused".
+var coordCodeRE = regexp.MustCompile(`^[a-z][a-z_]{0,47}$`)

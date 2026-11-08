@@ -187,6 +187,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 	if s.mintsLinks(p) {
 		out = append(out, s.slackLinkTools()...)
 	}
+	// coordination_draft: the sponsored side of a parent's draft, only beside coordination_plan and
+	// the factory's routes (v4); a human drafts through PUT /api/coordinations/{task}/draft.
+	if s.Intake != nil && s.Coordination.on() && s.CoordinationWrites != nil {
+		out = append(out, s.coordinationDraftTool())
+	}
 	return out
 }
 

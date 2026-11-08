@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { mountCoordinationPanel, renderCoordinationNode } from "../src/coordination";
-import type { CoordinationFlow, CoordinationNode } from "../src/summary";
+import type { CoordinationConfirmation, CoordinationFlow, CoordinationNode, CoordinationView } from "../src/summary";
 
 const child = (o: Partial<CoordinationNode>): CoordinationNode => ({
   id: "contract", kind: "child", childID: "contract", repository: "acme/api", roles: ["implementer", "reviewer"], disabled: true, ...o,
@@ -86,5 +86,90 @@ describe("coordination panel", () => {
     expect(li.querySelector("a")).toBeNull();
     expect(li.querySelector("img")).toBeNull();
     expect(li.textContent).toContain("<img src=x>");
+  });
+});
+
+describe("coordination controls", () => {
+  const view = (restricted = 0): CoordinationView => ({
+    parentTask: "pppppppp", phase: "Planned", planHash: "0123456789abcdef", restrictedChildren: restricted,
+    plan: { id: "pppppppp", version: 2, title: "t", children: [{ id: "contract", repository: "acme/api" }] },
+    children: [{ id: "contract", repository: "acme/api", fingerprint: "fp-contract" }],
+    budget: { planningReservedMicroUSD: 7, planningSettledMicroUSD: 3 },
+  });
+  const childFlow: CoordinationFlow = { ...planned, nodes: [child({ requiredConfirmation: "child" })], edges: [] };
+
+  it("binds the parent confirmation to the exact plan and hash", () => {
+    const sent: CoordinationConfirmation[] = [];
+    const { root, panel } = mountWith((c) => { sent.push(c); return Promise.resolve(); });
+    panel.set(planned, view());
+    const b = root.querySelector<HTMLButtonElement>('button[data-act="coordination-confirm"]')!;
+    expect(b.textContent).toBe("Confirm plan v2");
+    b.click();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].planHash).toBe("0123456789abcdef");
+    expect(sent[0].plan.version).toBe(2);
+    expect(sent[0].parent).toEqual({ planHash: "0123456789abcdef" });
+    expect(sent[0].child).toBeUndefined();
+    expect(sent[0].planning).toEqual({ attemptID: "", effectiveRequester: "", reservedMicroUSD: 7, settledMicroUSD: 3 });
+  });
+
+  it("binds a child authorization to its fingerprint and version", () => {
+    const sent: CoordinationConfirmation[] = [];
+    const { root, panel } = mountWith((c) => { sent.push(c); return Promise.resolve(); });
+    panel.set(childFlow, view());
+    root.querySelector<HTMLButtonElement>('[data-node="contract"] button[data-act="coordination-authorize"]')!.click();
+    expect(sent[0].child).toEqual({ childID: "contract", childFingerprint: "fp-contract", planVersion: 2 });
+    expect(sent[0].parent).toBeUndefined();
+  });
+
+  it("offers no decision while a child is restricted, or without a view", () => {
+    const { root, panel } = mountWith(() => Promise.resolve());
+    panel.set(planned, view(1));
+    expect(root.querySelector('button[data-act^="coordination-"]')).toBeNull();
+    panel.set(planned, undefined);
+    expect(root.querySelector('button[data-act^="coordination-"]')).toBeNull();
+  });
+
+  it("says a refusal and asks for a fresh summary", async () => {
+    let refreshed = 0;
+    const { root, panel } = mountWith(() => Promise.reject(new Error("stale_plan")), () => { refreshed++; });
+    panel.set(planned, view());
+    root.querySelector<HTMLButtonElement>('button[data-act="coordination-confirm"]')!.click();
+    await Promise.resolve(); await Promise.resolve();
+    expect(root.querySelector(".rail-coordination-status")?.textContent).toContain("stale_plan");
+    expect(refreshed).toBe(1);
+  });
+});
+
+function mountWith(confirm: (c: CoordinationConfirmation) => Promise<void>, refresh: () => void = () => {}) {
+  const root = document.createElement("div");
+  document.body.replaceChildren(root);
+  return { root, panel: mountCoordinationPanel(root, { confirm, refresh }) };
+}
+
+describe("coordination recovery", () => {
+  const view: CoordinationView = {
+    parentTask: "pppppppp", phase: "Coordinating", planHash: "0123456789abcdef", restrictedChildren: 0,
+    plan: { id: "pppppppp", version: 3, title: "t" }, children: [], budget: {},
+    recovery: { code: "retry_integration", planVersion: 3 },
+  };
+  it("offers the one proposed recovery, bound to its code and version", () => {
+    const sent: { code: string; planVersion: number }[] = [];
+    const root = document.createElement("div");
+    document.body.replaceChildren(root);
+    const panel = mountCoordinationPanel(root, { confirm: () => Promise.resolve(), recover: (r) => { sent.push(r); return Promise.resolve(); }, refresh: () => {} });
+    panel.set(filed, view);
+    const b = root.querySelector<HTMLButtonElement>('button[data-act="coordination-recover"]')!;
+    expect(b.textContent).toBe("Recover: retry_integration");
+    b.click();
+    expect(sent).toEqual([{ code: "retry_integration", planVersion: 3 }]);
+  });
+  it("offers none without a proposal or with a child withheld", () => {
+    const root = document.createElement("div");
+    const panel = mountCoordinationPanel(root, { confirm: () => Promise.resolve(), recover: () => Promise.resolve(), refresh: () => {} });
+    panel.set(filed, { ...view, recovery: undefined });
+    expect(root.querySelector('button[data-act="coordination-recover"]')).toBeNull();
+    panel.set({ ...filed, restrictedChildren: 1 }, { ...view, restrictedChildren: 1 });
+    expect(root.querySelector('button[data-act="coordination-recover"]')).toBeNull();
   });
 });

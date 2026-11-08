@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { nav } from "../src/api";
-import { listRooms, newRoomForm, RoomLog, rowCells, sortRooms } from "../src/view";
+import { listRooms, newRoomForm, RoomLog, rowCells, sortRooms, type RoomRow } from "../src/view";
 
 const row = (text: string) => { const p = document.createElement("p"); p.textContent = text; return p; };
 
@@ -322,5 +322,14 @@ describe("the room list's auto-refresh", () => {
     fire();
     await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(document.title).toBe("Maku rooms"));
+  });
+});
+
+describe("a coordination parent's row", () => {
+  it("shows the family compactly, not a second needs list", () => {
+    const row: RoomRow = { id: "pppppppp", phase: "Active", owner: "o", driver: "d", dataClass: "public", lastSeq: 1, task: "Coordinating",
+      coordination: { planVersion: 2, restrictedChildren: 1, recoveryCode: "retry_child",
+        children: [{ id: "contract", phase: "Merged", dependsOn: [] }, { id: "consumer", phase: "Running", dependsOn: ["contract"] }] } };
+    expect(rowCells(row, new Date()).phase).toBe("Coordinating · family v2: contract Merged, consumer Running (+1 restricted), recovery retry_child");
   });
 });

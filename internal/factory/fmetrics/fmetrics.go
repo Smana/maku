@@ -188,6 +188,7 @@ type Set struct {
 	handoffToMerge       metric.Float64Histogram
 	maxCost              metric.Float64Counter
 	apiIntake            metric.Int64Counter
+	coord                coordination
 
 	spendMu sync.Mutex
 	spend   map[string]map[string]float64 // the meter's last live spend, run then model
@@ -476,6 +477,8 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		return nil
 	}, sponsorInfo)
 	check(err)
+	s.coord, err = newCoordination(meter)
+	check(err)
 	check(s.registerSpend(meter))
 	check(s.registerSettled(meter))
 	check(s.registerCharges(meter))
@@ -507,6 +510,11 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 	if err != nil {
 		return err
 	}
+	alloc, err := meter.Int64ObservableGauge("agent_factory_coordination_allocated_micro_usd",
+		metric.WithDescription("Micro-USD the live, confirmed coordination families allocate, by primary and kind: planning, child, integration (v4 MR8)."))
+	if err != nil {
+		return err
+	}
 	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
 		if !leader() {
 			return nil
@@ -526,6 +534,18 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 					attribute.String("predicted_class", k[2]), attribute.String("tier", k[3]), attribute.String("repository", k[4]),
 					attribute.String("principal", k[5])))
 			}
+			allocated := map[[2]string]int64{}
+			for i := range l.Items {
+				if pl, ch, in, ok := coordinationAllocations(&l.Items[i]); ok {
+					r := repo(l.Items[i].Spec.Repository)
+					allocated[[2]string{r, "planning"}] += pl
+					allocated[[2]string{r, "child"}] += ch
+					allocated[[2]string{r, "integration"}] += in
+				}
+			}
+			for k, v := range allocated {
+				o.ObserveInt64(alloc, v, metric.WithAttributes(attribute.String("repository", k[0]), attribute.String("kind", k[1])))
+			}
 			for _, t := range l.Items {
 				if !v1alpha1.TerminalPhase(t.Status.Phase) && t.Status.PhaseSince != nil {
 					o.ObserveFloat64(phase, time.Since(t.Status.PhaseSince.Time).Seconds(),
@@ -541,7 +561,7 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 			o.ObserveInt64(stop, v)
 		}
 		return nil
-	}, tasks, stop, phase)
+	}, tasks, stop, phase, alloc)
 	return err
 }
 

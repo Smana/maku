@@ -21,6 +21,14 @@ rules:
   - apiGroups: [maku.ogenki.io]
     resources: [rooms/finalizers]
     verbs: [update]
+  # Coordination parents (v4 MR13): the human API reads a parent, its lineage and the day ledgers
+  # live, to filter them per viewer. Read-only: never watch, never write.
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
     verbs: [get, create, update]

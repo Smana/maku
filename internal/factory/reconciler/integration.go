@@ -64,7 +64,7 @@ func (r *Reconciler) integrating(ctx context.Context, t *v1alpha1.Task) error {
 func (r *Reconciler) receivedIntegration(ctx context.Context, t *v1alpha1.Task) error {
 	_, m, err := r.integrationLineage(ctx, t)
 	if reason := integrationRefusal(err); reason != "" {
-		return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return r.coordinationRejected(ctx, t, reason)
 	}
 	if err != nil {
 		return err
@@ -145,7 +145,7 @@ func (r *Reconciler) integrationHold(ctx context.Context, t *v1alpha1.Task) (boo
 	}
 	p, _, err := r.integrationLineage(ctx, t)
 	if reason := integrationRefusal(err); reason != "" {
-		return true, r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return true, r.coordinationRejected(ctx, t, reason)
 	}
 	if err != nil {
 		return true, err
@@ -159,7 +159,7 @@ func (r *Reconciler) integrationHold(ctx context.Context, t *v1alpha1.Task) (boo
 		if reason == "" {
 			return true, err
 		}
-		t.Status.Reason = reason
+		r.coordinationRefused(ctx, t.Spec.Repository, &t.Status.Reason, reason)
 		return true, nil
 	}
 	return false, nil
@@ -169,7 +169,7 @@ func (r *Reconciler) integrationHold(ctx context.Context, t *v1alpha1.Task) (boo
 func (r *Reconciler) startIntegration(ctx context.Context, t *v1alpha1.Task) error {
 	_, m, err := r.integrationLineage(ctx, t)
 	if reason := integrationRefusal(err); reason != "" {
-		return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return r.coordinationRejected(ctx, t, reason)
 	}
 	if err != nil {
 		return err
@@ -336,7 +336,12 @@ func (r *Reconciler) coordinateIntegration(ctx context.Context, t *v1alpha1.Task
 	}
 	slices.SortStableFunc(landed, func(a, b string) int { return facts[a].mergedAt.Compare(facts[b].mergedAt) })
 	cs.MergeOrder = append(cs.MergeOrder, landed...)
-	if err := r.absorbAttempts(ctx, cs, merges); err != nil {
+	for _, id := range landed {
+		if c, ok := coordination.PlanChild(cs, id); ok {
+			record(ctx, func(ctx context.Context) { r.Metrics.CoordinationChild(ctx, c.Repository, c.Class, "landed") })
+		}
+	}
+	if err := r.absorbAttempts(ctx, t.Spec.Repository, cs, merges); err != nil {
 		return err
 	}
 	for i := range cs.Children {
@@ -388,7 +393,7 @@ func (r *Reconciler) startAttempt(ctx context.Context, t *v1alpha1.Task, m coord
 	}
 	hold := func(reason string) {
 		if i := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == child }); i >= 0 {
-			cs.Children[i].Reason = reason
+			r.coordinationRefused(ctx, t.Spec.Repository, &cs.Children[i].Reason, reason)
 		}
 	}
 	if err := coordination.IntegrationAttemptAllowed(cs); err != nil {
@@ -417,7 +422,7 @@ func (r *Reconciler) startAttempt(ctx context.Context, t *v1alpha1.Task, m coord
 // comment, room message or green child: a pass for the current plan releases a pre-merge
 // dependent's exact head (MR9), and a final pass over exactly every child's current merge commit
 // is the family's acceptance (MR10).
-func (r *Reconciler) absorbAttempts(ctx context.Context, cs *v1alpha1.CoordinationStatus, merges map[string]string) error {
+func (r *Reconciler) absorbAttempts(ctx context.Context, primary string, cs *v1alpha1.CoordinationStatus, merges map[string]string) error {
 	for i := range cs.IntegrationAttempts {
 		a := &cs.IntegrationAttempts[i]
 		if a.State != coordination.ResultPending {
@@ -435,13 +440,29 @@ func (r *Reconciler) absorbAttempts(ctx context.Context, cs *v1alpha1.Coordinati
 		if res == nil || res.ManifestHash != a.ManifestHash || it.Spec.Integration == nil || it.Spec.Integration.PlanHash != a.PlanHash {
 			continue
 		}
+		purpose := a.Purpose
 		if res.State == coordination.ResultPending {
 			if it.Status.Phase == v1alpha1.PhaseEscalated {
+				if a.Reason != reasonIntegrationPending { // counted once, when its run was lost
+					record(ctx, func(ctx context.Context) {
+						r.Metrics.CoordinationIntegrationRun(ctx, primary, purpose, "infrastructure_failed")
+					})
+				}
 				a.Reason = reasonIntegrationPending
 			}
 			continue
 		}
 		a.State, a.Reason = res.State, res.Reason
+		result, created := "checks_failed", it.CreationTimestamp.Time
+		if a.State == coordination.ResultPassed {
+			result = "passed"
+		}
+		record(ctx, func(ctx context.Context) {
+			r.Metrics.CoordinationIntegrationRun(ctx, primary, purpose, result)
+			if !created.IsZero() {
+				r.Metrics.CoordinationWait(ctx, primary, "integration", r.Now().Sub(created))
+			}
+		})
 		if a.State != coordination.ResultPassed || a.PlanHash != cs.PlanHash {
 			continue
 		}
@@ -635,7 +656,14 @@ func (r *Reconciler) completeCoordination(ctx context.Context, t *v1alpha1.Task)
 			return err
 		}
 	}
+	repo := t.Spec.Repository
+	if old := t.Status.Coordination.Recovery; old != nil {
+		record(ctx, func(ctx context.Context) {
+			r.Metrics.CoordinationWait(ctx, repo, "recovery", r.Now().Sub(old.CreatedAt.Time))
+		})
+	}
 	t.Status.Coordination.Recovery = nil // nothing left to recover: a later revert is an incident
 	r.to(t, v1alpha1.PhaseDone, reasonIntegrationPassed)
+	record(ctx, func(ctx context.Context) { r.Metrics.CoordinationFamily(ctx, repo, "done") })
 	return nil
 }

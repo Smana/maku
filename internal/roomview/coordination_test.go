@@ -95,3 +95,50 @@ func TestCardShowsCoordination(t *testing.T) {
 		t.Fatal("a room without a family shows coordination")
 	}
 }
+
+func TestCoordinationBriefUsesPlanAndOneRecovery(t *testing.T) {
+	v := coordFamily()
+	v.Plan.Children = v.Plan.Children[:1]
+	v.Children = v.Children[:1]
+	v.Recovery = &v1alpha1.RecoveryProposal{Code: "retry_child", ChildID: "contract"}
+	v.RestrictedChildren = 1
+	in := BriefIn{Room: "parent-1", Coordination: &v,
+		Plan: PlanVersion{Source: "coordination", Rev: 3, Hash: "0123456", CeilingMicroUSD: 12_750_000}}
+	var b bytes.Buffer
+	if err := Brief(&b, in, Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	for _, want := range []string{"Plan: coordination v3 0123456 · budget $12.75 ceiling", "contract (acme/api): Merged",
+		"Recovery: retry_child (contract)", "1 restricted child"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "Recovery:") != 1 || strings.Contains(got, "Changed since") || strings.Contains(got, "acme/web") {
+		t.Fatalf("brief:\n%s", got)
+	}
+}
+
+func TestOverviewShowsCoordinationCompactly(t *testing.T) {
+	rows := []Row{{ID: "pppppppp", Phase: "Active", State: "running", Repository: "acme/api", Task: "Coordinating", LastSeq: 1,
+		Coordination: &summary.CoordinationOverview{PlanVersion: 2, RestrictedChildren: 1, RecoveryCode: "retry_child",
+			Children: []summary.CoordinationChildState{{ID: "contract", Phase: "Merged"}, {ID: "consumer", Phase: "<b>Running</b>"}}}}}
+	var b bytes.Buffer
+	if err := Overview(&b, rows, Options{Format: Text, All: true}); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	for _, want := range []string{"family v2: contract Merged, consumer", "+1 restricted", "recovery retry_child"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in\n%s", want, got)
+		}
+	}
+	var md bytes.Buffer
+	if err := Overview(&md, rows, Options{Format: Markdown, All: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(md.String(), "<b>") || !strings.Contains(md.String(), "family v2") {
+		t.Fatalf("markdown overview:\n%s", md.String())
+	}
+}

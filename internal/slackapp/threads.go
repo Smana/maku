@@ -28,6 +28,9 @@ type Thread struct {
 	Channel string    `json:"channel"`
 	TS      string    `json:"ts"`
 	At      time.Time `json:"at"`
+	// Coordination marks a coordination parent's thread (v4): its deliveries are recomputed against
+	// the channel at every event (projectCoordination), never posted as a single room's line.
+	Coordination bool `json:"coordination,omitempty"`
 }
 
 // Threads is the thread map, the ConfigMap factory-slack-threads in production.

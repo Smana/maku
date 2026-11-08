@@ -281,6 +281,32 @@ absent rather than 0.
 
 A label value outside its known set is recorded as `other`; `repository` takes only the configured repositories' names.
 
+### Coordination
+
+[Multi-repository coordination](factory.md#multi-repository-coordination)'s seven series. With
+`coordination.mode: off` none is recorded, so none is served; under `plan` only what drafts and
+confirmations do: plan versions, dropped children, authorization waits and allocations. The Go instruments keep the `agent_factory_` prefix like every factory instrument; the
+exporter serves them as below.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `maku_factory_coordination_families_total` | counter | `repository`, `outcome` | Families by primary: `filed` once, when the last issue and the parent's `filed` write land; `done` once, when the final integration completed the parent. A parent has no closed or stopped end: `factory/stop` pauses it |
+| `maku_factory_coordination_plan_versions_total` | counter | `repository`, `outcome` | Plan versions by primary: `confirmed` by the confirmation that completed them, `superseded` when a newer version was accepted, `stale_refused` for a confirmation of a hash that is no longer current |
+| `maku_factory_coordination_admission_refusals_total` | counter | `repository`, `reason` | Refused filings and integration admissions (on the primary) and child admissions or resumes (on the child's repository), once per change of reason, never per pass; `reason` is one of the [reason codes](factory.md#reason-codes) |
+| `maku_factory_coordination_children_total` | counter | `repository`, `class`, `outcome` | Children in their own repository, by plan class: `admitted` (Task created), `landed` (merged, in landing order), `dropped` (removed by an accepted version), `reverted` |
+| `maku_factory_coordination_integration_runs_total` | counter | `repository`, `purpose`, `result` | Integration attempts on the primary, at their end: `passed`, `checks_failed` (a typed failure or no result); and `infrastructure_failed` once when its run was lost and the Task escalated (an attempt resumed after that is counted again at its end) |
+| `maku_factory_coordination_wait_seconds` | histogram | `repository`, `reason` | Ended waits: `authorization` (the version's acceptance to its last confirmation), `artifact` (a dependent's earliest producer admitted to the dependent admitted), `integration` (an integration Task created to its result), `recovery` (a proposal made to replaced or cleared); buckets 1 min, 5 min, 15 min, 1 h, 4 h, 1 d, 3 d, 7 d |
+| `maku_factory_coordination_allocated_micro_usd` | gauge | `repository`, `kind` | Micro-USD the live families whose current plan the parent confirmed allocate, summed by primary: `planning`, `child`, `integration` (`maxRuns × runMicroUSD`); leader only, read from the cache at scrape time |
+
+`repository` takes only configured repositories, every other label a closed set; anything else is
+`other`. Family and child ids, artifact names, plan and acceptance text, viewers and channels are
+never label values. Per-run cost and per-person charge stay on the existing series.
+
+A parent mints a root span when it first reconciles and exports it at its end, as every task does.
+It adds `agent.coordination.plan_version` and `agent.coordination.plan_hash_prefix` (the first 12
+hex of the plan hash) and links to each child's and integration Task's root span; no plan text,
+acceptance or artifact bytes. The parent's reason is the span's `agent.task.reason`.
+
 ### Factory alerts
 
 | Alert | Fires when | For | First step |

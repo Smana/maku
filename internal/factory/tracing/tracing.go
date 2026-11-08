@@ -5,7 +5,9 @@
 // harness span on them, and the span itself is built from them and exported when the task ends,
 // at least once: a replay exports the identical span, which the collector keeps once per id. A
 // restart or a new leader loses nothing. The span carries ids, the tier, the phase and a reason
-// code only, never issue text: it enters the trace router with no allowlist (O-1 M3).
+// code only, never issue text: it enters the trace router with no allowlist (O-1 M3). A
+// coordination parent's adds its plan version, a plan hash prefix and links to its family's root
+// spans, never plan text or artifact bytes.
 package tracing
 
 import (
@@ -53,6 +55,50 @@ func Traceparent(traceID, spanID string) string { return "00-" + traceID + "-" +
 type Task struct {
 	TraceID, SpanID, TaskID, Tier, Phase, Reason string
 	Start, End                                   time.Time
+	// Coordination is a coordination parent's own data (v4 observability); nil for any other task.
+	Coordination *Coordination
+}
+
+// Coordination is what a coordination parent's span adds: its plan version, a prefix of its plan
+// hash, and links to its children's and integration Tasks' root spans. Never plan text, artifact
+// bytes or acceptance: the span enters the trace router with no allowlist (O-1 M3).
+type Coordination struct {
+	PlanVersion int32
+	PlanHash    string
+	Links       []Link
+}
+
+// Link is another task's root span, by its minted ids.
+type Link struct{ TraceID, SpanID string }
+
+// maxLinks bounds a parent's links: two children and their bounded integration attempts.
+const maxLinks = 18
+
+// hashRE is a plan hash; hashPrefix is how much of it a span carries, enough to tell versions apart.
+var hashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+const hashPrefix = 12
+
+// coordinationSpan is c's attributes and links; a hash or an id that is not one is dropped.
+func coordinationSpan(c *Coordination) ([]attribute.KeyValue, []trace.Link) {
+	if c == nil {
+		return nil, nil
+	}
+	attrs := []attribute.KeyValue{attribute.Int64("agent.coordination.plan_version", int64(c.PlanVersion))}
+	if hashRE.MatchString(c.PlanHash) {
+		attrs = append(attrs, attribute.String("agent.coordination.plan_hash_prefix", c.PlanHash[:hashPrefix]))
+	}
+	var links []trace.Link
+	for _, l := range c.Links {
+		tid, terr := trace.TraceIDFromHex(l.TraceID)
+		sid, serr := trace.SpanIDFromHex(l.SpanID)
+		if terr != nil || serr != nil || len(links) == maxLinks {
+			continue
+		}
+		links = append(links, trace.Link{SpanContext: trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid,
+			TraceFlags: trace.FlagsSampled, Remote: true})})
+	}
+	return attrs, links
 }
 
 // Sink exports finished task spans; the reconciler holds nil when tracing is off.
@@ -137,10 +183,11 @@ func record(tid trace.TraceID, sid trace.SpanID, t Task) (sdktrace.ReadOnlySpan,
 	tp := sdktrace.NewTracerProvider(sdktrace.WithIDGenerator(fixedIDs{tid, sid}), sdktrace.WithSpanProcessor(keep),
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 		sdktrace.WithResource(resource.NewSchemaless(attribute.String("service.name", "agent-factory"))))
+	cattrs, links := coordinationSpan(t.Coordination)
 	_, span := tp.Tracer("agent-factory").Start(context.Background(), "task", trace.WithTimestamp(t.Start),
 		trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attribute.String("agent.task_id", t.TaskID),
 			attribute.String("agent.tier", t.Tier), attribute.String("agent.task.phase", t.Phase),
-			attribute.String("agent.task.reason", spanReason(t.Reason))))
+			attribute.String("agent.task.reason", spanReason(t.Reason))), trace.WithAttributes(cattrs...), trace.WithLinks(links...))
 	span.End(trace.WithTimestamp(t.End))
 	if keep.span == nil {
 		return nil, errors.New("task span: not recorded")
