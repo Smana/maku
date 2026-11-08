@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/summary"
 )
@@ -47,7 +48,10 @@ type BriefIn struct {
 	// permission, check or egress failure the room's facts and notes name, empty when they name none. The
 	// caller fills it, so the brief reads nothing new to say how to fix what it reports.
 	Cause string
-	Now   time.Time
+	// Coordination is a coordination parent's family as the caller may read it (v4): its children,
+	// links and the restricted count, written as the card writes them. Nil for any other room.
+	Coordination *coordinationview.View
+	Now          time.Time
 }
 
 // Brief writes the resume brief: fixed prose, quoted data (CD11). The plan version is display only;
@@ -66,6 +70,7 @@ func Brief(w io.Writer, in BriefIn, o Options) error {
 	head.briefPlan(in)
 	changed.briefChanged(in)
 	tail.briefBlocked(in)
+	tail.briefCoordination(in)
 	tail.briefFix(in)
 	tail.briefNext(in)
 	tail.briefLinks(in)
@@ -135,14 +140,27 @@ func (c *card) briefAcceptance(in BriefIn) {
 	c.line("Acceptance: " + strings.Join(checks, ", "))
 }
 
+// briefCoordination is a parent's family, from the card's own lines.
+func (c *card) briefCoordination(in BriefIn) {
+	if in.Coordination == nil {
+		return
+	}
+	for _, l := range CoordinationLines(*in.Coordination, c.o)[1:] { // the plan line already says the head
+		c.line(l)
+	}
+	if n := in.Coordination.RestrictedChildren; n > 0 {
+		c.line(plural(n, "restricted child", "restricted children"))
+	}
+}
+
 // briefPlan is which plan ran and what it was allowed to spend. The scope half reads the scope it
 // names: the state it prints is the scope's, so a caller that hands over a scope needs no second field
 // to say which plan ran (SC6).
 func (c *card) briefPlan(in BriefIn) {
 	var parts []string
 	switch {
-	case in.Plan.Source == "proposal":
-		s := "proposal"
+	case in.Plan.Source == "proposal" || in.Plan.Source == "coordination":
+		s := in.Plan.Source
 		if in.Plan.Rev > 0 {
 			s += " v" + strconv.Itoa(in.Plan.Rev)
 		}

@@ -171,3 +171,12 @@ func integrationNode(v View, id, purpose string, roles []string, confirmed bool)
 	}
 	return n
 }
+
+// NeedsOf is what needs/v1 reads of v (summary.CoordinationNeeds).
+func NeedsOf(v View) *summary.CoordinationNeeds {
+	n := &summary.CoordinationNeeds{ParentTask: v.ParentTask, PlanVersion: v.Plan.Version, Primary: v.Plan.Primary.Repository, Flow: FlowOf(v)}
+	if v.Recovery != nil {
+		n.RecoveryCode = v.Recovery.Code
+	}
+	return n
+}

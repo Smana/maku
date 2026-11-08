@@ -10,6 +10,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/summary"
 )
 
 // CoordinationViews reads the core's unfiltered view of a coordination parent (v4 MR13): an
@@ -132,6 +133,38 @@ func (s *Server) filterCoordination(ctx context.Context, raw coordination.Coordi
 	actx, cancel := context.WithTimeout(ctx, accessWait)
 	defer cancel()
 	return coordinationview.Filter(actx, raw, viewer, githubReader{s})
+}
+
+// coordinationNeedsIn is what needs/v1 reads of room id's family for p: the filtered view and p's
+// standing in each visible child's repository; nil when the room is no readable coordination parent.
+func (s *Server) coordinationNeedsIn(ctx context.Context, id string, p authn.Principal) (*summary.CoordinationNeeds, map[string]summary.GitHubStanding) {
+	v, ok := s.coordinationFor(ctx, id, p)
+	if !ok {
+		return nil, nil
+	}
+	return coordinationview.NeedsOf(v), s.childStanding(ctx, v, p)
+}
+
+// childStanding is p's GitHub standing in each visible child's repository: who authorizes a child
+// is a writer of its own repository (MR5). A sponsored principal has none, and no admin standing
+// substitutes for it.
+func (s *Server) childStanding(ctx context.Context, v coordinationview.View, p authn.Principal) map[string]summary.GitHubStanding {
+	out := map[string]summary.GitHubStanding{}
+	if p.Sponsored || s.Identity == nil || s.Access == nil {
+		return out
+	}
+	for _, c := range v.Plan.Children {
+		if _, done := out[c.Repository]; done {
+			continue
+		}
+		var gh summary.GitHubStanding
+		if login, err := s.Identity.Login(ctx, p.Sub, c.Repository); err == nil && login != "" {
+			gh.Login = login
+			gh.MayWrite, _ = s.Access.CanWrite(ctx, c.Repository, login)
+		}
+		out[c.Repository] = gh
+	}
+	return out
 }
 
 // githubReader is D7's two checks as coordinationview reads them; unwired, every child is
