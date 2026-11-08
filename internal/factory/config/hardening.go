@@ -4,6 +4,8 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -210,4 +212,34 @@ func strictJSON(b []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+// Hash is the sha256 of the effective hardening configuration: the key a drill report proves
+// (R6), so any change to the block needs a new passing drill.
+func (h Hardening) Hash() string {
+	b, _ := json.Marshal(struct { // a struct of strings, slices and maps: Marshal cannot fail
+		Mode, MinAuthorTrust, Classifier, MaxAge string
+		BlockedUsers, LabelAllowlist             []string
+		Repositories                             map[string]hardening.Mode
+	}{string(h.Mode), h.MinAuthorTrust, string(h.Layers.Classifier), h.Drills.MaxAge.String(),
+		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes()})
+	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}
+
+func (h Hardening) repositoryModes() map[string]hardening.Mode {
+	m := map[string]hardening.Mode{}
+	for name, r := range h.Repositories {
+		m[name] = r.Mode
+	}
+	return m
+}
+
+// HardeningSettings are the facts readiness reads from this configuration for repository. The read
+// filter is off until forge_read is wired (stage H4).
+func (c *Config) HardeningSettings(repository, makuVersion string) hardening.Settings {
+	h := c.Hardening
+	mode := h.ModeFor(repository)
+	return hardening.Settings{Mode: mode, Layers: hardening.LayersFor(mode, h.Layers.Classifier),
+		Demo: c.Demo, DrillMaxAge: h.Drills.MaxAge.Duration, ConfigHash: h.Hash(), Version: makuVersion}
 }

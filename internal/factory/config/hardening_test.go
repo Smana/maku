@@ -92,3 +92,26 @@ func TestHardeningRepositoryStricterOnly(t *testing.T) {
 		t.Fatal("ModeFor, stricter")
 	}
 }
+
+// Readiness reads its configuration facts here: the effective mode, the layers, the demo flag and
+// a hash a drill report binds; forge_read is not wired before stage H4.
+func TestHardeningSettings(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.HardeningSettings("Smana/cloud-native-ref", "v9.9.9")
+	if s.Mode != hardening.ModeOff || s.Layers != hardening.LayersFor(hardening.ModeOff, hardening.ModeAudit) ||
+		s.ReadFilter || s.Demo || s.DrillMaxAge != 168*time.Hour || s.Version != "v9.9.9" || len(s.ConfigHash) != 64 {
+		t.Fatalf("%+v", s)
+	}
+	same, _ := Parse([]byte(good + "hardening: {mode: off, minAuthorTrust: approved}\n"))
+	other, _ := Parse([]byte(good + "hardening: {minAuthorTrust: merged}\n"))
+	if same.Hardening.Hash() != c.Hardening.Hash() || other.Hardening.Hash() == c.Hardening.Hash() {
+		t.Fatal("the hash follows the effective configuration, not its spelling")
+	}
+	c.Demo = true
+	if !c.HardeningSettings("x/y", "").Demo {
+		t.Fatal("R7 reads the demo flag")
+	}
+}
