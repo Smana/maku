@@ -180,6 +180,7 @@ type Set struct {
 	policyDivergence     metric.Int64Gauge
 	policyDual           metric.Int64Counter
 	grantsActive         metric.Int64Gauge
+	evidenceAge          metric.Float64Gauge
 	grantEvents          metric.Int64Counter
 	policyChanges        metric.Int64Counter
 	refusals             metric.Int64Counter
@@ -440,6 +441,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.policyDual, err = meter.Int64Counter("agent_factory_policy_dual_decisions_total",
 		metric.WithDescription("Merge decisions decided again under the repository's policy (stage 3), by agreement: agree, explained (the policy differs where the comparison says), unread (the diff it needed was not read), unexplained, or no_policy. Nothing is decided on it."))
 	check(err)
+	s.evidenceAge, err = meter.Float64Gauge("agent_factory_policy_evidence_age_seconds",
+		metric.WithDescription("Age of a repository's promotion evidence as the leader last served it (merge policy stage 6): above 600 the reads are failing and the page shows older evidence. A repository never read has no series."))
+	check(err)
 	s.grantsActive, err = meter.Int64Gauge("agent_factory_approval_grants_active",
 		metric.WithDescription("Saved approval grants active for a repository's class as the last lookup found them (merge policy stage 5). Grant ids live in the decision record, never here."))
 	check(err)
@@ -630,6 +634,11 @@ func (s *Set) PolicyLoadError(ctx context.Context, repository, reason string) {
 // PolicyDivergence records how many classes differ from the central config (stage 1's exit: 0).
 func (s *Set) PolicyDivergence(ctx context.Context, repository string, n int) {
 	s.policyDivergence.Record(ctx, int64(n), metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+// PolicyEvidenceAge records the age of repository's promotion evidence.
+func (s *Set) PolicyEvidenceAge(ctx context.Context, repository string, age time.Duration) {
+	s.evidenceAge.Record(ctx, age.Seconds(), metric.WithAttributes(attribute.String("repository", s.repository(repository))))
 }
 
 // PolicyAgreements are dual evaluation's agreement values (merge policy stage 3, MP18).

@@ -198,8 +198,8 @@ func (s *Server) maintainerOf(w http.ResponseWriter, r *http.Request, p authn.Pr
 	return who, true
 }
 
-// promotionSnapshot is what a promotion was granted on: the class's evidence as read, the minimum
-// applied, and the line the proposal changes.
+// promotionSnapshot is what a promotion was granted on: the class's evidence as read at ReadAt,
+// the minimum applied, and the line the proposal changes.
 type promotionSnapshot struct {
 	ReadAt    time.Time         `json:"readAt"`
 	Minimum   int               `json:"minimum"`
@@ -242,6 +242,9 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 	case c.Proposal == nil:
 		refuseJSON(w, http.StatusConflict, "not_promotable")
 		return
+	case c.Evidence == nil || rep.EvidenceAt == nil:
+		refuseJSON(w, http.StatusConflict, "evidence_pending")
+		return
 	}
 	threshold := rep.Minimum
 	if in.ExceptionID != "" {
@@ -253,12 +256,12 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 		}
 		threshold = e.Minimum
 	}
-	ev := c.Evidence
+	ev := *c.Evidence
 	if ev.Clean < threshold || ev.Bad > 0 || ev.Drill != evidence.DrillPassed {
 		refuseJSON(w, http.StatusConflict, "not_eligible")
 		return
 	}
-	snap, err := json.Marshal(promotionSnapshot{ReadAt: rep.ReadAt, Minimum: rep.Minimum, Threshold: threshold, Mode: c.Mode,
+	snap, err := json.Marshal(promotionSnapshot{ReadAt: *rep.EvidenceAt, Minimum: rep.Minimum, Threshold: threshold, Mode: c.Mode,
 		Evidence: ev, Line: c.Proposal.Line})
 	if err != nil {
 		refuseJSON(w, http.StatusInternalServerError, "snapshot")

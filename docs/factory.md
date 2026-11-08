@@ -1257,7 +1257,33 @@ With `policyManagement.promotion` on (merge policy stage 6), the settings pages 
 class's evidence and let a maintainer ask to promote a shadow class to live. The evidence is the
 [tally](#calibration)'s, computed in Go from the same records (`internal/factory/evidence`, tested
 on the script's fixtures), read through the repository's App connection over the last 180 days and
-cached 10 minutes:
+cached 10 minutes. The page never waits on it: the policy file and the default branch are read on
+the request, the evidence off it.
+
+```mermaid
+sequenceDiagram
+    participant UI as settings page
+    participant F as factory API
+    participant S as evidence.Service
+    participant R as Refresher (leader)
+    participant GH as GitHub search
+    UI->>F: GET /v1/policy/evidence
+    F->>S: Report
+    S-->>F: policy, classes, editor inputs; evidence as last read, or pending
+    F-->>UI: 200 at once
+    S-)GH: missing or older than 10 min: one read, its own 3 min deadline
+    R-)S: every minute, each owned repository that is due
+    GH--)S: 4 searches at a time; a failure keeps the last good evidence
+    UI->>F: every 5 s while a class is pending
+```
+
+One read runs per repository at a time; a failed one is tried again after a minute, a rate-limited
+one after a backoff doubling from 2 to 30 minutes, and either logs `policy evidence unread` with its
+`reason` (`rate_limited`, `deadline_exceeded`, `unreadable`). The page then shows the older evidence
+with its age and that reason; `maku_factory_policy_evidence_age_seconds` is its age on the leader.
+A class still pending offers no promotion, and the broker refuses one `evidence_pending`.
+
+Each class's evidence:
 
 | Field | Source |
 |---|---|
