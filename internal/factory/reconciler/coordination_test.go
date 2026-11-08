@@ -26,14 +26,15 @@ const (
 // fakeCoordination is the coordination service as the reconciler sees it: File and ExecuteReady
 // answer per child from ready, and every call is recorded.
 type fakeCoordination struct {
-	ready map[string]error
-	files []string
-	asked []string
+	ready   map[string]error
+	fileErr error // what File refuses with
+	files   []string
+	asked   []string
 }
 
 func (f *fakeCoordination) File(_ context.Context, name string) error {
 	f.files = append(f.files, name)
-	return nil
+	return f.fileErr
 }
 
 func (f *fakeCoordination) ExecuteReady(_ context.Context, _ *v1alpha1.CoordinationStatus, ids []string) error {

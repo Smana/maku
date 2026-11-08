@@ -389,7 +389,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
 	// confirms only.
 	// Each repository's checks and filing go through that repository's own App connection.
-	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now,
+	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now, Metrics: m,
 		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh

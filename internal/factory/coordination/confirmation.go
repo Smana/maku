@@ -79,6 +79,35 @@ type Service struct {
 	Now           func() time.Time
 	// Forges is each repository's own factory App connection for filing, nil when it has none.
 	Forges func(repository string) IssueForge
+	// Metrics records the service's coordination series; nil records nothing.
+	Metrics Metrics
+}
+
+// Metrics is what the service counts (v4 observability), each after the write that records it:
+// *fmetrics.Set implements it. Labels are configured repositories and bounded codes only.
+type Metrics interface {
+	CoordinationFamily(ctx context.Context, repository, outcome string)
+	CoordinationPlanVersion(ctx context.Context, repository, outcome string)
+	CoordinationChild(ctx context.Context, repository, class, outcome string)
+	CoordinationWait(ctx context.Context, repository, reason string, d time.Duration)
+}
+
+// observe runs f on the service's Metrics, when it has one.
+func (s *Service) observe(f func(Metrics)) {
+	if s.Metrics != nil {
+		f(s.Metrics)
+	}
+}
+
+// authorizationWait is how long cs's current version waited for its confirmations: from its
+// acceptance to now, the write that completed them.
+func authorizationWait(cs *v1alpha1.CoordinationStatus, now time.Time) time.Duration {
+	for i := len(cs.History) - 1; i >= 0; i-- {
+		if h := cs.History[i]; h.PlanHash == cs.PlanHash {
+			return now.Sub(h.AcceptedAt.Time)
+		}
+	}
+	return 0
 }
 
 func (s *Service) mode() string {
@@ -283,7 +312,20 @@ func (s *Service) record(ctx context.Context, t *v1alpha1.Task, next v1alpha1.Co
 	}
 	reason, _ := s.eligibility(ctx, cs) // a refused gate is the reason; the draft stands
 	setReason(t, reason)
-	return s.Client.Status().Update(ctx, t)
+	if err := s.Client.Status().Update(ctx, t); err != nil {
+		return err
+	}
+	if old.Plan != nil {
+		s.observe(func(m Metrics) {
+			m.CoordinationPlanVersion(ctx, next.Primary.Repository, "superseded")
+			for _, c := range old.Plan.Children {
+				if _, kept := find(next, c.ID); !kept {
+					m.CoordinationChild(ctx, c.Repository, c.Class, "dropped")
+				}
+			}
+		})
+	}
+	return nil
 }
 
 // setReason writes a confirmation's reason on parent t, except once filing has started: filed and
@@ -363,6 +405,7 @@ func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfi
 	}
 	var out CoordinationConfirmation
 	var gate error
+	var completed *v1alpha1.CoordinationStatus // set when this confirmation completed the version
 	key := types.NamespacedName{Namespace: s.Namespace, Name: in.Plan.ID}
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var t v1alpha1.Task
@@ -379,6 +422,8 @@ func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfi
 			return ErrParentNotFound
 		}
 		cs := t.Status.Coordination
+		completed = nil
+		before := complete(cs)
 		fp := ""
 		if in.Child != nil {
 			fp = ChildFingerprint(*cs.Plan, in.Child.ChildID)
@@ -405,10 +450,22 @@ func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfi
 		var reason string
 		reason, gate = s.eligibility(ctx, cs)
 		setReason(&t, reason)
+		if !before && complete(cs) {
+			completed = cs
+		}
 		return s.Client.Status().Update(ctx, &t)
 	})
+	if errors.Is(err, ErrStalePlan) {
+		s.observe(func(m Metrics) { m.CoordinationPlanVersion(ctx, in.Plan.Primary.Repository, "stale_refused") })
+	}
 	if err != nil {
 		return CoordinationConfirmation{}, err
+	}
+	if cs := completed; cs != nil {
+		s.observe(func(m Metrics) {
+			m.CoordinationPlanVersion(ctx, cs.Plan.Primary.Repository, "confirmed")
+			m.CoordinationWait(ctx, cs.Plan.Primary.Repository, "authorization", authorizationWait(cs, s.now()))
+		})
 	}
 	return out, gate
 }

@@ -64,7 +64,7 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.
 		return r.stop(ctx, t, "superseded")
 	}
 	if reason := lineageReason(err); reason != "" {
-		return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return r.coordinationRejected(ctx, t, reason)
 	}
 	if err != nil {
 		return err
@@ -102,7 +102,7 @@ func (r *Reconciler) coordinationAuthority(ctx context.Context, t *v1alpha1.Task
 	if reason == "" {
 		return true, err
 	}
-	t.Status.Reason = reason
+	r.coordinationRefused(ctx, t.Spec.Repository, &t.Status.Reason, reason)
 	return true, nil
 }
 
@@ -118,7 +118,7 @@ func (r *Reconciler) coordinationHold(ctx context.Context, t *v1alpha1.Task) (bo
 		return true, r.stop(ctx, t, "superseded")
 	}
 	if reason := lineageReason(err); reason != "" {
-		return true, r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return true, r.coordinationRejected(ctx, t, reason)
 	}
 	if err != nil {
 		return true, err
