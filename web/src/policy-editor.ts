@@ -7,6 +7,8 @@
 // policy and simulates it, and the answer is the file to submit as the maintainer's own pull
 // request. factory: is never in the form.
 
+import templateFile from "./policy-templates.json";
+
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
   mode: string; author: string; adopt?: { logins: string[]; branches: string[] }; harness: string;
@@ -26,19 +28,19 @@ export interface Preview {
 }
 export interface Outcome { verdict: string; reason?: string }
 
-// The spec's class templates, all in shadow: the editor's starting points.
-export const templates: Record<string, () => ClassPolicy> = {
-  "docs-broad": () => ({ mode: "shadow", author: "agents", harness: "", conditions: {
-    all: [{ allowedFiles: ["^docs/.+\\.md$", "^README\\.md$"] }, { maxPatchFiles: 10 }, { maxModifiedLines: 200 },
-      { holdoutChecks: ["Check the documentation links 🔗"] }],
-    deny: [{ protectedFiles: ["^docs/superpowers/.+$", "^docs/specs/.+$", "^docs/security/.+$"] }] },
-    requiresApproval: [{ changedFiles: ["^docs/architecture/.+$"] }], limits: { maxPerDay: 2 }, monitor: { followUpWindow: "168h" } }),
-  "deps-patch": () => ({ mode: "shadow", author: "adopt", adopt: { logins: ["renovate[bot]"], branches: ["^renovate/"] }, harness: "",
-    conditions: { all: [{ diffShape: "semver-patch" }, { maxPatchFiles: 3 }, { maxModifiedLines: 10 }, { releaseAgeCheck: "renovate/stability-days" }] },
-    limits: { maxPerDay: 2 }, monitor: { followUpWindow: "168h" } }),
-  "generated-files": () => ({ mode: "shadow", author: "agents", harness: "", conditions: {
-    all: [{ allowedFiles: ["^gen/.+$"] }, { holdoutChecks: ["Regenerate and compare"] }, { modifyOnly: true }] } }),
-};
+// The spec's class templates, all in shadow: the editor's starting points. They live in a JSON file
+// so the factory's own check runs on them (mergepolicy.TestEveryEditorTemplatePassesCheck): a semver
+// shape needs modifyOnly, and semver-minor stays shadow only (M2).
+export const templates: Record<string, () => ClassPolicy> = Object.fromEntries(
+  Object.entries(templateFile as Record<string, ClassPolicy>).map(([k, v]) => [k, () => structuredClone(v)]));
+
+// profilesFor are the central profiles a class of author may reference: an adopted class only a
+// profile that runs nothing (template none), an agents class only one that runs. adopted unknown
+// (an older broker), every profile.
+export function profilesFor(author: string, profiles: string[], adopted?: string[] | null): string[] {
+  if (!adopted) return profiles;
+  return profiles.filter((p) => adopted.includes(p) === (author === "adopt"));
+}
 
 // The leaves the form edits, in the order it shows them. Any other leaf, and every any-branch, is
 // kept as it is and edited in the expert view.
@@ -120,7 +122,7 @@ function labelled(label: string, input: HTMLElement): HTMLLabelElement {
 }
 
 // classForm renders the guided form for cls, calling change with the class as edited.
-export function classForm(cls: ClassPolicy, profiles: string[], change: (c: ClassPolicy) => void): HTMLElement {
+export function classForm(cls: ClassPolicy, profiles: string[], change: (c: ClassPolicy) => void, adopted?: string[] | null): HTMLElement {
   const c: ClassPolicy = structuredClone(cls);
   c.conditions ??= {};
   const form = el("fieldset", undefined, "editor-form");
@@ -156,13 +158,25 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
   };
 
   select("mode", c.mode, ["shadow", "live", "off"], (v) => { c.mode = v; });
-  select("author", c.author, ["agents", "adopt"], (v) => { c.author = v; if (v === "adopt") c.adopt ??= { logins: [], branches: [] }; else delete c.adopt; });
+  let harness: HTMLSelectElement | undefined;
+  const fill = () => {
+    const fit = profilesFor(c.author, profiles, adopted);
+    const options = fit.includes(c.harness) || c.harness === "" ? fit : [c.harness, ...fit];
+    harness!.replaceChildren(...["", ...options].map((o) => { const opt = el("option", o || "(none)"); opt.value = o; return opt; }));
+    harness!.value = c.harness;
+  };
+  select("author", c.author, ["agents", "adopt"], (v) => {
+    c.author = v;
+    if (v === "adopt") c.adopt ??= { logins: [], branches: [] }; else delete c.adopt;
+    if (!profilesFor(v, profiles, adopted).includes(c.harness)) c.harness = profilesFor(v, profiles, adopted)[0] ?? "";
+    fill();
+  });
   if (c.adopt) {
     text("adopted logins (one a line)", c.adopt.logins.join("\n"), (v) => { c.adopt!.logins = lines(v); }, true);
     text("adopted branches (one a line)", c.adopt.branches.join("\n"), (v) => { c.adopt!.branches = lines(v); }, true);
   }
-  const options = profiles.includes(c.harness) || c.harness === "" ? profiles : [c.harness, ...profiles];
-  select("harness profile (the central list)", c.harness, ["", ...options], (v) => { c.harness = v; });
+  harness = select("harness profile (the central list)", c.harness, [], (v) => { c.harness = v; });
+  fill();
 
   form.append(el("h4", "Conditions (all must hold)"));
   const all = () => c.conditions!.all ?? [];

@@ -6,7 +6,7 @@
 // button it hides is only a convenience. Every value is written as text.
 
 import { api, SignInRequired } from "./api";
-import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, templates } from "./policy-editor";
+import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates } from "./policy-editor";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -22,7 +22,7 @@ export interface Proposal { path: string; line: number; file: string; editURL: s
 export interface ClassReport { class: string; source: string; mode: string; evidence: Evidence; proposal?: Proposal; unproposed?: string }
 export interface Report {
   repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
-  file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null;
+  file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null; adoptedProfiles?: string[] | null;
   guardrails: Record<string, unknown>;
 }
 export interface Step2 { row: string; status: string; detail?: string }
@@ -332,13 +332,18 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   const show = () => {
     const v = pick.value;
     let cls = v.startsWith("template:") ? templates[v.slice(9)]() : file.classes![v];
-    if (v.startsWith("template:") && !cls.harness) cls = { ...cls, harness: profiles[0] ?? "" };
+    if (v.startsWith("template:") && !cls.harness) cls = { ...cls, harness: profilesFor(cls.author, profiles, r.adoptedProfiles)[0] ?? "" };
     const key = () => (v.startsWith("template:") ? (name.value.trim() || v.slice(9)) : v);
     name.hidden = !v.startsWith("template:");
     formAt.replaceChildren(classForm(cls, profiles, (c) => {
+      // A file that declares classes declares docs-links and revert (OD-8): a first class brings
+      // them, unarmed, so the first check does not fail on what the maintainer never wrote.
+      for (const req of ["docs-links", "revert"]) {
+        file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
+      }
       file.classes![key()] = cleanClass(c);
       yaml.value = fileYAML(file);
-    }));
+    }, r.adoptedProfiles));
   };
   pick.onchange = show;
   box.append(labelled2("class", pick), name, formAt);

@@ -1,0 +1,145 @@
+{
+  "docs-broad": {
+    "mode": "shadow",
+    "author": "agents",
+    "harness": "",
+    "conditions": {
+      "all": [
+        {
+          "allowedFiles": [
+            "^docs/.+\\.md$",
+            "^README\\.md$"
+          ]
+        },
+        {
+          "maxPatchFiles": 10
+        },
+        {
+          "maxModifiedLines": 200
+        },
+        {
+          "holdoutChecks": [
+            "Check the documentation links 🔗"
+          ]
+        }
+      ],
+      "deny": [
+        {
+          "protectedFiles": [
+            "^docs/superpowers/.+$",
+            "^docs/specs/.+$",
+            "^docs/security/.+$"
+          ]
+        }
+      ]
+    },
+    "requiresApproval": [
+      {
+        "changedFiles": [
+          "^docs/architecture/.+$"
+        ]
+      }
+    ],
+    "limits": {
+      "maxPerDay": 2
+    },
+    "monitor": {
+      "followUpWindow": "168h"
+    }
+  },
+  "deps-patch": {
+    "mode": "shadow",
+    "author": "adopt",
+    "adopt": {
+      "logins": [
+        "renovate[bot]"
+      ],
+      "branches": [
+        "^renovate/"
+      ]
+    },
+    "harness": "",
+    "conditions": {
+      "all": [
+        {
+          "diffShape": "semver-patch"
+        },
+        {
+          "modifyOnly": true
+        },
+        {
+          "maxPatchFiles": 3
+        },
+        {
+          "maxModifiedLines": 10
+        },
+        {
+          "releaseAgeCheck": "renovate/stability-days"
+        }
+      ]
+    },
+    "limits": {
+      "maxPerDay": 2
+    },
+    "monitor": {
+      "followUpWindow": "168h"
+    }
+  },
+  "deps-minor": {
+    "mode": "shadow",
+    "author": "adopt",
+    "adopt": {
+      "logins": [
+        "renovate[bot]"
+      ],
+      "branches": [
+        "^renovate/"
+      ]
+    },
+    "harness": "",
+    "conditions": {
+      "all": [
+        {
+          "diffShape": "semver-minor"
+        },
+        {
+          "modifyOnly": true
+        },
+        {
+          "maxPatchFiles": 3
+        },
+        {
+          "maxModifiedLines": 10
+        },
+        {
+          "releaseAgeCheck": "renovate/stability-days"
+        }
+      ]
+    },
+    "monitor": {
+      "followUpWindow": "168h"
+    }
+  },
+  "generated-files": {
+    "mode": "shadow",
+    "author": "agents",
+    "harness": "",
+    "conditions": {
+      "all": [
+        {
+          "allowedFiles": [
+            "^gen/.+$"
+          ]
+        },
+        {
+          "holdoutChecks": [
+            "Regenerate and compare"
+          ]
+        },
+        {
+          "modifyOnly": true
+        }
+      ]
+    }
+  }
+}

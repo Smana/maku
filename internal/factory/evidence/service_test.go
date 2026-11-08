@@ -106,3 +106,19 @@ func TestServiceFallsBackToTheCentralClasses(t *testing.T) {
 		t.Fatal("a failed read is an error, never an empty report")
 	}
 }
+
+// The editor gives a template a profile its author may take: the report names those that run
+// nothing, which only an adopted class takes.
+func TestServiceNamesTheProfilesAnAdoptedClassTakes(t *testing.T) {
+	cfg := serviceCfg()
+	cfg.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}, "checked": {Checks: true}, "adopted-none": {Template: config.TemplateNone}}
+	src := &fakeSource{file: policyFile, found: true}
+	s := &Service{Cfg: cfg, Sources: func(string) (Source, bool) { return src, true }, Now: time.Now}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(r.HarnessProfiles, []string{"adopted-none", "checked", "plain"}) || !slices.Equal(r.AdoptedProfiles, []string{"adopted-none"}) {
+		t.Fatalf("%v %v", r.HarnessProfiles, r.AdoptedProfiles)
+	}
+}

@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import { evidenceLine, explain, isSettings, ladderLine, mountSettings, settingsFrame, type Evidence, type RepositoryPage } from "../src/settings";
-import { fileYAML, setLeaf, toYAML } from "../src/policy-editor";
+import { fileYAML, setLeaf, templates, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 20, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [{ model: "glm-5.3", mergedUnchanged: 20, changed: 1 }] },
@@ -208,6 +208,38 @@ describe("the policy editor", () => {
     expect(yaml).toContain("  deps-patch:\n");
     expect(yaml).toContain('harness: "docs-standard"');
     expect(yaml).toContain('logins: ["renovate[bot]"]');
+  });
+  it("gives a template a profile its author may take, and declares the required classes unarmed", async () => {
+    const app = document.createElement("div");
+    const r = page();
+    r.report = { ...r.report, harnessProfiles: ["adopted-none", "checked", "plain"], adoptedProfiles: ["adopted-none"],
+      file: "factory: aws-0\n", policy: { factory: "aws-0" } };
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": r }));
+    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
+    const yamlOf = () => (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
+    const edit = () => {
+      const mode = app.querySelector(".editor-form select") as HTMLSelectElement;
+      mode.dispatchEvent(new Event("change"));
+    };
+    pick.value = "template:docs-broad";
+    pick.dispatchEvent(new Event("change"));
+    edit();
+    expect(yamlOf()).toMatch(/  docs-broad:\n(    .*\n)*?    harness: "checked"\n/);
+    expect(yamlOf()).toContain('  docs-links:\n    mode: "off"\n    author: "agents"\n    harness: "checked"\n');
+    expect(yamlOf()).toContain('  revert:\n    mode: "off"\n');
+    const harness = [...app.querySelectorAll(".editor-form select")][2] as HTMLSelectElement;
+    expect([...harness.options].map((o) => o.value)).not.toContain("adopted-none");
+    pick.value = "template:deps-patch";
+    pick.dispatchEvent(new Event("change"));
+    edit();
+    expect(yamlOf()).toMatch(/  deps-patch:\n(    .*\n)*?    harness: "adopted-none"\n/);
+  });
+  it("holds every semver template to modifyOnly, as the factory's class check does", () => {
+    for (const name of ["deps-patch", "deps-minor"]) {
+      const all = templates[name]().conditions?.all ?? [];
+      expect(all.some((l) => "diffShape" in l)).toBe(true);
+      expect(all).toContainEqual({ modifyOnly: true });
+    }
   });
   it("lets a reader see the editor but not check: the broker would refuse it", async () => {
     const app = document.createElement("div");
