@@ -15,6 +15,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/grant"
 	"github.com/Smana/maku/internal/factory/steering"
 )
 
@@ -55,6 +56,20 @@ type ArmInputs struct {
 	// Integration is a coordination dependent's integration hold (v4 MR9), applied to every
 	// decision DecideArm returns.
 	Integration IntegrationGate
+	// Grants are the saved approval grants of the task's repository and class, read immediately
+	// before the decision (merge policy stage 5): withApproval consults them in a live class only.
+	// Never part of a fixture: a replay reads the subset as a human's, as the gate did without them.
+	Grants GrantRead `json:"-"`
+}
+
+// GrantRead is one lookup of a repository's grants: Read is false when it failed or was not made,
+// and then no grant authorizes (MP13). PolicyHash is the repository policy decided under, At the
+// lookup's time, against which a grant's expiry is read.
+type GrantRead struct {
+	Read       bool
+	List       []grant.Grant
+	PolicyHash string
+	At         time.Time
 }
 
 // ContractRead is the files a pull request changed since the tester's contract commit (row 2c).

@@ -8,6 +8,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"time"
 )
 
 // TemplateNone is the harness of an adopted class: another author's pull requests, no run.
@@ -52,6 +53,23 @@ type MergeGuardrails struct {
 	MaxPatchFiles    int      `json:"maxPatchFiles,omitempty"`
 	MaxModifiedLines int      `json:"maxModifiedLines,omitempty"`
 	MaxPerDay        int      `json:"maxPerDay,omitempty"`
+	// MaxGrantLifetime caps a saved approval grant's life from its creation or last renewal (merge
+	// policy stage 5): the factory's lookup expires an older grant. 0 is DefaultGrantLifetime.
+	MaxGrantLifetime Duration `json:"maxGrantLifetime,omitzero"`
+}
+
+// The bounds of mergeGuardrails.maxGrantLifetime: 90 days by default (the spec's), a year at most.
+const (
+	DefaultGrantLifetime = 90 * 24 * time.Hour
+	MaxGrantLifetime     = 365 * 24 * time.Hour
+)
+
+// GrantLifetime is the cap in force: MaxGrantLifetime, or DefaultGrantLifetime when unset.
+func (g MergeGuardrails) GrantLifetime() time.Duration {
+	if g.MaxGrantLifetime.Duration == 0 {
+		return DefaultGrantLifetime
+	}
+	return g.MaxGrantLifetime.Duration
 }
 
 // PolicyManagement holds the rollout's switches, all off by default (merge policy stages).
@@ -66,6 +84,10 @@ type PolicyManagement struct {
 	// Read last observed it, and records whether the two agree (stage 3). It decides nothing: the
 	// central decision is the one acted on. Needs Read.
 	DualEvaluation bool `json:"dualEvaluation,omitempty"`
+	// ApprovalMemory consults saved approval grants where a live class's requiresApproval subset
+	// would ask a human (stage 5): an active grant whose predicate covers the decision lets it arm.
+	// Off, no grant is read. Needs Read: a grant is bound to the policy Read observes.
+	ApprovalMemory bool `json:"approvalMemory,omitempty"`
 	// RepositoryAuthority lets a repository whose entry says classAuthority: repository be decided
 	// on its own policy file rather than on central classes (stage 4). Invalid, unreadable or stale
 	// policy pauses its auto-merge; human merges continue. Needs Read.
@@ -104,6 +126,12 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 	}
 	if pm := c.PolicyManagement; pm.DualEvaluation && !pm.Read {
 		bad("policyManagement.dualEvaluation needs read: it evaluates the policy read observes")
+	}
+	if pm := c.PolicyManagement; pm.ApprovalMemory && !pm.Read {
+		bad("policyManagement.approvalMemory needs read: a grant is bound to the policy read observes")
+	}
+	if l := c.MergeGuardrails.MaxGrantLifetime.Duration; l < 0 || l > MaxGrantLifetime {
+		bad("mergeGuardrails.maxGrantLifetime must be 0 (the default, %s) to %s", DefaultGrantLifetime, MaxGrantLifetime)
 	}
 	if pm := c.PolicyManagement; pm.RepositoryAuthority && !pm.Read {
 		bad("policyManagement.repositoryAuthority needs read: it decides on the policy read observes")

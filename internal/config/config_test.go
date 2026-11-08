@@ -61,6 +61,16 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// Merge policy stage 5: human.approvalMemory is off unless a file turns it on.
+func TestLoadApprovalMemory(t *testing.T) {
+	if c, err := Load(write(t, valid)); err != nil || c.Human.ApprovalMemory {
+		t.Fatalf("%v %v", c.Human.ApprovalMemory, err)
+	}
+	if c, err := Load(write(t, valid+"  approvalMemory: true\n")); err != nil || !c.Human.ApprovalMemory {
+		t.Fatalf("%v %v", c.Human.ApprovalMemory, err)
+	}
+}
+
 // access is the human.access block, appended to valid.
 const access = "  access:\n    readerFile: /etc/room-broker/zitadel-reader/reader.json\n"
 

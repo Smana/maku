@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { mountApprovalMemory } from "./approval-memory";
 import { fetchDashboards } from "./dashboards";
 import { mountRoom } from "./room";
 import { initTheme } from "./theme";
@@ -12,4 +13,6 @@ const app = document.getElementById("app")!;
 const theme = initTheme();
 
 const m = location.pathname.match(/^\/r\/([a-z2-7]{8})$/);
-if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) }); else void listRooms(app, fetch, {}, theme);
+if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) });
+else if (location.pathname === "/settings/approval-memory") mountApprovalMemory(app, fetch);
+else void listRooms(app, fetch, {}, theme);

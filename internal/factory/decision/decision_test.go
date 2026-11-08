@@ -60,6 +60,18 @@ func TestTheDualFieldsPrintOnlyWhenRead(t *testing.T) {
 	}
 }
 
+// Approval memory (merge policy stage 5) binds a decision a grant let arm to the grant's id and
+// version. A decision no grant touched prints nothing new.
+func TestTheGrantFieldPrintsOnlyWhenAGrantWasUsed(t *testing.T) {
+	if got := Marker("abc", "c", "arm", "", Rows{Reviewer: "none"}); strings.Contains(got, "grant=") {
+		t.Fatal(got)
+	}
+	got := Marker("abc", "c", "arm", "", Rows{Reviewer: "none", Policy: "0123456789ab", Dual: "agree", Grant: "g7:2"})
+	if !strings.HasSuffix(got, " policy=0123456789ab dual=agree grant=g7:2 reviewer=none -->") {
+		t.Fatal(got)
+	}
+}
+
 // Repository authority (merge policy stage 4) binds the decision to the policy that made it,
 // with nothing compared: policy= alone, before reviewer.
 func TestThePolicyPrintsAloneUnderRepositoryAuthority(t *testing.T) {

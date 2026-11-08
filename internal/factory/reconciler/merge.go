@@ -154,6 +154,11 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 			return ferr
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
+			if policy.on && policy.err == nil && r.grantsOn() && needsGrants(in, policy.snap, true) {
+				// Stages 4 and 5: the policy that decides is the repository's, so its grants are read
+				// here, immediately before the decision, under that policy's hash.
+				in.Grants = r.grantRead(ctx, t, policy.snap.Hash)
+			}
 			d = decideUnder(in, policy)
 			evaluated = d
 		}
@@ -262,6 +267,14 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
 		return err
 	}
+	if !r.grantHolds(ctx, t, d) { // merge policy stage 5: the grant read again before the call (MP12, MP13)
+		d = ArmDecision{Verdict: "human", Reason: reasonApprovalRequired, Matched: d.Matched, Rows: d.Rows}
+		d.Rows.Grant = ""
+		t.Status.PullRequest.HeadSHA = pr.HeadSHA
+		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
+		narrateLater(t, withRecord(r.handOff(t, d.Reason, adopted), t, d, pr.HeadSHA))
+		return nil
+	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
 	// read refuses the merge (409) and the new head is decided again — never merged on this
 	// decision (SC-14). A merge GitHub does not allow as it stands (405) is a human's to fix.
@@ -288,6 +301,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	} else {
 		armed := metav1.NewTime(r.Now())
 		ref.ArmedAt, ref.MergedHow = &armed, "class"
+		r.grantUsed(ctx, t, ref, d, pr.HeadSHA)
 	}
 	r.to(t, v1alpha1.PhaseAutoMerging, "")
 	ev := withRecord(narrate.Armed(t), t, d, pr.HeadSHA)
@@ -1069,6 +1083,11 @@ func (r *Reconciler) revert(ctx context.Context, t *v1alpha1.Task, why string) e
 			return err
 		}
 		ref = t.Status.PullRequest
+	}
+	if !ref.Drill { // a drill exercises the revert path, never the grant (AM6)
+		if err := r.disableGrant(ctx, t, why); err != nil {
+			return err
+		}
 	}
 	if r.repo(t).Classes["revert"].Live && armable { // not live (R32): the revert PR opens and a maintainer merges it
 		if err := r.merger(ctx).EnableAutoMerge(ctx, rv.NodeID, ""); err != nil { // the merger's own revert-* branch

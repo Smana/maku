@@ -38,6 +38,11 @@ func TestHarnessProfilesAndGuardrailsValidate(t *testing.T) {
 		"simulation alone": {Config{PolicyManagement: PolicyManagement{Simulation: true}}, ""},
 		"dual with read":   {Config{PolicyManagement: PolicyManagement{Read: true, DualEvaluation: true}}, ""},
 		"dual alone":       {Config{PolicyManagement: PolicyManagement{DualEvaluation: true}}, "dualEvaluation needs read"},
+		"memory with read": {Config{PolicyManagement: PolicyManagement{Read: true, ApprovalMemory: true}}, ""},
+		"memory alone":     {Config{PolicyManagement: PolicyManagement{ApprovalMemory: true}}, "approvalMemory needs read"},
+		"a year of grant":  {Config{MergeGuardrails: MergeGuardrails{MaxGrantLifetime: Duration{MaxGrantLifetime}}}, ""},
+		"negative grant":   {Config{MergeGuardrails: MergeGuardrails{MaxGrantLifetime: Duration{-time.Hour}}}, "maxGrantLifetime"},
+		"too long a grant": {Config{MergeGuardrails: MergeGuardrails{MaxGrantLifetime: Duration{MaxGrantLifetime + time.Hour}}}, "maxGrantLifetime"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := policyProblems(&tc.cfg)
@@ -45,6 +50,16 @@ func TestHarnessProfilesAndGuardrailsValidate(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A grant lives 90 days unless the operator caps it lower (merge policy stage 5).
+func TestGrantLifetimeDefaultsToNinetyDays(t *testing.T) {
+	if got := (MergeGuardrails{}).GrantLifetime(); got != 90*24*time.Hour {
+		t.Fatal(got)
+	}
+	if got := (MergeGuardrails{MaxGrantLifetime: Duration{time.Hour}}).GrantLifetime(); got != time.Hour {
+		t.Fatal(got)
 	}
 }
 

@@ -105,6 +105,11 @@ type HumanConfig struct {
 	// Intake is the governed planner (v3.x conversational intake, CD5, CD17, CD18). Off unless the
 	// block turns it on: no block, no tool on any list.
 	Intake IntakeConfig `json:"intake,omitzero"`
+	// ApprovalMemory serves saved approval grants (merge policy stage 5): the
+	// /settings/approval-memory page and its API to humans, and the grant routes on :8443 to the
+	// factory. Off unless set; the factory consults grants only under its own
+	// policyManagement.approvalMemory.
+	ApprovalMemory bool `json:"approvalMemory,omitempty"`
 }
 
 // IntakeConfig is human.intake. It holds one block today; it exists so the planner's switch has a
