@@ -122,7 +122,7 @@ describe("the room page", () => {
       p.last().recv(agent(7, "approval_requested", { approvalId: "ap1", callId: "c1", class: "forge.other",
         action: { command: "git push" }, expiresAt: "2026-10-06T11:00:00Z" }));
       const chat = p.app.querySelector<HTMLElement>(".view-chat")!;
-      expect([...chat.querySelectorAll("details.fold")].map((f) => f.querySelector("summary")?.textContent)).toEqual(["· turn t1 · 2 changes", "· turn t1 · 2 changes"]);
+      expect([...chat.querySelectorAll("details.fold")].map((f) => f.querySelector("summary")?.textContent)).toEqual(["turn t1 · 2 changes", "turn t1 · 2 changes"]);
       expect(chat.querySelector('details.fold [data-seq="5"]')).not.toBeNull();
       const row = chat.querySelector<HTMLDetailsElement>('details.tool[data-seq="3"]')!;
       expect(row.closest(".fold")).toBeNull();

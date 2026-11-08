@@ -211,6 +211,13 @@ describe("layout", () => {
   it("keeps Send beside the text on a phone rather than a full-width row under it", () => {
     expect(phone).not.toMatch(/\.composer-write\s*{[^}]*flex-direction:\s*column/);
   });
+  it("takes an empty act notice out of the dock's row, so the theme button keeps its edge", () => {
+    expect(decl(outside, ".dock-meta .act-notice:empty")).toMatch(/display:\s*none/);
+  });
+  it("marks a plumbing fold with the step folds' disclosure, never a leading dot", () => {
+    expect(decl(outside, ".fold > summary::before")).toMatch(/content:\s*"▸"/);
+    expect(decl(outside, ".fold[open] > summary::before")).toMatch(/content:\s*"▾"/);
+  });
   it("keeps the theme button and the connection on one line on a phone", () => {
     const m = decl(phone, ".dock-meta");
     expect(m).toMatch(/flex-wrap:\s*nowrap/);

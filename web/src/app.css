@@ -266,6 +266,9 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 .page-dock[data-status="live"] .status::before { background: var(--success); }
 .page-dock[data-status="reconnecting"] .status::before { background: var(--warning); }
 .page-dock .notice { color: var(--destructive-text); overflow-wrap: anywhere; }
+/* An act notice with nothing to say takes no place: as a third, empty item it pushed the phone's
+   theme button off the edge toward the middle of a space-between row. */
+.dock-meta .act-notice:empty { display: none; }
 @media (max-width: 640px) {
   :root { --hit: 44px; }
   /* Static, not sticky: pinned, the header and the dock took two thirds of an 844 px screen. */
@@ -472,6 +475,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .clip-toggle:hover { box-shadow: none; text-decoration: underline; }
 .bubble .md > :first-child { margin-top: 0; } .bubble .md > :last-child { margin-bottom: 0; }
+/* A brief (chat.ts's briefKind): folded to its kind and first line on the bubble's own surface,
+   the full text under it in the DOM, so copy and find-in-page still reach it. */
+.brief { border-radius: 4px var(--radius-card) var(--radius-card) var(--radius-card); box-shadow: var(--shadow-border); background: var(--muted); }
+.from-agent .brief { background: var(--card); }
+.brief-summary {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 8px 14px; cursor: pointer; list-style: none;
+  font-size: 14px; color: var(--card-foreground); border-radius: inherit;
+}
+.brief-summary::-webkit-details-marker { display: none; }
+.brief-summary::before { content: "▸"; color: var(--placeholder); }
+.brief[open] > .brief-summary::before { content: "▾"; }
+.brief-kind { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted-foreground); }
+.brief-purpose { flex: 1 1 20ch; min-width: 0; font-weight: 400; overflow-wrap: anywhere; }
+.brief-toggle { font-size: 13px; font-weight: 700; color: var(--link); white-space: nowrap; }
+.brief-summary:hover .brief-toggle { text-decoration: underline; }
+.brief > .bubble { box-shadow: none; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-card) var(--radius-card); }
+/* A phone sets the first line under its kind, not as a narrow column beside it. */
+@media (max-width: 640px) { .brief-purpose { flex-basis: 100%; } }
 .bubble p { margin: .45em 0; }
 
 /* A tool row: one line, the detail behind the toggle */
@@ -549,6 +570,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .fold { color: var(--muted-foreground); font-size: 13px; margin: 6px 0; max-width: var(--log-w); }
 .fold > summary { cursor: pointer; list-style: none; }
 .fold > summary::-webkit-details-marker { display: none; }
+/* The fold's marker is the step folds' (▸, ▾ open), drawn here, so its line never starts with a stray dot. */
+.fold > summary::before { content: "▸"; color: var(--placeholder); margin-right: 6px; }
+.fold[open] > summary::before { content: "▾"; }
 .fold-body { padding-left: 14px; }
 .notes details > summary, .fold > summary, .step-calls > summary, .t-sec { font-variant-numeric: tabular-nums; }
 /* A step (P1): an agent's message, then its calls behind one line, on a rail under it. */

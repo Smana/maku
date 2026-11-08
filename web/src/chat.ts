@@ -65,6 +65,28 @@ function whoText(ev: RoomEvent): string {
   return ev.actor.role ? `${ev.actor.role} · ${idTail(ev.actor.id)}` : ev.actor.id;
 }
 
+// A brief shorter than this reads whole: only the long boilerplate folds.
+const briefMin = 400;
+
+// briefKind says whether a message is boilerplate a reader rarely re-reads: the factory's task
+// snapshot (a task_state message), or a run's brief, which the bridge mirrors as the agent's own
+// message addressed to it (bridge/mapping.go: a user-source MessageEvent). Short ones are not folded.
+export function briefKind(ev: RoomEvent): "snapshot" | "brief" | "" {
+  const p = ev.payload ?? {};
+  if (String(p.text ?? "").length < briefMin) return "";
+  if (p.kind === "task_state") return "snapshot";
+  if (ev.actor.kind === "agent" && Array.isArray(p.to) && p.to.includes(ev.actor.id)) return "brief";
+  return "";
+}
+
+// briefPurpose is a brief's first line, as plain text, clipped: "You are the implementer for …". A
+// parenthesised digest (the snapshot's "(sha256 7f65…, untrusted)") is detail, not purpose: it goes.
+export function briefPurpose(text: string): string {
+  const line = (text.split("\n").find((l) => l.trim()) ?? "").replace(/\s*\((?:sha256 )?[0-9a-f]{16,}[^)]*\)/g, "")
+    .replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim();
+  return line.length > 160 ? `${line.slice(0, 159).trimEnd()}…` : line;
+}
+
 // bubble renders a message as the agent's or human's prose, folded when long (clip.ts).
 function bubble(ev: RoomEvent, clips: Clips, you?: string): HTMLElement {
   const p = ev.payload ?? {};
@@ -81,8 +103,22 @@ function bubble(ev: RoomEvent, clips: Clips, you?: string): HTMLElement {
   const body = el("div", "bubble");
   const text = markdown(String(p.text ?? ""));
   body.append(text);
-  row.append(head, body);
-  clips.attach(body, text, ev.seq);
+  const kind = briefKind(ev);
+  if (kind) {
+    // A brief folds to its first line: the text stays in the DOM, so copy and find-in-page reach it
+    // (Chrome opens a closed <details> on a match).
+    row.dataset.brief = kind;
+    const fold = el("details", "brief") as HTMLDetailsElement;
+    const toggle = el("span", "brief-toggle", "Show the full brief");
+    const sum = el("summary", "brief-summary");
+    sum.append(el("span", "brief-kind", kind === "snapshot" ? "Task snapshot" : "Run brief"), el("span", "brief-purpose", briefPurpose(String(p.text))), toggle);
+    fold.append(sum, body);
+    fold.addEventListener("toggle", () => { toggle.textContent = fold.open ? "Hide the brief" : "Show the full brief"; });
+    row.append(head, fold);
+  } else {
+    row.append(head, body);
+    clips.attach(body, text, ev.seq);
+  }
   const r = redacted(ev);
   if (r) row.append(r);
   return row;
@@ -324,7 +360,7 @@ function label(fold: HTMLElement, turn = body(fold).querySelector<HTMLElement>("
   const n = body(fold).childElementCount;
   if (turn) fold.dataset.turn = turn;
   else delete fold.dataset.turn;
-  fold.querySelector(":scope > summary")!.textContent = turn ? `· turn ${turn} · ${n} changes` : `· ${n} changes`;
+  fold.querySelector(":scope > summary")!.textContent = turn ? `turn ${turn} · ${n} changes` : `${n} changes`;
 }
 
 // tidy keeps a fold honest after a row left it: an empty one goes, one with a single

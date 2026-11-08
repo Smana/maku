@@ -108,7 +108,7 @@ const cls = (v: unknown) => String(v ?? "").replace(/[^A-Za-z0-9_-]/g, "");
 // deliveryChip says where a message went (R09): the next run's brief, or the running
 // agent it steered. A message for the room only is the norm, and gets none (null).
 export function deliveryChip(p: any): HTMLElement | null {
-  if (p.delivery === "none") return null;
+  if (p.delivery === "none" || !p.delivery) return null; // no delivery said: no empty chip
   const to = Array.isArray(p.to) && p.to.length ? ` → ${p.to.join(", ")}` : "";
   const label = p.delivery === "steering" ? `steering${to}` : String(p.delivery ?? "");
   return el("span", `chip chip-delivery dl-${cls(p.delivery)}`, label);
