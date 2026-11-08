@@ -68,13 +68,20 @@ func TestTheGuidesExamplesValidate(t *testing.T) {
 	}
 	blocks := guideBlock.FindAllStringSubmatch(string(raw), -1)
 	var reference *config.Config
-	repositories := 0
 	for _, b := range blocks {
 		if b[1] == "central" {
 			c := centralOver(t, b[2])
 			if reference == nil {
 				reference = c
 			}
+		}
+	}
+	if reference == nil {
+		t.Fatal("no central block: the markers moved")
+	}
+	repositories := 0
+	for _, b := range blocks {
+		if b[1] != "repository" {
 			continue
 		}
 		repositories++
@@ -82,14 +89,14 @@ func TestTheGuidesExamplesValidate(t *testing.T) {
 		if err != nil {
 			t.Fatalf("repository block:\n%s\n%v", b[2], err)
 		}
-		if reference == nil || f.Factory != reference.Factory {
-			t.Fatalf("a repository block before the first central block, or naming another factory:\n%s", b[2])
+		if f.Factory != reference.Factory {
+			t.Fatalf("a repository block naming another factory:\n%s", b[2])
 		}
 		if err := mergepolicy.Validate(f, reference); err != nil {
 			t.Fatalf("repository block:\n%s\n%v", b[2], err)
 		}
 	}
-	if repositories < 4 {
+	if repositories < 5 {
 		t.Fatalf("found %d repository blocks: the markers moved", repositories)
 	}
 }

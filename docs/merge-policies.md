@@ -8,6 +8,7 @@ acted on.
 
 | You want to | Go to |
 |---|---|
+| Set up a repository | [Start here](#start-here) |
 | Understand the model | [Concepts](#concepts) |
 | Turn a stage on, or back off | [Rollout stages](#rollout-stages) |
 | Look up a field | [Reference](#reference) |
@@ -15,9 +16,101 @@ acted on.
 | Check, simulate, promote, save a grant | [Workflows](#workflows) |
 | Read a decision, a metric or a reason | [Operating it](#operating-it) |
 | Fix something | [Troubleshooting](#troubleshooting) |
+| Undo something | [Rollback](#rollback) |
 
 The merge gate itself (the fixed base, the decision record, adopted classes, the monitor) is in
 [the factory](factory.md#the-merge-gate). This page covers what a repository's policy changes.
+
+## Start here
+
+**With zero config, nothing auto-merges and no evidence is collected.** A repository whose
+`.github/agent-factory.yaml` holds only `factory:` has no repository policy: every task outside the
+central classes is `review`, so a human merges it, and no shadow decision is recorded. A repository
+that wants auto-merge later then starts from zero evidence. A cut-over repository whose file declares
+no class pauses (`policy_invalid`).
+
+Start instead with this file. Every class is in `shadow`: it decides every pull request it matches,
+records what it would have done, and merges nothing. That record is the evidence a later
+[promotion](#promotion-shadow-to-live) needs.
+
+<!-- check: repository -->
+```yaml
+factory: aws-0
+classes:
+  docs-links:
+    mode: shadow
+    author: agents
+    harness: plain
+    conditions:
+      all:
+        - holdoutChecks: ['Check the documentation links 🔗']
+  revert:
+    mode: shadow
+    author: agents
+    harness: plain
+    conditions:
+      all:
+        - holdoutChecks: ['Check the documentation links 🔗']
+  docs:
+    mode: shadow
+    author: agents
+    harness: plain
+    conditions:
+      all:
+        - allowedFiles: ['^docs/.+\.md$', '^README\.md$']
+        - maxPatchFiles: 5
+        - maxModifiedLines: 100
+      deny:
+        - protectedFiles: ['^docs/(adr|decisions|security)/']
+    limits:
+      maxPerDay: 2
+    monitor:
+      followUpWindow: 168h
+# Anything outside these classes is review: a human merges it.
+```
+
+Replace the holdout with your repository's documentation link check. Then:
+
+1. Add a `low-risk: docs` rule to `.policy.yml` by hand ([below](#a-class-with-any-and-its-policy-bot-rules)
+   shows the shape). Maku generates no policy-bot rule, and without one the class's pull requests
+   stop at `policy_pending`.
+2. Open one pull request with both files. It touches `.github/`, so a maintainer merges it.
+3. Merge the shadow decisions you agree with, unchanged; after twenty, [promote](#promotion-shadow-to-live).
+
+The operators' half is the central guardrails every class inherits. This is the recommended setup.
+It is **not yet deployed** on aws-0, where `mergeGuardrails` is unset:
+
+<!-- check: central -->
+```yaml
+harnessProfiles:
+  plain: {}
+  checked: {checks: true}
+  adopted-none: {template: none}
+mergeGuardrails:
+  protectedFiles:                       # the self-modification fence, once instead of per rule
+    - '^\.github/'
+    - '^\.policy\.yml$'
+    - '(^|/)(AGENTS|CLAUDE)\.md$'
+    - '^\.(agents|claude)/'
+    - '(^|/)(go\.sum|package-lock\.json|pnpm-lock\.yaml|uv\.lock|Cargo\.lock)$'
+  maxPatchFiles: 20
+  maxModifiedLines: 400
+  maxPerDay: 5
+  # minPromotionEvidence 20 and maxGrantLifetime 90 days are the code's defaults
+```
+
+Guardrails apply only to classes read from a repository file (`mergepolicy.Resolve`), never to
+central ones. Set before a cutover, they make the dual evaluation's repository decision stricter
+than the central one and show up as disagreements. Land them in the cutover's own pull request.
+
+| Default | Value |
+|---|---|
+| Mode | `shadow` for every class |
+| Author | `agents`; adopting a bot is a class of its own |
+| Paths | An allow list per class, plus the guardrails' deny list |
+| Size | 5 files, 100 lines for the docs class; 20 and 400 the central ceiling |
+| Rate | 2 a day per class; no class above 5 (the repository's total stays `merge.autoMergesPerDay`) |
+| Everything else | `review`: a human merges |
 
 ## Concepts
 
@@ -127,6 +220,10 @@ nor writes `.policy.yml`. A class that should arm needs a rule approving exactly
 and a pull request changing `.github/` or `.policy.yml` must stay outside every agent rule, so a
 human merges policy changes.
 
+**The `low-risk:` rule is still written by hand.** Nothing in Maku generates it from the class or
+checks that it matches. Add it in the same pull request as the class; a class without one waits at
+`policy_pending` on every pull request.
+
 ## Rollout stages
 
 ```mermaid
@@ -174,7 +271,21 @@ central config.
 | Key | Type | Default | Constraint |
 |---|---|---|---|
 | `factory` | string | required | A factory name (DNS label). Must equal the config's `factory`. Maku never edits it |
-| `classes` | map of class name → class | absent: no policy | Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. With any class, `docs-links` and `revert` are required and `review` is refused |
+| `classes` | map of class name → class | absent: no policy | Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. `review` is refused |
+
+Two rules every file with classes must meet:
+
+| Rule | Error | Fix |
+|---|---|---|
+| It declares `docs-links` and `revert`. `mode: off` is enough | `class revert is required in a file that declares classes (OD-8): add it, "revert: {mode: off, author: agents, harness: <a profile>}" keeps it unarmed` | Add the line the error gives. The editor adds both as `off` when a file's first class is created |
+| Every `live` or `shadow` class with `author: agents` declares `allowedFiles`, in `all` or in every `any` branch. `docs-links` and `revert` are exempt (their `links-only` shape is built in), and so is an adopted class (its diff shape bounds it) | `class docs: a live or shadow class needs allowedFiles, in all or in every branch of any: …` | Name the paths the class may touch. Without them every path of the repository is in the class, and only policy-bot fences it |
+
+An unknown key names where it is, the key meant when it is close or another tool's name for it, and
+every key valid there:
+
+```
+mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did you mean "maxPatchFiles"?); keys are matched exactly, in their documented case: one of allowedFiles, …
+```
 
 | Bound | Value |
 |---|---|
@@ -205,21 +316,47 @@ central config.
 Each leaf of `all` or of an `any` branch sets exactly one key. An empty value is refused rather than
 read as absent.
 
-| Leaf | Type | Gate reason when it refuses | Constraint |
-|---|---|---|---|
-| `allowedFiles` | list of regexp | `file_not_allowed` | Each starts with `^` and ends with `$`: the match is unanchored, as policy-bot's is |
-| `modifyOnly` | `true` | `file_added_or_deleted` | `false` is refused: leave it out. Renames and copies count as added |
-| `maxPatchFiles` | int ≥ 1 | `patch_too_large` | At most the guardrail's |
-| `maxModifiedLines` | int ≥ 1 | `patch_too_large` | Additions plus deletions, GitHub's count. At most the guardrail's |
-| `diffShape` | `links-only` \| `semver-patch` \| `semver-minor` \| `added-entry` | `class_mismatch` | Semver shapes and `added-entry` need `author: adopt`; semver needs `modifyOnly: true`; `semver-minor` is shadow only; `added-entry` needs `allowedFiles`, `holdoutChecks`, `requiredLabel` and no `modifyOnly` |
-| `holdoutChecks` | list of check names | `holdout_red`; waits `holdout_pending` | SUCCESS reported by GitHub Actions on the head; their workflow is a gate path |
-| `releaseAgeCheck` | commit status name | `release_age_red`; waits `release_age_pending` | Needs `author: adopt`; the status must be posted by an adopted login |
-| `oracle` | `{probe: dead-links, workflow, maxFindings: 1..16}` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
-| `companionFiles` | list of regexp | `class_mismatch` | Anchored like `allowedFiles`; needs `added-entry` |
-| `requiredLabel` | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author: adopt`; set by an adopted login |
+| Leaf | Level | Type | Gate reason when it refuses | Constraint |
+|---|---|---|---|---|
+| `allowedFiles` | core | list of regexp | `file_not_allowed` | Each starts with `^` and ends with `$`: the match is unanchored, as policy-bot's is |
+| `modifyOnly` | core | `true` | `file_added_or_deleted` | `false` is refused: leave it out. Renames and copies count as added |
+| `maxPatchFiles` | core | int ≥ 1 | `patch_too_large` | At most the guardrail's |
+| `maxModifiedLines` | core | int ≥ 1 | `patch_too_large` | Additions plus deletions, GitHub's count. At most the guardrail's |
+| `diffShape` | adopted | `links-only` \| `semver-patch` \| `semver-minor` \| `added-entry` | `class_mismatch` | Semver shapes and `added-entry` need `author: adopt`; semver needs `modifyOnly: true`; `semver-minor` is shadow only; `added-entry` needs `allowedFiles`, `holdoutChecks`, `requiredLabel` and no `modifyOnly` |
+| `holdoutChecks` | core | list of check names | `holdout_red`; waits `holdout_pending` | SUCCESS reported by GitHub Actions on the head; their workflow is a gate path |
+| `releaseAgeCheck` | adopted | commit status name | `release_age_red`; waits `release_age_pending` | Needs `author: adopt`; the status must be posted by an adopted login |
+| `oracle` | **expert** | `{probe: dead-links, workflow, maxFindings: 1..16}` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
+| `companionFiles` | **expert** | list of regexp | `class_mismatch` | Anchored like `allowedFiles`; needs `added-entry` |
+| `requiredLabel` | **expert** | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author: adopt`; set by an adopted login |
 
-`deny[].protectedFiles` refuses with `file_protected`; a rename from a protected path counts.
-`requiresApproval[].changedFiles` asks with `approval_required`.
+`deny[].protectedFiles` (core) refuses with `file_protected`; a rename from a protected path counts.
+`requiresApproval[].changedFiles` (core) asks with `approval_required`. `any` branches are
+**expert**: no real file uses them yet, and the guided form leaves them to the YAML view.
+
+| Level | Means |
+|---|---|
+| core | Every template uses it; start here |
+| adopted | Only for `author: adopt` (Renovate lanes); refused on an agents class |
+| **expert** | Valid in one narrow combination only. `oracle` needs `links-only`, `modifyOnly`, holdouts and `allowedFiles`; `companionFiles` needs `added-entry`; `requiredLabel` needs `adopt`. The guided form shows `companionFiles` and `requiredLabel` to every class, and they fail validation on an agents class |
+
+#### Names from other tools
+
+The parser refuses another tool's name and suggests the key meant. The ones it recognizes:
+
+| You may know | Tool | Here |
+|---|---|---|
+| `only_changed_files`, `files`, `paths` | policy-bot, Mergify | `allowedFiles` |
+| `no_changed_files`, `protectedPaths`, `denyFiles` | policy-bot | `conditions.deny[].protectedFiles` |
+| `modified_lines`, `maxLines`, `maxChangedLines` | policy-bot | `maxModifiedLines` |
+| `files_count`, `maxFiles`, `maxChangedFiles` | Mergify | `maxPatchFiles` |
+| `check-success`, `checks`, `requiredChecks` | Mergify, GitHub | `holdoutChecks` |
+| `label`, `labels`, `requiredLabels` | Mergify | `requiredLabel` |
+| `minimumReleaseAge`, `releaseAge` | Renovate | `releaseAgeCheck` |
+| `file_not_added` + `file_not_deleted` | policy-bot | `modifyOnly: true` (no suggestion: write it) |
+| `has_workflow_result` | policy-bot | `holdoutChecks` (no suggestion: write it) |
+
+A suggestion is matched case-insensitively; a key within two edits of a valid one (`allowedFile`) is
+suggested too.
 
 ### Central config
 
@@ -265,7 +402,7 @@ policyManagement:
   dualEvaluation: true
 ```
 
-Every repository file on this page is validated against this block (see [how](#how-this-pages-examples-are-checked)).
+A fuller example of the three blocks. The repository files on this page are validated against the [recommended guardrails](#start-here) instead (see [how](#how-this-pages-examples-are-checked)).
 
 ## Recipes
 
@@ -461,7 +598,7 @@ ai-native-ref), and it reads only central classes.
 ### Moving a repository to its own file (stage 4)
 
 1. Stages 1–3 on, the exported file merged, divergence 0, a week without `unexplained`.
-2. One central config pull request:
+2. One central config pull request, with the [guardrails](#start-here) if you set them:
 
 <!-- check: central -->
 ```yaml
@@ -690,16 +827,36 @@ Other policy vocabularies:
 | Settings API refusals | `not_a_maintainer`, `not_an_operator`, `no_such_class`, `not_promotable`, `not_eligible`, `exception_unusable`, `minimum_not_below`, `justification_length`, `bad_state`, `records_unavailable` |
 | Grant API refusals | `bad_predicate`, `repository_permission`, `grant_state` (status or version moved: reload), `grants_unavailable` |
 
-### Rollback
+## Rollback
+
+Every rollback is a pull request: to the repository's file for a class, to the central config for a
+stage. Nothing here needs a restart beyond the factory's own rollout.
+
+### A class
+
+| To | Do | Takes effect |
+|---|---|---|
+| Stop a live class merging | Set its `mode: shadow` (or `off`) in the file | On the next fence read, within 5 minutes. A lower mode is a tightening |
+| Undo a promotion | Revert the promotion's pull request | As above |
+| Stop one pull request now | Request changes on it (an agents pull request then gets a revision run, an adopted one goes to a human). The [kill switch](factory.md#the-kill-switch) stops everything | At once |
+| Stop one saved grant | **Revoke** it on `/settings/approval-memory` | At once, for good |
+| Undo a bad file on a cut-over repository | Revert it on the default branch. Meanwhile an invalid file already pauses auto-merge (`policy_invalid`); human merges continue | On the next read |
+
+A relaxation needs no rollback to be safe: a cut-over repository runs a relaxed live class in
+shadow until the factory restarts.
+
+### A stage
+
+Roll back from the top: a lower stage cannot be off while a higher one needs it.
 
 | Stage | Roll back with | Effect |
 |---|---|---|
 | 6 | `promotion: false` on the factory and the broker | Pages and routes `404`. A merged promotion stays in the file: revert it there |
-| 5 | `approvalMemory: false`; broker `human.approvalMemory: false` | No lookup; the subset asks a maintainer. Grants stay in the database, unused. One bad grant: revoke it |
-| 4 | Revert the cutover pull request (classes back, `classAuthority` gone), then `repositoryAuthority: false` | Central decides again. In this order: the switch off first fails config load |
-| 3 | `dualEvaluation: false` | No second decision |
-| 2 | `simulation: false` | The verbs refuse |
-| 1 | `read: false` (needs 3, 4 and 5 off) | Nothing read |
+| 5 | `approvalMemory: false`; broker `human.approvalMemory: false` | No lookup; the subset asks a maintainer. Grants stay in the database, unused |
+| 4 | Revert the cutover pull request (central `classes` back, `classAuthority` gone), then `repositoryAuthority: false` | Central decides again. The switch off first fails config load. No tool writes a repository file back into central classes, so a class changed in the file since the cutover is carried back by hand |
+| 3 | `dualEvaluation: false` | No second decision; records lose `policy=` and `dual=` |
+| 2 | `simulation: false` | The verbs refuse, the editor shows no simulation |
+| 1 | `read: false` (3, 4 and 5 off first) | Nothing read; the divergence gauge keeps its last value until restart |
 
 ## Troubleshooting
 
@@ -722,7 +879,14 @@ leaf out to inherit it.
 **`allowedFiles "docs/.+" must start with ^ and end with $`.** Anchor allow lists. Deny and approval
 patterns are unanchored on purpose: `'^docs/specs/'` covers the directory.
 
-**`key "Mode" is not a field`.** Keys are case-exact: `mode`.
+**`key "Mode" is not a field (did you mean "mode"?)`.** Keys are case-exact. The message starts
+with where the key is (`classes.docs.monitor:`) and lists every key valid there.
+
+**`class revert is required in a file that declares classes`.** Add the line the error gives:
+`revert: {mode: off, author: agents, harness: plain}` keeps it unarmed.
+
+**`a live or shadow class needs allowedFiles`.** An agents class in `live` or `shadow` must say which
+paths it may touch, in `all` or in every `any` branch.
 
 **`any holds at least two branches: one is all`.** Move a single branch's leaves into `all`.
 
