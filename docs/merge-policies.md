@@ -858,7 +858,7 @@ Other policy vocabularies:
 | `maku_factory_policy_load_errors_total{reason}` | `invalid`, `guardrail_mismatch` (valid in shape, over a guardrail or naming an unknown profile), counted at every read; `unreadable`, `stale`, counted per gate pass of a cut-over repository |
 | `policy diff` | `unchanged`, `tightening`, `relaxation` |
 | Promotion blockers | `below_minimum`, `bad_outcome`, `no_drill` |
-| Settings API refusals | `not_a_maintainer`, `not_an_operator`, `no_such_class`, `not_promotable`, `not_eligible`, `exception_unusable`, `minimum_not_below`, `justification_length`, `bad_state`, `records_unavailable` |
+| Settings API refusals | `not_a_maintainer`, `not_an_operator`, `no_such_class`, `not_promotable`, `evidence_pending`, `not_eligible`, `exception_unusable`, `minimum_not_below`, `justification_length`, `bad_state`, `records_unavailable` |
 | Grant API refusals | `bad_predicate`, `repository_permission`, `grant_state` (status or version moved: reload), `grants_unavailable` |
 
 ## Rollback

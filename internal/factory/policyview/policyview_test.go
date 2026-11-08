@@ -44,7 +44,7 @@ func rig(sim bool) (*config.Config, *config.Repository, evidence.Report) {
 		Repositories:     []config.Repository{{Name: "Smana/cloud-native-ref"}}}
 	f, _ := mergepolicy.Parse([]byte(base))
 	rep := evidence.Report{Repository: "Smana/cloud-native-ref", File: base, Policy: f, DefaultBranch: "main",
-		Classes: []evidence.ClassReport{{Class: "docs-links", Evidence: evidence.Evidence{Shadow: evidence.ShadowTally{Refused: 3, RefusedMergedUnchanged: 2}}}}}
+		Classes: []evidence.ClassReport{{Class: "docs-links", Evidence: &evidence.Evidence{Shadow: evidence.ShadowTally{Refused: 3, RefusedMergedUnchanged: 2}}}}}
 	return cfg, &cfg.Repositories[0], rep
 }
 

@@ -20,9 +20,11 @@ export interface Evidence {
   drill: string; minimum: number; eligible: boolean; blockers?: string[];
 }
 export interface Proposal { path: string; line: number; file: string; editURL: string }
-export interface ClassReport { class: string; source: string; mode: string; evidence: Evidence; proposal?: Proposal; unproposed?: string }
+// evidence is absent while the factory reads it: never read yet, or the class was added since.
+export interface ClassReport { class: string; source: string; mode: string; evidence?: Evidence; proposal?: Proposal; unproposed?: string }
 export interface Report {
   repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
+  evidenceAt?: string; evidenceError?: string;
   file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null; adoptedProfiles?: string[] | null;
   guardrails: Record<string, unknown>;
 }
@@ -83,6 +85,7 @@ const reasons: Record<string, string> = {
   justification_length: "A justification is 20 to 2,000 characters.",
   already_moved: "That record has already moved.",
   evidence_unavailable: "The evidence could not be read from GitHub. Retry.",
+  evidence_pending: "The evidence is still being read from GitHub. Wait for it, then retry.",
   not_found: "Not found, or not readable with your GitHub access.",
 };
 
@@ -159,6 +162,18 @@ export function evidenceLine(e: Evidence): string {
   return `${e.clean}/${e.minimum} clean · ${e.bad} bad · ${e.immature} immature · ${e.pending} pending · bound ${e.bound.toFixed(3)} · drill ${e.drill}`;
 }
 
+// PENDING is a class row's evidence while the factory reads it.
+export const PENDING = "evidence: computing…";
+
+// evidenceAge is when the shown evidence was read, and why it is older when the newest read failed.
+export function evidenceAge(r: Report): string {
+  if (!r.evidenceAt) return r.evidenceError ? `${PENDING} (the last read failed: ${r.evidenceError.replaceAll("_", " ")})` : PENDING;
+  return `as of ${r.evidenceAt}` + (r.evidenceError ? ` (the newest read failed: ${r.evidenceError.replaceAll("_", " ")})` : "");
+}
+
+// poll is how often, and how many times, a page with pending evidence asks again; a test shortens it.
+export const poll = { every: 5000, times: 60 };
+
 export function ladderLine(e: Evidence): string {
   return e.ladder.map((s) => `${s.merges}${s.reached ? " ✓" : ""}`).join(" / ");
 }
@@ -212,8 +227,9 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
     for (const r of repositories) {
       const page = await read<RepositoryPage>(`/api/policy/repositories/${r}`, get);
       for (const c of page.report.classes) {
-        rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, evidenceLine(c.evidence), ladderLine(c.evidence),
-          c.evidence.eligible ? "eligible" : (c.evidence.blockers ?? []).join(", ")]);
+        const e = c.evidence;
+        rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? evidenceLine(e) : PENDING, e ? ladderLine(e) : "-",
+          !e ? "pending" : e.eligible ? "eligible" : (e.blockers ?? []).join(", ")]);
       }
     }
     main.append(table(["Repository", "Class", "Mode", "Evidence", "Widening 29/46/61", "Eligibility"], rows));
@@ -229,39 +245,25 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const reload = () => void repositoryPage(app, repository, get, theme);
   const say = el("p", "", "notice");
   const r = page.report;
-  main.append(el("p", `Read ${r.readAt}. A promotion changes the class's mode in ${repository}'s own .github/agent-factory.yaml, ` +
+  main.append(el("p", `Policy read ${r.readAt}. A promotion changes the class's mode in ${repository}'s own .github/agent-factory.yaml, ` +
     "through a pull request you open and a human merges: Maku records the request and never edits the file. " +
     "Until the repository is cut over to its own policy, the central config stays the merge authority."), say);
   if (r.policyError) main.append(el("p", `The repository's policy file is ${r.policyError}: the central classes are shown.`, "notice"));
 
-  const approved = (cls: string) => page.exceptions.find((x) => x.class === cls && x.state === "approved" && Date.parse(x.expiresAt ?? "") > Date.now());
   main.append(el("h2", "Classes"));
-  main.append(table(["Class", "Mode", "Evidence", "Reviewers", "Widening 29/46/61", "Eligibility", ""], r.classes.map((c) => {
-    const e = c.evidence;
-    const reviewers = (e.shadow.reviewers ?? []).map((m) => `${m.model} ${m.mergedUnchanged}/${m.mergedUnchanged + m.changed}`).join(", ") || "-";
-    const action = el("span");
-    const exc = approved(c.class);
-    const eligible = e.eligible || (!!exc && e.clean >= exc.minimum && e.bad === 0 && e.drill === "passed");
-    if (c.proposal && page.you.maintainer && eligible) {
-      const b = el("button", "Promote to live", "primary");
-      b.type = "button";
-      b.onclick = async () => {
-        b.disabled = true;
-        try {
-          const out = (await post("/api/policy/promotions", { repository: r.repository, class: c.class, ...(exc && !e.eligible ? { exceptionId: exc.id } : {}) }, get)) as { proposal: Proposal };
-          showProposal(main, out.proposal);
-        } catch (err) { say.textContent = explain(err instanceof Error ? err.message : String(err)); b.disabled = false; }
-      };
-      action.append(b);
-    } else if (c.proposal && page.you.maintainer && !eligible) {
-      const b = el("button", "Ask an operator for an exception");
-      b.type = "button";
-      b.onclick = () => exceptionForm(action, r.repository, c.class, r.minimum, get, say, reload);
-      action.append(b);
-    } else action.textContent = c.unproposed ? c.unproposed.replaceAll("_", " ") : "";
-    return [c.class, `${c.mode} (${c.source})`, evidenceLine(e), reviewers, ladderLine(e),
-      eligible ? (e.eligible ? "eligible" : `eligible under exception ${exc!.id}`) : (e.blockers ?? []).join(", "), action];
-  })));
+  const classes = el("section", undefined, "policy-classes");
+  main.append(classes);
+  classesTable(classes, page, get, say, reload, main);
+  // Pending evidence fills in place: the editor below is never rebuilt, so no edit is lost.
+  void (async () => {
+    let cur = page;
+    for (let n = 0; n < poll.times && pending(cur.report); n++) {
+      await new Promise((res) => setTimeout(res, poll.every));
+      if (!app.contains(classes)) return; // the page moved on
+      try { cur = await read<RepositoryPage>(`/api/policy/repositories/${repository}`, get); } catch { continue; }
+      if (app.contains(classes)) classesTable(classes, cur, get, say, reload, main);
+    }
+  })();
 
   main.append(el("h2", "Promotion requests"));
   main.append(table(["Class", "Requested", "Threshold", "State", "Pull request", ""], page.promotions.map((p) => {
@@ -306,6 +308,48 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
 
   main.append(el("h2", "Policy editor"));
   main.append(editor(r, page.you.maintainer, get));
+}
+
+function pending(r: Report): boolean {
+  return r.classes.some((c) => !c.evidence);
+}
+
+// classesTable fills box with the classes and their evidence. A class whose evidence is pending
+// offers no promotion: the broker would refuse it (evidence_pending), and so does this row.
+function classesTable(box: HTMLElement, page: RepositoryPage, get: typeof fetch, say: HTMLElement, reload: () => void, main: HTMLElement) {
+  const r = page.report;
+  const approved = (cls: string) => page.exceptions.find((x) => x.class === cls && x.state === "approved" && Date.parse(x.expiresAt ?? "") > Date.now());
+  box.replaceChildren(el("p", `Evidence ${evidenceAge(r)}.`, "evidence-age"));
+  box.append(table(["Class", "Mode", "Evidence", "Reviewers", "Widening 29/46/61", "Eligibility", ""], r.classes.map((c) => {
+    const e = c.evidence;
+    const action = el("span");
+    if (!e) {
+      action.textContent = c.unproposed ? c.unproposed.replaceAll("_", " ") : "";
+      return [c.class, `${c.mode} (${c.source})`, PENDING, "-", "-", "pending", action];
+    }
+    const reviewers = (e.shadow.reviewers ?? []).map((m) => `${m.model} ${m.mergedUnchanged}/${m.mergedUnchanged + m.changed}`).join(", ") || "-";
+    const exc = approved(c.class);
+    const eligible = e.eligible || (!!exc && e.clean >= exc.minimum && e.bad === 0 && e.drill === "passed");
+    if (c.proposal && page.you.maintainer && eligible) {
+      const b = el("button", "Promote to live", "primary");
+      b.type = "button";
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          const out = (await post("/api/policy/promotions", { repository: r.repository, class: c.class, ...(exc && !e.eligible ? { exceptionId: exc.id } : {}) }, get)) as { proposal: Proposal };
+          showProposal(main, out.proposal);
+        } catch (err) { say.textContent = explain(err instanceof Error ? err.message : String(err)); b.disabled = false; }
+      };
+      action.append(b);
+    } else if (c.proposal && page.you.maintainer && !eligible) {
+      const b = el("button", "Ask an operator for an exception");
+      b.type = "button";
+      b.onclick = () => exceptionForm(action, r.repository, c.class, r.minimum, get, say, reload);
+      action.append(b);
+    } else action.textContent = c.unproposed ? c.unproposed.replaceAll("_", " ") : "";
+    return [c.class, `${c.mode} (${c.source})`, evidenceLine(e), reviewers, ladderLine(e),
+      eligible ? (e.eligible ? "eligible" : `eligible under exception ${exc!.id}`) : (e.blockers ?? []).join(", "), action];
+  })));
 }
 
 // editor is the guided form and the expert YAML view over the repository's policy file. The form

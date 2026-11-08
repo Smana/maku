@@ -22,6 +22,7 @@ import { mountCoordinationPanel } from "./coordination";
 import { mountRunView, mountScrollIndex } from "./runview";
 import { mountStrip } from "./strip";
 import { mountThemeButton, type ThemeController } from "./theme";
+import { mountSettingsLink } from "./settingslink";
 
 // mountRoom renders room id into app. get and socket are parameters so tests
 // drive the page with no broker. dashboards loads the strip's link templates once (main
@@ -32,6 +33,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   header.className = "page-header";
   mountBrand(header);
   const strip = mountStrip(header);
+  mountSettingsLink(header);
   // Not live: why, and when the page retries. Hidden while live.
   const banner = document.createElement("div");
   banner.className = "banner";

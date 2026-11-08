@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/config"
@@ -166,5 +167,46 @@ func TestPolicyHandlersByRole(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// hangingSearch answers the policy file at once and holds every search until its context ends.
+type hangingSearch struct{}
+
+func (hangingSearch) MergedRecords(ctx context.Context, _ string) ([]evidence.PR, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (hangingSearch) RevertRecords(ctx context.Context) ([]evidence.Revert, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+func (hangingSearch) AnyMerged(ctx context.Context, _ string) (bool, error) {
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+func (hangingSearch) FenceFile(context.Context) ([]byte, bool, error) {
+	return []byte("factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n    author: agents\n    harness: docs-standard\n"), true, nil
+}
+func (hangingSearch) DefaultBranch(context.Context) (string, error) { return "main", nil }
+
+// The live bug (v0.40.1): the route searched GitHub on the page's request, and a page gave up
+// before the searches did. It answers the policy and the classes at once, the evidence pending.
+func TestPolicyEvidenceAnswersWhileGitHubSearches(t *testing.T) {
+	s, _ := evidenceServer(true)
+	s.Evidence = &evidence.Service{Cfg: s.Cfg, Now: time.Now, Deadline: time.Second,
+		Sources: func(string) (evidence.Source, bool) { return hangingSearch{}, true }}
+	begin := time.Now()
+	w := getAs(s.Handler(), "human", "/v1/policy/evidence?repository="+coordPrimary)
+	if took := time.Since(begin); took > 500*time.Millisecond {
+		t.Fatalf("answered in %s", took)
+	}
+	var r evidence.Report
+	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil || w.Code != http.StatusOK || len(r.Classes) != 1 ||
+		r.Classes[0].Evidence != nil || r.EvidenceAt != nil || r.Policy == nil {
+		t.Fatalf("%d %s %v", w.Code, w.Body, err)
+	}
+	if strings.Contains(w.Body.String(), `"evidence":`) {
+		t.Fatalf("a pending class carries evidence: %s", w.Body)
 	}
 }
