@@ -12,6 +12,7 @@ import (
 type rec struct {
 	reasons []string
 	gauge   []int
+	changes []string
 }
 
 func (r *rec) PolicyLoadError(_ context.Context, _, reason string) {

@@ -168,6 +168,8 @@ type Config struct {
 	// Warnings are sentences about a file that loads and that a later release refuses, for the
 	// binary to log: Parse has no logger.
 	Warnings []string `json:"-"`
+	// classSource is a cut-over repository's classes (SetClassSource).
+	classSource func(repository string) (map[string]Class, bool)
 }
 
 // The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and
@@ -311,6 +313,9 @@ type Repository struct {
 	Merge        Merge            `json:"merge"`
 	Schedules    []Schedule       `json:"schedules,omitempty"`
 	Checks       Checks           `json:"checks,omitzero"`
+	// ClassAuthority is central (the default) or repository: its classes are then its
+	// .github/agent-factory.yaml's, with policyManagement.repositoryAuthority on (stage 4, MP15).
+	ClassAuthority string `json:"classAuthority,omitempty"`
 }
 
 // TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
@@ -351,6 +356,9 @@ func (r *Repository) IsMaintainer(login string) bool {
 // NeedsMerger reports whether a class of the repository is live, in shadow or monitored: a
 // monitor reads main's checks and writes labels through the merger App.
 func (r *Repository) NeedsMerger() bool {
+	if r.ClassAuthority == ClassAuthorityRepository {
+		return true // its classes arrive at run time, from its file
+	}
 	for _, cl := range r.Classes {
 		if cl.Live || cl.Shadow || cl.Monitor != nil {
 			return true
@@ -362,6 +370,9 @@ func (r *Repository) NeedsMerger() bool {
 // AnyMonitored reports whether a class of the repository declares a monitor, whose outcome
 // labels the merger writes in shadow too (merge gate R30).
 func (r *Repository) AnyMonitored() bool {
+	if r.ClassAuthority == ClassAuthorityRepository {
+		return true
+	}
 	for _, cl := range r.Classes {
 		if cl.Monitor != nil {
 			return true
@@ -384,9 +395,25 @@ func (r *Repository) AnyLive() bool {
 // as the one entry Parse would have made of it.
 func (c *Config) Repos() []Repository {
 	if len(c.Repositories) > 0 || reflect.ValueOf(c.legacyRepository()).IsZero() {
-		return c.Repositories
+		return c.withSource(c.Repositories)
 	}
 	return []Repository{c.legacyRepository()}
+}
+
+// withSource is rs with each cut-over repository's classes read from the source, on a copy: the
+// config itself is never written. Without a cut-over repository it is rs.
+func (c *Config) withSource(rs []Repository) []Repository {
+	if c.classSource == nil || !c.PolicyManagement.RepositoryAuthority ||
+		!slices.ContainsFunc(rs, func(r Repository) bool { return r.ClassAuthority == ClassAuthorityRepository }) {
+		return rs
+	}
+	out := slices.Clone(rs)
+	for i := range out {
+		if out[i].ClassAuthority == ClassAuthorityRepository {
+			out[i].Classes, _ = c.classSource(out[i].Name)
+		}
+	}
+	return out
 }
 
 func (c *Config) legacyRepository() Repository {
@@ -443,6 +470,9 @@ func (c *Config) NeedsMerger() bool {
 // Flux's objects on its cluster (MC7). None: no reader is built and nothing is read.
 func (c *Config) AnyFlux() bool {
 	for _, r := range c.Repos() {
+		if r.ClassAuthority == ClassAuthorityRepository {
+			return true // its file may declare monitor.flux
+		}
 		for _, cl := range r.Classes {
 			if cl.Monitor != nil && cl.Monitor.Flux != nil {
 				return true
@@ -1731,8 +1761,10 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if r.TriggerLabel == "" {
 		bad("triggerLabel is required")
 	}
+	c.validateAuthority(r, bad)
+	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range []string{"docs-links", "revert"} {
-		if _, ok := r.Classes[name]; !ok {
+		if _, ok := r.Classes[name]; !ok && !cutOver {
 			bad("class %s is required (OD-8)", name)
 		}
 	}
@@ -1769,7 +1801,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		if _, err := cron.ParseStandard(e.Cron); err != nil {
 			bad("schedule %s: cron %q does not parse", e.Name, e.Cron)
 		}
-		if e.Class != "review" {
+		if e.Class != "review" && !cutOver {
 			if _, ok := r.Classes[e.Class]; !ok {
 				bad("schedule %s: class %q is review or a declared class", e.Name, e.Class)
 			}
@@ -1780,7 +1812,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		switch e.Probe {
 		case "", "renovate-red":
 		case "dead-links":
-			if o := r.Classes[e.Class].Oracle; o == nil || o.Probe != "dead-links" {
+			if o := r.Classes[e.Class].Oracle; !cutOver && (o == nil || o.Probe != "dead-links") {
 				bad("schedule %s: probe dead-links needs class %q to declare oracle.probe dead-links", e.Name, e.Class)
 			}
 		default:
