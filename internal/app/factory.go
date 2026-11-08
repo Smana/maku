@@ -415,13 +415,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return evidenceSource{c.gh}, true
 		}}
 		apiSrv.Evidence = ev
-		apiSrv.Editor = &policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
+		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
 			}
 			return commentReader(c.gh), true
-		}}
+		}}}
 	}
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
@@ -725,4 +725,15 @@ func commentReader(gh *forge.GitHub) policyview.CommentReader {
 		}
 		return out, err
 	}
+}
+
+// policyEditor is the policy view as the API serves it, documents as any (api.PolicyEditor).
+type policyEditor struct{ *policyview.Service }
+
+func (e policyEditor) Preview(ctx context.Context, repository, file string) (any, error) {
+	return e.Service.Preview(ctx, repository, file)
+}
+
+func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {
+	return e.Service.Timeline(ctx, repository, pr)
 }

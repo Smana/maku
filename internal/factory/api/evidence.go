@@ -13,7 +13,6 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
-	"github.com/Smana/maku/internal/factory/policyview"
 )
 
 // EvidenceSource is each repository's promotion evidence (merge policy stage 6); *evidence.Service
@@ -113,11 +112,13 @@ func (s *Server) policyRepositories(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string][]string{"repositories": out})
 }
 
-// PolicyEditor is the settings editor's check and the decision timeline (stage 6);
-// *policyview.Service implements it.
+// PolicyEditor is the settings editor's check and the decision timeline (stage 6), each answered
+// as the JSON document it is; app wires *policyview.Service through it. The documents are any so
+// this package does not import the reconciler: intake's tests import this package, and the
+// reconciler imports intake.
 type PolicyEditor interface {
-	Preview(ctx context.Context, repository, file string) (policyview.Preview, error)
-	Timeline(ctx context.Context, repository string, pr int) (policyview.Timeline, error)
+	Preview(ctx context.Context, repository, file string) (any, error)
+	Timeline(ctx context.Context, repository string, pr int) (any, error)
 }
 
 // maxPreviewBody bounds a proposed policy: the file's own bound and its envelope.

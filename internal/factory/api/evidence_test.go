@@ -14,7 +14,6 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
-	"github.com/Smana/maku/internal/factory/policyview"
 )
 
 type fakeEvidence struct {
@@ -39,14 +38,14 @@ func (readAccess) CanRead(_ context.Context, p authn.Principal, repository strin
 
 type fakeEditor struct{ previews, timelines int }
 
-func (f *fakeEditor) Preview(context.Context, string, string) (policyview.Preview, error) {
+func (f *fakeEditor) Preview(context.Context, string, string) (any, error) {
 	f.previews++
-	return policyview.Preview{Valid: true}, nil
+	return map[string]bool{"valid": true}, nil
 }
 
-func (f *fakeEditor) Timeline(_ context.Context, repo string, pr int) (policyview.Timeline, error) {
+func (f *fakeEditor) Timeline(_ context.Context, repo string, pr int) (any, error) {
 	f.timelines++
-	return policyview.Timeline{Repository: repo, PullRequest: pr}, nil
+	return map[string]any{"repository": repo, "pullRequest": pr}, nil
 }
 
 func evidenceServer(on bool) (*Server, *fakeEvidence) {
