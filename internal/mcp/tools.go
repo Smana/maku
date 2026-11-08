@@ -159,6 +159,19 @@ func RoomTools(log Log, red Redactor, now func() time.Time) []Tool {
 				return appendAs(ctx, c, envelope.Message, envelope.MessagePayload{Kind: envelope.KindJudgeVerdict, Text: a.Reason,
 					Verdict: a.Verdict, Evidence: a.Evidence, Delivery: envelope.DeliveryNone})
 			}},
+		// v4 MR10: no text, only the bounded result. The factory accepts it only from the run it
+		// started, under the manifest hash it holds, so a forged or stray post decides nothing.
+		{Name: "room_integration", Roles: []string{"triager"}, Action: policy.Chat, HarnessOnly: true,
+			Description: "The harness records a coordination integration run's one outcome: passed or failed, a snake_case reason and the manifest's SHA-256. Only the harness's own client lists or may call it; it is never on the model's list.",
+			InputSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["state","reason","manifestHash"],"properties":{"state":{"type":"string","enum":["passed","failed"]},"reason":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"},"manifestHash":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}`),
+			Call: func(ctx context.Context, c Caller, args json.RawMessage) (any, error) {
+				var a envelope.IntegrationResult
+				if mcpwire.DecodeArgs(args, &a) != nil || a.Reason == "" || a.Validate() != nil {
+					return nil, argError("state is passed or failed; reason 1 to 64 bytes of snake_case; manifestHash the manifest's 64-hex SHA-256")
+				}
+				return appendAs(ctx, c, envelope.Message, envelope.MessagePayload{Kind: envelope.KindIntegrationResult,
+					Integration: &a, Delivery: envelope.DeliveryNone})
+			}},
 		{Name: "room_handoff", Roles: []string{"implementer", "tester", "triager"}, Action: policy.Chat,
 			Description: "Hand the work to the next role, with the commit you pushed as its full 40-hex sha (git rev-parse HEAD, never an abbreviation). Call it once, then finish.",
 			InputSchema: json.RawMessage(handoffSchema("")),
