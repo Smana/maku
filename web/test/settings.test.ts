@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import { evidenceLine, explain, isSettings, ladderLine, mountSettings, settingsFrame, type Evidence, type RepositoryPage } from "../src/settings";
+import { afterEach, describe, expect, it } from "vitest";
+import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, mountSettings, PENDING, poll, settingsFrame, type Evidence, type RepositoryPage } from "../src/settings";
 import { fileYAML, setLeaf, templates, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
@@ -12,7 +12,7 @@ const ev = (over: Partial<Evidence> = {}): Evidence => ({
 });
 
 const page = (over: Partial<RepositoryPage> = {}): RepositoryPage => ({
-  report: { repository: "Smana/cloud-native-ref", minimum: 20, readAt: "2026-11-08T00:00:00Z", factory: "aws-0", defaultBranch: "main",
+  report: { repository: "Smana/cloud-native-ref", minimum: 20, readAt: "2026-11-08T00:00:00Z", evidenceAt: "2026-11-08T00:00:00Z", factory: "aws-0", defaultBranch: "main",
     harnessProfiles: ["docs-standard"], guardrails: { maxPatchFiles: 20 }, file: "factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n",
     policy: { factory: "aws-0", classes: { "docs-links": { mode: "shadow", author: "agents", harness: "docs-standard",
       conditions: { all: [{ allowedFiles: ["^docs/.+\\.md$"] }, { maxPatchFiles: 10 }] } } } }, classes: [
@@ -362,5 +362,60 @@ describe("the decision timeline", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref/decisions/9", fakeFetch({
       "/api/policy/repositories/Smana/cloud-native-ref/decisions/9": { repository: "Smana/cloud-native-ref", pullRequest: 9, decisions: [] } }));
     expect(app.textContent).toContain("recorded no decision");
+  });
+});
+
+// The live bug (v0.40.1): the factory read the evidence on the page's request, and the page showed
+// nothing. It now answers the classes at once, their evidence pending, and fills them in place.
+describe("pending evidence", () => {
+  const pendingPage = (): RepositoryPage => {
+    const p = page();
+    p.report.classes = p.report.classes.map(({ evidence: _, ...c }) => c);
+    delete p.report.evidenceAt;
+    return p;
+  };
+  const was = { ...poll };
+  afterEach(() => Object.assign(poll, was));
+
+  it("renders each class as computing, offers no promotion, and keeps the editor", async () => {
+    poll.times = 0;
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
+    const rows = [...app.querySelectorAll(".policy-classes tbody tr")];
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(r.textContent).toContain(PENDING);
+    expect([...app.querySelectorAll("button")].some((b) => b.textContent === "Promote to live")).toBe(false);
+    expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toBe(`Evidence ${PENDING}.`);
+    expect(app.querySelector("section.policy-editor")).not.toBeNull();
+  });
+
+  it("fills the classes in place once the evidence is read, leaving the editor as it was", async () => {
+    poll.every = 1;
+    poll.times = 5;
+    const routes: Record<string, unknown> = { "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() };
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch(routes));
+    const editor = app.querySelector("section.policy-editor");
+    const ready = page();
+    ready.report.evidenceAt = "2026-11-08T00:05:00Z";
+    routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20/20 clean");
+    expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toBe("Evidence as of 2026-11-08T00:05:00Z.");
+    expect(app.querySelector("section.policy-editor")).toBe(editor);
+    expect([...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live")).toHaveLength(1);
+  });
+
+  it("says why the evidence shown is older", () => {
+    const r = page().report;
+    expect(evidenceAge({ ...r, evidenceAt: "2026-11-08T00:00:00Z", evidenceError: "rate_limited" }))
+      .toBe("as of 2026-11-08T00:00:00Z (the newest read failed: rate limited)");
+    expect(evidenceAge({ ...r, evidenceAt: undefined, evidenceError: "deadline_exceeded" })).toBe(`${PENDING} (the last read failed: deadline exceeded)`);
+  });
+
+  it("writes a pending class on the evidence page", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
+      "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
+    expect(app.textContent).toContain(PENDING);
   });
 });

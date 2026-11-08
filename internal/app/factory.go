@@ -416,8 +416,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		}}
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
+	var evidenceRefresh *evidence.Refresher
 	if cfg.PolicyManagement.Promotion {
-		ev := &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
+		ev := &evidence.Service{Cfg: cfg, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
@@ -425,6 +426,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return evidenceSource{c.gh}, true
 		}}
 		apiSrv.Evidence = ev
+		evidenceRefresh = &evidence.Refresher{Service: ev, Owned: fenced.Owned, OnAge: m.PolicyEvidenceAge}
 		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
@@ -447,6 +449,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return text, err
 	}
 	var runnables []manager.Runnable
+	if evidenceRefresh != nil {
+		runnables = append(runnables, evidenceRefresh)
+	}
 	if cfg.Demo {
 		g, err := demoGitToken(cfg, live, log)
 		if err != nil {

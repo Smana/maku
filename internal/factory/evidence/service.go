@@ -3,14 +3,18 @@
 package evidence
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
@@ -29,12 +33,20 @@ type Source interface {
 const PolicyPath = ".github/agent-factory.yaml"
 
 // The read's bounds. Lookback is how far back merges are read: the decision index's 180 days.
-// TTL is how long a repository's report is served before GitHub is read again: the page may be
-// reloaded at will, GitHub is read at most once per TTL per repository and replica.
+// TTL is how long a repository's evidence is served before GitHub is read again: the page may be
+// reloaded at will, GitHub is searched at most once per TTL per repository and replica.
 const (
 	Lookback      = 180 * 24 * time.Hour
 	TTL           = 10 * time.Minute
 	defaultWindow = 168 * time.Hour
+	// DefaultParallel bounds the searches one read runs at once; DefaultDeadline bounds the read.
+	DefaultParallel = 4
+	DefaultDeadline = 3 * time.Minute
+	// A failed read is tried again after retryAfter; a rate-limited one backs off, doubling, from
+	// minBackoff to maxBackoff.
+	retryAfter = time.Minute
+	minBackoff = 2 * time.Minute
+	maxBackoff = 30 * time.Minute
 )
 
 // Proposal is the promotion's one-line change: the file as it would be, the line it changes, and
@@ -51,21 +63,27 @@ type Proposal struct {
 type ClassReport struct {
 	Class string `json:"class"`
 	// Source is where the class is declared: "repository" (the policy file) or "central".
-	Source   string    `json:"source"`
-	Mode     string    `json:"mode"`
-	Evidence Evidence  `json:"evidence"`
+	Source string `json:"source"`
+	Mode   string `json:"mode"`
+	// Evidence is nil while it is being read: the class was never read, or was added since.
+	Evidence *Evidence `json:"evidence,omitempty"`
 	Proposal *Proposal `json:"proposal,omitempty"`
 	// Unproposed says why a class has no proposal: not_shadow, not_in_repository_policy.
 	Unproposed string `json:"unproposed,omitempty"`
 }
 
-// Report is a repository's promotion evidence as read at ReadAt.
+// Report is a repository's policy as read at ReadAt, and its classes' promotion evidence as read
+// at EvidenceAt.
 type Report struct {
 	Repository  string        `json:"repository"`
 	Minimum     int           `json:"minimum"`
 	PolicyError string        `json:"policyError,omitempty"`
 	Classes     []ClassReport `json:"classes"`
 	ReadAt      time.Time     `json:"readAt"`
+	// EvidenceAt is the last good read of the evidence, nil before the first. EvidenceError is the
+	// reason the newest read failed (Reason), "" when it did not: the evidence shown is then older.
+	EvidenceAt    *time.Time `json:"evidenceAt,omitempty"`
+	EvidenceError string     `json:"evidenceError,omitempty"`
 	// The editor's inputs: the policy file as read ("" when absent), its parsed form when it
 	// parses, the factory it must keep naming, the default branch its edit link opens, the central
 	// harness profiles a class may reference, and the guardrails it is validated against.
@@ -80,45 +98,194 @@ type Report struct {
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
 }
 
-// ErrUnknownRepository is a repository the config does not list.
-var ErrUnknownRepository = errors.New("evidence: the repository is not configured")
+var (
+	// ErrUnknownRepository is a repository the config does not list.
+	ErrUnknownRepository = errors.New("evidence: the repository is not configured")
+	// ErrInFlight is a refresh asked while one of the same repository runs.
+	ErrInFlight = errors.New("evidence: a read of the repository is running")
+)
+
+// The reasons a read failed, as logged and reported.
+const (
+	ReasonRateLimited = "rate_limited"
+	ReasonDeadline    = "deadline_exceeded"
+	ReasonCancelled   = "cancelled"
+	ReasonUnreadable  = "unreadable"
+)
+
+// Reason names err for a log line and the page: never GitHub's text.
+func Reason(err error) string {
+	switch msg := strings.ToLower(err.Error()); {
+	case strings.Contains(msg, "rate limit") || strings.Contains(msg, "rate_limited"):
+		return ReasonRateLimited
+	case errors.Is(err, context.DeadlineExceeded):
+		return ReasonDeadline
+	case errors.Is(err, context.Canceled):
+		return ReasonCancelled
+	}
+	return ReasonUnreadable
+}
 
 // Service reads and caches each configured repository's report. Sources is the repository's
 // connection, false without one.
+//
+// The report splits in two. The policy file and the default branch, two plain reads, are read on
+// the caller's request when older than TTL. The evidence, one search per author and label of
+// every class and one per merge, never is: a read of it runs on its own context, at most one per
+// repository, started by the Refresher or by a report that finds it missing or older than TTL,
+// and a report serves what the last good read left (live: a page load cancelled those searches).
 type Service struct {
 	Cfg     *config.Config
 	Sources func(repository string) (Source, bool)
 	Now     func() time.Time
+	Log     *slog.Logger
+	// Parallel bounds the searches one read runs at once, DefaultParallel when 0; Deadline bounds
+	// the read, DefaultDeadline when 0.
+	Parallel int
+	Deadline time.Duration
 
-	mu    sync.Mutex // one read at a time: the cache bounds GitHub, and so does this
-	cache map[string]Report
+	mu    sync.Mutex
+	repos map[string]*entry
 }
 
-// Report is repository's report, from the cache while younger than TTL.
-func (s *Service) Report(ctx context.Context, repository string) (Report, error) {
+// head is what the page needs at once: the policy file and the default branch.
+type head struct {
+	body   []byte
+	found  bool
+	branch string
+	readAt time.Time
+}
+
+// entry is one repository's cache.
+type entry struct {
+	head    head
+	classes map[string]Evidence
+	at      time.Time // the last good read of classes
+	reason  string    // the newest read's failure, "" after a success
+	retry   time.Time // no read before
+	backoff time.Duration
+	done    chan struct{} // open while a read runs
+}
+
+var closed = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
+
+// idle is closed once no read runs.
+func (e *entry) idle() <-chan struct{} {
+	if e.done == nil {
+		return closed
+	}
+	return e.done
+}
+
+func (e *entry) due(now time.Time) bool {
+	return e.done == nil && !now.Before(e.retry) && (e.at.IsZero() || now.Sub(e.at) >= TTL)
+}
+
+func (s *Service) entry(name string) *entry {
+	if s.repos == nil {
+		s.repos = map[string]*entry{}
+	}
+	e := s.repos[name]
+	if e == nil {
+		e = &entry{}
+		s.repos[name] = e
+	}
+	return e
+}
+
+func (s *Service) log() *slog.Logger {
+	if s.Log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return s.Log
+}
+
+func (s *Service) resolve(repository string) (*config.Repository, Source, error) {
 	rc := s.repository(repository)
 	if rc == nil {
-		return Report{}, ErrUnknownRepository
+		return nil, nil, ErrUnknownRepository
 	}
 	src, ok := s.Sources(rc.Name)
 	if !ok {
-		return Report{}, ErrUnknownRepository
+		return nil, nil, ErrUnknownRepository
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := s.Now()
-	if r, ok := s.cache[rc.Name]; ok && now.Sub(r.ReadAt) < TTL {
-		return r, nil
-	}
-	r, err := s.read(ctx, rc, src, now)
+	return rc, src, nil
+}
+
+// Report is repository's report: its policy, read again when older than TTL (an older one is
+// served when that read fails), and the evidence as last read, whose read it starts when due.
+func (s *Service) Report(ctx context.Context, repository string) (Report, error) {
+	rc, src, err := s.resolve(repository)
 	if err != nil {
 		return Report{}, err
 	}
-	if s.cache == nil {
-		s.cache = map[string]Report{}
+	now := s.Now()
+	s.mu.Lock()
+	h := s.entry(rc.Name).head
+	s.mu.Unlock()
+	if h.readAt.IsZero() || now.Sub(h.readAt) >= TTL {
+		fresh, err := readHead(ctx, src, now)
+		switch {
+		case err == nil:
+			h = fresh
+			s.mu.Lock()
+			if e := s.entry(rc.Name); e.head.readAt.Before(h.readAt) {
+				e.head = h
+			}
+			s.mu.Unlock()
+		case h.readAt.IsZero():
+			return Report{}, err
+		default:
+			s.log().WarnContext(ctx, "policy unread, served as read before", "repository", rc.Name, "reason", Reason(err), "error", err)
+		}
 	}
-	s.cache[rc.Name] = r
-	return r, nil
+	s.mu.Lock()
+	e := s.entry(rc.Name)
+	classes, at, reason := e.classes, e.at, e.reason
+	start := e.due(now)
+	if start {
+		e.done = make(chan struct{})
+	}
+	s.mu.Unlock()
+	if start {
+		// The request's values, never its cancellation: the read outlives the page load.
+		go func() { _ = s.read(context.WithoutCancel(ctx), rc, src) }()
+	}
+	return s.build(rc, h, classes, at, reason)
+}
+
+// Refresh reads repository's policy and every class's evidence now, unless a read of it runs
+// (ErrInFlight). A failure keeps the evidence last read.
+func (s *Service) Refresh(ctx context.Context, repository string) error {
+	rc, src, err := s.resolve(repository)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	e := s.entry(rc.Name)
+	if e.done != nil {
+		s.mu.Unlock()
+		return ErrInFlight
+	}
+	e.done = make(chan struct{})
+	s.mu.Unlock()
+	return s.read(ctx, rc, src)
+}
+
+// due is whether repository's evidence should be read again: missing or older than TTL, no read
+// running, and past any backoff.
+func (s *Service) due(repository string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.entry(repository).due(s.Now())
+}
+
+// evidenceAt is the last good read of repository's evidence, false before the first.
+func (s *Service) evidenceAt(repository string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	at := s.entry(repository).at
+	return at, !at.IsZero()
 }
 
 func (s *Service) repository(name string) *config.Repository {
@@ -138,28 +305,108 @@ type class struct {
 	window             time.Duration
 }
 
-func (s *Service) read(ctx context.Context, rc *config.Repository, src Source, now time.Time) (Report, error) {
-	r := Report{Repository: rc.Name, Minimum: s.Cfg.MergeGuardrails.MinPromotion(), ReadAt: now}
+func readHead(ctx context.Context, src Source, now time.Time) (head, error) {
 	body, found, err := src.FenceFile(ctx)
 	if err != nil {
-		return Report{}, fmt.Errorf("evidence: %w", err)
-	}
-	var file *mergepolicy.File
-	if found {
-		if file, err = mergepolicy.Parse(body); err != nil {
-			r.PolicyError = "invalid" // the reason, never the parser's text: the file is the repository's
-			file = nil
-		}
-	}
-	reverts, err := src.RevertRecords(ctx)
-	if err != nil {
-		return Report{}, fmt.Errorf("evidence: %w", err)
+		return head{}, fmt.Errorf("evidence: %w", err)
 	}
 	branch, err := src.DefaultBranch(ctx)
 	if err != nil {
-		return Report{}, fmt.Errorf("evidence: %w", err)
+		return head{}, fmt.Errorf("evidence: %w", err)
 	}
-	r.File, r.Policy, r.Factory, r.DefaultBranch = string(body), file, s.Cfg.Factory, branch
+	return head{body: body, found: found, branch: branch, readAt: now}, nil
+}
+
+// parse is the head's policy file, nil when absent or invalid ("invalid" is then its error).
+func (h head) parse() (*mergepolicy.File, string) {
+	if !h.found {
+		return nil, ""
+	}
+	f, err := mergepolicy.Parse(h.body)
+	if err != nil {
+		return nil, "invalid" // the reason, never the parser's text: the file is the repository's
+	}
+	return f, ""
+}
+
+// read is one read of rc's policy and evidence, the caller having claimed the entry's done: it
+// runs under the Service's deadline, its classes Parallel at a time, and releases the claim.
+func (s *Service) read(ctx context.Context, rc *config.Repository, src Source) error {
+	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Deadline, DefaultDeadline))
+	defer cancel()
+	start := s.Now()
+	h, classes, err := s.collectAll(ctx, rc, src, start)
+	now := s.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entry(rc.Name)
+	defer func() { close(e.done); e.done = nil }()
+	if err != nil {
+		e.reason = Reason(err)
+		if e.reason == ReasonRateLimited {
+			e.backoff = min(max(2*e.backoff, minBackoff), maxBackoff)
+		} else {
+			e.backoff = retryAfter
+		}
+		e.retry = now.Add(e.backoff)
+		args := []any{"repository", rc.Name, "reason", e.reason, "error", err, "retry_in", e.backoff}
+		if !e.at.IsZero() {
+			args = append(args, "served_age", now.Sub(e.at).Round(time.Second))
+		}
+		s.log().WarnContext(ctx, "policy evidence unread", args...)
+		return err
+	}
+	if e.head.readAt.Before(h.readAt) {
+		e.head = h
+	}
+	e.classes, e.at, e.reason, e.backoff, e.retry = classes, start, "", 0, time.Time{}
+	return nil
+}
+
+func (s *Service) collectAll(ctx context.Context, rc *config.Repository, src Source, now time.Time) (head, map[string]Evidence, error) {
+	h, err := readHead(ctx, src, now)
+	if err != nil {
+		return head{}, nil, err
+	}
+	file, _ := h.parse()
+	reverts, err := src.RevertRecords(ctx)
+	if err != nil {
+		return head{}, nil, fmt.Errorf("evidence: %w", err)
+	}
+	l := Logins{Factory: s.Cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
+	since := now.Add(-Lookback).UTC().Format("2006-01-02")
+	minimum := s.Cfg.MergeGuardrails.MinPromotion()
+	cs := s.classes(rc, file)
+	out := make([]Evidence, len(cs))
+	// Each class reads serially, so Parallel classes at once is Parallel searches at once.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(cmp.Or(s.Parallel, DefaultParallel))
+	for i, c := range cs {
+		g.Go(func() error {
+			e, err := collect(gctx, src, c, reverts, rc.Name, l, now, since, minimum)
+			out[i] = e
+			return err
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return head{}, nil, err
+	}
+	m := make(map[string]Evidence, len(cs))
+	for i, c := range cs {
+		m[c.name] = out[i]
+	}
+	return h, m, nil
+}
+
+// build is the report of h, each class with its evidence in classes when read.
+func (s *Service) build(rc *config.Repository, h head, classes map[string]Evidence, at time.Time, reason string) (Report, error) {
+	file, perr := h.parse()
+	r := Report{Repository: rc.Name, Minimum: s.Cfg.MergeGuardrails.MinPromotion(), ReadAt: h.readAt, PolicyError: perr,
+		EvidenceError: reason}
+	if !at.IsZero() {
+		r.EvidenceAt = &at
+	}
+	r.File, r.Policy, r.Factory, r.DefaultBranch = string(h.body), file, s.Cfg.Factory, h.branch
 	r.HarnessProfiles = slices.Sorted(maps.Keys(s.Cfg.HarnessProfiles))
 	r.AdoptedProfiles = []string{}
 	for _, n := range r.HarnessProfiles {
@@ -168,26 +415,23 @@ func (s *Service) read(ctx context.Context, rc *config.Repository, src Source, n
 		}
 	}
 	r.Guardrails = s.Cfg.MergeGuardrails
-	l := Logins{Factory: s.Cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
-	since := now.Add(-Lookback).UTC().Format("2006-01-02")
 	for _, c := range s.classes(rc, file) {
-		e, err := collect(ctx, src, c, reverts, rc.Name, l, now, since, r.Minimum)
-		if err != nil {
-			return Report{}, err
+		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode}
+		if e, ok := classes[c.name]; ok {
+			cr.Evidence = &e
 		}
-		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode, Evidence: e}
 		switch {
 		case c.source != sourceRepository:
 			cr.Unproposed = "not_in_repository_policy"
 		case c.mode != string(mergepolicy.ModeShadow):
 			cr.Unproposed = "not_shadow"
 		default:
-			out, line, err := Propose(body, c.name)
+			out, line, err := Propose(h.body, c.name)
 			if err != nil {
 				return Report{}, fmt.Errorf("evidence: propose %s: %w", c.name, err)
 			}
 			cr.Proposal = &Proposal{Path: PolicyPath, Line: line, File: string(out),
-				EditURL: EditURL(rc.Name, branch)}
+				EditURL: EditURL(rc.Name, h.branch)}
 		}
 		r.Classes = append(r.Classes, cr)
 	}

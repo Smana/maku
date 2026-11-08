@@ -35,9 +35,16 @@ func (f *fakePolicyFactory) PolicyEvidence(_ context.Context, token, repository 
 	if !strings.EqualFold(repository, policyRepo) {
 		return evidence.Report{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
 	}
-	ev := evidence.Evidence{Clean: f.clean, Bad: f.bad, Drill: f.drill, Minimum: 20}
-	ev.Eligible = f.clean >= 20 && f.bad == 0 && f.drill == evidence.DrillPassed
-	return evidence.Report{Repository: policyRepo, Minimum: 20, ReadAt: time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC), Classes: []evidence.ClassReport{
+	// No drill is evidence still being read.
+	var ev *evidence.Evidence
+	var at *time.Time
+	if f.drill != "" {
+		ev = &evidence.Evidence{Clean: f.clean, Bad: f.bad, Drill: f.drill, Minimum: 20}
+		ev.Eligible = f.clean >= 20 && f.bad == 0 && f.drill == evidence.DrillPassed
+		read := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
+		at = &read
+	}
+	return evidence.Report{Repository: policyRepo, Minimum: 20, ReadAt: time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC), EvidenceAt: at, Classes: []evidence.ClassReport{
 		{Class: "docs-links", Source: "repository", Mode: "shadow", Evidence: ev,
 			Proposal: &evidence.Proposal{Path: evidence.PolicyPath, Line: 6, File: "factory: aws-0\n", EditURL: "https://github.com/Smana/maku/edit/main/.github/agent-factory.yaml"}},
 		{Class: "revert", Source: "repository", Mode: "live", Unproposed: "not_shadow"},
@@ -278,6 +285,7 @@ func TestPromotionRequest(t *testing.T) {
 		"nineteen":               {"maint", 19, 0, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
 		"a bad outcome":          {"maint", 30, 1, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
 		"no drill":               {"maint", 30, 0, evidence.DrillOpen, req, http.StatusConflict, "not_eligible"},
+		"evidence being read":    {"maint", 30, 0, "", req, http.StatusConflict, "evidence_pending"},
 		"a live class":           {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": policyRepo, "class": "revert"}, http.StatusConflict, "not_promotable"},
 		"no such class":          {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": policyRepo, "class": "nope"}, http.StatusNotFound, "no_such_class"},
 		"another repository":     {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": "Smana/other", "class": "docs-links"}, http.StatusNotFound, "not_found"},
