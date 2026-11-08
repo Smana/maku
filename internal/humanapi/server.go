@@ -169,6 +169,9 @@ type Server struct {
 	// Coordination is coordination_plan (v4 MR4): listed beside the planner while its mode is not
 	// off. Nil, or off, lists nothing.
 	Coordination *CoordinationPlanner
+	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
+	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
+	Policy *Policy
 
 	// Connection bounds; zero takes the default.
 	HelloWait time.Duration // the first frame must arrive within it (10 s)
@@ -240,6 +243,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
 	mux.HandleFunc("GET /.well-known/roomctl", s.publicSetup)
 	mux.HandleFunc("GET /v1/ws", s.ws)
+	if s.Policy != nil {
+		s.policyRoutes(mux, index)
+	}
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)
 	}

@@ -93,6 +93,19 @@ func (pm PolicyManagement) IsOperator(login string) bool {
 	return login != "" && slices.ContainsFunc(pm.Operators, func(o string) bool { return strings.EqualFold(o, login) })
 }
 
+// Validate reports the switches' own rules; the factory and the broker, which reads the same key,
+// both apply it.
+func (pm PolicyManagement) Validate(bad func(string, ...any)) {
+	if pm.DualEvaluation && !pm.Read {
+		bad("policyManagement.dualEvaluation needs read: it evaluates the policy read observes")
+	}
+	for _, o := range pm.Operators {
+		if !githubLoginRE.MatchString(o) {
+			bad("policyManagement.operators: %q is not a GitHub login", o)
+		}
+	}
+}
+
 var profileRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
 
 func (c *Config) validateMergePolicy(bad func(string, ...any)) {
@@ -117,14 +130,7 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 			bad("harnessProfiles.%s: template none runs nothing, so it takes no other key", name)
 		}
 	}
-	if pm := c.PolicyManagement; pm.DualEvaluation && !pm.Read {
-		bad("policyManagement.dualEvaluation needs read: it evaluates the policy read observes")
-	}
-	for _, o := range c.PolicyManagement.Operators {
-		if !githubLoginRE.MatchString(o) {
-			bad("policyManagement.operators: %q is not a GitHub login", o)
-		}
-	}
+	c.PolicyManagement.Validate(bad)
 	g := c.MergeGuardrails
 	if n := g.MinPromotionEvidence; n != 0 && n < DefaultMinPromotionEvidence {
 		bad("mergeGuardrails.minPromotionEvidence %d is below %d (MP7): a weaker promotion is an operator's exception", n, DefaultMinPromotionEvidence)
