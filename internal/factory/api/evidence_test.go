@@ -47,7 +47,7 @@ func evidenceServer(on bool) (*Server, *fakeEvidence) {
 }
 
 func getAs(h http.Handler, token, target string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
