@@ -16,6 +16,10 @@ func TestPolicyReadsForwardTheCallersToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Method+" "+r.URL.RequestURI()+" "+r.Header.Get("Authorization"))
 		switch r.URL.Path {
+		case "/v1/policy/preview":
+			_, _ = w.Write([]byte(`{"valid":true,"simulation":{"enabled":false}}`))
+		case "/v1/policy/decisions":
+			_, _ = w.Write([]byte(`{"repository":"Smana/cloud-native-ref","pullRequest":12,"decisions":[]}`))
 		case "/v1/policy/repositories":
 			_, _ = w.Write([]byte(`{"repositories":["Smana/cloud-native-ref"]}`))
 		case "/v1/policy/evidence":
@@ -42,5 +46,12 @@ func TestPolicyReadsForwardTheCallersToken(t *testing.T) {
 	}
 	if rs, err := f.PolicyRepositories(t.Context(), "tok"); err != nil || len(rs) != 1 {
 		t.Fatalf("%q %v", rs, err)
+	}
+	if pv, err := f.PolicyPreview(t.Context(), "tok", "Smana/cloud-native-ref", "factory: aws-0\n"); err != nil || !pv.Valid {
+		t.Fatalf("%+v %v", pv, err)
+	}
+	if tl, err := f.PolicyDecisions(t.Context(), "tok", "Smana/cloud-native-ref", 12); err != nil || tl.PullRequest != 12 ||
+		seen[len(seen)-1] != "GET /v1/policy/decisions?pr=12&repository=Smana%2Fcloud-native-ref Bearer tok" {
+		t.Fatalf("%+v %v %q", tl, err, seen)
 	}
 }

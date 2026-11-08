@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/factory/evidence"
+	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/store"
@@ -41,6 +42,22 @@ func (f *fakePolicyFactory) PolicyEvidence(_ context.Context, token, repository 
 			Proposal: &evidence.Proposal{Path: evidence.PolicyPath, Line: 6, File: "factory: aws-0\n", EditURL: "https://github.com/Smana/maku/edit/main/.github/agent-factory.yaml"}},
 		{Class: "revert", Source: "repository", Mode: "live", Unproposed: "not_shadow"},
 	}}, nil
+}
+
+func (f *fakePolicyFactory) PolicyPreview(_ context.Context, token, repository, file string) (policyview.Preview, error) {
+	f.tokens = append(f.tokens, token)
+	if !strings.EqualFold(repository, policyRepo) {
+		return policyview.Preview{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
+	}
+	return policyview.Preview{Valid: true, Proposal: &evidence.Proposal{Path: evidence.PolicyPath, File: file}}, nil
+}
+
+func (f *fakePolicyFactory) PolicyDecisions(_ context.Context, token, repository string, pr int) (policyview.Timeline, error) {
+	f.tokens = append(f.tokens, token)
+	if !strings.EqualFold(repository, policyRepo) {
+		return policyview.Timeline{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
+	}
+	return policyview.Timeline{Repository: policyRepo, PullRequest: pr, Decisions: []policyview.Decision{}}, nil
 }
 
 func (f *fakePolicyFactory) PolicyRepositories(_ context.Context, token string) ([]string, error) {
@@ -186,6 +203,8 @@ func getPolicy(t *testing.T, e env, path string, h http.Header) (int, string) {
 var policyPaths = []struct{ method, path string }{
 	{http.MethodGet, "/settings"}, {http.MethodGet, "/settings/merge-policies"},
 	{http.MethodGet, "/settings/merge-policies/Smana/maku"}, {http.MethodGet, "/settings/evidence"},
+	{http.MethodGet, "/settings/merge-policies/Smana/maku/decisions/12"},
+	{http.MethodPost, "/api/policy/repositories/Smana/maku/preview"}, {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12"},
 	{http.MethodGet, "/api/policy/repositories"}, {http.MethodGet, "/api/policy/repositories/Smana/maku"},
 	{http.MethodPost, "/api/policy/promotions"}, {http.MethodPost, "/api/policy/promotions/bbbbbbbb"},
 	{http.MethodPost, "/api/policy/exceptions"}, {http.MethodPost, "/api/policy/exceptions/bbbbbbbb"},
@@ -207,7 +226,7 @@ func TestPolicyOffIsByteIdentical(t *testing.T) {
 func TestSettingsPagesServeTheApp(t *testing.T) {
 	f, m := newPolicy(20)
 	e := setup(t, policyOn(f, m))
-	for _, p := range policyPaths[:4] {
+	for _, p := range policyPaths[:5] {
 		if code, body := getPolicy(t, e, p.path, header("anyone")); code != http.StatusOK || !strings.Contains(body, "maku</html>") {
 			t.Errorf("%s: %d %q", p.path, code, body)
 		}
@@ -355,5 +374,66 @@ func TestExceptionIsAnOperatorsDecision(t *testing.T) {
 	code, body = promote(t, e, "maint", map[string]string{"repository": policyRepo, "class": "docs-links", "exceptionId": exc.ID})
 	if code != http.StatusCreated || !strings.Contains(body, `"threshold":10`) || !strings.Contains(body, `"exceptionId":"`+exc.ID+`"`) {
 		t.Fatalf("%d %s", code, body)
+	}
+}
+
+// MP17, one row per role per handler: anyone who reads the repository views; a maintainer
+// (write) previews, gets the edit link, requests and moves promotions and asks for exceptions;
+// an operator decides exceptions; a machine and an anonymous caller do nothing.
+func TestPolicyHandlersByRole(t *testing.T) {
+	type route struct{ method, path, body string }
+	routes := map[string]route{
+		"repositories":     {http.MethodGet, "/api/policy/repositories", ""},
+		"repository":       {http.MethodGet, "/api/policy/repositories/Smana/maku", ""},
+		"decisions":        {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12", ""},
+		"settings":         {http.MethodGet, "/settings/merge-policies/Smana/maku", ""},
+		"preview":          {http.MethodPost, "/api/policy/repositories/Smana/maku/preview", `{"file":"factory: aws-0\n"}`},
+		"promote":          {http.MethodPost, "/api/policy/promotions", `{"repository":"Smana/maku","class":"docs-links"}`},
+		"move":             {http.MethodPost, "/api/policy/promotions/pppppppp", `{"state":"pr_opened","pullRequest":12}`},
+		"ask exception":    {http.MethodPost, "/api/policy/exceptions", `{"repository":"Smana/maku","class":"docs-links","minimum":10,"justification":"a narrow class: ten clean decisions bound it"}`},
+		"decide exception": {http.MethodPost, "/api/policy/exceptions/xxxxxxxx", `{"decision":"approved"}`},
+	}
+	ok := func(code int) map[string]int {
+		return map[string]int{"repositories": 200, "repository": 200, "decisions": 200, "settings": 200, "preview": code,
+			"promote": code, "move": code, "ask exception": code, "decide exception": 403}
+	}
+	maint := ok(200)
+	maint["promote"], maint["ask exception"] = 201, 201
+	ops := ok(403)
+	ops["decide exception"] = 200
+	refused := func(code int) map[string]int {
+		m := map[string]int{}
+		for n := range routes {
+			m[n] = code
+		}
+		m["settings"] = 200 // the page loads; every call it makes is refused
+		return m
+	}
+	for role, want := range map[string]struct {
+		h     http.Header
+		codes map[string]int
+	}{
+		"reader":     {header("anyone"), ok(403)},
+		"maintainer": {header("maint"), maint},
+		"operator":   {header("ops"), ops},
+		"machine":    {header("bot", "X-Test-Kind", "system"), refused(403)},
+		"anonymous":  {http.Header{}, refused(401)},
+	} {
+		for name, rt := range routes {
+			t.Run(role+" "+name, func(t *testing.T) {
+				f, m := newPolicy(20)
+				m.promotions["pppppppp"] = store.Promotion{ID: "pppppppp", Repository: policyRepo, Class: "revert", State: store.PromotionRequested}
+				m.exceptions["xxxxxxxx"] = store.Exception{ID: "xxxxxxxx", Repository: policyRepo, Class: "docs-links", Minimum: 10, State: store.ExceptionRequested}
+				e := setup(t, policyOn(f, m))
+				var body any = ""
+				if rt.body != "" {
+					body = rt.body
+				}
+				code, out := sendJSON(t, e, rt.method, rt.path, want.h, body)
+				if code != want.codes[name] {
+					t.Fatalf("%d %s, want %d", code, out, want.codes[name])
+				}
+			})
+		}
 	}
 }

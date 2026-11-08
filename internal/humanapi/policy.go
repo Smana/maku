@@ -8,11 +8,14 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/evidence"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/store"
 )
@@ -22,6 +25,8 @@ import (
 type PolicyGateway interface {
 	PolicyEvidence(ctx context.Context, accessToken, repository string) (evidence.Report, error)
 	PolicyRepositories(ctx context.Context, accessToken string) ([]string, error)
+	PolicyPreview(ctx context.Context, accessToken, repository, file string) (policyview.Preview, error)
+	PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error)
 }
 
 // PolicyRecords is the promotion workflow's audit; *store.Store implements it.
@@ -49,17 +54,23 @@ type Policy struct {
 // ExceptionLifetime is how long an approved exception may carry a promotion.
 const ExceptionLifetime = 14 * 24 * time.Hour
 
+// maxPreviewBody bounds a proposed policy file: the file's own bound and its envelope.
+const maxPreviewBody = mergepolicy.MaxFileBytes + 4<<10
+
 // maxPolicyBody bounds a promotion or exception request: a justification of 2,000 characters and
 // its envelope.
 const maxPolicyBody = 8 << 10
 
 // policyRoutes registers the settings pages and the policy API; only with Policy set.
 func (s *Server) policyRoutes(mux *http.ServeMux, index http.Handler) {
-	for _, p := range []string{"GET /settings", "GET /settings/merge-policies", "GET /settings/merge-policies/{owner}/{name}", "GET /settings/evidence"} {
+	for _, p := range []string{"GET /settings", "GET /settings/merge-policies", "GET /settings/merge-policies/{owner}/{name}",
+		"GET /settings/merge-policies/{owner}/{name}/decisions/{pr}", "GET /settings/evidence"} {
 		mux.Handle(p, withCSP(index))
 	}
 	mux.HandleFunc("GET /api/policy/repositories", s.policyRepositories)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}", s.policyRepository)
+	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/preview", s.policyPreview)
+	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions/{pr}", s.policyDecisions)
 	mux.HandleFunc("POST /api/policy/promotions", s.requestPromotion)
 	mux.HandleFunc("POST /api/policy/promotions/{id}", s.movePromotion)
 	mux.HandleFunc("POST /api/policy/exceptions", s.requestException)
@@ -109,18 +120,7 @@ func (s *Server) rolesOn(ctx context.Context, p authn.Principal, repository stri
 // here and ok is false.
 func (s *Server) report(w http.ResponseWriter, r *http.Request, p authn.Principal, repository string) (evidence.Report, bool) {
 	rep, err := s.Policy.Factory.PolicyEvidence(r.Context(), p.AccessToken, repository)
-	var ref runrequest.ErrRefused
-	switch {
-	case err == nil:
-		return rep, true
-	case errors.As(err, &ref):
-		refuseJSON(w, ref.Status, ref.Reason)
-	case errors.Is(err, runrequest.ErrForbidden):
-		refuseJSON(w, http.StatusForbidden, "human_only")
-	default:
-		refuseJSON(w, http.StatusServiceUnavailable, "evidence_unavailable")
-	}
-	return rep, false
+	return rep, s.forwarded(w, err)
 }
 
 func classOf(rep evidence.Report, class string) (evidence.ClassReport, bool) {
@@ -396,6 +396,72 @@ func (s *Server) decideException(w http.ResponseWriter, r *http.Request) {
 	}
 	s.policyChange(r.Context(), out.Repository, out.Class, "exception_"+out.State)
 	writeJSON(w, out)
+}
+
+// policyPreview is POST /api/policy/repositories/{owner}/{name}/preview {file}: the editor's check
+// of a proposed policy file, for a maintainer (MP17). The factory parses, validates against the
+// central guardrails, compares structurally and simulates; nothing is written anywhere.
+func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		File string `json:"file"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil || dec.More() {
+		refuseJSON(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	rep, ok := s.report(w, r, p, r.PathValue("owner")+"/"+r.PathValue("name"))
+	if !ok {
+		return
+	}
+	if _, ok := s.maintainerOf(w, r, p, rep.Repository); !ok {
+		return
+	}
+	pv, err := s.Policy.Factory.PolicyPreview(r.Context(), p.AccessToken, rep.Repository, in.File)
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, pv)
+}
+
+// policyDecisions is GET /api/policy/repositories/{owner}/{name}/decisions/{pr}: a pull request's
+// decision timeline, which the factory reads for a reader of the repository.
+func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	pr, err := strconv.Atoi(r.PathValue("pr"))
+	if err != nil || pr < 1 {
+		refuseJSON(w, http.StatusBadRequest, "pr_required")
+		return
+	}
+	tl, err := s.Policy.Factory.PolicyDecisions(r.Context(), p.AccessToken, r.PathValue("owner")+"/"+r.PathValue("name"), pr)
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, tl)
+}
+
+// forwarded answers the factory's refusal with its bounded reason; true when err is nil.
+func (s *Server) forwarded(w http.ResponseWriter, err error) bool {
+	var ref runrequest.ErrRefused
+	switch {
+	case err == nil:
+		return true
+	case errors.As(err, &ref):
+		refuseJSON(w, ref.Status, ref.Reason)
+	case errors.Is(err, runrequest.ErrForbidden):
+		refuseJSON(w, http.StatusForbidden, "human_only")
+	default:
+		refuseJSON(w, http.StatusServiceUnavailable, "evidence_unavailable")
+	}
+	return false
 }
 
 // recorded answers a store refusal with its reason; true when err is nil.
