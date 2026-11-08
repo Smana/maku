@@ -40,6 +40,14 @@ export const templates: Record<string, () => ClassPolicy> = {
     all: [{ allowedFiles: ["^gen/.+$"] }, { holdoutChecks: ["Regenerate and compare"] }, { modifyOnly: true }] } }),
 };
 
+// profilesFor are the central profiles a class of author may reference: an adopted class only a
+// profile that runs nothing (template none), an agents class only one that runs. adopted unknown
+// (an older broker), every profile.
+export function profilesFor(author: string, profiles: string[], adopted?: string[] | null): string[] {
+  if (!adopted) return profiles;
+  return profiles.filter((p) => adopted.includes(p) === (author === "adopt"));
+}
+
 // The leaves the form edits, in the order it shows them. Any other leaf, and every any-branch, is
 // kept as it is and edited in the expert view.
 const listLeaves = ["allowedFiles", "holdoutChecks", "companionFiles"] as const;
@@ -120,7 +128,7 @@ function labelled(label: string, input: HTMLElement): HTMLLabelElement {
 }
 
 // classForm renders the guided form for cls, calling change with the class as edited.
-export function classForm(cls: ClassPolicy, profiles: string[], change: (c: ClassPolicy) => void): HTMLElement {
+export function classForm(cls: ClassPolicy, profiles: string[], change: (c: ClassPolicy) => void, adopted?: string[] | null): HTMLElement {
   const c: ClassPolicy = structuredClone(cls);
   c.conditions ??= {};
   const form = el("fieldset", undefined, "editor-form");
@@ -156,13 +164,25 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
   };
 
   select("mode", c.mode, ["shadow", "live", "off"], (v) => { c.mode = v; });
-  select("author", c.author, ["agents", "adopt"], (v) => { c.author = v; if (v === "adopt") c.adopt ??= { logins: [], branches: [] }; else delete c.adopt; });
+  let harness: HTMLSelectElement | undefined;
+  const fill = () => {
+    const fit = profilesFor(c.author, profiles, adopted);
+    const options = fit.includes(c.harness) || c.harness === "" ? fit : [c.harness, ...fit];
+    harness!.replaceChildren(...["", ...options].map((o) => { const opt = el("option", o || "(none)"); opt.value = o; return opt; }));
+    harness!.value = c.harness;
+  };
+  select("author", c.author, ["agents", "adopt"], (v) => {
+    c.author = v;
+    if (v === "adopt") c.adopt ??= { logins: [], branches: [] }; else delete c.adopt;
+    if (!profilesFor(v, profiles, adopted).includes(c.harness)) c.harness = profilesFor(v, profiles, adopted)[0] ?? "";
+    fill();
+  });
   if (c.adopt) {
     text("adopted logins (one a line)", c.adopt.logins.join("\n"), (v) => { c.adopt!.logins = lines(v); }, true);
     text("adopted branches (one a line)", c.adopt.branches.join("\n"), (v) => { c.adopt!.branches = lines(v); }, true);
   }
-  const options = profiles.includes(c.harness) || c.harness === "" ? profiles : [c.harness, ...profiles];
-  select("harness profile (the central list)", c.harness, ["", ...options], (v) => { c.harness = v; });
+  harness = select("harness profile (the central list)", c.harness, [], (v) => { c.harness = v; });
+  fill();
 
   form.append(el("h4", "Conditions (all must hold)"));
   const all = () => c.conditions!.all ?? [];

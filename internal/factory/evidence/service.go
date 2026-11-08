@@ -69,11 +69,14 @@ type Report struct {
 	// The editor's inputs: the policy file as read ("" when absent), its parsed form when it
 	// parses, the factory it must keep naming, the default branch its edit link opens, the central
 	// harness profiles a class may reference, and the guardrails it is validated against.
-	File            string                 `json:"file,omitempty"`
-	Policy          *mergepolicy.File      `json:"policy,omitempty"`
-	Factory         string                 `json:"factory"`
-	DefaultBranch   string                 `json:"defaultBranch"`
-	HarnessProfiles []string               `json:"harnessProfiles"`
+	File            string            `json:"file,omitempty"`
+	Policy          *mergepolicy.File `json:"policy,omitempty"`
+	Factory         string            `json:"factory"`
+	DefaultBranch   string            `json:"defaultBranch"`
+	HarnessProfiles []string          `json:"harnessProfiles"`
+	// AdoptedProfiles are the profiles that run nothing (template none): an adopted class takes
+	// only these, an agents class none of them (mergepolicy.Resolve).
+	AdoptedProfiles []string               `json:"adoptedProfiles"`
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
 }
 
@@ -158,6 +161,12 @@ func (s *Service) read(ctx context.Context, rc *config.Repository, src Source, n
 	}
 	r.File, r.Policy, r.Factory, r.DefaultBranch = string(body), file, s.Cfg.Factory, branch
 	r.HarnessProfiles = slices.Sorted(maps.Keys(s.Cfg.HarnessProfiles))
+	r.AdoptedProfiles = []string{}
+	for _, n := range r.HarnessProfiles {
+		if s.Cfg.HarnessProfiles[n].Template == config.TemplateNone {
+			r.AdoptedProfiles = append(r.AdoptedProfiles, n)
+		}
+	}
 	r.Guardrails = s.Cfg.MergeGuardrails
 	l := Logins{Factory: s.Cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")

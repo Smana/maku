@@ -209,6 +209,31 @@ describe("the policy editor", () => {
     expect(yaml).toContain('harness: "docs-standard"');
     expect(yaml).toContain('logins: ["renovate[bot]"]');
   });
+  it("gives a template a profile its author may take, and declares the required classes unarmed", async () => {
+    const app = document.createElement("div");
+    const r = page();
+    r.report = { ...r.report, harnessProfiles: ["adopted-none", "checked", "plain"], adoptedProfiles: ["adopted-none"],
+      file: "factory: aws-0\n", policy: { factory: "aws-0" } };
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": r }));
+    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
+    const yamlOf = () => (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
+    const edit = () => {
+      const mode = app.querySelector(".editor-form select") as HTMLSelectElement;
+      mode.dispatchEvent(new Event("change"));
+    };
+    pick.value = "template:docs-broad";
+    pick.dispatchEvent(new Event("change"));
+    edit();
+    expect(yamlOf()).toMatch(/  docs-broad:\n(    .*\n)*?    harness: "checked"\n/);
+    expect(yamlOf()).toContain('  docs-links:\n    mode: "off"\n    author: "agents"\n    harness: "checked"\n');
+    expect(yamlOf()).toContain('  revert:\n    mode: "off"\n');
+    const harness = [...app.querySelectorAll(".editor-form select")][2] as HTMLSelectElement;
+    expect([...harness.options].map((o) => o.value)).not.toContain("adopted-none");
+    pick.value = "template:deps-patch";
+    pick.dispatchEvent(new Event("change"));
+    edit();
+    expect(yamlOf()).toMatch(/  deps-patch:\n(    .*\n)*?    harness: "adopted-none"\n/);
+  });
   it("lets a reader see the editor but not check: the broker would refuse it", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
