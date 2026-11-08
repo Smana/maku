@@ -39,6 +39,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/demo"
+	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
@@ -403,6 +404,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return nil
 		}}
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
+	if cfg.PolicyManagement.Promotion { // stage 6: each repository's evidence, through its own App connection
+		apiSrv.Evidence = &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return evidenceSource{c.gh}, true
+		}}
+	}
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
 	redactor, err := redact.New()
 	if err != nil {
@@ -684,4 +694,13 @@ func (p *pinger) tick() (<-chan time.Time, func()) {
 	}
 	t := time.NewTicker(p.every)
 	return t.C, t.Stop
+}
+
+// evidenceSource is a repository's connection as the promotion evidence reads it: the default
+// branch is RepositoryInfo's.
+type evidenceSource struct{ *forge.GitHub }
+
+func (e evidenceSource) DefaultBranch(ctx context.Context) (string, error) {
+	info, err := e.RepositoryInfo(ctx)
+	return info.DefaultBranch, err
 }

@@ -127,6 +127,8 @@ type fakeGitHub struct {
 	now       func() time.Time
 	calls     []string
 	bodies    []string // the POST /graphql bodies, in order
+	// records answers the promotion-evidence searches (records.go) by query and cursor.
+	records func(q string, after any) string
 	// mergeReply: every mergePullRequest answers 200 with it (F-1).
 	mergeReply string
 	open       []string                         // the open pull requests GET /pulls lists (state=open, no head filter)
@@ -326,6 +328,12 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			return
 		}
 		switch {
+		case g.records != nil && strings.Contains(string(b), "search(type: ISSUE"):
+			var in struct{ Variables map[string]any }
+			_ = json.Unmarshal(b, &in)
+			q, _ := in.Variables["q"].(string)
+			_, _ = io.WriteString(w, g.records(q, in.Variables["after"]))
+			return
 		case strings.Contains(string(b), "search(type: ISSUE"):
 			var in struct{ Variables map[string]any }
 			_ = json.Unmarshal(b, &in)

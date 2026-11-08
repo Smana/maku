@@ -8,6 +8,7 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // TemplateNone is the harness of an adopted class: another author's pull requests, no run.
@@ -52,6 +53,18 @@ type MergeGuardrails struct {
 	MaxPatchFiles    int      `json:"maxPatchFiles,omitempty"`
 	MaxModifiedLines int      `json:"maxModifiedLines,omitempty"`
 	MaxPerDay        int      `json:"maxPerDay,omitempty"`
+	// MinPromotionEvidence is the clean shadow decisions a class needs before it may be promoted to
+	// live (MP7): 0 is DefaultMinPromotionEvidence, and less is refused here. A promotion on less
+	// needs an operator's exception, recorded per request, never a lower number here.
+	MinPromotionEvidence int `json:"minPromotionEvidence,omitempty"`
+}
+
+// DefaultMinPromotionEvidence is MP7's twenty: zero bad in twenty bounds the bad rate at 13.9%.
+const DefaultMinPromotionEvidence = 20
+
+// MinPromotion is the clean decisions a promotion needs without an exception.
+func (g MergeGuardrails) MinPromotion() int {
+	return max(g.MinPromotionEvidence, DefaultMinPromotionEvidence)
 }
 
 // PolicyManagement holds the rollout's switches, all off by default (merge policy stages).
@@ -66,6 +79,18 @@ type PolicyManagement struct {
 	// Read last observed it, and records whether the two agree (stage 3). It decides nothing: the
 	// central decision is the one acted on. Needs Read.
 	DualEvaluation bool `json:"dualEvaluation,omitempty"`
+	// Promotion serves the promotion workflow (stage 6): each class's shadow evidence on the
+	// factory API, and the broker's settings pages and promotion records. It changes no class:
+	// a maintainer's own pull request does. The broker reads the same key with this type.
+	Promotion bool `json:"promotion,omitempty"`
+	// Operators are the GitHub logins who approve a promotion below minPromotionEvidence (MP7's
+	// exception). Read by the broker; none approves nothing.
+	Operators []string `json:"operators,omitempty"`
+}
+
+// IsOperator is whether login is one of the operators; GitHub logins are case-insensitive.
+func (pm PolicyManagement) IsOperator(login string) bool {
+	return login != "" && slices.ContainsFunc(pm.Operators, func(o string) bool { return strings.EqualFold(o, login) })
 }
 
 var profileRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
@@ -95,7 +120,15 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 	if pm := c.PolicyManagement; pm.DualEvaluation && !pm.Read {
 		bad("policyManagement.dualEvaluation needs read: it evaluates the policy read observes")
 	}
+	for _, o := range c.PolicyManagement.Operators {
+		if !githubLoginRE.MatchString(o) {
+			bad("policyManagement.operators: %q is not a GitHub login", o)
+		}
+	}
 	g := c.MergeGuardrails
+	if n := g.MinPromotionEvidence; n != 0 && n < DefaultMinPromotionEvidence {
+		bad("mergeGuardrails.minPromotionEvidence %d is below %d (MP7): a weaker promotion is an operator's exception", n, DefaultMinPromotionEvidence)
+	}
 	for _, f := range []struct {
 		key string
 		n   int

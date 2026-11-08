@@ -112,6 +112,9 @@ type Server struct {
 	// Coordination is the multi-repository draft and confirmation flow (v4 MR4, MR5), served only
 	// while coordination.mode is plan or execute; nil or off serves no coordination route.
 	Coordination CoordinationService
+	// Evidence is each repository's promotion evidence (merge policy stage 6), served only while
+	// policyManagement.promotion is on; nil or off serves no policy route.
+	Evidence EvidenceSource
 }
 
 // SlackLinkReader is the broker's self-serve link records: the ZITADEL sub a Slack user linked;
@@ -164,6 +167,10 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("PUT /v1/coordinations/{task}/draft", s.draftCoordination)
 		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
 		mux.HandleFunc("POST /v1/coordinations/{task}/recovery", s.recoverCoordination)
+	}
+	if s.promotionOn() { // stage 6: off lists no policy route, so each is a 404
+		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
+		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
 	}
 	return mux
 }
