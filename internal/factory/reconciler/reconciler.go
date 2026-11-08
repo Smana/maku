@@ -114,6 +114,8 @@ type metrics interface {
 	ClassMismatch(ctx context.Context, predicted, matched string)
 	MergeDecision(ctx context.Context, class, verdict, reason string)
 	PolicyDualDecision(ctx context.Context, repository, class, agreement string)
+	ApprovalGrantsActive(ctx context.Context, repository, class string, n int)
+	ApprovalGrantEvent(ctx context.Context, repository, class, event string)
 	ClassPaused(ctx context.Context, repository, class string, paused bool)
 	Resumed(ctx context.Context, reason string)
 	LoopRun(ctx context.Context, class, end string)
@@ -188,6 +190,9 @@ type Reconciler struct {
 	// policyManagement.dualEvaluation decides each merge decision under a second time, deciding
 	// nothing on it (stage 3). nil: no dual evaluation.
 	Policy func(repository string) (mergepolicy.Snapshot, bool)
+	// Grants is the broker's saved approval grants, which policyManagement.approvalMemory consults
+	// where a live class's requiresApproval subset would ask a human (stage 5). nil: none is read.
+	Grants GrantClient
 	Runs   RunClient
 	// Kind is the runs kind, required: SetupWithManager watches its AgentRuns.
 	Kind    runwatch.Kind

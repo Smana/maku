@@ -876,6 +876,12 @@ type PullRequestRef struct {
 	// Drill: the revert was a maintainer's drill (AM6); the breaker does not count it.
 	// +optional
 	Drill bool `json:"drill,omitempty"`
+	// Grant is the saved approval grant the merger's merge was authorized under, "<id>:<version>"
+	// (merge policy stage 5): a revert of the merge disables it. Empty when no grant was used.
+	// +kubebuilder:validation:Pattern=`^[a-z2-7]{26}:[1-9][0-9]{0,8}$`
+	// +kubebuilder:validation:MaxLength=36
+	// +optional
+	Grant string `json:"grant,omitempty"`
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	Author string `json:"author,omitempty"`

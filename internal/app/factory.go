@@ -273,13 +273,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// v2 D7: a repository is acted on only while its default branch names this factory.
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names(), Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
-	// Stages 1 and 3 (merge policy): observed and compared, then each merge decision decided again
-	// under it; neither decides anything.
+	// Stages 1, 3 and 5 (merge policy): observed and compared, each merge decision decided again
+	// under it, and its approval subset's grants consulted there.
 	var snapshots func(string) (mergepolicy.Snapshot, bool)
 	if cfg.PolicyManagement.Read {
 		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now}
 		fenced.OnFile = w.Observe
-		if cfg.PolicyManagement.DualEvaluation {
+		if cfg.PolicyManagement.DualEvaluation || cfg.PolicyManagement.ApprovalMemory {
 			snapshots = w.Snapshot
 		}
 	}
@@ -311,6 +311,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
 		Trace: sink, Costs: costs}
+	if cfg.PolicyManagement.ApprovalMemory { // stage 5: grants read from the broker, never cached
+		rec.Grants = broker
+	}
 	if cfg.AnyFlux() {
 		// Uncached: the reader serves a few reads per monitor pass, and a cache would start an
 		// informer per Flux kind (and need watch, which the ClusterRole does not grant).

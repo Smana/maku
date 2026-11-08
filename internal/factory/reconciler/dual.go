@@ -62,6 +62,9 @@ func (r *Reconciler) dual(ctx context.Context, t *v1alpha1.Task, in ArmInputs, c
 		return
 	}
 	snap, ok := r.Policy(t.Spec.Repository)
+	if r.grantsOn() && needsGrants(in, snap, ok) { // stage 5: read immediately before the decision
+		in.Grants = r.grantRead(ctx, t, snap.Hash)
+	}
 	repo, agreement := dualOf(central, in, snap, ok)
 	d.Rows.Policy, d.Rows.Dual = shortHash(snap.Hash), agreement
 	class := t.Spec.PredictedClass
@@ -69,7 +72,7 @@ func (r *Reconciler) dual(ctx context.Context, t *v1alpha1.Task, in ArmInputs, c
 	if agreement != dualAgree {
 		r.log().Info("merge decision under the repository policy", "task.id", t.Name, "head", in.PR.HeadSHA, "class", class,
 			"agreement", agreement, "policy", d.Rows.Policy, "central", central.Verdict+":"+central.Reason,
-			"repository", repo.Verdict+":"+repo.Reason)
+			"repository", repo.Verdict+":"+repo.Reason, "grant", repo.Rows.Grant)
 	}
 }
 

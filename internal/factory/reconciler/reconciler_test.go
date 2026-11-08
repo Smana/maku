@@ -329,6 +329,12 @@ func (m *fakeMetrics) MergeDecision(_ context.Context, class, verdict, reason st
 func (m *fakeMetrics) PolicyDualDecision(_ context.Context, _, class, agreement string) {
 	m.add("policy_dual " + class + " " + agreement)
 }
+func (m *fakeMetrics) ApprovalGrantsActive(_ context.Context, _, class string, n int) {
+	m.add(fmt.Sprintf("grants_active %s %d", class, n))
+}
+func (m *fakeMetrics) ApprovalGrantEvent(_ context.Context, _, class, event string) {
+	m.add("grant_event " + class + " " + event)
+}
 func (m *fakeMetrics) ClassPaused(_ context.Context, repository, class string, paused bool) {
 	m.add("class_paused " + repository + " " + class + " " + strconv.FormatBool(paused))
 }
