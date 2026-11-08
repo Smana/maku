@@ -44,6 +44,11 @@ const pairs = (t: Tokens) => [
   ["the room list's notice on the page", t["--destructive-text"], t["--muted"], 4.5],
   ["destructive text on the page (.status-error, .summary-error, .mk-harness_error)", t["--destructive"], t["--muted"], 4.5],
   ["the focus ring on the header", t["--ring"], t["--brand-header"], 3],
+  // The strip (strip.ts): a fact's name, the run's receding parts and the Now line's lead and meta at
+  // 68% of the header's ink; the status pill's words on each tone's 14% tint.
+  ["the strip's fact names and receding parts", mix(t["--brand-header-foreground"], t["--brand-header"], 0.68), t["--brand-header"], 4.5],
+  ...(["--muted-foreground", "--primary", "--warning-border", "--success", "--destructive"] as const).map((tone) =>
+    [`the run status's words on its ${tone} tint`, t["--brand-header-foreground"], mix(t[tone], t["--brand-header"], 0.14), 4.5] as const),
   // The run rail's lanes and ghosts, drawn on a card.
   ["the writer lane on a card", t["--flow-writer"], t["--card"], 3],
   ["the judge lane on a card", t["--flow-judge"], t["--card"], 3],

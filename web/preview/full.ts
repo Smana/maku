@@ -7,6 +7,7 @@
 //   ?session      the session toggle open
 //   ?escalated    the factory's escalated room
 //   ?stress       a long Now line and a 64-hex digest (the phone bugs)
+//   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 // One rail fixture (flow-fixtures.ts), the first of:
 //   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
 //   ?split        a scoper whose handoff split into three parts
@@ -42,11 +43,16 @@ async function run() {
   // ?escalated: the factory's escalated room, as a maintainer meets it: the agent stopped, a
   // /factory retry is what comes next, the factory drives a public room.
   const params = new URLSearchParams(location.search);
-  const status = params.has("escalated")
+  const status0 = params.has("escalated")
     ? { ...summary.status, phase: "Escalated", state: "", run: null, pr: null, budget: { usedTokens: 196_000, limitTokens: 3_000_000 },
       reason: "the agent stopped on an error", next: "a maintainer comments `/factory retry` on the issue to run it again, or pushes to the branch" }
     : summary.status;
-  if (params.has("escalated")) Object.assign(snap, { driver: "system:factory", dataClass: "public" });
+  const running = params.has("running");
+  const status = running
+    ? { ...status0, state: "running", reason: undefined, next: undefined, spend: { usedMicroUSD: 40_000, limitMicroUSD: 5_100_000 },
+      runModel: { run: status0.run!.id, model: "agent-default", effort: "high" } }
+    : status0;
+  if (params.has("escalated") || running) Object.assign(snap, { driver: "system:factory", dataClass: "public" });
   const fx = flowFixture(flowName(params));
   const finished = params.has("finished") || params.has("split");
   const phase = params.has("escalated") ? status.phase : fx.phase;
