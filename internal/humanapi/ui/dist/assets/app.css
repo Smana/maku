@@ -1117,8 +1117,9 @@ main.settings.approval-memory > h1:first-child { display: none; }
 
 /* The Settings entry point in every page header: quiet until hovered, pushed to the header's end. */
 .page-header .settings-link { margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 10px; border-radius: 8px; color: var(--muted, inherit); text-decoration: none; font-size: 14px; white-space: nowrap;
+  padding: 6px 10px; border-radius: 8px; color: var(--brand-header-foreground); text-decoration: none; font-size: 14px; font-weight: 500; white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--brand-header-foreground) 22%, transparent);
   transition: background-color 120ms ease, color 120ms ease; }
-.page-header .settings-link:hover { color: var(--fg, inherit); background: var(--surface-2, rgba(127,127,127,.12)); }
-.page-header .settings-link:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+.page-header .settings-link:hover { background: color-mix(in srgb, var(--brand-header-foreground) 10%, transparent); }
+.page-header .settings-link:focus-visible { outline: 2px solid var(--brand-header-foreground); outline-offset: 2px; }
 .page-header .settings-link + .theme-toggle { margin-left: 8px; }
