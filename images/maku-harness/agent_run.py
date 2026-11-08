@@ -2077,9 +2077,21 @@ LS_REMOTE_S = 15
 REMOTE_URL = "https://github.com/%s.git"
 
 
-def pushed_head(env: dict, start: str) -> str | None:
+def first_head() -> str:
+    """The clone's first HEAD: the oldest entry of its reflog, which a resumed pod keeps with the clone. ""
+    when the reflog cannot be read."""
+    out = (_git("reflog", "--format=%H", "HEAD") or "").split()
+    return out[-1] if out else ""
+
+
+def pushed_head(env: dict, start: str | None) -> str | None:
     """The commit this run pushed: the clone's HEAD, when it moved past start and GitHub's branch is at it; None
-    otherwise. GitHub is asked directly, never the clone's remote-tracking refs, which the agent can write."""
+    otherwise. GitHub is asked directly, never the clone's remote-tracking refs, which the agent can write.
+    start None is the clone's first head: main reads no head before the conversation unless the loop does."""
+    if start is None:
+        start = first_head()
+        if not start:
+            return None
     local = head()
     if not local or local == start:
         return None
@@ -2093,7 +2105,7 @@ def pushed_head(env: dict, start: str) -> str | None:
     return local if remote == local else None
 
 
-def report_head(env: dict, steps, notes, start: str, remote=pushed_head, sleep=time.sleep) -> str | None:
+def report_head(env: dict, steps, notes, start: str | None, remote=pushed_head, sleep=time.sleep) -> str | None:
     """A finished implementer run's handoff of its pushed head, when the agent made none that the broker took
     (steps.handed_off). Retried once past the broker's one call a second. Best effort: returns the commit
     reported, or None."""
@@ -2306,7 +2318,6 @@ def main() -> int:
         state = loop_policy.State.load(LOOP_STATE, head(), resumed=resumed) if policy else None
         if state:
             save_state(state, LOOP_STATE)
-        start = state.start if state else head()  # report_head's: a head this run did not move is not its to report
         cid = http("POST", "/api/conversations", request)["id"]
         notes = ProgressNotes(env["MCP_URL"], env.get("ROLE") or "agent", resumed,
                               start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
@@ -2340,7 +2351,7 @@ def main() -> int:
                 final_checks(env, decl, notes, child_spans(provider, span) if decl else None, started)
             except Exception as exc:  # noqa: BLE001 -- the checks never fail a finished run
                 print("agent-run: final checks failed: %s" % exc, file=sys.stderr, flush=True)
-            report_head(env, steps, notes, start)
+            report_head(env, steps, notes, state.start if state else None)  # None: the clone's first head
         if decl and (ledger := checks_ledger()):
             print(ledger, flush=True)
         if search:
