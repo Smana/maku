@@ -948,3 +948,11 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-coordination-restricted { margin: 0; color: var(--muted-foreground); font-style: italic; }
 .rail-coordination-act { justify-self: start; }
 .rail-coordination-status:empty { display: none; }
+
+/* Approval memory (/settings/approval-memory): one card per saved grant, its predicate as code. */
+.grants-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.grants { list-style: none; padding: 0; display: grid; gap: 8px; }
+.grant { border: 1px solid var(--border); border-radius: var(--radius-row); padding: 10px 12px; background: var(--card); }
+.grant-predicate { font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; margin: 6px 0; }
+.grant-facts, .grants-note { color: var(--muted-foreground); font-size: 13px; }
+.grant-actions { display: flex; gap: 6px; margin-top: 6px; }
