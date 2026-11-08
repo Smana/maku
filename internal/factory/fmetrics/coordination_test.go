@@ -3,6 +3,7 @@
 package fmetrics
 
 import (
+	"fmt"
 	"maps"
 	"regexp"
 	"slices"
@@ -61,12 +62,12 @@ func labelSets(body string) (keys map[string][]string, values []string) {
 	return keys, values
 }
 
-// v4 observability: exactly the seven maku_factory_coordination_* series, each with its exact label
+// v4 observability: exactly the eight maku_factory_coordination_* series, each with its exact label
 // set: a configured repository and bounded outcome/class/purpose/result/reason/kind values, never a
 // family, child or artifact id, plan or acceptance text, a viewer or a channel.
 func TestCoordinationSeriesMetricNamesAndLabels(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(
-		coordinationParent("p1", "Smana/a", v1alpha1.PhaseCoordinating, true),
+		withRecovery(coordinationParent("p1", "Smana/a", v1alpha1.PhaseCoordinating, true), time.Hour),
 		coordinationParent("p2", "Smana/a", v1alpha1.PhaseCoordinating, true),
 		coordinationParent("p3", "Smana/a", v1alpha1.PhaseCoordinating, false), // a draft no one confirmed allocates nothing
 		coordinationParent("p4", "Smana/a", v1alpha1.PhaseDone, true),          // an ended family holds nothing
@@ -105,6 +106,7 @@ func TestCoordinationSeriesMetricNamesAndLabels(t *testing.T) {
 		"maku_factory_coordination_integration_runs_total":   {"purpose", "repository", "result"},
 		"maku_factory_coordination_wait_seconds":             {"reason", "repository"},
 		"maku_factory_coordination_allocated_micro_usd":      {"kind", "repository"},
+		"maku_factory_coordination_recovery_age_seconds":     {"repository"},
 	}
 	if !slices.Equal(slices.Sorted(maps.Keys(keys)), slices.Sorted(maps.Keys(want))) {
 		t.Fatalf("coordination series %v, want exactly %v", slices.Sorted(maps.Keys(keys)), slices.Sorted(maps.Keys(want)))
@@ -151,5 +153,52 @@ func TestCoordinationMetricLabelsAreBounded(t *testing.T) {
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s\n%s", want, body)
 		}
+	}
+}
+
+// withRecovery gives t's family a standing recovery proposal made age ago.
+func withRecovery(t *v1alpha1.Task, age time.Duration) *v1alpha1.Task {
+	t.Status.Coordination.Recovery = &v1alpha1.RecoveryProposal{Code: "retry_integration", Reason: "integration_failed",
+		PlanVersion: 2, CreatedAt: metav1.NewTime(time.Now().Add(-age))}
+	return t
+}
+
+// AgentFactoryCoordinationRecoveryRequired's input: per primary, the age of the oldest recovery
+// proposal standing on a live parent. An ended parent's proposal, a parent with none and a
+// non-coordination Task serve nothing; a primary with no standing proposal has no series.
+func TestCoordinationRecoveryAgeIsTheOldestStanding(t *testing.T) {
+	plain := tk("7buqdlot", "Implementing")
+	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(
+		withRecovery(coordinationParent("p1", "Smana/a", v1alpha1.PhaseCoordinating, true), 20*time.Minute),
+		withRecovery(coordinationParent("p2", "Smana/a", v1alpha1.PhaseCoordinating, false), 2*time.Hour),
+		withRecovery(coordinationParent("p3", "Smana/a", v1alpha1.PhaseDone, true), 48*time.Hour),
+		withRecovery(coordinationParent("p4", "Smana/c", v1alpha1.PhaseDone, true), time.Hour),
+		coordinationParent("p5", "Smana/b", v1alpha1.PhaseCoordinating, true),
+		plain,
+	).Build()
+	s, scrape := rig(t, c, func() bool { return true })
+	s.ListRepositories("Smana/a", "Smana/b", "Smana/c")
+	body := scrape()
+	re := regexp.MustCompile(`(?m)^maku_factory_coordination_recovery_age_seconds\{repository="([^"]+)"\} (\S+)$`)
+	got := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(body, -1) {
+		got[m[1]] = m[2]
+	}
+	if len(got) != 1 {
+		t.Fatalf("recovery age series %v, want Smana/a alone:\n%s", got, body)
+	}
+	var age float64
+	if _, err := fmt.Sscan(got["Smana/a"], &age); err != nil || age < 7200 || age > 7300 {
+		t.Fatalf("Smana/a's recovery age %q, want the oldest live proposal's ~7200 s", got["Smana/a"])
+	}
+}
+
+// Off the leader, nothing: the gauge reads the tasks as the other collected series do.
+func TestCoordinationRecoveryAgeIsLeaderOnly(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(
+		withRecovery(coordinationParent("p1", "Smana/a", v1alpha1.PhaseCoordinating, true), time.Hour)).Build()
+	_, scrape := rig(t, c, func() bool { return false })
+	if body := scrape(); strings.Contains(body, "maku_factory_coordination_recovery_age_seconds") {
+		t.Fatalf("a follower served the gauge:\n%s", body)
 	}
 }

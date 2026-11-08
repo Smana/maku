@@ -283,7 +283,7 @@ A label value outside its known set is recorded as `other`; `repository` takes o
 
 ### Coordination
 
-[Multi-repository coordination](factory.md#multi-repository-coordination)'s seven series. With
+[Multi-repository coordination](factory.md#multi-repository-coordination)'s eight series. With
 `coordination.mode: off` none is recorded, so none is served; under `plan` only what drafts and
 confirmations do: plan versions, dropped children, authorization waits and allocations. The Go instruments keep the `agent_factory_` prefix like every factory instrument; the
 exporter serves them as below.
@@ -297,6 +297,7 @@ exporter serves them as below.
 | `maku_factory_coordination_integration_runs_total` | counter | `repository`, `purpose`, `result` | Integration attempts on the primary, at their end: `passed`, `checks_failed` (a typed failure or no result); and `infrastructure_failed` once when its run was lost and the Task escalated (an attempt resumed after that is counted again at its end) |
 | `maku_factory_coordination_wait_seconds` | histogram | `repository`, `reason` | Ended waits: `authorization` (the version's acceptance to its last confirmation), `artifact` (a dependent's earliest producer admitted to the dependent admitted), `integration` (an integration Task created to its result), `recovery` (a proposal made to replaced or cleared); buckets 1 min, 5 min, 15 min, 1 h, 4 h, 1 d, 3 d, 7 d |
 | `maku_factory_coordination_allocated_micro_usd` | gauge | `repository`, `kind` | Micro-USD the live families whose current plan the parent confirmed allocate, summed by primary: `planning`, `child`, `integration` (`maxRuns × runMicroUSD`); leader only, read from the cache at scrape time |
+| `maku_factory_coordination_recovery_age_seconds` | gauge | `repository` | Seconds the oldest recovery proposal standing on a live parent has stood, by primary; no series while none stands. A proposal stands until it is replaced or cleared. Leader only, read from the cache at scrape time; `AgentFactoryCoordinationRecoveryRequired` fires on it past 15 minutes |
 
 `repository` takes only configured repositories, every other label a closed set; anything else is
 `other`. Family and child ids, artifact names, plan and acceptance text, viewers and channels are
