@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { actionsFor, fetchGrants, type Grant, mountApprovalMemory, moveGrant, predicate } from "../src/approval-memory";
+import { actionsFor, fetchGrants, type Grant, history, mountApprovalMemory, moveGrant, predicate, type Proposal,
+  proposalView, ruleFromQuery } from "../src/approval-memory";
 
 const grant: Grant = {
   id: "aaaaaaaaaaaaaaaaaaaaaaaaaa", version: 2, repository: "smana/cloud-native-ref", class: "docs-broad",
@@ -65,8 +66,8 @@ describe("approval memory", () => {
     expect(rows.length).toBe(2);
     expect(root.querySelector("img")).toBeNull();
     expect(rows[1].textContent).toContain("<img src=x onerror=alert(1)>");
-    expect([...rows[0].querySelectorAll("button")].map((b) => b.dataset.act)).toEqual(["revoke", "renew"]);
-    expect([...rows[1].querySelectorAll("button")].map((b) => b.dataset.act)).toEqual(["reconfirm", "revoke"]);
+    expect([...rows[0].querySelectorAll("button")].map((b) => b.dataset.act)).toEqual(["revoke", "renew", "history"]);
+    expect([...rows[1].querySelectorAll("button")].map((b) => b.dataset.act)).toEqual(["reconfirm", "revoke", "history"]);
     expect(root.querySelector<HTMLAnchorElement>("a")!.getAttribute("href")).toBe("/api/approval-memory/export");
     vi.stubGlobal("confirm", () => false);
     rows[0].querySelector<HTMLButtonElement>("button[data-act=revoke]")!.click();
@@ -90,5 +91,83 @@ describe("approval memory", () => {
     mountApprovalMemory(down, fake({ "/api/approval-memory/grants": { status: 503, body: {} } }));
     await flush();
     expect(down.querySelector(".grants-note")!.textContent).toBe("The grants are unavailable: 503.");
+  });
+  it("splits a grant's audit into its usage and its outcome", () => {
+    const box = history({ grant, outside: [], events: [
+      { event: "created", version: 1, actor: "smana", at: "2026-11-01T10:00:00Z" },
+      { event: "used", version: 1, actor: "system:factory", pr: 51, head: "0123456789abcdef", at: "2026-11-02T10:00:00Z" },
+      { event: "disabled", version: 1, actor: "system:factory", reason: "main_red", pr: 51, at: "2026-11-03T10:00:00Z" },
+    ] });
+    const [usage, outcome] = [...box.querySelectorAll("ul")].map((u) => u.textContent);
+    expect(usage).toContain("used (v1) by system:factory on #51 at 0123456");
+    expect(usage).not.toContain("disabled");
+    expect(outcome).toContain("disabled (v1) by system:factory on #51: main_red");
+    expect(history({ grant, outside: [], events: [] }).textContent).toContain("Never used.");
+  });
+  it("opens a grant's history on demand", async () => {
+    const get = fake({
+      [`/api/approval-memory/grants/${grant.id}`]: { status: 200, body: { grant, outside: [], events: [
+        { event: "used", version: 2, actor: "system:factory", pr: 7, at: "2026-11-02T10:00:00Z" }] } },
+      "/api/approval-memory/grants": { status: 200, body: { grants: [grant] } },
+    });
+    const root = document.createElement("div");
+    mountApprovalMemory(root, get);
+    await flush();
+    root.querySelector<HTMLButtonElement>("button[data-act=history]")!.click();
+    await flush();
+    await flush();
+    expect(root.querySelector(".grant-history")!.textContent).toContain("used (v2) by system:factory on #7");
+  });
+  it("prefills merge and create rule from a decision's link", () => {
+    expect(ruleFromQuery("?repository=smana/x&class=docs-broad&pr=12&policy=0123456789ab&file=a.md&file=b.md")).toEqual({
+      repository: "smana/x", class: "docs-broad", pullRequest: 12, policyHash: "0123456789ab", caughtFiles: ["a.md", "b.md"] });
+    expect(ruleFromQuery("?pr=-3").pullRequest).toBe(0);
+  });
+  it("shows the exact rule, the future pull requests it matches, what stays outside, expiry, revocation and merge once", () => {
+    const p: Proposal = { predicate: { repository: "smana/x", class: "docs-broad", files: ["docs/a\\.md"], policyHash: "0123456789ab" },
+      matches: "a future pull request of smana/x …", outside: ["the breaker and the daily caps"], expiresAt: "2027-02-06T00:00:00Z",
+      revoke: "POST /api/approval-memory/grants/<id>/revoke, once saved", mergeOnce: "approve the pull request's head on GitHub" };
+    const t = proposalView(p).textContent!;
+    for (const want of ["every caught file matches docs/a\\.md", "Future pull requests it would match", "a future pull request of smana/x",
+      "the breaker and the daily caps", "Expires 2027-02-06", "/revoke, once saved", "Merge once instead: approve"]) expect(t).toContain(want);
+  });
+  it("previews before it saves, then saves the previewed rule and lists it", async () => {
+    const calls: Call[] = [];
+    const prop = { predicate: { repository: "smana/x", class: "docs-broad", files: ["a\\.md"], policyHash: "0123456789ab" },
+      matches: "m", outside: ["o"], expiresAt: "2027-02-06T00:00:00Z", revoke: "r", mergeOnce: "approve" };
+    const get = fake({
+      "/api/approval-memory/preview": { status: 200, body: prop },
+      "/api/approval-memory/grants?": { status: 200, body: { grants: [] } },
+      "/api/approval-memory/grants": { status: 201, body: { ...prop, grant } },
+    }, calls);
+    const root = document.createElement("div");
+    mountApprovalMemory(root, get);
+    await flush();
+    const set = (name: string, v: string) => { root.querySelector<HTMLInputElement>(`[name=${name}]`)!.value = v; };
+    set("repository", "Smana/X"); set("class", "docs-broad"); set("pr", "12"); set("policy", "0123456789ab"); set("files", "a.md\n\n");
+    const create = root.querySelector<HTMLButtonElement>("button[data-act=create]")!;
+    expect(create.hidden).toBe(true);
+    root.querySelector<HTMLButtonElement>("button[data-act=preview]")!.click();
+    await flush();
+    const preview = calls.find((c) => c.path === "/api/approval-memory/preview")!;
+    expect(JSON.parse(String(preview.init!.body))).toEqual({ repository: "smana/x", class: "docs-broad", policyHash: "0123456789ab",
+      pullRequest: 12, caughtFiles: ["a.md"], lifetimeDays: 90 });
+    expect(root.querySelector(".rule-preview")!.textContent).toContain("before it is saved");
+    expect(create.hidden).toBe(false);
+    create.click();
+    await flush();
+    await flush();
+    expect(calls.some((c) => c.path === "/api/approval-memory/grants" && c.init?.method === "POST")).toBe(true);
+    expect(root.querySelector(".rule-preview")!.textContent).toContain("Rule saved: aaaaaaaa");
+  });
+  it("says why a preview was refused, and offers no save", async () => {
+    const root = document.createElement("div");
+    mountApprovalMemory(root, fake({ "/api/approval-memory/preview": { status: 403, body: { error: "repository_permission" } },
+      "/api/approval-memory/grants": { status: 200, body: { grants: [] } } }));
+    await flush();
+    root.querySelector<HTMLButtonElement>("button[data-act=preview]")!.click();
+    await flush();
+    expect(root.querySelector(".rule-out")!.textContent).toBe("No preview: repository_permission");
+    expect(root.querySelector<HTMLButtonElement>("button[data-act=create]")!.hidden).toBe(true);
   });
 });
