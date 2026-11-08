@@ -462,6 +462,24 @@ attempts. `worktree` is the child id until `maku` fills its path. A caller missi
 the 404 an unreadable room gets; a family not at one valid commit per child is a 409
 `checkout_not_ready`.
 
+### The policy routes
+
+Served only with `policyManagement.promotion` and a `factoryURL` ([promotion](factory.md#promotion),
+merge policy stage 6); off, each path below is the mux's `404`, byte for byte. Human callers only
+(`403 human_only` for a machine or sponsored token). The evidence is the factory's, read with the
+caller's own token; every write asks GitHub again who the caller is. Bodies are at most 8 KiB,
+unknown fields refused (`400 bad_json`).
+
+| Method and path | Who | Does |
+|---|---|---|
+| `GET /settings`, `/settings/merge-policies`, `/settings/merge-policies/{owner}/{name}`, `/settings/evidence` | Any member | The UI, on a direct load |
+| `GET /api/policy/repositories` | Any member | `{repositories}`: the configured repositories the caller reads on GitHub |
+| `GET /api/policy/repositories/{owner}/{name}` | A reader of it | `{report, promotions, exceptions, you}`: each class's mode, source, evidence and proposal; the newest 100 records of each kind; the caller's `login`, `maintainer` and `operator`. `404` for a repository the caller cannot read or the factory does not list |
+| `POST /api/policy/promotions` | A maintainer (write) | `{repository, class, exceptionId?}` → `201 {promotion, proposal}`. `409 not_promotable` (not a shadow class of the repository's file), `not_eligible`, `promotion_open`, `exception_unusable`; `404 no_such_class` |
+| `POST /api/policy/promotions/{id}` | A maintainer | `{state: pr_opened \| merged \| abandoned, pullRequest?}`: `pr_opened` names the pull request; `409 already_moved` |
+| `POST /api/policy/exceptions` | A maintainer | `{repository, class, minimum, justification}` → `201`: `minimum` below the configured one, a justification of 20 to 2,000 characters |
+| `POST /api/policy/exceptions/{id}` | An operator | `{decision: approved \| refused, note?}`: once; an approval lasts 14 days. `403 not_an_operator` |
+
 ### `GET /api/needs`
 
 What needs the caller, across every room they may read: one list, one order. `needs/v1` is one
@@ -999,6 +1017,16 @@ or internal principal: `admitted`, `duplicate`, or the code of any refusal after
 `bad_*`, `max_cost_*`, `repository_*`, `invalid_draft`, the caps and the `503`s); any other value is
 `other`. The `unauthenticated`, `not_permitted` and `sponsored_only` refusals come before the
 principal is known and are **not counted**.
+
+### `GET /v1/policy/evidence` and `GET /v1/policy/repositories`
+
+Served on the same port only with `policyManagement.promotion` (otherwise `404`), for a human token
+(`403 human_only` otherwise). `GET /v1/policy/evidence?repository=owner/name` answers the
+repository's promotion evidence, for a caller who reads it on GitHub: `{repository, minimum,
+policyError?, classes: [{class, source, mode, evidence, proposal?, unproposed?}], readAt}`. A
+repository the caller cannot read, or the config does not list, is `404 not_found` alike;
+`503 evidence_unavailable` when GitHub cannot be read whole. `GET /v1/policy/repositories` answers
+`{repositories}`, those of the config the caller reads.
 
 ## Webhooks
 

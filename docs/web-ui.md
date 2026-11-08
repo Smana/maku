@@ -180,6 +180,25 @@ Pick **fork here** on a message or handoff to branch the room at that point.
 | Limits | A prefix over 5,000 events or 32 MiB is refused (`too_large`): fork from an earlier message. Three forks at once, then one a minute |
 | Sealed source | Only its owner or an admin |
 
+## Settings
+
+With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; off, they are a
+`404`. Nothing links to them from the room list yet: open the address.
+
+| Page | Shows |
+|---|---|
+| `/settings/merge-policies` | The configured repositories you read on GitHub |
+| `/settings/merge-policies/<owner>/<name>` | Each class: mode and where it is declared, the [promotion evidence](factory.md#promotion) in one line, reviewer models, the 29/46/61 ladder, eligibility; the promotion requests and exceptions |
+| `/settings/evidence` | Every class of every repository you read, in one table |
+
+| Who | May |
+|---|---|
+| A reader of the repository | Read everything above |
+| A maintainer (write on GitHub) | **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification |
+| An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
+
+The broker checks each of these on every request; a hidden button is only a convenience.
+
 ## When something fails
 
 A refused action shows its reason in the dock. Source: `web/src/controls.ts`.
