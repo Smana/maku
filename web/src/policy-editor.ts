@@ -7,6 +7,8 @@
 // policy and simulates it, and the answer is the file to submit as the maintainer's own pull
 // request. factory: is never in the form.
 
+import templateFile from "./policy-templates.json";
+
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
   mode: string; author: string; adopt?: { logins: string[]; branches: string[] }; harness: string;
@@ -26,28 +28,11 @@ export interface Preview {
 }
 export interface Outcome { verdict: string; reason?: string }
 
-// deps is a Renovate lane: a semver shape needs modifyOnly (config.validateClass), and the caps,
-// release age and follow-up window are the spec's.
-function deps(shape: string, perDay: number): ClassPolicy {
-  return { mode: "shadow", author: "adopt", adopt: { logins: ["renovate[bot]"], branches: ["^renovate/"] }, harness: "",
-    conditions: { all: [{ diffShape: shape }, { modifyOnly: true }, { maxPatchFiles: 3 }, { maxModifiedLines: 10 },
-      { releaseAgeCheck: "renovate/stability-days" }] },
-    ...(perDay ? { limits: { maxPerDay: perDay } } : {}), monitor: { followUpWindow: "168h" } };
-}
-
-// The spec's class templates, all in shadow: the editor's starting points.
-export const templates: Record<string, () => ClassPolicy> = {
-  "docs-broad": () => ({ mode: "shadow", author: "agents", harness: "", conditions: {
-    all: [{ allowedFiles: ["^docs/.+\\.md$", "^README\\.md$"] }, { maxPatchFiles: 10 }, { maxModifiedLines: 200 },
-      { holdoutChecks: ["Check the documentation links 🔗"] }],
-    deny: [{ protectedFiles: ["^docs/superpowers/.+$", "^docs/specs/.+$", "^docs/security/.+$"] }] },
-    requiresApproval: [{ changedFiles: ["^docs/architecture/.+$"] }], limits: { maxPerDay: 2 }, monitor: { followUpWindow: "168h" } }),
-  "deps-patch": () => deps("semver-patch", 2),
-  // semver-minor is shadow only (M2): the template is for evidence, never promoted.
-  "deps-minor": () => deps("semver-minor", 0),
-  "generated-files": () => ({ mode: "shadow", author: "agents", harness: "", conditions: {
-    all: [{ allowedFiles: ["^gen/.+$"] }, { holdoutChecks: ["Regenerate and compare"] }, { modifyOnly: true }] } }),
-};
+// The spec's class templates, all in shadow: the editor's starting points. They live in a JSON file
+// so the factory's own check runs on them (mergepolicy.TestEveryEditorTemplatePassesCheck): a semver
+// shape needs modifyOnly, and semver-minor stays shadow only (M2).
+export const templates: Record<string, () => ClassPolicy> = Object.fromEntries(
+  Object.entries(templateFile as Record<string, ClassPolicy>).map(([k, v]) => [k, () => structuredClone(v)]));
 
 // profilesFor are the central profiles a class of author may reference: an adopted class only a
 // profile that runs nothing (template none), an agents class only one that runs. adopted unknown
