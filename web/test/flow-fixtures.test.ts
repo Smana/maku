@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detail, ghostsAfter, terminal } from "../src/flow";
+import { ghostsAfter, modelsOf, terminal } from "../src/flow";
 import { flowFixture, flowName, type FlowName } from "../preview/flow-fixtures";
 
 const names: FlowName[] = ["default", "finished", "split", "part"];
@@ -21,9 +21,9 @@ describe("flow fixtures", () => {
     expect(flow.ghosts).toEqual(["reviewer"]);
     expect(flow.milestones).toBeUndefined();
   });
-  it("default: the implementer's step shows its second model", () => {
+  it("default: the implementer's step names both models it was served", () => {
     const n = flowFixture("default").flow.nodes.find((x) => x.persona === "implementer")!;
-    expect(detail(n, Date.parse("2026-10-04T14:00:00Z"))).toMatch(/glm-5\.3 \+1$/);
+    expect(modelsOf(n).served).toEqual(["claude-haiku-4.5", "glm-5.3"]);
   });
   it("finished: every run ended, a terminal phase, milestones with rising seqs", () => {
     const { flow, phase } = flowFixture("finished");

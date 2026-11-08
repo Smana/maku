@@ -7,7 +7,7 @@
 import type { RoomEvent } from "./conn";
 import { idTail } from "./chat";
 import { el } from "./controls";
-import { chip, detail, ghostMerge, isLive, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
+import { chip, detail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
 import { replay } from "./replay";
 import type { Flow, FlowNode } from "./summary";
@@ -37,6 +37,12 @@ export interface Rail {
 
 // rows() never folds a one-node round, so a path can run past this.
 const maxRows = 8;
+
+// The card keeps this far from the window's edges, and this far from its node.
+const edgeGap = 8;
+const cardGap = 4;
+// How long a pointer has to cross that gap.
+const crossMs = 150;
 
 // A room id is a C2 id; nothing else reaches an href.
 const roomId = /^[a-z2-7]{8}$/;
@@ -155,21 +161,55 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     card.replaceChildren(...lines);
   }
 
+  // The card is fixed to the viewport beside its button, outside the rail's scroll box, which would
+  // clip it: below the button, or above when more room is there, its height capped to that room.
+  // The room is the window less the pinned header and dock (room.ts sets their heights): the sticky
+  // rail is a stacking context under both, so a card reaching them would slide beneath.
+  function place(b: HTMLElement): void {
+    const r = b.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const cs = getComputedStyle(card);
+    // The drawer (railpane.ts: .open) is fixed above both, so it keeps the whole window.
+    const inset = (v: string) => root.classList.contains("open") ? 0 : parseFloat(cs.getPropertyValue(v)) || 0;
+    const width = Math.min(Math.max(r.width, 280), vw - 2 * edgeGap);
+    const below = vh - inset("--dock-h") - r.bottom - cardGap - edgeGap;
+    const above = r.top - inset("--header-h") - cardGap - edgeGap;
+    card.style.width = `${width}px`;
+    card.style.left = `${Math.max(edgeGap, Math.min(r.left, vw - width - edgeGap))}px`;
+    card.style.maxHeight = "none";
+    const up = card.scrollHeight > below && above > below;
+    card.dataset.side = up ? "above" : "below";
+    card.style.top = up ? "" : `${r.bottom + cardGap}px`;
+    card.style.bottom = up ? `${vh - r.top + cardGap}px` : "";
+    card.style.maxHeight = `${Math.max(up ? above : below, 0)}px`;
+  }
+
+  let leaving: ReturnType<typeof setTimeout> | undefined;
+
   function showCard(run: string): void {
+    clearTimeout(leaving);
     const n = nodeOf(run);
-    const li = buttons.get(run)?.parentElement;
-    if (!n || !li) return;
+    const b = buttons.get(run);
+    if (!n || !b) return;
     carded = run;
     fillCard(n);
-    li.append(card);
     card.hidden = false;
+    place(b);
   }
 
   function hideCard(): void {
+    clearTimeout(leaving);
     carded = undefined;
     card.hidden = true;
-    root.insertBefore(card, announcer);
   }
+  card.onmouseenter = () => clearTimeout(leaving);
+  card.onmouseleave = (e) => { if (!carded || e.relatedTarget !== buttons.get(carded)) hideCard(); };
+  // A fixed card follows its node as the rail or the page scrolls (focus scrolls the rail too).
+  const follow = (e: Event) => {
+    const b = carded && buttons.get(carded);
+    if (b && e.target !== card) place(b);
+  };
+  addEventListener("scroll", follow, { capture: true, passive: true });
 
   function nodeItem(n: FlowNode): HTMLLIElement {
     const li = el("li", { className: "rail-node" });
@@ -188,11 +228,31 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     const age = el("span", { className: "rail-detail", textContent: detail(n, clock) });
     if (isLive(n)) ages.set(n.run, age);
     b.append(line, age);
-    b.onclick = () => h.select(n.run);
+    const m = modelsOf(n);
+    if (m.served.length || m.asked) {
+      const models = el("span", { className: "rail-models" });
+      models.append(...m.served.map((x) => el("span", { className: "rail-model", textContent: x })));
+      if (m.asked) {
+        const asked = el("span", { className: "rail-asked", textContent: m.asked });
+        asked.title = `asked for ${m.asked}`;
+        models.append(asked);
+      }
+      b.append(models);
+    }
+    // On touch there is no hover: the first tap opens the card, a tap on its open card selects.
+    // Read at pointerdown: the tap's focus opens the card before its click arrives.
+    let tapToOpen = false;
+    b.onpointerdown = (e) => { tapToOpen = (e as PointerEvent).pointerType === "touch" && carded !== n.run; };
+    b.onclick = () => {
+      if (tapToOpen) showCard(n.run);
+      else h.select(n.run);
+      tapToOpen = false;
+    };
     b.onfocus = () => showCard(n.run);
     b.onmouseenter = () => showCard(n.run);
     b.onblur = hideCard;
-    b.onmouseleave = hideCard;
+    // A pointer crossing the gap into the card (to scroll it) keeps it open.
+    b.onmouseleave = (e) => { if (e.relatedTarget !== card) leaving = setTimeout(hideCard, crossMs); };
     b.onkeydown = (e) => { if (e.key === "Escape") hideCard(); };
     buttons.set(n.run, b);
     li.append(b);
@@ -426,6 +486,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       applyMarks();
     },
     dispose() {
+      removeEventListener("scroll", follow, { capture: true });
       running?.stop();
       running = undefined;
       held = undefined;

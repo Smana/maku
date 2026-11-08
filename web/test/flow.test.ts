@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chip, detail, ghostMerge, ghostsAfter, isLive, parts, personaLabel, rows, tone } from "../src/flow";
+import { chip, detail, ghostMerge, modelsOf, ghostsAfter, isLive, parts, personaLabel, rows, tone } from "../src/flow";
 import type { Flow, FlowNode } from "../src/summary";
 
 const node = (o: Partial<FlowNode> = {}): FlowNode => ({
@@ -43,21 +43,26 @@ describe("isLive", () => {
 
 describe("detail", () => {
   const now = Date.parse("2026-10-08T11:00:00Z");
-  it("joins duration, cost and model", () =>
-    expect(detail(node({ microUSD: 820000, model: "glm-5.3" }), now)).toBe("14 m · $0.82 · glm-5.3"));
-  it("shows one model and counts the others", () => {
-    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"] }), now)).toBe("14 m · $0.82 · glm-5.3 +1");
-    expect(detail(node({ model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 m · glm-5.3");
-    expect(detail(node({ models: ["a", "b", "c"] }), now)).toBe("14 m · a +2");
-    expect(detail(node({ model: "asked", models: ["a", "b"] }), now)).toBe("14 m · asked +2");
-  });
-  it("leaves a missing part out with its dot", () => {
-    expect(detail(node({ model: "glm-5.3" }), now)).toBe("14 m · glm-5.3");
-    expect(detail(node({ startedAt: undefined, microUSD: 10000 }), now)).toBe("$0.01");
-  });
+  it("joins duration and cost; the models have their own line", () =>
+    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 m · $0.82"));
+  it("leaves a missing part out with its dot", () =>
+    expect(detail(node({ startedAt: undefined, microUSD: 10000 }), now)).toBe("$0.01"));
   it("counts a live run up to now", () => expect(detail(node({ endedAt: undefined }), now)).toBe("60 m"));
   it("a run over with no end time has no duration, rather than one that grows", () =>
-    expect(detail(node({ endedAt: undefined, outcome: "ended", model: "glm-5.3" }), now)).toBe("glm-5.3"));
+    expect(detail(node({ endedAt: undefined, outcome: "ended", microUSD: 10000 }), now)).toBe("$0.01"));
+});
+
+// The served models lead; the alias asked for is secondary, and only when no served model is it.
+describe("modelsOf", () => {
+  it.each<[string, Partial<FlowNode>, { served: string[]; asked?: string }]>([
+    ["one served model", { models: ["glm-5.3"] }, { served: ["glm-5.3"] }],
+    ["the alias equal to the served model", { model: "glm-5.3", models: ["glm-5.3"] }, { served: ["glm-5.3"] }],
+    ["an alias served by another model", { model: "agent-default", models: ["glm-5.3"] }, { served: ["glm-5.3"], asked: "agent-default" }],
+    ["several models, every one", { model: "agent-default", models: ["glm-5.3", "claude-haiku-4.5"] }, { served: ["glm-5.3", "claude-haiku-4.5"], asked: "agent-default" }],
+    ["the alias among several", { model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"] }, { served: ["claude-haiku-4.5", "glm-5.3"] }],
+    ["nothing served yet", { model: "agent-default" }, { served: [], asked: "agent-default" }],
+    ["no model at all", {}, { served: [] }],
+  ])("%s", (_n, o, want) => expect(modelsOf(node(o))).toEqual(want));
 });
 
 describe("rows", () => {

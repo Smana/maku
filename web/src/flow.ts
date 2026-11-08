@@ -46,7 +46,7 @@ function duration(ms: number): string {
   return `${Math.max(0, Math.round(ms / 1000))} s`;
 }
 
-// detail is the node's duration, cost and served model; a part the log lacks is left out.
+// detail is the node's duration and cost; a part the log lacks is left out. Its models are modelsOf's.
 export function detail(n: FlowNode, now: number): string {
   const parts: string[] = [];
   const start = n.startedAt ? Date.parse(n.startedAt) : NaN;
@@ -55,12 +55,15 @@ export function detail(n: FlowNode, now: number): string {
     if (!Number.isNaN(end)) parts.push(duration(end - start));
   }
   if (n.microUSD) parts.push(`$${(n.microUSD / 1e6).toFixed(2)}`);
-  const shown = n.model ?? n.models?.[0];
-  if (shown) {
-    const more = (n.models ?? []).filter((m) => m !== shown).length;
-    parts.push(more ? `${shown} +${more}` : shown);
-  }
   return parts.join(" · ");
+}
+
+// modelsOf is what a node ran on: every model served (provenance.servedModels), then the alias its
+// claim asked for when no served model is that alias. A tier alias such as agent-default says
+// nothing about the model that answered, so it never stands in for one.
+export function modelsOf(n: FlowNode): { served: string[]; asked?: string } {
+  const served = n.models ?? [];
+  return n.model && !served.includes(n.model) ? { served, asked: n.model } : { served };
 }
 
 export type Row = { node: FlowNode } | { round: number; nodes: FlowNode[] };

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { RoomEvent } from "../src/conn";
 import { mountRail } from "../src/rail";
@@ -166,11 +168,12 @@ describe("rail", () => {
     expect(nodeOf(rail, "r-s").querySelector("button")!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("no style attribute", () => {
+  // The CSP refuses a style attribute in markup; the card's place is set through the CSSOM.
+  it("no style attribute but the card's CSSOM place", () => {
     const { rail } = mount();
     rail.set(flow, "AwaitingCI", now);
     nodeOf(rail, "r-i").querySelector("button")!.focus();
-    expect(rail.el.querySelectorAll("[style]")).toHaveLength(0);
+    expect(rail.el.querySelectorAll("[style]:not(.rail-card)")).toHaveLength(0);
   });
 
   it("a started-by mark", () => {
@@ -208,7 +211,10 @@ describe("rail", () => {
     b.dispatchEvent(new MouseEvent("mouseenter"));
     expect(c.hidden).toBe(false);
     const hovered = c.textContent;
-    b.dispatchEvent(new MouseEvent("mouseleave"));
+    // The pointer may cross into the card (to scroll it); leaving the card hides it.
+    b.dispatchEvent(new MouseEvent("mouseleave", { relatedTarget: c }));
+    expect(c.hidden).toBe(false);
+    c.dispatchEvent(new MouseEvent("mouseleave"));
     expect(c.hidden).toBe(true);
     b.focus();
     expect(c.hidden).toBe(false);
@@ -223,6 +229,119 @@ describe("rail", () => {
     expect(c.querySelector(".rail-claim .hint")!.textContent).toBe("the agent's claim");
     b.blur();
     expect(c.hidden).toBe(true);
+  });
+
+  it("a node names its served models, the alias asked for second, and never truncates to +N", () => {
+    const { rail } = mount();
+    const done = { endedAt: "2026-11-03T10:06:00Z", outcome: "succeeded", microUSD: 230_000 };
+    rail.set({ nodes: [
+      node({ run: "a", ...done, model: "agent-default", models: ["glm-5.3"] }),
+      node({ run: "b", ...done, model: "glm-5.3", models: ["glm-5.3"] }),
+      node({ run: "c", ...done, model: "agent-default", models: ["glm-5.3", "claude-haiku-4.5"] }),
+    ] }, "Implementing", now);
+    const models = (run: string) => {
+      const m = nodeOf(rail, run).querySelector<HTMLElement>(".rail-models")!;
+      return { served: [...m.querySelectorAll(".rail-model")].map((x) => x.textContent), asked: m.querySelector(".rail-asked")?.textContent };
+    };
+    expect(nodeOf(rail, "a").querySelector(".rail-detail")!.textContent).toBe("6 m · $0.23");
+    expect(models("a")).toEqual({ served: ["glm-5.3"], asked: "agent-default" });
+    expect(models("b")).toEqual({ served: ["glm-5.3"], asked: undefined });
+    expect(models("c")).toEqual({ served: ["glm-5.3", "claude-haiku-4.5"], asked: "agent-default" });
+    expect(rail.el.querySelector(".rail-path")!.textContent).not.toMatch(/\+\d/);
+  });
+
+  it("a node with no model draws no model line", () => {
+    const { rail } = mount();
+    rail.set({ nodes: [node()] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-models")).toBeNull();
+  });
+
+  // The card sits outside every node and the rail's scroll box, placed in the viewport from the
+  // button's box: a rail that clips its overflow cannot cut it (v0.40.0).
+  it("the card escapes the rail's clipping and fits the viewport", () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(join(__dirname, "../src/app.css"), "utf8");
+    document.head.append(style);
+    try {
+      const { rail } = mount();
+      rail.set({ nodes: [node({ handoff: `Fixed all 12 runbook_url links in ${"deploy/base/metrics-stack/alerting/".repeat(4)}rules.yaml` })] }, "Implementing", now);
+      const b = rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!;
+      b.getBoundingClientRect = () => ({ top: 300, bottom: 350, left: 1050, right: 1350, width: 300, height: 50, x: 1050, y: 300, toJSON() {} });
+      b.dispatchEvent(new MouseEvent("mouseenter"));
+      const c = card(rail);
+      expect(c.hidden).toBe(false);
+      expect(c.closest(".rail-node")).toBeNull();
+      expect(c.parentElement).toBe(rail.el);
+      const cs = getComputedStyle(c);
+      expect(cs.position).toBe("fixed");
+      expect(cs.overflowY).toBe("auto");
+      expect(cs.overflowWrap).toBe("anywhere");
+      expect(c.style.top).toBe("354px");
+      expect(parseFloat(c.style.left) + parseFloat(c.style.width)).toBeLessThanOrEqual(window.innerWidth - 8);
+      expect(parseFloat(c.style.maxHeight)).toBeLessThanOrEqual(window.innerHeight - 354 - 8);
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("the card stops at the pinned dock, and flips above when the room is there", () => {
+    const { rail } = mount();
+    document.body.style.setProperty("--dock-h", "200px");
+    try {
+      rail.set({ nodes: [node()] }, "Implementing", now);
+      const b = rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!;
+      const h = window.innerHeight;
+      b.getBoundingClientRect = () => ({ top: h - 300, bottom: h - 250, left: 0, right: 300, width: 300, height: 50, x: 0, y: h - 300, toJSON() {} });
+      Object.defineProperty(card(rail), "scrollHeight", { value: 120 });
+      b.focus();
+      // 250 px under the node, 200 of them the dock's: 38 left below, more above.
+      expect(card(rail).dataset.side).toBe("above");
+      rail.el.classList.add("open"); // the drawer covers the dock
+      b.blur(); b.focus();
+      expect(card(rail).dataset.side).toBe("below");
+      expect(card(rail).style.maxHeight).toBe(`${250 - 4 - 8}px`);
+    } finally {
+      document.body.style.removeProperty("--dock-h");
+    }
+  });
+
+  it("the card flips above a node near the viewport's bottom", () => {
+    const { rail } = mount();
+    rail.set({ nodes: [node()] }, "Implementing", now);
+    const b = rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!;
+    const h = window.innerHeight;
+    b.getBoundingClientRect = () => ({ top: h - 60, bottom: h - 10, left: 0, right: 300, width: 300, height: 50, x: 0, y: h - 60, toJSON() {} });
+    b.focus();
+    const c = card(rail);
+    expect(c.dataset.side).toBe("above");
+    expect(c.style.bottom).toBe(`${h - (h - 60) + 4}px`);
+    b.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(c.hidden).toBe(true);
+  });
+
+  it("on touch, a tap opens the card; a second tap selects the run", () => {
+    const { rail, h } = mount();
+    rail.set({ nodes: [node()] }, "Implementing", now);
+    const b = rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!;
+    const tap = () => {
+      const down = new Event("pointerdown");
+      Object.defineProperty(down, "pointerType", { value: "touch" });
+      b.dispatchEvent(down);
+      b.focus(); // a browser focuses the button between pointerdown and click
+      b.click();
+    };
+    tap();
+    expect(card(rail).hidden).toBe(false);
+    expect(h.select).not.toHaveBeenCalled();
+    tap();
+    expect(h.select).toHaveBeenCalledWith("r-1");
+  });
+
+  it("a mouse click selects at once", () => {
+    const { rail, h } = mount();
+    rail.set({ nodes: [node()] }, "Implementing", now);
+    rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.click();
+    expect(h.select).toHaveBeenCalledWith("r-1");
   });
 
   it("folds an old round and opens it on click", () => {
