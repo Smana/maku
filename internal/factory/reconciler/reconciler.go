@@ -114,6 +114,7 @@ type metrics interface {
 	ClassMismatch(ctx context.Context, predicted, matched string)
 	MergeDecision(ctx context.Context, class, verdict, reason string)
 	PolicyDualDecision(ctx context.Context, repository, class, agreement string)
+	PolicyLoadError(ctx context.Context, repository, reason string)
 	ClassPaused(ctx context.Context, repository, class string, paused bool)
 	Resumed(ctx context.Context, reason string)
 	LoopRun(ctx context.Context, class, end string)
@@ -188,7 +189,11 @@ type Reconciler struct {
 	// policyManagement.dualEvaluation decides each merge decision under a second time, deciding
 	// nothing on it (stage 3). nil: no dual evaluation.
 	Policy func(repository string) (mergepolicy.Snapshot, bool)
-	Runs   RunClient
+	// Authority is a cut-over repository's policy as the gate decides on it (merge policy stage
+	// 4, mergepolicy.Watch.Authority): read once per pass, never cached here. nil: a cut-over
+	// repository's policy is unreadable, and its auto-merge pauses.
+	Authority func(repository string) (mergepolicy.Snapshot, error)
+	Runs      RunClient
 	// Kind is the runs kind, required: SetupWithManager watches its AgentRuns.
 	Kind    runwatch.Kind
 	Rooms   RoomLog

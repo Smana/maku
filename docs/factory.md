@@ -932,7 +932,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `shape=`, `holdout=`, `oracle=`, `age=` | `ok` when held, `n/a` when the class declares none, the refusal's reason when refused, `pending` for a release age still waiting |
 | `evidence=` | `ok`, or the refusal's reason |
 | `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
-| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it |
+| `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it. For a cut-over repository, `policy=` alone: the hash of the policy that decided |
 | `reviewer=` | The reviewer run's served models joined with `+`; `none` when the class has no reviewer run |
 
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
@@ -1476,6 +1476,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `policyManagement.read` | `true` observes each owned repository's class policy and compares it with this config. Stage 1 decides nothing: merge authority stays central | `false` |
 | `policyManagement.simulation` | `true` lets `maku policy simulate` (a policy file decided on decision fixtures by the gate's own evaluator) and `maku policy diff` (tightening or relaxation, class by class) run against this config. Offline; turned off when the simulator disagrees with the gate | `false` |
 | `policyManagement.dualEvaluation` | `true` decides each merge decision again under the repository's policy as `read` last observed it, counts the agreement and writes it into the decision record. Needs `read`. Stage 3 decides nothing: merge authority stays central | `false` |
+| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its classes (every `any` branch, the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source, MP15). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
 
 Each `repositories` entry:
 

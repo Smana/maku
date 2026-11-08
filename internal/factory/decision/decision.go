@@ -24,7 +24,8 @@ type Rows struct {
 	Reviewer                              string
 	// Policy and Dual are merge policy stage 3's dual evaluation: the first 12 hex digits of the
 	// repository policy's hash ("" when none was read) and whether its decision agreed with this
-	// one. Dual is "" with dual evaluation off, and then neither prints.
+	// one. Dual is "" with dual evaluation off, and then neither prints, unless repository
+	// authority (stage 4) decided on Policy: it then prints alone.
 	Policy, Dual string
 }
 
@@ -35,8 +36,11 @@ type Rows struct {
 // The dual fields sit before reviewer, which the tally reads last.
 func Marker(head, class, verdict, reason string, r Rows) string {
 	dual := ""
-	if r.Dual != "" {
+	switch {
+	case r.Dual != "":
 		dual = fmt.Sprintf(" policy=%s dual=%s", dash(r.Policy), r.Dual)
+	case r.Policy != "": // repository authority (stage 4): the policy decided, nothing compared
+		dual = " policy=" + r.Policy
 	}
 	return fmt.Sprintf("<!-- agent-factory-decision head=%s class=%s decision=%s:%s files=%s/%d lines=%s/%d shape=%s holdout=%s oracle=%s age=%s evidence=%s paused=%s capped=%s%s reviewer=%s -->",
 		dash(head), dash(class), dash(verdict), dash(reason), count(r.Files, r.Counted), r.MaxFiles, count(r.Lines, r.Counted), r.MaxLines,

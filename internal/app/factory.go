@@ -274,13 +274,19 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names(), Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
 	// Stages 1 and 3 (merge policy): observed and compared, then each merge decision decided again
-	// under it; neither decides anything.
+	// under it; neither decides anything. Stage 4: a cut-over repository is decided on it, and
+	// every reader reads its classes from it, aged out at the fence's own window.
 	var snapshots func(string) (mergepolicy.Snapshot, bool)
+	var authority func(string) (mergepolicy.Snapshot, error)
 	if cfg.PolicyManagement.Read {
-		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now}
+		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now, Stale: fenceStale}
 		fenced.OnFile = w.Observe
 		if cfg.PolicyManagement.DualEvaluation {
 			snapshots = w.Snapshot
+		}
+		if cfg.PolicyManagement.RepositoryAuthority {
+			cfg.SetClassSource(w.Classes)
+			authority = w.Authority
 		}
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
@@ -306,7 +312,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
 	}
 	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
-		Policy: snapshots, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
+		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage: triage.Classify{Cfg: cfg, C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,

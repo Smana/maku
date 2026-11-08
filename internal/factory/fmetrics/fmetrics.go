@@ -178,6 +178,7 @@ type Set struct {
 	policyLoadErrors     metric.Int64Counter
 	policyDivergence     metric.Int64Gauge
 	policyDual           metric.Int64Counter
+	policyChanges        metric.Int64Counter
 	refusals             metric.Int64Counter
 	unpricedModels       metric.Int64Counter
 	excludesCache        metric.Int64Counter
@@ -430,6 +431,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.policyDivergence, err = meter.Int64Gauge("agent_factory_policy_central_divergence",
 		metric.WithDescription("Classes on which a repository's merge policy differs from the central config, as last compared: 0 is equivalent. A repository never compared has no series; the value is the last comparison's."))
 	check(err)
+	s.policyChanges, err = meter.Int64Counter("agent_factory_policy_changes_total",
+		metric.WithDescription("Structural changes of a cut-over repository's merge policy, by class: tightening, or relaxation, which runs a live class in shadow (stage 4, MP8)."))
+	check(err)
 	s.policyDual, err = meter.Int64Counter("agent_factory_policy_dual_decisions_total",
 		metric.WithDescription("Merge decisions decided again under the repository's policy (stage 3), by agreement: agree, explained (the policy differs where the comparison says), unread (the diff it needed was not read), unexplained, or no_policy. Nothing is decided on it."))
 	check(err)
@@ -591,7 +595,19 @@ func (s *Set) RepositoryOwned(ctx context.Context, repository string, owned bool
 	s.owned.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
 }
 
-func policyLoadReasons() []string { return []string{"invalid", "guardrail_mismatch"} }
+func policyLoadReasons() []string {
+	return []string{"invalid", "guardrail_mismatch", "unreadable", "stale"}
+}
+
+// PolicyChange counts one structural change of a cut-over repository's class (stage 4, MP8);
+// a change outside the list is not counted. Promotion and demotion arrive with stage 6.
+func (s *Set) PolicyChange(ctx context.Context, repository, class, change string) {
+	if change != "tightening" && change != "relaxation" {
+		return
+	}
+	s.policyChanges.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class), attribute.String("change", change)))
+}
 
 // PolicyLoadError counts a failed read of repository's merge policy; a reason outside the list is
 // not counted.

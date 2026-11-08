@@ -56,12 +56,13 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 		return r.end(ctx, t, v1alpha1.PhaseClosed, "pr_closed")
 	}
 	r.countApproves(ctx, t, pr)
+	policy := r.gatePolicy(r.repo(t), t.Spec.Repository) // stage 4: one read for the pass
 	// An adopted pull request is Renovate's: a maintainer's veto is the gate's changes_requested
 	// hand-off, never a revision run.
 	if rvs := r.changesRequested(t, pr); len(rvs) > 0 && !adoptedTask(t) {
 		return r.revise(ctx, t, pr, rvs)
 	}
-	if adoptedTask(t) && !gateOf(r.repo(t), t.Spec.PredictedClass).Adopted() {
+	if adoptedTask(t) && (!policy.on || policy.err == nil) && !gateOf(r.repo(t), t.Spec.PredictedClass).Adopted() {
 		// The class was removed, renamed or lost its author: there is no gate to decide this pull
 		// request by, and no room to ask (an adopted Task never had one).
 		r.to(t, v1alpha1.PhaseAwaitingHuman, "class_mismatch")
@@ -134,12 +135,12 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 			in.Contract = ContractRead{Read: true, Changed: files}
 		}
 	}
-	d := DecideArm(in)
+	d := decideUnder(in, policy)
 	evaluated := d // the evaluator's own decision, before the rows read after it, for dual evaluation
 	// A maintainer's approval arms on a human's judgement of the head, never on its diff: reading it
 	// again could only hand the approved head off for the diff the approval already covered (AM1).
 	approved := d.Verdict == "arm" && d.Reason == "maintainer_approved"
-	if !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (r.repo(t).Classes[t.Spec.PredictedClass].ReadsDiff(t.Spec.PredictedClass) ||
+	if !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (policy.readsDiff(r.repo(t), t.Spec.PredictedClass) ||
 		r.Cfg.SteeringOn()) {
 		// The diff is read late (steering on: always, to refuse a changed note): only a decision that would arm or shadow a class with a condition
 		// on its diff pays its 2N+1 API calls. The first pass held those conditions vacuously;
@@ -153,7 +154,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 			return ferr
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
-			d = DecideArm(in)
+			d = decideUnder(in, policy)
 			evaluated = d
 		}
 	}
@@ -180,6 +181,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	if r.repo(t).Merge.GateStatus {
 		r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
+	}
+	if reason := policy.loadError(); reason != "" {
+		record(ctx, func(ctx context.Context) { r.Metrics.PolicyLoadError(ctx, t.Spec.Repository, reason) })
 	}
 	if d.Verdict != "wait" {
 		class, verdict, reason := t.Spec.PredictedClass, d.Verdict, cmp.Or(d.Reason, "armed")
