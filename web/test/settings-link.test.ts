@@ -30,3 +30,14 @@ describe("the Settings link in the page headers", () => {
     expect(app.querySelector(".page-header a.settings-link")?.getAttribute("href")).toBe("/settings");
   });
 });
+
+describe("the Settings link's colours", () => {
+  it("uses the header's foreground, never a surface colour (it was invisible on v0.40.2's first candidate)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
+    const rule = css.match(/\.page-header \.settings-link \{[^}]*\}/)?.[0] ?? "";
+    expect(rule).toMatch(/color: var\(--brand-header-foreground\)/);
+    expect(rule).not.toMatch(/--muted/);
+  });
+});
