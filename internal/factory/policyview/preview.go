@@ -107,6 +107,9 @@ func Check(cfg *config.Config, rc *config.Repository, rep evidence.Report, file 
 	}
 	pv.Simulation = simulate(cfg, rc, policy)
 	for _, c := range rep.Classes {
+		if c.Evidence == nil {
+			continue // still being read: the strictness is the evidence's
+		}
 		pv.Strictness = append(pv.Strictness, Strictness{Class: c.Class, Refused: c.Evidence.Shadow.Refused,
 			RefusedMergedUnchanged: c.Evidence.Shadow.RefusedMergedUnchanged})
 	}

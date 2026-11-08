@@ -88,7 +88,7 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 	rep, err := s.Evidence.Report(r.Context(), repo)
 	if err != nil {
 		if s.Log != nil {
-			s.Log.WarnContext(r.Context(), "policy evidence unread", "repository", repo, "error", err)
+			s.Log.WarnContext(r.Context(), "policy evidence unread", "repository", repo, "reason", evidence.Reason(err), "error", err)
 		}
 		refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 		return
