@@ -104,6 +104,7 @@ func (s *Server) grantRoutes(mux *http.ServeMux, index http.Handler) {
 	mux.HandleFunc("GET /api/approval-memory/grants", s.listGrants)
 	mux.HandleFunc("GET /api/approval-memory/grants/{id}", s.grantDetail)
 	mux.HandleFunc("GET /api/approval-memory/export", s.exportGrants)
+	mux.HandleFunc("POST /api/approval-memory/preview", s.previewGrant)
 	mux.HandleFunc("POST /api/approval-memory/grants", s.createGrant)
 	mux.HandleFunc("POST /api/approval-memory/grants/{id}/{action}", s.moveGrant)
 }
@@ -322,52 +323,119 @@ func lifetime(days int) (time.Duration, bool) {
 	return time.Duration(days) * 24 * time.Hour, days >= 1 && days <= maxGrantDays
 }
 
+// ruleRequest is "merge and create rule" as the page posts it, for a preview or a create. A
+// maintainer names the files the approval subset caught on the pull request (caughtFiles), which
+// become exact patterns, or writes the patterns (files) themselves; not both.
+type ruleRequest struct {
+	Repository   string   `json:"repository"`
+	Class        string   `json:"class"`
+	Files        []string `json:"files,omitempty"`
+	CaughtFiles  []string `json:"caughtFiles,omitempty"`
+	DiffShape    string   `json:"diffShape,omitempty"`
+	PolicyHash   string   `json:"policyHash"`
+	PullRequest  int      `json:"pullRequest"`
+	LifetimeDays int      `json:"lifetimeDays"`
+}
+
+// ruleProposal is what a maintainer sees before saving a rule, and again once it is saved: the
+// exact predicate, the future pull requests it would match, the conditions that stay outside it,
+// its expiry, how to revoke it, and what "merge once" does instead.
+type ruleProposal struct {
+	Grant     *grantView      `json:"grant,omitempty"`
+	Predicate grant.Predicate `json:"predicate"`
+	Matches   string          `json:"matches"`
+	Outside   []string        `json:"outside"`
+	ExpiresAt time.Time       `json:"expiresAt"`
+	Revoke    string          `json:"revoke"`
+	MergeOnce string          `json:"mergeOnce"`
+}
+
+// mergeOnce is the other choice: the existing approved-merge path, for this head only (AM1).
+const mergeOnce = "approve the pull request's head on GitHub: the approved-merge path merges that head only, and saves nothing"
+
+// matchesText says which future pull requests the predicate would let arm, in words a maintainer
+// can check against the class: the subset's files only, every other condition still decided.
+func matchesText(pr grant.Predicate) string {
+	shape := ""
+	if pr.DiffShape != "" {
+		shape = ", and whose diff is " + pr.DiffShape
+	}
+	return "a future pull request of " + pr.Repository + " decided in the live class " + pr.Class + " under policy " +
+		pr.PolicyHash + ", whose every file in the class's requiresApproval subset matches one of " +
+		strings.Join(pr.Files, " | ") + shape + ". Files outside the subset are judged by the class as before."
+}
+
+// proposal validates a rule request for p: the predicate, its lifetime, and GitHub write on the
+// repository (MP17). It answers the proposal and the creator's login, or writes the refusal.
+func (s *Server) proposal(w http.ResponseWriter, r *http.Request, p authn.Principal) (ruleRequest, grant.Predicate, time.Duration, string, bool) {
+	var in ruleRequest
+	if !decodeGrant(w, r, &in) {
+		return in, grant.Predicate{}, 0, "", false
+	}
+	pred := grant.Predicate{Repository: strings.ToLower(in.Repository), Class: in.Class, Files: in.Files,
+		DiffShape: in.DiffShape, PolicyHash: in.PolicyHash}
+	if len(in.CaughtFiles) > 0 {
+		pred.Files = nil
+		for _, f := range in.CaughtFiles {
+			pred.Files = append(pred.Files, grant.Exact(f))
+		}
+	}
+	life, okLife := lifetime(in.LifetimeDays)
+	if err := pred.Validate(); err != nil || in.PullRequest < 1 || !okLife || (len(in.Files) > 0 && len(in.CaughtFiles) > 0) {
+		refuseJSON(w, http.StatusBadRequest, "bad_predicate")
+		return in, pred, 0, "", false
+	}
+	_, write, login, err := s.repoStanding(r.Context(), p, pred.Repository)
+	switch {
+	case err != nil:
+		refuseJSON(w, http.StatusServiceUnavailable, reasonAccessUnverified)
+		return in, pred, 0, "", false
+	case !write:
+		refuseJSON(w, http.StatusForbidden, "repository_permission")
+		return in, pred, 0, "", false
+	}
+	return in, pred, life, login, true
+}
+
+// previewGrant: POST /api/approval-memory/preview, "merge and create rule" before anything is
+// saved: the proposal a create would answer, for a maintainer of the repository.
+func (s *Server) previewGrant(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.grantWriter(w, r)
+	if !ok {
+		return
+	}
+	_, pred, life, _, ok := s.proposal(w, r, p)
+	if !ok {
+		return
+	}
+	writeJSON(w, ruleProposal{Predicate: pred, Matches: matchesText(pred), Outside: grantOutside,
+		ExpiresAt: s.now().Add(life).UTC(), Revoke: "POST /api/approval-memory/grants/<id>/revoke, once saved", MergeOnce: mergeOnce})
+}
+
 // createGrant: POST /api/approval-memory/grants, "merge and create rule" (MP9, MP10): a
-// maintainer of the repository saves the exact predicate. The answer shows it, the conditions
-// that remain outside it, its expiry and how to revoke it.
+// maintainer of the repository saves the exact predicate. The answer is the proposal with the
+// grant, its expiry and how to revoke it.
 func (s *Server) createGrant(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.grantWriter(w, r)
 	if !ok {
 		return
 	}
-	var in struct {
-		grant.Predicate
-		PullRequest  int `json:"pullRequest"`
-		LifetimeDays int `json:"lifetimeDays"`
-	}
-	if !decodeGrant(w, r, &in) {
-		return
-	}
-	life, okLife := lifetime(in.LifetimeDays)
-	if err := in.Validate(); err != nil || in.PullRequest < 1 || !okLife {
-		refuseJSON(w, http.StatusBadRequest, "bad_predicate")
-		return
-	}
-	_, write, login, err := s.repoStanding(r.Context(), p, in.Repository)
-	switch {
-	case err != nil:
-		refuseJSON(w, http.StatusServiceUnavailable, reasonAccessUnverified)
-		return
-	case !write:
-		refuseJSON(w, http.StatusForbidden, "repository_permission")
+	in, pred, life, login, ok := s.proposal(w, r, p)
+	if !ok {
 		return
 	}
 	id := strings.ToLower(linkCode.EncodeToString(randomBytes(16)))
-	g, err := s.Grants.CreateGrant(r.Context(), store.NewGrant{ID: id, Repository: in.Repository, Class: in.Class,
-		Files: in.Files, DiffShape: in.DiffShape, PolicyHash: in.PolicyHash, OriginPR: in.PullRequest, CreatedBy: login, Lifetime: life})
+	g, err := s.Grants.CreateGrant(r.Context(), store.NewGrant{ID: id, Repository: pred.Repository, Class: pred.Class,
+		Files: pred.Files, DiffShape: pred.DiffShape, PolicyHash: pred.PolicyHash, OriginPR: in.PullRequest, CreatedBy: login, Lifetime: life})
 	if err != nil {
 		s.log().Warn("approval grant not created", "err", err)
 		refuseJSON(w, http.StatusServiceUnavailable, "grants_unavailable")
 		return
 	}
+	v := viewOf(g)
 	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, struct {
-		Grant     grantView       `json:"grant"`
-		Predicate grant.Predicate `json:"predicate"`
-		Outside   []string        `json:"outside"`
-		ExpiresAt time.Time       `json:"expiresAt"`
-		Revoke    string          `json:"revoke"`
-	}{viewOf(g), in.Predicate, grantOutside, g.ExpiresAt, "POST /api/approval-memory/grants/" + g.ID + "/revoke"})
+	writeJSON(w, ruleProposal{Grant: &v, Predicate: pred, Matches: matchesText(pred), Outside: grantOutside, ExpiresAt: g.ExpiresAt,
+		Revoke: "POST /api/approval-memory/grants/" + g.ID + "/revoke", MergeOnce: mergeOnce})
 }
 
 func randomBytes(n int) []byte {
