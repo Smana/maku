@@ -1,0 +1,20 @@
+factory: "aws-0"
+classes:
+  docs-broad:
+    mode: "shadow"
+    author: "agents"
+    harness: "docs-standard"
+    conditions:
+      all:
+        - allowedFiles: ["^docs/.+\\.md$", "^README\\.md$"]
+        - maxPatchFiles: 10
+        - maxModifiedLines: 200
+        - holdoutChecks: ["Check the documentation links 🔗"]
+      deny:
+        - protectedFiles: ["^docs/superpowers/.+$", "^docs/specs/.+$", "^docs/security/.+$"]
+    requiresApproval:
+      - changedFiles: ["^docs/architecture/.+$"]
+    limits:
+      maxPerDay: 2
+    monitor:
+      followUpWindow: "168h"

@@ -1056,7 +1056,32 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .settings textarea { display: block; width: 100%; min-height: 4em; margin: 4px 0; }
 .settings .editor-form { border: 1px solid var(--border); border-radius: var(--radius-row); padding: 8px 16px; }
 .settings .editor-field { display: grid; grid-template-columns: 18em 1fr; gap: 8px; align-items: start; margin: 4px 0; }
-.settings .expert-yaml { min-height: 16em; font-family: ui-monospace, monospace; font-size: 13px; }
+/* The expert view: a transparent textarea over its highlighted copy, so the text stays a plain,
+   accessible textarea. Both layers share one font, padding and line height, or the caret drifts. */
+.settings .yaml-editor { border: 1px solid var(--border); border-radius: var(--radius-row); background: var(--card); overflow: hidden; }
+.settings .yaml-bar { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.settings .yaml-name { color: var(--muted-foreground); font-family: ui-monospace, monospace; margin-right: auto; }
+.settings .yaml-body { display: flex; height: 24em; }
+.settings .yaml-gutter, .settings .yaml-hl, .settings .expert-yaml {
+  margin: 0; padding: 8px; font: 13px/1.5 ui-monospace, monospace; tab-size: 2; white-space: pre; overflow-wrap: normal; max-height: none; }
+/* The page's code rule sets its own font: the copy must keep the textarea's, or the caret drifts. */
+.settings .yaml-hl code { font: inherit; }
+.settings .yaml-gutter { min-width: 3ch; text-align: right; color: var(--muted-foreground); background: var(--muted); overflow: hidden; user-select: none; }
+.settings .yaml-gutter .y-error { color: var(--destructive-text); font-weight: 700; }
+.settings .yaml-stack { position: relative; flex: 1; min-width: 0; }
+.settings .yaml-hl { position: absolute; inset: 0; overflow: hidden; color: var(--card-foreground); pointer-events: none; }
+.settings .expert-yaml { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; resize: none; border: 0; outline-offset: -2px;
+  background: transparent; color: transparent; caret-color: var(--card-foreground); overflow: auto; }
+.settings .expert-yaml::selection { color: transparent; background: color-mix(in srgb, var(--primary) 25%, transparent); }
+.y-key { color: var(--link); }
+.y-str { color: var(--success-text); }
+.y-num, .y-bool { color: var(--warning-foreground); }
+.y-comment, .y-punct { color: var(--muted-foreground); }
+.y-line.y-error { background: color-mix(in srgb, var(--destructive) 10%, var(--card)); }
+.settings .yaml-status { margin: 0; padding: 4px 8px; font-size: 13px; color: var(--destructive-text); }
+.settings .yaml-status:empty { display: none; }
+.settings .editor-form:disabled { opacity: 0.6; }
+.settings .error-line { font: 13px ui-monospace, monospace; padding: 0 6px; }
 .settings .structural-relaxation { font-weight: 700; }
 
 /* Approval memory (/settings/approval-memory): one card per saved grant, its predicate as code. */

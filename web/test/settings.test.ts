@@ -241,6 +241,69 @@ describe("the policy editor", () => {
       expect(all).toContainEqual({ modifyOnly: true });
     }
   });
+  const repo = "/api/policy/repositories/Smana/cloud-native-ref";
+  const mount = async (routes: Record<string, unknown> = {}) => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ [repo]: page(), ...routes }));
+    const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
+    const type = (v: string) => { yaml.value = v; yaml.dispatchEvent(new Event("input")); };
+    const field = (name: string) => [...app.querySelectorAll(".editor-field")].find((l) => l.textContent?.startsWith(name))!.querySelector("input, textarea, select") as HTMLInputElement;
+    return { app, yaml, type, field };
+  };
+  it("reads the expert text back into the form, comments kept in the text", async () => {
+    const { app, yaml, type, field } = await mount();
+    type('# ours\nfactory: aws-0\nclasses:\n  docs-links:\n    mode: live # promoted\n    author: agents\n    harness: docs-standard\n' +
+      "    conditions:\n      all:\n        - maxPatchFiles: 4\n  extra:\n    mode: off\n    author: agents\n    harness: docs-standard\n");
+    expect(field("maxPatchFiles").value).toBe("4");
+    expect((app.querySelector(".editor-form select") as HTMLSelectElement).value).toBe("live");
+    expect([...(app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement).options].map((o) => o.value)).toContain("extra");
+    expect(yaml.value).toContain("# promoted");
+    field("maxPatchFiles").value = "5";
+    field("maxPatchFiles").dispatchEvent(new Event("input"));
+    expect(yaml.value).toContain('mode: "live"');
+    expect(yaml.value).toContain("        - maxPatchFiles: 5\n");
+  });
+  it("pauses the form while the text does not parse, and says where", async () => {
+    const { app, type } = await mount();
+    type("factory: aws-0\nclasses:\n  docs-links:\n    mode: [\n");
+    expect(app.querySelector(".yaml-status")?.textContent).toMatch(/^Line 5: /);
+    expect((app.querySelector(".editor-form") as HTMLFieldSetElement).disabled).toBe(true);
+    expect(app.querySelector(".yaml-gutter .y-error")?.textContent).toBe("5");
+    type("factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n");
+    expect((app.querySelector(".editor-form") as HTMLFieldSetElement).disabled).toBe(false);
+    expect(app.querySelector(".yaml-status")?.textContent).toBe("");
+  });
+  it("highlights the text it shows, line for line", async () => {
+    const { app, type } = await mount();
+    type("factory: aws-0\n");
+    const hl = app.querySelector(".yaml-hl")!;
+    expect(hl.textContent).toBe("factory: aws-0\n");
+    expect(hl.querySelector(".y-key")?.textContent).toBe("factory");
+  });
+  it("points each of the factory's errors at its line, and a click goes there", async () => {
+    const { app, yaml, type } = await mount({ [`${repo}/preview`]: { valid: false, simulation: { enabled: false },
+      errors: ["class docs-links: guardrail: maxPatchFiles 30 is over the guardrail's 20", "class revert is required"] } });
+    type("factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n    conditions:\n      all:\n        - maxPatchFiles: 30\n");
+    [...app.querySelectorAll("button")].find((b) => b.textContent === "Check, compare and simulate")!.click();
+    await settle();
+    const items = [...app.querySelectorAll(".editor-preview li")];
+    expect(items.map((li) => li.querySelector("button")?.textContent ?? null)).toEqual(["Line 7", null]);
+    expect(app.querySelector(".yaml-gutter .y-error")?.textContent).toBe("7");
+    items[0].querySelector("button")!.click();
+    expect(yaml.value.slice(yaml.selectionStart, yaml.selectionEnd)).toBe("        - maxPatchFiles: 30");
+  });
+  it("copies and downloads the text as the file it replaces", async () => {
+    const { app, yaml } = await mount();
+    const wrote: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t: string) => { wrote.push(t); } } });
+    const copy = app.querySelector(".yaml-bar button.copy") as HTMLButtonElement;
+    copy.click();
+    await settle();
+    expect(wrote).toEqual([yaml.value]);
+    expect(copy.textContent).toBe("Copied");
+    const dl = app.querySelector(".yaml-bar a.download") as HTMLAnchorElement;
+    expect(dl.getAttribute("download")).toBe("agent-factory.yaml");
+  });
   it("lets a reader see the editor but not check: the broker would refuse it", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",

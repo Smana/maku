@@ -14,6 +14,7 @@
     "demo": "bash scripts/demo-site.sh .demo-site && SERVE_ROOT=.demo-site node preview/serve.mjs"
   },
   "dependencies": {
+    "js-yaml": "5.4.3",
     "markdown-it": "14.3.3"
   },
   "devDependencies": {

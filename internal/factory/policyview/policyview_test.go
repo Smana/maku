@@ -181,3 +181,13 @@ func TestTheTimelineShowsTheGrantAndTheDecidingPolicy(t *testing.T) {
 		t.Fatalf("%+v", g.Revisions)
 	}
 }
+
+// Each error is one entry naming its class, so the editor can point at the class's line.
+func TestCheckSplitsParseErrorsByClass(t *testing.T) {
+	cfg, rc, rep := rig(false)
+	file := strings.Replace(strings.Replace(base, "mode: shadow", "mode: armed", 1), "author: agents", "author: people", 1)
+	pv := Check(cfg, rc, rep, file)
+	if pv.Valid || len(pv.Errors) != 2 || !strings.Contains(pv.Errors[0], "class docs-links: mode") || !strings.HasPrefix(pv.Errors[1], "class docs-links: author") {
+		t.Fatalf("%q", pv.Errors)
+	}
+}

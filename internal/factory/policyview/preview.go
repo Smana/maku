@@ -78,7 +78,7 @@ func Check(cfg *config.Config, rc *config.Repository, rep evidence.Report, file 
 	}
 	next, err := mergepolicy.Parse([]byte(file))
 	if err != nil {
-		return bad(err.Error())
+		return bad(strings.Split(err.Error(), "\n")...)
 	}
 	if next.Factory != cfg.Factory {
 		return bad("factory: is read-only here: it must stay " + cfg.Factory)
