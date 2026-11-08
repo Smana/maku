@@ -4,12 +4,16 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/evidence"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/factory/policyview"
 )
 
 // EvidenceSource is each repository's promotion evidence (merge policy stage 6); *evidence.Service
@@ -78,17 +82,8 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "repository_required")
 		return
 	}
-	repo := s.configured(asked)
+	repo := s.readable(w, r, p, asked)
 	if repo == "" {
-		refuse(w, http.StatusNotFound, "not_found")
-		return
-	}
-	switch can, err := s.reads(r.Context(), p, repo); {
-	case err != nil:
-		refuse(w, http.StatusServiceUnavailable, reasonLinkUnverified)
-		return
-	case !can:
-		refuse(w, http.StatusNotFound, "not_found")
 		return
 	}
 	rep, err := s.Evidence.Report(r.Context(), repo)
@@ -116,4 +111,95 @@ func (s *Server) policyRepositories(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	reply(w, http.StatusOK, map[string][]string{"repositories": out})
+}
+
+// PolicyEditor is the settings editor's check and the decision timeline (stage 6);
+// *policyview.Service implements it.
+type PolicyEditor interface {
+	Preview(ctx context.Context, repository, file string) (policyview.Preview, error)
+	Timeline(ctx context.Context, repository string, pr int) (policyview.Timeline, error)
+}
+
+// maxPreviewBody bounds a proposed policy: the file's own bound and its envelope.
+const maxPreviewBody = mergepolicy.MaxFileBytes + 4<<10
+
+// readable answers the caller's read of repository, refusing for them when not: the repository as
+// the config spells it, or "".
+func (s *Server) readable(w http.ResponseWriter, r *http.Request, p authn.Principal, asked string) string {
+	repo := s.configured(asked)
+	if repo == "" {
+		refuse(w, http.StatusNotFound, "not_found")
+		return ""
+	}
+	switch can, err := s.reads(r.Context(), p, repo); {
+	case err != nil:
+		refuse(w, http.StatusServiceUnavailable, reasonLinkUnverified)
+		return ""
+	case !can:
+		refuse(w, http.StatusNotFound, "not_found")
+		return ""
+	}
+	return repo
+}
+
+// policyPreview is POST /v1/policy/preview {repository, file}: a maintainer's proposed policy file,
+// checked strictly, compared structurally and simulated (MP8, MP16). It writes nothing: the answer
+// is the file to submit and the GitHub page to submit it from.
+func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyReader(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Repository string `json:"repository"`
+		File       string `json:"file"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	repo := s.readable(w, r, p, in.Repository)
+	if repo == "" {
+		return
+	}
+	switch can, err := s.Access.CanWrite(r.Context(), p, repo); {
+	case err != nil:
+		refuse(w, http.StatusServiceUnavailable, reasonLinkUnverified)
+		return
+	case !can:
+		refuse(w, http.StatusForbidden, "not_a_maintainer")
+		return
+	}
+	pv, err := s.Editor.Preview(r.Context(), repo, in.File)
+	if err != nil {
+		refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
+		return
+	}
+	reply(w, http.StatusOK, pv)
+}
+
+// policyDecisions is GET /v1/policy/decisions?repository=owner/name&pr=N: the pull request's
+// decision timeline, for a reader of the repository.
+func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyReader(w, r)
+	if !ok {
+		return
+	}
+	pr, err := strconv.Atoi(r.URL.Query().Get("pr"))
+	if err != nil || pr < 1 {
+		refuse(w, http.StatusBadRequest, "pr_required")
+		return
+	}
+	repo := s.readable(w, r, p, r.URL.Query().Get("repository"))
+	if repo == "" {
+		return
+	}
+	tl, err := s.Editor.Timeline(r.Context(), repo, pr)
+	if err != nil {
+		refuse(w, http.StatusServiceUnavailable, "decisions_unavailable")
+		return
+	}
+	reply(w, http.StatusOK, tl)
 }

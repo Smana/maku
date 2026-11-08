@@ -115,6 +115,8 @@ type Server struct {
 	// Evidence is each repository's promotion evidence (merge policy stage 6), served only while
 	// policyManagement.promotion is on; nil or off serves no policy route.
 	Evidence EvidenceSource
+	// Editor is the settings editor's check and the decision timeline, served beside Evidence.
+	Editor PolicyEditor
 }
 
 // SlackLinkReader is the broker's self-serve link records: the ZITADEL sub a Slack user linked;
@@ -171,6 +173,10 @@ func (s *Server) Handler() http.Handler {
 	if s.promotionOn() { // stage 6: off lists no policy route, so each is a 404
 		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
 		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
+		if s.Editor != nil {
+			mux.HandleFunc("POST /v1/policy/preview", s.policyPreview)
+			mux.HandleFunc("GET /v1/policy/decisions", s.policyDecisions)
+		}
 	}
 	return mux
 }

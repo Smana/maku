@@ -49,6 +49,7 @@ import (
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/meter"
+	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -406,12 +407,20 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
 	if cfg.PolicyManagement.Promotion {
-		apiSrv.Evidence = &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
+		ev := &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
 			}
 			return evidenceSource{c.gh}, true
+		}}
+		apiSrv.Evidence = ev
+		apiSrv.Editor = &policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return commentReader(c.gh), true
 		}}
 	}
 	// The api intake and factory/publish scan what they publish, and both fail closed without it.
@@ -704,4 +713,16 @@ type evidenceSource struct{ *forge.GitHub }
 func (e evidenceSource) DefaultBranch(ctx context.Context) (string, error) {
 	info, err := e.RepositoryInfo(ctx)
 	return info.DefaultBranch, err
+}
+
+// commentReader is a pull request's 50 newest comments as the decision timeline reads them.
+func commentReader(gh *forge.GitHub) policyview.CommentReader {
+	return func(ctx context.Context, pr int) ([]policyview.Comment, error) {
+		cs, err := gh.RecentComments(ctx, pr)
+		out := make([]policyview.Comment, 0, len(cs))
+		for _, c := range cs {
+			out = append(out, policyview.Comment{ID: c.ID, Author: c.Author, Body: c.Body, At: c.At})
+		}
+		return out, err
+	}
 }

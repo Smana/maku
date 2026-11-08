@@ -149,6 +149,10 @@ type ShadowTally struct {
 	AutoMerged      int        `json:"autoMerged"`
 	Drill           int        `json:"drill"`
 	Reviewers       []Reviewer `json:"reviewers"`
+	// Refused and RefusedMergedUnchanged are --strictness: the newest decisions a class row refused,
+	// and those a human then merged unchanged at that head (the gate's too-strict side).
+	Refused                int `json:"refused"`
+	RefusedMergedUnchanged int `json:"refusedMergedUnchanged"`
 	// Judged and Drilled are the pull request numbers, for the drill check.
 	Judged  []int `json:"-"`
 	Drilled []int `json:"-"`
@@ -160,6 +164,7 @@ func Shadow(prs []PR, reverts []Revert, class, repo string, l Logins) ShadowTall
 	var t ShadowTally
 	models := map[string]*Reviewer{}
 	for _, p := range prs {
+		t.strictness(p, class, l)
 		mine := own(p, l.Factory, wouldArm)
 		if len(mine) == 0 {
 			continue
@@ -206,6 +211,37 @@ func Shadow(prs []PR, reverts []Revert, class, repo string, l Logins) ShadowTall
 		}
 	}
 	return t
+}
+
+// strictRows are the class rows whose refusal --strictness counts.
+var strictRows = []string{"patch_too_large", "file_not_allowed", "file_protected", "file_added_or_deleted", "class_mismatch",
+	"holdout_red", "oracle_finding_open", "oracle_unrequested", "release_age_red"}
+
+var handOff = regexp.MustCompile(`event=human-([a-z_]+)-[0-9]+`)
+
+// strictness counts p as --strictness does: its newest factory decision record, when it is
+// class's, refused by a class row (a hand-off takes the reason its event names).
+func (t *ShadowTally) strictness(p PR, class string, l Logins) {
+	rs := own(p, l.Factory, record)
+	if len(rs) == 0 {
+		return
+	}
+	body := rs[len(rs)-1].Body
+	m := record.FindStringSubmatch(body)
+	if m[2] != class {
+		return
+	}
+	verdict, reason := m[3], m[4]
+	if h := handOff.FindStringSubmatch(body); h != nil {
+		verdict, reason = "human", h[1]
+	}
+	if verdict != "human" || !slices.Contains(strictRows, reason) {
+		return
+	}
+	t.Refused++
+	if p.HeadRefOid == m[1] && (p.MergedBy == nil || login(p.MergedBy.Login) != login(l.Merger)) {
+		t.RefusedMergedUnchanged++
+	}
 }
 
 // OutcomeTally is the script's --outcomes mode: what became of the class's merges.

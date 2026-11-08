@@ -35,7 +35,8 @@ const repo = "Smana/cloud-native-ref"
 // with reverts-drill.json.
 func TestShadowAgreesWithTheTallyOnItsDecisionFixture(t *testing.T) {
 	got := Shadow(fixture[[]PR](t, "prs-decisions.json"), fixture[[]Revert](t, "reverts-drill.json"), "docs-links", repo, logins)
-	want := ShadowTally{MergedUnchanged: 2, Changed: 1, Reverted: 1, Drill: 1,
+	// --strictness: refused=3 refused_merged_unchanged=2, as the script's test says.
+	want := ShadowTally{MergedUnchanged: 2, Changed: 1, Reverted: 1, Drill: 1, Refused: 3, RefusedMergedUnchanged: 2,
 		Reviewers: []Reviewer{{Model: "glm-5.3", MergedUnchanged: 2}, {Model: "kimi-k3", Changed: 1}},
 		Judged:    []int{21, 22, 23, 29}, Drilled: []int{21}}
 	if fmt.Sprint(got) != fmt.Sprint(want) {

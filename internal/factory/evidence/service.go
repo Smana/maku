@@ -66,6 +66,15 @@ type Report struct {
 	PolicyError string        `json:"policyError,omitempty"`
 	Classes     []ClassReport `json:"classes"`
 	ReadAt      time.Time     `json:"readAt"`
+	// The editor's inputs: the policy file as read ("" when absent), its parsed form when it
+	// parses, the factory it must keep naming, the default branch its edit link opens, the central
+	// harness profiles a class may reference, and the guardrails it is validated against.
+	File            string                 `json:"file,omitempty"`
+	Policy          *mergepolicy.File      `json:"policy,omitempty"`
+	Factory         string                 `json:"factory"`
+	DefaultBranch   string                 `json:"defaultBranch"`
+	HarnessProfiles []string               `json:"harnessProfiles"`
+	Guardrails      config.MergeGuardrails `json:"guardrails"`
 }
 
 // ErrUnknownRepository is a repository the config does not list.
@@ -143,12 +152,13 @@ func (s *Service) read(ctx context.Context, rc *config.Repository, src Source, n
 	if err != nil {
 		return Report{}, fmt.Errorf("evidence: %w", err)
 	}
-	branch := ""
-	if file != nil {
-		if branch, err = src.DefaultBranch(ctx); err != nil {
-			return Report{}, fmt.Errorf("evidence: %w", err)
-		}
+	branch, err := src.DefaultBranch(ctx)
+	if err != nil {
+		return Report{}, fmt.Errorf("evidence: %w", err)
 	}
+	r.File, r.Policy, r.Factory, r.DefaultBranch = string(body), file, s.Cfg.Factory, branch
+	r.HarnessProfiles = slices.Sorted(maps.Keys(s.Cfg.HarnessProfiles))
+	r.Guardrails = s.Cfg.MergeGuardrails
 	l := Logins{Factory: s.Cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")
 	for _, c := range s.classes(rc, file) {
@@ -168,11 +178,16 @@ func (s *Service) read(ctx context.Context, rc *config.Repository, src Source, n
 				return Report{}, fmt.Errorf("evidence: propose %s: %w", c.name, err)
 			}
 			cr.Proposal = &Proposal{Path: PolicyPath, Line: line, File: string(out),
-				EditURL: "https://github.com/" + rc.Name + "/edit/" + branch + "/" + PolicyPath}
+				EditURL: EditURL(rc.Name, branch)}
 		}
 		r.Classes = append(r.Classes, cr)
 	}
 	return r, nil
+}
+
+// EditURL is GitHub's edit page of repository's policy file on branch.
+func EditURL(repository, branch string) string {
+	return "https://github.com/" + repository + "/edit/" + branch + "/" + PolicyPath
 }
 
 const (
