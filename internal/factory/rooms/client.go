@@ -81,9 +81,12 @@ var (
 	// ErrNoRoute is a 404 or 405 with no reason: the broker's mux does not serve the route, so the
 	// broker is older than the factory (a v0.7 broker has no task route). An upgrade, not a retry.
 	ErrNoRoute = errors.New("rooms: the broker does not serve this route yet")
+	// ErrGrantState is 409 grant_state: the grant's status or version does not allow the move,
+	// such as disabling a grant already revoked.
+	ErrGrantState = errors.New("rooms: the grant does not move that way")
 )
 
-// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed and ErrNoRoute.
+// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute and ErrGrantState.
 func (e *APIError) Is(target error) bool {
 	switch target {
 	case ErrNoRoute:
@@ -94,6 +97,8 @@ func (e *APIError) Is(target error) bool {
 		return e.Reason == wire.ReasonNotPermitted
 	case ErrSealed:
 		return e.Reason == wire.ReasonSealed
+	case ErrGrantState:
+		return e.Reason == wire.ReasonGrantState
 	}
 	return false
 }
@@ -371,7 +376,8 @@ func spanReason(r string) string {
 	switch r {
 	case wire.ReasonBadRoom, wire.ReasonBadMessage, wire.ReasonUnauthenticated, wire.ReasonNotPermitted,
 		wire.ReasonNoRoom, wire.ReasonSealed, wire.ReasonRateLimited, wire.ReasonLogUnavailable, wire.ReasonTimedOut,
-		wire.ReasonBadStream, wire.ReasonBadConsume, wire.ReasonNoQueue, wire.ReasonNotLinked, wire.ReasonBadSlackUser:
+		wire.ReasonBadStream, wire.ReasonBadConsume, wire.ReasonNoQueue, wire.ReasonNotLinked, wire.ReasonBadSlackUser,
+		wire.ReasonBadGrant, wire.ReasonNoGrant, wire.ReasonGrantState:
 		return r
 	}
 	return "other"
@@ -379,7 +385,12 @@ func spanReason(r string) string {
 
 // do is one call. Its span carries metadata only (O-1 M3): the room id, the method, the route
 // template, the status and the broker's reason, never a body, the query or the token.
-func (c *Client) do(ctx context.Context, method, route, room, query string, in any, maxReply int64, out any) (err error) {
+func (c *Client) do(ctx context.Context, method, route, room, query string, in any, maxReply int64, out any) error {
+	return c.call(ctx, method, route, strings.Replace(route, "{id}", url.PathEscape(room), 1), room, query, in, maxReply, out)
+}
+
+// call is do with the path given: a grant route's {id} is a grant's, which the span never carries.
+func (c *Client) call(ctx context.Context, method, route, path, room, query string, in any, maxReply int64, out any) (err error) {
 	ctx, span := c.tracer.Start(ctx, "broker "+method+" "+route, trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attribute.String("agent.room_id", room), attribute.String("http.request.method", method),
 			attribute.String("url.template", route)))
@@ -410,7 +421,7 @@ func (c *Client) do(ctx context.Context, method, route, room, query string, in a
 			return fmt.Errorf("rooms: encode: %w", err)
 		}
 	}
-	target := c.base.JoinPath(strings.Replace(route, "{id}", url.PathEscape(room), 1)).String() + query
+	target := c.base.JoinPath(path).String() + query
 	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("rooms: request: %w", err)

@@ -263,3 +263,73 @@ func TestTheQueueClientSpeaksTheBrokersQueueRoutes(t *testing.T) {
 		t.Fatalf("only the named ref is consumed: %+v %v", got, err)
 	}
 }
+
+// memGrants is the store's grants in memory: one active grant, moved as the store moves it.
+type memGrants struct {
+	g store.Grant
+}
+
+func (m *memGrants) LookupGrants(_ context.Context, repository, class, hash string, _ time.Duration, _ string) ([]store.Grant, []string, error) {
+	if m.g.Repository != repository || m.g.Class != class || !strings.HasPrefix(hash, m.g.PolicyHash) || m.g.Status != "active" {
+		return nil, nil, nil
+	}
+	return []store.Grant{m.g}, nil, nil
+}
+
+func (m *memGrants) MoveGrant(_ context.Context, id string, mv store.GrantMove) (store.Grant, error) {
+	switch {
+	case id != m.g.ID:
+		return store.Grant{}, store.ErrNoGrant
+	case mv.Version != 0 && mv.Version != m.g.Version:
+		return store.Grant{}, store.ErrGrantVersion
+	case m.g.Status != "active":
+		return store.Grant{}, store.ErrGrantState
+	}
+	if mv.Event == "disabled" {
+		m.g.Status = "disabled"
+	}
+	return m.g, nil
+}
+
+// Merge policy stage 5: the grant calls against the broker's own grant routes. A use bound to a
+// version since left, and a move of a disabled grant, are the broker's grant_state.
+func TestTheGrantClientSpeaksTheBrokersGrantRoutes(t *testing.T) {
+	const id, hash = "aaaaaaaaaaaaaaaaaaaaaaaaaa", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	head := strings.Repeat("a", 40)
+	mg := &memGrants{g: store.Grant{ID: id, Version: 2, Repository: "smana/docs", Class: "docs-broad", Files: []string{`docs/a\.md`},
+		PolicyHash: hash[:12], Status: "active", ExpiresAt: time.Unix(2e9, 0).UTC()}}
+	srv := &bridgeapi.Server{Redactor: noRedact{}, Runs: systems{}, Systems: systems{}, Watch: noRuns{}, Grants: mg, GrantClient: "system:factory"}
+	ts := httptest.NewTLSServer(srv.Routes())
+	defer ts.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(ts.Certificate())
+	tok := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tok, []byte("factory-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(ts.URL, tok, httpx.New(5*time.Second, roots), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	gs, _, err := c.LookupGrants(ctx, "smana/docs", "docs-broad", hash, 90*24*time.Hour)
+	if err != nil || len(gs) != 1 || gs[0].ID != id || gs[0].Version != 2 || gs[0].Files[0] != `docs/a\.md` || !gs[0].ExpiresAt.Equal(time.Unix(2e9, 0)) {
+		t.Fatalf("%+v %v", gs, err)
+	}
+	if err := c.UseGrant(ctx, id, 2, 12, head); err != nil {
+		t.Fatal(err)
+	}
+	var api *APIError
+	if err := c.UseGrant(ctx, id, 1, 12, head); !errors.As(err, &api) || api.Status != http.StatusConflict || api.Reason != wire.ReasonGrantState {
+		t.Fatalf("a version since left: %v", err)
+	}
+	if err := c.DisableGrant(ctx, id, 12, "main_red"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DisableGrant(ctx, id, 12, "main_red"); !errors.As(err, &api) || api.Reason != wire.ReasonGrantState {
+		t.Fatalf("a disabled grant moved again: %v", err)
+	}
+	if _, _, err := c.LookupGrants(ctx, "smana/docs", "docs-broad", hash[:12], time.Hour); err == nil {
+		t.Fatal("a short hash was sent")
+	}
+}
