@@ -948,3 +948,12 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-coordination-restricted { margin: 0; color: var(--muted-foreground); font-style: italic; }
 .rail-coordination-act { justify-self: start; }
 .rail-coordination-status:empty { display: none; }
+
+/* The settings pages (merge policy stage 6). */
+.settings-nav { display: flex; gap: 16px; margin: 0 16px 12px; }
+.settings { margin: 0 16px; }
+.settings h2 { font-size: 16px; margin: 20px 0 8px; }
+.settings .settings-table { width: 100%; margin: 0; }
+.settings .proposal { background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); padding: 12px 16px; margin-bottom: 16px; }
+.settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: 13px; }
+.settings textarea { display: block; width: 100%; min-height: 4em; margin: 4px 0; }

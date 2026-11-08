@@ -2,6 +2,7 @@
 
 import { fetchDashboards } from "./dashboards";
 import { mountRoom } from "./room";
+import { isSettings, mountSettings } from "./settings";
 import { initTheme } from "./theme";
 import { listRooms } from "./view";
 
@@ -12,4 +13,6 @@ const app = document.getElementById("app")!;
 const theme = initTheme();
 
 const m = location.pathname.match(/^\/r\/([a-z2-7]{8})$/);
-if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) }); else void listRooms(app, fetch, {}, theme);
+if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) });
+else if (isSettings(location.pathname)) void mountSettings(app, location.pathname, fetch, theme);
+else void listRooms(app, fetch, {}, theme);
