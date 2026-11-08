@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { fileYAML, type PolicyFile, templates } from "../src/policy-editor";
-import { canonical, fileShape, highlight, locate, parsePolicy, type Shape, tokenize } from "../src/policy-yaml";
+import { canonical, comments, fileShape, highlight, keyFix, locate, parsePolicy, type Shape, tokenize } from "../src/policy-yaml";
 
 // The goldens are shared with the Go side (internal/factory/mergepolicy/ui_golden_test.go), which
 // parses each one strictly and checks full.yaml names every field of the file's Go types.
@@ -96,6 +96,21 @@ describe("an error from the factory's check", () => {
     expect(locate(text, msg)).toBe(line);
   });
   it.each([
+    ["mergepolicy: classes.docs-links.conditions.all[0]: key \"maxFiles\" is not a field (did you mean \"maxPatchFiles\"?); keys are matched exactly", 8],
+    ["mergepolicy: classes.deps-patch.limits: key \"maxPerDay\" is not a field; one of x", 13],
+    ["mergepolicy: classes.deps-patch: key \"harness\" is not a field; one of x", 11],
+    ["mergepolicy: key \"factory\" is not a field (did you mean \"classes\"?); one of classes, factory", 1],
+  ])("follows a key error's path to its line: %s", (msg, line) => {
+    expect(locate(text, msg)).toBe(line);
+  });
+  it("follows a path through list items and stops at the deepest place the text has", () => {
+    const t = "factory: aws-0\nclasses:\n  a:\n    conditions:\n      all:\n        - allowedFiles: [x]\n        - maxPatchFiles: 3\n" +
+      "        - oracle:\n            probe: p\n";
+    expect(locate(t, 'classes.a.conditions.all[1]: key "maxPatchFiles" is not a field')).toBe(7);
+    expect(locate(t, 'classes.a.conditions.all[2].oracle: key "probe" is not a field')).toBe(9);
+    expect(locate(t, 'classes.a.conditions.all[5]: key "zz" is not a field')).toBe(5);
+  });
+  it.each([
     "the proposal is the file as it is",
     "class revert is required",
     "at most 400 patterns in the file, not 401",
@@ -118,5 +133,22 @@ describe("the highlighter", () => {
     const code = highlight("a: 1\nb: 2\n", new Set([2]));
     expect(code.textContent).toBe("a: 1\nb: 2\n");
     expect([...code.querySelectorAll(".y-line")].map((l) => l.classList.contains("y-error"))).toEqual([false, true]);
+  });
+});
+
+describe("a key error's fix", () => {
+  it("reads the key, the one meant first, then the rest of the list", () => {
+    expect(keyFix('mergepolicy: classes.a.conditions.all[0]: key "maxFiles" is not a field (did you mean "maxPatchFiles"?); keys are matched exactly, in their documented case: one of allowedFiles, maxPatchFiles, modifyOnly'))
+      .toEqual({ key: "maxFiles", keys: ["maxPatchFiles", "allowedFiles", "modifyOnly"] });
+    expect(keyFix('classes.a.monitor: key "followUp" is not a field; keys are matched exactly, in their documented case: one of flux, followUpWindow'))
+      .toEqual({ key: "followUp", keys: ["flux", "followUpWindow"] });
+    expect(keyFix("class a: harness is required")).toBeUndefined();
+  });
+});
+
+describe("comments", () => {
+  it("counts the comments a rewrite would drop, not a # inside a string", () => {
+    expect(comments('# top\nfactory: aws-0 # inline\nclasses:\n  a:\n    holdoutChecks: ["links #1"]\n')).toBe(2);
+    expect(comments('factory: "aws-0"\n')).toBe(0);
   });
 });

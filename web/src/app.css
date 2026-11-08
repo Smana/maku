@@ -1080,6 +1080,8 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .y-line.y-error { background: color-mix(in srgb, var(--destructive) 10%, var(--card)); }
 .settings .yaml-status { margin: 0; padding: 4px 8px; font-size: 13px; color: var(--destructive-text); }
 .settings .yaml-status:empty { display: none; }
+.settings .comments-warning:empty { display: none; }
+.settings .key-fix { font: 13px ui-monospace, monospace; padding: 0 6px; }
 .settings .editor-form:disabled { opacity: 0.6; }
 .settings .error-line { font: 13px ui-monospace, monospace; padding: 0 6px; }
 .settings .structural-relaxation { font-weight: 700; }

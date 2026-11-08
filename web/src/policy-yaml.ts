@@ -177,6 +177,51 @@ function keyIn(msg: string): string | undefined {
   return msg.split(/[^A-Za-z.]+/).map((w) => w.split(".").at(-1)!).find((w) => known.has(w));
 }
 
+// keyCol is the column a line's key starts at, after any list dashes.
+const keyCol = (l: string) => /^\s*(?:-\s+)*/.exec(l)![0].length;
+
+// pathBlock walks a path such as classes.a.conditions.all[1] through the text's indentation: the
+// 1-based line of the deepest step the text has, and where that step's block ends. A list item's
+// first key sits on the item's own line, after its dash.
+function pathBlock(lines: string[], path: string): { at: number; end: number } | undefined {
+  let from = 0, end = lines.length, found: { at: number; end: number } | undefined;
+  for (const seg of path.match(/[^.[\]]+|\[\d+\]/g) ?? []) {
+    const first = lines.findIndex((l, i) => i >= from && i < end && !blank(l));
+    if (first < 0) break;
+    let hit = -1, col = 0;
+    if (seg.startsWith("[")) {
+      col = indentOf(lines[first]);
+      let n = Number(seg.slice(1, -1));
+      for (let i = first; i < end && hit < 0; i++) {
+        if (!blank(lines[i]) && indentOf(lines[i]) === col && /^\s*-/.test(lines[i]) && n-- === 0) hit = i;
+      }
+    } else {
+      col = keyCol(lines[first]);
+      hit = (keyLine(lines, seg, first, end) ?? 0) - 1;
+      while (hit >= 0 && keyCol(lines[hit]) !== col) hit = (keyLine(lines, seg, hit + 1, end) ?? 0) - 1;
+    }
+    if (hit < 0) break;
+    let e = hit + 1;
+    while (e < end && (blank(lines[e]) || indentOf(lines[e]) > col)) e++;
+    found = { at: hit + 1, end: e };
+    [from, end] = [seg.startsWith("[") ? hit : hit + 1, e];
+  }
+  return found;
+}
+
+// keyFix reads a key error: the key refused and the keys it may be, the one meant first.
+export function keyFix(msg: string): { key: string; keys: string[] } | undefined {
+  const m = /key "([^"]+)" is not a field(?: \(did you mean "([^"]+)"\?\))?/.exec(msg);
+  if (!m) return undefined;
+  const list = /one of (.+)$/.exec(msg)?.[1].split(", ").map((k) => k.trim()) ?? [];
+  return { key: m[1], keys: [...new Set([...(m[2] ? [m[2]] : []), ...list])] };
+}
+
+// comments is how many lines of text carry a comment: what a rewrite from the form drops.
+export function comments(text: string): number {
+  return text.split("\n").filter((l) => tokenize(l).some((t) => t.c === "y-comment")).length;
+}
+
 // locate is the 1-based line of text an error message is about, or undefined when the text holds
 // no such place (the error is about the file as a whole, or a class it lacks).
 export function locate(text: string, msg: string): number | undefined {
@@ -185,6 +230,12 @@ export function locate(text: string, msg: string): number | undefined {
   const lines = text.split("\n");
   let body = msg.replace(/^mergepolicy: /, "");
   let from = 0, to = lines.length;
+  const k = /^([\w-]+(?:\.[\w-]+|\[\d+\])*): (key ".*)$/.exec(body);
+  if (k) {
+    const b = pathBlock(lines, k[1]);
+    if (b) return keyLine(lines, keyIn(k[2])!, b.at - 1, b.end) ?? b.at;
+    body = k[2];
+  }
   const c = /^class ([a-z0-9][-a-z0-9]*)(?::\s*|\s+)(.*)$/.exec(body);
   if (c) {
     const b = classBlock(lines, c[1]);

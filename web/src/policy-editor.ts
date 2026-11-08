@@ -8,7 +8,7 @@
 // request. factory: is never in the form.
 
 import templateFile from "./policy-templates.json";
-import { canonical, highlight } from "./policy-yaml";
+import { canonical, highlight, keyFix } from "./policy-yaml";
 
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
@@ -230,8 +230,10 @@ export function cleanClass(c: ClassPolicy): ClassPolicy {
 
 // previewView renders the factory's answer: errors, or the structural change, the simulation, the
 // strictness counterfactual and the file to submit.
-// at is the line of the checked text an error is about, if any; go shows that line.
-export function previewView(p: Preview, at: (msg: string) => number | undefined = () => undefined, go: (line: number) => void = () => {}): HTMLElement {
+// at is the line of the checked text an error is about, if any; go shows that line, and fix
+// replaces a refused key on it with one the error lists.
+export function previewView(p: Preview, at: (msg: string) => number | undefined = () => undefined, go: (line: number) => void = () => {},
+  fix?: (line: number, from: string, to: string) => void): HTMLElement {
   const box = el("section", undefined, "editor-preview");
   if (!p.valid) {
     box.append(el("h3", "The file does not pass"));
@@ -246,6 +248,17 @@ export function previewView(p: Preview, at: (msg: string) => number | undefined 
         li.append(b, " ");
       }
       li.append(e);
+      const k = keyFix(e);
+      if (line !== undefined && fix && k?.keys.length) {
+        const keys = el("span", " Replace with: ", "key-fixes");
+        for (const to of k.keys) {
+          const b = el("button", to, "key-fix");
+          b.type = "button";
+          b.onclick = () => fix(line, k.key, to);
+          keys.append(b, " ");
+        }
+        li.append(keys);
+      }
       ul.append(li);
     }
     box.append(ul);
@@ -324,8 +337,9 @@ export interface YamlView {
   text: HTMLTextAreaElement;
   set(v: string): void;
   mark(lines: Iterable<number>): void;
-  say(msg: string): void;
+  say(...parts: (string | Node)[]): void;
   reveal(line: number): void;
+  replaceKey(line: number, from: string, to: string): void;
 }
 
 // yamlEditor is the expert view: a textarea over its own highlighted copy, with line numbers, the
@@ -369,7 +383,7 @@ export function yamlEditor(initial: string, path: string, input: (text: string) 
     root, text,
     set(v) { text.value = v; marks = new Set(); paint(); },
     mark(lines) { marks = new Set(lines); paint(); },
-    say(msg) { status.textContent = msg; },
+    say(...parts) { status.replaceChildren(...parts); },
     reveal(line) {
       const ls = text.value.split("\n");
       const start = ls.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0);
@@ -378,6 +392,14 @@ export function yamlEditor(initial: string, path: string, input: (text: string) 
       const lh = parseFloat(getComputedStyle(text).lineHeight);
       if (lh) text.scrollTop = Math.max(0, (line - 3) * lh);
       text.onscroll?.(new Event("scroll"));
+    },
+    // replaceKey renames from to to on line, as an edit of the text: the form follows.
+    replaceKey(line, from, to) {
+      const ls = text.value.split("\n");
+      const esc = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      ls[line - 1] = ls[line - 1].replace(new RegExp(`^(\\s*(?:-\\s+)*["']?)${esc}(["']?\\s*:)`), (_, a, b) => a + to + b);
+      text.value = ls.join("\n");
+      text.dispatchEvent(new Event("input"));
     },
   };
 }

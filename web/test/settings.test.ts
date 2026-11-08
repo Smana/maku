@@ -292,6 +292,36 @@ describe("the policy editor", () => {
     items[0].querySelector("button")!.click();
     expect(yaml.value.slice(yaml.selectionStart, yaml.selectionEnd)).toBe("        - maxPatchFiles: 30");
   });
+  it("offers the keys a key error lists, and a pick rewrites that key on its line", async () => {
+    const { app, yaml, type, field } = await mount({ [`${repo}/preview`]: { valid: false, simulation: { enabled: false },
+      errors: ['mergepolicy: classes.docs-links.conditions.all[0]: key "maxFiles" is not a field (did you mean "maxPatchFiles"?); keys are matched exactly, in their documented case: one of allowedFiles, maxPatchFiles'] } });
+    type("factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n    author: agents\n    harness: docs-standard\n    conditions:\n      all:\n        - maxFiles: 4 # cap\n");
+    [...app.querySelectorAll("button")].find((b) => b.textContent === "Check, compare and simulate")!.click();
+    await settle();
+    const li = app.querySelector(".editor-preview li")!;
+    expect(li.querySelector("button.error-line")?.textContent).toBe("Line 9");
+    const fixes = [...li.querySelectorAll("button.key-fix")];
+    expect(fixes.map((b) => b.textContent)).toEqual(["maxPatchFiles", "allowedFiles"]);
+    (fixes[0] as HTMLButtonElement).click();
+    expect(yaml.value.split("\n")[8]).toBe("        - maxPatchFiles: 4 # cap");
+    expect(field("maxPatchFiles").value).toBe("4");
+    expect(app.querySelector(".yaml-gutter .y-error")).toBeNull();
+  });
+  it("warns before a form edit drops the text's comments, and can undo it", async () => {
+    const { app, yaml, type, field } = await mount();
+    const warn = () => app.querySelector(".comments-warning")?.textContent ?? "";
+    expect(warn()).toBe("");
+    const commented = "# ours\nfactory: aws-0\nclasses:\n  docs-links:\n    mode: shadow # for now\n    author: agents\n    harness: docs-standard\n";
+    type(commented);
+    expect(warn()).toMatch(/2 comments/);
+    field("maxPatchFiles").value = "5";
+    field("maxPatchFiles").dispatchEvent(new Event("input"));
+    expect(yaml.value).not.toContain("#");
+    const undo = [...app.querySelectorAll(".yaml-status button")].find((b) => b.textContent === "Undo") as HTMLButtonElement;
+    undo.click();
+    expect(yaml.value).toBe(commented);
+    expect(field("maxPatchFiles").value).toBe("");
+  });
   it("copies and downloads the text as the file it replaces", async () => {
     const { app, yaml } = await mount();
     const wrote: string[] = [];

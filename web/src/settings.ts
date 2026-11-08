@@ -7,7 +7,7 @@
 
 import { api, SignInRequired } from "./api";
 import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
-import { locate, parsePolicy } from "./policy-yaml";
+import { comments, locate, parsePolicy } from "./policy-yaml";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -334,6 +334,12 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   name.setAttribute("aria-label", "new class name");
   const formAt = el("div");
   const out = el("div");
+  // The form writes the file without comments: say so before an edit there drops them.
+  const warning = el("p", "", "notice comments-warning");
+  const note = (text: string) => {
+    const n = comments(text);
+    warning.textContent = n ? `The file has ${n} comment${n > 1 ? "s" : ""}. A form edit rewrites it without them: edit in the expert view to keep them.` : "";
+  };
   const view = yamlEditor(r.file ?? fileYAML(file), ".github/agent-factory.yaml", (text) => {
     const p = parsePolicy(text);
     const form = formAt.querySelector("fieldset");
@@ -344,6 +350,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
       return;
     }
     view.say("");
+    note(text);
     file.classes = p.file.classes ?? {};
     fillPick();
     if (!pick.value.startsWith("template:")) show();
@@ -362,14 +369,25 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
           file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
         }
         file.classes![key()] = cleanClass(c);
+        const before = view.text.value;
+        const dropped = comments(before);
         view.set(fileYAML(file));
+        note(view.text.value);
+        if (!dropped) return view.say();
+        const undo = el("button", "Undo");
+        undo.type = "button";
+        undo.onclick = () => {
+          view.text.value = before;
+          view.text.dispatchEvent(new Event("input"));
+        };
+        view.say(`The form edit dropped ${dropped} comment${dropped > 1 ? "s" : ""}. `, undo);
       }, r.adoptedProfiles));
     } catch {
       formAt.replaceChildren(el("p", "The form cannot show this class as the text has it: edit it in the expert view.", "notice"));
     }
   };
   pick.onchange = show;
-  box.append(labelled2("class", pick), name, formAt);
+  box.append(labelled2("class", pick), name, warning, formAt);
   box.append(el("h3", "Expert YAML view"), el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
   const check = el("button", "Check, compare and simulate", "primary");
   check.type = "button";
@@ -382,11 +400,12 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
       const p = (await post(`/api/policy/repositories/${r.repository}/preview`, { file: text }, get)) as Preview;
       const at = (msg: string) => locate(text, msg);
       view.mark((p.errors ?? []).map(at).filter((n) => n !== undefined));
-      out.replaceChildren(previewView(p, at, (line) => view.reveal(line)));
+      out.replaceChildren(previewView(p, at, (line) => view.reveal(line), (line, from, to) => view.replaceKey(line, from, to)));
     } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
     check.disabled = false;
   };
   box.append(check, out);
+  note(view.text.value);
   if (pick.options.length) show();
   return box;
 }
