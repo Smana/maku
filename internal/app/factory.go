@@ -387,7 +387,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Coordination (v4 MR16): Prerequisites stays nil because neither capability it must prove,
 	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
 	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
-	// confirms only.
+	// confirms only. coordination.Prerequisites composes the two once class authority has a port;
+	// hardening.Evaluator, its second half, answers false through stage H4 (hardening design).
 	// Each repository's checks and filing go through that repository's own App connection.
 	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now, Metrics: m,
 		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {

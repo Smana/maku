@@ -149,6 +149,8 @@ type Config struct {
 	Sandbox   Sandbox             `json:"sandbox,omitzero"`
 	// Coordination is the multi-repository coordination switch (v4 MR16): off unless set.
 	Coordination Coordination `json:"coordination,omitzero"`
+	// Hardening is the untrusted-input hardening track (hardening design): off unless set.
+	Hardening Hardening `json:"hardening,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
@@ -217,10 +219,10 @@ func (c *Coordination) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// coordinationOnce refuses a coordination block, or a key inside it, written twice: YAMLToJSON
-// keeps the last silently, and a switch must never read differently from what its author sees.
-// The rest of the file keeps its last-key-wins reading.
-func coordinationOnce(raw []byte) error {
+// blockOnce refuses a switch block (coordination, hardening), or a key inside it, written twice:
+// YAMLToJSON keeps the last silently, and a switch must never read differently from what its author
+// sees. The rest of the file keeps its last-key-wins reading.
+func blockOnce(raw []byte, name string) error {
 	var doc yamlv3.Node
 	if err := yamlv3.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yamlv3.MappingNode {
 		return nil //nolint:nilerr // YAMLToJSON reports the malformed file; this check reads only a well-formed one
@@ -228,11 +230,11 @@ func coordinationOnce(raw []byte) error {
 	top := doc.Content[0].Content
 	var block *yamlv3.Node
 	for i := 0; i+1 < len(top); i += 2 {
-		if top[i].Value != "coordination" {
+		if top[i].Value != name {
 			continue
 		}
 		if block != nil {
-			return errors.New("coordination is written twice")
+			return fmt.Errorf("%s is written twice", name)
 		}
 		block = top[i+1]
 	}
@@ -243,7 +245,7 @@ func coordinationOnce(raw []byte) error {
 	for i := 0; i+1 < len(block.Content); i += 2 {
 		k := block.Content[i].Value
 		if seen[k] {
-			return fmt.Errorf("coordination.%s is written twice", k)
+			return fmt.Errorf("%s.%s is written twice", name, k)
 		}
 		seen[k] = true
 	}
@@ -1255,8 +1257,10 @@ func Load(path string) (*Config, error) {
 
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
 func Parse(raw []byte) (*Config, error) {
-	if err := coordinationOnce(raw); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
+	for _, block := range []string{"coordination", "hardening"} {
+		if err := blockOnce(raw, block); err != nil {
+			return nil, fmt.Errorf("config: %w", err)
+		}
 	}
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
@@ -1296,6 +1300,9 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	c.Scoper = c.Scoper.WithDefaults()
 	c.Coordination.ApplyDefaults()
+	if c.Hardening.Mode == "" { // the block is absent: its UnmarshalJSON applied them otherwise
+		c.Hardening.ApplyDefaults()
+	}
 	if len(c.Meter.Prices) > 0 { // without prices, a tier keeps its token cap (one release of compatibility)
 		for name, t := range c.Tiers {
 			if t.RunUSD == 0 {
@@ -1416,6 +1423,7 @@ func (c *Config) Validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	c.Coordination.Validate(bad)
+	c.validateHardening(bad)
 	rs := c.Repos()
 	switch {
 	case len(rs) == 0:
