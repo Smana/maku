@@ -33,7 +33,7 @@ REMOTE_BASE, PROTOCOL = "https://github.com/", "https"
 
 MAX_MANIFEST_BYTES = 8192  # runs.maxCoordinationJSON
 MAX_SUBJECTS, MAX_CHECKS = 8, 32
-FETCH_TIMEOUT_S, GIT_TIMEOUT_S = 600, 60
+FETCH_TIMEOUT_S, GIT_TIMEOUT_S = 120, 30  # RunGit's
 CHECK_TIMEOUT_S = 1800
 OUTPUT_TAIL = 2000
 
@@ -149,29 +149,48 @@ def default_branch(repo_dir: str) -> str:
     raise Infrastructure("origin names no default branch")
 
 
-def checkout(subject: dict, root: str) -> str:
-    """One subject's detached worktree at its exact SHA, verified (verify, then worktree add):
-    a landed merge must be on origin's default branch; a head is fetched by its id."""
+def fetch(subject: dict, root: str) -> str:
+    """One subject's commit fetched into a bare repository of its own and verified (verify): a
+    landed merge must be on origin's default branch; a head is fetched by its id. Returns that
+    repository."""
     cid, repo = subject["childID"], subject["repository"]
     sha = subject.get("headSHA") or subject["mergeCommitSHA"]
-    repo_dir, path = os.path.join(root, ".repos", cid), os.path.join(root, cid)
+    repo_dir = os.path.join(root, ".repos", cid)
     os.makedirs(repo_dir)
     git(repo_dir, "init", "-q", "--bare")
     git(repo_dir, "remote", "add", "origin", REMOTE_BASE + repo + ".git")
     if subject.get("headSHA"):
         git(repo_dir, "fetch", "--no-tags", "origin", sha)
-        if rev_parse(repo_dir, sha) != sha:
-            raise Infrastructure("%s's head is not on origin" % cid)
     else:
-        tracked = "refs/remotes/origin/" + default_branch(repo_dir)
-        git(repo_dir, "fetch", "--no-tags", "origin", "+refs/heads/%s:%s" % (tracked[len("refs/remotes/origin/"):], tracked))
-        if rev_parse(repo_dir, sha) != sha:
-            raise Infrastructure("%s's merge commit is not on origin" % cid)
-        git(repo_dir, "merge-base", "--is-ancestor", sha, tracked)  # no longer on the default branch: refused
-    git(repo_dir, "worktree", "add", "--detach", path, sha)
-    if rev_parse(path, "HEAD") != sha:
-        raise Infrastructure("%s is not at %s" % (cid, sha[:12]))
-    return path
+        default = default_branch(repo_dir)
+        git(repo_dir, "fetch", "--no-tags", "origin", "+refs/heads/%s:refs/remotes/origin/%s" % (default, default))
+    verify(subject, repo_dir)
+    return repo_dir
+
+
+def verify(subject: dict, repo_dir: str) -> None:
+    cid = subject["childID"]
+    sha = subject.get("headSHA") or subject["mergeCommitSHA"]
+    if rev_parse(repo_dir, sha) != sha:
+        raise Infrastructure("%s's commit is not on origin" % cid)
+    if not subject.get("headSHA"):
+        tracked = git(repo_dir, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/").split()
+        try:
+            git(repo_dir, "merge-base", "--is-ancestor", sha, tracked[0])
+        except (Infrastructure, IndexError):
+            raise Infrastructure("%s's merge commit is not on the default branch" % cid) from None
+
+
+def checkout(subjects: list, root: str) -> None:
+    """Every subject's detached worktree at its exact SHA, all verified before any is created and
+    each verified again right before (coordination checkout's Run); no branch is created."""
+    repos = [fetch(s, root) for s in subjects]
+    for s, repo_dir in zip(subjects, repos):
+        sha, path = s.get("headSHA") or s["mergeCommitSHA"], os.path.join(root, s["childID"])
+        verify(s, repo_dir)
+        git(repo_dir, "worktree", "add", "--detach", path, sha)
+        if rev_parse(path, "HEAD") != sha:
+            raise Infrastructure("%s is not at %s" % (s["childID"], sha[:12]))
 
 
 def write_manifest(raw: bytes, directory: str) -> str:
@@ -226,8 +245,7 @@ def run(env: dict, post, redact=lambda s: s, manifest_dir: str = MANIFEST_DIR, r
         manifest_hash = env[HASH_ENV]
         path = write_manifest(raw, manifest_dir)
         os.makedirs(root)
-        for s in m["subjects"]:
-            checkout(s, root)
+        checkout(m["subjects"], root)
         print("agent-run integration: %d subject(s) at their exact SHAs, %d check(s)" % (len(m["subjects"]), len(m["acceptance"])), flush=True)
     except (Infrastructure, OSError) as exc:
         print("agent-run integration: not run, nothing reported: %s" % exc, flush=True)

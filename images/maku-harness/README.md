@@ -184,7 +184,7 @@ flowchart TD
 |---|---|
 | Subjects | each child id, repository and exactly one 40-hex `headSHA` or `mergeCommitSHA` is checked before any git call, as `maku coordination checkout` checks its document |
 | Fetch | anonymous over https only: no credential helper, no system or global git config, `core.hooksPath=/dev/null`, no LFS smudge, no submodules. A merge commit must be on origin's default branch (`ls-remote --symref`, then `merge-base --is-ancestor`); a head is fetched by its id |
-| Worktrees | `git worktree add --detach` in a bare repository of its own, then `rev-parse HEAD` must be the SHA; no branch is created |
+| Worktrees | every subject is fetched and verified before any worktree exists, and verified again right before its own; then `git worktree add --detach` from a bare repository of its own, and `rev-parse HEAD` must be the SHA. No branch is created. Git calls time out at 120 s (fetch, `ls-remote`, `worktree add`) or 30 s |
 | Checks | each `acceptance[].check` verbatim through `bash -c` (no template language), at `$MAKU_COORDINATION_ROOT`, with only `PATH`, `HOME`, `LANG`, `TMPDIR` and the two `MAKU_COORDINATION_*` paths; none of the run's credential paths. Each runs in its own process group, killed when its shell exits, at most 30 minutes; the redacted tail of its output is logged |
 | Result | `passed`/`acceptance_passed`, `failed`/`acceptance_failed` or `failed`/`acceptance_timeout`, with the manifest hash, through the harness-only room tool `room_integration`. The factory reads it only from the run it started, under the hash it holds |
 | Infrastructure | a malformed manifest, a fetch, a worktree or a SHA that does not verify, or an unstored result posts nothing typed and exits 1: the factory escalates `integration_pending` |

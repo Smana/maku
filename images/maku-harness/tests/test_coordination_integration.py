@@ -194,6 +194,14 @@ class IntegrationTest(unittest.TestCase):
         raw = manifest(self.up, ["true"], subjects=[{"childID": "consumer", "repository": "Smana/consumer", "headSHA": "1" * 40}])
         self.assert_infrastructure(env_for(raw))
 
+    def test_every_subject_verifies_before_any_worktree_exists(self):
+        # coordination checkout's order: fetch and verify every commit, then create anything.
+        raw = manifest(self.up, ["true"], subjects=[
+            {"childID": "aaa", "repository": "Smana/contract", "mergeCommitSHA": self.up.merge},
+            {"childID": "zzz", "repository": "Smana/consumer", "headSHA": "1" * 40}])
+        self.assert_infrastructure(env_for(raw))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "work", "aaa")))
+
     def test_a_merge_off_the_default_branch_is_refused(self):
         # coordination checkout's verify: a landed child's merge must be on origin's default branch.
         raw = manifest(self.up, ["true"], purpose="final",
