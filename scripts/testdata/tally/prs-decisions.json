@@ -11,7 +11,7 @@
           "login": "ogenki-agent-factory"
         },
         "createdAt": "2026-10-01T00:00:00Z",
-        "body": "Agent factory task `t`: would auto-merge: `docs-links`, checks green. <!-- agent-factory scope=task event=would-arm-2 head=a21 paused=false capped=false -->\n\n<!-- agent-factory-decision head=a21 class=docs-links decision=shadow:shadow_would_arm files=1/3 lines=12/20 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false policy=0123456789ab dual=agree reviewer=glm-5.3 -->"
+        "body": "Agent factory task `t`: would auto-merge: `docs-links`, checks green. <!-- agent-factory scope=task event=would-arm-2 head=a21 paused=false capped=false -->\n\n<!-- agent-factory-decision head=a21 class=docs-links decision=shadow:shadow_would_arm files=1/3 lines=12/20 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false policy=0123456789ab dual=agree grant=g7:2 reviewer=glm-5.3 -->"
       }
     ]
   },
