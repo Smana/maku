@@ -71,7 +71,7 @@ const pairs = (t: Tokens) => [
   ...(["--link", "--success-text", "--warning-foreground", "--muted-foreground", "--card-foreground"] as const).flatMap((k) => [
     [`the expert view's ${k} on a card`, t[k], t["--card"], 4.5],
     [`the expert view's ${k} on a marked line`, t[k], mix(t["--destructive"], t["--card"], 0.1), 4.5],
-  ]),
+  ] as const),
   ["a marked line's number on the gutter", t["--destructive-text"], t["--muted"], 4.5],
   // The room list: a hovered row's tint, the page title on the header, the phase chip.
   ["the list's page title on the header", t["--muted-foreground"], t["--brand-header"], 4.5],
