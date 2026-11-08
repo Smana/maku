@@ -404,7 +404,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return nil
 		}}
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
-	if cfg.PolicyManagement.Promotion { // stage 6: each repository's evidence, through its own App connection
+	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
+	if cfg.PolicyManagement.Promotion {
 		apiSrv.Evidence = &evidence.Service{Cfg: cfg, Now: time.Now, Sources: func(repo string) (evidence.Source, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
