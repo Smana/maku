@@ -7,6 +7,7 @@ import { statusIcon } from "./icons";
 import { maxRows } from "./limits";
 import { ago } from "./summary";
 import { mountThemeButton, type ThemeController } from "./theme";
+import { mountSettingsLink } from "./settingslink";
 
 // A room's rows by seq, in seq order on the page. A resume the broker clamped can
 // resend a seq: its row is replaced in place, never doubled, and one no longer held
@@ -215,6 +216,7 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   h1.className = "page-title";
   h1.textContent = "Rooms";
   header.append(h1);
+  mountSettingsLink(header);
   if (theme) mountThemeButton(header, theme);
 
   const check = (name: string, label: string, on?: boolean) => {
