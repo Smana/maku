@@ -239,7 +239,7 @@ flowchart LR
 | Stage | Switch (factory) | Needs | Does | Merge authority | Exit, as the code measures it | Off |
 |---|---|---|---|---|---|---|
 | 1 | `read` | — | Each fence read parses, validates and resolves the file and compares it with the central classes | Central | `maku_factory_policy_central_divergence == 0` and no `maku_factory_policy_load_errors_total` series | Unset: no observation; the gauge keeps its last value until restart |
-| 2 | `simulation` | — | Unlocks `maku policy simulate` and `maku policy diff`, and the editor's simulation rows. Offline | Central | The simulator agrees with the gate on the conformance fixtures | Unset: both verbs refuse, the editor shows no simulation. The spec's rule: turn it off when the simulator disagrees with the gate |
+| 2 | `simulation` | — | Unlocks `maku policy diff` and the fixture replay (`maku policy simulate`), and the editor's replay rows. Offline | Central | The simulator agrees with the gate on the conformance fixtures | Unset: both verbs refuse, the editor shows no simulation. The spec's rule: turn it off when the simulator disagrees with the gate |
 | 3 | `dualEvaluation` | `read` | Every merge decision is decided again under the repository's snapshot; agreement counted and written as `dual=` | Central | A week with no `agreement="unexplained"` | Unset: the record loses `policy=`/`dual=` |
 | 4 | `repositoryAuthority` | `read`; the repository entry sets `classAuthority: repository` and declares no `classes` | The gate decides the repository on its own file; triage, intake, schedules and the monitor read its classes | Repository file | An invalid or unreadable file pauses auto-merge | Revert the cutover: restore the entry's central `classes` and drop `classAuthority`, then the switch. The switch off with `classAuthority: repository` still set fails config load |
 | 5 | `approvalMemory` | `read`; broker `human.approvalMemory: true` | Grants are looked up, uncached, before each decision of a live class with a `requiresApproval` subset once the diff is read, and again before the merge call | Repository file plus grants | Grant lifecycle and rollback proofs | Unset: no lookup, the subset asks a maintainer again. Broker off: every grant path is a `404` |
@@ -483,8 +483,32 @@ classes:
       flux: {source: flux-system/flux-system, within: 1h}
 ```
 
-`deps-minor` is the same with `diffShape: semver-minor`; it can never be `live`. See
-[adopted classes](factory.md#adopted-classes) for how adoption reads commits and pushes.
+Minor updates get a class of their own, `deps-minor`, which is **shadow only**: `semver-minor`
+refuses `mode: live` (`semver-minor is shadow only`), so it collects evidence and never merges. The
+editor's template is this, with no daily cap of its own:
+
+<!-- check: repository -->
+```yaml
+factory: aws-0
+classes:
+  docs-links: {mode: off, author: agents, harness: plain}
+  revert: {mode: off, author: agents, harness: plain}
+  deps-minor:
+    mode: shadow
+    author: adopt
+    adopt: {logins: ['renovate[bot]'], branches: ['^renovate/']}
+    harness: adopted-none
+    conditions:
+      all:
+        - diffShape: semver-minor
+        - modifyOnly: true
+        - maxPatchFiles: 3
+        - maxModifiedLines: 10
+        - releaseAgeCheck: renovate/stability-days
+    monitor: {followUpWindow: 168h}
+```
+
+See [adopted classes](factory.md#adopted-classes) for how adoption reads commits and pushes.
 
 ### Generated files
 
@@ -617,38 +641,48 @@ repositories:
 
 ## Workflows
 
-### Validate: `maku policy check`
+### Validate a class: `maku policy diff`
+
+To validate a new or changed class, use `diff`, never `check`. `diff` parses both files strictly,
+validates each against the guardrails and profiles, and names each class's structural change. Pass
+the same file twice to validate one file alone. It needs `policyManagement.simulation` in the
+config you pass.
+
+```bash
+maku policy diff --config factory.yaml --repository owner/name old.yaml new.yaml
+```
+
+It prints `CLASS CHANGE WHY` per class: `unchanged`, `tightening`, or `relaxation` with why.
+
+### Migration only: `maku policy check`
 
 ```bash
 maku policy check --config factory.yaml --repository owner/name .github/agent-factory.yaml
 ```
 
-It parses strictly, refuses a file naming another factory, validates against the guardrails and
-profiles, and then **requires equivalence with the central classes**: `equivalent`, or each
-difference (`docs-broad: only in the repository`). It is the migration's check and a repository
-CI's check before stage 4. A file that adds a class, an `any` or a `requiresApproval` subset is not
-equivalent by design; validate those with `maku policy diff`, which runs the same strict validation
-on both files. The verbs are offline and need only the config file.
+`check` means **equivalent to the central classes**, not "valid". It parses and validates as `diff`
+does, then prints `equivalent` or each difference (`docs-broad: only in the repository`). Use it for
+the export before a cutover, and in a repository's CI while the central config still decides. A file
+that adds a class, an `any` or a `requiresApproval` subset fails it by design.
 
-### Simulate and diff
-
-Both need `policyManagement.simulation` in the config you pass.
+### Fixture replay: `maku policy simulate`
 
 ```bash
-maku policy diff     --config factory.yaml --repository owner/name old.yaml new.yaml
 maku policy simulate --config factory.yaml --repository owner/name new.yaml \
   internal/factory/reconciler/testdata/conformance/*.json
 ```
 
-`diff` prints `CLASS CHANGE WHY` per class. `simulate` decides each fixture under the central class
-and under the file's class with the gate's own evaluator, and prints `CENTRAL`, `REPOSITORY` and
-the change: `unchanged`, `newly_auto_merged`, `newly_blocked`, `newly_approval_required`, `changed`.
+A **fixture replay**, not an impact preview: it replays Maku's conformance fixtures under the central
+class and under the file's class with the gate's own evaluator, and prints `CENTRAL`, `REPOSITORY`
+and the change (`unchanged`, `newly_auto_merged`, `newly_blocked`, `newly_approval_required`,
+`changed`). It needs `policyManagement.simulation`.
 
-The fixtures are the conformance cases in Maku's source, recorded under the test config in
-`internal/factory/reconciler/simulate_test.go` for the classes `dead-links` and `docs`. Under any
-other config a row prints `(the fixture recorded another central decision)`: it no longer conforms
-and proves nothing. Read a simulation as the evaluator's parity proof, not as a preview of your
-repository's history; the editor's strictness counterfactual is the historical view.
+The fixtures are recorded under the test config in `internal/factory/reconciler/simulate_test.go`,
+for the classes `dead-links` and `docs`. Under any other config a row prints `(the fixture recorded
+another central decision)`: it no longer conforms and proves nothing. Read a replay as proof that the
+evaluator the editor uses is the gate's, not as a preview of your repository's pull requests; the
+editor's strictness counterfactual is the only historical view. Replaying real pull requests is not
+part of this release.
 
 ### The settings editor
 
@@ -658,12 +692,12 @@ holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
 | Mode | Edits |
 |---|---|
 | Guided form | One class: mode, author and `adopt`, harness (from the central list), the `all` leaves except `oracle`, `deny`, `requiresApproval`, `limits`, `monitor.followUpWindow`. `any` branches and `oracle` are kept as they are |
-| Templates | `docs-broad`, `deps-patch`, `generated-files`, in shadow, harness empty: pick one |
+| Templates | `docs-broad`, `deps-patch`, `deps-minor` (shadow only), `generated-files`, all in shadow. The harness starts on the first central profile the template's author may take (`template: none` for the two deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote |
 | Expert YAML | The whole file, same validation. `factory:` is refused if changed |
 
 **Check** sends the file to the factory (`POST /api/policy/repositories/<owner>/<name>/preview`): the
 gate's `Parse`, `Validate`, `Resolve`, the structural change against the current policy (the file's
-classes, or the central ones as `export` would write them), the simulation when `simulation` is on,
+classes, or the central ones as `export` would write them), the fixture replay when `simulation` is on,
 and the strictness counterfactual of the class's recent decisions. The answer is the whole file and
 the GitHub edit link on the default branch. **Maku writes nothing**: paste the file into the edit
 page and open the pull request yourself. Since a policy pull request touches `.github/`, a human
@@ -715,7 +749,7 @@ For a pull request a live class's `requiresApproval` subset sent to a maintainer
 | Choice | Effect |
 |---|---|
 | Merge once | Approve the head on GitHub: the approved-merge path merges that head only and saves nothing |
-| **Merge and create rule** | Save a grant: **Preview rule** shows the exact predicate, the future pull requests it would match, what stays outside it, its expiry and how to revoke it; **Merge and create rule** saves it. The button merges nothing: an `approval_required` hand-off never returns to the gate by itself, so merge this pull request as you would have (approve its head with `merge.approveToMerge`, or merge it by hand). The grant covers the later ones |
+| **Merge and create rule** | Saves a grant and **merges nothing**: this pull request stays waiting for a human, and a maintainer still merges it (approve its head with `merge.approveToMerge`, or merge it by hand), because an `approval_required` hand-off never returns to the gate by itself. The grant covers later pull requests. **Preview rule** first shows the exact predicate, the future pull requests it would match, what stays outside it, its expiry and how to revoke it |
 
 The form takes the repository, class, pull request, the record's `policy=` hash and the caught
 files; the page reads them prefilled from `?repository=&class=&pr=&policy=&file=…`. Each caught file
@@ -855,17 +889,14 @@ Roll back from the top: a lower stage cannot be off while a higher one needs it.
 | 5 | `approvalMemory: false`; broker `human.approvalMemory: false` | No lookup; the subset asks a maintainer. Grants stay in the database, unused |
 | 4 | Revert the cutover pull request (central `classes` back, `classAuthority` gone), then `repositoryAuthority: false` | Central decides again. The switch off first fails config load. No tool writes a repository file back into central classes, so a class changed in the file since the cutover is carried back by hand |
 | 3 | `dualEvaluation: false` | No second decision; records lose `policy=` and `dual=` |
-| 2 | `simulation: false` | The verbs refuse, the editor shows no simulation |
+| 2 | `simulation: false` | `diff` and `simulate` refuse, the editor shows no fixture replay |
 | 1 | `read: false` (3, 4 and 5 off first) | Nothing read; the divergence gauge keeps its last value until restart |
 
 ## Troubleshooting
 
-**`maku policy check` says `not equivalent` for a file I just wrote.** It compares with the central
-classes, by design. A new class is `only in the repository`. Validate it with `maku policy diff`
-instead (both files may be the same).
-
-**`a semver shape needs modifyOnly: true` on the editor's `deps-patch` template.** The template
-lacks `modifyOnly: true`; add it as a leaf of `all`. The [recipe](#dependency-updates) has it.
+**`maku policy check` says `not equivalent` for a file I just wrote.** `check` means "equivalent to
+central", not "valid": a new class is `only in the repository`. Validate it with `maku policy diff`
+(the same file twice is fine).
 
 **`harness "x" is not in harnessProfiles`.** The class names a profile the central config does not
 have. Ask an operator to add it, or pick one the editor lists.

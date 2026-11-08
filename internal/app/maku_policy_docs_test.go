@@ -96,7 +96,7 @@ func TestTheGuidesExamplesValidate(t *testing.T) {
 			t.Fatalf("repository block:\n%s\n%v", b[2], err)
 		}
 	}
-	if repositories < 5 {
+	if repositories < 6 {
 		t.Fatalf("found %d repository blocks: the markers moved", repositories)
 	}
 }
