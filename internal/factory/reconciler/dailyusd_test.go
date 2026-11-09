@@ -27,7 +27,7 @@ func TestAFactoryRunReservesItsRunCapInMicroUSD(t *testing.T) {
 			tier.RunUSD = c.runUSD
 			cf.Tiers["standard"] = tier
 			g.r.Triage = triage.Static{Cfg: cf}
-			g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
+			g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
 			tk := g.reconcile(t, "3buqdlot", 3)
 			if got := reservationOf(t, g, rid(0)); tk.Status.Phase != v1alpha1.PhaseImplementing || got.MaxMicroUSD != c.want {
 				t.Fatalf("%s: reserved %+v, want %d micro-USD", tk.Status.Phase, got, c.want)

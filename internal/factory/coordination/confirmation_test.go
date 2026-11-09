@@ -261,7 +261,7 @@ func TestCoordinationConfirmAuthority(t *testing.T) {
 			return childConfirm(p, "consumer")
 		}, want: ErrRepositoryPermission},
 		{name: "a B maintainer the config does not list", actor: other, in: func(p v1alpha1.CoordinationPlan) CoordinationConfirmation { return childConfirm(p, "consumer") },
-			setup: func(s *Service, _ *fakeChecks) { s.Cfg.Repositories[1].Maintainers = nil }, want: ErrRepositoryPermission},
+			setup: func(s *Service, _ *fakeChecks) { s.Cfg.Current().Repositories[1].Maintainers = nil }, want: ErrRepositoryPermission},
 		{name: "a stale hash", actor: smana, in: func(p v1alpha1.CoordinationPlan) CoordinationConfirmation {
 			c := parentConfirm(p)
 			c.Parent.PlanHash = strings.Repeat("0", 64)
@@ -309,7 +309,7 @@ func TestCoordinationConfirmParentOnlyAuthorizesNoChild(t *testing.T) {
 	s, f := testService(t, config.CoordinationPlan)
 	p := draftPlan(t)
 	child(t, &p, "consumer").Maintainer = "github:Smana"
-	s.Cfg.Repositories[1].Maintainers = []string{"Smana"}
+	s.Cfg.Current().Repositories[1].Maintainers = []string{"Smana"}
 	f.perms[repoB]["smana"] = "write"
 	mustDraft(t, s, p)
 	ctx := context.Background()

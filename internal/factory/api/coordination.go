@@ -47,8 +47,8 @@ type DraftRequest struct {
 const maxCoordinationBody = coordination.MaxPlanBytes + 8<<10
 
 // coordinationOn is whether the switch serves the coordination routes: off, or unset, is a 404.
-func (s *Server) coordinationOn() bool {
-	m := s.Cfg.Coordination.Mode
+func (s *Server) coordinationOn(cfg *config.Config) bool {
+	m := cfg.Coordination.Mode
 	return s.Coordination != nil && m != "" && m != config.CoordinationOff
 }
 
@@ -56,6 +56,7 @@ func (s *Server) coordinationOn() bool {
 // by their ZITADEL→GitHub link, holding write on the primary; a sponsored principal by its
 // onBehalfOf maintainer, as POST /v1/tasks resolves one, holding write there too.
 func (s *Server) draftCoordination(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, ok := s.coordinationCaller(w, r)
 	if !ok {
 		return
@@ -72,7 +73,7 @@ func (s *Server) draftCoordination(w http.ResponseWriter, r *http.Request) {
 	actor := coordination.Actor{Principal: p.ID}
 	switch {
 	case p.Sponsored:
-		sp := s.Cfg.SponsoredBy(p.ID)
+		sp := cfg.SponsoredBy(p.ID)
 		if p.Internal || sp == nil {
 			refuse(w, http.StatusForbidden, reasonSponsoredOnly)
 			return
@@ -81,7 +82,7 @@ func (s *Server) draftCoordination(w http.ResponseWriter, r *http.Request) {
 			refuse(w, http.StatusForbidden, "repository_not_allowed")
 			return
 		}
-		login, code, reason := s.sponsorOf(r.Context(), sp, TaskRequest{Repository: primary, OnBehalfOf: in.OnBehalfOf})
+		login, code, reason := s.sponsorOf(r.Context(), cfg, sp, TaskRequest{Repository: primary, OnBehalfOf: in.OnBehalfOf})
 		if reason != "" {
 			refuse(w, code, reason)
 			return
@@ -100,7 +101,7 @@ func (s *Server) draftCoordination(w http.ResponseWriter, r *http.Request) {
 			refuse(w, code, reason)
 			return
 		}
-		if !s.mayWrite(r.Context(), p, primary) {
+		if !s.mayWrite(r.Context(), cfg, p, primary) {
 			refuse(w, http.StatusForbidden, "repository_permission")
 			return
 		}

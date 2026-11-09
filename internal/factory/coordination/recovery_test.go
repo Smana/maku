@@ -325,7 +325,7 @@ func TestRecoverRetriesIntegrationOnce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		it := IntegrationTask(ns, r.s.Cfg, task, m, 1)
+		it := IntegrationTask(ns, r.s.Cfg.Current(), task, m, 1)
 		it.Status.Phase = v1alpha1.PhaseEscalated
 		if err := r.s.Client.Create(ctx, it); err != nil {
 			t.Fatal(err)

@@ -22,8 +22,8 @@ import (
 func TestAWaitCountsForTheTasksPayer(t *testing.T) {
 	for enabled, payer := range map[bool]string{true: "github:smana", false: runs.PrincipalFactory} {
 		g := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
-		g.r.Cfg.Budgets = personBudgets(enabled, true)
-		g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "Alice")
+		g.r.Cfg.Current().Budgets = personBudgets(enabled, true)
+		g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "Alice")
 		g.f.SetComments(7, retryBy(77, "Alice", time.Minute))
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseQueued {
 			t.Fatalf("enabled %v: %s", enabled, tk.Status.Phase)
@@ -42,7 +42,7 @@ func TestAWaitCountsForTheTasksPayer(t *testing.T) {
 // payer is now.
 func TestAStopsRevocationsNameEachRunsPayer(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"))
-	g.r.Cfg.Budgets = personBudgets(true, true)
+	g.r.Cfg.Current().Budgets = personBudgets(true, true)
 	g.reconcile(t, "3buqdlot", 3)
 	g.runs.set(rid(0), "Running")
 	g.runs.runs["aaaaaaa2"] = runs.Run{ID: "aaaaaaa2", TaskID: "3buqdlot", Phase: "Pending", Principal: runs.PrincipalFactory,

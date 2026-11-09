@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -219,11 +221,11 @@ func settled(r *envelope.RunFact) *envelope.RunFact {
 }
 
 // factsDue reports facts the room does not have yet.
-func (r *Reconciler) factsDue(t *v1alpha1.Task) bool {
+func (r *Reconciler) factsDue(cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Status.RoomRef == "" || r.Rooms == nil {
 		return false
 	}
-	return !r.factsPosted(t, r.factsFor(t))
+	return !r.factsPosted(t, r.factsFor(cfg, t))
 }
 
 // factsPosted: the room's ledger records exactly these facts, posted.
@@ -236,12 +238,12 @@ func (r *Reconciler) factsPosted(t *v1alpha1.Task, f envelope.TaskFacts) bool {
 // an AwaitingHuman hand-off (approvalReturns), so the room's merge need says what the issue says,
 // whether the task's dollars are final (CD23), which is what stops the key bucketing them, and the
 // merge policy that governs the task (policyOf).
-func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
+func (r *Reconciler) factsFor(cfg *config.Config, t *v1alpha1.Task) envelope.TaskFacts {
 	f := factsOf(t)
-	f.Plan = r.planOf(t)
-	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(t, t.Status.Reason)
-	f.SpendFinal = r.spendIsFinal(t)
-	f.Policy = policyOf(r.Cfg, r.repo(t), t)
+	f.Plan = r.planOf(cfg, t)
+	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(cfg, t, t.Status.Reason)
+	f.SpendFinal = r.spendIsFinal(cfg, t)
+	f.Policy = policyOf(cfg, r.repo(cfg, t), t)
 	return f
 }
 
@@ -251,11 +253,11 @@ func (r *Reconciler) factsFor(t *v1alpha1.Task) envelope.TaskFacts {
 // does not allow the factory yet (FR-1), is a wait, as for the snapshot: the facts stay due. A sealed
 // room never takes them, so they are settled: waiting would post and log on every later reconcile,
 // and an error would hold the task in backoff instead of its poll.
-func (r *Reconciler) postFacts(ctx context.Context, t *v1alpha1.Task) error {
-	if !r.factsDue(t) {
+func (r *Reconciler) postFacts(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	if !r.factsDue(cfg, t) {
 		return nil
 	}
-	f := r.factsFor(t)
+	f := r.factsFor(cfg, t)
 	h := factsKey(f)
 	if l := t.Status.Facts; l == nil || l.Hash != h {
 		prevSeq, prevLedger := t.Status.RoomSeq, t.Status.Facts
@@ -300,8 +302,8 @@ func personaOf(t *v1alpha1.Task, r v1alpha1.RunRecord) string {
 }
 
 // planOf is the personas the task is expected to run, in order, for the room's stage strip.
-func (r *Reconciler) planOf(t *v1alpha1.Task) []string {
-	if r.Cfg.Investigates(t.Spec.Template) {
+func (r *Reconciler) planOf(cfg *config.Config, t *v1alpha1.Task) []string {
+	if cfg.Investigates(t.Spec.Template) {
 		return []string{"triager"}
 	}
 	var plan []string
@@ -313,10 +315,10 @@ func (r *Reconciler) planOf(t *v1alpha1.Task) []string {
 	if scoperPlanned(t) {
 		add("scoper")
 	}
-	if r.testerPlanned(t) {
+	if r.testerPlanned(cfg, t) {
 		add("tester")
 	}
-	for _, role := range r.Cfg.Templates[t.Spec.Template].Roles {
+	for _, role := range cfg.Templates[t.Spec.Template].Roles {
 		add(role)
 	}
 	return plan

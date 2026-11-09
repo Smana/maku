@@ -27,7 +27,7 @@ func cancelledChecks(second string) forge.Checks {
 // A job is re-run only once nothing is pending: GitHub refuses it before the run completes.
 func TestCancelledBesidePendingWaitsWithoutRerun(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.CheckReruns = 1
+	g.r.Cfg.Current().Merge.CheckReruns = 1
 	g.f.SetChecks(12, cancelledChecks("PENDING"))
 	tk := g.reconcile(t, "3buqdlot", 3)
 	if tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Reason != "ci_pending" || tk.Status.CheckReruns != 0 || len(g.f.Reruns()) != 0 {
@@ -38,7 +38,7 @@ func TestCancelledBesidePendingWaitsWithoutRerun(t *testing.T) {
 // A refused re-run leaves the cap unspent, and every cancelled job is still tried.
 func TestRefusedRerunLeavesTheCapUnspent(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.CheckReruns = 1
+	g.r.Cfg.Current().Merge.CheckReruns = 1
 	g.f.SetChecks(12, cancelledChecks("CANCELLED"))
 	g.f.FailReruns(errors.New("403"), 776, 777)
 	var err error
@@ -58,7 +58,7 @@ func TestRefusedRerunLeavesTheCapUnspent(t *testing.T) {
 // A new head gets a fresh re-run budget.
 func TestNewHeadResetsTheRerunBudget(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.CheckReruns = 1
+	g.r.Cfg.Current().Merge.CheckReruns = 1
 	g.f.SetChecks(12, cancelledChecks("SUCCESS"))
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.CheckReruns != 1 {
 		t.Fatalf("first head: %d", tk.Status.CheckReruns)
@@ -75,7 +75,7 @@ func TestNewHeadResetsTheRerunBudget(t *testing.T) {
 // N1: a ci_cancelled hand-off is transient; a green CI on the same head returns the task to the gate.
 func TestACancelledHandOffReturnsToTheGate(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.CheckReruns = 0
+	g.r.Cfg.Current().Merge.CheckReruns = 0
 	g.f.SetChecks(12, cancelledChecks("SUCCESS"))
 	if tk := g.reconcile(t, "3buqdlot", 2); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "ci_cancelled" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)

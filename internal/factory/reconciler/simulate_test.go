@@ -14,7 +14,7 @@ import (
 
 // conformanceCfg is the config the fixtures under testdata/conformance were decided under.
 func conformanceCfg() *config.Config {
-	c := gateInputs().Cfg
+	c := gateInputs().Cfg.Current()
 	c.Factory = "aws-0"
 	c.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}}
 	return c

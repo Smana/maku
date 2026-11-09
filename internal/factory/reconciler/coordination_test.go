@@ -86,7 +86,7 @@ func filedParent(p v1alpha1.CoordinationPlan, reason string) *v1alpha1.Task {
 func coordinationRig(t *testing.T, mode string, objs ...client.Object) (*rig, *fakeCoordination) {
 	t.Helper()
 	g := newRig(t, objs...)
-	g.r.Cfg.Coordination.Mode = mode
+	g.r.Cfg.Current().Coordination.Mode = mode
 	fc := &fakeCoordination{ready: map[string]error{}}
 	g.r.Coordination = fc
 	return g, fc

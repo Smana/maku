@@ -122,21 +122,21 @@ func mainSpec(t *testing.T, g *rig, tk *v1alpha1.Task) v1alpha1.TaskSpec {
 	s := tk.Spec
 	s.Template, s.PredictedClass, s.DataClass = d.Template, d.PredictedClass, d.DataClass
 	s.Budget = triage.Ceiling(d.Budget, s.MaxMicroUSD)
-	if p := g.r.Cfg.LoopFor(d.PredictedClass); p != nil {
+	if p := g.r.Cfg.Current().LoopFor(d.PredictedClass); p != nil {
 		judge := p.JudgeModel
 		if d.DataClass != "public" && config.PublicOnly(judge) {
 			judge = config.DefaultJudge
 		}
 		s.Loop = &v1alpha1.Loop{StallSteps: p.StallSteps, Continuations: p.Continuations, JudgeModel: judge}
 	}
-	s.Search = g.r.Cfg.SearchFor(d.PredictedClass)
-	mode := g.r.Cfg.ScopeFor(d.PredictedClass)
-	if g.r.Cfg.Investigates(s.Template) {
+	s.Search = g.r.Cfg.Current().SearchFor(d.PredictedClass)
+	mode := g.r.Cfg.Current().ScopeFor(d.PredictedClass)
+	if g.r.Cfg.Current().Investigates(s.Template) {
 		mode = config.ScopeOff
 	}
 	s.ScopeMode, s.Steering = string(mode), nil
 	tk.Spec = s
-	g.r.splitAtTriage(tk, d.Classification)
+	g.r.splitAtTriage(g.r.Cfg.Current(), tk, d.Classification)
 	return tk.Spec
 }
 
@@ -261,7 +261,7 @@ func TestProfileSpec(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "fix it")
 			tk.Spec.MaxMicroUSD = c.maxMicroUSD
 			tk.Spec.Budget = triage.Ceiling(triage.BudgetFor(cf, c.tier), c.maxMicroUSD)
-			g.r.profileSpec(tk, "review", c.p)
+			g.r.profileSpec(g.r.Cfg.Current(), tk, "review", c.p)
 			if b := tk.Spec.Budget; b.Tier != c.wantTier || b.TaskMicroUSD != c.wantTask {
 				t.Fatalf("budget %+v", b)
 			}
@@ -291,17 +291,17 @@ func TestRunsReadTheFrozenProfile(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t)
-			repo := g.r.Cfg.Repos()[0]
+			repo := g.r.Cfg.Current().Repos()[0]
 			repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "docs": tc.class}
 			repo.Checks = config.Checks{Egress: []string{"golang"}}
-			g.r.Cfg.Repositories = []config.Repository{repo}
-			g.r.Cfg.Templates["solo"] = config.Template{Roles: []string{"implementer"}}
+			g.r.Cfg.Current().Repositories = []config.Repository{repo}
+			g.r.Cfg.Current().Templates["solo"] = config.Template{Roles: []string{"implementer"}}
 			tk := issueTask("3buqdlot", 7, "fix")
 			tk.Spec.PredictedClass, tk.Spec.DataClass, tk.Spec.Template = "docs", "public", "solo"
 			tk.Status.Profile = tc.profile
-			s := g.r.implementerSpec(tk, "brief")
-			if s.Checks != tc.on || !reflect.DeepEqual(s.EgressProfiles, tc.egress) || g.r.testFirst(tk) != tc.on {
-				t.Fatalf("checks %v egress %v testFirst %v, want %v %v %v", s.Checks, s.EgressProfiles, g.r.testFirst(tk), tc.on, tc.egress, tc.on)
+			s := g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief")
+			if s.Checks != tc.on || !reflect.DeepEqual(s.EgressProfiles, tc.egress) || g.r.testFirst(g.r.Cfg.Current(), tk) != tc.on {
+				t.Fatalf("checks %v egress %v testFirst %v, want %v %v %v", s.Checks, s.EgressProfiles, g.r.testFirst(g.r.Cfg.Current(), tk), tc.on, tc.egress, tc.on)
 			}
 		})
 	}

@@ -28,7 +28,7 @@ func declaredRig(t *testing.T) *rig {
 	if err := g.c.Update(t.Context(), &tk); err != nil {
 		t.Fatal(err)
 	}
-	g.r.Cfg.Classes["dead-links"] = declaredClass()
+	g.r.Cfg.Current().Classes["dead-links"] = declaredClass()
 	checks := green("SUCCESS")
 	checks.Runs = append(checks.Runs, forge.Check{Name: "External links 🔗", State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"})
 	g.f.SetChecks(12, checks)
@@ -115,7 +115,7 @@ func TestAFullPageDiffRefusesPatchTooLarge(t *testing.T) {
 // request that changes a steering note is handed to a human.
 func TestSteeringReadsTheDiffOfAnyClass(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetFileStats(forge.FileStat{Path: ".github/agent-factory/steering/docs.md", Status: "modified", Additions: 1})
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "steering_path" ||

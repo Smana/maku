@@ -30,8 +30,8 @@ func scoperRig(t *testing.T) *rig {
 func scoperRigWith(t *testing.T, b config.Scoper) *rig {
 	t.Helper()
 	g := scopeRig(t, config.ScopeScoper)
-	g.r.Cfg.Scoper = b
-	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g.r.Cfg.Current().Scoper = b
+	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
 	g.reconcile(t, "3buqdlot", 3)
 	return g
@@ -91,8 +91,8 @@ func scoperRigOf(t *testing.T, edit func(*v1alpha1.Task)) *rig {
 	tk := issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves")
 	edit(tk)
 	g := newRig(t, tk)
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
-	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
+	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	g.reconcile(t, "3buqdlot", 3)
 	return g
 }
@@ -351,7 +351,7 @@ func TestTheOtherExitsAreCounted(t *testing.T) {
 		t.Fatalf("metrics %v removed %v", g.metrics.recorded, g.f.Removed(7))
 	}
 	g = bounced(t)
-	g.r.Cfg.Caps.EscalatedHours = new(168)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(168)
 	g.r.Now = func() time.Time { return now.Add(200 * time.Hour) }
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Reason != "escalation_expired" || !slices.Contains(g.metrics.recorded, "bounce review expired") ||
 		!slices.Equal(g.f.Removed(7), []string{"factory/needs-author"}) {

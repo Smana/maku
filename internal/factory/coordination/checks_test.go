@@ -90,7 +90,7 @@ func TestRepositoryChecks(t *testing.T) {
 			return &v1alpha1.ChildAuthorization{Repository: repoB, FenceSHA: "0000000000000000000000000000000000000000"}
 		}, want: ErrPolicyChanged},
 		{name: "the primary maintainer for B", actor: smana, setup: func(g *GitHubChecks, _ map[string]*forgetest.Fake) {
-			g.Cfg.Repositories[1].Maintainers = []string{"other-maintainer"}
+			g.Cfg.Current().Repositories[1].Maintainers = []string{"other-maintainer"}
 		}, want: ErrRepositoryPermission},
 		{name: "a read-only maintainer", actor: Actor{Principal: "zitadel:r", LinkedGitHubLogin: "readonly"}, want: ErrRepositoryPermission},
 		{name: "a permission read that fails", actor: maintainer, setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) { f[repoB].FailPermission(errors.New("502")) }, want: ErrAccessUnverified},

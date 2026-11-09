@@ -52,19 +52,20 @@ func BudgetFor(cfg *config.Config, tier string) v1alpha1.Budget {
 }
 
 // Static is phase 1's triage: the config's defaults for every task.
-type Static struct{ Cfg *config.Config }
+type Static struct{ Cfg config.Source }
 
 // Triage returns the defaults; a task's own data class wins over the default one.
 func (s Static) Triage(_ context.Context, t *v1alpha1.Task) (Decision, error) {
-	d := s.Cfg.Defaults
+	cfg := s.Cfg.Current()
+	d := cfg.Defaults
 	dataClass := t.Spec.DataClass
 	if dataClass == "" {
 		dataClass = d.DataClass
 	}
 	return Decision{Template: d.Template, PredictedClass: d.PredictedClass, DataClass: dataClass,
-		Budget:         BudgetFor(s.Cfg, d.Tier),
+		Budget:         BudgetFor(cfg, d.Tier),
 		Classification: v1alpha1.Classification{Tier: d.Tier, Classifier: "static", Fallback: "static"},
-		Cohort:         CohortOf(t.Name, false, s.Cfg.Evaluation.ControlPercent)}, nil
+		Cohort:         CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)}, nil
 }
 
 // sponsoredRuns is how many whole runs a ceiling holds: implementer, tester and reviewer. runFits

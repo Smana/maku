@@ -73,7 +73,7 @@ const maxAttemptID = 128
 type Service struct {
 	Client        client.Client
 	Namespace     string
-	Cfg           *config.Config
+	Cfg           config.Source
 	Checks        RepositoryChecks
 	Prerequisites ExecutionPrerequisites
 	Now           func() time.Time
@@ -110,11 +110,20 @@ func authorizationWait(cs *v1alpha1.CoordinationStatus, now time.Time) time.Dura
 	return 0
 }
 
-func (s *Service) mode() string {
-	if s.Cfg == nil || s.Cfg.Coordination.Mode == "" {
+// config is the config for one decision: one Current per public entry point, handed down.
+func (s *Service) config() *config.Config {
+	if s.Cfg == nil {
+		return nil
+	}
+	return s.Cfg.Current()
+}
+
+// modeOf is the coordination mode under cfg (a startup field), off for a nil config.
+func modeOf(cfg *config.Config) string {
+	if cfg == nil || cfg.Coordination.Mode == "" {
 		return config.CoordinationOff
 	}
-	return s.Cfg.Coordination.Mode
+	return cfg.Coordination.Mode
 }
 
 func (s *Service) now() time.Time {
@@ -145,7 +154,8 @@ func (s *Service) resolve() ResolvePolicy {
 // or pull request. Drafting needs a linked actor; the caller has checked their write on the
 // primary.
 func (s *Service) Draft(ctx context.Context, actor Actor, p v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation) (CoordinationConfirmation, error) {
-	if s.mode() == config.CoordinationOff {
+	cfg := s.config()
+	if modeOf(cfg) == config.CoordinationOff {
 		return CoordinationConfirmation{}, ErrCoordinationOff
 	}
 	if actor.LinkedGitHubLogin == "" {
@@ -183,13 +193,13 @@ func (s *Service) Draft(ctx context.Context, actor Actor, p v1alpha1.Coordinatio
 			return err
 		}
 		var err error
-		m, err = s.revise(ctx, &t, resolved, hash, planning)
+		m, err = s.revise(ctx, cfg, &t, resolved, hash, planning)
 		return err
 	})
 	if err != nil {
 		return CoordinationConfirmation{}, err
 	}
-	if err := s.repostVersion(ctx, &t, m); err != nil {
+	if err := s.repostVersion(ctx, cfg, &t, m); err != nil {
 		return CoordinationConfirmation{}, err
 	}
 	return out, nil
@@ -198,7 +208,7 @@ func (s *Service) Draft(ctx context.Context, actor Actor, p v1alpha1.Coordinatio
 // repostVersion reposts an accepted version on a filed parent's issue with its changed sections
 // and who reconfirms (MR12), once per version and hash: a replayed draft reposts what a lost post
 // missed. Before filing there is no issue: File reposts the version it files.
-func (s *Service) repostVersion(ctx context.Context, t *v1alpha1.Task, m Materiality) error {
+func (s *Service) repostVersion(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, m Materiality) error {
 	cs := t.Status.Coordination
 	if t.Spec.Kind != v1alpha1.TaskKindCoordination || t.Spec.Issue == 0 || t.Status.Reason != ReasonFiled || cs == nil || cs.Plan == nil {
 		return nil
@@ -213,7 +223,7 @@ func (s *Service) repostVersion(ctx context.Context, t *v1alpha1.Task, m Materia
 			links[st.ID] = issueURL(st.Repository, st.Issue)
 		}
 	}
-	return s.repost(ctx, f, t.Name, t.Spec.Issue, *cs.Plan, cs.PlanHash, links, m)
+	return s.repost(ctx, cfg, f, t.Name, t.Spec.Issue, *cs.Plan, cs.PlanHash, links, m)
 }
 
 // create makes a new parent and records its first plan version.
@@ -243,7 +253,7 @@ func (s *Service) create(ctx context.Context, actor Actor, p v1alpha1.Coordinati
 }
 
 // revise accepts next on an existing parent: a replay, or exactly the next version.
-func (s *Service) revise(ctx context.Context, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation) (Materiality, error) {
+func (s *Service) revise(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation) (Materiality, error) {
 	if t.Spec.Kind != v1alpha1.TaskKindCoordination {
 		return Materiality{}, ErrParentConflict
 	}
@@ -252,7 +262,7 @@ func (s *Service) revise(ctx context.Context, t *v1alpha1.Task, next v1alpha1.Co
 	}
 	cs := t.Status.Coordination
 	if cs == nil || cs.Plan == nil { // a create whose status write was lost: record the first version
-		return Materiality{}, s.record(ctx, t, next, hash, planning, Materiality{}, nil)
+		return Materiality{}, s.record(ctx, cfg, t, next, hash, planning, Materiality{}, nil)
 	}
 	old := *cs.Plan
 	switch {
@@ -265,11 +275,11 @@ func (s *Service) revise(ctx context.Context, t *v1alpha1.Task, next v1alpha1.Co
 	if err != nil {
 		return Materiality{}, err
 	}
-	return m, s.record(ctx, t, next, hash, planning, m, cs)
+	return m, s.record(ctx, cfg, t, next, hash, planning, m, cs)
 }
 
 // record writes next as the current plan on t, carrying what m preserves of old.
-func (s *Service) record(ctx context.Context, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation, m Materiality, old *v1alpha1.CoordinationStatus) error {
+func (s *Service) record(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, next v1alpha1.CoordinationPlan, hash string, planning PlanningReconciliation, m Materiality, old *v1alpha1.CoordinationStatus) error {
 	if old == nil {
 		old = &v1alpha1.CoordinationStatus{}
 	}
@@ -310,7 +320,7 @@ func (s *Service) record(ctx context.Context, t *v1alpha1.Task, next v1alpha1.Co
 			return err
 		}
 	}
-	reason, _ := s.eligibility(ctx, cs) // a refused gate is the reason; the draft stands
+	reason, _ := s.eligibility(ctx, cfg, cs) // a refused gate is the reason; the draft stands
 	setReason(t, reason)
 	if err := s.Client.Status().Update(ctx, t); err != nil {
 		return err
@@ -397,7 +407,8 @@ func planningFits(b *v1alpha1.CoordinationBudgetStatus) error {
 // repository check decide whether filing is eligible; a refusal there is returned after the
 // confirmation is recorded, and nothing is filed.
 func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfirmation) (CoordinationConfirmation, error) {
-	if s.mode() == config.CoordinationOff {
+	cfg := s.config()
+	if modeOf(cfg) == config.CoordinationOff {
 		return CoordinationConfirmation{}, ErrCoordinationOff
 	}
 	if actor.LinkedGitHubLogin == "" {
@@ -440,15 +451,15 @@ func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfi
 		var err error
 		out = CoordinationConfirmation{Plan: *cs.Plan.DeepCopy(), PlanHash: cs.PlanHash, Planning: in.Planning}
 		if in.Parent != nil {
-			out.Parent, err = s.confirmParent(ctx, actor, cs)
+			out.Parent, err = s.confirmParent(ctx, cfg, actor, cs)
 		} else {
-			out.Child, err = s.authorizeChild(ctx, actor, cs, in.Child.ChildID, fp)
+			out.Child, err = s.authorizeChild(ctx, cfg, actor, cs, in.Child.ChildID, fp)
 		}
 		if err != nil {
 			return err
 		}
 		var reason string
-		reason, gate = s.eligibility(ctx, cs)
+		reason, gate = s.eligibility(ctx, cfg, cs)
 		setReason(&t, reason)
 		if !before && complete(cs) {
 			completed = cs
@@ -471,13 +482,13 @@ func (s *Service) Confirm(ctx context.Context, actor Actor, in CoordinationConfi
 }
 
 // confirmParent records actor's confirmation of cs's current hash, once per login and hash.
-func (s *Service) confirmParent(ctx context.Context, actor Actor, cs *v1alpha1.CoordinationStatus) (*ParentConfirmation, error) {
+func (s *Service) confirmParent(ctx context.Context, cfg *config.Config, actor Actor, cs *v1alpha1.CoordinationStatus) (*ParentConfirmation, error) {
 	primary := cs.Plan.Primary.Repository
 	pc, ok := find(*cs.Plan, primaryChildID(*cs.Plan))
 	if !ok {
 		return nil, refuse(ErrInvalidPlan, "primary.repository", "no child in the primary")
 	}
-	if !s.Cfg.RepositoryFor(primary).IsMaintainer(actor.LinkedGitHubLogin) {
+	if !cfg.RepositoryFor(primary).IsMaintainer(actor.LinkedGitHubLogin) {
 		return nil, fmt.Errorf("%w: not a maintainer of the primary", ErrRepositoryPermission)
 	}
 	if _, err := s.check(ctx, actor, pc, nil); err != nil {
@@ -497,7 +508,7 @@ func (s *Service) confirmParent(ctx context.Context, actor Actor, cs *v1alpha1.C
 
 // authorizeChild records actor's authorization of child id at fingerprint fp, replacing that
 // child's older record.
-func (s *Service) authorizeChild(ctx context.Context, actor Actor, cs *v1alpha1.CoordinationStatus, id, fp string) (*ChildAuthorization, error) {
+func (s *Service) authorizeChild(ctx context.Context, cfg *config.Config, actor Actor, cs *v1alpha1.CoordinationStatus, id, fp string) (*ChildAuthorization, error) {
 	c, ok := find(*cs.Plan, id)
 	if !ok {
 		return nil, refuse(ErrInvalidConfirmation, "child.childID", "no such child")
@@ -505,7 +516,7 @@ func (s *Service) authorizeChild(ctx context.Context, actor Actor, cs *v1alpha1.
 	if !strings.EqualFold(MaintainerLogin(c), actor.LinkedGitHubLogin) {
 		return nil, fmt.Errorf("%w: not the child's maintainer", ErrRepositoryPermission)
 	}
-	if !s.Cfg.RepositoryFor(c.Repository).IsMaintainer(actor.LinkedGitHubLogin) {
+	if !cfg.RepositoryFor(c.Repository).IsMaintainer(actor.LinkedGitHubLogin) {
 		return nil, fmt.Errorf("%w: not a maintainer of the child's repository", ErrRepositoryPermission)
 	}
 	pol, err := s.check(ctx, actor, c, nil)
@@ -531,25 +542,30 @@ func (s *Service) authorizeChild(ctx context.Context, actor Actor, cs *v1alpha1.
 
 // eligibility is the parent's reason after a confirmation, and execute's refusal when every
 // confirmation is present but the gate or a repository check is not.
-func (s *Service) eligibility(ctx context.Context, cs *v1alpha1.CoordinationStatus) (string, error) {
+func (s *Service) eligibility(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus) (string, error) {
 	switch {
 	case !complete(cs):
 		return ReasonAwaitingConfirmation, nil
-	case s.mode() != config.CoordinationExecute:
+	case modeOf(cfg) != config.CoordinationExecute:
 		return ReasonConfirmed, nil
 	}
-	if err := s.ExecuteReady(ctx, cs, nil); err != nil {
+	if err := s.executeReady(ctx, cfg, cs, nil); err != nil {
 		return Reason(err), err
 	}
 	return ReasonFilingEligible, nil
 }
 
-// ExecuteReady re-reads every authority execute rests on, for the children ids names (every
+// ExecuteReady is executeReady for one decision of its own: it loads the config once.
+func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationStatus, ids []string) error {
+	return s.executeReady(ctx, s.config(), cs, ids)
+}
+
+// executeReady re-reads every authority execute rests on, for the children ids names (every
 // child when nil): the full plan validates for execute with each confirmed increase, the
 // capability gate passes for every repository, the parent confirmer still maintains and writes the
 // primary, and each child's authorizer still maintains and writes its repository at the fence they
 // authorized. Nothing is cached: a regression refuses the next filing or admission.
-func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationStatus, ids []string) error {
+func (s *Service) executeReady(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus, ids []string) error {
 	if cs == nil || cs.Plan == nil {
 		return ErrParentNotFound
 	}
@@ -584,11 +600,11 @@ func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationSta
 	for _, c := range p.Children {
 		repos = append(repos, c.Repository)
 	}
-	if err := GateExecute(ctx, s.mode(), s.Prerequisites, repos); err != nil {
+	if err := GateExecute(ctx, modeOf(cfg), s.Prerequisites, repos); err != nil {
 		return err
 	}
 	if pp, ok := find(p, primaryChildID(p)); ok {
-		if !s.Cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(pc.LinkedGitHubLogin) {
+		if !cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(pc.LinkedGitHubLogin) {
 			return fmt.Errorf("%w: the parent confirmer no longer maintains the primary", ErrRepositoryPermission)
 		}
 		if _, err := s.check(ctx, Actor{Principal: pc.Actor, LinkedGitHubLogin: pc.LinkedGitHubLogin}, pp, nil); err != nil {
@@ -599,7 +615,7 @@ func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationSta
 		if ids != nil && !slices.Contains(ids, c.ID) {
 			continue
 		}
-		if err := s.childAuthority(ctx, cs, c); err != nil {
+		if err := s.childAuthority(ctx, cfg, cs, c); err != nil {
 			return err
 		}
 	}
@@ -607,13 +623,13 @@ func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationSta
 }
 
 // childAuthority re-reads c's authorizer's authority at c's repository, bound to their fence.
-func (s *Service) childAuthority(ctx context.Context, cs *v1alpha1.CoordinationStatus, c v1alpha1.CoordinationChild) error {
+func (s *Service) childAuthority(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus, c v1alpha1.CoordinationChild) error {
 	a := currentAuthorization(cs, c.ID)
 	if a == nil {
 		return refuse(ErrInvalidConfirmation, "children."+c.ID, "not authorized")
 	}
 	login := MaintainerLogin(c)
-	if !s.Cfg.RepositoryFor(c.Repository).IsMaintainer(login) {
+	if !cfg.RepositoryFor(c.Repository).IsMaintainer(login) {
 		return fmt.Errorf("%w: %s's authorizer no longer maintains it", ErrRepositoryPermission, c.ID)
 	}
 	_, err := s.check(ctx, Actor{Principal: a.Actor, LinkedGitHubLogin: login}, c, a)

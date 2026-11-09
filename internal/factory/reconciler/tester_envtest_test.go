@@ -59,12 +59,12 @@ func envTesterRig(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	g := newRig(t) // the fake client it builds is replaced below
 	g.c, g.r.Client, g.r.Ledger = c, c, c
 	g.r.Now = func() time.Time { return clock }
-	g.r.Cfg.AgentsLogin = agentsApp
-	g.r.Cfg.Defaults.PredictedClass = "scripts"
-	g.r.Cfg.Merge.ContractCheck = contractCheck
-	g.r.Cfg.Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Live: true}
+	g.r.Cfg.Current().AgentsLogin = agentsApp
+	g.r.Cfg.Current().Defaults.PredictedClass = "scripts"
+	g.r.Cfg.Current().Merge.ContractCheck = contractCheck
+	g.r.Cfg.Current().Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Live: true}
 	if cfgEdit != nil {
-		cfgEdit(g.r.Cfg)
+		cfgEdit(g.r.Cfg.Current())
 	}
 	g.r.Triage = triage.Static{Cfg: g.r.Cfg}
 	if err := c.Create(ctx, tk); err != nil {

@@ -21,7 +21,7 @@ const (
 
 // twoRepos lists A and B with the rig's settings, and gives each its own GitHub (v2 D8).
 func twoRepos(g *rig) (a, b *forgetest.Fake) {
-	c := g.r.Cfg
+	c := g.r.Cfg.Current()
 	one := config.Repository{Maintainers: c.Maintainers, Classes: c.Classes, Merge: c.Merge}
 	ra, rb := one, one
 	ra.Name, rb.Name = repoA, repoB
@@ -97,11 +97,11 @@ func TestTheMergeCapAndBreakerArePerRepository(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		n, err := g.r.armedToday(bctx, g.r.Cfg.RepositoryFor(repo))
+		n, err := g.r.armedToday(bctx, g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(repo))
 		if err != nil || n != want {
 			t.Errorf("%s armed today: %d %v, want %d", repo, n, err, want)
 		}
-		paused, err := g.r.paused(bctx, g.r.Cfg.RepositoryFor(repo), "docs-links")
+		paused, err := g.r.paused(bctx, g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(repo), "docs-links")
 		if err != nil || paused != (repo == repoA) {
 			t.Errorf("%s paused %v %v: A's revert must not demote B's class", repo, paused, err)
 		}

@@ -385,7 +385,7 @@ func TestStartPollsCountsErrorsAndStops(t *testing.T) {
 
 func TestStartRefusesAPeriodOfZero(t *testing.T) {
 	p, _ := poller(t, forgetest.NewFake())
-	p.Cfg.Poll.Issues.Duration = 0
+	p.Cfg.Current().Poll.Issues.Duration = 0
 	if err := p.Start(t.Context()); err == nil {
 		t.Fatal("NewTicker would panic")
 	}
@@ -620,7 +620,7 @@ func TestControlIssue(t *testing.T) {
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
 	f.SetLabeled(LabelStop, forge.Item{Number: 1})
 	p, _ := poller(t, f)
-	p.Cfg.ControlIssue = 1
+	p.Cfg.Current().ControlIssue = 1
 	_ = p.Poll(context.Background())
 	if on, _ := killswitch.Engaged(context.Background(), p.Client, "agent-system"); !on {
 		t.Fatal("factory/stop on the control issue is the global stop (§6.1)")
@@ -638,7 +638,7 @@ func TestTheControlIssueStopReachesAnotherProcess(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
 	p, c := poller(t, f)
-	p.Cfg.ControlIssue = 1
+	p.Cfg.Current().ControlIssue = 1
 	if err := p.Poll(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -662,7 +662,7 @@ func TestRemovingTheLabelKeepsAHandMadeStop(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 1})
 	p, c := poller(t, f, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: "agent-system"}})
-	p.Cfg.ControlIssue = 1
+	p.Cfg.Current().ControlIssue = 1
 	if err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -680,7 +680,7 @@ func TestAFailedPublishDoesNotSkipReverts(t *testing.T) {
 	f.SetLabeled(LabelRevert, forge.Item{Number: 12, PullRequest: true})
 	f.SetEvents(12, forge.LabelEvent{Actor: "Smana", Label: LabelRevert, At: t0})
 	p, c := poller(t, f, tk)
-	p.Cfg.ControlIssue = 1
+	p.Cfg.Current().ControlIssue = 1
 	p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, o ...client.CreateOption) error {
 			if _, ok := obj.(*corev1.ConfigMap); ok {
@@ -704,7 +704,7 @@ func TestLiftingTheStopIsPreconditioned(t *testing.T) {
 	f.SetIssue(forge.Issue{Number: 1})
 	p, c := poller(t, f, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: "agent-system",
 		UID: "u1", Annotations: map[string]string{killswitch.AnnotationSource: killswitch.SourceIssue}}})
-	p.Cfg.ControlIssue = 1
+	p.Cfg.Current().ControlIssue = 1
 	var pre client.DeleteOptions
 	p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, o ...client.DeleteOption) error {
@@ -726,7 +726,7 @@ func TestThePassThatEngagesTheStopCreatesNoTask(t *testing.T) {
 	labelled(f, 7, "Smana")
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
 	p, c := poller(t, f) // Stopped stays false: the lagging cache
-	p.Cfg.ControlIssue = 1
+	p.Cfg.Current().ControlIssue = 1
 	if err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}

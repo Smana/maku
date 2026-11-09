@@ -25,10 +25,10 @@ func TestDeclaringAMonitorDoesNotBackfillOldMerges(t *testing.T) {
 	cf := &countingForge{TaskForge: g.f}
 	g.r.Forge = cf
 	tk := g.reconcile(t, "3buqdlot", 2)
-	if tk.Status.Monitor != nil || g.r.monitorDue(tk) {
+	if tk.Status.Monitor != nil || g.r.monitorDue(g.r.Cfg.Current(), tk) {
 		t.Fatalf("no watch for a merge past its window: %+v", tk.Status.Monitor)
 	}
-	if cf.prs != 0 || len(g.f.Added(12)) != 0 || len(g.f.Comments(12)) != 0 || len(g.f.Comments(g.r.Cfg.ControlFor().Issue)) != 0 {
+	if cf.prs != 0 || len(g.f.Added(12)) != 0 || len(g.f.Comments(12)) != 0 || len(g.f.Comments(g.r.Cfg.Current().ControlFor().Issue)) != 0 {
 		t.Fatalf("no reads, labels or comments: %d reads, %v, %q", cf.prs, g.f.Added(12), g.f.Comments(12))
 	}
 	// a merge still inside its window is watched as before
@@ -42,7 +42,7 @@ func TestDeclaringAMonitorDoesNotBackfillOldMerges(t *testing.T) {
 // issue that merely shares its number, for the monitor's copies and for a revert's.
 func TestControlCopiesStayOnTheControlRepository(t *testing.T) {
 	g := monitorRig(t)
-	g.r.Cfg.Control = config.Control{Repository: "Smana/elsewhere", Issue: 3}
+	g.r.Cfg.Current().Control = config.Control{Repository: "Smana/elsewhere", Issue: 3}
 	g.f.SetCommitChecks(mSHA, forge.Check{Name: "Pre-commit checks", State: "FAILURE"})
 	g.f.SetMerged(later(20, "Smana", "x", FollowUpOfLabel(12)))
 	tk := g.reconcile(t, "3buqdlot", 1)
@@ -56,7 +56,7 @@ func TestControlCopiesStayOnTheControlRepository(t *testing.T) {
 	for name, repo := range map[string]string{"other": "Smana/elsewhere", "own": "Smana/cloud-native-ref"} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseVerifying)
-			g.r.Cfg.Control = config.Control{Repository: repo, Issue: 1}
+			g.r.Cfg.Current().Control = config.Control{Repository: repo, Issue: 1}
 			var tk v1alpha1.Task
 			_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 			merged := metav1.NewTime(now)
@@ -97,7 +97,7 @@ func TestTheLedgerReadsOnlyWhatV020ReadWithoutTheNewKeys(t *testing.T) {
 	g.reconcile(t, "3buqdlot", 1)
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
-	if _, err := g.r.githubLedger(t.Context(), g.r.repo(&tk)); err != nil {
+	if _, err := g.r.githubLedger(t.Context(), g.r.repo(g.r.Cfg.Current(), &tk)); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(g.f.LabelReads(), RegressionLabel) || !slices.Contains(g.f.LabelReads(), MergedLabel("dead-links")) {

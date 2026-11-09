@@ -13,6 +13,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -107,7 +108,7 @@ func Score(cl v1alpha1.Classification, acting, fit string) []TierScore {
 }
 
 // outcome runs once per task, when it first ends: tier fit (SC-10) and the task.final line (SC-7).
-func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
+func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) {
 	if cl := t.Status.Classification; cl != nil && cl.Fit == "" {
 		if fit := Fit(t); fit != "" {
 			cl.Fit = fit
@@ -127,11 +128,11 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 		t.Status.EndedAt, t.Status.Outcome = &at, taskOutcome(t)
 	}
 	if !r.settling(t) { // never ran: nothing settles, and nothing waits (R34)
-		outcome, micro, _, err := r.tally(ctx, t)
+		outcome, micro, _, err := r.tally(ctx, cfg, t)
 		if err != nil { // a family read: a task that never ran has none
 			r.log().Warn("task outcome not counted", "task.id", t.Name, "err", err)
 		} else {
-			r.count(ctx, t, outcome, micro)
+			r.count(ctx, cfg, t, outcome, micro)
 		}
 	}
 	ids := make([]string, 0, len(t.Status.Runs))
@@ -162,7 +163,7 @@ func counting(t *v1alpha1.Task) bool {
 // is here and none is a write, so an error leaves the status as it was and the next pass retries.
 // ready is false while a part's usage still settles, within familyBound of the parent's end; past
 // it the parent counts what it has. A task that counts nothing reads nothing.
-func (r *Reconciler) tally(ctx context.Context, t *v1alpha1.Task) (outcome string, micro int64, ready bool, err error) {
+func (r *Reconciler) tally(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (outcome string, micro int64, ready bool, err error) {
 	if !counting(t) {
 		return "", 0, true, nil
 	}
@@ -179,7 +180,7 @@ func (r *Reconciler) tally(ctx context.Context, t *v1alpha1.Task) (outcome strin
 	}
 	for i := range all {
 		c := &all[i]
-		if !settledTask(c) && !r.familyBoundPassed(t) {
+		if !settledTask(c) && !r.familyBoundPassed(cfg, t) {
 			return "", 0, false, nil
 		}
 		micro += r.costOf(c)
@@ -194,13 +195,13 @@ func settledTask(t *v1alpha1.Task) bool {
 
 // count records a tally once, by the task's profile. The mark rides the status write the metric
 // waits for: once, or neither.
-func (r *Reconciler) count(ctx context.Context, t *v1alpha1.Task, outcome string, micro int64) {
+func (r *Reconciler) count(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, outcome string, micro int64) {
 	if !counting(t) {
 		return
 	}
 	p := t.Status.Profile
 	p.Counted = true
-	class, rec, usd := t.Spec.PredictedClass, r.recommendedLabel(t), float64(micro)/1e6
+	class, rec, usd := t.Spec.PredictedClass, r.recommendedLabel(cfg, t), float64(micro)/1e6
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
 	})
@@ -210,11 +211,11 @@ func (r *Reconciler) count(ctx context.Context, t *v1alpha1.Task, outcome string
 // parts' usage to settle: one more window (twice the window from its end). A part the family ended
 // is stopped on the parent's pass and settles one window later; a part that never settles — deleted,
 // or ended by nobody — holds the count no longer than this.
-func (r *Reconciler) familyBound() time.Duration { return 2 * r.settleWindow() }
+func (r *Reconciler) familyBound(cfg *config.Config) time.Duration { return 2 * r.settleWindow(cfg) }
 
-func (r *Reconciler) familyBoundPassed(t *v1alpha1.Task) bool {
+func (r *Reconciler) familyBoundPassed(cfg *config.Config, t *v1alpha1.Task) bool {
 	at := endedAt(t)
-	return at != nil && r.Now().Sub(at.Time) >= r.familyBound()
+	return at != nil && r.Now().Sub(at.Time) >= r.familyBound(cfg)
 }
 
 // endedAt is a terminal task's first end, PhaseSince for a task ended before the field was written.
@@ -329,22 +330,22 @@ func profileOf(t *v1alpha1.Task) string {
 }
 
 // recommendedOf is the scoper's recommendation on t as a metric label, none without a profile.
-func (r *Reconciler) recommendedOf(t *v1alpha1.Task) string {
+func (r *Reconciler) recommendedOf(cfg *config.Config, t *v1alpha1.Task) string {
 	if t.Status.Profile == nil {
 		return "none"
 	}
-	return r.recommendedLabel(t)
+	return r.recommendedLabel(cfg, t)
 }
 
 // intervention counts one intervention on t, by its cohort, profile and recommendation, once the
 // status write that carries its cause succeeds.
-func (r *Reconciler) intervention(ctx context.Context, t *v1alpha1.Task, kind string) {
-	cohort, profile, rec := cohortOf(t), profileOf(t), r.recommendedOf(t)
+func (r *Reconciler) intervention(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, kind string) {
+	cohort, profile, rec := cohortOf(t), profileOf(t), r.recommendedOf(cfg, t)
 	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, kind, cohort, profile, rec) })
 }
 
 // interventions counts, once per run, how humans steered it from the room (§7).
-func (r *Reconciler) interventions(ctx context.Context, t *v1alpha1.Task) {
+func (r *Reconciler) interventions(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) {
 	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, current(t).StartSeq, func(e envelope.Event) bool {
 		return e.Actor.Kind == envelope.ActorHuman || e.Type == envelope.Driver
 	})
@@ -359,12 +360,12 @@ func (r *Reconciler) interventions(ctx context.Context, t *v1alpha1.Task) {
 			}
 			var p envelope.MessagePayload
 			if json.Unmarshal(e.Payload, &p) == nil && p.Delivery == envelope.DeliverySteering {
-				r.intervention(ctx, t, "steer")
+				r.intervention(ctx, cfg, t, "steer")
 			}
 		case envelope.Driver:
 			var p envelope.DriverPayload
 			if json.Unmarshal(e.Payload, &p) == nil && strings.HasPrefix(p.To, "human:") {
-				r.intervention(ctx, t, "takeover")
+				r.intervention(ctx, cfg, t, "takeover")
 			}
 		}
 	}

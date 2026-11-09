@@ -66,7 +66,7 @@ func TestCreateTaskSelfServeLink(t *testing.T) {
 			s, f := newTaskServer(t, slack, 0)
 			s.SlackLinks, s.Logins = links, logins
 			if c.edit != nil {
-				c.edit(s.Cfg)
+				c.edit(s.Cfg.Current())
 			}
 			rec := postTask(s, c.body, "k")
 			if rec.Code != c.status || !strings.Contains(rec.Body.String(), `"`+c.reason+`"`) {
@@ -80,7 +80,7 @@ func TestCreateTaskSelfServeLink(t *testing.T) {
 	t.Run("linked maintainer", func(t *testing.T) {
 		s, f := newTaskServer(t, slack, 0)
 		s.SlackLinks, s.Logins = links, logins
-		optIn(s.Cfg)
+		optIn(s.Cfg.Current())
 		rec := postTask(s, selfServe, "k")
 		var out struct{ Sponsor string }
 		if rec.Code != 201 || json.Unmarshal(rec.Body.Bytes(), &out) != nil || out.Sponsor != "smana" {
@@ -93,7 +93,7 @@ func TestCreateTaskSelfServeLink(t *testing.T) {
 	t.Run("config wins", func(t *testing.T) { // U02DEF is smana in the config, outsider on the broker
 		s, _ := newTaskServer(t, slack, 0)
 		s.SlackLinks, s.Logins = links, logins
-		optIn(s.Cfg)
+		optIn(s.Cfg.Current())
 		if rec := postTask(s, draft, "k"); rec.Code != 201 || !strings.Contains(rec.Body.String(), `"sponsor":"smana"`) {
 			t.Fatalf("%d %s", rec.Code, rec.Body)
 		}

@@ -139,7 +139,7 @@ func TestTheClosingCommentCarriesTheSettledTotal(t *testing.T) {
 		t.Fatal(tk.Status.Phase)
 	}
 	usage(1, 250_000) // the meter's last reading of the reviewer lands after the end
-	window := 2*g.r.Cfg.Poll.Meter.Duration + 30*time.Second
+	window := 2*g.r.Cfg.Current().Poll.Meter.Duration + 30*time.Second
 	g.r.Now = func() time.Time { return now.Add(window - time.Second) }
 	g.reconcile(t, "3buqdlot", 1)
 	if say := strings.Join(g.f.Comments(7), "\n"); strings.Contains(say, "Tokens used") {
@@ -164,7 +164,7 @@ func TestAClosingTotalMissingARunsUsageIsAFloor(t *testing.T) {
 	g.reconcile(t, "3buqdlot", 2)
 	g.f.SetPR(forge.PR{Number: 12, State: "MERGED", MergedBy: "Smana", HeadSHA: head1})
 	g.reconcile(t, "3buqdlot", 1)
-	g.r.Now = func() time.Time { return now.Add(2*g.r.Cfg.Poll.Meter.Duration + 30*time.Second) }
+	g.r.Now = func() time.Time { return now.Add(2*g.r.Cfg.Current().Poll.Meter.Duration + 30*time.Second) }
 	g.reconcile(t, "3buqdlot", 1)
 	if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "Tokens used: at least 400 k") {
 		t.Fatalf("%q", say)
@@ -195,7 +195,7 @@ func TestLateUsageSettles(t *testing.T) {
 		t.Fatalf("task_tokens recorded %d times before the settle: %q", n, g.metrics.recorded)
 	}
 	usage(1, 260) // the meter's late reading of the ended reviewer, after the task ended
-	window := 2*g.r.Cfg.Poll.Meter.Duration + 30*time.Second
+	window := 2*g.r.Cfg.Current().Poll.Meter.Duration + 30*time.Second
 	g.r.Now = func() time.Time { return now.Add(window - time.Second) }
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Usage.Tokens != 1560 || tk.Status.UsageSettled {
 		t.Fatalf("refreshed, not settled: %d %+v", tk.Status.Usage.Tokens, tk.Status.UsageSettled)

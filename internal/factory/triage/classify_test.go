@@ -295,7 +295,7 @@ func TestPredictClassReportsDeclared(t *testing.T) {
 			f := forgetest.NewFake()
 			f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs"}})
 			f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "class:docs", At: time.Now()})
-			class, declared, err := Classify{Cfg: testCfg(), Forge: f}.predictClass(t.Context(), c.task)
+			class, declared, err := Classify{Forge: f}.predictClass(t.Context(), testCfg(), c.task)
 			if err != nil || class != c.want || declared != c.declared {
 				t.Fatalf("(%q, %v, %v), want (%q, %v)", class, declared, err, c.want, c.declared)
 			}

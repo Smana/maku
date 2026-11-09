@@ -42,11 +42,11 @@ func TestClassModelsPickAPublicRunsAlias(t *testing.T) {
 			tk.Spec.DataClass = c.dataClass
 			g := teamRigFor(t, "pair", tk, func(g *rig) {
 				if c.models != nil {
-					g.r.Cfg.Loops = map[string]config.Loop{"review": {Models: c.models}}
+					g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Models: c.models}}
 				}
-				pair := g.r.Cfg.Templates["pair"]
+				pair := g.r.Cfg.Current().Templates["pair"]
 				pair.ReviewerModel = c.reviewerModel
-				g.r.Cfg.Templates["pair"] = pair
+				g.r.Cfg.Current().Templates["pair"] = pair
 			})
 			impl, rev := g.runs.specs[rid(0)], g.runs.specs[rid(1)]
 			if impl.Model != c.implementer || impl.Tier != "standard" {
@@ -74,7 +74,7 @@ func TestAProviderJudgeIsPublicOnly(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.DataClass = class
 			g := newRig(t, tk)
-			g.r.Cfg.Loops = map[string]config.Loop{"review": {Judge: "mistral-light"}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Judge: "mistral-light"}}
 			got := g.reconcile(t, "3buqdlot", 3)
 			if got.Spec.Loop == nil || got.Spec.Loop.JudgeModel != want {
 				t.Fatalf("judge %+v, want %q", got.Spec.Loop, want)
@@ -87,7 +87,7 @@ func TestAProviderJudgeIsPublicOnly(t *testing.T) {
 // never gets a claim: runs.Spec.Validate refuses an internal run that names a provider alias.
 func TestAnInternalRunWithAProviderJudgeIsRefused(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"))
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Judge: "mistral-light"}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Judge: "mistral-light"}}
 	g.runs.refuse = func(s runs.Spec) error { return s.Validate() }
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Spec.Loop == nil || tk.Spec.Loop.JudgeModel != "mistral-light" {
@@ -131,14 +131,14 @@ func TestPinModelForEveryRole(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t)
-			g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
-			g.r.Cfg.Loops = map[string]config.Loop{"review": {Models: row}}
+			g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Models: row}}
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.DataClass, tk.Spec.PredictedClass, tk.Spec.Template = c.dataClass, "review", "solo"
 			tk.Spec.Budget = v1alpha1.Budget{Tier: "standard", Model: "agent-default", RunTokens: 1_500_000, RunMinutes: 45}
 			s := c.spec(g.r, tk)
 			s.RunID = rid(0)
-			if got := g.r.pinModel(tk, &s); s.Model != c.want || got != c.source {
+			if got := g.r.pinModel(g.r.Cfg.Current(), tk, &s); s.Model != c.want || got != c.source {
 				t.Fatalf("%s %s: model %q source %q, want %q %q", s.Role, s.Tier, s.Model, got, c.want, c.source)
 			}
 			if err := s.Validate(); err != nil && c.dataClass == "public" {
@@ -148,10 +148,10 @@ func TestPinModelForEveryRole(t *testing.T) {
 	}
 }
 
-func scoper(r *Reconciler, t *v1alpha1.Task) runs.Spec { return r.scoperSpec(t, "x") }
-func tester(r *Reconciler, t *v1alpha1.Task) runs.Spec { return r.testerSpec(t, "x") }
+func scoper(r *Reconciler, t *v1alpha1.Task) runs.Spec { return r.scoperSpec(r.Cfg.Current(), t, "x") }
+func tester(r *Reconciler, t *v1alpha1.Task) runs.Spec { return r.testerSpec(r.Cfg.Current(), t, "x") }
 func investigator(r *Reconciler, t *v1alpha1.Task) runs.Spec {
-	s := r.implementerSpec(t, "x")
+	s := r.implementerSpec(r.Cfg.Current(), t, "x")
 	s.Role = "triager"
 	return s
 }
@@ -171,12 +171,12 @@ func TestAnAdoptedRunKeepsItsModelSource(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t)
-			pair := g.r.Cfg.Templates["pair"]
+			pair := g.r.Cfg.Current().Templates["pair"]
 			pair.ReviewerModel = c.reviewerModel
-			g.r.Cfg.Templates["pair"] = pair
+			g.r.Cfg.Current().Templates["pair"] = pair
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.Template = "pair"
-			if err := g.r.recordExisting(tk, c.x); err != nil {
+			if err := g.r.recordExisting(g.r.Cfg.Current(), tk, c.x); err != nil {
 				t.Fatal(err)
 			}
 			if got := tk.Status.Runs[0].Provenance.ModelSource; got != c.want {

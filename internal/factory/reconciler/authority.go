@@ -30,8 +30,8 @@ type gatePolicy struct {
 
 // gatePolicy reads the task's repository's policy when the repository is cut over. Without an
 // Authority source a cut-over repository has no readable policy, and pauses.
-func (r *Reconciler) gatePolicy(rc *config.Repository, repository string) gatePolicy {
-	if !r.Cfg.RepositoryAuthoritative(rc) {
+func (r *Reconciler) gatePolicy(cfg *config.Config, rc *config.Repository, repository string) gatePolicy {
+	if !cfg.RepositoryAuthoritative(rc) {
 		return gatePolicy{}
 	}
 	if r.Authority == nil {
@@ -80,7 +80,7 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 // it refuses or waits; otherwise a wait for the next read, or a maintainer for an invalid file.
 // Nothing arms or shadows: human merges continue.
 func noAuthority(in ArmInputs, p gatePolicy) ArmDecision {
-	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
+	rc := in.Cfg.Current().RepositoryFor(in.Task.Spec.Repository)
 	rows := recordOf(in, config.Class{})
 	rows.Policy = shortHash(p.snap.Hash)
 	d, done := baseChecks(in, rc)

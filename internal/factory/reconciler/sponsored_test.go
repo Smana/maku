@@ -36,9 +36,9 @@ func sponsor(tk *v1alpha1.Task, maxMicroUSD int64) {
 // meter.prices has them: api.sponsored requires prices (C13).
 func priceTiers(g *rig) {
 	for name, usd := range map[string][2]float64{"standard": {2.55, 5.10}, "frontier": {6.80, 13.60}} {
-		tr := g.r.Cfg.Tiers[name]
+		tr := g.r.Cfg.Current().Tiers[name]
 		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
-		g.r.Cfg.Tiers[name] = tr
+		g.r.Cfg.Current().Tiers[name] = tr
 	}
 	g.r.Triage = triage.Static{Cfg: g.r.Cfg}
 }
@@ -161,7 +161,7 @@ func sponsoredDayRig(t *testing.T, objs ...*v1alpha1.Task) *rig {
 	}
 	priceTiers(g)
 	lc := sponsoredConfig(t)
-	g.r.Cfg.API, g.r.Cfg.Budgets = lc.API, lc.Budgets
+	g.r.Cfg.Current().API, g.r.Cfg.Current().Budgets = lc.API, lc.Budgets
 	return g
 }
 
@@ -287,7 +287,7 @@ func TestTwoSponsoredRunsRaceForTheLastSlot(t *testing.T) {
 		tk.Spec.Budget = v1alpha1.Budget{RunMicroUSD: 666_666}
 		wg.Go(func() {
 			for { // the reconciler requeues ErrLedgerBusy
-				_, err := g.r.reserveFactoryDay(t.Context(), tk, g.r.Cfg.Budgets.DailyMicroUSD("system:factory"))
+				_, err := g.r.reserveFactoryDay(t.Context(), g.r.Cfg.Current(), tk, g.r.Cfg.Current().Budgets.DailyMicroUSD("system:factory"))
 				mu.Lock()
 				switch {
 				case errors.Is(err, ledger.ErrBusy):
@@ -343,9 +343,9 @@ func TestAnAPITasksTaskCapIsEnforcedWhateverTheFlagSays(t *testing.T) {
 			} else {
 				g = newRig(t, tk)
 				priceTiers(g)
-				g.r.Cfg.Budgets = sponsoredConfig(t).Budgets
+				g.r.Cfg.Current().Budgets = sponsoredConfig(t).Budgets
 			}
-			if g.r.Cfg.Budgets.EnforceTask {
+			if g.r.Cfg.Current().Budgets.EnforceTask {
 				t.Fatal("the fixture's flag is off")
 			}
 			g.reconcile(t, "3buqdlot", 2) // Received → Triaged → Queued
@@ -377,7 +377,7 @@ func issueTaskNoIssue(tk *v1alpha1.Task) *v1alpha1.Task { tk.Spec.Issue = 0; ret
 // any reservation.
 func TestAnAPITaskOfAnUnknownPrincipalIsEscalated(t *testing.T) {
 	g := sponsoredDayRig(t, issueTask("3buqdlot", 0, "Fix the dead link in docs/a.md."))
-	g.r.Cfg.API.Sponsored = nil
+	g.r.Cfg.Current().API.Sponsored = nil
 	got := g.reconcile(t, "3buqdlot", 3)
 	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "principal_unknown" || len(g.runs.specs) != 0 {
 		t.Fatalf("%s %s, %d specs", got.Status.Phase, got.Status.Reason, len(g.runs.specs))

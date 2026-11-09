@@ -31,12 +31,12 @@ func testerRigCfg(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 		edit(tk)
 	}
 	g := newRig(t, tk)
-	g.r.Cfg.Classes["scripts"] = config.Class{Checks: true, TestFirst: true}
-	g.r.Cfg.Merge.ContractCheck = "Test contract 🧪"
-	g.r.Cfg.Defaults.PredictedClass = tk.Spec.PredictedClass // the static triage's class
+	g.r.Cfg.Current().Classes["scripts"] = config.Class{Checks: true, TestFirst: true}
+	g.r.Cfg.Current().Merge.ContractCheck = "Test contract 🧪"
+	g.r.Cfg.Current().Defaults.PredictedClass = tk.Spec.PredictedClass // the static triage's class
 	g.r.Triage = triage.Static{Cfg: g.r.Cfg}
 	if cfgEdit != nil {
-		cfgEdit(g.r.Cfg)
+		cfgEdit(g.r.Cfg.Current())
 	}
 	g.reconcile(t, "3buqdlot", 3)
 	return g
@@ -164,7 +164,7 @@ func (g *rig) editCommit(t *testing.T, edit func(*forge.Commit)) {
 
 // pushed records the tester's push as GitHub's activity does: the branch's creation by the agents App.
 func (g *rig) pushed(actor string) {
-	g.r.Cfg.AgentsLogin = agentsApp
+	g.r.Cfg.Current().AgentsLogin = agentsApp
 	g.f.SetActivity("agent/3buqdlot", forge.Push{Type: "branch_creation", Actor: actor, Before: strings.Repeat("0", 40), After: contractSHA})
 }
 
@@ -397,7 +397,7 @@ func TestEveryImplementerBriefCarriesTheContract(t *testing.T) {
 	holdsTheContract(t, "the revision", g.runs.specs[rid(3)].TaskText)
 	tk := g.task(t)
 	tk.Status.NextTrigger = "ci"
-	s, _, _, err := g.r.nextImplementer(t.Context(), tk)
+	s, _, _, err := g.r.nextImplementer(t.Context(), g.r.Cfg.Current(), tk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestNoVerifierSetHoldsATester(t *testing.T) {
 	g := newRig(t)
 	tk := &v1alpha1.Task{}
 	tk.Spec.Template = "trio" // a hand-built config still lists the tester
-	if got := g.r.nextVerifier(tk, "implementer"); got != "reviewer" {
+	if got := g.r.nextVerifier(g.r.Cfg.Current(), tk, "implementer"); got != "reviewer" {
 		t.Fatalf("next verifier %q, want the reviewer", got)
 	}
 	tk.Status.Runs = []v1alpha1.RunRecord{{ID: "aaaaaaaa", Role: "tester", Verdict: "approve"}, {ID: "bbbbbbbb", Role: "reviewer", Verdict: "approve"}}
@@ -464,7 +464,7 @@ func TestNoVerifierSetHoldsATester(t *testing.T) {
 	tk.Status.Verdict = "approve"
 	in := ArmInputs{PR: forge.PR{HeadSHA: head2}, ReportedHead: head2, Cfg: g.r.Cfg, Task: tk,
 		Verifiers: []v1alpha1.RunRecord{{ID: "aaaaaaaa", Role: "tester", Verdict: "approve", HeadSHA: head1}}}
-	if got := agentEvidence(in); got != "foreign_trailer" { // past every verdict row: only the trailer is left
+	if got := agentEvidence(in, in.Cfg.Current()); got != "foreign_trailer" { // past every verdict row: only the trailer is left
 		t.Fatalf("a tester's approve counted: %q", got)
 	}
 }

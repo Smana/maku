@@ -270,12 +270,13 @@ func SameRecovery(a, b *v1alpha1.RecoveryProposal) bool {
 // increase_budget are a new plan version, never taken here. Nothing here reverts, merges or
 // reaches another repository's running child.
 func (s *Service) Recover(ctx context.Context, actor Actor, parentTask, code string, planVersion int32) error {
+	cfg := s.config()
 	switch {
-	case s.mode() == config.CoordinationOff:
+	case modeOf(cfg) == config.CoordinationOff:
 		return ErrCoordinationOff
 	case actor.LinkedGitHubLogin == "":
 		return fmt.Errorf("%w: no linked GitHub login", ErrRepositoryPermission)
-	case s.mode() != config.CoordinationExecute:
+	case modeOf(cfg) != config.CoordinationExecute:
 		return ErrNotExecuting
 	}
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -294,10 +295,10 @@ func (s *Service) Recover(ctx context.Context, actor Actor, parentTask, code str
 		case rec == nil || rec.Code != code || rec.PlanVersion != cs.Plan.Version:
 			return ErrRecoveryNotProposed
 		}
-		if err := s.recoveryAuthority(ctx, actor, cs, rec); err != nil {
+		if err := s.recoveryAuthority(ctx, cfg, actor, cs, rec); err != nil {
 			return err
 		}
-		if err := s.recoverOnce(ctx, actor, t, rec); err != nil {
+		if err := s.recoverOnce(ctx, cfg, actor, t, rec); err != nil {
 			return err
 		}
 		cs.Recovery = nil // resolving it may reveal the next one, never a bundled playbook
@@ -309,21 +310,21 @@ func (s *Service) Recover(ctx context.Context, actor Actor, parentTask, code str
 var childCodes = []string{RecoveryRetryChild, RecoveryResumeChild, RecoveryRetryProducer, RecoveryRetryDependent, RecoveryAuthorizeChild}
 
 // recoveryAuthority is the selected path's authority, read now.
-func (s *Service) recoveryAuthority(ctx context.Context, actor Actor, cs *v1alpha1.CoordinationStatus, rec *v1alpha1.RecoveryProposal) error {
+func (s *Service) recoveryAuthority(ctx context.Context, cfg *config.Config, actor Actor, cs *v1alpha1.CoordinationStatus, rec *v1alpha1.RecoveryProposal) error {
 	p := *cs.Plan
 	if slices.Contains(childCodes, rec.Code) {
 		c, ok := find(p, rec.ChildID)
 		switch {
 		case !ok:
 			return ErrRecoveryNotProposed
-		case !strings.EqualFold(MaintainerLogin(c), actor.LinkedGitHubLogin) || !s.Cfg.RepositoryFor(c.Repository).IsMaintainer(actor.LinkedGitHubLogin):
+		case !strings.EqualFold(MaintainerLogin(c), actor.LinkedGitHubLogin) || !cfg.RepositoryFor(c.Repository).IsMaintainer(actor.LinkedGitHubLogin):
 			return fmt.Errorf("%w: not the child's maintainer", ErrRepositoryPermission)
 		}
 		_, err := s.check(ctx, actor, c, nil)
 		return err
 	}
 	pc, ok := find(p, primaryChildID(p))
-	if !ok || !s.Cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(actor.LinkedGitHubLogin) {
+	if !ok || !cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(actor.LinkedGitHubLogin) {
 		return fmt.Errorf("%w: not a maintainer of the primary", ErrRepositoryPermission)
 	}
 	_, err := s.check(ctx, actor, pc, nil)
@@ -331,7 +332,7 @@ func (s *Service) recoveryAuthority(ctx context.Context, actor Actor, cs *v1alph
 }
 
 // recoverOnce takes rec's one action on parent t's status, written by the caller.
-func (s *Service) recoverOnce(ctx context.Context, actor Actor, t *v1alpha1.Task, rec *v1alpha1.RecoveryProposal) error {
+func (s *Service) recoverOnce(ctx context.Context, cfg *config.Config, actor Actor, t *v1alpha1.Task, rec *v1alpha1.RecoveryProposal) error {
 	cs := t.Status.Coordination
 	switch rec.Code {
 	case RecoveryRetryChild, RecoveryResumeChild, RecoveryRetryProducer, RecoveryRetryDependent:
@@ -349,10 +350,10 @@ func (s *Service) recoverOnce(ctx context.Context, actor Actor, t *v1alpha1.Task
 	case RecoveryAuthorizeChild:
 		kept := slices.DeleteFunc(slices.Clone(cs.Authorizations), func(a v1alpha1.ChildAuthorization) bool { return a.ChildID == rec.ChildID })
 		cs.Authorizations = kept
-		_, err := s.authorizeChild(ctx, actor, cs, rec.ChildID, ChildFingerprint(*cs.Plan, rec.ChildID))
+		_, err := s.authorizeChild(ctx, cfg, actor, cs, rec.ChildID, ChildFingerprint(*cs.Plan, rec.ChildID))
 		return err
 	case RecoveryRetryIntegration, RecoveryRerunIntegration:
-		return s.retryIntegration(ctx, t, rec)
+		return s.retryIntegration(ctx, cfg, t, rec)
 	}
 	return ErrPlanRevisionRequired
 }
@@ -360,7 +361,7 @@ func (s *Service) recoverOnce(ctx context.Context, actor Actor, t *v1alpha1.Task
 // retryIntegration starts one new integration attempt: the same manifest after an infrastructure
 // loss, or the dependent's current head after a release went stale. It is counted against maxRuns
 // and behind the execute gate re-read for the primary, as every attempt is.
-func (s *Service) retryIntegration(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RecoveryProposal) error {
+func (s *Service) retryIntegration(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, rec *v1alpha1.RecoveryProposal) error {
 	cs := t.Status.Coordination
 	var m IntegrationManifest
 	switch rec.Code {
@@ -394,10 +395,10 @@ func (s *Service) retryIntegration(ctx context.Context, t *v1alpha1.Task, rec *v
 	if err := IntegrationAttemptAllowed(cs); err != nil {
 		return err
 	}
-	if err := s.ExecuteReady(ctx, cs, []string{PrimaryChild(cs)}); err != nil {
+	if err := s.executeReady(ctx, cfg, cs, []string{PrimaryChild(cs)}); err != nil {
 		return err
 	}
-	it := IntegrationTask(s.Namespace, s.Cfg, t, m, len(cs.IntegrationAttempts)+1)
+	it := IntegrationTask(s.Namespace, cfg, t, m, len(cs.IntegrationAttempts)+1)
 	if err := s.Client.Create(ctx, it); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
@@ -438,7 +439,8 @@ func (s *Service) familyHeads(ctx context.Context, cs *v1alpha1.CoordinationStat
 // child's for a child action, else the primary. The caller resolves the actor's login there;
 // Recover re-reads the authority itself.
 func (s *Service) RecoveryRepository(ctx context.Context, parentTask string) (string, error) {
-	if s.mode() == config.CoordinationOff {
+	cfg := s.config()
+	if modeOf(cfg) == config.CoordinationOff {
 		return "", ErrCoordinationOff
 	}
 	t, err := s.parent(ctx, parentTask)

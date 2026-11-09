@@ -17,7 +17,7 @@ import (
 // default branch of a repository this factory owns (v2 D7: a fence it is not named in is not
 // read, and says so). An absent note is no steering; an invalid one is not used, counted and logged, and the
 // task proceeds (SC4), as does one that is never readable (a directory, a symlink). A retryable read error is returned: the triage is retried.
-func (r *Reconciler) scopeAtTriage(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) scopeAtTriage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	mode := config.ScopeMode(t.Spec.ScopeMode) // profileSpec's: the row's, off for an investigate task
 	t.Spec.Steering = nil
 	path := steering.Path(t.Spec.PredictedClass)

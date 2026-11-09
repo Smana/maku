@@ -38,7 +38,7 @@ func TestQueuesAndReviewerTier(t *testing.T) {
 		t.Fatalf("factory runs are admitted by Kueue's factory queue: %q", got)
 	}
 	s := g.runs.specs[rid(1)]
-	if s.Model != g.r.Cfg.Tiers["frontier"].Model || s.MaxTokens != tk.Spec.Budget.RunTokens {
+	if s.Model != g.r.Cfg.Current().Tiers["frontier"].Model || s.MaxTokens != tk.Spec.Budget.RunTokens {
 		t.Fatalf("the reviewer uses another tier's model and the task's run budget: %+v", s)
 	}
 }
@@ -51,7 +51,7 @@ func TestWIPHoldsReviewClassWork(t *testing.T) {
 		waiting = append(waiting, o)
 	}
 	g := newRig(t, append(waiting, issueTask("3buqdlot", 7, "x"))...)
-	g.r.Cfg.Caps.AwaitingHumanWIP = 2
+	g.r.Cfg.Current().Caps.AwaitingHumanWIP = 2
 	tk := g.reconcile(t, "3buqdlot", 3)
 	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Reason != "waiting_review_wip" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
@@ -73,13 +73,13 @@ func TestTaskTokenCapLeavesRoomForAWholeRun(t *testing.T) {
 			tk.Status.Runs[0].Tokens = used
 			g := newRig(t, tk, roomOf("3buqdlot"))
 			g.f.SetPR(pr12()) // Queued re-reads the task's pull request (lateReviews) first
-			g.r.Cfg.Budgets.EnforceTask = enforce
+			g.r.Cfg.Current().Budgets.EnforceTask = enforce
 			return g, g.reconcile(t, "3buqdlot", 1)
 		},
 		"reviewer": func(t *testing.T, used int64, enforce bool) (*rig, *v1alpha1.Task) {
 			g := newRig(t, issueTask("3buqdlot", 7, "x"))
 			g.r.Triage = staticWith("pair")
-			g.r.Cfg.Budgets.EnforceTask = enforce
+			g.r.Cfg.Current().Budgets.EnforceTask = enforce
 			g.reconcile(t, "3buqdlot", 3)
 			g.f.SetBranch("agent/3buqdlot", 12)
 			g.f.SetPR(pr12At(head1))
@@ -130,7 +130,7 @@ func TestTaskTokenCapLeavesRoomForAWholeRun(t *testing.T) {
 func TestAMergedPullRequestIsNotEscalatedForTheTaskCap(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"))
 	g.r.Triage = staticWith("pair")
-	g.r.Cfg.Budgets.EnforceTask = true
+	g.r.Cfg.Current().Budgets.EnforceTask = true
 	g.reconcile(t, "3buqdlot", 3)
 	g.f.SetBranch("agent/3buqdlot", 12)
 	g.f.SetPR(pr12At(head1))
@@ -170,13 +170,13 @@ func TestARequestChangesPastTheCapIsQueuedNotAnnounced(t *testing.T) {
 			tk.Status.Runs[0].Tokens, tk.Status.Usage.Tokens = 1_500_001, 1_500_001
 			g := newRig(t, tk, roomOf("3buqdlot"))
 			g.f.SetPR(pr12(review))
-			g.r.Cfg.Budgets.EnforceTask = enforce
+			g.r.Cfg.Current().Budgets.EnforceTask = enforce
 			return g, g.reconcile(t, "3buqdlot", 2) // → Queued → admitted or not
 		},
 		"queued for its reviewer": func(t *testing.T, enforce bool) (*rig, *v1alpha1.Task) {
 			g := newRig(t, issueTask("3buqdlot", 7, "x"))
 			g.r.Triage = staticWith("pair")
-			g.r.Cfg.Budgets.EnforceTask = enforce
+			g.r.Cfg.Current().Budgets.EnforceTask = enforce
 			g.reconcile(t, "3buqdlot", 3)
 			g.f.SetBranch("agent/3buqdlot", 12)
 			g.f.SetPR(pr12At(head1))
@@ -234,14 +234,14 @@ func factoryLedger(spent int64, reserved map[string]int64) *corev1.ConfigMap {
 func TestFactoryDailyBudget(t *testing.T) {
 	budgets := config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
 	g := newRig(t, issueTask("3buqdlot", 7, "x"), factoryLedger(42_500_000, nil))
-	g.r.Cfg.Budgets = budgets
+	g.r.Cfg.Current().Budgets = budgets
 	if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing ||
 		!slices.Contains(g.metrics.recorded, "revoked budget-principal-shadow") {
 		t.Fatalf("in shadow the day is counted, not enforced (R3): %s %q", tk.Status.Phase, g.metrics.recorded)
 	}
 	budgets.EnforcePrincipal = true
 	g = newRig(t, issueTask("3buqdlot", 7, "x"), factoryLedger(42_500_000, nil))
-	g.r.Cfg.Budgets = budgets
+	g.r.Cfg.Current().Budgets = budgets
 	if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Reason != "waiting_daily_budget" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
@@ -255,13 +255,13 @@ func TestFactoryDailyBudget(t *testing.T) {
 // ledger refunds nothing, and the live claims are no measure of the day.
 func TestDeletedRunsSpendStaysInTheDay(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"), factoryLedger(40_800_000, nil))
-	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, EnforcePrincipal: true}
+	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, EnforcePrincipal: true}
 	// No claim lists any of the $40.80: every run that spent them was deleted.
 	if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Reason != "waiting_daily_budget" {
 		t.Fatalf("$40.80 spent and a $2.55 run do not fit $42.50: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	g = newRig(t, issueTask("3buqdlot", 7, "x"))
-	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, EnforcePrincipal: true}
+	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, EnforcePrincipal: true}
 	g.runs.runs["zzzzzzzz"] = runs.Run{ID: "zzzzzzzz", Principal: runs.PrincipalFactory, Phase: "Succeeded",
 		Tokens: 25_000_000, Created: now.Add(-time.Hour)}
 	if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing {
@@ -301,12 +301,12 @@ func TestQueuedAndTheAPIDecideTheDayAlike(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t, issueTask("3buqdlot", 7, "x"), c.l.DeepCopy())
-			g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
+			g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
 			tk := g.reconcile(t, "3buqdlot", 3)
 			queued := tk.Status.Reason == "waiting_daily_budget"
 
 			cf := cfg()
-			cf.Budgets = g.r.Cfg.Budgets
+			cf.Budgets = g.r.Cfg.Current().Budgets
 			cf.API.Repositories = []string{"Smana/cloud-native-ref"}
 			cf.API.SystemRepositories = map[string][]string{runs.PrincipalFactory: {"Smana/cloud-native-ref"}} // v2 D6
 			rooms := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(c.l.DeepCopy()).Build()
@@ -360,8 +360,8 @@ func TestFactoryRunsAreReservedBeforeTheyStart(t *testing.T) {
 		objs = append(objs, issueTask(n, 7+i, "x"))
 	}
 	g := newRig(t, objs...)
-	g.r.Cfg.Caps.ActiveTasks = 4
-	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
+	g.r.Cfg.Current().Caps.ActiveTasks = 4
+	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
 	started, waiting := 0, 0
 	for _, n := range names {
 		switch tk := g.reconcile(t, n, 3); {
@@ -390,7 +390,7 @@ func TestFactoryRunsAreReservedBeforeTheyStart(t *testing.T) {
 // R3: in shadow the factory's run is still reserved, and an over day only counts.
 func TestShadowReservesAndNeverHolds(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"), factoryLedger(42_500_000, nil))
-	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
+	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
 	if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing ||
 		!slices.Contains(g.metrics.recorded, "revoked budget-principal-shadow") {
 		t.Fatalf("shadow counts, never holds: %s %s %q", tk.Status.Phase, tk.Status.Reason, g.metrics.recorded)
@@ -400,7 +400,7 @@ func TestShadowReservesAndNeverHolds(t *testing.T) {
 	}
 	// A ledger that cannot be read holds nothing in shadow either.
 	g = newRig(t, issueTask("3buqdlot", 7, "x"))
-	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
+	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}
 	g.r.Ledger = brokenLedger{g.c}
 	if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing {
 		t.Fatalf("an unreadable ledger in shadow: %s %s", tk.Status.Phase, tk.Status.Reason)
@@ -444,7 +444,7 @@ func TestAFactoryReservationSettlesOnceAcrossRestarts(t *testing.T) {
 	c := losingClient(t, func(tk *v1alpha1.Task) bool { return len(tk.Status.Runs) > 0 })
 	g := newRig(t)
 	g.c, g.r.Client = c, c // g.r.Ledger keeps the rig's own client: the ledger is not the Task's
-	g.r.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
+	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
 	g.reconcile(t, "3buqdlot", 2) // Queued
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the write recording the run is lost")

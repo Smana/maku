@@ -21,14 +21,15 @@ import (
 // live class and is recorded as would-require-approval in a shadow one (the owner's Q3). Through
 // stage 3 nothing merges on this decision.
 func DecideArmUnder(in ArmInputs, variants []config.Class, approval []string) ArmDecision {
-	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
+	cfg := in.Cfg.Current()
+	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
 	class := in.Task.Spec.PredictedClass
 	if len(variants) == 0 {
-		return decide(in, rc, config.Class{})
+		return decide(in, cfg, rc, config.Class{})
 	}
 	var best ArmDecision
 	for i, v := range variants {
-		d := decide(in, rc, withShape(v, class))
+		d := decide(in, cfg, rc, withShape(v, class))
 		if i == 0 || rank(d) > rank(best) {
 			best = d
 		}

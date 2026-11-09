@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Smana/maku/internal/factory/config"
 )
 
 // The fence reads every five minutes and the file rarely moves: an unchanged file is not parsed
@@ -51,5 +53,39 @@ func TestAMixedFileIsInvalid(t *testing.T) {
 	w.Observe(t.Context(), "o/r", []byte(mixed))
 	if strings.Join(r.reasons, ",") != ReasonInvalid {
 		t.Fatalf("%v", r.reasons)
+	}
+}
+
+type swapSource struct{ c *config.Config }
+
+func (s *swapSource) Current() *config.Config { return s.c }
+
+// The config is live: the cache is keyed by the file and the config it was evaluated under, so a
+// published config re-evaluates an unchanged file.
+func TestObserveReevaluatesAnUnchangedFileUnderANewConfig(t *testing.T) {
+	w, r := watchRig()
+	first := w.Cfg.Current().Current()
+	first.Hash = "one"
+	src := &swapSource{c: first}
+	w.Cfg = src
+	w.Observe(t.Context(), "o/r", []byte(same))
+	w.Observe(t.Context(), "o/r", []byte(same))
+	if w.evaluations != 1 {
+		t.Fatalf("%d evaluations under one config, want 1", w.evaluations)
+	}
+	next := central()
+	next.HarnessProfiles = map[string]config.HarnessProfile{"checked": {Checks: true}}
+	next.Hash = "two"
+	next.Repositories = first.Repositories
+	src.c = next
+	w.Observe(t.Context(), "o/r", []byte(same))
+	if w.evaluations != 2 {
+		t.Fatalf("%d evaluations after a new config, want 2", w.evaluations)
+	}
+	if s, _ := w.Snapshot("o/r"); s.Err == nil {
+		t.Fatalf("the file names harness plain, which the new config lacks: %+v", s)
+	}
+	if len(r.reasons) == 0 {
+		t.Fatal("the failed evaluation is counted")
 	}
 }

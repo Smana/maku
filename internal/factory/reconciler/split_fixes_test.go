@@ -23,7 +23,7 @@ import (
 // A part carries its parent's search, so its implementer claim does too.
 func TestAPartInheritsSearch(t *testing.T) {
 	g := splitRigWith(t, "frontier", false, nil)
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Search: true, Split: &config.SplitPolicy{MaxChildren: 3}}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Search: true, Split: &config.SplitPolicy{MaxChildren: 3}}}
 	g.reconcile(t, "3buqdlot", 3)
 	splitHandoffOf(g, 0, readyScope(), parts(2))
 	endScoper(t, g, "Succeeded", "agent_finished")
@@ -68,13 +68,13 @@ func TestATellParentConflictNeverOpensASecondRevert(t *testing.T) {
 				t.Fatal(err)
 			}
 			conflictingParent(g, n)
-			if err := g.r.revert(t.Context(), c, "main_red"); err != nil {
+			if err := g.r.revert(t.Context(), g.r.Cfg.Current(), c, "main_red"); err != nil {
 				t.Fatalf("revert failed on the parent's conflict: %v", err)
 			}
 			if c.Status.PullRequest.RevertNumber == 0 || c.Status.Phase != v1alpha1.PhaseReverted || len(g.f.Reverts()) != 1 {
 				t.Fatalf("%+v %s %v", c.Status.PullRequest, c.Status.Phase, g.f.Reverts())
 			}
-			if err := g.r.revert(t.Context(), c, "main_red"); err != nil || len(g.f.Reverts()) != 1 {
+			if err := g.r.revert(t.Context(), g.r.Cfg.Current(), c, "main_red"); err != nil || len(g.f.Reverts()) != 1 {
 				t.Fatalf("a replay opened another: %v %v", err, g.f.Reverts())
 			}
 		})

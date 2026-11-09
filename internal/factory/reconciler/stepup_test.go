@@ -55,7 +55,7 @@ func stepRig(t *testing.T, cf *config.Config, edit func(*v1alpha1.Task)) (*rig, 
 	tk = g.get(t)
 	tk.Status = st
 	p, _ := cf.ProfileFor(cf.Classes["review"], "review-floor")
-	g.r.profileSpec(tk, "review", p)
+	g.r.profileSpec(g.r.Cfg.Current(), tk, "review", p)
 	tk.Spec.ScopeMode = string(config.ScopeOff)
 	tk.Spec.Budget.Tier = "standard"
 	if err := g.c.Update(t.Context(), tk); err != nil {
@@ -80,7 +80,7 @@ func (g *rig) get(t *testing.T) *v1alpha1.Task {
 // fail ends tk escalated for reason and writes its status, as a reconcile pass would.
 func (g *rig) fail(t *testing.T, tk *v1alpha1.Task, reason string) *v1alpha1.Task {
 	t.Helper()
-	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseEscalated, reason); err != nil {
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), tk, v1alpha1.PhaseEscalated, reason); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
@@ -214,7 +214,7 @@ func TestARefusedStepWriteChangesNothing(t *testing.T) {
 			return cl.Update(ctx, o, opts...)
 		}})
 	before := tk.Status.DeepCopy()
-	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseEscalated, "stalled"); err == nil {
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), tk, v1alpha1.PhaseEscalated, "stalled"); err == nil {
 		t.Fatal("the refusal should surface")
 	}
 	if tk.Status.Phase != before.Phase || *tk.Status.Profile != *before.Profile || tk.Status.NextTrigger != "" || len(tk.Status.Outbox) != 0 {
@@ -224,7 +224,7 @@ func TestARefusedStepWriteChangesNothing(t *testing.T) {
 	if stored.Spec.Budget.Tier != "standard" || stored.Status.Profile.Name != "review-floor" || stored.Status.Profile.Source != "floor" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
-	if err := g.r.end(t.Context(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
 		t.Fatal(err)
 	}
 	wantStepped(t, stored, "review-frontier", "out_of_budget")
@@ -296,7 +296,7 @@ func TestRoundsExhaustedNarratedOnlyWhenNotStepped(t *testing.T) {
 				tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12}
 				tk.Status.Runs[0].Role = c.role
 			})
-			if err := g.r.roundsExhausted(t.Context(), tk, rooms.Verdict{RunID: rid(0), Verdict: "changes", Commit: "abc"}); err != nil {
+			if err := g.r.roundsExhausted(t.Context(), g.r.Cfg.Current(), tk, rooms.Verdict{RunID: rid(0), Verdict: "changes", Commit: "abc"}); err != nil {
 				t.Fatal(err)
 			}
 			n := 0
@@ -390,9 +390,9 @@ func TestASaturatedStepBriefKeepsTheJudge(t *testing.T) {
 func TestARoundsExhaustedReviewSteps(t *testing.T) {
 	g := pairRig(t)
 	steps := int32(7)
-	g.r.Cfg.Loops = map[string]config.Loop{"review-search": {StallSteps: &steps}}
-	g.r.Cfg.HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-search": {Loop: "review-search"}}
-	g.r.Cfg.Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review-search": {StallSteps: &steps}}
+	g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-search": {Loop: "review-search"}}
+	g.r.Cfg.Current().Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
 		Escalation: &config.Escalation{NotConverged: "review-search"}}
 	tk := g.get(t)
 	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
@@ -423,7 +423,7 @@ func TestAReviewEndedStepBriefCarriesTheImplementersJudge(t *testing.T) {
 		tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
 	})
 	g.log.evs = append(g.log.evs, judgeEvent(3, rid(0), "not_yet", "the implementer's verdict"))
-	if err := g.r.roundsExhausted(t.Context(), tk, rooms.Verdict{RunID: rid(1), Verdict: "changes"}); err != nil {
+	if err := g.r.roundsExhausted(t.Context(), g.r.Cfg.Current(), tk, rooms.Verdict{RunID: rid(1), Verdict: "changes"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
@@ -482,17 +482,17 @@ func TestAStepKeepsTheBranchAndThePullRequest(t *testing.T) {
 // mapping. The replay recovers the persisted step: spec and status agree, one narration.
 func TestAReplayRecoversThePersistedStep(t *testing.T) {
 	g, tk := stepRig(t, stepCfg(), nil)
-	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseEscalated, "stalled"); err != nil {
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), tk, v1alpha1.PhaseEscalated, "stalled"); err != nil {
 		t.Fatal(err)
 	}
 	stored := g.get(t) // the spec write landed, the status write never happened
 	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "floor" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
-	cl := g.r.Cfg.Classes["review"]
+	cl := g.r.Cfg.Current().Classes["review"]
 	cl.Escalation = nil
-	g.r.Cfg.Classes["review"] = cl
-	if err := g.r.end(t.Context(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
+	g.r.Cfg.Current().Classes["review"] = cl
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
 		t.Fatal(err)
 	}
 	wantStepped(t, stored, "review-frontier", "out_of_budget")

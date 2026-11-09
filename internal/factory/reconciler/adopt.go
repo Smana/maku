@@ -20,11 +20,11 @@ func adoptedTask(t *v1alpha1.Task) bool { return t.Spec.Source.Kind == "adopt" }
 // receivedAdopted (R39): an adopted Task is never triaged. Its class is the poller's, it has no
 // template, no room and no run: it records its pull request and goes to the merge gate, which
 // decides everything again on the head it reads.
-func (r *Reconciler) receivedAdopted(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) receivedAdopted(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	i := strings.LastIndex(t.Spec.Source.Ref, "#")
 	n, err := strconv.Atoi(t.Spec.Source.Ref[i+1:])
 	if i < 0 || err != nil || n <= 0 {
-		return r.end(ctx, t, v1alpha1.PhaseRejected, "adopt_ref_invalid")
+		return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, "adopt_ref_invalid")
 	}
 	pr, err := r.gh(ctx).PullRequest(ctx, n)
 	if err != nil {
@@ -39,7 +39,7 @@ func (r *Reconciler) receivedAdopted(ctx context.Context, t *v1alpha1.Task) erro
 		t.Status = status
 	}
 	t.Status.PullRequest = &v1alpha1.PullRequestRef{Number: n, URL: pr.URL, NodeID: pr.NodeID, HeadSHA: pr.HeadSHA, Author: pr.Author}
-	t.Status.ConfigHash = r.Cfg.Hash
+	t.Status.ConfigHash = cfg.Hash
 	r.to(t, v1alpha1.PhaseAwaitingCI, "")
 	return nil
 }
@@ -53,8 +53,8 @@ var adoptedReturns = map[string]bool{"shadow_would_arm": true}
 // maintainer's Request changes is theirs to act on with Renovate: no revision run starts. A
 // transient hand-off returns through reenter on a new head, counted; a shadow decision returns on
 // Renovate's next push, uncounted, since it is no hand-off.
-func (r *Reconciler) awaitingHumanAdopted(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
-	if back, err := r.reenter(ctx, t, pr); err != nil {
+func (r *Reconciler) awaitingHumanAdopted(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) error {
+	if back, err := r.reenter(ctx, cfg, t, pr); err != nil {
 		r.log().Warn("merge gate return unreadable", "task.id", t.Name, "reason", t.Status.Reason, "err", err)
 	} else if back {
 		return nil

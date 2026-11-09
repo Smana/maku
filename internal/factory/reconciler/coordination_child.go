@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -58,13 +60,13 @@ func lineageReason(err error) string {
 // every repository, its frozen snapshot is the confirmed plan's, and its authorizer's authority
 // and the capability gate are re-read now. It never runs C7, the scoper or the splitter: class,
 // template, scope and budget are the plan's. A refused authority holds this child alone.
-func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) receivedCoordinationChild(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	p, err := r.checkCoordinationLineage(ctx, t)
 	if errors.Is(err, errCoordinationSuperseded) {
-		return r.stop(ctx, t, "superseded")
+		return r.stop(ctx, cfg, t, "superseded")
 	}
 	if reason := lineageReason(err); reason != "" {
-		return r.coordinationRejected(ctx, t, reason)
+		return r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return err
@@ -81,7 +83,7 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.
 	t.Status.Classification = &v1alpha1.Classification{Tier: c.Tier, Classifier: "coordination", Fallback: "static"}
 	// The generation's own share of the lifetime allocation: its Task's cap (MR8).
 	t.Status.Coordination = &v1alpha1.CoordinationStatus{PlanVersion: cp.PlanVersion, ChildID: cp.ChildID, AllocationMicroUSD: t.Spec.Budget.TaskMicroUSD}
-	t.Status.ConfigHash = r.Cfg.Hash
+	t.Status.ConfigHash = cfg.Hash
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
@@ -109,16 +111,16 @@ func (r *Reconciler) coordinationAuthority(ctx context.Context, t *v1alpha1.Task
 // coordinationHold is queued's re-check before every new run or resume of a coordination child:
 // its lineage, then its authority; an integration Task's is integrationHold. held is true when it
 // does not start.
-func (r *Reconciler) coordinationHold(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+func (r *Reconciler) coordinationHold(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (bool, error) {
 	if t.Spec.Kind == v1alpha1.TaskKindIntegration {
-		return r.integrationHold(ctx, t)
+		return r.integrationHold(ctx, cfg, t)
 	}
 	p, err := r.checkCoordinationLineage(ctx, t)
 	if errors.Is(err, errCoordinationSuperseded) {
-		return true, r.stop(ctx, t, "superseded")
+		return true, r.stop(ctx, cfg, t, "superseded")
 	}
 	if reason := lineageReason(err); reason != "" {
-		return true, r.coordinationRejected(ctx, t, reason)
+		return true, r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return true, err

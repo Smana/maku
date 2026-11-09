@@ -28,7 +28,7 @@ type ArmInputs struct {
 	PR           forge.PR
 	Checks       forge.Checks
 	Task         *v1alpha1.Task
-	Cfg          *config.Config `json:"-"` // a fixture is decided under the config it is run with
+	Cfg          config.Source `json:"-"` // a fixture is decided under the config it is run with
 	ArmedToday   int
 	Paused       bool
 	ReportedHead string
@@ -133,13 +133,14 @@ func CIState(c forge.Checks, required []string) string {
 // the conditions the class declares (merge gate classes MC1). Every "no" fails towards a human
 // (property 3), each with its own reason. Every decision carries the rows it read (AM8).
 func DecideArm(in ArmInputs) ArmDecision {
-	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
-	return decide(in, rc, gateOf(rc, in.Task.Spec.PredictedClass))
+	cfg := in.Cfg.Current()
+	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
+	return decide(in, cfg, rc, gateOf(rc, in.Task.Spec.PredictedClass))
 }
 
 // decide is DecideArm's rule on the class cl, wherever it was read: the central config, or a
 // repository's policy (DecideArmUnder). Everything else is read from the central config.
-func decide(in ArmInputs, rc *config.Repository, cl config.Class) (d ArmDecision) {
+func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.Class) (d ArmDecision) {
 	rows := recordOf(in, cl)
 	defer func() { d.Rows = rows; d = withIntegrationHold(in.Integration, d) }() // MR9: one hold over every return, central or repository class
 	if d, done := baseChecks(in, rc); done {
@@ -153,7 +154,7 @@ func decide(in ArmInputs, rc *config.Repository, cl config.Class) (d ArmDecision
 		if reason := adoptAuthor(in, cl); reason != "" {
 			return human(reason, class)
 		}
-	} else if !forge.SameLogin(in.PR.Author, in.Cfg.AgentsLogin) {
+	} else if !forge.SameLogin(in.PR.Author, cfg.AgentsLogin) {
 		return human("not_agent_authored", "")
 	}
 	if !cl.Adopted() && rc.Merge.ApproveToMerge { // R-B1: adopted classes keep today's path (AM1)
@@ -192,13 +193,13 @@ func decide(in ArmInputs, rc *config.Repository, cl config.Class) (d ArmDecision
 	if cl.Adopted() {
 		rows.Evidence = adoptEvidence(in, cl)
 	} else {
-		rows.Evidence = agentEvidence(in)
+		rows.Evidence = agentEvidence(in, cfg)
 	}
 	if rows.Evidence != "" {
 		return human(rows.Evidence, class)
 	}
 	rows.Evidence = "ok"
-	if in.DiffRead && in.Cfg.SteeringOn() && touchesSteering(in.Stats) {
+	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
 		return human("steering_path", class) // no agent pull request changes a note (scoper SC3)
 	}
 	rows, reason, wait := declared(cl, in, rows)
@@ -497,8 +498,8 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 
 // agentEvidence is the agents author mode's evidence (R02, R03, SC-14): "" when the room
 // reported this head, the verifiers approved it and its trailer names one of the task's runs.
-func agentEvidence(in ArmInputs) string {
-	if slices.Contains(in.Cfg.Templates[in.Task.Spec.Template].Roles, "reviewer") && in.Task.Status.Verdict != "approve" {
+func agentEvidence(in ArmInputs, cfg *config.Config) string {
+	if slices.Contains(cfg.Templates[in.Task.Spec.Template].Roles, "reviewer") && in.Task.Status.Verdict != "approve" {
 		return "no_approving_verdict"
 	}
 	// R02: the rule can only speak about the commit the room named. An unreported head — a run

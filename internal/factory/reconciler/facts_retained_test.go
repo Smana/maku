@@ -49,16 +49,16 @@ func TestAnUpgradeLeavesAnEndedTasksFactsAlone(t *testing.T) {
 				tk.Status.Split = nil
 			}
 			g := newRig(t, tk)
-			g.r.Cfg.Templates["pair"] = config.Template{Roles: []string{"implementer", "reviewer"}}
-			rc := g.r.Cfg.RepositoryFor(tk.Spec.Repository)
+			g.r.Cfg.Current().Templates["pair"] = config.Template{Roles: []string{"implementer", "reviewer"}}
+			rc := g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository)
 			rc.Classes = map[string]config.Class{"scripts": {Live: true, AllowedFiles: []string{`^scripts/`}}}
-			if f := g.r.factsFor(tk); f.Policy == nil || len(f.Plan) == 0 || f.Runs[0].Persona == "" || (f.Split != nil) != tc.split || f.Parent == nil {
+			if f := g.r.factsFor(g.r.Cfg.Current(), tk); f.Policy == nil || len(f.Plan) == 0 || f.Runs[0].Persona == "" || (f.Split != nil) != tc.split || f.Parent == nil {
 				t.Fatalf("the fixture must carry the rail's fields: %+v", f)
 			}
-			if got := factsKey(g.r.factsFor(tk)); got != tc.pin {
+			if got := factsKey(g.r.factsFor(g.r.Cfg.Current(), tk)); got != tc.pin {
 				t.Fatalf("key %s, the factory before the upgrade left %s", got, tc.pin)
 			}
-			if err := g.r.postFacts(t.Context(), tk); err != nil {
+			if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 				t.Fatal(err)
 			}
 			if len(g.log.factsSeqs) != 0 || tk.Status.RoomSeq != 5 {
@@ -90,8 +90,8 @@ func TestTheRailsFactsReachALiveAndAnEndingTask(t *testing.T) {
 	}
 	tk := retainedTask(v1alpha1.PhaseDone, "the last phase's")
 	g := newRig(t, tk)
-	g.r.Cfg.Templates["pair"] = config.Template{Roles: []string{"implementer", "reviewer"}}
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	g.r.Cfg.Current().Templates["pair"] = config.Template{Roles: []string{"implementer", "reviewer"}}
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	if f, ok := g.log.facts[6]; !ok || len(f.Plan) == 0 || f.Runs[0].Persona != "scoper" {
@@ -105,13 +105,13 @@ func TestASealedRoomSettlesItsFacts(t *testing.T) {
 	g := newRig(t, awaiting())
 	tk := stored(t, g.c)
 	g.log.failFacts = &rooms.APIError{Status: 410, Reason: "sealed"}
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
-	if g.r.factsDue(tk) || !tk.Status.Facts.Posted {
-		t.Fatalf("due %v, ledger %+v", g.r.factsDue(tk), tk.Status.Facts)
+	if g.r.factsDue(g.r.Cfg.Current(), tk) || !tk.Status.Facts.Posted {
+		t.Fatalf("due %v, ledger %+v", g.r.factsDue(g.r.Cfg.Current(), tk), tk.Status.Facts)
 	}
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	if len(g.log.factsSeqs) != 1 {
@@ -119,10 +119,10 @@ func TestASealedRoomSettlesItsFacts(t *testing.T) {
 	}
 	// New facts ask once more, and the answer settles them too.
 	tk.Status.Phase = v1alpha1.PhaseDone
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
-	if len(g.log.factsSeqs) != 2 || g.r.factsDue(tk) {
-		t.Fatalf("posted %v, due %v", g.log.factsSeqs, g.r.factsDue(tk))
+	if len(g.log.factsSeqs) != 2 || g.r.factsDue(g.r.Cfg.Current(), tk) {
+		t.Fatalf("posted %v, due %v", g.log.factsSeqs, g.r.factsDue(g.r.Cfg.Current(), tk))
 	}
 }

@@ -78,6 +78,7 @@ var errNoForge = errors.New("api: no GitHub connection for the repository")
 // createTask is the intake api (F4, R4): a sponsored principal's request becomes a Task, which
 // triage, the gate and narration then treat as any other. Refusals name codes only.
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, err := s.Auth.Authenticate(r)
 	switch {
 	case errors.Is(err, authn.ErrForbidden):
@@ -87,11 +88,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	if ip := s.Cfg.InternalBy(p.ID); p.Internal && ip != nil {
-		s.createInternalTask(w, r, p, ip)
+	if ip := cfg.InternalBy(p.ID); p.Internal && ip != nil {
+		s.createInternalTask(cfg, w, r, p, ip)
 		return
 	}
-	sp := s.Cfg.SponsoredBy(p.ID)
+	sp := cfg.SponsoredBy(p.ID)
 	if !p.Sponsored || p.Internal || sp == nil {
 		refuse(w, http.StatusForbidden, reasonSponsoredOnly)
 		return
@@ -141,7 +142,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	// The float is range-checked before it becomes micro-USD: 1e300 would overflow the conversion.
 	switch {
-	case len(s.Cfg.Meter.Prices) == 0: // C13: a ceiling in dollars needs priced runs; before the ceiling checks
+	case len(cfg.Meter.Prices) == 0: // C13: a ceiling in dollars needs priced runs; before the ceiling checks
 		out(http.StatusServiceUnavailable, "meter_unpriced")
 		return
 	case !(in.MaxCostUSD >= minMaxCostUSD): // under a cent a third of it rounds a cap to 0, which reads as unset
@@ -156,11 +157,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	case maxUSD <= 0:
 		out(http.StatusBadRequest, "max_cost_required")
 		return
-	case maxUSD > s.Cfg.MaxTaskMicroUSD():
+	case maxUSD > cfg.MaxTaskMicroUSD():
 		out(http.StatusBadRequest, "max_cost_over_class")
 		return
 	}
-	login, code, reason := s.sponsorOf(ctx, sp, in)
+	login, code, reason := s.sponsorOf(ctx, cfg, sp, in)
 	if reason != "" {
 		out(code, reason)
 		return
@@ -192,7 +193,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, map[string]any{"task": t.Name, "room": t.Name, "issue": t.Spec.Issue, "duplicate": true})
 		return
 	}
-	switch capped, err := s.dailyCapReached(ctx); {
+	switch capped, err := s.dailyCapReached(ctx, cfg); {
 	case err != nil:
 		fail(http.StatusServiceUnavailable, "tasks_unavailable", err)
 		return
@@ -216,7 +217,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		out(http.StatusTooManyRequests, reasonPrincipalOver)
 		return
 	}
-	code, body, err := s.admitTask(ctx, sp, login, name, key, title, text, in, maxUSD)
+	code, body, err := s.admitTask(ctx, cfg, sp, login, name, key, title, text, in, maxUSD)
 	switch {
 	case errors.Is(err, errReplayConflict):
 		out(http.StatusConflict, "idempotency_conflict")
@@ -251,7 +252,7 @@ const reasonLinkUnverified = "link_unverified"
 // linked by onBehalfOf.slack first (the config wins), else, for a principal with
 // onBehalfOf.slackLinks, by the broker's self-serve link record: its ZITADEL sub's current GitHub
 // login, never a login the caller sent.
-func (s *Server) sponsorOf(ctx context.Context, sp *config.Sponsored, in TaskRequest) (string, int, string) {
+func (s *Server) sponsorOf(ctx context.Context, cfg *config.Config, sp *config.Sponsored, in TaskRequest) (string, int, string) {
 	login := sp.Sponsor
 	if in.OnBehalfOf != "" {
 		id, found := strings.CutPrefix(in.OnBehalfOf, "slack:")
@@ -267,7 +268,7 @@ func (s *Server) sponsorOf(ctx context.Context, sp *config.Sponsored, in TaskReq
 			}
 		}
 	}
-	if !s.Cfg.RepositoryFor(in.Repository).IsMaintainer(login) {
+	if !cfg.RepositoryFor(in.Repository).IsMaintainer(login) {
 		return "", http.StatusForbidden, "not_a_maintainer"
 	}
 	return strings.ToLower(login), 0, ""
@@ -368,7 +369,7 @@ func (s *Server) principalSpent(ctx context.Context, sp *config.Sponsored, maxUS
 
 // admitTask creates the Task before the issue, as RunLore does: the name is the key's, so a racing
 // replay loses on AlreadyExists and files no second issue (R12).
-func (s *Server) admitTask(ctx context.Context, sp *config.Sponsored, login, name, key, title, text string,
+func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.Sponsored, login, name, key, title, text string,
 	in TaskRequest, maxUSD int64) (int, map[string]any, error) {
 	var filer IssueFiler
 	if title != "" && s.Forges != nil {
@@ -408,7 +409,7 @@ func (s *Server) admitTask(ctx context.Context, sp *config.Sponsored, login, nam
 		return http.StatusCreated, body, nil
 	}
 	footer := fmt.Sprintf("\n\n---\nFiled by the agent factory, sponsored by @%s through %s. Its room: %s/r/%s (tailnet only).",
-		login, sp.Principal(), strings.TrimSuffix(s.Cfg.RoomsURL, "/"), name)
+		login, sp.Principal(), strings.TrimSuffix(cfg.RoomsURL, "/"), name)
 	// Past the Task, a client that hangs up must not orphan the issue: filing and linking outlive ctx.
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
