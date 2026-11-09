@@ -20,15 +20,16 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	if !unresolved(t) {
 		return nil
 	}
-	choices := r.profileChoices(t)
+	offered := len(r.profileChoices(t)) > 0
 	q := *t.Status.Profile
 	q.Resolved = true
-	if s != nil && len(choices) > 0 {
+	if s != nil && offered {
 		q.Recommended, q.Why = s.Profile, s.ProfileWhy
 	}
 	switch d, persisted := decided(t); {
 	case persisted && d.Source == "scoper": // the spec write landed and the status write did not: the decision binds, not today's config
 		d.restore(&q)
+		offered = offered || d.Offered
 	case q.Source == "label":
 	case s == nil:
 		q.Reason = "scoper_failed"
@@ -43,7 +44,8 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 			break
 		}
 		v, _ := r.Cfg.ProfileFor(r.repo(t).Classes[t.Spec.PredictedClass], name)
-		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || v.TestFirst}
+		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || v.TestFirst,
+			Recommended: q.Recommended, Why: q.Why, Offered: offered}
 		if err := r.applyProfile(ctx, t, d); err != nil {
 			return err
 		}
@@ -51,7 +53,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	}
 	*t.Status.Profile = q
 	narrateLater(t, narrate.ProfileChosen(q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
-	if len(choices) > 0 {
+	if offered {
 		class, cohort, rec, applied := t.Spec.PredictedClass, q.Cohort, r.recommendedLabel(t), q.Source == "scoper"
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
 	}
@@ -59,30 +61,37 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 }
 
 // recommendedLabel is the scoper's recommendation on t as a bounded metric label: a profile the
-// class offers, none without one, other for a name no longer offered.
+// class offers or the one the task runs under (offered when it was applied), none without one,
+// other for a name no longer offered.
 func (r *Reconciler) recommendedLabel(t *v1alpha1.Task) string {
 	rec := t.Status.Profile.Recommended
 	switch {
 	case rec == "":
 		return "none"
-	case slices.ContainsFunc(r.profileChoices(t), func(c ProfileChoice) bool { return c.Name == rec }):
+	case rec == t.Status.Profile.Name, slices.ContainsFunc(r.profileChoices(t), func(c ProfileChoice) bool { return c.Name == rec }):
 		return rec
 	}
 	return "other"
 }
 
 // profileDecision is what applyProfile persists beside the spec it applies, under
-// AnnotationProfileDecision, so a replay can restore the status half of the decision.
+// AnnotationProfileDecision, so a replay can restore the status half of the decision without
+// reading a config that may have changed since: the frozen booleans, the scoper's recommendation
+// and whether the class offered a choice, which the recommendation count hangs on.
 type profileDecision struct {
-	Name      string `json:"name"`
-	Source    string `json:"source"`
-	Reason    string `json:"reason,omitempty"`
-	Checks    bool   `json:"checks,omitempty"`
-	TestFirst bool   `json:"testFirst,omitempty"`
+	Name        string `json:"name"`
+	Source      string `json:"source"`
+	Reason      string `json:"reason,omitempty"`
+	Checks      bool   `json:"checks,omitempty"`
+	TestFirst   bool   `json:"testFirst,omitempty"`
+	Recommended string `json:"recommended,omitempty"`
+	Why         string `json:"why,omitempty"`
+	Offered     bool   `json:"offered,omitempty"`
 }
 
 func (d profileDecision) restore(p *v1alpha1.ProfileStatus) {
 	p.Name, p.Source, p.Reason, p.Checks, p.TestFirst = d.Name, d.Source, d.Reason, d.Checks, d.TestFirst
+	p.Recommended, p.Why = d.Recommended, d.Why
 }
 
 // decided is the decision t's spec carries, if any.

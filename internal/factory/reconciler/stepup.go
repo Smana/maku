@@ -62,7 +62,8 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 		return false, nil
 	}
 	// TestFirst stays: the tester branches from main, which an implementer run has already left.
-	d := profileDecision{Name: target, Source: "escalation", Reason: g, Checks: p.Checks || v.Checks, TestFirst: p.TestFirst}
+	d := profileDecision{Name: target, Source: "escalation", Reason: g, Checks: p.Checks || v.Checks, TestFirst: p.TestFirst,
+		Recommended: p.Recommended, Why: p.Why, Offered: len(r.profileChoices(t)) > 0}
 	// The spec is written before any status change, so a refused write replays the whole step.
 	if err := r.applyProfile(ctx, t, d); err != nil {
 		return false, err

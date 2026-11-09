@@ -506,13 +506,28 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	if stored := g.get(t); stored.Spec.Loop == nil || stored.Spec.Loop.StallSteps != 7 || stored.Status.Profile.Resolved {
 		t.Fatalf("the spec write landed alone: %+v %+v", stored.Spec.Loop, stored.Status.Profile)
 	}
+	// Between the two writes the config changes under the task: observe, and the class offers no
+	// variant any more. The persisted decision binds: status, narration, the recommendation count
+	// and the outcome's label all say what was decided.
 	cf.Evaluation.Mode = config.EvaluationObserve
+	cf.Classes["review"] = config.Class{Harness: "review-floor"}
 	tk := g.reconcile(t, "3buqdlot", 1)
 	wantResolved(t, tk, "review-search", "scoper", "", 1)
 	if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 || tk.Status.Profile.Recommended != "review-search" || tk.Status.Profile.Why != "because" {
 		t.Fatalf("%+v %+v", tk.Spec.Loop, tk.Status.Profile)
 	}
+	if c := g.f.Comments(7); !strings.Contains(c[len(c)-1], "`review-search`") || !strings.Contains(c[len(c)-1], "the scoper: because") {
+		t.Fatalf("narration %q", c[len(c)-1])
+	}
 	if got := slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(m string) bool { return !strings.HasPrefix(m, "profile ") }); !slices.Equal(got, []string{"profile review treatment review-search true"}) {
 		t.Fatalf("metrics %q", got)
+	}
+	tk.Annotations[v1alpha1.AnnotationStop] = "true"
+	if err := g.c.Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	g.reconcile(t, "3buqdlot", 1)
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.Contains(got[0], "review-search scoper review-search stopped") {
+		t.Fatalf("outcome %q", got)
 	}
 }
