@@ -129,7 +129,7 @@ spec:
 
 | Where | What |
 |---|---|
-| **Schema and CEL, at admission** | Field types and enums. Live and shadow together on one class (today `classes.go:161`). Refs fixed once set. Tier caps positive and `taskUSD ≥ runUSD`. Only one `MergePolicy` per `repositoryRef` is checked by the reconciler, because CEL can't see other objects. Write the rules against the wiki's CEL notes (`cel-transition-rule-omitempty-needs-has`, `gofmt-curls-quotes-in-kubebuilder-cel-marker`) |
+| **Schema and CEL, at admission** | Field types and enums. Live and shadow together on one class (today `classes.go:161`). Refs fixed once set. Tier caps positive and `taskUSD ≥ runUSD` are not in v1's CEL: `Parse` enforces them at reconcile. Only one `MergePolicy` per `repositoryRef` is checked by the reconciler, because CEL can't see other objects. Write the rules against the wiki's CEL notes (`cel-transition-rule-omitempty-needs-has`, `gofmt-curls-quotes-in-kubebuilder-cel-marker`) |
 | **Reconciler, reported as `Accepted=False`** | Everything in today's `Config.Validate()` and `validateRepository` that needs more than one object: a ref to a missing object, a template naming an unknown tier, a class naming a role no template has, two `MergePolicy` for one repository, a repository in both the file and a CR (D8) |
 
 Today's strict decoding (`DisallowUnknownFields`) is **not** fully replaced by the structural
@@ -214,6 +214,7 @@ their `status`.
 - **Status counts and spend** (D10, D11): after #420 decides where they come from.
 - **Persisting the last accepted version** across restarts (D14).
 - **Pinning a task to its generations** (D5): recorded, not pinned.
+- **Admission-time tier rules**: caps positive and `taskUSD ≥ runUSD` in CEL. `Parse` enforces them at reconcile.
 
 ## Notes from implementation (2026-11-10)
 

@@ -38,6 +38,9 @@ func Decode(raw []byte) ([]Object, error) {
 		default:
 			return nil, fmt.Errorf("document %d: kind %q is not a factory resource", i+1, kind)
 		}
+		if v, _ := m["apiVersion"].(string); v != v1alpha1.GroupVersion.String() {
+			return nil, fmt.Errorf("%s %q: apiVersion %q is not %s", kind, name, v, v1alpha1.GroupVersion)
+		}
 		if err := yaml.UnmarshalStrict([]byte(doc), typed); err != nil {
 			return nil, fmt.Errorf("%s %q: %w", kind, name, err)
 		}

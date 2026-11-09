@@ -113,6 +113,10 @@ ykind Role '.rules[] | select((.resources | join(",")) == "factories/status,repo
 ykind ClusterRole 'select(.metadata.name == "maku-viewer") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-view" == "true"' "maku-viewer aggregates into view"
 ykind ClusterRole 'select(.metadata.name == "maku-mergepolicy-editor") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit" == "true"' "maku-mergepolicy-editor aggregates into edit"
 ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-admin" == "true"' "maku-factory-admin aggregates into admin"
+# Each role's exact rules: viewer reads, the editor writes only merge policies, admin writes all three.
+ykind ClusterRole 'select(.metadata.name == "maku-viewer") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch")' "maku-viewer is read-only on the three kinds"
+ykind ClusterRole 'select(.metadata.name == "maku-mergepolicy-editor") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-mergepolicy-editor covers only mergepolicies"
+ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-factory-admin covers the three kinds"
 for crd in factories repositories mergepolicies; do
   [ -f "crds/maku.ogenki.io_${crd}.yaml" ] || { echo "FAIL: the chart ships the ${crd} CRD" >&2; fail=1; }
 done

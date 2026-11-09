@@ -5,9 +5,12 @@ package resources
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 
 	"github.com/Smana/maku/internal/factory/config"
 )
@@ -51,8 +54,26 @@ func TestMigrateRefusesTheLegacyShape(t *testing.T) {
 }
 
 func TestMigrateNamesAndSplitsTheMeter(t *testing.T) {
-	in := "factory: f\nmeter: {url: u, prices: {a: 1}}\ntriage: {controlPercent: 5}\nrepositories:\n- name: A/x\n- name: B/x\n- name: C/zed\n"
-	manifests, residual, err := Migrate([]byte(in), "ns")
+	var m map[string]any
+	if err := yaml.Unmarshal(file(t), &m); err != nil {
+		t.Fatal(err)
+	}
+	entry := m["repositories"].([]any)[0].(map[string]any)
+	var repos []any
+	for _, n := range []string{"A/x", "B/x", "C/zed"} {
+		e := maps.Clone(entry)
+		e["name"] = n
+		repos = append(repos, e)
+	}
+	m["repositories"] = repos
+	m["meter"].(map[string]any)["prices"] = map[string]any{"agent-default": map[string]any{"input": 1.40, "cacheRead": 0.26,
+		"output": 4.40, "source": "https://docs.z.ai/guides/overview/pricing", "checkedAt": "2026-10-16"}}
+	m["triage"] = map[string]any{"controlPercent": 5}
+	in, err := yaml.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, residual, err := Migrate(in, "ns")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +82,7 @@ func TestMigrateNamesAndSplitsTheMeter(t *testing.T) {
 			t.Errorf("missing %q in\n%s", n, manifests)
 		}
 	}
-	if !strings.Contains(string(residual), "url: u") || strings.Contains(string(residual), "prices") ||
+	if !strings.Contains(string(residual), "url: http://vmsingle") || strings.Contains(string(residual), "prices") ||
 		strings.Contains(string(residual), "triage") {
 		t.Errorf("residual:\n%s", residual)
 	}
@@ -125,6 +146,31 @@ func TestDecodeRefusesABooleanOff(t *testing.T) {
 		_, err := Decode([]byte("apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: f}\nspec: " + spec + "\n"))
 		if err == nil || !strings.Contains(err.Error(), `write "off"`) || !strings.Contains(err.Error(), "spec.") {
 			t.Errorf("%s: %v", spec, err)
+		}
+	}
+}
+
+// F5: Migrate refuses what Parse refuses, an empty factory name or a nameless entry among them.
+func TestMigrateParsesFirst(t *testing.T) {
+	for _, in := range []string{
+		strings.Replace(string(file(t)), "factory: aws-0", "factory: \"\"", 1),
+		strings.Replace(string(file(t)), "- name: Smana/cloud-native-ref", "- name: \"\"", 1),
+	} {
+		if _, _, err := Migrate([]byte(in), "ns"); err == nil {
+			t.Errorf("Migrate must refuse what Parse refuses:\n%.200s", in)
+		}
+	}
+}
+
+func TestNamePartIsADNSLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		"Smana/cloud-native-ref": "cloud-native-ref",
+		"Org/My_Repo.go":         "my-repo-go",
+		"Org/.dotfiles_":         "dotfiles",
+		"plain":                  "plain",
+	} {
+		if got := namePart(in); got != want {
+			t.Errorf("namePart(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

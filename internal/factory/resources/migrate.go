@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	"github.com/Smana/maku/internal/factory/config"
 )
 
 // Migrate moves a config file's catalogue and repositories into manifests (D8): it returns the
@@ -25,6 +27,11 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 	}
 	if _, legacy := base["repository"]; legacy {
 		return nil, nil, errors.New("migrate: move repository, maintainers, triggerLabel, classes, merge and schedules into repositories[] first")
+	}
+	// Parse's refusals (an empty factory name, an entry without a name) are Migrate's: what it
+	// would split must already be a valid file.
+	if _, err := config.Parse(file); err != nil {
+		return nil, nil, fmt.Errorf("migrate: %w", err)
 	}
 	factory := str(base, "factory")
 
@@ -92,7 +99,7 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		repository := str(m, "name")
 		name := namePart(repository)
 		if parts[name] > 1 {
-			name = strings.ToLower(strings.ReplaceAll(repository, "/", "-"))
+			name = dnsLabel(repository)
 		}
 		rs := map[string]any{"factoryRef": factory, "repository": repository}
 		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "classAuthority"} {
@@ -127,13 +134,19 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 	}(), "---\n")), residual, nil
 }
 
-// namePart is the repository's name without its owner, lowercased.
+// namePart is the repository's name without its owner, as a DNS-1123 label.
 func namePart(repository string) string {
 	_, n, ok := strings.Cut(repository, "/")
 	if !ok {
 		n = repository
 	}
-	return strings.ToLower(n)
+	return dnsLabel(n)
+}
+
+// dnsLabel lowercases s, turns '/', '_' and '.' into '-' and trims '-' from both ends: a GitHub
+// owner or repository name is then a DNS-1123 label.
+func dnsLabel(s string) string {
+	return strings.Trim(strings.NewReplacer("/", "-", "_", "-", ".", "-").Replace(strings.ToLower(s)), "-")
 }
 
 // offFields visits loops.*.scope and harnessProfiles.*.loop where set, in name order: the two

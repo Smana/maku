@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Smana/maku/internal/factory/resources"
@@ -32,7 +33,7 @@ func (r Maku) config(args []string) error {
 		if *from == "" {
 			return errors.New("config migrate: --from is required")
 		}
-		file, err := os.ReadFile(*from)
+		file, err := os.ReadFile(filepath.Clean(*from))
 		if err != nil {
 			return fmt.Errorf("config migrate: %w", err)
 		}
@@ -41,7 +42,7 @@ func (r Maku) config(args []string) error {
 			return fmt.Errorf("config migrate: %w", err)
 		}
 		if *residual != "" {
-			if err := os.WriteFile(*residual, rest, 0o600); err != nil { //nolint:gosec // a path the developer names on their own command line
+			if err := writeIn(filepath.Clean(*residual), rest); err != nil {
 				return fmt.Errorf("config migrate: %w", err)
 			}
 		}
@@ -56,13 +57,13 @@ func (r Maku) config(args []string) error {
 		if *cfgPath == "" || len(pos) == 0 {
 			return errors.New("config validate: --config and at least one manifest file are required")
 		}
-		file, err := os.ReadFile(*cfgPath)
+		file, err := os.ReadFile(filepath.Clean(*cfgPath))
 		if err != nil {
 			return fmt.Errorf("config validate: %w", err)
 		}
 		docs := make([]string, 0, len(pos))
 		for _, p := range pos {
-			raw, err := os.ReadFile(p) //nolint:gosec // as above
+			raw, err := os.ReadFile(filepath.Clean(p))
 			if err != nil {
 				return fmt.Errorf("config validate: %w", err)
 			}
@@ -94,4 +95,15 @@ func (r Maku) config(args []string) error {
 		return err
 	}
 	return fmt.Errorf("config: unknown verb %q\n%s", verb, makuUsage)
+}
+
+// writeIn writes b to p, 0600, through an os.Root on p's directory: the file stays in the
+// directory the developer named.
+func writeIn(p string, b []byte) error {
+	root, err := os.OpenRoot(filepath.Dir(p))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.WriteFile(filepath.Base(p), b, 0o600)
 }

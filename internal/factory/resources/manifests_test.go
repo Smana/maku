@@ -54,3 +54,10 @@ func TestDecodeFillsTheNamespace(t *testing.T) {
 		t.Fatalf("%v %+v", err, objs)
 	}
 }
+
+func TestDecodeRefusesAnotherAPIVersion(t *testing.T) {
+	_, err := Decode([]byte("apiVersion: maku.ogenki.io/v1beta1\nkind: Factory\nmetadata: {name: aws-0}\nspec: {}\n"))
+	if err == nil || !strings.Contains(err.Error(), `Factory "aws-0"`) || !strings.Contains(err.Error(), "maku.ogenki.io/v1alpha1") {
+		t.Fatalf("err = %v", err)
+	}
+}
