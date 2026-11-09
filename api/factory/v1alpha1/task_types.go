@@ -465,6 +465,13 @@ type TaskStatus struct {
 	// the total is final. Written once, with the one TaskTokens the settle records.
 	// +optional
 	UsageSettled bool `json:"usageSettled,omitempty"`
+	// The task's first end (R34): the settle window counts from it, and Outcome is what it ended
+	// as. A later Reverted revises neither.
+	// +optional
+	EndedAt *metav1.Time `json:"endedAt,omitempty"`
+	// +kubebuilder:validation:Enum=accepted;merged_human;no_op;closed;stopped;rejected;reverted;failed
+	// +optional
+	Outcome string `json:"outcome,omitempty"`
 	// +optional
 	ReviewRounds int32 `json:"reviewRounds,omitempty"`
 	// +optional

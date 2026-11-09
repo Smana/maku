@@ -16,6 +16,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -298,8 +299,10 @@ func TestAnEscalationCountsOnce(t *testing.T) {
 // profile and count nothing of their own.
 func TestASplitFamilyIsCountedOnceOnTheParent(t *testing.T) {
 	for name, c := range map[string]struct {
+		of      int
 		human   bool
 		dropped bool
+		stopped bool
 		phase   string
 		reason  string
 		want    string
@@ -307,9 +310,12 @@ func TestASplitFamilyIsCountedOnceOnTheParent(t *testing.T) {
 		"every part by the bot":  {phase: v1alpha1.PhaseDone, reason: "children_merged", want: "accepted"},
 		"a part a human amended": {human: true, phase: v1alpha1.PhaseDone, reason: "children_merged", want: "merged_human"},
 		"a part dropped":         {dropped: true, phase: v1alpha1.PhaseClosed, reason: "child_dropped", want: "stopped"},
+		// The parent stopped with its third part never opened: every opened part landed, and the
+		// family is still not accepted (R32).
+		"a part never opened": {of: 3, stopped: true, phase: v1alpha1.PhaseStopped, reason: "stopped_by_annotation", want: "stopped"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			g, _ := harnessedSplit(t, 2)
+			g, _ := harnessedSplit(t, max(c.of, 2))
 			g.r.Now = func() time.Time { return now.Add(time.Hour) }
 			g.f.SetComments(7, splitBy(80, "Smana"))
 			g.reconcile(t, "3buqdlot", 2) // Escalated → Split, then part 1
@@ -332,6 +338,13 @@ func TestASplitFamilyIsCountedOnceOnTheParent(t *testing.T) {
 				_ = g.f.CloseIssue(t.Context(), 502)
 			}
 			ended(2, phase, 450_000, c.human)
+			if c.stopped {
+				p := g.get(t)
+				p.Annotations = map[string]string{v1alpha1.AnnotationStop: "true"}
+				if err := g.c.Update(t.Context(), p); err != nil {
+					t.Fatal(err)
+				}
+			}
 			p := g.reconcile(t, "3buqdlot", 1)
 			if p.Status.Phase != c.phase || p.Status.Reason != c.reason {
 				t.Fatalf("%s %s", p.Status.Phase, p.Status.Reason)
@@ -350,36 +363,172 @@ func TestASplitFamilyIsCountedOnceOnTheParent(t *testing.T) {
 	}
 }
 
-// R32's order: merged_human wins over every other part; else the first part by index that is not
-// accepted; a part the family ended before its own end reads as the parent's outcome.
+// R32's order over every part of the approved split, opened or not: merged_human wins over every
+// other part; else the first part by index that is not accepted; a part the family ended before its
+// own end, or never opened, reads as the parent's outcome; a part the parent recorded reverted is
+// reverted whatever its task's first end. The family is built as approval builds it: of parts, the
+// opened ones appended in order, each with its newest generation's task.
 func TestFamilyOutcomeOrder(t *testing.T) {
 	part := func(phase string, human bool) *v1alpha1.Task {
 		return &v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: phase, PullRequest: &v1alpha1.PullRequestRef{HumanCommits: human}}}
 	}
 	for name, c := range map[string]struct {
-		parts []*v1alpha1.Task
-		want  string
+		of       int32
+		opened   []*v1alpha1.Task
+		reverted int32 // the part the parent recorded reverted, 0 for none
+		want     string
 	}{
-		"all accepted":               {[]*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseDone, false)}, "accepted"},
-		"a human after a stop":       {[]*v1alpha1.Task{part(v1alpha1.PhaseStopped, false), part(v1alpha1.PhaseDone, true)}, "merged_human"},
-		"first by index":             {[]*v1alpha1.Task{part(v1alpha1.PhaseStopped, false), part(v1alpha1.PhaseClosed, false)}, "stopped"},
-		"an open part, the parent's": {[]*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseImplementing, false)}, "closed"},
-		"never opened, the parent's": {[]*v1alpha1.Task{part(v1alpha1.PhaseDone, false), nil}, "closed"},
-		"no part":                    {nil, "closed"},
+		"all accepted":               {2, []*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseDone, false)}, 0, "accepted"},
+		"a human after a stop":       {2, []*v1alpha1.Task{part(v1alpha1.PhaseStopped, false), part(v1alpha1.PhaseDone, true)}, 0, "merged_human"},
+		"first by index":             {2, []*v1alpha1.Task{part(v1alpha1.PhaseStopped, false), part(v1alpha1.PhaseClosed, false)}, 0, "stopped"},
+		"an open part, the parent's": {2, []*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseImplementing, false)}, 0, "closed"},
+		"never opened, the parent's": {2, []*v1alpha1.Task{part(v1alpha1.PhaseDone, false)}, 0, "closed"},
+		"three of, one unopened":     {3, []*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseDone, false)}, 0, "closed"},
+		"reverted on the parent":     {2, []*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseDone, false)}, 1, "reverted"},
+		"no part":                    {2, nil, 0, "closed"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			p := &v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseClosed, Split: &v1alpha1.SplitStatus{State: SplitApproved}}}
+			p := &v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseClosed, Split: &v1alpha1.SplitStatus{State: SplitApproved, Of: c.of}}}
 			newest := map[int32]*v1alpha1.Task{}
-			for i, c := range c.parts {
-				p.Status.Split.Children = append(p.Status.Split.Children, v1alpha1.SplitChild{Index: int32(i + 1)})
-				if c != nil {
-					newest[int32(i+1)] = c
+			for i, ch := range c.opened {
+				k := int32(i + 1)
+				sc := v1alpha1.SplitChild{Index: k, Issue: 500 + int(k), Task: child(int(k))}
+				if k == c.reverted {
+					sc.Outcome = ChildReverted
 				}
+				p.Status.Split.Children = append(p.Status.Split.Children, sc)
+				newest[k] = ch
 			}
 			if got := familyOutcome(p, newest); got != c.want {
 				t.Fatalf("%s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// R34: a read the count needs that fails (here the family's) leaves the status as it was: neither
+// the settle mark nor the count lands, and the next pass counts once.
+func TestAFailedFamilyReadRetriesTheCount(t *testing.T) {
+	g, _ := harnessedSplit(t, 2)
+	g.r.Now = func() time.Time { return now.Add(time.Hour) }
+	g.f.SetComments(7, splitBy(80, "Smana"))
+	g.reconcile(t, "3buqdlot", 2)
+	setPhase(t, g, child(1), v1alpha1.PhaseDone, "")
+	g.reconcile(t, "3buqdlot", 1)
+	setPhase(t, g, child(2), v1alpha1.PhaseDone, "")
+	if p := g.reconcile(t, "3buqdlot", 1); p.Status.Phase != v1alpha1.PhaseDone {
+		t.Fatal(p.Status.Phase)
+	}
+	refuse := false
+	g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, l client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := l.(*v1alpha1.TaskList); ok && refuse {
+				refuse = false
+				return errors.New("the family read refused")
+			}
+			return cl.List(ctx, l, opts...)
+		}})
+	refuse = true
+	g.r.Now = func() time.Time { return now.Add(time.Hour + g.r.settleWindow()) }
+	if _, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: taskKey("3buqdlot")}); err == nil {
+		t.Fatal("the refusal should surface")
+	}
+	p := g.get(t)
+	if p.Status.UsageSettled || p.Status.Profile.Counted || len(taskOutcomes(g.metrics.recorded)) != 0 {
+		t.Fatalf("a failed read must leave the status as it was: settled %v counted %v %v", p.Status.UsageSettled, p.Status.Profile.Counted, g.metrics.recorded)
+	}
+	p = g.reconcile(t, "3buqdlot", 2)
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.Contains(got[0], " accepted ") || !p.Status.UsageSettled || !p.Status.Profile.Counted {
+		t.Fatalf("%v %+v", got, p.Status)
+	}
+}
+
+// R34: a parent counts its family once every part's usage has settled, so a part's late cost is in
+// the family's USD; it waits on the poll past its own window, and no longer than the family bound
+// (twice the settle window from its end), after which it counts what it has.
+func TestAParentWaitsForItsPartsToSettle(t *testing.T) {
+	for _, late := range []bool{true, false} {
+		t.Run(map[bool]string{true: "the part settles", false: "the part never settles"}[late], func(t *testing.T) {
+			g, _ := harnessedSplit(t, 2)
+			g.r.Now = func() time.Time { return now.Add(time.Hour) }
+			g.f.SetComments(7, splitBy(80, "Smana"))
+			g.reconcile(t, "3buqdlot", 2)
+			setPhase(t, g, child(1), v1alpha1.PhaseDone, "")
+			g.reconcile(t, "3buqdlot", 1)
+			setPhase(t, g, child(2), v1alpha1.PhaseDone, "")
+			ch := childTask(t, g, 2) // a part whose run the meter still prices: ended, not settled
+			ch.Status.Runs = []v1alpha1.RunRecord{{ID: runID(child(2), 0), CostMicroUSD: 100_000}}
+			ch.Status.Usage.CostMicroUSD = 100_000
+			if err := g.c.Status().Update(t.Context(), ch); err != nil {
+				t.Fatal(err)
+			}
+			if p := g.reconcile(t, "3buqdlot", 1); p.Status.Phase != v1alpha1.PhaseDone {
+				t.Fatal(p.Status.Phase)
+			}
+			ended := g.r.Now()
+			g.r.Now = func() time.Time { return ended.Add(g.r.settleWindow()) }
+			res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: taskKey("3buqdlot")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := g.get(t)
+			if p.Status.UsageSettled || len(taskOutcomes(g.metrics.recorded)) != 0 || res.RequeueAfter != g.r.Cfg.Poll.Tasks.Duration {
+				t.Fatalf("the parent waits for the part on the poll: settled %v %v requeue %s", p.Status.UsageSettled, g.metrics.recorded, res.RequeueAfter)
+			}
+			want := "0.1"
+			if late {
+				ch = childTask(t, g, 2)
+				ch.Status.Usage.CostMicroUSD, ch.Status.Runs[0].CostMicroUSD, ch.Status.UsageSettled = 450_000, 450_000, true
+				if err := g.c.Status().Update(t.Context(), ch); err != nil {
+					t.Fatal(err)
+				}
+				g.r.Now = func() time.Time { return ended.Add(g.r.settleWindow() + time.Minute) }
+				want = "0.45"
+			} else {
+				g.r.Now = func() time.Time { return ended.Add(2 * g.r.settleWindow()) }
+			}
+			p = g.reconcile(t, "3buqdlot", 2)
+			if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasSuffix(got[0], " accepted "+want) || !p.Status.UsageSettled {
+				t.Fatalf("%v, want usd %s; settled %v", got, want, p.Status.UsageSettled)
+			}
+		})
+	}
+}
+
+// R34: the outcome and the settle window are the first end's; a revert before the settle revises
+// neither: the task counts accepted, at the window its first end opened.
+func TestARevertBeforeTheSettleRevisesNothing(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "x"))
+	tk := g.reconcile(t, "3buqdlot", 3)
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment", Resolved: true}
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
+	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseDone, "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	tk = g.get(t)
+	if tk.Status.EndedAt == nil || !tk.Status.EndedAt.Equal(tk.Status.PhaseSince) || tk.Status.Outcome != "accepted" {
+		t.Fatalf("the first end is frozen: %+v %q", tk.Status.EndedAt, tk.Status.Outcome)
+	}
+	half := g.r.settleWindow() / 2
+	g.r.Now = func() time.Time { return now.Add(half) }
+	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseReverted, "main_red"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	tk = g.get(t)
+	if tk.Status.Phase != v1alpha1.PhaseReverted || !tk.Status.EndedAt.Time.Equal(now) || tk.Status.Outcome != "accepted" {
+		t.Fatalf("%s %v %q", tk.Status.Phase, tk.Status.EndedAt, tk.Status.Outcome)
+	}
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) } // the first end's window, not the revert's
+	tk = g.reconcile(t, "3buqdlot", 2)
+	want := []string{"task_outcome review treatment review-search scoper none accepted 0"}
+	if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) || !tk.Status.UsageSettled {
+		t.Fatalf("%v, want %v; settled %v", got, want, tk.Status.UsageSettled)
 	}
 }
 

@@ -1171,6 +1171,10 @@ func (in *TaskStatus) DeepCopyInto(out *TaskStatus) {
 		(*in).DeepCopyInto(*out)
 	}
 	out.Usage = in.Usage
+	if in.EndedAt != nil {
+		in, out := &in.EndedAt, &out.EndedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Narrated != nil {
 		in, out := &in.Narrated, &out.Narrated
 		*out = make([]string, len(*in))

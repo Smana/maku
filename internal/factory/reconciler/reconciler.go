@@ -807,16 +807,21 @@ func (r *Reconciler) settling(t *v1alpha1.Task) bool {
 	return v1alpha1.TerminalPhase(t.Status.Phase) && len(t.Status.Runs) > 0 && !t.Status.UsageSettled
 }
 
-// settle refreshes a settling task's records from their claims, and once the window closes
-// records the task's tokens, its outcome and its USD (R34) and marks the usage settled. The
-// metrics ride the same status write as the mark, so a conflicting write replays both; the write
-// that lands records them once.
+// settle refreshes a settling task's records from their claims, and once the window closes from
+// the task's first end records the task's tokens, its outcome and its USD (R34) and marks the usage
+// settled. Every read comes before the mark: a read that fails leaves the status as it was, and the
+// next pass retries. The metrics ride the same status write as the mark, so a conflicting write
+// replays both; the write that lands records them once.
 func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
 	if _, _, err := r.observe(ctx, t); err != nil {
 		return err
 	}
-	if t.Status.PhaseSince != nil && r.Now().Sub(t.Status.PhaseSince.Time) < r.settleWindow() {
+	if at := endedAt(t); at != nil && r.Now().Sub(at.Time) < r.settleWindow() {
 		return nil
+	}
+	outcome, micro, ready, err := r.tally(ctx, t)
+	if err != nil || !ready {
+		return err // not ready: the parts still settle, and settleLeft requeues on the poll
 	}
 	t.Status.UsageSettled = true
 	blind := slices.ContainsFunc(t.Status.Runs, func(rec v1alpha1.RunRecord) bool { return rec.Tokens == 0 })
@@ -827,16 +832,23 @@ func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	tokens, tier, tmpl, class := t.Status.Usage.Tokens, t.Spec.Budget.Tier, t.Spec.Template, t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.TaskTokens(ctx, tokens, tier, tmpl, class) })
-	return r.countTask(ctx, t)
+	r.count(ctx, t, outcome, micro)
+	return nil
 }
 
 // settleLeft is how much of the settle window an ended task still owes: it is requeued for its
-// settle, never on the poll interval an ended task otherwise skips.
+// settle, never on the poll interval an ended task otherwise skips. Past its own window a task
+// still settling waits for its family (R32), on the poll, no later than the family bound.
 func (r *Reconciler) settleLeft(t *v1alpha1.Task) time.Duration {
-	if t.Status.PhaseSince == nil {
+	at := endedAt(t)
+	if at == nil {
 		return r.Cfg.Poll.Tasks.Duration
 	}
-	return max(r.settleWindow()-r.Now().Sub(t.Status.PhaseSince.Time), time.Second)
+	since := r.Now().Sub(at.Time)
+	if left := r.settleWindow() - since; left > 0 {
+		return max(left, time.Second)
+	}
+	return max(min(r.Cfg.Poll.Tasks.Duration, r.familyBound()-since), time.Second)
 }
 
 // spendFinalMargin is past the meter's own settle window, so the re-price reads a figure that has

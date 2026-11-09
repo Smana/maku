@@ -495,7 +495,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
 			Throttle: throttle(cfg),
-			Budgets:  cfg.Budgets, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
+			Budgets:  cfg.Budgets, Profiles: cfg.HarnessProfiles, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,
 			Ledger: live, Tasks: mgr.GetClient(), Namespace: ns},

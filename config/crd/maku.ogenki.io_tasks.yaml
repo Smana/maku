@@ -1649,6 +1649,12 @@ spec:
                     && !has(self.pendingGenerations))'
                 - message: an allocation and an accepted head are a child's
                   rule: has(self.childID) || (!has(self.allocationMicroUSD) && !has(self.integrationAcceptedHead))
+              endedAt:
+                description: |-
+                  The task's first end (R34): the settle window counts from it, and Outcome is what it ended
+                  as. A later Reverted revises neither.
+                format: date-time
+                type: string
               facts:
                 description: 'The task facts last written to the room: their seq comes
                   from the roomSeq ledger (ruling SK).'
@@ -1894,6 +1900,17 @@ spec:
                   type: object
                 maxItems: 16
                 type: array
+              outcome:
+                enum:
+                - accepted
+                - merged_human
+                - no_op
+                - closed
+                - stopped
+                - rejected
+                - reverted
+                - failed
+                type: string
               phase:
                 enum:
                 - Received

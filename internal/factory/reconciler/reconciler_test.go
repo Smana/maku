@@ -522,7 +522,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 		t.Fatalf("settled: %+v %q", tk.Status, g.f.Comments(7))
 	}
 	want := []string{"time_to_pr issue standard solo", "pr review human_merged", "tier_fit static standard over false",
-		"intervention human_commit none none none", "task_tokens 0 standard solo review"} // a head nobody's run reported is a human's
+		"task_tokens 0 standard solo review"} // no profile: the merge's provenance is not read (R39)
 	if strings.Join(g.metrics.recorded, "|") != strings.Join(want, "|") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}

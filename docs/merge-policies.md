@@ -304,7 +304,7 @@ mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did 
 | `author` | `agents` \| `adopt` | required | Refused on `review` |
 | `adopt` | `{logins: [..], branches: [..]}` | — | Required with `author: adopt`, refused otherwise. Logins end in `[bot]`; branches are `^` plus a literal prefix (`^renovate/`) |
 | `harness` | string | required | A key of the central `harnessProfiles`. `template: none` for `adopt`, any other for `agents` |
-| `harnessAllowed`, `escalation` | as the [central keys](#central-config) | none | The same constraints; carried into the gate's class only when set. On `review` they are, with `harness`, the only keys: `adopt`, `conditions`, `requiresApproval`, `limits` and `monitor` are refused there |
+| `harnessAllowed`, `escalation` | as the [central keys](#central-config) | none | The same constraints; carried into the gate's class only when set. On `review` they are, with `harness`, the only keys: any other key is refused as written, whatever its value (`mode: ""`, `conditions: {}`, `limits: {maxPerDay: 0}`, `adopt: null` included) |
 | `conditions.all` | list of leaves | none | Each leaf one key; a key at most once |
 | `conditions.any` | list of 2–8 lists of leaves | none | No empty branch; a key in `all` is not repeated in a branch |
 | `conditions.deny` | list of `{protectedFiles: [..]}` | none | Non-empty lists. Unanchored regular expressions |

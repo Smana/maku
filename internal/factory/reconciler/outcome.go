@@ -119,9 +119,19 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 	if !v1alpha1.TerminalPhase(t.Status.Phase) {
 		return
 	}
+	if t.Status.EndedAt == nil { // the first end is the one counted (R34): a later Reverted revises nothing
+		at := metav1.NewTime(r.Now())
+		if t.Status.PhaseSince != nil {
+			at = *t.Status.PhaseSince
+		}
+		t.Status.EndedAt, t.Status.Outcome = &at, taskOutcome(t)
+	}
 	if !r.settling(t) { // never ran: nothing settles, and nothing waits (R34)
-		if err := r.countTask(ctx, t); err != nil { // a family read: a task that never ran has none
+		outcome, micro, _, err := r.tally(ctx, t)
+		if err != nil { // a family read: a task that never ran has none
 			r.log().Warn("task outcome not counted", "task.id", t.Name, "err", err)
+		} else {
+			r.count(ctx, t, outcome, micro)
 		}
 	}
 	ids := make([]string, 0, len(t.Status.Runs))
@@ -142,48 +152,102 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 		"phase", t.Status.Phase, "reason", t.Status.Reason, "tokens", t.Status.Usage.Tokens)
 }
 
-// countTask counts a terminal task's outcome and USD once, by its profile (R34): at its settle,
-// once the meter's late readings have had their window, so the dollars are the task's whole; at
-// its end for a task that never ran. The mark rides the status write the count waits for: once,
-// or neither. An approved split's parent counts for its family (R32): the parts carry no profile.
-func (r *Reconciler) countTask(ctx context.Context, t *v1alpha1.Task) error {
+// counting: t has a profile its outcome and USD are owed to, and has not been counted yet.
+func counting(t *v1alpha1.Task) bool {
+	return t.Status.Profile != nil && !t.Status.Profile.Counted
+}
+
+// tally is what a terminal task's count says (R34): the outcome it first ended with and its USD;
+// for an approved split's parent, the family's (R32), every part's generation summed. Every read
+// is here and none is a write, so an error leaves the status as it was and the next pass retries.
+// ready is false while a part's usage still settles, within familyBound of the parent's end; past
+// it the parent counts what it has. A task that counts nothing reads nothing.
+func (r *Reconciler) tally(ctx context.Context, t *v1alpha1.Task) (outcome string, micro int64, ready bool, err error) {
+	if !counting(t) {
+		return "", 0, true, nil
+	}
+	outcome, micro = t.Status.Outcome, t.Status.Usage.CostMicroUSD
+	if outcome == "" {
+		outcome = taskOutcome(t)
+	}
+	if !splitApproved(t) {
+		return outcome, micro, true, nil
+	}
+	newest, all, err := r.family(ctx, t)
+	if err != nil {
+		return "", 0, false, err
+	}
+	for i := range all {
+		c := &all[i]
+		if !settledTask(c) && !r.familyBoundPassed(t) {
+			return "", 0, false, nil
+		}
+		micro += r.costOf(c)
+	}
+	return familyOutcome(t, newest), micro, true, nil
+}
+
+// settledTask: t has ended and its usage is final, nothing to settle for a task that never ran.
+func settledTask(t *v1alpha1.Task) bool {
+	return v1alpha1.TerminalPhase(t.Status.Phase) && (len(t.Status.Runs) == 0 || t.Status.UsageSettled)
+}
+
+// count records a tally once, by the task's profile. The mark rides the status write the metric
+// waits for: once, or neither.
+func (r *Reconciler) count(ctx context.Context, t *v1alpha1.Task, outcome string, micro int64) {
+	if !counting(t) {
+		return
+	}
 	p := t.Status.Profile
-	if p == nil || p.Counted {
-		return nil
-	}
-	outcome, micro := taskOutcome(t), t.Status.Usage.CostMicroUSD
-	if splitApproved(t) {
-		newest, all, err := r.family(ctx, t)
-		if err != nil {
-			return err
-		}
-		outcome = familyOutcome(t, newest)
-		for i := range all {
-			micro += r.costOf(&all[i])
-		}
-	}
 	p.Counted = true
 	class, rec, usd := t.Spec.PredictedClass, r.recommendedLabel(t), float64(micro)/1e6
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
 	})
-	return nil
 }
 
-// familyOutcome is an approved split's outcome, read on the parent from its parts (R32): accepted
-// when every opened part's newest generation merged with no human commit; merged_human when any
-// did with one; otherwise the first other outcome by part index, a part the family ended before
-// its own end (not terminal, or never opened) reading as the parent's. A family with no part
-// opened is the parent's own outcome.
+// familyBound is how long past its own settle window an approved split's parent waits for its
+// parts' usage to settle: one more window (twice the window from its end). A part the family ended
+// is stopped on the parent's pass and settles one window later; a part that never settles — deleted,
+// or ended by nobody — holds the count no longer than this.
+func (r *Reconciler) familyBound() time.Duration { return 2 * r.settleWindow() }
+
+func (r *Reconciler) familyBoundPassed(t *v1alpha1.Task) bool {
+	at := endedAt(t)
+	return at != nil && r.Now().Sub(at.Time) >= r.familyBound()
+}
+
+// endedAt is a terminal task's first end, PhaseSince for a task ended before the field was written.
+func endedAt(t *v1alpha1.Task) *metav1.Time {
+	if t.Status.EndedAt != nil {
+		return t.Status.EndedAt
+	}
+	return t.Status.PhaseSince
+}
+
+// familyOutcome is an approved split's outcome, read on the parent over every part of the split,
+// opened or not (R32): accepted when every part merged with no human commit; merged_human when any
+// did with one; otherwise the first other outcome by part index. A part reads as the parent's own
+// outcome when it was never opened or the family ended before its own end; as reverted when the
+// parent recorded it so, whatever its task first ended as; else as its task's first end.
 func familyOutcome(p *v1alpha1.Task, newest map[int32]*v1alpha1.Task) string {
 	own := taskOutcome(p)
-	if len(p.Status.Split.Children) == 0 {
-		return own
-	}
+	sp := p.Status.Split
 	first, human := "", false
-	for _, c := range p.Status.Split.Children {
+	of := sp.Of
+	for _, c := range sp.Children {
+		of = max(of, c.Index)
+	}
+	for k := int32(1); k <= of; k++ {
 		o := own
-		if n := newest[c.Index]; n != nil && v1alpha1.TerminalPhase(n.Status.Phase) {
+		i := slices.IndexFunc(sp.Children, func(c v1alpha1.SplitChild) bool { return c.Index == k })
+		switch n := newest[k]; {
+		case i < 0:
+		case sp.Children[i].Outcome == ChildReverted:
+			o = "reverted"
+		case n != nil && n.Status.Outcome != "":
+			o = n.Status.Outcome
+		case n != nil && v1alpha1.TerminalPhase(n.Status.Phase):
 			o = taskOutcome(n)
 		}
 		switch {

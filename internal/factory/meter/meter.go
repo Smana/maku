@@ -269,6 +269,9 @@ type Meter struct {
 	Throttle Throttled
 	// Budgets are the daily ceilings; enforced only when EnforcePrincipal (R3's shadow first).
 	Budgets config.Budgets
+	// Profiles are the configured harnessProfiles (R40): a run's cost is reported under its claim's
+	// profile when it is one of them, "other" when not, "" without one.
+	Profiles map[string]config.HarnessProfile
 	// B1Ceiling is the gateway's per-run ceiling (config.RunTokenCeiling), in the unit B1 charges
 	// (b1Spend): a 429 at or above it is the run spending its own bucket, below it the fleet's
 	// (R13). Zero: never name B1.
@@ -1343,7 +1346,7 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 		if m.live == nil {
 			m.live = map[string]CostKey{}
 		}
-		m.live[r.ID] = CostKey{Tier: r.Tier, Role: costRole(r), Cohort: r.Cohort, Profile: r.Profile}
+		m.live[r.ID] = CostKey{Tier: r.Tier, Role: costRole(r), Cohort: r.Cohort, Profile: m.profileLabel(r.Profile)}
 		return
 	}
 	if _, ok := m.live[r.ID]; !ok {
@@ -1365,6 +1368,15 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 // CostKey is what a run's cost is reported by: its tier and costRole, and the task's cohort and
 // profile when the run started (R34), "" without.
 type CostKey struct{ Tier, Role, Cohort, Profile string }
+
+// profileLabel bounds a claim's profile annotation to the configured harnessProfiles (R40): a
+// value anyone could write, or a profile since removed, is "other"; none stays "".
+func (m *Meter) profileLabel(p string) string {
+	if _, ok := m.Profiles[p]; p == "" || ok {
+		return p
+	}
+	return "other"
+}
 
 // costRole is the role a run's cost is reported under (harness roles HR6): the claim's role, except
 // that a factory triager run whose brief opens with the scoper marker is "scoper". The marker counts

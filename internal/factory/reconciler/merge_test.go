@@ -1417,6 +1417,32 @@ func TestGateRecordsHumanCommits(t *testing.T) {
 	}
 }
 
+// R39: the merged pull request's provenance is read for the evaluation alone. A task with no profile
+// completes as on main: no commit list, no branch record, whatever their state, and no human_commit.
+func TestANoProfileMergeCompletesAsOnMain(t *testing.T) {
+	for name, phase := range map[string]string{"via AwaitingHuman": v1alpha1.PhaseAwaitingHuman, "via AwaitingCI": v1alpha1.PhaseAwaitingCI} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, phase)
+			tk := g.get(t)
+			tk.Status.Reason = "merge_gate_off"
+			if err := g.c.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			g.f.SetActivityErr("agent/3buqdlot", errors.New("the branch record is down"))
+			g.f.SetCommitsTruncated(12)
+			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
+				HeadRef: "agent/3buqdlot", HeadSHA: "def", Author: "Smana"})
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits || got.Status.PullRequest.MergeCommitSHA != "m1" {
+				t.Fatalf("%s %s %+v", got.Status.Phase, got.Status.Reason, got.Status.PullRequest)
+			}
+			if got := interventions(g.metrics.recorded); len(got) != 0 {
+				t.Fatalf("no profile, no human_commit: %v", got)
+			}
+		})
+	}
+}
+
 // A human pushes and merges between two reconciles: the merged pull request is read by the gate's
 // provenance, never by who merged it: the room's reported head, every commit's Agent-Run claim, and
 // every push the agents App's in GitHub's record of the branch, read past the deletion that follows
