@@ -361,3 +361,32 @@ func TestASplitResolvesWhenTheTaskRunsWhole(t *testing.T) {
 		}
 	})
 }
+
+// R14: a harness class whose row runs no scoper resolves as it is queued, once, uncounted.
+func TestAnUnscopedTaskResolvesAtAdmission(t *testing.T) {
+	cf := resolveCfg("apply", 0)
+	steps := int32(40)
+	cf.Loops["review"] = config.Loop{StallSteps: &steps}
+	g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it"), "")
+	failed := false
+	g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, cl client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+			if tk, ok := o.(*v1alpha1.Task); ok && tk.Status.Phase == v1alpha1.PhaseQueued && !failed {
+				failed = true
+				return errors.New("status write refused")
+			}
+			return cl.SubResource(sub).Update(ctx, o, opts...)
+		}})
+	g.reconcile(t, "3buqdlot", 1) // Received → Triaged
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil || !failed {
+		t.Fatalf("the Queued write should fail: %v", err)
+	}
+	tk := g.reconcile(t, "3buqdlot", 2) // Triaged → Queued, then the run
+	if tk.Spec.ScopeMode != string(config.ScopeOff) {
+		t.Fatalf("scope %s", tk.Spec.ScopeMode)
+	}
+	wantResolved(t, tk, "review-floor", "floor", "", 1)
+	if p := tk.Status.Profile; p.Recommended != "" || p.Why != "" || countProfile(g.metrics.recorded) != 0 {
+		t.Fatalf("%+v %v", p, g.metrics.recorded)
+	}
+}

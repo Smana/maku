@@ -122,3 +122,13 @@ func (r *Reconciler) resolveScoped(ctx context.Context, t *v1alpha1.Task) error 
 	}
 	return r.resolveProfile(ctx, t, &sc.Scope)
 }
+
+// resolveUnscoped settles the profile of a task no scoper runs for: as triage froze it, with no choice offered.
+func resolveUnscoped(t *v1alpha1.Task) {
+	p := t.Status.Profile
+	if p == nil || p.Resolved || t.Spec.Parent != nil {
+		return
+	}
+	p.Resolved = true
+	narrateLater(t, narrate.ProfileChosen(p.Name, p.Source, p.Reason, "", len(t.Status.Runs)))
+}

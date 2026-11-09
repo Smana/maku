@@ -1076,6 +1076,9 @@ func (r *Reconciler) triaged(ctx context.Context, t *v1alpha1.Task) error {
 		return err
 	}
 	t.Status.RoomRef = t.Name
+	if !scoperPlanned(t) {
+		resolveUnscoped(t)
+	}
 	r.to(t, v1alpha1.PhaseQueued, "")
 	return nil
 }
