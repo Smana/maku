@@ -272,7 +272,8 @@ is the last material transition, not every reconcile.
 
 Creation and edits are best-effort and never block factory work. An edit happens only when the rendered
 body differs from the last successful one; failures leave that record untouched and retry on a later
-reconcile. The forge's real, fake and absent implementations all expose the new ID/edit contract.
+reconcile. The real GitHub forge and its fake expose the new ID/edit contract through the reconciler's
+consumer-owned `TaskForge` interface.
 
 ## Verification
 
@@ -288,7 +289,7 @@ The implementation plan must include table-driven tests for:
   label changes, missing rooms, and internal questions;
 - acceptance remaining in its operative section and the scoper's settled-Decision prompt contract;
 - status-comment ID persistence, crash recovery past 50 comments, generation ownership, no-op reconciles,
-  failed creation/edit retries, and the real/fake/absent forge contracts.
+  failed creation/edit retries, and the real/fake `TaskForge` contracts.
 
 The repository gate is `task check`.
 
