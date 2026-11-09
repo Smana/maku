@@ -52,7 +52,7 @@ func (r *Reconciler) startScoper(ctx context.Context, t *v1alpha1.Task) error {
 		return err
 	}
 	if !ok {
-		text = ScoperBrief(t, r.Nonce(), r.Cfg.Scoper)
+		text = ScoperBrief(t, r.Nonce(), r.Cfg.Scoper, r.profileChoices(t))
 	}
 	return r.startRun(ctx, t, r.scoperSpec(t, text), nextTrigger(t))
 }

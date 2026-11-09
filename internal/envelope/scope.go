@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -32,7 +33,17 @@ type Scope struct {
 	Assumptions []string     `json:"assumptions,omitempty"`
 	Acceptance  []Acceptance `json:"acceptance"`
 	Question    string       `json:"question,omitempty"`
+	// Profile is the harness profile the scoper recommends over the class's floor, and ProfileWhy
+	// its reason; a ready scope's only (TE).
+	Profile    string `json:"profile,omitempty"`
+	ProfileWhy string `json:"profileWhy,omitempty"`
 }
+
+// MaxProfileWhy bounds the reason a scope gives for its profile.
+const MaxProfileWhy = 200
+
+// profileRE is config's harnessProfiles key pattern, copied: envelope sits below the factory's config.
+var profileRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
 
 // Acceptance is one check the judge reads: a command or an observation, and what it proves.
 type Acceptance struct {
@@ -50,12 +61,15 @@ const ScopeSchema = `{"type":"object","additionalProperties":false,"required":["
 	`"assumptions":{"type":"array","maxItems":5,"items":{"type":"string","minLength":1,"maxLength":300}},` +
 	`"acceptance":{"type":"array","minItems":1,"maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["check","proves"],` +
 	`"properties":{"check":{"type":"string","minLength":1,"maxLength":300},"proves":{"type":"string","minLength":1,"maxLength":200}}}},` +
-	`"question":{"type":"string","maxLength":500}}}`
+	`"question":{"type":"string","maxLength":500},` +
+	`"profile":{"type":"string","pattern":"^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$"},` +
+	`"profileWhy":{"type":"string","minLength":1,"maxLength":200}}}`
 
 // ErrScope is every refusal of Validate: the broker returns it to the model as an argument error.
 var ErrScope = errors.New("scope: state ready or question; task 1-1000 bytes; touches 1-10 and leave 0-10, each 1-200; " +
 	"plan 1-7 and assumptions 0-5, each 1-300; acceptance 1-5 of {check 1-300, proves 1-200}; question 1-500 exactly when " +
-	"state is question, with at least one assumption; at most 4096 bytes as JSON")
+	"state is question, with at least one assumption; profile a profile name and profileWhy 1-200, only when state is " +
+	"ready; at most 4096 bytes as JSON")
 
 // Validate checks the scope's shape and bounds (SC6). Bytes, not characters: the bound is the
 // brief's, which is bytes.
@@ -85,6 +99,8 @@ func (s Scope) Validate() error {
 	} else {
 		good = good && s.Question == ""
 	}
+	good = good && (s.Profile == "" || (s.State == ScopeReady && profileRE.MatchString(s.Profile))) &&
+		(s.ProfileWhy == "" || (s.State == ScopeReady && ok(s.ProfileWhy, MaxProfileWhy)))
 	// Unescaped: HTML escaping would count <, > and & as six bytes each.
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

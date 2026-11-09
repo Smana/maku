@@ -400,7 +400,7 @@ func TestOnlyAMaintainersRetryProceeds(t *testing.T) {
 // Drill 6ysg5vvt (cnref #2666, v0.30.2): the scoper made 72 tool calls, re-read the same files and was
 // revoked budget-run before any room_handoff. The brief orders the hand-off before more exploration.
 func TestTheScoperBriefHandsOffBeforeItExplores(t *testing.T) {
-	b := ScoperBrief(issueTask("3buqdlot", 7, parentText), "n0nce234", config.Scoper{})
+	b := ScoperBrief(issueTask("3buqdlot", 7, parentText), "n0nce234", config.Scoper{}, nil)
 	for _, want := range []string{"Call room_handoff as soon as you have the scope", "at most 25 tool calls",
 		"hand off what you have", "Never re-read a file you already read"} {
 		if !strings.Contains(b, want) {
