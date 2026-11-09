@@ -245,8 +245,7 @@ func (r *Reconciler) noVerdict(ctx context.Context, t *v1alpha1.Task, why string
 	return nil
 }
 
-// roundsExhausted escalates a task out of review rounds, unless it steps (TE7); only an
-// escalation narrates the last verdict.
+// roundsExhausted escalates a task out of review rounds unless it steps; only an escalation narrates the verdict.
 func (r *Reconciler) roundsExhausted(ctx context.Context, t *v1alpha1.Task, v rooms.Verdict) error {
 	const reason = "review_rounds_exhausted"
 	if stepped, err := r.stepUp(ctx, t, reason); stepped || err != nil {

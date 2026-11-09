@@ -78,14 +78,15 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 	if err != nil {
 		return runs.Spec{}, nil, "", err
 	}
-	text, refs := r.revisionBrief(ctx, t, evs, q, sc)
+	var judge string
 	if trigger == TriggerEscalation {
-		judge, err := r.lastJudge(ctx, t)
+		j, err := r.lastJudge(ctx, t)
 		if err != nil {
 			return runs.Spec{}, nil, "", err
 		}
-		text += judgeBlock(judge, r.Nonce(), reviseCap-len(text))
+		judge = judgeBlock(j, r.Nonce(), reviseCap)
 	}
+	text, refs := r.revisionBrief(ctx, t, evs, q, sc, judge)
 	return r.implementerSpec(t, resumed(t, trigger)+text), refs, trigger, nil
 }
 

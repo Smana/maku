@@ -387,9 +387,9 @@ func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []ev
 // revisionBrief is the revision brief as the factory builds it: the room's log and queue, and, with
 // brief.ciEvidence, what the review asked for and what CI said (CD12). One place, so a test that
 // renders the brief renders what production does.
-func (r *Reconciler) revisionBrief(ctx context.Context, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped) (string, []int64) {
+func (r *Reconciler) revisionBrief(ctx context.Context, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped, tail string) (string, []int64) {
 	items, notes := r.evidence(ctx, t)
-	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes})
+	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes, tail: tail})
 }
 
 // reviewWhere is where a review's body came from, as the brief names it.

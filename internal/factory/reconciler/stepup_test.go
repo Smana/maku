@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -211,10 +212,17 @@ func TestARefusedStepWriteChangesNothing(t *testing.T) {
 	if tk.Status.Phase != before.Phase || *tk.Status.Profile != *before.Profile || tk.Status.NextTrigger != "" || len(tk.Status.Outbox) != 0 {
 		t.Fatalf("%+v", tk.Status)
 	}
-	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseEscalated, "stalled"); err != nil {
+	stored := g.get(t)
+	if stored.Spec.Budget.Tier != "standard" || stored.Status.Profile.Name != "review-floor" || stored.Status.Profile.Source != "floor" {
+		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
+	}
+	if err := g.r.end(t.Context(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
 		t.Fatal(err)
 	}
-	wantStepped(t, tk, "review-frontier", "out_of_budget")
+	wantStepped(t, stored, "review-frontier", "out_of_budget")
+	if got := g.get(t); got.Spec.Budget.Tier != "frontier" {
+		t.Fatalf("stored tier %s", got.Spec.Budget.Tier)
+	}
 }
 
 func TestRetryAfterAStepNeverStepsAgain(t *testing.T) {
@@ -267,16 +275,19 @@ func TestTheStepBriefCarriesTheJudge(t *testing.T) {
 	}
 }
 
+// The step helper narrates the last verdict only when it declines. A verifier's run is the only one
+// production reaches it with, and that never steps (R15); the implementer case pins the helper.
 func TestRoundsExhaustedNarratedOnlyWhenNotStepped(t *testing.T) {
 	for name, c := range map[string]struct {
-		cohort string
-		want   int
-	}{"stepped": {"treatment", 0}, "declined": {"control", 1}} {
+		cohort, role string
+		want         int
+	}{"stepped": {"treatment", "implementer", 0}, "declined": {"control", "implementer", 1}, "a verifier's run": {"treatment", "reviewer", 1}} {
 		t.Run(name, func(t *testing.T) {
 			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
 				tk.Status.Profile.Cohort = c.cohort
 				tk.Status.ReviewRounds = 2
 				tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12}
+				tk.Status.Runs[0].Role = c.role
 			})
 			if err := g.r.roundsExhausted(t.Context(), tk, rooms.Verdict{RunID: rid(0), Verdict: "changes", Commit: "abc"}); err != nil {
 				t.Fatal(err)
@@ -287,9 +298,79 @@ func TestRoundsExhaustedNarratedOnlyWhenNotStepped(t *testing.T) {
 					n++
 				}
 			}
-			if n != c.want {
-				t.Fatalf("%d %+v", n, tk.Status.Outbox)
+			if n != c.want || (c.want == 1) != (tk.Status.Phase == v1alpha1.PhaseEscalated) {
+				t.Fatalf("%s %d %+v", tk.Status.Phase, n, tk.Status.Outbox)
 			}
 		})
+	}
+}
+
+// R15: only an implementer's end steps; any other role's goes to the human.
+func TestOnlyAnImplementersEndSteps(t *testing.T) {
+	for _, role := range []string{"reviewer", "tester", "triager", ""} {
+		t.Run(role, func(t *testing.T) {
+			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+				if role == "" {
+					tk.Status.Runs = nil
+				} else {
+					tk.Status.Runs[0].Role = role
+				}
+			})
+			wantEscalated(t, g.fail(t, tk, "budget-run"), "budget-run")
+		})
+	}
+}
+
+func TestTheJudgeNoteWalksTheResumedChain(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "implementer", Trigger: "resume", StartSeq: 6})
+	})
+	g.log.evs = append(g.log.evs, judgeEvent(2, rid(0), "not_yet", "older"), judgeEvent(4, rid(0), "not_yet", "the lost run's verdict"))
+	if got, err := g.r.lastJudge(t.Context(), tk); err != nil || got != "the lost run's verdict" {
+		t.Fatalf("%q %v", got, err)
+	}
+	g.log.evs = append(g.log.evs, judgeEvent(7, rid(1), "not_yet", "the resumed run's verdict"))
+	if got, _ := g.r.lastJudge(t.Context(), tk); got != "the resumed run's verdict" {
+		t.Fatalf("%q", got)
+	}
+	g.r.Rooms = endlessLog{g.log}
+	if got, err := g.r.lastJudge(t.Context(), tk); err != nil || got != "" {
+		t.Fatalf("an incomplete tail gave %q %v", got, err)
+	}
+}
+
+func TestJudgeBlockFits(t *testing.T) {
+	for name, text := range map[string]string{"plain": "check failed", "multiline": "one\ntwo\nthree", "utf-8": strings.Repeat("é", 40)} {
+		t.Run(name, func(t *testing.T) {
+			whole := judgeBlock(text, "n0nce234", 1<<20)
+			if got := judgeBlock(text, "n0nce234", len(whole)); got != whole {
+				t.Fatalf("an exact fit clipped: %q", got)
+			}
+			for room := len(whole) - 1; room > len(whole)-8; room-- {
+				got := judgeBlock(text, "n0nce234", room)
+				if len(got) > room || !utf8.ValidString(got) {
+					t.Fatalf("room %d: %d bytes %q", room, len(got), got)
+				}
+			}
+		})
+	}
+}
+
+// A saturated revision brief still carries the judge's note, and quotes only the messages it shows.
+func TestASaturatedStepBriefKeepsTheJudge(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), nil)
+	g.log.evs = append(g.log.evs, judgeEvent(5, rid(0), "not_yet", "check:validate still fails"))
+	for i := range 8 {
+		g.log.queue = append(g.log.queue, rooms.Queued{Ref: int64(10 + i), Author: "system:factory", Text: strings.Repeat("q", 3000)})
+	}
+	g.fail(t, tk, "not_met")
+	tk = g.reconcile(t, "3buqdlot", 1)
+	last := tk.Status.Runs[len(tk.Status.Runs)-1]
+	text := g.runs.specs[last.ID].TaskText
+	if !strings.Contains(text, "> check:validate still fails") || len(text) > reviseCap+len(ResumeNotice(tk)) {
+		t.Fatalf("%d bytes, judge note %v", len(text), strings.Contains(text, "check:validate"))
+	}
+	if n := strings.Count(text, strings.Repeat("q", 3000)); n == 8 || n == 0 {
+		t.Fatalf("%d whole messages quoted", n)
 	}
 }

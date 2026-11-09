@@ -537,7 +537,7 @@ func (g *evidenceRig) checksError(n int, err error) { g.f.SetChecksError(n, err)
 // queued messages when a test gives some.
 func (g *evidenceRig) reviseBrief(t *testing.T, queued ...rooms.Queued) (string, []int64) {
 	t.Helper()
-	return g.r.revisionBrief(t.Context(), g.tk, nil, queued, nil)
+	return g.r.revisionBrief(t.Context(), g.tk, nil, queued, nil, "")
 }
 
 // CD12: the reviewer's comment and the failing check's annotation ride the revision brief, fenced, and the

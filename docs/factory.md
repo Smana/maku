@@ -393,7 +393,7 @@ review rounds reset:
 | `not_met`, `review_rounds_exhausted` | `not_converged` | `escalation.notConverged` |
 | any other (`ci_red`, `judge_impossible`, `needs_author`, `budget-task`, …) | — | the maintainer |
 
-There is no step for a task with an unresolved profile, a control-cohort task, a group the class
+Only an implementer run's end steps (the in-run judge's `not_met` included); a reviewer's `review_rounds_exhausted`, a tester's or any other role's end goes to the maintainer. There is no step for a task with an unresolved profile, a control-cohort task, a group the class
 does not map, a task that has already stepped (`/factory retry` keeps it stepped), or a target
 whose tier leaves less than one run in the task cap (a sponsor's ceiling still caps it). A step
 raises the tier, never lowers it; it never turns on `testFirst`, since the tester branches from

@@ -1161,8 +1161,7 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
 }
 
-// ProfileEscalated is the task's one escalation step (TE7): it runs again under a richer profile
-// before any human is asked. One per task: a stepped task never steps again.
+// ProfileEscalated says the task runs once more under a richer profile before a maintainer is asked.
 func ProfileEscalated(from, to, group string) Event {
 	return Event{Key: "profile-escalated", Body: fmt.Sprintf(
 		"Agent factory: this task stopped (%s) under profile `%s`; it runs once more under profile `%s` before a maintainer is asked.",
