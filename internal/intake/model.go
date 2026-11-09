@@ -103,6 +103,9 @@ type DraftRequest struct {
 	Context    string
 	Candidates []string
 	Classes    []string
+	// Candidate is the broker-verified revision to re-plan. It is serialized as its own JSON
+	// envelope, separately from Context's 4 KiB bound; settled text and Decisions are data to preserve.
+	Candidate *Plan
 }
 
 // Draft is the model's answer, as it arrives and before config has a say: the repository and the
@@ -150,6 +153,7 @@ type GovernedRequest struct {
 	Context      string
 	Candidates   []string
 	Classes      []string
+	candidate    *Plan // plan/v1 revisions only; coordination's typed outputs have no candidate
 	SystemPrompt string
 }
 
@@ -159,8 +163,12 @@ type GovernedRequest struct {
 // nobody approved.
 func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, error) {
 	var d Draft
+	prompt := systemPrompt
+	if req.Candidate != nil {
+		prompt += revisionSystemPrompt
+	}
 	usage, err := m.Generate(ctx, GovernedRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, SystemPrompt: systemPrompt}, &d)
+		Classes: req.Classes, candidate: req.Candidate, SystemPrompt: prompt}, &d)
 	if err != nil {
 		return Draft{}, Usage{}, err
 	}
@@ -175,7 +183,8 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 // attempt. The answer is decoded strictly into out, unknown fields and trailing content refused, so
 // each caller's own type is its contract; the bounds of its fields are the caller's to hold.
 func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usage, error) {
-	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates, Classes: req.Classes})
+	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
+		Classes: req.Classes, Candidate: req.candidate})
 	if err != nil {
 		return Usage{}, err
 	}

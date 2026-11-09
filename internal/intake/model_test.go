@@ -545,6 +545,37 @@ func TestTheAllowedClassesReachThePrompt(t *testing.T) {
 	}
 }
 
+// A verified revision is model input in its own JSON envelope, not extra prose charged against the
+// request's 4 KiB context bound. Settled text and Decisions therefore survive the transport verbatim.
+func TestDraftSerializesVerifiedCandidateSeparately(t *testing.T) {
+	f := fakeGateway(t, okReply)
+	m := modelFor(f)
+	candidate := intake.Plan{APIVersion: intake.APIVersion, Rev: 3, Round: 2, RoundsLeft: 8,
+		Repository: "smana/ai-native-ref", Issues: []intake.Issue{{
+			Index: 1, Title: "docs: the install link is dead", Class: "docs-links",
+			Body: "## What is wrong\n" + strings.Repeat("settled ", 700) +
+				"\n## Decisions\nD1 [g1]: keep this answer",
+		}}}
+	request := req()
+	request.Context = strings.Repeat("c", 4<<10)
+	request.Candidate = &candidate
+	if _, _, err := m.Draft(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := f.body()["messages"].([]any)
+	user, _ := msgs[1].(map[string]any)["content"].(string)
+	if !strings.Contains(user, "Verified candidate plan to revise:\n"+string(encoded)) {
+		t.Fatalf("the candidate is not its own exact JSON envelope: %s", user)
+	}
+	if !strings.Contains(user, "D1 [g1]: keep this answer") {
+		t.Fatalf("the settled Decision did not reach the model: %s", user)
+	}
+}
+
 // MR4, CD18: the coordination planner is a second typed output of the one governed call, not a second
 // route. Generate sends the caller's system prompt through the same alias, key, bounds and deadline,
 // decodes the answer strictly into the caller's own type, and makes exactly one attempt.
