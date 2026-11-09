@@ -31,8 +31,13 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 	if p == nil || !p.Resolved || len(t.Status.Runs) == 0 {
 		return false, nil
 	}
-	// A run's own end steps only for the implementer; review_rounds_exhausted judges the implementer's work after a verifier's run.
-	if reason != "review_rounds_exhausted" && current(t).Role != "implementer" {
+	if d, ok := decided(t); ok && d.Source == "escalation" && p.Source != "escalation" {
+		// The step's spec write landed and its status write did not: the persisted step binds, not today's config.
+		r.stepped(t, d)
+		return true, nil
+	}
+	// A run's own end steps only for the implementer; review_rounds_exhausted is the reviewer's verdict on the implementer's work.
+	if want := map[bool]string{true: "reviewer", false: "implementer"}[reason == "review_rounds_exhausted"]; current(t).Role != want {
 		return false, nil
 	}
 	g := group(reason)
@@ -56,18 +61,25 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 	if !runFits(trial) {
 		return false, nil
 	}
+	// TestFirst stays: the tester branches from main, which an implementer run has already left.
+	d := profileDecision{Name: target, Source: "escalation", Reason: g, Checks: p.Checks || v.Checks, TestFirst: p.TestFirst}
 	// The spec is written before any status change, so a refused write replays the whole step.
-	if err := r.applyProfile(ctx, t, target); err != nil {
+	if err := r.applyProfile(ctx, t, d); err != nil {
 		return false, err
 	}
+	r.stepped(t, d)
+	return true, nil
+}
+
+// stepped is the status half of a step whose spec is written: the profile, a fresh review loop and the queued run.
+func (r *Reconciler) stepped(t *v1alpha1.Task, d profileDecision) {
+	p := t.Status.Profile
 	from := p.Name
-	p.Name, p.Source, p.Reason, p.Checks = target, "escalation", g, p.Checks || v.Checks
-	// TestFirst stays: the tester branches from main, which an implementer run has already left.
+	d.restore(p)
 	t.Status.ReviewRounds = 0
 	t.Status.NextTrigger = TriggerEscalation
 	r.to(t, v1alpha1.PhaseQueued, "")
-	narrateLater(t, narrate.ProfileEscalated(from, target, g))
-	return true, nil
+	narrateLater(t, narrate.ProfileEscalated(from, d.Name, d.Reason))
 }
 
 // lastJudge is the completion judge's newest verdict across t's newest implementer run and the runs

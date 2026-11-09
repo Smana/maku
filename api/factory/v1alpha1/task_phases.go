@@ -45,6 +45,11 @@ const AnnotationRevert = "agents.ogenki.io/revert"
 // AnnotationRevert.
 const AnnotationDrill = "agents.ogenki.io/drill"
 
+// AnnotationProfileDecision is the harness profile decision (name, source, reason, checks,
+// testFirst as JSON) written in the same update as the spec it applies: a replay whose status
+// write was lost recovers status.profile from it instead of deciding again under a changed config.
+const AnnotationProfileDecision = "agents.ogenki.io/profile-decision"
+
 // LabelIssue carries the number of the issue a task narrates on.
 const LabelIssue = "agents.ogenki.io/issue"
 

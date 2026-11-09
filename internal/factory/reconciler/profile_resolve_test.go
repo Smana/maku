@@ -474,3 +474,42 @@ func TestARefusedSpecWriteLeavesItUnresolved(t *testing.T) {
 		t.Fatalf("%+v %+v %v", p, tk.Status.Outbox, g.metrics.recorded)
 	}
 }
+
+// The spec write landed and the status write did not; the config then turns the mode to observe.
+// The replay recovers the persisted decision: spec and status agree, one narration, one count.
+func TestAReplayRecoversThePersistedResolution(t *testing.T) {
+	cf := resolveCfg("apply", 0)
+	cf.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g := profileRig(t, cf, issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves"), "")
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	sc := readyScope()
+	sc.Profile, sc.ProfileWhy = "review-search", "because"
+	scopeHandoff(g, 0, sc)
+	g.runs.set(rid(0), "Succeeded")
+	g.log.end(rid(0), "Succeeded", "agent_finished")
+	failed := false
+	g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, cl client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+			if tk, ok := o.(*v1alpha1.Task); ok && tk.Status.Profile != nil && tk.Status.Profile.Resolved && !failed {
+				failed = true
+				return errors.New("status write refused")
+			}
+			return cl.SubResource(sub).Update(ctx, o, opts...)
+		}})
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil || !failed {
+		t.Fatalf("the status write should fail: %v", err)
+	}
+	if stored := g.get(t); stored.Spec.Loop == nil || stored.Spec.Loop.StallSteps != 7 || stored.Status.Profile.Resolved {
+		t.Fatalf("the spec write landed alone: %+v %+v", stored.Spec.Loop, stored.Status.Profile)
+	}
+	cf.Evaluation.Mode = config.EvaluationObserve
+	tk := g.reconcile(t, "3buqdlot", 1)
+	wantResolved(t, tk, "review-search", "scoper", "", 1)
+	if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 || tk.Status.Profile.Recommended != "review-search" || tk.Status.Profile.Why != "because" {
+		t.Fatalf("%+v %+v", tk.Spec.Loop, tk.Status.Profile)
+	}
+	if got := slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(m string) bool { return !strings.HasPrefix(m, "profile ") }); !slices.Equal(got, []string{"profile review treatment review-search true"}) {
+		t.Fatalf("metrics %q", got)
+	}
+}

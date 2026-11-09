@@ -119,7 +119,12 @@ func TestStepTable(t *testing.T) {
 		"ci_red": {}, "judge_impossible": {}, "needs_author": {}, "budget-task": {},
 	} {
 		t.Run(reason, func(t *testing.T) {
-			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) { tk.Status.ReviewRounds = 2 })
+			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+				tk.Status.ReviewRounds = 2
+				if reason == "review_rounds_exhausted" { // the review loop's verdict ends a reviewer's run
+					tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
+				}
+			})
 			got := g.fail(t, tk, reason)
 			if want[0] == "" {
 				wantEscalated(t, got, reason)
@@ -304,10 +309,12 @@ func TestRoundsExhaustedNarratedOnlyWhenNotStepped(t *testing.T) {
 	}
 }
 
-// R15: a run's own budget-run, stalled or not_met steps only when it was the implementer's.
+// A run's own budget-run, stalled or not_met steps only when it was the implementer's;
+// review_rounds_exhausted only after the reviewer's run that exhausted them.
 func TestOnlyAnImplementersEndSteps(t *testing.T) {
 	for _, c := range []struct{ role, reason string }{{"reviewer", "budget-run"}, {"tester", "budget-run"}, {"reviewer", "stalled"},
-		{"tester", "stalled"}, {"reviewer", "not_met"}, {"triager", "budget-run"}, {"", "budget-run"}, {"", "review_rounds_exhausted"}} {
+		{"tester", "stalled"}, {"reviewer", "not_met"}, {"triager", "budget-run"}, {"", "budget-run"}, {"", "review_rounds_exhausted"},
+		{"implementer", "review_rounds_exhausted"}, {"tester", "review_rounds_exhausted"}} {
 		role := c.role
 		t.Run(role+" "+c.reason, func(t *testing.T) {
 			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
@@ -424,5 +431,34 @@ func TestAReviewEndedStepBriefCarriesTheImplementersJudge(t *testing.T) {
 	last := tk.Status.Runs[len(tk.Status.Runs)-1]
 	if text := g.runs.specs[last.ID].TaskText; last.Trigger != TriggerEscalation || !strings.Contains(text, "> the implementer's verdict") {
 		t.Fatalf("%s %q", last.Trigger, text)
+	}
+}
+
+// The step's spec write landed and its status write did not; the class then loses its escalation
+// mapping. The replay recovers the persisted step: spec and status agree, one narration.
+func TestAReplayRecoversThePersistedStep(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), nil)
+	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseEscalated, "stalled"); err != nil {
+		t.Fatal(err)
+	}
+	stored := g.get(t) // the spec write landed, the status write never happened
+	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "floor" {
+		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
+	}
+	cl := g.r.Cfg.Classes["review"]
+	cl.Escalation = nil
+	g.r.Cfg.Classes["review"] = cl
+	if err := g.r.end(t.Context(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
+		t.Fatal(err)
+	}
+	wantStepped(t, stored, "review-frontier", "out_of_budget")
+	n := 0
+	for _, o := range stored.Status.Outbox {
+		if strings.HasPrefix(o.Key, "profile-escalated") {
+			n++
+		}
+	}
+	if n != 1 || stored.Spec.Budget.Tier != "frontier" {
+		t.Fatalf("%d narrations, tier %s", n, stored.Spec.Budget.Tier)
 	}
 }

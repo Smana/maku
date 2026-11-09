@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -25,7 +26,9 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	if s != nil && len(choices) > 0 {
 		q.Recommended, q.Why = s.Profile, s.ProfileWhy
 	}
-	switch {
+	switch d, persisted := decided(t); {
+	case persisted && d.Source == "scoper": // the spec write landed and the status write did not: the decision binds, not today's config
+		d.restore(&q)
 	case q.Source == "label":
 	case s == nil:
 		q.Reason = "scoper_failed"
@@ -40,11 +43,11 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 			break
 		}
 		v, _ := r.Cfg.ProfileFor(r.repo(t).Classes[t.Spec.PredictedClass], name)
-		if err := r.applyProfile(ctx, t, name); err != nil {
+		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || v.TestFirst}
+		if err := r.applyProfile(ctx, t, d); err != nil {
 			return err
 		}
-		q.Name, q.Source, q.Reason = name, "scoper", ""
-		q.Checks, q.TestFirst = q.Checks || v.Checks, q.TestFirst || v.TestFirst
+		d.restore(&q)
 	}
 	*t.Status.Profile = q
 	narrateLater(t, narrate.ProfileChosen(q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
@@ -57,6 +60,30 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
 	}
 	return nil
+}
+
+// profileDecision is what applyProfile persists beside the spec it applies, under
+// AnnotationProfileDecision, so a replay can restore the status half of the decision.
+type profileDecision struct {
+	Name      string `json:"name"`
+	Source    string `json:"source"`
+	Reason    string `json:"reason,omitempty"`
+	Checks    bool   `json:"checks,omitempty"`
+	TestFirst bool   `json:"testFirst,omitempty"`
+}
+
+func (d profileDecision) restore(p *v1alpha1.ProfileStatus) {
+	p.Name, p.Source, p.Reason, p.Checks, p.TestFirst = d.Name, d.Source, d.Reason, d.Checks, d.TestFirst
+}
+
+// decided is the decision t's spec carries, if any.
+func decided(t *v1alpha1.Task) (profileDecision, bool) {
+	var d profileDecision
+	raw, ok := t.Annotations[v1alpha1.AnnotationProfileDecision]
+	if !ok || json.Unmarshal([]byte(raw), &d) != nil {
+		return profileDecision{}, false
+	}
+	return d, true
 }
 
 func unresolved(t *v1alpha1.Task) bool {
@@ -95,20 +122,29 @@ func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name stri
 	return name, "", nil
 }
 
-// applyProfile persists profile name's spec, skipping an unchanged one so a replay writes nothing.
-func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, name string) error {
+// applyProfile persists decision d's spec and d itself in one update; a replay restores the status
+// from the persisted decision, never by deciding again.
+func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, d profileDecision) error {
 	class := t.Spec.PredictedClass
-	p, ok := r.Cfg.ProfileFor(r.repo(t).Classes[class], name)
+	p, ok := r.Cfg.ProfileFor(r.repo(t).Classes[class], d.Name)
 	if !ok {
-		return fmt.Errorf("profile %q is not one of class %q's", name, class)
+		return fmt.Errorf("profile %q is not one of class %q's", d.Name, class)
 	}
 	before := t.Spec.DeepCopy()
 	r.profileSpec(t, class, p)
 	// A changed mode would read the finished scoper's run as a triager proposal on replay.
 	t.Spec.ScopeMode = before.ScopeMode
-	if equality.Semantic.DeepEqual(*before, t.Spec) {
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	if equality.Semantic.DeepEqual(*before, t.Spec) && t.Annotations[v1alpha1.AnnotationProfileDecision] == string(raw) {
 		return nil
 	}
+	if t.Annotations == nil {
+		t.Annotations = map[string]string{}
+	}
+	t.Annotations[v1alpha1.AnnotationProfileDecision] = string(raw)
 	status := t.Status // Update returns the server's status into t; keep ours
 	if err := r.Client.Update(ctx, t); err != nil {
 		return err
