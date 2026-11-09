@@ -120,7 +120,9 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 		return
 	}
 	if !r.settling(t) { // never ran: nothing settles, and nothing waits (R34)
-		r.countTask(ctx, t)
+		if err := r.countTask(ctx, t); err != nil { // a family read: a task that never ran has none
+			r.log().Warn("task outcome not counted", "task.id", t.Name, "err", err)
+		}
 	}
 	ids := make([]string, 0, len(t.Status.Runs))
 	for _, x := range t.Status.Runs {
@@ -143,17 +145,77 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 // countTask counts a terminal task's outcome and USD once, by its profile (R34): at its settle,
 // once the meter's late readings have had their window, so the dollars are the task's whole; at
 // its end for a task that never ran. The mark rides the status write the count waits for: once,
-// or neither. An approved split's parts did the work, and count.
-func (r *Reconciler) countTask(ctx context.Context, t *v1alpha1.Task) {
+// or neither. An approved split's parent counts for its family (R32): the parts carry no profile.
+func (r *Reconciler) countTask(ctx context.Context, t *v1alpha1.Task) error {
 	p := t.Status.Profile
-	if p == nil || p.Counted || splitApproved(t) {
-		return
+	if p == nil || p.Counted {
+		return nil
+	}
+	outcome, micro := taskOutcome(t), t.Status.Usage.CostMicroUSD
+	if splitApproved(t) {
+		newest, all, err := r.family(ctx, t)
+		if err != nil {
+			return err
+		}
+		outcome = familyOutcome(t, newest)
+		for i := range all {
+			micro += r.costOf(&all[i])
+		}
 	}
 	p.Counted = true
-	class, rec, outcome, usd := t.Spec.PredictedClass, r.recommendedLabel(t), taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
+	class, rec, usd := t.Spec.PredictedClass, r.recommendedLabel(t), float64(micro)/1e6
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
 	})
+	return nil
+}
+
+// familyOutcome is an approved split's outcome, read on the parent from its parts (R32): accepted
+// when every opened part's newest generation merged with no human commit; merged_human when any
+// did with one; otherwise the first other outcome by part index, a part the family ended before
+// its own end (not terminal, or never opened) reading as the parent's. A family with no part
+// opened is the parent's own outcome.
+func familyOutcome(p *v1alpha1.Task, newest map[int32]*v1alpha1.Task) string {
+	own := taskOutcome(p)
+	first, human, any := "", false, false
+	for _, c := range p.Status.Split.Children {
+		any = true
+		o := own
+		if n := newest[c.Index]; n != nil && v1alpha1.TerminalPhase(n.Status.Phase) {
+			o = taskOutcome(n)
+		}
+		switch {
+		case o == "merged_human":
+			human = true
+		case o != "accepted" && first == "":
+			first = o
+		}
+	}
+	switch {
+	case !any:
+		return own
+	case human:
+		return "merged_human"
+	case first != "":
+		return first
+	}
+	return "accepted"
+}
+
+// costOf is what t's runs cost, each at the larger of its record and the meter's current figure:
+// a part's status may trail the meter by a tick when its parent settles.
+func (r *Reconciler) costOf(t *v1alpha1.Task) int64 {
+	var sum int64
+	for _, rec := range t.Status.Runs {
+		c := rec.CostMicroUSD
+		if r.Costs != nil {
+			if m, ok := r.Costs.Get(rec.ID); ok {
+				c = max(c, m.MicroUSD)
+			}
+		}
+		sum += c
+	}
+	return max(sum, t.Status.Usage.CostMicroUSD)
 }
 
 // splitApproved: t is the parent of an approved split, whose parts carry the work.

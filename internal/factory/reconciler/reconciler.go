@@ -827,8 +827,7 @@ func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	tokens, tier, tmpl, class := t.Status.Usage.Tokens, t.Spec.Budget.Tier, t.Spec.Template, t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.TaskTokens(ctx, tokens, tier, tmpl, class) })
-	r.countTask(ctx, t)
-	return nil
+	return r.countTask(ctx, t)
 }
 
 // settleLeft is how much of the settle window an ended task still owes: it is requeued for its

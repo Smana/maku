@@ -292,22 +292,94 @@ func TestAnEscalationCountsOnce(t *testing.T) {
 	}
 }
 
-// A parent whose split was approved did none of the work: its parts count, it does not. An
-// unresolved task that fails without a pull request still counts.
-func TestASplitParentIsNotCounted(t *testing.T) {
-	g, _ := harnessedSplit(t, 2)
-	g.r.Now = func() time.Time { return now.Add(time.Hour) }
-	g.f.SetComments(7, splitBy(80, "Smana"))
-	g.reconcile(t, "3buqdlot", 2) // Escalated → Split, then part 1
-	setPhase(t, g, child(1), v1alpha1.PhaseDone, "merged")
-	g.reconcile(t, "3buqdlot", 1)
-	setPhase(t, g, child(2), v1alpha1.PhaseDone, "merged")
-	p := g.reconcile(t, "3buqdlot", 1)
-	if p.Status.Phase != v1alpha1.PhaseDone || p.Status.Reason != "children_merged" {
-		t.Fatalf("%s %s", p.Status.Phase, p.Status.Reason)
+// R32: an approved split's family is counted once, on the parent, under the parent's triage
+// profile: accepted when every part merged with no human commit, merged_human when any had one, the
+// USD the family's whole (the parent's and every part's, every generation). The parts carry no
+// profile and count nothing of their own.
+func TestASplitFamilyIsCountedOnceOnTheParent(t *testing.T) {
+	for name, c := range map[string]struct {
+		human   bool
+		dropped bool
+		phase   string
+		reason  string
+		want    string
+	}{
+		"every part by the bot":  {phase: v1alpha1.PhaseDone, reason: "children_merged", want: "accepted"},
+		"a part a human amended": {human: true, phase: v1alpha1.PhaseDone, reason: "children_merged", want: "merged_human"},
+		"a part dropped":         {dropped: true, phase: v1alpha1.PhaseClosed, reason: "child_dropped", want: "stopped"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, _ := harnessedSplit(t, 2)
+			g.r.Now = func() time.Time { return now.Add(time.Hour) }
+			g.f.SetComments(7, splitBy(80, "Smana"))
+			g.reconcile(t, "3buqdlot", 2) // Escalated → Split, then part 1
+			ended := func(k int, phase string, usd int64, human bool) {
+				setPhase(t, g, child(k), phase, "")
+				ch := childTask(t, g, k)
+				ch.Status.Usage.CostMicroUSD, ch.Status.PullRequest.HumanCommits = usd, human
+				if ch.Status.Profile != nil {
+					t.Fatalf("part %d carries a profile: %+v", k, ch.Status.Profile)
+				}
+				if err := g.c.Status().Update(t.Context(), ch); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ended(1, v1alpha1.PhaseDone, 300_000, false)
+			g.reconcile(t, "3buqdlot", 1)
+			phase := v1alpha1.PhaseDone
+			if c.dropped { // stopped, its issue closed by a maintainer: dropped (SL12)
+				phase = v1alpha1.PhaseStopped
+				_ = g.f.CloseIssue(t.Context(), 502)
+			}
+			ended(2, phase, 450_000, c.human)
+			p := g.reconcile(t, "3buqdlot", 1)
+			if p.Status.Phase != c.phase || p.Status.Reason != c.reason {
+				t.Fatalf("%s %s", p.Status.Phase, p.Status.Reason)
+			}
+			p.Status.Usage.CostMicroUSD = 250_000 // the scoper's own spend
+			if err := g.c.Status().Update(t.Context(), p); err != nil {
+				t.Fatal(err)
+			}
+			p = g.settled(t, "3buqdlot")
+			g.reconcile(t, "3buqdlot", 2)
+			want := []string{"task_outcome review treatment review-floor floor review-wide " + c.want + " 1"}
+			if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) || p.Status.Profile == nil || !p.Status.Profile.Counted {
+				t.Fatalf("%v, want %v; %+v", got, want, p.Status.Profile)
+			}
+		})
 	}
-	if got := taskOutcomes(g.metrics.recorded); len(got) != 0 || p.Status.Profile == nil || p.Status.Profile.Counted {
-		t.Fatalf("%v %+v", got, p.Status.Profile)
+}
+
+// R32's order: merged_human wins over every other part; else the first part by index that is not
+// accepted; a part the family ended before its own end reads as the parent's outcome.
+func TestFamilyOutcomeOrder(t *testing.T) {
+	part := func(phase string, human bool) *v1alpha1.Task {
+		return &v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: phase, PullRequest: &v1alpha1.PullRequestRef{HumanCommits: human}}}
+	}
+	for name, c := range map[string]struct {
+		parts []*v1alpha1.Task
+		want  string
+	}{
+		"all accepted":               {[]*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseDone, false)}, "accepted"},
+		"a human after a stop":       {[]*v1alpha1.Task{part(v1alpha1.PhaseStopped, false), part(v1alpha1.PhaseDone, true)}, "merged_human"},
+		"first by index":             {[]*v1alpha1.Task{part(v1alpha1.PhaseStopped, false), part(v1alpha1.PhaseClosed, false)}, "stopped"},
+		"an open part, the parent's": {[]*v1alpha1.Task{part(v1alpha1.PhaseDone, false), part(v1alpha1.PhaseImplementing, false)}, "closed"},
+		"never opened, the parent's": {[]*v1alpha1.Task{part(v1alpha1.PhaseDone, false), nil}, "closed"},
+		"no part":                    {nil, "closed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseClosed, Split: &v1alpha1.SplitStatus{State: SplitApproved}}}
+			newest := map[int32]*v1alpha1.Task{}
+			for i, c := range c.parts {
+				p.Status.Split.Children = append(p.Status.Split.Children, v1alpha1.SplitChild{Index: int32(i + 1)})
+				if c != nil {
+					newest[int32(i+1)] = c
+				}
+			}
+			if got := familyOutcome(p, newest); got != c.want {
+				t.Fatalf("%s, want %s", got, c.want)
+			}
+		})
 	}
 }
 

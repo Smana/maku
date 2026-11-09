@@ -23,9 +23,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	offered := len(r.profileChoices(t)) > 0
 	q := *t.Status.Profile
 	q.Resolved = true
-	if s != nil && offered {
-		q.Recommended, q.Why = s.Profile, s.ProfileWhy
-	}
+	r.recommend(t, &q, s)
 	switch d, persisted := decided(t); {
 	case persisted && d.Source == "scoper": // the spec write landed and the status write did not: the decision binds, not today's config
 		d.restore(&q)
@@ -58,6 +56,15 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
 	}
 	return nil
+}
+
+// recommend notes scope s's recommendation on p, t's profile or a copy of it, when the class offers
+// a choice; nil, or a class with none, notes nothing.
+func (r *Reconciler) recommend(t *v1alpha1.Task, p *v1alpha1.ProfileStatus, s *envelope.Scope) {
+	if s == nil || p == nil || len(r.profileChoices(t)) == 0 {
+		return
+	}
+	p.Recommended, p.Why = s.Profile, s.ProfileWhy
 }
 
 // recommendedLabel is the scoper's recommendation on t as a bounded metric label: a profile the

@@ -74,7 +74,7 @@ func (r *Reconciler) splitHandoff(ctx context.Context, t *v1alpha1.Task, sc *env
 		r.ignoreSplit(ctx, t, seq)
 		return r.scopeEnd(ctx, t, sc, "ready", seq)
 	}
-	return r.proposeSplit(ctx, t, sp, seq)
+	return r.proposeSplit(ctx, t, sc, sp, seq)
 }
 
 // ignoreSplit records and counts a split the factory will not propose (SL14).
@@ -87,7 +87,10 @@ func (r *Reconciler) ignoreSplit(ctx context.Context, t *v1alpha1.Task, seq int6
 // proposeSplit is SL4 (SR7): Escalated, split_proposed, one comment and the label, no child. Not
 // end(), as bounce is not: the comment is the plan, and a proposal says nothing of the tier. The
 // whole task's scope is recorded ready, so a /factory retry runs it whole with no second scoper run.
-func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sp *envelope.Split, seq int64) error {
+// The scoper's recommendation is noted on the still unresolved profile: an approved family counts
+// on the parent, under its triage profile (R32), and the row keeps the counterfactual.
+func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, seq int64) error {
+	r.recommend(t, t.Status.Profile, sc)
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: "ready", Seq: seq}
 	t.Status.Split = &v1alpha1.SplitStatus{State: SplitProposed, Seq: seq, Of: int32(len(sp.Children))} //nolint:gosec // Validate bounds it to 2..5
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
