@@ -83,7 +83,7 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, cfg *config.
 	t.Status.Classification = &v1alpha1.Classification{Tier: c.Tier, Classifier: "coordination", Fallback: "static"}
 	// The generation's own share of the lifetime allocation: its Task's cap (MR8).
 	t.Status.Coordination = &v1alpha1.CoordinationStatus{PlanVersion: cp.PlanVersion, ChildID: cp.ChildID, AllocationMicroUSD: t.Spec.Budget.TaskMicroUSD}
-	t.Status.ConfigHash = cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }

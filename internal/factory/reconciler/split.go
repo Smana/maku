@@ -402,7 +402,7 @@ func (r *Reconciler) receivedChild(ctx context.Context, cfg *config.Config, t *v
 	}
 	t.Status = status
 	t.Status.Classification = &v1alpha1.Classification{Tier: t.Spec.Budget.Tier, Classifier: "split", Fallback: "static"}
-	t.Status.ConfigHash = cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }

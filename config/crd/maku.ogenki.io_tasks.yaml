@@ -747,6 +747,21 @@ spec:
                 - fallback
                 - tier
                 type: object
+              configGenerations:
+                description: |-
+                  The generations of the factory's resources the task was triaged under (factory resources
+                  D5): recorded, not pinned. Unset when every generation is zero (the file served it).
+                properties:
+                  factory:
+                    format: int64
+                    type: integer
+                  mergePolicy:
+                    format: int64
+                    type: integer
+                  repository:
+                    format: int64
+                    type: integer
+                type: object
               configHash:
                 description: 'The config that triaged the task: the circuit breaker
                   resets with a new one (§6.4).'

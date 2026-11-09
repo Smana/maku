@@ -1058,7 +1058,7 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status = status
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
-	t.Status.ConfigHash = cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
@@ -1379,4 +1379,15 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 		r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
 	}
 	return nil
+}
+
+// recordConfig stamps the config a task was triaged under: its hash and, beside it, the
+// resource generations its repository was served under (D5: recorded, not pinned).
+func recordConfig(cfg *config.Config, t *v1alpha1.Task) {
+	t.Status.ConfigHash = cfg.Hash
+	f, r, p := cfg.GenerationsFor(t.Spec.Repository)
+	t.Status.ConfigGenerations = nil
+	if f != 0 || r != 0 || p != 0 {
+		t.Status.ConfigGenerations = &v1alpha1.ConfigGenerations{Factory: f, Repository: r, MergePolicy: p}
+	}
 }

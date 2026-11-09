@@ -1038,3 +1038,23 @@ func contains(comments []string, s string) bool {
 func (m *fakeMetrics) ProfileRecommendation(_ context.Context, class, cohort, recommended string, applied bool) {
 	m.add(fmt.Sprintf("profile %s %s %s %v", class, cohort, recommended, applied))
 }
+
+// D5: a triaged task records the generations it was triaged under (recorded, not pinned).
+func TestTriageRecordsConfigGenerations(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	g.r.Cfg.Current().Generations = config.Generations{Factory: 3,
+		Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 5}}}
+	tk := g.reconcile(t, "3buqdlot", 1)
+	want := &v1alpha1.ConfigGenerations{Factory: 3, Repository: 2, MergePolicy: 5}
+	if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Status.ConfigHash != strings.Repeat("a", 64) ||
+		tk.Status.ConfigGenerations == nil || *tk.Status.ConfigGenerations != *want {
+		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status)
+	}
+}
+
+func TestTriageLeavesConfigGenerationsNilForTheFile(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.ConfigGenerations != nil {
+		t.Fatalf("%+v", tk.Status.ConfigGenerations)
+	}
+}

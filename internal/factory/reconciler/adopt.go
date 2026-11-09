@@ -39,7 +39,7 @@ func (r *Reconciler) receivedAdopted(ctx context.Context, cfg *config.Config, t 
 		t.Status = status
 	}
 	t.Status.PullRequest = &v1alpha1.PullRequestRef{Number: n, URL: pr.URL, NodeID: pr.NodeID, HeadSHA: pr.HeadSHA, Author: pr.Author}
-	t.Status.ConfigHash = cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseAwaitingCI, "")
 	return nil
 }

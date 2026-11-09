@@ -84,7 +84,7 @@ func (r *Reconciler) receivedIntegration(ctx context.Context, cfg *config.Config
 	}
 	t.Status.RoomRef = t.Name
 	t.Status.Result = &v1alpha1.IntegrationResult{State: coordination.ResultPending, ManifestHash: coordination.ManifestHash(m)}
-	t.Status.ConfigHash = cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseQueued, "")
 	return nil
 }
