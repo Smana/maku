@@ -69,6 +69,10 @@ const (
 )
 
 // Duration is a time.Duration written as a string such as "30s".
+// +kubebuilder:object:generate=true
+// +kubebuilder:validation:Type=string
+// +kubebuilder:validation:MaxLength=32
+// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 type Duration struct{ time.Duration }
 
 // UnmarshalJSON parses a Go duration string; a bare number is refused, since its unit is a guess.
@@ -331,6 +335,7 @@ var EgressProfiles = []string{"pypi", "npm", "golang", "crates"}
 
 // Checks is what a check-enabled run of the repository requests beyond github (v3 feature 3,
 // RC7): the platform names the egress, never the repository's own file.
+// +kubebuilder:object:generate=true
 type Checks struct {
 	Egress []string `json:"egress,omitempty"`
 }
@@ -346,6 +351,7 @@ func (r *Repository) ChecksFor(class string) (bool, []string) {
 
 // Control is the pinned issue whose factory/stop label is the global stop (§6.1). Issue 0: none,
 // and only the stop object stops the factory.
+// +kubebuilder:object:generate=true
 type Control struct {
 	Repository string `json:"repository,omitempty"`
 	Issue      int    `json:"issue,omitempty"`
@@ -517,6 +523,7 @@ type Poll struct {
 }
 
 // Defaults apply when triage leaves a value open.
+// +kubebuilder:object:generate=true
 type Defaults struct {
 	Template       string `json:"template"`
 	Tier           string `json:"tier"`
@@ -534,6 +541,7 @@ type Triage struct {
 }
 
 // Merge is §5.1's merge actor and §6.4's rollback.
+// +kubebuilder:object:generate=true
 type Merge struct {
 	// The 8 contexts classic protection requires, by name (GitHub Actions, app 15368).
 	RequiredChecks []string `json:"requiredChecks"`
@@ -569,6 +577,7 @@ type Merge struct {
 
 // Breaker is the circuit breaker's outcome window (R41, review G5): a class whose last Window
 // merges hold MaxReverts reverts is demoted to human review, whatever the config.
+// +kubebuilder:object:generate=true
 type Breaker struct {
 	Window     int `json:"window"`
 	MaxReverts int `json:"maxReverts"`
@@ -586,6 +595,7 @@ func (m Merge) UsesPolicyBot() bool { return m.PolicyBot == nil || *m.PolicyBot 
 // Tier is a model and its budgets. RunUSD and TaskUSD cap a run and a task in USD, priced by
 // meter.prices, in place of RunTokens and TaskTokens; 0 keeps the token cap. With meter.prices
 // set each defaults to RefUSD of its token cap.
+// +kubebuilder:object:generate=true
 type Tier struct {
 	Model      string  `json:"model"`
 	RunTokens  int64   `json:"runTokens"`
@@ -610,6 +620,7 @@ func RefMicroUSD(tokens int64) int64 { return int64(math.Round(float64(tokens) *
 
 // Price is a model's list price in USD per million tokens of each type the gateway reports.
 // The gateway's input count includes the cache reads and writes, so each is priced once.
+// +kubebuilder:object:generate=true
 type Price struct {
 	Input     float64 `json:"input"`
 	CacheRead float64 `json:"cacheRead"`
@@ -624,6 +635,7 @@ type Price struct {
 }
 
 // Template is a team: the roles run in order on one branch.
+// +kubebuilder:object:generate=true
 type Template struct {
 	Roles           []string `json:"roles"`
 	MaxReviewRounds int32    `json:"maxReviewRounds,omitempty"`
@@ -633,6 +645,7 @@ type Template struct {
 }
 
 // Caps bound the factory's throughput (§6.2).
+// +kubebuilder:object:generate=true
 type Caps struct {
 	ActiveTasks    int `json:"activeTasks"`
 	ConcurrentRuns int `json:"concurrentRuns"`
@@ -661,6 +674,7 @@ type Caps struct {
 // Facts are what a terminal task tells its room about its dollars (CD23). A switch here lands with
 // the code that reads it: both decoders refuse a key they do not know, so a file written for a
 // later release fails this one's rollout instead of silently changing nothing.
+// +kubebuilder:object:generate=true
 type Facts struct {
 	// FinalSpend is CD23: a terminal task requeues once at its last run's end plus the settle
 	// window plus a margin, prices its runs again, and posts one fact whose dollars it will not
@@ -672,6 +686,7 @@ type Facts struct {
 // Brief is what a revision brief quotes from GitHub beyond the room's own log (CD12). A switch here
 // lands with the code that reads it: both decoders refuse a key they do not know, so a file written
 // for a later release fails this one's rollout instead of silently changing nothing.
+// +kubebuilder:object:generate=true
 type Brief struct {
 	// CIEvidence is CD12: a revision brief carries, fenced as untrusted data, what the open change
 	// requests asked for and what the failing checks annotated — the reviewer's comments and the
@@ -686,6 +701,7 @@ type Brief struct {
 // the principal's starts false, a week of shadow numbers first (OD-10, R3). The run cap is always
 // enforced by the meter. The days are in USD (truthful costs TC5): the day ledger counts each
 // run's priced cost, a cache read at its own rate.
+// +kubebuilder:object:generate=true
 type Budgets struct {
 	EnforceTask      bool    `json:"enforceTask"`
 	EnforcePrincipal bool    `json:"enforcePrincipal"`
@@ -704,6 +720,7 @@ type Budgets struct {
 // PerPerson charges each run to the person who caused it as well as to the fleet, in one ledger
 // write (v2 per-person caps D2, D3). Enabled alone attributes and counts (shadow); a refusal also
 // needs EnforcePrincipal (D8).
+// +kubebuilder:object:generate=true
 type PerPerson struct {
 	Enabled bool `json:"enabled"`
 	// DailyUSD is every person's day (D7: one value, no per-person override). Omitted: humanDailyUSD.
@@ -766,6 +783,7 @@ func (b *Budgets) dropTokenDays() []Ignored {
 }
 
 // Resume bounds the automatic resume of a run lost to its infrastructure (disruption design §4).
+// +kubebuilder:object:generate=true
 type Resume struct {
 	// MaxPerTask is how many runs of one task the factory resumes on its own; past it the task
 	// escalates as before. Defaulted when omitted.
@@ -776,6 +794,7 @@ type Resume struct {
 // hand off at NudgeAt tool calls and ends the run at MaxToolCalls, as budget_calls. The factory
 // writes both into the scoper brief's first line, which the harness reads. Each is defaulted alone
 // when omitted.
+// +kubebuilder:object:generate=true
 type Scoper struct {
 	NudgeAt      int `json:"nudgeAt,omitempty"`
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
@@ -821,6 +840,7 @@ type Tracing struct {
 }
 
 // Schedule starts a task from config (§1). The config is a gate path, so its text is trusted.
+// +kubebuilder:object:generate=true
 type Schedule struct {
 	Name      string `json:"name"`
 	Cron      string `json:"cron"`  // 5 fields, UTC
@@ -1904,6 +1924,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 // keys (D4: no row, or a row without them, is today's run); an unset key then takes the
 // design's default. Rows are keyed by class so the scoper's switch (scoper design SC2,
 // loops.<class>.scope) joins them as one more key.
+// +kubebuilder:object:generate=true
 type Loop struct {
 	// StallSteps ends a run with no commit by this many steps (L3): 1 to 500, default 80.
 	StallSteps *int32 `json:"stallSteps,omitempty"`
@@ -1995,6 +2016,7 @@ func (c *Config) SteeringOn() bool {
 func scopeModes() []ScopeMode { return []ScopeMode{ScopeOff, ScopeSteering, ScopeScoper} }
 
 // SplitPolicy is a row's split (splitter design SL3, SL9, SL10).
+// +kubebuilder:object:generate=true
 type SplitPolicy struct {
 	// MaxChildren is the most parts a split may hold: 2 to 5, required.
 	MaxChildren int32 `json:"maxChildren"`

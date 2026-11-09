@@ -38,6 +38,7 @@ func (l *LoopRef) UnmarshalJSON(b []byte) error {
 // HarnessProfile is a named, centrally approved way of running a class (merge policy MP2). Stage 1
 // reads Checks and TestFirst; Template, Tier and Loop are validated here and read from repository
 // cutover on. Empty keeps what the factory selects today.
+// +kubebuilder:object:generate=true
 type HarnessProfile struct {
 	Template  string  `json:"template,omitempty"`
 	Tier      string  `json:"tier,omitempty"`
@@ -50,6 +51,7 @@ type HarnessProfile struct {
 
 // MergeGuardrails bound every repository's class policy (MP3, MP6): a class may add protected
 // paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 is no guardrail.
+// +kubebuilder:object:generate=true
 type MergeGuardrails struct {
 	ProtectedFiles   []string `json:"protectedFiles,omitempty"`
 	MandatoryChecks  []string `json:"mandatoryChecks,omitempty"`

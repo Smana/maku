@@ -17,6 +17,7 @@ import (
 // The other fields are the class's declared conditions (merge gate classes MC1), named as gh-aw
 // names them where it has a name. Each is checked on top of the gate's fixed base, which no class
 // can remove; an absent one is not checked, so a class that declares none is decided as before.
+// +kubebuilder:object:generate=true
 type Class struct {
 	Live   bool `json:"live,omitempty"`
 	Shadow bool `json:"shadow,omitempty"`
@@ -77,12 +78,14 @@ type Escalation struct {
 }
 
 // Author is a class's author mode.
+// +kubebuilder:object:generate=true
 type Author struct {
 	Adopt *Adopt `json:"adopt,omitempty"`
 }
 
 // Adopt names the logins whose pull requests are adopted and the head branches they come from
 // (gh-aw's allowed-branches); every commit and every push of the branch must be theirs.
+// +kubebuilder:object:generate=true
 type Adopt struct {
 	Logins   []string `json:"logins"`
 	Branches []string `json:"branches"`
@@ -92,6 +95,7 @@ type Adopt struct {
 func (c Class) Adopted() bool { return c.Author != nil && c.Author.Adopt != nil }
 
 // Monitor is a class's post-merge watch (MC7).
+// +kubebuilder:object:generate=true
 type Monitor struct {
 	// OracleRuns is how many scheduled detector runs after the merge must report none of the
 	// targets the pull request wrote; 0 reads none. Needs an oracle.
@@ -107,6 +111,7 @@ type Monitor struct {
 }
 
 // VerificationWatch is how long after the merge RunLore's verdict is waited for, and accepted.
+// +kubebuilder:object:generate=true
 type VerificationWatch struct {
 	Within Duration `json:"within"`
 }
@@ -114,6 +119,7 @@ type VerificationWatch struct {
 // FluxWatch names the GitRepository that delivers the repository to the factory's cluster, and
 // how long after it reaches the merge commit a Kustomization or HelmRelease turning not Ready is
 // blamed on the merge.
+// +kubebuilder:object:generate=true
 type FluxWatch struct {
 	Source string   `json:"source"` // namespace/name
 	Within Duration `json:"within"`
@@ -129,6 +135,7 @@ var sourceRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z
 
 // Oracle is an oracle-backed class's detector: the probe that turns its findings into a task,
 // the workflow on main whose runs report them, and the most findings one task holds.
+// +kubebuilder:object:generate=true
 type Oracle struct {
 	Probe       string `json:"probe"`
 	Workflow    string `json:"workflow"`
