@@ -237,7 +237,7 @@ absent rather than 0.
 | `maku_factory_budget_cap_usd` | gauge | `principal` | The principal's daily cap in USD |
 | `maku_factory_budget_remaining_usd` | gauge | `principal` | USD the principal has left today, 0 once its day is spent |
 | `maku_factory_budget_spent_usd` | gauge | `principal` | USD the principal spent today, unclamped: how far past its cap a day ran. Each principal of yesterday reads 0 from the day's first settled tick |
-| `maku_factory_human_interventions_total` | counter | `kind`, `cohort`, `repository` | `stop`, `retry`, `request_changes`, `steer`, `takeover`, `approve`, `split`; `cohort` is the task's (`labeled`, `control`, `treatment`), `none` without a profile |
+| `maku_factory_human_interventions_total` | counter | `kind`, `cohort`, `profile`, `repository` | A human stepping in: `stop`, `retry`, `request_changes`, `steer`, `takeover`, `approve`, `split`; or the factory needing one: `needs_author` (the scoper bounced to the author), `human_commit` (once, when the pull request's first human commit is read), `escalated` (each entry into Escalated, a bounce apart). `cohort` and `profile` are the task's (`labeled`, `control`, `treatment`), `none` without a profile |
 | `maku_factory_merge_decisions_total` | counter | `class`, `verdict`, `reason`, `repository` | The merge gate's decisions: `arm`, `shadow`, `human`, `escalate`, `ci_red`, `ci_cancelled`; a wait is none. Each also leaves a [decision record](factory.md#the-merge-gate) in its comment |
 | `maku_factory_class_mismatch_total` | counter | `predicted`, `matched` | The predicted class differs from the one policy-bot matched |
 | `maku_factory_tier_fit_total` | counter | `classifier`, `tier`, `fit`, `control` | A finished task's tier fit, per classifier |

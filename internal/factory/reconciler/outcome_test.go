@@ -220,6 +220,64 @@ func taskOutcomes(ms []string) []string {
 	return slices.DeleteFunc(slices.Clone(ms), func(m string) bool { return !strings.HasPrefix(m, "task_outcome ") })
 }
 
+// interventions is the intervention lines among the metrics recorded; a leading *Task is ignored,
+// so a reconcile's result can be chained in.
+func interventions(args ...any) []string {
+	ms := args[len(args)-1].([]string)
+	return slices.DeleteFunc(slices.Clone(ms), func(m string) bool { return !strings.HasPrefix(m, "intervention ") })
+}
+
+// An entry into Escalated counts once, by the task's cohort and profile, through a refused status
+// write and the reconciles that follow; a bounce counts as needs_author instead.
+func TestAnEscalationCountsOnce(t *testing.T) {
+	for name, c := range map[string]struct {
+		profile *v1alpha1.ProfileStatus
+		want    string
+	}{
+		"with a profile": {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"},
+			"intervention escalated treatment review-search"},
+		"without a profile": {nil, "intervention escalated none none"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refuse := false
+			cl := fake.NewClientBuilder().WithScheme(scheme()).WithStatusSubresource(&v1alpha1.Task{}, &roomv1.Room{}).
+				WithObjects(issueTask("3buqdlot", 7, "x")).
+				WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, k client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+					if refuse {
+						refuse = false
+						return apierrors.NewConflict(schema.GroupResource{Resource: "tasks"}, o.GetName(), errors.New("stale"))
+					}
+					return k.SubResource(sub).Update(ctx, o, opts...)
+				}}).Build()
+			g := newRig(t)
+			g.c, g.r.Client = cl, cl
+			tk := g.reconcile(t, "3buqdlot", 3)
+			tk.Status.Profile = c.profile
+			if err := cl.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			g.runs.set(rid(0), "Running")
+			g.log.evs = append(g.log.evs, envelope.Event{Seq: 1, RunID: rid(0), Type: envelope.ToolCall, TS: now})
+			g.reconcile(t, "3buqdlot", 1)
+			g.r.Now = func() time.Time { return now.Add(11 * time.Minute) }
+			refuse = true
+			if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+				t.Fatal("the refused write is returned")
+			}
+			if got := interventions(g.metrics.recorded); len(got) != 0 {
+				t.Fatalf("a refused write counts nothing: %v", got)
+			}
+			if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseEscalated {
+				t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+			}
+			g.reconcile(t, "3buqdlot", 1)
+			if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{c.want}) {
+				t.Fatalf("%v, want %q once", got, c.want)
+			}
+		})
+	}
+}
+
 // A parent whose split was approved did none of the work: its parts count, it does not. An
 // unresolved task that fails without a pull request still counts.
 func TestASplitParentIsNotCounted(t *testing.T) {

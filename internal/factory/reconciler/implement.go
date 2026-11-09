@@ -984,8 +984,7 @@ func (r *Reconciler) countApproves(ctx context.Context, t *v1alpha1.Task, pr for
 	for _, rv := range pr.Reviews {
 		if rv.State == "APPROVED" && r.repo(t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) {
 			markHandled(t, rv.ID)
-			cohort := cohortOf(t)
-			record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "approve", cohort) })
+			r.intervention(ctx, t, "approve")
 		}
 	}
 }

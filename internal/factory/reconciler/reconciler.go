@@ -103,7 +103,7 @@ type metrics interface {
 	HumanWait(ctx context.Context, phase, reason, class string, d time.Duration)
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
-	Intervention(ctx context.Context, kind, cohort string)
+	Intervention(ctx context.Context, kind, cohort, profile string)
 	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64)
 	TierFit(ctx context.Context, classifier, tier, fit string, control bool)
 	Revoked(ctx context.Context, reason string)
@@ -314,6 +314,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			f(ctx)
 		}
 		r.waited(ctx, &t, before, &t.Status)
+		r.needed(ctx, &t, before, &t.Status)
 	}
 	// Only a written outbox is posted (review M-a), only written facts reach the room, and only a
 	// written end exports the task's span: a write that conflicts posts and exports nothing, and its
@@ -500,6 +501,23 @@ func (r *Reconciler) waited(ctx context.Context, t *v1alpha1.Task, before, after
 	}
 }
 
+// needed counts the interventions a written pass showed the task needs (§7): its entry into
+// Escalated — a bounce as needs_author, the author's and not a maintainer's — and the first human
+// commit on its pull request, from whichever site set HumanCommits. Read off the write like waited,
+// so a refused write counts nothing and its replay counts once.
+func (r *Reconciler) needed(ctx context.Context, t *v1alpha1.Task, before, after *v1alpha1.TaskStatus) {
+	if after.Phase == v1alpha1.PhaseEscalated && before.Phase != after.Phase {
+		kind := "escalated"
+		if after.Reason == ReasonNeedsAuthor {
+			kind = "needs_author"
+		}
+		r.Metrics.Intervention(ctx, kind, cohortOf(t), profileOf(t))
+	}
+	if after.PullRequest != nil && after.PullRequest.HumanCommits && (before.PullRequest == nil || !before.PullRequest.HumanCommits) {
+		r.Metrics.Intervention(ctx, "human_commit", cohortOf(t), profileOf(t))
+	}
+}
+
 // maxHandedOffReason is HandedOffReason's CRD bound.
 const maxHandedOffReason = 64
 
@@ -518,7 +536,7 @@ func (r *Reconciler) to(t *v1alpha1.Task, phase, reason string) {
 		ref.HandedOffAt, ref.HandedOffReason = t.Status.PhaseSince.DeepCopy(), reason[:min(len(reason), maxHandedOffReason)]
 	}
 	if ref := t.Status.PullRequest; phase == v1alpha1.PhaseAwaitingHuman && ref != nil && reason == "human_commit_in_pr" {
-		ref.HumanCommits = true // every site where the gate's provenance refuses a commit (TE)
+		ref.HumanCommits = true // every site where the gate's provenance refuses a commit
 	}
 }
 
@@ -637,8 +655,7 @@ func (r *Reconciler) stop(ctx context.Context, t *v1alpha1.Task, why string) err
 		}
 	}
 	if why != "kill_switch" {
-		cohort := cohortOf(t)
-		record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "stop", cohort) })
+		r.intervention(ctx, t, "stop")
 	}
 	exit := ""
 	if why == "superseded" {

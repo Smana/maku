@@ -1377,6 +1377,9 @@ func TestGateRecordsHumanCommits(t *testing.T) {
 	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseDone || !got.Status.PullRequest.HumanCommits || taskOutcome(got) != "merged_human" {
 		t.Fatalf("kept through the merge: %s %v", got.Status.Phase, got.Status.PullRequest.HumanCommits)
 	}
+	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention human_commit none none"}) {
+		t.Fatalf("the human's commit counts once, at the hand-off: %v", got)
+	}
 }
 
 // A human pushes and merges between two reconciles: the merged pull request is read by the gate's
@@ -1413,6 +1416,13 @@ func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
 			}
 			if !slices.ContainsFunc(g.metrics.recorded, func(m string) bool { return strings.HasPrefix(m, "task_outcome ") && strings.Contains(m, " "+want+" ") }) {
 				t.Fatalf("%v", g.metrics.recorded)
+			}
+			var counted []string
+			if c.human {
+				counted = []string{"intervention human_commit treatment review-floor"}
+			}
+			if got := interventions(g.metrics.recorded); !slices.Equal(got, counted) {
+				t.Fatalf("interventions %v, want %v", got, counted)
 			}
 		})
 	}

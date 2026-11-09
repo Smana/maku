@@ -49,7 +49,7 @@ func taskOutcomes() []string {
 	return []string{"accepted", "merged_human", "no_op", "closed", "stopped", "rejected", "reverted", "failed"}
 }
 func interventions() []string {
-	return []string{"stop", "retry", "request_changes", "steer", "takeover", "approve", "split"}
+	return []string{"stop", "retry", "request_changes", "steer", "takeover", "approve", "split", "needs_author", "human_commit", "escalated"}
 }
 func revocations() []string {
 	return []string{"budget-run", "budget-task", "budget-principal", "budget-fleet", "manual",
@@ -772,11 +772,16 @@ func (s *Set) BudgetDay(ctx context.Context, principal string, spentMicroUSD, ca
 	s.budgetSpent.Record(ctx, float64(spentMicroUSD)/1e6, at)
 }
 
-// Intervention counts a human stepping in: stop, retry, request_changes, steer, takeover, approve.
-// cohort is the task's team-evaluation cohort, "none" without a profile.
-func (s *Set) Intervention(ctx context.Context, kind, cohort string) {
+// Intervention counts a human stepping in (stop, retry, request_changes, steer, takeover, approve,
+// split) or the factory needing one (needs_author, human_commit, escalated). cohort and profile
+// are the task's, "none" without a profile; the caller maps a profile no longer offered to other.
+func (s *Set) Intervention(ctx context.Context, kind, cohort, profile string) {
+	if profile == "" {
+		profile = "none"
+	}
 	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())),
-		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "none"})), s.repoOf(ctx)))
+		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "none"})),
+		attribute.String("profile", profile), s.repoOf(ctx)))
 }
 
 // TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost.

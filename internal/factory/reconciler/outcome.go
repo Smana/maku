@@ -182,6 +182,21 @@ func cohortOf(t *v1alpha1.Task) string {
 	return t.Status.Profile.Cohort
 }
 
+// profileOf is t's harness profile as a metric label, none without one.
+func profileOf(t *v1alpha1.Task) string {
+	if t.Status.Profile == nil {
+		return "none"
+	}
+	return t.Status.Profile.Name
+}
+
+// intervention counts one intervention on t, by its cohort and profile, once the status write
+// that carries its cause succeeds.
+func (r *Reconciler) intervention(ctx context.Context, t *v1alpha1.Task, kind string) {
+	cohort, profile := cohortOf(t), profileOf(t)
+	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, kind, cohort, profile) })
+}
+
 // interventions counts, once per run, how humans steered it from the room (§7).
 func (r *Reconciler) interventions(ctx context.Context, t *v1alpha1.Task) {
 	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, current(t).StartSeq, func(e envelope.Event) bool {
@@ -198,14 +213,12 @@ func (r *Reconciler) interventions(ctx context.Context, t *v1alpha1.Task) {
 			}
 			var p envelope.MessagePayload
 			if json.Unmarshal(e.Payload, &p) == nil && p.Delivery == envelope.DeliverySteering {
-				cohort := cohortOf(t)
-				record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "steer", cohort) })
+				r.intervention(ctx, t, "steer")
 			}
 		case envelope.Driver:
 			var p envelope.DriverPayload
 			if json.Unmarshal(e.Payload, &p) == nil && strings.HasPrefix(p.To, "human:") {
-				cohort := cohortOf(t)
-				record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "takeover", cohort) })
+				r.intervention(ctx, t, "takeover")
 			}
 		}
 	}
