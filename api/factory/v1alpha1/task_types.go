@@ -960,8 +960,9 @@ type Usage struct {
 type Narration struct {
 	// +kubebuilder:validation:MaxLength=128
 	Key string `json:"key"`
-	// The issue or PR it goes to.
-	// +kubebuilder:validation:Minimum=1
+	// The issue or PR it goes to; 0 waits for the task's first target (a profile announcement
+	// queued before a schedule's task has a pull request).
+	// +kubebuilder:validation:Minimum=0
 	Number int `json:"number"`
 	// The factory's own words, never text a user wrote.
 	// +kubebuilder:validation:MaxLength=4096

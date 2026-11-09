@@ -17,6 +17,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/triage"
 )
 
@@ -302,7 +303,10 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "floor", "none", 0) // no issue to narrate on
+		wantResolved(t, tk, "review-floor", "floor", "none", 1) // no issue yet: the announcement waits for the pull request (R31)
+		if o := tk.Status.Outbox[len(tk.Status.Outbox)-1]; o.Number != 0 || !strings.HasPrefix(o.Key, "profile-chosen-") {
+			t.Fatalf("%+v", o)
+		}
 	})
 	t.Run("assumed on retry", func(t *testing.T) {
 		g := harnessedScoper(t, nil)
@@ -532,5 +536,83 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	}
 	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention stop treatment review-search review-search"}) {
 		t.Fatalf("interventions %q", got)
+	}
+}
+
+// R31: a task with no issue (a schedule's) resolves its profile before it has a pull request, so
+// the announcement has nowhere to go yet. It stays in the outbox, is posted once the pull request
+// exists, and once only.
+func TestAProfileAnnouncementWaitsForATarget(t *testing.T) {
+	cf := resolveCfg("apply", 0)
+	cf.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	tk := issueTask("3buqdlot", 0, "# Fix the link\n\n## Acceptance check\nthe link resolves")
+	tk.Spec.Source = v1alpha1.Source{Kind: "schedule", Ref: "weekly-links", Key: "k", RequestedBy: "schedule:weekly-links", Trust: "trusted", ContentSHA256: strings.Repeat("b", 64)}
+	g := profileRig(t, cf, tk, "")
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	sc := readyScope()
+	sc.Profile, sc.ProfileWhy = "review-search", "because"
+	scopeHandoff(g, 0, sc)
+	g.runs.set(rid(0), "Succeeded")
+	g.log.end(rid(0), "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 2)
+	if p := tk.Status.Profile; p == nil || !p.Resolved || p.Name != "review-search" {
+		t.Fatalf("%+v", p)
+	}
+	pending := slices.IndexFunc(tk.Status.Outbox, func(o v1alpha1.Narration) bool { return strings.HasPrefix(o.Key, "profile-chosen-") })
+	if pending < 0 || tk.Status.Outbox[pending].Number != 0 || len(g.f.Comments(12)) != 0 || slices.ContainsFunc(tk.Status.Narrated, func(k string) bool { return strings.HasPrefix(k, "profile-chosen-") }) {
+		t.Fatalf("pending: %+v %v", tk.Status.Outbox, tk.Status.Narrated)
+	}
+	g.f.SetBranch("agent/3buqdlot", 12)
+	g.f.SetPR(forge.PR{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", HeadRef: "agent/3buqdlot", HeadSHA: "abc", Author: "ogenki-agents[bot]", State: "OPEN"})
+	g.log.handoff(rid(1), "abc")
+	g.finish(rid(1), "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 2)
+	if tk.Status.PullRequest == nil || tk.Status.PullRequest.Number != 12 {
+		t.Fatalf("%+v", tk.Status.PullRequest)
+	}
+	announced := func() int {
+		n := 0
+		for _, c := range g.f.Comments(12) {
+			if strings.Contains(c, "runs under profile `review-search`") {
+				n++
+			}
+		}
+		return n
+	}
+	if got := g.f.Comments(12); announced() != 1 || !strings.Contains(got[0], "runs under profile") {
+		t.Fatalf("posted first, once: %q", got)
+	}
+	tk = g.reconcile(t, "3buqdlot", 2)
+	if announced() != 1 || slices.ContainsFunc(tk.Status.Outbox, func(o v1alpha1.Narration) bool { return strings.HasPrefix(o.Key, "profile-chosen-") }) {
+		t.Fatalf("once: %q %+v", g.f.Comments(12), tk.Status.Outbox)
+	}
+}
+
+// R31's other end: a task that ends with no target drops the waiting announcement, so its outbox
+// empties and the task closes.
+func TestAWaitingAnnouncementIsDroppedAtTheEnd(t *testing.T) {
+	cf := resolveCfg("apply", 0)
+	cf.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	tk := issueTask("3buqdlot", 0, "# Fix the link\n\n## Acceptance check\nthe link resolves")
+	tk.Spec.Source = v1alpha1.Source{Kind: "schedule", Ref: "weekly-links", Key: "k", RequestedBy: "schedule:weekly-links", Trust: "trusted", ContentSHA256: strings.Repeat("b", 64)}
+	g := profileRig(t, cf, tk, "")
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	sc := readyScope()
+	sc.Profile = "review-search"
+	scopeHandoff(g, 0, sc)
+	g.finish(rid(0), "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 2)
+	if !slices.ContainsFunc(tk.Status.Outbox, func(o v1alpha1.Narration) bool { return strings.HasPrefix(o.Key, "profile-chosen-") }) {
+		t.Fatalf("%+v", tk.Status.Outbox)
+	}
+	tk.Annotations[v1alpha1.AnnotationStop] = "true"
+	if err := g.c.Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	tk = g.reconcile(t, "3buqdlot", 3)
+	if tk.Status.Phase != v1alpha1.PhaseStopped || len(tk.Status.Outbox) != 0 || !slices.ContainsFunc(tk.Status.Narrated, func(k string) bool { return strings.HasPrefix(k, "profile-chosen-") }) {
+		t.Fatalf("%s %+v %v", tk.Status.Phase, tk.Status.Outbox, tk.Status.Narrated)
 	}
 }

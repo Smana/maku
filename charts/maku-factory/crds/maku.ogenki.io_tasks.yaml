@@ -1876,8 +1876,10 @@ spec:
                       maxLength: 128
                       type: string
                     number:
-                      description: The issue or PR it goes to.
-                      minimum: 1
+                      description: |-
+                        The issue or PR it goes to; 0 waits for the task's first target (a profile announcement
+                        queued before a schedule's task has a pull request).
+                      minimum: 0
                       type: integer
                   required:
                   - body

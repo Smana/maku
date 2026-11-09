@@ -685,9 +685,12 @@ func (r *Reconciler) stop(ctx context.Context, t *v1alpha1.Task, why string) err
 // status; Post would skip it anyway.
 func narrateLater(t *v1alpha1.Task, e narrate.Event) { narrateOn(t, target(t), e) }
 
-// narrateOn is narrateLater on issue or pull request n.
+// narrateOn is narrateLater on issue or pull request n. With no target (a schedule's task before
+// its pull request) an event is dropped, except a profile announcement (R31): it is queued with no
+// number and posts once the task has one, since the announcement is what a reader of the pull
+// request compares the outcome with.
 func narrateOn(t *v1alpha1.Task, n int, e narrate.Event) {
-	if n == 0 || slices.Contains(t.Status.Narrated, e.Key) ||
+	if (n == 0 && !narrate.Pending(e.Key)) || slices.Contains(t.Status.Narrated, e.Key) ||
 		slices.ContainsFunc(t.Status.Outbox, func(o v1alpha1.Narration) bool { return o.Key == e.Key }) {
 		return
 	}
@@ -697,27 +700,40 @@ func narrateOn(t *v1alpha1.Task, n int, e narrate.Event) {
 // drain posts the outbox in order and stops at the first failure, which the next reconcile
 // retries. A post that landed but failed is found by its marker then, not posted twice. A post
 // GitHub refuses for good (F-3) is dropped: it would hold back every later one and the room's close.
+// An entry still waiting for a target (R31) is skipped, not a failure, and dropped once the task
+// has ended without one: nothing will give it a target, and the outbox must empty for the close.
 func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
-	for len(t.Status.Outbox) > 0 {
-		o := t.Status.Outbox[0]
+	var kept []v1alpha1.Narration
+	for i, o := range t.Status.Outbox {
 		if narrate.Closing(o.Key) && r.settling(t) {
-			break // its token total is final only once the usage settles (#42); settle requeues
+			kept = append(kept, t.Status.Outbox[i:]...) // its token total is final only once the usage settles (#42); settle requeues
+			break
 		}
-		err := r.narrator(ctx).Post(ctx, t, o.Number, narrate.Event{Key: o.Key, Body: o.Body})
+		n := o.Number
+		if n == 0 {
+			if n = target(t); n == 0 {
+				if !v1alpha1.TerminalPhase(t.Status.Phase) {
+					kept = append(kept, o)
+				} else {
+					r.log().Warn("narration_dropped", "task.id", t.Name, "key", o.Key, "why", "no_target")
+					narrate.Abandon(t, o.Key)
+				}
+				continue
+			}
+		}
+		err := r.narrator(ctx).Post(ctx, t, n, narrate.Event{Key: o.Key, Body: o.Body})
 		var pe *forge.PermanentError
 		switch {
 		case errors.As(err, &pe):
 			// Error, not Warn: a mis-scoped App token reads as a refusal too, and must be seen.
-			r.log().Error("narration_dropped", "task.id", t.Name, "key", o.Key, "number", o.Number, "why", "refused", "status", pe.Status)
+			r.log().Error("narration_dropped", "task.id", t.Name, "key", o.Key, "number", n, "why", "refused", "status", pe.Status)
 			narrate.Abandon(t, o.Key)
 		case err != nil:
+			t.Status.Outbox = append(kept, t.Status.Outbox[i:]...)
 			return err
 		}
-		t.Status.Outbox = t.Status.Outbox[1:]
 	}
-	if len(t.Status.Outbox) == 0 {
-		t.Status.Outbox = nil
-	}
+	t.Status.Outbox = kept
 	return nil
 }
 
