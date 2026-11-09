@@ -171,6 +171,9 @@ type Config struct {
 	Evaluation Evaluation `json:"evaluation,omitzero"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
+	// Generations are the object generations this config was served under (Live.Publish); Parse
+	// leaves them zero.
+	Generations Generations `json:"-"`
 	// Ignored are the keys the file sets that this release accepts and ignores, for the binary
 	// to warn about: Parse has no logger.
 	Ignored []Ignored `json:"-"`
