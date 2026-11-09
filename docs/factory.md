@@ -382,6 +382,8 @@ each hand-off with its reason and the merge command, and the end with the tokens
 A class with `harness` adds `profile_chosen` (`profile-chosen-<runs>`) once its scoper ends: the
 profile the task runs under, `(default)` for the floor, and the scoper's why or the reason the floor
 was kept (`none`, `unknown`, `not_allowed`, `observe`, `internal`, `no_tests_paths`, `scoper_failed`).
+On a task with no issue, it and `profile_escalated` wait for the pull request, and are dropped if
+the task ends without one.
 
 A class with `escalation` steps a task up once before a maintainer is asked, then narrates
 `profile_escalated` (`profile-escalated-<runs>`) and queues a run with trigger `escalation` and the
