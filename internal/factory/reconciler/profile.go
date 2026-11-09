@@ -155,7 +155,7 @@ func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, d profi
 
 // resolveRetried runs before the retry changes any state, so a broker error replays the retry.
 func (r *Reconciler) resolveRetried(ctx context.Context, t *v1alpha1.Task) error {
-	if !unresolved(t) || !scoperPlanned(t) || t.Status.Scope == nil || (t.Status.Split != nil && t.Status.Split.State == SplitApproved) {
+	if !unresolved(t) || !scoperPlanned(t) || t.Status.Scope == nil || splitApproved(t) {
 		return nil
 	}
 	sc, err := r.taskScope(ctx, t)

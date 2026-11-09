@@ -214,3 +214,43 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 		})
 	}
 }
+
+func taskOutcomes(ms []string) []string {
+	return slices.DeleteFunc(slices.Clone(ms), func(m string) bool { return !strings.HasPrefix(m, "task_outcome ") })
+}
+
+// A parent whose split was approved did none of the work: its parts count, it does not. An
+// unresolved task that fails without a pull request still counts.
+func TestASplitParentIsNotCounted(t *testing.T) {
+	g, _ := harnessedSplit(t, 2)
+	g.r.Now = func() time.Time { return now.Add(time.Hour) }
+	g.f.SetComments(7, splitBy(80, "Smana"))
+	g.reconcile(t, "3buqdlot", 2) // Escalated → Split, then part 1
+	setPhase(t, g, child(1), v1alpha1.PhaseDone, "merged")
+	g.reconcile(t, "3buqdlot", 1)
+	setPhase(t, g, child(2), v1alpha1.PhaseDone, "merged")
+	p := g.reconcile(t, "3buqdlot", 1)
+	if p.Status.Phase != v1alpha1.PhaseDone || p.Status.Reason != "children_merged" {
+		t.Fatalf("%s %s", p.Status.Phase, p.Status.Reason)
+	}
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 0 || p.Status.Profile == nil || p.Status.Profile.Counted {
+		t.Fatalf("%v %+v", got, p.Status.Profile)
+	}
+}
+
+func TestAnUnresolvedTaskThatFailsIsCounted(t *testing.T) {
+	g := harnessedScoper(t, nil)
+	scopeHandoff(g, 0, questionScope())
+	if tk := endScoper(t, g, "Succeeded", "agent_finished"); tk.Status.Reason != ReasonNeedsAuthor || tk.Status.Profile.Resolved {
+		t.Fatalf("%s %q %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile)
+	}
+	g.r.Cfg.Caps.EscalatedHours = new(168)
+	g.r.Now = func() time.Time { return now.Add(200 * time.Hour) }
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Reason != "escalation_expired" {
+		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasPrefix(got[0], "task_outcome review treatment review-floor floor stopped") || !tk.Status.Profile.Counted {
+		t.Fatalf("%v %+v", got, tk.Status.Profile)
+	}
+}

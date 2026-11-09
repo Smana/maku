@@ -63,7 +63,7 @@ var underReasons = []string{"stuck", "agent_stuck", "review_rounds_exhausted", "
 // capability after a full attempt, over when it succeeded on < 20 % of the tier's task budget.
 func Fit(t *v1alpha1.Task) string {
 	switch {
-	case t.Spec.Parent != nil || (t.Status.Split != nil && t.Status.Split.State == SplitApproved):
+	case t.Spec.Parent != nil || splitApproved(t):
 		return "" // SR17: C7 chose neither a part's tier nor the work its parent did
 	case t.Status.Phase == v1alpha1.PhaseEscalated && slices.Contains(underReasons, t.Status.Reason):
 		return "under"
@@ -119,7 +119,7 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 	if !v1alpha1.TerminalPhase(t.Status.Phase) {
 		return
 	}
-	if p := t.Status.Profile; p != nil && !p.Counted {
+	if p := t.Status.Profile; p != nil && !p.Counted && !splitApproved(t) { // an approved split's parts did the work, and count
 		p.Counted = true // rides the status write the count waits for: once, or neither
 		class, outcome, usd := t.Spec.PredictedClass, taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
 		record(ctx, func(ctx context.Context) { r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, outcome, usd) })
@@ -142,7 +142,12 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 		"phase", t.Status.Phase, "reason", t.Status.Reason, "tokens", t.Status.Usage.Tokens)
 }
 
-// taskOutcome is an ended task's outcome (TE): accepted is merged with no human commit.
+// splitApproved: t is the parent of an approved split, whose parts carry the work.
+func splitApproved(t *v1alpha1.Task) bool {
+	return t.Status.Split != nil && t.Status.Split.State == SplitApproved
+}
+
+// taskOutcome is an ended task's outcome: accepted is merged with no human commit.
 func taskOutcome(t *v1alpha1.Task) string {
 	switch t.Status.Phase {
 	case v1alpha1.PhaseDone:
