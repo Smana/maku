@@ -177,9 +177,11 @@ func (r *Reconciler) countTask(ctx context.Context, t *v1alpha1.Task) error {
 // opened is the parent's own outcome.
 func familyOutcome(p *v1alpha1.Task, newest map[int32]*v1alpha1.Task) string {
 	own := taskOutcome(p)
-	first, human, any := "", false, false
+	if len(p.Status.Split.Children) == 0 {
+		return own
+	}
+	first, human := "", false
 	for _, c := range p.Status.Split.Children {
-		any = true
 		o := own
 		if n := newest[c.Index]; n != nil && v1alpha1.TerminalPhase(n.Status.Phase) {
 			o = taskOutcome(n)
@@ -192,8 +194,6 @@ func familyOutcome(p *v1alpha1.Task, newest map[int32]*v1alpha1.Task) string {
 		}
 	}
 	switch {
-	case !any:
-		return own
 	case human:
 		return "merged_human"
 	case first != "":
