@@ -101,9 +101,6 @@ spec:
                                 type: string
                               maxItems: 64
                               type: array
-                          required:
-                          - branches
-                          - logins
                           type: object
                       type: object
                     checks:
@@ -168,9 +165,6 @@ spec:
                               maxLength: 32
                               pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                               type: string
-                          required:
-                          - source
-                          - within
                           type: object
                         followUpWindow:
                           description: |-
@@ -193,11 +187,7 @@ spec:
                               maxLength: 32
                               pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                               type: string
-                          required:
-                          - within
                           type: object
-                      required:
-                      - followUpWindow
                       type: object
                     oracle:
                       description: |-
@@ -212,10 +202,6 @@ spec:
                         workflow:
                           maxLength: 1024
                           type: string
-                      required:
-                      - maxFindings
-                      - probe
-                      - workflow
                       type: object
                     protectedFiles:
                       description: 'ProtectedFiles: no changed path matches one of
@@ -288,9 +274,6 @@ spec:
                         type: integer
                       window:
                         type: integer
-                    required:
-                    - maxReverts
-                    - window
                     type: object
                   checkReruns:
                     description: |-
@@ -349,18 +332,6 @@ spec:
                     maxLength: 32
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
-                required:
-                - autoMergesPerDay
-                - breaker
-                - checkReruns
-                - fixRuns
-                - leakScanCheck
-                - mergerLogin
-                - policyBotLogin
-                - requiredChecks
-                - revertWindow
-                - verifyChecks
-                - verifyFor
                 type: object
               repositoryRef:
                 maxLength: 253

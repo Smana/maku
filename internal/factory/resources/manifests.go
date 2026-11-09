@@ -41,11 +41,20 @@ func Decode(raw []byte) ([]Object, error) {
 		if err := yaml.UnmarshalStrict([]byte(doc), typed); err != nil {
 			return nil, fmt.Errorf("%s %q: %w", kind, name, err)
 		}
+		spec, _ := m["spec"].(map[string]any)
+		var offErr error
+		offFields(spec, func(path string, row map[string]any, key string) {
+			if _, ok := row[key].(bool); ok && offErr == nil {
+				offErr = fmt.Errorf("%s %q: %s is a boolean (YAML reads a bare off as false): write \"off\"", kind, name, path)
+			}
+		})
+		if offErr != nil {
+			return nil, offErr
+		}
 		var gen int64
 		if g, ok := meta["generation"].(float64); ok {
 			gen = int64(g)
 		}
-		spec, _ := m["spec"].(map[string]any)
 		objs = append(objs, Object{Kind: Kind(kind), Name: name, Generation: gen, Spec: spec})
 	}
 	return objs, nil

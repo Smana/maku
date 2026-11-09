@@ -5,6 +5,7 @@ package resources
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -90,4 +91,40 @@ func equalJSON(t *testing.T, a, b any) bool {
 		t.Fatal(err1, err2)
 	}
 	return bytes.Equal(x, y)
+}
+
+// F1: ai-native-ref's real config migrates into objects Assemble serves whole, and a loop row's
+// bare `off` (YAML 1.1's false) is written as the string "off".
+func TestMigrateANRConfig(t *testing.T) {
+	file, err := os.ReadFile("testdata/anr.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Parse(file); err != nil {
+		t.Fatalf("the fixture must parse as a file: %v", err)
+	}
+	manifests, residual, err := Migrate(file, "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(manifests), "scope: \"off\"") {
+		t.Errorf("loops.default.scope must be the string \"off\":\n%s", manifests)
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatalf("Decode(Migrate(anr)): %v", err)
+	}
+	r, err := Assemble(residual, objs)
+	if err != nil || len(r.Refused) != 0 || len(r.Accepted) != 7 {
+		t.Fatalf("err %v, refused %+v, accepted %d", err, r.Refused, len(r.Accepted))
+	}
+}
+
+func TestDecodeRefusesABooleanOff(t *testing.T) {
+	for _, spec := range []string{"{loops: {default: {scope: off}}}", "{harnessProfiles: {plain: {loop: false}}}"} {
+		_, err := Decode([]byte("apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: f}\nspec: " + spec + "\n"))
+		if err == nil || !strings.Contains(err.Error(), `write "off"`) || !strings.Contains(err.Error(), "spec.") {
+			t.Errorf("%s: %v", spec, err)
+		}
+	}
 }

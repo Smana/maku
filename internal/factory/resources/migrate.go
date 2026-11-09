@@ -5,6 +5,8 @@ package resources
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -51,6 +53,13 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 			}
 		}
 	}
+
+	// YAML 1.1 reads a bare off as false; the CRD wants the string.
+	offFields(spec, func(_ string, row map[string]any, key string) {
+		if b, ok := row[key].(bool); ok && !b {
+			row[key] = "off"
+		}
+	})
 
 	var docs [][]byte
 	add := func(kind, name string, spec map[string]any) error {
@@ -125,4 +134,19 @@ func namePart(repository string) string {
 		n = repository
 	}
 	return strings.ToLower(n)
+}
+
+// offFields visits loops.*.scope and harnessProfiles.*.loop where set, in name order: the two
+// fields where YAML 1.1 reads a bare off as the boolean false.
+func offFields(spec map[string]any, visit func(path string, row map[string]any, key string)) {
+	for _, f := range []struct{ table, key string }{{"loops", "scope"}, {"harnessProfiles", "loop"}} {
+		rows, _ := spec[f.table].(map[string]any)
+		for _, name := range slices.Sorted(maps.Keys(rows)) {
+			if row, ok := rows[name].(map[string]any); ok {
+				if _, set := row[f.key]; set {
+					visit(fmt.Sprintf("spec.%s.%s.%s", f.table, name, f.key), row, f.key)
+				}
+			}
+		}
+	}
 }

@@ -113,16 +113,7 @@ spec:
                         type: number
                       enabled:
                         type: boolean
-                    required:
-                    - dailyUSD
-                    - enabled
                     type: object
-                required:
-                - enforcePrincipal
-                - enforceTask
-                - factoryDailyUSD
-                - humanDailyUSD
-                - perPerson
                 type: object
               caps:
                 description: Caps bound the factory's throughput (§6.2).
@@ -161,13 +152,6 @@ spec:
                     type: boolean
                   tasksPerDay:
                     type: integer
-                required:
-                - activeTasks
-                - awaitingHumanWIP
-                - concurrentRuns
-                - maxPendingMinutes
-                - maxTextBytes
-                - tasksPerDay
                 type: object
               control:
                 description: |-
@@ -195,11 +179,6 @@ spec:
                   tier:
                     maxLength: 253
                     type: string
-                required:
-                - dataClass
-                - predictedClass
-                - template
-                - tier
                 type: object
               facts:
                 description: |-
@@ -311,8 +290,6 @@ spec:
                             hold: 2 to 5, required.'
                           format: int32
                           type: integer
-                      required:
-                      - maxChildren
                       type: object
                     stallSteps:
                       description: 'StallSteps ends a run with no commit by this many
@@ -385,10 +362,6 @@ spec:
                         TC1). Validated when present; the meter never reads them.
                       maxLength: 1024
                       type: string
-                  required:
-                  - cacheRead
-                  - input
-                  - output
                   type: object
                 maxProperties: 32
                 type: object
@@ -401,8 +374,6 @@ spec:
                       MaxPerTask is how many runs of one task the factory resumes on its own; past it the task
                       escalates as before. Defaulted when omitted.
                     type: integer
-                required:
-                - maxPerTask
                 type: object
               scoper:
                 description: |-
@@ -436,8 +407,6 @@ spec:
                         type: string
                       maxItems: 64
                       type: array
-                  required:
-                  - roles
                   type: object
                 maxProperties: 16
                 type: object
@@ -464,11 +433,6 @@ spec:
                       type: integer
                     taskUSD:
                       type: number
-                  required:
-                  - model
-                  - runMinutes
-                  - runTokens
-                  - taskTokens
                   type: object
                 maxProperties: 16
                 type: object

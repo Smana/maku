@@ -117,11 +117,6 @@ spec:
                     text:
                       maxLength: 14336
                       type: string
-                  required:
-                  - class
-                  - cron
-                  - name
-                  - text
                   type: object
                 maxItems: 16
                 type: array
