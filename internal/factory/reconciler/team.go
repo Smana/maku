@@ -184,8 +184,7 @@ func (r *Reconciler) reviewing(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
 	if t.Status.ReviewRounds >= r.maxRounds(t) {
-		narrateOn(t, t.Status.PullRequest.Number, narrate.RoundsExhausted(t, v))
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "review_rounds_exhausted")
+		return r.roundsExhausted(ctx, t, v)
 	}
 	t.Status.ReviewRounds++
 	t.Status.NextTrigger = "review"
@@ -243,5 +242,17 @@ func (r *Reconciler) noVerdict(ctx context.Context, t *v1alpha1.Task, why string
 		narrateLater(t, narrate.NoVerdict(t, cur.ID, why))
 	}
 	r.requestVerifier(t, cur.Role)
+	return nil
+}
+
+// roundsExhausted escalates a task out of review rounds, unless it steps (TE7); only an
+// escalation narrates the last verdict.
+func (r *Reconciler) roundsExhausted(ctx context.Context, t *v1alpha1.Task, v rooms.Verdict) error {
+	const reason = "review_rounds_exhausted"
+	if stepped, err := r.stepUp(ctx, t, reason); stepped || err != nil {
+		return err
+	}
+	narrateOn(t, t.Status.PullRequest.Number, narrate.RoundsExhausted(t, v))
+	r.ended(ctx, t, v1alpha1.PhaseEscalated, reason)
 	return nil
 }

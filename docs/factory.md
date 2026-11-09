@@ -383,6 +383,23 @@ A class with `harness` adds `profile_chosen` (`profile-chosen-<runs>`) once its 
 profile the task runs under, `(default)` for the floor, and the scoper's why or the reason the floor
 was kept (`none`, `unknown`, `not_allowed`, `observe`, `internal`, `no_tests_paths`, `scoper_failed`).
 
+A class with `escalation` steps a task up once before a maintainer is asked, then narrates
+`profile_escalated` (`profile-escalated`) and queues a run with trigger `escalation` and the
+review rounds reset:
+
+| Escalated reason | Group | Step to |
+|---|---|---|
+| `budget-run`, `stalled` | `out_of_budget` | `escalation.outOfBudget` |
+| `not_met`, `review_rounds_exhausted` | `not_converged` | `escalation.notConverged` |
+| any other (`ci_red`, `judge_impossible`, `needs_author`, `budget-task`, …) | — | the maintainer |
+
+There is no step for a task with an unresolved profile, a control-cohort task, a group the class
+does not map, a task that has already stepped (`/factory retry` keeps it stepped), or a target
+whose tier leaves less than one run in the task cap (a sponsor's ceiling still caps it). A step
+raises the tier, never lowers it; it never turns on `testFirst`, since the tester branches from
+main. The stepped run gets the revision brief with the completion judge's last verdict fenced in
+it. The escalated task's end comment names the profile already tried.
+
 A maintainer's **Request changes** is answered where it was made, on the pull request:
 
 | Event (key) | When | Says |

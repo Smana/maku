@@ -930,6 +930,9 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 		fmt.Fprintf(&b, ", `%s`; it resets at 00:00 UTC", p)
 	}
 	b.WriteString(".")
+	if p := t.Status.Profile; p != nil && p.Source == "escalation" && phase == v1alpha1.PhaseEscalated {
+		fmt.Fprintf(&b, " It had already stepped up once, to profile `%s` (%s).", p.Name, p.Reason)
+	}
 	if pr := t.Status.PullRequest; pr != nil && pr.MergedBy != "" && phase == v1alpha1.PhaseDone {
 		fmt.Fprintf(&b, " Merged by @%s.", strings.TrimSuffix(pr.MergedBy, "[bot]"))
 	}
@@ -1156,4 +1159,12 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 		body += " — " + strings.Join(because, "; ")
 	}
 	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
+}
+
+// ProfileEscalated is the task's one escalation step (TE7): it runs again under a richer profile
+// before any human is asked. One per task: a stepped task never steps again.
+func ProfileEscalated(from, to, group string) Event {
+	return Event{Key: "profile-escalated", Body: fmt.Sprintf(
+		"Agent factory: this task stopped (%s) under profile `%s`; it runs once more under profile `%s` before a maintainer is asked.",
+		group, from, to)}
 }

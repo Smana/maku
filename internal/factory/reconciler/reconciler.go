@@ -730,8 +730,18 @@ func target(t *v1alpha1.Task) int {
 // task.final line the moment the task first ends. The reservations no claim holds any more are
 // released here (#55): every ending path, and every replay of one, passes through it.
 func (r *Reconciler) end(ctx context.Context, t *v1alpha1.Task, phase, reason string) error {
-	r.finish(ctx, t, phase, reason, narrate.Ended(t, phase, reason, r.repo(t).Maintainers...))
+	if phase == v1alpha1.PhaseEscalated {
+		if stepped, err := r.stepUp(ctx, t, reason); stepped || err != nil {
+			return err
+		}
+	}
+	r.ended(ctx, t, phase, reason)
 	return nil
+}
+
+// ended is end past the escalation step.
+func (r *Reconciler) ended(ctx context.Context, t *v1alpha1.Task, phase, reason string) {
+	r.finish(ctx, t, phase, reason, narrate.Ended(t, phase, reason, r.repo(t).Maintainers...))
 }
 
 // finish is the ending every task shares: its unheld reservations released, the move, a terminal

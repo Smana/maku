@@ -66,7 +66,7 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 	if err != nil {
 		return runs.Spec{}, nil, "", err
 	}
-	if t.Status.PullRequest == nil {
+	if t.Status.PullRequest == nil && trigger != TriggerEscalation { // a step continues the run before it, PR or not
 		return r.implementerSpec(t, resumed(t, trigger)+firstBrief(t, r.Nonce(), sc)), nil, trigger, nil
 	}
 	// The finished run's handoff and verdict are after its start; brief.Build reads only those.
@@ -79,6 +79,13 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 		return runs.Spec{}, nil, "", err
 	}
 	text, refs := r.revisionBrief(ctx, t, evs, q, sc)
+	if trigger == TriggerEscalation {
+		judge, err := r.lastJudge(ctx, t)
+		if err != nil {
+			return runs.Spec{}, nil, "", err
+		}
+		text += judgeBlock(judge, r.Nonce(), reviseCap-len(text))
+	}
 	return r.implementerSpec(t, resumed(t, trigger)+text), refs, trigger, nil
 }
 

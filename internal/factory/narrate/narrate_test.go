@@ -698,3 +698,27 @@ func TestProfileChosen(t *testing.T) {
 		})
 	}
 }
+
+func TestProfileEscalated(t *testing.T) {
+	e := ProfileEscalated("review-floor", "review-frontier", "out_of_budget")
+	if e.Key != "profile-escalated" {
+		t.Fatalf("key %q", e.Key)
+	}
+	for _, w := range []string{"`review-floor`", "`review-frontier`", "out_of_budget"} {
+		if !strings.Contains(e.Body, w) {
+			t.Errorf("body lacks %q: %s", w, e.Body)
+		}
+	}
+}
+
+func TestEndedNamesTheStepTried(t *testing.T) {
+	tk := task()
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-frontier", Source: "escalation", Reason: "out_of_budget"}
+	if b := Ended(tk, v1alpha1.PhaseEscalated, "stalled").Body; !strings.Contains(b, "`review-frontier`") {
+		t.Fatal(b)
+	}
+	tk.Status.Profile.Source = "scoper"
+	if b := Ended(tk, v1alpha1.PhaseEscalated, "stalled").Body; strings.Contains(b, "review-frontier") {
+		t.Fatal(b)
+	}
+}
