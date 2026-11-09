@@ -81,8 +81,9 @@ func (c candidate) objects() []Object {
 //
 // When the file and the candidate set do not parse together, culprits are removed greedily: the
 // first candidate (pairs by the Repository's name, then the Factory) whose removal makes the rest
-// parse, or changes Parse's error, is refused Invalid with the current error, and the search
-// starts again on what is left, at most once per candidate. When no removal changes anything, the
+// parse is refused Invalid with the current error; when none does, the first whose removal changes
+// Parse's error is (two culprits). The search starts again on what is left, at most once per
+// candidate. When no removal changes anything, the
 // whole set is refused. A culprit pair refuses its MergePolicy with the error and its Repository
 // as "not served". The Accepted objects are the ones Config is built from.
 //
@@ -120,12 +121,22 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 	cfg, warnings, err := tryParse(base, set)
 	for err != nil && len(set) > 0 {
 		cur := err.Error()
-		culprit := -1
+		// Success first: a removal that makes Parse succeed names the culprit. Only when none
+		// does, the first removal that changes the error does (two culprits). Judging by a
+		// changed error alone would blame a pair whose message merely depends on a bad Factory.
+		culprit, changed := -1, -1
 		for i := range set {
-			if _, _, e := tryParse(base, slices.Concat(set[:i:i], set[i+1:])); e == nil || e.Error() != cur {
+			_, _, e := tryParse(base, slices.Concat(set[:i:i], set[i+1:]))
+			if e == nil {
 				culprit = i
 				break
 			}
+			if changed < 0 && e.Error() != cur {
+				changed = i
+			}
+		}
+		if culprit < 0 {
+			culprit = changed
 		}
 		if culprit < 0 {
 			for _, c := range set {

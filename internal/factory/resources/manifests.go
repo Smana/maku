@@ -48,7 +48,7 @@ func Decode(raw []byte) ([]Object, error) {
 		var offErr error
 		offFields(spec, func(path string, row map[string]any, key string) {
 			if _, ok := row[key].(bool); ok && offErr == nil {
-				offErr = fmt.Errorf("%s %q: %s is a boolean (YAML reads a bare off as false): write \"off\"", kind, name, path)
+				offErr = fmt.Errorf("%s %q: %s must be a string such as \"off\", not a boolean", kind, name, path)
 			}
 		})
 		if offErr != nil {
