@@ -975,7 +975,10 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	t.Spec.Template, t.Spec.PredictedClass, t.Spec.DataClass = d.Template, d.PredictedClass, d.DataClass
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
-	profile := r.floorProfile(t, d)
+	var profile *v1alpha1.ProfileStatus
+	if !triage.Investigates(r.Cfg, t) && !r.Cfg.Investigates(d.Template) { // R9: a task routed to investigate never takes part in the evaluation
+		profile = r.floorProfile(t, d)
+	}
 	var floor config.HarnessProfile
 	if profile != nil {
 		floor, _ = r.Cfg.ProfileFor(r.Cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass], profile.Name)

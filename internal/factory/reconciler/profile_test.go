@@ -23,8 +23,47 @@ func profileCfg(harness bool) *config.Config {
 	if harness {
 		review.Harness = "review-floor"
 	}
+	c.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
 	c.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "review": review, "tests": {}}
+	for name, usd := range map[string][2]float64{"standard": {2.55, 5.10}, "frontier": {6.80, 13.60}} {
+		tr := c.Tiers[name]
+		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
+		c.Tiers[name] = tr
+	}
 	return c
+}
+
+// apiTasks are an internal principal's and a sponsored principal's api tasks.
+func apiTasks(t *testing.T, c *config.Config) (internal, sponsored *v1alpha1.Task) {
+	t.Helper()
+	lc := sponsoredConfig(t)
+	c.API, c.Budgets = lc.API, lc.Budgets
+	c.API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore", Sponsor: "smana"}, DailyTasks: 5}}
+	sponsored = issueTask("3buqdlot", 0, "Fix the dead link in docs/a.md.")
+	sponsor(sponsored, 2_000_000)
+	internal = sponsored.DeepCopy()
+	internal.Spec.Source.Ref, internal.Spec.Source.RequestedBy = "api:runlore", c.API.InternalPrincipals[0].Principal()
+	internal.Spec.DataClass = "internal"
+	return internal, sponsored
+}
+
+// R9: a task routed to investigate by its source never takes part in the evaluation.
+func TestInvestigateTasksSkipTheEvaluation(t *testing.T) {
+	cf := profileCfg(true)
+	internal, _ := apiTasks(t, cf)
+	runlore := issueTask("3buqdlot", 7, "a finding")
+	runlore.Spec.Source.Kind, runlore.Spec.DataClass = "runlore", "internal"
+	for name, tk := range map[string]*v1alpha1.Task{"runlore": runlore, "internal api": internal} {
+		t.Run(name, func(t *testing.T) {
+			g := profileRig(t, cf, tk.DeepCopy(), "")
+			want := mainSpec(t, g, tk)
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseTriaged || got.Status.Profile != nil || got.Spec.Template != "investigate" ||
+				got.Spec.ScopeMode != string(config.ScopeOff) || !reflect.DeepEqual(got.Spec, want) {
+				t.Fatalf("%s %+v %+v", got.Status.Phase, got.Status.Profile, got.Spec)
+			}
+		})
+	}
 }
 
 func profileRig(t *testing.T, c *config.Config, tk *v1alpha1.Task, label string) *rig {
@@ -108,10 +147,13 @@ func TestNoHarnessIsToday(t *testing.T) {
 	origin.Spec.Origin, origin.Spec.PredictedClass = "parent1", "tests"
 	sponsored := issueTask("3buqdlot", 7, "fix it")
 	sponsored.Spec.MaxMicroUSD = 2_000_000
+	internal, sponsoredAPI := apiTasks(t, &config.Config{})
 	for name, c := range map[string]struct {
 		tk    *v1alpha1.Task
 		label string
 	}{
+		"internal api":    {internal, ""},
+		"sponsored api":   {sponsoredAPI, ""},
 		"issue":           {issueTask("3buqdlot", 7, "fix it"), ""},
 		"labelled issue":  {issueTask("3buqdlot", 7, "fix it"), "class:review"},
 		"schedule":        {schedule, ""},
@@ -122,6 +164,7 @@ func TestNoHarnessIsToday(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cf := profileCfg(false)
 			cf.Evaluation.ControlPercent = 100
+			apiTasks(t, cf)
 			g := profileRig(t, cf, c.tk.DeepCopy(), c.label)
 			want := mainSpec(t, g, c.tk)
 			tk := g.reconcile(t, "3buqdlot", 1)
@@ -130,6 +173,46 @@ func TestNoHarnessIsToday(t *testing.T) {
 			}
 			if !reflect.DeepEqual(tk.Spec, want) {
 				t.Fatalf("spec\n got %+v\nwant %+v", tk.Spec, want)
+			}
+		})
+	}
+}
+
+// profileSpec takes the profile's row, raises the tier only above the current one, and keeps a
+// sponsored ceiling through a raise.
+func TestProfileSpec(t *testing.T) {
+	cf := profileCfg(true)
+	steps := int32(7)
+	cf.Loops["review-search"] = config.Loop{StallSteps: &steps, Search: true}
+	for name, c := range map[string]struct {
+		p           config.HarnessProfile
+		tier        string
+		maxMicroUSD int64
+		wantTier    string
+		wantTask    int64
+	}{
+		"own row":        {config.HarnessProfile{Loop: "review-search"}, "standard", 0, "standard", 5_100_000},
+		"tier above":     {config.HarnessProfile{Tier: "frontier"}, "standard", 0, "frontier", 13_600_000},
+		"tier equal":     {config.HarnessProfile{Tier: "standard"}, "standard", 0, "standard", 5_100_000},
+		"tier below":     {config.HarnessProfile{Tier: "standard"}, "frontier", 0, "frontier", 13_600_000},
+		"ceiling raised": {config.HarnessProfile{Tier: "frontier"}, "standard", 2_000_000, "frontier", 2_000_000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newRig(t)
+			g.r.Cfg = cf
+			tk := issueTask("3buqdlot", 7, "fix it")
+			tk.Spec.MaxMicroUSD = c.maxMicroUSD
+			tk.Spec.Budget = triage.Ceiling(triage.BudgetFor(cf, c.tier), c.maxMicroUSD)
+			g.r.profileSpec(tk, "review", c.p)
+			if b := tk.Spec.Budget; b.Tier != c.wantTier || b.TaskMicroUSD != c.wantTask {
+				t.Fatalf("budget %+v", b)
+			}
+			wantSteps, wantScope := int32(40), string(config.ScopeScoper)
+			if c.p.Loop != "" {
+				wantSteps, wantScope = 7, string(config.ScopeOff)
+			}
+			if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != wantSteps || tk.Spec.ScopeMode != wantScope || !tk.Spec.Search {
+				t.Fatalf("row: %+v %s", tk.Spec.Loop, tk.Spec.ScopeMode)
 			}
 		})
 	}
