@@ -1363,3 +1363,19 @@ func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
 		t.Fatalf("merged %q, want the approved head", a)
 	}
 }
+
+// TE: a human's commit seen by the gate is remembered on the pull request through its merge.
+func TestGateRecordsHumanCommits(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetActivity("agent/3buqdlot", forge.Push{Type: "push", Actor: "Smana", Before: "c1", After: "abc", At: now},
+		forge.Push{Type: "branch_creation", Actor: "ogenki-agents[bot]", After: "c1"})
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Reason != "human_commit_in_pr" || !got.Status.PullRequest.HumanCommits {
+		t.Fatalf("%s %v", got.Status.Reason, got.Status.PullRequest.HumanCommits)
+	}
+	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now})
+	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseDone || !got.Status.PullRequest.HumanCommits || taskOutcome(got) != "merged_human" {
+		t.Fatalf("kept through the merge: %s %v", got.Status.Phase, got.Status.PullRequest.HumanCommits)
+	}
+}

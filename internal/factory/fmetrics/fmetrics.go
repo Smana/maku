@@ -45,6 +45,9 @@ const other = "other"
 func outcomes() []string {
 	return []string{"auto_merged", "approved_merged", "human_merged", "closed", "reverted", "follow_up"}
 }
+func taskOutcomes() []string {
+	return []string{"accepted", "merged_human", "no_op", "closed", "stopped", "rejected", "reverted", "failed"}
+}
 func interventions() []string {
 	return []string{"stop", "retry", "request_changes", "steer", "takeover", "approve", "split"}
 }
@@ -160,6 +163,8 @@ type Set struct {
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
 	profileRecs          metric.Int64Counter
+	taskOutcomes         metric.Int64Counter
+	taskUSD              metric.Float64Counter
 	splits               metric.Int64Counter
 	splitChildren        metric.Int64Counter
 	revisionDeferred     metric.Int64Counter
@@ -372,6 +377,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
 		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied (TE)."))
+	check(err)
+	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
+		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed (TE)."))
+	check(err)
+	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
+		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile and outcome (TE)."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -762,8 +773,22 @@ func (s *Set) BudgetDay(ctx context.Context, principal string, spentMicroUSD, ca
 }
 
 // Intervention counts a human stepping in: stop, retry, request_changes, steer, takeover, approve.
-func (s *Set) Intervention(ctx context.Context, kind string) {
-	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())), s.repoOf(ctx)))
+// cohort is the task's team-evaluation cohort, "none" without a profile.
+func (s *Set) Intervention(ctx context.Context, kind, cohort string) {
+	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())),
+		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "none"})), s.repoOf(ctx)))
+}
+
+// TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost (TE);
+// profile names come from config, so the label stays bounded.
+func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, outcome string, usd float64) {
+	cohort = oneOf(cohort, []string{"labeled", "control", "treatment"})
+	outcome = oneOf(outcome, taskOutcomes())
+	s.taskOutcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
+		attribute.String("profile", profile), attribute.String("source", oneOf(source, []string{"label", "floor", "control", "scoper", "escalation"})),
+		attribute.String("outcome", outcome), s.repoOf(ctx)))
+	s.taskUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
+		attribute.String("profile", profile), attribute.String("outcome", outcome)))
 }
 
 // ClassMismatch counts a task whose predicted class is not the one policy-bot matched.

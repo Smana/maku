@@ -281,7 +281,7 @@ func TestAMaintainerApprovesTheSplit(t *testing.T) {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Split)
 	}
 	if !slices.Equal(g.f.Removed(7), []string{"factory/split-proposed"}) || !slices.Contains(g.metrics.recorded, "split review approved") ||
-		!slices.Contains(g.metrics.recorded, "intervention split") {
+		!slices.Contains(g.metrics.recorded, "intervention split none") {
 		t.Fatalf("removed %v metrics %v", g.f.Removed(7), g.metrics.recorded)
 	}
 }
@@ -353,7 +353,7 @@ func TestTwoSplitCommentsApproveOnce(t *testing.T) {
 		}
 		return n
 	}
-	if tk.Status.Split.State != "approved" || count("split review approved") != 1 || count("intervention split") != 1 {
+	if tk.Status.Split.State != "approved" || count("split review approved") != 1 || count("intervention split none") != 1 {
 		t.Fatalf("%+v %v", tk.Status.Split, g.metrics.recorded)
 	}
 }

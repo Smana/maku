@@ -2065,6 +2065,11 @@ spec:
                       or handed to a human (N1: a push after the hand-off keeps it with the human).
                     maxLength: 64
                     type: string
+                  humanCommits:
+                    description: |-
+                      HumanCommits: the gate handed the pull request off human_commit_in_pr at least once. Never
+                      cleared, so a merge after a human's commit is not counted accepted (TE).
+                    type: boolean
                   mergeCommitSHA:
                     maxLength: 64
                     type: string

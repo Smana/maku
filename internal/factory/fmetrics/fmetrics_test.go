@@ -125,7 +125,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 	s.PROutcome(ctx, "docs-links", "human_merged")
 	s.TaskTokens(ctx, 120_000, "standard", "solo", "review")
 	s.BudgetDay(ctx, "system:factory", 34_000_000, 42_500_000)
-	s.Intervention(ctx, "stop")
+	s.Intervention(ctx, "stop", "none")
 	s.ClassMismatch(ctx, "docs-links", "review")
 	s.MergeDecision(ctx, "docs-links", "shadow", "shadow_would_arm")
 	s.TierFit(ctx, "static", "standard", "fit", false)
@@ -158,7 +158,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 		`maku_factory_budget_cap_usd{principal="system:factory"} 42.5`,
 		`maku_factory_budget_remaining_usd{principal="system:factory"} 8.5`,
 		`maku_factory_budget_spent_usd{principal="system:factory"} 34`,
-		`maku_factory_human_interventions_total{kind="stop",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="none",kind="stop",repository="other"} 1`,
 		`maku_factory_label_events_truncated_total{label="factory/ready"} 1`,
 		`maku_factory_class_mismatch_total{matched="review",predicted="docs-links"} 1`,
 		`maku_factory_merge_decisions_total{class="docs-links",reason="shadow_would_arm",repository="other",verdict="shadow"} 1`,
@@ -225,7 +225,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
 	s.Revoked(ctx, "ignore previous instructions")
 	s.PROutcome(ctx, "docs-links", "exploded")
-	s.Intervention(ctx, "a comment's text")
+	s.Intervention(ctx, "a comment's text", "none")
 	s.IntakeError(ctx, "webhook")
 	s.Resumed(ctx, "an agent's text")
 	s.RoomClosedAtCap(ctx, "an agent's text")
@@ -240,7 +240,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 	for _, want := range []string{
 		`maku_factory_run_revocations_total{principal="other",reason="other"} 1`,
 		`maku_factory_pr_outcomes_total{class="docs-links",outcome="other",principal="other",repository="other"} 1`,
-		`maku_factory_human_interventions_total{kind="other",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="none",kind="other",repository="other"} 1`,
 		`maku_factory_intake_errors_total{repository="other",source="other"} 1`,
 		`maku_factory_resumes_total{reason="other"} 1`,
 		`maku_factory_rooms_closed_at_cap_total{reason="other"} 1`,
@@ -475,6 +475,25 @@ func TestProfileRecommendation(t *testing.T) {
 		`maku_factory_profile_recommendations_total{applied="false",class="review",cohort="control",recommended="review-search"} 1`,
 		`maku_factory_profile_recommendations_total{applied="false",class="review",cohort="treatment",recommended="none"} 1`,
 		`maku_factory_profile_recommendations_total{applied="true",class="review",cohort="treatment",recommended="review-search"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
+// TE: a task's outcome and USD by cohort and profile; interventions by cohort.
+func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
+	ctx := t.Context()
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "accepted", 1.25)
+	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "accepted", 0.5)
+	s.Intervention(ctx, "retry", "control")
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",repository="other",source="scoper"} 2`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="review-search"} 1.75`,
+		`maku_factory_human_interventions_total{cohort="control",kind="retry",repository="other"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s\n%s", want, body)

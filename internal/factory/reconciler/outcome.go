@@ -119,6 +119,11 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 	if !v1alpha1.TerminalPhase(t.Status.Phase) {
 		return
 	}
+	if p := t.Status.Profile; p != nil && !p.Counted {
+		p.Counted = true // rides the status write the count waits for: once, or neither
+		class, outcome, usd := t.Spec.PredictedClass, taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
+		record(ctx, func(ctx context.Context) { r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, outcome, usd) })
+	}
 	ids := make([]string, 0, len(t.Status.Runs))
 	for _, x := range t.Status.Runs {
 		ids = append(ids, x.ID)
@@ -137,6 +142,39 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 		"phase", t.Status.Phase, "reason", t.Status.Reason, "tokens", t.Status.Usage.Tokens)
 }
 
+// taskOutcome is an ended task's outcome (TE): accepted is merged with no human commit.
+func taskOutcome(t *v1alpha1.Task) string {
+	switch t.Status.Phase {
+	case v1alpha1.PhaseDone:
+		switch {
+		case t.Status.Reason == reasonIntegrationFailed:
+			return "failed"
+		case t.Status.PullRequest != nil && t.Status.PullRequest.HumanCommits:
+			return "merged_human"
+		}
+		return "accepted"
+	case v1alpha1.PhaseNoOp:
+		return "no_op"
+	case v1alpha1.PhaseClosed:
+		return "closed"
+	case v1alpha1.PhaseStopped:
+		return "stopped"
+	case v1alpha1.PhaseRejected:
+		return "rejected"
+	case v1alpha1.PhaseReverted:
+		return "reverted"
+	}
+	return "failed"
+}
+
+// cohortOf labels a task's metrics with its team-evaluation cohort, "none" without a profile.
+func cohortOf(t *v1alpha1.Task) string {
+	if t.Status.Profile == nil {
+		return "none"
+	}
+	return t.Status.Profile.Cohort
+}
+
 // interventions counts, once per run, how humans steered it from the room (§7).
 func (r *Reconciler) interventions(ctx context.Context, t *v1alpha1.Task) {
 	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, current(t).StartSeq, func(e envelope.Event) bool {
@@ -153,12 +191,14 @@ func (r *Reconciler) interventions(ctx context.Context, t *v1alpha1.Task) {
 			}
 			var p envelope.MessagePayload
 			if json.Unmarshal(e.Payload, &p) == nil && p.Delivery == envelope.DeliverySteering {
-				record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "steer") })
+				cohort := cohortOf(t)
+				record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "steer", cohort) })
 			}
 		case envelope.Driver:
 			var p envelope.DriverPayload
 			if json.Unmarshal(e.Payload, &p) == nil && strings.HasPrefix(p.To, "human:") {
-				record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "takeover") })
+				cohort := cohortOf(t)
+				record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "takeover", cohort) })
 			}
 		}
 	}

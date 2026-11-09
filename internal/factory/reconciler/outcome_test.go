@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -107,5 +108,60 @@ func TestLoopEndsScoreTheTier(t *testing.T) {
 		if got := Fit(&v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseEscalated, Reason: reason}}); got != want {
 			t.Errorf("Fit(%s) = %q, want %q", reason, got, want)
 		}
+	}
+}
+
+// TE: a task's outcome, the column team evaluation compares cohorts on.
+func TestTaskOutcomeTable(t *testing.T) {
+	for name, c := range map[string]struct {
+		phase, reason string
+		human         bool
+		want          string
+	}{
+		"merged by the factory":  {v1alpha1.PhaseDone, "merged", false, "accepted"},
+		"merged, a human commit": {v1alpha1.PhaseDone, "merged", true, "merged_human"},
+		"integration failed":     {v1alpha1.PhaseDone, "integration_failed", false, "failed"},
+		"escalation expired":     {v1alpha1.PhaseStopped, "escalation_expired", false, "stopped"},
+		"stopped":                {v1alpha1.PhaseStopped, "kill_switch", false, "stopped"},
+		"no-op":                  {v1alpha1.PhaseNoOp, "no_change", false, "no_op"},
+		"closed":                 {v1alpha1.PhaseClosed, "pr_closed", false, "closed"},
+		"rejected":               {v1alpha1.PhaseRejected, "unauthorized", false, "rejected"},
+		"reverted":               {v1alpha1.PhaseReverted, "reverted", true, "reverted"},
+	} {
+		tk := &v1alpha1.Task{Status: v1alpha1.TaskStatus{Phase: c.phase, Reason: c.reason,
+			PullRequest: &v1alpha1.PullRequestRef{HumanCommits: c.human}}}
+		if got := taskOutcome(tk); got != c.want {
+			t.Errorf("%s: %s, want %s", name, got, c.want)
+		}
+	}
+}
+
+// TE: an ended task with a profile is counted once, with its USD; the guard rides the status.
+func TestTaskOutcomeCountedOnce(t *testing.T) {
+	g := newRig(t)
+	ended := func(phase string, p *v1alpha1.ProfileStatus) *v1alpha1.Task {
+		return &v1alpha1.Task{Spec: v1alpha1.TaskSpec{PredictedClass: "review"},
+			Status: v1alpha1.TaskStatus{Phase: phase, Reason: "merged", Profile: p, Usage: v1alpha1.Usage{CostMicroUSD: 1_500_000}}}
+	}
+	count := func() int {
+		n := 0
+		for _, s := range g.metrics.recorded {
+			if strings.HasPrefix(s, "task_outcome ") {
+				n++
+			}
+		}
+		return n
+	}
+	tk := ended(v1alpha1.PhaseDone, &v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"})
+	g.r.outcome(t.Context(), tk)
+	g.r.outcome(t.Context(), tk)
+	if count() != 1 || !tk.Status.Profile.Counted || !slices.Contains(g.metrics.recorded, "task_outcome review treatment review-search scoper accepted 1.5") {
+		t.Fatalf("one count: %v %v", tk.Status.Profile.Counted, g.metrics.recorded)
+	}
+	g.r.outcome(t.Context(), ended(v1alpha1.PhaseDone, nil))
+	esc := &v1alpha1.ProfileStatus{Name: "review-search", Cohort: "treatment"}
+	g.r.outcome(t.Context(), ended(v1alpha1.PhaseEscalated, esc))
+	if count() != 1 || esc.Counted {
+		t.Fatalf("no profile, or an escalation, counts nothing: %v", g.metrics.recorded)
 	}
 }

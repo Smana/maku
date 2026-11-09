@@ -103,7 +103,8 @@ type metrics interface {
 	HumanWait(ctx context.Context, phase, reason, class string, d time.Duration)
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
-	Intervention(ctx context.Context, kind string)
+	Intervention(ctx context.Context, kind, cohort string)
+	TaskOutcome(ctx context.Context, class, cohort, profile, source, outcome string, usd float64)
 	TierFit(ctx context.Context, classifier, tier, fit string, control bool)
 	Revoked(ctx context.Context, reason string)
 	AdmissionRefused(ctx context.Context, reason string)
@@ -516,6 +517,9 @@ func (r *Reconciler) to(t *v1alpha1.Task, phase, reason string) {
 	if ref := t.Status.PullRequest; phase == v1alpha1.PhaseAwaitingHuman && ref != nil && ref.HandedOffAt == nil {
 		ref.HandedOffAt, ref.HandedOffReason = t.Status.PhaseSince.DeepCopy(), reason[:min(len(reason), maxHandedOffReason)]
 	}
+	if ref := t.Status.PullRequest; phase == v1alpha1.PhaseAwaitingHuman && ref != nil && reason == "human_commit_in_pr" {
+		ref.HumanCommits = true // every site where the gate's provenance refuses a commit (TE)
+	}
 }
 
 // handedOffMerged records a merged pull request's wait from its first hand-off to its merge (AM9),
@@ -633,7 +637,8 @@ func (r *Reconciler) stop(ctx context.Context, t *v1alpha1.Task, why string) err
 		}
 	}
 	if why != "kill_switch" {
-		record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "stop") })
+		cohort := cohortOf(t)
+		record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "stop", cohort) })
 	}
 	exit := ""
 	if why == "superseded" {

@@ -237,7 +237,7 @@ absent rather than 0.
 | `maku_factory_budget_cap_usd` | gauge | `principal` | The principal's daily cap in USD |
 | `maku_factory_budget_remaining_usd` | gauge | `principal` | USD the principal has left today, 0 once its day is spent |
 | `maku_factory_budget_spent_usd` | gauge | `principal` | USD the principal spent today, unclamped: how far past its cap a day ran. Each principal of yesterday reads 0 from the day's first settled tick |
-| `maku_factory_human_interventions_total` | counter | `kind`, `repository` | `stop`, `retry`, `request_changes`, `steer`, `takeover`, `approve`, `split` |
+| `maku_factory_human_interventions_total` | counter | `kind`, `cohort`, `repository` | `stop`, `retry`, `request_changes`, `steer`, `takeover`, `approve`, `split`; `cohort` is the task's (`labeled`, `control`, `treatment`), `none` without a profile |
 | `maku_factory_merge_decisions_total` | counter | `class`, `verdict`, `reason`, `repository` | The merge gate's decisions: `arm`, `shadow`, `human`, `escalate`, `ci_red`, `ci_cancelled`; a wait is none. Each also leaves a [decision record](factory.md#the-merge-gate) in its comment |
 | `maku_factory_class_mismatch_total` | counter | `predicted`, `matched` | The predicted class differs from the one policy-bot matched |
 | `maku_factory_tier_fit_total` | counter | `classifier`, `tier`, `fit`, `control` | A finished task's tier fit, per classifier |
@@ -267,6 +267,8 @@ absent rather than 0.
 | `maku_factory_steering_reads_total` | counter | `class`, `read`, `repository` | Steering notes read at triage, in a mode other than `off`: `used`, `absent`, `invalid`, or `unowned` (the repository's fence does not name this factory, or its cache is stale: not read) |
 | `maku_factory_scoper_runs_total` | counter | `class`, `outcome`, `repository` | Scoper runs as they end: `ready`, `question`, `assumed`, `missing`, `failed`, `budget` (the run cap ended it before any handoff; its `status.scope` is `failed`), `budget_calls` (the harness stopped it at `scoper.maxToolCalls` tool calls before any handoff; its `status.scope` is `failed`). A scoper that ends without a handoff says so in the room |
 | `maku_factory_profile_recommendations_total` | counter | `class`, `cohort`, `recommended`, `applied` | Resolved tasks offered profiles: the scoper's recommendation (`none` without one, `other` for a name not offered) and whether it was applied (`true` only for the treatment cohort under `evaluation.mode: apply`) |
+| `maku_factory_task_outcomes_total` | counter | `class`, `cohort`, `profile`, `source`, `outcome`, `repository` | Ended tasks with a profile, once each: `accepted` (merged, no human commit), `merged_human`, `no_op`, `closed`, `stopped`, `rejected`, `reverted`, `failed` |
+| `maku_factory_task_usd_total` | counter | `class`, `cohort`, `profile`, `outcome` | USD of those tasks, every attempt summed, read when the task ends |
 | `maku_factory_scope_bounces_total` | counter | `class`, `exit`, `repository` | Bounced tasks leaving their wait: `relabel`, `retry`, `expired` |
 | `maku_factory_splits_total` | counter | `class`, `outcome`, `repository` | Split handoffs, once each: `approved`, `declined`, `superseded`, `expired`, `ignored`, and `unstated` (offered a split, the scoper's handoff summary describes one but its `room_handoff` carries no `split`: the task runs whole, and a room note says so) |
 | `maku_factory_split_children_total` | counter | `class`, `outcome`, `repository` | Parts of a split, once each when their parent ends: `landed`, `dropped`, `reverted` |

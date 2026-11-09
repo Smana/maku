@@ -879,6 +879,10 @@ type PullRequestRef struct {
 	MergedBy string `json:"mergedBy,omitempty"`
 	// +optional
 	AutoMerged bool `json:"autoMerged,omitempty"`
+	// HumanCommits: the gate handed the pull request off human_commit_in_pr at least once. Never
+	// cleared, so a merge after a human's commit is not counted accepted (TE).
+	// +optional
+	HumanCommits bool `json:"humanCommits,omitempty"`
 	// MergedHow says who judged the merge the merger made (human path AM1): "class", the class's
 	// own conditions (AutoMerged), or "approved", a maintainer's approval of the head, named in
 	// ApprovedBy. Empty for a merge the merger did not make.

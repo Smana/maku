@@ -150,7 +150,8 @@ func (r *Reconciler) approveSplit(ctx context.Context, t *v1alpha1.Task, c forge
 	}
 	r.leaveSplit(ctx, t, SplitApproved)
 	t.Status.Split.ApprovedBy = person
-	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "split") })
+	cohort := cohortOf(t)
+	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "split", cohort) })
 	r.to(t, v1alpha1.PhaseSplit, "")
 	return nil
 }
