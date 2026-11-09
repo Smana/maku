@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
@@ -1414,6 +1415,48 @@ func TestGateRecordsHumanCommits(t *testing.T) {
 	}
 	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention human_commit none none none"}) {
 		t.Fatalf("the human's commit counts once, at the hand-off: %v", got)
+	}
+}
+
+// R39: a split's part reads no parent at its merge. The mark its triage wrote (status.evaluated, the
+// parent having a profile) decides: a part without it completes as on main while the parent's read
+// fails; a part with it keeps its provenance check, the parent's read failing all the same.
+func TestAPartReadsNoParentAtItsMerge(t *testing.T) {
+	bot, claim := "ogenki-agents[bot]", "docs: fix\n\nAgent-Run: "+rid(0)
+	for name, c := range map[string]struct {
+		evaluated bool
+		human     bool
+	}{
+		"no profile in the family": {false, false},
+		"a profiled family":        {true, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
+			tk := g.get(t)
+			tk.Spec.Parent = &v1alpha1.Parent{Task: "abcdefgh", Issue: 7, Index: 1, Of: 2}
+			if err := g.c.Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			tk = g.get(t)
+			tk.Status.Reason, tk.Status.Evaluated = "merge_gate_off", c.evaluated
+			if err := g.c.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
+				Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key.Name == "abcdefgh" {
+						return errors.New("the parent's read refused")
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				}})
+			g.f.SetCommits(12, forge.Commit{SHA: "abc", Message: claim}, forge.Commit{SHA: "def", Message: "typo"})
+			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
+				HeadRef: "agent/3buqdlot", HeadSHA: "def", Author: bot, HeadMessage: claim})
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits != c.human || got.Status.PullRequest.MergeCommitSHA != "m1" {
+				t.Fatalf("%s %s %+v, want Done with human %v", got.Status.Phase, got.Status.Reason, got.Status.PullRequest, c.human)
+			}
+		})
 	}
 }
 

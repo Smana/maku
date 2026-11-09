@@ -439,6 +439,9 @@ func (r *Reconciler) inherit(ctx context.Context, t *v1alpha1.Task) (string, err
 	t.Spec.PredictedClass, t.Spec.DataClass = p.Spec.PredictedClass, p.Spec.DataClass // SL6: the parent's class
 	t.Spec.Steering, t.Spec.ScopeMode, t.Spec.Loop, t.Spec.Search = p.Spec.Steering, p.Spec.ScopeMode, p.Spec.Loop, p.Spec.Search
 	t.Spec.Template, t.Spec.Budget = triage.Matrix(p.Spec.PredictedClass, "issue", b.Tier), b
+	// R39: the family's membership in the evaluation is written here, the one place a part reads
+	// its parent; its merge reads the mark and never the parent.
+	t.Status.Evaluated = p.Status.Profile != nil
 	if t.Labels == nil {
 		t.Labels = map[string]string{}
 	}

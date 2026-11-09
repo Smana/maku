@@ -1655,6 +1655,12 @@ spec:
                   as. A later Reverted revises neither.
                 format: date-time
                 type: string
+              evaluated:
+                description: |-
+                  A split's part whose outcome the team evaluation counts, under its parent's profile (R32):
+                  written at its triage when the parent has one. Its merge's provenance is read for the mark
+                  (R39), never for the parent.
+                type: boolean
               facts:
                 description: 'The task facts last written to the room: their seq comes
                   from the roomSeq ledger (ruling SK).'

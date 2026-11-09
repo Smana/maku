@@ -94,6 +94,34 @@ func TestAChildIsTriagedFromItsParent(t *testing.T) {
 	}
 }
 
+// R39: a part's triage marks it evaluated when its parent has a profile, and not otherwise; the
+// merge reads the mark, never the parent.
+func TestAPartIsMarkedEvaluatedFromItsParent(t *testing.T) {
+	t.Run("a profiled parent", func(t *testing.T) {
+		g, _ := harnessedSplit(t, 2)
+		g.r.Now = func() time.Time { return now.Add(time.Hour) }
+		g.f.SetComments(7, splitBy(80, "Smana"))
+		g.reconcile(t, "3buqdlot", 2)
+		if p := g.get(t); p.Status.Profile == nil {
+			t.Fatalf("the parent carries the profile: %+v", p.Status)
+		}
+		g.reconcile(t, child(1), 3)
+		if c := childTask(t, g, 1); !c.Status.Evaluated || c.Status.Profile != nil {
+			t.Fatalf("marked, no profile of its own: %+v", c.Status)
+		}
+	})
+	t.Run("a parent with none", func(t *testing.T) {
+		g := approved(t)
+		if p := g.reconcile(t, "3buqdlot", 0); p.Status.Profile != nil {
+			t.Fatalf("no profile on this parent: %+v", p.Status.Profile)
+		}
+		g.reconcile(t, child(1), 3)
+		if c := childTask(t, g, 1); c.Status.Evaluated {
+			t.Fatalf("not marked: %+v", c.Status)
+		}
+	})
+}
+
 // SR10, offline proof 4: a replay after a lost write following CreateIssue adopts the issue by its
 // marker and opens none; the Task's AlreadyExists is the dedup.
 func TestAReplayOpensNoSecondIssue(t *testing.T) {

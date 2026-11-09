@@ -472,6 +472,11 @@ type TaskStatus struct {
 	// +kubebuilder:validation:Enum=accepted;merged_human;no_op;closed;stopped;rejected;reverted;failed
 	// +optional
 	Outcome string `json:"outcome,omitempty"`
+	// A split's part whose outcome the team evaluation counts, under its parent's profile (R32):
+	// written at its triage when the parent has one. Its merge's provenance is read for the mark
+	// (R39), never for the parent.
+	// +optional
+	Evaluated bool `json:"evaluated,omitempty"`
 	// +optional
 	ReviewRounds int32 `json:"reviewRounds,omitempty"`
 	// +optional

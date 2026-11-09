@@ -1527,7 +1527,8 @@ creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
 | `status.pullRequest` | `number`, `url`, `nodeID`, `headSHA`, `mergeCommitSHA`, `mergedBy`, `autoMerged`, `armedAt`, `mergedAt`, `revertNumber`, `author`, `reviewers` |
 | `status.usage` | `tokens` and `costMicroUSD` summed over the runs; never drops |
 | `status.usageSettled` | The meter's late readings had their window and the total is final |
-| `status.endedAt`, `status.outcome` | The task's first end and what it ended as (`accepted`, `merged_human`, `no_op`, `closed`, `stopped`, `rejected`, `reverted`, `failed`): the settle window counts from the first, `task_outcomes_total` reports the second. A later `Reverted` revises neither |
+| `status.endedAt`, `status.outcome` | The task's first end and what it ended as (`accepted`, `merged_human`, `no_op`, `closed`, `stopped`, `rejected`, `reverted`, `failed`): the settle window counts from the first. A later `Reverted` revises neither. `task_outcomes_total` reports `outcome` for a task of its own; an approved split's parent reports the family's outcome, read from its parts at the settle, and its own `outcome` is a part's fallback (a part never opened, or not ended) |
+| `status.evaluated` | A split's part the evaluation counts under its parent's profile: written at the part's triage when the parent has one. Its merge's provenance is read for the mark, never for the parent |
 | `status.reviewRounds`, `status.fixRuns`, `status.retries`, `status.resumes` | Counters behind `maxReviewRounds`, `merge.fixRuns`, `/factory retry` and `resume.maxPerTask`. `status.fixRunsBeforeStep` is `fixRuns` at the escalation step: the cap counts from it |
 | `status.checkReruns`, `status.checkRerunsHead` | Re-runs of cancelled checks, per head |
 | `status.gateReentries` | Returns from a transient hand-off to the gate (at most 3) |

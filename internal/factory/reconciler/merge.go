@@ -582,14 +582,14 @@ func (r *Reconciler) factoryMade(ctx context.Context, t *v1alpha1.Task, head str
 // nobody's push; a record not yet written is not waited for, the pull request being merged. What
 // cannot be proven the factory's is a human's. An adopted pull request has no run to claim its
 // commits and is left as it is. The read is the evaluation's (R39): a task it does not count, with
-// no profile and no parent with one, completes as on main, reading nothing.
+// no profile and no mark from a parent with one, completes as on main, reading nothing.
 func (r *Reconciler) mergedHumanCommits(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
 	ref := t.Status.PullRequest
 	if ref.HumanCommits || adoptedTask(t) {
 		return nil
 	}
-	if evaluated, err := r.evaluated(ctx, t); err != nil || !evaluated {
-		return err
+	if !evaluated(t) {
+		return nil
 	}
 	made, err := r.factoryMade(ctx, t, pr.HeadSHA)
 	if err != nil || !made {
@@ -605,19 +605,10 @@ func (r *Reconciler) mergedHumanCommits(ctx context.Context, t *v1alpha1.Task, p
 }
 
 // evaluated: t's outcome is counted by the team evaluation, under its own profile or, for a split's
-// part, its parent's (R32); its parent is read for that alone.
-func (r *Reconciler) evaluated(ctx context.Context, t *v1alpha1.Task) (bool, error) {
-	if t.Status.Profile != nil {
-		return true, nil
-	}
-	if t.Spec.Parent == nil {
-		return false, nil
-	}
-	var p v1alpha1.Task
-	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: t.Namespace, Name: t.Spec.Parent.Task}, &p); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	return p.Status.Profile != nil, nil
+// part, its parent's (R32), as its triage marked it. Nothing is read: a part's merge must not wait
+// on its parent (R39).
+func evaluated(t *v1alpha1.Task) bool {
+	return t.Status.Profile != nil || t.Status.Evaluated
 }
 
 // engagedSince: a maintainer reviewed or commented on the pull request after since.
