@@ -174,12 +174,21 @@ func (r *Reconciler) implementerSpec(t *v1alpha1.Task, text string) runs.Spec {
 // that has them (v3 feature 3, RC8): spec.loop.checks and the repository's checks.egress. Any other
 // run, an internal one included, is today's.
 func (r *Reconciler) withChecks(s *runs.Spec, t *v1alpha1.Task) {
-	on, egress := r.repo(t).ChecksFor(t.Spec.PredictedClass)
-	if !on || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
+	if !r.checksOn(t) || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
 		s.Checks, s.EgressProfiles = false, nil
 		return
 	}
-	s.Checks, s.EgressProfiles = true, egress
+	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(t).Checks.Egress)
+}
+
+// checksOn: the run requests checks as frozen on status.profile at triage (D5); no profile, the
+// class's config as today.
+func (r *Reconciler) checksOn(t *v1alpha1.Task) bool {
+	if t.Status.Profile != nil {
+		return t.Status.Profile.Checks
+	}
+	on, _ := r.repo(t).ChecksFor(t.Spec.PredictedClass)
+	return on
 }
 
 // reserveFactoryDay is §6.2's "SP3 at admission" for the factory's own principal (R34), admitted

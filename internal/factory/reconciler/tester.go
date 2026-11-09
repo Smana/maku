@@ -46,7 +46,15 @@ func ranTester(t *v1alpha1.Task) bool {
 
 // testFirst: the task's class writes its tests first and its template has an implementer to follow.
 func (r *Reconciler) testFirst(t *v1alpha1.Task) bool {
-	return r.repo(t).TestFirstFor(t.Spec.PredictedClass) && slices.Contains(r.Cfg.Templates[t.Spec.Template].Roles, "implementer")
+	return r.testFirstOn(t) && slices.Contains(r.Cfg.Templates[t.Spec.Template].Roles, "implementer")
+}
+
+// testFirstOn: testFirst as frozen on status.profile at triage (D5); no profile, the class's config.
+func (r *Reconciler) testFirstOn(t *v1alpha1.Task) bool {
+	if t.Status.Profile != nil {
+		return t.Status.Profile.TestFirst
+	}
+	return r.repo(t).TestFirstFor(t.Spec.PredictedClass)
 }
 
 // testerRun: the task's current run is its tester's.
