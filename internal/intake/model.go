@@ -106,13 +106,13 @@ type DraftRequest struct {
 }
 
 // Draft is the model's answer, as it arrives and before config has a say: the repository and the
-// evidence behind it, the alternatives, one to three issues, and at most one question.
+// evidence behind it, the alternatives, one to three issues, and its ranked clarification gaps.
 type Draft struct {
-	Repository   string         `json:"repository"`
-	Evidence     []Evidence     `json:"evidence"`
-	Alternatives []Alternative  `json:"alternatives"`
-	Issues       []DraftIssue   `json:"issues"`
-	Question     *DraftQuestion `json:"question"`
+	Repository   string        `json:"repository"`
+	Evidence     []Evidence    `json:"evidence"`
+	Alternatives []Alternative `json:"alternatives"`
+	Issues       []DraftIssue  `json:"issues"`
+	Gaps         []Gap         `json:"gaps"`
 }
 
 // DraftIssue is one issue as the reply composed it. Roles and BudgetUSD exist only so that a reply
@@ -125,13 +125,6 @@ type DraftIssue struct {
 	DependsOn []int    `json:"dependsOn"`
 	Roles     []string `json:"roles"`
 	BudgetUSD float64  `json:"budgetUSD"`
-}
-
-// DraftQuestion is the at most one thing the reply says must be decided before the work starts, with
-// its recommendation.
-type DraftQuestion struct {
-	Text        string `json:"text"`
-	Recommended Answer `json:"recommended"`
 }
 
 // Usage is what the call cost, from the reply's own `usage`: the broker attributes a spend it can
@@ -367,8 +360,52 @@ func (d Draft) invalid() string {
 			return fmt.Sprintf("evidence[%d].text: %d characters, the bound is %d", i, n, maxEvidenceRunes)
 		}
 	}
-	if q := d.Question; q != nil && (strings.TrimSpace(q.Text) == "" || strings.TrimSpace(q.Recommended.Answer) == "") {
-		return "question: it carries text and a recommended answer, or it is absent"
+	seenGaps := make(map[string]struct{}, len(d.Gaps))
+	for i, g := range d.Gaps {
+		if strings.TrimSpace(g.ID) == "" {
+			return fmt.Sprintf("gaps[%d].id: empty, each gap names its one clarification marker", i)
+		}
+		if _, ok := seenGaps[g.ID]; ok {
+			return fmt.Sprintf("gaps[%d].id: already used by another gap", i)
+		}
+		seenGaps[g.ID] = struct{}{}
+		switch g.Section {
+		case "what-is-wrong", "what-it-should-be", "acceptance-check", "scope":
+		default:
+			return fmt.Sprintf("gaps[%d].section: it is what-is-wrong, what-it-should-be, acceptance-check, or scope", i)
+		}
+		if strings.TrimSpace(g.Text) == "" || strings.TrimSpace(g.Recommended.Answer) == "" {
+			return fmt.Sprintf("gaps[%d]: it carries text and a recommended answer", i)
+		}
+		markers := 0
+		for _, is := range d.Issues {
+			markers += clarificationMarkerCount(is.Body, g.ID)
+		}
+		if markers != 1 {
+			return fmt.Sprintf("gaps[%d].id: it names exactly one clarification marker already in an issue body", i)
+		}
 	}
 	return ""
+}
+
+// clarificationMarkerCount counts complete, non-empty [NEEDS CLARIFICATION: id text] markers. The
+// space after id keeps g1 from naming g10's marker.
+func clarificationMarkerCount(body, id string) int {
+	prefix := "[NEEDS CLARIFICATION: " + id + " "
+	count := 0
+	for {
+		i := strings.Index(body, prefix)
+		if i < 0 {
+			return count
+		}
+		body = body[i+len(prefix):]
+		end := strings.IndexByte(body, ']')
+		if end < 0 {
+			return count
+		}
+		if strings.TrimSpace(body[:end]) != "" {
+			count++
+		}
+		body = body[end+1:]
+	}
 }

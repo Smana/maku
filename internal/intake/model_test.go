@@ -221,6 +221,72 @@ func TestTheModelCallIsTheGovernedOne(t *testing.T) {
 	}
 }
 
+// The planner asks for ranked gaps, each tied to a clarification marker in an issue body. The old
+// single-question reply shape is no longer part of the strict model contract.
+func TestSystemPrompt(t *testing.T) {
+	f := fakeGateway(t, okReply)
+	m := modelFor(f)
+	if _, _, err := m.Draft(t.Context(), req()); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := f.body()["messages"].([]any)
+	if len(msgs) != 2 {
+		t.Fatalf("messages: %v", msgs)
+	}
+	prompt, _ := msgs[0].(map[string]any)["content"].(string)
+	for _, want := range []string{`"gaps"`, "[NEEDS CLARIFICATION:", "already in an issue body"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("system prompt lacks %q: %s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, `"question"`) {
+		t.Fatalf("system prompt retains the old single-question shape: %s", prompt)
+	}
+}
+
+// A ranked gap is not free-floating display text: its ID is unique and names one marker in the
+// material issue bodies, and its section comes from the plan/v1 vocabulary.
+func TestDraftRequiresRankedGapMarkers(t *testing.T) {
+	gap := func(id, section string) map[string]any {
+		return map[string]any{"id": id, "section": section, "text": "which one?",
+			"recommended": map[string]any{"answer": "the first", "why": "it is already documented"}}
+	}
+	reply := func(body string, gaps ...map[string]any) []byte {
+		draft, err := json.Marshal(map[string]any{
+			"repository": "smana/ai-native-ref",
+			"issues": []any{map[string]any{
+				"title": "docs: the install link is dead", "body": body, "class": "docs-links",
+			}},
+			"gaps": gaps,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return replyBody(string(draft))
+	}
+	marked := strings.Replace(validBody, "The install link 404s.",
+		"The install link 404s.\n[NEEDS CLARIFICATION: g1 which one?]", 1)
+	for _, c := range []struct {
+		name string
+		body []byte
+		want string
+	}{
+		{name: "marker absent", body: reply(validBody, gap("g1", "what-is-wrong")), want: "exactly one"},
+		{name: "marker repeated", body: reply(marked+"\n[NEEDS CLARIFICATION: g1 again]", gap("g1", "what-is-wrong")), want: "exactly one"},
+		{name: "duplicate gap ID", body: reply(marked, gap("g1", "what-is-wrong"), gap("g1", "scope")), want: "already used"},
+		{name: "unknown section", body: reply(marked, gap("g1", "other")), want: "gaps[0].section"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := fakeGateway(t, c.body)
+			m := modelFor(f)
+			_, _, err := m.Draft(t.Context(), req())
+			if !errors.Is(err, intake.ErrInvalid) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("%v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
 // reasoning_effort is sent only when configured: unset, the body carries no such field and the
 // model's own default stands; set, it carries the configured value verbatim.
 func TestTheReasoningEffortIsSentOnlyWhenSet(t *testing.T) {

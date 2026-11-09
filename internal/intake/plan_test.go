@@ -88,6 +88,34 @@ func TestPlanHashCoversTheMaterialSetOnly(t *testing.T) {
 	}
 }
 
+// Ranked gaps and their round are display: the clarification markers in the issue bodies are already
+// material, so adding the ranked view cannot change what a person confirmed. WithGaps also owns its
+// slice and keeps the legacy single-question view pointed at the highest-ranked gap.
+func TestPlanGapsStayDisplayOnly(t *testing.T) {
+	p := planFixture(t, "single")
+	before := intake.Hash(p)
+	gaps := []intake.Gap{
+		{ID: "g1", Section: "what-is-wrong", Text: "first", Recommended: intake.Answer{Answer: "use one"}},
+		{ID: "g2", Section: "acceptance-check", Text: "second"},
+	}
+	p = intake.WithGaps(p, gaps)
+	p.Round, p.RoundsLeft = 2, 8
+	if got := intake.Hash(p); got != before {
+		t.Fatalf("display fields changed hash: %s != %s", got, before)
+	}
+	if p.Question == nil || p.Question.Text != "first" {
+		t.Fatalf("first gap not mapped: %+v", p.Question)
+	}
+	gaps[0].Text = "changed by caller"
+	if p.Gaps[0].Text != "first" {
+		t.Fatalf("WithGaps aliased its input: %+v", p.Gaps)
+	}
+	p = intake.WithGaps(p, nil)
+	if p.Gaps != nil || p.Question != nil {
+		t.Fatalf("no gaps must clear both views: %+v %+v", p.Gaps, p.Question)
+	}
+}
+
 // The canonical bytes are stable, and the ceiling is an integer: 2000000 micro-dollars for $2.00,
 // never `2.0000000000000004` or `2` — the deliberate deviation from the spec's `ceilingUSD`.
 func TestPlanHashIsStable(t *testing.T) {

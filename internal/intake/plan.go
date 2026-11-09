@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"time"
 )
 
@@ -38,8 +39,12 @@ type Plan struct {
 	APIVersion string `json:"apiVersion"`
 	// Rev counts the plan's revisions in its thread or session. It is display: the hash binds the
 	// plan, and a second Confirm is idempotent on the thread key, not on a revision number.
-	Rev     int     `json:"rev"`
-	Planner Planner `json:"planner"`
+	Rev int `json:"rev"`
+	// Round and RoundsLeft are the intake's clarification round and the rounds remaining before its
+	// cap. Both are display only, and separate from Rev's consumer revision count.
+	Round      int     `json:"round"`
+	RoundsLeft int     `json:"roundsLeft"`
+	Planner    Planner `json:"planner"`
 	// Repository is the one repository the plan files into. It is material: a plan for another
 	// repository is another plan.
 	Repository string `json:"repository"`
@@ -53,7 +58,10 @@ type Plan struct {
 	Issues       []Issue       `json:"issues"`
 	// Budget is the ceiling the broker charges this plan's work against, from config (CD17).
 	Budget Budget `json:"budget"`
-	// Question is the at-most-one thing the broker must ask before anything is filed.
+	// Gaps are the ranked clarifications left in the issue bodies' markers. They are display only:
+	// the markers themselves are already in Material.
+	Gaps []Gap `json:"gaps"`
+	// Question is the highest-ranked gap, kept for clients that render one question.
 	Question *Question `json:"question"`
 	// Hash is the canonical hash the broker computed over Material. It is display in the sense that
 	// Hash never reads it: a plan arrives with the hash its producer claimed, and the consumer
@@ -106,6 +114,26 @@ type Issue struct {
 type Budget struct {
 	CeilingUSD float64 `json:"ceilingUSD"`
 	Source     string  `json:"source"`
+}
+
+// Gap is one ranked clarification. ID names its one [NEEDS CLARIFICATION: …] marker in an issue
+// body; Section is what-is-wrong, what-it-should-be, acceptance-check, or scope.
+type Gap struct {
+	ID          string `json:"id"`
+	Section     string `json:"section"`
+	Text        string `json:"text"`
+	Recommended Answer `json:"recommended"`
+}
+
+// WithGaps sets a plan's ranked display gaps and maps the first to the legacy Question view. The
+// input is cloned so later caller edits cannot mutate a plan that has already been composed.
+func WithGaps(p Plan, gaps []Gap) Plan {
+	p.Gaps = slices.Clone(gaps)
+	p.Question = nil
+	if len(p.Gaps) > 0 {
+		p.Question = &Question{Text: p.Gaps[0].Text, Recommended: p.Gaps[0].Recommended}
+	}
+	return p
 }
 
 // Question is the at most one thing the broker asks before filing, with its recommendation: a
@@ -207,6 +235,7 @@ func Hash(p Plan) string {
 func (p Plan) JSON() ([]byte, error) {
 	p.RepositoryEvidence = list(p.RepositoryEvidence)
 	p.Alternatives = list(p.Alternatives)
+	p.Gaps = list(p.Gaps)
 	p.Issues = list(p.Issues)
 	for i := range p.Issues {
 		p.Issues[i].Roles = list(p.Issues[i].Roles)
