@@ -129,3 +129,21 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveCopiesTheVariants(t *testing.T) {
+	c := central()
+	c.HarnessProfiles["richer"] = config.HarnessProfile{Checks: true}
+	raw := "factory: aws-0\nclasses:\n  docs-broad:\n    mode: \"off\"\n    author: agents\n    harness: plain\n    harnessAllowed: [richer]\n    escalation: {outOfBudget: richer}\n"
+	cl := resolved(t, raw, c).Class
+	if cl.Harness != "plain" || !slices.Equal(cl.HarnessAllowed, []string{"richer"}) || cl.Escalation == nil || cl.Escalation.OutOfBudget != "richer" {
+		t.Fatalf("%+v", cl)
+	}
+	f, err := Parse([]byte(strings.Replace(raw, "[richer]", "[nope]", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Resolve("docs-broad", f.Classes["docs-broad"], c)
+	if !errors.Is(err, ErrGuardrail) || !strings.Contains(err.Error(), `harnessAllowed "nope" is not in harnessProfiles (TE2)`) {
+		t.Fatalf("got %v", err)
+	}
+}

@@ -44,6 +44,8 @@ type HarnessProfile struct {
 	Checks    bool    `json:"checks,omitempty"`
 	TestFirst bool    `json:"testFirst,omitempty"`
 	Loop      LoopRef `json:"loop,omitempty"`
+	// Description is the line the scoper's brief shows: when to choose the profile (TE).
+	Description string `json:"description,omitempty"`
 }
 
 // MergeGuardrails bound every repository's class policy (MP3, MP6): a class may add protected
@@ -160,6 +162,9 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		}
 		if _, ok := c.Loops[string(p.Loop)]; p.Loop != "" && p.Loop != LoopOff && !ok {
 			bad("harnessProfiles.%s: loop %q is off or a row of loops", name, p.Loop)
+		}
+		if len(p.Description) > MaxDescription {
+			bad("harnessProfiles.%s: description is %d bytes at most", name, MaxDescription)
 		}
 		if p.TestFirst && !p.Checks {
 			bad("harnessProfiles.%s: testFirst needs checks (R17)", name)

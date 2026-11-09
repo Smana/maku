@@ -73,14 +73,16 @@ type File struct {
 
 // ClassPolicy is one class as a repository declares it.
 type ClassPolicy struct {
-	Mode             Mode            `json:"mode"`
-	Author           string          `json:"author"`
-	Adopt            *config.Adopt   `json:"adopt,omitempty"`
-	Harness          string          `json:"harness"`
-	Conditions       Conditions      `json:"conditions,omitzero"`
-	RequiresApproval []ApprovalLeaf  `json:"requiresApproval,omitempty"`
-	Limits           Limits          `json:"limits,omitzero"`
-	Monitor          *config.Monitor `json:"monitor,omitempty"`
+	Mode             Mode               `json:"mode"`
+	Author           string             `json:"author"`
+	Adopt            *config.Adopt      `json:"adopt,omitempty"`
+	Harness          string             `json:"harness"`
+	HarnessAllowed   []string           `json:"harnessAllowed,omitempty"`
+	Escalation       *config.Escalation `json:"escalation,omitempty"`
+	Conditions       Conditions         `json:"conditions,omitzero"`
+	RequiresApproval []ApprovalLeaf     `json:"requiresApproval,omitempty"`
+	Limits           Limits             `json:"limits,omitzero"`
+	Monitor          *config.Monitor    `json:"monitor,omitempty"`
 }
 
 // Conditions are a class's predicates. Any leaf absent from All and Any is not checked. Any is

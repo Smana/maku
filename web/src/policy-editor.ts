@@ -13,6 +13,7 @@ import { canonical, highlight, keyFix } from "./policy-yaml";
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
   mode: string; author: string; adopt?: { logins: string[]; branches: string[] }; harness: string;
+  harnessAllowed?: string[]; escalation?: { outOfBudget?: string; notConverged?: string };
   conditions?: { all?: Leaf[]; any?: Leaf[][]; deny?: { protectedFiles: string[] }[] };
   requiresApproval?: { changedFiles: string[] }[];
   limits?: { maxPerDay?: number };

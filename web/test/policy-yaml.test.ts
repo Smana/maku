@@ -22,6 +22,7 @@ const fullPolicy = (): PolicyFile => ({
         any: [[{ requiredLabel: "safe" }], [{ companionFiles: ["^CHANGELOG\\.md$"] }]],
         all: [{ oracle: { maxFindings: 4, workflow: "detect.yaml", probe: "links" } }, { allowedFiles: ["^docs/.+$"] }, { modifyOnly: true },
           { maxPatchFiles: 5 }, { maxModifiedLines: 50 }, { diffShape: "links-only" }, { holdoutChecks: ["links 🔗"] }, { releaseAgeCheck: "renovate/stability-days" }] },
+      escalation: { notConverged: "docs-search", outOfBudget: "docs-frontier" }, harnessAllowed: ["docs-search", "docs-frontier"],
       harness: "docs-standard", adopt: { branches: ["^renovate/"], logins: ["renovate[bot]"] }, author: "adopt", mode: "shadow" },
     "a-docs": { harness: "docs-standard", author: "agents", mode: "live" },
   },

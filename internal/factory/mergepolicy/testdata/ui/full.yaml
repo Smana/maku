@@ -11,6 +11,10 @@ classes:
       logins: ["renovate[bot]"]
       branches: ["^renovate/"]
     harness: "docs-standard"
+    harnessAllowed: ["docs-search", "docs-frontier"]
+    escalation:
+      outOfBudget: "docs-frontier"
+      notConverged: "docs-search"
     conditions:
       all:
         - oracle:
