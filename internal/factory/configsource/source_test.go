@@ -292,3 +292,25 @@ func TestKickCoalesces(t *testing.T) {
 		t.Fatal("kicks must coalesce")
 	}
 }
+
+// A first-pass refusal whose last good version was not served in the end is not accepted, even
+// at generation 0, where an unserved object's zero ServedGeneration equals its own.
+func TestARefusedObjectNotServedIsNotAcceptedAtGenerationZero(t *testing.T) {
+	listed := []resources.Object{{Kind: resources.KindRepository, Name: "a", Generation: 0}}
+	first := map[key]resources.Refusal{{resources.KindRepository, "a"}: {Kind: resources.KindRepository, Name: "a",
+		Reason: v1alpha1.ReasonInvalid, Message: "bad"}}
+	out := outcomes(listed, resources.Result{}, first, nil)
+	if len(out) != 1 || out[0].Accepted || out[0].Reason != v1alpha1.ReasonInvalid || out[0].Message != "bad" {
+		t.Fatalf("outcome %+v, want refused with its first-pass reason", out)
+	}
+}
+
+// A MergePolicy whose repositoryRef names no served Repository records no generations under "".
+func TestGenerationsIgnoreAnOrphanPolicy(t *testing.T) {
+	g := generations([]resources.Object{
+		{Kind: resources.KindMergePolicy, Name: "p", Generation: 3, Spec: map[string]any{"repositoryRef": "missing"}},
+	})
+	if _, ok := g.Repos[""]; ok || len(g.Repos) != 0 {
+		t.Fatalf("generations %+v, want none for an orphan policy", g.Repos)
+	}
+}

@@ -72,7 +72,7 @@ func TestFactoryManagerOptions(t *testing.T) {
 	}{{"agent-system", runwatch.DefaultKind}, {"factory-test", native}} {
 		ns, rk := tc.ns, tc.rk
 		t.Run(ns, func(t *testing.T) {
-			o := factoryManagerOptions(ns, rk)
+			o := factoryManagerOptions(ns, rk, factoryResources())
 			if !o.LeaderElection || o.LeaderElectionID != "agent-factory.agents.ogenki.io" || o.LeaderElectionNamespace != ns ||
 				!o.LeaderElectionReleaseOnCancel {
 				t.Fatalf("leader election: %+v", o)
@@ -87,7 +87,8 @@ func TestFactoryManagerOptions(t *testing.T) {
 				t.Fatal("unstructured reads (a stop's run list) must reach the API server")
 			}
 			// The chart's Roles grant exactly these namespaces: a cluster-wide informer is refused.
-			want := map[string][]string{"Task": {ns}, "Room": {ns}, "ConfigMap": {ns}, rk.GVK().Kind: {rk.Namespace}}
+			want := map[string][]string{"Task": {ns}, "Room": {ns}, "ConfigMap": {ns}, rk.GVK().Kind: {rk.Namespace},
+				"Factory": {ns}, "Repository": {ns}, "MergePolicy": {ns}}
 			if len(o.Cache.ByObject) != len(want) || o.Cache.DefaultNamespaces != nil {
 				t.Fatalf("cached kinds: %v, default namespaces %v", o.Cache.ByObject, o.Cache.DefaultNamespaces)
 			}
@@ -104,6 +105,12 @@ func TestFactoryManagerOptions(t *testing.T) {
 					if by.Field == nil || by.Field.String() != "metadata.name="+killswitch.ConfigMap {
 						t.Fatalf("ConfigMaps cached by %v", by.Field)
 					}
+				case *factoryv1.Factory:
+					kind = "Factory"
+				case *factoryv1.Repository:
+					kind = "Repository"
+				case *factoryv1.MergePolicy:
+					kind = "MergePolicy"
 				case *unstructured.Unstructured:
 					kind = x.GroupVersionKind().Kind
 					if x.GroupVersionKind() != rk.GVK() {
@@ -231,13 +238,23 @@ func TestNonDemoStartupStillFailsFast(t *testing.T) {
 func TestDemoGitTokenServesTheListedRepositories(t *testing.T) {
 	cfg := &config.Config{Demo: true, Runs: runwatch.Kind{Namespace: "runs"},
 		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}}
-	g, err := demoGitToken(cfg, nil, slog.New(slog.DiscardHandler))
+	g, err := demoGitToken(cfg, served(cfg), nil, slog.New(slog.DiscardHandler))
 	if err != nil || g.Namespace != "runs" || g.NeedLeaderElection() != true {
 		t.Fatalf("%+v %v", g, err)
 	}
 	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Other/c"})
-	if _, err := demoGitToken(cfg, nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
+	if _, err := demoGitToken(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func served(cfg *config.Config) func() []string {
+	return func() []string {
+		var out []string
+		for _, r := range cfg.Repos() {
+			out = append(out, r.Name)
+		}
+		return out
 	}
 }
 

@@ -59,9 +59,11 @@ type Source struct {
 	Reader    client.Reader // uncached (mgr.GetAPIReader() or a plain client): works before the cache starts
 	Namespace string
 	File      []byte
-	Live      *config.Live // nil until the first successful Sync, which creates it
-	Log       *slog.Logger
-	Resync    time.Duration // 5m when zero
+	// Live is nil until the first successful Sync, which creates it. That first Sync must complete
+	// before Live is shared: the field itself is not synchronized, only what Live serves.
+	Live   *config.Live
+	Log    *slog.Logger
+	Resync time.Duration // 5m when zero
 
 	mu         sync.Mutex // serializes Sync and guards what follows
 	lastGood   map[key]resources.Object
@@ -233,7 +235,7 @@ func outcomes(listed []resources.Object, r resources.Result, first map[key]resou
 		oc := Outcome{Kind: o.Kind, Name: o.Name, ObservedGeneration: o.Generation}
 		oc.ServedGeneration = served[k]
 		switch f, ok := first[k]; {
-		case ok && oc.ServedGeneration == o.Generation:
+		case ok && hasAccepted(r, k) && oc.ServedGeneration == o.Generation:
 			// Refused only because its pair was (a Repository whose MergePolicy changed): the
 			// object itself is served as it is.
 			oc.Accepted = true
@@ -274,13 +276,17 @@ func generations(accepted []resources.Object) config.Generations {
 		case resources.KindFactory:
 			g.Factory = o.Generation
 		case resources.KindRepository:
-			name, _ := o.Spec["repository"].(string)
-			repoOf[o.Name] = strings.ToLower(name)
+			if name, _ := o.Spec["repository"].(string); name != "" {
+				repoOf[o.Name] = strings.ToLower(name)
+			}
 		}
 	}
 	for _, o := range accepted {
 		switch o.Kind {
 		case resources.KindRepository:
+			if repoOf[o.Name] == "" {
+				continue
+			}
 			if g.Repos == nil {
 				g.Repos = map[string]config.RepoGenerations{}
 			}
@@ -289,6 +295,9 @@ func generations(accepted []resources.Object) config.Generations {
 			g.Repos[repoOf[o.Name]] = e
 		case resources.KindMergePolicy:
 			ref, _ := o.Spec["repositoryRef"].(string)
+			if repoOf[ref] == "" {
+				continue // its repository is not served: nothing to record it under
+			}
 			if g.Repos == nil {
 				g.Repos = map[string]config.RepoGenerations{}
 			}

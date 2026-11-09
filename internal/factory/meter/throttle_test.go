@@ -30,7 +30,7 @@ func TestA429IsJudgedInTheUnitB1Charges(t *testing.T) {
 			var revoked []revocation
 			var fell []string
 			m := usdMeter(st, typed{"aaaaaaaa": typedUsage(tc.u)}, &revoked, &fell)
-			m.RunUSD = map[string]float64{"standard": 100} // the run cap stays out of the way
+			with(m, func(c *config.Config) { c.Tiers = map[string]config.Tier{"standard": {RunUSD: 100}} }) // the run cap stays out of the way
 			m.Throttle, m.B1Ceiling = throttled{"aaaaaaaa": true}, config.RunTokenCeiling
 			if err := m.Tick(t.Context()); err != nil {
 				t.Fatal(err)

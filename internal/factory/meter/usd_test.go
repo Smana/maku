@@ -40,8 +40,7 @@ func standardRun(id string) runs.Run {
 type revocation struct{ reason, limit string }
 
 func usdMeter(st *store, src Source, revoked *[]revocation, fell *[]string) *Meter {
-	return &Meter{Runs: st, Source: src, Prices: glm,
-		RunUSD: map[string]float64{"standard": config.RefUSD(1_500_000)},
+	return &Meter{Runs: st, Source: src, Cfg: priced(glm, map[string]float64{"standard": config.RefUSD(1_500_000)}, config.Budgets{}),
 		OnRevoke: func(_ context.Context, r, l string) {
 			*revoked = append(*revoked, revocation{r, l})
 		},
@@ -109,7 +108,7 @@ func TestATierWithoutAUSDCapKeepsItsTokenCap(t *testing.T) {
 	var revoked []revocation
 	var fell []string
 	m := usdMeter(st, typed{"aaaaaaaa": typedUsage(cohort["#2279"])}, &revoked, &fell)
-	m.RunUSD = nil
+	m.Cfg = priced(glm, nil, config.Budgets{})
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +226,8 @@ func TestARunIsPricedByTheModelThatServedIt(t *testing.T) {
 			var revoked []revocation
 			var fell []string
 			m := usdMeter(st, typed{"aaaaaaaa": byModel(map[string]ModelUsage{model: {Input: 700_000, Output: 10_000}})}, &revoked, &fell)
-			m.Prices, m.Costs = served, &Costs{}
+			with(m, func(c *config.Config) { c.Meter.Prices = served })
+			m.Costs = &Costs{}
 			if err := m.Tick(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -267,7 +267,8 @@ func TestAServedModelWithoutAPriceIsNamedAndCappedInTokens(t *testing.T) {
 	var revoked []revocation
 	var fell, named []string
 	m := usdMeter(st, src, &revoked, &fell)
-	m.Prices, m.Costs = served, &Costs{}
+	with(m, func(c *config.Config) { c.Meter.Prices = served })
+	m.Costs = &Costs{}
 	m.OnUnpriced = func(_ context.Context, model string) { named = append(named, model) }
 	for range 2 {
 		if err := m.Tick(t.Context()); err != nil {
@@ -296,7 +297,7 @@ func TestAnUnseenRunIsNotReportedUnpriced(t *testing.T) {
 	var revoked []revocation
 	var fell []string
 	m := usdMeter(st, typed{}, &revoked, &fell)
-	m.Prices = served
+	with(m, func(c *config.Config) { c.Meter.Prices = served })
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +334,8 @@ func TestAnInputBelowItsCacheTokensIsNamedOnce(t *testing.T) {
 	var revoked []revocation
 	var fell, named []string
 	m := usdMeter(st, src, &revoked, &fell)
-	m.Prices, m.Costs = served, &Costs{}
+	with(m, func(c *config.Config) { c.Meter.Prices = served })
+	m.Costs = &Costs{}
 	m.OnInputExcludesCache = func(_ context.Context, model string) { named = append(named, model) }
 	for range 2 {
 		if err := m.Tick(t.Context()); err != nil {
@@ -358,4 +360,51 @@ func TestAPriceRowsProvenanceChangesNoCost(t *testing.T) {
 	if a, b := cost(p, u), cost(q, u); a != b {
 		t.Fatalf("cost %d with provenance, %d without", b, a)
 	}
+}
+
+// priced is the config a test meter reads: prices, each tier's USD run cap, and the budgets.
+func priced(prices map[string]config.Price, runUSD map[string]float64, b config.Budgets) *config.Config {
+	c := &config.Config{Budgets: b, Tiers: map[string]config.Tier{}}
+	c.Meter.Prices = prices
+	for name, usd := range runUSD {
+		c.Tiers[name] = config.Tier{RunUSD: usd}
+	}
+	return c
+}
+
+// Factory resources D12: the meter reads the live config each tick, so a tier's USD cap that a
+// publish adds caps the next tick's runs, with no restart.
+func TestATierCapPublishedLiveAppliesOnTheNextTick(t *testing.T) {
+	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{standardRun("aaaaaaaa")}}
+	live := config.NewLive(priced(glm, nil, config.Budgets{}))
+	var revoked []revocation
+	var fell []string
+	m := usdMeter(st, typed{"aaaaaaaa": typedUsage(Usage{Input: 100_000, Output: 10_000})}, &revoked, &fell)
+	m.Cfg = live
+	if err := m.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(revoked) != 0 {
+		t.Fatalf("no cap yet, revoked %v", revoked)
+	}
+	next := priced(glm, map[string]float64{"standard": 0.10}, config.Budgets{})
+	next.Hash = "published"
+	live.Publish(next)
+	if err := m.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(revoked) != 1 || revoked[0] != (revocation{ReasonBudgetRun, LimitRunUSD}) {
+		t.Fatalf("revocations %v, want one on the published USD cap", revoked)
+	}
+}
+
+// with changes a copy of the meter's config, for a test that alters one input.
+func with(m *Meter, f func(*config.Config)) {
+	c := &config.Config{}
+	if m.Cfg != nil {
+		cp := *m.Cfg.Current()
+		c = &cp
+	}
+	f(c)
+	m.Cfg = c
 }

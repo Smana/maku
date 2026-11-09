@@ -48,9 +48,9 @@ type Finding struct {
 	Text        string  `json:"text"`
 }
 
-// runloreForge is the part of the forge the intake uses, as the factory App (issues:write is in
+// RunLoreForge is the part of the forge the intake uses, as the factory App (issues:write is in
 // its scope).
-type runloreForge interface {
+type RunLoreForge interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
 }
 
@@ -59,8 +59,10 @@ type runloreForge interface {
 // notify route), on every replica like the run-request API. Token re-reads the mounted bearer
 // secret at each request, so a rotation needs no restart (AGENTS.md).
 type RunLore struct {
-	// Forge is the factory App on cfg.RunLoreRepository(), where the findings are filed (v2 D6).
-	Forge runloreForge
+	// Forges is the factory App's connection to a repository, false when it has none. The intake
+	// files on cfg.RunLoreRepository() (v2 D6), looked up per request: the repository set is live
+	// (factory resources D12).
+	Forges func(repository string) (RunLoreForge, bool)
 	// Owned is v2 D7's fence; nil owns nothing.
 	Owned     func(repository string) bool
 	Client    client.Client
@@ -188,6 +190,10 @@ func (h *RunLore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // then creates the task before the issue: the task's name is the key's hash, so a replay racing
 // on the other replica loses on AlreadyExists and opens no second issue.
 func (h *RunLore) intake(ctx context.Context, cfg *config.Config, f Finding) (int, any, error) {
+	gh, ok := h.Forges(cfg.RunLoreRepository())
+	if !ok {
+		return 0, nil, fmt.Errorf("runlore.repository %s has no GitHub connection", cfg.RunLoreRepository())
+	}
 	key := taskid.RunloreKey(f.AlertName, f.ResourceRef)
 	group := taskid.Name(key)
 	var same v1alpha1.TaskList
@@ -244,7 +250,7 @@ func (h *RunLore) intake(ctx context.Context, cfg *config.Config, f Finding) (in
 	// (F-8), as api/internal.go's intake does.
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fileTimeout)
 	defer cancel()
-	iss, err := h.Forge.CreateIssue(fctx, title, body, []string{"factory/proposed"})
+	iss, err := gh.CreateIssue(fctx, title, body, []string{"factory/proposed"})
 	if err != nil {
 		return 0, nil, err
 	}

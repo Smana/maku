@@ -155,6 +155,7 @@ type Set struct {
 	mergeDecisions       metric.Int64Counter
 	tierFit              metric.Int64Counter
 	intakeErrors         metric.Int64Counter
+	configWireErrors     metric.Int64Counter
 	eventsTruncated      metric.Int64Counter
 	revocations          metric.Int64Counter
 	githubRemaining      metric.Int64Gauge
@@ -354,6 +355,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.intakeErrors, err = meter.Int64Counter("agent_factory_intake_errors_total",
 		metric.WithDescription("Failed intake polls or requests."))
+	check(err)
+	s.configWireErrors, err = meter.Int64Counter("agent_factory_config_wire_errors_total",
+		metric.WithDescription("Repositories a config publish listed and the factory could not wire (a GitHub connection, a merger key): not served until a publish succeeds."))
 	check(err)
 	s.eventsTruncated, err = meter.Int64Counter("agent_factory_label_events_truncated_total",
 		metric.WithDescription("Label polls that met the forge's event cap and left the label for the next poll."))
@@ -827,6 +831,13 @@ func (s *Set) TierFit(ctx context.Context, classifier, tier, fit string, control
 // IntakeError counts a failed intake poll or request, by source.
 func (s *Set) IntakeError(ctx context.Context, source string) {
 	s.intakeErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("source", oneOf(source, intakeSources())), s.repoOf(ctx)))
+}
+
+// ConfigWireError counts a repository a config publish listed and the factory could not wire. The
+// label is the config's spelling: the published list bounds it, though the repository is not
+// served (so not in ListRepositories' list).
+func (s *Set) ConfigWireError(ctx context.Context, repository string) {
+	s.configWireErrors.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", repository)))
 }
 
 // LabelEventsTruncated counts a label left on its issue because its events passed the forge's cap.
