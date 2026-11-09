@@ -16,40 +16,41 @@ import (
 
 // resolveProfile settles t's profile from scope s (nil: the scoper left none); the count is deferred so a replay counts once.
 func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *envelope.Scope) error {
-	p := t.Status.Profile
-	if p == nil || p.Resolved || t.Spec.Parent != nil {
+	if !unresolved(t) {
 		return nil
 	}
 	choices := r.profileChoices(t)
-	p.Resolved = true
+	q := *t.Status.Profile
+	q.Resolved = true
 	if s != nil && len(choices) > 0 {
-		p.Recommended, p.Why = s.Profile, s.ProfileWhy
+		q.Recommended, q.Why = s.Profile, s.ProfileWhy
 	}
 	switch {
-	case p.Source == "label":
+	case q.Source == "label":
 	case s == nil:
-		p.Reason = "scoper_failed"
-	case p.Source == "control":
+		q.Reason = "scoper_failed"
+	case q.Source == "control":
 	default:
 		name, reason, err := r.variantFor(ctx, t, s.Profile)
 		if err != nil {
 			return err
 		}
 		if reason != "" {
-			p.Reason = reason
+			q.Reason = reason
 			break
 		}
 		v, _ := r.Cfg.ProfileFor(r.repo(t).Classes[t.Spec.PredictedClass], name)
 		if err := r.applyProfile(ctx, t, name); err != nil {
 			return err
 		}
-		p.Name, p.Source, p.Reason = name, "scoper", ""
-		p.Checks, p.TestFirst = p.Checks || v.Checks, p.TestFirst || v.TestFirst
+		q.Name, q.Source, q.Reason = name, "scoper", ""
+		q.Checks, q.TestFirst = q.Checks || v.Checks, q.TestFirst || v.TestFirst
 	}
-	narrateLater(t, narrate.ProfileChosen(p.Name, p.Source, p.Reason, p.Why, len(t.Status.Runs)))
+	*t.Status.Profile = q
+	narrateLater(t, narrate.ProfileChosen(q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
 	if len(choices) > 0 {
-		class, cohort, applied := t.Spec.PredictedClass, p.Cohort, p.Source == "scoper"
-		rec := p.Recommended
+		class, cohort, applied := t.Spec.PredictedClass, q.Cohort, q.Source == "scoper"
+		rec := q.Recommended
 		if rec != "" && !slices.ContainsFunc(choices, func(c ProfileChoice) bool { return c.Name == rec }) {
 			rec = "other" // keeps the label bounded
 		}
@@ -58,7 +59,16 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	return nil
 }
 
-// variantFor is the variant to apply for name, or the reason the floor is kept.
+func unresolved(t *v1alpha1.Task) bool {
+	return t.Status.Profile != nil && !t.Status.Profile.Resolved && t.Spec.Parent == nil
+}
+
+// assumed is sc as an assumed end runs it: a question's scope carries no recommendation.
+func assumed(sc envelope.Scope) *envelope.Scope {
+	sc.Profile, sc.ProfileWhy = "", ""
+	return &sc
+}
+
 func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name string) (string, string, error) {
 	cl := r.repo(t).Classes[t.Spec.PredictedClass]
 	if name == "" || name == cl.Harness {
@@ -107,28 +117,28 @@ func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, name st
 	return nil
 }
 
-// resolveScoped resolves a scoped task a retry queues after it escalated on its scoper's end (a
-// question, a declined split); an approved split's parent never runs itself.
-func (r *Reconciler) resolveScoped(ctx context.Context, t *v1alpha1.Task) error {
-	if !scoperPlanned(t) || t.Status.Scope == nil || (t.Status.Split != nil && t.Status.Split.State == SplitApproved) {
+// resolveRetried runs before the retry changes any state, so a broker error replays the retry.
+func (r *Reconciler) resolveRetried(ctx context.Context, t *v1alpha1.Task) error {
+	if !unresolved(t) || !scoperPlanned(t) || t.Status.Scope == nil || (t.Status.Split != nil && t.Status.Split.State == SplitApproved) {
 		return nil
 	}
 	sc, err := r.taskScope(ctx, t)
-	if err != nil {
+	switch {
+	case err != nil:
 		return err
-	}
-	if sc == nil {
+	case sc == nil:
 		return r.resolveProfile(ctx, t, nil)
+	case t.Status.Reason == ReasonNeedsAuthor || sc.Assumed:
+		return r.resolveProfile(ctx, t, assumed(sc.Scope))
 	}
 	return r.resolveProfile(ctx, t, &sc.Scope)
 }
 
-// resolveUnscoped settles the profile of a task no scoper runs for: as triage froze it, with no choice offered.
 func resolveUnscoped(t *v1alpha1.Task) {
-	p := t.Status.Profile
-	if p == nil || p.Resolved || t.Spec.Parent != nil {
+	if !unresolved(t) {
 		return
 	}
+	p := t.Status.Profile
 	p.Resolved = true
 	narrateLater(t, narrate.ProfileChosen(p.Name, p.Source, p.Reason, "", len(t.Status.Runs)))
 }

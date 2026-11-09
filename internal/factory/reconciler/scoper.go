@@ -102,7 +102,7 @@ func (r *Reconciler) scoped(ctx context.Context, t *v1alpha1.Task, phase, reason
 	case sc.State == envelope.ScopeReady:
 		return r.scopeEnd(ctx, t, sc, "ready", seq)
 	case t.Spec.Issue == 0: // a schedule has no author to ask
-		return r.scopeEnd(ctx, t, sc, "assumed", seq)
+		return r.scopeEnd(ctx, t, assumed(*sc), "assumed", seq)
 	}
 	return r.bounce(ctx, t, sc, seq)
 }

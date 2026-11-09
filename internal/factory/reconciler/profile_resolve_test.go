@@ -390,3 +390,87 @@ func TestAnUnscopedTaskResolvesAtAdmission(t *testing.T) {
 		t.Fatalf("%+v %v", p, g.metrics.recorded)
 	}
 }
+
+// flakyLog fails the next EventsSince once when armed, as a broker outage would.
+type flakyLog struct {
+	*fakeLog
+	fail bool
+}
+
+func (l *flakyLog) EventsSince(ctx context.Context, room string, after int64, keep func(envelope.Event) bool) ([]envelope.Event, int64, error) {
+	if l.fail {
+		l.fail = false
+		return nil, 0, errors.New("broker down")
+	}
+	return l.fakeLog.EventsSince(ctx, room, after, keep)
+}
+
+// R13: a ready scope's recommendation bounced for want of an acceptance check runs assumed, on the floor.
+func TestAnAssumedRetryAppliesNoRecommendation(t *testing.T) {
+	g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Text = "fix it" })
+	sc := readyScope()
+	sc.Profile, sc.ProfileWhy = "review-wide", "two pages"
+	scopeHandoff(g, 0, sc)
+	if tk := endScoper(t, g, "Succeeded", "agent_finished"); tk.Status.Reason != ReasonNeedsAuthor {
+		t.Fatalf("%s %q", tk.Status.Phase, tk.Status.Reason)
+	}
+	g.r.Now = func() time.Time { return now.Add(time.Hour) }
+	g.f.SetComments(7, retryBy(77, "smana", -30*time.Minute))
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Scope.State != "assumed" || tk.Status.Profile.Recommended != "" {
+		t.Fatalf("%+v %+v", tk.Status.Scope, tk.Status.Profile)
+	}
+	wantResolved(t, tk, "review-floor", "floor", "none", 1)
+}
+
+// A broker error reading the scope leaves the retry unhandled; the next reconcile replays it once.
+func TestABrokerErrorReplaysTheRetry(t *testing.T) {
+	g := harnessedScoper(t, nil)
+	scopeHandoff(g, 0, questionScope())
+	endScoper(t, g, "Succeeded", "agent_finished")
+	fl := &flakyLog{fakeLog: g.log, fail: true}
+	g.r.Rooms = fl
+	g.r.Now = func() time.Time { return now.Add(time.Hour) }
+	g.f.SetComments(7, retryBy(77, "smana", -30*time.Minute))
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+		t.Fatal("the broker error should surface")
+	}
+	tk := g.reconcile(t, "3buqdlot", 0)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Retries != 0 || slices.Contains(tk.Status.Handled, 77) ||
+		tk.Status.Scope.State != "question" || tk.Status.Profile.Resolved {
+		t.Fatalf("the retry changed state: %s %d %v %+v %+v", tk.Status.Phase, tk.Status.Retries, tk.Status.Handled, tk.Status.Scope, tk.Status.Profile)
+	}
+	tk = g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Retries != 1 {
+		t.Fatalf("%s %d", tk.Status.Phase, tk.Status.Retries)
+	}
+	wantResolved(t, tk, "review-floor", "floor", "none", 1)
+}
+
+// A refused spec write leaves the profile unresolved, unnarrated and uncounted; the next try applies once.
+func TestARefusedSpecWriteLeavesItUnresolved(t *testing.T) {
+	g, tk := triagedRig(t, resolveCfg("apply", 0), "", "")
+	refuse := true
+	g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
+		Update: func(ctx context.Context, cl client.WithWatch, o client.Object, opts ...client.UpdateOption) error {
+			if refuse {
+				refuse = false
+				return errors.New("spec write refused")
+			}
+			return cl.Update(ctx, o, opts...)
+		}})
+	sc := readyScope()
+	sc.Profile = "review-search"
+	if err := g.r.resolveProfile(t.Context(), tk, &sc); err == nil {
+		t.Fatal("the refusal should surface")
+	}
+	if p := tk.Status.Profile; p.Resolved || p.Name != "review-floor" || p.Recommended != "" || len(tk.Status.Outbox) != 0 || countProfile(g.metrics.recorded) != 0 {
+		t.Fatalf("%+v %+v %v", p, tk.Status.Outbox, g.metrics.recorded)
+	}
+	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+		t.Fatal(err)
+	}
+	if p := tk.Status.Profile; !p.Resolved || p.Name != "review-search" || tk.Spec.Loop.StallSteps != 7 || len(tk.Status.Outbox) != 1 || countProfile(g.metrics.recorded) != 1 {
+		t.Fatalf("%+v %+v %v", p, tk.Status.Outbox, g.metrics.recorded)
+	}
+}
