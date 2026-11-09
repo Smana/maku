@@ -1669,6 +1669,12 @@ spec:
               fixRuns:
                 format: int32
                 type: integer
+              fixRunsBeforeStep:
+                description: |-
+                  FixRuns when the escalation step queued the task's run under its richer profile: the step
+                  grants a fresh allowance, so merge.fixRuns counts from here (R33).
+                format: int32
+                type: integer
               gateReentries:
                 description: |-
                   Returns from a transient AwaitingHuman hand-off to the merge gate (N1), every cause

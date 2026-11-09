@@ -100,6 +100,9 @@ func wantStepped(t *testing.T, tk *v1alpha1.Task, name, group string) {
 		p.Name != name || p.Source != "escalation" || p.Reason != group || p.Cohort != "treatment" || !p.Checks || p.TestFirst {
 		t.Fatalf("%s %q %d %+v", tk.Status.Phase, tk.Status.NextTrigger, tk.Status.ReviewRounds, p)
 	}
+	if tk.Status.FixRunsBeforeStep != tk.Status.FixRuns { // R33: the repairs spent so far are the step's baseline
+		t.Fatalf("fix runs %d, baseline %d", tk.Status.FixRuns, tk.Status.FixRunsBeforeStep)
+	}
 	if !outboxHas(tk, "profile-escalated") || outboxHas(tk, "end-") {
 		t.Fatalf("outbox %+v", tk.Status.Outbox)
 	}
@@ -120,7 +123,7 @@ func TestStepTable(t *testing.T) {
 	} {
 		t.Run(reason, func(t *testing.T) {
 			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
-				tk.Status.ReviewRounds = 2
+				tk.Status.ReviewRounds, tk.Status.FixRuns = 2, 1
 				if reason == "review_rounds_exhausted" { // the review loop's verdict ends a reviewer's run
 					tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
 				}

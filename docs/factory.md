@@ -400,7 +400,9 @@ reads the class's `escalation` alone, not `evaluation.mode`: a class that declar
 `observe` too. A step
 raises the tier, never lowers it; it never turns on `testFirst`, since the tester branches from
 main. The stepped run gets the revision brief with the completion judge's last verdict fenced in
-it. The escalated task's end comment names the profile already tried.
+it, on the same branch and pull request. The step renews the task's usual limits once: the review
+rounds and the CI fix runs count from it (`status.fixRunsBeforeStep`), so a stepped task gets
+`merge.fixRuns` repairs of its own. The escalated task's end comment names the profile already tried.
 
 A maintainer's **Request changes** is answered where it was made, on the pull request:
 
@@ -1523,7 +1525,7 @@ creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
 | `status.pullRequest` | `number`, `url`, `nodeID`, `headSHA`, `mergeCommitSHA`, `mergedBy`, `autoMerged`, `armedAt`, `mergedAt`, `revertNumber`, `author`, `reviewers` |
 | `status.usage` | `tokens` and `costMicroUSD` summed over the runs; never drops |
 | `status.usageSettled` | The meter's late readings had their window and the total is final |
-| `status.reviewRounds`, `status.fixRuns`, `status.retries`, `status.resumes` | Counters behind `maxReviewRounds`, `merge.fixRuns`, `/factory retry` and `resume.maxPerTask` |
+| `status.reviewRounds`, `status.fixRuns`, `status.retries`, `status.resumes` | Counters behind `maxReviewRounds`, `merge.fixRuns`, `/factory retry` and `resume.maxPerTask`. `status.fixRunsBeforeStep` is `fixRuns` at the escalation step: the cap counts from it |
 | `status.checkReruns`, `status.checkRerunsHead` | Re-runs of cancelled checks, per head |
 | `status.gateReentries` | Returns from a transient hand-off to the gate (at most 3) |
 | `status.verdict` | The last review's effective verdict: `approve`, `changes` or `none` |

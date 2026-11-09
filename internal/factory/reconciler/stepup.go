@@ -72,12 +72,13 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 	return true, nil
 }
 
-// stepped is the status half of a step whose spec is written: the profile, a fresh review loop and the queued run.
+// stepped is the status half of a step whose spec is written: the profile, a fresh review loop, a
+// fresh CI-repair allowance (R33) and the queued run.
 func (r *Reconciler) stepped(t *v1alpha1.Task, d profileDecision) {
 	p := t.Status.Profile
 	from := p.Name
 	d.restore(p)
-	t.Status.ReviewRounds = 0
+	t.Status.ReviewRounds, t.Status.FixRunsBeforeStep = 0, t.Status.FixRuns
 	t.Status.NextTrigger = TriggerEscalation
 	r.to(t, v1alpha1.PhaseQueued, "")
 	narrateLater(t, narrate.ProfileEscalated(from, d.Name, d.Reason))

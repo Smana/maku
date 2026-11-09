@@ -908,10 +908,12 @@ func (r *Reconciler) rerunCancelled(ctx context.Context, t *v1alpha1.Task, pr fo
 	return first
 }
 
-// fixCI: two fix runs, then escalate with the failure on the PR (§6.3).
+// fixCI: two fix runs, then escalate with the failure on the PR (§6.3). The allowance counts from
+// the escalation step when there was one (R33); FixRuns itself keeps counting, so every repair's
+// room message and narration has an id of its own.
 func (r *Reconciler) fixCI(ctx context.Context, t *v1alpha1.Task, pr forge.PR, c forge.Checks) error {
 	names := failing(c, requiredFor(r.repo(t), t))
-	if t.Status.FixRuns >= r.repo(t).Merge.FixRuns {
+	if t.Status.FixRuns-t.Status.FixRunsBeforeStep >= r.repo(t).Merge.FixRuns {
 		narrateOn(t, pr.Number, narrate.CIExhausted(t, names))
 		return r.end(ctx, t, v1alpha1.PhaseEscalated, "ci_red")
 	}
@@ -922,7 +924,7 @@ func (r *Reconciler) fixCI(ctx context.Context, t *v1alpha1.Task, pr forge.PR, c
 			why = append(why, fmt.Sprintf("`%s`: %s", x.Name, strings.ToLower(x.State)))
 		}
 	}
-	narrateLater(t, narrate.CIFixing(t, pr.Number, pr.HeadSHA, why, int(t.Status.FixRuns), int(r.repo(t).Merge.FixRuns)))
+	narrateLater(t, narrate.CIFixing(t, pr.Number, pr.HeadSHA, why, int(t.Status.FixRuns-t.Status.FixRunsBeforeStep), int(r.repo(t).Merge.FixRuns)))
 	msg := fmt.Sprintf("CI failed on %s: %s. Read the failing jobs with `gh pr checks %d` and fix them on the same branch.",
 		pr.HeadSHA, strings.Join(names, ", "), pr.Number)
 	if err := r.Rooms.Enqueue(ctx, t.Status.RoomRef, "ci", msg, int64(t.Status.FixRuns)); err != nil {

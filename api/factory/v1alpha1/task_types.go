@@ -469,6 +469,10 @@ type TaskStatus struct {
 	ReviewRounds int32 `json:"reviewRounds,omitempty"`
 	// +optional
 	FixRuns int32 `json:"fixRuns,omitempty"`
+	// FixRuns when the escalation step queued the task's run under its richer profile: the step
+	// grants a fresh allowance, so merge.fixRuns counts from here (R33).
+	// +optional
+	FixRunsBeforeStep int32 `json:"fixRunsBeforeStep,omitempty"`
 	// Re-runs of a cancelled required check, capped by merge.checkReruns. A cancelled check is
 	// not a failure, so it never spends a fix run.
 	// +optional

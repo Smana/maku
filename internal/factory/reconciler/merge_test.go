@@ -274,6 +274,41 @@ func TestACIFixRunSaysWhyItStarted(t *testing.T) {
 	}
 }
 
+// R33: the escalation step grants a fresh CI-repair allowance, counted from the fix runs spent
+// before it; each repair's room message and narration keep ids of their own.
+func TestAStepGrantsFreshCIRepairs(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	tk := g.get(t)
+	tk.Status.FixRuns, tk.Status.FixRunsBeforeStep = 2, 2 // both repairs spent, then stepped
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-frontier", Source: "escalation", Reason: "out_of_budget", Cohort: "treatment", Resolved: true}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	red := green("SUCCESS")
+	red.Runs[1].State = "FAILURE"
+	g.f.SetChecks(12, red)
+	for i := range 2 {
+		id := rid(i + 1)
+		tk := g.reconcile(t, "3buqdlot", 2)
+		n := int64(i + 3)
+		if tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.FixRuns != int32(n) || tk.Status.Runs[len(tk.Status.Runs)-1].Trigger != "ci" ||
+			g.log.keys[fmt.Sprintf("ci/%d", n)] == 0 || !slices.Contains(tk.Status.Narrated, fmt.Sprintf("ci-fixing-%d", n)) {
+			t.Fatalf("repair %d: %s fixes %d, keys %v, narrated %v", i+1, tk.Status.Phase, tk.Status.FixRuns, g.log.keys, tk.Status.Narrated)
+		}
+		if c := append(g.f.Comments(7), g.f.Comments(12)...); !slices.ContainsFunc(c, func(b string) bool {
+			return strings.Contains(b, fmt.Sprintf("a run starts to fix it (%d/2)", i+1))
+		}) {
+			t.Fatalf("the count is the step's: %q", c)
+		}
+		g.runs.set(id, "Succeeded")
+		g.log.end(id, "Succeeded", "agent_finished")
+		g.reconcile(t, "3buqdlot", 1)
+	}
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "ci_red" {
+		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+}
+
 func TestCIRedGetsTwoFixRunsThenEscalates(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	red := green("SUCCESS")

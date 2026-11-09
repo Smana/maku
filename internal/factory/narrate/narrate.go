@@ -803,9 +803,10 @@ func Held(t *v1alpha1.Task, reason, roomsURL string) Event {
 }
 
 // CIFixing says why the next run starts: CI is red on the head, naming each check and its
-// conclusion ("name: state"). Once per fix run, as Revising is once per round.
+// conclusion ("name: state"). Once per fix run, as Revising is once per round: the key counts
+// every repair of the task, n the allowance, which an escalation step renews (R33).
 func CIFixing(t *v1alpha1.Task, pr int, head string, checks []string, n, limit int) Event {
-	return Event{Key: fmt.Sprintf("ci-fixing-%d", n),
+	return Event{Key: fmt.Sprintf("ci-fixing-%d", t.Status.FixRuns),
 		Body: fmt.Sprintf("Agent factory task `%s`: CI is red on #%d at `%s` (%s); a run starts to fix it (%d/%d).",
 			t.Name, pr, head, strings.Join(checks, ", "), n, limit)}
 }
