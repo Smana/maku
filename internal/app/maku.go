@@ -77,6 +77,11 @@ const makuUsage = `usage: maku <command>
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
+  config migrate --from FILE [--namespace NS] [--residual FILE]
+                                  split a factory config file into Factory, Repository and MergePolicy
+                                  manifests on stdout, offline; --residual keeps the rest of the file
+  config validate --config FILE MANIFEST...
+                                  check manifests against a config file the way the factory would, offline
   policy export|check|simulate|diff
                                   write, check, simulate or diff a repository's merge policy file, offline;
                                   simulate and diff need policyManagement.simulation
@@ -178,6 +183,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.skill(args)
 	case "policy":
 		return r.policy(args)
+	case "config":
+		return r.config(args)
 	case "setup":
 		return r.setup(ctx, args)
 	case "demo":
