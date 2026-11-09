@@ -304,6 +304,7 @@ mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did 
 | `author` | `agents` \| `adopt` | required | |
 | `adopt` | `{logins: [..], branches: [..]}` | — | Required with `author: adopt`, refused otherwise. Logins end in `[bot]`; branches are `^` plus a literal prefix (`^renovate/`) |
 | `harness` | string | required | A key of the central `harnessProfiles`. `template: none` for `adopt`, any other for `agents` |
+| `harnessAllowed`, `escalation` | as the [central keys](#central-config) | none | The same constraints; carried into the gate's class only when set. Never on `review`, which no file declares |
 | `conditions.all` | list of leaves | none | Each leaf one key; a key at most once |
 | `conditions.any` | list of 2–8 lists of leaves | none | No empty branch; a key in `all` is not repeated in a branch |
 | `conditions.deny` | list of `{protectedFiles: [..]}` | none | Non-empty lists. Unanchored regular expressions |
@@ -379,9 +380,12 @@ All three blocks live at the top level of the factory's config. Defaults are off
 The broker reads `policyManagement` (only `promotion` and `operators` matter there) and
 `human.approvalMemory` (bool, default `false`) from its own config.
 
-A profile's `template` is read for [coordination](factory.md#multi-repository-coordination) checks;
-`tier` and `loop` are validated but no reader applies them to a class's runs. `checks` and
-`testFirst` are the class's.
+A profile's `checks` and `testFirst` are the class's. Its `template`, `tier` and `loop` shape the
+runs of a task whose class declares `harnessAllowed` or `escalation` ([the scoper](factory.md#the-scoper)
+resolves the profile); `template` is also read for [coordination](factory.md#multi-repository-coordination)
+checks. `review` is never declared in a file, so a cut-over repository's review tasks take no
+`harness`, `harnessAllowed` or `escalation`: they run as before the evaluation, and only a central
+`classes.review` carries them.
 
 <!-- check: central -->
 ```yaml
