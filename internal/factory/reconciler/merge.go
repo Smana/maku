@@ -577,8 +577,9 @@ func (r *Reconciler) factoryMade(ctx context.Context, t *v1alpha1.Task, head str
 }
 
 // mergedHumanCommits records whether a pull request merged outside the gate's arm carries a human's
-// commit: factoryMade, as the gate reads a CI fix, never an author login or who merged. The push
-// record is not read: a merged branch is usually deleted, and its deletion is nobody's push. What
+// commit, as the gate reads a CI fix: factoryMade and factoryPushed, never an author login or who
+// merged. The push record is read past the branch's deletion, which usually follows a merge and is
+// nobody's push; a record not yet written is not waited for, the pull request being merged. What
 // cannot be proven the factory's is a human's. An adopted pull request has no run to claim its
 // commits and is left as it is.
 func (r *Reconciler) mergedHumanCommits(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
@@ -587,10 +588,15 @@ func (r *Reconciler) mergedHumanCommits(ctx context.Context, t *v1alpha1.Task, p
 		return nil
 	}
 	made, err := r.factoryMade(ctx, t, pr.HeadSHA)
+	if err != nil || !made {
+		ref.HumanCommits = err == nil
+		return err
+	}
+	pushed, err := r.pushedUntilDeleted(ctx, "agent/"+t.Name, []string{r.Cfg.AgentsLogin}, pr.HeadSHA)
 	if err != nil {
 		return err
 	}
-	ref.HumanCommits = !made
+	ref.HumanCommits = pushed != pushFactory
 	return nil
 }
 
@@ -771,23 +777,46 @@ func (r *Reconciler) pushedBy(ctx context.Context, branch string, logins []strin
 	if err != nil {
 		return pushStranger, err
 	}
+	return pushChain(ps, logins, head), nil
+}
+
+// pushedUntilDeleted is pushedBy for a branch deleted at head, as a merged pull request's usually
+// is: the deletion, nobody's push, is read past when it removed the head; anything else newer than
+// the head's push is a stranger's, as the chain reads it.
+func (r *Reconciler) pushedUntilDeleted(ctx context.Context, branch string, logins []string, head string) (pushCheck, error) {
+	ps, err := r.gh(ctx).BranchActivity(ctx, branch)
+	if errors.Is(err, forge.ErrActivityTruncated) {
+		return pushStranger, nil
+	}
+	if err != nil {
+		return pushStranger, err
+	}
+	if len(ps) > 0 && ps[0].Type == "branch_deletion" && ps[0].Before == head {
+		ps = ps[1:]
+	}
+	return pushChain(ps, logins, head), nil
+}
+
+// pushChain reads GitHub's record of a branch, newest first, as one unbroken chain of the logins'
+// moves from its creation to head.
+func pushChain(ps []forge.Push, logins []string, head string) pushCheck {
 	if len(ps) == 0 {
-		return pushUnrecorded, nil
+		return pushUnrecorded
 	}
 	want := ps[0].After // newest first
 	for _, p := range ps {
 		if p.Actor == "" || !slices.ContainsFunc(logins, func(l string) bool { return forge.SameLogin(p.Actor, l) }) || p.After != want {
-			return pushStranger, nil
+			return pushStranger
 		}
 		if p.Type == "branch_creation" {
 			if ps[0].After != head {
-				return pushUnrecorded, nil
+				return pushUnrecorded
 			}
-			return pushFactory, nil
+			return pushFactory
 		}
 		want = p.Before
 	}
-	return pushStranger, nil // the creation was never read
+	return pushStranger // the creation was never read
 }
 
 // implementerRuns are the IDs of the task's implementer runs.

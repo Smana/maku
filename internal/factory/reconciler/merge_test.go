@@ -1383,17 +1383,30 @@ func TestGateRecordsHumanCommits(t *testing.T) {
 }
 
 // A human pushes and merges between two reconciles: the merged pull request is read by the gate's
-// commit provenance (the room's reported head and every commit's Agent-Run claim), never by who
-// merged it, so the task counts merged_human; a bot-only pull request a human merged stays accepted.
+// provenance, never by who merged it: the room's reported head, every commit's Agent-Run claim, and
+// every push the agents App's in GitHub's record of the branch, read past the deletion that follows
+// a merge. A trailer a human kept proves nothing; a record nobody wrote proves nothing either.
 func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
+	bot, claim := "ogenki-agents[bot]", "docs: fix\n\nAgent-Run: "+rid(0)
+	botOnly := []forge.Push{{Type: "branch_deletion", Actor: "Smana", Before: "abc"},
+		{Type: "push", Actor: bot, Before: "c1", After: "abc"}, {Type: "branch_creation", Actor: bot, After: "c1"}}
+	humanPush := []forge.Push{{Type: "branch_deletion", Actor: "Smana", Before: "abc"},
+		{Type: "push", Actor: bot, Before: "c1", After: "abc"}, {Type: "push", Actor: "Smana", Before: "c0", After: "c1"},
+		{Type: "branch_creation", Actor: bot, After: "c0"}}
 	for name, c := range map[string]struct {
-		phase string
-		human bool
+		phase    string
+		commits  []forge.Commit
+		activity []forge.Push
+		human    bool
 	}{
-		"human push, via AwaitingHuman": {v1alpha1.PhaseAwaitingHuman, true},
-		"human push, via AwaitingCI":    {v1alpha1.PhaseAwaitingCI, true},
-		"bot-only, merged by hand":      {v1alpha1.PhaseAwaitingHuman, false},
-		"bot-only, merged at the gate":  {v1alpha1.PhaseAwaitingCI, false},
+		"human push, via AwaitingHuman": {v1alpha1.PhaseAwaitingHuman, []forge.Commit{{SHA: "abc", Message: claim}, {SHA: "def", Message: "typo"}}, nil, true},
+		"human push, via AwaitingCI":    {v1alpha1.PhaseAwaitingCI, []forge.Commit{{SHA: "abc", Message: claim}, {SHA: "def", Message: "typo"}}, nil, true},
+		"bot-only, merged by hand":      {v1alpha1.PhaseAwaitingHuman, nil, nil, false},
+		"bot-only, merged at the gate":  {v1alpha1.PhaseAwaitingCI, nil, nil, false},
+		"bot-only, the branch deleted":  {v1alpha1.PhaseAwaitingHuman, []forge.Commit{{SHA: "c1", Message: claim}, {SHA: "abc", Message: claim}}, botOnly, false},
+		"a human's push under the reported head, trailers kept": {v1alpha1.PhaseAwaitingHuman,
+			[]forge.Commit{{SHA: "c0", Message: claim}, {SHA: "c1", Message: claim}, {SHA: "abc", Message: claim}}, humanPush, true},
+		"no push recorded": {v1alpha1.PhaseAwaitingHuman, nil, []forge.Push{}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, c.phase)
@@ -1405,11 +1418,17 @@ func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
 			}
 			head, want := "abc", "accepted"
 			if c.human {
-				head, want = "def", "merged_human"
-				g.f.SetCommits(12, forge.Commit{SHA: "abc", Message: "docs: fix\n\nAgent-Run: " + rid(0)}, forge.Commit{SHA: "def", Message: "typo"})
+				want = "merged_human"
+			}
+			if c.commits != nil {
+				head = c.commits[len(c.commits)-1].SHA
+				g.f.SetCommits(12, c.commits...)
+			}
+			if c.activity != nil {
+				g.f.SetActivity("agent/3buqdlot", c.activity...)
 			}
 			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
-				HeadRef: "agent/3buqdlot", HeadSHA: head, Author: "ogenki-agents[bot]", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0)})
+				HeadRef: "agent/3buqdlot", HeadSHA: head, Author: bot, HeadMessage: claim})
 			got := g.reconcile(t, "3buqdlot", 1)
 			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits != c.human || taskOutcome(got) != want {
 				t.Fatalf("%s %s human %v, want %s", got.Status.Phase, got.Status.Reason, got.Status.PullRequest.HumanCommits, want)
