@@ -71,10 +71,12 @@ type File struct {
 	Classes map[string]ClassPolicy `json:"classes,omitempty"`
 }
 
-// ClassPolicy is one class as a repository declares it.
+// ClassPolicy is one class as a repository declares it. review declares harness, harnessAllowed
+// and escalation only (R30): its merge authority is implicit, so mode and author are absent there
+// and required everywhere else.
 type ClassPolicy struct {
-	Mode             Mode               `json:"mode"`
-	Author           string             `json:"author"`
+	Mode             Mode               `json:"mode,omitempty"`
+	Author           string             `json:"author,omitempty"`
 	Adopt            *config.Adopt      `json:"adopt,omitempty"`
 	Harness          string             `json:"harness"`
 	HarnessAllowed   []string           `json:"harnessAllowed,omitempty"`
@@ -180,7 +182,7 @@ func Parse(raw []byte) (*File, error) {
 		for _, list := range f.Classes[name].patterns() {
 			total += len(list)
 		}
-		if err := f.Classes[name].shape(); err != nil {
+		if err := f.Classes[name].shape(name); err != nil {
 			// One error a line, each naming its class: the editor points each at the class's line.
 			for line := range strings.SplitSeq(err.Error(), "\n") {
 				errs = append(errs, fmt.Errorf("class %s: %s", name, line))
@@ -199,7 +201,10 @@ func Parse(raw []byte) (*File, error) {
 	return &f, nil
 }
 
-func (p ClassPolicy) shape() error {
+func (p ClassPolicy) shape(name string) error {
+	if name == "review" {
+		return p.reviewShape()
+	}
 	var errs []error
 	if !slices.Contains([]Mode{ModeLive, ModeShadow, ModeOff}, p.Mode) {
 		errs = append(errs, fmt.Errorf("mode %q is not live, shadow or off", p.Mode))
@@ -259,6 +264,27 @@ func (p ClassPolicy) shape() error {
 			case len(pat) > MaxPatternBytes:
 				errs = append(errs, fmt.Errorf("a pattern is at most %d bytes", MaxPatternBytes))
 			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// reviewShape is shape for review: the evaluation keys, and nothing that would give the class a
+// merge authority of its own. mode and author are refused, not required.
+func (p ClassPolicy) reviewShape() error {
+	var errs []error
+	if p.Harness == "" {
+		errs = append(errs, errors.New("harness is required: a profile of the central list"))
+	}
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"mode", p.Mode != ""}, {"author", p.Author != ""}, {"adopt", p.Adopt != nil},
+		{"conditions", len(p.Conditions.All)+len(p.Conditions.Any)+len(p.Conditions.Deny) > 0},
+		{"requiresApproval", len(p.RequiresApproval) > 0}, {"limits", p.Limits != Limits{}}, {"monitor", p.Monitor != nil}} {
+		if k.set {
+			errs = append(errs, fmt.Errorf("%s is refused on review: it declares harness, harnessAllowed and escalation only, "+
+				"and a human merges it", k.key))
 		}
 	}
 	return errors.Join(errs...)

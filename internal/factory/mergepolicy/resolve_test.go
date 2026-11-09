@@ -108,7 +108,6 @@ func TestValidate(t *testing.T) {
 		"fine":           {head + required, ""},
 		"fence only":     {"factory: aws-0\n", ""},
 		"no revert":      {head + "  docs-links: {mode: live, author: agents, harness: plain}\n", "revert"},
-		"review":         {head + required + "  review: {mode: off, author: agents, harness: plain}\n", "review is implicit"},
 		"the class rule": {head + required + "  bad:\n    mode: shadow\n    author: agents\n    harness: plain\n    conditions: {all: [{allowedFiles: ['docs/.+']}]}\n", "must start with ^"},
 		"no revert, how": {head + "  docs-links: {mode: live, author: agents, harness: plain}\n", "mode: off"},
 		"unbounded":      {head + required + "  docs: {mode: shadow, author: agents, harness: plain}\n", "class docs: a live or shadow class needs allowedFiles"},
@@ -145,5 +144,43 @@ func TestResolveCopiesTheVariants(t *testing.T) {
 	_, err = Resolve("docs-broad", f.Classes["docs-broad"], c)
 	if !errors.Is(err, ErrGuardrail) || !strings.Contains(err.Error(), `harnessAllowed "nope" is not in harnessProfiles (TE2)`) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// R30: a repository's review class declares harness, harnessAllowed and escalation, nothing else;
+// its merge authority is implicit and no file gives it a mode, an author, conditions or caps.
+func TestAReviewClassDeclaresOnlyTheEvaluationKeys(t *testing.T) {
+	c := central()
+	c.HarnessProfiles["other"] = config.HarnessProfile{}
+	required := "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain}\n  revert: {mode: live, author: agents, harness: plain}\n"
+	for name, tc := range map[string]struct{ review, want string }{
+		"the floor alone":   {"  review: {harness: plain}\n", ""},
+		"floor and steps":   {"  review: {harness: plain, harnessAllowed: [other], escalation: {outOfBudget: other}}\n", ""},
+		"no harness":        {"  review: {harnessAllowed: [other]}\n", "harness is required"},
+		"a mode":            {"  review: {mode: off, harness: plain}\n", "review"},
+		"an author":         {"  review: {author: agents, harness: plain}\n", "review"},
+		"adopt":             {"  review: {harness: plain, adopt: {logins: ['a[bot]'], branches: ['^x/']}}\n", "review"},
+		"conditions":        {"  review: {harness: plain, conditions: {all: [{maxPatchFiles: 2}]}}\n", "review"},
+		"an approval":       {"  review: {harness: plain, requiresApproval: [{changedFiles: ['^a']}]}\n", "review"},
+		"a cap":             {"  review: {harness: plain, limits: {maxPerDay: 2}}\n", "review"},
+		"a monitor":         {"  review: {harness: plain, monitor: {followUpWindow: 24h}}\n", "review"},
+		"a missing variant": {"  review: {harness: plain, harnessAllowed: [nope]}\n", "harnessAllowed \"nope\""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, err := Parse([]byte(required + tc.review))
+			if err == nil {
+				err = Validate(f, c)
+			}
+			if (tc.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+			if err != nil {
+				return
+			}
+			r, err := Resolve("review", f.Classes["review"], c)
+			if err != nil || r.Class.Live || r.Class.Shadow || r.Class.Harness != "plain" || r.Branches != nil {
+				t.Fatalf("%v %+v", err, r)
+			}
+		})
 	}
 }

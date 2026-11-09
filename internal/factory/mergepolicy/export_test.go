@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -236,5 +237,61 @@ func TestExportRefusesAFloorThatDropsChecks(t *testing.T) {
 	r, err := Resolve("review-ish", f.Classes["review-ish"], c)
 	if err != nil || !r.Class.Checks {
 		t.Fatalf("%+v, %v", r.Class, err)
+	}
+}
+
+// R30: a repository-authority review class carries the evaluation keys and nothing else. The
+// central review exports them, the file validates, the comparison sees them, and a repository cut
+// over to the file keeps review's floor, variants and steps while review's merge authority stays
+// implicit: a human merges it, live or shadow never.
+func TestReviewEvaluationSurvivesTheCutover(t *testing.T) {
+	c := central()
+	c.Factory = "aws-0"
+	c.HarnessProfiles["review-floor"] = config.HarnessProfile{Description: "default"}
+	c.HarnessProfiles["review-search"] = config.HarnessProfile{Description: "search first"}
+	review := config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
+		Escalation: &config.Escalation{OutOfBudget: "review-search"}}
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
+		"docs-links": {Live: true}, "revert": {Live: true}, "review": review}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if err := Validate(g, c); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if d := Compare(rc, g, c); len(d) != 0 {
+		t.Fatalf("%v\n%s", d, raw)
+	}
+	if p := g.Classes["review"]; p.Mode != "" || p.Author != "" || p.Harness != "review-floor" || !slices.Equal(p.HarnessAllowed, review.HarnessAllowed) ||
+		p.Escalation == nil || p.Escalation.OutOfBudget != "review-search" || strings.Contains(string(raw), "mode: \"\"") {
+		t.Fatalf("%+v\n%s", p, raw)
+	}
+	// A central review whose keys the comparison would miss diverges.
+	rc.Classes["review"] = config.Class{Harness: "review-floor"}
+	if d := Compare(rc, g, c); len(d) != 1 || !strings.HasPrefix(d[0], "review: central ") {
+		t.Fatalf("%v", d)
+	}
+	w, _, _ := authorityRig()
+	w.Cfg.HarnessProfiles = c.HarnessProfiles
+	w.Observe(t.Context(), "o/r", raw)
+	got := w.Cfg.RepositoryFor("o/r").Classes["review"]
+	if got.Live || got.Shadow || got.Harness != "review-floor" || !slices.Equal(got.HarnessAllowed, review.HarnessAllowed) ||
+		got.Escalation == nil || got.Escalation.OutOfBudget != "review-search" {
+		t.Fatalf("cut over: %+v", got)
+	}
+	// Review without the evaluation stays implicit, as before.
+	rc.Classes["review"] = config.Class{Checks: true}
+	f, err = Export(rc, c)
+	if _, ok := f.Classes["review"]; err != nil || ok {
+		t.Fatalf("%v %+v", err, f.Classes["review"])
 	}
 }

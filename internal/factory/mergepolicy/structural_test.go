@@ -97,6 +97,7 @@ func TestTheHarnessAxesAreNotProvenNeutral(t *testing.T) {
 	off := r(base, "mode: shadow", "mode: off", 1)
 	allowed := r(off, "harness: plain\n", "harness: plain\n    harnessAllowed: [other]\n", 1)
 	stepped := r(allowed, "harnessAllowed: [other]\n", "harnessAllowed: [other]\n    escalation: {outOfBudget: other}\n", 1)
+	review := "factory: aws-0\nclasses:\n  review: {harness: plain, "
 	for name, tc := range map[string]struct {
 		old, next, kind, why string
 	}{
@@ -107,6 +108,11 @@ func TestTheHarnessAxesAreNotProvenNeutral(t *testing.T) {
 		"a step removed":      {stepped, allowed, KindTightening, ""},
 		"a step retargeted":   {stepped, r(r(stepped, "[other]", "[other, checked]", 1), "outOfBudget: other", "outOfBudget: checked", 1), KindRelaxation, "escalation"},
 		"a step regrouped":    {stepped, r(stepped, "outOfBudget", "notConverged", 1), KindRelaxation, "escalation"},
+		// R30: review's axes read as any class's; it has no mode to promote or demote.
+		"review unchanged":       {review + "harnessAllowed: [other]}\n", review + "harnessAllowed: [other]}\n", KindUnchanged, ""},
+		"review variant added":   {review + "}\n", review + "harnessAllowed: [other]}\n", KindRelaxation, "harnessAllowed"},
+		"review variant removed": {review + "harnessAllowed: [other]}\n", review + "}\n", KindTightening, ""},
+		"review harness changed": {review + "}\n", r(review, "plain", "other", 1) + "}\n", KindRelaxation, "harness"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ch := structural(t, tc.old, tc.next)

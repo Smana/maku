@@ -15,16 +15,20 @@ import (
 )
 
 // Export writes a repository's central classes as a policy file (MP15): behaviour preserved, so
-// each class keeps its mode. review stays implicit. A class whose checks and testFirst no profile
-// holds is an error: the operator adds the profile first.
+// each class keeps its mode. review is written with its evaluation keys when it has a floor
+// (R30), and stays implicit without one. A class whose checks and testFirst no profile holds is
+// an error: the operator adds the profile first.
 func Export(rc *config.Repository, c *config.Config) (*File, error) {
 	f := &File{Factory: c.Factory, Classes: map[string]ClassPolicy{}}
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
-		if name == "review" {
+		if name == "review" && rc.Classes[name].Harness == "" {
 			continue
 		}
 		p, err := exportClass(rc.Classes[name], c)
+		if err == nil && name == "review" {
+			p = ClassPolicy{Harness: p.Harness, HarnessAllowed: p.HarnessAllowed, Escalation: p.Escalation}
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("class %s: %w", name, err))
 			continue
@@ -120,7 +124,8 @@ func profileFor(cl config.Class, c *config.Config) (string, bool) {
 func Marshal(f *File) ([]byte, error) { return yaml.Marshal(f) }
 
 // Compare lists how the repository's classes differ from the central ones, class by class, with
-// path and check lists read as sets. review is implicit on both sides.
+// path and check lists read as sets. review is compared on its evaluation keys alone (R30): a
+// central review with no floor is implicit, and the file not declaring it is no divergence.
 func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 	var out []string
 	names := map[string]bool{}
@@ -130,7 +135,9 @@ func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 	for n := range f.Classes {
 		names[n] = true
 	}
-	delete(names, "review")
+	if _, inRepo := f.Classes["review"]; !inRepo && rc.Classes["review"].Harness == "" {
+		delete(names, "review")
+	}
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		central, inCentral := rc.Classes[name]
 		repo, inRepo := f.Classes[name]
