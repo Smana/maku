@@ -94,18 +94,15 @@ func (r *Reconciler) scoped(ctx context.Context, t *v1alpha1.Task, phase, reason
 	}
 	switch {
 	case sc == nil && phase == "Succeeded":
-		return r.scopeEnd(ctx, t, "missing", 0)
+		return r.scopeEnd(ctx, t, nil, "missing", 0)
 	case sc == nil:
 		return r.scoperFailed(ctx, t, reason)
 	case sc.State == envelope.ScopeReady && split != nil:
-		return r.splitHandoff(ctx, t, split, seq)
+		return r.splitHandoff(ctx, t, sc, split, seq)
 	case sc.State == envelope.ScopeReady:
-		if err := r.resolveProfile(ctx, t, sc); err != nil {
-			return err
-		}
-		return r.scopeEnd(ctx, t, "ready", seq)
+		return r.scopeEnd(ctx, t, sc, "ready", seq)
 	case t.Spec.Issue == 0: // a schedule has no author to ask
-		return r.scopeEnd(ctx, t, "assumed", seq)
+		return r.scopeEnd(ctx, t, sc, "assumed", seq)
 	}
 	return r.bounce(ctx, t, sc, seq)
 }
@@ -202,10 +199,7 @@ func (r *Reconciler) scoperFailed(ctx context.Context, t *v1alpha1.Task, reason 
 		func(ctx context.Context) error { return r.Client.Status().Update(ctx, t) }); err != nil {
 		r.log().Warn("the scoper's failure note not posted", "task.id", t.Name, "err", err)
 	}
-	if err := r.resolveProfile(ctx, t, nil); err != nil {
-		return err
-	}
-	return r.scopeEndAs(ctx, t, "failed", 0, outcome)
+	return r.scopeEndAs(ctx, t, nil, "failed", 0, outcome)
 }
 
 // mentionsSplit: the handoff's summary speaks of splitting the task.
@@ -228,13 +222,17 @@ func (r *Reconciler) unstatedSplit(ctx context.Context, t *v1alpha1.Task) {
 	}
 }
 
-// scopeEnd records the scoper's outcome and queues the implementer's first run.
-func (r *Reconciler) scopeEnd(ctx context.Context, t *v1alpha1.Task, state string, seq int64) error {
-	return r.scopeEndAs(ctx, t, state, seq, state)
+// scopeEnd records the scoper's outcome, resolves the profile on sc (nil: no scope) and queues the
+// implementer's first run.
+func (r *Reconciler) scopeEnd(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, state string, seq int64) error {
+	return r.scopeEndAs(ctx, t, sc, state, seq, state)
 }
 
 // scopeEndAs is scopeEnd counted under outcome, which may say more than the recorded state.
-func (r *Reconciler) scopeEndAs(ctx context.Context, t *v1alpha1.Task, state string, seq int64, outcome string) error {
+func (r *Reconciler) scopeEndAs(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, state string, seq int64, outcome string) error {
+	if err := r.resolveProfile(ctx, t, sc); err != nil {
+		return err
+	}
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: state, Seq: seq}
 	class := t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.ScoperRun(ctx, class, outcome) })

@@ -69,10 +69,10 @@ const (
 
 // splitHandoff is the scoper's second answer (SL4, SR6): a split the task was offered goes to a
 // maintainer; any other is ignored and counted, and the task runs on its scope.
-func (r *Reconciler) splitHandoff(ctx context.Context, t *v1alpha1.Task, sp *envelope.Split, seq int64) error {
+func (r *Reconciler) splitHandoff(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, seq int64) error {
 	if t.Spec.Split == nil || len(sp.Children) > int(t.Spec.Split.MaxChildren) || sp.Validate() != nil {
 		r.ignoreSplit(ctx, t, seq)
-		return r.scopeEnd(ctx, t, "ready", seq)
+		return r.scopeEnd(ctx, t, sc, "ready", seq)
 	}
 	return r.proposeSplit(ctx, t, sp, seq)
 }

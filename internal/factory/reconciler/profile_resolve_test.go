@@ -5,9 +5,11 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -108,9 +110,21 @@ func TestResolutionTable(t *testing.T) {
 			}) {
 				t.Fatalf("outbox %+v", tk.Status.Outbox)
 			}
-			counted := slices.ContainsFunc(g.metrics.recorded, func(m string) bool { return strings.HasPrefix(m, "profile ") })
-			if counted == (c.label != "") {
-				t.Fatalf("metrics %v", g.metrics.recorded)
+			var want []string
+			if c.label == "" {
+				rec := c.want.recommended
+				if rec == "zzz" || rec == "review-other" {
+					rec = "other"
+				}
+				cohort := "treatment"
+				if c.percent == 100 {
+					cohort = "control"
+				}
+				want = []string{fmt.Sprintf("profile review %s %s %v", cohort, rec, c.want.source == "scoper")}
+			}
+			got := slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(m string) bool { return !strings.HasPrefix(m, "profile ") })
+			if !slices.Equal(got, want) {
+				t.Fatalf("metrics %q, want %q", got, want)
 			}
 		})
 	}
@@ -220,4 +234,130 @@ func TestASplitChildKeepsToday(t *testing.T) {
 	if *tk.Status.Profile != before || len(tk.Status.Outbox) != 0 || countProfile(g.metrics.recorded) != 0 {
 		t.Fatalf("%+v %+v", tk.Status.Profile, tk.Status.Outbox)
 	}
+}
+
+// harnessed gives c's review class a floor and one variant, applied.
+func harnessed(c *config.Config) {
+	c.HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-wide": {Checks: true, Description: "wide"}}
+	c.Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-wide"}}
+	c.Evaluation.Mode = config.EvaluationApply
+}
+
+// harnessedScoper is a scoper-mode task under harnessed config, edited before triage, past its scoper's start.
+func harnessedScoper(t *testing.T, edit func(*v1alpha1.Task)) *rig {
+	t.Helper()
+	tk := issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves")
+	if edit != nil {
+		edit(tk)
+	}
+	g := newRig(t, tk)
+	g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
+	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	harnessed(g.r.Cfg)
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	return g
+}
+
+// wantResolved checks tk's profile and its profile-chosen narrations (queued or posted).
+func wantResolved(t *testing.T, tk *v1alpha1.Task, name, source, reason string, narrations int) {
+	t.Helper()
+	p := tk.Status.Profile
+	if p == nil || !p.Resolved || p.Name != name || p.Source != source || p.Reason != reason {
+		t.Fatalf("%s %+v, want %s %s %s", tk.Status.Phase, p, name, source, reason)
+	}
+	n := 0
+	for _, o := range tk.Status.Outbox {
+		if strings.HasPrefix(o.Key, "profile-chosen-") {
+			n++
+		}
+	}
+	for _, k := range tk.Status.Narrated {
+		if strings.HasPrefix(k, "profile-chosen-") {
+			n++
+		}
+	}
+	if n != narrations {
+		t.Fatalf("%d profile-chosen narrations, want %d: %+v %v", n, narrations, tk.Status.Outbox, tk.Status.Narrated)
+	}
+}
+
+// Every scoper end that queues the task itself resolves its profile first.
+func TestEveryRunnableScoperEndResolves(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		g := harnessedScoper(t, nil)
+		tk := endScoper(t, g, "Succeeded", "agent_finished")
+		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "missing" {
+			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
+		}
+		wantResolved(t, tk, "review-floor", "floor", "scoper_failed", 1)
+	})
+	t.Run("assumed, a schedule", func(t *testing.T) {
+		g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Issue, tk.Spec.Source.Kind = 0, "schedule" })
+		scopeHandoff(g, 0, questionScope())
+		tk := endScoper(t, g, "Succeeded", "agent_finished")
+		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
+			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
+		}
+		wantResolved(t, tk, "review-floor", "floor", "none", 0) // no issue to narrate on
+	})
+	t.Run("assumed on retry", func(t *testing.T) {
+		g := harnessedScoper(t, nil)
+		scopeHandoff(g, 0, questionScope())
+		if tk := endScoper(t, g, "Succeeded", "agent_finished"); tk.Status.Profile.Resolved {
+			t.Fatalf("a bounce waits unresolved: %+v", tk.Status.Profile)
+		}
+		g.r.Now = func() time.Time { return now.Add(time.Hour) }
+		g.f.SetComments(7, retryBy(77, "smana", -30*time.Minute))
+		tk := g.reconcile(t, "3buqdlot", 1)
+		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
+			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
+		}
+		wantResolved(t, tk, "review-floor", "floor", "none", 1)
+	})
+}
+
+// harnessedSplit is a split rig under harnessed config whose scoper recommends review-wide with a
+// split of n parts.
+func harnessedSplit(t *testing.T, n int) (*rig, *v1alpha1.Task) {
+	t.Helper()
+	g := splitRigWith(t, "frontier", false, nil)
+	harnessed(g.r.Cfg)
+	g.reconcile(t, "3buqdlot", 3)
+	sc := readyScope()
+	sc.Profile, sc.ProfileWhy = "review-wide", "two pages"
+	splitHandoffOf(g, 0, sc, parts(n))
+	return g, endScoper(t, g, "Succeeded", "agent_finished")
+}
+
+func TestASplitResolvesWhenTheTaskRunsWhole(t *testing.T) {
+	t.Run("ignored", func(t *testing.T) {
+		_, tk := harnessedSplit(t, 4) // over maxChildren 3
+		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Split.State != SplitIgnored {
+			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Split)
+		}
+		wantResolved(t, tk, "review-wide", "scoper", "", 1)
+	})
+	t.Run("declined by a retry", func(t *testing.T) {
+		g, tk := harnessedSplit(t, 2)
+		if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Profile.Resolved {
+			t.Fatalf("a proposal waits unresolved: %s %+v", tk.Status.Phase, tk.Status.Profile)
+		}
+		g.r.Now = func() time.Time { return now.Add(time.Hour) }
+		g.f.SetComments(7, retryBy(77, "Smana", -30*time.Minute))
+		tk = g.reconcile(t, "3buqdlot", 1)
+		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Split.State != "declined" {
+			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Split)
+		}
+		wantResolved(t, tk, "review-wide", "scoper", "", 1)
+	})
+	t.Run("approved", func(t *testing.T) {
+		g, _ := harnessedSplit(t, 2)
+		g.r.Now = func() time.Time { return now.Add(time.Hour) }
+		g.f.SetComments(7, splitBy(80, "Smana"))
+		tk := g.reconcile(t, "3buqdlot", 1)
+		if tk.Status.Split.State != SplitApproved || tk.Status.Profile == nil || tk.Status.Profile.Resolved {
+			t.Fatalf("%s %+v %+v", tk.Status.Phase, tk.Status.Split, tk.Status.Profile)
+		}
+	})
 }

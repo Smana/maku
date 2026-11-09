@@ -14,10 +14,7 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 )
 
-// resolveProfile settles t's profile once its scoper ends (TE), before the task is queued: the
-// scoper's recommendation when the treatment cohort applies it and it fits, else the floor with
-// the reason. s nil is a failed scoper. A labelled task keeps its profile; a split child is left as
-// it is. The count waits for the status write, so a replay counts once.
+// resolveProfile settles t's profile from scope s (nil: the scoper left none); the count is deferred so a replay counts once.
 func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *envelope.Scope) error {
 	p := t.Status.Profile
 	if p == nil || p.Resolved || t.Spec.Parent != nil {
@@ -54,15 +51,14 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 		class, cohort, applied := t.Spec.PredictedClass, p.Cohort, p.Source == "scoper"
 		rec := p.Recommended
 		if rec != "" && !slices.ContainsFunc(choices, func(c ProfileChoice) bool { return c.Name == rec }) {
-			rec = "other" // a name the scoper made up never becomes a label value
+			rec = "other" // keeps the label bounded
 		}
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
 	}
 	return nil
 }
 
-// variantFor is the variant a treatment task takes on the scoper's recommendation name, or the
-// reason it keeps the floor.
+// variantFor is the variant to apply for name, or the reason the floor is kept.
 func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name string) (string, string, error) {
 	cl := r.repo(t).Classes[t.Spec.PredictedClass]
 	if name == "" || name == cl.Harness {
@@ -79,7 +75,7 @@ func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name stri
 		return "", "observe", nil
 	}
 	if v.TestFirst {
-		if t.Spec.DataClass != "public" { // the tester runs on public tasks only (testerDue)
+		if t.Spec.DataClass != "public" {
 			return "", "internal", nil
 		}
 		if paths, err := r.testPaths(ctx, t); err != nil || len(paths) == 0 {
@@ -89,8 +85,7 @@ func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name stri
 	return name, "", nil
 }
 
-// applyProfile writes profile name's spec onto t as received does, keeping t's local status and
-// its scope mode; an unchanged spec is not written, so a replayed step writes nothing.
+// applyProfile persists profile name's spec, skipping an unchanged one so a replay writes nothing.
 func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, name string) error {
 	class := t.Spec.PredictedClass
 	p, ok := r.Cfg.ProfileFor(r.repo(t).Classes[class], name)
@@ -99,8 +94,7 @@ func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, name st
 	}
 	before := t.Spec.DeepCopy()
 	r.profileSpec(t, class, p)
-	// The scoper has run under triage's mode: a variant's row changing it would read the scoper's
-	// run as a triager's proposal on replay and drop the scope from the implementer's brief.
+	// A changed mode would read the finished scoper's run as a triager proposal on replay.
 	t.Spec.ScopeMode = before.ScopeMode
 	if equality.Semantic.DeepEqual(*before, t.Spec) {
 		return nil
@@ -111,4 +105,20 @@ func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, name st
 	}
 	t.Status = status
 	return nil
+}
+
+// resolveScoped resolves a scoped task a retry queues after it escalated on its scoper's end (a
+// question, a declined split); an approved split's parent never runs itself.
+func (r *Reconciler) resolveScoped(ctx context.Context, t *v1alpha1.Task) error {
+	if !scoperPlanned(t) || t.Status.Scope == nil || (t.Status.Split != nil && t.Status.Split.State == SplitApproved) {
+		return nil
+	}
+	sc, err := r.taskScope(ctx, t)
+	if err != nil {
+		return err
+	}
+	if sc == nil {
+		return r.resolveProfile(ctx, t, nil)
+	}
+	return r.resolveProfile(ctx, t, &sc.Scope)
 }

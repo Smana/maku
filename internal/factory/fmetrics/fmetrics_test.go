@@ -469,10 +469,12 @@ func TestProfileRecommendation(t *testing.T) {
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
 	s.ProfileRecommendation(ctx, "review", "control", "review-search", false)
 	s.ProfileRecommendation(ctx, "review", "treatment", "", false)
+	s.ProfileRecommendation(ctx, "review", "treatment", "review-search", true)
 	body := scrape()
 	for _, want := range []string{
 		`maku_factory_profile_recommendations_total{applied="false",class="review",cohort="control",recommended="review-search"} 1`,
 		`maku_factory_profile_recommendations_total{applied="false",class="review",cohort="treatment",recommended="none"} 1`,
+		`maku_factory_profile_recommendations_total{applied="true",class="review",cohort="treatment",recommended="review-search"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s\n%s", want, body)

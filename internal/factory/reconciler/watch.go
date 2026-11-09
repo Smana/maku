@@ -374,6 +374,9 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 	t.Status.RetriedBy = v1alpha1.Person(c.Author) // D2: the retrier pays for the runs the retry causes
 	t.Status.NextTrigger = "retry"
 	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "retry") })
+	if err := r.resolveScoped(ctx, t); err != nil {
+		return err
+	}
 	next := v1alpha1.PhaseQueued
 	if t.Status.RoomRef == "" { // escalated before it had a room (foreign_room): check the room again
 		next = v1alpha1.PhaseTriaged

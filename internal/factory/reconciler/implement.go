@@ -644,7 +644,7 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 	if !found {
 		why := r.lostReason(ctx, t)
 		if scoperRun(t) && why == "run_lost" { // SC11: a scoper whose claim vanished fails open
-			return r.scopeEnd(ctx, t, "failed", 0)
+			return r.scopeEnd(ctx, t, nil, "failed", 0)
 		}
 		return r.end(ctx, t, v1alpha1.PhaseEscalated, why)
 	}
@@ -662,7 +662,7 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 				return err
 			}
 			if scoperRun(t) { // SC11: a stuck scoper fails open
-				return r.scopeEnd(ctx, t, "failed", 0)
+				return r.scopeEnd(ctx, t, nil, "failed", 0)
 			}
 			return r.end(ctx, t, v1alpha1.PhaseEscalated, "stuck")
 		}
