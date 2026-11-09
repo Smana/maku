@@ -714,21 +714,30 @@ func Assemble(file []byte, objs []Object) (Result, error)
 var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "harnessProfiles", "mergeGuardrails"}
 ```
 
-**Algorithm** (implement exactly this):
+**Algorithm** (implement exactly this). Every intermediate state must be a *complete* config:
+after migration the file alone holds neither a catalogue nor a repository, and `Parse` refuses a
+config with no repository (`api.repositories is empty`). So candidates are judged as a whole set,
+never one object on top of an incomplete base.
 
 1. Decode `file` into `map[string]any` with `sigs.k8s.io/yaml.Unmarshal`. Call it `base`. Read `base["factory"].(string)` as `name`.
-2. **Factory.** Of the objects of kind `Factory`, refuse each whose `Name != name` with `NotThisFactory`. If one is left, build a candidate: a copy of `base`. Delete every `CatalogueKeys` key from the copy, and add a warning for each key that was present: `"<key> in the file is ignored: Factory <name> sets the catalogue"`. Copy each key of its spec onto the candidate with these exceptions: `prices` goes to `meter.prices`, creating `meter` if absent; `triage` merges into `base["triage"]` key by key. Call `config.Parse` on the candidate (marshalled with `yaml.Marshal`). If it parses, the candidate becomes `base` and the Factory is accepted. If not, refuse it with `Invalid` and the error's text, and keep `base`.
-3. **Repositories.** Index the `MergePolicy` objects by `spec.repositoryRef`. Any repositoryRef named by two or more policies: refuse all of them with `DuplicatePolicy`. Any that names no `Repository` object: refuse with `MissingRef`.
-4. For each `Repository`, sorted by `Name`:
-   - `spec.factoryRef != name` → `NotThisFactory`.
-   - Its `spec.repository` equals (case-insensitively) a `name` in `base["repositories"]` that came from the file → `DefinedTwice`, and the file's entry stays.
-   - No accepted `MergePolicy` names it → `NoMergePolicy`.
-   - Otherwise build the entry: `name` = `spec.repository`, plus `maintainers`, `triggerLabel`, `checks`, `schedules` and `classAuthority` copied when present, plus `classes` and `merge` from its policy's spec when present. Append it to a copy of `base["repositories"]`, creating the list if absent, and `config.Parse` the result. On success, keep it: both the Repository and its MergePolicy are accepted. On failure, refuse the Repository **and** its MergePolicy with `Invalid` and the error text.
-5. `config.Parse` the final `base` into `Result.Config` and return it. If the file alone does not parse (step 1, or step 5 with nothing accepted), return the error.
+2. **Structural refusals**, before any `Parse`:
+   - a `Factory` whose `Name != name`, and every `Factory` after the first by `Name` when several remain → `NotThisFactory`;
+   - `MergePolicy` objects whose `spec.repositoryRef` is shared by two or more → all of them `DuplicatePolicy`; one naming no `Repository` object → `MissingRef`;
+   - a `Repository` whose `spec.factoryRef != name` → `NotThisFactory`; whose `spec.repository` equals, case-insensitively, a file entry's `name` in `base["repositories"]` (or `base["repository"]`, the legacy shape) → `DefinedTwice` (the file's entry stays); that no remaining `MergePolicy` names → `NoMergePolicy`.
+   What remains is the candidate set `S`: at most one Factory, and *pairs* (a Repository with its MergePolicy), sorted by the Repository's `Name`, then the Factory last.
+3. `merge(S)` builds one map from a deep copy of `base`:
+   - with a Factory: delete every `CatalogueKeys` key, adding a warning per key that was present, `"<key> in the file is ignored: Factory <name> sets the catalogue"`; copy each key of its spec on top, except `prices` → `meter.prices` (creating `meter`) and `triage`, merged key by key into `triage`;
+   - per pair, append to `repositories` (created if absent) an entry: `name` = `spec.repository`, plus `maintainers`, `triggerLabel`, `checks`, `schedules`, `classAuthority` when present, plus the policy's `classes` and `merge` when present.
+4. If `Parse(merge(S))` succeeds, every object of `S` is accepted: done.
+5. Otherwise find the **single culprit**: the first element `e` of `S`, in order, such that `Parse(merge(S − e))` succeeds. Refuse `e` with `Invalid` and the text of step 4's error (a pair refuses both its Repository and its MergePolicy), and accept the rest.
+6. If no single removal parses, refuse every element of `S` with `Invalid` and step 4's error, and fall back to `Parse(base)`. If that fails too, return its error: the factory has nothing it can serve.
+7. Sort `Refused` by `Kind` then `Name`; `Accepted` keeps `S`'s order.
+
+The single-culprit rule fits the live case (plan 2), where objects change one at a time; two broken
+objects at once refuse the whole set, which is conservative and reported.
 
 A legacy single-repository file (`repository:` at the top level) keeps working: `Parse` moves it
-into `Repositories`. Step 4's `DefinedTwice` check must also compare against `base["repository"]`
-when it is set.
+into `Repositories`, and step 2's `DefinedTwice` check covers it.
 
 - [ ] **Step 1: Write the fixture**
 
@@ -1040,7 +1049,7 @@ func TestMigrateRoundTrips(t *testing.T) {
 	}
 	if !equalRepos(want.Repos(), got.Config.Repos()) || !equalJSON(t, want.Tiers, got.Config.Tiers) ||
 		!equalJSON(t, want.Templates, got.Config.Templates) || !equalJSON(t, want.Caps, got.Config.Caps) ||
-		!equalJSON(t, want.Budgets, got.Config.Budgets) || want.Triage != got.Config.Triage {
+		!equalJSON(t, want.Budgets, got.Config.Budgets) || !equalJSON(t, want.Triage, got.Config.Triage) {
 		t.Fatalf("the round trip changed the config\nmanifests:\n%s\nresidual:\n%s", manifests, residual)
 	}
 }
