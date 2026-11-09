@@ -61,6 +61,7 @@ func revocationLimits() []string {
 func budgetFallbacks() []string { return []string{"unpriced", "untyped"} }
 func budgetScopes() []string    { return []string{"run", "task"} }
 func tiers() []string           { return []string{"light", "standard", "frontier"} }
+func cohorts() []string         { return []string{"labeled", "control", "treatment", "none"} }
 func intakeSources() []string   { return []string{"issue", "runlore", "schedule", "api", "adopt"} }
 func resumeReasons() []string   { return []string{"Disrupted", "PodLost"} }
 func roomCapReasons() []string  { return []string{"human_driver", "facts_due"} }
@@ -784,7 +785,7 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommend
 		recommended = "none"
 	}
 	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())),
-		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "none"})),
+		attribute.String("cohort", oneOf(cohort, cohorts())),
 		attribute.String("profile", profile), attribute.String("recommended", recommended), s.repoOf(ctx)))
 }
 
@@ -852,12 +853,20 @@ func (s *Set) RunRevoked(ctx context.Context, reason, limit string) {
 		attribute.String("limit", oneOf(limit, revocationLimits())), principalOf(ctx)))
 }
 
-// RunCost records a priced run's USD cost at its end, in total by tier and role, and by the model
-// that served it: the run meter's OnCost. The role is the AgentRun's, or scoper for a triager run
-// that scoped a task (harness roles HR6).
-func (s *Set) RunCost(ctx context.Context, tier, role string, usd float64, byModel map[string]float64) {
+// RunCost records a priced run's USD cost at its end, in total by tier, role, cohort and profile,
+// and by the model that served it: the run meter's OnCost. The role is the AgentRun's, or scoper
+// for a triager run that scoped a task (harness roles HR6); cohort and profile are the task's when
+// the run started (R34), none without a profile.
+func (s *Set) RunCost(ctx context.Context, tier, role, cohort, profile string, usd float64, byModel map[string]float64) {
+	if cohort == "" {
+		cohort = "none"
+	}
+	if profile == "" {
+		profile = "none"
+	}
 	s.runCost.Record(ctx, usd, metric.WithAttributes(attribute.String("tier", oneOf(tier, tiers())),
-		attribute.String("role", oneOf(role, costRoles()))))
+		attribute.String("role", oneOf(role, costRoles())), attribute.String("cohort", oneOf(cohort, cohorts())),
+		attribute.String("profile", profile)))
 	s.LateCost(ctx, byModel)
 }
 

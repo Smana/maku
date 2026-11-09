@@ -142,7 +142,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 	s.RunOvershoot(ctx, 42_000)
 	s.RunRevoked(ctx, "budget-run", "run-usd")
 	s.RunRevoked(ctx, "budget-task", "task-usd")
-	s.RunCost(ctx, "standard", "implementer", 0.65, map[string]float64{"glm-5.3": 0.65})
+	s.RunCost(ctx, "standard", "implementer", "", "", 0.65, map[string]float64{"glm-5.3": 0.65})
 	s.LateCost(ctx, map[string]float64{"glm-5.3": 0.1})
 	s.RunSpend(map[string]map[string]float64{"nh5tztlh": {"claude-opus-5-5": 2.13212}})
 	s.RunSettled(map[string]float64{"nh5tztlh": 2.8})
@@ -175,7 +175,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 		`maku_factory_run_overshoot_tokens_total 42000`,
 		`maku_factory_run_revocations_total{limit="run-usd",principal="other",reason="budget-run"} 1`,
 		`maku_factory_run_revocations_total{limit="task-usd",principal="other",reason="budget-task"} 1`,
-		`maku_factory_run_cost_usd_bucket{role="implementer",tier="standard",le="0.75"} 1`,
+		`maku_factory_run_cost_usd_bucket{cohort="none",profile="none",role="implementer",tier="standard",le="0.75"} 1`,
 		`maku_factory_model_cost_usd_total{model="glm-5.3"} 0.75`,
 		`maku_factory_run_spend_usd{model="claude-opus-5-5",run="nh5tztlh"} 2.13212`,
 		`maku_factory_run_settled_usd{run="nh5tztlh"} 2.8`,
@@ -230,7 +230,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 	s.Resumed(ctx, "an agent's text")
 	s.RoomClosedAtCap(ctx, "an agent's text")
 	s.RunRevoked(ctx, "budget-run", "a limit")
-	s.RunCost(ctx, "huge", "an agent's text", 1, map[string]float64{"A Model": 1})
+	s.RunCost(ctx, "huge", "an agent's text", "an agent's text", "", 1, map[string]float64{"A Model": 1})
 	s.RunSpend(map[string]map[string]float64{"not a run": {"glm-5.3": 1}, "aaaaaaaa": {"A Model": 2}})
 	s.RunSettled(map[string]float64{"not a run": 1, "aaaaaaaa": 2})
 	s.RunBudgetFallback(ctx, "a scope", "a reason")
@@ -245,7 +245,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 		`maku_factory_resumes_total{reason="other"} 1`,
 		`maku_factory_rooms_closed_at_cap_total{reason="other"} 1`,
 		`maku_factory_run_revocations_total{limit="other",principal="other",reason="budget-run"} 1`,
-		`maku_factory_run_cost_usd_count{role="other",tier="other"} 1`,
+		`maku_factory_run_cost_usd_count{cohort="other",profile="none",role="other",tier="other"} 1`,
 		`maku_factory_model_cost_usd_total{model="other"} 1`,
 		`maku_factory_run_spend_usd{model="other",run="aaaaaaaa"} 2`,
 		`maku_factory_run_settled_usd{run="aaaaaaaa"} 2`,
@@ -364,11 +364,22 @@ func TestRunCostCarriesTheRole(t *testing.T) {
 	ctx := t.Context()
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
 	for _, role := range []string{"implementer", "reviewer", "tester", "triager", "scoper"} {
-		s.RunCost(ctx, "standard", role, 0.42, nil)
+		s.RunCost(ctx, "standard", role, "", "", 0.42, nil)
 	}
+	s.RunCost(ctx, "standard", "implementer", "treatment", "review-search", 0.42, nil)
+	s.RunCost(ctx, "standard", "implementer", "control", "review-floor", 0.42, nil)
 	body := scrape()
 	for _, role := range []string{"implementer", "reviewer", "tester", "triager", "scoper"} {
-		if want := `maku_factory_run_cost_usd_count{role="` + role + `",tier="standard"} 1`; !strings.Contains(body, want+"\n") {
+		if want := `maku_factory_run_cost_usd_count{cohort="none",profile="none",role="` + role + `",tier="standard"} 1`; !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+	// R34: the task's cohort and profile label the run's cost, none without a profile.
+	for _, want := range []string{
+		`maku_factory_run_cost_usd_count{cohort="treatment",profile="review-search",role="implementer",tier="standard"} 1`,
+		`maku_factory_run_cost_usd_count{cohort="control",profile="review-floor",role="implementer",tier="standard"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s\n%s", want, body)
 		}
 	}

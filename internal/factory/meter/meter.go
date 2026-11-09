@@ -302,7 +302,7 @@ type Meter struct {
 	// with its tier and costRole: endSettle after the meter, having seen it live, sees it end, or
 	// when it is deleted first. OnFallback of a run of a USD-capped tier capped in tokens instead,
 	// once per run.
-	OnCost     func(ctx context.Context, tier, role string, usd float64, byModel map[string]float64)
+	OnCost     func(ctx context.Context, key CostKey, usd float64, byModel map[string]float64)
 	OnFallback func(ctx context.Context, why string)
 	// OnLateCost is told of what a run spent after its cost was reported, by served model: a
 	// reading slower than endSettle corrects the total spend, never the reported cost.
@@ -352,7 +352,7 @@ type Meter struct {
 	pruned   string                      // the last UTC day whose old ledgers were deleted
 	told     map[string]bool             // the principals Day was told of on toldDay
 	toldDay  string                      // the UTC day told counts
-	live     map[string]costKey          // priced runs seen live, by tier and role: their cost is still to report
+	live     map[string]CostKey          // priced runs seen live, by tier and role: their cost is still to report
 	ended    map[string]time.Time        // live-seen runs, by when this meter first saw them ended
 	settled  map[string]map[string]int64 // reported runs: the micro-USD by served model reported
 	fell     map[string]bool             // runs whose fallback was reported
@@ -1341,9 +1341,9 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 	}
 	if !runs.Terminal(r.Phase) {
 		if m.live == nil {
-			m.live = map[string]costKey{}
+			m.live = map[string]CostKey{}
 		}
-		m.live[r.ID] = costKey{tier: r.Tier, role: costRole(r)}
+		m.live[r.ID] = CostKey{Tier: r.Tier, Role: costRole(r), Cohort: r.Cohort, Profile: r.Profile}
 		return
 	}
 	if _, ok := m.live[r.ID]; !ok {
@@ -1362,8 +1362,9 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 	}
 }
 
-// costKey is what a run's cost is reported by: its tier and costRole.
-type costKey struct{ tier, role string }
+// CostKey is what a run's cost is reported by: its tier and costRole, and the task's cohort and
+// profile when the run started (R34), "" without.
+type CostKey struct{ Tier, Role, Cohort, Profile string }
 
 // costRole is the role a run's cost is reported under (harness roles HR6): the claim's role, except
 // that a factory triager run whose brief opens with the scoper marker is "scoper". The marker counts
@@ -1395,7 +1396,7 @@ func (m *Meter) report(ctx context.Context, id string) {
 	}
 	m.settled[id] = at
 	if m.OnCost != nil {
-		m.OnCost(ctx, key.tier, key.role, float64(e.usd)/1e6, by)
+		m.OnCost(ctx, key, float64(e.usd)/1e6, by)
 	}
 }
 

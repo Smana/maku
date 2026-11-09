@@ -1433,6 +1433,7 @@ func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
 			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits != c.human || taskOutcome(got) != want {
 				t.Fatalf("%s %s human %v, want %s", got.Status.Phase, got.Status.Reason, got.Status.PullRequest.HumanCommits, want)
 			}
+			g.settled(t, "3buqdlot")
 			if !slices.ContainsFunc(g.metrics.recorded, func(m string) bool { return strings.HasPrefix(m, "task_outcome ") && strings.Contains(m, " "+want+" ") }) {
 				t.Fatalf("%v", g.metrics.recorded)
 			}

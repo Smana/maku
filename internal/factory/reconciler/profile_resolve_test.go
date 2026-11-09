@@ -531,6 +531,7 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.reconcile(t, "3buqdlot", 1)
+	g.settled(t, "3buqdlot")
 	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.Contains(got[0], "review-search scoper review-search stopped") {
 		t.Fatalf("outcome %q", got)
 	}
@@ -570,6 +571,10 @@ func TestAProfileAnnouncementWaitsForATarget(t *testing.T) {
 	tk = g.reconcile(t, "3buqdlot", 2)
 	if tk.Status.PullRequest == nil || tk.Status.PullRequest.Number != 12 {
 		t.Fatalf("%+v", tk.Status.PullRequest)
+	}
+	// R34: each claim carries the cohort and the profile the task ran under when it started.
+	if s0, s1 := g.runs.specs[rid(0)], g.runs.specs[rid(1)]; s0.Cohort != "treatment" || s0.Profile != "review-floor" || s1.Cohort != "treatment" || s1.Profile != "review-search" {
+		t.Fatalf("claims %q %q / %q %q", s0.Cohort, s0.Profile, s1.Cohort, s1.Profile)
 	}
 	announced := func() int {
 		n := 0

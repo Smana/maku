@@ -252,6 +252,9 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 		return err
 	}
 	s.RunID, s.StartSeq, s.ChargedTo = runID(t.Name, len(t.Status.Runs)), last, r.person(t)
+	if p := t.Status.Profile; p != nil { // the meter labels the run's cost with them (R34)
+		s.Cohort, s.Profile = p.Cohort, p.Name
+	}
 	if t.Spec.MaxMicroUSD > 0 { // F4, C-1: the meter holds an api task's run to its own cap, not the tier's
 		s.MaxMicroUSD = runMicroUSD(t.Spec.Budget)
 	}

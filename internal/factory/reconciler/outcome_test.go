@@ -209,12 +209,25 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 			if tk.Status.Phase != c.phase {
 				t.Fatalf("phase %s", tk.Status.Phase)
 			}
+			if got := outcomes(); len(got) != 0 || (tk.Status.Profile != nil && tk.Status.Profile.Counted) {
+				t.Fatalf("counted before the usage settled (R34): %v %+v", got, tk.Status.Profile)
+			}
+			tk = g.settled(t, "3buqdlot")
 			g.reconcile(t, "3buqdlot", 1)
 			if got := outcomes(); !slices.Equal(got, c.want) || (c.want != nil) != (tk.Status.Profile != nil && tk.Status.Profile.Counted) {
 				t.Fatalf("%v, counted %+v", got, tk.Status.Profile)
 			}
 		})
 	}
+}
+
+// settled moves the clock past the settle window from the task's end and reconciles once: the
+// pass that records the task's tokens, outcome and USD (R34).
+func (g *rig) settled(t *testing.T, name string) *v1alpha1.Task {
+	t.Helper()
+	at := g.r.Now().Add(g.r.settleWindow())
+	g.r.Now = func() time.Time { return at }
+	return g.reconcile(t, name, 1)
 }
 
 func taskOutcomes(ms []string) []string {
@@ -298,6 +311,36 @@ func TestASplitParentIsNotCounted(t *testing.T) {
 	}
 }
 
+// R34: the task's USD is counted once its usage has settled — terminal, then twice the meter's
+// poll and 30 s — so a cost the meter prices after the end is in it; and once only, through the
+// reconciles that follow.
+func TestTaskUSDIsCountedOnceTheUsageSettled(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "x"))
+	tk := g.reconcile(t, "3buqdlot", 3)
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment", Resolved: true}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	tk.Annotations = map[string]string{v1alpha1.AnnotationStop: "true"}
+	if err := g.c.Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped {
+		t.Fatal(tk.Status.Phase)
+	}
+	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}} // priced after the end: a late reading
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow() - time.Second) }
+	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.UsageSettled || len(taskOutcomes(g.metrics.recorded)) != 0 {
+		t.Fatalf("counted inside the window: %v", g.metrics.recorded)
+	}
+	tk = g.settled(t, "3buqdlot")
+	g.reconcile(t, "3buqdlot", 2)
+	want := []string{"task_outcome review treatment review-search scoper none stopped 0.42"}
+	if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) || !tk.Status.UsageSettled || !tk.Status.Profile.Counted {
+		t.Fatalf("%v, want %v once; %+v", got, want, tk.Status.Profile)
+	}
+}
+
 func TestAnUnresolvedTaskThatFailsIsCounted(t *testing.T) {
 	g := harnessedScoper(t, nil)
 	scopeHandoff(g, 0, questionScope())
@@ -310,6 +353,7 @@ func TestAnUnresolvedTaskThatFailsIsCounted(t *testing.T) {
 	if tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Reason != "escalation_expired" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
+	tk = g.settled(t, "3buqdlot")
 	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasPrefix(got[0], "task_outcome review treatment review-floor floor none stopped") || !tk.Status.Profile.Counted {
 		t.Fatalf("%v %+v", got, tk.Status.Profile)
 	}
@@ -337,6 +381,7 @@ func TestTaskOutcomeCarriesTheRecommendation(t *testing.T) {
 			if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped {
 				t.Fatal(tk.Status.Phase)
 			}
+			g.settled(t, "3buqdlot")
 			want := fmt.Sprintf("task_outcome review %s %s %s %s stopped 0", c.profile.Cohort, c.profile.Name, c.profile.Source, c.want)
 			if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, []string{want}) {
 				t.Fatalf("%v, want %q", got, want)

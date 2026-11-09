@@ -119,12 +119,8 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 	if !v1alpha1.TerminalPhase(t.Status.Phase) {
 		return
 	}
-	if p := t.Status.Profile; p != nil && !p.Counted && !splitApproved(t) { // an approved split's parts did the work, and count
-		p.Counted = true // rides the status write the count waits for: once, or neither
-		class, rec, outcome, usd := t.Spec.PredictedClass, r.recommendedLabel(t), taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
-		record(ctx, func(ctx context.Context) {
-			r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
-		})
+	if !r.settling(t) { // never ran: nothing settles, and nothing waits (R34)
+		r.countTask(ctx, t)
 	}
 	ids := make([]string, 0, len(t.Status.Runs))
 	for _, x := range t.Status.Runs {
@@ -142,6 +138,22 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 		"contentSHA256", t.Spec.Source.ContentSHA256, "classifier", classifier, "tier", tier, "control", control,
 		"runIds", strings.Join(ids, ","), "room", t.Status.RoomRef, "pr", pr, "mergedBy", mergedBy,
 		"phase", t.Status.Phase, "reason", t.Status.Reason, "tokens", t.Status.Usage.Tokens)
+}
+
+// countTask counts a terminal task's outcome and USD once, by its profile (R34): at its settle,
+// once the meter's late readings have had their window, so the dollars are the task's whole; at
+// its end for a task that never ran. The mark rides the status write the count waits for: once,
+// or neither. An approved split's parts did the work, and count.
+func (r *Reconciler) countTask(ctx context.Context, t *v1alpha1.Task) {
+	p := t.Status.Profile
+	if p == nil || p.Counted || splitApproved(t) {
+		return
+	}
+	p.Counted = true
+	class, rec, outcome, usd := t.Spec.PredictedClass, r.recommendedLabel(t), taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
+	record(ctx, func(ctx context.Context) {
+		r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
+	})
 }
 
 // splitApproved: t is the parent of an approved split, whose parts carry the work.

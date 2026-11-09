@@ -808,8 +808,9 @@ func (r *Reconciler) settling(t *v1alpha1.Task) bool {
 }
 
 // settle refreshes a settling task's records from their claims, and once the window closes
-// records the task's tokens and marks the usage settled. The metric rides the same status write
-// as the mark, so a conflicting write replays both; the write that lands records them once.
+// records the task's tokens, its outcome and its USD (R34) and marks the usage settled. The
+// metrics ride the same status write as the mark, so a conflicting write replays both; the write
+// that lands records them once.
 func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
 	if _, _, err := r.observe(ctx, t); err != nil {
 		return err
@@ -826,6 +827,7 @@ func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	tokens, tier, tmpl, class := t.Status.Usage.Tokens, t.Spec.Budget.Tier, t.Spec.Template, t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.TaskTokens(ctx, tokens, tier, tmpl, class) })
+	r.countTask(ctx, t)
 	return nil
 }
 
