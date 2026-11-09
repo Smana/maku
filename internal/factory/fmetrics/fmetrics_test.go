@@ -482,16 +482,26 @@ func TestProfileRecommendation(t *testing.T) {
 	}
 }
 
+// The comparison the evaluation makes: tasks the scoper recommended X for, control (the floor ran)
+// against treatment (X ran, or the step past it); no recommendation is none.
 func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	ctx := t.Context()
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
-	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "accepted", 1.25)
-	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "accepted", 0.5)
+	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "review-search", "accepted", 1.25)
+	s.TaskOutcome(ctx, "review", "treatment", "review-search", "scoper", "review-search", "accepted", 0.5)
+	s.TaskOutcome(ctx, "review", "control", "review-floor", "control", "review-search", "failed", 2)
+	s.TaskOutcome(ctx, "review", "treatment", "review-frontier", "escalation", "review-search", "failed", 4)
+	s.TaskOutcome(ctx, "review", "treatment", "review-floor", "floor", "", "accepted", 1)
 	s.Intervention(ctx, "retry", "control")
 	body := scrape()
 	for _, want := range []string{
-		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",repository="other",source="scoper"} 2`,
-		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="review-search"} 1.75`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search",repository="other",source="scoper"} 2`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search"} 1.75`,
+		`maku_factory_task_outcomes_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search",repository="other",source="control"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search"} 2`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search",repository="other",source="escalation"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search"} 4`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-floor",recommended="none",repository="other",source="floor"} 1`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",repository="other"} 1`,
 	} {
 		if !strings.Contains(body, want) {

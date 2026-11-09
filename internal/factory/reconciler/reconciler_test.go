@@ -298,8 +298,8 @@ func (m *fakeMetrics) TaskTokens(_ context.Context, tokens int64, tier, template
 func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort string) {
 	m.add("intervention " + kind + " " + cohort)
 }
-func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, outcome string, usd float64) {
-	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %v", class, cohort, profile, source, outcome, usd))
+func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
+	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
 }
 func (m *fakeMetrics) TierFit(_ context.Context, classifier, tier, fit string, control bool) {
 	m.add("tier_fit " + classifier + " " + tier + " " + fit + " " + strconv.FormatBool(control))

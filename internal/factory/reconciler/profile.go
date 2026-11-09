@@ -52,14 +52,23 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	*t.Status.Profile = q
 	narrateLater(t, narrate.ProfileChosen(q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
 	if len(choices) > 0 {
-		class, cohort, applied := t.Spec.PredictedClass, q.Cohort, q.Source == "scoper"
-		rec := q.Recommended
-		if rec != "" && !slices.ContainsFunc(choices, func(c ProfileChoice) bool { return c.Name == rec }) {
-			rec = "other" // keeps the label bounded
-		}
+		class, cohort, rec, applied := t.Spec.PredictedClass, q.Cohort, r.recommendedLabel(t), q.Source == "scoper"
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
 	}
 	return nil
+}
+
+// recommendedLabel is the scoper's recommendation on t as a bounded metric label: a profile the
+// class offers, none without one, other for a name no longer offered.
+func (r *Reconciler) recommendedLabel(t *v1alpha1.Task) string {
+	rec := t.Status.Profile.Recommended
+	switch {
+	case rec == "":
+		return "none"
+	case slices.ContainsFunc(r.profileChoices(t), func(c ProfileChoice) bool { return c.Name == rec }):
+		return rec
+	}
+	return "other"
 }
 
 // profileDecision is what applyProfile persists beside the spec it applies, under

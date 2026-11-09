@@ -113,7 +113,10 @@ func TestResolutionTable(t *testing.T) {
 			var want []string
 			if c.label == "" {
 				rec := c.want.recommended
-				if rec == "zzz" || rec == "review-other" {
+				switch rec {
+				case "":
+					rec = "none"
+				case "zzz", "review-other":
 					rec = "other"
 				}
 				cohort := "treatment"

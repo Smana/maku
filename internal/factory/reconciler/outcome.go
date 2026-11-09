@@ -121,8 +121,10 @@ func (r *Reconciler) outcome(ctx context.Context, t *v1alpha1.Task) {
 	}
 	if p := t.Status.Profile; p != nil && !p.Counted && !splitApproved(t) { // an approved split's parts did the work, and count
 		p.Counted = true // rides the status write the count waits for: once, or neither
-		class, outcome, usd := t.Spec.PredictedClass, taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
-		record(ctx, func(ctx context.Context) { r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, outcome, usd) })
+		class, rec, outcome, usd := t.Spec.PredictedClass, r.recommendedLabel(t), taskOutcome(t), float64(t.Status.Usage.CostMicroUSD)/1e6
+		record(ctx, func(ctx context.Context) {
+			r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
+		})
 	}
 	ids := make([]string, 0, len(t.Status.Runs))
 	for _, x := range t.Status.Runs {

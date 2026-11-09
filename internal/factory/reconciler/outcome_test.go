@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -164,7 +165,7 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 		want    []string
 	}{
 		"stopped with a profile": {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"}, stop,
-			v1alpha1.PhaseStopped, []string{"task_outcome review treatment review-search scoper stopped 1.5"}},
+			v1alpha1.PhaseStopped, []string{"task_outcome review treatment review-search scoper none stopped 1.5"}},
 		"stopped without a profile": {nil, stop, v1alpha1.PhaseStopped, nil},
 		"escalated":                 {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"}, stuck, v1alpha1.PhaseEscalated, nil},
 	} {
@@ -250,7 +251,37 @@ func TestAnUnresolvedTaskThatFailsIsCounted(t *testing.T) {
 	if tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Reason != "escalation_expired" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
-	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasPrefix(got[0], "task_outcome review treatment review-floor floor stopped") || !tk.Status.Profile.Counted {
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasPrefix(got[0], "task_outcome review treatment review-floor floor none stopped") || !tk.Status.Profile.Counted {
 		t.Fatalf("%v %+v", got, tk.Status.Profile)
+	}
+}
+
+// The outcome carries the scoper's recommendation as ProfileRecommendation does: an offered name,
+// none without one, other for a name the class no longer offers.
+func TestTaskOutcomeCarriesTheRecommendation(t *testing.T) {
+	for name, c := range map[string]struct {
+		profile v1alpha1.ProfileStatus
+		want    string
+	}{
+		"applied":     {v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment", Recommended: "review-search", Resolved: true}, "review-search"},
+		"control":     {v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Recommended: "review-search", Resolved: true}, "review-search"},
+		"stepped":     {v1alpha1.ProfileStatus{Name: "review-frontier", Source: "escalation", Cohort: "treatment", Recommended: "review-search", Resolved: true}, "review-search"},
+		"none":        {v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}, "none"},
+		"not offered": {v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Recommended: "review-gone", Resolved: true}, "other"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) { tk.Status.Profile = &c.profile })
+			tk.Annotations = map[string]string{v1alpha1.AnnotationStop: "true"}
+			if err := g.c.Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped {
+				t.Fatal(tk.Status.Phase)
+			}
+			want := fmt.Sprintf("task_outcome review %s %s %s %s stopped 0", c.profile.Cohort, c.profile.Name, c.profile.Source, c.want)
+			if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, []string{want}) {
+				t.Fatalf("%v, want %q", got, want)
+			}
+		})
 	}
 }

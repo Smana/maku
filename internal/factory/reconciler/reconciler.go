@@ -104,7 +104,7 @@ type metrics interface {
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
 	Intervention(ctx context.Context, kind, cohort string)
-	TaskOutcome(ctx context.Context, class, cohort, profile, source, outcome string, usd float64)
+	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64)
 	TierFit(ctx context.Context, classifier, tier, fit string, control bool)
 	Revoked(ctx context.Context, reason string)
 	AdmissionRefused(ctx context.Context, reason string)

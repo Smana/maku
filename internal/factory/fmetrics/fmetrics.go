@@ -379,10 +379,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied (TE)."))
 	check(err)
 	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
-		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed (TE)."))
+		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
 	check(err)
 	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
-		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile and outcome (TE)."))
+		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile, the profile the scoper recommended and outcome."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -779,16 +779,20 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort string) {
 		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "none"})), s.repoOf(ctx)))
 }
 
-// TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost (TE);
-// profile names come from config, so the label stays bounded.
-func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, outcome string, usd float64) {
+// TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost.
+// profile and recommended come from config (the caller maps a name no longer offered to other), so
+// the labels stay bounded; no recommendation is none.
+func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
 	cohort = oneOf(cohort, []string{"labeled", "control", "treatment"})
 	outcome = oneOf(outcome, taskOutcomes())
+	if recommended == "" {
+		recommended = "none"
+	}
 	s.taskOutcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
 		attribute.String("profile", profile), attribute.String("source", oneOf(source, []string{"label", "floor", "control", "scoper", "escalation"})),
-		attribute.String("outcome", outcome), s.repoOf(ctx)))
+		attribute.String("recommended", recommended), attribute.String("outcome", outcome), s.repoOf(ctx)))
 	s.taskUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
-		attribute.String("profile", profile), attribute.String("outcome", outcome)))
+		attribute.String("profile", profile), attribute.String("recommended", recommended), attribute.String("outcome", outcome)))
 }
 
 // ClassMismatch counts a task whose predicted class is not the one policy-bot matched.
