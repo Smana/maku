@@ -376,7 +376,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("Scoper runs as they end, by class and outcome: ready, question, assumed, missing, failed, budget or budget_calls (scoper design SC11, SC12; harness roles HR2)."))
 	check(err)
 	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
-		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied (TE)."))
+		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied."))
 	check(err)
 	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
 		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))

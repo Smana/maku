@@ -58,7 +58,7 @@ func Control(taskID string, percent int) bool {
 }
 
 // Cohort puts percent % of tasks in the evaluation's control cohort, hashed apart from Control so
-// the two groups are independent (TE).
+// the two groups are independent.
 func Cohort(taskID string, percent int) bool {
 	return Control("evaluation/"+taskID, percent)
 }

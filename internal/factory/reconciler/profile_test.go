@@ -47,7 +47,7 @@ func apiTasks(t *testing.T, c *config.Config) (internal, sponsored *v1alpha1.Tas
 	return internal, sponsored
 }
 
-// R9: a task routed to investigate by its source never takes part in the evaluation.
+// A task routed to investigate by its source never takes part in the evaluation.
 func TestInvestigateTasksSkipTheEvaluation(t *testing.T) {
 	cf := profileCfg(true)
 	internal, _ := apiTasks(t, cf)

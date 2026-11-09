@@ -162,7 +162,7 @@ type Config struct {
 	HarnessProfiles  map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
 	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
-	// Evaluation is the team evaluation's cohort and mode (TE): observe unless set.
+	// Evaluation is the team evaluation's cohort and mode: observe unless set.
 	Evaluation Evaluation `json:"evaluation,omitzero"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`

@@ -463,7 +463,7 @@ func TestEveryNarratedReasonIsAHumanPathReason(t *testing.T) {
 	}
 }
 
-// TE: a recommendation is counted with whether it was applied; none when the scoper gave none.
+// A recommendation is counted with whether it was applied; none when the scoper gave none.
 func TestProfileRecommendation(t *testing.T) {
 	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })

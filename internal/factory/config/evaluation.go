@@ -8,7 +8,7 @@ import (
 	"slices"
 )
 
-// Evaluation is the team evaluation's switch (TE): the control cohort's share of unlabelled
+// Evaluation is the team evaluation's switch: the control cohort's share of unlabelled
 // tasks, and whether the scoper's recommendation is only recorded (observe) or used (apply).
 type Evaluation struct {
 	ControlPercent int    `json:"controlPercent,omitempty"`

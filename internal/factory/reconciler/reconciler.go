@@ -1009,7 +1009,7 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	t.Spec.Template, t.Spec.PredictedClass, t.Spec.DataClass = d.Template, d.PredictedClass, d.DataClass
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
 	var profile *v1alpha1.ProfileStatus
-	if !triage.Investigates(r.Cfg, t) && !r.Cfg.Investigates(d.Template) { // R9: a task routed to investigate never takes part in the evaluation
+	if !triage.Investigates(r.Cfg, t) && !r.Cfg.Investigates(d.Template) { // a task routed to investigate never takes part in the evaluation
 		profile = r.floorProfile(t, d)
 	}
 	var floor config.HarnessProfile
@@ -1061,7 +1061,7 @@ func (r *Reconciler) profileSpec(t *v1alpha1.Task, class string, p config.Harnes
 }
 
 // floorProfile is the profile t is frozen under at triage: its class's floor, with the cohort's
-// source; nil for a class without a harness, whose task carries no status.profile (TE).
+// source; nil for a class without a harness, whose task carries no status.profile.
 func (r *Reconciler) floorProfile(t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
 	cl := r.Cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass]
 	p, ok := r.Cfg.ProfileFor(cl, cl.Harness)

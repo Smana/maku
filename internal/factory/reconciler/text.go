@@ -219,7 +219,7 @@ func ScoperBrief(t *v1alpha1.Task, nonce string, b config.Scoper, choices []Prof
 	return fit(head, steeringBlock(t, nonce), snapshotBlock(t, fence), t)
 }
 
-// ProfileChoice is one harness profile the scoper may recommend (TE): the class's floor, or one of
+// ProfileChoice is one harness profile the scoper may recommend: the class's floor, or one of
 // its allowed variants.
 type ProfileChoice struct {
 	Name, Description string
@@ -227,7 +227,7 @@ type ProfileChoice struct {
 }
 
 // profileChoices are t's profiles to choose from: nil for a labelled task, a task without a
-// profile, or a class with no variant (R11: nothing to choose); else the floor, then each variant
+// profile, or a class with no variant (nothing to choose); else the floor, then each variant
 // in config order.
 func (r *Reconciler) profileChoices(t *v1alpha1.Task) []ProfileChoice {
 	p := t.Status.Profile

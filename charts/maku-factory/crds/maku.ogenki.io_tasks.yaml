@@ -1913,7 +1913,7 @@ spec:
                 type: string
               profile:
                 description: The harness profile frozen at triage and the evaluation
-                  cohort; absent for a class without a harness (TE).
+                  cohort; absent for a class without a harness.
                 properties:
                   checks:
                     type: boolean

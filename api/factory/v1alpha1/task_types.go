@@ -397,7 +397,7 @@ type Budget struct {
 	TaskMicroUSD int64 `json:"taskMicroUSD,omitempty"`
 }
 
-// ProfileStatus is the harness profile a task runs under and how it was chosen (TE). Checks and
+// ProfileStatus is the harness profile a task runs under and how it was chosen. Checks and
 // TestFirst are frozen here: a profile removed from config later changes nothing.
 type ProfileStatus struct {
 	// +kubebuilder:validation:MaxLength=63
@@ -441,7 +441,7 @@ type TaskStatus struct {
 	// The C7 answer, recorded as-is (§2).
 	// +optional
 	Classification *Classification `json:"classification,omitempty"`
-	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness (TE).
+	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness.
 	// +optional
 	Profile *ProfileStatus `json:"profile,omitempty"`
 	// +kubebuilder:validation:MaxItems=256

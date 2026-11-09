@@ -16,12 +16,12 @@ type Decision struct {
 	Template, PredictedClass, DataClass string
 	Budget                              v1alpha1.Budget
 	Classification                      v1alpha1.Classification
-	// Declared is a class a maintainer or a schedule named; Cohort is the evaluation's group (TE).
+	// Declared is a class a maintainer or a schedule named; Cohort is the evaluation's group.
 	Declared bool
 	Cohort   string
 }
 
-// The evaluation cohorts a task is frozen in at triage (TE).
+// The evaluation cohorts a task is frozen in at triage.
 const (
 	CohortLabeled   = "labeled"
 	CohortControl   = "control"

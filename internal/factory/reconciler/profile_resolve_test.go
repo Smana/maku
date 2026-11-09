@@ -365,7 +365,7 @@ func TestASplitResolvesWhenTheTaskRunsWhole(t *testing.T) {
 	})
 }
 
-// R14: a harness class whose row runs no scoper resolves as it is queued, once, uncounted.
+// A harness class whose row runs no scoper resolves as it is queued, once, uncounted.
 func TestAnUnscopedTaskResolvesAtAdmission(t *testing.T) {
 	cf := resolveCfg("apply", 0)
 	steps := int32(40)
@@ -408,7 +408,7 @@ func (l *flakyLog) EventsSince(ctx context.Context, room string, after int64, ke
 	return l.fakeLog.EventsSince(ctx, room, after, keep)
 }
 
-// R13: a ready scope's recommendation bounced for want of an acceptance check runs assumed, on the floor.
+// A ready scope's recommendation bounced for want of an acceptance check runs assumed, on the floor.
 func TestAnAssumedRetryAppliesNoRecommendation(t *testing.T) {
 	g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Text = "fix it" })
 	sc := readyScope()

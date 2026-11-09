@@ -44,7 +44,7 @@ type HarnessProfile struct {
 	Checks    bool    `json:"checks,omitempty"`
 	TestFirst bool    `json:"testFirst,omitempty"`
 	Loop      LoopRef `json:"loop,omitempty"`
-	// Description is the line the scoper's brief shows: when to choose the profile (TE).
+	// Description is the line the scoper's brief shows: when to choose the profile.
 	Description string `json:"description,omitempty"`
 }
 

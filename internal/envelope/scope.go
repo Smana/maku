@@ -34,7 +34,7 @@ type Scope struct {
 	Acceptance  []Acceptance `json:"acceptance"`
 	Question    string       `json:"question,omitempty"`
 	// Profile is the harness profile the scoper recommends over the class's floor, and ProfileWhy
-	// its reason; a ready scope's only (TE).
+	// its reason; a ready scope's only.
 	Profile    string `json:"profile,omitempty"`
 	ProfileWhy string `json:"profileWhy,omitempty"`
 }
