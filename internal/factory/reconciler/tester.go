@@ -222,6 +222,25 @@ type checksDecl struct {
 	} `json:"tests"`
 }
 
+// checksAt is the declaration at ref; an absent or malformed one declares nothing.
+func (r *Reconciler) checksAt(ctx context.Context, ref string) (checksDecl, error) {
+	var d checksDecl
+	raw, err := r.merger(ctx).FileAt(ctx, ".github/agent-checks.yaml", ref)
+	if err != nil {
+		return d, err
+	}
+	if raw == "" || yaml.Unmarshal([]byte(raw), &d) != nil {
+		return checksDecl{}, nil
+	}
+	return d, nil
+}
+
+// testPaths are the paths the default branch's declaration lets a tester write.
+func (r *Reconciler) testPaths(ctx context.Context, _ *v1alpha1.Task) ([]string, error) {
+	d, err := r.checksAt(ctx, defaultBranch)
+	return d.Tests.Paths, err
+}
+
 // underPath is the declaration's rule: the path itself, or any path under a prefix ending in "/".
 func underPath(path string, prefixes []string) bool {
 	return slices.ContainsFunc(prefixes, func(p string) bool { return path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) })
@@ -231,12 +250,11 @@ func underPath(path string, prefixes []string) bool {
 // file of the commit is added or modified, under tests.paths and not a runner file, and the trailers'
 // files are exactly them. An absent or unreadable declaration is a refusal.
 func (r *Reconciler) testsOnly(ctx context.Context, cm forge.Commit, trailers []string) (bool, error) {
-	raw, err := r.merger(ctx).FileAt(ctx, ".github/agent-checks.yaml", cm.Parents[0])
+	d, err := r.checksAt(ctx, cm.Parents[0])
 	if err != nil {
 		return false, err
 	}
-	var d checksDecl
-	if raw == "" || yaml.Unmarshal([]byte(raw), &d) != nil || len(d.Tests.Paths) == 0 {
+	if len(d.Tests.Paths) == 0 {
 		return false, nil
 	}
 	var changed []string

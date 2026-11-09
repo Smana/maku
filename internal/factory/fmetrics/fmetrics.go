@@ -159,6 +159,7 @@ type Set struct {
 	resumes              metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
+	profileRecs          metric.Int64Counter
 	splits               metric.Int64Counter
 	splitChildren        metric.Int64Counter
 	revisionDeferred     metric.Int64Counter
@@ -368,6 +369,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.scoperRuns, err = meter.Int64Counter("agent_factory_scoper_runs_total",
 		metric.WithDescription("Scoper runs as they end, by class and outcome: ready, question, assumed, missing, failed, budget or budget_calls (scoper design SC11, SC12; harness roles HR2)."))
+	check(err)
+	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
+		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied (TE)."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -1006,6 +1010,17 @@ func (s *Set) SteeringRead(ctx context.Context, class, read string) {
 func (s *Set) ScoperRun(ctx context.Context, class, outcome string) {
 	s.scoperRuns.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
 		attribute.String("outcome", oneOf(outcome, []string{"ready", "question", "assumed", "missing", "failed", "budget", "budget_calls"})), s.repoOf(ctx)))
+}
+
+// ProfileRecommendation counts a resolved task that was offered profiles; recommended comes from
+// config or is "none", so the label stays bounded.
+func (s *Set) ProfileRecommendation(ctx context.Context, class, cohort, recommended string, applied bool) {
+	if recommended == "" {
+		recommended = "none"
+	}
+	s.profileRecs.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
+		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment"})),
+		attribute.String("recommended", recommended), attribute.Bool("applied", applied)))
 }
 
 // Split counts a split handoff's outcome once.

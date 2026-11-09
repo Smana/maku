@@ -668,3 +668,33 @@ func TestAnApprovalShownSaysWhoAndWhatRemains(t *testing.T) {
 		t.Fatal("a new review is a new narration")
 	}
 }
+
+// TE: the profile a task runs under, said once, with the floor marked and the scoper's why.
+func TestProfileChosen(t *testing.T) {
+	for name, c := range map[string]struct {
+		name, source, reason, why string
+		want, not                 []string
+	}{
+		"variant": {"review-search", "scoper", "", "the change spans three packages",
+			[]string{"`review-search`", "the change spans three packages"}, []string{"(default)"}},
+		"floor": {"review-floor", "floor", "not_allowed", "",
+			[]string{"`review-floor` (default)", "not_allowed"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := ProfileChosen(c.name, c.source, c.reason, c.why, 1)
+			if e.Key != "profile-chosen-1" {
+				t.Fatalf("key %q", e.Key)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(e.Body, w) {
+					t.Errorf("body lacks %q: %s", w, e.Body)
+				}
+			}
+			for _, w := range c.not {
+				if strings.Contains(e.Body, w) {
+					t.Errorf("body has %q: %s", w, e.Body)
+				}
+			}
+		})
+	}
+}

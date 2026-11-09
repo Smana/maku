@@ -379,6 +379,9 @@ A task ends with one of these:
 The factory App comments on the task's issue, or on its pull request when it has none: a run's
 start (id, branch, budget, the room link, how to stop it), the pull request, CI fix and resume,
 each hand-off with its reason and the merge command, and the end with the tokens used.
+A class with `harness` adds `profile_chosen` (`profile-chosen-<runs>`) once its scoper ends: the
+profile the task runs under, `(default)` for the floor, and the scoper's why or the reason the floor
+was kept (`none`, `unknown`, `not_allowed`, `observe`, `internal`, `no_tests_paths`, `scoper_failed`).
 
 A maintainer's **Request changes** is answered where it was made, on the pull request:
 

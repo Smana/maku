@@ -1029,3 +1029,7 @@ func (g *rig) setPhaseSince(t *testing.T, name string, at time.Time) {
 func contains(comments []string, s string) bool {
 	return slices.ContainsFunc(comments, func(c string) bool { return strings.Contains(c, s) })
 }
+
+func (m *fakeMetrics) ProfileRecommendation(_ context.Context, class, cohort, recommended string, applied bool) {
+	m.add(fmt.Sprintf("profile %s %s %s %v", class, cohort, recommended, applied))
+}

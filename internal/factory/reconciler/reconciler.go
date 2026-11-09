@@ -124,6 +124,7 @@ type metrics interface {
 	RoomClosedAtCap(ctx context.Context, reason string)
 	SteeringRead(ctx context.Context, class, read string)
 	ScoperRun(ctx context.Context, class, outcome string)
+	ProfileRecommendation(ctx context.Context, class, cohort, recommended string, applied bool)
 	ScopeBounce(ctx context.Context, class, exit string)
 	Split(ctx context.Context, class, outcome string)
 	SplitChild(ctx context.Context, class, outcome string)

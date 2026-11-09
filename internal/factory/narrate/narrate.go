@@ -1137,3 +1137,23 @@ func summary(text string, budget int) string {
 		}
 	}
 }
+
+// ProfileChosen names the harness profile the task's run-th run starts under, the floor marked
+// as the default, with the scoper's why or the reason it was not applied.
+func ProfileChosen(name, source, reason, why string, run int) Event {
+	body := fmt.Sprintf("Agent factory: this task runs under profile `%s`", name)
+	if source != "scoper" && source != "escalation" {
+		body += " (default)"
+	}
+	var because []string
+	if reason != "" {
+		because = append(because, reason)
+	}
+	if why != "" {
+		because = append(because, "the scoper: "+why)
+	}
+	if len(because) > 0 {
+		body += " — " + strings.Join(because, "; ")
+	}
+	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
+}

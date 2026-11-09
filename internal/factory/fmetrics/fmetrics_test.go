@@ -462,3 +462,20 @@ func TestEveryNarratedReasonIsAHumanPathReason(t *testing.T) {
 		t.Fatalf("narrate lists %d reasons: the walk proves nothing", len(narrate.Reasons()))
 	}
 }
+
+// TE: a recommendation is counted with whether it was applied; none when the scoper gave none.
+func TestProfileRecommendation(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ProfileRecommendation(ctx, "review", "control", "review-search", false)
+	s.ProfileRecommendation(ctx, "review", "treatment", "", false)
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_profile_recommendations_total{applied="false",class="review",cohort="control",recommended="review-search"} 1`,
+		`maku_factory_profile_recommendations_total{applied="false",class="review",cohort="treatment",recommended="none"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}

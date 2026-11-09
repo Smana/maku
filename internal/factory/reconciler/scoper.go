@@ -100,6 +100,9 @@ func (r *Reconciler) scoped(ctx context.Context, t *v1alpha1.Task, phase, reason
 	case sc.State == envelope.ScopeReady && split != nil:
 		return r.splitHandoff(ctx, t, split, seq)
 	case sc.State == envelope.ScopeReady:
+		if err := r.resolveProfile(ctx, t, sc); err != nil {
+			return err
+		}
 		return r.scopeEnd(ctx, t, "ready", seq)
 	case t.Spec.Issue == 0: // a schedule has no author to ask
 		return r.scopeEnd(ctx, t, "assumed", seq)
@@ -198,6 +201,9 @@ func (r *Reconciler) scoperFailed(ctx context.Context, t *v1alpha1.Task, reason 
 	if err := narrate.Room(ctx, r.Rooms, t, "scope-failed", "Agent factory: "+what+"; the task runs whole, with no scope or split.",
 		func(ctx context.Context) error { return r.Client.Status().Update(ctx, t) }); err != nil {
 		r.log().Warn("the scoper's failure note not posted", "task.id", t.Name, "err", err)
+	}
+	if err := r.resolveProfile(ctx, t, nil); err != nil {
+		return err
 	}
 	return r.scopeEndAs(ctx, t, "failed", 0, outcome)
 }
