@@ -16,7 +16,7 @@ resources that the factory reconciles**, next to the `Task`, `Room` and `AgentRu
 | Kind | One per | Holds | Today in |
 |---|---|---|---|
 | `Factory` | factory | the catalogue: tiers, role templates, harness profiles, loops, meter prices, caps, budgets, the kill-switch issue | the values file, around the `repositories` list |
-| `Repository` | repository served | maintainers, trigger label, checks, schedules, data class, `classAuthority`, which `Factory` serves it | `repositories[]` entries |
+| `Repository` | repository served | maintainers, trigger label, checks, schedules, `classAuthority`, which `Factory` serves it | `repositories[]` entries |
 | `MergePolicy` | repository | its classes and merge rules | `repositories[].classes` and `merge` (about 225 lines, three blocks) |
 
 Plumbing (GitHub App key files, broker URL, identity provider, listen addresses) and the feature
@@ -74,7 +74,7 @@ mergepolicy/cloud-native-ref             Smana/cloud-native-ref   central     6 
 | D13 | **Every replica builds the snapshot; only the leader writes status.** The factory runs two replicas behind leader election, and every replica serves the settings API from config. So the config controller runs with `NeedLeaderElection() == false` and only the status writer needs the lease | (a) the leader alone builds the snapshot: a follower would serve the settings pages from a stale config |
 | D14 | **An object invalid at startup is not served.** The snapshot is in memory, so after a restart an object with no valid version has no last good one: its repository is not served, it gets `Accepted=False`, and the factory emits a warning event. CEL at admission and `maku config validate` in the GitOps repository's CI make this rare | (a) persisting each object's last accepted spec in an annotation or a ConfigMap: more state, and a second source of truth beside git |
 | D15 | **One Factory per process, by name.** The factory serves the `Factory` named by `config.factory` (today's fence name, the cluster's). Any other `Factory` in the namespace gets `Accepted=False`, reason `NotThisFactory`. A `Repository` whose `factoryRef` names another factory is ignored, with the same reason | (a) a `--factory` flag: a second name for the same thing |
-| D16 | **The schema is written once.** The config structs that become CR specs move to `api/factory/v1alpha1` with kubebuilder markers, and `internal/factory/config` keeps type aliases, so `Config.Validate()` and every reader keep compiling. The YAML file and the CRs decode into the same Go types | (a) separate API types with a conversion layer: every one of `Class`'s twenty fields written twice, and drift between the two |
+| D16 | **The schema is written once, in `internal/factory/config`.** The CR specs reference config's own structs (`Class`, `Merge`, `Tier`, `Loop` …): `api/factory/v1alpha1` imports `internal/factory/config`, which imports no API package, so there is no cycle. controller-gen generates deepcopy for config and the schema from markers on its fields, with `crd:allowDangerousTypes=true` for the USD amounts, which are `float64`. Methods and validation stay where they are. The YAML file and the CRs decode into the same Go types | (a) moving the structs into the API package behind type aliases: Go defines no methods on an alias from another package, and `Budgets` keeps unexported state. (b) separate API types with a conversion layer: every one of `Class`'s twenty fields written twice, and drift between the two |
 
 ## The resources
 
@@ -114,7 +114,6 @@ spec:
   triggerLabel: factory/ready
   checks: {egress: [pypi]}
   schedules: []
-  dataClass: public
   classAuthority: central   # or repository (stage 4)
 ---
 apiVersion: maku.ogenki.io/v1alpha1
@@ -138,8 +137,9 @@ schema: with server-side apply and no `fieldValidation=Strict`, the API server p
 field and only warns. So `maku config validate <dir>` decodes the manifests strictly and runs the
 reconciler's checks offline, and the GitOps repository runs it in CI (ai-native-ref's `task check`).
 
-A `Repository` with no `MergePolicy` has no classes: its issues are triaged with no class to
-predict, and nothing of it merges. `Repository` reports it (`Accepted=True`, `MergePolicy` empty).
+A `Repository` with no `MergePolicy` is not served: `Accepted=False`, reason `NoMergePolicy`. Its
+merge block (required checks, merger login) is what lets the gate decide anything, so a repository
+without one is a half-written change, not a mode.
 
 ### The config controller (D5)
 
@@ -223,4 +223,5 @@ design:
 | Two replicas behind leader election, each serving the settings API | `charts/maku-factory/values.yaml`, `factory.go` | D13 |
 | Server-side apply prunes unknown fields instead of refusing them | Kubernetes field validation | `maku config validate` in CI |
 | The fence's name and the `Factory` name were two names | `Config.Factory` | D15 |
-| `Class` has about twenty fields | `classes.go` | D16: one set of Go types |
+| `Class` has about twenty fields; the USD amounts are `float64`, which controller-gen refuses by default | `classes.go`, `config.go` | D16: one set of Go types, in config |
+| The example gave `Repository` a `dataClass`: today's `Repository` has none (only `defaults.dataClass` and a schedule's) | `config.go` | dropped from `Repository` |
