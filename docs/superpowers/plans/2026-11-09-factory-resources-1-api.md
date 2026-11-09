@@ -729,12 +729,14 @@ never one object on top of an incomplete base.
    - with a Factory: delete every `CatalogueKeys` key, adding a warning per key that was present, `"<key> in the file is ignored: Factory <name> sets the catalogue"`; copy each key of its spec on top, except `prices` → `meter.prices` (creating `meter`) and `triage`, merged key by key into `triage`;
    - per pair, append to `repositories` (created if absent) an entry: `name` = `spec.repository`, plus `maintainers`, `triggerLabel`, `checks`, `schedules`, `classAuthority` when present, plus the policy's `classes` and `merge` when present.
 4. If `Parse(merge(S))` succeeds, every object of `S` is accepted: done.
-5. Otherwise find the **single culprit**: the first element `e` of `S`, in order, such that `Parse(merge(S − e))` succeeds. Refuse `e` with `Invalid` and the text of step 4's error (a pair refuses both its Repository and its MergePolicy), and accept the rest.
-6. If no single removal parses, refuse every element of `S` with `Invalid` and step 4's error, and fall back to `Parse(base)`. If that fails too, return its error: the factory has nothing it can serve.
+5. Otherwise remove culprits **greedily**. While `Parse(merge(S))` fails with error `E`, find the first element `e` of `S`, in order, such that `Parse(merge(S − e))` succeeds or fails with an error other than `E`. Refuse `e` with `Invalid` and `E`'s text, remove it from `S`, and repeat. A culprit pair refuses its MergePolicy with `E` and its Repository with `Invalid`, `"not served: MergePolicy <name> was refused"`. If no removal changes anything, refuse every element left with `E` and empty `S`. The loop runs at most `|S|` times.
+6. If `Parse(merge(S))` still fails (with `S` empty, `Parse(base)`: for example a migrated file whose objects are all refused), return the `Result`, its `Refused` and `Warnings` included, **with** the error: the factory has nothing it can serve, and the caller still reports the refusals.
 7. Sort `Refused` by `Kind` then `Name`; `Accepted` keeps `S`'s order.
 
-The single-culprit rule fits the live case (plan 2), where objects change one at a time; two broken
-objects at once refuse the whole set, which is conservative and reported.
+Greedy removal refuses two broken objects at once and serves the rest. Parse's messages name a
+repository rather than an index, so removing a good element normally leaves the error unchanged. Assemble keeps
+no history: the caller (plan 2) substitutes each refused object's last accepted spec and calls
+Assemble again, which is how D5 keeps the last accepted version.
 
 A legacy single-repository file (`repository:` at the top level) keeps working: `Parse` moves it
 into `Repositories`, and step 2's `DefinedTwice` check covers it.

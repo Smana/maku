@@ -55,7 +55,7 @@ func Decode(raw []byte) ([]Object, error) {
 		if g, ok := meta["generation"].(float64); ok {
 			gen = int64(g)
 		}
-		objs = append(objs, Object{Kind: Kind(kind), Name: name, Generation: gen, Spec: spec})
+		objs = append(objs, Object{Kind: Kind(kind), Name: name, Namespace: str(meta, "namespace"), Generation: gen, Spec: spec})
 	}
 	return objs, nil
 }

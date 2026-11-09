@@ -72,10 +72,8 @@ func (r Maku) config(args []string) error {
 		if err != nil {
 			return fmt.Errorf("config validate: %w", err)
 		}
-		res, err := resources.Assemble(file, objs)
-		if err != nil {
-			return fmt.Errorf("config validate: %w", err)
-		}
+		// An error means no servable config; its refusals are still printed first.
+		res, assembleErr := resources.Assemble(file, objs)
 		for _, w := range res.Warnings {
 			if _, err := fmt.Fprintf(r.Out, "warning: %s\n", w); err != nil {
 				return err
@@ -85,6 +83,9 @@ func (r Maku) config(args []string) error {
 			if _, err := fmt.Fprintf(r.Out, "%s/%s: %s: %s\n", f.Kind, f.Name, f.Reason, f.Message); err != nil {
 				return err
 			}
+		}
+		if assembleErr != nil {
+			return fmt.Errorf("config validate: %w", assembleErr)
 		}
 		if len(res.Refused) > 0 {
 			return fmt.Errorf("config validate: %d refused", len(res.Refused))

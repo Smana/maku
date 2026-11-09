@@ -47,3 +47,10 @@ func TestDecodeSkipsEmptyDocuments(t *testing.T) {
 		t.Fatalf("%v %+v", err, objs)
 	}
 }
+
+func TestDecodeFillsTheNamespace(t *testing.T) {
+	objs, err := Decode([]byte("apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: a, namespace: agent-system}\nspec: {}\n"))
+	if err != nil || len(objs) != 1 || objs[0].Namespace != "agent-system" {
+		t.Fatalf("%v %+v", err, objs)
+	}
+}

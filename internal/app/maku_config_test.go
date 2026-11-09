@@ -97,3 +97,22 @@ func TestMakuConfigValidateRefusesUnknownFields(t *testing.T) {
 		t.Fatalf("error: %v\n%s", err, out.String())
 	}
 }
+
+// F2: when no config can be served, validate still prints the refusals before its error.
+func TestMakuConfigValidateReportsRefusalsWithoutAConfig(t *testing.T) {
+	dir, _ := writeConfigFixture(t)
+	residual := filepath.Join(dir, "residual.yaml")
+	if err := os.WriteFile(residual, []byte("factory: aws-0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(dir, "factory.yaml")
+	if err := os.WriteFile(f, []byte("apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: aws-0}\nspec: {caps: {activeTasks: -1}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, f})
+	if err == nil || !strings.Contains(out.String(), "Factory/aws-0: Invalid") {
+		t.Fatalf("error: %v\n%s", err, out.String())
+	}
+}

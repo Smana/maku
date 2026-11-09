@@ -35,8 +35,11 @@ const (
 // Object is one resource as the API server stores it: its spec raw, so a field the author
 // omitted stays omitted and Parse's defaults apply exactly as they do to the file.
 type Object struct {
-	Kind       Kind
-	Name       string
+	Kind Kind
+	Name string
+	// Namespace is the object's; Assemble ignores it. The controller's cache must be scoped to
+	// the factory's namespace (plan 2), so every object it passes is in that namespace.
+	Namespace  string
 	Generation int64
 	Spec       map[string]any
 }
@@ -75,7 +78,20 @@ func (c candidate) objects() []Object {
 }
 
 // Assemble builds the factory's config from the file and the objects (factory resources D5, D8, D15).
-// It returns an error only when the file alone does not parse.
+//
+// When the file and the candidate set do not parse together, culprits are removed greedily: the
+// first candidate (pairs by the Repository's name, then the Factory) whose removal makes the rest
+// parse, or changes Parse's error, is refused Invalid with the current error, and the search
+// starts again on what is left, at most once per candidate. When no removal changes anything, the
+// whole set is refused. A culprit pair refuses its MergePolicy with the error and its Repository
+// as "not served". The Accepted objects are the ones Config is built from.
+//
+// An error means no servable config: the file does not read as YAML, or it does not parse once
+// every candidate is refused (after migration the file alone holds no repository). Result.Refused
+// and Result.Warnings are still valid with an error, so the caller reports the refusals.
+//
+// Assemble keeps no history. D5's "keep the last accepted version" is the caller's: it substitutes
+// each refused object's last accepted spec, when it has one, and calls Assemble again.
 func Assemble(file []byte, objs []Object) (Result, error) {
 	var base map[string]any
 	if err := yaml.Unmarshal(file, &base); err != nil {
@@ -90,38 +106,37 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 	refuse := func(o Object, reason, format string, a ...any) {
 		res.Refused = append(res.Refused, Refusal{Kind: o.Kind, Name: o.Name, Reason: reason, Message: fmt.Sprintf(format, a...)})
 	}
+	refuseInvalid := func(c candidate, msg string) {
+		if c.factory != nil {
+			refuse(*c.factory, v1alpha1.ReasonInvalid, "%s", msg)
+			return
+		}
+		refuse(*c.policy, v1alpha1.ReasonInvalid, "%s", msg)
+		refuse(*c.repo, v1alpha1.ReasonInvalid, "not served: MergePolicy %s was refused", c.policy.Name)
+	}
 
 	set := structural(base, name, objs, refuse)
 
 	cfg, warnings, err := tryParse(base, set)
-	if err != nil {
-		stepErr := err.Error()
+	for err != nil && len(set) > 0 {
+		cur := err.Error()
 		culprit := -1
 		for i := range set {
-			rest := slices.Concat(set[:i:i], set[i+1:])
-			if c, w, e := tryParse(base, rest); e == nil {
-				cfg, warnings, culprit = c, w, i
+			if _, _, e := tryParse(base, slices.Concat(set[:i:i], set[i+1:])); e == nil || e.Error() != cur {
+				culprit = i
 				break
 			}
 		}
-		if culprit >= 0 {
-			for _, o := range set[culprit].objects() {
-				refuse(o, v1alpha1.ReasonInvalid, "%s", stepErr)
-			}
-			set = slices.Concat(set[:culprit:culprit], set[culprit+1:])
-		} else {
+		if culprit < 0 {
 			for _, c := range set {
-				for _, o := range c.objects() {
-					refuse(o, v1alpha1.ReasonInvalid, "%s", stepErr)
-				}
+				refuseInvalid(c, cur)
 			}
 			set = nil
-			cfg, err = parseMap(base)
-			if err != nil {
-				return Result{}, err
-			}
-			warnings = nil
+		} else {
+			refuseInvalid(set[culprit], cur)
+			set = slices.Concat(set[:culprit:culprit], set[culprit+1:])
 		}
+		cfg, warnings, err = tryParse(base, set)
 	}
 
 	for _, c := range set {
@@ -131,7 +146,7 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Name, b.Name))
 	})
 	res.Config, res.Warnings = cfg, warnings
-	return res, nil
+	return res, err
 }
 
 // structural applies the refusals that need no Parse and returns the candidate set: pairs sorted

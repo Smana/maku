@@ -169,3 +169,120 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 		t.Fatalf("warnings: %v", r.Warnings)
 	}
 }
+
+func badPolicy(t *testing.T, name string) Object {
+	p := policy(t, name, name)
+	p.Spec["classes"] = classes(map[string]any{"live": true, "shadow": true})
+	return p
+}
+
+func refusal(r Result, kind Kind, name string) *Refusal {
+	for i, x := range r.Refused {
+		if x.Kind == kind && x.Name == name {
+			return &r.Refused[i]
+		}
+	}
+	return nil
+}
+
+// F4: a Factory Parse refuses is the culprit; the file's catalogue stays, with no warning that a
+// Factory replaces it, and the pair beside it is served.
+func TestAssembleFactoryCulpritKeepsTheFilesCatalogue(t *testing.T) {
+	want, _ := config.Parse(file(t))
+	f := Object{Kind: KindFactory, Name: "aws-0", Spec: map[string]any{"caps": map[string]any{"activeTasks": -1}}}
+	r, err := Assemble(file(t), []Object{f, repo("maku", "Smana/maku"), policy(t, "maku", "maku")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := refusal(r, KindFactory, "aws-0"); x == nil || x.Reason != v1alpha1.ReasonInvalid {
+		t.Fatalf("the Factory must be refused Invalid: %+v", r.Refused)
+	}
+	if len(r.Refused) != 1 || r.Config.RepositoryFor("Smana/maku") == nil {
+		t.Fatalf("the pair must be served: %+v", r.Refused)
+	}
+	if !equalJSON(t, want.Tiers, r.Config.Tiers) || !equalJSON(t, want.Caps, r.Config.Caps) || len(r.Warnings) != 0 {
+		t.Fatalf("the file's catalogue must stay, without warnings: %v", r.Warnings)
+	}
+}
+
+// F3: a pair culprit refuses the MergePolicy with Parse's error and the Repository as not served.
+func TestAssemblePairCulpritRefusesBoth(t *testing.T) {
+	r, err := Assemble(file(t), []Object{repo("maku", "Smana/maku"), badPolicy(t, "maku")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, rp := refusal(r, KindMergePolicy, "maku"), refusal(r, KindRepository, "maku")
+	if p == nil || p.Reason != v1alpha1.ReasonInvalid || !strings.Contains(p.Message, "live and shadow") {
+		t.Fatalf("MergePolicy: %+v", p)
+	}
+	if rp == nil || rp.Reason != v1alpha1.ReasonInvalid || rp.Message != "not served: MergePolicy maku was refused" {
+		t.Fatalf("Repository: %+v", rp)
+	}
+}
+
+// F2: two bad pairs are both refused, and the good one between them is served.
+func TestAssembleTwoCulprits(t *testing.T) {
+	r, err := Assemble(file(t), []Object{
+		repo("a", "Smana/a"), badPolicy(t, "a"),
+		repo("b", "Smana/b"), policy(t, "b", "b"),
+		repo("c", "Smana/c"), badPolicy(t, "c"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refused(r, KindMergePolicy, "a") != v1alpha1.ReasonInvalid || refused(r, KindMergePolicy, "c") != v1alpha1.ReasonInvalid {
+		t.Fatalf("both bad policies must be refused: %+v", r.Refused)
+	}
+	if refused(r, KindRepository, "b") != "" || r.Config.RepositoryFor("Smana/b") == nil || len(r.Accepted) != 2 {
+		t.Fatalf("the good pair must be served: %+v", r.Refused)
+	}
+	if x := refusal(r, KindMergePolicy, "c"); strings.Contains(x.Message, "Smana/a") {
+		t.Fatalf("c's refusal must carry the error left once a was removed: %q", x.Message)
+	}
+}
+
+// F2: after migration the file alone serves nothing, so a bad Factory leaves no config: the
+// error comes with the refusals, which the caller still reports.
+func TestAssembleMigratedBadFactoryReportsRefusals(t *testing.T) {
+	manifests, residual, err := Migrate(file(t), "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range objs {
+		if objs[i].Kind == KindFactory {
+			objs[i].Spec["caps"] = map[string]any{"activeTasks": -1}
+		}
+	}
+	r, err := Assemble(residual, objs)
+	if err == nil || r.Config != nil {
+		t.Fatalf("no config can be served: err %v", err)
+	}
+	if refused(r, KindFactory, "aws-0") != v1alpha1.ReasonInvalid {
+		t.Fatalf("the Factory's refusal must come with the error: %+v", r.Refused)
+	}
+}
+
+// Refused is sorted by Kind, then Name, whatever order the refusals were found in.
+func TestAssembleRefusedOrder(t *testing.T) {
+	r, err := Assemble(file(t), []Object{
+		repo("z", "Smana/z"), badPolicy(t, "z"),
+		{Kind: KindFactory, Name: "gcp-0", Spec: map[string]any{}},
+		policy(t, "orphan", "nothing"),
+		repo("b", "Smana/b"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, x := range r.Refused {
+		got = append(got, string(x.Kind)+"/"+x.Name)
+	}
+	want := "Factory/gcp-0 MergePolicy/orphan MergePolicy/z Repository/b Repository/z"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("order: %v, want %s", got, want)
+	}
+}

@@ -159,6 +159,12 @@ watches the three kinds. For each object, on each generation:
    charging, each repository's GitHub and merger connections, the fence's repository list, metric
    labels) is re-derived on each publish.
 
+The whole-set check is `resources.Assemble` (plan 1), which is pure and keeps no history. To keep
+an object's last accepted version, the controller substitutes, for each object Assemble refuses
+`Invalid`, the last spec it accepted for that object, when it has one, and calls Assemble again on
+that set; an object with no accepted version stays refused (D14). The controller's cache is scoped
+to the factory's namespace.
+
 A task records `status.configGenerations` (`factory`, `repository`, `mergePolicy`) when it starts,
 beside today's `configHash`; each merge decision records the `MergePolicy` generation it read
 (D5). Every replica runs steps 1–4; only the leader writes status (D13). Conditions change
