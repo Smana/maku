@@ -210,3 +210,21 @@ func TestExportCarriesTheVariants(t *testing.T) {
 		t.Fatalf("export then compare differs: %v", d)
 	}
 }
+
+// A floor without the class's checks would drop them on resolve (D5): export refuses it.
+func TestExportRefusesAFloorThatDropsChecks(t *testing.T) {
+	c := central()
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{"review-ish": {Harness: "plain", Checks: true, HarnessAllowed: []string{"checked"}}}}
+	if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), `class review-ish: harness "plain" drops checks the class sets; name a harness with checks`) {
+		t.Fatalf("got %v", err)
+	}
+	rc.Classes["review-ish"] = config.Class{Harness: "checked", Checks: true, HarnessAllowed: []string{"checked"}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Resolve("review-ish", f.Classes["review-ish"], c)
+	if err != nil || !r.Class.Checks {
+		t.Fatalf("%+v, %v", r.Class, err)
+	}
+}

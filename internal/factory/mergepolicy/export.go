@@ -36,6 +36,17 @@ func Export(rc *config.Repository, c *config.Config) (*File, error) {
 
 func exportClass(cl config.Class, c *config.Config) (ClassPolicy, error) {
 	harness, ok := cl.Harness, cl.Harness != ""
+	if prof := c.HarnessProfiles[harness]; ok {
+		// Resolve reads checks and testFirst from the profile alone: a floor without them would drop the class's.
+		for _, b := range []struct {
+			key          string
+			class, floor bool
+		}{{"checks", cl.Checks, prof.Checks}, {"testFirst", cl.TestFirst, prof.TestFirst}} {
+			if b.class && !b.floor {
+				return ClassPolicy{}, fmt.Errorf("harness %q drops %s the class sets; name a harness with %s", harness, b.key, b.key)
+			}
+		}
+	}
 	if !ok {
 		harness, ok = profileFor(cl, c)
 	}
