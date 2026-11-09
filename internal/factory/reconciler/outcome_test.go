@@ -14,17 +14,18 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/runs"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestStuckRunEscalatesAndMentions(t *testing.T) {
