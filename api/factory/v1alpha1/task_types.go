@@ -397,6 +397,34 @@ type Budget struct {
 	TaskMicroUSD int64 `json:"taskMicroUSD,omitempty"`
 }
 
+// ProfileStatus is the harness profile a task runs under and how it was chosen (TE). Checks and
+// TestFirst are frozen here: a profile removed from config later changes nothing.
+type ProfileStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=label;floor;control;scoper;escalation
+	Source string `json:"source"`
+	// +kubebuilder:validation:Enum=labeled;control;treatment
+	Cohort string `json:"cohort"`
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Recommended string `json:"recommended,omitempty"`
+	// +kubebuilder:validation:MaxLength=200
+	// +optional
+	Why string `json:"why,omitempty"`
+	// +optional
+	Checks bool `json:"checks,omitempty"`
+	// +optional
+	TestFirst bool `json:"testFirst,omitempty"`
+	// +optional
+	Resolved bool `json:"resolved,omitempty"`
+	// +optional
+	Counted bool `json:"counted,omitempty"`
+}
+
 // TaskStatus is the task's audit record: the whole §4 record, including the fields later
 // phases fill.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.trace) || has(self.trace)",message="a task's trace is never removed: its runs are parented on it"
@@ -413,6 +441,9 @@ type TaskStatus struct {
 	// The C7 answer, recorded as-is (§2).
 	// +optional
 	Classification *Classification `json:"classification,omitempty"`
+	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness (TE).
+	// +optional
+	Profile *ProfileStatus `json:"profile,omitempty"`
 	// +kubebuilder:validation:MaxItems=256
 	// +optional
 	Runs []RunRecord `json:"runs,omitempty"`

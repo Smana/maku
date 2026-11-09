@@ -5,6 +5,7 @@ package triage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -274,5 +275,54 @@ func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 				t.Fatalf("PredictedClass %q, want %q (%v)", d.PredictedClass, c.want, err)
 			}
 		})
+	}
+}
+
+// TE: a class a maintainer or a schedule names is declared; an inferred one is not.
+func TestPredictClassReportsDeclared(t *testing.T) {
+	sched := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, PredictedClass: "tests"}}
+	for name, c := range map[string]struct {
+		actor    string
+		task     *v1alpha1.Task
+		want     string
+		declared bool
+	}{
+		"a maintainer's label":     {"Smana", issueTask(), "docs", true},
+		"a non-maintainer's label": {"someone", issueTask(), "review", false},
+		"a schedule":               {"", sched, "tests", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := forgetest.NewFake()
+			f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs"}})
+			f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "class:docs", At: time.Now()})
+			class, declared, err := Classify{Cfg: testCfg(), Forge: f}.predictClass(t.Context(), c.task)
+			if err != nil || class != c.want || declared != c.declared {
+				t.Fatalf("(%q, %v, %v), want (%q, %v)", class, declared, err, c.want, c.declared)
+			}
+		})
+	}
+}
+
+// TE: the evaluation cohort is hashed apart from OD-14's control group.
+func TestCohortIsApartFromControl(t *testing.T) {
+	cohort, control, both := 0, 0, 0
+	for i := range 1000 {
+		id := fmt.Sprintf("t-%d", i)
+		a, b := Cohort(id, 10), Control(id, 10)
+		if a {
+			cohort++
+		}
+		if b {
+			control++
+		}
+		if a && b {
+			both++
+		}
+	}
+	if cohort < 80 || cohort > 120 || control < 80 || control > 120 || both >= 30 {
+		t.Fatalf("cohort %d, control %d, both %d", cohort, control, both)
+	}
+	if Cohort("t-1", 0) {
+		t.Fatal("0 % means none")
 	}
 }

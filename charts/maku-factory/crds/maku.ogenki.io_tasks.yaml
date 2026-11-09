@@ -1910,6 +1910,49 @@ spec:
               phaseSince:
                 format: date-time
                 type: string
+              profile:
+                description: The harness profile frozen at triage and the evaluation
+                  cohort; absent for a class without a harness (TE).
+                properties:
+                  checks:
+                    type: boolean
+                  cohort:
+                    enum:
+                    - labeled
+                    - control
+                    - treatment
+                    type: string
+                  counted:
+                    type: boolean
+                  name:
+                    maxLength: 63
+                    type: string
+                  reason:
+                    maxLength: 32
+                    type: string
+                  recommended:
+                    maxLength: 63
+                    type: string
+                  resolved:
+                    type: boolean
+                  source:
+                    enum:
+                    - label
+                    - floor
+                    - control
+                    - scoper
+                    - escalation
+                    type: string
+                  testFirst:
+                    type: boolean
+                  why:
+                    maxLength: 200
+                    type: string
+                required:
+                - cohort
+                - name
+                - source
+                type: object
               published:
                 description: The issue the factory filed from this investigate task's
                   proposal (RA9), once.

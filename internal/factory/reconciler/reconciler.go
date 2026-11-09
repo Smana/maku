@@ -975,15 +975,12 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	t.Spec.Template, t.Spec.PredictedClass, t.Spec.DataClass = d.Template, d.PredictedClass, d.DataClass
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
-	t.Spec.Loop = nil
-	if p := r.Cfg.LoopFor(d.PredictedClass); p != nil {
-		judge := p.JudgeModel
-		if d.DataClass != "public" && config.PublicOnly(judge) { // a provider judge is public tasks' only (v3 F15, F4)
-			judge = config.DefaultJudge
-		}
-		t.Spec.Loop = &v1alpha1.Loop{StallSteps: p.StallSteps, Continuations: p.Continuations, JudgeModel: judge}
+	profile := r.floorProfile(t, d)
+	var floor config.HarnessProfile
+	if profile != nil {
+		floor, _ = r.Cfg.ProfileFor(r.Cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass], profile.Name)
 	}
-	t.Spec.Search = r.Cfg.SearchFor(d.PredictedClass)
+	r.profileSpec(t, d.PredictedClass, floor)
 	if err := r.scopeAtTriage(ctx, t); err != nil {
 		return err // a note that cannot be read is retried, never read as none (SC4)
 	}
@@ -994,9 +991,57 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	t.Status = status
 	t.Status.Classification = &d.Classification
+	t.Status.Profile = profile
 	t.Status.ConfigHash = r.Cfg.Hash
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
+}
+
+// profileSpec writes what profile p changes on t's spec: its template when set, the loop, search and
+// scope of its row (the class's when it names none), and its tier only when above t's, through the
+// same ceiling as triage so a sponsored task's cap holds. A zero p is the class's row: today's spec.
+func (r *Reconciler) profileSpec(t *v1alpha1.Task, class string, p config.HarnessProfile) {
+	if p.Template != "" {
+		t.Spec.Template = p.Template
+	}
+	row := r.Cfg.RowFor(class, p)
+	t.Spec.Loop = nil
+	if lp := r.Cfg.LoopFor(row); lp != nil {
+		judge := lp.JudgeModel
+		if t.Spec.DataClass != "public" && config.PublicOnly(judge) { // a provider judge is public tasks' only (v3 F15, F4)
+			judge = config.DefaultJudge
+		}
+		t.Spec.Loop = &v1alpha1.Loop{StallSteps: lp.StallSteps, Continuations: lp.Continuations, JudgeModel: judge}
+	}
+	t.Spec.Search = r.Cfg.SearchFor(row)
+	mode := r.Cfg.ScopeFor(row)
+	if r.Cfg.Investigates(t.Spec.Template) {
+		mode = config.ScopeOff // R38's investigate path is never scoped
+	}
+	t.Spec.ScopeMode = string(mode)
+	if slices.Index(tiers, p.Tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
+		t.Spec.Budget = triage.Ceiling(triage.BudgetFor(r.Cfg, p.Tier), t.Spec.MaxMicroUSD)
+	}
+}
+
+// floorProfile is the profile t is frozen under at triage: its class's floor, with the cohort's
+// source; nil for a class without a harness, whose task carries no status.profile (TE).
+func (r *Reconciler) floorProfile(t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
+	cl := r.Cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass]
+	p, ok := r.Cfg.ProfileFor(cl, cl.Harness)
+	if !ok {
+		return nil
+	}
+	source := map[string]string{triage.CohortLabeled: "label", triage.CohortControl: "control"}[d.Cohort]
+	if source == "" {
+		source = "floor"
+	}
+	cohort := d.Cohort
+	if cohort == "" {
+		cohort = triage.CohortTreatment
+	}
+	return &v1alpha1.ProfileStatus{Name: cl.Harness, Source: source, Cohort: cohort,
+		Checks: cl.Checks || p.Checks, TestFirst: cl.TestFirst || p.TestFirst}
 }
 
 // triaged gives the task its room (R2). A room of that name the factory did not make escalates:

@@ -13,16 +13,13 @@ import (
 )
 
 // scopeAtTriage fixes the task's scope mode and steering note (scoper design SC2, SC3): the
-// class's mode, off for an investigate task, and in any other mode the class's note on the
+// mode profileSpec wrote, and in any other mode the class's note on the
 // default branch of a repository this factory owns (v2 D7: a fence it is not named in is not
 // read, and says so). An absent note is no steering; an invalid one is not used, counted and logged, and the
 // task proceeds (SC4), as does one that is never readable (a directory, a symlink). A retryable read error is returned: the triage is retried.
 func (r *Reconciler) scopeAtTriage(ctx context.Context, t *v1alpha1.Task) error {
-	mode := r.Cfg.ScopeFor(t.Spec.PredictedClass)
-	if r.Cfg.Investigates(t.Spec.Template) {
-		mode = config.ScopeOff // R38's investigate path is never scoped
-	}
-	t.Spec.ScopeMode, t.Spec.Steering = string(mode), nil
+	mode := config.ScopeMode(t.Spec.ScopeMode) // profileSpec's: the row's, off for an investigate task
+	t.Spec.Steering = nil
 	path := steering.Path(t.Spec.PredictedClass)
 	if mode == config.ScopeOff || path == "" {
 		return nil
