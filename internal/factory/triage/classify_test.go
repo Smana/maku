@@ -82,7 +82,7 @@ func TestClassifyUsesAMaintainersClassLabel(t *testing.T) {
 	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "class:docs-links", At: time.Now()})
 	c7 := &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.91, Classifier: "semantic-router", Fallback: "none",
 		Shadow: []C7Shadow{{Classifier: "jev", Tier: "standard", Confidence: 0.6}}}}
-	d, err := Classify{Cfg: testCfg(), C: c7, Forge: f}.Triage(context.Background(), issueTask())
+	d, err := Classify{C: c7, Forge: f}.Triage(context.Background(), testCfg(), issueTask())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestClassifyFallsBackAndIgnoresStrangersLabels(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs-links"}})
 	f.SetEvents(7, forge.LabelEvent{Actor: "someone", Label: "class:docs-links", At: time.Now()})
-	d, err := Classify{Cfg: testCfg(), C: &fakeC7{err: errors.New("timeout")}, Forge: f}.Triage(context.Background(), issueTask())
+	d, err := Classify{C: &fakeC7{err: errors.New("timeout")}, Forge: f}.Triage(context.Background(), testCfg(), issueTask())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,8 @@ func TestClassifyFallsBackAndIgnoresStrangersLabels(t *testing.T) {
 func TestControlGroupRunsAtFrontier(t *testing.T) {
 	cfg := testCfg()
 	cfg.Triage.ControlPercent = 100
-	d, _ := Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "light", Classifier: "semantic-router", Fallback: "none"}},
-		Forge: forgetest.NewFake()}.Triage(context.Background(), &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, DataClass: "public"}})
+	d, _ := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Classifier: "semantic-router", Fallback: "none"}},
+		Forge: forgetest.NewFake()}.Triage(context.Background(), cfg, &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, DataClass: "public"}})
 	if !d.Classification.Control || d.Classification.Tier != "light" || d.Budget.Tier != "frontier" {
 		t.Fatalf("the classifier's answer is recorded as-is; the budget acts at frontier (OD-14): %+v", d)
 	}
@@ -136,7 +136,7 @@ func TestClassifyReadsTheTasksRepository(t *testing.T) {
 			f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "class:docs-links", At: time.Now()})
 			tk := issueTask()
 			tk.Spec.Repository = c.repo
-			d, err := Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), tk)
+			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cfg, tk)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,12 +168,12 @@ func TestClassifyReadsTheIssueOnItsRepository(t *testing.T) {
 	}
 	tk := issueTask()
 	tk.Spec.Repository = "Smana/b"
-	d, err := Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Clients: clients}.Triage(t.Context(), tk)
+	d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Clients: clients}.Triage(t.Context(), cfg, tk)
 	if err != nil || d.PredictedClass != "review" {
 		t.Fatalf("B's issue carries no class: %q %v", d.PredictedClass, err)
 	}
 	tk.Spec.Repository = "Smana/elsewhere"
-	if d, err := (Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Clients: clients}).Triage(t.Context(), tk); err != nil ||
+	if d, err := (Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Clients: clients}).Triage(t.Context(), cfg, tk); err != nil ||
 		d.PredictedClass != "review" {
 		t.Fatalf("an unknown repository reads no label: %q %v", d.PredictedClass, err)
 	}
@@ -185,7 +185,7 @@ func TestAnOracleClassRunsSoloOnLight(t *testing.T) {
 	cfg.Triage.ControlPercent = 100
 	cfg.Classes["dead-links"] = config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}}
 	c7 := &fakeC7{resp: C7Response{Tier: "frontier", Classifier: "semantic-router"}}
-	d, err := Classify{Cfg: cfg, C: c7, Forge: forgetest.NewFake()}.Triage(context.Background(),
+	d, err := Classify{C: c7, Forge: forgetest.NewFake()}.Triage(context.Background(), cfg,
 		&v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, PredictedClass: "dead-links", Text: "x", DataClass: "public"}})
 	if err != nil || d.Template != "solo" || d.Budget.Tier != "light" || d.PredictedClass != "dead-links" || d.Classification.Control ||
 		c7.got.Text != "" {
@@ -204,7 +204,7 @@ func TestClassifyWithoutAClassifierURLMakesNoCall(t *testing.T) {
 	c7 := &fakeC7{resp: C7Response{Tier: "light", Classifier: "semantic-router"}}
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 7})
-	d, err := Classify{Cfg: cfg, C: c7, Forge: f}.Triage(t.Context(), issueTask())
+	d, err := Classify{C: c7, Forge: f}.Triage(t.Context(), cfg, issueTask())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestInternalPrincipalTasksInvestigate(t *testing.T) {
 			tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"},
 				Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "api", RequestedBy: c.by}, Repository: "Smana/cloud-native-ref",
 					Issue: 7, Text: "x", DataClass: "public"}}
-			d, err := Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "standard", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), tk)
+			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "standard", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cfg, tk)
 			if err != nil || d.Template != c.template || d.PredictedClass != c.class || d.DataClass != c.dc {
 				t.Fatalf("%+v %v", d, err)
 			}
@@ -270,7 +270,7 @@ func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 			f.SetIssue(iss)
 			tk := issueTask()
 			tk.Spec.PredictedClass, tk.Spec.Origin = c.predicted, c.origin
-			d, err := Classify{Cfg: cfg, C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), tk)
+			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cfg, tk)
 			if err != nil || d.PredictedClass != c.want {
 				t.Fatalf("PredictedClass %q, want %q (%v)", d.PredictedClass, c.want, err)
 			}

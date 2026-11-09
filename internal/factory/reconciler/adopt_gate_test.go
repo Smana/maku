@@ -296,7 +296,7 @@ func TestAnAdoptedRedCheckHandsOff(t *testing.T) {
 func TestTheReleaseAgeIsAWaitedOnCheck(t *testing.T) {
 	g := adoptRig(t)
 	c, _ := g.f.PullRequestChecks(t.Context(), 30)
-	in := ArmInputs{Checks: c, Task: &v1alpha1.Task{}, Cfg: g.r.Cfg}
+	in := ArmInputs{Checks: c, Task: &v1alpha1.Task{}, Cfg: g.r.Cfg.Current()}
 	if got := unreported(in, depsPatchClass()); len(got) != 0 {
 		t.Fatalf("passed: %v", got)
 	}
@@ -337,7 +337,7 @@ func TestAnAdoptedDecisionNeedsItsAdoptionRead(t *testing.T) {
 	c, _ := g.f.PullRequestChecks(t.Context(), 30)
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), keyFor(adoptTask), &tk)
-	in := ArmInputs{PR: pr, Checks: c, Task: &tk, Cfg: g.r.Cfg, DiffRead: true}
+	in := ArmInputs{PR: pr, Checks: c, Task: &tk, Cfg: g.r.Cfg.Current(), DiffRead: true}
 	in.Files.Base, in.Files.Head = map[string]string{depFile: "version: 3.8.3\n"}, map[string]string{depFile: "version: 3.8.4\n"}
 	in.Stats = []forge.FileStat{{Path: depFile, Status: "modified", Additions: 1, Deletions: 1}}
 	if d := DecideArm(in); d.Verdict != "human" || d.Reason != "adoption_unread" {

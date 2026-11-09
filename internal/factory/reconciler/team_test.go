@@ -32,8 +32,8 @@ import (
 // staticWith is the static triager with the template it picks.
 type staticWith string
 
-func (s staticWith) Triage(ctx context.Context, t *v1alpha1.Task) (triage.Decision, error) {
-	d, err := triage.Static{Cfg: cfg()}.Triage(ctx, t)
+func (s staticWith) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (triage.Decision, error) {
+	d, err := triage.Static{}.Triage(ctx, cfg, t)
 	d.Template = string(s)
 	return d, err
 }

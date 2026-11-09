@@ -71,7 +71,7 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, cfg *config.
 	if err != nil {
 		return err
 	}
-	if held, err := r.coordinationAuthority(ctx, t, p); held || err != nil {
+	if held, err := r.coordinationAuthority(ctx, cfg, t, p); held || err != nil {
 		return err
 	}
 	if r.Trace != nil && t.Status.Trace == nil { // R46: the task's root span, minted once at acceptance
@@ -91,12 +91,12 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, cfg *config.
 // coordinationAuthority re-reads child t's authority under its parent p: held is true when it
 // does not pass, with the refusal's bounded reason on t. Nothing is cached, so a lost App, fence,
 // maintainer, permission, class or capability holds the next admission or run.
-func (r *Reconciler) coordinationAuthority(ctx context.Context, t *v1alpha1.Task, p *v1alpha1.Task) (bool, error) {
+func (r *Reconciler) coordinationAuthority(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, p *v1alpha1.Task) (bool, error) {
 	if r.Coordination == nil {
 		t.Status.Reason = coordination.ReasonPrerequisites
 		return true, nil
 	}
-	err := r.Coordination.ExecuteReady(ctx, p.Status.Coordination, []string{t.Spec.CoordinationParent.ChildID})
+	err := r.Coordination.ExecuteReady(ctx, cfg, p.Status.Coordination, []string{t.Spec.CoordinationParent.ChildID})
 	if err == nil {
 		return false, nil
 	}
@@ -125,7 +125,7 @@ func (r *Reconciler) coordinationHold(ctx context.Context, cfg *config.Config, t
 	if err != nil {
 		return true, err
 	}
-	return r.coordinationAuthority(ctx, t, p)
+	return r.coordinationAuthority(ctx, cfg, t, p)
 }
 
 // currentGeneration is whether child t is st's current generation under a fingerprint the current

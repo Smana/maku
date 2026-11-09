@@ -30,8 +30,8 @@ import (
 // coordinationPort is the coordination service the reconciler drives (v4 MR2):
 // *coordination.Service implements it.
 type coordinationPort interface {
-	File(ctx context.Context, parentTask string) error
-	ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationStatus, ids []string) error
+	File(ctx context.Context, cfg *config.Config, parentTask string) error
+	ExecuteReady(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus, ids []string) error
 }
 
 // reasonWaitingDependency is a dependent child's entry while a producer has not landed.
@@ -82,7 +82,7 @@ func (r *Reconciler) coordinating(ctx context.Context, cfg *config.Config, t *v1
 		return err
 	}
 	if t.Status.Reason != coordination.ReasonFiled {
-		err := r.Coordination.File(ctx, t.Name)
+		err := r.Coordination.File(ctx, cfg, t.Name)
 		reason := coordination.Reason(err)
 		switch {
 		case err == nil:
@@ -365,7 +365,7 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, cfg *config.
 			if !landed {
 				continue
 			}
-			if err := r.Coordination.ExecuteReady(ctx, cs, []string{c.ID}); err != nil {
+			if err := r.Coordination.ExecuteReady(ctx, cfg, cs, []string{c.ID}); err != nil {
 				reason := coordination.Reason(err)
 				if reason == "" {
 					return err
@@ -382,7 +382,7 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, cfg *config.
 			// A replacement: the execute gate is re-read for it, and it holds only what every
 			// earlier generation left of the lifetime allocation (MR8).
 			if len(c.DependsOn) == 0 {
-				if err := r.Coordination.ExecuteReady(ctx, cs, []string{c.ID}); err != nil {
+				if err := r.Coordination.ExecuteReady(ctx, cfg, cs, []string{c.ID}); err != nil {
 					reason := coordination.Reason(err)
 					if reason == "" {
 						return err

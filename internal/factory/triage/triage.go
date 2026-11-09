@@ -41,7 +41,7 @@ func CohortOf(taskID string, declared bool, percent int) string {
 
 // Triager decides once per task.
 type Triager interface {
-	Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error)
+	Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error)
 }
 
 // BudgetFor is the tier's caps and model (§6.2, R11).
@@ -52,11 +52,10 @@ func BudgetFor(cfg *config.Config, tier string) v1alpha1.Budget {
 }
 
 // Static is phase 1's triage: the config's defaults for every task.
-type Static struct{ Cfg config.Source }
+type Static struct{}
 
 // Triage returns the defaults; a task's own data class wins over the default one.
-func (s Static) Triage(_ context.Context, t *v1alpha1.Task) (Decision, error) {
-	cfg := s.Cfg.Current()
+func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error) {
 	d := cfg.Defaults
 	dataClass := t.Spec.DataClass
 	if dataClass == "" {

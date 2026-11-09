@@ -320,14 +320,14 @@ func (s *Service) recoveryAuthority(ctx context.Context, cfg *config.Config, act
 		case !strings.EqualFold(MaintainerLogin(c), actor.LinkedGitHubLogin) || !cfg.RepositoryFor(c.Repository).IsMaintainer(actor.LinkedGitHubLogin):
 			return fmt.Errorf("%w: not the child's maintainer", ErrRepositoryPermission)
 		}
-		_, err := s.check(ctx, actor, c, nil)
+		_, err := s.check(ctx, cfg, actor, c, nil)
 		return err
 	}
 	pc, ok := find(p, primaryChildID(p))
 	if !ok || !cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(actor.LinkedGitHubLogin) {
 		return fmt.Errorf("%w: not a maintainer of the primary", ErrRepositoryPermission)
 	}
-	_, err := s.check(ctx, actor, pc, nil)
+	_, err := s.check(ctx, cfg, actor, pc, nil)
 	return err
 }
 
@@ -395,7 +395,7 @@ func (s *Service) retryIntegration(ctx context.Context, cfg *config.Config, t *v
 	if err := IntegrationAttemptAllowed(cs); err != nil {
 		return err
 	}
-	if err := s.executeReady(ctx, cfg, cs, []string{PrimaryChild(cs)}); err != nil {
+	if err := s.ExecuteReady(ctx, cfg, cs, []string{PrimaryChild(cs)}); err != nil {
 		return err
 	}
 	it := IntegrationTask(s.Namespace, cfg, t, m, len(cs.IntegrationAttempts)+1)

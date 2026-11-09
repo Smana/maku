@@ -40,7 +40,7 @@ func priceTiers(g *rig) {
 		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
 		g.r.Cfg.Current().Tiers[name] = tr
 	}
-	g.r.Triage = triage.Static{Cfg: g.r.Cfg}
+	g.r.Triage = triage.Static{}
 }
 
 // R5, R7, R8, C4: an api task is capped under its ceiling with room for three runs, in USD and in

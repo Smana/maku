@@ -134,17 +134,17 @@ func (s *Service) now() time.Time {
 }
 
 // check is RepositoryChecks with a nil port failing closed.
-func (s *Service) check(ctx context.Context, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
+func (s *Service) check(ctx context.Context, cfg *config.Config, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
 	if s.Checks == nil {
 		return RepositoryPolicy{}, fmt.Errorf("%w: no repository checks", ErrAccessUnverified)
 	}
-	return s.Checks.Check(ctx, actor, c, auth)
+	return s.Checks.Check(ctx, cfg, actor, c, auth)
 }
 
 // resolve is the factory's ResolvePolicy: each repository's own fresh check, no actor.
-func (s *Service) resolve() ResolvePolicy {
+func (s *Service) resolve(cfg *config.Config) ResolvePolicy {
 	return func(ctx context.Context, repository, class, tier string) (RepositoryPolicy, error) {
-		return s.check(ctx, Actor{}, v1alpha1.CoordinationChild{Repository: repository, Class: class, Tier: tier}, nil)
+		return s.check(ctx, cfg, Actor{}, v1alpha1.CoordinationChild{Repository: repository, Class: class, Tier: tier}, nil)
 	}
 }
 
@@ -173,7 +173,7 @@ func (s *Service) Draft(ctx context.Context, actor Actor, p v1alpha1.Coordinatio
 	for _, c := range p.Children {
 		increase[c.ID] = true
 	}
-	resolved, err := ValidateWithIncrease(ctx, p, ModePlan, s.resolve(), increase)
+	resolved, err := ValidateWithIncrease(ctx, p, ModePlan, s.resolve(cfg), increase)
 	if err != nil {
 		return CoordinationConfirmation{}, err
 	}
@@ -491,7 +491,7 @@ func (s *Service) confirmParent(ctx context.Context, cfg *config.Config, actor A
 	if !cfg.RepositoryFor(primary).IsMaintainer(actor.LinkedGitHubLogin) {
 		return nil, fmt.Errorf("%w: not a maintainer of the primary", ErrRepositoryPermission)
 	}
-	if _, err := s.check(ctx, actor, pc, nil); err != nil {
+	if _, err := s.check(ctx, cfg, actor, pc, nil); err != nil {
 		return nil, err
 	}
 	for i := range cs.Confirmations {
@@ -519,7 +519,7 @@ func (s *Service) authorizeChild(ctx context.Context, cfg *config.Config, actor 
 	if !cfg.RepositoryFor(c.Repository).IsMaintainer(actor.LinkedGitHubLogin) {
 		return nil, fmt.Errorf("%w: not a maintainer of the child's repository", ErrRepositoryPermission)
 	}
-	pol, err := s.check(ctx, actor, c, nil)
+	pol, err := s.check(ctx, cfg, actor, c, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -549,23 +549,18 @@ func (s *Service) eligibility(ctx context.Context, cfg *config.Config, cs *v1alp
 	case modeOf(cfg) != config.CoordinationExecute:
 		return ReasonConfirmed, nil
 	}
-	if err := s.executeReady(ctx, cfg, cs, nil); err != nil {
+	if err := s.ExecuteReady(ctx, cfg, cs, nil); err != nil {
 		return Reason(err), err
 	}
 	return ReasonFilingEligible, nil
 }
 
-// ExecuteReady is executeReady for one decision of its own: it loads the config once.
-func (s *Service) ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationStatus, ids []string) error {
-	return s.executeReady(ctx, s.config(), cs, ids)
-}
-
-// executeReady re-reads every authority execute rests on, for the children ids names (every
+// ExecuteReady re-reads every authority execute rests on, for the children ids names (every
 // child when nil): the full plan validates for execute with each confirmed increase, the
 // capability gate passes for every repository, the parent confirmer still maintains and writes the
 // primary, and each child's authorizer still maintains and writes its repository at the fence they
 // authorized. Nothing is cached: a regression refuses the next filing or admission.
-func (s *Service) executeReady(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus, ids []string) error {
+func (s *Service) ExecuteReady(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus, ids []string) error {
 	if cs == nil || cs.Plan == nil {
 		return ErrParentNotFound
 	}
@@ -593,7 +588,7 @@ func (s *Service) executeReady(ctx context.Context, cfg *config.Config, cs *v1al
 	for _, c := range p.Children {
 		increase[c.ID] = true // complete: the parent and every child confirmed this version
 	}
-	if _, err := ValidateWithIncrease(ctx, p, ModeExecute, s.resolve(), increase); err != nil {
+	if _, err := ValidateWithIncrease(ctx, p, ModeExecute, s.resolve(cfg), increase); err != nil {
 		return err
 	}
 	repos := make([]string, 0, len(p.Children))
@@ -607,7 +602,7 @@ func (s *Service) executeReady(ctx context.Context, cfg *config.Config, cs *v1al
 		if !cfg.RepositoryFor(p.Primary.Repository).IsMaintainer(pc.LinkedGitHubLogin) {
 			return fmt.Errorf("%w: the parent confirmer no longer maintains the primary", ErrRepositoryPermission)
 		}
-		if _, err := s.check(ctx, Actor{Principal: pc.Actor, LinkedGitHubLogin: pc.LinkedGitHubLogin}, pp, nil); err != nil {
+		if _, err := s.check(ctx, cfg, Actor{Principal: pc.Actor, LinkedGitHubLogin: pc.LinkedGitHubLogin}, pp, nil); err != nil {
 			return err
 		}
 	}
@@ -632,7 +627,7 @@ func (s *Service) childAuthority(ctx context.Context, cfg *config.Config, cs *v1
 	if !cfg.RepositoryFor(c.Repository).IsMaintainer(login) {
 		return fmt.Errorf("%w: %s's authorizer no longer maintains it", ErrRepositoryPermission, c.ID)
 	}
-	_, err := s.check(ctx, Actor{Principal: a.Actor, LinkedGitHubLogin: login}, c, a)
+	_, err := s.check(ctx, cfg, Actor{Principal: a.Actor, LinkedGitHubLogin: login}, c, a)
 	return err
 }
 

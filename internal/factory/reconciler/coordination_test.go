@@ -32,12 +32,12 @@ type fakeCoordination struct {
 	asked   []string
 }
 
-func (f *fakeCoordination) File(_ context.Context, name string) error {
+func (f *fakeCoordination) File(_ context.Context, _ *config.Config, name string) error {
 	f.files = append(f.files, name)
 	return f.fileErr
 }
 
-func (f *fakeCoordination) ExecuteReady(_ context.Context, _ *v1alpha1.CoordinationStatus, ids []string) error {
+func (f *fakeCoordination) ExecuteReady(_ context.Context, _ *config.Config, _ *v1alpha1.CoordinationStatus, ids []string) error {
 	for _, id := range ids {
 		f.asked = append(f.asked, id)
 		if err := f.ready[id]; err != nil {

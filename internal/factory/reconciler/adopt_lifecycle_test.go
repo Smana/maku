@@ -21,7 +21,7 @@ import (
 // neverTriage fails the test when the classifier is asked about an adopted Task.
 type neverTriage struct{ t *testing.T }
 
-func (n neverTriage) Triage(context.Context, *v1alpha1.Task) (triage.Decision, error) {
+func (n neverTriage) Triage(context.Context, *config.Config, *v1alpha1.Task) (triage.Decision, error) {
 	n.t.Helper()
 	n.t.Error("an adopted task is never triaged")
 	return triage.Decision{}, errors.New("triaged")

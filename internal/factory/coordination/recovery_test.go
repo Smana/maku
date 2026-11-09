@@ -294,7 +294,7 @@ func TestRecoverReauthorizesAtTheCurrentFence(t *testing.T) {
 	r, p := filedRig(t)
 	r.s.Checks.(*fakeChecks).fence[repoB] = strings.Repeat("d", 40)
 	cs := parentOf(t, r.s, p.ID).Status.Coordination
-	if err := r.s.ExecuteReady(ctx, cs, []string{"consumer"}); !errors.Is(err, ErrPolicyChanged) {
+	if err := r.s.ExecuteReady(ctx, r.s.Cfg.Current(), cs, []string{"consumer"}); !errors.Is(err, ErrPolicyChanged) {
 		t.Fatalf("before: %v", err)
 	}
 	proposing(t, r, p, RecoveryAuthorizeChild, "consumer", "")
@@ -305,7 +305,7 @@ func TestRecoverReauthorizesAtTheCurrentFence(t *testing.T) {
 	if a := currentAuthorization(cs, "consumer"); a == nil || a.FenceSHA != strings.Repeat("d", 40) || a.Actor != other.Principal {
 		t.Fatalf("authorization %+v", a)
 	}
-	if err := r.s.ExecuteReady(ctx, cs, []string{"consumer"}); err != nil {
+	if err := r.s.ExecuteReady(ctx, r.s.Cfg.Current(), cs, []string{"consumer"}); err != nil {
 		t.Fatalf("after: %v", err)
 	}
 }

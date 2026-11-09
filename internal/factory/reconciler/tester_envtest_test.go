@@ -66,7 +66,7 @@ func envTesterRig(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	if cfgEdit != nil {
 		cfgEdit(g.r.Cfg.Current())
 	}
-	g.r.Triage = triage.Static{Cfg: g.r.Cfg}
+	g.r.Triage = triage.Static{}
 	if err := c.Create(ctx, tk); err != nil {
 		t.Fatal(err)
 	}

@@ -42,7 +42,7 @@ func newFakeChecks() *fakeChecks {
 	}
 }
 
-func (f *fakeChecks) Check(_ context.Context, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
+func (f *fakeChecks) Check(_ context.Context, _ *config.Config, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
 	f.calls = append(f.calls, c.Repository+"|"+actor.LinkedGitHubLogin)
 	if err := f.err[c.Repository]; err != nil {
 		return RepositoryPolicy{}, err

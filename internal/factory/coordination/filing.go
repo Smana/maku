@@ -46,8 +46,7 @@ type IssueForge interface {
 // confirmations). Every authority and the capability gate are re-read before the first write. A
 // crash leaves the parent filing_incomplete; a replay adopts each issue by its factory author and
 // first-line marker instead of filing it twice. Only when all are recorded is the parent filed.
-func (s *Service) File(ctx context.Context, parentTask string) error {
-	cfg := s.config()
+func (s *Service) File(ctx context.Context, cfg *config.Config, parentTask string) error {
 	t, err := s.parent(ctx, parentTask)
 	if err != nil {
 		return err
@@ -56,7 +55,7 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 	if t.Status.Reason == ReasonFiled {
 		return nil
 	}
-	if err := s.executeReady(ctx, cfg, cs, nil); err != nil {
+	if err := s.ExecuteReady(ctx, cfg, cs, nil); err != nil {
 		return err
 	}
 	p, hash := *cs.Plan, cs.PlanHash

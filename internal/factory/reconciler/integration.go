@@ -156,7 +156,7 @@ func (r *Reconciler) integrationHold(ctx context.Context, cfg *config.Config, t 
 		t.Status.Reason = coordination.ReasonPrerequisites
 		return true, nil
 	}
-	if err := r.Coordination.ExecuteReady(ctx, p.Status.Coordination, []string{coordination.PrimaryChild(p.Status.Coordination)}); err != nil {
+	if err := r.Coordination.ExecuteReady(ctx, cfg, p.Status.Coordination, []string{coordination.PrimaryChild(p.Status.Coordination)}); err != nil {
 		reason := coordination.Reason(err)
 		if reason == "" {
 			return true, err
@@ -402,7 +402,7 @@ func (r *Reconciler) startAttempt(ctx context.Context, cfg *config.Config, t *v1
 		hold(coordination.ReasonOf(err))
 		return nil
 	}
-	if err := r.Coordination.ExecuteReady(ctx, cs, []string{coordination.PrimaryChild(cs)}); err != nil {
+	if err := r.Coordination.ExecuteReady(ctx, cfg, cs, []string{coordination.PrimaryChild(cs)}); err != nil {
 		reason := coordination.Reason(err)
 		if reason == "" {
 			return err

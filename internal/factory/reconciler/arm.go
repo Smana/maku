@@ -28,7 +28,7 @@ type ArmInputs struct {
 	PR           forge.PR
 	Checks       forge.Checks
 	Task         *v1alpha1.Task
-	Cfg          config.Source `json:"-"` // a fixture is decided under the config it is run with
+	Cfg          *config.Config `json:"-"` // a fixture is decided under the config it is run with
 	ArmedToday   int
 	Paused       bool
 	ReportedHead string
@@ -133,7 +133,7 @@ func CIState(c forge.Checks, required []string) string {
 // the conditions the class declares (merge gate classes MC1). Every "no" fails towards a human
 // (property 3), each with its own reason. Every decision carries the rows it read (AM8).
 func DecideArm(in ArmInputs) ArmDecision {
-	cfg := in.Cfg.Current()
+	cfg := in.Cfg
 	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
 	return decide(in, cfg, rc, gateOf(rc, in.Task.Spec.PredictedClass))
 }

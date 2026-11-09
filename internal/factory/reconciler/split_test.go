@@ -28,7 +28,7 @@ type c7 struct {
 	control bool
 }
 
-func (c c7) Triage(_ context.Context, t *v1alpha1.Task) (triage.Decision, error) {
+func (c c7) Triage(_ context.Context, _ *config.Config, t *v1alpha1.Task) (triage.Decision, error) {
 	acting := c.tier
 	if c.control {
 		acting = "frontier"

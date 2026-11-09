@@ -34,7 +34,7 @@ func testerRigCfg(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	g.r.Cfg.Current().Classes["scripts"] = config.Class{Checks: true, TestFirst: true}
 	g.r.Cfg.Current().Merge.ContractCheck = "Test contract 🧪"
 	g.r.Cfg.Current().Defaults.PredictedClass = tk.Spec.PredictedClass // the static triage's class
-	g.r.Triage = triage.Static{Cfg: g.r.Cfg}
+	g.r.Triage = triage.Static{}
 	if cfgEdit != nil {
 		cfgEdit(g.r.Cfg.Current())
 	}
@@ -462,7 +462,7 @@ func TestNoVerifierSetHoldsATester(t *testing.T) {
 	}
 	// A tester's approve of an older head is no reviewer's: it never makes a verdict stale.
 	tk.Status.Verdict = "approve"
-	in := ArmInputs{PR: forge.PR{HeadSHA: head2}, ReportedHead: head2, Cfg: g.r.Cfg, Task: tk,
+	in := ArmInputs{PR: forge.PR{HeadSHA: head2}, ReportedHead: head2, Cfg: g.r.Cfg.Current(), Task: tk,
 		Verifiers: []v1alpha1.RunRecord{{ID: "aaaaaaaa", Role: "tester", Verdict: "approve", HeadSHA: head1}}}
 	if got := agentEvidence(in, in.Cfg.Current()); got != "foreign_trailer" { // past every verdict row: only the trailer is left
 		t.Fatalf("a tester's approve counted: %q", got)

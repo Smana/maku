@@ -21,7 +21,7 @@ import (
 // live class and is recorded as would-require-approval in a shadow one (the owner's Q3). Through
 // stage 3 nothing merges on this decision.
 func DecideArmUnder(in ArmInputs, variants []config.Class, approval []string) ArmDecision {
-	cfg := in.Cfg.Current()
+	cfg := in.Cfg
 	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
 	class := in.Task.Spec.PredictedClass
 	if len(variants) == 0 {

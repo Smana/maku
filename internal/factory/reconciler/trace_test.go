@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -95,12 +97,12 @@ type flakyTriage struct {
 	fail bool
 }
 
-func (f *flakyTriage) Triage(ctx context.Context, t *v1alpha1.Task) (triage.Decision, error) {
+func (f *flakyTriage) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (triage.Decision, error) {
 	if f.fail {
 		f.fail = false
 		return triage.Decision{}, errors.New("triage unavailable")
 	}
-	return f.Triager.Triage(ctx, t)
+	return f.Triager.Triage(ctx, cfg, t)
 }
 
 // The ids are minted once: a task whose triage failed after acceptance keeps the ids its status
@@ -108,7 +110,7 @@ func (f *flakyTriage) Triage(ctx context.Context, t *v1alpha1.Task) (triage.Deci
 func TestTheTraceIsMintedOnce(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"))
 	g.r.Trace = &fakeSink{}
-	g.r.Triage = &flakyTriage{Triager: triage.Static{Cfg: cfg()}, fail: true}
+	g.r.Triage = &flakyTriage{Triager: triage.Static{}, fail: true}
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the triage error is returned")
 	}

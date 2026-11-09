@@ -49,7 +49,7 @@ var checkReasons = []error{ErrRepositoryNotAllowed, ErrPrivateRepository, ErrApp
 // given, binds the answer to the fence its maintainer authorized at (ErrPolicyChanged). An actor
 // with no login asks for the repository's policy alone, as plan validation does.
 type RepositoryChecks interface {
-	Check(ctx context.Context, actor Actor, child v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error)
+	Check(ctx context.Context, cfg *config.Config, actor Actor, child v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error)
 }
 
 // Actor is who confirms or drafts: the authenticated principal and the GitHub login its token's
@@ -73,14 +73,12 @@ type CheckForge interface {
 // guardrails, and the actor's collaborator permission. It caches nothing, so a lost App, fence,
 // maintainer, permission or class refuses the very next check.
 type GitHubChecks struct {
-	Cfg config.Source
 	// Forges is repository's own App connection, nil when it has none.
 	Forges func(repository string) CheckForge
 }
 
 // Check implements RepositoryChecks.
-func (g GitHubChecks) Check(ctx context.Context, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
-	cfg := g.Cfg.Current()
+func (g GitHubChecks) Check(ctx context.Context, cfg *config.Config, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
 	repo := c.Repository
 	if !slices.ContainsFunc(cfg.Repos(), func(r config.Repository) bool { return strings.EqualFold(r.Name, repo) }) {
 		return RepositoryPolicy{}, ErrRepositoryNotAllowed

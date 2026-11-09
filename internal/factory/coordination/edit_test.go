@@ -25,7 +25,7 @@ func filedRig(t *testing.T) (*filingRig, v1alpha1.CoordinationPlan) {
 	r := newFilingRig(t)
 	p := draftPlan(t)
 	r.confirmAll(t, p)
-	if err := r.s.File(context.Background(), p.ID); err != nil {
+	if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.s.setStatus(context.Background(), p.ID, func(task *v1alpha1.Task) {
@@ -87,11 +87,11 @@ func TestUnaffectedChildStaysReadyAcrossAnEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	cs := parentOf(t, r.s, p.ID).Status.Coordination
-	if err := r.s.ExecuteReady(ctx, cs, []string{"contract"}); err != nil {
+	if err := r.s.ExecuteReady(ctx, r.s.Cfg.Current(), cs, []string{"contract"}); err != nil {
 		t.Fatalf("the unaffected child is held: %v", err)
 	}
 	for _, ids := range [][]string{{"consumer"}, nil} {
-		if err := r.s.ExecuteReady(ctx, cs, ids); !errors.Is(err, ErrInvalidConfirmation) {
+		if err := r.s.ExecuteReady(ctx, r.s.Cfg.Current(), cs, ids); !errors.Is(err, ErrInvalidConfirmation) {
 			t.Fatalf("%v: err = %v", ids, err)
 		}
 	}

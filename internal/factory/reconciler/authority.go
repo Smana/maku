@@ -80,7 +80,7 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 // it refuses or waits; otherwise a wait for the next read, or a maintainer for an invalid file.
 // Nothing arms or shadows: human merges continue.
 func noAuthority(in ArmInputs, p gatePolicy) ArmDecision {
-	rc := in.Cfg.Current().RepositoryFor(in.Task.Spec.Repository)
+	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
 	rows := recordOf(in, config.Class{})
 	rows.Policy = shortHash(p.snap.Hash)
 	d, done := baseChecks(in, rc)

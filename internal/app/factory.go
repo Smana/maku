@@ -315,7 +315,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
 		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
-		Triage: triage.Classify{Cfg: cfg, C: c7,
+		Triage: triage.Classify{C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
 		Trace: sink, Costs: costs}
@@ -402,7 +402,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// hardening.Evaluator, its second half, answers false through stage H4 (hardening design).
 	// Each repository's checks and filing go through that repository's own App connection.
 	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now, Metrics: m,
-		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
+		Checks: coordination.GitHubChecks{Forges: func(repo string) coordination.CheckForge {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh
 			}

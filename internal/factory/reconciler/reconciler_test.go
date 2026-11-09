@@ -429,7 +429,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	seeingMeter(t, c)
 	g := &rig{c: c, f: forgetest.NewFake(), runs: newRuns(), log: &fakeLog{}, metrics: &fakeMetrics{}}
 	g.r = &Reconciler{Client: c, Ledger: c, Namespace: "agent-system", Cfg: cfg(), Forge: g.f, Merger: g.f, Runs: g.runs, Rooms: g.log,
-		Triage: triage.Static{Cfg: cfg()}, Metrics: g.metrics,
+		Triage: triage.Static{}, Metrics: g.metrics,
 		Now: func() time.Time { return now }, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Owned: func(string) bool { return true }, CanWrite: func(context.Context, string, string) (bool, error) { return true, nil }}
 	g.runs.now = func() time.Time { return g.r.Now() } // the claims carry the rig's clock

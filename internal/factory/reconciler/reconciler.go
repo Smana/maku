@@ -1032,7 +1032,7 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	if t.Spec.Parent != nil {
 		return r.receivedChild(ctx, cfg, t) // a part of a split: its parent's spec, no classifier (SL5)
 	}
-	d, err := r.Triage.Triage(ctx, t)
+	d, err := r.Triage.Triage(ctx, cfg, t)
 	if err != nil {
 		return err
 	}

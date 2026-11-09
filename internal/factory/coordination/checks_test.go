@@ -17,8 +17,12 @@ const fenceOurs = "factory: ogenki\n"
 
 // checkRig is two public repositories fenced to this factory, each with its own App connection,
 // and the central config's scripts class and standard tier.
+// checkCfg is the config checkRig built: the checks take it per call.
+var checkCfg *config.Config
+
 func checkRig() (GitHubChecks, map[string]*forgetest.Fake) {
 	cfg := testConfig(config.CoordinationExecute)
+	checkCfg = cfg
 	cfg.Factory = "ogenki"
 	cfg.FactoryLogin = "ogenki-agent-factory[bot]"
 	cfg.Defaults.Template = "pair"
@@ -38,7 +42,7 @@ func checkRig() (GitHubChecks, map[string]*forgetest.Fake) {
 	fakes[repoB].SetPermission("other-maintainer", "write")
 	fakes[repoB].SetPermission("readonly", "read")
 	fakes[repoB].SetPermission("Smana", "write")
-	return GitHubChecks{Cfg: cfg, Forges: func(r string) CheckForge {
+	return GitHubChecks{Forges: func(r string) CheckForge {
 		if f, ok := fakes[r]; ok {
 			return f
 		}
@@ -89,8 +93,8 @@ func TestRepositoryChecks(t *testing.T) {
 		{name: "a fence changed since authorization", actor: maintainer, auth: func(GitHubChecks) *v1alpha1.ChildAuthorization {
 			return &v1alpha1.ChildAuthorization{Repository: repoB, FenceSHA: "0000000000000000000000000000000000000000"}
 		}, want: ErrPolicyChanged},
-		{name: "the primary maintainer for B", actor: smana, setup: func(g *GitHubChecks, _ map[string]*forgetest.Fake) {
-			g.Cfg.Current().Repositories[1].Maintainers = []string{"other-maintainer"}
+		{name: "the primary maintainer for B", actor: smana, setup: func(_ *GitHubChecks, _ map[string]*forgetest.Fake) {
+			checkCfg.Repositories[1].Maintainers = []string{"other-maintainer"}
 		}, want: ErrRepositoryPermission},
 		{name: "a read-only maintainer", actor: Actor{Principal: "zitadel:r", LinkedGitHubLogin: "readonly"}, want: ErrRepositoryPermission},
 		{name: "a permission read that fails", actor: maintainer, setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) { f[repoB].FailPermission(errors.New("502")) }, want: ErrAccessUnverified},
@@ -108,7 +112,7 @@ func TestRepositoryChecks(t *testing.T) {
 			if tc.auth != nil {
 				auth = tc.auth(g)
 			}
-			pol, err := g.Check(context.Background(), tc.actor, c, auth)
+			pol, err := g.Check(context.Background(), checkCfg, tc.actor, c, auth)
 			if !errors.Is(err, tc.want) && (tc.want != nil || err != nil) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -129,11 +133,11 @@ func TestRepositoryChecks(t *testing.T) {
 func TestRepositoryChecksCacheNothing(t *testing.T) {
 	g, fakes := checkRig()
 	a := Actor{LinkedGitHubLogin: "other-maintainer"}
-	if _, err := g.Check(context.Background(), a, consumerChild(), nil); err != nil {
+	if _, err := g.Check(context.Background(), checkCfg, a, consumerChild(), nil); err != nil {
 		t.Fatal(err)
 	}
 	fakes[repoB].SetPermission("other-maintainer", "read")
-	if _, err := g.Check(context.Background(), a, consumerChild(), nil); !errors.Is(err, ErrRepositoryPermission) {
+	if _, err := g.Check(context.Background(), checkCfg, a, consumerChild(), nil); !errors.Is(err, ErrRepositoryPermission) {
 		t.Fatalf("err = %v after write was lost", err)
 	}
 }

@@ -65,7 +65,6 @@ func Cohort(taskID string, percent int) bool {
 
 // Classify is the one triage per task (§2): deterministic rules plus one C7 call.
 type Classify struct {
-	Cfg   config.Source
 	C     Classifier
 	Forge ClassForge
 	// Clients is v2 D8: the factory App on a repository. Set, a task's labels are read on its
@@ -87,8 +86,7 @@ func (c Classify) forge(t *v1alpha1.Task) ClassForge {
 
 // Triage fixes the class, then asks C7 for the tier: one call per task, whose failure falls
 // back to static/standard rather than blocking the task (§2, C7).
-func (c Classify) Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error) {
-	cfg := c.Cfg.Current()
+func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error) {
 	dataClass := t.Spec.DataClass
 	if dataClass == "" {
 		dataClass = cfg.Defaults.DataClass
