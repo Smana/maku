@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/intake"
@@ -205,6 +206,53 @@ func TestReviseRejects(t *testing.T) {
 			requireRevisionRefusal(t, err, intake.ReasonPlannerInvalid)
 		})
 	}
+}
+
+func TestReviseBodyBounds(t *testing.T) {
+	t.Run("base body over 16 KiB", func(t *testing.T) {
+		base := revisionBase()
+		base.Issues[0].Body += strings.Repeat("\n", 16<<10)
+		candidate := cloneRevisionPlan(base)
+		_, err := intake.Revise(base, intake.Hash(base), candidate, 10)
+		requireRevisionRefusal(t, err, intake.ReasonPlannerInvalid)
+		if !strings.Contains(err.Error(), "base issue 1 body") || !strings.Contains(err.Error(), "16 KiB") {
+			t.Fatalf("error = %v, want the base body bound", err)
+		}
+	})
+
+	t.Run("long candidate newline run is rejected cheaply", func(t *testing.T) {
+		base := intake.Plan{
+			APIVersion: intake.APIVersion,
+			Round:      1,
+			Repository: "owner/repository",
+			Budget:     intake.Budget{CeilingUSD: 2, Source: "class"},
+			Issues: []intake.Issue{{
+				Index: 1, Title: "docs: clarify behavior", Class: "docs-links", Roles: []string{"scoper"},
+				Body: "## What is wrong\nProtected prefix.\n[NEEDS CLARIFICATION: g1 owner?]\n" +
+					"## What it should be\nDocumented.\n## Acceptance check\nDone.",
+			}},
+			Gaps: []intake.Gap{{
+				ID: "g1", Section: "what-is-wrong", Text: "owner?",
+				Recommended: intake.Answer{Answer: "docs team", Why: "ownership"},
+			}},
+		}
+		base = intake.WithGaps(base, base.Gaps)
+		candidate := cloneRevisionPlan(base)
+		candidate.Issues[0].Body = "## What is wrong\nChanged prefix.\nChosen answer.\n" +
+			"## What it should be\nDocumented.\n## Acceptance check\nDone." +
+			strings.Repeat("\n", 64<<10) + "## Decisions\nD1 [g1]: chosen answer, because ownership"
+
+		start := time.Now()
+		_, err := intake.Revise(base, intake.Hash(base), candidate, 10)
+		elapsed := time.Since(start)
+		requireRevisionRefusal(t, err, intake.ReasonPlannerInvalid)
+		if elapsed > 250*time.Millisecond {
+			t.Fatalf("oversize newline run took %s before rejection", elapsed)
+		}
+		if !strings.Contains(err.Error(), "candidate issue 1 body") || !strings.Contains(err.Error(), "16 KiB") {
+			t.Fatalf("error = %v, want the candidate body bound", err)
+		}
+	})
 }
 
 func TestReviseCorrelation(t *testing.T) {

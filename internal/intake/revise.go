@@ -26,6 +26,16 @@ func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, er
 	if Hash(base) != baseHash {
 		return Plan{}, refuse(ReasonPlanChanged, "")
 	}
+	for i, issue := range base.Issues {
+		if len(issue.Body) > maxBodyBytes {
+			return Plan{}, refuse(ReasonPlannerInvalid, fmt.Sprintf("base issue %d body: %d bytes, the bound is %d KiB", i+1, len(issue.Body), maxBodyBytes>>10))
+		}
+	}
+	for i, issue := range candidate.Issues {
+		if len(issue.Body) > maxBodyBytes {
+			return Plan{}, refuse(ReasonPlannerInvalid, fmt.Sprintf("candidate issue %d body: %d bytes, the bound is %d KiB", i+1, len(issue.Body), maxBodyBytes>>10))
+		}
+	}
 	if maxRounds < 1 || base.Round < 0 {
 		return Plan{}, refuse(ReasonPlannerInvalid, "revision round and maxRounds must be positive")
 	}
@@ -228,6 +238,8 @@ type revisionBodyEdit struct {
 	recorded     map[string]bool
 }
 
+const maxRevisionSeparatorAttempts = 4
+
 // analyzeRevisionBody proves one body's edit. Outside a Decisions section, the base and candidate
 // are the same byte string except that some base marker spans became non-empty text. An existing
 // Decisions section is a verbatim prefix of candidate's; a new one may be introduced only with new
@@ -305,7 +317,8 @@ func analyzeRevisionBody(baseBody, candidateBody string) (revisionBodyEdit, erro
 
 	// A newly introduced heading needs its line-break separator. Try the longest trailing newline
 	// separator first so it is not captured as part of the last answer; the base's own trailing
-	// newlines remain mandatory and make the shorter attempts succeed when needed.
+	// newlines remain mandatory and make the shorter attempts succeed when needed. At most four
+	// attempts cover the base separator and the two newlines appendRevisionRecord may introduce.
 	allowSeparator := !baseHasDecision && candidateHasDecision
 	firstNewline := len(candidateCore)
 	for firstNewline > 0 && candidateCore[firstNewline-1] == '\n' {
@@ -314,6 +327,7 @@ func analyzeRevisionBody(baseBody, candidateBody string) (revisionBodyEdit, erro
 	start, end := len(candidateCore), len(candidateCore)+1
 	if allowSeparator {
 		start = firstNewline
+		end = min(end, start+maxRevisionSeparatorAttempts)
 	}
 	var lastErr error
 	for coreEnd := start; coreEnd < end; coreEnd++ {

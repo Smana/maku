@@ -11,10 +11,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/httpx"
 )
 
@@ -35,6 +37,8 @@ const (
 	maxTitleRunes = 256
 	maxBodyBytes  = 16 << 10
 )
+
+var gapIDRE = regexp.MustCompile(`^g[1-9][0-9]*$`)
 
 // The sentinels the caller maps to the closed refusal list: each spells its own reason, so a wrapped
 // error already reads as the line a person is shown, and `errors.Is` on it is the whole mapping —
@@ -173,6 +177,9 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 		return Draft{}, Usage{}, err
 	}
 	if detail := d.invalid(); detail != "" {
+		return Draft{}, Usage{}, errPlannerInvalid(detail)
+	}
+	if detail := d.invalidModelGapCoverage(); detail != "" {
 		return Draft{}, Usage{}, errPlannerInvalid(detail)
 	}
 	return d, usage, nil
@@ -374,6 +381,9 @@ func (d Draft) invalid() string {
 		if strings.TrimSpace(g.ID) == "" {
 			return fmt.Sprintf("gaps[%d].id: empty, each gap names its one clarification marker", i)
 		}
+		if !gapIDRE.MatchString(g.ID) {
+			return fmt.Sprintf("gaps[%d].id: it is a canonical g[1-9][0-9]* identifier", i)
+		}
 		if _, ok := seenGaps[g.ID]; ok {
 			return fmt.Sprintf("gaps[%d].id: already used by another gap", i)
 		}
@@ -393,6 +403,23 @@ func (d Draft) invalid() string {
 		if markers != 1 {
 			return fmt.Sprintf("gaps[%d].id: it names exactly one clarification marker already in an issue body", i)
 		}
+	}
+	return ""
+}
+
+// invalidModelGapCoverage closes the model reply's marker set: Compose may hold an intermediate
+// marker without gaps, but a model reply must account for every parsed marker exactly once.
+func (d Draft) invalidModelGapCoverage() string {
+	totalMarkers := 0
+	for i, is := range d.Issues {
+		markers, err := sanitize.ClarificationMarkers(is.Body)
+		if err != nil {
+			return fmt.Sprintf("issues[%d].body: it has a malformed clarification marker", i)
+		}
+		totalMarkers += len(markers)
+	}
+	if totalMarkers != len(d.Gaps) {
+		return fmt.Sprintf("gaps: every clarification marker needs one ranked gap, got %d markers and %d gaps", totalMarkers, len(d.Gaps))
 	}
 	return ""
 }

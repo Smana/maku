@@ -273,6 +273,9 @@ func TestDraftRequiresRankedGapMarkers(t *testing.T) {
 	}{
 		{name: "marker absent", body: reply(validBody, gap("g1", "what-is-wrong")), want: "exactly one"},
 		{name: "marker repeated", body: reply(marked+"\n[NEEDS CLARIFICATION: g1 again]", gap("g1", "what-is-wrong")), want: "exactly one"},
+		{name: "leading zero gap ID", body: reply(strings.Replace(marked, "g1", "g01", 1), gap("g01", "what-is-wrong")), want: "canonical"},
+		{name: "noncanonical gap ID", body: reply(strings.Replace(marked, "g1", "G1", 1), gap("G1", "what-is-wrong")), want: "canonical"},
+		{name: "orphan marker", body: reply(marked+"\n[NEEDS CLARIFICATION: g2 orphan plan text]", gap("g1", "what-is-wrong")), want: "every clarification marker"},
 		{name: "duplicate gap ID", body: reply(marked, gap("g1", "what-is-wrong"), gap("g1", "scope")), want: "already used"},
 		{name: "unknown section", body: reply(marked, gap("g1", "other")), want: "gaps[0].section"},
 	} {
@@ -282,6 +285,11 @@ func TestDraftRequiresRankedGapMarkers(t *testing.T) {
 			_, _, err := m.Draft(t.Context(), req())
 			if !errors.Is(err, intake.ErrInvalid) || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("%v, want %q", err, c.want)
+			}
+			for _, planText := range []string{"which one?", "orphan plan text"} {
+				if strings.Contains(err.Error(), planText) {
+					t.Fatalf("diagnostic echoes plan text %q: %v", planText, err)
+				}
 			}
 		})
 	}
