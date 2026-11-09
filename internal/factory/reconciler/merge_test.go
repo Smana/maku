@@ -1378,3 +1378,42 @@ func TestGateRecordsHumanCommits(t *testing.T) {
 		t.Fatalf("kept through the merge: %s %v", got.Status.Phase, got.Status.PullRequest.HumanCommits)
 	}
 }
+
+// A human pushes and merges between two reconciles: the merged pull request is read by the gate's
+// commit provenance (the room's reported head and every commit's Agent-Run claim), never by who
+// merged it, so the task counts merged_human; a bot-only pull request a human merged stays accepted.
+func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
+	for name, c := range map[string]struct {
+		phase string
+		human bool
+	}{
+		"human push, via AwaitingHuman": {v1alpha1.PhaseAwaitingHuman, true},
+		"human push, via AwaitingCI":    {v1alpha1.PhaseAwaitingCI, true},
+		"bot-only, merged by hand":      {v1alpha1.PhaseAwaitingHuman, false},
+		"bot-only, merged at the gate":  {v1alpha1.PhaseAwaitingCI, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, c.phase)
+			tk := g.get(t)
+			tk.Status.Reason = "merge_gate_off"
+			tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
+			if err := g.c.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			head, want := "abc", "accepted"
+			if c.human {
+				head, want = "def", "merged_human"
+				g.f.SetCommits(12, forge.Commit{SHA: "abc", Message: "docs: fix\n\nAgent-Run: " + rid(0)}, forge.Commit{SHA: "def", Message: "typo"})
+			}
+			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
+				HeadRef: "agent/3buqdlot", HeadSHA: head, Author: "ogenki-agents[bot]", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0)})
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits != c.human || taskOutcome(got) != want {
+				t.Fatalf("%s %s human %v, want %s", got.Status.Phase, got.Status.Reason, got.Status.PullRequest.HumanCommits, want)
+			}
+			if !slices.ContainsFunc(g.metrics.recorded, func(m string) bool { return strings.HasPrefix(m, "task_outcome ") && strings.Contains(m, " "+want+" ") }) {
+				t.Fatalf("%v", g.metrics.recorded)
+			}
+		})
+	}
+}

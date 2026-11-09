@@ -351,8 +351,8 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 		if pr, err = r.readPR(ctx, t); err != nil {
 			return err
 		}
-		if r.prEnded(ctx, t, pr) {
-			return nil
+		if ended, err := r.prEnded(ctx, t, pr); ended || err != nil {
+			return err
 		}
 	}
 	if done, err := r.escalatedSplit(ctx, t, pr); done || err != nil {

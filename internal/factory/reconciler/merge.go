@@ -37,6 +37,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	switch pr.State {
 	case "MERGED": // a maintainer merged it through the bypass…
 		if !forge.SameLogin(pr.MergedBy, r.repo(t).Merge.MergerLogin) {
+			if err := r.mergedHumanCommits(ctx, t, pr); err != nil {
+				return err
+			}
 			t.Status.PullRequest.MergedBy, t.Status.PullRequest.MergeCommitSHA = pr.MergedBy, pr.MergeCommitSHA
 			noteMergedHead(t, pr)
 			// R41: a human merge records when, so it counts in the class's breaker window.
@@ -538,27 +541,21 @@ func (r *Reconciler) backToGate(t *v1alpha1.Task, why, reason, head string) {
 // It returns true when the caller must stop: the task was handed off, or GitHub has not recorded
 // the head's push yet and the task waits, unchanged, for a later reconcile (pushRecordGrace).
 func (r *Reconciler) humanCommit(ctx context.Context, t *v1alpha1.Task, head string) (bool, error) {
-	reported, err := r.reportedHead(ctx, t)
+	factoryMade, err := r.factoryMade(ctx, t, head)
 	if err != nil {
 		return false, err
 	}
-	if reported == head {
-		factoryMade, err := r.factoryCommits(ctx, t, head)
+	if factoryMade {
+		pushed, err := r.factoryPushed(ctx, t, head)
 		if err != nil {
 			return false, err
 		}
-		if factoryMade {
-			pushed, err := r.factoryPushed(ctx, t, head)
-			if err != nil {
-				return false, err
-			}
-			switch {
-			case pushed == pushFactory:
-				return false, nil
-			case pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)):
-				r.log().Info("the head's push is not recorded yet: waiting", "task.id", t.Name, "head", head)
-				return true, nil
-			}
+		switch {
+		case pushed == pushFactory:
+			return false, nil
+		case pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)):
+			r.log().Info("the head's push is not recorded yet: waiting", "task.id", t.Name, "head", head)
+			return true, nil
 		}
 	}
 	t.Status.NextTrigger = ""
@@ -566,6 +563,35 @@ func (r *Reconciler) humanCommit(ctx context.Context, t *v1alpha1.Task, head str
 	r.to(t, v1alpha1.PhaseAwaitingHuman, "human_commit_in_pr")
 	narrateLater(t, narrate.WaitingForHuman(t, "human_commit_in_pr"))
 	return true, nil
+}
+
+// factoryMade: head is the commit the room last reported from one of the task's implementer runs,
+// and every commit of the pull request claims one (factoryCommits). The commits' provenance alone,
+// without the push record.
+func (r *Reconciler) factoryMade(ctx context.Context, t *v1alpha1.Task, head string) (bool, error) {
+	reported, err := r.reportedHead(ctx, t)
+	if err != nil || reported != head {
+		return false, err
+	}
+	return r.factoryCommits(ctx, t, head)
+}
+
+// mergedHumanCommits records whether a pull request merged outside the gate's arm carries a human's
+// commit: factoryMade, as the gate reads a CI fix, never an author login or who merged. The push
+// record is not read: a merged branch is usually deleted, and its deletion is nobody's push. What
+// cannot be proven the factory's is a human's. An adopted pull request has no run to claim its
+// commits and is left as it is.
+func (r *Reconciler) mergedHumanCommits(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
+	ref := t.Status.PullRequest
+	if ref.HumanCommits || adoptedTask(t) {
+		return nil
+	}
+	made, err := r.factoryMade(ctx, t, pr.HeadSHA)
+	if err != nil {
+		return err
+	}
+	ref.HumanCommits = !made
+	return nil
 }
 
 // engagedSince: a maintainer reviewed or commented on the pull request after since.
@@ -906,6 +932,9 @@ func (r *Reconciler) autoMerging(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		ref.AutoMerged = merger // AutoMerged: merged by the merger App on the class's conditions (R52)
 		if !ref.AutoMerged {
+			if err := r.mergedHumanCommits(ctx, t, pr); err != nil {
+				return err
+			}
 			ref.MergedHow, ref.ApprovedBy = "", "" // a human's merge, not the merger's: nothing to revert (AM1)
 			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
 			r.handedOffMerged(ctx, t, "human")

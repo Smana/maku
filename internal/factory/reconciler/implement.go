@@ -923,8 +923,8 @@ func (r *Reconciler) awaitingHuman(ctx context.Context, t *v1alpha1.Task) error 
 	if err != nil {
 		return err
 	}
-	if r.prEnded(ctx, t, pr) {
-		return nil
+	if ended, err := r.prEnded(ctx, t, pr); ended || err != nil {
+		return err
 	}
 	r.countApproves(ctx, t, pr)
 	if adoptedTask(t) {
@@ -992,10 +992,13 @@ func (r *Reconciler) countApproves(ctx context.Context, t *v1alpha1.Task, pr for
 
 // prEnded ends the task when its pull request was merged or closed. A closed one carrying
 // factory/stale was the stale close's (remind): its replay after a lost status write still says so.
-func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR) bool {
+func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	class := t.Spec.PredictedClass
 	switch pr.State {
 	case "MERGED":
+		if err := r.mergedHumanCommits(ctx, t, pr); err != nil {
+			return false, err
+		}
 		t.Status.PullRequest.MergedBy, t.Status.PullRequest.MergeCommitSHA = pr.MergedBy, pr.MergeCommitSHA
 		noteMergedHead(t, pr)
 		// R41: like the CI gate's bypass record, the timestamp is what puts the merge in the
@@ -1004,18 +1007,16 @@ func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR)
 		t.Status.PullRequest.MergedAt = &now
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
 		r.handedOffMerged(ctx, t, "human")
-		_ = r.end(ctx, t, v1alpha1.PhaseDone, "merged")
-		return true
+		return true, r.end(ctx, t, v1alpha1.PhaseDone, "merged")
 	case "CLOSED":
 		reason := "pr_closed"
 		if slices.Contains(pr.Labels, labelStale) {
 			reason = "stale"
 		}
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "closed") })
-		_ = r.end(ctx, t, v1alpha1.PhaseClosed, reason)
-		return true
+		return true, r.end(ctx, t, v1alpha1.PhaseClosed, reason)
 	}
-	return false
+	return false, nil
 }
 
 // stamp fills what the run ran on from its claim (R10): each field once, never changed, so a later
