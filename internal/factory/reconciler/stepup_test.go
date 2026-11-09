@@ -275,13 +275,12 @@ func TestTheStepBriefCarriesTheJudge(t *testing.T) {
 	}
 }
 
-// The step helper narrates the last verdict only when it declines. A verifier's run is the only one
-// production reaches it with, and that never steps (R15); the implementer case pins the helper.
+// Out of review rounds after a verifier's run, the task steps, or narrates the last verdict when it declines.
 func TestRoundsExhaustedNarratedOnlyWhenNotStepped(t *testing.T) {
 	for name, c := range map[string]struct {
 		cohort, role string
 		want         int
-	}{"stepped": {"treatment", "implementer", 0}, "declined": {"control", "implementer", 1}, "a verifier's run": {"treatment", "reviewer", 1}} {
+	}{"stepped": {"treatment", "reviewer", 0}, "declined": {"control", "reviewer", 1}} {
 		t.Run(name, func(t *testing.T) {
 			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
 				tk.Status.Profile.Cohort = c.cohort
@@ -305,10 +304,12 @@ func TestRoundsExhaustedNarratedOnlyWhenNotStepped(t *testing.T) {
 	}
 }
 
-// R15: only an implementer's end steps; any other role's goes to the human.
+// R15: a run's own budget-run, stalled or not_met steps only when it was the implementer's.
 func TestOnlyAnImplementersEndSteps(t *testing.T) {
-	for _, role := range []string{"reviewer", "tester", "triager", ""} {
-		t.Run(role, func(t *testing.T) {
+	for _, c := range []struct{ role, reason string }{{"reviewer", "budget-run"}, {"tester", "budget-run"}, {"reviewer", "stalled"},
+		{"tester", "stalled"}, {"reviewer", "not_met"}, {"triager", "budget-run"}, {"", "budget-run"}, {"", "review_rounds_exhausted"}} {
+		role := c.role
+		t.Run(role+" "+c.reason, func(t *testing.T) {
 			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
 				if role == "" {
 					tk.Status.Runs = nil
@@ -316,7 +317,7 @@ func TestOnlyAnImplementersEndSteps(t *testing.T) {
 					tk.Status.Runs[0].Role = role
 				}
 			})
-			wantEscalated(t, g.fail(t, tk, "budget-run"), "budget-run")
+			wantEscalated(t, g.fail(t, tk, c.reason), c.reason)
 		})
 	}
 }
@@ -372,5 +373,35 @@ func TestASaturatedStepBriefKeepsTheJudge(t *testing.T) {
 	}
 	if n := strings.Count(text, strings.Repeat("q", 3000)); n == 8 || n == 0 {
 		t.Fatalf("%d whole messages quoted", n)
+	}
+}
+
+// A pair task out of review rounds steps to the notConverged profile and runs its implementer again.
+func TestARoundsExhaustedReviewSteps(t *testing.T) {
+	g := pairRig(t)
+	steps := int32(7)
+	g.r.Cfg.Loops = map[string]config.Loop{"review-search": {StallSteps: &steps}}
+	g.r.Cfg.HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-search": {Loop: "review-search"}}
+	g.r.Cfg.Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
+		Escalation: &config.Escalation{NotConverged: "review-search"}}
+	tk := g.get(t)
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	for i, rv := range []string{rid(1), rid(3), rid(5)} {
+		g.log.verdict(rv, "changes", head1, "still wrong")
+		g.finish(rv, "Succeeded", "agent_finished")
+		tk = g.reconcile(t, "3buqdlot", 2)
+		if i < 2 {
+			g.finish(rid(2*i+2), "Succeeded", "agent_finished")
+			g.reconcile(t, "3buqdlot", 2)
+		}
+	}
+	p := tk.Status.Profile
+	if tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.ReviewRounds != 0 || p.Name != "review-search" ||
+		p.Source != "escalation" || p.Reason != "not_converged" || tk.Status.Runs[6].Trigger != TriggerEscalation ||
+		tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 || strings.Contains(strings.Join(g.f.Comments(12), "\n"), "review rounds") {
+		t.Fatalf("%s %d %+v %+v %+v", tk.Status.Phase, tk.Status.ReviewRounds, p, tk.Status.Runs, tk.Spec.Loop)
 	}
 }

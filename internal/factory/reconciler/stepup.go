@@ -28,7 +28,11 @@ func group(reason string) string {
 // stepUp runs t once more under a richer profile instead of escalating it for reason.
 func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string) (bool, error) {
 	p := t.Status.Profile
-	if p == nil || !p.Resolved || len(t.Status.Runs) == 0 || current(t).Role != "implementer" {
+	if p == nil || !p.Resolved || len(t.Status.Runs) == 0 {
+		return false, nil
+	}
+	// A run's own end steps only for the implementer; review_rounds_exhausted judges the implementer's work after a verifier's run.
+	if reason != "review_rounds_exhausted" && current(t).Role != "implementer" {
 		return false, nil
 	}
 	g := group(reason)
