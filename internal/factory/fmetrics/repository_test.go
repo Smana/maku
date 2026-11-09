@@ -22,17 +22,17 @@ func TestTheRepositoryLabelIsBoundedByTheList(t *testing.T) {
 	s.PROutcome(b, "docs-links", "closed")
 	s.TimeToPR(b, time.Minute, "issue", "standard", "solo")
 	s.TaskTokens(b, 1000, "standard", "solo", "review")
-	s.Intervention(b, "stop", "none", "none")
+	s.Intervention(b, "stop", "none", "none", "none")
 	s.IntakeError(b, "issue")
 	s.PROutcome(WithRepository(t.Context(), "Evil/repo"), "docs-links", "closed")
-	s.Intervention(t.Context(), "retry", "none", "none")
+	s.Intervention(t.Context(), "retry", "none", "none", "none")
 	out := scrape()
 	for _, want := range []string{
 		`maku_factory_pr_outcomes_total{class="docs-links",outcome="closed",principal="other",repository="Smana/b"`,
 		`maku_factory_pr_outcomes_total{class="docs-links",outcome="closed",principal="other",repository="other"`,
 		`maku_factory_time_to_pr_seconds_count{repository="Smana/b",source="issue",template="solo",tier="standard"}`,
-		`maku_factory_human_interventions_total{cohort="none",kind="stop",profile="none",repository="Smana/b"`,
-		`maku_factory_human_interventions_total{cohort="none",kind="retry",profile="none",repository="other"`,
+		`maku_factory_human_interventions_total{cohort="none",kind="stop",profile="none",recommended="none",repository="Smana/b"`,
+		`maku_factory_human_interventions_total{cohort="none",kind="retry",profile="none",recommended="none",repository="other"`,
 		`maku_factory_intake_errors_total{repository="Smana/b",source="issue"`,
 		`predicted_class="review",principal="system:factory",repository="Smana/a"`,
 		`predicted_class="review",principal="system:factory",repository="other"`,

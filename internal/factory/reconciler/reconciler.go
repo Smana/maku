@@ -103,7 +103,7 @@ type metrics interface {
 	HumanWait(ctx context.Context, phase, reason, class string, d time.Duration)
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
-	Intervention(ctx context.Context, kind, cohort, profile string)
+	Intervention(ctx context.Context, kind, cohort, profile, recommended string)
 	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64)
 	TierFit(ctx context.Context, classifier, tier, fit string, control bool)
 	Revoked(ctx context.Context, reason string)
@@ -511,10 +511,10 @@ func (r *Reconciler) needed(ctx context.Context, t *v1alpha1.Task, before, after
 		if after.Reason == ReasonNeedsAuthor {
 			kind = "needs_author"
 		}
-		r.Metrics.Intervention(ctx, kind, cohortOf(t), profileOf(t))
+		r.Metrics.Intervention(ctx, kind, cohortOf(t), profileOf(t), r.recommendedOf(t))
 	}
 	if after.PullRequest != nil && after.PullRequest.HumanCommits && (before.PullRequest == nil || !before.PullRequest.HumanCommits) {
-		r.Metrics.Intervention(ctx, "human_commit", cohortOf(t), profileOf(t))
+		r.Metrics.Intervention(ctx, "human_commit", cohortOf(t), profileOf(t), r.recommendedOf(t))
 	}
 }
 

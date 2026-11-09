@@ -295,8 +295,8 @@ func (m *fakeMetrics) HandoffToMerge(_ context.Context, class, reason, how strin
 func (m *fakeMetrics) TaskTokens(_ context.Context, tokens int64, tier, template, class string) {
 	m.add("task_tokens " + strconv.FormatInt(tokens, 10) + " " + tier + " " + template + " " + class)
 }
-func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort, profile string) {
-	m.add("intervention " + kind + " " + cohort + " " + profile)
+func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort, profile, recommended string) {
+	m.add("intervention " + kind + " " + cohort + " " + profile + " " + recommended)
 }
 func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
 	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
@@ -522,7 +522,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 		t.Fatalf("settled: %+v %q", tk.Status, g.f.Comments(7))
 	}
 	want := []string{"time_to_pr issue standard solo", "pr review human_merged", "tier_fit static standard over false",
-		"intervention human_commit none none", "task_tokens 0 standard solo review"} // a head nobody's run reported is a human's
+		"intervention human_commit none none none", "task_tokens 0 standard solo review"} // a head nobody's run reported is a human's
 	if strings.Join(g.metrics.recorded, "|") != strings.Join(want, "|") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
@@ -829,7 +829,7 @@ func TestStopAnnotation(t *testing.T) {
 			// still records the total, once, past its window (R49).
 			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
 			g.reconcile(t, "3buqdlot", 1)
-			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none|task_tokens 0 standard solo review" {
+			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review" {
 				t.Fatalf("%q", g.metrics.recorded)
 			}
 		})
@@ -961,7 +961,7 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 	}
 	// The revoke is counted with the claim's annotation, not the status write: the replay finds the
 	// run already gone, so a deferred count would be lost (F30).
-	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none|task_tokens 0 standard solo review" {
+	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review" {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 }

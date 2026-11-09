@@ -773,15 +773,19 @@ func (s *Set) BudgetDay(ctx context.Context, principal string, spentMicroUSD, ca
 }
 
 // Intervention counts a human stepping in (stop, retry, request_changes, steer, takeover, approve,
-// split) or the factory needing one (needs_author, human_commit, escalated). cohort and profile
-// are the task's, "none" without a profile; the caller maps a profile no longer offered to other.
-func (s *Set) Intervention(ctx context.Context, kind, cohort, profile string) {
+// split) or the factory needing one (needs_author, human_commit, escalated). cohort, profile and
+// recommended are the task's as TaskOutcome labels them, "none" without; the caller maps a name no
+// longer offered to other.
+func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommended string) {
 	if profile == "" {
 		profile = "none"
 	}
+	if recommended == "" {
+		recommended = "none"
+	}
 	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())),
 		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment", "none"})),
-		attribute.String("profile", profile), s.repoOf(ctx)))
+		attribute.String("profile", profile), attribute.String("recommended", recommended), s.repoOf(ctx)))
 }
 
 // TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost.

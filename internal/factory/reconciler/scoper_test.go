@@ -189,7 +189,7 @@ func TestAQuestionBouncesToTheAuthor(t *testing.T) {
 	if !slices.Equal(g.f.Added(7), []string{"factory/needs-author"}) || !slices.Contains(g.metrics.recorded, "scoper review question") {
 		t.Fatalf("labels %v metrics %v", g.f.Added(7), g.metrics.recorded)
 	}
-	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention needs_author none none"}) {
+	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention needs_author none none none"}) {
 		t.Fatalf("a bounce is the author's intervention, not an escalation: %v", got)
 	}
 	if got := interventions(g.reconcile(t, "3buqdlot", 1), g.metrics.recorded); len(got) != 1 {

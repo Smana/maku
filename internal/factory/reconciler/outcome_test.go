@@ -236,8 +236,8 @@ func TestAnEscalationCountsOnce(t *testing.T) {
 		want    string
 	}{
 		"with a profile": {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"},
-			"intervention escalated treatment review-search"},
-		"without a profile": {nil, "intervention escalated none none"},
+			"intervention escalated treatment review-search none"},
+		"without a profile": {nil, "intervention escalated none none none"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			refuse := false

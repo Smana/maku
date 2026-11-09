@@ -125,7 +125,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 	s.PROutcome(ctx, "docs-links", "human_merged")
 	s.TaskTokens(ctx, 120_000, "standard", "solo", "review")
 	s.BudgetDay(ctx, "system:factory", 34_000_000, 42_500_000)
-	s.Intervention(ctx, "stop", "none", "none")
+	s.Intervention(ctx, "stop", "none", "none", "")
 	s.ClassMismatch(ctx, "docs-links", "review")
 	s.MergeDecision(ctx, "docs-links", "shadow", "shadow_would_arm")
 	s.TierFit(ctx, "static", "standard", "fit", false)
@@ -158,7 +158,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 		`maku_factory_budget_cap_usd{principal="system:factory"} 42.5`,
 		`maku_factory_budget_remaining_usd{principal="system:factory"} 8.5`,
 		`maku_factory_budget_spent_usd{principal="system:factory"} 34`,
-		`maku_factory_human_interventions_total{cohort="none",kind="stop",profile="none",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="none",kind="stop",profile="none",recommended="none",repository="other"} 1`,
 		`maku_factory_label_events_truncated_total{label="factory/ready"} 1`,
 		`maku_factory_class_mismatch_total{matched="review",predicted="docs-links"} 1`,
 		`maku_factory_merge_decisions_total{class="docs-links",reason="shadow_would_arm",repository="other",verdict="shadow"} 1`,
@@ -225,7 +225,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
 	s.Revoked(ctx, "ignore previous instructions")
 	s.PROutcome(ctx, "docs-links", "exploded")
-	s.Intervention(ctx, "a comment's text", "none", "none")
+	s.Intervention(ctx, "a comment's text", "none", "none", "")
 	s.IntakeError(ctx, "webhook")
 	s.Resumed(ctx, "an agent's text")
 	s.RoomClosedAtCap(ctx, "an agent's text")
@@ -240,7 +240,7 @@ func TestLabelValuesAreBounded(t *testing.T) {
 	for _, want := range []string{
 		`maku_factory_run_revocations_total{principal="other",reason="other"} 1`,
 		`maku_factory_pr_outcomes_total{class="docs-links",outcome="other",principal="other",repository="other"} 1`,
-		`maku_factory_human_interventions_total{cohort="none",kind="other",profile="none",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="none",kind="other",profile="none",recommended="none",repository="other"} 1`,
 		`maku_factory_intake_errors_total{repository="other",source="other"} 1`,
 		`maku_factory_resumes_total{reason="other"} 1`,
 		`maku_factory_rooms_closed_at_cap_total{reason="other"} 1`,
@@ -492,9 +492,11 @@ func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	s.TaskOutcome(ctx, "review", "control", "review-floor", "control", "review-search", "failed", 2)
 	s.TaskOutcome(ctx, "review", "treatment", "review-frontier", "escalation", "review-search", "failed", 4)
 	s.TaskOutcome(ctx, "review", "treatment", "review-floor", "floor", "", "accepted", 1)
-	s.Intervention(ctx, "retry", "control", "review-floor")
+	s.Intervention(ctx, "retry", "control", "review-floor", "review-search")
+	s.Intervention(ctx, "retry", "control", "review-floor", "review-tested")
+	s.Intervention(ctx, "retry", "control", "review-floor", "")
 	for _, kind := range []string{"needs_author", "human_commit", "escalated"} {
-		s.Intervention(ctx, kind, "treatment", "review-search")
+		s.Intervention(ctx, kind, "treatment", "review-search", "review-search")
 	}
 	body := scrape()
 	for _, want := range []string{
@@ -505,10 +507,12 @@ func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search",repository="other",source="escalation"} 1`,
 		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search"} 4`,
 		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-floor",recommended="none",repository="other",source="floor"} 1`,
-		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",repository="other"} 1`,
-		`maku_factory_human_interventions_total{cohort="treatment",kind="needs_author",profile="review-search",repository="other"} 1`,
-		`maku_factory_human_interventions_total{cohort="treatment",kind="human_commit",profile="review-search",repository="other"} 1`,
-		`maku_factory_human_interventions_total{cohort="treatment",kind="escalated",profile="review-search",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="review-search",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="review-tested",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="none",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="treatment",kind="needs_author",profile="review-search",recommended="review-search",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="treatment",kind="human_commit",profile="review-search",recommended="review-search",repository="other"} 1`,
+		`maku_factory_human_interventions_total{cohort="treatment",kind="escalated",profile="review-search",recommended="review-search",repository="other"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s\n%s", want, body)

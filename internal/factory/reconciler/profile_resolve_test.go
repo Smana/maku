@@ -530,4 +530,7 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.Contains(got[0], "review-search scoper review-search stopped") {
 		t.Fatalf("outcome %q", got)
 	}
+	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention stop treatment review-search review-search"}) {
+		t.Fatalf("interventions %q", got)
+	}
 }

@@ -190,11 +190,19 @@ func profileOf(t *v1alpha1.Task) string {
 	return t.Status.Profile.Name
 }
 
-// intervention counts one intervention on t, by its cohort and profile, once the status write
-// that carries its cause succeeds.
+// recommendedOf is the scoper's recommendation on t as a metric label, none without a profile.
+func (r *Reconciler) recommendedOf(t *v1alpha1.Task) string {
+	if t.Status.Profile == nil {
+		return "none"
+	}
+	return r.recommendedLabel(t)
+}
+
+// intervention counts one intervention on t, by its cohort, profile and recommendation, once the
+// status write that carries its cause succeeds.
 func (r *Reconciler) intervention(ctx context.Context, t *v1alpha1.Task, kind string) {
-	cohort, profile := cohortOf(t), profileOf(t)
-	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, kind, cohort, profile) })
+	cohort, profile, rec := cohortOf(t), profileOf(t), r.recommendedOf(t)
+	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, kind, cohort, profile, rec) })
 }
 
 // interventions counts, once per run, how humans steered it from the room (§7).
