@@ -214,9 +214,19 @@ func TestExportCarriesTheVariants(t *testing.T) {
 // A floor without the class's checks would drop them on resolve (D5): export refuses it.
 func TestExportRefusesAFloorThatDropsChecks(t *testing.T) {
 	c := central()
-	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{"review-ish": {Harness: "plain", Checks: true, HarnessAllowed: []string{"checked"}}}}
-	if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), `class review-ish: harness "plain" drops checks the class sets; name a harness with checks`) {
-		t.Fatalf("got %v", err)
+	c.HarnessProfiles["tested"] = config.HarnessProfile{Checks: true, TestFirst: true}
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{}}
+	for name, tc := range map[string]struct {
+		class config.Class
+		want  string
+	}{
+		"checks":    {config.Class{Harness: "plain", Checks: true, HarnessAllowed: []string{"checked"}}, `harness "plain" drops checks the class sets; name a harness with checks`},
+		"testFirst": {config.Class{Harness: "checked", Checks: true, TestFirst: true, HarnessAllowed: []string{"tested"}}, `harness "checked" drops testFirst the class sets; name a harness with testFirst`},
+	} {
+		rc.Classes["review-ish"] = tc.class
+		if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), "class review-ish: "+tc.want) {
+			t.Fatalf("%s: got %v", name, err)
+		}
 	}
 	rc.Classes["review-ish"] = config.Class{Harness: "checked", Checks: true, HarnessAllowed: []string{"checked"}}
 	f, err := Export(rc, c)
