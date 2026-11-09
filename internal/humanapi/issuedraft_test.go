@@ -12,8 +12,73 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/repoaccess"
 )
+
+// Every external draft door refuses a live clarification marker. Composition deliberately remains
+// intermediate: its ranked gaps and their markers are what the next clarification round resolves.
+func TestFinalDraftDoors(t *testing.T) {
+	markerBody := strings.Replace(runDraft, "\nx\n", "\n[NEEDS CLARIFICATION: g1 which check?]\n", 1)
+
+	t.Run("issue_draft", func(t *testing.T) {
+		e := setup(t, mcpOn, actorOn(&actLog{}))
+		got := call(t, e, viaRoomctl("dev"), "issue_draft", map[string]any{
+			"repo": "Smana/a", "title": "docs(x): y", "body": markerBody,
+		})
+		if !got.isError || !strings.Contains(got.text, "unresolved_marker") {
+			t.Fatalf("issue_draft accepted a marker: %+v", got)
+		}
+	})
+
+	t.Run("plan_check", func(t *testing.T) {
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+		plan := planFixture(t, "single")
+		plan.Issues[0].Body = markerBody
+		got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+			"plan": plan, "hash": intake.Hash(plan),
+		})
+		if !got.isError || !strings.Contains(got.text, "unresolved_marker") {
+			t.Fatalf("plan_check accepted a marker: %+v", got)
+		}
+	})
+
+	t.Run("run_create", func(t *testing.T) {
+		f := &fakeTaskFactory{}
+		e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+		plan := planFixture(t, "slack-one-issue")
+		plan.Issues[0].Body = markerBody
+		args := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": markerBody,
+			"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF",
+			"plan": plan, "plan_hash": intake.Hash(plan)}
+		for name, callArgs := range map[string]map[string]any{
+			"with a plan": args,
+			"without a plan": {"repo": plan.Repository, "title": plan.Issues[0].Title, "text": markerBody,
+				"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				got := call(t, e, bearer("slack-app"), "run_create", callArgs)
+				if !got.isError || !strings.Contains(got.text, "unresolved_marker") {
+					t.Fatalf("run_create accepted a marker: %+v", got)
+				}
+			})
+		}
+		if len(f.got) != 0 {
+			t.Fatalf("a marker reached the factory: %+v", f.got)
+		}
+	})
+
+	t.Run("compose remains intermediate", func(t *testing.T) {
+		plan, err := intake.Compose(intake.Draft{Repository: "Smana/ai-native-ref",
+			Issues: []intake.DraftIssue{{Title: "docs(x): y", Body: markerBody, Class: "docs-links"}}}, intake.ComposeIn{
+			Surface: intake.SurfaceSession,
+			Classes: map[string]intake.Class{"docs-links": {Roles: []string{"implementer"}, CeilingUSD: 1.5, Source: "class:docs-links"}},
+		})
+		if err != nil || !strings.Contains(plan.Issues[0].Body, "NEEDS CLARIFICATION") {
+			t.Fatalf("Compose lost its intermediate marker: %+v, %v", plan, err)
+		}
+	})
+}
 
 func TestMCPIssueDraft(t *testing.T) {
 	e := setup(t, mcpOn, actorOn(&actLog{}))

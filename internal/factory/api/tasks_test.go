@@ -129,6 +129,19 @@ func openTask(name string) *factoryv1.Task {
 		Status: factoryv1.TaskStatus{Phase: factoryv1.PhaseImplementing}}
 }
 
+// A titled task is an external filing door: an unresolved planner marker creates neither Task nor issue.
+func TestFinalDraftDoors(t *testing.T) {
+	s, f := newTaskServer(t, slack, 0)
+	body := strings.Replace(draft, `x\u200b`, `[NEEDS CLARIFICATION: g1 which check?]`, 1)
+	rec := postTask(s, body, "k")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid_draft") {
+		t.Fatalf("factory task creation accepted a marker: %d %s", rec.Code, rec.Body)
+	}
+	if len(f.got) != 0 || len(tasks(t, s)) != 0 {
+		t.Fatal("a marker filed an issue or created a Task")
+	}
+}
+
 // F4, R4–R12: admission in its order, both identities on the Task, the issue filed once, no label.
 func TestCreateTaskAdmission(t *testing.T) {
 	for name, c := range map[string]struct {

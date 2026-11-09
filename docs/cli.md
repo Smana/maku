@@ -185,12 +185,18 @@ over.
 
 | Tool | What it does | What it answers |
 |---|---|---|
-| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it | `plan/v1`, the hash the broker computed over it, at most one question to put to you, and `canStart`: whether you may start the factory on it. One model call, on public text only; it files nothing |
-| `plan_check` | Re-validates a plan you were shown, against the hash the broker answered with | The plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
+| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it; a clarification revision also carries the base plan, its hash and your edited candidate | `plan/v1`, the hash the broker computed over it, ranked gaps with the first as the compatibility question, and `canStart`: whether you may start the factory on it. One model call below the round cap, on public text only; it files nothing |
+| `plan_check` | Re-validates a final plan you were shown, against the hash the broker answered with; an optional candidate applies a deterministic final revision | The final plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
 
 `issue_file` calls `plan_check` itself, so you never call it by hand: it is there so an agent can
 re-check a plan before showing you a form for it, and so a plan that changed after it was shown
 files nothing rather than something else.
+
+To answer a gap, your agent passes `intake_plan` the original request fields plus the revision envelope:
+`plan` (the base plan), `hash` (its hash) and `candidate` (the edited plan). Only marker replacements
+and their new Decision/Assumption records may change. The broker verifies the base and returns the
+candidate's new hash. To accept every remaining recommendation, the agent records each as an
+`A<n> [g<n>]` assumption and calls `plan_check` with the same envelope; no model call is needed.
 
 What a plan shows, as `intake_plan` answers and your agent shows it back:
 
@@ -239,20 +245,31 @@ Its sections, in the order they are read:
 - **The acceptance check.** `## Acceptance check`, the third heading inside the issue's block, with
   `## What is wrong` and `## What it should be` before it: the factory reads the same three sections
   on a hand-written issue, and a draft without them is refused before a plan exists.
+- **The decisions.** An optional `## Decisions` section after Acceptance check records answers as
+  `D1 [g1]: <choice>, because <reason>` and assumptions as `A2 [g2]: assumed <answer>, because <why>`.
+  IDs ascend and stay unique in each issue; numeric gaps are allowed when a split issue carries only
+  the records it needs. Intermediate plans may retain markers; final filing refuses them.
 - **The ceiling.** `Ceiling $2.00 · class:docs`: the money this plan's work is charged against and
   where that number came from, both from the broker's config. The roles and the money are the
   config's whatever the reply says, and a class the config does not define makes no plan.
 
-A plan may carry one question, with the broker's recommendation and why. It is the one thing the
-planner needs from you to plan the rest of the work, and the answer is yours. A plan marked
-`degraded` came from the broker's deterministic template rather than the model
+A plan may carry ranked gaps; the `Question` shown here is only the first, with the broker's
+recommendation and why. Answer it through the revision envelope, then repeat with the next first gap.
+The answer is yours. A plan marked `degraded` came from the broker's deterministic template rather than the model
 (`human.intake.plan.fallback: composer`): it says so in its first line, and it is not the
 natural-language planner.
 
-Each attempt costs one of your day's plans (`human.intake.plan.dailyPlans` per requester, reset at
-00:00 UTC) and one model call: there is no retry loop. Neither tool files, labels, stores or
-approves anything: the plan is shown, and `issue_file` files its first issue once you answer its
-form.
+The initial plan and every `intake_plan` revision cost one of your day's plans
+(`human.intake.plan.dailyPlans` per requester, reset at 00:00 UTC); `plan_check` costs none.
+`human.intake.plan.maxRounds` (default 10) separately caps clarification rounds in one intake. Below
+the cap a revision makes one model call. The cap-reaching revision instead records all remaining
+recommendations as assumptions and returns a final plan without another model call, but still spends
+its daily slot. Thus `maxRounds` ends one conversation; `dailyPlans` bounds all attempts that day.
+
+Neither tool files, labels, stores or approves anything: the plan is shown, and `issue_file` files its
+first issue once you answer its form. Strict decoding makes mixed versions fail closed: an older
+broker refuses revision fields or `gaps`; a newer broker keeps legacy hashes and maps the first gap to
+the old `Question` view, so existing Slack proposals still render and confirm.
 
 The refusals you can meet, with the next step. The broker answers a plan or a check it will not make
 with one reason of a closed list, each with its own sentence; the whole list is
@@ -266,6 +283,8 @@ with one reason of a closed list, each with its own sentence; the whole list is
 | `planner_timeout` | The one call outlived its deadline (20 s, under `/mcp`'s 25 s). Ask again, with the same words or a shorter context |
 | `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository |
 | `plan_changed` | The plan and the hash you passed do not hold together: it was edited after it was shown. Show the newer plan and confirm that one, never the older text |
+| `unresolved_marker` | A final draft still has a gap or clarification marker. Resolve it through a revision, or accept the remaining recommendations |
+| `invalid_decisions` | Fix the Decisions records: one line each, with ascending unique IDs and valid gap references |
 
 ### OpenCode's background service
 

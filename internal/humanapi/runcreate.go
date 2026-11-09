@@ -123,7 +123,7 @@ func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Princip
 	if ref != nil {
 		return ref
 	}
-	return intake.Check(plan, candidates, s.Intake.Classes)
+	return intake.CheckFinal(plan, candidates, s.Intake.Classes)
 }
 
 // argRefusal is one of run_create's argument refusals, in the shape checkPlan answers with: a call
@@ -182,7 +182,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 		}
 	}
 	if a.Title != "" {
-		d, err := s.checkDraft(ctx, a.Title, a.Text)
+		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
 			return runrequest.TaskResult{}, err
 		}

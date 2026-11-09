@@ -317,7 +317,7 @@ func cleanRequest(in TaskRequest) (string, string, error) {
 		}
 		return "", text, nil
 	}
-	d, err := sanitize.CheckDraft(in.Title, in.Text)
+	d, err := sanitize.CheckFinalDraft(in.Title, in.Text)
 	if err != nil {
 		return "", "", errors.New("invalid_draft")
 	}

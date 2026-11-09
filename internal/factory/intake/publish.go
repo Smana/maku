@@ -275,7 +275,7 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 		return "", "", "", err
 	}
 	first, rest, _ := strings.Cut(proposal, "\n")
-	d, err := sanitize.CheckDraft(strings.TrimLeft(first, "# \t"), rest)
+	d, err := sanitize.CheckFinalDraft(strings.TrimLeft(first, "# \t"), rest)
 	if err != nil {
 		return "", "", "invalid_draft", nil
 	}

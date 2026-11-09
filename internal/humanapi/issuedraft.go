@@ -40,7 +40,7 @@ func (s *Server) issueDraftTool(ctx context.Context, p authn.Principal, args jso
 	if mcpwire.DecodeArgs(args, &a) != nil || !repositoryRE.MatchString(a.Repo) {
 		return nil, toolError("invalid_arguments: repo is owner/name; title and body are strings")
 	}
-	d, err := s.checkDraft(ctx, a.Title, a.Body)
+	d, err := s.checkFinalDraft(ctx, a.Title, a.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -86,10 +86,22 @@ func (s *Server) canStart(ctx context.Context, p authn.Principal, repo string) (
 	return true, ""
 }
 
-// checkDraft is issue_draft's whole check: the template (sanitize.CheckDraft), then the redactor,
-// failing closed without one. Its refusals are toolErrors the model reads as they are.
+// checkDraft is the intermediate template and redaction check. Planner revisions use it while their
+// markers are still legal; external draft doors call checkFinalDraft instead. Both fail closed
+// without a redactor, and their refusals are toolErrors the model reads as they are.
 func (s *Server) checkDraft(ctx context.Context, title, body string) (sanitize.Draft, error) {
-	d, err := sanitize.CheckDraft(title, body)
+	return s.checkDraftWith(ctx, title, body, sanitize.CheckDraft)
+}
+
+// checkFinalDraft applies the external filing rules before the same redactor: valid Decisions and no
+// live or malformed clarification marker, in addition to the ordinary template.
+func (s *Server) checkFinalDraft(ctx context.Context, title, body string) (sanitize.Draft, error) {
+	return s.checkDraftWith(ctx, title, body, sanitize.CheckFinalDraft)
+}
+
+func (s *Server) checkDraftWith(ctx context.Context, title, body string,
+	check func(string, string) (sanitize.Draft, error)) (sanitize.Draft, error) {
+	d, err := check(title, body)
 	if err != nil {
 		return sanitize.Draft{}, toolError(err.Error())
 	}

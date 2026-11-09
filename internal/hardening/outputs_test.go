@@ -57,6 +57,15 @@ func TestDecodeOutput(t *testing.T) {
 	}
 }
 
+// A safe-output issue is filed externally, so unlike an intermediate plan it may not carry a marker.
+func TestFinalDraftDoors(t *testing.T) {
+	body := strings.Replace(issueBody, "\nx\n", "\n[NEEDS CLARIFICATION: g1 which check?]\n", 1)
+	_, refusal := DecodeOutput(Issue, raw(map[string]string{"title": "docs(x): a typo", "body": body}), nil)
+	if refusal != RefuseSchema {
+		t.Fatalf("hardening accepted an unresolved marker: %q", refusal)
+	}
+}
+
 func TestDecodeOutputBundleBound(t *testing.T) {
 	big := base64.StdEncoding.EncodeToString(make([]byte, MaxBundle+1))
 	if _, r := DecodeOutput(Push, raw(map[string]string{"bundle": big}), nil); r != RefuseSchema {

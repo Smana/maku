@@ -658,10 +658,10 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `room_changes` | a reader of the room | `room`, `cursor?` (`seq:N`) | What changed since a cursor, as a list of milestones (run started and ended, notes, handoffs, approvals asked and decided, verdicts, the PR opened or merged, holds, the budget) in the text, and `{room, url, since, items, more, cursor, untrusted: true}` as `structuredContent`. Without a cursor, the last 24 hours. A call scans at most 2,000 events: `more > 0` says there is more to read (milestones left out, or events past that bound), and `cursor` is the last event it covered: pass it back. A cursor past the room's last event is clamped to it, so the cursor returned can be lower. A fork's copied events are not its own milestones |
 | `room_queue` | collaborator | `room`, `text` | `{room, queued}`: the message's `seq`. Its text is machine-sent |
 | `room_fork` | as the `fork` action | `room`, `at`, `role?`, `prUrl?`, `egress?`, `note?` | `{room, url, run?, runError?}`. The note is machine-sent |
-| `issue_draft` | any member | `repo`, `title`, `body` | `{repo, title, body, stripped, canStart, canStartWhy?}`: the draft with hidden and control characters stripped (`stripped` counts them). `canStart` is true when `repo` is in `human.mcp.sessionStart` and the caller writes to it on GitHub; else `canStartWhy` is `off` (not listed, no GitHub check wired, or a sponsored caller), `not_linked`, `no_write` (read only, or the GitHub App cannot see the repository) or `unverified` (the check failed). Refused unless the title reads `<area>: <what is wrong>` (at most 256 characters), the body holds `## What is wrong`, `## What it should be` and `## Acceptance check` in that order (at most 16 KiB), and the redactor finds no secret. It files nothing: `maku mcp`'s `issue_file` does |
+| `issue_draft` | any member | `repo`, `title`, `body` | `{repo, title, body, stripped, canStart, canStartWhy?}`: the draft with hidden and control characters stripped (`stripped` counts them). `canStart` is true when `repo` is in `human.mcp.sessionStart` and the caller writes to it on GitHub; else `canStartWhy` is `off` (not listed, no GitHub check wired, or a sponsored caller), `not_linked`, `no_write` (read only, or the GitHub App cannot see the repository) or `unverified` (the check failed). Refused unless the title reads `<area>: <what is wrong>` (at most 256 characters), the body holds `## What is wrong`, `## What it should be` and `## Acceptance check` in that order (at most 16 KiB), any `## Decisions` records are valid, no clarification marker remains, and the redactor finds no secret. It files nothing: `maku mcp`'s `issue_file` does |
 | `needs_list` | any member; a sponsored principal, the rooms it watches | `since?`, `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. Listed only while `human.needs.enabled` serves the route. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page |
-| `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, the one question to ask first, `canStart`. One public-text-only model call; it files nothing ([the planner](#the-planner-on-mcp)) |
-| `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, `on_behalf_of?` | The plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
+| `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, an optional revision envelope (`plan`, `hash`, `candidate`), and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, ranked gaps and the first as the compatibility question, `canStart`. One public-text-only model call below the round cap; it files nothing ([the planner](#the-planner-on-mcp)) |
+| `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, optional `candidate`, `on_behalf_of?` | The final plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
 | `coordination_plan` | any caller, when `human.intake.plan.enabled` and `coordination.mode` is not `off` | `text`, `candidates` (2 to 20), `primary`, `context?`, `id?`, `version?`, and a sponsored principal's `on_behalf_of` | A validated two-repository `CoordinationPlan`, its hash, diagnostics and the attempt's planning record. One call on the planner's route; it files nothing ([coordination](#coordination-on-mcp)) |
 | `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
 
@@ -719,16 +719,36 @@ visibility can be read, so the guard would refuse every plan) or without an `Act
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `intake_plan` | `text` (one sentence about what is wrong, required, at most 16 KiB); `repository?` and `candidates?` (owner/name, at most 20 candidates); `context?` (at most 4 KiB) and `evidence?` (at most 5 items of at most 280 characters, counted against the same 4 KiB); `on_behalf_of?` (`slack:<team>/<user>`) and `ceiling?` (USD, 0 or absent means the class's), both a sponsored principal's alone | `{plan, hash, question, canStart, canStartWhy?, degraded}`: the plan, the hash the broker computed over it, the one question to ask first, whether this caller may start the factory on it, and whether a template rather than the planner wrote it (`degraded`, `human.intake.plan.fallback: composer`) |
-| `plan_check` | `plan` (the `plan/v1` object as it was shown), `hash` (`sha256:<64 hex>`), `on_behalf_of?` (a sponsored principal's, as above) | `{plan, hash, canStart, canStartWhy?}`: the plan re-validated with the hash recomputed over it. It files nothing, calls no model, spends no daily plan and writes no record |
+| `intake_plan` | `text` (one sentence about what is wrong, required, at most 16 KiB); `repository?` and `candidates?` (owner/name, at most 20 candidates); `context?` (at most 4 KiB) and `evidence?` (at most 5 items of at most 280 characters, counted against the same 4 KiB); `on_behalf_of?` (`slack:<team>/<user>`) and `ceiling?` (USD, 0 or absent means the class's), both a sponsored principal's alone. A revision adds the previous `plan`, its `hash` and the edited `candidate`, all three together | `{plan, hash, question, canStart, canStartWhy?, degraded}`: the plan, the hash the broker computed over it, the first ranked gap as `question`, whether this caller may start the factory on it, and whether a template rather than the planner wrote it (`degraded`, `human.intake.plan.fallback: composer`) |
+| `plan_check` | `plan` (the base `plan/v1` object as it was shown), `hash` (`sha256:<64 hex>`), optional `candidate` (the deterministic final revision), `on_behalf_of?` (a sponsored principal's, as above) | `{plan, hash, canStart, canStartWhy?}`: the final plan re-validated with the hash recomputed over it or its candidate. It files nothing, calls no model, spends no daily plan and writes no record |
 
-`plan/v1` is `{apiVersion: "plan/v1", rev, planner: {model, surface, at}, repository,
-repositoryEvidence, alternatives, issues, budget: {ceilingUSD, source}, question, hash}`; each issue
+`plan/v1` is `{apiVersion: "plan/v1", rev, round, roundsLeft, planner: {model, surface, at}, repository,
+repositoryEvidence, alternatives, issues, budget: {ceilingUSD, source}, gaps, question, hash}`; each issue
 is `{index, title, body, class, roles, dependsOn}`, numbered 1..n in order, one to three per plan,
-with `sanitize`'s draft bounds. `repositoryEvidence` (at most 5 items of at most 280 characters),
-`alternatives` and `planner` are display and untrusted; the hashed set is
-`{apiVersion, repository, budget, issues}` (CD27), so `hash` — computed by the broker, never by a
-caller — is what a plan *is*.
+with `sanitize`'s draft bounds. Each ranked gap is `{id, section, text, recommended: {answer, why}}`;
+`question` is only its first gap for Slack, room views and older clients. `repositoryEvidence` (at most
+5 items of at most 280 characters), `alternatives`, `planner`, `gaps`, `question`, `round` and
+`roundsLeft` are display and untrusted; the hashed set is `{apiVersion, repository, budget, issues}`
+(CD27), so `hash` — computed by the broker, never by a caller — is what a plan *is*.
+
+A revision envelope carries the base `plan`, its `hash` and a `candidate`. The broker recomputes the
+base hash, then permits only replacement of existing markers with non-empty answers and the appended
+Decision/Assumption records for those gap IDs. Repository, budget, issue order, classes, roles and
+dependencies cannot change. It returns the candidate with remaining gaps recomputed and a **new
+hash**. `plan_check` without `candidate` keeps the old unmodified-plan call shape; with one it performs
+the same deterministic revision and final check without a model call. Slack does not use this envelope:
+its existing thread replies still make initial-shape `intake_plan` calls.
+
+Intermediate composition and `intake.Check` tolerate clarification markers. Final `plan_check`,
+`issue_draft`/`issue_file`, `run_create`, factory task creation, hardening issue output and proposal
+publishing do not: a final plan has no gaps or unresolved markers. An optional `## Decisions` section
+follows `## Acceptance check`; its one-line records use `D1 [g1]: <choice>, because <reason>` and
+`A2 [g2]: assumed <answer>, because <why>`. IDs ascend and are unique within one issue but need not be
+contiguous. A post-filing scoper record omits the gap reference.
+
+Mixed versions fail closed through strict decoding: an older broker refuses revision fields or a plan
+with `gaps` as `invalid_arguments` rather than ignoring them. A newer broker preserves legacy plan
+hashes and the legacy `Question` mapping, so in-flight Slack proposals still render and confirm.
 
 **What the model decides, and what it does not.** The reply names the class and drafts the issues;
 roles, the ceiling and the hash are the config's and the broker's. A reply naming a role or a budget
@@ -748,6 +768,8 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 | `repository_not_allowed` | no repository the allowlist serves and you may write in matches this request; name one of the repositories listed |
 | `no_write` | you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it |
 | `invalid_draft` | the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order |
+| `unresolved_marker` | a final plan still has a ranked gap or a live/malformed clarification marker; answer it through a revision |
+| `invalid_decisions` | the optional Decisions section has malformed, duplicate or descending records |
 | `planner_invalid` | the plan is not the shape the contract asks for (`<field>: <value>, the bound is …`); ask again |
 | `planner_unavailable` | the plan service is unavailable; try again later |
 | `planner_timeout` | the plan service did not answer inside its deadline; try again |
@@ -759,13 +781,19 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 | `daily_plans_reached` | you have used today's plans; the cap resets at 00:00 UTC |
 | `plan_too_large` | the plan is longer than a bound the contract sets; nothing was truncated |
 
-The cap is `human.intake.plan.dailyPlans` per **effective requester** — a human's GitHub login, a
-Slack user's `slack:<team>/<user>` — per UTC day, counted on this replica, and one plan costs one
-call: there is no retry loop. Neither tool files, stores or approves anything: the plan is shown,
-and the coding agent's `issue_file` (or the Slack proposal, later) re-validates it through
-`plan_check` first. Both count in `maku_rooms_human_mcp_calls_total{tool, outcome}`, and
-`intake_plan` also feeds `maku_intake_plan_total`, `maku_intake_plan_seconds` and
-`maku_intake_plan_tokens`.
+The daily cap is `human.intake.plan.dailyPlans` per **effective requester** — a human's GitHub login,
+a Slack user's `slack:<team>/<user>` — per UTC day, counted on this replica. The initial plan and every
+`intake_plan` revision spend one daily slot, including a revision that reaches the round cap;
+`plan_check` spends none. `human.intake.plan.maxRounds` (default 10) separately bounds clarification
+rounds in one intake. Below it, an `intake_plan` revision makes one model call. On the cap-reaching
+revision, the broker accepts all remaining recommendations as `A<n> [g<n>]` records and returns a final
+plan without another model call. The two caps are therefore independent: `maxRounds` ends one
+conversation, while `dailyPlans` bounds total attempts across conversations.
+
+Neither tool files, stores or approves anything: the plan is shown, and the coding agent's `issue_file`
+(or the Slack proposal, later) re-validates it through `plan_check` first. Both count in
+`maku_rooms_human_mcp_calls_total{tool, outcome}`, and `intake_plan` also feeds
+`maku_intake_plan_total`, `maku_intake_plan_seconds` and `maku_intake_plan_tokens`.
 
 **For the operator:** the planner's model call is the only place the broker reaches a model; it sends
 public text only, refuses a private repository before the call, and logs the hash, never the text.
@@ -833,11 +861,12 @@ does not match `plan_hash`, so a plan edited after it was shown is never filed),
 does not carry exactly one issue (`invalid_arguments`: Slack files one issue per call, CD19),
 `plan_changed` unless `repo`, `title` and `text` are the plan's own repository, title and body, and
 `invalid_arguments` for a `max_cost` above the plan's ceiling. It then re-validates the plan through
-the same checks `plan_check` runs — the Slack user's GitHub write access, the allowlist, the class
-table and the issue template — so a plan this broker cannot hold is refused here rather than filed and
-left to the factory to refuse. `on_behalf_of` is required with a plan: the plan is re-validated for the
-Slack user it was made for, never for the App's own identity. A call with no plan is the tool it always
-was, which is why an App that has not been updated keeps working.
+the same final checks `plan_check` runs — the Slack user's GitHub write access, the allowlist, the class
+table, valid Decisions and no gaps or clarification markers — so a plan this broker cannot hold is
+refused here rather than filed and left to the factory to refuse. `on_behalf_of` is required with a
+plan: the plan is re-validated for the Slack user it was made for, never for the App's own identity. A
+call with no plan is the tool it always was, which is why an App that has not been updated keeps
+working; a titled draft still has to pass `issue_draft`'s final validation.
 
 **`run_create` as a task.** With `2025-11-25`, `run_create` lists `execution.taskSupport: optional`.
 A `tools/call` with `task: {ttl?}` creates the factory task and returns an MCP task whose id is
@@ -968,7 +997,7 @@ limits: [sponsored principals](factory.md#sponsored-principals).
 |---|---|
 | Auth | `Authorization: Bearer`: a token from `api.humanIssuer` whose client is a sponsored principal's `clientIDFile` and whose audience holds `api.projectIDFile` |
 | `Idempotency-Key` | Required, at most 255 bytes. The Task's name derives from `api:<name>:<key>`: a replay answers `200 {duplicate: true}` and creates nothing, two requests under one key make one task. A name another request owns is `409 idempotency_conflict` |
-| Body | `repository`, `text` (at most 16 KiB), `dataClass` (`public`), `maxCostUSD` (at least 0.01), all required; `title?` (files the issue; `<area>: <what is wrong>` and the three template sections), `onBehalfOf?`, `ref?` (at most 256 characters, a git ref: letters, digits, `.`, `_`, `/`, `-`, no leading `-`, no `..`, no whitespace; the same pattern as `run_create`'s, since it is written into the agent's brief). At most 64 KiB; unknown fields refused |
+| Body | `repository`, `text` (at most 16 KiB), `dataClass` (`public`), `maxCostUSD` (at least 0.01), all required; `title?` (files the issue; `<area>: <what is wrong>`, the three template sections, valid optional Decisions and no unresolved clarification marker), `onBehalfOf?`, `ref?` (at most 256 characters, a git ref: letters, digits, `.`, `_`, `/`, `-`, no leading `-`, no `..`, no whitespace; the same pattern as `run_create`'s, since it is written into the agent's brief). At most 64 KiB; unknown fields refused |
 | `201` | `{task, room, issue?, sponsor}`: the room is named as the task; `sponsor` is the GitHub login it is charged to |
 | `200` | `{task, room, issue, duplicate: true}` |
 | `400` | `bad_json`, `idempotency_key_required`, `bad_data_class`, `bad_ref`, `max_cost_required`, `max_cost_over_principal`, `max_cost_over_class`, `invalid_draft`, `bad_text` |
