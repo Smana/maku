@@ -3,11 +3,11 @@
 package reconciler
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
@@ -140,14 +140,14 @@ func mainSpec(t *testing.T, g *rig, tk *v1alpha1.Task) v1alpha1.TaskSpec {
 	return tk.Spec
 }
 
-// Off is today: a class without a harness gets the spec main gave it and no status.profile, whatever
-// the intake. The expectation is testdata/no-harness-spec.json, each case's spec after one reconcile
-// at 88e4c11 (origin/main before the evaluation), captured by a throwaway test in a worktree of that
-// commit that built this rig from the base's own helpers (cfg, newRig, triage.Classify, the
-// sponsored fixture) and wrote got.Spec per case; it is not derived from the code under test.
+// Off is today: a class without a harness gets the Task main gave it, Spec and Status, and no
+// status.profile, whatever the intake. The expectation is testdata/no-harness.json: each case's whole
+// Task after one reconcile at 88e4c11 (origin/main before the evaluation), normalized as
+// normalizedTask does, written by hack/no-harness-golden.sh from a worktree of that commit with the
+// base's own helpers; it is not derived from the code under test.
 func TestNoHarnessIsToday(t *testing.T) {
-	var golden map[string]json.RawMessage
-	raw, err := os.ReadFile("testdata/no-harness-spec.json")
+	var golden map[string]any
+	raw, err := os.ReadFile("testdata/no-harness.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,18 +187,53 @@ func TestNoHarnessIsToday(t *testing.T) {
 			}
 			want, ok := golden[name]
 			if !ok {
-				t.Fatalf("no golden spec for %q", name)
+				t.Fatalf("no golden task for %q", name)
 			}
-			got, err := json.Marshal(tk.Spec)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var w, g2 any
-			if json.Unmarshal(want, &w) != nil || json.Unmarshal(got, &g2) != nil || !reflect.DeepEqual(w, g2) {
-				t.Fatalf("spec differs from main's\n got %s\nwant %s", got, bytes.TrimSpace(want))
+			if got := normalizedTask(t, tk); !reflect.DeepEqual(want, got) {
+				w, _ := json.MarshalIndent(want, "", "  ")
+				g, _ := json.MarshalIndent(got, "", "  ")
+				t.Fatalf("the task differs from main's\n got %s\nwant %s", g, w)
 			}
 		})
 	}
+}
+
+// normalizedTask is the Task as JSON with its volatile fields fixed: the server-set metadata dropped,
+// every RFC3339 time "<time>". hack/no-harness-golden.sh carries the same function; change both.
+func normalizedTask(t *testing.T, tk *v1alpha1.Task) any {
+	t.Helper()
+	raw, err := json.Marshal(tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	if meta, ok := v.(map[string]any)["metadata"].(map[string]any); ok {
+		for _, k := range []string{"resourceVersion", "generation", "uid", "creationTimestamp", "managedFields"} {
+			delete(meta, k)
+		}
+	}
+	return scrubTimes(v)
+}
+
+func scrubTimes(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			x[k] = scrubTimes(e)
+		}
+	case []any:
+		for i, e := range x {
+			x[i] = scrubTimes(e)
+		}
+	case string:
+		if _, err := time.Parse(time.RFC3339, x); err == nil {
+			return "<time>"
+		}
+	}
+	return v
 }
 
 // profileSpec takes the profile's row, raises the tier only above the current one, and keeps a

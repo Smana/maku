@@ -18,6 +18,8 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/intake"
+	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/triage"
 )
 
@@ -622,34 +624,62 @@ func TestAWaitingAnnouncementIsDroppedAtTheEnd(t *testing.T) {
 	}
 }
 
-// R37: a needs_author bounce leaves the profile unresolved; the author's answer and a maintainer's
-// re-label supersede the task, and the new generation resolves from its own scoper's handoff.
+// intakeErrors is the poller's error counter, nothing counted.
+type intakeErrors struct{}
+
+func (intakeErrors) IntakeError(context.Context, string)          {}
+func (intakeErrors) LabelEventsTruncated(context.Context, string) {}
+func (intakeErrors) AdmissionRefused(context.Context, string)     {}
+
+// R37: a needs_author bounce leaves the profile unresolved. The author answers on the issue and a
+// maintainer labels it factory/ready again; the intake supersedes the bounced task and creates the
+// issue's second generation, whose own scoper run reads the answer and whose handoff resolves it.
 func TestANewGenerationResolvesFromItsOwnScoper(t *testing.T) {
-	g := harnessedScoper(t, nil)
+	g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Labels = map[string]string{v1alpha1.LabelIssue: "7"} })
 	scopeHandoff(g, 0, questionScope())
 	tk := endScoper(t, g, "Succeeded", "agent_finished")
-	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != ReasonNeedsAuthor || tk.Status.Profile.Resolved {
-		t.Fatalf("%s %s %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != ReasonNeedsAuthor || tk.Status.Profile.Resolved ||
+		!slices.Equal(g.f.Added(7), []string{LabelNeedsAuthor}) {
+		t.Fatalf("%s %s %+v %v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile, g.f.Added(7))
 	}
-	tk.Annotations = map[string]string{v1alpha1.AnnotationStop: "superseded"}
-	if err := g.c.Update(t.Context(), tk); err != nil {
+	// The author edits the answer into the issue, then a maintainer labels it again.
+	answered := now.Add(10 * time.Minute)
+	g.f.SetIssue(forge.Issue{Number: 7, Title: "Fix the link", Body: "## Acceptance check\nthe link resolves\n\nThe panel moves to agent-run.",
+		Labels: []string{LabelNeedsAuthor}, LastEditedAt: answered})
+	g.f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: answered.Add(time.Minute)},
+		forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: now.Add(-time.Hour)})
+	g.f.SetLabeled("factory/ready", forge.Item{Number: 7})
+	g.r.Cfg.TriggerLabel, g.r.Cfg.Poll.Issues = "factory/ready", config.Duration{Duration: time.Minute}
+	poller := &intake.IssuePoller{Forge: g.f, Client: g.c, Namespace: "agent-system", Cfg: g.r.Cfg, Errors: intakeErrors{},
+		Stopped: func(context.Context) bool { return false }, CanWrite: func(context.Context, string) (bool, error) { return true, nil },
+		Owned: func(string) bool { return true }, Now: g.r.Now}
+	if err := poller.Poll(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Profile.Resolved {
-		t.Fatalf("superseded unresolved: %s %+v", tk.Status.Phase, tk.Status.Profile)
+	next := taskid.Name(taskid.IssueKey("Smana/cloud-native-ref", 7, 2))
+	var gen2 v1alpha1.Task
+	if err := g.c.Get(t.Context(), taskKey(next), &gen2); err != nil {
+		t.Fatalf("the second generation: %v", err)
 	}
-	next := issueTask("4cvrempu", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves\n\nThe panel moves to agent-run.")
-	if err := g.c.Create(t.Context(), next); err != nil {
-		t.Fatal(err)
+	if !strings.Contains(gen2.Spec.Text, "The panel moves to agent-run.") || gen2.Spec.Source.Key != taskid.IssueKey("Smana/cloud-native-ref", 7, 2) {
+		t.Fatalf("%+v", gen2.Spec)
 	}
-	g.reconcile(t, "4cvrempu", 3)
+	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Reason != "superseded" || tk.Status.Profile.Resolved ||
+		!slices.Contains(g.metrics.recorded, "bounce review relabel") {
+		t.Fatalf("superseded, unresolved: %s %s %+v %v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile, g.metrics.recorded)
+	}
+	g.reconcile(t, next, 3) // Received → Triaged → Queued → the scoper's run
+	scoper := runID(next, 0)
+	if brief := g.runs.specs[scoper].TaskText; !strings.Contains(brief, "The panel moves to agent-run.") {
+		t.Fatalf("the rerun's brief carries the answer: %q", brief)
+	}
 	sc := readyScope()
 	sc.Profile, sc.ProfileWhy = "review-wide", "two pages"
-	g.log.evs = append(g.log.evs, envelope.Event{Seq: int64(len(g.log.evs) + 1), RunID: runID("4cvrempu", 0), Type: envelope.Handoff,
-		Actor:   envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + runID("4cvrempu", 0), Role: "triager"},
+	g.log.evs = append(g.log.evs, envelope.Event{Seq: int64(len(g.log.evs) + 1), RunID: scoper, Type: envelope.Handoff,
+		Actor:   envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + scoper, Role: "triager"},
 		Payload: envelope.Must(envelope.HandoffPayload{FromRole: "triager", ToRole: "implementer", Summary: "Scoped.", Commit: strings.Repeat("c", 40), Scope: &sc})})
-	g.finish(runID("4cvrempu", 0), "Succeeded", "agent_finished")
-	got := g.reconcile(t, "4cvrempu", 1)
+	g.finish(scoper, "Succeeded", "agent_finished")
+	got := g.reconcile(t, next, 1)
 	if got.Status.Phase != v1alpha1.PhaseQueued {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
 	}
