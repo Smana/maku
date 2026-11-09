@@ -543,7 +543,8 @@ any byte of difference; Maku reads its result and never runs repository code.
 `maku policy diff` (and the editor's **Check**) proves a change structural, class by class
 (`mergepolicy.Structural`). A tightening is bounded on every row by the old class: fewer allowed
 paths, more denied ones, a wider approval subset, lower caps, more evidence, a lower mode. Anything
-else, including a rewritten pattern or another harness profile, is a relaxation.
+else, including a rewritten pattern, another harness profile, a `harnessAllowed` variant or an
+`escalation` step added or changed, is a relaxation.
 
 | Change to `docs-broad` above | Verdict | Why, as printed |
 |---|---|---|

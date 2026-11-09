@@ -90,6 +90,33 @@ func TestStructural(t *testing.T) {
 	}
 }
 
+// The harness axes are not evidence rows: a variant or a step added or changed is unproven, as
+// another harness is; a variant or the step removed runs a subset of what ran.
+func TestTheHarnessAxesAreNotProvenNeutral(t *testing.T) {
+	r := strings.Replace
+	off := r(base, "mode: shadow", "mode: off", 1)
+	allowed := r(off, "harness: plain\n", "harness: plain\n    harnessAllowed: [other]\n", 1)
+	stepped := r(allowed, "harnessAllowed: [other]\n", "harnessAllowed: [other]\n    escalation: {outOfBudget: other}\n", 1)
+	for name, tc := range map[string]struct {
+		old, next, kind, why string
+	}{
+		"a variant added":     {off, allowed, KindRelaxation, "harnessAllowed"},
+		"a variant removed":   {allowed, off, KindTightening, ""},
+		"a variant rewritten": {allowed, r(allowed, "[other]", "[checked]", 1), KindRelaxation, "harnessAllowed"},
+		"a step added":        {allowed, stepped, KindRelaxation, "escalation"},
+		"a step removed":      {stepped, allowed, KindTightening, ""},
+		"a step retargeted":   {stepped, r(r(stepped, "[other]", "[other, checked]", 1), "outOfBudget: other", "outOfBudget: checked", 1), KindRelaxation, "escalation"},
+		"a step regrouped":    {stepped, r(stepped, "outOfBudget", "notConverged", 1), KindRelaxation, "escalation"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ch := structural(t, tc.old, tc.next)
+			if ch.Kind != tc.kind || !strings.Contains(strings.Join(ch.Why, ";"), tc.why) {
+				t.Fatalf("got %s %v, want %s naming %q", ch.Kind, ch.Why, tc.kind, tc.why)
+			}
+		})
+	}
+}
+
 // A branch that no old variant bounds is a relaxation, even when the others tighten.
 func TestABroadeningBranchRelaxes(t *testing.T) {
 	two := strings.Replace(strings.Replace(base, "        - maxPatchFiles: 10\n", "", 1), "      deny:\n", "      any:\n        - [{maxPatchFiles: 3}]\n        - [{maxPatchFiles: 5}]\n      deny:\n", 1)
