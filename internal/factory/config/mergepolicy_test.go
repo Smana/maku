@@ -8,12 +8,37 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Smana/maku/internal/envelope"
 )
 
 func policyProblems(c *Config) string {
 	var out []string
 	c.validateMergePolicy(func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) })
 	return strings.Join(out, "\n")
+}
+
+// A harnessProfiles key and a scope's profile are one name: envelope copies the pattern, as it sits
+// below config, so the two readers are held to the same boundaries here.
+func TestAProfileNameIsTheScopes(t *testing.T) {
+	scope := func(profile string) error {
+		s := envelope.Scope{State: envelope.ScopeReady, Task: "Fix the link.", Touches: []string{"docs/guide.md"}, Plan: []string{"Fix it."},
+			Acceptance: []envelope.Acceptance{{Check: "task docs", Proves: "the site builds"}}, Profile: profile}
+		return s.Validate()
+	}
+	for name, ok := range map[string]bool{
+		"a": true, "a1": true, "review-floor": true, "0-a": true,
+		"a" + strings.Repeat("b", 38) + "c": true,
+		"a" + strings.Repeat("b", 39) + "c": false,
+		"":                                  false, "-a": false, "a-": false, "A": false, "a_b": false, "a.b": false, "a b": false, "é": false,
+	} {
+		if profileRE.MatchString(name) != ok {
+			t.Errorf("config %q: %v, want %v", name, !ok, ok)
+		}
+		if (scope(name) == nil) != ok && name != "" { // an empty profile is no profile on a scope
+			t.Errorf("envelope %q: %v, want %v", name, !ok, ok)
+		}
+	}
 }
 
 func TestHarnessProfilesAndGuardrailsValidate(t *testing.T) {
