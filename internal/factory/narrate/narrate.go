@@ -980,7 +980,7 @@ func Closing(key string) bool { return strings.HasPrefix(key, closingPrefix) }
 // Pending is a key whose event waits in the outbox for the task's first target instead of being
 // dropped without one (R31): the profile announcements.
 func Pending(key string) bool {
-	return strings.HasPrefix(key, "profile-chosen-") || strings.HasPrefix(key, "profile-escalated")
+	return strings.HasPrefix(key, "profile-chosen-") || strings.HasPrefix(key, "profile-escalated-")
 }
 
 // Retotal rewrites an ending's "Tokens used" line with the settled total (#42).
@@ -1168,9 +1168,10 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
 }
 
-// ProfileEscalated says the task runs once more under a richer profile before a maintainer is asked.
-func ProfileEscalated(from, to, group string) Event {
-	return Event{Key: "profile-escalated", Body: fmt.Sprintf(
+// ProfileEscalated says the task runs once more under a richer profile before a maintainer is
+// asked; run is the count of runs so far, as ProfileChosen keys it.
+func ProfileEscalated(from, to, group string, run int) Event {
+	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Body: fmt.Sprintf(
 		"Agent factory: this task stopped (%s) under profile `%s`; it runs once more under profile `%s` before a maintainer is asked.",
 		group, from, to)}
 }

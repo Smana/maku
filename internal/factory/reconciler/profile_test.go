@@ -3,6 +3,9 @@
 package reconciler
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
 	"reflect"
 	"testing"
 
@@ -137,8 +140,20 @@ func mainSpec(t *testing.T, g *rig, tk *v1alpha1.Task) v1alpha1.TaskSpec {
 	return tk.Spec
 }
 
-// Off is today: a class without a harness gets main's spec and no status.profile, whatever the intake.
+// Off is today: a class without a harness gets the spec main gave it and no status.profile, whatever
+// the intake. The expectation is testdata/no-harness-spec.json, each case's spec after one reconcile
+// at 88e4c11 (origin/main before the evaluation), captured by a throwaway test in a worktree of that
+// commit that built this rig from the base's own helpers (cfg, newRig, triage.Classify, the
+// sponsored fixture) and wrote got.Spec per case; it is not derived from the code under test.
 func TestNoHarnessIsToday(t *testing.T) {
+	var golden map[string]json.RawMessage
+	raw, err := os.ReadFile("testdata/no-harness-spec.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
 	schedule := issueTask("3buqdlot", 0, "add tests")
 	schedule.Spec.Source.Kind, schedule.Spec.PredictedClass = "schedule", "tests"
 	runlore := issueTask("3buqdlot", 7, "a finding")
@@ -166,13 +181,21 @@ func TestNoHarnessIsToday(t *testing.T) {
 			cf.Evaluation.ControlPercent = 100
 			apiTasks(t, cf)
 			g := profileRig(t, cf, c.tk.DeepCopy(), c.label)
-			want := mainSpec(t, g, c.tk)
 			tk := g.reconcile(t, "3buqdlot", 1)
 			if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Status.Profile != nil {
 				t.Fatalf("triaged, no harness, no profile: %s %+v", tk.Status.Phase, tk.Status.Profile)
 			}
-			if !reflect.DeepEqual(tk.Spec, want) {
-				t.Fatalf("spec\n got %+v\nwant %+v", tk.Spec, want)
+			want, ok := golden[name]
+			if !ok {
+				t.Fatalf("no golden spec for %q", name)
+			}
+			got, err := json.Marshal(tk.Spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var w, g2 any
+			if json.Unmarshal(want, &w) != nil || json.Unmarshal(got, &g2) != nil || !reflect.DeepEqual(w, g2) {
+				t.Fatalf("spec differs from main's\n got %s\nwant %s", got, bytes.TrimSpace(want))
 			}
 		})
 	}

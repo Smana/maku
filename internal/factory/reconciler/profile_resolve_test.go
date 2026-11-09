@@ -621,3 +621,84 @@ func TestAWaitingAnnouncementIsDroppedAtTheEnd(t *testing.T) {
 		t.Fatalf("%s %+v %v", tk.Status.Phase, tk.Status.Outbox, tk.Status.Narrated)
 	}
 }
+
+// R37: a needs_author bounce leaves the profile unresolved; the author's answer and a maintainer's
+// re-label supersede the task, and the new generation resolves from its own scoper's handoff.
+func TestANewGenerationResolvesFromItsOwnScoper(t *testing.T) {
+	g := harnessedScoper(t, nil)
+	scopeHandoff(g, 0, questionScope())
+	tk := endScoper(t, g, "Succeeded", "agent_finished")
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != ReasonNeedsAuthor || tk.Status.Profile.Resolved {
+		t.Fatalf("%s %s %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile)
+	}
+	tk.Annotations = map[string]string{v1alpha1.AnnotationStop: "superseded"}
+	if err := g.c.Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Profile.Resolved {
+		t.Fatalf("superseded unresolved: %s %+v", tk.Status.Phase, tk.Status.Profile)
+	}
+	next := issueTask("4cvrempu", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves\n\nThe panel moves to agent-run.")
+	if err := g.c.Create(t.Context(), next); err != nil {
+		t.Fatal(err)
+	}
+	g.reconcile(t, "4cvrempu", 3)
+	sc := readyScope()
+	sc.Profile, sc.ProfileWhy = "review-wide", "two pages"
+	g.log.evs = append(g.log.evs, envelope.Event{Seq: int64(len(g.log.evs) + 1), RunID: runID("4cvrempu", 0), Type: envelope.Handoff,
+		Actor:   envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + runID("4cvrempu", 0), Role: "triager"},
+		Payload: envelope.Must(envelope.HandoffPayload{FromRole: "triager", ToRole: "implementer", Summary: "Scoped.", Commit: strings.Repeat("c", 40), Scope: &sc})})
+	g.finish(runID("4cvrempu", 0), "Succeeded", "agent_finished")
+	got := g.reconcile(t, "4cvrempu", 1)
+	if got.Status.Phase != v1alpha1.PhaseQueued {
+		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	}
+	wantResolved(t, got, "review-wide", "scoper", "", 1)
+	if got.Status.Profile.Recommended != "review-wide" || got.Status.Profile.Why != "two pages" {
+		t.Fatalf("%+v", got.Status.Profile)
+	}
+}
+
+// R37: the scoper's spend stays on the task once the profile resolves: the resolution re-snapshots
+// the budget, never the usage.
+func TestTheScoperSpendIsKeptAfterTheResolution(t *testing.T) {
+	g := harnessedScoper(t, nil)
+	run := g.runs.runs[rid(0)]
+	run.Tokens = 120_000
+	g.runs.runs[rid(0)] = run
+	sc := readyScope()
+	sc.Profile = "review-wide"
+	scopeHandoff(g, 0, sc)
+	tk := endScoper(t, g, "Succeeded", "agent_finished")
+	wantResolved(t, tk, "review-wide", "scoper", "", 1)
+	if len(tk.Status.Runs) != 1 || tk.Status.Runs[0].Tokens != 120_000 || tk.Status.Usage.Tokens != 120_000 {
+		t.Fatalf("runs %+v usage %+v", tk.Status.Runs, tk.Status.Usage)
+	}
+}
+
+// R37: a stepped run that succeeds goes the usual way: its pull request, the reviewer, and the merge
+// gate (AwaitingCI).
+func TestASteppedSuccessReachesTheMergeGate(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), nil)
+	wantStepped(t, g.fail(t, tk, "budget-run"), "review-frontier", "out_of_budget")
+	tk = g.reconcile(t, "3buqdlot", 1)
+	imp := tk.Status.Runs[len(tk.Status.Runs)-1]
+	if tk.Status.Phase != v1alpha1.PhaseImplementing || imp.Trigger != TriggerEscalation {
+		t.Fatalf("%s %+v", tk.Status.Phase, imp)
+	}
+	g.f.SetBranch("agent/3buqdlot", 12)
+	g.f.SetPR(pr12At(head1))
+	g.log.handoff(imp.ID, head1)
+	g.finish(imp.ID, "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 2)
+	rev := tk.Status.Runs[len(tk.Status.Runs)-1]
+	if tk.Status.Phase != v1alpha1.PhaseReviewing || rev.Role != "reviewer" || tk.Status.PullRequest == nil || tk.Status.PullRequest.Number != 12 {
+		t.Fatalf("%s %+v %+v", tk.Status.Phase, rev, tk.Status.PullRequest)
+	}
+	g.log.verdict(rev.ID, "approve", head1, "fine")
+	g.finish(rev.ID, "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 2)
+	if tk.Status.Phase != v1alpha1.PhaseAwaitingCI {
+		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+}

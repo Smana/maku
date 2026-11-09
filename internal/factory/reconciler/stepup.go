@@ -81,7 +81,7 @@ func (r *Reconciler) stepped(t *v1alpha1.Task, d profileDecision) {
 	t.Status.ReviewRounds, t.Status.FixRunsBeforeStep = 0, t.Status.FixRuns
 	t.Status.NextTrigger = TriggerEscalation
 	r.to(t, v1alpha1.PhaseQueued, "")
-	narrateLater(t, narrate.ProfileEscalated(from, d.Name, d.Reason))
+	narrateLater(t, narrate.ProfileEscalated(from, d.Name, d.Reason, len(t.Status.Runs)))
 }
 
 // lastJudge is the completion judge's newest verdict across t's newest implementer run and the runs

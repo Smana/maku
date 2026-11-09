@@ -700,8 +700,8 @@ func TestProfileChosen(t *testing.T) {
 }
 
 func TestProfileEscalated(t *testing.T) {
-	e := ProfileEscalated("review-floor", "review-frontier", "out_of_budget")
-	if e.Key != "profile-escalated" {
+	e := ProfileEscalated("review-floor", "review-frontier", "out_of_budget", 3)
+	if e.Key != "profile-escalated-3" {
 		t.Fatalf("key %q", e.Key)
 	}
 	for _, w := range []string{"`review-floor`", "`review-frontier`", "out_of_budget"} {

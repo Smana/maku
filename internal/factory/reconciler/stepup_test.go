@@ -103,14 +103,14 @@ func wantStepped(t *testing.T, tk *v1alpha1.Task, name, group string) {
 	if tk.Status.FixRunsBeforeStep != tk.Status.FixRuns { // R33: the repairs spent so far are the step's baseline
 		t.Fatalf("fix runs %d, baseline %d", tk.Status.FixRuns, tk.Status.FixRunsBeforeStep)
 	}
-	if !outboxHas(tk, "profile-escalated") || outboxHas(tk, "end-") {
+	if !outboxHas(tk, "profile-escalated-") || outboxHas(tk, "end-") {
 		t.Fatalf("outbox %+v", tk.Status.Outbox)
 	}
 }
 
 func wantEscalated(t *testing.T, tk *v1alpha1.Task, reason string) {
 	t.Helper()
-	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != reason || outboxHas(tk, "profile-escalated") {
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != reason || outboxHas(tk, "profile-escalated-") {
 		t.Fatalf("%s %q %+v %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile, tk.Status.Outbox)
 	}
 }
@@ -430,10 +430,51 @@ func TestAReviewEndedStepBriefCarriesTheImplementersJudge(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantStepped(t, g.get(t), "review-search", "not_converged")
+	// R37: the reviewer's last findings are in the stepped brief too, after the reviewer's start.
+	g.log.evs = append(g.log.evs, envelope.Event{Seq: 5, RunID: rid(1), Type: envelope.Message, Origin: envelope.OriginClient,
+		Actor:   envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + rid(1), Role: "reviewer"},
+		Payload: envelope.Must(envelope.MessagePayload{Kind: envelope.KindReviewVerdict, Verdict: "changes", Commit: "abc1234", Text: "the reviewer's findings", Delivery: envelope.DeliveryNone})})
 	tk = g.reconcile(t, "3buqdlot", 1)
 	last := tk.Status.Runs[len(tk.Status.Runs)-1]
-	if text := g.runs.specs[last.ID].TaskText; last.Trigger != TriggerEscalation || !strings.Contains(text, "> the implementer's verdict") {
+	if text := g.runs.specs[last.ID].TaskText; last.Trigger != TriggerEscalation || !strings.Contains(text, "> the implementer's verdict") ||
+		!strings.Contains(text, "Last review verdict (changes") || !strings.Contains(text, "the reviewer's findings") {
 		t.Fatalf("%s %q", last.Trigger, text)
+	}
+}
+
+// R37: a maintainer's class label puts a task in the labeled cohort, not the control one, so its
+// class's escalation steps it as any treatment task.
+func TestALabelledTaskSteps(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Source, tk.Status.Profile.Cohort = "label", "labeled"
+	})
+	got := g.fail(t, tk, "budget-run")
+	p := got.Status.Profile
+	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.NextTrigger != TriggerEscalation || p.Name != "review-frontier" ||
+		p.Source != "escalation" || p.Reason != "out_of_budget" || p.Cohort != "labeled" || !outboxHas(got, "profile-escalated-") {
+		t.Fatalf("%s %+v %+v", got.Status.Phase, p, got.Status.Outbox)
+	}
+}
+
+// R37: the stepped run continues the task's work: the same branch, the same pull request, and the
+// revision brief, not a first brief.
+func TestAStepKeepsTheBranchAndThePullRequest(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", HeadSHA: "abc"}
+	})
+	g.f.SetBranch("agent/3buqdlot", 12)
+	g.f.SetPR(pr12At("abc"))
+	g.log.handoff(rid(0), "abc")
+	wantStepped(t, g.fail(t, tk, "budget-run"), "review-frontier", "out_of_budget")
+	tk = g.reconcile(t, "3buqdlot", 1)
+	last := tk.Status.Runs[len(tk.Status.Runs)-1]
+	s := g.runs.specs[last.ID]
+	if tk.Status.Phase != v1alpha1.PhaseImplementing || last.Trigger != TriggerEscalation || s.Branch != "agent/3buqdlot" || s.BaseRef != "main" ||
+		s.Tier != "frontier" || tk.Status.PullRequest == nil || tk.Status.PullRequest.Number != 12 || tk.Status.PullRequest.URL != "https://github.com/Smana/cloud-native-ref/pull/12" {
+		t.Fatalf("%s %+v %+v", tk.Status.Phase, s, tk.Status.PullRequest)
+	}
+	if !strings.Contains(s.TaskText, "keep working on branch agent/3buqdlot and update its pull request #12") || strings.Contains(s.TaskText, "TASK-DATA-") {
+		t.Fatalf("a revision brief, not a first one: %q", s.TaskText)
 	}
 }
 
@@ -457,7 +498,7 @@ func TestAReplayRecoversThePersistedStep(t *testing.T) {
 	wantStepped(t, stored, "review-frontier", "out_of_budget")
 	n := 0
 	for _, o := range stored.Status.Outbox {
-		if strings.HasPrefix(o.Key, "profile-escalated") {
+		if strings.HasPrefix(o.Key, "profile-escalated-") {
 			n++
 		}
 	}

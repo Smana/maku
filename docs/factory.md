@@ -384,7 +384,7 @@ profile the task runs under, `(default)` for the floor, and the scoper's why or 
 was kept (`none`, `unknown`, `not_allowed`, `observe`, `internal`, `no_tests_paths`, `scoper_failed`).
 
 A class with `escalation` steps a task up once before a maintainer is asked, then narrates
-`profile_escalated` (`profile-escalated`) and queues a run with trigger `escalation` and the
+`profile_escalated` (`profile-escalated-<runs>`) and queues a run with trigger `escalation` and the
 review rounds reset:
 
 | Escalated reason | Group | Step to |

@@ -19,12 +19,14 @@ const evaluationProfiles = `harnessProfiles:
   unlooped:        {template: pair, loop: "off"}
   implicit:        {template: pair, loop: stalled}
   unjudged:        {template: pair, loop: nojudge}
+  unscoped:        {template: pair, loop: judged}
   untemplated:     {loop: review}
   bare:            {}
   bare-checked:    {checks: true}
 loops:
   stalled:       {stallSteps: 90}
   nojudge:       {stallSteps: 90, judge: none}
+  judged:        {stallSteps: 90, judge: tier-light}
   review:        {scope: scoper, judge: tier-light}
   review-search: {scope: scoper, judge: tier-light, search: true}
 `
@@ -78,6 +80,7 @@ func TestEvaluationRefuses(t *testing.T) {
 		"loop off under a judged loop": {"review: {harness: review-floor, harnessAllowed: [unlooped]}", "", `"unlooped" drops the floor's judge (TE6)`},
 		"implicit judge, loop off":     {"review: {harness: implicit, harnessAllowed: [unlooped]}", "", `"unlooped" drops the floor's judge (TE6)`},
 		"implicit judge, judge none":   {"review: {harness: implicit, harnessAllowed: [unjudged]}", "", `"unjudged" drops the floor's judge (TE6)`},
+		"judged, scope dropped":        {"review: {harness: review-floor, harnessAllowed: [unscoped]}", "", `"unscoped" drops the floor's scope (TE6)`},
 		"template under triage's":      {"review: {harness: untemplated, harnessAllowed: [solo]}", "", `"solo" sets a template the floor leaves to triage (TE2)`},
 		"testFirst without contract":   {reviewClass, "", `class review: profile "review-tested": testFirst needs merge.contractCheck`},
 		"live with variants":           {"review: {live: true, harness: review-floor, harnessAllowed: [review-search]}", "", `a live or shadow class has one profile (TE2)`},
