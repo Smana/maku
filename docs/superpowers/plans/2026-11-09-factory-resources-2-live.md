@@ -58,6 +58,33 @@ sites, runnables with file:line) is at
 
 ---
 
+### Task 0: Culprit selection succeeds first (carried from plan 1's final review)
+
+**Files:** `internal/factory/resources/assemble.go` (the greedy loop, ~321–357), `assemble_test.go`,
+`manifests.go` (one message), and plan 1's Task 4 text
+(`docs/superpowers/plans/2026-11-09-factory-resources-1-api.md`).
+
+**The defect.** Plan 1's greedy rule removes the first element whose removal makes `Parse`
+succeed **or changes its error**. `Validate` joins every error, and a pair's messages can depend
+on catalogue values (`schedule %s: text must be 1..%d bytes` uses `caps.maxTextBytes`). So a bad
+Factory (`caps.maxTextBytes: 10`) plus two pairs with schedules gives: pair a refused (its
+removal changed the joined error), then pair b refused (its removal made Parse succeed), and
+**the bad Factory accepted**. Live (task 3), one bad Factory edit would take every repository out
+of service instead of being refused.
+
+**The rule.** In each iteration:
+1. Take the first `e`, in S's order, whose removal makes `Parse` **succeed**.
+2. If none does, take the first `e` whose removal changes the error.
+3. If none does, refuse everything.
+
+- [ ] **Step 1:** Add the reviewer's reproduction as a test, `TestAssembleBadFactoryIsTheCulpritNotThePairs`. It is in the implementation worktree at `.superpowers/sdd/zz_greedy_test.go.txt`; adapt it into `assemble_test.go`. Assert the Factory is refused `Invalid` and both pairs are served (with the file's catalogue). Run it and see it fail.
+- [ ] **Step 2:** Implement the rule. `TestAssembleTwoCulprits` and every other Assemble test must still pass.
+- [ ] **Step 3:** `Decode`'s boolean refusal for `scope`/`loop` mentions "a bare off as false". Reword it so it is right for `true` as well, for example `must be a string such as "off", not a boolean`.
+- [ ] **Step 4:** Fix plan 1's Task 4 text: describe success-first selection and remove the sentence claiming that removing a good element normally leaves the error unchanged.
+- [ ] **Step 5:** `task check` passes. Commit `fix(resources): a culprit is the element whose removal makes the config parse`.
+
+---
+
 ### Task 1: `config.Source` and `config.Live`
 
 **Files:**
