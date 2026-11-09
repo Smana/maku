@@ -19,6 +19,7 @@ const TemplateNone = "none"
 const LoopOff LoopRef = "off"
 
 // LoopRef names a row of loops, or off.
+// +kubebuilder:validation:MaxLength=253
 type LoopRef string
 
 // UnmarshalJSON reads a string, or false as off: YAML reads a bare off as false.
@@ -40,7 +41,9 @@ func (l *LoopRef) UnmarshalJSON(b []byte) error {
 // cutover on. Empty keeps what the factory selects today.
 // +kubebuilder:object:generate=true
 type HarnessProfile struct {
-	Template  string  `json:"template,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	Template string `json:"template,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
 	Tier      string  `json:"tier,omitempty"`
 	Checks    bool    `json:"checks,omitempty"`
 	TestFirst bool    `json:"testFirst,omitempty"`
@@ -53,7 +56,11 @@ type HarnessProfile struct {
 // paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 is no guardrail.
 // +kubebuilder:object:generate=true
 type MergeGuardrails struct {
-	ProtectedFiles   []string `json:"protectedFiles,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	ProtectedFiles []string `json:"protectedFiles,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	MandatoryChecks  []string `json:"mandatoryChecks,omitempty"`
 	MaxPatchFiles    int      `json:"maxPatchFiles,omitempty"`
 	MaxModifiedLines int      `json:"maxModifiedLines,omitempty"`

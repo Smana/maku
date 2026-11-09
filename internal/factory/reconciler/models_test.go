@@ -15,13 +15,13 @@ import (
 // the run runs on; an internal task, and a role or tier without an entry, keep today's model. The
 // run's provenance records which source chose it.
 func TestClassModelsPickAPublicRunsAlias(t *testing.T) {
-	models := map[string]map[string]string{
+	models := map[string]config.ModelAliases{
 		"implementer": {"standard": "mistral-standard"},
 		"reviewer":    {"frontier": "kimi-frontier"},
 	}
 	for name, c := range map[string]struct {
 		dataClass, reviewerModel string
-		models                   map[string]map[string]string
+		models                   map[string]config.ModelAliases
 		implementer, reviewer    string
 		implSource, revSource    string
 	}{
@@ -30,7 +30,7 @@ func TestClassModelsPickAPublicRunsAlias(t *testing.T) {
 		"internal: today's models": {"internal", "", models, "agent-default", "tier-frontier",
 			v1alpha1.ModelSourceTier, v1alpha1.ModelSourceTier},
 		"public, no reviewer entry: its reviewerModel": {"public", "tier-light",
-			map[string]map[string]string{"implementer": {"standard": "mistral-standard"}}, "mistral-standard", "tier-light",
+			map[string]config.ModelAliases{"implementer": {"standard": "mistral-standard"}}, "mistral-standard", "tier-light",
 			v1alpha1.ModelSourceClassModels, v1alpha1.ModelSourceReviewerModel},
 		"public, an entry wins over reviewerModel": {"public", "tier-light", models, "mistral-standard", "kimi-frontier",
 			v1alpha1.ModelSourceClassModels, v1alpha1.ModelSourceClassModels},
@@ -112,7 +112,7 @@ func TestAnInternalRunWithAProviderJudgeIsRefused(t *testing.T) {
 // light), the tester (the task's tier) and investigate's triager. A public task takes the row's
 // alias; an internal one keeps today's model, its source the tier.
 func TestPinModelForEveryRole(t *testing.T) {
-	row := map[string]map[string]string{
+	row := map[string]config.ModelAliases{
 		"triager": {"light": "mistral-light", "standard": "mistral-standard"},
 		"tester":  {"standard": "mistral-standard"},
 	}

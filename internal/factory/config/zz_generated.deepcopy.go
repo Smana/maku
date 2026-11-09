@@ -317,15 +317,15 @@ func (in *Loop) DeepCopyInto(out *Loop) {
 	}
 	if in.Models != nil {
 		in, out := &in.Models, &out.Models
-		*out = make(map[string]map[string]string, len(*in))
+		*out = make(map[string]ModelAliases, len(*in))
 		for key, val := range *in {
-			var outVal map[string]string
+			var outVal map[string]ModelAlias
 			if val == nil {
 				(*out)[key] = nil
 			} else {
 				inVal := (*in)[key]
 				in, out := &inVal, &outVal
-				*out = make(map[string]string, len(*in))
+				*out = make(ModelAliases, len(*in))
 				for key, val := range *in {
 					(*out)[key] = val
 				}

@@ -28,8 +28,12 @@ type Class struct {
 	// tests first (v3 feature 4, TF1); needs Checks and the repository's merge.contractCheck.
 	TestFirst bool `json:"testFirst,omitempty"`
 	// AllowedFiles: every changed path matches one of these regular expressions.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
 	// ProtectedFiles: no changed path matches one of these.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	ProtectedFiles []string `json:"protectedFiles,omitempty"`
 	// ModifyOnly: no file is added, deleted, renamed or copied.
 	ModifyOnly bool `json:"modifyOnly,omitempty"`
@@ -38,9 +42,12 @@ type Class struct {
 	MaxPatchFiles    int `json:"maxPatchFiles,omitempty"`
 	MaxModifiedLines int `json:"maxModifiedLines,omitempty"`
 	// DiffShape is a shape every changed line must have: links-only is R52's LinksOnly.
+	// +kubebuilder:validation:MaxLength=512
 	DiffShape string `json:"diffShape,omitempty"`
 	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is
 	// a gate path, so the pull request cannot change them (loops L7).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
 	// MaxPerDay caps this class's merges a day, under merge.autoMergesPerDay; 0 is no cap of its own.
 	MaxPerDay int `json:"maxPerDay,omitempty"`
@@ -56,12 +63,16 @@ type Class struct {
 	Author *Author `json:"author,omitempty"`
 	// ReleaseAgeCheck names the commit status that holds the release age (MC11), posted by an
 	// adopted login: Renovate's renovate/stability-days.
+	// +kubebuilder:validation:MaxLength=1024
 	ReleaseAgeCheck string `json:"releaseAgeCheck,omitempty"`
 	// CompanionFiles are the paths an added-entry pull request may append to beside its one added
 	// entry (a knowledge base's index and log), anchored like AllowedFiles.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	CompanionFiles []string `json:"companionFiles,omitempty"`
 	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
+	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
 	// Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
 	// and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
@@ -87,7 +98,11 @@ type Author struct {
 // (gh-aw's allowed-branches); every commit and every push of the branch must be theirs.
 // +kubebuilder:object:generate=true
 type Adopt struct {
-	Logins   []string `json:"logins"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	Logins []string `json:"logins"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
 	Branches []string `json:"branches"`
 }
 
@@ -121,6 +136,7 @@ type VerificationWatch struct {
 // blamed on the merge.
 // +kubebuilder:object:generate=true
 type FluxWatch struct {
+	// +kubebuilder:validation:MaxLength=1024
 	Source string   `json:"source"` // namespace/name
 	Within Duration `json:"within"`
 }
@@ -137,7 +153,9 @@ var sourceRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z
 // the workflow on main whose runs report them, and the most findings one task holds.
 // +kubebuilder:object:generate=true
 type Oracle struct {
-	Probe       string `json:"probe"`
+	// +kubebuilder:validation:MaxLength=1024
+	Probe string `json:"probe"`
+	// +kubebuilder:validation:MaxLength=1024
 	Workflow    string `json:"workflow"`
 	MaxFindings int    `json:"maxFindings"`
 }

@@ -18,7 +18,7 @@ func TestDeepCopySharesNothing(t *testing.T) {
 		src.Author.Adopt.Logins[0] != "renovate[bot]" {
 		t.Fatalf("the copy shares memory with its source: %+v", src)
 	}
-	l := Loop{Models: map[string]map[string]string{"reviewer": {"frontier": "kimi"}}}
+	l := Loop{Models: map[string]ModelAliases{"reviewer": {"frontier": "kimi"}}}
 	lc := l.DeepCopy()
 	lc.Models["reviewer"]["frontier"] = "x"
 	if l.Models["reviewer"]["frontier"] != "kimi" {
