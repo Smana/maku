@@ -282,6 +282,68 @@ func TestCheckHoldsTheThreeIssueFixture(t *testing.T) {
 	}
 }
 
+// Final validation adds the no-open-clarifications rule without making intermediate plans invalid:
+// markers and ranked gaps are legal while composing, but neither may cross a filing door.
+func TestCheckFinalRequiresNoGaps(t *testing.T) {
+	const accepted = "Smana/ai-native-ref"
+	for _, c := range []struct {
+		name   string
+		change func(*intake.Plan)
+		want   string
+	}{
+		{name: "final plan"},
+		{name: "display gap without a marker",
+			change: func(p *intake.Plan) {
+				*p = intake.WithGaps(*p, []intake.Gap{{ID: "g1", Text: "which command?", Recommended: intake.Answer{Answer: "task check"}}})
+			},
+			want: intake.ReasonUnresolvedMarker},
+		{name: "marker in an issue body",
+			change: func(p *intake.Plan) {
+				p.Issues[0].Body = strings.Replace(p.Issues[0].Body, "The install link", "[NEEDS CLARIFICATION: g1 which page?]\nThe install link", 1)
+			},
+			want: intake.ReasonUnresolvedMarker},
+		{name: "malformed Decisions",
+			change: func(p *intake.Plan) {
+				p.Issues[0].Body += "\n\n## Decisions\nD2: later\nD1: earlier"
+			},
+			want: intake.ReasonInvalidDecisions},
+		{name: "intermediate Check errors take precedence",
+			change: func(p *intake.Plan) {
+				p.Repository = "owner/outside"
+				p.Issues[0].Body += "\n[NEEDS CLARIFICATION: g1 which page?]"
+			},
+			want: intake.ReasonRepositoryNotInCandidates},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := planFixture(t, "single")
+			p.Issues = slices.Clone(p.Issues)
+			if c.change != nil {
+				c.change(&p)
+			}
+			if c.want != intake.ReasonRepositoryNotInCandidates {
+				if r := intake.Check(p, []string{accepted}, classes()); r != nil {
+					t.Fatalf("intermediate Check refused a composable plan: %+v", r)
+				}
+			}
+			r := intake.CheckFinal(p, []string{accepted}, classes())
+			if c.want == "" {
+				if r != nil {
+					t.Fatalf("CheckFinal() = %+v", r)
+				}
+				return
+			}
+			if r == nil || r.Reason != c.want {
+				t.Fatalf("CheckFinal() = %+v, want %s", r, c.want)
+			}
+			if c.want == intake.ReasonUnresolvedMarker || c.want == intake.ReasonInvalidDecisions {
+				if want := intake.ReasonRefusal(c.want).Sentence; r.Sentence != want {
+					t.Fatalf("CheckFinal() sentence = %q, want %q", r.Sentence, want)
+				}
+			}
+		})
+	}
+}
+
 // The closed list is closed: one sentence per reason, and no sentence a reader sees carries a
 // placeholder. A reason whose sentence has a diagnostic slot is never emitted without one — "(%s)"
 // in a person's line is the same defect as a reason nobody can label.
@@ -293,6 +355,7 @@ func TestNoRefusalSentenceEmitsAPlaceholder(t *testing.T) {
 		intake.ReasonPlannerTimeout, intake.ReasonPlanChanged, intake.ReasonRepositoryUnverified,
 		intake.ReasonRepositoryNotInCandidates, intake.ReasonInvalidClass, intake.ReasonNotLinked,
 		intake.ReasonDailyPlansReached, intake.ReasonPlanTooLarge,
+		intake.ReasonUnresolvedMarker, intake.ReasonInvalidDecisions,
 	}
 	for _, reason := range declared {
 		s, ok := sentences[reason]
