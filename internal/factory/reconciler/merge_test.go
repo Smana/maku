@@ -1364,7 +1364,6 @@ func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
 	}
 }
 
-// TE: a human's commit seen by the gate is remembered on the pull request through its merge.
 func TestGateRecordsHumanCommits(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.f.SetChecks(12, green("SUCCESS"))

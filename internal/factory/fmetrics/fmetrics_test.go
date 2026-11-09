@@ -482,7 +482,6 @@ func TestProfileRecommendation(t *testing.T) {
 	}
 }
 
-// TE: a task's outcome and USD by cohort and profile; interventions by cohort.
 func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	ctx := t.Context()
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })

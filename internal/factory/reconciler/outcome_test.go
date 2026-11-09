@@ -4,7 +4,9 @@ package reconciler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
@@ -12,10 +14,16 @@ import (
 	"time"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	roomv1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/runs"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestStuckRunEscalatesAndMentions(t *testing.T) {
@@ -111,7 +119,6 @@ func TestLoopEndsScoreTheTier(t *testing.T) {
 	}
 }
 
-// TE: a task's outcome, the column team evaluation compares cohorts on.
 func TestTaskOutcomeTable(t *testing.T) {
 	for name, c := range map[string]struct {
 		phase, reason string
@@ -136,32 +143,74 @@ func TestTaskOutcomeTable(t *testing.T) {
 	}
 }
 
-// TE: an ended task with a profile is counted once, with its USD; the guard rides the status.
 func TestTaskOutcomeCountedOnce(t *testing.T) {
-	g := newRig(t)
-	ended := func(phase string, p *v1alpha1.ProfileStatus) *v1alpha1.Task {
-		return &v1alpha1.Task{Spec: v1alpha1.TaskSpec{PredictedClass: "review"},
-			Status: v1alpha1.TaskStatus{Phase: phase, Reason: "merged", Profile: p, Usage: v1alpha1.Usage{CostMicroUSD: 1_500_000}}}
-	}
-	count := func() int {
-		n := 0
-		for _, s := range g.metrics.recorded {
-			if strings.HasPrefix(s, "task_outcome ") {
-				n++
-			}
+	stop := func(t *testing.T, g *rig, c client.Client) {
+		tk := g.get(t)
+		tk.Annotations = map[string]string{v1alpha1.AnnotationStop: "true"}
+		if err := c.Update(t.Context(), tk); err != nil {
+			t.Fatal(err)
 		}
-		return n
 	}
-	tk := ended(v1alpha1.PhaseDone, &v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"})
-	g.r.outcome(t.Context(), tk)
-	g.r.outcome(t.Context(), tk)
-	if count() != 1 || !tk.Status.Profile.Counted || !slices.Contains(g.metrics.recorded, "task_outcome review treatment review-search scoper accepted 1.5") {
-		t.Fatalf("one count: %v %v", tk.Status.Profile.Counted, g.metrics.recorded)
+	stuck := func(t *testing.T, g *rig, _ client.Client) {
+		g.runs.set(rid(0), "Running")
+		g.log.evs = append(g.log.evs, envelope.Event{Seq: 1, RunID: rid(0), Type: envelope.ToolCall, TS: now})
+		g.reconcile(t, "3buqdlot", 1)
+		g.r.Now = func() time.Time { return now.Add(11 * time.Minute) }
 	}
-	g.r.outcome(t.Context(), ended(v1alpha1.PhaseDone, nil))
-	esc := &v1alpha1.ProfileStatus{Name: "review-search", Cohort: "treatment"}
-	g.r.outcome(t.Context(), ended(v1alpha1.PhaseEscalated, esc))
-	if count() != 1 || esc.Counted {
-		t.Fatalf("no profile, or an escalation, counts nothing: %v", g.metrics.recorded)
+	for name, c := range map[string]struct {
+		profile *v1alpha1.ProfileStatus
+		end     func(*testing.T, *rig, client.Client)
+		phase   string
+		want    []string
+	}{
+		"stopped with a profile": {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"}, stop,
+			v1alpha1.PhaseStopped, []string{"task_outcome review treatment review-search scoper stopped 1.5"}},
+		"stopped without a profile": {nil, stop, v1alpha1.PhaseStopped, nil},
+		"escalated":                 {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"}, stuck, v1alpha1.PhaseEscalated, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refuse := false
+			cl := fake.NewClientBuilder().WithScheme(scheme()).WithStatusSubresource(&v1alpha1.Task{}, &roomv1.Room{}).
+				WithObjects(issueTask("3buqdlot", 7, "x")).
+				WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, k client.Client, sub string, o client.Object, opts ...client.SubResourceUpdateOption) error {
+					if refuse {
+						refuse = false
+						return apierrors.NewConflict(schema.GroupResource{Resource: "tasks"}, o.GetName(), errors.New("stale"))
+					}
+					return k.SubResource(sub).Update(ctx, o, opts...)
+				}}).Build()
+			g := newRig(t)
+			g.c, g.r.Client = cl, cl
+			tk := g.reconcile(t, "3buqdlot", 3)
+			tk.Status.Profile, tk.Status.Usage.CostMicroUSD = c.profile, 1_500_000
+			if err := cl.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			c.end(t, g, cl)
+			outcomes := func() []string {
+				var out []string
+				for _, s := range g.metrics.recorded {
+					if strings.HasPrefix(s, "task_outcome ") {
+						out = append(out, s)
+					}
+				}
+				return out
+			}
+			refuse = true
+			if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+				t.Fatal("the refused write is returned")
+			}
+			if p := g.get(t).Status.Profile; len(outcomes()) != 0 || (p != nil && p.Counted) {
+				t.Fatalf("a refused write neither counts nor marks: %v %+v", outcomes(), p)
+			}
+			tk = g.reconcile(t, "3buqdlot", 1)
+			if tk.Status.Phase != c.phase {
+				t.Fatalf("phase %s", tk.Status.Phase)
+			}
+			g.reconcile(t, "3buqdlot", 1)
+			if got := outcomes(); !slices.Equal(got, c.want) || (c.want != nil) != (tk.Status.Profile != nil && tk.Status.Profile.Counted) {
+				t.Fatalf("%v, counted %+v", got, tk.Status.Profile)
+			}
+		})
 	}
 }
