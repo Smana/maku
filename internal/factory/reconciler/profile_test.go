@@ -218,29 +218,33 @@ func TestProfileSpec(t *testing.T) {
 	}
 }
 
-// D5: a run reads checks and testFirst frozen on status.profile, not the class's live config; a
-// task without a profile reads the config as today.
+// A run reads checks and testFirst frozen on status.profile, not the class's live config; a task
+// without a profile reads the config as today.
 func TestRunsReadTheFrozenProfile(t *testing.T) {
-	g := newRig(t)
-	repo := g.r.Cfg.Repos()[0]
-	repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "docs": {}}
-	repo.Checks = config.Checks{Egress: []string{"golang"}}
-	g.r.Cfg.Repositories = []config.Repository{repo}
-	g.r.Cfg.Templates["solo"] = config.Template{Roles: []string{"implementer"}}
-	tk := issueTask("3buqdlot", 7, "fix")
-	tk.Spec.PredictedClass, tk.Spec.DataClass, tk.Spec.Template = "docs", "public", "solo"
-	if s := g.r.implementerSpec(tk, "brief"); s.Checks || g.r.testFirst(tk) {
-		t.Fatalf("no profile: checks %v testFirst %v, want today's off", s.Checks, g.r.testFirst(tk))
-	}
-	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "p", Checks: true, TestFirst: true}
-	s := g.r.implementerSpec(tk, "brief")
-	if !s.Checks || !reflect.DeepEqual(s.EgressProfiles, []string{"golang"}) || !g.r.testFirst(tk) {
-		t.Fatalf("frozen on: checks %v egress %v testFirst %v", s.Checks, s.EgressProfiles, g.r.testFirst(tk))
-	}
-	repo.Classes["docs"] = config.Class{Checks: true, TestFirst: true}
-	g.r.Cfg.Repositories = []config.Repository{repo}
-	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "p"}
-	if s := g.r.implementerSpec(tk, "brief"); s.Checks || g.r.testFirst(tk) {
-		t.Fatalf("frozen off: checks %v testFirst %v, want the frozen off", s.Checks, g.r.testFirst(tk))
+	for name, tc := range map[string]struct {
+		class   config.Class
+		profile *v1alpha1.ProfileStatus
+		on      bool
+		egress  []string
+	}{
+		"no profile":           {class: config.Class{}},
+		"frozen on, class off": {class: config.Class{}, profile: &v1alpha1.ProfileStatus{Name: "p", Checks: true, TestFirst: true}, on: true, egress: []string{"golang"}},
+		"frozen off, class on": {class: config.Class{Checks: true, TestFirst: true}, profile: &v1alpha1.ProfileStatus{Name: "p"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newRig(t)
+			repo := g.r.Cfg.Repos()[0]
+			repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "docs": tc.class}
+			repo.Checks = config.Checks{Egress: []string{"golang"}}
+			g.r.Cfg.Repositories = []config.Repository{repo}
+			g.r.Cfg.Templates["solo"] = config.Template{Roles: []string{"implementer"}}
+			tk := issueTask("3buqdlot", 7, "fix")
+			tk.Spec.PredictedClass, tk.Spec.DataClass, tk.Spec.Template = "docs", "public", "solo"
+			tk.Status.Profile = tc.profile
+			s := g.r.implementerSpec(tk, "brief")
+			if s.Checks != tc.on || !reflect.DeepEqual(s.EgressProfiles, tc.egress) || g.r.testFirst(tk) != tc.on {
+				t.Fatalf("checks %v egress %v testFirst %v, want %v %v %v", s.Checks, s.EgressProfiles, g.r.testFirst(tk), tc.on, tc.egress, tc.on)
+			}
+		})
 	}
 }

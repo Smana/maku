@@ -49,7 +49,7 @@ func (r *Reconciler) testFirst(t *v1alpha1.Task) bool {
 	return r.testFirstOn(t) && slices.Contains(r.Cfg.Templates[t.Spec.Template].Roles, "implementer")
 }
 
-// testFirstOn: testFirst as frozen on status.profile at triage (D5); no profile, the class's config.
+// testFirstOn: a decision frozen at triage survives later config changes; a task without one reads live config.
 func (r *Reconciler) testFirstOn(t *v1alpha1.Task) bool {
 	if t.Status.Profile != nil {
 		return t.Status.Profile.TestFirst

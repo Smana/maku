@@ -181,8 +181,7 @@ func (r *Reconciler) withChecks(s *runs.Spec, t *v1alpha1.Task) {
 	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(t).Checks.Egress)
 }
 
-// checksOn: the run requests checks as frozen on status.profile at triage (D5); no profile, the
-// class's config as today.
+// checksOn: a decision frozen at triage survives later config changes; a task without one reads live config.
 func (r *Reconciler) checksOn(t *v1alpha1.Task) bool {
 	if t.Status.Profile != nil {
 		return t.Status.Profile.Checks
