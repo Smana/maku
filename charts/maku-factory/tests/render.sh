@@ -89,9 +89,9 @@ yq -e '.rules[] | select(.resources[] == "configmaps") | ((has("resourceNames") 
 ynone 'select(.kind == "Role" or .kind == "ClusterRole") | .rules[] | select(.resources[] == "secrets")' "the factory never reads Secrets through the API"
 # The Flux reader (MC7, R34) renders only when enabled: no ClusterRole by default, then exactly
 # get on gitrepositories and list on kustomizations and helmreleases, no watch.
-ynone 'select(.kind == "ClusterRole" or .kind == "ClusterRoleBinding")' "no cluster-scoped RBAC unless monitor.flux.enabled"
+ynone 'select(.kind == "ClusterRole" or .kind == "ClusterRoleBinding") | select(.metadata.name == "agent-factory-flux-reader")' "no Flux cluster-scoped RBAC unless monitor.flux.enabled"
 flux=$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref --set monitor.flux.enabled=true)
-cr=$(yq 'select(.kind == "ClusterRole")' - <<<"$flux")
+cr=$(yq 'select(.kind == "ClusterRole" and .metadata.name == "agent-factory-flux-reader")' - <<<"$flux")
 [ "$(yq '.rules | length' - <<<"$cr")" = 3 ] || { echo "FAIL: the Flux ClusterRole has exactly three rules" >&2; fail=1; }
 for rule in "source.toolkit.fluxcd.io gitrepositories get" "kustomize.toolkit.fluxcd.io kustomizations list" "helm.toolkit.fluxcd.io helmreleases list"; do
   set -- $rule
@@ -107,6 +107,15 @@ ynone 'select(.kind == "Certificate")' "no Certificate unless api.tls.issuerRef.
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "api-tls")' "no API pair unless api.tls.secretName"
 ynone 'select(.kind == "ConfigMap") | .data."config.yaml" | from_yaml | .api.tls | select(. != null)' "plaintext by default: no config.api.tls"
 # api.tls on: the pair mounted, config.api.tls pointed at it, the Certificate, the port named https
+# Factory resources D7: the factory reads the three kinds and writes their status, nothing more.
+ykind Role '.rules[] | select((.resources | join(",")) == "factories,repositories,mergepolicies") | (.verbs | join(",")) == "get,list,watch"' "the factory reads its resources"
+ykind Role '.rules[] | select((.resources | join(",")) == "factories/status,repositories/status,mergepolicies/status") | (.verbs | join(",")) == "get,update,patch"' "the factory writes their status"
+ykind ClusterRole 'select(.metadata.name == "maku-viewer") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-view" == "true"' "maku-viewer aggregates into view"
+ykind ClusterRole 'select(.metadata.name == "maku-mergepolicy-editor") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit" == "true"' "maku-mergepolicy-editor aggregates into edit"
+ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | .metadata.labels."rbac.authorization.k8s.io/aggregate-to-admin" == "true"' "maku-factory-admin aggregates into admin"
+for crd in factories repositories mergepolicies; do
+  [ -f "crds/maku.ogenki.io_${crd}.yaml" ] || { echo "FAIL: the chart ships the ${crd} CRD" >&2; fail=1; }
+done
 base="$out"
 out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
   --set api.tls.secretName=agent-factory-api-tls --set api.tls.issuerRef.name=openbao)"

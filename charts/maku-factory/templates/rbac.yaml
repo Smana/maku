@@ -17,6 +17,12 @@ rules:
     resources: [tasks/status]
     verbs: [get, update, patch]
   - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories/status, repositories/status, mergepolicies/status]
+    verbs: [get, update, patch]
+  - apiGroups: [maku.ogenki.io]
     resources: [rooms]
     verbs: [get, list, watch, create, delete]
   # ConfigMaps: the stop object, the meter heartbeat (agent-factory-meter), R50's day ledgers
