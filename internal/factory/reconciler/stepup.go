@@ -70,13 +70,16 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 	return true, nil
 }
 
-// lastJudge is the completion judge's newest verdict across t's last implementer run and the runs
+// lastJudge is the completion judge's newest verdict across t's newest implementer run and the runs
 // it resumed; "" when there is none, or when the room's log could not be read to its end.
 func (r *Reconciler) lastJudge(ctx context.Context, t *v1alpha1.Task) (string, error) {
-	if len(t.Status.Runs) == 0 {
+	i := len(t.Status.Runs) - 1
+	for i >= 0 && t.Status.Runs[i].Role != "implementer" {
+		i--
+	}
+	if i < 0 {
 		return "", nil
 	}
-	i := len(t.Status.Runs) - 1
 	chain := map[string]bool{t.Status.Runs[i].ID: true}
 	for i > 0 && t.Status.Runs[i].Trigger == "resume" {
 		i--

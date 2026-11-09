@@ -405,3 +405,24 @@ func TestARoundsExhaustedReviewSteps(t *testing.T) {
 		t.Fatalf("%s %d %+v %+v %+v", tk.Status.Phase, tk.Status.ReviewRounds, p, tk.Status.Runs, tk.Spec.Loop)
 	}
 }
+
+// Out of review rounds, the last run is the verifier's: the note is still the implementer's verdict.
+func TestAReviewEndedStepBriefCarriesTheImplementersJudge(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.ReviewRounds = 2
+		tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
+	})
+	g.log.evs = append(g.log.evs, judgeEvent(3, rid(0), "not_yet", "the implementer's verdict"))
+	if err := g.r.roundsExhausted(t.Context(), tk, rooms.Verdict{RunID: rid(1), Verdict: "changes"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	wantStepped(t, g.get(t), "review-search", "not_converged")
+	tk = g.reconcile(t, "3buqdlot", 1)
+	last := tk.Status.Runs[len(tk.Status.Runs)-1]
+	if text := g.runs.specs[last.ID].TaskText; last.Trigger != TriggerEscalation || !strings.Contains(text, "> the implementer's verdict") {
+		t.Fatalf("%s %q", last.Trigger, text)
+	}
+}
