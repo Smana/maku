@@ -17,7 +17,14 @@ const evaluationProfiles = `harnessProfiles:
   light:           {template: pair, loop: review, tier: light}
   standard:        {template: pair, loop: review, tier: standard}
   unlooped:        {template: pair, loop: "off"}
+  implicit:        {template: pair, loop: stalled}
+  unjudged:        {template: pair, loop: nojudge}
+  untemplated:     {loop: review}
+  bare:            {}
+  bare-checked:    {checks: true}
 loops:
+  stalled:       {stallSteps: 90}
+  nojudge:       {stallSteps: 90, judge: none}
   review:        {scope: scoper, judge: tier-light}
   review-search: {scope: scoper, judge: tier-light, search: true}
 `
@@ -26,9 +33,15 @@ const evaluationExample = "evaluation: {controlPercent: 10, mode: observe}\n"
 
 const reviewClass = "review: {harness: review-floor, harnessAllowed: [review-search, review-tested, review-frontier], escalation: {outOfBudget: review-frontier, notConverged: review-search}}"
 
+const contractAnchor = `  leakScanCheck: "Security scanning 🔒"`
+
 func evaluated(t *testing.T, class, extra string) string {
 	t.Helper()
-	return withClasses(t, "docs-links: {shadow: true}\n  revert: {shadow: true}\n  docs: {}\n  "+class) + evaluationProfiles + extra
+	raw := withClasses(t, "docs-links: {shadow: true}\n  revert: {shadow: true}\n  docs: {}\n  "+class) + evaluationProfiles + extra
+	if !strings.Contains(raw, contractAnchor) {
+		t.Fatal("the fixture's leakScanCheck line moved")
+	}
+	return strings.Replace(raw, contractAnchor, contractAnchor+"\n  contractCheck: Test contract", 1)
 }
 
 func TestEvaluationTheSpecsExampleLoads(t *testing.T) {
@@ -63,6 +76,10 @@ func TestEvaluationRefuses(t *testing.T) {
 		"fewer roles":                  {"review: {harness: review-floor, harnessAllowed: [solo]}", "", `"solo" drops roles of the floor (TE2)`},
 		"lower tier":                   {"review: {harness: standard, harnessAllowed: [light]}", "", `"light" is below the floor's tier (TE2)`},
 		"loop off under a judged loop": {"review: {harness: review-floor, harnessAllowed: [unlooped]}", "", `"unlooped" drops the floor's judge (TE6)`},
+		"implicit judge, loop off":     {"review: {harness: implicit, harnessAllowed: [unlooped]}", "", `"unlooped" drops the floor's judge (TE6)`},
+		"implicit judge, judge none":   {"review: {harness: implicit, harnessAllowed: [unjudged]}", "", `"unjudged" drops the floor's judge (TE6)`},
+		"template under triage's":      {"review: {harness: untemplated, harnessAllowed: [solo]}", "", `"solo" sets a template the floor leaves to triage (TE2)`},
+		"testFirst without contract":   {reviewClass, "", `class review: profile "review-tested": testFirst needs merge.contractCheck`},
 		"live with variants":           {"review: {live: true, harness: review-floor, harnessAllowed: [review-search]}", "", `a live or shadow class has one profile (TE2)`},
 		"shadow with escalation":       {"review: {shadow: true, harness: review-floor, harnessAllowed: [review-search], escalation: {notConverged: review-search}}", "", `a live or shadow class has one profile (TE2)`},
 		"mode":                         {reviewClass, "evaluation: {mode: maybe}\n", `evaluation.mode is observe or apply`},
@@ -71,6 +88,9 @@ func TestEvaluationRefuses(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := evaluated(t, c.class, c.extra)
+			if name == "testFirst without contract" {
+				raw = strings.Replace(raw, "\n  contractCheck: Test contract", "", 1)
+			}
 			if name == "description" {
 				raw = strings.Replace(raw, `description: "a large or long change"`, `description: "`+long+`"`, 1)
 			}
@@ -82,6 +102,13 @@ func TestEvaluationRefuses(t *testing.T) {
 				t.Fatalf("%v: a class's refusal names its repository", err)
 			}
 		})
+	}
+}
+
+// Both profiles without a loop run the class's own row: nothing is dropped.
+func TestEvaluationSameClassRowLoads(t *testing.T) {
+	if _, err := Parse([]byte(evaluated(t, "review: {harness: bare, harnessAllowed: [bare-checked]}", ""))); err != nil {
+		t.Fatal(err)
 	}
 }
 

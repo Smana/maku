@@ -73,7 +73,7 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 		cl.Harness, cl.HarnessAllowed, cl.Escalation = p.Harness, p.HarnessAllowed, p.Escalation
 	}
 	var errs []error
-	for _, m := range c.VariantProblems(cl) {
+	for _, m := range c.VariantProblems(name, cl) {
 		errs = append(errs, fmt.Errorf("class %s: %w: %s", name, ErrGuardrail, m))
 	}
 	if adopted {

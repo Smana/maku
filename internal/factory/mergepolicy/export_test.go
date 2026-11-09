@@ -172,3 +172,41 @@ func TestCompareSeesEveryField(t *testing.T) {
 		})
 	}
 }
+
+// A class with a floor exports it and its variants as they are; one without exports as before.
+func TestExportCarriesTheVariants(t *testing.T) {
+	c := central()
+	c.Factory = "aws-0"
+	c.HarnessProfiles["z-floor"] = config.HarnessProfile{}
+	c.HarnessProfiles["richer"] = config.HarnessProfile{Checks: true}
+	esc := &config.Escalation{OutOfBudget: "richer"}
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
+		"varied": {Harness: "z-floor", HarnessAllowed: []string{"richer"}, Escalation: esc},
+		"plain":  {Shadow: true},
+	}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := f.Classes["plain"]; p.Harness != "plain" || p.HarnessAllowed != nil || p.Escalation != nil {
+		t.Fatalf("a class without harness exports as before: %+v", p)
+	}
+	raw, err := Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Resolve("varied", back.Classes["varied"], c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cl := r.Class; cl.Harness != "z-floor" || len(cl.HarnessAllowed) != 1 || cl.HarnessAllowed[0] != "richer" || cl.Escalation == nil || *cl.Escalation != *esc {
+		t.Fatalf("%+v", cl)
+	}
+	if d := Compare(rc, back, c); len(d) != 0 {
+		t.Fatalf("export then compare differs: %v", d)
+	}
+}

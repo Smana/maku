@@ -45,7 +45,7 @@ func (c *Config) RowFor(class string, p HarnessProfile) string {
 }
 
 // VariantProblems is every reason cl's floor, variants and escalation are refused (TE2, TE6, TE7).
-func (c *Config) VariantProblems(cl Class) []string {
+func (c *Config) VariantProblems(class string, cl Class) []string {
 	var out []string
 	bad := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
 	if (cl.Live || cl.Shadow) && (len(cl.HarnessAllowed) > 0 || cl.Escalation != nil) {
@@ -62,7 +62,7 @@ func (c *Config) VariantProblems(cl Class) []string {
 			continue
 		}
 		if hasFloor {
-			c.belowFloor(floor, name, v, bad)
+			c.belowFloor(class, floor, name, v, bad)
 		}
 	}
 	if e := cl.Escalation; e != nil {
@@ -75,10 +75,13 @@ func (c *Config) VariantProblems(cl Class) []string {
 	return out
 }
 
-// belowFloor compares only what both profiles set: an empty template or tier is today's selection.
-// A loop is compared only when both name one, as the template and tier are.
-func (c *Config) belowFloor(floor HarnessProfile, name string, v HarnessProfile, bad func(string, ...any)) {
-	if floor.Template != "" && v.Template != "" {
+// belowFloor: the template and loop are compared as they run, a profile without a loop running
+// the class's row (RowFor); the tier only when both set one, since a run never lowers its tier.
+func (c *Config) belowFloor(class string, floor HarnessProfile, name string, v HarnessProfile, bad func(string, ...any)) {
+	switch {
+	case floor.Template == "" && v.Template != "":
+		bad("harnessAllowed %q sets a template the floor leaves to triage (TE2)", name)
+	case floor.Template != "" && v.Template != "":
 		roles := c.Templates[v.Template].Roles
 		if slices.ContainsFunc(c.Templates[floor.Template].Roles, func(r string) bool { return !slices.Contains(roles, r) }) {
 			bad("harnessAllowed %q drops roles of the floor (TE2)", name)
@@ -87,17 +90,12 @@ func (c *Config) belowFloor(floor HarnessProfile, name string, v HarnessProfile,
 	if floor.Tier != "" && v.Tier != "" && slices.Index(tiers(), v.Tier) < slices.Index(tiers(), floor.Tier) {
 		bad("harnessAllowed %q is below the floor's tier (TE2)", name)
 	}
-	if floor.Loop == "" || v.Loop == "" {
-		return
-	}
-	fr, vr := string(floor.Loop), string(v.Loop)
+	fr, vr := c.RowFor(class, floor), c.RowFor(class, v)
 	if c.ScopeFor(fr) != ScopeOff && c.ScopeFor(vr) == ScopeOff {
 		bad("harnessAllowed %q drops the floor's scope (TE6)", name)
 	}
-	if j := c.rowOf(fr).Judge; j != "" && j != NoJudge {
-		if p := c.LoopFor(vr); p == nil || p.JudgeModel == "" {
-			bad("harnessAllowed %q drops the floor's judge (TE6)", name)
-		}
+	if judged := func(row string) bool { p := c.LoopFor(row); return p != nil && p.JudgeModel != "" }; judged(fr) && !judged(vr) {
+		bad("harnessAllowed %q drops the floor's judge (TE6)", name)
 	}
 }
 
@@ -124,8 +122,17 @@ func (c *Config) validateEvaluation(bad func(string, ...any)) {
 	}
 	for _, r := range c.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
-			for _, p := range c.VariantProblems(r.Classes[name]) {
+			cl := r.Classes[name]
+			for _, p := range c.VariantProblems(name, cl) {
 				bad("%s: classes.%s: %s", r.Name, name, p)
+			}
+			if r.Merge.ContractCheck != "" {
+				continue
+			}
+			for _, pn := range slices.Compact(slices.Sorted(slices.Values(append([]string{cl.Harness}, cl.HarnessAllowed...)))) {
+				if c.HarnessProfiles[pn].TestFirst {
+					bad("%s: class %s: profile %q: testFirst needs merge.contractCheck", r.Name, name, pn)
+				}
 			}
 		}
 	}
