@@ -154,16 +154,26 @@ func TestAReviewClassDeclaresOnlyTheEvaluationKeys(t *testing.T) {
 	c.HarnessProfiles["other"] = config.HarnessProfile{}
 	required := "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain}\n  revert: {mode: live, author: agents, harness: plain}\n"
 	for name, tc := range map[string]struct{ review, want string }{
-		"the floor alone":   {"  review: {harness: plain}\n", ""},
-		"floor and steps":   {"  review: {harness: plain, harnessAllowed: [other], escalation: {outOfBudget: other}}\n", ""},
-		"no harness":        {"  review: {harnessAllowed: [other]}\n", "harness is required"},
-		"a mode":            {"  review: {mode: off, harness: plain}\n", "review"},
-		"an author":         {"  review: {author: agents, harness: plain}\n", "review"},
-		"adopt":             {"  review: {harness: plain, adopt: {logins: ['a[bot]'], branches: ['^x/']}}\n", "review"},
-		"conditions":        {"  review: {harness: plain, conditions: {all: [{maxPatchFiles: 2}]}}\n", "review"},
-		"an approval":       {"  review: {harness: plain, requiresApproval: [{changedFiles: ['^a']}]}\n", "review"},
-		"a cap":             {"  review: {harness: plain, limits: {maxPerDay: 2}}\n", "review"},
-		"a monitor":         {"  review: {harness: plain, monitor: {followUpWindow: 24h}}\n", "review"},
+		"the floor alone": {"  review: {harness: plain}\n", ""},
+		"floor and steps": {"  review: {harness: plain, harnessAllowed: [other], escalation: {outOfBudget: other}}\n", ""},
+		"no harness":      {"  review: {harnessAllowed: [other]}\n", "harness is required"},
+		"a mode":          {"  review: {mode: off, harness: plain}\n", "review"},
+		"an author":       {"  review: {author: agents, harness: plain}\n", "review"},
+		"adopt":           {"  review: {harness: plain, adopt: {logins: ['a[bot]'], branches: ['^x/']}}\n", "review"},
+		"conditions":      {"  review: {harness: plain, conditions: {all: [{maxPatchFiles: 2}]}}\n", "review"},
+		"an approval":     {"  review: {harness: plain, requiresApproval: [{changedFiles: ['^a']}]}\n", "review"},
+		"a cap":           {"  review: {harness: plain, limits: {maxPerDay: 2}}\n", "review"},
+		"a monitor":       {"  review: {harness: plain, monitor: {followUpWindow: 24h}}\n", "review"},
+		// The key alone is refused, whatever its value: a decoded zero value is still a declaration.
+		"an empty mode":     {"  review: {mode: \"\", harness: plain}\n", "mode"},
+		"an empty author":   {"  review: {author: \"\", harness: plain}\n", "author"},
+		"a null adopt":      {"  review: {harness: plain, adopt: null}\n", "adopt"},
+		"empty conditions":  {"  review: {harness: plain, conditions: {}}\n", "conditions"},
+		"no approvals":      {"  review: {harness: plain, requiresApproval: []}\n", "requiresApproval"},
+		"a zero cap":        {"  review: {harness: plain, limits: {maxPerDay: 0}}\n", "limits"},
+		"empty limits":      {"  review: {harness: plain, limits: {}}\n", "limits"},
+		"a null monitor":    {"  review: {harness: plain, monitor: null}\n", "monitor"},
+		"an unknown key":    {"  review: {harness: plain, merge: true}\n", "merge"},
 		"a missing variant": {"  review: {harness: plain, harnessAllowed: [nope]}\n", "harnessAllowed \"nope\""},
 	} {
 		t.Run(name, func(t *testing.T) {

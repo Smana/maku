@@ -164,6 +164,9 @@ func Parse(raw []byte) (*File, error) {
 	if err := exactKeys(tree, reflect.TypeFor[File](), ""); err != nil {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
 	}
+	if err := reviewKeys(tree); err != nil {
+		return nil, fmt.Errorf("mergepolicy: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(j))
 	dec.DisallowUnknownFields()
 	var f File
@@ -269,25 +272,36 @@ func (p ClassPolicy) shape(name string) error {
 	return errors.Join(errs...)
 }
 
-// reviewShape is shape for review: the evaluation keys, and nothing that would give the class a
-// merge authority of its own. mode and author are refused, not required.
-func (p ClassPolicy) reviewShape() error {
-	var errs []error
-	if p.Harness == "" {
-		errs = append(errs, errors.New("harness is required: a profile of the central list"))
+// reviewKeysAllowed are the keys classes.review may carry (R30): the evaluation keys, and nothing
+// that would give the class a merge authority of its own.
+var reviewKeysAllowed = []string{"harness", "harnessAllowed", "escalation"}
+
+// reviewKeys refuses every other key on classes.review as written, before decoding: an empty, null
+// or zero value decodes to the absent value, and would otherwise pass as undeclared.
+func reviewKeys(tree any) error {
+	root, _ := tree.(map[string]any)
+	classes, _ := root["classes"].(map[string]any)
+	review, ok := classes["review"].(map[string]any)
+	if !ok {
+		return nil
 	}
-	for _, k := range []struct {
-		key string
-		set bool
-	}{{"mode", p.Mode != ""}, {"author", p.Author != ""}, {"adopt", p.Adopt != nil},
-		{"conditions", len(p.Conditions.All)+len(p.Conditions.Any)+len(p.Conditions.Deny) > 0},
-		{"requiresApproval", len(p.RequiresApproval) > 0}, {"limits", p.Limits != Limits{}}, {"monitor", p.Monitor != nil}} {
-		if k.set {
-			errs = append(errs, fmt.Errorf("%s is refused on review: it declares harness, harnessAllowed and escalation only, "+
-				"and a human merges it", k.key))
+	var errs []error
+	for _, k := range slices.Sorted(maps.Keys(review)) {
+		if !slices.Contains(reviewKeysAllowed, k) {
+			errs = append(errs, fmt.Errorf("class review: %s is refused on review: it declares harness, harnessAllowed and escalation only, "+
+				"and a human merges it", k))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// reviewShape is shape for review: the floor is required. The other keys were refused as written
+// (reviewKeys).
+func (p ClassPolicy) reviewShape() error {
+	if p.Harness == "" {
+		return errors.New("harness is required: a profile of the central list")
+	}
+	return nil
 }
 
 // patterns are the class's path lists, each compiled when the class is validated.
