@@ -958,10 +958,22 @@ factory (`factoryURL` must point at it). Approval memory's page needs `human.app
 **Promote to live answers `not_promotable`.** The class is central (stage 4 not done) or not in
 shadow.
 
-## Factory resources (preview)
+## Factory resources
 
 The chart ships three kinds in `maku.ogenki.io/v1alpha1`: `Factory`, `Repository` and `MergePolicy`.
-The factory does not read them yet; the central config above stays the only thing that decides.
+The factory reads them on every replica, together with the config file, and a change applies
+without a restart. How is in [architecture](architecture.md#how-the-factory-reads-its-configuration).
+
+- **Live:** the catalogue and `repositories`, including each repository's classes and merge rules
+  and adding or removing a repository. **Needs a rollout:** the startup switches, among them
+  `policyManagement`, `coordination`, `hardening` and `api`. The
+  [table](architecture.md#live-fields-and-fields-that-need-a-rollout) lists both.
+- **A refused change** keeps the last accepted version while the factory runs. After a restart an
+  invalid object is not served, and a factory with nothing to serve does not start.
+- **A repository defined in both** the file and a resource is refused, never merged.
+- **Tasks record** `status.configGenerations` for the `Factory`, `Repository` and `MergePolicy` they
+  started under. It is a record, not a pin.
+
 Two offline commands prepare the move. `migrate` splits a config file into manifests and writes
 what stays in the file as a residual; `validate` lays manifests over a config file and refuses
 what the factory would refuse, one line each.

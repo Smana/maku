@@ -67,6 +67,10 @@ ledgers they replaced, `agent-factory-ledger-<UTC day>`, once 35 days old. The n
 factory can touch every ConfigMap in it, its own config included: keep no ConfigMap there it must
 not touch. In `config.runs.namespace` (default `agents`), a second Role manages the `AgentRun`s of `config.runs.group` (default `cloud.ogenki.io`): the values the binary reads, so the two cannot disagree. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
 
+The factory's own Role reads (`get`, `list`, `watch`) the three kinds and updates their `status`:
+every replica lists them to build its configuration. Without that grant the factory refuses to
+start, and the message names the Role. See [architecture](../../docs/architecture.md#how-the-factory-reads-its-configuration).
+
 Three ClusterRoles cover the `Factory`, `Repository` and `MergePolicy` kinds for people, not for
 the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or `admin`
 grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three kinds) into `view`,
@@ -77,7 +81,12 @@ grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three 
 ## Config
 
 `config` is rendered as-is into `/etc/agent-factory/config/config.yaml` (a ConfigMap; a change
-rolls the pods). Its keys, defaults and validation are in
+rolls the pods). The factory also reads the `Factory`, `Repository` and `MergePolicy` resources
+live: the catalogue and `repositories` apply without a rollout, whether they come from the file or
+from a resource. The startup keys (`policyManagement`, `coordination`, `hardening`, `api`, `runs`,
+`sandbox`, `demo`, `broker`, `github`, the `meter` URLs and query, `poll`, `tracing`, the logins,
+`roomsURL`, `factory`) still need one, which this ConfigMap's change gives. With no CRDs installed
+the factory runs from the file alone ([the full table](../../docs/architecture.md#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
 [docs/factory.md](../../docs/factory.md#the-config-file). Keys added since a file was written
 default to the platform's values, so an older file loads unchanged: `api.groups` (`agents-admin`,
 `agents-member`) and a schedule's `probeAuthor` (`renovate[bot]`). The daily budgets are in USD:
