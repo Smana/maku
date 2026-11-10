@@ -377,6 +377,8 @@ spec:
                 - repository
                 type: string
               classCount:
+                description: 'ClassCount and LiveCount are always serialized, zero
+                  included: the printer columns read them.'
                 minimum: 0
                 type: integer
               classes:

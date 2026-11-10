@@ -62,9 +62,12 @@ type FactoryStatus struct {
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Always serialized, zero included: the printer columns read them.
+	// +optional
 	// +kubebuilder:validation:Minimum=0
-	Repositories int  `json:"repositories,omitempty"`
-	Stopped      bool `json:"stopped,omitempty"`
+	Repositories int `json:"repositories"`
+	// +optional
+	Stopped bool `json:"stopped"`
 }
 
 // Factory is one factory's catalogue (D3). Its name is config.factory, the fence's (D15).
@@ -190,10 +193,13 @@ type MergePolicyStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// +kubebuilder:validation:Enum=central;repository
 	Authority string `json:"authority,omitempty"`
+	// ClassCount and LiveCount are always serialized, zero included: the printer columns read them.
+	// +optional
 	// +kubebuilder:validation:Minimum=0
-	ClassCount int `json:"classCount,omitempty"`
+	ClassCount int `json:"classCount"`
+	// +optional
 	// +kubebuilder:validation:Minimum=0
-	LiveCount int `json:"liveCount,omitempty"`
+	LiveCount int `json:"liveCount"`
 	// +kubebuilder:validation:MaxItems=32
 	Classes []ClassStatus `json:"classes,omitempty"`
 }
