@@ -145,7 +145,13 @@ func (s *Server) recordVerification(w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusOK, map[string]any{"task": t.Name, "verdict": v.Verdict, "recordedAt": v.RecordedAt.Time, "duplicate": true})
 			return
 		}
-		vw := cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass].Monitor
+		rc := cfg.RepositoryFor(t.Spec.Repository)
+		if rc == nil { // a publish removed its repository (factory resources D12)
+			refuse(w, http.StatusForbidden, "repository_not_allowed")
+			return
+		}
+		cl, _ := rc.Class(t.Spec.PredictedClass)
+		vw := cl.Monitor
 		// One window with the monitor: its Since is GitHub's merge time once a pass has read it; until
 		// then the Task's MergedAt, the factory's clock, which the monitor's first pass corrects.
 		since := pr.MergedAt.Time

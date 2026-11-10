@@ -23,6 +23,9 @@ import (
 func DecideArmUnder(in ArmInputs, variants []config.Class, approval []string) ArmDecision {
 	cfg := in.Cfg
 	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
+	if rc == nil {
+		return notServedDecision(in)
+	}
 	class := in.Task.Spec.PredictedClass
 	if len(variants) == 0 {
 		return decide(in, cfg, rc, config.Class{})

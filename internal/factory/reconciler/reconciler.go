@@ -221,6 +221,7 @@ type Reconciler struct {
 	Coordination coordinationPort
 
 	oldBroker sync.Once // the broker serves no task route: said once per process
+	notServed onceSet   // tasks whose repository is not served, said once each
 	ledger    mergeLedger
 	mon       monitorCache
 }
@@ -254,6 +255,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if _, migrating := t.Annotations[roomv1.AnnotationMigrating]; migrating {
 		return ctrl.Result{}, nil // a migrate-group copy without its status yet: lifting the guard requeues it
 	}
+	// Factory resources D12: a publish may remove the task's repository. Nothing about it is
+	// decided under another repository's settings, and it is no error: a later publish may serve it.
+	if r.repo(cfg, &t) == nil {
+		if r.notServed.once(t.Name) {
+			r.log().Info("repository not served: the task waits for a publish that serves it", "task", t.Name, "repository", t.Spec.Repository)
+		}
+		return ctrl.Result{RequeueAfter: notServedRequeue}, nil
+	}
+	r.notServed.forget(t.Name)
 	// v2 D10 and spend per identity SI4: the pass's series are the task's repository's and its payer's.
 	ctx, err := r.bind(fmetrics.WithPrincipal(fmetrics.WithRepository(ctx, t.Spec.Repository), r.payer(cfg, &t)), &t)
 	if err != nil {
@@ -552,7 +562,37 @@ func (r *Reconciler) handedOffMerged(ctx context.Context, t *v1alpha1.Task, how 
 	record(ctx, func(ctx context.Context) { r.Metrics.HandoffToMerge(ctx, class, reason, how, d) })
 }
 
-// repo is the config entry of the task's repository (v2 D1).
+// notServedRequeue is when a task whose repository the published config does not serve is looked
+// at again: a later publish may serve it again (factory resources D12).
+const notServedRequeue = 5 * time.Minute
+
+// onceSet holds names already reported, so a condition that persists is logged once per name.
+type onceSet struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+// once reports whether name is new, and records it.
+func (s *onceSet) once(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen[name] {
+		return false
+	}
+	if s.seen == nil {
+		s.seen = map[string]bool{}
+	}
+	s.seen[name] = true
+	return true
+}
+
+func (s *onceSet) forget(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.seen, name)
+}
+
+// repo is the config entry of the task's repository (v2 D1); nil when the config does not serve it.
 func (r *Reconciler) repo(cfg *config.Config, t *v1alpha1.Task) *config.Repository {
 	return cfg.RepositoryFor(t.Spec.Repository)
 }

@@ -297,3 +297,31 @@ func TestStopsOutliveTheFence(t *testing.T) {
 		t.Fatalf("the stop was not honoured: %v", got.Annotations)
 	}
 }
+
+// A publish that drops B (2→1, factory resources D12) stops B's poller cold: its pass is skipped,
+// never run under A's label and maintainers, though B's issue carries A's label from A's maintainer.
+func TestARemovedRepositorysPollerDoesNothing(t *testing.T) {
+	f := forgetest.NewFake()
+	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: t0})
+	f.SetLabeled("factory/ready", forge.Item{Number: 7})
+	f.SetIssue(forge.Issue{Number: 7, Title: "Fix", Body: "it"})
+	p, c := poller(t, f)
+	twoRepositories(p)
+	p.Repository = "Smana/b"
+	two := p.Cfg.Current()
+	two.Hash = "two"
+	live := config.NewLive(two)
+	p.Cfg = live
+	next := *two
+	next.Repositories, next.Hash = two.Repositories[:1], "one"
+	live.Publish(&next)
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if ts := tasks(t, c); len(ts) != 0 {
+		t.Fatalf("B's poller ran under A's settings: %+v", ts)
+	}
+	if got := f.Removed(7); len(got) != 0 {
+		t.Fatalf("B's poller consumed a label: %q", got)
+	}
+}

@@ -228,6 +228,10 @@ On each publish the subscribers re-derive what depends on the catalogue:
   `maku_factory_config_wire_errors_total{repository}` counts it.
 - The fence's repository list, the issue pollers, the meter and the metric labels are rebuilt.
 - A removed repository's `repository_owned` gauge keeps its last value until the next restart.
+- A removed repository's tasks are never decided under another repository's settings. Each one
+  waits, looked at again every five minutes, until a publish serves its repository again. Its
+  issue poller skips its passes until then, and the API refuses its requests with
+  `repository_not_allowed`.
 
 The source runs on every replica, not only the leader, so a follower serves the settings API from
 the same configuration. Only leader-only work stays leader-only.

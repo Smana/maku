@@ -332,7 +332,20 @@ type Repository struct {
 }
 
 // TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
-func (r *Repository) TestFirstFor(class string) bool { return r.Classes[class].TestFirst }
+func (r *Repository) TestFirstFor(class string) bool {
+	cl, _ := r.Class(class)
+	return cl.TestFirst
+}
+
+// Class is the repository's class name, and whether it declares it. A nil repository (one the
+// config does not serve, RepositoryFor) declares none.
+func (r *Repository) Class(name string) (Class, bool) {
+	if r == nil {
+		return Class{}, false
+	}
+	cl, ok := r.Classes[name]
+	return cl, ok
+}
 
 // EgressProfiles are the registry profiles a run may request on top of github: the AgentRun
 // XRD's enum, which the composition turns into FQDNs.
@@ -350,7 +363,7 @@ type Checks struct {
 // ChecksFor reports whether a run of class runs the repository's checks in its sandbox (RC8), and
 // the egress profiles it then requests. Absent or false, the run is today's.
 func (r *Repository) ChecksFor(class string) (bool, []string) {
-	if !r.Classes[class].Checks {
+	if cl, _ := r.Class(class); !cl.Checks {
 		return false, nil
 	}
 	return true, slices.Clone(r.Checks.Egress)
@@ -368,12 +381,18 @@ type Control struct {
 // IsMaintainer is whether login is one of the repository's maintainers; GitHub logins are
 // case-insensitive.
 func (r *Repository) IsMaintainer(login string) bool {
+	if r == nil {
+		return false // not served: nobody maintains it here
+	}
 	return slices.ContainsFunc(r.Maintainers, func(m string) bool { return strings.EqualFold(m, login) })
 }
 
 // NeedsMerger reports whether a class of the repository is live, in shadow or monitored: a
 // monitor reads main's checks and writes labels through the merger App.
 func (r *Repository) NeedsMerger() bool {
+	if r == nil {
+		return false
+	}
 	if r.ClassAuthority == ClassAuthorityRepository {
 		return true // its classes arrive at run time, from its file
 	}
@@ -388,6 +407,9 @@ func (r *Repository) NeedsMerger() bool {
 // AnyMonitored reports whether a class of the repository declares a monitor, whose outcome
 // labels the merger writes in shadow too (merge gate R30).
 func (r *Repository) AnyMonitored() bool {
+	if r == nil {
+		return false
+	}
 	if r.ClassAuthority == ClassAuthorityRepository {
 		return true
 	}
@@ -401,6 +423,9 @@ func (r *Repository) AnyMonitored() bool {
 
 // AnyLive reports whether a class of the repository is live.
 func (r *Repository) AnyLive() bool {
+	if r == nil {
+		return false
+	}
 	for _, cl := range r.Classes {
 		if cl.Live {
 			return true
@@ -447,18 +472,20 @@ func (c *Config) Primary() string {
 	return ""
 }
 
-// RepositoryFor is name's entry, matched case-insensitively as GitHub matches it. With one entry
-// it is that entry whatever name says, as one set of settings governed every task before the
-// list (v2 D1). With several, an unlisted name gets an entry with no maintainer and no class.
+// RepositoryFor is name's entry, matched case-insensitively as GitHub matches it, nil when the
+// config does not serve name. An empty name with one entry is that entry, as one set of settings
+// governed every task before the list (v2 D1). A name not listed is never given another
+// repository's entry: after a publish removes it (factory resources D12), its tasks would be
+// decided under the remaining repository's classes. Every caller handles nil by standing down.
 func (c *Config) RepositoryFor(name string) *Repository {
 	rs := c.Repos()
 	if i := slices.IndexFunc(rs, func(r Repository) bool { return strings.EqualFold(r.Name, name) }); i >= 0 {
 		return &rs[i]
 	}
-	if len(rs) == 1 {
+	if name == "" && len(rs) == 1 {
 		return &rs[0]
 	}
-	return &Repository{Name: name}
+	return nil
 }
 
 // listed is name's entry, nil when the list does not name it (whatever its length).
@@ -2095,7 +2122,7 @@ func (c *Config) neverSplit(class string) bool {
 // SplitFor is class's split on repository, every value resolved, nil when none is offered: its row,
 // else default's, read whole as for the loop, and only beside scope: scoper.
 func (c *Config) SplitFor(repository, class string) *SplitPolicy {
-	if c.neverSplit(class) || c.RepositoryFor(repository).Classes[class].Oracle != nil {
+	if cl, _ := c.RepositoryFor(repository).Class(class); c.neverSplit(class) || cl.Oracle != nil {
 		return nil
 	}
 	row := c.rowOf(class)

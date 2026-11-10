@@ -53,6 +53,7 @@ func holdRig(t *testing.T, independent bool) (*rig, *v1alpha1.Task) {
 	g.log.handoff(rid(0), headH1)
 	g.patch(t, func(tk *v1alpha1.Task) { tk.Status.PullRequest.HeadSHA = headH1 })
 	g.f.SetChecks(12, green("SUCCESS"))
+	listRepos(g.r.Cfg.Current(), coordA, coordB) // the parent's and the children's repositories are served
 	return g, parent
 }
 
@@ -162,7 +163,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 
 	t.Run("a second decision on the read diff", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Current().Classes["docs-links"] = config.Class{Live: true, MaxPatchFiles: 5} // a diff condition: DecideArm decides again on the read diff
+		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Live: true, MaxPatchFiles: 5} // a diff condition: DecideArm decides again on the read diff
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
@@ -193,8 +194,8 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 
 	t.Run("maintainer approved, through the approval's return", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Current().Merge.ApproveToMerge = true
-		g.r.Cfg.Current().Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+		g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
+		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "class_unarmed" {
@@ -242,7 +243,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 
 	t.Run("shadow would arm and never releases", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}}
+		g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}}
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		tk := g.reconcile(t, "3buqdlot", 1)

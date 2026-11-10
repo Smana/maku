@@ -152,7 +152,7 @@ func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier str
 		if r.Profile.Template != "" {
 			template = r.Profile.Template
 		}
-	} else if cl, ok := cfg.RepositoryFor(repo).Classes[class]; !ok || cl.Author != nil {
+	} else if cl, ok := cfg.RepositoryFor(repo).Class(class); !ok || cl.Author != nil {
 		return RepositoryPolicy{}, fmt.Errorf("%w: %s", ErrClassNotAllowed, class)
 	}
 	t, ok := cfg.Tiers[tier]

@@ -268,7 +268,11 @@ func (s *Server) sponsorOf(ctx context.Context, cfg *config.Config, sp *config.S
 			}
 		}
 	}
-	if !cfg.RepositoryFor(in.Repository).IsMaintainer(login) {
+	rc := cfg.RepositoryFor(in.Repository)
+	if rc == nil { // listed for the principal, but not served by the published config (factory resources D12)
+		return "", http.StatusForbidden, "repository_not_allowed"
+	}
+	if !rc.IsMaintainer(login) {
 		return "", http.StatusForbidden, "not_a_maintainer"
 	}
 	return strings.ToLower(login), 0, ""

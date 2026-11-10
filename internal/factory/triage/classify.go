@@ -99,7 +99,7 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if Investigates(cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}
-	if cfg.RepositoryFor(t.Spec.Repository).Classes[class].Oracle != nil {
+	if oracle(cfg, t, class) {
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
 		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Budget: BudgetFor(cfg, "light"),
@@ -131,6 +131,12 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Cohort: cohort}, nil
 }
 
+// oracle reports whether class is an oracle class of t's repository; none when it is not served.
+func oracle(cfg *config.Config, t *v1alpha1.Task, class string) bool {
+	cl, _ := cfg.RepositoryFor(t.Spec.Repository).Class(class)
+	return cl.Oracle != nil
+}
+
 // predictClass: the schedule's class; else a maintainer-applied class:<name> label; else review.
 // RunLore tasks are always review. Labels are intent, never authority (§2, §8 T3).
 // declared is a class the schedule or a maintainer named, never one inferred.
@@ -139,7 +145,7 @@ func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alp
 		return "review", false, nil
 	}
 	if t.Spec.Source.Kind == "schedule" {
-		if _, ok := cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass]; ok {
+		if _, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
 			return t.Spec.PredictedClass, true, nil
 		}
 		return "review", false, nil
@@ -154,7 +160,7 @@ func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alp
 	}
 	for _, l := range iss.Labels {
 		name, ok := strings.CutPrefix(l, "class:")
-		if _, known := cfg.RepositoryFor(t.Spec.Repository).Classes[name]; !ok || !known || name == "revert" {
+		if _, known := cfg.RepositoryFor(t.Spec.Repository).Class(name); !ok || !known || name == "revert" {
 			continue // revert is the factory's own class, never predicted from a label
 		}
 		evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
@@ -174,7 +180,7 @@ func (c Classify) inferred(cfg *config.Config, t *v1alpha1.Task) string {
 	if t.Spec.Origin == "" || t.Spec.PredictedClass == "revert" {
 		return "review"
 	}
-	if _, ok := cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass]; ok {
+	if _, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
 		return t.Spec.PredictedClass
 	}
 	return "review"

@@ -135,6 +135,9 @@ func CIState(c forge.Checks, required []string) string {
 func DecideArm(in ArmInputs) ArmDecision {
 	cfg := in.Cfg
 	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
+	if rc == nil {
+		return notServedDecision(in)
+	}
 	return decide(in, cfg, rc, gateOf(rc, in.Task.Spec.PredictedClass))
 }
 
@@ -424,7 +427,14 @@ func runsEnded(t *v1alpha1.Task) time.Time {
 // gateOf is the class as the gate reads it: its config, with the diff shape built into
 // docs-links and revert (R52) when the config names none.
 func gateOf(rc *config.Repository, class string) config.Class {
-	return withShape(rc.Classes[class], class)
+	cl, _ := rc.Class(class)
+	return withShape(cl, class)
+}
+
+// notServedDecision is the decision on a task whose repository the config does not serve: a
+// wait that reads no class, so no other repository's settings can arm it (factory resources D12).
+func notServedDecision(in ArmInputs) ArmDecision {
+	return ArmDecision{Verdict: "wait", Reason: reasonRepositoryNotServed, Matched: in.Task.Spec.PredictedClass}
 }
 
 // withShape is cl with the built-in diff shape of its name when it declares none.
@@ -438,6 +448,9 @@ func withShape(cl config.Class, class string) config.Class {
 // requiredFor is row 2's list (R21, F3-R8): merge.requiredChecks, and merge.contractCheck on a task whose
 // tester wrote a contract. Every reader of the required checks calls this, never the config's list.
 func requiredFor(rc *config.Repository, t *v1alpha1.Task) []string {
+	if rc == nil {
+		return nil
+	}
 	if t == nil || t.Status.Contract == nil || rc.Merge.ContractCheck == "" {
 		return rc.Merge.RequiredChecks
 	}

@@ -121,6 +121,7 @@ type IssuePoller struct {
 	}
 }
 
+// repo is the poller's repository entry; nil when the published config no longer serves it.
 func (p *IssuePoller) repo(cfg *config.Config) *config.Repository {
 	return cfg.RepositoryFor(p.Repository)
 }
@@ -184,7 +185,11 @@ func (p *IssuePoller) Start(ctx context.Context) error {
 	}
 	c, stop := tick(every)
 	defer stop()
-	ctx = fmetrics.WithRepository(ctx, p.repo(cfg).Name) // v2 D10: this poller's errors are its repository's
+	name := p.Repository
+	if rc := p.repo(cfg); rc != nil {
+		name = rc.Name // the legacy poller names none: its one entry's
+	}
+	ctx = fmetrics.WithRepository(ctx, name) // v2 D10: this poller's errors are its repository's
 	for {
 		if err := p.Poll(ctx); err != nil {
 			if p.Errors != nil {
@@ -208,6 +213,9 @@ func (p *IssuePoller) Start(ctx context.Context) error {
 // unread control issue alone stops the pass, since whether intake may start work is then unknown.
 func (p *IssuePoller) Poll(ctx context.Context) error {
 	cfg := p.Cfg.Current()
+	if p.repo(cfg) == nil {
+		return nil // a publish removed this poller's repository (factory resources D12): the pass is skipped
+	}
 	var errs []error
 	engaged := false // reflects the stop label this pass saw or set, so the reader's cache may not hold it yet; it errs safe if the publish fails
 	if n := p.controlIssue(cfg); n > 0 {

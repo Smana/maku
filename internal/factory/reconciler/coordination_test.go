@@ -87,6 +87,7 @@ func coordinationRig(t *testing.T, mode string, objs ...client.Object) (*rig, *f
 	t.Helper()
 	g := newRig(t, objs...)
 	g.r.Cfg.Current().Coordination.Mode = mode
+	listRepos(g.r.Cfg.Current(), coordA, coordB) // a child's repository is served, never the rig's by fallback
 	fc := &fakeCoordination{ready: map[string]error{}}
 	g.r.Coordination = fc
 	return g, fc
