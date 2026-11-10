@@ -45,7 +45,7 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if g == "" {
 		return false, nil
 	}
-	cl := r.repo(cfg, t).Classes[t.Spec.PredictedClass]
+	cl := r.class(cfg, t, t.Spec.PredictedClass)
 	if cl.Escalation == nil {
 		return false, nil
 	}

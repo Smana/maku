@@ -597,6 +597,13 @@ func (r *Reconciler) repo(cfg *config.Config, t *v1alpha1.Task) *config.Reposito
 	return cfg.RepositoryFor(t.Spec.Repository)
 }
 
+// class is the task's repository's class name, the zero class when the repository does not declare
+// it or the config does not serve the repository.
+func (r *Reconciler) class(cfg *config.Config, t *v1alpha1.Task, name string) config.Class {
+	cl, _ := r.repo(cfg, t).Class(name)
+	return cl
+}
+
 func (r *Reconciler) narrator(ctx context.Context, cfg *config.Config) narrate.Narrator {
 	return narrate.Narrator{Forge: r.gh(ctx), Login: cfg.FactoryLogin}
 }
@@ -1084,7 +1091,7 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	}
 	var floor config.HarnessProfile
 	if profile != nil {
-		floor, _ = cfg.ProfileFor(cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass], profile.Name)
+		floor, _ = cfg.ProfileFor(r.class(cfg, t, d.PredictedClass), profile.Name)
 	}
 	r.profileSpec(cfg, t, d.PredictedClass, floor)
 	if err := r.scopeAtTriage(ctx, cfg, t); err != nil {
@@ -1133,7 +1140,7 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class str
 // floorProfile is the profile t is frozen under at triage: its class's floor, with the cohort's
 // source; nil for a class without a harness, whose task carries no status.profile.
 func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
-	cl := cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass]
+	cl := r.class(cfg, t, d.PredictedClass)
 	p, ok := cfg.ProfileFor(cl, cl.Harness)
 	if !ok {
 		return nil

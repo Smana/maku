@@ -42,7 +42,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 			q.Reason = reason
 			break
 		}
-		v, _ := cfg.ProfileFor(r.repo(cfg, t).Classes[t.Spec.PredictedClass], name)
+		v, _ := cfg.ProfileFor(r.class(cfg, t, t.Spec.PredictedClass), name)
 		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || v.TestFirst,
 			Recommended: q.Recommended, Why: q.Why, Offered: offered}
 		if err := r.applyProfile(ctx, cfg, t, d); err != nil {
@@ -123,7 +123,7 @@ func assumed(sc envelope.Scope) *envelope.Scope {
 }
 
 func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, name string) (string, string, error) {
-	cl := r.repo(cfg, t).Classes[t.Spec.PredictedClass]
+	cl := r.class(cfg, t, t.Spec.PredictedClass)
 	if name == "" || name == cl.Harness {
 		return "", "none", nil
 	}
@@ -156,7 +156,7 @@ func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1al
 // from the persisted decision, never by deciding again.
 func (r *Reconciler) applyProfile(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d profileDecision) error {
 	class := t.Spec.PredictedClass
-	p, ok := cfg.ProfileFor(r.repo(cfg, t).Classes[class], d.Name)
+	p, ok := cfg.ProfileFor(r.class(cfg, t, class), d.Name)
 	if !ok {
 		return fmt.Errorf("profile %q is not one of class %q's", d.Name, class)
 	}

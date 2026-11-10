@@ -234,7 +234,7 @@ func (r *Reconciler) profileChoices(cfg *config.Config, t *v1alpha1.Task) []Prof
 	if p == nil || p.Source == "label" {
 		return nil
 	}
-	cl := r.repo(cfg, t).Classes[t.Spec.PredictedClass]
+	cl := r.class(cfg, t, t.Spec.PredictedClass)
 	if len(cl.HarnessAllowed) == 0 {
 		return nil
 	}
