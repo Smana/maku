@@ -167,12 +167,12 @@ func update(ctx context.Context, c client.Client, o client.Object, set func() bo
 	return err
 }
 
-// keepTimes gives each desired condition the stored lastTransitionTime when its status, reason
-// and message did not change: the time moves only when the condition does.
+// keepTimes gives each desired condition the stored lastTransitionTime when its type and status
+// did not change, as apimeta.SetStatusCondition does: a new reason or message is no transition.
 func keepTimes(stored, desired []metav1.Condition) []metav1.Condition {
 	for i := range desired {
 		for _, s := range stored {
-			if s.Type == desired[i].Type && s.Status == desired[i].Status && s.Reason == desired[i].Reason && s.Message == desired[i].Message {
+			if s.Type == desired[i].Type && s.Status == desired[i].Status {
 				desired[i].LastTransitionTime = s.LastTransitionTime
 			}
 		}

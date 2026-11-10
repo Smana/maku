@@ -141,6 +141,19 @@ func TestEnvtestWriteOnce(t *testing.T) {
 	if conn == nil || !conn.LastTransitionTime.Equal(&was) {
 		t.Fatalf("Connected %+v", conn)
 	}
+
+	// Still refused, for another reason: the message follows, the transition time does not.
+	refusedAt := cnd.LastTransitionTime
+	outcomes[0].Reason, outcomes[0].Message = v1alpha1.ReasonDefinedTwice, "defined twice for the test"
+	time.Sleep(1100 * time.Millisecond) // the API server keeps seconds: a new time would show
+	if err := w.WriteOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r4, _ := get()
+	cnd = apimeta.FindStatusCondition(r4.Status.Conditions, v1alpha1.ConditionAccepted)
+	if cnd == nil || cnd.Reason != v1alpha1.ReasonDefinedTwice || cnd.Message != "defined twice for the test" || !cnd.LastTransitionTime.Equal(&refusedAt) {
+		t.Fatalf("Accepted %+v, want the time %v kept", cnd, refusedAt)
+	}
 }
 
 func hasDecision(cs []v1alpha1.ClassStatus, at time.Time) bool {

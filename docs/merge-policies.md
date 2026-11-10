@@ -1007,8 +1007,10 @@ NAME                                   REPO    AUTHORITY    CLASSES   LIVE   ACC
 mergepolicy.maku.ogenki.io/cnref       cnref   repository   3         1      True       12d
 ```
 
-Each condition carries `observedGeneration`, the object's generation. A refused object keeps the
-last accepted version in service, and its message says which generation that is.
+The status and each of its conditions carry one `observedGeneration`: the generation the factory
+last looked at, which trails the object's own until it reads the newer one. A condition's
+`lastTransitionTime` moves only when its status does. A refused object keeps the last accepted
+version in service, and its message says which generation that is.
 
 | Condition | On | Status and reason |
 |---|---|---|

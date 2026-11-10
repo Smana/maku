@@ -313,3 +313,29 @@ func TestFactory(t *testing.T) {
 		})
 	}
 }
+
+// An outcome older than the object (the Source observed generation 3, the object is at 5): every
+// condition and every status level says 3, the generation the status is about.
+func TestOneObservedGenerationPerObject(t *testing.T) {
+	in := Inputs{Config: cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}), GitHubUp: true,
+		Synced:    configsource.Synced{At: now.Time},
+		Snapshot:  func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{HasClasses: true}, true },
+		Connected: func(string) (bool, string) { return true, "" },
+		Outcomes:  []configsource.Outcome{served(resources.KindFactory, "f"), served(resources.KindRepository, "r"), served(resources.KindMergePolicy, "p")}}
+	got := Desired(in, []v1alpha1.Factory{obj("f", 5)}, []v1alpha1.Repository{repoObj("r", repo, 5)}, []v1alpha1.MergePolicy{policyObj("p", "r", 5)}, now)
+	check := func(kind string, gen int64, cs []metav1.Condition, types ...string) {
+		t.Helper()
+		if gen != 3 {
+			t.Errorf("%s status observedGeneration %d, want 3", kind, gen)
+		}
+		for _, typ := range types {
+			if c := cond(t, cs, typ); c.ObservedGeneration != 3 {
+				t.Errorf("%s %s observedGeneration %d, want 3", kind, typ, c.ObservedGeneration)
+			}
+		}
+	}
+	f, r, p := got.Factories["f"], got.Repositories["r"], got.MergePolicies["p"]
+	check("Factory", f.ObservedGeneration, f.Conditions, v1alpha1.ConditionAccepted, ConditionReady)
+	check("Repository", r.ObservedGeneration, r.Conditions, v1alpha1.ConditionAccepted, ConditionConnected)
+	check("MergePolicy", p.ObservedGeneration, p.Conditions, v1alpha1.ConditionAccepted, ConditionRepositoryFileValid, ConditionInSync)
+}

@@ -6,8 +6,9 @@
 //   - Desired is pure: no I/O, no clock, no cluster. The caller passes the objects, the inputs
 //     and now. The writer, not Desired, preserves a condition's stored lastTransitionTime when its
 //     status did not change (apimeta.SetStatusCondition semantics).
-//   - Every status carries observedGeneration, the object's generation, at its level and on each
-//     condition. Conditions: Accepted (all kinds), Connected (Repository), RepositoryFileValid
+//   - Every status carries one observedGeneration, at its level and on each condition: the
+//     generation the Source observed when it has an outcome for the object, the object's own
+//     otherwise. Conditions: Accepted (all kinds), Connected (Repository), RepositoryFileValid
 //     and InSync (MergePolicy), Ready (Factory).
 //   - A refused object's other conditions are still computed when its repository is served, from
 //     the last good version the factory serves.
@@ -144,13 +145,14 @@ func (d *desirer) accepted(cs *[]metav1.Condition, gen int64, o *configsource.Ou
 
 func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 	o := d.outcome(resources.KindFactory, f.Name)
-	st := v1alpha1.FactoryStatus{ObservedGeneration: observed(o, f.Generation), Stopped: d.in.Stopped}
+	g := observed(o, f.Generation)
+	st := v1alpha1.FactoryStatus{ObservedGeneration: g, Stopped: d.in.Stopped}
 	if d.in.Config != nil {
 		st.Repositories = len(d.in.Config.Repos())
 	}
-	d.accepted(&st.Conditions, observed(o, f.Generation), o)
+	d.accepted(&st.Conditions, g, o)
 	ready := func(status metav1.ConditionStatus, reason, msg string) {
-		d.set(&st.Conditions, f.Generation, ConditionReady, status, reason, msg)
+		d.set(&st.Conditions, g, ConditionReady, status, reason, msg)
 	}
 	sync := d.in.Synced
 	switch {
@@ -172,18 +174,19 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 
 func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePolicy) v1alpha1.RepositoryStatus {
 	o := d.outcome(resources.KindRepository, r.Name)
-	st := v1alpha1.RepositoryStatus{ObservedGeneration: observed(o, r.Generation)}
-	d.accepted(&st.Conditions, observed(o, r.Generation), o)
+	g := observed(o, r.Generation)
+	st := v1alpha1.RepositoryStatus{ObservedGeneration: g}
+	d.accepted(&st.Conditions, g, o)
 	name := r.Spec.Repository
 	_, served := d.served[strings.ToLower(name)]
 	switch {
 	case served && d.in.Connected == nil:
-		d.set(&st.Conditions, r.Generation, ConditionConnected, metav1.ConditionUnknown, "NotChecked", "")
+		d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionUnknown, "NotChecked", "")
 	case served:
 		if ok, msg := d.in.Connected(name); ok {
-			d.set(&st.Conditions, r.Generation, ConditionConnected, metav1.ConditionTrue, "Healthy", "")
+			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionTrue, "Healthy", "")
 		} else {
-			d.set(&st.Conditions, r.Generation, ConditionConnected, metav1.ConditionFalse, "Unhealthy", msg)
+			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionFalse, "Unhealthy", msg)
 		}
 	default:
 		var err error
@@ -191,9 +194,9 @@ func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePo
 			err = d.in.WireErr(name)
 		}
 		if err != nil {
-			d.set(&st.Conditions, r.Generation, ConditionConnected, metav1.ConditionFalse, "WiringFailed", err.Error())
+			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionFalse, "WiringFailed", err.Error())
 		} else {
-			d.set(&st.Conditions, r.Generation, ConditionConnected, metav1.ConditionFalse, "NotServed", "")
+			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionFalse, "NotServed", "")
 		}
 	}
 	for _, p := range sortedByName(policies) {
@@ -213,15 +216,16 @@ func sortedByName(ps []v1alpha1.MergePolicy) []v1alpha1.MergePolicy {
 
 func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatus {
 	o := d.outcome(resources.KindMergePolicy, p.Name)
-	st := v1alpha1.MergePolicyStatus{ObservedGeneration: observed(o, p.Generation)}
-	d.accepted(&st.Conditions, observed(o, p.Generation), o)
+	g := observed(o, p.Generation)
+	st := v1alpha1.MergePolicyStatus{ObservedGeneration: g}
+	d.accepted(&st.Conditions, g, o)
 	repository := ""
 	if o != nil {
 		repository = o.Repository
 	}
 	rc, served := d.served[strings.ToLower(repository)]
 	if repository == "" || !served {
-		d.fileConditions(&st, p.Generation, "", false)
+		d.fileConditions(&st, g, "", false)
 		return st
 	}
 	st.Authority = config.ClassAuthorityCentral
@@ -250,7 +254,7 @@ func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatu
 	}
 	slices.SortFunc(st.Classes, func(a, b v1alpha1.ClassStatus) int { return cmp.Compare(a.Name, b.Name) })
 	st.ClassCount = len(st.Classes)
-	d.fileConditions(&st, p.Generation, repository, true)
+	d.fileConditions(&st, g, repository, true)
 	return st
 }
 
