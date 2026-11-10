@@ -12,6 +12,7 @@ import { hasControls, mountComposer, mountControls, rejection, shortPrincipal } 
 import { mountFork } from "./fork";
 import { mountNeeds } from "./needs";
 import { renderPolicy } from "./policy";
+import { renderProfile } from "./profile";
 import { changesSummary, fetchSummary, focusApproval, renderNotes, type Summary } from "./summary";
 import { PendingActs } from "./pending";
 import { RoomState } from "./room-state";
@@ -51,11 +52,12 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // keeps what the page already shows. No aria-live: a rebuild would re-read every block.
   const blocks = document.createElement("div");
   const policyBlock = document.createElement("div");
+  const profileBlock = document.createElement("div");
   const summaryError = document.createElement("p");
   summaryError.className = "summary-error";
   summaryError.setAttribute("role", "status");
   summaryError.hidden = true;
-  lead.append(blocks, policyBlock, summaryError);
+  lead.append(blocks, policyBlock, profileBlock, summaryError);
   // Until the first frame, three grey message shapes stand where the stream will be:
   // an empty page reads as broken (P9).
   const skeleton = document.createElement("div");
@@ -246,6 +248,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
         renderPolicy(policyBlock, sum);
+        renderProfile(profileBlock, sum);
         showRail(sum);
         coordination.set(sum.flow?.coordination, sum.coordination);
         runView.set(sum.flow?.nodes ?? []);

@@ -89,6 +89,28 @@ func TestFactsOfABareTask(t *testing.T) {
 	}
 }
 
+func TestFactsOfProfile(t *testing.T) {
+	task := issueTask("3buqdlot", 7, "x")
+	task.Status.Phase = v1alpha1.PhaseDone
+	task.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+	f := factsOf(task)
+	want := &envelope.ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+	if !reflect.DeepEqual(f.Profile, want) {
+		t.Fatalf("profile = %+v, want %+v", f.Profile, want)
+	}
+	key := factsKey(f)
+	f.Profile.Name = "review-floor"
+	if factsKey(f) == key {
+		t.Fatal("the terminal facts key drops the profile")
+	}
+	task.Status.Profile = nil
+	if f := factsOf(task); f.Profile != nil {
+		t.Fatalf("profile without a ProfileStatus = %+v", f.Profile)
+	}
+}
+
 func TestFactsArePostedOncePerChange(t *testing.T) {
 	g := newRig(t, awaiting())
 	tk := stored(t, g.c)

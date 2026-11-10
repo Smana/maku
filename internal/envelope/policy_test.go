@@ -62,6 +62,41 @@ func TestTaskFactsValidateNamesThePolicy(t *testing.T) {
 	}
 }
 
+func validProfileFact() ProfileFact {
+	return ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+}
+
+func TestProfileFactValidate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*ProfileFact)
+		ok   bool
+	}{
+		{"every field is valid", func(*ProfileFact) {}, true},
+		{"only the required fields are valid", func(p *ProfileFact) { p.Recommended, p.Reason, p.Why = "", "", "" }, true},
+		{"a name is required", func(p *ProfileFact) { p.Name = "" }, false},
+		{"the name is bounded", func(p *ProfileFact) { p.Name = strings.Repeat("n", 64) }, false},
+		{"the source is an enum", func(p *ProfileFact) { p.Source = "model" }, false},
+		{"the cohort is an enum", func(p *ProfileFact) { p.Cohort = "experiment" }, false},
+		{"the recommendation is bounded", func(p *ProfileFact) { p.Recommended = strings.Repeat("r", 64) }, false},
+		{"the reason is bounded", func(p *ProfileFact) { p.Reason = strings.Repeat("r", 33) }, false},
+		{"the explanation is bounded", func(p *ProfileFact) { p.Why = strings.Repeat("é", 201) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := validProfileFact()
+			tc.edit(&p)
+			err := (TaskFacts{Phase: "Implementing", Profile: &p}).Validate()
+			if (err == nil) != tc.ok {
+				t.Fatalf("Validate() = %v, want ok=%v", err, tc.ok)
+			}
+			if !tc.ok && !strings.HasPrefix(err.Error(), "task facts: profile: ") {
+				t.Fatalf("Validate() = %v, want a task facts: profile: error", err)
+			}
+		})
+	}
+}
+
 func TestClip(t *testing.T) {
 	nine := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
 	if got, cut := Clip(nine); len(got) != MaxPolicyList || !cut {

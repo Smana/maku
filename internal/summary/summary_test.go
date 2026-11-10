@@ -27,6 +27,20 @@ func view(st summary.State, room, url string, sub policy.Subject, after int64, n
 	return summary.View(st, room, url, sub, summary.GitHubStanding{}, after, now)
 }
 
+func TestSummaryIncludesProfile(t *testing.T) {
+	p := &envelope.ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+	st := summary.State{Facts: &envelope.TaskFacts{Phase: "Done", Profile: p}}
+	s := view(st, "3kq7x2ma", "https://rooms.example/r/3kq7x2ma", owner(), 0, time.Now())
+	if !reflect.DeepEqual(s.Status.Profile, p) {
+		t.Fatalf("profile = %+v, want %+v", s.Status.Profile, p)
+	}
+	st.Facts.Profile = nil
+	if s := view(st, "3kq7x2ma", "https://rooms.example/r/3kq7x2ma", owner(), 0, time.Now()); s.Status.Profile != nil {
+		t.Fatalf("profile without facts = %+v", s.Status.Profile)
+	}
+}
+
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.json want fields from the current fold")
 
 var goldens = []string{"normal", "resumed", "expired_approval", "sealed", "no_facts", "runs_and_spend", "hostile"}

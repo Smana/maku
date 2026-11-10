@@ -98,6 +98,10 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 			f.PR.ApprovedBy, f.PR.ApprovedCommit, f.PR.ApprovalStale = a.By, a.Commit, a.Stale
 		}
 	}
+	if p := t.Status.Profile; p != nil {
+		f.Profile = &envelope.ProfileFact{Name: p.Name, Source: p.Source, Cohort: p.Cohort,
+			Recommended: p.Recommended, Reason: p.Reason, Why: p.Why}
+	}
 	return f
 }
 
