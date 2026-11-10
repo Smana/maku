@@ -15,9 +15,13 @@ const maxRequestBody = 1 << 20
 
 // Stub is the in-process external-service emulator. Its state is safe for concurrent requests.
 type Stub struct {
-	key        *rsa.PrivateKey
-	handler    http.Handler
-	modelCalls atomic.Int64
+	key            *rsa.PrivateKey
+	handler        http.Handler
+	issues         *IssueStore
+	modelCalls     atomic.Int64
+	plannerCalls   atomic.Int64
+	scoperCalls    atomic.Int64
+	scoperHandoffs atomic.Int64
 }
 
 // New builds a stub with one throwaway signing key. It never contacts an external service.
@@ -26,7 +30,7 @@ func New() *Stub {
 	if err != nil {
 		panic("e2e-stub: generate throwaway RSA key: " + err.Error())
 	}
-	s := &Stub{key: key}
+	s := &Stub{key: key, issues: NewIssueStore()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /oauth/v2/keys", s.jwks)
@@ -39,6 +43,8 @@ func New() *Stub {
 	mux.HandleFunc("GET /repos/owner/repo", gitHubRepository)
 	mux.HandleFunc("GET /user/123", gitHubUser)
 	mux.HandleFunc("GET /repos/owner/repo/collaborators/dev/permission", gitHubPermission)
+	s.registerIssueRoutes(mux)
+	mux.HandleFunc("POST /v1/chat/completions", s.completion)
 	s.handler = boundedBodies(mux)
 	return s
 }
@@ -48,6 +54,24 @@ func (s *Stub) Handler() http.Handler { return s.handler }
 
 // ModelCalls reports model requests received so far; non-model routes never change it.
 func (s *Stub) ModelCalls() int { return int(s.modelCalls.Load()) }
+
+// PlannerCalls reports governed plan/v1 model requests.
+func (s *Stub) PlannerCalls() int { return int(s.plannerCalls.Load()) }
+
+// ScoperCalls reports scoper model requests, including the finish after a handoff.
+func (s *Stub) ScoperCalls() int { return int(s.scoperCalls.Load()) }
+
+// Issue returns one issue from the same store the HTTP routes use.
+func (s *Stub) Issue(number int) (Issue, bool) { return s.issues.Issue(number) }
+
+// SetBody edits one issue body in the same store the HTTP routes use.
+func (s *Stub) SetBody(number int, body string) (Issue, bool) { return s.issues.SetBody(number, body) }
+
+// Comments returns all issue comments from the same store the HTTP routes use.
+func (s *Stub) Comments(number int) []Comment { return s.issues.Comments(number) }
+
+// LabelEvents returns all label additions from the same store the HTTP routes use.
+func (s *Stub) LabelEvents(number int) []LabelEvent { return s.issues.LabelEvents(number) }
 
 func boundedBodies(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

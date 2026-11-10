@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+const scoperPrompt = "<!-- agent-factory scoper nudgeAt=25 maxToolCalls=40 -->\nYou are the scoper for agent factory task demo in owner/repo."
+
+type completionEnvelope struct {
+	Choices []struct {
+		FinishReason string `json:"finish_reason"`
+		Message      struct {
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"message"`
+	} `json:"choices"`
+}
+
+type modelCallCounters interface {
+	PlannerCalls() int
+	ScoperCalls() int
+}
+
+func modelCounters(t *testing.T, stub *Stub) modelCallCounters {
+	t.Helper()
+	counters, ok := any(stub).(modelCallCounters)
+	if !ok {
+		t.Fatal("Stub does not expose separate planner and scoper counters")
+	}
+	return counters
+}
+
+func postCompletion(t *testing.T, ts *httptest.Server, body string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/v1/chat/completions", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, raw
+}
+
+func TestModelPlannerReturnsOneValidG1Plan(t *testing.T) {
+	stub, ts := newStubServer(t)
+	body := `{"model":"tier-frontier","response_format":{"type":"json_object"},"messages":[` +
+		`{"role":"system","content":"Return plan/v1 JSON."},{"role":"user","content":"Plan this change for owner/repo."}]}`
+	status, raw := postCompletion(t, ts, body)
+	if status != http.StatusOK {
+		t.Fatalf("planner status = %d, body %s", status, raw)
+	}
+	envelope := decodeResponse[completionEnvelope](t, raw)
+	if len(envelope.Choices) != 1 || envelope.Choices[0].FinishReason != "stop" {
+		t.Fatalf("planner envelope = %+v", envelope)
+	}
+	var draft struct {
+		Repository string `json:"repository"`
+		Issues     []struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+			Class string `json:"class"`
+		} `json:"issues"`
+		Gaps []struct {
+			ID          string `json:"id"`
+			Section     string `json:"section"`
+			Text        string `json:"text"`
+			Recommended struct {
+				Answer string `json:"answer"`
+				Why    string `json:"why"`
+			} `json:"recommended"`
+		} `json:"gaps"`
+	}
+	if err := json.Unmarshal([]byte(envelope.Choices[0].Message.Content), &draft); err != nil {
+		t.Fatalf("planner content is not JSON: %v", err)
+	}
+	if draft.Repository != "owner/repo" || len(draft.Issues) != 1 || len(draft.Gaps) != 1 {
+		t.Fatalf("planner draft = %+v", draft)
+	}
+	gap := draft.Gaps[0]
+	if gap.ID != "g1" || gap.Section != "what-is-wrong" || gap.Text == "" || gap.Recommended.Answer != "task check" || gap.Recommended.Why == "" {
+		t.Fatalf("planner gap = %+v", gap)
+	}
+	if got := strings.Count(draft.Issues[0].Body, "[NEEDS CLARIFICATION:"); got != 1 ||
+		!strings.Contains(draft.Issues[0].Body, "[NEEDS CLARIFICATION: g1 ") {
+		t.Fatalf("planner body has %d markers: %q", got, draft.Issues[0].Body)
+	}
+	counters := modelCounters(t, stub)
+	if counters.PlannerCalls() != 1 || counters.ScoperCalls() != 0 || stub.ModelCalls() != 1 {
+		t.Fatalf("calls planner/scoper/total = %d/%d/%d", counters.PlannerCalls(), counters.ScoperCalls(), stub.ModelCalls())
+	}
+}
+
+func scoperCompletion(t *testing.T, ts *httptest.Server) (string, map[string]any) {
+	t.Helper()
+	body := fmt.Sprintf(`{"model":"tier-light","stream":false,"messages":[{"role":"system","content":"You are an agent."},{"role":"user","content":%s}]}`, strconvQuote(scoperPrompt))
+	status, raw := postCompletion(t, ts, body)
+	if status != http.StatusOK {
+		t.Fatalf("scoper status = %d, body %s", status, raw)
+	}
+	envelope := decodeResponse[completionEnvelope](t, raw)
+	if len(envelope.Choices) != 1 || len(envelope.Choices[0].Message.ToolCalls) != 1 {
+		t.Fatalf("scoper envelope = %+v", envelope)
+	}
+	call := envelope.Choices[0].Message.ToolCalls[0].Function
+	var args map[string]any
+	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil {
+		t.Fatalf("tool arguments are not JSON: %v", err)
+	}
+	return call.Name, args
+}
+
+func TestModelScoperQuestionThenReady(t *testing.T) {
+	stub, ts := newStubServer(t)
+	name, args := scoperCompletion(t, ts)
+	if name != "room-broker__room_handoff" || args["toRole"] != "implementer" || args["commit"] != "4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3" {
+		t.Fatalf("question handoff %s %+v", name, args)
+	}
+	question, ok := args["scope"].(map[string]any)
+	if !ok || question["state"] != "question" || question["question"] == "" || len(question["assumptions"].([]any)) == 0 || len(question["acceptance"].([]any)) == 0 {
+		t.Fatalf("question scope = %+v", args["scope"])
+	}
+
+	name, args = scoperCompletion(t, ts)
+	ready, ok := args["scope"].(map[string]any)
+	if name != "room-broker__room_handoff" || !ok || ready["state"] != "ready" || ready["question"] != nil || len(ready["acceptance"].([]any)) == 0 {
+		t.Fatalf("ready handoff %s %+v", name, args)
+	}
+	counters := modelCounters(t, stub)
+	if counters.PlannerCalls() != 0 || counters.ScoperCalls() != 2 || stub.ModelCalls() != 2 {
+		t.Fatalf("calls planner/scoper/total = %d/%d/%d", counters.PlannerCalls(), counters.ScoperCalls(), stub.ModelCalls())
+	}
+}
+
+func TestModelScoperFinishesAfterHandoff(t *testing.T) {
+	_, ts := newStubServer(t)
+	messages := `{"role":"system","content":"You are an agent."},{"role":"user","content":` + strconvQuote(scoperPrompt) + `},` +
+		`{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"room-broker__room_handoff","arguments":"{}"}}]},` +
+		`{"role":"tool","name":"room-broker__room_handoff","content":"ok"}`
+	body := `{"stream":true,"messages":[` + messages + `]}`
+	status, raw := postCompletion(t, ts, body)
+	if status != http.StatusOK || !strings.Contains(string(raw), `"name":"finish"`) || !strings.HasSuffix(string(raw), "data: [DONE]\n\n") {
+		t.Fatalf("post-handoff status = %d, stream %s", status, raw)
+	}
+}
+
+func TestModelOtherRolesReceiveFinish(t *testing.T) {
+	stub, ts := newStubServer(t)
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			body := fmt.Sprintf(`{"stream":%v,"messages":[{"role":"system","content":"You are the implementer."}]}`, stream)
+			status, raw := postCompletion(t, ts, body)
+			if status != http.StatusOK || !strings.Contains(string(raw), `"name":"finish"`) {
+				t.Fatalf("finish status = %d, response %s", status, raw)
+			}
+			if stream && (!strings.Contains(string(raw), `"type":"function","index":0`) || !strings.HasSuffix(string(raw), "data: [DONE]\n\n")) {
+				t.Fatalf("invalid tool-call stream %q", raw)
+			}
+		})
+	}
+	counters := modelCounters(t, stub)
+	if counters.PlannerCalls() != 0 || counters.ScoperCalls() != 0 || stub.ModelCalls() != 2 {
+		t.Fatalf("calls planner/scoper/total = %d/%d/%d", counters.PlannerCalls(), counters.ScoperCalls(), stub.ModelCalls())
+	}
+}
+
+func TestModelNonModelPathsDoNotChangeCounters(t *testing.T) {
+	stub, ts := newStubServer(t)
+	counters := modelCounters(t, stub)
+	for _, path := range []string{"/healthz", "/repos/owner/repo", "/graphql"} {
+		method := http.MethodGet
+		var body []byte
+		if path == "/graphql" {
+			method = http.MethodPost
+			body = []byte(`{"query":"query { viewer { login } }"}`)
+		}
+		_, _ = request(t, ts, method, path, body)
+	}
+	if counters.PlannerCalls() != 0 || counters.ScoperCalls() != 0 || stub.ModelCalls() != 0 {
+		t.Fatalf("non-model paths changed calls to planner/scoper/total = %d/%d/%d",
+			counters.PlannerCalls(), counters.ScoperCalls(), stub.ModelCalls())
+	}
+}
