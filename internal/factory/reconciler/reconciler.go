@@ -1094,7 +1094,7 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 		floor, _ = cfg.ProfileFor(r.class(cfg, t, d.PredictedClass), profile.Name)
 	}
 	r.profileSpec(cfg, t, d.PredictedClass, floor)
-	if err := r.scopeAtTriage(ctx, cfg, t); err != nil {
+	if err := r.scopeAtTriage(ctx, t); err != nil {
 		return err // a note that cannot be read is retried, never read as none (SC4)
 	}
 	r.splitAtTriage(cfg, t, d.Classification)
