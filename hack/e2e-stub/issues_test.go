@@ -18,19 +18,8 @@ import (
 
 const factoryAuthor = "maku-demo[bot]"
 
-const issueSnapshotQuery = `query($owner:String!, $name:String!, $number:Int!) {
-  repository(owner: $owner, name: $name) {
-    issue(number: $number) {
-      number url title body state
-      author { __typename login }
-      lastEditedAt
-      labels(first: 50) { nodes { name } }
-      timelineItems(itemTypes: [RENAMED_TITLE_EVENT], last: 1) {
-        nodes { __typename ... on RenamedTitleEvent { createdAt } }
-      }
-    }
-  }
-}`
+// issueSnapshotQuery is the serialization of the Issue query struct in internal/factory/forge/github.go.
+const issueSnapshotQuery = `query($name:String!$number:Int!$owner:String!){repository(owner: $owner, name: $name){issue(number: $number){number,url,title,body,state,author{__typename,login},lastEditedAt,labels(first: 50){nodes{name}},timelineItems(itemTypes: [RENAMED_TITLE_EVENT], last: 1){nodes{... on RenamedTitleEvent{createdAt}}}}}}`
 
 type restIssue struct {
 	ID        int64     `json:"id"`
@@ -82,6 +71,30 @@ func graphQLIssue(t *testing.T, ts *httptest.Server, number int) (int, []byte) {
 	body := []byte(fmt.Sprintf(`{"query":%s,"variables":{"owner":"owner","name":"repo","number":%d}}`,
 		strconvQuote(issueSnapshotQuery), number))
 	return request(t, ts, http.MethodPost, "/graphql", body)
+}
+
+func TestIssueStoreRealForgeQuery(t *testing.T) {
+	_, ts := newStubServer(t)
+	number := createIssue(t, ts, "body")
+	status, raw := graphQLIssue(t, ts, number)
+	if status != http.StatusOK {
+		t.Fatalf("real forge query status = %d, body %s", status, raw)
+	}
+	var response struct {
+		Data struct {
+			Repository struct {
+				Issue struct {
+					Number int `json:"number"`
+				} `json:"issue"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.Repository.Issue.Number != number {
+		t.Fatalf("real forge query response = %s", raw)
+	}
 }
 
 func TestIssueStoreLabelsBodyAndEvents(t *testing.T) {
@@ -198,7 +211,7 @@ func TestIssueStoreGraphQLFailsClosed(t *testing.T) {
 	queries := []string{
 		`query { viewer { login } }`,
 		strings.Replace(issueSnapshotQuery, "repository(", "viewer { login } repository(", 1),
-		strings.Replace(issueSnapshotQuery, "number url title body state", "numberurltitlebodystate", 1),
+		strings.Replace(issueSnapshotQuery, "number,url,title,body,state", "numberurltitlebodystate", 1),
 	}
 	for _, query := range queries {
 		body := []byte(fmt.Sprintf(`{"query":%s,"variables":{"owner":"owner","name":"repo","number":%d}}`, strconvQuote(query), number))

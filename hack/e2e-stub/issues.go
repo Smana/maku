@@ -531,7 +531,7 @@ func (s *Stub) editComment(w http.ResponseWriter, r *http.Request) {
 
 const issueSnapshotSelection = "repository(owner:$owner,name:$name){issue(number:$number){" +
 	"number,url,title,body,state,author{__typename,login},lastEditedAt,labels(first:50){nodes{name}}," +
-	"timelineItems(itemTypes:[RENAMED_TITLE_EVENT],last:1){nodes{__typename,... on RenamedTitleEvent{createdAt}}}}}}"
+	"timelineItems(itemTypes:[RENAMED_TITLE_EVENT],last:1){nodes{... on RenamedTitleEvent{createdAt}}}}}}"
 
 var graphQLPunctuation = regexp.MustCompile(`\s*([{}():])\s*`)
 

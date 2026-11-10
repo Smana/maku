@@ -49,7 +49,7 @@ func (r completionRequest) role() string {
 		return otherRole
 	}
 	system := r.Messages[0]
-	if system.Role == "system" && r.ResponseFormat.Type == "json_object" && strings.Contains(system.Content, "plan/v1") {
+	if system.Role == "system" && r.ResponseFormat.Type == "json_object" && strings.Contains(system.Content, "You plan the issues a repository's maintainers will work from") {
 		return plannerRole
 	}
 	// OpenHands carries the factory brief in its user turn, not in the SDK's system prompt.
