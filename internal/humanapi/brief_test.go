@@ -24,6 +24,16 @@ type briefBody struct {
 	Cursor     string `json:"cursor"`
 }
 
+type briefQuestionBody struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended"`
+}
+
+type briefQuestionAnswer struct {
+	Text     string             `json:"text"`
+	Question *briefQuestionBody `json:"question"`
+}
+
 // briefAt is GET /api/rooms/{id}/brief+q for h: the answer, and the status it came with.
 func briefAt(t *testing.T, e env, q string, h http.Header) (briefBody, int) {
 	t.Helper()
@@ -58,6 +68,16 @@ func scopedHandoffs(padding int) option {
 			v.evs = append(v.evs, envelope.Event{V: 1, Seq: seq, RoomID: roomID, Type: envelope.Message, TS: now.Add(-time.Hour),
 				Payload: []byte(`{"kind":"chat","text":"x","delivery":"none"}`)})
 		}
+	}
+}
+
+func handoffScope(scope *envelope.Scope) option {
+	return func(_ *Server, _ *fanout.Hub, v *hubView) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		seq := int64(len(v.evs)) + 1
+		v.evs = append(v.evs, envelope.Event{V: 1, Seq: seq, RoomID: roomID, Type: envelope.Handoff, TS: time.Now(),
+			Payload: envelope.Must(envelope.HandoffPayload{FromRole: "triager", ToRole: "implementer", Summary: "scoped", Scope: scope})})
 	}
 }
 
@@ -149,6 +169,84 @@ func TestBriefScope(t *testing.T) {
 		if !strings.Contains(got.text, want) {
 			t.Errorf("no %q in\n%s", want, got.text)
 		}
+	}
+}
+
+// A scoper's question is structured data for the local answer tool, never a new line in the rendered brief.
+func TestBriefQuestion(t *testing.T) {
+	tests := []struct {
+		name            string
+		state           string
+		assumptions     []string
+		wantQuestion    bool
+		wantRecommended string
+	}{
+		{name: "question with recommendation", state: envelope.ScopeQuestion, assumptions: []string{"task check"}, wantQuestion: true, wantRecommended: "task check"},
+		{name: "ready omits question", state: envelope.ScopeReady},
+		{name: "question without recommendation", state: envelope.ScopeQuestion, wantQuestion: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := &envelope.Scope{State: tc.state, Task: "prove the resume brief", Question: "Which command proves this?",
+				Assumptions: tc.assumptions, Acceptance: []envelope.Acceptance{{Check: "go test ./internal/humanapi", Proves: "the brief still passes"}}}
+			e := setup(t, mcpOn, handoffScope(scope))
+			got := call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID})
+			var structured briefQuestionAnswer
+			if err := json.Unmarshal(got.structured, &structured); err != nil {
+				t.Fatalf("MCP brief: %v", err)
+			}
+			check := func(door string, answer briefQuestionAnswer) {
+				if !tc.wantQuestion {
+					if answer.Question != nil {
+						t.Fatalf("%s question = %+v, want nil", door, answer.Question)
+					}
+					return
+				}
+				if answer.Question == nil || answer.Question.Text != "Which command proves this?" || answer.Question.Recommended != tc.wantRecommended {
+					t.Fatalf("%s question = %+v", door, answer.Question)
+				}
+			}
+			check("MCP", structured)
+			if got.text != structured.Text {
+				t.Fatalf("MCP text differs from its envelope:\n%s\n%s", got.text, structured.Text)
+			}
+			for _, unwanted := range []string{scope.Question, tc.wantRecommended} {
+				if unwanted != "" && strings.Contains(structured.Text, unwanted) {
+					t.Errorf("rendered brief gained structured question text %q:\n%s", unwanted, structured.Text)
+				}
+			}
+			for _, want := range []string{"Acceptance: `go test ./internal/humanapi`", "Plan: scope " + tc.state} {
+				if !strings.Contains(structured.Text, want) {
+					t.Errorf("rendered brief lost %q:\n%s", want, structured.Text)
+				}
+			}
+
+			code, body := get(t, e, "/api/rooms/"+roomID+"/brief", header("dev"))
+			var route briefQuestionAnswer
+			if code != http.StatusOK || json.Unmarshal([]byte(body), &route) != nil {
+				t.Fatalf("HTTP brief: %d %s", code, body)
+			}
+			check("HTTP", route)
+			if route.Text != structured.Text {
+				t.Fatalf("HTTP and MCP rendered briefs differ:\n%s\n%s", route.Text, structured.Text)
+			}
+
+			schema, ok := toolEntry(t, e, viaRoomctl("dev"), "room_brief")["outputSchema"].(map[string]any)
+			if !ok {
+				t.Fatalf("room_brief declares no outputSchema")
+			}
+			properties, ok := schema["properties"].(map[string]any)
+			if !ok || properties["question"] == nil {
+				t.Fatalf("room_brief outputSchema has no question: %+v", schema)
+			}
+			var served any
+			if err := json.Unmarshal(got.structured, &served); err != nil {
+				t.Fatalf("%s: %v", got.structured, err)
+			}
+			for _, fault := range schemaFaults(schema, served, "structuredContent") {
+				t.Errorf("%s", fault)
+			}
+		})
 	}
 }
 

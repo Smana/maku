@@ -167,7 +167,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 		schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["room"],"properties":{"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"since":{"type":"string","pattern":"^(seq:[0-9]{1,18}|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))$"}}}`),
 		// The answer, declared as the route serves it: both doors give one envelope, so a field cannot be
 		// added to one and not the other.
-		output: json.RawMessage(`{"type":"object","required":["apiVersion","room","text","cursor"],"properties":{"apiVersion":{"type":"string"},"room":{"type":"string"},"text":{"type":"string"},"cursor":{"type":"string"}}}`)})
+		output: json.RawMessage(`{"type":"object","required":["apiVersion","room","text","cursor"],"properties":{"apiVersion":{"type":"string"},"room":{"type":"string"},"text":{"type":"string"},"cursor":{"type":"string"},"question":{"type":"object","required":["text","recommended"],"properties":{"text":{"type":"string"},"recommended":{"type":"string"}}}}}`)})
 	if !p.Sponsored {
 		return all
 	}
