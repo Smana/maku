@@ -154,10 +154,30 @@ describe("the index and evidence pages", () => {
     const cards = [...app.querySelectorAll("a.settings-card")];
     expect(cards.map((a) => a.getAttribute("href"))).toEqual(["/settings/merge-policies", "/settings/evidence", "/settings/approval-memory"]);
     expect(cards[0].textContent).toContain("2 repositories");
-    expect(cards[0].textContent).toContain("1 live · 1 shadow");
-    expect(cards[1].textContent).toContain("1 class eligible to promote");
+    expect(cards[0].textContent).toContain("1 live · 1 shadow (1 unreadable)");
+    expect(cards[1].textContent).toContain("1 class eligible to promote (1 unreadable)");
     expect(cards[2].textContent).toContain("2 saved grants");
     expect(app.querySelector("main ul")).toBeNull(); // no bullet list
+  });
+
+  it("says the counts are unavailable when the list, or every repository, cannot be read", async () => {
+    for (const routes of [{}, { "/api/policy/repositories": { repositories: ["Smana/a", "Smana/b"] } }]) {
+      const app = document.createElement("div");
+      await mountSettings(app, "/settings", fakeFetch(routes));
+      const cards = [...app.querySelectorAll("a.settings-card")];
+      expect(cards[0].textContent).toContain("Counts unavailable right now.");
+      expect(cards[1].textContent).toContain("Counts unavailable right now.");
+      expect(cards[0].textContent).not.toContain("no class");
+    }
+  });
+
+  it("counts an empty list as zero, not as unavailable", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings", fakeFetch({ "/api/policy/repositories": { repositories: [] } }));
+    const cards = [...app.querySelectorAll("a.settings-card")];
+    expect(cards[0].textContent).toContain("0 repositories");
+    expect(cards[1].textContent).toContain("No class to promote yet.");
+    expect(cards[1].textContent).not.toContain("unavailable");
   });
 
   it("lists each repository with where its classes come from and its classes by mode", async () => {

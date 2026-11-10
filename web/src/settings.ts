@@ -240,21 +240,28 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
   const main = settingsFrame(app, "Settings", "/settings", theme);
   const box = el("div", undefined, "settings-cards");
   main.append(box);
-  let repos: string[] = [];
+  let repos: string[] | undefined;
   let pages: (RepositoryPage | Error)[] = [];
   let grants: number | undefined;
-  try { ({ repositories: repos } = await read<{ repositories: string[] }>("/api/policy/repositories", get)); pages = await readAll(repos, get); } catch { /* counts unknown */ }
+  try { ({ repositories: repos } = await read<{ repositories: string[] }>("/api/policy/repositories", get)); pages = await readAll(repos, get); }
+  catch (e) {
+    if (e instanceof SignInRequired) { failed(main, e); return; }
+    repos = undefined; // the card says the counts are unavailable
+  }
   try { grants = (await read<{ grants: unknown[] }>("/api/approval-memory", get)).grants.length; } catch { /* counts unknown */ }
   const ok = pages.filter((p): p is RepositoryPage => !(p instanceof Error));
   const modes: Record<string, number> = {};
   for (const p of ok) for (const [m, n] of Object.entries(modeCounts(p.report))) modes[m] = (modes[m] ?? 0) + n;
   const eligible = ok.flatMap((p) => p.report.classes).filter((c) => c.mode === "shadow" && c.evidence?.eligible).length;
   const unknown = "Counts unavailable right now.";
+  const bad = pages.length - ok.length;
+  const note = bad ? ` (${bad} unreadable)` : "";
+  const known = repos !== undefined && (repos.length === 0 || ok.length > 0);
   box.append(
     card("/settings/merge-policies", "Merge policies", "Which agent pull requests may merge on their own, per repository.",
-      repos.length ? `${plural(repos.length, "repository", "repositories")} · ${countsText(modes)}` : unknown),
+      !known ? unknown : `${plural(repos!.length, "repository", "repositories")}${repos!.length ? ` · ${countsText(modes)}` : ""}${note}`),
     card("/settings/evidence", "Evidence", "How close each shadow class is to being promoted to live.",
-      ok.length ? `${plural(eligible, "class", "classes")} eligible to promote` : unknown),
+      !known ? unknown : repos!.length === 0 ? "No class to promote yet." : `${plural(eligible, "class", "classes")} eligible to promote${note}`),
     card("/settings/approval-memory", "Approval memory", "Approvals you saved so a later, similar pull request can merge without asking again.",
       grants === undefined ? unknown : plural(grants, "saved grant")));
 }
