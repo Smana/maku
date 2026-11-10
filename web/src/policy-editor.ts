@@ -27,6 +27,8 @@ export interface Preview {
   simulation: { enabled: boolean; rows?: { name: string; class: string; central: Outcome; repository: Outcome; change: string; conforms: boolean }[]; counts?: Record<string, number> };
   strictness?: { class: string; refused: number; refusedMergedUnchanged: number }[];
   proposal?: { path: string; file: string; editURL: string };
+  // For a repository served from a MergePolicy: the factory's manifest of the checked text.
+  manifest?: string; manifestPath?: string;
 }
 export interface Outcome { verdict: string; reason?: string }
 
@@ -310,15 +312,20 @@ export function previewView(p: Preview, at: (msg: string) => number | undefined 
 }
 
 // fileActions copies text or downloads it as the file at path. The label says it was copied:
-// the change of word, not a motion, is the signal.
-export function fileActions(text: () => string, path: string, label = "Copy"): HTMLElement[] {
+// the change of word, not a motion, is the signal. text may be an answer still to come
+// (a check the factory runs first): undefined is no text, and the copy says so.
+export function fileActions(text: () => string | Promise<string | undefined>, path: string, label = "Copy"): HTMLElement[] {
   const copy = el("button", label, "copy");
   copy.type = "button";
   let reset: ReturnType<typeof setTimeout> | undefined;
   copy.onclick = async () => {
     try {
-      await navigator.clipboard.writeText(text());
-      copy.textContent = "Copied";
+      const t = await text();
+      if (t === undefined) copy.textContent = "No manifest: see the check below";
+      else {
+        await navigator.clipboard.writeText(t);
+        copy.textContent = "Copied";
+      }
     } catch {
       copy.textContent = "Copy failed: select the text";
     }
@@ -328,8 +335,22 @@ export function fileActions(text: () => string, path: string, label = "Copy"): H
   const download = el("a", "Download", "download");
   download.setAttribute("download", path.split("/").at(-1)!);
   download.href = "#";
-  // The href is set at the click, so the download is the text as it is then.
-  download.onclick = () => { download.href = `data:application/yaml;charset=utf-8,${encodeURIComponent(text())}`; };
+  const href = (t: string) => `data:application/yaml;charset=utf-8,${encodeURIComponent(t)}`;
+  // The href is set at the click, so the download is the text as it is then. An answer still to
+  // come holds the click, then clicks again once the href is the answer.
+  let ready = false;
+  download.onclick = (e) => {
+    if (ready) { ready = false; return; }
+    const t = text();
+    if (typeof t === "string") { download.href = href(t); return; }
+    e.preventDefault();
+    void t.then((v) => {
+      if (v === undefined) return;
+      download.href = href(v);
+      ready = true;
+      download.click();
+    }, () => undefined);
+  };
   return [copy, download];
 }
 
@@ -345,9 +366,10 @@ export interface YamlView {
 
 // yamlEditor is the expert view: a textarea over its own highlighted copy, with line numbers, the
 // lines an error is about marked, a status line, and copy and download. input is each edit.
-// out, when given, is what copy and download give instead of the text as it is: the text as the
-// file it becomes (a MergePolicy manifest), named path, its copy button labelled label.
-export interface YamlOut { path: string; label: string; wrap: (text: string) => string }
+// out, when given, is what copy and download give instead of the text as it is: the file the
+// factory builds of the text (a MergePolicy manifest), named path, its copy button labelled label;
+// undefined when the factory builds none.
+export interface YamlOut { path: string; label: string; get: (text: string) => Promise<string | undefined> }
 export function yamlEditor(initial: string, path: string, input: (text: string) => void, out?: YamlOut): YamlView {
   const text = el("textarea", undefined, "expert-yaml");
   text.setAttribute("aria-label", "expert YAML view");
@@ -375,7 +397,7 @@ export function yamlEditor(initial: string, path: string, input: (text: string) 
   };
   const bar = el("div", undefined, "yaml-bar");
   bar.append(el("span", out?.path ?? path, "yaml-name"),
-    ...(out ? fileActions(() => out.wrap(text.value), out.path, out.label) : fileActions(() => text.value, path)));
+    ...(out ? fileActions(() => out.get(text.value), out.path, out.label) : fileActions(() => text.value, path)));
   const stack = el("div", undefined, "yaml-stack");
   stack.append(hl, text);
   const body = el("div", undefined, "yaml-body");

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -380,6 +381,7 @@ func TestRefresherReadsOwnedRepositories(t *testing.T) {
 func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
 	cfg := serviceCfg()
 	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 3}}}
+	cfg.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}}
 	s := &Service{Cfg: cfg, Namespace: "factory", Sources: func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true }, Now: time.Now}
 	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
 	if err != nil {
@@ -395,6 +397,12 @@ func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
 	if !strings.Contains(r.Manifest, "docs-links") || !strings.Contains(r.Manifest, "repositoryRef: cloud-native-ref") {
 		t.Fatal(r.Manifest)
 	}
+	// The editor edits the served classes in the file's shape, never spec.classes; the preview
+	// builds the edited manifest in the same namespace, for the same Repository.
+	if r.Served == nil || r.Served.Classes["docs-links"].Mode != mergepolicy.ModeShadow || r.Served.Classes["docs-links"].Harness != "plain" ||
+		r.Namespace != "factory" || r.RepositoryRef != "cloud-native-ref" {
+		t.Fatalf("%+v %+v", r.Served, r)
+	}
 
 	// Hand-named objects: the manifest carries their names, never a derived one.
 	cfg.Generations.Repos["smana/cloud-native-ref"] = config.RepoGenerations{Repository: 2, MergePolicy: 3, RepositoryName: "custom-repo", PolicyName: "custom-policy"}
@@ -408,7 +416,7 @@ func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
 
 	file := service(&fakeSource{file: "factory: aws-0\n", found: true}, time.Now)
 	r, err = file.Report(t.Context(), "Smana/cloud-native-ref")
-	if err != nil || r.Manifest != "" || r.MergePolicy != "" || r.ManifestPath != "" {
+	if err != nil || r.Manifest != "" || r.MergePolicy != "" || r.ManifestPath != "" || r.Served != nil {
 		t.Fatalf("%+v %v", r, err)
 	}
 }

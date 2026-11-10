@@ -98,11 +98,17 @@ type Report struct {
 	AdoptedProfiles []string               `json:"adoptedProfiles"`
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
 	// For a repository served from a MergePolicy object: its name, the manifest of its central
-	// classes and merge block (what a GitOps pull request changes), and the file name to save it
-	// under. Empty for a repository the file serves.
-	MergePolicy  string `json:"mergePolicy,omitempty"`
-	Manifest     string `json:"manifest,omitempty"`
-	ManifestPath string `json:"manifestPath,omitempty"`
+	// classes and merge block (what a GitOps pull request changes), the file name to save it
+	// under, and its classes in the policy file's shape (mergepolicy.Export), which the editor
+	// edits: the editor never edits spec.classes. Empty for a repository the file serves. Served
+	// is nil when a class has no file shape (Export's error).
+	MergePolicy  string            `json:"mergePolicy,omitempty"`
+	Manifest     string            `json:"manifest,omitempty"`
+	ManifestPath string            `json:"manifestPath,omitempty"`
+	Served       *mergepolicy.File `json:"served,omitempty"`
+	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
+	Namespace     string `json:"-"`
+	RepositoryRef string `json:"-"`
 }
 
 var (
@@ -443,6 +449,10 @@ func (s *Service) build(cfg *config.Config, rc *config.Repository, h head, class
 			return Report{}, fmt.Errorf("evidence: manifest: %w", err)
 		}
 		r.MergePolicy, r.Manifest, r.ManifestPath = name, string(m), "mergepolicy-"+name+".yaml"
+		r.Namespace, r.RepositoryRef = s.Namespace, ref
+		if f, err := mergepolicy.Export(rc, cfg); err == nil {
+			r.Served = f
+		}
 	}
 	for _, c := range s.classes(cfg, rc, file) {
 		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode}

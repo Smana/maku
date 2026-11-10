@@ -1029,7 +1029,12 @@ generation the decision used, so a decision can be matched to the `MergePolicy` 
 
 For a repository served from a `MergePolicy`, [the settings page](web-ui.md#settings) offers **Copy
 MergePolicy manifest** and **Download**, a file named `mergepolicy-<name>.yaml` with the real
-object's name. A change is a GitOps pull request on that manifest, which Flux applies.
+object's name. A change is a GitOps pull request on that manifest, which Flux applies. The editor
+holds the served classes in the policy file's shape; the factory builds the manifest. Unedited, it
+is the served one. Edited, the page checks the text first, and the manifest is the check's: each
+class resolved as the gate decides on it. A text the factory refuses has no manifest, and neither
+has a class with `any` or `requiresApproval`, which `spec.classes` cannot hold. The manifest is
+built from the version the factory serves: a change the factory refused is not in it.
 
 Counts and spend are not in the status yet.
 
