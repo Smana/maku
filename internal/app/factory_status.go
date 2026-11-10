@@ -35,7 +35,7 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 				if rc.gh.Healthy(time.Now()) {
 					return true, ""
 				}
-				return false, "no successful GitHub call in the last 3 minutes"
+				return false, "no recent successful GitHub call"
 			},
 			Decisions: rec.Latest,
 			GitHubUp:  conns.healthy(time.Now()),
@@ -47,7 +47,7 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 		if err != nil {
 			log.Warn("status: stop object not read", "error", err)
 		}
-		in.Stopped = stopped && err == nil
+		in.Stopped = stopped
 		return in
 	}
 }

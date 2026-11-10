@@ -12,6 +12,7 @@ import (
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,7 +26,10 @@ const defaultEvery = 30 * time.Second
 // (NeedLeaderElection), on a ticker and whenever it is kicked, and it writes an object only when
 // its computed status differs from the stored one.
 type Writer struct {
-	Client    client.Client // the manager's
+	Client client.Client // the manager's: writes status
+	// Reader lists the objects: the manager's uncached reader, so a kind whose CRD is missing
+	// starts no informer. Client when nil.
+	Reader    client.Reader
 	Namespace string
 	Inputs    func(ctx context.Context) Inputs
 	Every     time.Duration // 30s when zero
@@ -78,18 +82,20 @@ func (w *Writer) WriteOnce(ctx context.Context) error {
 		repos     v1alpha1.RepositoryList
 		policies  v1alpha1.MergePolicyList
 	)
-	in := client.InNamespace(w.Namespace)
-	if err := w.Client.List(ctx, &factories, in); err != nil {
-		return fmt.Errorf("listing Factories: %w", err)
+	reader := w.Reader
+	if reader == nil {
+		reader = w.Client
 	}
-	if err := w.Client.List(ctx, &repos, in); err != nil {
-		return fmt.Errorf("listing Repositories: %w", err)
+	var errs []error
+	for _, l := range []client.ObjectList{&factories, &repos, &policies} {
+		if err := list(ctx, reader, l, w.Namespace); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	if err := w.Client.List(ctx, &policies, in); err != nil {
-		return fmt.Errorf("listing MergePolicies: %w", err)
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	d := Desired(w.Inputs(ctx), factories.Items, repos.Items, policies.Items, metav1.Now())
-	var errs []error
 	for i := range factories.Items {
 		o := &factories.Items[i]
 		errs = append(errs, update(ctx, w.Client, o, func() bool {
@@ -127,6 +133,15 @@ func (w *Writer) WriteOnce(ctx context.Context) error {
 		}))
 	}
 	return errors.Join(errs...)
+}
+
+// list fills l; a kind whose CRD is not installed is an empty list, so the others still go on.
+func list(ctx context.Context, r client.Reader, l client.ObjectList, ns string) error {
+	err := r.List(ctx, l, client.InNamespace(ns))
+	if err == nil || apimeta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
+		return nil
+	}
+	return fmt.Errorf("listing %T: %w", l, err)
 }
 
 // update re-gets o on each attempt (a conflict means it moved), lets set recompute its status

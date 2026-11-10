@@ -106,6 +106,15 @@ type desirer struct {
 	served map[string]config.Repository // lowercased owner/name
 }
 
+// observed is the generation the Source observed when it has an outcome, the object's otherwise:
+// the status never claims an observation the Source did not make.
+func observed(o *configsource.Outcome, objectGen int64) int64 {
+	if o != nil {
+		return o.ObservedGeneration
+	}
+	return objectGen
+}
+
 func (d *desirer) set(cs *[]metav1.Condition, gen int64, typ string, status metav1.ConditionStatus, reason, message string) {
 	apimeta.SetStatusCondition(cs, metav1.Condition{Type: typ, Status: status, Reason: reason, Message: message,
 		ObservedGeneration: gen, LastTransitionTime: d.now})
@@ -134,12 +143,12 @@ func (d *desirer) accepted(cs *[]metav1.Condition, gen int64, o *configsource.Ou
 }
 
 func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
-	st := v1alpha1.FactoryStatus{ObservedGeneration: f.Generation, Stopped: d.in.Stopped}
+	o := d.outcome(resources.KindFactory, f.Name)
+	st := v1alpha1.FactoryStatus{ObservedGeneration: observed(o, f.Generation), Stopped: d.in.Stopped}
 	if d.in.Config != nil {
 		st.Repositories = len(d.in.Config.Repos())
 	}
-	o := d.outcome(resources.KindFactory, f.Name)
-	d.accepted(&st.Conditions, f.Generation, o)
+	d.accepted(&st.Conditions, observed(o, f.Generation), o)
 	ready := func(status metav1.ConditionStatus, reason, msg string) {
 		d.set(&st.Conditions, f.Generation, ConditionReady, status, reason, msg)
 	}
@@ -162,8 +171,9 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 }
 
 func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePolicy) v1alpha1.RepositoryStatus {
-	st := v1alpha1.RepositoryStatus{ObservedGeneration: r.Generation}
-	d.accepted(&st.Conditions, r.Generation, d.outcome(resources.KindRepository, r.Name))
+	o := d.outcome(resources.KindRepository, r.Name)
+	st := v1alpha1.RepositoryStatus{ObservedGeneration: observed(o, r.Generation)}
+	d.accepted(&st.Conditions, observed(o, r.Generation), o)
 	name := r.Spec.Repository
 	_, served := d.served[strings.ToLower(name)]
 	switch {
@@ -202,9 +212,9 @@ func sortedByName(ps []v1alpha1.MergePolicy) []v1alpha1.MergePolicy {
 }
 
 func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatus {
-	st := v1alpha1.MergePolicyStatus{ObservedGeneration: p.Generation}
 	o := d.outcome(resources.KindMergePolicy, p.Name)
-	d.accepted(&st.Conditions, p.Generation, o)
+	st := v1alpha1.MergePolicyStatus{ObservedGeneration: observed(o, p.Generation)}
+	d.accepted(&st.Conditions, observed(o, p.Generation), o)
 	repository := ""
 	if o != nil {
 		repository = o.Repository
@@ -233,7 +243,7 @@ func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatu
 		}
 		if l, ok := last[name]; ok {
 			cs.LastDecision = truncate(l.Verdict+":"+l.Reason, maxLastDecisionLen)
-			at := metav1.NewTime(l.At)
+			at := metav1.NewTime(l.At.Truncate(time.Second)) // the API server stores seconds
 			cs.LastDecisionAt = &at
 		}
 		st.Classes = append(st.Classes, cs)

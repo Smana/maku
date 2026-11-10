@@ -90,8 +90,12 @@ func TestAccepted(t *testing.T) {
 			if c.Message != tt.message {
 				t.Errorf("message %q, want %q", c.Message, tt.message)
 			}
-			if c.ObservedGeneration != 5 || got.ObservedGeneration != 5 {
-				t.Errorf("observedGeneration condition %d status %d, want 5", c.ObservedGeneration, got.ObservedGeneration)
+			wantGen := int64(5) // no outcome: the object's generation
+			if tt.outcome != nil && tt.outcome.Kind == resources.KindRepository {
+				wantGen = tt.outcome.ObservedGeneration
+			}
+			if c.ObservedGeneration != wantGen || got.ObservedGeneration != wantGen {
+				t.Errorf("observedGeneration condition %d status %d, want %d", c.ObservedGeneration, got.ObservedGeneration, wantGen)
 			}
 			if !c.LastTransitionTime.Equal(&now) {
 				t.Errorf("lastTransitionTime %v, want now", c.LastTransitionTime)
@@ -279,7 +283,7 @@ func TestMergePolicyRefusedStillComputed(t *testing.T) {
 
 func TestFactory(t *testing.T) {
 	fresh := configsource.Synced{At: now.Add(-14 * time.Minute)}
-	acc := []configsource.Outcome{{Kind: resources.KindFactory, Name: "f", Accepted: true}}
+	acc := []configsource.Outcome{{Kind: resources.KindFactory, Name: "f", Accepted: true, ObservedGeneration: 2}}
 	tests := []struct {
 		name   string
 		in     Inputs

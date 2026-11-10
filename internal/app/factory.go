@@ -299,7 +299,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Outcomes would deadlock).
 	var policyWatch *mergepolicy.Watch // nil while policyManagement.read is off
 	recorder := &decision.Recorder{}
-	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Namespace: ns, Log: log,
+	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns, Log: log,
 		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, log)}
 	src.OnSynced = statusWriter.Kick
 	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {

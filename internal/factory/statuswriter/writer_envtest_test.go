@@ -3,11 +3,13 @@
 package statuswriter
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -20,6 +22,7 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/configsource"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -72,8 +75,19 @@ func TestEnvtestWriteOnce(t *testing.T) {
 		{Kind: resources.KindRepository, Name: "cnref", Repository: repository, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true},
 		{Kind: resources.KindMergePolicy, Name: "cnref", Repository: repository, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true},
 	}
-	w := &Writer{Client: c, Namespace: envNS, Log: slog.New(slog.DiscardHandler),
-		Inputs: func(context.Context) Inputs { return Inputs{Outcomes: outcomes, Config: cfg} }}
+	var className string
+	for name := range classes {
+		className = name
+		break
+	}
+	// A nanosecond-precision time: the API server keeps seconds, and a second pass must still be quiet.
+	decidedAt := time.Date(2026, 11, 10, 10, 0, 0, 123456789, time.UTC)
+	w := &Writer{Client: c, Reader: c, Namespace: envNS, Log: slog.New(slog.DiscardHandler),
+		Inputs: func(context.Context) Inputs {
+			return Inputs{Outcomes: outcomes, Config: cfg, Decisions: func(string) map[string]decision.Last {
+				return map[string]decision.Last{className: {Verdict: "merge", Reason: "green", At: decidedAt}}
+			}}
+		}}
 	get := func() (*v1alpha1.Repository, *v1alpha1.MergePolicy) {
 		t.Helper()
 		var r v1alpha1.Repository
@@ -104,6 +118,9 @@ func TestEnvtestWriteOnce(t *testing.T) {
 	if err := w.WriteOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if at := p.Status.Classes; len(at) == 0 || !hasDecision(at, decidedAt.Truncate(time.Second)) {
+		t.Fatalf("no decision time in %+v", at)
+	}
 	r2, p2 := get()
 	if r2.ResourceVersion != r.ResourceVersion || p2.ResourceVersion != p.ResourceVersion {
 		t.Fatalf("a second pass wrote: %s -> %s, %s -> %s", r.ResourceVersion, r2.ResourceVersion, p.ResourceVersion, p2.ResourceVersion)
@@ -121,7 +138,50 @@ func TestEnvtestWriteOnce(t *testing.T) {
 		t.Fatalf("refused Accepted %+v", cnd)
 	}
 	conn := apimeta.FindStatusCondition(r3.Status.Conditions, ConditionConnected)
-	if conn == nil || conn.LastTransitionTime.Before(&was) {
+	if conn == nil || !conn.LastTransitionTime.Equal(&was) {
 		t.Fatalf("Connected %+v", conn)
+	}
+}
+
+func hasDecision(cs []v1alpha1.ClassStatus, at time.Time) bool {
+	for _, c := range cs {
+		if c.LastDecisionAt != nil && c.LastDecisionAt.Time.Equal(at) {
+			return true
+		}
+	}
+	return false
+}
+
+// With none of the CRDs installed a pass is not an error and logs nothing at Warn.
+func TestEnvtestWriteOnceWithoutCRDs(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
+	}
+	env := &envtest.Environment{}
+	restCfg, err := env.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = env.Stop() }()
+	s := runtime.NewScheme()
+	_ = v1alpha1.AddToScheme(s)
+	c, err := client.New(restCfg, client.Options{Scheme: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	w := &Writer{Client: c, Reader: c, Namespace: envNS, Every: 20 * time.Millisecond,
+		Log:    slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Inputs: func(context.Context) Inputs { return Inputs{} }}
+	if err := w.WriteOnce(t.Context()); err != nil {
+		t.Fatalf("WriteOnce: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	if err := w.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("logged at Warn: %s", logs.String())
 	}
 }
