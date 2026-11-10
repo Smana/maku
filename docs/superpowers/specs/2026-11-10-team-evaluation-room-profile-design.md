@@ -74,7 +74,7 @@ The local E2E evidence report remains an operational artifact and is not added t
 - UI: active-only, observe-recommendation, absent-profile, and untrusted-why cases; refresh preserves open state.
 - Docs: repository link and style checks.
 - Full gate: `task check`, including race-enabled Go tests, UI typecheck/tests, and UI bundle verification.
-- Live smoke: after rebuilding PR images, the room for the existing apply-mode task shows `review-frontier`, and a floor task shows no applied recommendation.
+- Live smoke: after rebuilding PR images, a new floor-profile room shows `review-floor` with no applied recommendation. An older room whose sealed log predates the field keeps rendering without a profile block.
 
 ## Rollout
 
