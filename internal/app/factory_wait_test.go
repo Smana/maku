@@ -203,14 +203,17 @@ func TestWaitServableStartsAtOnce(t *testing.T) {
 
 // With the CRDs not installed the warning is about the file, not about applying resources.
 func TestWaitServableWordingFollowsCRDs(t *testing.T) {
-	for name, tc := range map[string]struct{ absent, want string }{
-		"CRDs installed": {"", "apply the factory's Factory, Repository and MergePolicy resources"},
-		"CRDs absent":    {"y", "fix the file"},
+	for name, tc := range map[string]struct {
+		absent bool
+		want   string
+	}{
+		"CRDs installed": {false, "apply the factory's Factory, Repository and MergePolicy resources"},
+		"CRDs absent":    {true, "fix the file"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			log, sb := syncLog()
 			calls := 0
-			state := func() waitState { return waitState{crdsAbsent: tc.absent != ""} }
+			state := func() waitState { return waitState{crdsAbsent: tc.absent} }
 			if err := waitServable(t.Context(), log, &startupGate{}, notServableAfter(1, &calls), state, time.Millisecond, time.Millisecond, time.Minute); err != nil {
 				t.Fatal(err)
 			}

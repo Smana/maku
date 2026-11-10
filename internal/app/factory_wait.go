@@ -72,7 +72,7 @@ func waitServable(ctx context.Context, log *slog.Logger, gate *startupGate, sync
 	var logged time.Time
 	for {
 		err := sync(ctx)
-		if err != nil && ctx.Err() != nil {
+		if err != nil && ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return fmt.Errorf("%w: %w", errStoppedWaiting, context.Cause(ctx))
 		}
 		if !errors.Is(err, configsource.ErrNotServable) {

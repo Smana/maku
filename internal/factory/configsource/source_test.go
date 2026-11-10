@@ -323,3 +323,30 @@ func outs(s *Source) []Outcome {
 	o, _ := s.Outcomes()
 	return o
 }
+
+// toggleCRDs lists as a cluster without the CRDs until they are installed.
+type toggleCRDs struct {
+	client.Reader
+	installed bool
+}
+
+func (r *toggleCRDs) List(ctx context.Context, l client.ObjectList, o ...client.ListOption) error {
+	if !r.installed {
+		return noCRDs{}.List(ctx, l)
+	}
+	return r.Reader.List(ctx, l, o...)
+}
+
+// CRDsAbsent is the last Sync's finding: it turns false once the CRDs are installed.
+func TestCRDsAbsentFollowsTheLastSync(t *testing.T) {
+	base, _ := source(t)
+	r := &toggleCRDs{Reader: base.Reader}
+	s := &Source{Reader: r, Namespace: ns, File: file(t)}
+	if err := s.Sync(t.Context()); err != nil || !s.CRDsAbsent() {
+		t.Fatalf("err %v, CRDsAbsent %v: want absent", err, s.CRDsAbsent())
+	}
+	r.installed = true
+	if err := s.Sync(t.Context()); err != nil || s.CRDsAbsent() {
+		t.Fatalf("err %v, CRDsAbsent %v: want present", err, s.CRDsAbsent())
+	}
+}
