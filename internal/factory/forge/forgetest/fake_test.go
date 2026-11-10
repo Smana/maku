@@ -5,6 +5,7 @@ package forgetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,7 +20,10 @@ type api interface {
 	Issue(ctx context.Context, number int) (forge.Issue, error)
 	RenderMarkdown(ctx context.Context, text string) (string, error)
 	Comment(ctx context.Context, number int, body string) error
+	CommentWithID(ctx context.Context, number int, body string) (int64, error)
+	EditComment(ctx context.Context, id int64, body string) error
 	RecentComments(ctx context.Context, number int) ([]forge.Comment, error)
+	AllComments(ctx context.Context, number int) ([]forge.Comment, error)
 	AddLabels(ctx context.Context, number int, labels ...string) error
 	RemoveLabel(ctx context.Context, number int, label string) error
 	PullRequestForBranch(ctx context.Context, branch string) (int, error)
@@ -87,6 +91,64 @@ func TestFakeRecordsWhatTheFactoryDid(t *testing.T) {
 	if d, err := f.Diff(ctx, "base", "head"); err != nil || d.Base["docs/a.md"] != "old" || d.Head["docs/a.md"] != "new" ||
 		len(d.Files) != 1 || d.Files[0] != (forge.FileStat{Path: "docs/a.md", Status: "modified", Additions: 1, Deletions: 1}) {
 		t.Errorf("diff %+v %v", d, err)
+	}
+}
+
+func TestCommentIdentityAndEdit(t *testing.T) {
+	f := NewFake()
+	ctx := t.Context()
+	first, err := f.CommentWithID(ctx, 7, "first")
+	if err != nil || first == 0 {
+		t.Fatalf("first id %d, %v", first, err)
+	}
+	second, err := f.CommentWithID(ctx, 7, "second")
+	if err != nil || second == 0 || second <= first {
+		t.Fatalf("second id %d after %d, %v", second, first, err)
+	}
+	if err := f.EditComment(ctx, first, "first edited"); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := f.AllComments(ctx, 7)
+	if err != nil || len(cs) != 2 {
+		t.Fatalf("%+v, %v", cs, err)
+	}
+	if cs[0].ID != second || cs[0].Body != "second" || cs[0].Edited {
+		t.Fatalf("the other comment changed: %+v", cs[0])
+	}
+	if cs[1].ID != first || cs[1].Body != "first edited" || !cs[1].Edited {
+		t.Fatalf("the edited comment: %+v", cs[1])
+	}
+	if err := f.EditComment(ctx, 999, "absent"); err == nil {
+		t.Fatal("editing an absent comment is an error")
+	}
+}
+
+func TestAllCommentsPaginates(t *testing.T) {
+	f := NewFake()
+	ctx := t.Context()
+	for i := 1; i <= 120; i++ {
+		if _, err := f.CommentWithID(ctx, 7, fmt.Sprintf("c%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := f.AllComments(ctx, 7)
+	if err != nil || len(all) != 120 {
+		t.Fatalf("%d comments, %v", len(all), err)
+	}
+	for i, c := range all {
+		want := int64(120 - i)
+		if c.ID != want || c.Body != fmt.Sprintf("c%d", want) {
+			t.Fatalf("comment %d: %+v, want id and body %d", i, c, want)
+		}
+	}
+	recent, err := f.RecentComments(ctx, 7)
+	if err != nil || len(recent) != 50 {
+		t.Fatalf("recent: %d comments, %v", len(recent), err)
+	}
+	for i := range recent {
+		if recent[i] != all[i] {
+			t.Fatalf("recent comment %d: %+v, want %+v", i, recent[i], all[i])
+		}
 	}
 }
 

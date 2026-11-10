@@ -521,6 +521,45 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		}
 		_, _ = io.WriteString(w, `[{"number":12},{"number":3}]`)
 	}))
+	// Issue 15's comments are mutable: the identity and edit test reads back exactly what it wrote.
+	type editableComment struct {
+		ID        int64             `json:"id"`
+		Body      string            `json:"body"`
+		User      map[string]string `json:"user"`
+		CreatedAt time.Time         `json:"created_at"`
+		UpdatedAt time.Time         `json:"updated_at"`
+	}
+	var editable []editableComment
+	commentAt := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	mux.HandleFunc("POST /repos/Smana/demo/issues/15/comments", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		var in struct{ Body string }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		g.mu.Lock()
+		id := int64(len(editable) + 1)
+		editable = append(editable, editableComment{ID: id, Body: in.Body, User: map[string]string{"login": "Smana"},
+			CreatedAt: commentAt, UpdatedAt: commentAt})
+		g.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprintf(w, `{"id":%d}`, id)
+	}))
+	mux.HandleFunc("PATCH /repos/Smana/demo/issues/comments/{id}", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		var in struct{ Body string }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		for i := range editable {
+			if editable[i].ID == id {
+				editable[i].Body = in.Body
+				editable[i].UpdatedAt = editable[i].CreatedAt.Add(time.Hour)
+				_, _ = fmt.Fprintf(w, `{"id":%d,"body":%q}`, id, in.Body)
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+	}))
 	mux.HandleFunc("POST /repos/Smana/demo/issues/7/comments", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		var in map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&in)
@@ -614,6 +653,13 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"message":"Not Found"}`)
+			return
+		}
+		if r.PathValue("n") == "15" {
+			g.mu.Lock()
+			cs := append([]editableComment(nil), editable...)
+			g.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(cs)
 			return
 		}
 		total := map[string]int{"7": 1, "9": 130, "10": 180, "11": 60, "13": 2}[r.PathValue("n")]
@@ -1099,6 +1145,54 @@ func TestRecentCommentsAreTheNewest(t *testing.T) {
 				t.Fatalf("#%d: comment %d is id %d, want %d (newest first)", issue, i, c.ID, want)
 			}
 		}
+	}
+}
+
+func TestCommentIdentityAndEdit(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	first, err := r.g.CommentWithID(ctx, 15, "first")
+	if err != nil || first == 0 {
+		t.Fatalf("first id %d, %v", first, err)
+	}
+	second, err := r.g.CommentWithID(ctx, 15, "second")
+	if err != nil || second == 0 || second == first {
+		t.Fatalf("second id %d after %d, %v", second, first, err)
+	}
+	if err := r.g.EditComment(ctx, first, "first edited"); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := r.g.RecentComments(ctx, 15)
+	if err != nil || len(cs) != 2 {
+		t.Fatalf("%+v, %v", cs, err)
+	}
+	if cs[0].ID != second || cs[0].Body != "second" || cs[0].Edited {
+		t.Fatalf("the other comment changed: %+v", cs[0])
+	}
+	if cs[1].ID != first || cs[1].Body != "first edited" || !cs[1].Edited {
+		t.Fatalf("the edited comment: %+v", cs[1])
+	}
+	var pe *PermanentError
+	if err := r.g.EditComment(ctx, 999, "absent"); !errors.As(err, &pe) || pe.Status != http.StatusNotFound {
+		t.Fatalf("editing an absent comment: %v", err)
+	}
+}
+
+func TestAllCommentsPaginates(t *testing.T) {
+	r := newRig(t)
+	cs, err := r.g.AllComments(t.Context(), 9)
+	if err != nil || len(cs) != 130 {
+		t.Fatalf("%d comments, %v", len(cs), err)
+	}
+	for i, c := range cs {
+		want := int64(130 - i)
+		if c.ID != want || c.Body != fmt.Sprintf("c%d", want) {
+			t.Fatalf("comment %d: %+v, want id and body %d", i, c, want)
+		}
+	}
+	var pe *PermanentError
+	if _, err := r.g.AllComments(t.Context(), 404); !errors.As(err, &pe) || pe.Status != http.StatusNotFound {
+		t.Fatalf("listing an absent issue's comments: %v", err)
 	}
 }
 

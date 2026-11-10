@@ -43,17 +43,27 @@ type Event struct {
 	Body string
 }
 
-// commenter is the part of the forge narration uses.
-type commenter interface {
+// commentPoster is the existing posting boundary; other factory intakes also satisfy it.
+type commentPoster interface {
 	RecentComments(ctx context.Context, number int) ([]forge.Comment, error)
 	Comment(ctx context.Context, number int, body string) error
 }
+
+// commenter is the full comment recovery contract narration can use.
+type commenter interface {
+	commentPoster
+	AllComments(ctx context.Context, number int) ([]forge.Comment, error)
+	CommentWithID(ctx context.Context, number int, body string) (int64, error)
+	EditComment(ctx context.Context, id int64, body string) error
+}
+
+var _ commenter = (*forge.GitHub)(nil)
 
 // Narrator posts as the factory App. Login is config.factoryLogin: a marker counts only in that
 // login's comments, since anyone can comment on a public issue and would otherwise silence a
 // narration by posting its marker first.
 type Narrator struct {
-	Forge commenter
+	Forge commentPoster
 	Login string
 }
 
