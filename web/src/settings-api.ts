@@ -5,7 +5,7 @@
 // importing the page that draws it.
 
 import { api } from "./api";
-import type { Evidence, Report } from "./settings";
+import type { Evidence, MergePolicyStatus, Report } from "./settings";
 
 // A refusal's bounded code, as the broker writes it, else the status.
 async function refusal(r: Response): Promise<string> {
@@ -56,10 +56,74 @@ export function ladderLine(e: Evidence): string {
   return e.ladder.map((s) => `${s.merges}${s.reached ? " ✓" : ""}`).join(" / ");
 }
 
+export type PolicyState = "central" | "repository" | "not-migrated";
+
+// policyState says who holds the merge authority: no MergePolicy is not-migrated; the object's
+// authority (else its classes' sources, when it carries no status) says central or repository.
+export function policyState(r: Report): PolicyState {
+  if (!r.mergePolicy) return "not-migrated";
+  const authority = r.mergePolicyStatus?.status.authority;
+  if (authority === "repository" || r.classes.some((c) => c.source === "repository")) return "repository";
+  return "central";
+}
+
 // centralManifest is the report's MergePolicy manifest when the central classes are the merge
-// authority (no class comes from the repository's file); undefined otherwise.
+// authority; undefined otherwise.
 export function centralManifest(r: Report): string | undefined {
-  return r.manifest && !r.classes.some((c) => c.source === "repository") ? r.manifest : undefined;
+  return policyState(r) === "central" ? r.manifest : undefined;
+}
+
+export type Tone = "ok" | "warn" | "bad" | "unknown";
+
+const differences = (message?: string) => (message ? message.split(";").filter((x) => x.trim() !== "").length : 0);
+
+// conditionWords reads each condition of a MergePolicy's status in the page's words; a type it
+// does not know shows as sent.
+export function conditionWords(st?: MergePolicyStatus): { word: string; tone: Tone; message?: string }[] {
+  return (st?.status.conditions ?? []).map((c) => {
+    const message = c.message || undefined;
+    const known = c.status === "True" || c.status === "False" || c.status === "Unknown";
+    switch (c.type) {
+      case "Accepted":
+        if (c.status === "True") return { word: "Accepted", tone: "ok" as Tone };
+        if (c.status === "False") return { word: "Refused", tone: "bad" as Tone, message };
+        break;
+      case "InSync":
+        if (c.status === "True") return { word: "In sync with .github/agent-factory.yaml", tone: "ok" as Tone };
+        if (c.status === "False") {
+          const n = differences(c.message);
+          return { word: n ? `Not in sync: ${n} difference${n > 1 ? "s" : ""}` : "Not in sync", tone: "warn" as Tone, message };
+        }
+        if (c.status === "Unknown" && c.reason === "PolicyReadOff") return { word: "File not read", tone: "unknown" as Tone, message };
+        break;
+      case "RepositoryFileValid":
+        if (c.status === "True") return { word: "Repository file valid", tone: "ok" as Tone };
+        if (c.status === "False") return { word: "Repository file invalid", tone: "bad" as Tone, message };
+        break;
+    }
+    return { word: known ? `${c.type}: ${c.status}` : `${c.type}: ${String(c.status)}`, tone: "unknown" as Tone, message };
+  });
+}
+
+const condition = (r: Report, type: string) => r.mergePolicyStatus?.status.conditions?.find((c) => c.type === type);
+
+// fileLine says what the repository's .github/agent-factory.yaml is to its classes now; prominent
+// only when it needs the reader's attention (an invalid file under repository authority).
+export function fileLine(r: Report): { text: string; prominent: boolean } {
+  const state = policyState(r);
+  if (state === "not-migrated") return { text: "Classes come from .github/agent-factory.yaml.", prominent: false };
+  if (state === "repository") {
+    if (condition(r, "RepositoryFileValid")?.status === "False") {
+      return { text: ".github/agent-factory.yaml is invalid: auto-merge is paused until it is fixed.", prominent: true };
+    }
+    return { text: "The classes come from .github/agent-factory.yaml, which the MergePolicy defers to.", prominent: false };
+  }
+  const sync = condition(r, "InSync");
+  if (sync?.status === "False") {
+    const n = differences(sync.message);
+    return { text: `.github/agent-factory.yaml differs from the MergePolicy${n ? ` in ${n} place${n > 1 ? "s" : ""}` : ""}; the MergePolicy wins.`, prominent: false };
+  }
+  return { text: ".github/agent-factory.yaml matches the MergePolicy.", prominent: false };
 }
 
 // servedFrom names what serves a repository's classes: its MergePolicy only while that is the

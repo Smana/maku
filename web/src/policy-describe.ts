@@ -156,6 +156,69 @@ export function describeClass(c: ClassPolicy, guardrails: Record<string, unknown
   return { lead, when, also };
 }
 
+// summaryLine is a class's conditions in one line, for a list: describeClass's leaf phrases
+// abbreviated and joined with " · ". Every key gets a phrase; one the page has no words for is named.
+function leafSummary(k: string, v: unknown): string {
+  switch (k) {
+    case "allowedFiles": return strs(v) ? joinOr(v) : named(k);
+    case "companionFiles": return strs(v) ? `with ${joinOr(v)}` : named(k);
+    case "maxPatchFiles": return pos(v) ? `≤ ${v} files` : named(k);
+    case "maxModifiedLines": return pos(v) ? `≤ ${v} lines` : named(k);
+    case "modifyOnly": return v === true ? "modify only" : named(k);
+    case "diffShape": return typeof v === "string" ? (Object.hasOwn(shapes, v) ? shapes[v].replace(/^the diff /, "") : `shape ${v}`) : named(k);
+    case "holdoutChecks": return strs(v) ? joinOr(quoted(v), "and") : named(k);
+    case "releaseAgeCheck": return nonEmpty(v) ? `release age “${v}”` : named(k);
+    case "requiredLabel": return nonEmpty(v) ? `label “${v}”` : named(k);
+    case "oracle": return isObj(v) && nonEmpty(v.probe) ? `${v.probe} oracle clear` : named(k);
+  }
+  return named(k);
+}
+
+const leafSummaries = (l: unknown): string[] => {
+  if (!isObj(l)) return [named("malformed")];
+  const keys = Object.keys(l);
+  return keys.length ? keys.map((k) => leafSummary(k, l[k])) : [named("empty")];
+};
+
+export function summaryLine(c: ClassPolicy, guardrails: Record<string, unknown> = {}): string {
+  const cond = isObj(c.conditions) ? c.conditions : {};
+  const parts: string[] = [];
+  const allRaw: unknown = cond.all;
+  const all: unknown[] = Array.isArray(allRaw) ? allRaw : [];
+  if (allRaw !== undefined && !Array.isArray(allRaw)) parts.push(named("all"));
+  parts.push(...all.flatMap(leafSummaries));
+  const has = (k: string) => all.some((l) => isObj(l) && k in l);
+  for (const [k, unit] of [["maxPatchFiles", "files"], ["maxModifiedLines", "lines"]] as const) {
+    if (!has(k) && pos(guardrails[k])) parts.push(`≤ ${guardrails[k]} ${unit}`);
+  }
+  const anyRaw: unknown = cond.any;
+  if (anyRaw !== undefined && !Array.isArray(anyRaw)) parts.push(named("any"));
+  else if (Array.isArray(anyRaw) && anyRaw.length) {
+    parts.push(anyRaw.map((b) => (Array.isArray(b) && b.length ? b.flatMap(leafSummaries).join(", ") : named("branch"))).join(" or "));
+  }
+  const denyRaw: unknown = cond.deny;
+  if (denyRaw !== undefined && !Array.isArray(denyRaw)) parts.push(named("deny"));
+  for (const d of Array.isArray(denyRaw) ? denyRaw : []) {
+    const keys = entryKeys(d);
+    if (keys.length === 0) parts.push(named(isObj(d) ? "empty" : "malformed"));
+    for (const k of keys) parts.push(k === "protectedFiles" && isObj(d) && strs(d.protectedFiles) ? `never ${joinOr(d.protectedFiles)}` : named(k));
+  }
+  const askRaw: unknown = c.requiresApproval;
+  if (askRaw !== undefined && !Array.isArray(askRaw)) parts.push(named("requiresApproval"));
+  for (const a of Array.isArray(askRaw) ? askRaw : []) {
+    const keys = entryKeys(a);
+    if (keys.length === 0) parts.push(named(isObj(a) ? "empty" : "malformed"));
+    for (const k of keys) parts.push(k === "changedFiles" && isObj(a) && strs(a.changedFiles) ? `asks for ${joinOr(a.changedFiles)}` : named(k));
+  }
+  const lim: unknown = c.limits;
+  if (lim !== undefined && !isObj(lim)) parts.push(named("limits"));
+  if (isObj(lim)) {
+    for (const k of Object.keys(lim)) parts.push(k === "maxPerDay" && pos(lim.maxPerDay) ? `${lim.maxPerDay} a day` : named(k));
+  }
+  if (!(isObj(lim) && "maxPerDay" in lim) && pos(guardrails.maxPerDay)) parts.push(`${guardrails.maxPerDay} a day`);
+  return parts.length ? parts.join(" · ") : "Base checks only";
+}
+
 export function describeGuardrails(g: Record<string, unknown>): string[] {
   const out: string[] = [];
   const list = (k: string) => (Array.isArray(g[k]) ? (g[k] as string[]) : []);

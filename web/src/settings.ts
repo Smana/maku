@@ -25,6 +25,13 @@ export interface Evidence {
 export interface Proposal { path: string; line: number; file: string; editURL: string }
 // evidence is absent while the factory reads it: never read yet, or the class was added since.
 export interface ClassReport { class: string; source: string; mode: string; evidence?: Evidence; proposal?: Proposal; unproposed?: string }
+export interface Condition { type: string; status: "True" | "False" | "Unknown" | string; reason?: string; message?: string }
+export interface ClassStatus { name: string; mode: string; lastDecision?: string; lastDecisionAt?: string }
+// A repository's MergePolicy object as the factory reads it; absent when it has none.
+export interface MergePolicyStatus {
+  namespace: string; generation: number;
+  status: { observedGeneration?: number; authority?: string; conditions?: Condition[]; classes?: ClassStatus[] };
+}
 export interface Report {
   repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
   evidenceAt?: string; evidenceError?: string;
@@ -32,7 +39,7 @@ export interface Report {
   guardrails: Record<string, unknown>;
   // Set when the repository is served from a MergePolicy object: its name, its manifest as the
   // factory renders it, the file name to save that under, and its classes in the file's shape.
-  mergePolicy?: string; manifest?: string; manifestPath?: string; served?: PolicyFile;
+  mergePolicy?: string; mergePolicyStatus?: MergePolicyStatus; manifest?: string; manifestPath?: string; served?: PolicyFile;
 }
 
 export interface Step2 { row: string; status: string; detail?: string }

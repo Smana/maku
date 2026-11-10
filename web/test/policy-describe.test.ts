@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { describeClass, describeGuardrails, joinOr, modeMeaning } from "../src/policy-describe";
+import { describeClass, describeGuardrails, joinOr, modeMeaning, summaryLine } from "../src/policy-describe";
 import { templates } from "../src/policy-editor";
 
 describe("describeClass", () => {
@@ -189,5 +189,28 @@ describe("deny, approval, limits and monitor entries", () => {
       "Also limited by a setting this page does not describe (mystery).",
       "Also limited by a setting this page does not describe (followUpWindow).",
     ]);
+  });
+});
+
+describe("summaryLine", () => {
+  const base = { mode: "shadow", author: "agents", harness: "plain" };
+  it("reads the docs class as one line of its leaf phrases", () => {
+    expect(summaryLine({ ...base,
+      conditions: { all: [{ allowedFiles: ["docs/…", "README.md"] }, { maxPatchFiles: 10 }, { maxModifiedLines: 200 },
+        { holdoutChecks: ["Check the documentation links"] }], deny: [{ protectedFiles: ["docs/security/"] }] },
+      requiresApproval: [{ changedFiles: ["docs/architecture/"] }], limits: { maxPerDay: 2 } }))
+      .toBe("docs/… or README.md · ≤ 10 files · ≤ 200 lines · “Check the documentation links” · never docs/security/ · asks for docs/architecture/ · 2 a day");
+  });
+  it("says a class with no condition checks the base only", () => {
+    expect(summaryLine(base)).toBe("Base checks only");
+  });
+  it("joins an any's branches with or", () => {
+    expect(summaryLine({ ...base, conditions: { any: [[{ maxPatchFiles: 1 }], [{ modifyOnly: true }]] } })).toBe("≤ 1 files or modify only");
+  });
+  it("keeps an unknown key visible", () => {
+    expect(summaryLine({ ...base, conditions: { all: [{ wat: 1 }] } })).toBe("a condition this page does not describe (wat)");
+  });
+  it("falls back to the factory's caps", () => {
+    expect(summaryLine(base, { maxPatchFiles: 20, maxPerDay: 5 })).toBe("≤ 20 files · 5 a day");
   });
 });
