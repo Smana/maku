@@ -129,9 +129,16 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   `room_queue`, `room_fork` and `issue_draft` from the broker; `intake_plan` and `plan_check` too, when
   the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `room_wait`
   and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
-  events; `maku mcp` polls it for your agent. The broker also serves the prompts `handoff` (`what`),
-  `plan` (`what`), `status` (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash
-  commands (see [Short commands](#short-commands) for how to type them).
+  events; `maku mcp` polls it for your agent. The broker also serves the prompts `factory_intake`
+  (`request`), `handoff` (`what`, an alias for the same intake loop), `plan` (`what`), `status`
+  (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash commands (see
+  [Short commands](#short-commands) for how to type them).
+- `factory_intake` is the canonical filing loop: show `intake_plan`'s text, ask only the first gap
+  with its recommendation, offer "accept the rest" at every question, and revise through the base
+  `plan` + `hash` + edited `candidate` envelope with matching D/A records. When no gaps remain, it
+  finishes with `plan_check`, shows the final draft and assumptions, then calls `issue_file`. A client
+  without MCP prompt support gets the same short contract from `intake_plan`'s description and the
+  server instructions; neither route makes the client a second planner.
 - `resume` is the one to start a session with: it calls `needs_list` once, then `room_brief` of the
   first room that needs you — or of the room you passed — and names the brief's `Next:` line as the
   one step. `inbox` is one `needs_list` call: when the list is empty it says so in one line and names
@@ -188,9 +195,9 @@ over.
 | `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it; a clarification revision also carries the base plan, its hash and your edited candidate | `plan/v1`, the hash the broker computed over it, ranked gaps with the first as the compatibility question, and `canStart`: whether you may start the factory on it. One model call below the round cap, on public text only; it files nothing |
 | `plan_check` | Re-validates a final plan you were shown, against the hash the broker answered with; an optional candidate applies a deterministic final revision | The final plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
 
-`issue_file` calls `plan_check` itself, so you never call it by hand: it is there so an agent can
-re-check a plan before showing you a form for it, and so a plan that changed after it was shown
-files nothing rather than something else.
+The canonical intake loop calls `plan_check` for the final draft (including an accept-the-rest
+revision), then `issue_file` with the returned plan and new hash. `issue_file` calls `plan_check`
+again itself, so a plan that changed after it was shown files nothing rather than something else.
 
 To answer a gap, your agent passes `intake_plan` the original request fields plus the revision envelope:
 `plan` (the base plan), `hash` (its hash) and `candidate` (the edited plan). Only marker replacements
@@ -271,6 +278,10 @@ first issue once you answer its form. Strict decoding makes mixed versions fail 
 broker refuses revision fields or `gaps`; a newer broker keeps legacy hashes and maps the first gap to
 the old `Question` view, so existing Slack proposals still render and confirm.
 
+After filing, `need_answer` is the scoper-bounce counterpart: it reads the authorized room question,
+confirms the answer and appends the next issue-local Decision to the issue body. It never adds or
+removes a label; a maintainer re-applies `factory/ready` when the answer is ready for another run.
+
 The refusals you can meet, with the next step. The broker answers a plan or a check it will not make
 with one reason of a closed list, each with its own sentence; the whole list is
 [the planner on `/mcp`](api.md#the-planner-on-mcp).
@@ -326,7 +337,7 @@ also write one command file, `factory.md`, that calls the same prompts' tools:
 
 | Type | Does |
 |---|---|
-| `/factory handoff [what]` | plans it with `intake_plan` and shows the plan, then files its first issue with `issue_file` and the plan's hash; with the planner off, writes the issue, has `issue_draft` check it, and files it |
+| `/factory handoff [what]` | runs the canonical `factory_intake` loop: clarify one first gap at a time or accept the rest, finish with `plan_check`, then file the first issue through `issue_file`; with the planner off, writes the issue, has `issue_draft` check it, and files it |
 | `/factory status [room]` | `room_summary` of the room; none: your most recently updated room |
 | `/factory resume [room]` | `needs_list` once, then `room_brief` of the first room that needs you (or of the room you passed); names the brief's `Next:` line as the one step |
 | `/factory inbox` | `needs_list` once: the rooms that need you. Empty, it says so and names `rooms_list` with `mine` |
@@ -408,11 +419,13 @@ server, a shell fallback section runs the same jobs through `gh` and `maku`.
 
 It does:
 
-- Hand your own words, and the context it has read, to the broker's planner (`intake_plan`), show the
-  plan as it is — its question included — and file its first issue with `issue_file`, plan and hash
-  together, only once you answer the form. With the planner off, or in a shell with no MCP server, it
-  writes the issue in the template's three sections, has `issue_draft` check it, and says the broker
-  planned nothing rather than passing a plan it wrote as the planner's.
+- Invoke the broker's canonical `factory_intake` prompt (`handoff` is its alias), or follow the same
+  contract from `intake_plan`'s description when the client has no prompts. It asks only the first
+  gap, offers "accept the rest", applies answers through the base plan + hash + candidate revision
+  envelope with D/A records, and finishes with `plan_check` then `issue_file`. With the planner off,
+  or in a shell with no MCP server, it writes the issue in the template's three sections, has
+  `issue_draft` check it, and says the broker planned nothing rather than passing a plan it wrote as
+  the planner's.
 - Follow a task: find the room, and report phase, run, PR and the newest notes.
 - Say "it needs you" first when something waits on you, giving the link: approvals stay on the room page.
 - Answer "anything waiting on me?".

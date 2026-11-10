@@ -89,7 +89,7 @@ func TestPromptsList(t *testing.T) {
 	}
 	_, out := rpc(t, e, viaRoomctl("dev"), "prompts/list", nil)
 	got := promptList(t, out)
-	want := map[string]string{"handoff": "what", "plan": "what", "status": "room", "resume": "room", "inbox": ""}
+	want := map[string]string{"factory_intake": "request", "handoff": "what", "plan": "what", "status": "room", "resume": "room", "inbox": ""}
 	if len(got) != len(want) {
 		t.Fatalf("prompts: %v", got)
 	}
@@ -105,6 +105,44 @@ func TestPromptsList(t *testing.T) {
 				t.Errorf("%v: an argument is optional", p)
 			}
 		}
+	}
+}
+
+// factory_intake is the canonical loop and handoff its compatibility alias. A regression that
+// drops either entry, diverges their text, or omits a revision step leaves a client to invent a
+// second planning or filing flow.
+func TestFactoryIntakePrompt(t *testing.T) {
+	e := setup(t, mcpOn)
+	h := viaRoomctl("dev")
+	_, out := rpc(t, e, h, "prompts/list", nil)
+	listed := promptList(t, out)
+	if fmt.Sprint(listed["factory_intake"]) != "[request]" || fmt.Sprint(listed["handoff"]) != "[what]" {
+		t.Fatalf("intake prompts: %v", listed)
+	}
+	canonical := promptText(t, e, h, "factory_intake", map[string]string{"request": "fix the dead link"})
+	alias := promptText(t, e, h, "handoff", map[string]string{"what": "fix the dead link"})
+	if canonical != alias {
+		t.Fatalf("handoff is not the factory_intake alias:\ncanonical: %s\nalias: %s", canonical, alias)
+	}
+	flatText := flat(canonical)
+	for _, want := range []string{
+		"fix the dead link",
+		"ask only the first gap",
+		"accept the rest",
+		"d/a records",
+		"base plan",
+		"`plan`",
+		"`hash`",
+		"`candidate`",
+		"plan_check",
+		"issue_file",
+	} {
+		if !strings.Contains(flatText, want) {
+			t.Errorf("factory_intake lacks %q:\n%s", want, canonical)
+		}
+	}
+	if strings.Index(flatText, "plan_check") > strings.Index(flatText, "issue_file") {
+		t.Errorf("factory_intake files before its final check: %s", canonical)
 	}
 }
 

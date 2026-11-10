@@ -667,15 +667,27 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 
 The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`, `room_brief`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
 
-`prompts/list` and `prompts/get` serve the prompts `handoff` (`what`), `plan` (`what`), `status`
-(`room`), `resume` (`room`) and `inbox`: canned messages the client offers as slash commands. A
-sponsored principal's list is empty. The prompts start nothing and compose nothing: `handoff` passes
-the developer's words and the session's context to `intake_plan` and then files through `issue_file`,
-and `plan` stops after showing what the planner answered. `resume` is one call to the needs list, then
-`room_brief` of the room it names first — or of the room the developer passed — so a session starts
-from the brief rather than from a search of the log, and never claims a room exists before
-`room_brief` shows it. `inbox` is one `needs_list` call: when its list is empty it says so in one line
-and names `rooms_list` with `mine`, rather than making a second call.
+`prompts/list` and `prompts/get` serve the prompts `factory_intake` (`request`), `handoff` (`what`),
+`plan` (`what`), `status` (`room`), `resume` (`room`) and `inbox`: canned messages the client offers
+as slash commands. A sponsored principal's list is empty. `factory_intake` is the canonical intake
+loop and `handoff` returns the same text for compatibility. It passes the developer's words and
+context to `intake_plan`, shows the answer as it is, asks only the first gap with its recommendation,
+and offers "accept the rest" at every question. Answers replace only clarification markers and append
+matching D/A records in `candidate`, then travel with the base `plan` and its `hash` in the revision
+envelope. Accepting the rest uses `plan_check` with that envelope and one A record per recommendation.
+When no gaps remain, the loop finishes with `plan_check`, shows the final draft and assumptions, then
+calls `issue_file`. The same short contract is in `intake_plan`'s tool description and `initialize`'s
+server instructions, so a client that declares no prompts capability follows the identical loop. The
+broker remains the only planner. `plan` stops after showing what the planner answered. `resume` is one
+call to the needs list, then `room_brief` of the room it names first — or of the room the developer
+passed — so a session starts from the brief rather than from a search of the log, and never claims a
+room exists before `room_brief` shows it. `inbox` is one `needs_list` call: when its list is empty it
+says so in one line and names `rooms_list` with `mine`, rather than making a second call.
+
+The local relay's `need_answer` is the post-filing scoper-bounce counterpart, not a second broker
+planner: it reads the authorized `room_brief` question, confirms the answer and appends an issue-local
+Decision to the GitHub issue body. It never adds or removes a label; a maintainer re-applies
+`factory/ready`.
 
 No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
 the CLI's ZITADEL client (formerly `roomctl`): the [actions](#actions)' rules, limits and rejections apply. Arguments are

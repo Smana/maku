@@ -16,16 +16,24 @@ is working on now.
 
 ## The broker takes the request
 
-The plan is the broker's, not yours. `intake_plan` takes the developer's own words and the context you
-have — the repository you are in, the paths you read — and answers with a plan, its hash, and at most
-one question to put to the developer first. Show its text as it is, question included: never write
-the plan yourself, never retype, shorten or merge what it returned, and carry the hash along
-unchanged. A plan marked `degraded` came from the broker's template rather than the model: say so,
-because it is not the natural-language plan.
+Invoke the `factory_intake` prompt with the developer's request (`handoff` is an alias for the same
+loop). If the client does not surface MCP prompts, follow the same short contract in `intake_plan`'s
+tool description and the server instructions. The plan is the broker's, not yours: never write the
+plan yourself, and never retype, shorten or merge what it returned. Show every answer as it is. A plan
+marked `degraded` came from the broker's template rather than the model: say so, because it is not the
+natural-language plan.
 
-When the developer has answered that question, call `issue_file` with the plan and its hash. The
-broker's `plan_check` re-validates both before anything is shown, so a plan whose hash no longer holds
-files nothing and offers no form; the form then shows the plan's issue and its ceiling, and only the
+While gaps remain, ask only the first gap, with its recommendation and why, and offer "accept the
+rest" at every question. For an answer, call `intake_plan` with the original request fields and the
+revision envelope: `plan` (the base plan), `hash` (the base plan's hash) and `candidate` (the edited
+plan). In the candidate, resolve only the answered clarification markers and append their matching
+Decision/Assumption (D/A) records; all other material stays unchanged. Show the revised plan and
+repeat with its new first gap.
+
+To accept the rest, replace every remaining marker with its recommendation, append each matching
+`A<n> [g<n>]` record, and call `plan_check` with the same revision envelope. When no gaps remain,
+finish with `plan_check`, show the final draft and every assumption, then call `issue_file` with the
+returned plan and its new hash. The form shows the plan's issue and its ceiling, and only the
 developer's answer to it files anything. One call files the plan's first issue: with a plan of two or
 three, say plainly that the others are not filed and let the developer decide.
 
@@ -57,13 +65,13 @@ broker built. Do not rewrite it, and do not add a link of your own.
 | check a room's branch out into a new worktree beside the repository | `room_checkout` |
 | turn a side task into a plan | `intake_plan` (the broker's governed planner: plan it nowhere else) |
 | re-check a plan against its hash | `plan_check` |
-| hand a side task over | `intake_plan`, then `issue_file` with the plan and its hash once the developer answers the form |
+| hand a side task over | the `factory_intake` prompt (`handoff` is its alias), ending with `plan_check` and `issue_file` |
+| answer a scoper's post-filing question | `need_answer`, which appends a Decision to the issue body and never changes labels |
 
 A plan's hash is what `issue_file` checks: `plan_check` recomputes it over the plan it is given, so
-the two travel together, and a plan edited after `intake_plan` answered it is refused rather than
-filed.
+the two travel together. An edit outside a validated revision envelope is refused rather than filed.
 
-The prompts `handoff`, `plan`, `status` and `inbox` are the same jobs as slash commands. Claude Code lists them as `/factory:handoff` but accepts only `/mcp__factory__handoff`, so `maku setup` (Claude Code, OpenCode) also installs a short command: `/factory handoff <what>`, `/factory status [#issue]`, `/factory inbox`.
+The prompts `factory_intake`, `handoff`, `plan`, `status`, `resume` and `inbox` are the same jobs as slash commands. Claude Code lists them as `/factory:handoff` but accepts only `/mcp__factory__handoff`, so `maku setup` (Claude Code, OpenCode) also installs a short command: `/factory handoff <what>`, `/factory status [#issue]`, `/factory inbox`.
 
 `issue_file` files what the broker validated, and `canStart` is the broker's answer: `plan_check`'s
 with a plan, `issue_draft`'s without one. Tell the developer: "Filed #N. Label it `factory/ready` to

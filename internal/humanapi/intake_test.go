@@ -940,6 +940,37 @@ func TestPlanCheckResolvesTheRequesterAsIntakePlanDoes(t *testing.T) {
 	}
 }
 
+// A client that declares no prompts capability never reads factory_intake. The initialize
+// instructions and intake_plan's own description must therefore carry the whole short loop, rather
+// than leaving that client to compose a plan or file without the final check.
+func TestIntakeInstructionsWithoutPrompt(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"))
+	h := viaRoomctl("dev")
+	_, initialized := rpc(t, e, h, "initialize", map[string]any{
+		"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
+	})
+	instructions, _ := initialized["result"].(map[string]any)["instructions"].(string)
+	_, listed := rpc(t, e, h, "tools/list", nil)
+	description := ""
+	for _, item := range listed["result"].(map[string]any)["tools"].([]any) {
+		tool := item.(map[string]any)
+		if tool["name"] == "intake_plan" {
+			description, _ = tool["description"].(string)
+		}
+	}
+	if description == "" {
+		t.Fatal("tools/list has no intake_plan description")
+	}
+	for surface, text := range map[string]string{"server instructions": instructions, "intake_plan description": description} {
+		flatText := flat(text)
+		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check", "issue_file"} {
+			if !strings.Contains(flatText, want) {
+				t.Errorf("%s lack %q for a prompts-less client:\n%s", surface, want, text)
+			}
+		}
+	}
+}
+
 // The schema is the client's copy of the check, so it must not disagree with it: each bound is the
 // broker's own constant, and a ceiling of zero is "no channel ceiling" — a value the broker accepts,
 // so a schema refusing it would refuse a request the broker answers.
