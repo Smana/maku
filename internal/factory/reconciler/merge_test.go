@@ -266,7 +266,7 @@ func TestACIFixRunSaysWhyItStarted(t *testing.T) {
 	red.Runs[1].State = "FAILURE"
 	g.f.SetChecks(12, red)
 	g.reconcile(t, "3buqdlot", 2)
-	c := strings.Join(g.f.Comments(7), "\n") // the issue, where the task's other narration lands
+	c := strings.Join(eventCommentBodies(g.f, 7), "\n") // the issue, where the task's other narration lands
 	for _, want := range []string{"CI is red on #12 at `abc`", "`Kubernetes validation`: failure", "a run starts to fix it (1/2)"} {
 		if !strings.Contains(c, want) {
 			t.Fatalf("missing %q in %q", want, c)
@@ -558,7 +558,7 @@ func TestAPolicyHandOffReturnsToTheGate(t *testing.T) {
 			if tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Reason != "reentered_policy" || tk.Status.GateReentries != 1 {
 				t.Fatalf("%s %s %d", tk.Status.Phase, tk.Status.Reason, tk.Status.GateReentries)
 			}
-			if c := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(c, "goes back to the merge gate: policy-bot now passes") {
+			if c := strings.Join(eventCommentBodies(g.f, 7), "\n"); !strings.Contains(c, "goes back to the merge gate: policy-bot now passes") {
 				t.Fatalf("the return is narrated: %q", c)
 			}
 			if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging || len(g.f.Armed()) != 1 || g.f.Armed()[0] != "PR_12 abc" {
@@ -631,7 +631,7 @@ func TestAStaleVerdictIsReviewedAgain(t *testing.T) {
 		tk.Status.GateReentries != 1 {
 		t.Fatalf("%s %s %s %d", tk.Status.Phase, tk.Status.NextRole, tk.Status.Reason, tk.Status.GateReentries)
 	}
-	if c := strings.Join(g.f.Comments(7), "\n"); strings.Contains(c, "waits for a maintainer") || !strings.Contains(c, "reviewed again") {
+	if c := strings.Join(eventCommentBodies(g.f, 7), "\n"); strings.Contains(c, "waits for a maintainer") || !strings.Contains(c, "reviewed again") {
 		t.Fatalf("%q", c)
 	}
 	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseReviewing || current(tk).Role != "reviewer" || current(tk).HeadSHA != "abc" {
@@ -1036,7 +1036,7 @@ func TestAHumanCommitUnderAnApprovalIsHandedOffByHand(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "human_commit_in_pr" || len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s %v", got.Status.Phase, got.Status.Reason, g.f.Armed())
 	}
-	if c := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(c, "bypass rules") || strings.Contains(c, "approve this pull request") {
+	if c := strings.Join(eventCommentBodies(g.f, 7), "\n"); !strings.Contains(c, "bypass rules") || strings.Contains(c, "approve this pull request") {
 		t.Fatalf("the hand-off names the bypass: %q", c)
 	}
 	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "human_commit_in_pr" {
@@ -1056,7 +1056,7 @@ func TestAnApprovalMergesAPatchTooLargeToRead(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "patch_too_large" {
 		t.Fatalf("hand-off: %s %s", got.Status.Phase, got.Status.Reason)
 	}
-	if c := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(c, "approve this pull request") {
+	if c := strings.Join(eventCommentBodies(g.f, 7), "\n"); !strings.Contains(c, "approve this pull request") {
 		t.Fatalf("the hand-off says approve: %q", c)
 	}
 	pr, _ := g.f.PullRequest(t.Context(), 12)
@@ -1344,7 +1344,7 @@ func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "head_unreported" || len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s %v", got.Status.Phase, got.Status.Reason, g.f.Armed())
 	}
-	c := strings.Join(g.f.Comments(7), "\n")
+	c := strings.Join(eventCommentBodies(g.f, 7), "\n")
 	if !strings.Contains(c, "never reported") || strings.Contains(c, "older head") || strings.Contains(c, "approve this pull request") {
 		t.Fatalf("the hand-off says what is missing, and that an approval does not merge it: %q", c)
 	}

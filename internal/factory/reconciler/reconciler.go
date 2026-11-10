@@ -273,7 +273,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, rerr
 		}
 	}
-	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(&t) && !r.spendFinalDue(&t) && !closeDue {
+	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(&t) && !r.spendFinalDue(&t) && !r.statusCommentDue(&t) && !closeDue {
 		left := closeWait
 		// CD23's one timed requeue: the instant a terminal task's dollars are final, never a poll.
 		// Only an instant still ahead is scheduled — past it the pass below owes the fact, and
@@ -320,11 +320,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// written end exports the task's span: a write that conflicts posts and exports nothing, and its
 	// replay may take another path. The second write records what was posted and exported. Facts
 	// are advisory: a failed post is returned for a retry, and no phase waits on it.
-	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(&t) {
+	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(&t) || r.statusCommentDue(&t) {
 		queued := t.Status.DeepCopy()
 		err = errors.Join(err, r.drain(ctx, &t))
 		perr := r.postFacts(ctx, &t)
 		err = errors.Join(err, perr)
+		if r.statusCommentDue(&t) {
+			err = errors.Join(err, r.syncStatusComment(ctx, &t))
+		}
 		r.endTrace(ctx, &t)
 		// CD23: the pass that landed the final fact records how long its dollars took to settle,
 		// from the last run's end. postFacts persists the fact's hash before it calls the room, so a

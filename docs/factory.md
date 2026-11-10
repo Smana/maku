@@ -380,6 +380,15 @@ The factory App comments on the task's issue, or on its pull request when it has
 start (id, branch, budget, the room link, how to stop it), the pull request, CI fix and resume,
 each hand-off with its reason and the merge command, and the end with the tokens used.
 
+An issue task also has one live **Factory status** comment, created by the reconciler with the first
+event narration, never by the intake poller; a refused intake label creates no Task and no status
+comment. Later material transitions edit that same comment, while an unchanged reconcile makes no
+GitHub status calls. It shows the phase and its last transition time, room and waiting guidance,
+spec hash, Decision and Assumption counts, and pull request. Live checks, token usage and spend are
+deliberately omitted. Its ID and last successful body are persisted in Task status; recovery reads
+all issue comments, a newer generation adopts it, and an older generation cannot edit it. Failed
+creation or edits retry without rolling back the task transition or its event comments.
+
 A maintainer's **Request changes** is answered where it was made, on the pull request:
 
 | Event (key) | When | Says |

@@ -92,9 +92,9 @@ func TestRevisionEndIsNarratedOnThePR(t *testing.T) {
 				t.Fatalf("%s %+v", got.Status.Phase, got.Status.Runs)
 			}
 			if cs := g.f.Comments(12); len(cs) != 1 || !strings.Contains(cs[0], "revising after @Smana's review") {
-				t.Fatalf("Revising goes on the pull request: PR %q, issue %q", cs, g.f.Comments(7))
+				t.Fatalf("Revising goes on the pull request: PR %q, issue %q", cs, eventCommentBodies(g.f, 7))
 			}
-			if is := strings.Join(g.f.Comments(7), "\n"); strings.Contains(is, "revis") {
+			if is := strings.Join(eventCommentBodies(g.f, 7), "\n"); strings.Contains(is, "revis") {
 				t.Fatalf("nothing review-driven on the issue (a run's start stays there): %q", is)
 			}
 			pr.HeadSHA = c.head
@@ -133,7 +133,7 @@ func TestRevisionEndIsNarratedOnThePR(t *testing.T) {
 			if strings.Contains(revised[0], "AGENTS.md is a gate path") {
 				t.Errorf("the review's text is never quoted:\n%s", revised[0])
 			}
-			if is := strings.Join(g.f.Comments(7), "\n"); strings.Contains(is, "revis") {
+			if is := strings.Join(eventCommentBodies(g.f, 7), "\n"); strings.Contains(is, "revis") {
 				t.Fatalf("nothing review-driven on the issue (a run's start stays there): %q", is)
 			}
 		})
