@@ -71,12 +71,12 @@ func source(t *testing.T, objs ...client.Object) (*Source, client.Client) {
 
 func outcome(t *testing.T, s *Source, k resources.Kind, name string) Outcome {
 	t.Helper()
-	for _, o := range s.Outcomes() {
+	for _, o := range outs(s) {
 		if o.Kind == k && o.Name == name {
 			return o
 		}
 	}
-	t.Fatalf("no outcome for %s/%s in %+v", k, name, s.Outcomes())
+	t.Fatalf("no outcome for %s/%s in %+v", k, name, outs(s))
 	return Outcome{}
 }
 
@@ -92,8 +92,8 @@ func TestSyncServesTheFileAloneWithNoObjects(t *testing.T) {
 	if cfg.Generations.Repos != nil || cfg.Generations.Factory != 0 {
 		t.Fatalf("generations must be zero with the file alone: %+v", cfg.Generations)
 	}
-	if len(s.Outcomes()) != 0 {
-		t.Fatalf("outcomes: %+v", s.Outcomes())
+	if len(outs(s)) != 0 {
+		t.Fatalf("outcomes: %+v", outs(s))
 	}
 }
 
@@ -112,9 +112,9 @@ func TestSyncAddsARepository(t *testing.T) {
 	if o := outcome(t, s, resources.KindRepository, "other"); !o.Accepted || o.ServedGeneration != 3 || o.ObservedGeneration != 3 {
 		t.Fatalf("outcome: %+v", o)
 	}
-	outs := s.Outcomes()
-	if outs[0].Kind != resources.KindMergePolicy || outs[1].Kind != resources.KindRepository {
-		t.Fatalf("outcomes must sort by kind: %+v", outs)
+	all := outs(s)
+	if all[0].Kind != resources.KindMergePolicy || all[1].Kind != resources.KindRepository {
+		t.Fatalf("outcomes must sort by kind: %+v", all)
 	}
 }
 
@@ -175,8 +175,8 @@ func TestSyncDropsADeletedObject(t *testing.T) {
 	if s.Live.Current().Generations.Repos != nil {
 		t.Fatalf("generations: %+v", s.Live.Current().Generations)
 	}
-	if len(s.Outcomes()) != 0 || len(s.lastGood) != 0 {
-		t.Fatalf("outcomes %+v lastGood %+v", s.Outcomes(), s.lastGood)
+	if len(outs(s)) != 0 || len(s.lastGood) != 0 {
+		t.Fatalf("outcomes %+v lastGood %+v", outs(s), s.lastGood)
 	}
 }
 
@@ -225,13 +225,13 @@ func TestSyncAtStartupWithNothingServableFails(t *testing.T) {
 		t.Fatal("Live must stay nil")
 	}
 	var found bool
-	for _, o := range s.Outcomes() {
+	for _, o := range outs(s) {
 		if o.Kind == resources.KindFactory && !o.Accepted && o.Reason == v1alpha1.ReasonInvalid {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("the refusals are still reported: %+v", s.Outcomes())
+		t.Fatalf("the refusals are still reported: %+v", outs(s))
 	}
 }
 
@@ -313,4 +313,10 @@ func TestGenerationsIgnoreAnOrphanPolicy(t *testing.T) {
 	if _, ok := g.Repos[""]; ok || len(g.Repos) != 0 {
 		t.Fatalf("generations %+v, want none for an orphan policy", g.Repos)
 	}
+}
+
+// outs are s's outcomes, without the Sync's completion.
+func outs(s *Source) []Outcome {
+	o, _ := s.Outcomes()
+	return o
 }
