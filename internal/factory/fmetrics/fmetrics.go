@@ -1047,6 +1047,13 @@ func (s *Set) ClassWithoutHoldout(ctx context.Context, repository, class string)
 		attribute.String("class", class)))
 }
 
+// ClassWithHoldout sets agent_factory_class_without_holdout back to 0: a publish gave the class
+// holdoutChecks, took it off live, or removed it (factory resources D12).
+func (s *Set) ClassWithHoldout(ctx context.Context, repository, class string) {
+	s.noHoldout.Record(ctx, 0, metric.WithAttributes(attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class)))
+}
+
 // ClassPaused records the breaker's verdict for a class (AM9), at each decision and each monitor
 // pass; the repository is bounded as every other series' is (R-I3).
 func (s *Set) ClassPaused(ctx context.Context, repository, class string, paused bool) {

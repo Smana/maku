@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -21,13 +22,14 @@ import (
 type fakeWiring struct {
 	mu      sync.Mutex
 	refuse  map[string]bool
+	flaky   map[string]bool // the merger connect fails, transiently
 	gh      map[string]int
 	mergers map[string]int
 	failed  []string
 }
 
 func newFakeWiring() *fakeWiring {
-	return &fakeWiring{refuse: map[string]bool{}, gh: map[string]int{}, mergers: map[string]int{}}
+	return &fakeWiring{refuse: map[string]bool{}, flaky: map[string]bool{}, gh: map[string]int{}, mergers: map[string]int{}}
 }
 
 func (w *fakeWiring) conns() *repoConns {
@@ -45,6 +47,9 @@ func (w *fakeWiring) conns() *repoConns {
 		w.mu.Lock()
 		defer w.mu.Unlock()
 		w.mergers[name]++
+		if w.flaky[name] {
+			return nil, errors.New("GitHub answered 502")
+		}
 		return forge.Absent{}, nil
 	}
 	c.failed = func(_ context.Context, name string) {
@@ -128,6 +133,21 @@ type fakePublishMetrics struct {
 	people   bool
 	budgets  map[string]float64
 	holdouts []string
+	cleared  []string
+	unowned  []string
+	wireErrs []string
+}
+
+func (m *fakePublishMetrics) ClassWithHoldout(_ context.Context, repo, class string) {
+	m.cleared = append(m.cleared, repo+"/"+class)
+}
+func (m *fakePublishMetrics) RepositoryOwned(_ context.Context, repo string, owned bool) {
+	if !owned {
+		m.unowned = append(m.unowned, repo)
+	}
+}
+func (m *fakePublishMetrics) ConfigWireError(_ context.Context, repo string) {
+	m.wireErrs = append(m.wireErrs, repo)
 }
 
 func (m *fakePublishMetrics) ListRepositories(names ...string) { m.repos = slices.Clone(names) }
@@ -139,9 +159,21 @@ func (m *fakePublishMetrics) ClassWithoutHoldout(_ context.Context, repo, class 
 	m.holdouts = append(m.holdouts, repo+"/"+class)
 }
 
-type fakePollers struct{ synced [][]string }
+type fakePollers struct {
+	synced [][]string
+	panics bool
+}
 
-func (p *fakePollers) Sync(repos []string) { p.synced = append(p.synced, slices.Clone(repos)) }
+func (p *fakePollers) Sync(repos []string) {
+	if p.panics {
+		panic("poller wiring bug")
+	}
+	p.synced = append(p.synced, slices.Clone(repos))
+}
+
+func newWiring(conns *repoConns, p *fakePollers, m *fakePublishMetrics, logs *bytes.Buffer, kicks *int) *wiring {
+	return &wiring{log: slog.New(slog.NewTextHandler(logs, nil)), conns: conns, pollers: p, m: m, kick: func() { *kicks++ }}
+}
 
 // D12: a publish re-wires the repositories, re-syncs the pollers and the repository list, and
 // re-derives the startup's gauges: per-person charging, each tier's run budget (0 for a tier the
@@ -149,7 +181,9 @@ func (p *fakePollers) Sync(repos []string) { p.synced = append(p.synced, slices.
 func TestOnPublishRederivesWhatTheStartupDerived(t *testing.T) {
 	w := newFakeWiring()
 	conns := w.conns()
-	prev := repos("o/a")
+	prev := repos("o/a", "o/gone")
+	prev.Repositories[0].Classes = map[string]config.Class{"fixed": {Live: true}, "off": {Live: true}}
+	prev.Repositories[1].Classes = map[string]config.Class{"docs": {Live: true}}
 	prev.Tiers = map[string]config.Tier{"standard": {RunUSD: 2.55}, "gone": {RunUSD: 1}}
 	if err := conns.sync(t.Context(), prev); err != nil {
 		t.Fatal(err)
@@ -157,13 +191,15 @@ func TestOnPublishRederivesWhatTheStartupDerived(t *testing.T) {
 	next := repos("o/a", "o/bad", "o/b")
 	next.Tiers = map[string]config.Tier{"standard": {RunUSD: 3}, "free": {}}
 	next.Budgets.PerPerson.Enabled = true
+	next.Repositories[0].Classes = map[string]config.Class{"fixed": {Live: true, HoldoutChecks: []string{"e2e"}}, "off": {}}
 	next.Repositories[2].Classes = map[string]config.Class{"docs": {Live: true}}
 	next.Warnings = []string{"a sentence"}
 	w.refuse["o/bad"] = true
 	m := &fakePublishMetrics{budgets: map[string]float64{}}
 	p := &fakePollers{}
 	var logs bytes.Buffer
-	onPublish(t.Context(), slog.New(slog.NewTextHandler(&logs, nil)), conns, p, m)(prev, next)
+	kicks := 0
+	onPublish(t.Context(), newWiring(conns, p, m, &logs, &kicks))(prev, next)
 
 	want := []string{"o/a", "o/b"}
 	if !slices.Equal(m.repos, want) || len(p.synced) != 1 || !slices.Equal(p.synced[0], want) {
@@ -178,9 +214,106 @@ func TestOnPublishRederivesWhatTheStartupDerived(t *testing.T) {
 	if !slices.Equal(m.holdouts, []string{"o/b/docs"}) {
 		t.Fatalf("holdout gauge %v", m.holdouts)
 	}
+	// M1: what the publish made stale reads 0, recorded while the old list still names it.
+	if want := []string{"o/a/fixed", "o/a/off", "o/gone/docs"}; !slices.Equal(m.cleared, want) {
+		t.Fatalf("holdout gauges cleared %v, want %v", m.cleared, want)
+	}
+	if !slices.Equal(m.unowned, []string{"o/gone"}) {
+		t.Fatalf("repository_owned cleared %v", m.unowned)
+	}
+	if kicks != 1 {
+		t.Fatalf("the fence was kicked %d times, want once", kicks)
+	}
 	for _, s := range []string{"level=ERROR", "o/bad", "a sentence"} {
 		if !strings.Contains(logs.String(), s) {
 			t.Errorf("log lacks %q:\n%s", s, logs.String())
 		}
+	}
+}
+
+// I1: a served repository whose merger reconnect fails transiently keeps its connections and
+// stays served; the failure is counted, and a retry reconnects it once GitHub answers.
+func TestARepositoryKeepsItsConnectionsWhenAReconnectFails(t *testing.T) {
+	w := newFakeWiring()
+	conns := w.conns()
+	cfg := repos("o/a", "o/b")
+	if err := conns.sync(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := conns.get("o/a")
+	if ran, err := conns.retry(t.Context(), func() *config.Config { return cfg }); ran || err != nil {
+		t.Fatalf("a retry with nothing pending ran: %v %v", ran, err)
+	}
+	live := repos("o/a", "o/b")
+	live.Repositories[1].Classes = map[string]config.Class{"docs": {Live: true}} // every merger's scope moves
+	w.flaky["o/a"] = true
+	if err := conns.sync(t.Context(), live); err == nil || !strings.Contains(err.Error(), "o/a") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(conns.names(), []string{"o/a", "o/b"}) {
+		t.Fatalf("names %v: a transient failure dropped a served repository", conns.names())
+	}
+	if kept, _ := conns.get("o/a"); kept.gh != old.gh || kept.merger != old.merger {
+		t.Fatal("the served repository lost its connections")
+	}
+	if !slices.Equal(w.failed, []string{"o/a"}) {
+		t.Fatalf("failed %v", w.failed)
+	}
+	delete(w.flaky, "o/a")
+	m := &fakePublishMetrics{budgets: map[string]float64{}}
+	var logs bytes.Buffer
+	kicks := 0
+	newWiring(conns, &fakePollers{}, m, &logs, &kicks).retry(t.Context(), func() *config.Config { return live })
+	if w.mergers["o/a"] != 3 || !strings.Contains(logs.String(), "every repository is wired") {
+		t.Fatalf("mergers %v, log %s", w.mergers, logs.String())
+	}
+	if rc, _ := conns.get("o/a"); rc.scope != mergerScopeFor(live, "o/a") {
+		t.Fatal("the retry did not reconnect the merger at its new scope")
+	}
+	if ran, _ := conns.retry(t.Context(), func() *config.Config { return live }); ran {
+		t.Fatal("a retry ran with nothing pending")
+	}
+}
+
+// A merger key a class needs and the pod does not mount leaves the repository out, served or not.
+func TestAMissingMergerKeyLeavesAServedRepositoryOut(t *testing.T) {
+	c := newRepoConns(slog.New(slog.DiscardHandler))
+	c.connectGH = func(context.Context, *config.Config, string) (*forge.GitHub, error) { return &forge.GitHub{}, nil }
+	missing := filepath.Join(t.TempDir(), "app_id")
+	cfg := repos("o/a")
+	cfg.GitHub = config.GitHub{MergerAppIDFile: missing, MergerKeyFile: missing}
+	if err := c.sync(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	next := repos("o/a")
+	next.GitHub = cfg.GitHub
+	next.Repositories[0].Classes = map[string]config.Class{"docs": {Shadow: true}}
+	if err := c.sync(t.Context(), next); !errors.Is(err, errMergerKeyMissing) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(c.names()) != 0 {
+		t.Fatalf("served %v without the merger key its class needs", c.names())
+	}
+}
+
+// M4: in demo mode one App installation serves one account, so a repository of another owner
+// than the first is never wired.
+func TestTheDemoRefusesARepositoryOfAnotherOwner(t *testing.T) {
+	c := newRepoConns(slog.New(slog.DiscardHandler))
+	cfg := repos("o/a", "x/b")
+	cfg.Demo = true
+	if _, err := c.connectGH(t.Context(), cfg, "x/b"); err == nil || !strings.Contains(err.Error(), "different owners") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// M5: a panic in a subscriber is logged and counted, never a crash.
+func TestOnPublishRecoversAPanic(t *testing.T) {
+	m := &fakePublishMetrics{budgets: map[string]float64{}}
+	var logs bytes.Buffer
+	kicks := 0
+	onPublish(t.Context(), newWiring(newFakeWiring().conns(), &fakePollers{panics: true}, m, &logs, &kicks))(repos("o/a"), repos("o/a"))
+	if !slices.Equal(m.wireErrs, []string{"*"}) || !strings.Contains(logs.String(), "panicked") {
+		t.Fatalf("wire errors %v, log %s", m.wireErrs, logs.String())
 	}
 }

@@ -162,3 +162,37 @@ func TestRefreshFollowsTheListedRepositories(t *testing.T) {
 		t.Fatal("a removed repository's state lingers")
 	}
 }
+
+// A Kick refreshes at once, between periods; kicks coalesce and never block.
+func TestKickRefreshesBetweenPeriods(t *testing.T) {
+	fs := &files{by: map[string]file{"o/a": {body: "factory: aws-0\n", found: true}}}
+	var mu sync.Mutex
+	names, passes := []string{"o/none"}, 0
+	read := func(ctx context.Context, repo string) ([]byte, bool, error) {
+		mu.Lock()
+		passes++
+		mu.Unlock()
+		return fs.read(ctx, repo)
+	}
+	f := &Fence{Name: "aws-0", Read: read, Repositories: func() []string { mu.Lock(); defer mu.Unlock(); return slices.Clone(names) },
+		Every: time.Hour, Stale: time.Hour, Now: time.Now}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = f.Start(ctx) }()
+	wait := func(what string, ok func() bool) {
+		deadline := time.Now().Add(5 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	wait("no first pass", func() bool { mu.Lock(); defer mu.Unlock(); return passes > 0 })
+	mu.Lock()
+	names = []string{"o/a"}
+	mu.Unlock()
+	f.Kick()
+	f.Kick()
+	wait("a kick did not refresh before the hour", func() bool { return f.Owned("o/a") })
+}

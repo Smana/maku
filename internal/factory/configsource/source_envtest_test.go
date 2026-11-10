@@ -50,7 +50,7 @@ func TestEnvtestSourceFollowsTheObjects(t *testing.T) {
 	if err := src.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := src.Watch(ctx, mgr.GetCache()); err != nil {
+	if err := src.Watch(ctx, mgr.GetCache(), Kinds()); err != nil {
 		t.Fatal(err)
 	}
 	if err := mgr.Add(src); err != nil {

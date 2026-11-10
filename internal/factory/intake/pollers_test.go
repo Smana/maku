@@ -4,6 +4,7 @@ package intake
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -99,5 +100,79 @@ func TestPollersFollowTheServedRepositories(t *testing.T) {
 	}
 	if !p.NeedLeaderElection() {
 		t.Fatal("the pollers are leader-only")
+	}
+}
+
+// A Sync after Start returned (a publish racing the leader's loss) records the set and starts
+// nothing: no goroutine outlives Start.
+func TestPollersLateSyncStartsNothing(t *testing.T) {
+	c := &counting{running: map[string]int{}, started: map[string]int{}}
+	p := &Pollers{New: func(repo string) (*IssuePoller, bool) { return &IssuePoller{Repository: repo}, true }, start: c.run}
+	p.Sync([]string{"o/a"})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- p.Start(ctx) }()
+	eventually(t, "a runs", func() bool { r, _ := c.snapshot(); return r["o/a"] == 1 })
+	cancel()
+	<-done
+	p.Sync([]string{"o/a", "o/b"})
+	time.Sleep(50 * time.Millisecond)
+	if r, s := c.snapshot(); len(r) != 0 || s["o/b"] != 0 {
+		t.Fatalf("a late Sync started pollers: running %v, started %v", r, s)
+	}
+}
+
+// A poller whose Start returned an error is restarted by the next Sync; a repository removed and
+// added again runs one poller at a time, the new one after the old returned.
+func TestPollersRestartAFailedPollerAndNeverOverlap(t *testing.T) {
+	var mu sync.Mutex
+	fails, live, overlap, starts := true, 0, false, 0
+	release := make(chan struct{})
+	p := &Pollers{New: func(repo string) (*IssuePoller, bool) { return &IssuePoller{Repository: repo}, true },
+		start: func(ctx context.Context, _ *IssuePoller) error {
+			mu.Lock()
+			starts++
+			if fails {
+				fails = false
+				mu.Unlock()
+				return errors.New("bad period")
+			}
+			live++
+			overlap = overlap || live > 1
+			mu.Unlock()
+			<-ctx.Done()
+			<-release // the old poller is slow to return
+			mu.Lock()
+			live--
+			mu.Unlock()
+			return nil
+		}}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	p.Sync([]string{"o/a"})
+	go func() { done <- p.Start(ctx) }()
+	eventually(t, "the failed poller ended", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		_, ok := p.running["o/a"]
+		return !ok && p.ctx != nil
+	})
+	p.Sync([]string{"o/a"})
+	eventually(t, "restarted", func() bool { mu.Lock(); defer mu.Unlock(); return live == 1 })
+	p.Sync(nil)
+	p.Sync([]string{"o/a"})
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	if starts != 2 {
+		mu.Unlock()
+		t.Fatalf("the re-added poller started before the old one returned: %d starts", starts)
+	}
+	mu.Unlock()
+	close(release)
+	eventually(t, "the re-added poller runs", func() bool { mu.Lock(); defer mu.Unlock(); return starts == 3 && live == 1 })
+	cancel()
+	<-done
+	if overlap {
+		t.Fatal("two pollers ran for one repository")
 	}
 }

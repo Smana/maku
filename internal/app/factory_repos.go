@@ -53,9 +53,12 @@ type repoConns struct {
 	// failed hears each repository a sync could not wire; nil hears nothing.
 	failed func(ctx context.Context, repository string)
 
-	mu    sync.RWMutex
-	order []string
-	by    map[string]repoConn
+	syncMu sync.Mutex // serializes sync and retry
+
+	mu      sync.RWMutex
+	order   []string
+	by      map[string]repoConn
+	pending bool // the last sync failed a repository: retry it
 }
 
 // newRepoConns connects through GitHub: the factory App, and the merger App (connectMerger). In
@@ -71,6 +74,15 @@ func newRepoConns(log *slog.Logger) *repoConns {
 		}
 		return gh, requirePublic(ctx, []string{repository}, func(ctx context.Context, _ string) (bool, error) { return gh.Public(ctx) })
 	}
+	connect := c.connectGH
+	c.connectGH = func(ctx context.Context, cfg *config.Config, repository string) (*forge.GitHub, error) {
+		if cfg.Demo { // one App installation serves one account: demoGitToken mints for one owner
+			if _, _, err := oneOwner([]string{cfg.Primary(), repository}); err != nil {
+				return nil, err
+			}
+		}
+		return connect(ctx, cfg, repository)
+	}
 	c.connectMerger = func(ctx context.Context, cfg *config.Config, repository string) (forge.Merger, error) {
 		return connectMerger(ctx, log, cfg, repository)
 	}
@@ -79,10 +91,32 @@ func newRepoConns(log *slog.Logger) *repoConns {
 
 // sync makes the connections cfg's repositories: it connects each new one, keeps the
 // connections of those it had (reconnecting a merger whose scope moved), and drops the removed
-// ones. A repository whose installation is missing, or whose class needs a merger key that is not
-// mounted, is left out, never silently served (v2 D8): it is named in the error and heard by
-// failed. At startup that error fails the start; on a publish it is logged.
+// ones. A new repository whose installation is missing, or any whose class needs a merger key
+// that is not mounted, is left out, never silently served (v2 D8). A served repository whose
+// merger reconnect fails otherwise keeps the connection it had, and the reconnect is retried.
+// Each failure is named in the error and heard by failed; at startup the error fails the start,
+// on a publish it is logged.
 func (c *repoConns) sync(ctx context.Context, cfg *config.Config) error {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+	return c.syncLocked(ctx, cfg)
+}
+
+// retry syncs to cur() again while the last sync failed a repository; ran reports whether it did.
+// cur is read under the sync lock, so a retry never wires an older config than a publish did.
+func (c *repoConns) retry(ctx context.Context, cur func() *config.Config) (ran bool, err error) {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+	c.mu.RLock()
+	pending := c.pending
+	c.mu.RUnlock()
+	if !pending {
+		return false, nil
+	}
+	return true, c.syncLocked(ctx, cur())
+}
+
+func (c *repoConns) syncLocked(ctx context.Context, cfg *config.Config) error {
 	c.mu.RLock()
 	had := maps.Clone(c.by)
 	c.mu.RUnlock()
@@ -113,17 +147,21 @@ func (c *repoConns) sync(ctx context.Context, cfg *config.Config) error {
 			// R16 (owner, 2026-09-27): merge-side calls use the merger App's key, which no other
 			// workload holds. TW4: its token asks the merger profile, not the factory App's scope.
 			merger, err := c.connectMerger(ctx, cfg, r.Name)
-			if err != nil {
+			switch {
+			case err == nil:
+				rc.merger, rc.scope = merger, scope
+			case ok && !errors.Is(err, errMergerKeyMissing):
+				fail(r.Name, err) // served: keeps its connections, the old scope retries the merger
+			default:
 				fail(r.Name, err)
 				continue
 			}
-			rc.merger, rc.scope = merger, scope
 		}
 		by[key] = rc
 		order = append(order, r.Name)
 	}
 	c.mu.Lock()
-	c.by, c.order = by, order
+	c.by, c.order, c.pending = by, order, len(errs) > 0
 	c.mu.Unlock()
 	return errors.Join(errs...)
 }

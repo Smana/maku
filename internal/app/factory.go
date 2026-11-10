@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
@@ -131,13 +133,25 @@ func warnConfig(log *slog.Logger, cfg *config.Config, m holdoutGauge) {
 	if m == nil {
 		return
 	}
+	for _, c := range withoutHoldout(cfg) {
+		m.ClassWithoutHoldout(context.Background(), c.repository, c.class)
+	}
+}
+
+// repoClass is one class of one repository.
+type repoClass struct{ repository, class string }
+
+// withoutHoldout are the live classes that declare no holdoutChecks (TO5), in order.
+func withoutHoldout(cfg *config.Config) []repoClass {
+	var out []repoClass
 	for _, r := range cfg.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {
-				m.ClassWithoutHoldout(context.Background(), r.Name, name)
+				out = append(out, repoClass{r.Name, name})
 			}
 		}
 	}
+	return out
 }
 
 // brokerClient is the HTTP client for the broker: its CA when broker.caFile is set, the system
@@ -277,7 +291,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// From here the Source reads through the manager's uncached reader. Nothing else syncs before
 	// the manager starts it, so swapping the reader after the first Sync races with nothing.
 	src.Reader = mgr.GetAPIReader()
-	if err := src.Watch(ctx, mgr.GetCache()); err != nil {
+	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {
 		return err
 	}
 	if err := mgr.Add(src); err != nil {
@@ -514,6 +528,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			},
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log})
 	}
+	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, kick: fenced.Kick}
 	for _, r := range append(runnables,
 		&intake.Scheduler{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
@@ -539,7 +554,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 					m.Revoked(fmetrics.WithPrincipal(ctx, r.Payer()), "manual")
 				}
 			}, Log: log},
-		apiSrv, fenced,
+		apiSrv, fenced, &retrier{every: pingEvery, retry: func(ctx context.Context) { wired.retry(ctx, live.Current) }},
 		&pinger{ping: conns.ping, every: pingEvery, up: func() bool { return conns.healthy(time.Now()) }, record: m.GitHubUp},
 	) {
 		if err := mgr.Add(r); err != nil {
@@ -548,7 +563,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	// D12: each publish re-wires the repositories and re-derives what the startup derived. It is
 	// registered once every runnable is built, and a failure in it is logged, never fatal.
-	live.Subscribe(onPublish(ctx, log, conns, pollers, m))
+	live.Subscribe(onPublish(ctx, wired))
 	down := newDrainFlag(ctx)
 	ops := factoryOps(mgr.GetCache().WaitForCacheSync, down.Draining, exp.Handler())
 	return serveFactory(ctx, log, mgr, ops, down, ns)
@@ -615,7 +630,7 @@ func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string) (src *
 	}
 	src = &configsource.Source{Reader: plain, Namespace: ns, File: raw, Log: log}
 	if err := src.Sync(ctx); err != nil {
-		return nil, nil, err
+		return nil, nil, forbiddenHint(err, ns)
 	}
 	if kinds, err = servedKinds(plain); err != nil {
 		return nil, nil, err
@@ -623,9 +638,12 @@ func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string) (src *
 	return src, kinds, nil
 }
 
-// factoryResources are the kinds the config is built from (D5).
-func factoryResources() []client.Object {
-	return []client.Object{&factoryv1.Factory{}, &factoryv1.Repository{}, &factoryv1.MergePolicy{}}
+// forbiddenHint names the Role rule a refused list needs; the start still fails.
+func forbiddenHint(err error, ns string) error {
+	if !apierrors.IsForbidden(err) {
+		return err
+	}
+	return fmt.Errorf("%w: the factory's Role in %s must grant get, list and watch on factories, repositories and mergepolicies (maku.ogenki.io)", err, ns)
 }
 
 // servedKinds are the factory's resource kinds the API server serves: the manager caches only
@@ -633,7 +651,7 @@ func factoryResources() []client.Object {
 // installed later is read by the Source's periodic resync, and watched from the next start.
 func servedKinds(c client.Client) ([]client.Object, error) {
 	var out []client.Object
-	for _, obj := range factoryResources() {
+	for _, obj := range configsource.Kinds() {
 		if _, err := c.IsObjectNamespaced(obj); meta.IsNoMatchError(err) {
 			continue
 		} else if err != nil {
@@ -647,38 +665,124 @@ func servedKinds(c client.Client) ([]client.Object, error) {
 // publishMetrics are the series a publish re-derives (fmetrics.Set).
 type publishMetrics interface {
 	holdoutGauge
+	ClassWithHoldout(ctx context.Context, repository, class string)
+	RepositoryOwned(ctx context.Context, repository string, owned bool)
+	ConfigWireError(ctx context.Context, repository string)
 	ListRepositories(names ...string)
 	ChargePeople(on bool)
 	RunBudgetUSD(ctx context.Context, tier string, usd float64)
 }
 
-// onPublish is the config's subscriber (D12): it wires the repositories next lists (a failure
-// leaves that repository out until a later publish wires it, logged and counted, never fatal),
-// moves the issue pollers and the repository list onto the served set, and re-derives the
-// startup's gauges: per-person charging, each tier's run budget (0 for a tier no longer capped)
-// and the live classes without holdoutChecks.
-func onPublish(ctx context.Context, log *slog.Logger, conns *repoConns, pollers interface{ Sync(repos []string) }, m publishMetrics) func(prev, next *config.Config) {
-	return func(prev, next *config.Config) {
-		if err := conns.sync(ctx, next); err != nil {
-			log.Error("config published: a repository is not served until a publish wires it", "err", err)
+// wiring is what follows the served repository set (D12): the connections, the issue pollers,
+// the repository list of the metrics and the fence.
+type wiring struct {
+	log     *slog.Logger
+	conns   *repoConns
+	pollers interface{ Sync(repos []string) }
+	m       publishMetrics
+	kick    func() // a fence refresh, not waiting for it; nil kicks nothing
+}
+
+// served moves the pollers, the metrics' repository list and the fence onto the served set once
+// a sync changed it; before is the set served before it, whose dropped repositories read not owned.
+func (w *wiring) served(ctx context.Context, before []string) []string {
+	names := w.conns.names()
+	for _, b := range before {
+		if !slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, b) }) {
+			w.m.RepositoryOwned(ctx, b, false) // while the list still names it
 		}
-		names := conns.names()
-		m.ListRepositories(names...)
-		pollers.Sync(names)
-		m.ChargePeople(next.Budgets.PerPerson.Enabled)
+	}
+	w.m.ListRepositories(names...)
+	w.pollers.Sync(names)
+	if w.kick != nil {
+		w.kick()
+	}
+	return names
+}
+
+// guard keeps a panic in the wiring from crashing the process: logged and counted under "*".
+func (w *wiring) guard(ctx context.Context) {
+	if r := recover(); r != nil {
+		w.log.Error("config wiring panicked: the factory keeps serving what it had", "panic", r, "stack", string(debug.Stack()))
+		w.m.ConfigWireError(ctx, "*")
+	}
+}
+
+// onPublish is the config's subscriber (D12): it wires the repositories next lists (a failure is
+// logged, counted and retried, never fatal), moves what follows the served set onto it, and
+// re-derives the startup's gauges: per-person charging, each tier's run budget (0 for a tier no
+// longer capped) and the live classes without holdoutChecks (0 for one no longer so).
+func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
+	return func(prev, next *config.Config) {
+		defer w.guard(ctx)
+		before := w.conns.names()
+		if err := w.conns.sync(ctx, next); err != nil {
+			w.log.Error("config published: a repository is not wired yet; retried every minute", "err", err)
+		}
+		gaps := withoutHoldout(next)
+		for _, g := range withoutHoldout(prev) {
+			if !slices.Contains(gaps, g) {
+				w.m.ClassWithHoldout(ctx, g.repository, g.class) // while the list still names it
+			}
+		}
+		names := w.served(ctx, before)
+		w.m.ChargePeople(next.Budgets.PerPerson.Enabled)
 		budgets := meter.RunUSD(next)
 		for tier := range meter.RunUSD(prev) {
 			if _, ok := budgets[tier]; !ok {
-				m.RunBudgetUSD(ctx, tier, 0)
+				w.m.RunBudgetUSD(ctx, tier, 0)
 			}
 		}
 		for tier, usd := range budgets {
-			m.RunBudgetUSD(ctx, tier, usd)
+			w.m.RunBudgetUSD(ctx, tier, usd)
 		}
-		warnConfig(log, next, m)
-		log.Info("config published", "hash", next.Hash, "repositories", names)
+		warnConfig(w.log, next, w.m)
+		w.log.Info("config published", "hash", next.Hash, "repositories", names)
 	}
 }
+
+// retry wires cur() again while a repository failed to wire (I1), then follows the served set.
+func (w *wiring) retry(ctx context.Context, cur func() *config.Config) {
+	defer w.guard(ctx)
+	before := w.conns.names()
+	ran, err := w.conns.retry(ctx, cur)
+	if !ran {
+		return
+	}
+	if err != nil {
+		w.log.Warn("config wiring retried: a repository is still not wired", "err", err)
+	} else {
+		w.log.Info("config wiring retried: every repository is wired")
+	}
+	w.served(ctx, before)
+}
+
+// retrier retries a failed wiring every period on every replica: each wires its own connections.
+type retrier struct {
+	every time.Duration
+	retry func(context.Context)
+}
+
+// NeedLeaderElection is false: the API and the fence serve from every replica's connections.
+func (*retrier) NeedLeaderElection() bool { return false }
+
+// Start retries at each period until ctx ends.
+func (r *retrier) Start(ctx context.Context) error {
+	t := time.NewTicker(r.every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+			r.retry(ctx)
+		}
+	}
+}
+
+// errMergerKeyMissing is a merger key a class needs and the pod does not mount: the repository is
+// left out, whether it was served or not.
+var errMergerKeyMissing = errors.New("merger App key missing")
 
 // connectMerger connects the merger App, or answers the fail-closed forge.Absent when its key
 // is not mounted and no class of the repository needs it (#57: the chart mounts the Secret
@@ -693,7 +797,7 @@ func connectMerger(ctx context.Context, log *slog.Logger, cfg *config.Config, re
 		case errors.Is(err, os.ErrNotExist) && !cfg.RepositoryFor(repository).NeedsMerger():
 			idFile = ""
 		case errors.Is(err, os.ErrNotExist):
-			return nil, fmt.Errorf("merger App key %s is missing, and a live or shadow class needs it: create the agent-factory-merger Secret or turn the class off", idFile)
+			return nil, fmt.Errorf("%w: %s is not mounted, and a live or shadow class needs it: create the agent-factory-merger Secret or turn the class off", errMergerKeyMissing, idFile)
 		}
 	}
 	if idFile == "" {

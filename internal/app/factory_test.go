@@ -28,6 +28,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/meter"
@@ -72,7 +73,7 @@ func TestFactoryManagerOptions(t *testing.T) {
 	}{{"agent-system", runwatch.DefaultKind}, {"factory-test", native}} {
 		ns, rk := tc.ns, tc.rk
 		t.Run(ns, func(t *testing.T) {
-			o := factoryManagerOptions(ns, rk, factoryResources())
+			o := factoryManagerOptions(ns, rk, configsource.Kinds())
 			if !o.LeaderElection || o.LeaderElectionID != "agent-factory.agents.ogenki.io" || o.LeaderElectionNamespace != ns ||
 				!o.LeaderElectionReleaseOnCancel {
 				t.Fatalf("leader election: %+v", o)

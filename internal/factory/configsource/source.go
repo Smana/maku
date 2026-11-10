@@ -122,14 +122,21 @@ func (s *Source) Start(ctx context.Context) error {
 	}
 }
 
-// Watch registers handlers on the three kinds that Kick. A kind with no CRD is skipped.
-func (s *Source) Watch(ctx context.Context, c cache.Cache) error {
+// Kinds are the three kinds the config is built from, in the order Sync lists them.
+func Kinds() []client.Object {
+	return []client.Object{&v1alpha1.Factory{}, &v1alpha1.Repository{}, &v1alpha1.MergePolicy{}}
+}
+
+// Watch registers handlers that Kick on kinds, a subset of Kinds: the ones the cache was told
+// about (a ByObject entry), so it never starts an informer the manager did not configure. A kind
+// with no CRD is skipped.
+func (s *Source) Watch(ctx context.Context, c cache.Cache, kinds []client.Object) error {
 	h := toolscache.ResourceEventHandlerFuncs{
 		AddFunc:    func(any) { s.Kick() },
 		UpdateFunc: func(_, _ any) { s.Kick() },
 		DeleteFunc: func(any) { s.Kick() },
 	}
-	for _, obj := range []client.Object{&v1alpha1.Factory{}, &v1alpha1.Repository{}, &v1alpha1.MergePolicy{}} {
+	for _, obj := range kinds {
 		inf, err := c.GetInformer(ctx, obj)
 		if err != nil {
 			if meta.IsNoMatchError(err) {

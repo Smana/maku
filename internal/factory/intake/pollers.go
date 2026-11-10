@@ -21,19 +21,26 @@ type Pollers struct {
 	// start runs one poller; nil is IssuePoller.Start. A test counts with it.
 	start func(context.Context, *IssuePoller) error
 
-	mu      sync.Mutex
-	ctx     context.Context // Start's; nil until Start
-	want    []string
-	running map[string]context.CancelFunc // by lowercased name
-	wg      sync.WaitGroup
+	mu       sync.Mutex
+	ctx      context.Context // Start's while it runs; nil before and after
+	want     []string
+	running  map[string]*polling // by lowercased name
+	stopping map[string]*polling // cancelled, not yet returned: a re-add waits for them
+	wg       sync.WaitGroup
+}
+
+// polling is one running poller: its cancel, and done, closed once its Start returned.
+type polling struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 // NeedLeaderElection is true: two pollers would race each label.
 func (*Pollers) NeedLeaderElection() bool { return true }
 
 // Sync makes repos the polled set: it starts a poller for each repository it adds and stops the
-// poller of each it removes, leaving the others running. Before Start, it records the set, which
-// Start runs.
+// poller of each it removes, leaving the others running. Outside Start (before, or after it
+// returned) it only records the set, which the next Start runs.
 func (p *Pollers) Sync(repos []string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -51,8 +58,9 @@ func (p *Pollers) Start(ctx context.Context) error {
 	p.mu.Unlock()
 	<-ctx.Done()
 	p.mu.Lock()
-	for name, cancel := range p.running {
-		cancel()
+	p.ctx = nil // a late Sync records, and starts nothing
+	for name, r := range p.running {
+		r.cancel()
 		delete(p.running, name)
 	}
 	p.mu.Unlock()
@@ -63,16 +71,17 @@ func (p *Pollers) Start(ctx context.Context) error {
 // apply starts and stops pollers until the running set is want. p.mu is held.
 func (p *Pollers) apply() {
 	if p.running == nil {
-		p.running = map[string]context.CancelFunc{}
+		p.running, p.stopping = map[string]*polling{}, map[string]*polling{}
 	}
 	wanted := make(map[string]bool, len(p.want))
 	for _, r := range p.want {
 		wanted[strings.ToLower(r)] = true
 	}
-	for name, cancel := range p.running {
+	for name, r := range p.running {
 		if !wanted[name] {
-			cancel()
+			r.cancel()
 			delete(p.running, name)
+			p.stopping[name] = r
 		}
 	}
 	for _, repo := range p.want {
@@ -86,9 +95,25 @@ func (p *Pollers) apply() {
 			continue
 		}
 		ctx, cancel := context.WithCancel(p.ctx)
-		p.running[name] = cancel
+		r := &polling{cancel: cancel, done: make(chan struct{})}
+		prev := p.stopping[name] // removed then added again: one poller per repository at a time
+		p.running[name] = r
 		p.wg.Go(func() {
-			if err := p.run(ctx, poller); err != nil {
+			defer close(r.done)
+			if prev != nil {
+				<-prev.done
+			}
+			err := p.run(ctx, poller)
+			p.mu.Lock()
+			if p.running[name] == r { // ended on its own: the next Sync starts it again
+				delete(p.running, name)
+			}
+			if p.stopping[name] == r {
+				delete(p.stopping, name)
+			}
+			p.mu.Unlock()
+			cancel()
+			if err != nil {
 				p.log().Error("issue poller stopped", "repository", repo, "err", err)
 			}
 		})

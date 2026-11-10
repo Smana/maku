@@ -77,6 +77,23 @@ type Fence struct {
 
 	mu    sync.RWMutex
 	state map[string]entry
+
+	kickOnce sync.Once
+	kick     chan struct{}
+}
+
+func (f *Fence) kickCh() chan struct{} {
+	f.kickOnce.Do(func() { f.kick = make(chan struct{}, 1) })
+	return f.kick
+}
+
+// Kick asks Start for a refresh now, without blocking and coalesced: a publish that adds a
+// repository has it read at once, not at the next period.
+func (f *Fence) Kick() {
+	select {
+	case f.kickCh() <- struct{}{}:
+	default:
+	}
 }
 
 type entry struct {
@@ -161,6 +178,7 @@ func (f *Fence) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+		case <-f.kickCh():
 		}
 	}
 }
