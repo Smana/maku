@@ -10,9 +10,13 @@ import (
 
 // Evaluation is the team evaluation's switch: the control cohort's share of unlabelled
 // tasks, and whether the scoper's recommendation is only recorded (observe) or used (apply).
+// +kubebuilder:object:generate=true
 type Evaluation struct {
-	ControlPercent int    `json:"controlPercent,omitempty"`
-	Mode           string `json:"mode,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	ControlPercent int `json:"controlPercent,omitempty"`
+	// +kubebuilder:validation:Enum=observe;apply
+	Mode string `json:"mode,omitempty"`
 }
 
 // The evaluation modes; unset is observe.

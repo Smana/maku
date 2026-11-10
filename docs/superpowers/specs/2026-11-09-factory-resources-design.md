@@ -70,7 +70,7 @@ mergepolicy/cloud-native-ref             Smana/cloud-native-ref   central     6 
 | D9 | **The settings pages stay read-only.** They read the CRs' spec and status through the factory. Any change comes out as YAML (a patch for the manifest) that the maintainer commits by PR. Flux stays the only writer. Promotions and exceptions stay in Postgres | (a) the pages write the CRs: Flux reverts them on the next reconcile. (b) the pages open the PR through a GitHub App: a new write permission |
 | D10 | **`MergePolicy.status`** (narrowed for v1): conditions `Accepted`, `RepositoryFileValid`, `InSync` (the repository file matches the spec); `authority`; per class its mode (`live`, `shadow`, `unarmed`) and its last decision with time. Columns `REPO AUTHORITY CLASSES LIVE ACCEPTED AGE`. **Later**, once #420's metrics land: 7-day counts (would merge, merged, held), refreshed at most once a minute. The full history stays in decision markers and Postgres | (a) conditions only: no view of what the policy is doing. (b) the last N decisions in status: grows, and is written often. (c) the counts in v1: a second reader of Postgres before #420 decides where they come from |
 | D11 | **`Repository.status`** (narrowed for v1): conditions `Accepted`, `Connected` (the GitHub App is installed and can read the repository and its file), the `MergePolicy` that applies. Columns `REPO FACTORY ACCEPTED CONNECTED AGE`. **`Factory.status`**: conditions `Accepted`, `Ready` (broker reachable, GitHub Apps valid), repositories served, whether `factory/stop` is active. Columns `ACCEPTED READY REPOS STOPPED AGE`. **Later**, with #420: open tasks, the last task and its outcome, today's spend against the daily cap | (a) conditions only: no `kubectl get` answer to "is it serving my repository". (b) spend and task counts in v1: they duplicate Grafana before #420 settles the source |
-| D12 | **Live fields and startup fields.** What the factory reads per decision applies live: the catalogue (tiers, templates, harness profiles, loops, caps, budgets, facts, brief, resume, scoper, merge guardrails, meter prices, defaults, `triage.controlPercent`, the kill-switch issue) and each repository's settings, classes and merge rules, including adding or removing a repository. What changes the factory's wiring stays in Helm values and needs a rollout, as today: `policyManagement`, `coordination`, `hardening`, `api` (sponsored and internal principals included), `runs`, `sandbox`, `demo`, the broker, GitHub key files, meter and log URLs, poll intervals, tracing, logins and `roomsURL` | (a) everything live: the factory would start and stop the policy watch, promotion, approval memory and the Flux watcher when a switch flips. (b) restart on an accepted change: no live gain |
+| D12 | **Live fields and startup fields.** What the factory reads per decision applies live: the catalogue (tiers, templates, harness profiles, loops, caps, budgets, facts, brief, resume, scoper, merge guardrails, meter prices, defaults, `triage.controlPercent`, `evaluation`, the kill-switch issue) and each repository's settings, classes and merge rules, including adding or removing a repository. What changes the factory's wiring stays in Helm values and needs a rollout, as today: `policyManagement`, `coordination`, `hardening`, `api` (sponsored and internal principals included), `runs`, `sandbox`, `demo`, the broker, GitHub key files, meter and log URLs, poll intervals, tracing, logins and `roomsURL` | (a) everything live: the factory would start and stop the policy watch, promotion, approval memory and the Flux watcher when a switch flips. (b) restart on an accepted change: no live gain |
 | D13 | **Every replica builds the snapshot; only the leader writes status.** The factory runs two replicas behind leader election, and every replica serves the settings API from config. So the config controller runs with `NeedLeaderElection() == false` and only the status writer needs the lease | (a) the leader alone builds the snapshot: a follower would serve the settings pages from a stale config |
 | D14 | **An object invalid at startup is not served.** The snapshot is in memory, so after a restart an object with no valid version has no last good one: its repository is not served, it gets `Accepted=False`, and the factory emits a warning event. CEL at admission and `maku config validate` in the GitOps repository's CI make this rare | (a) persisting each object's last accepted spec in an annotation or a ConfigMap: more state, and a second source of truth beside git |
 | D15 | **One Factory per process, by name.** The factory serves the `Factory` named by `config.factory` (today's fence name, the cluster's). Any other `Factory` in the namespace gets `Accepted=False`, reason `NotThisFactory`. A `Repository` whose `factoryRef` names another factory is ignored, with the same reason | (a) a `--factory` flag: a second name for the same thing |
@@ -129,7 +129,7 @@ spec:
 
 | Where | What |
 |---|---|
-| **Schema and CEL, at admission** | Field types and enums. Live and shadow together on one class (today `classes.go:161`). Refs fixed once set. Tier caps positive and `taskUSD ≥ runUSD`. Only one `MergePolicy` per `repositoryRef` is checked by the reconciler, because CEL can't see other objects. Write the rules against the wiki's CEL notes (`cel-transition-rule-omitempty-needs-has`, `gofmt-curls-quotes-in-kubebuilder-cel-marker`) |
+| **Schema and CEL, at admission** | Field types and enums. Live and shadow together on one class (today `classes.go:161`). Refs fixed once set. Tier caps positive and `taskUSD ≥ runUSD` are not in v1's CEL: `Parse` enforces them at reconcile. Only one `MergePolicy` per `repositoryRef` is checked by the reconciler, because CEL can't see other objects. Write the rules against the wiki's CEL notes (`cel-transition-rule-omitempty-needs-has`, `gofmt-curls-quotes-in-kubebuilder-cel-marker`) |
 | **Reconciler, reported as `Accepted=False`** | Everything in today's `Config.Validate()` and `validateRepository` that needs more than one object: a ref to a missing object, a template naming an unknown tier, a class naming a role no template has, two `MergePolicy` for one repository, a repository in both the file and a CR (D8) |
 
 Today's strict decoding (`DisallowUnknownFields`) is **not** fully replaced by the structural
@@ -158,6 +158,12 @@ watches the three kinds. For each object, on each generation:
    the pointer across one. What startup derives from the catalogue (the tiers' run budgets, per-person
    charging, each repository's GitHub and merger connections, the fence's repository list, metric
    labels) is re-derived on each publish.
+
+The whole-set check is `resources.Assemble` (plan 1), which is pure and keeps no history. To keep
+an object's last accepted version, the controller substitutes, for each object Assemble refuses
+`Invalid`, the last spec it accepted for that object, when it has one, and calls Assemble again on
+that set; an object with no accepted version stays refused (D14). The controller's cache is scoped
+to the factory's namespace.
 
 A task records `status.configGenerations` (`factory`, `repository`, `mergePolicy`) when it starts,
 beside today's `configHash`; each merge decision records the `MergePolicy` generation it read
@@ -208,6 +214,7 @@ their `status`.
 - **Status counts and spend** (D10, D11): after #420 decides where they come from.
 - **Persisting the last accepted version** across restarts (D14).
 - **Pinning a task to its generations** (D5): recorded, not pinned.
+- **Admission-time tier rules**: caps positive and `taskUSD ≥ runUSD` in CEL. `Parse` enforces them at reconcile.
 
 ## Notes from implementation (2026-11-10)
 

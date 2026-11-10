@@ -958,6 +958,19 @@ factory (`factoryURL` must point at it). Approval memory's page needs `human.app
 **Promote to live answers `not_promotable`.** The class is central (stage 4 not done) or not in
 shadow.
 
+## Factory resources (preview)
+
+The chart ships three kinds in `maku.ogenki.io/v1alpha1`: `Factory`, `Repository` and `MergePolicy`.
+The factory does not read them yet; the central config above stays the only thing that decides.
+Two offline commands prepare the move. `migrate` splits a config file into manifests and writes
+what stays in the file as a residual; `validate` lays manifests over a config file and refuses
+what the factory would refuse, one line each.
+
+```bash
+maku config migrate --from config.yaml --residual residual.yaml > manifests.yaml
+maku config validate --config residual.yaml manifests.yaml   # ok: 3 accepted
+```
+
 ## How this page's examples are checked
 
 Every YAML block marked for it is parsed and validated by

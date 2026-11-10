@@ -69,6 +69,10 @@ const (
 )
 
 // Duration is a time.Duration written as a string such as "30s".
+// +kubebuilder:object:generate=true
+// +kubebuilder:validation:Type=string
+// +kubebuilder:validation:MaxLength=32
+// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 type Duration struct{ time.Duration }
 
 // UnmarshalJSON parses a Go duration string; a bare number is refused, since its unit is a guess.
@@ -115,6 +119,7 @@ type Config struct {
 	// The legacy single-repository shape (v2 D1), read as a one-entry Repositories for one minor
 	// release and refused beside it. Parse moves these into Repositories and Control and empties
 	// them, so code reads Repos and Control, never these.
+	// +kubebuilder:validation:MaxLength=253
 	Repository   string           `json:"repository,omitempty"`
 	Maintainers  []string         `json:"maintainers,omitempty"`
 	TriggerLabel string           `json:"triggerLabel,omitempty"`
@@ -310,6 +315,7 @@ const MaxRepositories = 8
 
 // Repository is one repository the factory works on, with the settings that are its own (v2 D2).
 type Repository struct {
+	// +kubebuilder:validation:MaxLength=253
 	Name         string           `json:"name"` // owner/name
 	Maintainers  []string         `json:"maintainers"`
 	TriggerLabel string           `json:"triggerLabel"`
@@ -331,7 +337,10 @@ var EgressProfiles = []string{"pypi", "npm", "golang", "crates"}
 
 // Checks is what a check-enabled run of the repository requests beyond github (v3 feature 3,
 // RC7): the platform names the egress, never the repository's own file.
+// +kubebuilder:object:generate=true
 type Checks struct {
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	Egress []string `json:"egress,omitempty"`
 }
 
@@ -346,7 +355,9 @@ func (r *Repository) ChecksFor(class string) (bool, []string) {
 
 // Control is the pinned issue whose factory/stop label is the global stop (§6.1). Issue 0: none,
 // and only the stop object stops the factory.
+// +kubebuilder:object:generate=true
 type Control struct {
+	// +kubebuilder:validation:MaxLength=253
 	Repository string `json:"repository,omitempty"`
 	Issue      int    `json:"issue,omitempty"`
 }
@@ -517,10 +528,15 @@ type Poll struct {
 }
 
 // Defaults apply when triage leaves a value open.
+// +kubebuilder:object:generate=true
 type Defaults struct {
-	Template       string `json:"template"`
-	Tier           string `json:"tier"`
-	DataClass      string `json:"dataClass"`
+	// +kubebuilder:validation:MaxLength=253
+	Template string `json:"template"`
+	// +kubebuilder:validation:MaxLength=253
+	Tier string `json:"tier"`
+	// +kubebuilder:validation:MaxLength=253
+	DataClass string `json:"dataClass"`
+	// +kubebuilder:validation:MaxLength=253
 	PredictedClass string `json:"predictedClass"`
 }
 
@@ -534,21 +550,30 @@ type Triage struct {
 }
 
 // Merge is §5.1's merge actor and §6.4's rollback.
+// +kubebuilder:object:generate=true
 type Merge struct {
 	// The 8 contexts classic protection requires, by name (GitHub Actions, app 15368).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	RequiredChecks []string `json:"requiredChecks"`
 	// The checks main's CI runs on push, watched on the merge commit. Not RequiredChecks: a
 	// path-filtered push workflow never reports there, and absent must not mean pending (§6.4).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	VerifyChecks []string `json:"verifyChecks"`
 	// ContractCheck is the check run that proves a task's test contract (R21, TF7): required on
 	// a task with a contract (row 2b), only reported on one without.
-	ContractCheck  string `json:"contractCheck,omitempty"`
-	LeakScanCheck  string `json:"leakScanCheck"`  // R42: TruffleHog's check run, "Security scanning 🔒"
+	// +kubebuilder:validation:MaxLength=1024
+	ContractCheck string `json:"contractCheck,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	LeakScanCheck string `json:"leakScanCheck"` // R42: TruffleHog's check run, "Security scanning 🔒"
+	// +kubebuilder:validation:MaxLength=253
 	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
 	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
 	GateStatus bool `json:"gateStatus,omitempty"`
 	// PolicyBot false drops policy-bot from the gate (the demo's); nil means true.
-	PolicyBot        *bool  `json:"policyBot,omitempty"`
+	PolicyBot *bool `json:"policyBot,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
 	MergerLogin      string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
 	AutoMergesPerDay int    `json:"autoMergesPerDay"`
 	FixRuns          int32  `json:"fixRuns"`
@@ -569,6 +594,7 @@ type Merge struct {
 
 // Breaker is the circuit breaker's outcome window (R41, review G5): a class whose last Window
 // merges hold MaxReverts reverts is demoted to human review, whatever the config.
+// +kubebuilder:object:generate=true
 type Breaker struct {
 	Window     int `json:"window"`
 	MaxReverts int `json:"maxReverts"`
@@ -586,7 +612,9 @@ func (m Merge) UsesPolicyBot() bool { return m.PolicyBot == nil || *m.PolicyBot 
 // Tier is a model and its budgets. RunUSD and TaskUSD cap a run and a task in USD, priced by
 // meter.prices, in place of RunTokens and TaskTokens; 0 keeps the token cap. With meter.prices
 // set each defaults to RefUSD of its token cap.
+// +kubebuilder:object:generate=true
 type Tier struct {
+	// +kubebuilder:validation:MaxLength=253
 	Model      string  `json:"model"`
 	RunTokens  int64   `json:"runTokens"`
 	TaskTokens int64   `json:"taskTokens"`
@@ -610,6 +638,7 @@ func RefMicroUSD(tokens int64) int64 { return int64(math.Round(float64(tokens) *
 
 // Price is a model's list price in USD per million tokens of each type the gateway reports.
 // The gateway's input count includes the cache reads and writes, so each is priced once.
+// +kubebuilder:object:generate=true
 type Price struct {
 	Input     float64 `json:"input"`
 	CacheRead float64 `json:"cacheRead"`
@@ -619,20 +648,27 @@ type Price struct {
 	// Source is the provider page the row was read from, an https URL, and CheckedAt the day it
 	// was read, YYYY-MM-DD: provenance for the human who confirms a drift finding (truthful costs
 	// TC1). Validated when present; the meter never reads them.
-	Source    string `json:"source,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	Source string `json:"source,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
 	CheckedAt string `json:"checkedAt,omitempty"`
 }
 
 // Template is a team: the roles run in order on one branch.
+// +kubebuilder:object:generate=true
 type Template struct {
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
 	Roles           []string `json:"roles"`
 	MaxReviewRounds int32    `json:"maxReviewRounds,omitempty"`
 	// ReviewerModel is the reviewer's gateway name whatever the implementer's tier; empty keeps
 	// the other tier's model. The run keeps the other tier's caps.
+	// +kubebuilder:validation:MaxLength=253
 	ReviewerModel string `json:"reviewerModel,omitempty"`
 }
 
 // Caps bound the factory's throughput (§6.2).
+// +kubebuilder:object:generate=true
 type Caps struct {
 	ActiveTasks    int `json:"activeTasks"`
 	ConcurrentRuns int `json:"concurrentRuns"`
@@ -661,6 +697,7 @@ type Caps struct {
 // Facts are what a terminal task tells its room about its dollars (CD23). A switch here lands with
 // the code that reads it: both decoders refuse a key they do not know, so a file written for a
 // later release fails this one's rollout instead of silently changing nothing.
+// +kubebuilder:object:generate=true
 type Facts struct {
 	// FinalSpend is CD23: a terminal task requeues once at its last run's end plus the settle
 	// window plus a margin, prices its runs again, and posts one fact whose dollars it will not
@@ -672,6 +709,7 @@ type Facts struct {
 // Brief is what a revision brief quotes from GitHub beyond the room's own log (CD12). A switch here
 // lands with the code that reads it: both decoders refuse a key they do not know, so a file written
 // for a later release fails this one's rollout instead of silently changing nothing.
+// +kubebuilder:object:generate=true
 type Brief struct {
 	// CIEvidence is CD12: a revision brief carries, fenced as untrusted data, what the open change
 	// requests asked for and what the failing checks annotated — the reviewer's comments and the
@@ -686,6 +724,7 @@ type Brief struct {
 // the principal's starts false, a week of shadow numbers first (OD-10, R3). The run cap is always
 // enforced by the meter. The days are in USD (truthful costs TC5): the day ledger counts each
 // run's priced cost, a cache read at its own rate.
+// +kubebuilder:object:generate=true
 type Budgets struct {
 	EnforceTask      bool    `json:"enforceTask"`
 	EnforcePrincipal bool    `json:"enforcePrincipal"`
@@ -698,12 +737,13 @@ type Budgets struct {
 	IgnoredFactoryDaily *int64 `json:"factoryDaily,omitempty"`
 	IgnoredHumanDaily   *int64 `json:"humanDaily,omitempty"`
 	// sponsoredDays is each sponsored principal's day in micro-USD, set by Parse (R7).
-	sponsoredDays map[string]int64
+	sponsoredDays map[string]int64 `json:"-"`
 }
 
 // PerPerson charges each run to the person who caused it as well as to the fleet, in one ledger
 // write (v2 per-person caps D2, D3). Enabled alone attributes and counts (shadow); a refusal also
 // needs EnforcePrincipal (D8).
+// +kubebuilder:object:generate=true
 type PerPerson struct {
 	Enabled bool `json:"enabled"`
 	// DailyUSD is every person's day (D7: one value, no per-person override). Omitted: humanDailyUSD.
@@ -766,6 +806,7 @@ func (b *Budgets) dropTokenDays() []Ignored {
 }
 
 // Resume bounds the automatic resume of a run lost to its infrastructure (disruption design §4).
+// +kubebuilder:object:generate=true
 type Resume struct {
 	// MaxPerTask is how many runs of one task the factory resumes on its own; past it the task
 	// escalates as before. Defaulted when omitted.
@@ -776,6 +817,7 @@ type Resume struct {
 // hand off at NudgeAt tool calls and ends the run at MaxToolCalls, as budget_calls. The factory
 // writes both into the scoper brief's first line, which the harness reads. Each is defaulted alone
 // when omitted.
+// +kubebuilder:object:generate=true
 type Scoper struct {
 	NudgeAt      int `json:"nudgeAt,omitempty"`
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
@@ -821,14 +863,22 @@ type Tracing struct {
 }
 
 // Schedule starts a task from config (§1). The config is a gate path, so its text is trusted.
+// +kubebuilder:object:generate=true
 type Schedule struct {
-	Name      string `json:"name"`
-	Cron      string `json:"cron"`  // 5 fields, UTC
-	Class     string `json:"class"` // the predicted class (§2)
-	Text      string `json:"text"`
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+	// +kubebuilder:validation:MaxLength=1024
+	Cron string `json:"cron"` // 5 fields, UTC
+	// +kubebuilder:validation:MaxLength=253
+	Class string `json:"class"` // the predicted class (§2)
+	// +kubebuilder:validation:MaxLength=14336
+	Text string `json:"text"`
+	// +kubebuilder:validation:MaxLength=253
 	DataClass string `json:"dataClass,omitempty"`
-	Probe     string `json:"probe,omitempty"` // "" or renovate-red
+	// +kubebuilder:validation:MaxLength=1024
+	Probe string `json:"probe,omitempty"` // "" or renovate-red
 	// ProbeAuthor is the login whose open PRs the probe looks at; omitted: renovate[bot].
+	// +kubebuilder:validation:MaxLength=253
 	ProbeAuthor string `json:"probeAuthor,omitempty"`
 }
 
@@ -893,6 +943,7 @@ type Access struct {
 // in USD, and how many of its tasks may be open at once. Sponsor is the maintainer accountable
 // for it; a link names who may sponsor one request instead (R9).
 type Sponsored struct {
+	// +kubebuilder:validation:MaxLength=253
 	Name         string   `json:"name"`
 	ClientIDFile string   `json:"clientIDFile"`
 	Sponsor      string   `json:"sponsor"`
@@ -1130,6 +1181,7 @@ type RunLore struct {
 	MinConfidence float64 `json:"minConfidence"`
 	DailyCap      int     `json:"dailyCap"`
 	// Repository is where RunLore's issues are filed (v2 D6); omitted, the first listed.
+	// +kubebuilder:validation:MaxLength=253
 	Repository string `json:"repository,omitempty"`
 }
 
@@ -1904,15 +1956,18 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 // keys (D4: no row, or a row without them, is today's run); an unset key then takes the
 // design's default. Rows are keyed by class so the scoper's switch (scoper design SC2,
 // loops.<class>.scope) joins them as one more key.
+// +kubebuilder:object:generate=true
 type Loop struct {
 	// StallSteps ends a run with no commit by this many steps (L3): 1 to 500, default 80.
 	StallSteps *int32 `json:"stallSteps,omitempty"`
 	// Continuations is how many not_yet verdicts continue the conversation (L2): 0 to 5, default 2.
 	Continuations *int32 `json:"continuations,omitempty"`
 	// Judge is the completion judge's alias, or none for no judge (L2): default tier-light.
+	// +kubebuilder:validation:MaxLength=253
 	Judge string `json:"judge,omitempty"`
 	// Scope is the class's scope mode (scoper design SC2): off, steering or scoper; unset is off.
 	// It never switches the loop on: On reads the loop's three keys only.
+	// +kubebuilder:validation:MaxLength=253
 	Scope ScopeMode `json:"scope,omitempty"`
 	// Search offers the class's implementer runs the search tool (v3 feature 5, ST9); absent is off.
 	// It never switches the loop on: On reads the loop's three keys only.
@@ -1923,8 +1978,18 @@ type Loop struct {
 	// Models is role → tier → the provider alias that role runs on for a public task of that tier
 	// (v3 F15, F3); a role or tier without an entry, and every internal task, keep today's model.
 	// It never switches the loop on.
-	Models map[string]map[string]string `json:"models,omitempty"`
+	// +kubebuilder:validation:MaxProperties=32
+	Models map[string]ModelAliases `json:"models,omitempty"`
 }
+
+// ModelAliases is tier → provider alias, one role's row of Loop.Models. It is a named type so the
+// CRD can bound the inner map.
+// +kubebuilder:validation:MaxProperties=32
+type ModelAliases map[string]ModelAlias
+
+// ModelAlias is a provider alias, a named type for the same reason.
+// +kubebuilder:validation:MaxLength=253
+type ModelAlias string
 
 // ModelFor is the provider alias class's row names for role on tier, "" for today's model: always
 // "" unless dataClass is public (F4). A row is whole: a class row without models is none, whatever
@@ -1934,7 +1999,7 @@ func (c *Config) ModelFor(class, dataClass, role, tier string) string {
 		return ""
 	}
 	row := c.rowOf(class)
-	return row.Models[role][tier]
+	return string(row.Models[role][tier])
 }
 
 // ScopeMode is a row's scope. The config is YAML 1.1, where a bare off is the boolean false: it
@@ -1995,6 +2060,7 @@ func (c *Config) SteeringOn() bool {
 func scopeModes() []ScopeMode { return []ScopeMode{ScopeOff, ScopeSteering, ScopeScoper} }
 
 // SplitPolicy is a row's split (splitter design SL3, SL9, SL10).
+// +kubebuilder:object:generate=true
 type SplitPolicy struct {
 	// MaxChildren is the most parts a split may hold: 2 to 5, required.
 	MaxChildren int32 `json:"maxChildren"`
@@ -2002,6 +2068,7 @@ type SplitPolicy struct {
 	// tier's tasks (SP3: $20.40 on standard's $5.10).
 	FamilyUSD float64 `json:"familyUSD,omitempty"`
 	// ChildTier is every child's tier (SP5): omitted, standard.
+	// +kubebuilder:validation:MaxLength=253
 	ChildTier string `json:"childTier,omitempty"`
 	// AnyTier offers the split to every task of the class, whatever tier C7 rated it (SP1's
 	// option (b), an explicit opt-in); omitted, only a task C7 rated frontier is offered one.
@@ -2087,14 +2154,14 @@ func (c *Config) LoopFor(class string) *LoopPolicy {
 
 // validateModels: each role is SP1's, each tier is one of the three, and each alias is a provider
 // alias of that very tier (F2), priced while meter.prices is set (F3).
-func (c *Config) validateModels(bad func(string, ...any), name string, byRole map[string]map[string]string) {
+func (c *Config) validateModels(bad func(string, ...any), name string, byRole map[string]ModelAliases) {
 	for _, role := range slices.Sorted(maps.Keys(byRole)) {
 		if !slices.Contains(roles(), role) {
 			bad("loops.%s.models: unknown role %q", name, role)
 			continue
 		}
 		for _, tier := range slices.Sorted(maps.Keys(byRole[role])) {
-			alias, key := byRole[role][tier], "loops."+name+".models."+role+"."+tier
+			alias, key := string(byRole[role][tier]), "loops."+name+".models."+role+"."+tier
 			p, ok := providerModels()[alias]
 			switch {
 			case !slices.Contains(tiers(), tier):

@@ -67,6 +67,13 @@ ledgers they replaced, `agent-factory-ledger-<UTC day>`, once 35 days old. The n
 factory can touch every ConfigMap in it, its own config included: keep no ConfigMap there it must
 not touch. In `config.runs.namespace` (default `agents`), a second Role manages the `AgentRun`s of `config.runs.group` (default `cloud.ogenki.io`): the values the binary reads, so the two cannot disagree. `tests/render.sh` asserts the ConfigMap rule's shape and the 8082 ports.
 
+Three ClusterRoles cover the `Factory`, `Repository` and `MergePolicy` kinds for people, not for
+the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or `admin`
+grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three kinds) into `view`,
+`maku-mergepolicy-editor` (every verb on `mergepolicies` only) into `edit`, and `maku-factory-admin`
+(every verb on the three kinds) into `admin`. Their names are fixed: one factory per cluster.
+`tests/render.sh` asserts each role's rules.
+
 ## Config
 
 `config` is rendered as-is into `/etc/agent-factory/config/config.yaml` (a ConfigMap; a change
