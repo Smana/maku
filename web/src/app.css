@@ -173,7 +173,9 @@
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  accent-color: var(--primary); /* the filters' checkboxes and radios take the theme's blue */
 }
+::selection { background: color-mix(in srgb, var(--primary) 25%, transparent); }
 
 body {
   font: 400 var(--text-body)/var(--leading-body) var(--font-sans);
@@ -186,8 +188,8 @@ h1, h2, h3, h4 { text-wrap: balance; font-family: var(--font-display); font-weig
 /* Section headings: 16 px bold; metadata labels stay labels, never headings. */
 h2, h3, h4 { font-size: var(--text-body); line-height: 1.4; font-weight: 700; }
 strong, b { font-weight: 700; }
-/* Long prose reads lighter at 400: message bodies, handoff summaries and the notes. The chrome
-   (names, chips, buttons, the strip) keeps the body's 500. */
+/* Long prose reads lighter at 400: message bodies, handoff summaries and the notes. Pinned at 400
+   so a parent that sets 500 (a name, a chip) never thickens them. */
 .bubble .md, .handoff > .md, .notes { font-weight: 400; }
 /* Code, commands and tool I/O are monospace at 14 px; IDs, timestamps and counters at 13 px
    with tabular numerals. Prose, bubbles and cards stay in the sans. */
@@ -539,8 +541,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .tool[open] summary::before { content: "▾"; }
 .tool summary::-webkit-details-marker { display: none; }
 .tool[open] > summary { border-radius: calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 0 0; } /* its bottom meets the body's rule */
-.tool.st-rejected, .tool.st-error { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--destructive) 65%, var(--card)); } /* its t-status word says which */
-.tool.st-rejected { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning) 80%, var(--card)); }
+/* A call that failed or was refused tones its own 1 px border; its t-status word says which. */
+.tool.st-error { border-color: var(--destructive); }
+.tool.st-rejected { border-color: var(--warning-border); }
 .t-name { color: var(--link); font-weight: 700; }
 .t-prompt { color: var(--placeholder); }
 /* A call's status (P3): ok a muted check, running the link colour, the rest in words. */
@@ -697,11 +700,10 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 /* A list that could not be refreshed, and a room whose state could not be read: information under the
    list, not needs themselves, so the pill does not count them. */
 .needs-other li.needs-stale, .needs-other li.needs-unread { color: var(--muted-foreground); font-size: var(--text-small); }
-/* The 6 px reason field and buttons plus the 8 px of padding, concentric. The accent is a bar,
-   as a rejected call's is, on the card's own edge; the left padding clears its 3 px. */
+/* A pending approval: the card shape, its waiting state the 1 px border in the warning tone
+   (below), as a refused call's is; the Needs you heading and pill say it in words. */
 .approval { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 6px;
-  background: var(--card); color: var(--card-foreground); min-width: 0;
-  box-shadow: inset 3px 0 0 var(--warning); }
+  background: var(--card); color: var(--card-foreground); min-width: 0; }
 .approval-command { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-meta { color: var(--muted-foreground); font-size: var(--text-small); overflow-wrap: anywhere; }
 .approval-json > summary { cursor: pointer; color: var(--muted-foreground); font-size: var(--text-small); }
@@ -709,10 +711,10 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .approval-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .approval-decide input { flex: 1 1 12em; min-width: 0; }
 /* A need decided elsewhere or by another control (needs.ts's needCard): the approval card's surface
-   and bar, its heading, its sentence, and one action that is always there. */
+   and toned border, its heading, its sentence, and one action that is always there. */
 .needs-other li.need { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 4px;
-  background: var(--card); color: var(--card-foreground); min-width: 0;
-  box-shadow: inset 3px 0 0 var(--warning); }
+  background: var(--card); color: var(--card-foreground); min-width: 0; }
+.approval, .needs-other li.need { border-color: var(--warning-border); }
 .need-title { margin: 0; font-weight: 700; }
 .need-what, .need-why { margin: 0; font-size: var(--text-small); }
 .need-why { color: var(--muted-foreground); }
@@ -869,14 +871,14 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   color: var(--card-foreground); background: transparent;
   border-color: color-mix(in srgb, var(--card-foreground) 50%, var(--card));
 }
-/* The room page's status line (strip.ts's .run-status), compact: the accent bar is the colour cue,
+/* The room page's status line (strip.ts's .run-status), compact: the icon is the colour cue,
    never the only one, on tokens that hold 3:1 on a card and on a hovered row in both themes. */
-.rooms .row-status { display: inline-flex; gap: 6px; align-items: baseline; padding-left: 8px; border-left: 3px solid var(--muted-foreground); color: var(--card-foreground); font-weight: 500; line-height: 1.35; }
-.rooms .row-status[data-kind="running"] { border-left-color: var(--primary); }
-.rooms .row-status[data-kind="waiting-you"], .rooms .row-status[data-kind="waiting-other"], .rooms .row-status[data-kind="waiting-pr"], .rooms .row-status[data-kind="waiting"] { border-left-color: var(--warning-border); }
-.rooms .row-status[data-kind="finished"], .rooms .row-status[data-kind="done"] { border-left-color: var(--success); }
-.rooms .row-status[data-kind="failed"] { border-left-color: var(--destructive); }
-.rooms .row-status-icon { flex: none; }
+.rooms .row-status { display: inline-flex; gap: 6px; align-items: baseline; color: var(--card-foreground); font-weight: 500; line-height: 1.35; }
+.rooms .row-status-icon { flex: none; color: var(--muted-foreground); }
+.rooms .row-status[data-kind="running"] .row-status-icon { color: var(--primary); }
+.rooms .row-status[data-kind="waiting-you"] .row-status-icon, .rooms .row-status[data-kind="waiting-other"] .row-status-icon, .rooms .row-status[data-kind="waiting-pr"] .row-status-icon, .rooms .row-status[data-kind="waiting"] .row-status-icon { color: var(--warning-border); }
+.rooms .row-status[data-kind="finished"] .row-status-icon, .rooms .row-status[data-kind="done"] .row-status-icon { color: var(--success); }
+.rooms .row-status[data-kind="failed"] .row-status-icon { color: var(--destructive); }
 .rooms .repo, .rooms .room-id { color: var(--muted-foreground); }
 .rooms td.repo { white-space: nowrap; } /* an owner/name reads whole; the task and the status wrap */
 @media (max-width: 600px) {
@@ -1154,7 +1156,8 @@ main.settings.approval-memory > h1:first-child { display: none; }
 /* A class: name, mode in words, the class as sentences, its evidence. */
 .policy-classes { display: grid; gap: 12px; }
 .class-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
-.class-card:target { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Selected: the class a link points at (#class-<name>) adds the 1 px primary border. */
+.class-card:target { border-color: var(--primary); }
 .class-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between; }
 .mode-badge { padding: 2px 10px; border-radius: 999px; font-size: var(--text-small); border: 1px solid var(--border); }
 .mode-badge[data-mode="live"] { border-color: var(--success); color: var(--success-text); }
@@ -1253,8 +1256,9 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .settings .yaml-gutter .y-error { color: var(--destructive-text); font-weight: 700; }
 .settings .yaml-stack { position: relative; flex: 1; min-width: 0; }
 .settings .yaml-hl { position: absolute; inset: 0; overflow: hidden; color: var(--card-foreground); pointer-events: none; }
-.settings .expert-yaml { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; resize: none; border: 0; outline-offset: -2px;
+.settings .expert-yaml { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; resize: none; border: 0;
   background: transparent; color: transparent; caret-color: var(--card-foreground); overflow: auto; }
+.settings .expert-yaml:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; } /* the editor frame clips an outset ring */
 .settings .expert-yaml::selection { color: transparent; background: color-mix(in srgb, var(--primary) 25%, transparent); }
 .y-key { color: var(--link); }
 .y-str { color: var(--success-text); }

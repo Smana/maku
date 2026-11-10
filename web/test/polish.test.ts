@@ -296,10 +296,9 @@ describe("appearance", () => {
     expect(r).toMatch(/background:\s*color-mix\(in srgb, var\(--tone\) 14%, var\(--brand-header\)\)/);
     expect(r).not.toMatch(/border-left/);
   });
-  it("draws the approval card's accent as a bar on a raised card, not a full outline", () => {
-    const a = decl(outside, ".approval");
-    expect(a).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
-    expect(a).toMatch(/box-shadow:\s*inset 3px 0 0 var\(--warning\)/);
+  it("draws the approval card's state as its 1 px border in the warning tone, never a side bar", () => {
+    expect(decl(outside, ".approval")).not.toMatch(/box-shadow/);
+    expect(decl(outside, ".approval, .needs-other li.need")).toMatch(/border-color:\s*var\(--warning-border\)/);
   });
   it("draws deny as a ghost: no outline until hovered", () => {
     const d = decl(outside, "button.deny");

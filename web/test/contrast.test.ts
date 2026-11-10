@@ -40,6 +40,7 @@ const pairs = (t: Tokens) => [
   ["the needs-you pill", t["--warning-solid-foreground"], t["--warning"], 4.5],
   ["the budget meter's fill", t["--primary"], mix(t["--brand-header-foreground"], t["--brand-header"], 0.12), 3],
   ["the needs-you border", t["--warning-border"], t["--card"], 3],
+  ["a failed call's border on a card", t["--destructive"], t["--card"], 3],
   ["the deny button's text on a card", t["--destructive-text"], t["--card"], 4.5],
   ["the controls' group names", t["--muted-foreground"], t["--background"], 4.5],
   ["a destructive button on the dock's session panel", t["--destructive-text"], t["--surface-raised"], 4.5],
@@ -91,11 +92,11 @@ const pairs = (t: Tokens) => [
   ["the phase chip's border on a card", mix(t["--card-foreground"], t["--card"], 0.5), t["--card"], 3],
   ["the phase chip's border on a hovered room row", mix(t["--card-foreground"], t["--card"], 0.5), mix(t["--primary"], t["--card"], 0.06), 3],
   ["the focus ring on a hovered room row", t["--ring"], mix(t["--primary"], t["--card"], 0.06), 3],
-  // The room list's status line: its words on a row, and each kind's accent bar on a card and a hovered row.
+  // The room list's status line: its words on a row, and each kind's icon colour on a card and a hovered row.
   ["a room row's status words on a hovered row", t["--card-foreground"], mix(t["--primary"], t["--card"], 0.06), 4.5],
   ...(["--primary", "--warning-border", "--success", "--destructive", "--muted-foreground"] as const).flatMap((k) => [
-    [`a room row's ${k} status accent on a card`, t[k], t["--card"], 3],
-    [`a room row's ${k} status accent on a hovered row`, t[k], mix(t["--primary"], t["--card"], 0.06), 3],
+    [`a room row's ${k} status icon on a card`, t[k], t["--card"], 3],
+    [`a room row's ${k} status icon on a hovered row`, t[k], mix(t["--primary"], t["--card"], 0.06), 3],
   ] as const),
   // The Ogenki surfaces: muted text on a raised surface (hover, table header), the selected
   // border, each status word on a card and on the page, the ink on an accent fill, the focus ring.
