@@ -1,0 +1,19 @@
+factory: "aws-0"
+classes:
+  docs-or-tests:
+    mode: "shadow"
+    author: "agents"
+    harness: "docs-standard"
+    conditions:
+      all:
+        - maxPatchFiles: 10
+        - maxModifiedLines: 200
+      any:
+        - - allowedFiles: ["^docs/.+\\.md$"]
+          - holdoutChecks: ["Check the documentation links 🔗"]
+        - - allowedFiles: ["^test/.+$", "^.+_test\\.go$"]
+          - holdoutChecks: ["Tests"]
+    limits:
+      maxPerDay: 2
+    monitor:
+      followUpWindow: "168h"
