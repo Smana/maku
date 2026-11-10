@@ -8,19 +8,14 @@
    #6D28D9 (light) and #A78BFA (dark), and Muted is secondary text on dark only (2.48:1 on
    Paper). web/test/contrast.test.ts pins every value and pair below. --input is a 3:1
    boundary in both schemes (WCAG 1.4.11); --surface-raised is the dock's surface. */
-@font-face {
-  font-family: "Space Grotesk"; font-style: normal; font-weight: 400; font-display: swap;
-  src: url("/assets/fonts/space-grotesk-latin-400-normal.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Space Grotesk"; font-style: normal; font-weight: 500; font-display: swap;
-  src: url("/assets/fonts/space-grotesk-latin-500-normal.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Space Grotesk"; font-style: normal; font-weight: 700; font-display: swap;
-  src: url("/assets/fonts/space-grotesk-latin-700-normal.woff2") format("woff2");
-}
+@font-face { font-family: "Space Grotesk"; src: url("/assets/fonts/SpaceGrotesk-Variable.woff2") format("woff2"); font-weight: 300 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("/assets/fonts/Inter-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "Inter"; src: url("/assets/fonts/Inter-Variable-Italic.woff2") format("woff2"); font-weight: 100 900; font-style: italic; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/assets/fonts/JetBrainsMono-Variable.woff2") format("woff2"); font-weight: 100 800; font-style: normal; font-display: swap; }
 :root {
+  --font-display: "Space Grotesk", Arial, sans-serif;
+  --font-sans: Inter, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Courier New", monospace;
   /* The log's measure: every row, and on a wide screen the conversation's column and the composer. */
   --log-w: 72ch;
   /* One radius scale: a control, a row (a call, the table, the composer), a card. */
@@ -147,13 +142,13 @@ html {
 }
 
 body {
-  font: 500 16px/1.55 "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 400 16px/1.55 var(--font-sans);
   margin: 0;
   background: var(--muted);
   color: var(--foreground);
 }
 
-h1, h2, h3, h4 { text-wrap: balance; }
+h1, h2, h3, h4 { text-wrap: balance; font-family: var(--font-display); font-weight: 700; }
 /* Section headings: 16 px bold; metadata labels stay labels, never headings. */
 h2, h3, h4 { font-size: 16px; line-height: 1.4; font-weight: 700; }
 strong, b { font-weight: 700; }
@@ -162,9 +157,9 @@ strong, b { font-weight: 700; }
 .bubble .md, .handoff > .md, .notes { font-weight: 400; }
 /* Code, commands and tool I/O are monospace at 14 px; IDs, timestamps and counters at 13 px
    with tabular numerals. Prose, bubbles and cards stay in the sans. */
-.t-cmd, .t-command, .approval-command, pre, code { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.t-cmd, .t-command, .approval-command, pre, code { font: 14px/1.5 var(--font-mono); }
 time, .t-time, .step-dur, .replay-progress, .t-prompt {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.45;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.45;
   font-variant-numeric: tabular-nums;
 }
 p, li { text-wrap: pretty; }
@@ -204,7 +199,7 @@ a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-ra
 .brand-mark-dark { display: none; }
 .dark .brand-mark-dark { display: block; }
 .dark .brand-mark-light { display: none; }
-.brand-wordmark { font: 700 24px/1 "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: -0.03em; }
+.brand-wordmark { font: 700 24px/1 var(--font-display); letter-spacing: -0.03em; }
 .brand:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
 /* The dock: the composer on the left (the text over its row: deliver to, the notice, send),
    the act notice, the theme button and the connection on the right; one column on a phone. */
@@ -362,7 +357,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .page-header .chip { color: var(--brand-header-foreground); background: transparent; border-color: transparent; padding: 0; font-size: 14px; }
 .page-header .fact-label, .page-header .chip-run > :not(.run-role) { color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); }
 .page-header .run-role { font-weight: 700; }
-.page-header .run-id { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.page-header .run-id { font: 13px/1.45 var(--font-mono); }
 .page-header .chip[title] { cursor: help; }
 /* The budget is quiet until it matters: amber from 80 %, red once spent. */
 .page-header .chip-budget[data-level="warn"] { color: var(--warning); font-weight: 700; }
@@ -793,7 +788,7 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
    16px padding put the divider midway; 24px of line height makes it 24px tall. */
 .page-header .page-title {
   margin: 0; align-self: center;
-  font: 500 18px/24px "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 500 18px/24px var(--font-display);
   color: var(--muted-foreground);
   border-left: 1px solid var(--border); padding-left: 16px;
 }
@@ -1126,7 +1121,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .mode-badge[data-mode="off"] { color: var(--muted-foreground); }
 .class-source, .evidence-detail, .class-empty { color: var(--muted-foreground); font-size: 14px; }
 .class-card .class-intent { margin: 8px 0 4px; color: var(--card-foreground); }
-.settings .class-card .class-summary { max-width: 88ch; margin: 6px 0; font: 13px/1.5 ui-monospace, monospace; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.settings .class-card .class-summary { max-width: 88ch; margin: 6px 0; font: 13px/1.5 var(--font-mono); color: var(--muted-foreground); overflow-wrap: anywhere; }
 .class-card .class-last { margin: 4px 0; font-size: 13px; color: var(--muted-foreground); }
 /* A time inside a settings sentence reads as part of it, not as the log's mono timestamp. */
 .settings p time { font: inherit; font-variant-numeric: tabular-nums; }
@@ -1169,7 +1164,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 /* The gallery: simple, then advanced. */
 .example-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 8px 0 16px; }
 .example-card { padding: 14px 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.example-card h4 { margin: 0; font-family: ui-monospace, monospace; font-size: 14px; }
+.example-card h4 { margin: 0; font-family: var(--font-mono); font-size: 14px; }
 .example-why { color: var(--muted-foreground); margin: 0; }
 .example-card button { align-self: flex-start; margin-top: auto; }
 .example-yaml { font-size: 13px; overflow-x: auto; }
@@ -1207,10 +1202,10 @@ main.settings.approval-memory > h1:first-child { display: none; }
    accessible textarea. Both layers share one font, padding and line height, or the caret drifts. */
 .settings .yaml-editor { border: 1px solid var(--border); border-radius: var(--radius-row); background: var(--card); overflow: hidden; }
 .settings .yaml-bar { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
-.settings .yaml-name { color: var(--muted-foreground); font-family: ui-monospace, monospace; margin-right: auto; }
+.settings .yaml-name { color: var(--muted-foreground); font-family: var(--font-mono); margin-right: auto; }
 .settings .yaml-body { display: flex; height: 24em; }
 .settings .yaml-gutter, .settings .yaml-hl, .settings .expert-yaml {
-  margin: 0; padding: 8px; font: 13px/1.5 ui-monospace, monospace; tab-size: 2; white-space: pre; overflow-wrap: normal; max-height: none; }
+  margin: 0; padding: 8px; font: 13px/1.5 var(--font-mono); tab-size: 2; white-space: pre; overflow-wrap: normal; max-height: none; }
 /* The page's code rule sets its own font: the copy must keep the textarea's, or the caret drifts. */
 .settings .yaml-hl code { font: inherit; }
 .settings .yaml-gutter { min-width: 3ch; text-align: right; color: var(--muted-foreground); background: var(--muted); overflow: hidden; user-select: none; }
@@ -1228,16 +1223,16 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .settings .yaml-status { margin: 0; padding: 4px 8px; font-size: 13px; color: var(--destructive-text); }
 .settings .yaml-status:empty { display: none; }
 .settings .comments-warning:empty { display: none; }
-.settings .key-fix { font: 13px ui-monospace, monospace; padding: 0 6px; }
+.settings .key-fix { font: 13px var(--font-mono); padding: 0 6px; }
 .settings .editor-form:disabled { opacity: 0.6; }
-.settings .error-line { font: 13px ui-monospace, monospace; padding: 0 6px; }
+.settings .error-line { font: 13px var(--font-mono); padding: 0 6px; }
 .settings .structural-relaxation { font-weight: 700; }
 
 /* Approval memory (/settings/approval-memory): one card per saved grant, its predicate as code. */
 .grants-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
 .grants { list-style: none; padding: 0; display: grid; gap: 8px; }
 .grant { border: 1px solid var(--border); border-radius: var(--radius-row); padding: 10px 12px; background: var(--card); }
-.grant-predicate { font-family: ui-monospace, monospace; font-size: 13px; overflow-wrap: anywhere; margin: 6px 0; }
+.grant-predicate { font-family: var(--font-mono); font-size: 13px; overflow-wrap: anywhere; margin: 6px 0; }
 .grant-facts, .grants-note { color: var(--muted-foreground); font-size: 13px; }
 .grant-actions { display: flex; gap: 6px; margin-top: 6px; }
 .grant-history h3, .rule-preview h3 { font-size: 14px; margin: 8px 0 4px; }
