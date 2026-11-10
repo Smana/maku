@@ -345,15 +345,19 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   box.append(el("p", `This file belongs to the factory ${r.factory} (read-only). Harness profiles: ${profiles.join(", ") || "none"}.`, "editor-meta"));
   const pick = el("select");
   pick.setAttribute("aria-label", "class to edit");
+  // source is what the form edits: a class of the file, or a new class from an example.
+  let source: { kind: "class" | "template"; name: string } | undefined;
+  // While a new class is not in the file yet, the picker shows it as a placeholder, so choosing
+  // any class of the file, the one edited before included, is a change.
   const fillPick = () => {
     const was = pick.value;
     pick.replaceChildren();
+    if (source?.kind === "template") { const o = el("option", `New class from ${source.name}`); o.value = ""; pick.append(o); }
     for (const n of Object.keys(file.classes!)) { const o = el("option", n); o.value = n; pick.append(o); }
-    if ([...pick.options].some((o) => o.value === was)) pick.value = was;
+    pick.value = source?.kind === "template" ? "" : [...pick.options].some((o) => o.value === was) ? was : pick.options[0]?.value ?? "";
   };
   fillPick();
-  // source is what the form edits: a class of the file, or a new class from an example.
-  let source: { kind: "class" | "template"; name: string } | undefined = pick.value ? { kind: "class", name: pick.value } : undefined;
+  if (pick.value) source = { kind: "class", name: pick.value };
   const name = el("input");
   name.placeholder = "new class name";
   name.setAttribute("aria-label", "new class name");
@@ -365,6 +369,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     name.hidden = false;
     gallery.hidden = true;
     opener.setAttribute("aria-expanded", "false");
+    fillPick();
     show();
   }, r.guardrails);
   gallery.id = `example-gallery-${r.repository.replace(/[^A-Za-z0-9_-]/g, "-")}`;
@@ -420,7 +425,9 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     const tpl = src.kind === "template";
     let cls = tpl ? templates[src.name]() : file.classes![src.name];
     if (tpl && !cls.harness) cls = { ...cls, harness: profilesFor(cls.author, profiles, r.adoptedProfiles)[0] ?? "" };
-    const key = () => (tpl ? (name.value.trim() || src.name) : src.name);
+    // The new class's name is fixed by the first edit that writes it into the file.
+    let written: string | undefined;
+    const key = () => written ?? (tpl ? (name.value.trim() || src.name) : src.name);
     name.hidden = !tpl;
     try {
       formAt.replaceChildren(classForm(cls, profiles, (c) => {
@@ -430,6 +437,14 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
           file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
         }
         file.classes![key()] = cleanClass(c);
+        if (tpl && !written) {
+          // From now on it is a class of the file: the picker lists it and the text refills it.
+          written = key();
+          source = { kind: "class", name: written };
+          name.hidden = true;
+          fillPick();
+          pick.value = written;
+        }
         const before = view.text.value;
         const dropped = comments(before);
         view.set(fileYAML(file));
@@ -448,7 +463,9 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     }
   };
   pick.onchange = () => {
+    if (!pick.value) return; // the placeholder of the new class being started
     source = { kind: "class", name: pick.value };
+    fillPick();
     show();
   };
   // The form and the YAML are two tabs over one file; the check, below both, reads the YAML.
@@ -456,7 +473,8 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Edit the file as");
   const panes: HTMLElement[] = [];
-  const tab = (label: string, pane: HTMLElement, on: boolean) => {
+  // tab adds a tab over pane and returns what selects it.
+  const tab = (label: string, pane: HTMLElement, on: boolean): (() => void) => {
     const b = el("button", label);
     b.type = "button";
     b.id = `${gallery.id}-tab-${panes.length}`;
@@ -466,13 +484,14 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     pane.setAttribute("role", "tabpanel");
     pane.setAttribute("aria-labelledby", b.id);
     pane.hidden = !on;
-    b.onclick = () => {
+    const select = () => {
       for (const t of tabs.children) {
         t.setAttribute("aria-selected", String(t === b));
         (t as HTMLButtonElement).tabIndex = t === b ? 0 : -1;
       }
       for (const p of panes) p.hidden = p !== pane;
     };
+    b.onclick = select;
     // Arrow keys move between the tabs, as a tablist's do.
     b.onkeydown = (e) => {
       if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
@@ -483,6 +502,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     };
     panes.push(pane);
     tabs.append(b);
+    return select;
   };
   const picker = el("div", undefined, "editor-picker");
   picker.append(labelled2("Class", pick), opener, name);
@@ -492,7 +512,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   yamlPane.append(el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
   if (manifest) yamlPane.append(el("p", "Built from the version the factory serves; a change the factory refused is not in it.", "notice"));
   tab("Form", formPane, true);
-  tab("YAML (expert)", yamlPane, false);
+  const toYaml = tab("YAML (expert)", yamlPane, false);
   box.append(tabs, formPane, yamlPane);
   const check = el("button", "Check, compare and simulate", "primary");
   check.type = "button";
@@ -507,7 +527,9 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
       const at = (msg: string) => locate(text, msg);
       view.mark((p.errors ?? []).map(at).filter((n) => n !== undefined));
       // Served from a MergePolicy, the change is the manifest's: no file to submit on GitHub.
-      out.replaceChildren(previewView(manifest ? { ...p, proposal: undefined } : p, at, (line) => view.reveal(line), (line, from, to) => view.replaceKey(line, from, to)));
+      // An error's line is in the YAML: its tab is shown first, from the form too.
+      out.replaceChildren(previewView(manifest ? { ...p, proposal: undefined } : p, at,
+        (line) => { toYaml(); view.reveal(line); }, (line, from, to) => { toYaml(); view.replaceKey(line, from, to); }));
       if (p.valid && p.manifest) last = { text, manifest: p.manifest };
       return p;
     } catch (e) {

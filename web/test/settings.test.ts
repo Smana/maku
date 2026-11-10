@@ -399,6 +399,42 @@ describe("the policy editor", () => {
     expect(open.getAttribute("aria-expanded")).toBe("false");
     expect((app.querySelector("section.example-gallery") as HTMLElement).hidden).toBe(true);
   });
+  it("shows the YAML tab when an error's line is chosen from the form", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(),
+      "/api/policy/repositories/Smana/cloud-native-ref/preview": { valid: false, simulation: { enabled: false },
+        errors: ["class docs-links: guardrail: maxPatchFiles 30 is over the guardrail's 20"] } }));
+    const cap = field(app, "maxPatchFiles").querySelector("input")!;
+    cap.value = "30";
+    cap.dispatchEvent(new Event("input"));
+    (app.querySelector(".editor-actions button") as HTMLButtonElement).click();
+    await settle();
+    (app.querySelector(".editor-preview button.error-line") as HTMLButtonElement).click();
+    const pane = app.querySelector(".yaml-editor")!.closest('[role="tabpanel"]') as HTMLElement;
+    expect(pane.hidden).toBe(false);
+    const yamlTab = [...app.querySelectorAll('[role="tab"]')].find((t) => t.textContent === "YAML (expert)")!;
+    expect(yamlTab.getAttribute("aria-selected")).toBe("true");
+  });
+  it("goes back to a class of the file after starting from an example, and lists the new one once written", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
+    startFrom(app, "docs-broad");
+    expect(pick.value).toBe("");
+    expect(pick.selectedOptions[0].textContent).toBe("New class from docs-broad");
+    pick.value = "docs-links";
+    pick.dispatchEvent(new Event("change"));
+    expect(app.querySelector(".editor-form legend")?.textContent).toBe("Editing docs-links");
+    expect([...pick.options].map((o) => o.value)).toEqual(["docs-links"]);
+    startFrom(app, "docs-broad");
+    field(app, "mode").querySelector("select")!.dispatchEvent(new Event("change"));
+    expect([...pick.options].map((o) => o.value)).toEqual(["docs-links", "revert", "docs-broad"]);
+    expect(pick.value).toBe("docs-broad");
+    const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
+    yaml.value = yaml.value.replace(/(  docs-broad:\n(?:    .*\n)*?)    mode: "shadow"/, '$1    mode: "live"');
+    yaml.dispatchEvent(new Event("input"));
+    expect(field(app, "mode").querySelector("select")!.value).toBe("live"); // the text refills the new class's form
+  });
   it("holds every semver template to modifyOnly, as the factory's class check does", () => {
     for (const name of ["deps-patch", "deps-minor"]) {
       const all = templates[name]().conditions?.all ?? [];
