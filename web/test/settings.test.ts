@@ -332,13 +332,30 @@ describe("the policy editor", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
     expect([...app.querySelectorAll(".editor-group h3")].map((h) => h.textContent))
-      .toEqual(["Who writes it", "What it may touch", "How big it may be", "What must pass", "When to ask a maintainer", "Limits and follow-up"]);
+      .toEqual(["What it is for", "Who writes it", "What it may touch", "How big it may be", "What must pass", "When to ask a maintainer", "Limits and follow-up"]);
     const ask = app.querySelector('.editor-group[data-group="ask"]')!;
     const add = ask.querySelector("button.group-add") as HTMLButtonElement;
     expect(add.textContent).toBe("Add an approval rule");
     expect(ask.querySelector(".editor-field")).toBeNull();
     add.click();
     expect(ask.querySelector('.editor-field[data-key="changedFiles"]')).not.toBeNull();
+  });
+  it("edits the description first, capped at 280, and shows it in the live story and the YAML", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const intent = app.querySelector('.editor-group[data-group="intent"]')!;
+    expect(app.querySelector(".editor-group")).toBe(intent);
+    (intent.querySelector("button.group-add") as HTMLButtonElement).click();
+    const box = field(app, "description").querySelector("textarea")!;
+    expect(box.maxLength).toBe(280);
+    box.value = "Keeps the docs current.";
+    box.dispatchEvent(new Event("input"));
+    expect(app.querySelector(".class-story")?.textContent).toContain("Keeps the docs current.");
+    expect((app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value).toContain(`description: "Keeps the docs current."`);
+    expect(field(app, "description").textContent).toContain("23 of 280");
+    box.value = "x".repeat(280);
+    box.dispatchEvent(new Event("input"));
+    expect(field(app, "description").textContent).toContain("280 of 280");
   });
   it("rewrites the class's sentence as the form changes", async () => {
     const app = document.createElement("div");

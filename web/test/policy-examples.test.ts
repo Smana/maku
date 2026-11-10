@@ -13,6 +13,13 @@ describe("the example gallery", () => {
     expect(EXAMPLES.filter((e) => e.level === "advanced").length).toBeGreaterThanOrEqual(3);
     for (const e of EXAMPLES) expect(e.why.length, e.name).toBeGreaterThan(30);
   });
+  it("gives every template a description of at most 280 characters", () => {
+    for (const [name, make] of Object.entries(templates)) {
+      const d = make().description ?? "";
+      expect(d.length, name).toBeGreaterThan(20);
+      expect(d.length, name).toBeLessThanOrEqual(280);
+    }
+  });
   it("keeps every example in shadow: a gallery never starts a class live", () => {
     for (const [name, make] of Object.entries(templates)) expect(make().mode, name).toBe("shadow");
   });

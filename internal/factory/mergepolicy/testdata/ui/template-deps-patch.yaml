@@ -1,6 +1,7 @@
 factory: "aws-0"
 classes:
   deps-patch:
+    description: "Let Renovate's patch bumps merge on their own once the release is old enough. Nothing is added, deleted or renamed, and a minor or major bump is not this class's."
     mode: "shadow"
     author: "adopt"
     adopt:

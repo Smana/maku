@@ -17,6 +17,12 @@ describe("the editor's fields", () => {
       expect(groups.has(f.group), f.key).toBe(true);
     }
   });
+  it("opens with the intent group, which holds the description", () => {
+    expect(GROUPS[0].id).toBe("intent");
+    expect(GROUPS[0].title).toBe("What it is for");
+    expect(FIELDS.find((f) => f.key === "description")?.group).toBe("intent");
+    expect(docsLink("description")).toMatch(/#description$/);
+  });
   it("shows the adopted leaves to an adopted class only, and the off-only keys to an off class only", () => {
     expect(shown(agents)).not.toContain("releaseAgeCheck");
     expect(shown(agents)).not.toContain("requiredLabel");

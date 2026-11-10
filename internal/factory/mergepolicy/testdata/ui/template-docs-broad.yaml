@@ -1,6 +1,7 @@
 factory: "aws-0"
 classes:
   docs-broad:
+    description: "Let agents keep the documentation current: Markdown under docs/ and the README, small changes, links checked. Architecture pages always go to a maintainer."
     mode: "shadow"
     author: "agents"
     harness: "docs-standard"

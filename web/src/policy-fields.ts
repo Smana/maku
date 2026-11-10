@@ -7,7 +7,7 @@
 
 import type { ClassPolicy } from "./policy-editor";
 
-export type Group = "who" | "touch" | "size" | "pass" | "ask" | "limits";
+export type Group = "intent" | "who" | "touch" | "size" | "pass" | "ask" | "limits";
 export interface Field {
   key: string; label: string; help: string; anchor: string; group: Group;
   kind: "list" | "number" | "text" | "bool" | "shape";
@@ -18,6 +18,7 @@ export const DOCS = "https://github.com/Smana/maku/blob/main/docs/merge-policies
 export const docsLink = (anchor: string) => `${DOCS}#${anchor}`;
 
 export const GROUPS: { id: Group; title: string; add: string }[] = [
+  { id: "intent", title: "What it is for", add: "+ Describe what this class is for" },
   { id: "who", title: "Who writes it", add: "" },
   { id: "touch", title: "What it may touch", add: "Add file rules" },
   { id: "size", title: "How big it may be", add: "Add a size limit" },
@@ -32,6 +33,8 @@ const off = (c: ClassPolicy) => c.mode === "off";
 const shape = (c: ClassPolicy) => c.conditions?.all?.find((l) => "diffShape" in l)?.diffShape;
 
 export const FIELDS: Field[] = [
+  { key: "description", label: "What it is for", group: "intent", kind: "text", anchor: "description", shown: always,
+    help: "One or two sentences a maintainer reads first on the class's card; the gate never reads it." },
   { key: "adopt.logins", label: "Bot accounts it adopts", group: "who", kind: "list", anchor: "a-class", shown: adopted,
     help: "The GitHub App logins whose pull requests this class decides, such as renovate[bot]. One per line." },
   { key: "adopt.branches", label: "Their branch prefixes", group: "who", kind: "list", anchor: "a-class", shown: adopted,

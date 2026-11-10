@@ -1,5 +1,6 @@
 {
   "docs-broad": {
+    "description": "Let agents keep the documentation current: Markdown under docs/ and the README, small changes, links checked. Architecture pages always go to a maintainer.",
     "mode": "shadow",
     "author": "agents",
     "harness": "",
@@ -48,6 +49,7 @@
     }
   },
   "deps-patch": {
+    "description": "Let Renovate's patch bumps merge on their own once the release is old enough. Nothing is added, deleted or renamed, and a minor or major bump is not this class's.",
     "mode": "shadow",
     "author": "adopt",
     "adopt": {
@@ -86,6 +88,7 @@
     }
   },
   "deps-minor": {
+    "description": "Watch Renovate's minor bumps in shadow to learn how often they are safe. It decides nothing live: the factory keeps this shape in shadow only.",
     "mode": "shadow",
     "author": "adopt",
     "adopt": {
@@ -121,6 +124,7 @@
     }
   },
   "generated-files": {
+    "description": "Let a regeneration land when it only rewrites generated files and running the generator again gives the same result. Any other file refuses the pull request.",
     "mode": "shadow",
     "author": "agents",
     "harness": "",
@@ -143,6 +147,7 @@
     }
   },
   "docs-or-tests": {
+    "description": "One class for two kinds of small change, documentation or tests, each with its own check. A pull request that mixes the two is not this class's.",
     "mode": "shadow",
     "author": "agents",
     "harness": "",
@@ -191,6 +196,7 @@
     }
   },
   "infra-with-approval": {
+    "description": "Let agents make small infrastructure changes that pass validation, never on production or security paths. Network changes wait for a maintainer's approval.",
     "mode": "shadow",
     "author": "agents",
     "harness": "",

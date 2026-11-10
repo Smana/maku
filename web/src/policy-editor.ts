@@ -124,6 +124,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
 function hasValue(c: ClassPolicy, key: string): boolean {
   const all = c.conditions?.all ?? [];
   switch (key) {
+    case "description": return !!c.description;
     case "adopt.logins": return !!c.adopt?.logins.length;
     case "adopt.branches": return !!c.adopt?.branches.length;
     case "harnessAllowed": return !!c.harnessAllowed?.length;
@@ -159,7 +160,7 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
     const s = describeClass(c, guardrails);
     const ul = el("ul");
     for (const w of s.when) ul.append(el("li", w));
-    story.replaceChildren(el("p", s.lead), ul, ...s.also.map((a) => el("p", a)));
+    story.replaceChildren(...(c.description ? [el("p", c.description, "class-intent")] : []), el("p", s.lead), ul, ...s.also.map((a) => el("p", a)));
   };
   const emit = () => { tell(); change(structuredClone(c)); };
   form.append(story);
@@ -226,6 +227,17 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
     check();
     return { input: t, error: patterns ? err : undefined };
   };
+  // descriptionOf is the class's free sentence: capped at the factory's 280, with a live count.
+  const descriptionOf = (value: string, set: (v: string) => void): { input: HTMLElement; error: HTMLElement } => {
+    const t = el("textarea");
+    t.maxLength = 280;
+    t.value = value;
+    const count = el("p", "", "field-count");
+    const show = () => { count.textContent = `${t.value.length} of 280`; };
+    t.oninput = () => { show(); set(t.value); emit(); };
+    show();
+    return { input: t, error: count };
+  };
   const numberOf = (value: unknown, max: unknown, set: (v: number) => void) => {
     const i = el("input");
     i.type = "number";
@@ -247,6 +259,7 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
   const control = (f: Field): { input: HTMLElement; error?: HTMLElement } => {
     const list = (v: string[], set: (v: string[]) => void) => listOf(v, set, patternKeys.has(f.key));
     switch (f.key) {
+      case "description": return descriptionOf(c.description ?? "", (v) => { if (v.trim()) c.description = v; else delete c.description; });
       case "adopt.logins": return list(c.adopt?.logins ?? [], (v) => { (c.adopt ??= { logins: [], branches: [] }).logins = v; });
       case "adopt.branches": return list(c.adopt?.branches ?? [], (v) => { (c.adopt ??= { logins: [], branches: [] }).branches = v; });
       case "harnessAllowed": return list(c.harnessAllowed ?? [], (v) => { if (v.length) c.harnessAllowed = v; else delete c.harnessAllowed; });
