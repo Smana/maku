@@ -91,3 +91,98 @@ describe("the guardrails and modes", () => {
     expect(joinOr(["a", "b"], "and")).toBe("a and b");
   });
 });
+
+// Round 1 review: a class never reads looser than it is. Every key of a leaf, every entry of a
+// deny, approval, limit or monitor block is described or named; a malformed value is named too.
+describe("a leaf with several keys, and malformed values", () => {
+  const when = (l: unknown) => describeClass({ mode: "shadow", author: "agents", harness: "plain", conditions: { all: [l as never] } }).when;
+  const named = (k: string) => `a condition this page does not describe (${k})`;
+
+  it("describes every key of a leaf, one phrase each", () => {
+    expect(when({ maxPatchFiles: 3, brandNew: 1 })).toEqual(["it changes at most 3 files", named("brandNew")]);
+  });
+  it("names a leaf with no keys", () => {
+    expect(when({})).toEqual([named("empty")]);
+  });
+  it("describes modifyOnly only when it is true", () => {
+    expect(when({ modifyOnly: true })).toEqual(["it only modifies files, adding or deleting none"]);
+    expect(when({ modifyOnly: false })).toEqual([named("modifyOnly")]);
+  });
+  it("describes a file or check list only when it is a non-empty array of strings", () => {
+    expect(when({ allowedFiles: [] })).toEqual([named("allowedFiles")]);
+    expect(when({ allowedFiles: "^a$" })).toEqual([named("allowedFiles")]);
+    expect(when({ companionFiles: [1] })).toEqual([named("companionFiles")]);
+    expect(when({ holdoutChecks: [] })).toEqual([named("holdoutChecks")]);
+    expect(when({ holdoutChecks: "lint" })).toEqual([named("holdoutChecks")]);
+  });
+  it("describes a size cap only when it is a positive number", () => {
+    expect(when({ maxPatchFiles: 0 })).toEqual([named("maxPatchFiles")]);
+    expect(when({ maxPatchFiles: "3" })).toEqual([named("maxPatchFiles")]);
+    expect(when({ maxModifiedLines: -1 })).toEqual([named("maxModifiedLines")]);
+  });
+  it("describes a check name or label only when it is a non-empty string", () => {
+    expect(when({ releaseAgeCheck: "" })).toEqual([named("releaseAgeCheck")]);
+    expect(when({ requiredLabel: 3 })).toEqual([named("requiredLabel")]);
+    expect(when({ requiredLabel: "docs" })).toEqual(["it carries the label “docs”"]);
+  });
+  it("describes diffShape only as a string, and keeps an unknown shape's name", () => {
+    expect(when({ diffShape: 3 })).toEqual([named("diffShape")]);
+    expect(when({ diffShape: "weird" })).toEqual(["the diff has the shape weird"]);
+  });
+  it("describes an oracle only with a string probe", () => {
+    expect(when({ oracle: { probe: "dead-links" } })).toEqual(["the dead-links oracle has no finding open"]);
+    expect(when({ oracle: {} })).toEqual([named("oracle")]);
+    expect(when({ oracle: { probe: 2 } })).toEqual([named("oracle")]);
+  });
+  it("names a malformed condition and a non-array all", () => {
+    expect(when(null)).toEqual([named("malformed")]);
+    expect(describeClass({ mode: "shadow", author: "agents", harness: "plain", conditions: { all: "x" as never } }).when)
+      .toEqual([named("all")]);
+  });
+  it("does not read a prototype name as a shape or a mode", () => {
+    expect(when({ diffShape: "constructor" })).toEqual(["the diff has the shape constructor"]);
+    expect(modeMeaning("constructor")).toEqual({ label: "constructor", meaning: "a mode this page does not know" });
+  });
+});
+
+describe("deny, approval, limits and monitor entries", () => {
+  const cls = (over: Record<string, unknown>, g: Record<string, unknown> = {}) =>
+    describeClass({ mode: "shadow", author: "agents", harness: "plain", ...over } as never, g);
+
+  it("names an unknown key on a deny entry and keeps the known files", () => {
+    expect(cls({ conditions: { deny: [{ protectedFiles: ["^x$"], brandNew: 1 }] } }).also).toEqual([
+      "Never if it touches ^x$.",
+      "Never if it matches a rule this page does not describe (brandNew).",
+    ]);
+  });
+  it("names a deny entry whose protectedFiles is empty", () => {
+    expect(cls({ conditions: { deny: [{ protectedFiles: [] }] } }).also)
+      .toEqual(["Never if it matches a rule this page does not describe (protectedFiles)."]);
+  });
+  it("names an unknown key on a requiresApproval entry", () => {
+    expect(cls({ requiresApproval: [{ changedFiles: ["^x$"], other: 1 }] }).also).toEqual([
+      "A maintainer approves it first if it changes ^x$.",
+      "A maintainer approves it first under a rule this page does not describe (other).",
+    ]);
+  });
+  it("names an unknown limits key, and a bad maxPerDay without the factory's fallback", () => {
+    expect(cls({ limits: { maxPerDay: 2, weekly: 9 } }).also).toEqual([
+      "At most 2 a day.",
+      "Also limited by a setting this page does not describe (weekly).",
+    ]);
+    expect(cls({ limits: { maxPerDay: 0 } }, { maxPerDay: 5 }).also)
+      .toEqual(["Also limited by a setting this page does not describe (maxPerDay)."]);
+  });
+  it("describes the three known monitor keys, and names the rest", () => {
+    expect(cls({ monitor: { followUpWindow: "168h", oracleRuns: 3, flux: true, verification: true } }).also).toEqual([
+      "Watched for 168h after it merges.",
+      "Re-runs the oracle 3 times after merge.",
+      "Waits for Flux to apply it.",
+      "Verifies the deployment after merge.",
+    ]);
+    expect(cls({ monitor: { mystery: 1, followUpWindow: 12 } }).also).toEqual([
+      "Also limited by a setting this page does not describe (mystery).",
+      "Also limited by a setting this page does not describe (followUpWindow).",
+    ]);
+  });
+});
