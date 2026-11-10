@@ -116,6 +116,11 @@ tasks:
     cmds:
       - bash charts/agent-factory/tests/install.sh kind
 
+  chart:intake:k3d:
+    desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)
+    cmds:
+      - bash charts/agent-factory/tests/intake.sh
+
   quickstart:
     desc: kind + Cilium + gVisor + cert-manager + CNPG + the chart + maku (Linux, docker; MODEL_API_KEY, GITHUB_TOKEN, REPO)
     cmds:

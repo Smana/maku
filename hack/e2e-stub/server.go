@@ -33,6 +33,11 @@ func New() *Stub {
 	s := &Stub{key: key, issues: NewIssueStore()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /__counts", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]int{
+			"total": s.ModelCalls(), "planner": s.PlannerCalls(), "scoper": s.ScoperCalls(),
+		})
+	})
 	mux.HandleFunc("GET /oauth/v2/keys", s.jwks)
 	mux.HandleFunc("POST /token", s.token)
 	mux.HandleFunc("GET /v2/users/dev", s.activeUser)
