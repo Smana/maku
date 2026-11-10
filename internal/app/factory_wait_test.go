@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -56,7 +57,7 @@ func TestWaitServableRetriesUntilServed(t *testing.T) {
 		}
 		return nil
 	}
-	if err := waitServable(t.Context(), slog.New(slog.DiscardHandler), gate, sync, nil, time.Millisecond, 4*time.Millisecond); err != nil {
+	if err := waitServable(t.Context(), slog.New(slog.DiscardHandler), gate, sync, nil, time.Millisecond, 4*time.Millisecond, time.Hour); err != nil {
 		t.Fatalf("a Sync that serves ends the wait: %v", err)
 	}
 	if calls != 4 {
@@ -76,7 +77,7 @@ func TestWaitServableOtherErrorFailsAtOnce(t *testing.T) {
 	boom := errors.New("list Factory: forbidden")
 	calls := 0
 	err := waitServable(t.Context(), slog.New(slog.DiscardHandler), &startupGate{},
-		func(context.Context) error { calls++; return boom }, nil, time.Hour, time.Hour)
+		func(context.Context) error { calls++; return boom }, nil, time.Hour, time.Hour, time.Hour)
 	if !errors.Is(err, boom) || calls != 1 {
 		t.Fatalf("err %v after %d calls, want %v after 1", err, calls, boom)
 	}
@@ -89,7 +90,7 @@ func TestWaitServableStopsOnCancel(t *testing.T) {
 	go func() {
 		done <- waitServable(ctx, slog.New(slog.DiscardHandler), &startupGate{}, func(context.Context) error {
 			return configsource.ErrNotServable
-		}, func() []string { return []string{"Repository a: Invalid"} }, time.Hour, time.Hour)
+		}, func() waitState { return waitState{refused: []string{"Repository a: Invalid"}} }, time.Hour, time.Hour, time.Hour)
 	}()
 	cancel()
 	select {
@@ -146,8 +147,114 @@ func TestPlumbingOnlyFileWaits(t *testing.T) {
 	defer cancel()
 	calls := 0
 	sync := func(ctx context.Context) error { calls++; return src.Sync(ctx) }
-	err := waitServable(ctx, slog.New(slog.DiscardHandler), &startupGate{}, sync, refusals(src), time.Millisecond, 2*time.Millisecond)
+	err := waitServable(ctx, slog.New(slog.DiscardHandler), &startupGate{}, sync, waitStateOf(src), time.Millisecond, 2*time.Millisecond, time.Hour)
 	if !errors.Is(err, errStoppedWaiting) || calls < 2 {
 		t.Fatalf("err %v after %d Syncs, want a wait ended by the deadline", err, calls)
+	}
+}
+
+// syncLog is a logger writing to a buffer, to count the wait's warnings.
+func syncLog() (*slog.Logger, *strings.Builder) {
+	var sb strings.Builder
+	return slog.New(slog.NewTextHandler(&sb, nil)), &sb
+}
+
+func notServableAfter(n int, calls *int) func(context.Context) error {
+	return func(context.Context) error {
+		*calls++
+		if *calls <= n {
+			return configsource.ErrNotServable
+		}
+		return nil
+	}
+}
+
+// The warning goes out once per interval however often Sync retries; a shorter interval warns again.
+func TestWaitServableWarnsOncePerInterval(t *testing.T) {
+	for name, tc := range map[string]struct {
+		every time.Duration
+		want  int
+	}{"a minute apart": {time.Minute, 1}, "every attempt": {0, 6}} {
+		t.Run(name, func(t *testing.T) {
+			log, sb := syncLog()
+			calls := 0
+			if err := waitServable(t.Context(), log, &startupGate{}, notServableAfter(6, &calls), nil, time.Millisecond, time.Millisecond, tc.every); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Count(sb.String(), "waiting for a servable config"); got != tc.want {
+				t.Fatalf("%d warnings over %d attempts, want %d", got, calls, tc.want)
+			}
+		})
+	}
+}
+
+// A first Sync that serves starts at once: one call, no warning, no wait left on /readyz.
+func TestWaitServableStartsAtOnce(t *testing.T) {
+	log, sb := syncLog()
+	gate := &startupGate{}
+	calls := 0
+	if err := waitServable(t.Context(), log, gate, notServableAfter(0, &calls), nil, time.Hour, time.Hour, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || sb.Len() != 0 || gate.waiting.Load() != nil {
+		t.Fatalf("calls %d, log %q, waiting %v: want 1 call, silent, not waiting", calls, sb.String(), gate.waiting.Load())
+	}
+}
+
+// With the CRDs not installed the warning is about the file, not about applying resources.
+func TestWaitServableWordingFollowsCRDs(t *testing.T) {
+	for name, tc := range map[string]struct{ absent, want string }{
+		"CRDs installed": {"", "apply the factory's Factory, Repository and MergePolicy resources"},
+		"CRDs absent":    {"y", "fix the file"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			log, sb := syncLog()
+			calls := 0
+			state := func() waitState { return waitState{crdsAbsent: tc.absent != ""} }
+			if err := waitServable(t.Context(), log, &startupGate{}, notServableAfter(1, &calls), state, time.Millisecond, time.Millisecond, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(sb.String(), tc.want) {
+				t.Fatalf("warning %q lacks %q", sb.String(), tc.want)
+			}
+		})
+	}
+}
+
+// A cancel while a Sync is in flight surfaces as that Sync's context error: still a clean stop.
+func TestWaitServableCancelDuringSync(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	err := waitServable(ctx, slog.New(slog.DiscardHandler), &startupGate{}, func(ctx context.Context) error {
+		cancel()
+		return fmt.Errorf("list Factory: %w", ctx.Err())
+	}, nil, time.Hour, time.Hour, time.Hour)
+	if !errors.Is(err, errStoppedWaiting) {
+		t.Fatalf("err %v, want errStoppedWaiting", err)
+	}
+}
+
+// An API server that refuses the list fails the start at once, with the Role rule it needs.
+func TestFirstSyncForbiddenNamesTheRole(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,"message":"forbidden"}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "kubeconfig")
+	body := "apiVersion: v1\nkind: Config\nclusters: [{name: c, cluster: {server: " + srv.URL + "}}]\n" +
+		"users: [{name: u, user: {token: t}}]\ncontexts: [{name: x, context: {cluster: c, user: u}}]\ncurrent-context: x\n"
+	if err := os.WriteFile(kubeconfig, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(cfg, []byte(plumbingOnly), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", kubeconfig)
+	_, _, err := firstSync(t.Context(), slog.New(slog.DiscardHandler), cfg, "agent-system", &startupGate{})
+	if err == nil || !apierrors.IsForbidden(err) || !strings.Contains(err.Error(), "Role in agent-system must grant get, list and watch") {
+		t.Fatalf("err %v, want a Forbidden with the Role hint", err)
 	}
 }

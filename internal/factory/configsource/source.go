@@ -121,6 +121,13 @@ func (s *Source) Outcomes() ([]Outcome, Synced) {
 	return slices.Clone(s.outcomes), s.synced
 }
 
+// CRDsAbsent reports whether the last Sync found the factory CRDs not installed.
+func (s *Source) CRDsAbsent() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.crdsAbsent
+}
+
 func (s *Source) now() time.Time {
 	if s.Now != nil {
 		return s.Now()

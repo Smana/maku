@@ -365,9 +365,11 @@ func TestDuplicatePolicyReportsItsOwnClasses(t *testing.T) {
 	p := policyObj("b", "r", 1)
 	p.Spec.Classes = map[string]config.Class{"mine": {Shadow: true}, "other": {}}
 	in := Inputs{
-		Config:    cfg(rc),
-		Outcomes:  []configsource.Outcome{dup},
-		Decisions: func(string) map[string]decision.Last { return map[string]decision.Last{"mine": {Verdict: "merge", Reason: "ok", At: now.Time}} },
+		Config:   cfg(rc),
+		Outcomes: []configsource.Outcome{dup},
+		Decisions: func(string) map[string]decision.Last {
+			return map[string]decision.Last{"mine": {Verdict: "merge", Reason: "ok", At: now.Time}}
+		},
 	}
 	got := Desired(in, nil, nil, []v1alpha1.MergePolicy{p}, now).MergePolicies["b"]
 	if got.Authority != "" || got.LiveCount != 0 || got.ClassCount != 2 {
