@@ -5,6 +5,7 @@ package reconciler
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -449,7 +450,7 @@ func TestTheScoperBriefStartsWithItsMarker(t *testing.T) {
 		{"a zero config reads the defaults", config.Scoper{}, "<!-- agent-factory scoper nudgeAt=25 maxToolCalls=40 -->\n", "at most 25 tool calls"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := ScoperBrief(tk, "n0nce234", c.s)
+			got := ScoperBrief(tk, "n0nce234", c.s, nil)
 			if !strings.HasPrefix(got, c.marker) || strings.Count(got, runs.ScoperMarkerPrefix) != 1 || !strings.Contains(got, c.nudge) {
 				t.Fatalf("%q", got[:min(len(got), 200)])
 			}
@@ -536,7 +537,7 @@ func (g *evidenceRig) checksError(n int, err error) { g.f.SetChecksError(n, err)
 // queued messages when a test gives some.
 func (g *evidenceRig) reviseBrief(t *testing.T, queued ...rooms.Queued) (string, []int64) {
 	t.Helper()
-	return g.r.revisionBrief(t.Context(), g.tk, nil, queued, nil)
+	return g.r.revisionBrief(t.Context(), g.tk, nil, queued, nil, "")
 }
 
 // CD12: the reviewer's comment and the failing check's annotation ride the revision brief, fenced, and the
@@ -659,5 +660,75 @@ func TestSeveralUnreadableChecksAreOneSentence(t *testing.T) {
 	}
 	if !strings.Contains(got, "keep working on branch agent/3buqdlot") || !strings.Contains(got, "the install link is still dead") {
 		t.Fatalf("the revision did not go out:\n%s", got)
+	}
+}
+
+func TestScoperBriefListsProfiles(t *testing.T) {
+	choices := []ProfileChoice{
+		{Name: "standard", Description: "One pass of implement and review.", Floor: true},
+		{Name: "test-first", Description: "Failing tests first, for a behaviour change."},
+	}
+	for _, split := range []bool{false, true} {
+		tk := issueTask("3buqdlot", 7, "# Fix the link")
+		gold := "scoper_brief.golden"
+		if split {
+			tk.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: 3}
+			gold = "scoper_brief_split.golden"
+		}
+		// Captured from main's ScoperBrief before profiles existed.
+		want, err := os.ReadFile("testdata/" + gold)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); b != string(want) {
+			t.Errorf("split %v: nil choices changed the brief", split)
+		}
+		b := ScoperBrief(tk, "n0nce234", config.Scoper{}, choices)
+		for _, want := range []string{"## Profiles", "- standard (default): One pass of implement and review.",
+			"- test-first: Failing tests first, for a behaviour change.",
+			"profile", "profileWhy", "only when it fits this task better than the default"} {
+			if !strings.Contains(b, want) {
+				t.Errorf("split %v: no %q in\n%s", split, want, b)
+			}
+		}
+		if strings.Contains(b, "test-first (default)") {
+			t.Errorf("split %v: a variant marked default", split)
+		}
+		if fence := strings.Index(b, "\nTASK-DATA-n0nce234\n"); strings.Index(b, "## Profiles") > fence {
+			t.Errorf("split %v: the profiles block is inside the task data", split)
+		}
+	}
+}
+
+func TestProfileChoices(t *testing.T) {
+	cfg := &config.Config{
+		HarnessProfiles: map[string]config.HarnessProfile{
+			"standard": {Description: "One pass."}, "test-first": {Description: "Tests first."}, "careful": {Description: "Two reviews."}},
+		Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Classes: map[string]config.Class{
+			"docs":  {Harness: "standard", HarnessAllowed: []string{"test-first", "careful"}},
+			"fixed": {Harness: "standard"},
+		}}},
+	}
+	r := &Reconciler{Cfg: cfg}
+	both := []ProfileChoice{{Name: "standard", Description: "One pass.", Floor: true},
+		{Name: "test-first", Description: "Tests first."}, {Name: "careful", Description: "Two reviews."}}
+	for name, c := range map[string]struct {
+		class   string
+		profile *v1alpha1.ProfileStatus
+		want    []ProfileChoice
+	}{
+		"floor":          {"docs", &v1alpha1.ProfileStatus{Name: "standard", Source: "floor"}, both},
+		"control":        {"docs", &v1alpha1.ProfileStatus{Name: "standard", Source: "control"}, both},
+		"label":          {"docs", &v1alpha1.ProfileStatus{Name: "test-first", Source: "label"}, nil},
+		"no profile":     {"docs", nil, nil},
+		"nothing to add": {"fixed", &v1alpha1.ProfileStatus{Name: "standard", Source: "floor"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tk := issueTask("3buqdlot", 7, "x")
+			tk.Spec.Repository, tk.Spec.PredictedClass, tk.Status.Profile = "Smana/cloud-native-ref", c.class, c.profile
+			if got := r.profileChoices(tk); !slices.Equal(got, c.want) {
+				t.Fatalf("%+v, want %+v", got, c.want)
+			}
+		})
 	}
 }

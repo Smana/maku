@@ -139,7 +139,7 @@ flowchart LR
 |---|---|---|
 | Repository policy | The `classes` block of `.github/agent-factory.yaml` on the default branch. A file with `factory:` alone is the ownership fence and declares no policy | `internal/factory/mergepolicy/policy.go` |
 | Central config | The factory's config file: `harnessProfiles`, `mergeGuardrails`, `policyManagement`, and per repository `classAuthority`, maintainers, `merge`, schedules, budgets | `internal/factory/config/mergepolicy.go` |
-| Class | A named kind of change: what it may touch, which evidence it needs, whether it merges. `docs-links` and `revert` are required in every policy; `review` is implicit and never declared | `mergepolicy.Validate` |
+| Class | A named kind of change: what it may touch, which evidence it needs, whether it merges. `docs-links` and `revert` are required in every policy; `review` never merges through the gate and may be declared for its evaluation keys only | `mergepolicy.Validate` |
 | Mode | `live` merges, `shadow` records what it would have done, `off` does neither | `Mode` |
 | Author mode | `agents`: the factory's agents App wrote it through a task's runs. `adopt`: another App's pull requests (Renovate), adopted by login and branch prefix | `ClassPolicy.Author` |
 | Conditions | `all`: leaves that must all hold. `any`: two to eight branches, one of which must hold. `deny`: paths that refuse. One closed vocabulary, one leaf one key | `Conditions`, `Leaf` |
@@ -271,7 +271,7 @@ central config.
 | Key | Type | Default | Constraint |
 |---|---|---|---|
 | `factory` | string | required | A factory name (DNS label). Must equal the config's `factory`. Maku never edits it |
-| `classes` | map of class name → class | absent: no policy | Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. `review` is refused |
+| `classes` | map of class name → class | absent: no policy | Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. `review` takes `harness`, `harnessAllowed` and `escalation` only |
 
 Two rules every file with classes must meet:
 
@@ -300,10 +300,11 @@ mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did 
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
-| `mode` | `live` \| `shadow` \| `off` | required | |
-| `author` | `agents` \| `adopt` | required | |
+| `mode` | `live` \| `shadow` \| `off` | required | Refused on `review`: a human merges it |
+| `author` | `agents` \| `adopt` | required | Refused on `review` |
 | `adopt` | `{logins: [..], branches: [..]}` | — | Required with `author: adopt`, refused otherwise. Logins end in `[bot]`; branches are `^` plus a literal prefix (`^renovate/`) |
 | `harness` | string | required | A key of the central `harnessProfiles`. `template: none` for `adopt`, any other for `agents` |
+| `harnessAllowed`, `escalation` | as the [central keys](#central-config) | none | The same constraints; carried into the gate's class only when set. On `review` they are, with `harness`, the only keys: any other key is refused as written, whatever its value (`mode: ""`, `conditions: {}`, `limits: {maxPerDay: 0}`, `adopt: null` included) |
 | `conditions.all` | list of leaves | none | Each leaf one key; a key at most once |
 | `conditions.any` | list of 2–8 lists of leaves | none | No empty branch; a key in `all` is not repeated in a branch |
 | `conditions.deny` | list of `{protectedFiles: [..]}` | none | Non-empty lists. Unanchored regular expressions |
@@ -364,7 +365,7 @@ All three blocks live at the top level of the factory's config. Defaults are off
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
-| `harnessProfiles.<name>` | `{template, tier, checks, testFirst, loop}` | none | Name like a class name. `template`: `solo`, `pair`, `trio`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `testFirst` needs `checks`; `none` takes no other key |
+| `harnessProfiles.<name>` | `{template, tier, checks, testFirst, loop, description}` | none | Name like a class name. `template`: `solo`, `pair`, `trio`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `testFirst` needs `checks`; `none` takes no other key; `description` ≤ 120 bytes |
 | `mergeGuardrails.protectedFiles` | list of regexp | none | Appended to every class's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every class's `holdoutChecks` |
 | `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0: no guardrail | A class above it is refused; a class without one inherits it |
@@ -372,14 +373,21 @@ All three blocks live at the top level of the factory's config. Defaults are off
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | 0 to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
 | `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | See [the stages](#rollout-stages) |
 | `policyManagement.operators` | list of GitHub logins | none: no exception can be approved | Read by the broker |
+| `classes.<c>.harnessAllowed` | list of profile names | none | Each in `harnessProfiles`, none below `harness` (roles, tier, the loop row's `scope` and `judge`); refused on a `live` or `shadow` class. Carried into the gate's class only when set |
+| `classes.<c>.escalation` | `{outOfBudget, notConverged}` | none: the group goes to the human | Each a profile of `harnessAllowed`; refused on a `live` or `shadow` class |
 | `repositories[].classAuthority` | `central` \| `repository` | `central` | `repository` needs `repositoryAuthority` and no `classes` |
 
 The broker reads `policyManagement` (only `promotion` and `operators` matter there) and
 `human.approvalMemory` (bool, default `false`) from its own config.
 
-A profile's `template` is read for [coordination](factory.md#multi-repository-coordination) checks;
-`tier` and `loop` are validated but no reader applies them to a class's runs. `checks` and
-`testFirst` are the class's.
+A profile's `checks` and `testFirst` are the class's. Its `template`, `tier` and `loop` shape the
+runs of a task whose class declares `harnessAllowed` or `escalation` ([the scoper](factory.md#the-scoper)
+resolves the profile); `template` is also read for [coordination](factory.md#multi-repository-coordination)
+checks. A file declares `review` with `harness`, `harnessAllowed` and `escalation` only, and the
+export writes it that way when the central `classes.review` has a `harness`; on `review` the
+`harness` is always the evaluation's floor, so a cut-over repository's review tasks keep the floor,
+the variants and the steps the central class had. Without a floor `review` stays implicit on both
+sides, and its tasks run as before the evaluation.
 
 <!-- check: central -->
 ```yaml
@@ -537,7 +545,8 @@ any byte of difference; Maku reads its result and never runs repository code.
 `maku policy diff` (and the editor's **Check**) proves a change structural, class by class
 (`mergepolicy.Structural`). A tightening is bounded on every row by the old class: fewer allowed
 paths, more denied ones, a wider approval subset, lower caps, more evidence, a lower mode. Anything
-else, including a rewritten pattern or another harness profile, is a relaxation.
+else, including a rewritten pattern, another harness profile, a `harnessAllowed` variant or an
+`escalation` step added or changed, is a relaxation.
 
 | Change to `docs-broad` above | Verdict | Why, as printed |
 |---|---|---|

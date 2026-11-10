@@ -71,16 +71,20 @@ type File struct {
 	Classes map[string]ClassPolicy `json:"classes,omitempty"`
 }
 
-// ClassPolicy is one class as a repository declares it.
+// ClassPolicy is one class as a repository declares it. review declares harness, harnessAllowed
+// and escalation only (R30): its merge authority is implicit, so mode and author are absent there
+// and required everywhere else.
 type ClassPolicy struct {
-	Mode             Mode            `json:"mode"`
-	Author           string          `json:"author"`
-	Adopt            *config.Adopt   `json:"adopt,omitempty"`
-	Harness          string          `json:"harness"`
-	Conditions       Conditions      `json:"conditions,omitzero"`
-	RequiresApproval []ApprovalLeaf  `json:"requiresApproval,omitempty"`
-	Limits           Limits          `json:"limits,omitzero"`
-	Monitor          *config.Monitor `json:"monitor,omitempty"`
+	Mode             Mode               `json:"mode,omitempty"`
+	Author           string             `json:"author,omitempty"`
+	Adopt            *config.Adopt      `json:"adopt,omitempty"`
+	Harness          string             `json:"harness"`
+	HarnessAllowed   []string           `json:"harnessAllowed,omitempty"`
+	Escalation       *config.Escalation `json:"escalation,omitempty"`
+	Conditions       Conditions         `json:"conditions,omitzero"`
+	RequiresApproval []ApprovalLeaf     `json:"requiresApproval,omitempty"`
+	Limits           Limits             `json:"limits,omitzero"`
+	Monitor          *config.Monitor    `json:"monitor,omitempty"`
 }
 
 // Conditions are a class's predicates. Any leaf absent from All and Any is not checked. Any is
@@ -160,6 +164,9 @@ func Parse(raw []byte) (*File, error) {
 	if err := exactKeys(tree, reflect.TypeFor[File](), ""); err != nil {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
 	}
+	if err := reviewKeys(tree); err != nil {
+		return nil, fmt.Errorf("mergepolicy: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(j))
 	dec.DisallowUnknownFields()
 	var f File
@@ -178,7 +185,7 @@ func Parse(raw []byte) (*File, error) {
 		for _, list := range f.Classes[name].patterns() {
 			total += len(list)
 		}
-		if err := f.Classes[name].shape(); err != nil {
+		if err := f.Classes[name].shape(name); err != nil {
 			// One error a line, each naming its class: the editor points each at the class's line.
 			for line := range strings.SplitSeq(err.Error(), "\n") {
 				errs = append(errs, fmt.Errorf("class %s: %s", name, line))
@@ -197,7 +204,10 @@ func Parse(raw []byte) (*File, error) {
 	return &f, nil
 }
 
-func (p ClassPolicy) shape() error {
+func (p ClassPolicy) shape(name string) error {
+	if name == "review" {
+		return p.reviewShape()
+	}
 	var errs []error
 	if !slices.Contains([]Mode{ModeLive, ModeShadow, ModeOff}, p.Mode) {
 		errs = append(errs, fmt.Errorf("mode %q is not live, shadow or off", p.Mode))
@@ -260,6 +270,38 @@ func (p ClassPolicy) shape() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// reviewKeysAllowed are the keys classes.review may carry (R30): the evaluation keys, and nothing
+// that would give the class a merge authority of its own.
+var reviewKeysAllowed = []string{"harness", "harnessAllowed", "escalation"}
+
+// reviewKeys refuses every other key on classes.review as written, before decoding: an empty, null
+// or zero value decodes to the absent value, and would otherwise pass as undeclared.
+func reviewKeys(tree any) error {
+	root, _ := tree.(map[string]any)
+	classes, _ := root["classes"].(map[string]any)
+	review, ok := classes["review"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	var errs []error
+	for _, k := range slices.Sorted(maps.Keys(review)) {
+		if !slices.Contains(reviewKeysAllowed, k) {
+			errs = append(errs, fmt.Errorf("class review: %s is refused on review: it declares harness, harnessAllowed and escalation only, "+
+				"and a human merges it", k))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// reviewShape is shape for review: the floor is required. The other keys were refused as written
+// (reviewKeys).
+func (p ClassPolicy) reviewShape() error {
+	if p.Harness == "" {
+		return errors.New("harness is required: a profile of the central list")
+	}
+	return nil
 }
 
 // patterns are the class's path lists, each compiled when the class is validated.

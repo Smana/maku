@@ -1649,6 +1649,18 @@ spec:
                     && !has(self.pendingGenerations))'
                 - message: an allocation and an accepted head are a child's
                   rule: has(self.childID) || (!has(self.allocationMicroUSD) && !has(self.integrationAcceptedHead))
+              endedAt:
+                description: |-
+                  The task's first end (R34): the settle window counts from it, and Outcome is what it ended
+                  as. A later Reverted revises neither.
+                format: date-time
+                type: string
+              evaluated:
+                description: |-
+                  A split's part whose outcome the team evaluation counts, under its parent's profile (R32):
+                  written at its triage when the parent has one. Its merge's provenance is read for the mark
+                  (R39), never for the parent.
+                type: boolean
               facts:
                 description: 'The task facts last written to the room: their seq comes
                   from the roomSeq ledger (ruling SK).'
@@ -1667,6 +1679,12 @@ spec:
                 - seq
                 type: object
               fixRuns:
+                format: int32
+                type: integer
+              fixRunsBeforeStep:
+                description: |-
+                  FixRuns when the escalation step queued the task's run under its richer profile: the step
+                  grants a fresh allowance, so merge.fixRuns counts from here (R33).
                 format: int32
                 type: integer
               gateReentries:
@@ -1857,6 +1875,7 @@ spec:
                 - ci
                 - retry
                 - resume
+                - escalation
                 type: string
               outbox:
                 description: |-
@@ -1875,8 +1894,10 @@ spec:
                       maxLength: 128
                       type: string
                     number:
-                      description: The issue or PR it goes to.
-                      minimum: 1
+                      description: |-
+                        The issue or PR it goes to; 0 waits for the task's first target (a profile announcement
+                        queued before a schedule's task has a pull request).
+                      minimum: 0
                       type: integer
                   required:
                   - body
@@ -1885,6 +1906,17 @@ spec:
                   type: object
                 maxItems: 16
                 type: array
+              outcome:
+                enum:
+                - accepted
+                - merged_human
+                - no_op
+                - closed
+                - stopped
+                - rejected
+                - reverted
+                - failed
+                type: string
               phase:
                 enum:
                 - Received
@@ -1910,6 +1942,49 @@ spec:
               phaseSince:
                 format: date-time
                 type: string
+              profile:
+                description: The harness profile frozen at triage and the evaluation
+                  cohort; absent for a class without a harness.
+                properties:
+                  checks:
+                    type: boolean
+                  cohort:
+                    enum:
+                    - labeled
+                    - control
+                    - treatment
+                    type: string
+                  counted:
+                    type: boolean
+                  name:
+                    maxLength: 63
+                    type: string
+                  reason:
+                    maxLength: 32
+                    type: string
+                  recommended:
+                    maxLength: 63
+                    type: string
+                  resolved:
+                    type: boolean
+                  source:
+                    enum:
+                    - label
+                    - floor
+                    - control
+                    - scoper
+                    - escalation
+                    type: string
+                  testFirst:
+                    type: boolean
+                  why:
+                    maxLength: 200
+                    type: string
+                required:
+                - cohort
+                - name
+                - source
+                type: object
               published:
                 description: The issue the factory filed from this investigate task's
                   proposal (RA9), once.
@@ -2021,6 +2096,10 @@ spec:
                       or handed to a human (N1: a push after the hand-off keeps it with the human).
                     maxLength: 64
                     type: string
+                  humanCommits:
+                    description: 'HumanCommits is never cleared: one human commit
+                      makes the merge merged_human, not accepted.'
+                    type: boolean
                   mergeCommitSHA:
                     maxLength: 64
                     type: string
@@ -2220,6 +2299,7 @@ spec:
                       - ci
                       - retry
                       - resume
+                      - escalation
                       type: string
                     unpriced:
                       description: 'Why the meter could not price the run: its task

@@ -162,6 +162,8 @@ type Config struct {
 	HarnessProfiles  map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
 	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
+	// Evaluation is the team evaluation's cohort and mode: observe unless set.
+	Evaluation Evaluation `json:"evaluation,omitzero"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
 	// Ignored are the keys the file sets that this release accepts and ignores, for the binary
@@ -1746,6 +1748,7 @@ func (c *Config) Validate() error {
 	}
 	c.validateLoops(bad)
 	c.validateMergePolicy(bad)
+	c.validateEvaluation(bad)
 	return errors.Join(errs...)
 }
 
@@ -1930,10 +1933,7 @@ func (c *Config) ModelFor(class, dataClass, role, tier string) string {
 	if dataClass != "public" {
 		return ""
 	}
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	return row.Models[role][tier]
 }
 
@@ -1965,10 +1965,7 @@ func (m *ScopeMode) UnmarshalJSON(b []byte) error {
 // ScopeFor is class's scope mode: its row's, else default's, off when that row sets none. A row
 // is whole, as for the loop (part 2 R1): a class row without scope is off, whatever default's says.
 func (c *Config) ScopeFor(class string) ScopeMode {
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	if row.Scope == "" {
 		return ScopeOff
 	}
@@ -1978,10 +1975,7 @@ func (c *Config) ScopeFor(class string) ScopeMode {
 // SearchFor reports whether class's implementer runs get the search tool (v3 feature 5, ST9): its
 // row's search, else default's. A row is whole: a class row without search is off.
 func (c *Config) SearchFor(class string) bool {
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	return row.Search
 }
 
@@ -2034,10 +2028,7 @@ func (c *Config) SplitFor(repository, class string) *SplitPolicy {
 	if c.neverSplit(class) || c.RepositoryFor(repository).Classes[class].Oracle != nil {
 		return nil
 	}
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	if row.Split == nil || row.Scope != ScopeScoper {
 		return nil
 	}
@@ -2073,10 +2064,7 @@ type LoopPolicy struct {
 
 // LoopFor is class's loop policy, nil when its loop is off: its row, else default's.
 func (c *Config) LoopFor(class string) *LoopPolicy {
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	if !row.On() {
 		return nil
 	}
@@ -2122,7 +2110,8 @@ func (c *Config) validateModels(bad func(string, ...any), name string, byRole ma
 	}
 }
 
-// validateLoops: a row's key is default, review or a class some repository declares; its values
+// validateLoops: a row's key is default, review, a class some repository declares or a harness
+// profile's loop (TE6), never off; its values
 // are within the harness's bounds; and only cloud-native-ref's AgentRun carries spec.loop.
 func (c *Config) validateLoops(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
@@ -2130,6 +2119,8 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		if name != "default" && name != "review" && !slices.ContainsFunc(c.Repos(), func(r Repository) bool {
 			_, ok := r.Classes[name]
 			return ok
+		}) && !slices.ContainsFunc(slices.Collect(maps.Values(c.HarnessProfiles)), func(p HarnessProfile) bool {
+			return string(p.Loop) == name && name != string(LoopOff)
 		}) {
 			bad("loops.%s: %q is not default, review or a class a repository declares", name, name)
 		}

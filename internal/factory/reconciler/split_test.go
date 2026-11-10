@@ -113,7 +113,7 @@ func TestSplitAnyTierOffersEveryTier(t *testing.T) {
 			if (tk.Spec.Split != nil) != c.offered {
 				t.Fatalf("split %+v", tk.Spec.Split)
 			}
-			if got := strings.Contains(ScoperBrief(tk, "n0nce234", config.Scoper{}), "hand off split {why, children}"); got != c.offered {
+			if got := strings.Contains(ScoperBrief(tk, "n0nce234", config.Scoper{}, nil), "hand off split {why, children}"); got != c.offered {
 				t.Fatalf("ScoperBrief carries splitHow = %v, want %v", got, c.offered)
 			}
 		})
@@ -146,12 +146,12 @@ func TestNoSplitOutsideItsRow(t *testing.T) {
 // Offline proof 7, the scoper's half: the split clause is in the scoping brief only when offered.
 func TestTheScoperIsToldItMaySplit(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, parentText)
-	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}); strings.Contains(b, "split") {
+	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); strings.Contains(b, "split") {
 		t.Fatalf("a scoper not offered a split hears of one:\n%s", b)
 	}
 	tk.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: 3, FamilyMicroUSD: 20_400_000, ChildTier: "standard"}
 	for _, want := range []string{"2 to 3 changes", "hand off split {why, children}", "beside scope", "in the order they merge"} {
-		if b := ScoperBrief(tk, "n0nce234", config.Scoper{}); !strings.Contains(b, want) {
+		if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); !strings.Contains(b, want) {
 			t.Errorf("the split clause lacks %q", want)
 		}
 	}
@@ -281,7 +281,7 @@ func TestAMaintainerApprovesTheSplit(t *testing.T) {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Split)
 	}
 	if !slices.Equal(g.f.Removed(7), []string{"factory/split-proposed"}) || !slices.Contains(g.metrics.recorded, "split review approved") ||
-		!slices.Contains(g.metrics.recorded, "intervention split") {
+		!slices.Contains(g.metrics.recorded, "intervention split none none none") {
 		t.Fatalf("removed %v metrics %v", g.f.Removed(7), g.metrics.recorded)
 	}
 }
@@ -353,7 +353,7 @@ func TestTwoSplitCommentsApproveOnce(t *testing.T) {
 		}
 		return n
 	}
-	if tk.Status.Split.State != "approved" || count("split review approved") != 1 || count("intervention split") != 1 {
+	if tk.Status.Split.State != "approved" || count("split review approved") != 1 || count("intervention split none none none") != 1 {
 		t.Fatalf("%+v %v", tk.Status.Split, g.metrics.recorded)
 	}
 }
@@ -421,11 +421,11 @@ func TestTheOtherSplitExitsAreCounted(t *testing.T) {
 // argument of the same call, only when the task was offered one.
 func TestTheHandoffSentenceNamesSplitOnlyWhenOffered(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, parentText)
-	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}); strings.Contains(b, "split {why, children} in this same room_handoff call") {
+	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); strings.Contains(b, "split {why, children} in this same room_handoff call") {
 		t.Fatalf("a scoper not offered a split is told to pass one:\n%s", b)
 	}
 	tk.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: 3, FamilyMicroUSD: 20_400_000, ChildTier: "standard"}
-	b := ScoperBrief(tk, "n0nce234", config.Scoper{})
+	b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil)
 	for _, want := range []string{"End with one room_handoff call", "split {why, children} in this same room_handoff call",
 		"A split written only in room_post or in the summary is never proposed"} {
 		if !strings.Contains(b, want) {

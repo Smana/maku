@@ -189,6 +189,12 @@ func TestAQuestionBouncesToTheAuthor(t *testing.T) {
 	if !slices.Equal(g.f.Added(7), []string{"factory/needs-author"}) || !slices.Contains(g.metrics.recorded, "scoper review question") {
 		t.Fatalf("labels %v metrics %v", g.f.Added(7), g.metrics.recorded)
 	}
+	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention needs_author none none none"}) {
+		t.Fatalf("a bounce is the author's intervention, not an escalation: %v", got)
+	}
+	if got := interventions(g.reconcile(t, "3buqdlot", 1), g.metrics.recorded); len(got) != 1 {
+		t.Fatalf("counted once: %v", got)
+	}
 }
 
 // C7: an internal task's question stays in the room behind a link.
@@ -400,7 +406,7 @@ func TestOnlyAMaintainersRetryProceeds(t *testing.T) {
 // Drill 6ysg5vvt (cnref #2666, v0.30.2): the scoper made 72 tool calls, re-read the same files and was
 // revoked budget-run before any room_handoff. The brief orders the hand-off before more exploration.
 func TestTheScoperBriefHandsOffBeforeItExplores(t *testing.T) {
-	b := ScoperBrief(issueTask("3buqdlot", 7, parentText), "n0nce234", config.Scoper{})
+	b := ScoperBrief(issueTask("3buqdlot", 7, parentText), "n0nce234", config.Scoper{}, nil)
 	for _, want := range []string{"Call room_handoff as soon as you have the scope", "at most 25 tool calls",
 		"hand off what you have", "Never re-read a file you already read"} {
 		if !strings.Contains(b, want) {

@@ -803,9 +803,10 @@ func Held(t *v1alpha1.Task, reason, roomsURL string) Event {
 }
 
 // CIFixing says why the next run starts: CI is red on the head, naming each check and its
-// conclusion ("name: state"). Once per fix run, as Revising is once per round.
+// conclusion ("name: state"). Once per fix run, as Revising is once per round: the key counts
+// every repair of the task, n the allowance, which an escalation step renews (R33).
 func CIFixing(t *v1alpha1.Task, pr int, head string, checks []string, n, limit int) Event {
-	return Event{Key: fmt.Sprintf("ci-fixing-%d", n),
+	return Event{Key: fmt.Sprintf("ci-fixing-%d", t.Status.FixRuns),
 		Body: fmt.Sprintf("Agent factory task `%s`: CI is red on #%d at `%s` (%s); a run starts to fix it (%d/%d).",
 			t.Name, pr, head, strings.Join(checks, ", "), n, limit)}
 }
@@ -930,6 +931,9 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 		fmt.Fprintf(&b, ", `%s`; it resets at 00:00 UTC", p)
 	}
 	b.WriteString(".")
+	if p := t.Status.Profile; p != nil && p.Source == "escalation" && phase == v1alpha1.PhaseEscalated {
+		fmt.Fprintf(&b, " It had already stepped up once, to profile `%s` (%s).", p.Name, p.Reason)
+	}
 	if pr := t.Status.PullRequest; pr != nil && pr.MergedBy != "" && phase == v1alpha1.PhaseDone {
 		fmt.Fprintf(&b, " Merged by @%s.", strings.TrimSuffix(pr.MergedBy, "[bot]"))
 	}
@@ -972,6 +976,12 @@ const (
 
 // Closing reports whether key is an ending's: its token total is only final once the usage settles.
 func Closing(key string) bool { return strings.HasPrefix(key, closingPrefix) }
+
+// Pending is a key whose event waits in the outbox for the task's first target instead of being
+// dropped without one (R31): the profile announcements.
+func Pending(key string) bool {
+	return strings.HasPrefix(key, "profile-chosen-") || strings.HasPrefix(key, "profile-escalated-")
+}
 
 // Retotal rewrites an ending's "Tokens used" line with the settled total (#42).
 func Retotal(body string, tokens int64, incomplete bool) string {
@@ -1136,4 +1146,32 @@ func summary(text string, budget int) string {
 			return q
 		}
 	}
+}
+
+// ProfileChosen names the harness profile the task's run-th run starts under, the floor marked
+// as the default, with the scoper's why or the reason it was not applied.
+func ProfileChosen(name, source, reason, why string, run int) Event {
+	body := fmt.Sprintf("Agent factory: this task runs under profile `%s`", name)
+	if source != "scoper" && source != "escalation" {
+		body += " (default)"
+	}
+	var because []string
+	if reason != "" {
+		because = append(because, reason)
+	}
+	if why != "" {
+		because = append(because, "the scoper: "+why)
+	}
+	if len(because) > 0 {
+		body += " — " + strings.Join(because, "; ")
+	}
+	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
+}
+
+// ProfileEscalated says the task runs once more under a richer profile before a maintainer is
+// asked; run is the count of runs so far, as ProfileChosen keys it.
+func ProfileEscalated(from, to, group string, run int) Event {
+	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Body: fmt.Sprintf(
+		"Agent factory: this task stopped (%s) under profile `%s`; it runs once more under profile `%s` before a maintainer is asked.",
+		group, from, to)}
 }

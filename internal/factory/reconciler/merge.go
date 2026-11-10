@@ -37,6 +37,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, t *v1alpha1.Task) error {
 	switch pr.State {
 	case "MERGED": // a maintainer merged it through the bypass…
 		if !forge.SameLogin(pr.MergedBy, r.repo(t).Merge.MergerLogin) {
+			if err := r.mergedHumanCommits(ctx, t, pr); err != nil {
+				return err
+			}
 			t.Status.PullRequest.MergedBy, t.Status.PullRequest.MergeCommitSHA = pr.MergedBy, pr.MergeCommitSHA
 			noteMergedHead(t, pr)
 			// R41: a human merge records when, so it counts in the class's breaker window.
@@ -538,27 +541,21 @@ func (r *Reconciler) backToGate(t *v1alpha1.Task, why, reason, head string) {
 // It returns true when the caller must stop: the task was handed off, or GitHub has not recorded
 // the head's push yet and the task waits, unchanged, for a later reconcile (pushRecordGrace).
 func (r *Reconciler) humanCommit(ctx context.Context, t *v1alpha1.Task, head string) (bool, error) {
-	reported, err := r.reportedHead(ctx, t)
+	factoryMade, err := r.factoryMade(ctx, t, head)
 	if err != nil {
 		return false, err
 	}
-	if reported == head {
-		factoryMade, err := r.factoryCommits(ctx, t, head)
+	if factoryMade {
+		pushed, err := r.factoryPushed(ctx, t, head)
 		if err != nil {
 			return false, err
 		}
-		if factoryMade {
-			pushed, err := r.factoryPushed(ctx, t, head)
-			if err != nil {
-				return false, err
-			}
-			switch {
-			case pushed == pushFactory:
-				return false, nil
-			case pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)):
-				r.log().Info("the head's push is not recorded yet: waiting", "task.id", t.Name, "head", head)
-				return true, nil
-			}
+		switch {
+		case pushed == pushFactory:
+			return false, nil
+		case pushed == pushUnrecorded && r.Now().Before(pushDeadline(t)):
+			r.log().Info("the head's push is not recorded yet: waiting", "task.id", t.Name, "head", head)
+			return true, nil
 		}
 	}
 	t.Status.NextTrigger = ""
@@ -566,6 +563,52 @@ func (r *Reconciler) humanCommit(ctx context.Context, t *v1alpha1.Task, head str
 	r.to(t, v1alpha1.PhaseAwaitingHuman, "human_commit_in_pr")
 	narrateLater(t, narrate.WaitingForHuman(t, "human_commit_in_pr"))
 	return true, nil
+}
+
+// factoryMade: head is the commit the room last reported from one of the task's implementer runs,
+// and every commit of the pull request claims one (factoryCommits). The commits' provenance alone,
+// without the push record.
+func (r *Reconciler) factoryMade(ctx context.Context, t *v1alpha1.Task, head string) (bool, error) {
+	reported, err := r.reportedHead(ctx, t)
+	if err != nil || reported != head {
+		return false, err
+	}
+	return r.factoryCommits(ctx, t, head)
+}
+
+// mergedHumanCommits records whether a pull request merged outside the gate's arm carries a human's
+// commit, as the gate reads a CI fix: factoryMade and factoryPushed, never an author login or who
+// merged. The push record is read past the branch's deletion, which usually follows a merge and is
+// nobody's push; a record not yet written is not waited for, the pull request being merged. What
+// cannot be proven the factory's is a human's. An adopted pull request has no run to claim its
+// commits and is left as it is. The read is the evaluation's (R39): a task it does not count, with
+// no profile and no mark from a parent with one, completes as on main, reading nothing.
+func (r *Reconciler) mergedHumanCommits(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
+	ref := t.Status.PullRequest
+	if ref.HumanCommits || adoptedTask(t) {
+		return nil
+	}
+	if !evaluated(t) {
+		return nil
+	}
+	made, err := r.factoryMade(ctx, t, pr.HeadSHA)
+	if err != nil || !made {
+		ref.HumanCommits = err == nil
+		return err
+	}
+	pushed, err := r.pushedUntilDeleted(ctx, "agent/"+t.Name, []string{r.Cfg.AgentsLogin}, pr.HeadSHA)
+	if err != nil {
+		return err
+	}
+	ref.HumanCommits = pushed != pushFactory
+	return nil
+}
+
+// evaluated: t's outcome is counted by the team evaluation, under its own profile or, for a split's
+// part, its parent's (R32), as its triage marked it. Nothing is read: a part's merge must not wait
+// on its parent (R39).
+func evaluated(t *v1alpha1.Task) bool {
+	return t.Status.Profile != nil || t.Status.Evaluated
 }
 
 // engagedSince: a maintainer reviewed or commented on the pull request after since.
@@ -745,23 +788,46 @@ func (r *Reconciler) pushedBy(ctx context.Context, branch string, logins []strin
 	if err != nil {
 		return pushStranger, err
 	}
+	return pushChain(ps, logins, head), nil
+}
+
+// pushedUntilDeleted is pushedBy for a branch deleted at head, as a merged pull request's usually
+// is: the deletion, nobody's push, is read past when it removed the head; anything else newer than
+// the head's push is a stranger's, as the chain reads it.
+func (r *Reconciler) pushedUntilDeleted(ctx context.Context, branch string, logins []string, head string) (pushCheck, error) {
+	ps, err := r.gh(ctx).BranchActivity(ctx, branch)
+	if errors.Is(err, forge.ErrActivityTruncated) {
+		return pushStranger, nil
+	}
+	if err != nil {
+		return pushStranger, err
+	}
+	if len(ps) > 0 && ps[0].Type == "branch_deletion" && ps[0].Before == head {
+		ps = ps[1:]
+	}
+	return pushChain(ps, logins, head), nil
+}
+
+// pushChain reads GitHub's record of a branch, newest first, as one unbroken chain of the logins'
+// moves from its creation to head.
+func pushChain(ps []forge.Push, logins []string, head string) pushCheck {
 	if len(ps) == 0 {
-		return pushUnrecorded, nil
+		return pushUnrecorded
 	}
 	want := ps[0].After // newest first
 	for _, p := range ps {
 		if p.Actor == "" || !slices.ContainsFunc(logins, func(l string) bool { return forge.SameLogin(p.Actor, l) }) || p.After != want {
-			return pushStranger, nil
+			return pushStranger
 		}
 		if p.Type == "branch_creation" {
 			if ps[0].After != head {
-				return pushUnrecorded, nil
+				return pushUnrecorded
 			}
-			return pushFactory, nil
+			return pushFactory
 		}
 		want = p.Before
 	}
-	return pushStranger, nil // the creation was never read
+	return pushStranger // the creation was never read
 }
 
 // implementerRuns are the IDs of the task's implementer runs.
@@ -853,10 +919,12 @@ func (r *Reconciler) rerunCancelled(ctx context.Context, t *v1alpha1.Task, pr fo
 	return first
 }
 
-// fixCI: two fix runs, then escalate with the failure on the PR (§6.3).
+// fixCI: two fix runs, then escalate with the failure on the PR (§6.3). The allowance counts from
+// the escalation step when there was one (R33); FixRuns itself keeps counting, so every repair's
+// room message and narration has an id of its own.
 func (r *Reconciler) fixCI(ctx context.Context, t *v1alpha1.Task, pr forge.PR, c forge.Checks) error {
 	names := failing(c, requiredFor(r.repo(t), t))
-	if t.Status.FixRuns >= r.repo(t).Merge.FixRuns {
+	if t.Status.FixRuns-t.Status.FixRunsBeforeStep >= r.repo(t).Merge.FixRuns {
 		narrateOn(t, pr.Number, narrate.CIExhausted(t, names))
 		return r.end(ctx, t, v1alpha1.PhaseEscalated, "ci_red")
 	}
@@ -867,7 +935,7 @@ func (r *Reconciler) fixCI(ctx context.Context, t *v1alpha1.Task, pr forge.PR, c
 			why = append(why, fmt.Sprintf("`%s`: %s", x.Name, strings.ToLower(x.State)))
 		}
 	}
-	narrateLater(t, narrate.CIFixing(t, pr.Number, pr.HeadSHA, why, int(t.Status.FixRuns), int(r.repo(t).Merge.FixRuns)))
+	narrateLater(t, narrate.CIFixing(t, pr.Number, pr.HeadSHA, why, int(t.Status.FixRuns-t.Status.FixRunsBeforeStep), int(r.repo(t).Merge.FixRuns)))
 	msg := fmt.Sprintf("CI failed on %s: %s. Read the failing jobs with `gh pr checks %d` and fix them on the same branch.",
 		pr.HeadSHA, strings.Join(names, ", "), pr.Number)
 	if err := r.Rooms.Enqueue(ctx, t.Status.RoomRef, "ci", msg, int64(t.Status.FixRuns)); err != nil {
@@ -906,6 +974,9 @@ func (r *Reconciler) autoMerging(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		ref.AutoMerged = merger // AutoMerged: merged by the merger App on the class's conditions (R52)
 		if !ref.AutoMerged {
+			if err := r.mergedHumanCommits(ctx, t, pr); err != nil {
+				return err
+			}
 			ref.MergedHow, ref.ApprovedBy = "", "" // a human's merge, not the merger's: nothing to revert (AM1)
 			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
 			r.handedOffMerged(ctx, t, "human")

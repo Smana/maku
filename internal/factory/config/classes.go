@@ -62,6 +62,18 @@ type Class struct {
 	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
 	RequiredLabel string `json:"requiredLabel,omitempty"`
+	// Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
+	// and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
+	// Absent, the class runs as before.
+	Harness        string      `json:"harness,omitempty"`
+	HarnessAllowed []string    `json:"harnessAllowed,omitempty"`
+	Escalation     *Escalation `json:"escalation,omitempty"`
+}
+
+// Escalation maps a signal group to a profile of harnessAllowed; an absent group goes to the human.
+type Escalation struct {
+	OutOfBudget  string `json:"outOfBudget,omitempty"`
+	NotConverged string `json:"notConverged,omitempty"`
 }
 
 // Author is a class's author mode.

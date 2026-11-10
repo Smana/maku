@@ -89,7 +89,7 @@ func TestRequestChangesStartsARevision(t *testing.T) {
 	if len(g.log.states) != 0 {
 		t.Fatalf("a revision posts no second snapshot: %v", g.log.states)
 	}
-	if !slices.Contains(g.metrics.recorded, "intervention request_changes") {
+	if !slices.Contains(g.metrics.recorded, "intervention request_changes none none none") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 	// The same review never triggers twice.
@@ -459,7 +459,7 @@ func TestRetryRevivesAnEscalatedTask(t *testing.T) {
 	if c := g.f.Comments(7); len(c) != 2 || !strings.Contains(c[1], "Agent factory task `3buqdlot` is retrying, as @smana asked.") {
 		t.Fatalf("%q", c)
 	}
-	if !slices.Contains(g.metrics.recorded, "intervention retry") {
+	if !slices.Contains(g.metrics.recorded, "intervention retry none none none") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 	tk = g.reconcile(t, "3buqdlot", 1)
@@ -630,7 +630,7 @@ func TestARetryIsActedOnOnce(t *testing.T) {
 	}
 	n := 0
 	for _, s := range g.metrics.recorded {
-		if s == "intervention retry" {
+		if s == "intervention retry none none none" {
 			n++
 		}
 	}
@@ -1127,7 +1127,7 @@ func TestARetryCannotLiftTheTaskCap(t *testing.T) {
 	if n := strings.Count(strings.Join(g.f.Comments(7), "\n"), "the task's cap is part of its spec: raise it on a new task"); n != 1 {
 		t.Fatalf("the retry is answered once: %q", g.f.Comments(7))
 	}
-	if slices.Contains(g.metrics.recorded, "intervention retry") {
+	if slices.Contains(g.metrics.recorded, "intervention retry none none none") {
 		t.Fatal("a refused retry is no intervention")
 	}
 }

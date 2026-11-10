@@ -79,6 +79,14 @@ func classChange(name string, o, n ClassPolicy, ro, rn Resolved) Change {
 	if o.Harness != n.Harness {
 		why = append(why, fmt.Sprintf("harness %s to %s: not proven evidence-neutral", o.Harness, n.Harness))
 	}
+	// The harness axes are no evidence row: a profile that may run and did not before, or a step
+	// added or moved, is as unproven as another harness; a subset of the old ones is bounded.
+	if !superset(o.HarnessAllowed, n.HarnessAllowed) {
+		why = append(why, "harnessAllowed broadened or rewritten: not proven evidence-neutral")
+	}
+	if n.Escalation != nil && jsonOf(n.Escalation) != jsonOf(o.Escalation) {
+		why = append(why, "escalation added or changed: not proven evidence-neutral")
+	}
 	if !superset(rn.Approval, ro.Approval) {
 		why = append(why, "requiresApproval narrowed")
 	}
