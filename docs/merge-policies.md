@@ -698,11 +698,14 @@ part of this release.
 With `policyManagement.promotion` on (factory and broker), `/settings/merge-policies/<owner>/<name>`
 holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
 
-| Mode | Edits |
+The page shows the repository's guardrails as sentences, then one card per class, then the editor.
+The editor has two tabs, **Form** and **YAML (expert)**. **Check** sits below both.
+
+| Part | Edits |
 |---|---|
-| Guided form | One class: mode, author and `adopt`, harness (from the central list), the `all` leaves except `oracle`, `deny`, `requiresApproval`, `limits`, `monitor.followUpWindow`. `any` branches and `oracle` are kept as they are |
-| Templates | `docs-broad`, `deps-patch`, `deps-minor` (shadow only), `generated-files`, all in shadow. The harness starts on the first central profile the template's author may take (`template: none` for the two deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
-| Expert YAML | The whole file, same validation. `factory:` is refused if changed |
+| Form | One class, picked from a list or started with **New class from an example**. The form is grouped by question: *Who writes it* (mode, author, `adopt`, harness from the central list), *What it may touch* (the `all` leaves except `oracle`, file rules), *How big it may be*, *What must pass*, *When to ask a maintainer* (`deny`, `requiresApproval`), *Limits and follow-up* (`limits`, `monitor.followUpWindow`). Each field carries a plain label, its YAML key, a help line and a link to this page; empty groups fold behind an "Add ..." button. A live sentence above the groups reads the class back in words. `any` branches and `oracle` are kept as they are |
+| Examples | Simple: `docs-broad`, `deps-patch`, `generated-files`. Advanced: `deps-minor`, `docs-or-tests`, `infra-with-approval`. All start in shadow; `deps-minor` is shadow only. The harness starts on the first central profile the template's author may take (`template: none` for the deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
+| YAML (expert) | The whole file, same validation. `factory:` is refused if changed. An error's line opens this tab |
 
 **Check** sends the file to the factory (`POST /api/policy/repositories/<owner>/<name>/preview`): the
 gate's `Parse`, `Validate`, `Resolve`, the structural change against the current policy (the file's

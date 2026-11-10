@@ -192,8 +192,9 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 
 | Page | Shows |
 |---|---|
-| `/settings/merge-policies` | The configured repositories you read on GitHub |
-| `/settings/merge-policies/<owner>/<name>` | Each class: mode and where it is declared, the [promotion evidence](factory.md#promotion) in one line, reviewer models, the 29/46/61 ladder, eligibility; the promotion requests and exceptions |
+| `/settings` | Section cards (merge policies, evidence, approval memory) with live counts |
+| `/settings/merge-policies` | One row per repository: where its classes come from, its classes by mode, the class closest to promotion |
+| `/settings/merge-policies/<owner>/<name>` | One card per class: its mode and what it means, the class in words, evidence toward the [promotion](factory.md#promotion) with the widening steps, its promotion and exception; the factory's guardrails in words |
 | `/settings/merge-policies/<owner>/<name>/decisions/<pr>` | The pull request's decision timeline |
 | `/settings/evidence` | Every class of every repository you read, in one table |
 
