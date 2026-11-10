@@ -1200,3 +1200,11 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .page-header .settings-link:hover { background: color-mix(in srgb, var(--brand-header-foreground) 10%, transparent); }
 .page-header .settings-link:focus-visible { outline: 2px solid var(--brand-header-foreground); outline-offset: 2px; }
 .page-header .settings-link + .theme-toggle { margin-left: 8px; }
+
+/* The filter over a list: label, field, count; hidden items leave the layout. */
+.settings [hidden] { display: none !important; }
+.filter { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 12px 0; }
+.filter:empty { display: none; }
+.filter input { min-width: 0; flex: 1 1 220px; max-width: 360px; padding: 6px 10px; border: 1px solid var(--input); border-radius: var(--radius-control); background: var(--background); color: var(--foreground); }
+.filter-count { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.filter-empty { flex-basis: 100%; margin: 0; }

@@ -11,6 +11,7 @@ import { centralManifest, conditionWords, evidenceLine, explain, fileLine, ladde
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
+import { filterField } from "./filter";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -241,13 +242,16 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       return;
     }
     const pages = await readAll(repositories, get);
-    main.append(table(["Repository", "MergePolicy", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
+    const repoTable = table(["Repository", "MergePolicy", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
       const p = pages[i];
       if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
       const r = p.report;
       const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
       return [link(`/settings/merge-policies/${repo}`, repo), mergePolicyCell(r), countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
-    }), "repo-table"));
+    }), "repo-table");
+    const { box } = filterField({ label: "Filter repositories", noun: ["repository", "repositories"],
+      items: () => [...repoTable.tBodies[0].rows], text: (tr) => tr.textContent ?? "" });
+    main.append(box, repoTable);
   } catch (e) { failed(main, e); }
 }
 
@@ -305,6 +309,10 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
     el("p", p.report.evidenceAt ? `Evidence ${evidenceAge(p.report)}.` : evidenceAge(p.report), "evidence-age"),
     ...p.report.classes.map((c) => classCard(c, { page: p, get, say, reload, main, policy: policyOf(p) })));
   draw(page);
+  const filter = filterField({ label: "Filter classes", noun: ["class", "classes"],
+    items: () => [...classes.querySelectorAll<HTMLElement>("article.class-card")],
+    text: (c) => ["h3", ".mode-badge", ".class-intent"].map((q) => c.querySelector(q)?.textContent ?? "").join(" ") });
+  classes.before(filter.box);
   // Pending evidence fills in place: the editor below is never rebuilt, so no edit is lost.
   void (async () => {
     let cur = page;
@@ -312,7 +320,7 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
       await new Promise((res) => setTimeout(res, poll.every));
       if (!app.contains(classes)) return; // the page moved on
       try { cur = await read<RepositoryPage>(`/api/policy/repositories/${repository}`, get); } catch { continue; }
-      if (app.contains(classes)) draw(cur);
+      if (app.contains(classes)) { draw(cur); filter.apply(); }
     }
   })();
 

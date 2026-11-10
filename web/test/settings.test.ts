@@ -854,3 +854,60 @@ describe("a repository served from a MergePolicy", () => {
     expect(app.querySelectorAll(".class-card")).toHaveLength(2);
   });
 });
+
+describe("the filter", () => {
+  const was = { ...poll };
+  afterEach(() => { Object.assign(poll, was); history.replaceState(null, "", "/"); });
+  const repos = ["Smana/a", "Smana/b", "Smana/cloud-native-ref", "Smana/d"];
+  const manyClasses = (): RepositoryPage => {
+    const p = page();
+    p.report.classes = ["alpha", "beta", "gamma", "delta"].map((class_, i) => ({ class: class_, source: "repository", mode: i === 3 ? "live" : "shadow", evidence: ev() }));
+    p.report.policy!.classes = { alpha: { mode: "shadow", description: "Fixes typos" } } as never;
+    return p;
+  };
+
+  it("filters the repository table rows by repository and MergePolicy name", async () => {
+    const routes: Record<string, unknown> = { "/api/policy/repositories": { repositories: repos } };
+    for (const r of repos) routes[`/api/policy/repositories/${r}`] = page();
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", fakeFetch(routes));
+    const input = app.querySelector<HTMLInputElement>(".filter input")!;
+    input.value = "cloud-native";
+    input.dispatchEvent(new Event("input"));
+    expect([...app.querySelectorAll<HTMLElement>("table.repo-table tbody tr")].filter((tr) => !tr.hidden)).toHaveLength(4); // every row's MergePolicy is cloud-native-ref
+    input.value = "smana/d";
+    input.dispatchEvent(new Event("input"));
+    expect([...app.querySelectorAll<HTMLElement>("table.repo-table tbody tr")].filter((tr) => !tr.hidden).map((tr) => tr.children[0].textContent)).toEqual(["Smana/d"]);
+  });
+
+  it("offers no field over a short table", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] }, "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    expect(app.querySelector(".filter input")).toBeNull();
+  });
+
+  it("filters the class cards by name, mode and description, and keeps the filter when the poll redraws", async () => {
+    poll.every = 1;
+    poll.times = 5;
+    const pending = manyClasses();
+    pending.report.classes = pending.report.classes.map(({ evidence: _, ...c }) => c);
+    delete pending.report.evidenceAt;
+    const routes: Record<string, unknown> = { "/api/policy/repositories/Smana/cloud-native-ref": pending };
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch(routes));
+    const input = app.querySelector<HTMLInputElement>(".filter input")!;
+    const visible = () => [...app.querySelectorAll<HTMLElement>("article.class-card")].filter((c) => !c.hidden).map((c) => c.id);
+    input.value = "typos";
+    input.dispatchEvent(new Event("input"));
+    expect(visible()).toEqual(["class-alpha"]);
+    input.value = "beta";
+    input.dispatchEvent(new Event("input"));
+    expect(visible()).toEqual(["class-beta"]);
+    const ready = manyClasses();
+    ready.report.evidenceAt = "2026-11-08T00:05:00Z";
+    routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20/20 clean");
+    expect(visible()).toEqual(["class-beta"]);
+    expect(app.querySelector(".filter-count")?.textContent).toBe("1 of 4 classes");
+  });
+});
