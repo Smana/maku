@@ -120,17 +120,21 @@ func TestRepository(t *testing.T) {
 		name   string
 		cfg    *config.Config
 		wire   error
-		conn   func(string) (bool, string)
+		conn   func(string) (metav1.ConditionStatus, string)
 		status metav1.ConditionStatus
 		reason string
 		msg    string
 	}{
-		{"served and healthy", cfg(config.Repository{Name: repo}), nil, func(string) (bool, string) { return true, "" }, metav1.ConditionTrue, "Healthy", ""},
-		{"served and unhealthy", cfg(config.Repository{Name: repo}), nil, func(string) (bool, string) { return false, "rate limited" }, metav1.ConditionFalse, "Unhealthy", "rate limited"},
-		{"served, name differs in case", cfg(config.Repository{Name: "Acme/App"}), nil, func(string) (bool, string) { return true, "" }, metav1.ConditionTrue, "Healthy", ""},
+		{"served and healthy", cfg(config.Repository{Name: repo}), nil, func(string) (metav1.ConditionStatus, string) { return metav1.ConditionTrue, "" }, metav1.ConditionTrue, "Healthy", ""},
+		{"served and unhealthy", cfg(config.Repository{Name: repo}), nil, func(string) (metav1.ConditionStatus, string) { return metav1.ConditionFalse, "rate limited" }, metav1.ConditionFalse, "Unhealthy", "rate limited"},
+		{"served, name differs in case", cfg(config.Repository{Name: "Acme/App"}), nil, func(string) (metav1.ConditionStatus, string) { return metav1.ConditionTrue, "" }, metav1.ConditionTrue, "Healthy", ""},
 		{"not served, wiring failed", cfg(), boom, nil, metav1.ConditionFalse, "WiringFailed", "no installation"},
-		{"not served", cfg(), nil, func(string) (bool, string) { t.Fatal("Connected asked for an unserved repository"); return true, "" }, metav1.ConditionFalse, "NotServed", ""},
-		{"served, wiring error ignored", cfg(config.Repository{Name: repo}), boom, func(string) (bool, string) { return true, "" }, metav1.ConditionTrue, "Healthy", ""},
+		{"not served", cfg(), nil, func(string) (metav1.ConditionStatus, string) {
+			t.Fatal("Connected asked for an unserved repository")
+			return metav1.ConditionTrue, ""
+		}, metav1.ConditionFalse, "NotServed", ""},
+		{"served, wiring error ignored", cfg(config.Repository{Name: repo}), boom, func(string) (metav1.ConditionStatus, string) { return metav1.ConditionTrue, "" }, metav1.ConditionTrue, "Healthy", ""},
+		{"served, never checked", cfg(config.Repository{Name: repo}), nil, func(string) (metav1.ConditionStatus, string) { return metav1.ConditionUnknown, "" }, metav1.ConditionUnknown, "NotChecked", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -320,7 +324,7 @@ func TestOneObservedGenerationPerObject(t *testing.T) {
 	in := Inputs{Config: cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}), GitHubUp: true,
 		Synced:    configsource.Synced{At: now.Time},
 		Snapshot:  func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{HasClasses: true}, true },
-		Connected: func(string) (bool, string) { return true, "" },
+		Connected: func(string) (metav1.ConditionStatus, string) { return metav1.ConditionTrue, "" },
 		Outcomes:  []configsource.Outcome{served(resources.KindFactory, "f"), served(resources.KindRepository, "r"), served(resources.KindMergePolicy, "p")}}
 	got := Desired(in, []v1alpha1.Factory{obj("f", 5)}, []v1alpha1.Repository{repoObj("r", repo, 5)}, []v1alpha1.MergePolicy{policyObj("p", "r", 5)}, now)
 	check := func(kind string, gen int64, cs []metav1.Condition, types ...string) {

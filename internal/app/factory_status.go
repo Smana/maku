@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Smana/maku/internal/factory/configsource"
@@ -27,19 +28,20 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 		in := statuswriter.Inputs{
 			Outcomes: outcomes, Synced: synced, Config: src.Live.Current(),
 			WireErr: conns.wireErr,
-			Connected: func(repository string) (bool, string) {
+			Connected: func(repository string) (metav1.ConditionStatus, string) {
 				rc, ok := conns.get(repository)
 				if !ok {
-					return false, "no GitHub connection"
+					return metav1.ConditionFalse, "no GitHub connection"
 				}
-				if rc.gh.Healthy(time.Now()) {
-					return true, ""
-				}
-				return false, "no recent successful GitHub call"
+				return connection(rc.gh, time.Now())
 			},
 			Decisions: rec.Latest,
-			GitHubUp:  conns.healthy(time.Now()),
 		}
+		var ghs []ghHealth
+		for _, rc := range conns.all() {
+			ghs = append(ghs, rc.gh)
+		}
+		in.GitHubUp = githubUp(ghs, time.Now())
 		if w := watch(); w != nil {
 			in.Snapshot = w.Snapshot
 		}
@@ -50,4 +52,33 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 		in.Stopped = stopped
 		return in
 	}
+}
+
+// ghHealth is a repository's GitHub connection as the status reads it; *forge.GitHub.
+type ghHealth interface {
+	Checked() bool
+	Healthy(now time.Time) bool
+}
+
+// connection is a repository's Connected: Unknown before its first GitHub call, which says nothing
+// about GitHub yet.
+func connection(gh ghHealth, now time.Time) (metav1.ConditionStatus, string) {
+	switch {
+	case !gh.Checked():
+		return metav1.ConditionUnknown, ""
+	case gh.Healthy(now):
+		return metav1.ConditionTrue, ""
+	}
+	return metav1.ConditionFalse, "no recent successful GitHub call"
+}
+
+// githubUp is the Factory's GitHub health: no checked connection is unhealthy. A connection never
+// called yet is no outage.
+func githubUp(ghs []ghHealth, now time.Time) bool {
+	for _, gh := range ghs {
+		if gh.Checked() && !gh.Healthy(now) {
+			return false
+		}
+	}
+	return true
 }

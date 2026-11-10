@@ -988,7 +988,9 @@ maku config validate --config residual.yaml manifests.yaml   # ok: 3 accepted
 
 The leader writes each object's `status`; the other replicas never do. It runs every 30 seconds
 and after every config sync, lists the three kinds without the cache (a kind whose CRD is not
-installed counts as empty) and writes an object only when its status changed.
+installed counts as empty) and writes an object only when its status changed. With no object it
+reads nothing else, and with none of the three CRDs installed it runs every 5 minutes, and after
+every sync.
 
 ```bash
 kubectl get factory,repository,mergepolicy -n agent-system
@@ -1015,10 +1017,10 @@ version in service, and its message says which generation that is.
 | Condition | On | Status and reason |
 |---|---|---|
 | `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `NoMergePolicy`, `DuplicatePolicy`, `Invalid` |
-| `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` |
+| `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
 | `RepositoryFileValid` | `MergePolicy` | `True` `Valid`; `False` `Invalid` (the file does not parse, or declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
 | `InSync` | `MergePolicy` | `True` `InSync`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
-| `Ready` | `Factory` | `True` `Ready`; `False` `NotAccepted`, `GitHubDown` (a served repository is unhealthy), `SyncFailing` (the last sync failed, or none in 15 minutes) |
+| `Ready` | `Factory` | `True` `Ready`; `False` `NotAccepted`, `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
 With `policyManagement.read` off nothing watches the repository's file, so `RepositoryFileValid`
 and `InSync` stay `Unknown` with `PolicyReadOff`.

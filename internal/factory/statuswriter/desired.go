@@ -58,14 +58,15 @@ type Inputs struct {
 	WireErr func(repository string) error
 	// Config is the published config.
 	Config *config.Config
-	// Connected reports whether the repository's GitHub connection is healthy, and a message when not.
-	Connected func(repository string) (bool, string)
+	// Connected is the repository's GitHub connection: True healthy, False unhealthy with a
+	// message, Unknown when no call has been made yet (NotChecked).
+	Connected func(repository string) (metav1.ConditionStatus, string)
 	// Snapshot is the repository's file as last read; nil when policyManagement.read is off.
 	Snapshot func(repository string) (mergepolicy.Snapshot, bool)
 	// Decisions is the latest decision per class of the repository.
 	Decisions func(repository string) map[string]decision.Last
 	Stopped   bool
-	// GitHubUp is true when every served repository is healthy.
+	// GitHubUp is true when no served repository's checked connection is unhealthy.
 	GitHubUp bool
 }
 
@@ -183,10 +184,13 @@ func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePo
 	case served && d.in.Connected == nil:
 		d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionUnknown, "NotChecked", "")
 	case served:
-		if ok, msg := d.in.Connected(name); ok {
+		switch status, msg := d.in.Connected(name); status {
+		case metav1.ConditionTrue:
 			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionTrue, "Healthy", "")
-		} else {
+		case metav1.ConditionFalse:
 			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionFalse, "Unhealthy", msg)
+		default:
+			d.set(&st.Conditions, g, ConditionConnected, metav1.ConditionUnknown, "NotChecked", "")
 		}
 	default:
 		var err error
