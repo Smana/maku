@@ -15,21 +15,14 @@ function rule(sel: string): string {
 }
 
 describe("Maku typography", () => {
-  it("loads only local Space Grotesk 400, 500 and 700 with swap", () => {
+  it("loads only local Space Grotesk, Inter and JetBrains Mono, variable, with swap", () => {
     const faces = [...css.matchAll(/@font-face\s*{([^}]*)}/g)].map((m) => m[1]);
-    expect(faces).toHaveLength(3);
-    for (const w of [400, 500, 700]) {
-      const f = faces.find((x) => new RegExp(`font-weight:\\s*${w}\\b`).test(x))!;
-      expect(f, `weight ${w}`).toBeDefined();
-      expect(f).toMatch(/font-family:\s*"Space Grotesk"/);
-      expect(f).toMatch(/font-style:\s*normal/);
+    expect(faces).toHaveLength(4);
+    for (const f of faces) {
       expect(f).toMatch(/font-display:\s*swap/);
-      expect(f).toContain(`url("/assets/fonts/space-grotesk-latin-${w}-normal.woff2") format("woff2")`);
-      expect(existsSync(join(fonts, `space-grotesk-latin-${w}-normal.woff2`))).toBe(true);
+      expect(f).toMatch(/url\("\/assets\/fonts\/[A-Za-z-]+\.woff2"\) format\("woff2"\)/);
     }
-    expect(rule("body")).toContain(
-      'font: 500 16px/1.55 "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-    );
+    expect(rule("body")).toContain("font: 400 16px/1.55 var(--font-sans)");
     for (const src of [css, html]) {
       expect(src).not.toMatch(/@import/);
       expect(src).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
@@ -37,9 +30,9 @@ describe("Maku typography", () => {
     }
   });
 
-  it("sets message prose at 400, the chrome at 500 and bold at 700", () => {
+  it("sets message prose and the body at 400 and bold at 700", () => {
     expect(rule(".bubble .md, .handoff > .md, .notes")).toMatch(/font-weight:\s*400/);
-    expect(rule("body")).toMatch(/font:\s*500 /);
+    expect(rule("body")).toMatch(/font:\s*400 /);
     expect(rule("strong, b")).toMatch(/font-weight:\s*700/);
     expect(rule(".md :is(h1, h2, h3, h4, h5, h6)")).toMatch(/font-weight:\s*700/);
   });
@@ -55,7 +48,7 @@ describe("Maku typography", () => {
     expect(rule(".run-status")).toMatch(/font-weight:\s*700/);
     expect(rule(".msg-head")).toMatch(/font-size:\s*13px/);
     expect(rule(".chip, .pol")).toMatch(/font-size:\s*13px/);
-    expect(rule(".t-cmd, .t-command, .approval-command, pre, code")).toMatch(/font:\s*14px\/1\.5\s+ui-monospace/);
+    expect(rule(".t-cmd, .t-command, .approval-command, pre, code")).toMatch(/font:\s*14px\/1\.5\s+var\(--font-mono\)/);
     expect(css).not.toMatch(/font-size:\s*12px/);
     expect(css).not.toMatch(/font:\s*12px/);
     expect(css).not.toMatch(/font-size:\s*1[0-1]px/);
@@ -63,7 +56,7 @@ describe("Maku typography", () => {
 
   it("keeps code, IDs, and timestamps monospace without monospacing prose", () => {
     const mono = rule("time, .t-time, .step-dur, .replay-progress, .t-prompt");
-    expect(mono).toMatch(/font-family:\s*ui-monospace/);
+    expect(mono).toMatch(/font-family:\s*var\(--font-mono\)/);
     expect(mono).toMatch(/font-size:\s*13px/);
     expect(mono).toMatch(/tabular-nums/);
     // The code group names every command, tool I/O and code surface.
@@ -125,8 +118,8 @@ describe("Maku brand header", () => {
     expect(html).toContain('href="/assets/favicon/favicon-16.png"');
     expect(html).toContain('href="/assets/favicon/favicon-32.png"');
     expect(html).toContain('rel="apple-touch-icon" href="/assets/favicon/apple-touch-icon.png"');
-    for (const w of [400, 500, 700]) {
-      expect(html).toMatch(new RegExp(`rel="preload"[^>]*href="/assets/fonts/space-grotesk-latin-${w}-normal\\.woff2"[^>]*as="font"[^>]*type="font/woff2"[^>]*crossorigin`));
+    for (const n of ["SpaceGrotesk-Variable", "Inter-Variable", "JetBrainsMono-Variable"]) {
+      expect(html).toMatch(new RegExp(`rel="preload"[^>]*href="/assets/fonts/${n}\\.woff2"[^>]*as="font"[^>]*type="font/woff2"[^>]*crossorigin`));
     }
   });
 
@@ -136,12 +129,12 @@ describe("Maku brand header", () => {
       const h = read(f);
       expect(h).toMatch(/<title>Maku: /);
       expect(h).toContain('href="/assets/favicon/favicon.svg"');
-      expect(h).toContain('href="/assets/fonts/space-grotesk-latin-700-normal.woff2"');
+      expect(h).toContain('href="/assets/fonts/SpaceGrotesk-Variable.woff2"');
     }
     const d = read("demo.html");
     expect(d).toContain("<title>Maku: live demo</title>");
     expect(d).toContain('href="assets/favicon/favicon.svg"');
-    expect(d).toContain('href="assets/fonts/space-grotesk-latin-500-normal.woff2"');
+    expect(d).toContain('href="assets/fonts/SpaceGrotesk-Variable.woff2"');
     expect(d).not.toMatch(/href="\//);
   });
 });

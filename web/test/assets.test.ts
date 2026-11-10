@@ -16,8 +16,9 @@ const brand = [
   "favicon/favicon-32.png",
   "favicon/apple-touch-icon.png",
 ];
-const faces = [400, 500, 700].map((w) => `fonts/space-grotesk-latin-${w}-normal.woff2`);
-const fonts = [...faces, "fonts/LICENSE"];
+const faces = ["SpaceGrotesk-Variable", "Inter-Variable", "Inter-Variable-Italic", "JetBrainsMono-Variable"].map((n) => `fonts/${n}.woff2`);
+const licences = ["space-grotesk", "inter", "jetbrains-mono"].map((n) => `fonts/LICENSE-${n}.txt`);
+const fonts = [...faces, ...licences];
 
 function files(dir: string): string[] {
   return readdirSync(dir, { recursive: true, encoding: "utf8" })
@@ -29,11 +30,11 @@ function files(dir: string): string[] {
 const read = (...p: string[]) => readFileSync(join(...p));
 
 describe("static assets", () => {
-  it("ships only the ten required source assets byte-for-byte", () => {
+  it("ships only the required source assets byte-for-byte", () => {
     expect(files(src)).toEqual([...brand, ...fonts].sort());
     for (const f of brand) expect(read(src, f).equals(read(repo, "docs", "assets", "brand", f)), f).toBe(true);
     for (const f of faces) expect(read(src, f).subarray(0, 4).toString("latin1"), f).toBe("wOF2");
-    expect(read(src, "fonts/LICENSE").toString()).toContain("SIL Open Font License, Version 1.1");
+    for (const l of licences) expect(read(src, l).toString(), l).toContain("SIL Open Font License");
   });
 
   it("builds into dist/assets: index.html alone at the root, every asset byte-identical", () => {
@@ -57,7 +58,7 @@ describe("static assets", () => {
       const html = read(web, file).toString();
       expect(html, file).toContain(`<title>${title}</title>`);
       expect(html, file).toContain(`<link rel="stylesheet" href="${css}">`);
-      for (const f of ["favicon/favicon.svg", "favicon/favicon-32.png", "favicon/favicon-16.png", "favicon/apple-touch-icon.png", ...faces]) {
+      for (const f of ["favicon/favicon.svg", "favicon/favicon-32.png", "favicon/favicon-16.png", "favicon/apple-touch-icon.png", ...faces.filter((f) => !f.includes("Italic"))]) {
         expect(html, `${file}: ${f}`).toContain(`href="${base}${f}"`);
       }
       const hrefs = [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]);
