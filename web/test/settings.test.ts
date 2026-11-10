@@ -3,7 +3,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, modeCounts, mountSettings, PENDING, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
+import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, modeCounts, mountSettings, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
+import { READING } from "../src/class-card";
 import { fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
@@ -130,8 +131,9 @@ describe("the repository page", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": short, "/api/policy/exceptions/cccccccc": {} }, calls));
     expect(app.textContent).toContain("below_minimum");
-    expect([...app.querySelectorAll("button")].some((b) => b.textContent === "Ask an operator for an exception")).toBe(true);
-    const approve = [...app.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
+    const card = app.querySelector("#class-docs-links")!;
+    expect([...card.querySelectorAll("button")].some((b) => b.textContent === "Ask an operator for an exception")).toBe(true);
+    const approve = [...card.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
     approve.click();
     await settle();
     expect(calls).toContain(`POST /api/policy/exceptions/cccccccc {"decision":"approved"}`);
@@ -430,11 +432,11 @@ describe("pending evidence", () => {
     poll.times = 0;
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
-    const rows = [...app.querySelectorAll(".policy-classes tbody tr")];
-    expect(rows).toHaveLength(2);
-    for (const r of rows) expect(r.textContent).toContain(PENDING);
+    const cards = [...app.querySelectorAll(".policy-classes .class-card")];
+    expect(cards).toHaveLength(2);
+    expect(app.querySelectorAll(".policy-classes .evidence-reading")).toHaveLength(2);
     expect([...app.querySelectorAll("button")].some((b) => b.textContent === "Promote to live")).toBe(false);
-    expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toBe(`Evidence ${PENDING}.`);
+    expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toBe(READING);
     expect(app.querySelector("section.policy-editor")).not.toBeNull();
   });
 
@@ -458,14 +460,14 @@ describe("pending evidence", () => {
     const r = page().report;
     expect(evidenceAge({ ...r, evidenceAt: "2026-11-08T00:00:00Z", evidenceError: "rate_limited" }))
       .toBe("as of 2026-11-08T00:00:00Z (the newest read failed: rate limited)");
-    expect(evidenceAge({ ...r, evidenceAt: undefined, evidenceError: "deadline_exceeded" })).toBe(`${PENDING} (the last read failed: deadline exceeded)`);
+    expect(evidenceAge({ ...r, evidenceAt: undefined, evidenceError: "deadline_exceeded" })).toBe(`${READING} (the last read failed: deadline exceeded)`);
   });
 
   it("writes a pending class on the evidence page", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
       "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
-    expect(app.textContent).toContain(PENDING);
+    expect(app.textContent).toContain(READING);
   });
 });
 
