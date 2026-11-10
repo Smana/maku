@@ -710,13 +710,15 @@ With `policyManagement.promotion` on (factory and broker), `/settings/merge-poli
 holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
 
 The page is MergePolicy-first. A header says once what serves the classes: the `MergePolicy`'s
-name and namespace, its authority (`central` or `repository`), its generation, and each
-[condition](#factory-resources) as a word on its colour ("Accepted", "Not in sync: 2
-differences", the message on hover), then one legend for the three modes. One line under it says
-what `.github/agent-factory.yaml` is to the classes now: matching, differing (the `MergePolicy`
-wins), or, under `repository` authority, invalid, which pauses auto-merge and is shown as a notice.
-A repository with no `MergePolicy` says "Not migrated yet: `maku config migrate` prints its
-MergePolicy", shows its file's classes read-only and has no editor.
+name and namespace, its authority (`central` or `repository`), its generation (with "status from
+generation N" when the status lags the spec), and each [condition](#factory-resources) as a word on
+its colour ("Accepted", "Not in sync: 2 differences"), its message shown under them (the
+differences under **What differs**), then one legend for the three modes. One line under it says
+what `.github/agent-factory.yaml` is to the classes, and only what the status shows: it matches
+(`InSync=True`), it differs (the `MergePolicy` wins), it is invalid, or it has not been compared
+yet, with the reason. Under `repository` authority an invalid file pauses auto-merge and the line
+is a notice. A repository with no `MergePolicy` says "Not migrated yet: `maku config migrate`
+prints its MergePolicy" and has no editor; its cards keep their promotion and exception requests.
 
 Then the guardrails as sentences, one card per class (its [description](#description), its
 conditions in one line, its evidence, the full sentences folded under **Conditions**), and the
@@ -731,10 +733,13 @@ editor. The editor has two tabs, **Form** and **YAML (expert)**. **Check** sits 
 **Check** sends the file to the factory (`POST /api/policy/repositories/<owner>/<name>/preview`): the
 gate's `Parse`, `Validate`, `Resolve`, the structural change against the current policy (the file's
 classes, or the central ones as `export` would write them), the fixture replay when `simulation` is on,
-and the strictness counterfactual of the class's recent decisions. The answer is the whole file and
-the GitHub edit link on the default branch. **Maku writes nothing**: paste the file into the edit
-page and open the pull request yourself. Since a policy pull request touches `.github/`, a human
-merges it.
+and the strictness counterfactual of the class's recent decisions. What it answers depends on who
+holds the merge authority. **Maku writes nothing** either way:
+
+| Authority | The answer | You |
+|---|---|---|
+| `central` (a `MergePolicy` serves the classes) | The `MergePolicy` manifest the factory builds from the file, offered as **Copy MergePolicy manifest** and **Download** (`mergepolicy-<name>.yaml`) | Commit the manifest where the platform's GitOps applies it |
+| `repository`, or not migrated | The whole file and the GitHub edit link on the default branch | Paste the file into the edit page and open the pull request; it touches `.github/`, so a human merges it |
 
 ### Promotion: shadow to live
 
@@ -764,8 +769,11 @@ A class is eligible when all three hold (`evidence.Evaluate`):
 | `bad_outcome` | No mature, conclusive merge of the class was reverted (other than a drill), followed up or regressed |
 | `no_drill` | A `factory/drill` revert of one of the class's pull requests merged |
 
-Only a class of the repository's own file is promotable (`not_in_repository_policy` otherwise), and
-only from `shadow` (`not_shadow`). The proposal changes the one `mode:` line and is parsed again.
+Only a class of the repository's own file is promotable here (`not_in_repository_policy` otherwise),
+and only from `shadow` (`not_shadow`). Under `central` authority there is no file proposal: the
+card says to set `live: true` on the class in the `MergePolicy` and merge that change, and
+**Edit this class** opens it in the editor. A not-migrated repository keeps the file proposal and
+the exception requests; it only has no editor. The proposal changes the one `mode:` line and is parsed again.
 Evidence is cached 10 minutes per repository and replica. The 29/46/61 ladder and the
 Clopper-Pearson bound are shown, never acted on.
 
