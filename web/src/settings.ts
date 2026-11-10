@@ -7,7 +7,7 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { evidenceLine, explain, ladderLine, post, read } from "./settings-api";
+import { centralManifest, evidenceLine, explain, ladderLine, post, read, servedFrom } from "./settings-api";
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails } from "./policy-describe";
@@ -35,11 +35,6 @@ export interface Report {
   mergePolicy?: string; manifest?: string; manifestPath?: string; served?: PolicyFile;
 }
 
-// centralManifest is the report's MergePolicy manifest when the central classes are the merge
-// authority (no class comes from the repository's file); undefined otherwise.
-export function centralManifest(r: Report): string | undefined {
-  return r.manifest && !r.classes.some((c) => c.source === "repository") ? r.manifest : undefined;
-}
 export interface Step2 { row: string; status: string; detail?: string }
 export interface Decision {
   at: string; head: string; class: string; verdict: string; reason: string; steps: Step2[]; revisions: Step2[];
@@ -130,8 +125,8 @@ function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableEl
 }
 
 // Re-exported where the page's tests and neighbours import them from.
-export { evidenceLine, explain, ladderLine } from "./settings-api";
-export { READING, READING as PENDING, showProposal } from "./class-card";
+export { centralManifest, evidenceLine, explain, ladderLine, servedFrom } from "./settings-api";
+export { READING } from "./class-card";
 
 // evidenceAge is when the shown evidence was read, and why it is older when the newest read failed.
 export function evidenceAge(r: Report): string {
@@ -234,9 +229,8 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       const p = pages[i];
       if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
       const r = p.report;
-      const from = r.mergePolicy ? `MergePolicy ${r.mergePolicy}` : r.classes.some((c) => c.source === "repository") ? "its own .github/agent-factory.yaml" : "the factory's central config";
       const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
-      return [link(`/settings/merge-policies/${repo}`, repo), from, countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
+      return [link(`/settings/merge-policies/${repo}`, repo), servedFrom(r), countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
     }), "repo-table"));
   } catch (e) { failed(main, e); }
 }
@@ -246,6 +240,7 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
   try {
     const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
     const rows: (string | Node)[][] = [];
+    let reading = false;
     const pages = await readAll(repositories, get);
     for (const [i, r] of repositories.entries()) {
       const page = pages[i];
@@ -255,10 +250,13 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       }
       for (const c of page.report.classes) {
         const e = c.evidence;
-        rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? evidenceLine(e) : READING, e ? ladderLine(e) : "-",
+        reading ||= !e;
+        rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? evidenceLine(e) : "pending", e ? ladderLine(e) : "-",
           !e ? "pending" : e.eligible ? "eligible" : (e.blockers ?? []).join(", ")]);
       }
     }
+    // Pending rows say so in a word; the page says once that the evidence is being read.
+    if (reading) main.append(el("p", READING, "evidence-age"));
     main.append(table(["Repository", "Class", "Mode", "Evidence", "Widening 29/46/61", "Eligibility"], rows));
   } catch (e) { failed(main, e); }
 }
@@ -274,12 +272,10 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const r = page.report;
   const gitops = centralManifest(r) !== undefined;
   const lead = (text: string) => el("p", text, "lead");
-  main.append(lead(gitops
-    ? `Policy read ${r.readAt}. ${repository}'s classes are served from the MergePolicy ${r.mergePolicy}.`
-    : `Policy read ${r.readAt}. ${repository}'s classes come from its own .github/agent-factory.yaml, or from the factory's central config until the repository is cut over.`),
+  main.append(lead(`Policy read ${r.readAt}. ${repository}'s classes are served from ${servedFrom(r)}.`),
   lead(gitops
     ? "A change is a GitOps pull request on the MergePolicy manifest, which Flux applies. Edit the classes below, then copy or download the manifest; Maku never edits the cluster or the repository."
-    : "A promotion changes the class's mode in that file, through a pull request you open and a human merges. Maku records the request and never edits the file."),
+    : "A promotion changes the class's mode in the repository's .github/agent-factory.yaml, through a pull request you open and a human merges. Maku records the request and never edits the file."),
   say);
   if (r.policyError) main.append(el("p", `The repository's policy file is ${r.policyError}: the central classes are shown.`, "notice"));
 
@@ -362,15 +358,24 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   name.placeholder = "new class name";
   name.setAttribute("aria-label", "new class name");
   name.hidden = true;
+  const nameNote = el("p", "", "notice name-notice");
+  // free is base, or base-2, base-3… when the file already has a class of that name, said so.
+  const free = (base: string): string => {
+    let k = base;
+    for (let n = 2; Object.hasOwn(file.classes!, k); n++) k = `${base}-${n}`;
+    nameNote.textContent = k === base ? "" : `A class named ${base} exists: this one is named ${k}.`;
+    return k;
+  };
   const formAt = el("div");
   const gallery = exampleGallery((t) => {
     source = { kind: "template", name: t };
-    name.value = t;
+    name.value = free(t);
     name.hidden = false;
     gallery.hidden = true;
     opener.setAttribute("aria-expanded", "false");
     fillPick();
     show();
+    name.focus(); // the gallery that held focus is hidden
   }, r.guardrails);
   gallery.id = `example-gallery-${r.repository.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const opener = el("button", "New class from an example", "example-open");
@@ -431,19 +436,21 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     name.hidden = !tpl;
     try {
       formAt.replaceChildren(classForm(cls, profiles, (c) => {
+        // The first write fixes the new class's name, never on a class the file has already.
+        const first = tpl && !written;
+        if (first) name.value = written = free(key());
         // A file that declares classes declares docs-links and revert (OD-8): a first class brings
         // them, unarmed, so the first check does not fail on what the maintainer never wrote.
         for (const req of ["docs-links", "revert"]) {
           file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
         }
         file.classes![key()] = cleanClass(c);
-        if (tpl && !written) {
+        if (first) {
           // From now on it is a class of the file: the picker lists it and the text refills it.
-          written = key();
-          source = { kind: "class", name: written };
+          source = { kind: "class", name: key() };
           name.hidden = true;
           fillPick();
-          pick.value = written;
+          pick.value = key();
         }
         const before = view.text.value;
         const dropped = comments(before);
@@ -465,6 +472,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   pick.onchange = () => {
     if (!pick.value) return; // the placeholder of the new class being started
     source = { kind: "class", name: pick.value };
+    nameNote.textContent = "";
     fillPick();
     show();
   };
@@ -505,7 +513,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     return select;
   };
   const picker = el("div", undefined, "editor-picker");
-  picker.append(labelled2("Class", pick), opener, name);
+  picker.append(labelled2("Class", pick), opener, name, nameNote);
   const formPane = el("div", undefined, "editor-pane");
   formPane.append(picker, gallery, warning, formAt);
   const yamlPane = el("div", undefined, "editor-pane");

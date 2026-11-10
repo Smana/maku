@@ -1098,6 +1098,8 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .evidence-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
 .evidence-track { flex: 1 1 8em; min-width: 8em; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
 .evidence-fill { display: block; height: 100%; background: var(--primary); }
+/* A blocked class is not about to promote: its fill is muted, never the accent of progress. */
+.evidence-bar[data-blocked="true"] .evidence-fill { background: var(--muted-foreground); }
 .evidence-count { font-size: 14px; font-variant-numeric: tabular-nums; }
 .evidence-ladder { display: flex; flex-wrap: wrap; gap: 4px 12px; list-style: none; padding: 0; margin: 0 0 4px; font-size: 13px; color: var(--muted-foreground); }
 .evidence-ladder li[data-reached="true"] { color: var(--success-text); }

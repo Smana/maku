@@ -33,6 +33,11 @@ describe("describeClass", () => {
       "the status “renovate/stability-days” is green (the release is old enough)"]);
   });
 
+  it("leads an unknown mode with its name, never as off", () => {
+    expect(describeClass({ mode: "armed", author: "agents", harness: "plain" }).lead)
+      .toBe('Mode "armed" (a mode this page does not know): it would merge an agent\'s pull request on its own when all of these hold:');
+  });
+
   it("says an off class decides nothing, and what it would check", () => {
     expect(describeClass({ mode: "off", author: "agents", harness: "plain" }).lead)
       .toBe("Off: decides nothing. If turned on, it would merge an agent's pull request on its own when all of these hold:");

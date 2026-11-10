@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, modeCounts, mountSettings, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
 import { READING } from "../src/class-card";
-import { fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
+import { type ClassPolicy, classForm, fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
+import { parsePolicy } from "../src/policy-yaml";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 20, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [{ model: "glm-5.3", mergedUnchanged: 20, changed: 1 }] },
@@ -73,7 +74,7 @@ describe("the repository page", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", get);
     expect(app.textContent).toContain("20/20 clean");
     expect(app.textContent).toContain("glm-5.3 20/21");
-    expect(app.textContent).toContain("Live since promotion");
+    expect(app.textContent).toContain("Live \u00b7 3 clean decisions recorded.");
     expect(app.textContent).not.toContain("not shadow");
     const buttons = [...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live");
     expect(buttons).toHaveLength(1);
@@ -191,6 +192,19 @@ describe("the index and evidence pages", () => {
     expect(rows[1][0]).toBe("Smana/broken");
     expect(rows[1][1]).toMatch(/^Not readable: /);
     expect(app.querySelector('table.repo-table a[href="/settings/merge-policies/Smana/cloud-native-ref"]')).not.toBeNull();
+  });
+
+  it("names the MergePolicy only when it serves the classes, not when the repository's own file declares them", async () => {
+    const own = page();
+    own.report.mergePolicy = "cnr";
+    own.report.manifest = "kind: MergePolicy\n";
+    const served = structuredClone(own);
+    served.report.classes = served.report.classes.map((c) => ({ ...c, source: "central" }));
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/own", "Smana/served"] },
+      "/api/policy/repositories/Smana/own": own, "/api/policy/repositories/Smana/served": served }));
+    const from = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => tr.children[1].textContent);
+    expect(from).toEqual(["its own .github/agent-factory.yaml", "the MergePolicy cnr"]);
   });
 
   it("counts a report's classes by mode", () => {
@@ -453,6 +467,49 @@ describe("the policy editor", () => {
     yaml.dispatchEvent(new Event("input"));
     expect(field(app, "mode").querySelector("select")!.value).toBe("live"); // the text refills the new class's form
   });
+  it("moves focus to the new class's name when an example starts", async () => {
+    const app = document.createElement("div");
+    document.body.append(app);
+    try {
+      await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+      startFrom(app, "docs-broad");
+      expect(document.activeElement).toBe(app.querySelector('input[aria-label="new class name"]'));
+    } finally { app.remove(); }
+  });
+
+  it("never overwrites a class of the file with a new one of the same name", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
+    const name = app.querySelector('input[aria-label="new class name"]') as HTMLInputElement;
+    const edit = () => field(app, "mode").querySelector("select")!.dispatchEvent(new Event("change"));
+    startFrom(app, "docs-broad");
+    edit();
+    startFrom(app, "docs-broad");
+    expect(name.value).toBe("docs-broad-2");
+    expect(app.querySelector(".name-notice")?.textContent).toBe("A class named docs-broad exists: this one is named docs-broad-2.");
+    edit();
+    expect([...pick.options].map((o) => o.value)).toEqual(["docs-links", "revert", "docs-broad", "docs-broad-2"]);
+    // A typed name that is taken is suffixed at the first write too.
+    startFrom(app, "docs-broad");
+    name.value = "docs-links";
+    edit();
+    expect([...pick.options].map((o) => o.value)).toContain("docs-links-2");
+    const parsed = parsePolicy((app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value);
+    expect(parsed.ok && parsed.file.classes?.["docs-links"].conditions?.all).toEqual([{ allowedFiles: ["^docs/.+\\.md$"] }, { maxPatchFiles: 10 }]);
+  });
+
+  it("writes an adopted bot's logins and branches even when the YAML has author: adopt and no adopt:", () => {
+    const got: ClassPolicy[] = [];
+    const form = classForm({ mode: "shadow", author: "adopt", harness: "none" }, ["none"], (c) => got.push(c));
+    const at = (k: string) => form.querySelector(`.editor-field[data-key="${k}"] textarea`) as HTMLTextAreaElement;
+    at("adopt.logins").value = "renovate[bot]";
+    expect(() => at("adopt.logins").dispatchEvent(new Event("input"))).not.toThrow();
+    at("adopt.branches").value = "^renovate/";
+    at("adopt.branches").dispatchEvent(new Event("input"));
+    expect(got.at(-1)?.adopt).toEqual({ logins: ["renovate[bot]"], branches: ["^renovate/"] });
+  });
+
   it("holds every semver template to modifyOnly, as the factory's class check does", () => {
     for (const name of ["deps-patch", "deps-minor"]) {
       const all = templates[name]().conditions?.all ?? [];
@@ -604,7 +661,8 @@ describe("pending evidence", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
     const cards = [...app.querySelectorAll(".policy-classes .class-card")];
     expect(cards).toHaveLength(2);
-    expect(app.querySelectorAll(".policy-classes .evidence-reading")).toHaveLength(2);
+    expect(app.querySelectorAll(".policy-classes .evidence-reading")).toHaveLength(0);
+    expect(app.querySelector(".policy-classes")?.textContent?.split(READING)).toHaveLength(2); // said once
     expect([...app.querySelectorAll("button")].some((b) => b.textContent === "Promote to live")).toBe(false);
     expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toBe(READING);
     expect(app.querySelector("section.policy-editor")).not.toBeNull();
@@ -637,7 +695,9 @@ describe("pending evidence", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
       "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
-    expect(app.textContent).toContain(READING);
+    expect(app.textContent?.split(READING)).toHaveLength(2); // once for the page
+    const rows = [...app.querySelectorAll("tbody tr")].map((tr) => tr.children[3].textContent);
+    expect(rows).toEqual(["pending", "pending"]);
   });
 });
 

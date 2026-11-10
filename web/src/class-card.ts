@@ -8,7 +8,7 @@
 
 import { describeClass, modeMeaning } from "./policy-describe";
 import type { PolicyFile } from "./policy-editor";
-import { evidenceLine, explain, post } from "./settings-api";
+import { centralManifest, evidenceLine, explain, post, servedFrom } from "./settings-api";
 import type { ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
@@ -22,11 +22,13 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
   return e;
 }
 
-// The factory sends "repository" (the policy file's class) or "central"; anything else is shown as sent.
-const sources: Record<string, string> = {
-  repository: "Declared in the repository's .github/agent-factory.yaml",
-  central: "Set by the factory's central config",
-};
+// The factory sends "repository" (the policy file's class) or "central"; anything else is shown as
+// sent. A central class is the MergePolicy's while that serves the repository (servedFrom).
+function sourceLine(c: ClassReport, r: RepositoryPage["report"]): string {
+  if (c.source === "repository") return "Declared in the repository's .github/agent-factory.yaml";
+  if (c.source !== "central") return c.source;
+  return centralManifest(r) !== undefined ? `Served from ${servedFrom(r)}` : "Set by the factory's central config";
+}
 
 // The factory's blocker codes (internal/factory/evidence: BlockBelowMinimum, BlockBadOutcome,
 // BlockNoDrill) and its unproposed codes, in words; an unknown code is shown with spaces.
@@ -48,11 +50,17 @@ export function evidenceBar(e: Evidence): HTMLElement {
   box.setAttribute("aria-valuenow", String(Math.min(e.clean, e.minimum)));
   box.setAttribute("aria-valuemax", String(e.minimum));
   box.setAttribute("aria-label", "clean decisions toward promotion");
+  // A blocked class is not one step from promotion, however many clean decisions it has: its bar
+  // never reads as full.
+  const blocked = !e.eligible && (e.blockers ?? []).length > 0;
+  if (blocked) box.dataset.blocked = "true";
   const fill = el("span", undefined, "evidence-fill");
-  fill.style.width = `${Math.min(100, Math.round((100 * e.clean) / Math.max(1, e.minimum)))}%`;
+  fill.style.width = `${Math.min(blocked ? 95 : 100, Math.round((100 * e.clean) / Math.max(1, e.minimum)))}%`;
   const track = el("span", undefined, "evidence-track");
   track.append(fill);
-  box.append(track, el("span", `${e.clean} of ${e.minimum} clean decisions to promote`, "evidence-count"));
+  box.append(track, el("span", e.clean > e.minimum
+    ? `${e.minimum} of ${e.minimum} clean decisions (${e.clean} recorded)`
+    : `${e.clean} of ${e.minimum} clean decisions to promote`, "evidence-count"));
   return box;
 }
 
@@ -75,7 +83,7 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const badge = el("span", `${m.label} · ${m.meaning}`, "mode-badge");
   badge.dataset.mode = c.mode;
   head.append(el("h3", c.class), badge);
-  card.append(head, el("p", sources[c.source] ?? c.source, "class-source"));
+  card.append(head, el("p", sourceLine(c, ctx.page.report), "class-source"));
 
   const policy = ctx.policy?.classes?.[c.class];
   if (policy) {
@@ -83,7 +91,7 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     const when = el("ul", undefined, "class-when");
     for (const w of s.when) when.append(el("li", w));
     card.append(el("p", s.lead, "class-lead"), when, ...s.also.map((a) => el("p", a, "class-also")));
-  }
+  } else card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-lead"));
 
   const r = ctx.page.report;
   const e = c.evidence;
@@ -93,10 +101,12 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const words = (code: string) => unproposedWords[code] ?? code.replaceAll("_", " ");
   const notPromotable = c.unproposed && c.mode !== "live" ? `Not promotable here: ${words(c.unproposed)}.` : "";
   if (!e) {
-    card.append(el("p", READING, "evidence-reading"));
+    // The page says once that evidence is being read; a card speaks only for a class added since
+    // the last read, when the rest of the page already has its evidence.
+    if (r.evidenceAt) card.append(el("p", "Evidence for this class is still being read.", "evidence-reading"));
     act.textContent = notPromotable;
   } else if (c.mode === "live") {
-    card.append(el("p", `Live since promotion \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), el("p", evidenceLine(e), "evidence-detail"));
+    card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), el("p", evidenceLine(e), "evidence-detail"));
   } else if (c.mode === "off") {
     card.append(el("p", e.clean === 0 ? "Off: no decisions recorded." : evidenceLine(e), "evidence-detail"));
     act.textContent = notPromotable;
@@ -109,7 +119,10 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     card.append(el("p", eligible
       ? (e.eligible ? "Eligible to promote: enough clean decisions, no bad outcome, drill passed." : `Eligible to promote under exception ${exc!.id} (${exc!.minimum} clean decisions required).`)
       : `Not yet eligible: ${(e.blockers ?? []).map((k) => blockerWords[k] ?? k.replaceAll("_", " ")).join(", ") || "no reason given"}.`, "evidence-eligibility"));
-    if (c.proposal && ctx.page.you.maintainer && eligible) {
+    // The broker refuses a second request while one is open (promotion_open): offer neither then.
+    const open = ctx.page.promotions.some((p) => p.class === c.class && (p.state === "requested" || p.state === "pr_opened"));
+    if (open) act.textContent = "";
+    else if (c.proposal && ctx.page.you.maintainer && eligible) {
       const b = el("button", "Promote to live", "primary");
       b.type = "button";
       b.onclick = async () => {
@@ -142,6 +155,7 @@ function promotionsOf(cls: string, ctx: CardContext): HTMLElement {
       a.href = `https://github.com/${p.repository}/pull/${p.pullRequest}`;
       line.append(a);
     }
+    line.append(` (${p.exceptionId ? `under exception ${p.exceptionId}, ` : ""}threshold ${p.threshold})`);
     const act = el("span", undefined, "class-actions");
     if (ctx.page.you.maintainer && (p.state === "requested" || p.state === "pr_opened")) promotionActions(act, p, ctx);
     box.append(line, act);

@@ -5,7 +5,7 @@
 // importing the page that draws it.
 
 import { api } from "./api";
-import type { Evidence } from "./settings";
+import type { Evidence, Report } from "./settings";
 
 // A refusal's bounded code, as the broker writes it, else the status.
 async function refusal(r: Response): Promise<string> {
@@ -54,4 +54,17 @@ export function evidenceLine(e: Evidence): string {
 
 export function ladderLine(e: Evidence): string {
   return e.ladder.map((s) => `${s.merges}${s.reached ? " ✓" : ""}`).join(" / ");
+}
+
+// centralManifest is the report's MergePolicy manifest when the central classes are the merge
+// authority (no class comes from the repository's file); undefined otherwise.
+export function centralManifest(r: Report): string | undefined {
+  return r.manifest && !r.classes.some((c) => c.source === "repository") ? r.manifest : undefined;
+}
+
+// servedFrom names what serves a repository's classes: its MergePolicy only while that is the
+// authority, else its own file once it declares a class, else the factory's central config.
+export function servedFrom(r: Report): string {
+  if (centralManifest(r) !== undefined) return `the MergePolicy ${r.mergePolicy}`;
+  return r.classes.some((c) => c.source === "repository") ? "its own .github/agent-factory.yaml" : "the factory's central config";
 }

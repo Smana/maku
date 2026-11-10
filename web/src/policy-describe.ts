@@ -86,7 +86,8 @@ export function describeClass(c: ClassPolicy, guardrails: Record<string, unknown
   const tail = "on its own when all of these hold";
   const lead = c.mode === "live" ? `Merges ${who(c)} ${tail}:`
     : c.mode === "shadow" ? `Would merge ${who(c)} ${tail} (shadow: it records the decision and merges nothing):`
-    : `Off: decides nothing. If turned on, it would merge ${who(c)} ${tail}:`;
+    : c.mode === "off" ? `Off: decides nothing. If turned on, it would merge ${who(c)} ${tail}:`
+    : `Mode "${String(c.mode)}" (a mode this page does not know): it would merge ${who(c)} ${tail}:`;
   for (const [k, unit] of [["maxPatchFiles", "files"], ["maxModifiedLines", "lines"]] as const) {
     if (!has(k) && pos(guardrails[k])) when.push(`it changes at most ${guardrails[k]} ${unit} (the factory's cap)`);
   }

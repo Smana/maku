@@ -247,8 +247,8 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
   const control = (f: Field): { input: HTMLElement; error?: HTMLElement } => {
     const list = (v: string[], set: (v: string[]) => void) => listOf(v, set, patternKeys.has(f.key));
     switch (f.key) {
-      case "adopt.logins": return list(c.adopt?.logins ?? [], (v) => { c.adopt!.logins = v; });
-      case "adopt.branches": return list(c.adopt?.branches ?? [], (v) => { c.adopt!.branches = v; });
+      case "adopt.logins": return list(c.adopt?.logins ?? [], (v) => { (c.adopt ??= { logins: [], branches: [] }).logins = v; });
+      case "adopt.branches": return list(c.adopt?.branches ?? [], (v) => { (c.adopt ??= { logins: [], branches: [] }).branches = v; });
       case "harnessAllowed": return list(c.harnessAllowed ?? [], (v) => { if (v.length) c.harnessAllowed = v; else delete c.harnessAllowed; });
       case "escalation.outOfBudget": return { input: textOf(c.escalation?.outOfBudget ?? "", escalate("outOfBudget")) };
       case "escalation.notConverged": return { input: textOf(c.escalation?.notConverged ?? "", escalate("notConverged")) };
