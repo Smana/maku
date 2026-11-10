@@ -15,6 +15,23 @@ describe("mountSettingsLink", () => {
     expect(a.textContent).toContain("Settings");
     expect(a.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   });
+
+  it("appears when the settings API is available", async () => {
+    const host = document.createElement("header");
+    const get = () => Promise.resolve(new Response("{}", { status: 200 }));
+    const a = mountSettingsLink(host, "/settings", get as typeof fetch);
+    expect(a.hidden).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(a.hidden).toBe(false);
+  });
+
+  it("stays hidden when the settings API is unavailable", async () => {
+    const host = document.createElement("header");
+    const get = () => Promise.resolve(new Response("", { status: 404 }));
+    const a = mountSettingsLink(host, "/settings", get as typeof fetch);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(a.hidden).toBe(true);
+  });
 });
 
 describe("the Settings link in the page headers", () => {
