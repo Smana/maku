@@ -53,6 +53,7 @@ func holdRig(t *testing.T, independent bool) (*rig, *v1alpha1.Task) {
 	g.log.handoff(rid(0), headH1)
 	g.patch(t, func(tk *v1alpha1.Task) { tk.Status.PullRequest.HeadSHA = headH1 })
 	g.f.SetChecks(12, green("SUCCESS"))
+	listRepos(g.r.Cfg.Current(), coordA, coordB) // the parent's and the children's repositories are served
 	return g, parent
 }
 
@@ -83,9 +84,9 @@ func (g *rig) pass(t *testing.T, parentName, head string) {
 	if err := g.c.Status().Update(t.Context(), parent); err != nil {
 		t.Fatal(err)
 	}
-	mode, port := g.r.Cfg.Coordination.Mode, g.r.Coordination
-	g.r.Cfg.Coordination.Mode, g.r.Coordination = config.CoordinationExecute, &fakeCoordination{ready: map[string]error{}}
-	defer func() { g.r.Cfg.Coordination.Mode, g.r.Coordination = mode, port }()
+	mode, port := g.r.Cfg.Current().Coordination.Mode, g.r.Coordination
+	g.r.Cfg.Current().Coordination.Mode, g.r.Coordination = config.CoordinationExecute, &fakeCoordination{ready: map[string]error{}}
+	defer func() { g.r.Cfg.Current().Coordination.Mode, g.r.Coordination = mode, port }()
 	p := g.reconcile(t, parentName, 2)
 	want := v1alpha1.IntegrationRelease{ChildID: "consumer", HeadSHA: head, IntegrationTask: it.Name, ManifestHash: hash}
 	if rel := p.Status.Coordination.Children[1].IntegrationRelease; rel == nil || *rel != want {
@@ -162,7 +163,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 
 	t.Run("a second decision on the read diff", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Classes["docs-links"] = config.Class{Live: true, MaxPatchFiles: 5} // a diff condition: DecideArm decides again on the read diff
+		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Live: true, MaxPatchFiles: 5} // a diff condition: DecideArm decides again on the read diff
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
@@ -183,7 +184,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 		g.f.SetChecks(12, green("SUCCESS"))
 		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
 		// The parent sees the moved head and drops the stale release.
-		g.r.Cfg.Coordination.Mode = config.CoordinationExecute
+		g.r.Cfg.Current().Coordination.Mode = config.CoordinationExecute
 		g.r.Coordination = &fakeCoordination{ready: map[string]error{}}
 		g.reconcile(t, parent.Name, 2)
 		if p, _ := g.coordTask(t, parent.Name); p.Status.Coordination.Children[1].IntegrationRelease != nil {
@@ -193,8 +194,8 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 
 	t.Run("maintainer approved, through the approval's return", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Merge.ApproveToMerge = true
-		g.r.Cfg.Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+		g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
+		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "class_unarmed" {
@@ -242,7 +243,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 
 	t.Run("shadow would arm and never releases", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}}
+		g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}}
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		tk := g.reconcile(t, "3buqdlot", 1)

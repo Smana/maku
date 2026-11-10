@@ -379,7 +379,7 @@ func TestAReviewerWithoutAVerdictAtTheTaskCap(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := pairRig(t)
-			g.r.Cfg.Budgets.EnforceTask = c.enforce
+			g.r.Cfg.Current().Budgets.EnforceTask = c.enforce
 			r := g.runs.runs[rid(1)]
 			r.Tokens = c.used // standard tier: 1.5 M of 3 M leaves exactly a run's worth
 			g.runs.runs[rid(1)] = r

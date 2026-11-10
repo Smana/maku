@@ -53,7 +53,7 @@ func reservationOf(t *testing.T, g *rig, id string) ledger.Reservation {
 func TestATaskRunIsChargedToItsLabeller(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		g := newRig(t, issueTask("3buqdlot", 7, "x"))
-		g.r.Cfg.Budgets = personBudgets(enabled, true)
+		g.r.Cfg.Current().Budgets = personBudgets(enabled, true)
 		tk := g.reconcile(t, "3buqdlot", 3)
 		want, person := ledger.Reservation{Principal: runs.PrincipalFactory, MaxMicroUSD: config.RefMicroUSD(tk.Spec.Budget.RunTokens)}, ""
 		if enabled {
@@ -84,7 +84,7 @@ func TestQueuedRefusesAPersonPastTheirDay(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t, issueTask("3buqdlot", 7, "x"), spentLedger(c.spent))
-			g.r.Cfg.Budgets = personBudgets(true, c.enforce)
+			g.r.Cfg.Current().Budgets = personBudgets(true, c.enforce)
 			tk := g.reconcile(t, "3buqdlot", 3)
 			if tk.Status.Phase != c.phase || (c.reason != "" && tk.Status.Reason != c.reason) ||
 				(c.metric != "" && !slices.Contains(g.metrics.recorded, c.metric)) {
@@ -103,8 +103,8 @@ func TestQueuedRefusesAPersonPastTheirDay(t *testing.T) {
 // D2: a /factory retry charges the retrier, not the labeller, for the runs it causes.
 func TestARetryIsChargedToTheRetrier(t *testing.T) {
 	g := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
-	g.r.Cfg.Budgets = personBudgets(true, true)
-	g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "Alice")
+	g.r.Cfg.Current().Budgets = personBudgets(true, true)
+	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "Alice")
 	g.f.SetComments(7, retryBy(77, "Alice", time.Minute))
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.RetriedBy != "github:alice" {

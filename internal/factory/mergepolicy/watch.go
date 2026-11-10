@@ -50,12 +50,14 @@ type Snapshot struct {
 	Read        time.Time
 	// File is the parsed file of a valid snapshot, for the next one's structural comparison.
 	File *File
+	// cfgHash is the hash of the config the file was evaluated under: the cache key's second half.
+	cfgHash string
 }
 
 // Watch observes each owned repository's file as the fence reads it. It decides nothing: the gate
 // keeps reading the central config, and dual evaluation reads Snapshot beside it.
 type Watch struct {
-	Cfg     *config.Config
+	Cfg     config.Source
 	Metrics Recorder
 	Log     *slog.Logger
 	Now     func() time.Time
@@ -75,9 +77,10 @@ type Watch struct {
 // never compared has no series, so 0 is never "nothing to compare". It logs only when the file or
 // its result changes: the fence reads every five minutes. The load-error counter counts every
 // failed read, so a rate shows it is still bad. A file whose hash is the last read's is not
-// evaluated again: the config is the process's, so the result cannot have moved.
+// evaluated again under the same config (its Hash): a published config re-evaluates it.
 func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
-	rc := w.listed(repository)
+	cfg := w.Cfg.Current()
+	rc := w.listed(cfg, repository)
 	if rc == nil {
 		return
 	}
@@ -88,8 +91,8 @@ func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 	prev, seen := w.state[key]
 	w.mu.RUnlock()
 	s := prev
-	if !seen || prev.Hash != hash {
-		s = w.evaluate(rc, hash, body)
+	if !seen || prev.Hash != hash || prev.cfgHash != cfg.Hash {
+		s = w.evaluate(cfg, rc, hash, body)
 	}
 	s.Read = w.now()
 	switch {
@@ -97,7 +100,7 @@ func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 		w.Metrics.PolicyLoadError(ctx, repository, ReasonGuardrail)
 	case s.Err != nil:
 		w.Metrics.PolicyLoadError(ctx, repository, ReasonInvalid)
-	case s.HasClasses && !w.Cfg.RepositoryAuthoritative(rc):
+	case s.HasClasses && !cfg.RepositoryAuthoritative(rc):
 		w.Metrics.PolicyDivergence(ctx, repository, len(s.Divergences))
 	}
 	var changes []Change
@@ -107,8 +110,8 @@ func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 	}
 	w.state[key] = s
 	if s.Err == nil && s.HasClasses {
-		if last, ok := w.valid[key]; ok && last.Hash != s.Hash && w.Cfg.RepositoryAuthoritative(rc) {
-			changes = w.demote(key, last, s)
+		if last, ok := w.valid[key]; ok && last.Hash != s.Hash && cfg.RepositoryAuthoritative(rc) {
+			changes = w.demote(cfg, key, last, s)
 		}
 		w.valid[key] = s
 	}
@@ -120,36 +123,36 @@ func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 				"class", c.Class, "hash", s.Hash, "why", c.Why)
 		}
 	}
-	if !seen || prev.Hash != s.Hash {
+	if !seen || prev.Hash != s.Hash || prev.cfgHash != s.cfgHash {
 		w.log().Info("repository merge policy read", "repository", repository, "hash", s.Hash,
 			"classes", s.HasClasses, "err", s.Err, "divergences", s.Divergences)
 	}
 }
 
 // evaluate parses, validates, resolves and compares one file.
-func (w *Watch) evaluate(rc *config.Repository, hash string, body []byte) Snapshot {
+func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string, body []byte) Snapshot {
 	w.mu.Lock()
 	w.evaluations++
 	w.mu.Unlock()
-	s := Snapshot{Hash: hash}
+	s := Snapshot{Hash: hash, cfgHash: cfg.Hash}
 	f, err := Parse(body)
 	if err == nil {
 		s.HasClasses = f.Classes != nil
-		err = Validate(f, w.Cfg)
+		err = Validate(f, cfg)
 	}
 	s.Err = err
 	if err != nil || !s.HasClasses {
 		return s
 	}
 	s.File = f
-	if !w.Cfg.RepositoryAuthoritative(rc) { // a cut-over repository has no central classes to compare with
-		s.Divergences = Compare(rc, f, w.Cfg)
+	if !cfg.RepositoryAuthoritative(rc) { // a cut-over repository has no central classes to compare with
+		s.Divergences = Compare(rc, f, cfg)
 	}
 	s.Classes = map[string]Resolved{}
 	for name, p := range f.Classes {
-		r, rerr := Resolve(name, p, w.Cfg)
+		r, rerr := Resolve(name, p, cfg)
 		if rerr != nil { // Validate resolved it: unreachable, and never half a snapshot
-			return Snapshot{Hash: hash, HasClasses: true, Err: rerr}
+			return Snapshot{Hash: hash, cfgHash: cfg.Hash, HasClasses: true, Err: rerr}
 		}
 		s.Classes[name] = r
 	}
@@ -175,8 +178,8 @@ func (w *Watch) Snapshot(repository string) (Snapshot, bool) {
 // relaxation of a class the new file declares live runs that class in shadow until the process
 // restarts. It returns the changes that are not unchanged, for the caller to count. A comparison
 // that fails is a relaxation of every live class: uncertainty fails toward shadow.
-func (w *Watch) demote(key string, last, next Snapshot) []Change {
-	changes, err := Structural(last.File, next.File, w.Cfg)
+func (w *Watch) demote(cfg *config.Config, key string, last, next Snapshot) []Change {
+	changes, err := Structural(last.File, next.File, cfg)
 	if err != nil {
 		changes = nil
 		for name := range next.Classes {
@@ -254,8 +257,8 @@ func (w *Watch) shadowed(classes map[string]Resolved, demoted map[string][]strin
 	return out
 }
 
-func (w *Watch) listed(repository string) *config.Repository {
-	for _, r := range w.Cfg.Repos() {
+func (w *Watch) listed(cfg *config.Config, repository string) *config.Repository {
+	for _, r := range cfg.Repos() {
 		if strings.EqualFold(r.Name, repository) {
 			return &r
 		}

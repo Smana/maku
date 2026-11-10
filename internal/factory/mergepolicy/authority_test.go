@@ -84,7 +84,7 @@ func TestClassesPauseWhileThePolicyGivesNoAuthority(t *testing.T) {
 		t.Fatal("never read: no classes")
 	}
 	w.Observe(t.Context(), "o/r", []byte(liveDocs))
-	if cl, _ := w.Classes("o/r"); !cl["docs-links"].Live || !w.Cfg.RepositoryFor("o/r").Classes["docs-links"].Live {
+	if cl, _ := w.Classes("o/r"); !cl["docs-links"].Live || !w.Cfg.Current().RepositoryFor("o/r").Classes["docs-links"].Live {
 		t.Fatalf("%+v", cl)
 	}
 	w.Observe(t.Context(), "o/r", []byte("factory: aws-0\nclasses: [no]\n"))

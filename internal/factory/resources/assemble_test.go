@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 )
@@ -288,5 +290,43 @@ func TestAssembleRefusedOrder(t *testing.T) {
 	want := "Factory/gcp-0 MergePolicy/orphan MergePolicy/z Repository/b Repository/z"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("order: %v, want %s", got, want)
+	}
+}
+
+// A bad Factory changes the joined error of every pair that has a schedule (the text cap is a
+// catalogue value), so removing a pair changes the error. The culprit is the element whose
+// removal makes the config parse: the Factory.
+func TestAssembleBadFactoryIsTheCulpritNotThePairs(t *testing.T) {
+	sched := func(n string) []any {
+		return []any{map[string]any{"name": n, "cron": "0 6 * * 1", "class": "review", "text": "a schedule text well over ten bytes"}}
+	}
+	ra, rb := repo("a", "Smana/a"), repo("b", "Smana/b")
+	ra.Spec["schedules"], rb.Spec["schedules"] = sched("sa"), sched("sb")
+	var base map[string]any
+	if err := yaml.Unmarshal(file(t), &base); err != nil {
+		t.Fatal(err)
+	}
+	spec := map[string]any{}
+	for _, k := range CatalogueKeys {
+		if v, ok := base[k]; ok {
+			spec[k] = v
+		}
+	}
+	caps, _ := spec["caps"].(map[string]any)
+	if caps == nil {
+		caps = map[string]any{}
+	}
+	caps["maxTextBytes"] = 10
+	spec["caps"] = caps
+	f := Object{Kind: KindFactory, Name: "aws-0", Spec: spec}
+	r, err := Assemble(file(t), []Object{ra, policy(t, "a", "a"), rb, policy(t, "b", "b"), f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Refused) != 1 || r.Refused[0].Kind != KindFactory || r.Refused[0].Reason != v1alpha1.ReasonInvalid {
+		t.Fatalf("refused = %+v, want only the Factory, Invalid", r.Refused)
+	}
+	if len(r.Accepted) != 4 {
+		t.Fatalf("accepted = %d objects, want both pairs", len(r.Accepted))
 	}
 }

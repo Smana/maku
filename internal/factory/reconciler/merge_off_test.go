@@ -14,7 +14,7 @@ import (
 // gate goes to a maintainer at once, instead of erroring on the absent merger at every reconcile.
 func TestMergeGateOffHandsTheTaskToAHuman(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {}, "revert": {}}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {}, "revert": {}}
 	g.r.Merger = forge.Absent{}
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "merge_gate_off" {

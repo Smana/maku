@@ -23,6 +23,7 @@ func activeGrant() grant.Grant {
 func grantInputs(gs ...grant.Grant) ArmInputs {
 	in := gateInputs()
 	in.Task.Spec.Repository = "smana/docs"
+	in.Cfg.Current().Repository = "smana/docs" // the task's repository is served: its one entry
 	in.Grants = GrantRead{Read: true, List: gs, PolicyHash: grantPolicy, At: now}
 	return in
 }

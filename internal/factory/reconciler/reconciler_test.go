@@ -429,7 +429,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	seeingMeter(t, c)
 	g := &rig{c: c, f: forgetest.NewFake(), runs: newRuns(), log: &fakeLog{}, metrics: &fakeMetrics{}}
 	g.r = &Reconciler{Client: c, Ledger: c, Namespace: "agent-system", Cfg: cfg(), Forge: g.f, Merger: g.f, Runs: g.runs, Rooms: g.log,
-		Triage: triage.Static{Cfg: cfg()}, Metrics: g.metrics,
+		Triage: triage.Static{}, Metrics: g.metrics,
 		Now: func() time.Time { return now }, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Owned: func(string) bool { return true }, CanWrite: func(context.Context, string, string) (bool, error) { return true, nil }}
 	g.runs.now = func() time.Time { return g.r.Now() } // the claims carry the rig's clock
@@ -517,7 +517,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 		t.Fatalf("the end waits for the settle (#42): %s %q", tk.Status.Phase, g.f.Comments(7))
 	}
 	// The end does not record the tokens (R49); the settle does, once, past its window.
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 	if tk = g.reconcile(t, "3buqdlot", 1); !tk.Status.UsageSettled || !strings.Contains(g.f.Comments(7)[2], "Merged by @Smana") {
 		t.Fatalf("settled: %+v %q", tk.Status, g.f.Comments(7))
 	}
@@ -553,7 +553,7 @@ func TestEndings(t *testing.T) {
 			// by the settle (R49), not by the end. Only the task_tokens lines count here: the
 			// end of a task that scored its tier (outcome) records a tier_fit line too.
 			// A terminal ending is posted with the settled total (#42), so it is read after.
-			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			g.reconcile(t, "3buqdlot", 1)
 			if !strings.Contains(strings.Join(g.f.Comments(7), "\n"), c.says) {
 				t.Errorf("%q", g.f.Comments(7))
@@ -687,12 +687,12 @@ func TestDailyTaskCap(t *testing.T) {
 	rejected.Status.Phase = v1alpha1.PhaseRejected
 	today = append(today, rejected, issueTask("dddddddd", 1, "x")) // rejected, and not yet received
 	g := newRig(t, append(today, issueTask("3buqdlot", 7, "x"))...)
-	g.r.Cfg.Caps.TasksPerDay = 1
+	g.r.Cfg.Current().Caps.TasksPerDay = 1
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseRejected || tk.Status.Reason != "daily_task_cap" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	g = newRig(t, append(today, issueTask("3buqdlot", 7, "x"))...)
-	g.r.Cfg.Caps.TasksPerDay = 2
+	g.r.Cfg.Current().Caps.TasksPerDay = 2
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseTriaged {
 		t.Fatalf("yesterday's task does not count: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
@@ -827,7 +827,7 @@ func TestStopAnnotation(t *testing.T) {
 			}
 			// The stop deleted the task's run, so nothing is left to settle from: the settle
 			// still records the total, once, past its window (R49).
-			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			g.reconcile(t, "3buqdlot", 1)
 			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review" {
 				t.Fatalf("%q", g.metrics.recorded)
@@ -952,7 +952,7 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 	}
 	// A conflicting settle replays the recording with the mark, so the metric lands once (R49).
 	conflict = true
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the conflicting settle write is returned")
 	}
@@ -1037,4 +1037,24 @@ func contains(comments []string, s string) bool {
 
 func (m *fakeMetrics) ProfileRecommendation(_ context.Context, class, cohort, recommended string, applied bool) {
 	m.add(fmt.Sprintf("profile %s %s %s %v", class, cohort, recommended, applied))
+}
+
+// D5: a triaged task records the generations it was triaged under (recorded, not pinned).
+func TestTriageRecordsConfigGenerations(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	g.r.Cfg.Current().Generations = config.Generations{Factory: 3,
+		Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 5}}}
+	tk := g.reconcile(t, "3buqdlot", 1)
+	want := &v1alpha1.ConfigGenerations{Factory: 3, Repository: 2, MergePolicy: 5}
+	if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Status.ConfigHash != strings.Repeat("a", 64) ||
+		tk.Status.ConfigGenerations == nil || *tk.Status.ConfigGenerations != *want {
+		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status)
+	}
+}
+
+func TestTriageLeavesConfigGenerationsNilForTheFile(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.ConfigGenerations != nil {
+		t.Fatalf("%+v", tk.Status.ConfigGenerations)
+	}
 }

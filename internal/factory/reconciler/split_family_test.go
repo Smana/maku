@@ -152,7 +152,7 @@ func TestAFailedSubIssueLinkBlocksNothing(t *testing.T) {
 // with per-person caps on its runs are charged to them.
 func TestTheApproverPaysForTheParts(t *testing.T) {
 	g := splitRigWith(t, "frontier", false, func(tk *v1alpha1.Task) { tk.Spec.Source.RequestedBy = "github:alice" })
-	g.r.Cfg.Budgets = personBudgets(true, false)
+	g.r.Cfg.Current().Budgets = personBudgets(true, false)
 	g.reconcile(t, "3buqdlot", 3)
 	splitHandoffOf(g, 0, readyScope(), parts(2))
 	endScoper(t, g, "Succeeded", "agent_finished")
@@ -201,7 +201,7 @@ func TestThePartsLandOneByOneAndCloseTheParent(t *testing.T) {
 	if n := strings.Count(strings.Join(g.metrics.recorded, "|"), "split_child review landed"); n != 2 || p.Status.Classification.Fit != "" {
 		t.Fatalf("counted %d, fit %q: %v", n, p.Status.Classification.Fit, g.metrics.recorded)
 	}
-	g.r.Now = func() time.Time { return now.Add(time.Hour + g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(time.Hour + g.r.settleWindow(g.r.Cfg.Current())) }
 	g.reconcile(t, "3buqdlot", 1)
 	if last := g.f.Comments(7)[len(g.f.Comments(7))-1]; !strings.Contains(last, "every part of the split merged") || !strings.Contains(last, "#501") {
 		t.Fatalf("the parent's end lists its parts: %q", last)
@@ -319,7 +319,7 @@ func openRevertRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := approved(t)
 	g.r.Merger = g.f
-	g.r.Cfg.Classes = map[string]config.Class{"revert": {Live: true}}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"revert": {Live: true}}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", Title: "docs: part 1"})
 	c := childTask(t, g, 1)
 	merged := metav1.NewTime(now)
@@ -335,12 +335,12 @@ func toParent(c *v1alpha1.Task) bool {
 // before the close, nothing extra.
 func TestARevertedPartCommentsOnAClosedParent(t *testing.T) {
 	g, c := openRevertRig(t)
-	if err := g.r.revert(t.Context(), c, "main_red"); err != nil || toParent(c) {
+	if err := g.r.revert(t.Context(), g.r.Cfg.Current(), c, "main_red"); err != nil || toParent(c) {
 		t.Fatalf("before the close nothing extra: %+v %v", c.Status.Outbox, err)
 	}
 	g, c = openRevertRig(t)
 	setPhase(t, g, "3buqdlot", v1alpha1.PhaseDone, "children_merged")
-	if err := g.r.revert(t.Context(), c, "main_red"); err != nil || !toParent(c) {
+	if err := g.r.revert(t.Context(), g.r.Cfg.Current(), c, "main_red"); err != nil || !toParent(c) {
 		t.Fatalf("%+v %v", c.Status.Outbox, err)
 	}
 }
@@ -356,7 +356,7 @@ func TestARevertedPartIsNotCountedLandedByAnExpiringParent(t *testing.T) {
 	if err := g.c.Status().Update(t.Context(), &p); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.r.revert(t.Context(), c, "main_red"); err != nil || !toParent(c) {
+	if err := g.r.revert(t.Context(), g.r.Cfg.Current(), c, "main_red"); err != nil || !toParent(c) {
 		t.Fatalf("%+v %v", c.Status.Outbox, err)
 	}
 	_ = g.c.Get(t.Context(), taskKey("3buqdlot"), &p)
@@ -426,23 +426,23 @@ func TestTheFamilysCapHolds(t *testing.T) {
 func TestAPricedPartIsNotRefusedOnTokens(t *testing.T) {
 	g := approved(t)
 	p := g.reconcile(t, "3buqdlot", 0)
-	tr := g.r.Cfg.Tiers["standard"]
+	tr := g.r.Cfg.Current().Tiers["standard"]
 	tr.RunTokens, tr.TaskTokens = 6_000_000, 12_000_000 // more tokens than the dollars left buy at the reference rate
-	g.r.Cfg.Tiers["standard"] = tr
-	if !g.r.partFits(p, 2_600_000) {
+	g.r.Cfg.Current().Tiers["standard"] = tr
+	if !g.r.partFits(g.r.Cfg.Current(), p, 2_600_000) {
 		t.Error("a priced part with a run's dollars left is refused on tokens")
 	}
-	if g.r.partFits(p, 2_000_000) {
+	if g.r.partFits(g.r.Cfg.Current(), p, 2_000_000) {
 		t.Error("a priced part without a run's dollars left fits")
 	}
 	tr.RunUSD, tr.TaskUSD = 0, 0 // no USD price: the token bound decides
-	g.r.Cfg.Tiers["standard"] = tr
-	if g.r.partFits(p, 2_600_000) {
+	g.r.Cfg.Current().Tiers["standard"] = tr
+	if g.r.partFits(g.r.Cfg.Current(), p, 2_600_000) {
 		t.Error("an unpriced part fits past its token bound")
 	}
 	tr.RunTokens, tr.TaskTokens = 1_500_000, 3_000_000
-	g.r.Cfg.Tiers["standard"] = tr
-	if !g.r.partFits(p, 5_000_000) {
+	g.r.Cfg.Current().Tiers["standard"] = tr
+	if !g.r.partFits(g.r.Cfg.Current(), p, 5_000_000) {
 		t.Error("an unpriced part within its token bound is refused")
 	}
 }

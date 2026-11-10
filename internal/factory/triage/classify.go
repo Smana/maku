@@ -65,7 +65,6 @@ func Cohort(taskID string, percent int) bool {
 
 // Classify is the one triage per task (§2): deterministic rules plus one C7 call.
 type Classify struct {
-	Cfg   *config.Config
 	C     Classifier
 	Forge ClassForge
 	// Clients is v2 D8: the factory App on a repository. Set, a task's labels are read on its
@@ -87,27 +86,27 @@ func (c Classify) forge(t *v1alpha1.Task) ClassForge {
 
 // Triage fixes the class, then asks C7 for the tier: one call per task, whose failure falls
 // back to static/standard rather than blocking the task (§2, C7).
-func (c Classify) Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error) {
+func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error) {
 	dataClass := t.Spec.DataClass
 	if dataClass == "" {
-		dataClass = c.Cfg.Defaults.DataClass
+		dataClass = cfg.Defaults.DataClass
 	}
-	class, declared, err := c.predictClass(ctx, t)
+	class, declared, err := c.predictClass(ctx, cfg, t)
 	if err != nil {
 		return Decision{}, err
 	}
-	cohort := CohortOf(t.Name, declared, c.Cfg.Evaluation.ControlPercent)
-	if Investigates(c.Cfg, t) {
+	cohort := CohortOf(t.Name, declared, cfg.Evaluation.ControlPercent)
+	if Investigates(cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}
-	if c.Cfg.RepositoryFor(t.Spec.Repository).Classes[class].Oracle != nil {
+	if oracle(cfg, t, class) {
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
-		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Budget: BudgetFor(c.Cfg, "light"),
+		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Budget: BudgetFor(cfg, "light"),
 			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared, Cohort: cohort}, nil
 	}
 	res, err := C7Response{}, errors.New("no classifier") // unset URL: no C7 service, no call
-	if c.Cfg.Triage.ClassifierURL != "" && c.C != nil {
+	if cfg.Triage.ClassifierURL != "" && c.C != nil {
 		res, err = c.C.Classify(ctx, C7Request{Text: t.Spec.Text, Ref: t.Name, DataClass: dataClass})
 	}
 	if err != nil || (res.Tier != "light" && res.Tier != "standard" && res.Tier != "frontier") {
@@ -121,33 +120,39 @@ func (c Classify) Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error
 		cl.Shadow = append(cl.Shadow, v1alpha1.ShadowVerdict{Classifier: s.Classifier, Tier: s.Tier, Confidence: fmt.Sprintf("%.2f", s.Confidence)})
 	}
 	tier := res.Tier
-	if Control(t.Name, c.Cfg.Triage.ControlPercent) {
+	if Control(t.Name, cfg.Triage.ControlPercent) {
 		cl.Control, tier = true, "frontier"
 	}
 	source := t.Spec.Source.Kind
-	if Investigates(c.Cfg, t) {
+	if Investigates(cfg, t) {
 		source = "runlore" // Matrix keys on the source kind: both take investigate
 	}
 	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass,
-		Budget: BudgetFor(c.Cfg, tier), Classification: cl, Declared: declared, Cohort: cohort}, nil
+		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Cohort: cohort}, nil
+}
+
+// oracle reports whether class is an oracle class of t's repository; none when it is not served.
+func oracle(cfg *config.Config, t *v1alpha1.Task, class string) bool {
+	cl, _ := cfg.RepositoryFor(t.Spec.Repository).Class(class)
+	return cl.Oracle != nil
 }
 
 // predictClass: the schedule's class; else a maintainer-applied class:<name> label; else review.
 // RunLore tasks are always review. Labels are intent, never authority (§2, §8 T3).
 // declared is a class the schedule or a maintainer named, never one inferred.
-func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (class string, declared bool, err error) {
-	if Investigates(c.Cfg, t) {
+func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (class string, declared bool, err error) {
+	if Investigates(cfg, t) {
 		return "review", false, nil
 	}
 	if t.Spec.Source.Kind == "schedule" {
-		if _, ok := c.Cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass]; ok {
+		if _, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
 			return t.Spec.PredictedClass, true, nil
 		}
 		return "review", false, nil
 	}
 	gh := c.forge(t)
 	if t.Spec.Issue == 0 || gh == nil {
-		return c.inferred(t), false, nil
+		return c.inferred(cfg, t), false, nil
 	}
 	iss, err := gh.Issue(ctx, t.Spec.Issue)
 	if err != nil {
@@ -155,27 +160,27 @@ func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (class str
 	}
 	for _, l := range iss.Labels {
 		name, ok := strings.CutPrefix(l, "class:")
-		if _, known := c.Cfg.RepositoryFor(t.Spec.Repository).Classes[name]; !ok || !known || name == "revert" {
+		if _, known := cfg.RepositoryFor(t.Spec.Repository).Class(name); !ok || !known || name == "revert" {
 			continue // revert is the factory's own class, never predicted from a label
 		}
 		evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
 		if err != nil {
 			return "", false, err
 		}
-		if len(evs) > 0 && c.Cfg.RepositoryFor(t.Spec.Repository).IsMaintainer(evs[len(evs)-1].Actor) {
+		if len(evs) > 0 && cfg.RepositoryFor(t.Spec.Repository).IsMaintainer(evs[len(evs)-1].Actor) {
 			return name, true, nil
 		}
 	}
-	return c.inferred(t), false, nil
+	return c.inferred(cfg, t), false, nil
 }
 
 // inferred: K5, the factory's own record, never a label it applied. An origin task keeps the class
 // inferred at publish when its repository declares it and it is not revert; else review.
-func (c Classify) inferred(t *v1alpha1.Task) string {
+func (c Classify) inferred(cfg *config.Config, t *v1alpha1.Task) string {
 	if t.Spec.Origin == "" || t.Spec.PredictedClass == "revert" {
 		return "review"
 	}
-	if _, ok := c.Cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass]; ok {
+	if _, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
 		return t.Spec.PredictedClass
 	}
 	return "review"

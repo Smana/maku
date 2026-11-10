@@ -309,7 +309,7 @@ func TestARevocationNamesTheRunsPayer(t *testing.T) {
 	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{
 		{ID: "aaaaaaaa", Phase: "Running", MaxTokens: 100, Principal: runs.PrincipalFactory, ChargedTo: "github:alice", Created: now}}}
 	var who, why string
-	m := &Meter{Runs: st, Source: source{"aaaaaaaa": 200}, Budgets: config.Budgets{}, Now: func() time.Time { return now },
+	m := &Meter{Runs: st, Source: source{"aaaaaaaa": 200}, Cfg: priced(nil, nil, config.Budgets{}), Now: func() time.Time { return now },
 		OnRevoke: func(ctx context.Context, reason, _ string) { who, why = fmetrics.PrincipalOf(ctx), reason }}
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)

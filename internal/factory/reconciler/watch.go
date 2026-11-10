@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -44,14 +46,14 @@ func nextTrigger(t *v1alpha1.Task) string {
 // nextImplementer builds the next implementer run. Before a pull request exists it is the fenced
 // snapshot; after, the revise brief with the room's log and queued messages, and refs are the
 // queued messages that brief quoted: the only ones the run may consume (F-A).
-func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (runs.Spec, []int64, string, error) {
+func (r *Reconciler) nextImplementer(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (runs.Spec, []int64, string, error) {
 	trigger := nextTrigger(t)
 	text, ok, err := r.resumeBrief(ctx, t)
 	if err != nil {
 		return runs.Spec{}, nil, "", err
 	}
 	if ok && t.Status.PullRequest == nil {
-		return r.implementerSpec(t, text), nil, trigger, nil
+		return r.implementerSpec(cfg, t, text), nil, trigger, nil
 	}
 	if ok {
 		q, err := r.Rooms.Queue(ctx, t.Status.RoomRef)
@@ -59,7 +61,7 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 			return runs.Spec{}, nil, "", err
 		}
 		text, refs := withQueued(text, q, r.Nonce())
-		return r.implementerSpec(t, text), refs, trigger, nil
+		return r.implementerSpec(cfg, t, text), refs, trigger, nil
 	}
 	// The scope is read only for a brief that carries it: a resumed replay quotes its lost run's.
 	sc, err := r.taskScope(ctx, t)
@@ -67,7 +69,7 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 		return runs.Spec{}, nil, "", err
 	}
 	if t.Status.PullRequest == nil && trigger != TriggerEscalation { // a step continues the run before it, PR or not
-		return r.implementerSpec(t, resumed(t, trigger)+firstBrief(t, r.Nonce(), sc)), nil, trigger, nil
+		return r.implementerSpec(cfg, t, resumed(t, trigger)+firstBrief(t, r.Nonce(), sc)), nil, trigger, nil
 	}
 	// The finished run's handoff and verdict are after its start; brief.Build reads only those.
 	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, briefSince(t), briefEvent)
@@ -86,8 +88,8 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 		}
 		judge = judgeBlock(j, r.Nonce(), reviseCap)
 	}
-	text, refs := r.revisionBrief(ctx, t, evs, q, sc, judge)
-	return r.implementerSpec(t, resumed(t, trigger)+text), refs, trigger, nil
+	text, refs := r.revisionBrief(ctx, cfg, t, evs, q, sc, judge)
+	return r.implementerSpec(cfg, t, resumed(t, trigger)+text), refs, trigger, nil
 }
 
 // briefSince is the room seq a revision brief reads after: the start of the run before it. A
@@ -177,7 +179,7 @@ func notePR(ref *v1alpha1.PullRequestRef, pr forge.PR) {
 // (Δ5), so the review is never marked handled behind a verifier that cannot act on it. A pull
 // request merged or closed meanwhile is not run on: the task goes back to AwaitingHuman, which
 // ends it (done is true). pr is the pull request as read, for the run to start on.
-func (r *Reconciler) lateReviews(ctx context.Context, t *v1alpha1.Task) (forge.PR, bool, error) {
+func (r *Reconciler) lateReviews(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (forge.PR, bool, error) {
 	pr, err := r.readPR(ctx, t)
 	if err != nil {
 		return pr, false, err
@@ -187,10 +189,10 @@ func (r *Reconciler) lateReviews(ctx context.Context, t *v1alpha1.Task) (forge.P
 		r.to(t, v1alpha1.PhaseAwaitingHuman, "")
 		return pr, true, nil
 	}
-	rvs := r.changesRequested(t, pr)
+	rvs := r.changesRequested(cfg, t, pr)
 	if len(rvs) > 0 && t.Status.NextRole != "" {
 		t.Status.NextRole = ""
-		return pr, false, r.revise(ctx, t, pr, rvs)
+		return pr, false, r.revise(ctx, cfg, t, pr, rvs)
 	}
 	return pr, false, r.queueReviews(ctx, t, pr, rvs)
 }
@@ -199,14 +201,14 @@ func (r *Reconciler) lateReviews(ctx context.Context, t *v1alpha1.Task) (forge.P
 // since its last run started, not yet acted on, oldest id first (Δ5). Anyone else's review is
 // advice to a maintainer, not input; so is a review its author later approved over. Every one is
 // returned, not the newest: two maintainers' reviews in one round are both the next run's input.
-func (r *Reconciler) changesRequested(t *v1alpha1.Task, pr forge.PR) []forge.Review {
+func (r *Reconciler) changesRequested(cfg *config.Config, t *v1alpha1.Task, pr forge.PR) []forge.Review {
 	if pr.HeadRef != "agent/"+t.Name { // only the task's branch is the factory's to revise
 		return nil
 	}
 	since := current(t).Started
 	var out []forge.Review
 	for _, rv := range openChangeRequests(pr.Reviews, false) {
-		if r.repo(t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) && (since == nil || rv.At.After(since.Time)) {
+		if r.repo(cfg, t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) && (since == nil || rv.At.After(since.Time)) {
 			out = append(out, rv)
 		}
 	}
@@ -238,16 +240,16 @@ func openChangeRequests(reviews []forge.Review, dismissed bool) []forge.Review {
 
 // revise queues the reviews in the room (queueReviews) and sends the task back to Queued for a
 // new implementer run: the caps and the human-driver rule (C4) stay in one place.
-func (r *Reconciler) revise(ctx context.Context, t *v1alpha1.Task, pr forge.PR, rvs []forge.Review) error {
+func (r *Reconciler) revise(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR, rvs []forge.Review) error {
 	if err := r.queueReviews(ctx, t, pr, rvs); err != nil {
 		return err
 	}
-	r.intervention(ctx, t, "request_changes")
+	r.intervention(ctx, cfg, t, "request_changes")
 	t.Status.NextTrigger = "human"
 	r.to(t, v1alpha1.PhaseQueued, "")
 	// A revision the task cap will refuse is not announced: Queued escalates it as budget-task,
 	// and the review stays queued in the room for whoever picks the task up.
-	if runFits(t) || !r.Cfg.Budgets.EnforceTask {
+	if runFits(t) || !cfg.Budgets.EnforceTask {
 		narrateOn(t, reviewTarget(t), narrate.Revising(t, rvs[len(rvs)-1].Author))
 	}
 	return nil
@@ -291,7 +293,7 @@ const cmdRetry = "/factory retry"
 // candidate only). Anyone else's command is dropped without an answer (T1), so it cannot make the
 // factory talk. An edited comment never counts: its text may not be its author's. A failing
 // write check is an error: the command waits for the next reconcile.
-func (r *Reconciler) command(ctx context.Context, t *v1alpha1.Task, pr forge.PR, verb string) (forge.Comment, bool, error) {
+func (r *Reconciler) command(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR, verb string) (forge.Comment, bool, error) {
 	all := slices.Clone(pr.Comments)
 	if t.Spec.Issue > 0 {
 		cs, err := r.gh(ctx).RecentComments(ctx, t.Spec.Issue)
@@ -303,7 +305,7 @@ func (r *Reconciler) command(ctx context.Context, t *v1alpha1.Task, pr forge.PR,
 	var found forge.Comment
 	ok := false
 	for _, c := range all {
-		if c.Edited || !r.repo(t).IsMaintainer(c.Author) || slices.Contains(t.Status.Handled, c.ID) || !commandLine(c.Body, verb) ||
+		if c.Edited || !r.repo(cfg, t).IsMaintainer(c.Author) || slices.Contains(t.Status.Handled, c.ID) || !commandLine(c.Body, verb) ||
 			(t.Status.PhaseSince != nil && !c.At.After(t.Status.PhaseSince.Add(-retrySkew))) {
 			continue
 		}
@@ -343,35 +345,35 @@ func commandLine(body, verb string) bool {
 // is marked handled in the same status write as the move, and no run is created here, so a replay
 // after a lost write repeats the move; the next run's deterministic id (R48) keeps a replay from
 // ever starting a second one.
-func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	var pr forge.PR
 	if t.Status.PullRequest != nil {
 		var err error
 		if pr, err = r.readPR(ctx, t); err != nil {
 			return err
 		}
-		if ended, err := r.prEnded(ctx, t, pr); ended || err != nil {
+		if ended, err := r.prEnded(ctx, cfg, t, pr); ended || err != nil {
 			return err
 		}
 	}
-	if done, err := r.escalatedSplit(ctx, t, pr); done || err != nil {
+	if done, err := r.escalatedSplit(ctx, cfg, t, pr); done || err != nil {
 		return err
 	}
-	c, ok, err := r.command(ctx, t, pr, cmdRetry)
+	c, ok, err := r.command(ctx, cfg, t, pr, cmdRetry)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return r.expireEscalation(ctx, t)
+		return r.expireEscalation(ctx, cfg, t)
 	}
-	if t.Status.Reason == "budget-task" && !runFits(t) && (r.Cfg.Budgets.EnforceTask || t.Sponsored() != "") {
+	if t.Status.Reason == "budget-task" && !runFits(t) && (cfg.Budgets.EnforceTask || t.Sponsored() != "") {
 		// F-4: Queued would only escalate it again. The command is answered and handled; the
 		// escalation's clock keeps running, and Retries counts only retries that can run.
 		markHandled(t, c.ID)
 		narrateLater(t, narrate.TaskCapHolds(t, c.ID))
 		return nil
 	}
-	if err := r.resolveRetried(ctx, t); err != nil {
+	if err := r.resolveRetried(ctx, cfg, t); err != nil {
 		return err
 	}
 	markHandled(t, c.ID)
@@ -384,7 +386,7 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 	t.Status.Retries++
 	t.Status.RetriedBy = v1alpha1.Person(c.Author) // D2: the retrier pays for the runs the retry causes
 	t.Status.NextTrigger = "retry"
-	r.intervention(ctx, t, "retry")
+	r.intervention(ctx, cfg, t, "retry")
 	next := v1alpha1.PhaseQueued
 	if t.Status.RoomRef == "" { // escalated before it had a room (foreign_room): check the room again
 		next = v1alpha1.PhaseTriaged
@@ -398,8 +400,8 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 // a person drives its room (C4): the factory never acts on a task a human holds, so such a task
 // never expires while they drive. The PR is left as it is (no stale label, no close). The room
 // closes by the rooms' own close rules once the task has ended, not here.
-func (r *Reconciler) expireEscalation(ctx context.Context, t *v1alpha1.Task) error {
-	limit := r.Cfg.EscalatedLimit()
+func (r *Reconciler) expireEscalation(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	limit := cfg.EscalatedLimit()
 	// No PhaseSince (a task from before the field) never expires: there is nothing to count from.
 	if limit <= 0 || t.Status.PhaseSince == nil || r.Now().Sub(t.Status.PhaseSince.Time) < limit {
 		return nil
@@ -414,7 +416,7 @@ func (r *Reconciler) expireEscalation(ctx context.Context, t *v1alpha1.Task) err
 	}
 	r.leaveBounce(ctx, t, "expired")
 	r.leaveSplit(ctx, t, SplitExpired)
-	return r.end(ctx, t, v1alpha1.PhaseStopped, "escalation_expired")
+	return r.end(ctx, cfg, t, v1alpha1.PhaseStopped, "escalation_expired")
 }
 
 // labelStale marks a pull request the factory closed for want of a review (§6.3).
@@ -425,18 +427,18 @@ const labelStale = "factory/stale"
 // comments where the task narrates, read only once the wait is long); a head commit without an
 // Agent-Run trailer, so not an agent's (a takeover). It never goes back before a spell a reminder
 // was already keyed on: a comment that leaves GitHub's read window must not restart an older one.
-func (r *Reconciler) quietSince(t *v1alpha1.Task, pr forge.PR, thread []forge.Comment) time.Time {
+func (r *Reconciler) quietSince(cfg *config.Config, t *v1alpha1.Task, pr forge.PR, thread []forge.Comment) time.Time {
 	since := t.Status.PhaseSince.Time
 	if at, ok := narrate.RemindedSince(t); ok && at.After(since) {
 		since = at
 	}
 	for _, rv := range pr.Reviews {
-		if r.repo(t).IsMaintainer(rv.Author) && rv.At.After(since) {
+		if r.repo(cfg, t).IsMaintainer(rv.Author) && rv.At.After(since) {
 			since = rv.At
 		}
 	}
 	for _, c := range slices.Concat(pr.Comments, thread) {
-		if r.repo(t).IsMaintainer(c.Author) && c.At.After(since) {
+		if r.repo(cfg, t).IsMaintainer(c.Author) && c.At.After(since) {
 			since = c.At
 		}
 	}
@@ -448,10 +450,10 @@ func (r *Reconciler) quietSince(t *v1alpha1.Task, pr forge.PR, thread []forge.Co
 
 // approved: the latest maintainer review that decides (approve, request changes or a dismissal)
 // approves. Such a pull request waits for a merge, which until the wave only a human makes.
-func (r *Reconciler) approved(t *v1alpha1.Task, pr forge.PR) bool {
+func (r *Reconciler) approved(cfg *config.Config, t *v1alpha1.Task, pr forge.PR) bool {
 	last := ""
 	for _, rv := range pr.Reviews {
-		if r.repo(t).IsMaintainer(rv.Author) && rv.State != "COMMENTED" && rv.State != "PENDING" {
+		if r.repo(cfg, t).IsMaintainer(rv.Author) && rv.State != "COMMENTED" && rv.State != "PENDING" {
 			last = rv.State
 		}
 	}
@@ -467,10 +469,10 @@ func (r *Reconciler) thread(ctx context.Context, t *v1alpha1.Task, pr forge.PR) 
 }
 
 // postedAt is when the factory posted the comment carrying key's marker, if thread still has it.
-func (r *Reconciler) postedAt(t *v1alpha1.Task, thread []forge.Comment, key string) (time.Time, bool) {
+func (r *Reconciler) postedAt(cfg *config.Config, t *v1alpha1.Task, thread []forge.Comment, key string) (time.Time, bool) {
 	marker := narrate.Marker(t.Name, key)
 	for _, c := range thread {
-		if forge.SameLogin(c.Author, r.Cfg.FactoryLogin) && strings.Contains(c.Body, marker) {
+		if forge.SameLogin(c.Author, cfg.FactoryLogin) && strings.Contains(c.Body, marker) {
 			return c.At, true
 		}
 	}
@@ -486,25 +488,25 @@ func (r *Reconciler) postedAt(t *v1alpha1.Task, thread []forge.Comment, key stri
 // The reminder goes through the outbox, written before it is posted, so a replay posts it once.
 // The label goes on before the close, so a replay after a lost status write still reads the
 // closed pull request as stale (prEnded); a refused close takes the label off again.
-func (r *Reconciler) remind(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
+func (r *Reconciler) remind(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) error {
 	if t.Status.PhaseSince == nil || pr.HeadRef != "agent/"+t.Name {
 		return nil
 	}
-	if r.Now().Sub(r.quietSince(t, pr, nil)) < RemindAfter { // spares the thread read
+	if r.Now().Sub(r.quietSince(cfg, t, pr, nil)) < RemindAfter { // spares the thread read
 		return nil
 	}
 	thread, err := r.thread(ctx, t, pr)
 	if err != nil {
 		return err
 	}
-	since := r.quietSince(t, pr, thread)
+	since := r.quietSince(cfg, t, pr, thread)
 	waited := r.Now().Sub(since)
 	if waited < RemindAfter {
 		return nil
 	}
-	approved := r.approved(t, pr)
-	reminder := narrate.Reminder(t, r.repo(t).Maintainers, since, approved)
-	posted, ok := r.postedAt(t, thread, reminder.Key)
+	approved := r.approved(cfg, t, pr)
+	reminder := narrate.Reminder(t, r.repo(cfg, t).Maintainers, since, approved)
+	posted, ok := r.postedAt(cfg, t, thread, reminder.Key)
 	if approved || waited < StaleAfter || !ok || r.Now().Sub(posted) < reminderNotice {
 		narrateLater(t, reminder)
 		return nil
@@ -520,5 +522,5 @@ func (r *Reconciler) remind(ctx context.Context, t *v1alpha1.Task, pr forge.PR) 
 	}
 	class := t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "closed") })
-	return r.end(ctx, t, v1alpha1.PhaseClosed, "stale")
+	return r.end(ctx, cfg, t, v1alpha1.PhaseClosed, "stale")
 }

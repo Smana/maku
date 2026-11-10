@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,7 +46,7 @@ type IssueForge interface {
 // confirmations). Every authority and the capability gate are re-read before the first write. A
 // crash leaves the parent filing_incomplete; a replay adopts each issue by its factory author and
 // first-line marker instead of filing it twice. Only when all are recorded is the parent filed.
-func (s *Service) File(ctx context.Context, parentTask string) error {
+func (s *Service) File(ctx context.Context, cfg *config.Config, parentTask string) error {
 	t, err := s.parent(ctx, parentTask)
 	if err != nil {
 		return err
@@ -53,7 +55,7 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 	if t.Status.Reason == ReasonFiled {
 		return nil
 	}
-	if err := s.ExecuteReady(ctx, cs, nil); err != nil {
+	if err := s.ExecuteReady(ctx, cfg, cs, nil); err != nil {
 		return err
 	}
 	p, hash := *cs.Plan, cs.PlanHash
@@ -71,7 +73,7 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 	parentIssue := t.Spec.Issue
 	if parentIssue == 0 {
 		title, body := narrate.CoordinationParentIssue(parentTask, p, hash)
-		parentIssue, err = s.fileOnce(ctx, forges[p.Primary.Repository], narrate.LabelCoordination, title, body, []string{narrate.LabelCoordination},
+		parentIssue, err = s.fileOnce(ctx, cfg, forges[p.Primary.Repository], narrate.LabelCoordination, title, body, []string{narrate.LabelCoordination},
 			func(i forge.Issue) bool {
 				task, ok := narrate.CoordinationParentOf(i.Body)
 				return ok && task == parentTask
@@ -90,7 +92,7 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 			continue
 		}
 		title, body := narrate.CoordinationChildIssue(parentTask, p, c)
-		n, err := s.fileOnce(ctx, forges[c.Repository], narrate.LabelCoordinationChild, title, body,
+		n, err := s.fileOnce(ctx, cfg, forges[c.Repository], narrate.LabelCoordinationChild, title, body,
 			[]string{narrate.LabelCoordinationChild, narrate.ClassLabel(c.Class)},
 			func(i forge.Issue) bool {
 				task, id, ok := narrate.CoordinationChildOf(i.Body)
@@ -106,7 +108,7 @@ func (s *Service) File(ctx context.Context, parentTask string) error {
 		}
 		links[c.ID] = issueURL(c.Repository, n)
 	}
-	if err := s.repost(ctx, forges[p.Primary.Repository], parentTask, parentIssue, p, hash, links, Materiality{}); err != nil {
+	if err := s.repost(ctx, cfg, forges[p.Primary.Repository], parentTask, parentIssue, p, hash, links, Materiality{}); err != nil {
 		return err
 	}
 	if err := s.setStatus(ctx, parentTask, func(t *v1alpha1.Task) { t.Status.Reason = ReasonFiled }); err != nil {
@@ -140,13 +142,13 @@ func (s *Service) issueForge(repository string) IssueForge {
 }
 
 // fileOnce is the factory-authored issue under label that match recognizes, else a new one.
-func (s *Service) fileOnce(ctx context.Context, f IssueForge, label, title, body string, labels []string, match func(forge.Issue) bool) (int, error) {
+func (s *Service) fileOnce(ctx context.Context, cfg *config.Config, f IssueForge, label, title, body string, labels []string, match func(forge.Issue) bool) (int, error) {
 	existing, err := f.IssuesLabelled(ctx, label)
 	if err != nil {
 		return 0, fmt.Errorf("%w: list %s: %w", ErrAccessUnverified, label, err)
 	}
 	for _, i := range existing {
-		if forge.SameLogin(i.Author, s.Cfg.FactoryLogin) && match(i) {
+		if forge.SameLogin(i.Author, cfg.FactoryLogin) && match(i) {
 			return i.Number, nil
 		}
 	}
@@ -159,14 +161,14 @@ func (s *Service) fileOnce(ctx context.Context, f IssueForge, label, title, body
 
 // repost comments the plan once per (parent, version, hash) on the parent issue. A comment is
 // recovery evidence only: none is ever read back as control input.
-func (s *Service) repost(ctx context.Context, f IssueForge, task string, issue int, p v1alpha1.CoordinationPlan, hash string, links map[string]string, m Materiality) error {
+func (s *Service) repost(ctx context.Context, cfg *config.Config, f IssueForge, task string, issue int, p v1alpha1.CoordinationPlan, hash string, links map[string]string, m Materiality) error {
 	marker := narrate.CoordinationRepostMarker(task, p.Version, hash)
 	cs, err := f.RecentComments(ctx, issue)
 	if err != nil {
 		return fmt.Errorf("%w: comments: %w", ErrAccessUnverified, err)
 	}
 	for _, c := range cs {
-		if forge.SameLogin(c.Author, s.Cfg.FactoryLogin) && strings.HasPrefix(c.Body, marker) {
+		if forge.SameLogin(c.Author, cfg.FactoryLogin) && strings.HasPrefix(c.Body, marker) {
 			return nil
 		}
 	}

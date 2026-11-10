@@ -92,7 +92,7 @@ func TestCoordinationServiceMetrics(t *testing.T) {
 		t.Fatalf("a stale confirmation is counted: %v", m.got)
 	}
 	for range 2 {
-		if err := r.s.File(ctx, p.ID); err != nil {
+		if err := r.s.File(ctx, r.s.Cfg.Current(), p.ID); err != nil {
 			t.Fatal(err)
 		}
 	}

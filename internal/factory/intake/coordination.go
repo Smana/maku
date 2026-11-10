@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -31,16 +33,16 @@ const (
 // issue: a marker copied onto an ordinary issue grants nothing, and that issue takes the ordinary
 // path. A parent issue is refused; a child issue retries only its unchanged factory snapshot under
 // the current confirmed plan, as the same deterministic child Task, never one built from the issue.
-func (p *IssuePoller) coordinationIssue(ctx context.Context, n int, iss forge.Issue, last forge.LabelEvent) (bool, error) {
-	if !forge.SameLogin(iss.Author, p.Cfg.FactoryLogin) {
+func (p *IssuePoller) coordinationIssue(ctx context.Context, cfg *config.Config, n int, iss forge.Issue, last forge.LabelEvent) (bool, error) {
+	if !forge.SameLogin(iss.Author, cfg.FactoryLogin) {
 		return false, nil
 	}
 	if task, ok := narrate.CoordinationParentOf(iss.Body); ok {
 		parent, err := p.coordinationParent(ctx, task)
-		if err != nil || parent == nil || parent.Spec.Issue != n || !strings.EqualFold(parent.Spec.Repository, p.repo().Name) {
+		if err != nil || parent == nil || parent.Spec.Issue != n || !strings.EqualFold(parent.Spec.Repository, p.repo(cfg).Name) {
 			return false, err
 		}
-		return true, p.refuse(ctx, n, last, reasonCoordinationParent)
+		return true, p.refuse(ctx, cfg, n, last, reasonCoordinationParent)
 	}
 	task, id, ok := narrate.CoordinationChildOf(iss.Body)
 	if !ok {
@@ -53,17 +55,17 @@ func (p *IssuePoller) coordinationIssue(ctx context.Context, n int, iss forge.Is
 	cs := parent.Status.Coordination
 	c, ok := coordination.PlanChild(cs, id)
 	i := slices.IndexFunc(cs.Children, func(s v1alpha1.CoordinationChildStatus) bool { return s.ID == id })
-	if !ok || i < 0 || cs.Children[i].Issue != n || c.Repository != p.repo().Name {
+	if !ok || i < 0 || cs.Children[i].Issue != n || c.Repository != p.repo(cfg).Name {
 		return false, nil // not this family's child issue here: the ordinary path, with no lineage
 	}
 	if _, want := narrate.CoordinationChildIssue(task, *cs.Plan, c); iss.Body != want || !iss.LastEditedAt.IsZero() || !iss.TitleEditedAt.IsZero() {
-		return true, p.refuse(ctx, n, last, reasonCoordinationScopeChanged)
+		return true, p.refuse(ctx, cfg, n, last, reasonCoordinationScopeChanged)
 	}
-	t := coordination.ChildTask(p.Namespace, p.Cfg, parent, c, n, max(cs.Children[i].Generation, 1))
+	t := coordination.ChildTask(p.Namespace, cfg, parent, c, n, max(cs.Children[i].Generation, 1))
 	if err := p.Client.Create(ctx, t); err != nil && !apierrors.IsAlreadyExists(err) {
 		return true, fmt.Errorf("create coordination child %s: %w", t.Name, err)
 	}
-	return true, p.Forge.RemoveLabel(ctx, n, p.repo().TriggerLabel)
+	return true, p.Forge.RemoveLabel(ctx, n, p.repo(cfg).TriggerLabel)
 }
 
 // coordinationParent is the coordination parent named task, nil when there is none.

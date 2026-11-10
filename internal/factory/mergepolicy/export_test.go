@@ -281,9 +281,9 @@ func TestReviewEvaluationSurvivesTheCutover(t *testing.T) {
 		t.Fatalf("%v", d)
 	}
 	w, _, _ := authorityRig()
-	w.Cfg.HarnessProfiles = c.HarnessProfiles
+	w.Cfg.Current().HarnessProfiles = c.HarnessProfiles
 	w.Observe(t.Context(), "o/r", raw)
-	got := w.Cfg.RepositoryFor("o/r").Classes["review"]
+	got := w.Cfg.Current().RepositoryFor("o/r").Classes["review"]
 	if got.Live || got.Shadow || got.Harness != "review-floor" || !slices.Equal(got.HarnessAllowed, review.HarnessAllowed) ||
 		got.Escalation == nil || got.Escalation.OutOfBudget != "review-search" {
 		t.Fatalf("cut over: %+v", got)

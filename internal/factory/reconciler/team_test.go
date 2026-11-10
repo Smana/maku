@@ -32,8 +32,8 @@ import (
 // staticWith is the static triager with the template it picks.
 type staticWith string
 
-func (s staticWith) Triage(ctx context.Context, t *v1alpha1.Task) (triage.Decision, error) {
-	d, err := triage.Static{Cfg: cfg()}.Triage(ctx, t)
+func (s staticWith) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (triage.Decision, error) {
+	d, err := triage.Static{}.Triage(ctx, cfg, t)
 	d.Template = string(s)
 	return d, err
 }
@@ -360,10 +360,10 @@ func TestATemplateListingTheTesterHasTheReviewerAloneAsVerifier(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 2); g.runs.specs[rid(2)].Role != "reviewer" || tk.Status.ReviewRounds != 1 {
 		t.Fatalf("%d %+v", tk.Status.ReviewRounds, g.runs.specs[rid(2)])
 	}
-	if got := g.r.nextVerifier(g.task(t), "implementer"); got != "reviewer" {
+	if got := g.r.nextVerifier(g.r.Cfg.Current(), g.task(t), "implementer"); got != "reviewer" {
 		t.Fatalf("next verifier %q", got)
 	}
-	if got := g.r.nextVerifier(g.task(t), "triager"); got != "" {
+	if got := g.r.nextVerifier(g.r.Cfg.Current(), g.task(t), "triager"); got != "" {
 		t.Fatalf("a role outside the template has no next verifier: %q", got)
 	}
 }
@@ -660,8 +660,8 @@ func approvedPairAtTheGate(t *testing.T) *rig {
 	t.Helper()
 	g := pairRig(t)
 	g.r.Merger = g.f
-	g.r.Cfg.AgentsLogin = "ogenki-agents[bot]"
-	g.r.Cfg.Classes = map[string]config.Class{"review": {Shadow: true}}
+	g.r.Cfg.Current().AgentsLogin = "ogenki-agents[bot]"
+	g.r.Cfg.Current().Classes = map[string]config.Class{"review": {Shadow: true}}
 	g.f.SetPR(agentPR12(head1, rid(0)))
 	g.log.handoff(rid(0), head1)
 	g.log.verdict(rid(1), "approve", head1, "LGTM")
@@ -964,8 +964,8 @@ func TestEveryPushToAPRAtTheGateIsTheFactorys(t *testing.T) {
 	t.Run("a human's push during a revision run", func(t *testing.T) {
 		g := pairRig(t)
 		g.r.Merger = g.f
-		g.r.Cfg.AgentsLogin = "ogenki-agents[bot]"
-		g.r.Cfg.Classes = map[string]config.Class{"review": {Shadow: true}}
+		g.r.Cfg.Current().AgentsLogin = "ogenki-agents[bot]"
+		g.r.Cfg.Current().Classes = map[string]config.Class{"review": {Shadow: true}}
 		g.f.SetPR(agentPR12(head1, rid(0)))
 		g.log.handoff(rid(0), head1)
 		g.log.verdict(rid(1), "changes", head1, "Add a test.")
@@ -1070,9 +1070,9 @@ func reviewerRefusingRig(t *testing.T, urlOnlyRefused bool) (*rig, *int) {
 	t.Helper()
 	creates := 0
 	g := teamRigFor(t, "pair", issueTask("3buqdlot", 7, "x"), func(g *rig) {
-		repo := g.r.Cfg.Repos()[0]
+		repo := g.r.Cfg.Current().Repos()[0]
 		repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {}, "review": {Checks: true}}
-		g.r.Cfg.Repositories = []config.Repository{repo}
+		g.r.Cfg.Current().Repositories = []config.Repository{repo}
 		g.runs.refuse = func(s runs.Spec) error {
 			if s.Role != "reviewer" {
 				return nil

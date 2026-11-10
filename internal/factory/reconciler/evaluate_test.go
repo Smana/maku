@@ -25,13 +25,13 @@ func TestDecideArmUnderTheCentralClassIsDecideArm(t *testing.T) {
 		"shadow": func(in *ArmInputs) {
 			cl := declaredClass()
 			cl.Live, cl.Shadow = false, true
-			in.Cfg.Classes["dead-links"] = cl
+			in.Cfg.Current().Classes["dead-links"] = cl
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := gateInputs()
 			mutate(&in)
-			cl := gateOf(in.Cfg.RepositoryFor(""), "dead-links")
+			cl := gateOf(in.Cfg.Current().RepositoryFor(""), "dead-links")
 			if got, want := DecideArmUnder(in, []config.Class{cl}, nil), DecideArm(in); !reflect.DeepEqual(got, want) {
 				t.Fatalf("got %+v, want %+v", got, want)
 			}

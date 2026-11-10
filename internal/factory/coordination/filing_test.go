@@ -98,7 +98,7 @@ func TestCoordinationIssuesAreFiledWithTheirMarkers(t *testing.T) {
 	r := newFilingRig(t)
 	p := draftPlan(t)
 	r.confirmAll(t, p)
-	if err := r.s.File(context.Background(), p.ID); err != nil {
+	if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	parents, contract, consumer := r.issues(repoA, narrate.LabelCoordination), r.issues(repoA, narrate.LabelCoordinationChild), r.issues(repoB, narrate.LabelCoordinationChild)
@@ -129,7 +129,7 @@ func TestCoordinationIssuesAreFiledWithTheirMarkers(t *testing.T) {
 	if task.Status.Reason != ReasonFiled || task.Spec.Issue != parents[0].Number || len(task.Status.Coordination.Children) != 2 {
 		t.Fatalf("parent %s issue %d children %+v", task.Status.Reason, task.Spec.Issue, task.Status.Coordination.Children)
 	}
-	if err := r.s.File(context.Background(), p.ID); err != nil || len(r.forges[repoA].Comments(parents[0].Number)) != 1 {
+	if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); err != nil || len(r.forges[repoA].Comments(parents[0].Number)) != 1 {
 		t.Fatalf("a second File: %v", err)
 	}
 }
@@ -140,7 +140,7 @@ func TestCoordinationFilingChecksEveryRepositoryFirst(t *testing.T) {
 	p := draftPlan(t)
 	r.confirmAll(t, p)
 	r.s.Checks.(*fakeChecks).perms[repoB]["other-maintainer"] = "read"
-	if err := r.s.File(context.Background(), p.ID); !errors.Is(err, ErrRepositoryPermission) {
+	if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); !errors.Is(err, ErrRepositoryPermission) {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(r.forges[repoA].Created()) + len(r.forges[repoB].Created()); n != 0 {
@@ -148,7 +148,7 @@ func TestCoordinationFilingChecksEveryRepositoryFirst(t *testing.T) {
 	}
 	r.s.Prerequisites = nil
 	r.s.Checks.(*fakeChecks).perms[repoB]["other-maintainer"] = "write"
-	if err := r.s.File(context.Background(), p.ID); !errors.Is(err, ErrPrerequisites) || len(r.forges[repoA].Created()) != 0 {
+	if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); !errors.Is(err, ErrPrerequisites) || len(r.forges[repoA].Created()) != 0 {
 		t.Fatalf("without prerequisites: %v", err)
 	}
 }
@@ -167,14 +167,14 @@ func TestFilingCrashReplayAdoptsWithoutStarting(t *testing.T) {
 			p := draftPlan(t)
 			r.confirmAll(t, p)
 			r.failAt = tc.failAt
-			if err := r.s.File(context.Background(), p.ID); !errors.Is(err, errCrash) {
+			if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); !errors.Is(err, errCrash) {
 				t.Fatalf("err = %v, want the crash", err)
 			}
 			if got := parentOf(t, r.s, p.ID).Status.Reason; got != ReasonFilingIncomplete {
 				t.Fatalf("reason %q after the crash", got)
 			}
 			r.failAt, r.writes = 0, 0
-			if err := r.s.File(context.Background(), p.ID); err != nil {
+			if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); err != nil {
 				t.Fatalf("replay: %v", err)
 			}
 			if a, b := len(r.forges[repoA].Created()), len(r.forges[repoB].Created()); a != 2 || b != 1 {
@@ -199,7 +199,7 @@ func TestCoordinationFilingAdoptsOnlyFactoryIssues(t *testing.T) {
 	r.confirmAll(t, p)
 	r.forges[repoA].SetIssue(forge.Issue{Number: 3, Author: "mallory", Labels: []string{narrate.LabelCoordination},
 		Body: narrate.CoordinationParentMarker(p.ID, 1, PlanHash(p))})
-	if err := r.s.File(context.Background(), p.ID); err != nil {
+	if err := r.s.File(context.Background(), r.s.Cfg.Current(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if n := parentOf(t, r.s, p.ID).Spec.Issue; n == 3 {

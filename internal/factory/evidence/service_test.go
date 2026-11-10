@@ -355,7 +355,7 @@ func TestRefresherReadsOwnedRepositories(t *testing.T) {
 	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
 	src := &fakeSource{file: policyFile, found: true}
 	s := service(src, func() time.Time { return now })
-	s.Cfg.Repositories = append(s.Cfg.Repositories, config.Repository{Name: "Smana/elsewhere"})
+	s.Cfg.Current().Repositories = append(s.Cfg.Current().Repositories, config.Repository{Name: "Smana/elsewhere"})
 	ages := map[string]time.Duration{}
 	r := &Refresher{Service: s, Owned: func(repo string) bool { return repo == "Smana/cloud-native-ref" },
 		OnAge: func(_ context.Context, repo string, age time.Duration) { ages[repo] = age }}

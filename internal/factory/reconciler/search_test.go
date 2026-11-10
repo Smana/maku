@@ -18,7 +18,7 @@ import (
 func searchRig(t *testing.T, row config.Loop) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
-	g.r.Cfg.Loops = map[string]config.Loop{"review": row}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": row}
 	tk := g.reconcile(t, "3buqdlot", 3)
 	if !tk.Spec.Search {
 		t.Fatal("triage did not record spec.search")
@@ -49,9 +49,9 @@ func TestSearchJoinsTheLoopOnImplementerClaimsOnly(t *testing.T) {
 		t.Fatalf("spec.loop %v", loop)
 	}
 	for _, role := range []string{"reviewer", "tester", "triager"} {
-		s := g.r.implementerSpec(tk, "text")
+		s := g.r.implementerSpec(g.r.Cfg.Current(), tk, "text")
 		s.Role = role
-		if err := g.r.startRun(t.Context(), tk, s, "verifier"); err != nil {
+		if err := g.r.startRun(t.Context(), g.r.Cfg.Current(), tk, s, "verifier"); err != nil {
 			t.Fatal(err)
 		}
 		if got := g.runs.specs[runID(tk.Name, len(tk.Status.Runs)-1)]; got.Search {

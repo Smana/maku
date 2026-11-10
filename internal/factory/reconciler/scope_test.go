@@ -22,7 +22,7 @@ const reviewNote = "# Steering: review\n\n## Verify\n- `task check` (CI: check):
 func scopeRig(t *testing.T, mode config.ScopeMode) *rig {
 	t.Helper()
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves"))
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: mode}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: mode}}
 	return g
 }
 
@@ -93,12 +93,12 @@ func TestAnUnreadableNotePathProceedsUnsteered(t *testing.T) {
 func TestTheModeIsFixedAtTriage(t *testing.T) {
 	g := scopeRig(t, config.ScopeSteering)
 	g.reconcile(t, "3buqdlot", 1)
-	g.r.Cfg.Loops = nil
+	g.r.Cfg.Current().Loops = nil
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Spec.ScopeMode != "steering" {
 		t.Fatalf("mode %q after the config changed", tk.Spec.ScopeMode)
 	}
 	inv := investigateRig(t)
-	inv.r.Cfg.Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
+	inv.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
 	if tk := inv.reconcile(t, "3buqdlot", 1); tk.Spec.ScopeMode != "off" || tk.Spec.Steering != nil {
 		t.Fatalf("investigate: mode %q", tk.Spec.ScopeMode)
 	}

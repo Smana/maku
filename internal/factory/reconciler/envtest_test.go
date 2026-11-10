@@ -56,7 +56,7 @@ func TestEnvtestTaskToRun(t *testing.T) {
 		}
 	}
 	r := &Reconciler{Client: c, Namespace: "agent-system", Cfg: cfg(), Forge: forgetest.NewFake(), Kind: runwatch.DefaultKind, Runs: runs.Client{C: c, Kind: runwatch.DefaultKind},
-		Rooms: &fakeLog{}, Triage: triage.Static{Cfg: cfg()}, Metrics: &fakeMetrics{},
+		Rooms: &fakeLog{}, Triage: triage.Static{}, Metrics: &fakeMetrics{},
 		Now: time.Now, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Trace: &fakeSink{}}
 	if err := r.SetupWithManager(mgr); err != nil {

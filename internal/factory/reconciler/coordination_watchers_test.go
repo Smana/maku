@@ -30,7 +30,7 @@ func TestParentRoomAdmitsOnlyConfiguredSponsoredWatcher(t *testing.T) {
 		parent := filedParent(p, coordination.ReasonAwaitingConfirmation)
 		parent.Status.Phase, parent.Status.RoomRef = "", ""
 		g, _ := coordinationRig(t, config.CoordinationPlan, parent)
-		g.r.Cfg.API.Sponsored = sponsored
+		g.r.Cfg.Current().API.Sponsored = sponsored
 		g.reconcile(t, p.ID, 4)
 		var room roomv1.Room
 		if err := g.c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: p.ID}, &room); err != nil {
@@ -49,7 +49,7 @@ func TestParentRoomAdmitsOnlyConfiguredSponsoredWatcher(t *testing.T) {
 		if err := g.c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: p.ID}, &before); err != nil {
 			t.Fatal(err)
 		}
-		g.r.Cfg.API.Sponsored = sponsored
+		g.r.Cfg.Current().API.Sponsored = sponsored
 		g.reconcile(t, p.ID, 2)
 		var after roomv1.Room
 		if err := g.c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: p.ID}, &after); err != nil {

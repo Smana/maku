@@ -500,7 +500,7 @@ const evidencePR = 2239
 func reviseRig(t *testing.T, b config.Brief) *evidenceRig {
 	t.Helper()
 	g := newRig(t)
-	g.r.Cfg.Brief = b
+	g.r.Cfg.Current().Brief = b
 	tk := reviseTask()
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: evidencePR, HeadSHA: "abc"}
 	g.f.SetPR(forge.PR{Number: evidencePR, State: "OPEN", HeadRef: "agent/" + tk.Name})
@@ -537,7 +537,7 @@ func (g *evidenceRig) checksError(n int, err error) { g.f.SetChecksError(n, err)
 // queued messages when a test gives some.
 func (g *evidenceRig) reviseBrief(t *testing.T, queued ...rooms.Queued) (string, []int64) {
 	t.Helper()
-	return g.r.revisionBrief(t.Context(), g.tk, nil, queued, nil, "")
+	return g.r.revisionBrief(t.Context(), g.r.Cfg.Current(), g.tk, nil, queued, nil, "")
 }
 
 // CD12: the reviewer's comment and the failing check's annotation ride the revision brief, fenced, and the
@@ -726,7 +726,7 @@ func TestProfileChoices(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.Repository, tk.Spec.PredictedClass, tk.Status.Profile = "Smana/cloud-native-ref", c.class, c.profile
-			if got := r.profileChoices(tk); !slices.Equal(got, c.want) {
+			if got := r.profileChoices(cfg, tk); !slices.Equal(got, c.want) {
 				t.Fatalf("%+v, want %+v", got, c.want)
 			}
 		})

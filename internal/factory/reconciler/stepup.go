@@ -8,6 +8,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/narrate"
 )
 
@@ -26,7 +27,7 @@ func group(reason string) string {
 }
 
 // stepUp runs t once more under a richer profile instead of escalating it for reason.
-func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string) (bool, error) {
+func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) (bool, error) {
 	p := t.Status.Profile
 	if p == nil || !p.Resolved || len(t.Status.Runs) == 0 {
 		return false, nil
@@ -44,7 +45,7 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 	if g == "" {
 		return false, nil
 	}
-	cl := r.repo(t).Classes[t.Spec.PredictedClass]
+	cl := r.class(cfg, t, t.Spec.PredictedClass)
 	if cl.Escalation == nil {
 		return false, nil
 	}
@@ -52,20 +53,20 @@ func (r *Reconciler) stepUp(ctx context.Context, t *v1alpha1.Task, reason string
 	if target == "" || p.Source == "escalation" || p.Cohort == "control" {
 		return false, nil
 	}
-	v, ok := r.Cfg.ProfileFor(cl, target)
+	v, ok := cfg.ProfileFor(cl, target)
 	if !ok {
 		return false, nil
 	}
 	trial := t.DeepCopy()
-	r.profileSpec(trial, trial.Spec.PredictedClass, v)
+	r.profileSpec(cfg, trial, trial.Spec.PredictedClass, v)
 	if !runFits(trial) {
 		return false, nil
 	}
 	// TestFirst stays: the tester branches from main, which an implementer run has already left.
 	d := profileDecision{Name: target, Source: "escalation", Reason: g, Checks: p.Checks || v.Checks, TestFirst: p.TestFirst,
-		Recommended: p.Recommended, Why: p.Why, Offered: len(r.profileChoices(t)) > 0}
+		Recommended: p.Recommended, Why: p.Why, Offered: len(r.profileChoices(cfg, t)) > 0}
 	// The spec is written before any status change, so a refused write replays the whole step.
-	if err := r.applyProfile(ctx, t, d); err != nil {
+	if err := r.applyProfile(ctx, cfg, t, d); err != nil {
 		return false, err
 	}
 	r.stepped(t, d)

@@ -106,7 +106,7 @@ func TestRecordVerification(t *testing.T) {
 		"another internal principal":  {p: otherInternal, objs: verifyTasks(30*time.Minute, origTask), task: fixTask, body: verifyBody("resolved", "x"), status: 403, reason: "not_own_task"},
 		"a task with no origin":       {p: runlore, objs: verifyTasks(30*time.Minute, ""), task: fixTask, body: verifyBody("resolved", "x"), status: 403, reason: "not_own_task"},
 		"a sponsored principal":       {p: slack, objs: verifyTasks(30*time.Minute, origTask), task: fixTask, body: verifyBody("resolved", "x"), status: 403, reason: "not_permitted"},
-		"verification false":          {p: runlore, mutate: func(s *Server) { s.Cfg.API.InternalPrincipals[0].Verification = false }, objs: verifyTasks(30*time.Minute, origTask), task: fixTask, body: verifyBody("resolved", "x"), status: 403, reason: "verification_not_allowed"},
+		"verification false":          {p: runlore, mutate: func(s *Server) { s.Cfg.Current().API.InternalPrincipals[0].Verification = false }, objs: verifyTasks(30*time.Minute, origTask), task: fixTask, body: verifyBody("resolved", "x"), status: 403, reason: "verification_not_allowed"},
 		"not merged":                  {p: runlore, objs: unmerged(), task: fixTask, body: verifyBody("resolved", "x"), status: 409, reason: "not_merged"},
 		"merged three hours ago":      {p: runlore, objs: verifyTasks(3*time.Hour, origTask), task: fixTask, body: verifyBody("resolved", "x"), status: 409, reason: "window_closed"},
 		"an unknown task":             {p: runlore, objs: verifyTasks(30*time.Minute, origTask), task: "nope2222", body: verifyBody("resolved", "x"), status: 404, reason: "no_such_task"},

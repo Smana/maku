@@ -47,7 +47,7 @@ func TestProbeTheEndIsNarratedAfterAnOutage(t *testing.T) {
 	_, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 	t.Logf("reconcile during outage: %v", err)
 	ff.down = false
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) } // the end waits for the usage to settle (#42)
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) } // the end waits for the usage to settle (#42)
 	for range 3 {
 		_, _ = g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 	}
@@ -95,7 +95,7 @@ func TestTheEndIsPostedOnceAfterAnOutage(t *testing.T) {
 	}
 	// Past the settle window the usage settles and TaskTokens is recorded once; after that the
 	// ended task is left alone again.
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 	ff.down = true
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("an undrained outbox retries")

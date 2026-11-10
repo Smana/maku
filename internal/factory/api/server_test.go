@@ -220,7 +220,7 @@ func TestRunsInAttendedRoomsAreSuspendable(t *testing.T) {
 			st := &store{}
 			c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(room).Build()
 			srv := mkServer(t, st, c, false, false, "7f3cq2xz", 5_000_000)
-			srv.Cfg.Sandbox.Suspend.Enabled = tc.enabled
+			srv.Cfg.Current().Sandbox.Suspend.Enabled = tc.enabled
 			if w := post(srv.Handler(), "alice", body); w.Code != http.StatusCreated || st.created[0].Suspendable != tc.suspended {
 				t.Fatalf("%d %+v", w.Code, st.created)
 			}

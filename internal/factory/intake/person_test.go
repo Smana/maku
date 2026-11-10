@@ -39,7 +39,7 @@ func TestALabellerPastTheirDayIsRefusedAtIntake(t *testing.T) {
 			}
 			p, k := poller(t, f, l)
 			p.Ledger, p.Now = k, func() time.Time { return t0 }
-			p.Cfg.Budgets = config.Budgets{FactoryDailyUSD: 25, HumanDailyUSD: 5, EnforcePrincipal: c.enforce,
+			p.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 25, HumanDailyUSD: 5, EnforcePrincipal: c.enforce,
 				PerPerson: config.PerPerson{Enabled: c.enabled, DailyUSD: 5}}
 			if err := p.Poll(t.Context()); err != nil {
 				t.Fatal(err)

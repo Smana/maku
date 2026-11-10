@@ -36,7 +36,7 @@ func TestAnEndedRunsCostWaitsForItsLateReadings(t *testing.T) {
 	}
 	src := typed{"nh5tztlh": opus(366_751, 3_775)}
 	var got []reported
-	m := &Meter{Runs: st, Source: src, Prices: served, Now: func() time.Time { return clock },
+	m := &Meter{Runs: st, Source: src, Cfg: priced(served, nil, config.Budgets{}), Now: func() time.Time { return clock },
 		OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
 			got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 		}}
@@ -92,7 +92,7 @@ func TestTheCostCarriesTheRunsRole(t *testing.T) {
 			st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{r}}
 			src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
 			var got []reported
-			m := &Meter{Runs: st, Source: src, Prices: served,
+			m := &Meter{Runs: st, Source: src, Cfg: priced(served, nil, config.Budgets{}),
 				OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
 					got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 				}}
@@ -125,7 +125,9 @@ func TestRunCostCarriesTheCohortAndProfile(t *testing.T) {
 			st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{r}}
 			src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
 			var got []reported
-			m := &Meter{Runs: st, Source: src, Prices: served, Profiles: map[string]config.HarnessProfile{"review-search": {}},
+			cfg := priced(served, nil, config.Budgets{})
+			cfg.HarnessProfiles = map[string]config.HarnessProfile{"review-search": {}}
+			m := &Meter{Runs: st, Source: src, Cfg: cfg,
 				OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
 					got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 				}}
@@ -148,7 +150,7 @@ func TestADeletedRunReportsItsCost(t *testing.T) {
 	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{standardRun("aaaaaaaa")}}
 	src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
 	var got []reported
-	m := &Meter{Runs: st, Source: src, Prices: served,
+	m := &Meter{Runs: st, Source: src, Cfg: priced(served, nil, config.Budgets{}),
 		OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
 			got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 		}}
@@ -174,7 +176,7 @@ func TestTheLiveSpendSnapshot(t *testing.T) {
 	u := byModel(map[string]ModelUsage{"claude-opus-5-5": {Input: 100_000}, "": {Input: 1_000_000}})
 	var snap map[string]map[string]float64
 	m := &Meter{Runs: st, Source: typed{"aaaaaaaa": u}, Now: func() time.Time { return clock },
-		Prices:  map[string]config.Price{"claude-opus-5-5": served["claude-opus-5-5"], "agent-default": glm["agent-default"]},
+		Cfg:     priced(map[string]config.Price{"claude-opus-5-5": served["claude-opus-5-5"], "agent-default": glm["agent-default"]}, nil, config.Budgets{}),
 		OnSpend: func(s map[string]map[string]float64) { snap = s }}
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
@@ -203,7 +205,7 @@ func TestSpendAfterTheReportIsAddedLate(t *testing.T) {
 	src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
 	var costs []float64
 	var late []map[string]float64
-	m := &Meter{Runs: st, Source: src, Prices: served, Now: func() time.Time { return clock },
+	m := &Meter{Runs: st, Source: src, Cfg: priced(served, nil, config.Budgets{}), Now: func() time.Time { return clock },
 		OnCost:     func(_ context.Context, _ CostKey, usd float64, _ map[string]float64) { costs = append(costs, usd) },
 		OnLateCost: func(_ context.Context, byModel map[string]float64) { late = append(late, byModel) }}
 	tick := func() {

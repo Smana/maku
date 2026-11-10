@@ -21,7 +21,7 @@ func oracleInputs(headText string) ArmInputs {
 	in := gateInputs()
 	cl := declaredClass()
 	cl.Oracle = &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}
-	in.Cfg.Classes["dead-links"] = cl
+	in.Cfg.Current().Classes["dead-links"] = cl
 	in.Task.Spec.Findings = []v1alpha1.Finding{{File: testFile, URL: gone, Archive: archive}}
 	in.Files = changed(page, headText)
 	in.Stats = []forge.FileStat{{Path: testFile, Status: "modified", Additions: 1, Deletions: 1}}

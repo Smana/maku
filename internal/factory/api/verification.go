@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,8 +40,8 @@ type verificationRequest struct {
 }
 
 // anyVerifies reports whether an internal principal may send verdicts: the route is a 404 otherwise (D4).
-func (s *Server) anyVerifies() bool {
-	for _, ip := range s.Cfg.API.InternalPrincipals {
+func (s *Server) anyVerifies(cfg *config.Config) bool {
+	for _, ip := range cfg.API.InternalPrincipals {
 		if ip.Verification {
 			return true
 		}
@@ -51,6 +53,7 @@ func (s *Server) anyVerifies() bool {
 // whether the fix of its own proposal held. The verdict lands in the fix's status.monitor, which
 // the post-merge monitor reads; the evidence lands on the origin task, which stays internal.
 func (s *Server) recordVerification(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, err := s.Auth.Authenticate(r)
 	switch {
 	case errors.Is(err, authn.ErrForbidden):
@@ -60,7 +63,7 @@ func (s *Server) recordVerification(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
-	ip := s.Cfg.InternalBy(p.ID)
+	ip := cfg.InternalBy(p.ID)
 	switch {
 	case !p.Internal || ip == nil:
 		refuse(w, http.StatusForbidden, "not_permitted")
@@ -142,7 +145,13 @@ func (s *Server) recordVerification(w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusOK, map[string]any{"task": t.Name, "verdict": v.Verdict, "recordedAt": v.RecordedAt.Time, "duplicate": true})
 			return
 		}
-		vw := s.Cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass].Monitor
+		rc := cfg.RepositoryFor(t.Spec.Repository)
+		if rc == nil { // a publish removed its repository (factory resources D12)
+			refuse(w, http.StatusForbidden, "repository_not_allowed")
+			return
+		}
+		cl, _ := rc.Class(t.Spec.PredictedClass)
+		vw := cl.Monitor
 		// One window with the monitor: its Since is GitHub's merge time once a pass has read it; until
 		// then the Task's MergedAt, the factory's clock, which the monitor's first pass corrects.
 		since := pr.MergedAt.Time
