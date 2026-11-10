@@ -19,9 +19,9 @@ import (
 // issue order, while each body retains only its own ascending subset.
 //
 // The result recomputes the remaining ranked gaps from the base, advances the round and renews the
-// material hash. On the cap-reaching round it also replaces every remaining marker with its
-// recommendation and appends an A record, without making a model call. A revision above the cap is
-// planner_invalid; base drift is plan_changed.
+// material hash. When the derived round reaches or passes the cap it also replaces every remaining
+// marker with its recommendation and appends an A record, without making a model call. A base round
+// above the cap is planner_invalid; base drift is plan_changed.
 func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, error) {
 	if Hash(base) != baseHash {
 		return Plan{}, refuse(ReasonPlanChanged, "")
@@ -43,7 +43,7 @@ func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, er
 	if baseRound == 0 {
 		baseRound = 1
 	}
-	if baseRound >= maxRounds {
+	if baseRound > maxRounds {
 		return Plan{}, refuse(ReasonPlannerInvalid, "the revision would exceed maxRounds")
 	}
 	round := baseRound + 1
@@ -99,7 +99,7 @@ func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, er
 	}
 
 	out := cloneRevision(candidate)
-	if round == maxRounds {
+	if round >= maxRounds {
 		var err error
 		out, _, err = acceptRevisionRemainder(out, edits, gaps, lastNumber)
 		if err != nil {
@@ -122,7 +122,7 @@ func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, er
 		out = WithGaps(out, ranked)
 	}
 	out.Round = round
-	out.RoundsLeft = maxRounds - round
+	out.RoundsLeft = max(maxRounds-round, 0)
 	out.Hash = Hash(out)
 	return out, nil
 }

@@ -194,8 +194,7 @@ func TestReviseRejects(t *testing.T) {
 		baseRound int
 		maxRounds int
 	}{
-		{name: "above cap", baseRound: 10, maxRounds: 10},
-		{name: "legacy base cannot revise when cap is one", baseRound: 0, maxRounds: 1},
+		{name: "base already above cap", baseRound: 11, maxRounds: 10},
 		{name: "negative base round", baseRound: -1, maxRounds: 10},
 		{name: "invalid cap", baseRound: 1, maxRounds: 0},
 	} {
@@ -391,6 +390,39 @@ func TestReviseCapAcceptsRemaining(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestReviseCapOneAcceptsRemainder(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		baseRound int
+	}{
+		{name: "legacy base", baseRound: 0},
+		{name: "verified base at cap", baseRound: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := revisionBase()
+			base.Round = test.baseRound
+			got, err := intake.Revise(base, intake.Hash(base), revisionCandidate(base), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Round != 2 || got.RoundsLeft != 0 {
+				t.Fatalf("rounds = %d/%d, want 2/0", got.Round, got.RoundsLeft)
+			}
+			if len(got.Gaps) != 0 || got.Question != nil {
+				t.Fatalf("cap display = gaps %+v, question %+v", got.Gaps, got.Question)
+			}
+			for _, issue := range got.Issues {
+				if strings.Contains(issue.Body, "NEEDS CLARIFICATION") {
+					t.Fatalf("issue %d retains a clarification: %q", issue.Index, issue.Body)
+				}
+			}
+			if got.Hash != intake.Hash(got) {
+				t.Fatal("cap-one result was not rehashed")
+			}
+		})
+	}
 }
 
 func TestCheckCarryForward(t *testing.T) {
