@@ -97,6 +97,12 @@ func bounded(t *testing.T, path string, s *apiextensionsv1.JSONSchemaProps) {
 		for name, p := range s.Properties {
 			bounded(t, path+"."+name, &p)
 		}
+		if ap := s.AdditionalProperties; ap != nil && ap.Schema != nil {
+			if s.MaxProperties == nil {
+				t.Errorf("%s: a map without maxProperties", path)
+			}
+			bounded(t, path+"{}", ap.Schema)
+		}
 	}
 }
 

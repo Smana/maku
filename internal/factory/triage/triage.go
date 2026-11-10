@@ -16,6 +16,27 @@ type Decision struct {
 	Template, PredictedClass, DataClass string
 	Budget                              v1alpha1.Budget
 	Classification                      v1alpha1.Classification
+	// Declared is a class a maintainer or a schedule named; Cohort is the evaluation's group.
+	Declared bool
+	Cohort   string
+}
+
+// The evaluation cohorts a task is frozen in at triage.
+const (
+	CohortLabeled   = "labeled"
+	CohortControl   = "control"
+	CohortTreatment = "treatment"
+)
+
+// CohortOf is a task's evaluation group: a declared class is labeled, else percent % are control.
+func CohortOf(taskID string, declared bool, percent int) string {
+	switch {
+	case declared:
+		return CohortLabeled
+	case Cohort(taskID, percent):
+		return CohortControl
+	}
+	return CohortTreatment
 }
 
 // Triager decides once per task.
@@ -42,7 +63,8 @@ func (s Static) Triage(_ context.Context, t *v1alpha1.Task) (Decision, error) {
 	}
 	return Decision{Template: d.Template, PredictedClass: d.PredictedClass, DataClass: dataClass,
 		Budget:         BudgetFor(s.Cfg, d.Tier),
-		Classification: v1alpha1.Classification{Tier: d.Tier, Classifier: "static", Fallback: "static"}}, nil
+		Classification: v1alpha1.Classification{Tier: d.Tier, Classifier: "static", Fallback: "static"},
+		Cohort:         CohortOf(t.Name, false, s.Cfg.Evaluation.ControlPercent)}, nil
 }
 
 // sponsoredRuns is how many whole runs a ceiling holds: implementer, tester and reviewer. runFits

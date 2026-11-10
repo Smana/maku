@@ -66,7 +66,7 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 	if err != nil {
 		return runs.Spec{}, nil, "", err
 	}
-	if t.Status.PullRequest == nil {
+	if t.Status.PullRequest == nil && trigger != TriggerEscalation { // a step continues the run before it, PR or not
 		return r.implementerSpec(t, resumed(t, trigger)+firstBrief(t, r.Nonce(), sc)), nil, trigger, nil
 	}
 	// The finished run's handoff and verdict are after its start; brief.Build reads only those.
@@ -78,7 +78,15 @@ func (r *Reconciler) nextImplementer(ctx context.Context, t *v1alpha1.Task) (run
 	if err != nil {
 		return runs.Spec{}, nil, "", err
 	}
-	text, refs := r.revisionBrief(ctx, t, evs, q, sc)
+	var judge string
+	if trigger == TriggerEscalation {
+		j, err := r.lastJudge(ctx, t)
+		if err != nil {
+			return runs.Spec{}, nil, "", err
+		}
+		judge = judgeBlock(j, r.Nonce(), reviseCap)
+	}
+	text, refs := r.revisionBrief(ctx, t, evs, q, sc, judge)
 	return r.implementerSpec(t, resumed(t, trigger)+text), refs, trigger, nil
 }
 
@@ -234,7 +242,7 @@ func (r *Reconciler) revise(ctx context.Context, t *v1alpha1.Task, pr forge.PR, 
 	if err := r.queueReviews(ctx, t, pr, rvs); err != nil {
 		return err
 	}
-	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "request_changes") })
+	r.intervention(ctx, t, "request_changes")
 	t.Status.NextTrigger = "human"
 	r.to(t, v1alpha1.PhaseQueued, "")
 	// A revision the task cap will refuse is not announced: Queued escalates it as budget-task,
@@ -342,8 +350,8 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 		if pr, err = r.readPR(ctx, t); err != nil {
 			return err
 		}
-		if r.prEnded(ctx, t, pr) {
-			return nil
+		if ended, err := r.prEnded(ctx, t, pr); ended || err != nil {
+			return err
 		}
 	}
 	if done, err := r.escalatedSplit(ctx, t, pr); done || err != nil {
@@ -363,6 +371,9 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 		narrateLater(t, narrate.TaskCapHolds(t, c.ID))
 		return nil
 	}
+	if err := r.resolveRetried(ctx, t); err != nil {
+		return err
+	}
 	markHandled(t, c.ID)
 	r.leaveSplit(ctx, t, SplitDeclined) // SL4 (b): the task runs whole on its scope
 	if t.Status.Reason == ReasonNeedsAuthor && t.Status.Scope != nil {
@@ -373,7 +384,7 @@ func (r *Reconciler) escalated(ctx context.Context, t *v1alpha1.Task) error {
 	t.Status.Retries++
 	t.Status.RetriedBy = v1alpha1.Person(c.Author) // D2: the retrier pays for the runs the retry causes
 	t.Status.NextTrigger = "retry"
-	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "retry") })
+	r.intervention(ctx, t, "retry")
 	next := v1alpha1.PhaseQueued
 	if t.Status.RoomRef == "" { // escalated before it had a room (foreign_room): check the room again
 		next = v1alpha1.PhaseTriaged

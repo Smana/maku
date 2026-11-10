@@ -45,8 +45,11 @@ const other = "other"
 func outcomes() []string {
 	return []string{"auto_merged", "approved_merged", "human_merged", "closed", "reverted", "follow_up"}
 }
+func taskOutcomes() []string {
+	return []string{"accepted", "merged_human", "no_op", "closed", "stopped", "rejected", "reverted", "failed"}
+}
 func interventions() []string {
-	return []string{"stop", "retry", "request_changes", "steer", "takeover", "approve", "split"}
+	return []string{"stop", "retry", "request_changes", "steer", "takeover", "approve", "split", "needs_author", "human_commit", "escalated"}
 }
 func revocations() []string {
 	return []string{"budget-run", "budget-task", "budget-principal", "budget-fleet", "manual",
@@ -58,6 +61,7 @@ func revocationLimits() []string {
 func budgetFallbacks() []string { return []string{"unpriced", "untyped"} }
 func budgetScopes() []string    { return []string{"run", "task"} }
 func tiers() []string           { return []string{"light", "standard", "frontier"} }
+func cohorts() []string         { return []string{"labeled", "control", "treatment", "none"} }
 func intakeSources() []string   { return []string{"issue", "runlore", "schedule", "api", "adopt"} }
 func resumeReasons() []string   { return []string{"Disrupted", "PodLost"} }
 func roomCapReasons() []string  { return []string{"human_driver", "facts_due"} }
@@ -159,6 +163,9 @@ type Set struct {
 	resumes              metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
+	profileRecs          metric.Int64Counter
+	taskOutcomes         metric.Int64Counter
+	taskUSD              metric.Float64Counter
 	splits               metric.Int64Counter
 	splitChildren        metric.Int64Counter
 	revisionDeferred     metric.Int64Counter
@@ -368,6 +375,15 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.scoperRuns, err = meter.Int64Counter("agent_factory_scoper_runs_total",
 		metric.WithDescription("Scoper runs as they end, by class and outcome: ready, question, assumed, missing, failed, budget or budget_calls (scoper design SC11, SC12; harness roles HR2)."))
+	check(err)
+	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
+		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied."))
+	check(err)
+	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
+		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
+	check(err)
+	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
+		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile, the profile the scoper recommended and outcome."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -757,9 +773,36 @@ func (s *Set) BudgetDay(ctx context.Context, principal string, spentMicroUSD, ca
 	s.budgetSpent.Record(ctx, float64(spentMicroUSD)/1e6, at)
 }
 
-// Intervention counts a human stepping in: stop, retry, request_changes, steer, takeover, approve.
-func (s *Set) Intervention(ctx context.Context, kind string) {
-	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())), s.repoOf(ctx)))
+// Intervention counts a human stepping in (stop, retry, request_changes, steer, takeover, approve,
+// split) or the factory needing one (needs_author, human_commit, escalated). cohort, profile and
+// recommended are the task's as TaskOutcome labels them, "none" without; the caller maps a name no
+// longer offered to other.
+func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommended string) {
+	if profile == "" {
+		profile = "none"
+	}
+	if recommended == "" {
+		recommended = "none"
+	}
+	s.interventions.Add(ctx, 1, metric.WithAttributes(attribute.String("kind", oneOf(kind, interventions())),
+		attribute.String("cohort", oneOf(cohort, cohorts())),
+		attribute.String("profile", profile), attribute.String("recommended", recommended), s.repoOf(ctx)))
+}
+
+// TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost.
+// profile and recommended come from config (the caller maps a name no longer offered to other), so
+// the labels stay bounded; no recommendation is none.
+func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
+	cohort = oneOf(cohort, []string{"labeled", "control", "treatment"})
+	outcome = oneOf(outcome, taskOutcomes())
+	if recommended == "" {
+		recommended = "none"
+	}
+	s.taskOutcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
+		attribute.String("profile", profile), attribute.String("source", oneOf(source, []string{"label", "floor", "control", "scoper", "escalation"})),
+		attribute.String("recommended", recommended), attribute.String("outcome", outcome), s.repoOf(ctx)))
+	s.taskUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
+		attribute.String("profile", profile), attribute.String("recommended", recommended), attribute.String("outcome", outcome)))
 }
 
 // ClassMismatch counts a task whose predicted class is not the one policy-bot matched.
@@ -810,12 +853,20 @@ func (s *Set) RunRevoked(ctx context.Context, reason, limit string) {
 		attribute.String("limit", oneOf(limit, revocationLimits())), principalOf(ctx)))
 }
 
-// RunCost records a priced run's USD cost at its end, in total by tier and role, and by the model
-// that served it: the run meter's OnCost. The role is the AgentRun's, or scoper for a triager run
-// that scoped a task (harness roles HR6).
-func (s *Set) RunCost(ctx context.Context, tier, role string, usd float64, byModel map[string]float64) {
+// RunCost records a priced run's USD cost at its end, in total by tier, role, cohort and profile,
+// and by the model that served it: the run meter's OnCost. The role is the AgentRun's, or scoper
+// for a triager run that scoped a task (harness roles HR6); cohort and profile are the task's when
+// the run started (R34), none without a profile.
+func (s *Set) RunCost(ctx context.Context, tier, role, cohort, profile string, usd float64, byModel map[string]float64) {
+	if cohort == "" {
+		cohort = "none"
+	}
+	if profile == "" {
+		profile = "none"
+	}
 	s.runCost.Record(ctx, usd, metric.WithAttributes(attribute.String("tier", oneOf(tier, tiers())),
-		attribute.String("role", oneOf(role, costRoles()))))
+		attribute.String("role", oneOf(role, costRoles())), attribute.String("cohort", oneOf(cohort, cohorts())),
+		attribute.String("profile", profile)))
 	s.LateCost(ctx, byModel)
 }
 
@@ -1006,6 +1057,17 @@ func (s *Set) SteeringRead(ctx context.Context, class, read string) {
 func (s *Set) ScoperRun(ctx context.Context, class, outcome string) {
 	s.scoperRuns.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
 		attribute.String("outcome", oneOf(outcome, []string{"ready", "question", "assumed", "missing", "failed", "budget", "budget_calls"})), s.repoOf(ctx)))
+}
+
+// ProfileRecommendation counts a resolved task that was offered profiles; recommended comes from
+// config or is "none", so the label stays bounded.
+func (s *Set) ProfileRecommendation(ctx context.Context, class, cohort, recommended string, applied bool) {
+	if recommended == "" {
+		recommended = "none"
+	}
+	s.profileRecs.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
+		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment"})),
+		attribute.String("recommended", recommended), attribute.Bool("applied", applied)))
 }
 
 // Split counts a split handoff's outcome once.

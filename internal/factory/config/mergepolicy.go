@@ -19,6 +19,7 @@ const TemplateNone = "none"
 const LoopOff LoopRef = "off"
 
 // LoopRef names a row of loops, or off.
+// +kubebuilder:validation:MaxLength=253
 type LoopRef string
 
 // UnmarshalJSON reads a string, or false as off: YAML reads a bare off as false.
@@ -38,18 +39,29 @@ func (l *LoopRef) UnmarshalJSON(b []byte) error {
 // HarnessProfile is a named, centrally approved way of running a class (merge policy MP2). Stage 1
 // reads Checks and TestFirst; Template, Tier and Loop are validated here and read from repository
 // cutover on. Empty keeps what the factory selects today.
+// +kubebuilder:object:generate=true
 type HarnessProfile struct {
-	Template  string  `json:"template,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	Template string `json:"template,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
 	Tier      string  `json:"tier,omitempty"`
 	Checks    bool    `json:"checks,omitempty"`
 	TestFirst bool    `json:"testFirst,omitempty"`
 	Loop      LoopRef `json:"loop,omitempty"`
+	// Description is the line the scoper's brief shows: when to choose the profile.
+	// +kubebuilder:validation:MaxLength=120
+	Description string `json:"description,omitempty"`
 }
 
 // MergeGuardrails bound every repository's class policy (MP3, MP6): a class may add protected
 // paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 is no guardrail.
+// +kubebuilder:object:generate=true
 type MergeGuardrails struct {
-	ProtectedFiles   []string `json:"protectedFiles,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	ProtectedFiles []string `json:"protectedFiles,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	MandatoryChecks  []string `json:"mandatoryChecks,omitempty"`
 	MaxPatchFiles    int      `json:"maxPatchFiles,omitempty"`
 	MaxModifiedLines int      `json:"maxModifiedLines,omitempty"`
@@ -160,6 +172,9 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		}
 		if _, ok := c.Loops[string(p.Loop)]; p.Loop != "" && p.Loop != LoopOff && !ok {
 			bad("harnessProfiles.%s: loop %q is off or a row of loops", name, p.Loop)
+		}
+		if len(p.Description) > MaxDescription {
+			bad("harnessProfiles.%s: description is %d bytes at most", name, MaxDescription)
 		}
 		if p.TestFirst && !p.Checks {
 			bad("harnessProfiles.%s: testFirst needs checks (R17)", name)

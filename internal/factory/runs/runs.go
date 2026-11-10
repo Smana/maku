@@ -62,6 +62,10 @@ const (
 	// The factory build that created the claim (R10): version.Version, CREATE only, so a replay
 	// that finds the claim reads back the build that made it, not its own.
 	AnnFactoryVersion = "agents.ogenki.io/factory-version"
+	// The task's evaluation cohort and harness profile when the run started (R34): the meter
+	// labels the run's cost with them. CREATE only; absent on a task without a profile.
+	AnnCohort  = "agents.ogenki.io/cohort"
+	AnnProfile = "agents.ogenki.io/profile"
 )
 
 // ScoperMarkerPrefix opens a scoping run's brief (harness roles HR2): its first line is this prefix,
@@ -101,7 +105,7 @@ func Scheme(s *runtime.Scheme, k runwatch.Kind) {
 // CREATE-only annotations' sources (R48).
 type Spec struct {
 	RunID, TaskID, Role, Repository, BaseRef, Branch, TaskText, TaskURL, Principal, DataClass, Model, RoomRef, Queue, Traceparent, Tier string
-	SourceURL, Head, RequestHash, ChargedTo                                                                                             string
+	SourceURL, Head, RequestHash, ChargedTo, Cohort, Profile                                                                            string
 	MaxTokens, MaxMinutes, StartSeq, MaxMicroUSD                                                                                        int64
 	EgressProfiles                                                                                                                      []string
 	// Suspendable is spec.suspendable (v2 suspend), written only when true: it is immutable.
@@ -268,6 +272,12 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	if s.MaxMicroUSD > 0 {
 		ann[AnnMaxMicroUSD] = strconv.FormatInt(s.MaxMicroUSD, 10)
 	}
+	if s.Cohort != "" {
+		ann[AnnCohort] = s.Cohort
+	}
+	if s.Profile != "" {
+		ann[AnnProfile] = s.Profile
+	}
 	if b, h := artifactsJSON(s.CoordinationArtifacts); h != "" {
 		ann[AnnCoordinationArtifacts], ann[AnnCoordinationArtifactsHash] = string(b), h
 	}
@@ -284,7 +294,7 @@ func Terminal(phase string) bool { return runwatch.Terminal(phase) }
 // Run is the part of a claim the factory reads back.
 type Run struct {
 	ID, TaskID, Role, Principal, Phase, Reason, PullRequest, Revoked, Branch, RoomRef, Repository string
-	Head, TaskText, RequestHash, Tier, Model, ChargedTo                                           string
+	Head, TaskText, RequestHash, Tier, Model, ChargedTo, Cohort, Profile                          string
 	// What the run ran on (R10): the factory build that created the claim, the
 	// CompositionRevision Crossplane bound it to, and the harness image the composition read
 	// from its pod. Empty until known.
@@ -310,6 +320,7 @@ func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool)
 		PullRequest: str("status", "pullRequest"), Revoked: u.GetAnnotations()[AnnRevoked], Head: u.GetAnnotations()[AnnHead],
 		RequestHash: u.GetAnnotations()[AnnRequestHash], Tier: u.GetLabels()[LabelTier], Model: str("spec", "model"),
 		TaskText: str("spec", "task", "text"), ChargedTo: u.GetAnnotations()[AnnChargedTo],
+		Cohort: u.GetAnnotations()[AnnCohort], Profile: u.GetAnnotations()[AnnProfile],
 		FactoryVersion: u.GetAnnotations()[AnnFactoryVersion], CompositionRevision: str("spec", "crossplane", "compositionRevisionRef", "name"),
 		HarnessImage: str("status", "harnessImage")}
 	// The CREATE-only start seq (R48): absent means the room was empty when the run was created.
@@ -469,7 +480,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

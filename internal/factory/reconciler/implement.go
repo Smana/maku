@@ -174,12 +174,20 @@ func (r *Reconciler) implementerSpec(t *v1alpha1.Task, text string) runs.Spec {
 // that has them (v3 feature 3, RC8): spec.loop.checks and the repository's checks.egress. Any other
 // run, an internal one included, is today's.
 func (r *Reconciler) withChecks(s *runs.Spec, t *v1alpha1.Task) {
-	on, egress := r.repo(t).ChecksFor(t.Spec.PredictedClass)
-	if !on || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
+	if !r.checksOn(t) || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
 		s.Checks, s.EgressProfiles = false, nil
 		return
 	}
-	s.Checks, s.EgressProfiles = true, egress
+	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(t).Checks.Egress)
+}
+
+// checksOn: a decision frozen at triage survives later config changes; a task without one reads live config.
+func (r *Reconciler) checksOn(t *v1alpha1.Task) bool {
+	if t.Status.Profile != nil {
+		return t.Status.Profile.Checks
+	}
+	on, _ := r.repo(t).ChecksFor(t.Spec.PredictedClass)
+	return on
 }
 
 // reserveFactoryDay is §6.2's "SP3 at admission" for the factory's own principal (R34), admitted
@@ -244,6 +252,9 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 		return err
 	}
 	s.RunID, s.StartSeq, s.ChargedTo = runID(t.Name, len(t.Status.Runs)), last, r.person(t)
+	if p := t.Status.Profile; p != nil { // the meter labels the run's cost with them (R34)
+		s.Cohort, s.Profile = p.Cohort, p.Name
+	}
 	if t.Spec.MaxMicroUSD > 0 { // F4, C-1: the meter holds an api task's run to its own cap, not the tier's
 		s.MaxMicroUSD = runMicroUSD(t.Spec.Budget)
 	}
@@ -379,9 +390,9 @@ func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []ev
 // revisionBrief is the revision brief as the factory builds it: the room's log and queue, and, with
 // brief.ciEvidence, what the review asked for and what CI said (CD12). One place, so a test that
 // renders the brief renders what production does.
-func (r *Reconciler) revisionBrief(ctx context.Context, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped) (string, []int64) {
+func (r *Reconciler) revisionBrief(ctx context.Context, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped, tail string) (string, []int64) {
 	items, notes := r.evidence(ctx, t)
-	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes})
+	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes, tail: tail})
 }
 
 // reviewWhere is where a review's body came from, as the brief names it.
@@ -636,7 +647,7 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 	if !found {
 		why := r.lostReason(ctx, t)
 		if scoperRun(t) && why == "run_lost" { // SC11: a scoper whose claim vanished fails open
-			return r.scopeEnd(ctx, t, "failed", 0)
+			return r.scopeEnd(ctx, t, nil, "failed", 0)
 		}
 		return r.end(ctx, t, v1alpha1.PhaseEscalated, why)
 	}
@@ -654,7 +665,7 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 				return err
 			}
 			if scoperRun(t) { // SC11: a stuck scoper fails open
-				return r.scopeEnd(ctx, t, "failed", 0)
+				return r.scopeEnd(ctx, t, nil, "failed", 0)
 			}
 			return r.end(ctx, t, v1alpha1.PhaseEscalated, "stuck")
 		}
@@ -915,8 +926,8 @@ func (r *Reconciler) awaitingHuman(ctx context.Context, t *v1alpha1.Task) error 
 	if err != nil {
 		return err
 	}
-	if r.prEnded(ctx, t, pr) {
-		return nil
+	if ended, err := r.prEnded(ctx, t, pr); ended || err != nil {
+		return err
 	}
 	r.countApproves(ctx, t, pr)
 	if adoptedTask(t) {
@@ -976,17 +987,20 @@ func (r *Reconciler) countApproves(ctx context.Context, t *v1alpha1.Task, pr for
 	for _, rv := range pr.Reviews {
 		if rv.State == "APPROVED" && r.repo(t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) {
 			markHandled(t, rv.ID)
-			record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "approve") })
+			r.intervention(ctx, t, "approve")
 		}
 	}
 }
 
 // prEnded ends the task when its pull request was merged or closed. A closed one carrying
 // factory/stale was the stale close's (remind): its replay after a lost status write still says so.
-func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR) bool {
+func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	class := t.Spec.PredictedClass
 	switch pr.State {
 	case "MERGED":
+		if err := r.mergedHumanCommits(ctx, t, pr); err != nil {
+			return false, err
+		}
 		t.Status.PullRequest.MergedBy, t.Status.PullRequest.MergeCommitSHA = pr.MergedBy, pr.MergeCommitSHA
 		noteMergedHead(t, pr)
 		// R41: like the CI gate's bypass record, the timestamp is what puts the merge in the
@@ -995,18 +1009,16 @@ func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR)
 		t.Status.PullRequest.MergedAt = &now
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
 		r.handedOffMerged(ctx, t, "human")
-		_ = r.end(ctx, t, v1alpha1.PhaseDone, "merged")
-		return true
+		return true, r.end(ctx, t, v1alpha1.PhaseDone, "merged")
 	case "CLOSED":
 		reason := "pr_closed"
 		if slices.Contains(pr.Labels, labelStale) {
 			reason = "stale"
 		}
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "closed") })
-		_ = r.end(ctx, t, v1alpha1.PhaseClosed, reason)
-		return true
+		return true, r.end(ctx, t, v1alpha1.PhaseClosed, reason)
 	}
-	return false
+	return false, nil
 }
 
 // stamp fills what the run ran on from its claim (R10): each field once, never changed, so a later

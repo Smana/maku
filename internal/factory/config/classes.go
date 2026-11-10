@@ -17,6 +17,7 @@ import (
 // The other fields are the class's declared conditions (merge gate classes MC1), named as gh-aw
 // names them where it has a name. Each is checked on top of the gate's fixed base, which no class
 // can remove; an absent one is not checked, so a class that declares none is decided as before.
+// +kubebuilder:object:generate=true
 type Class struct {
 	Live   bool `json:"live,omitempty"`
 	Shadow bool `json:"shadow,omitempty"`
@@ -27,8 +28,12 @@ type Class struct {
 	// tests first (v3 feature 4, TF1); needs Checks and the repository's merge.contractCheck.
 	TestFirst bool `json:"testFirst,omitempty"`
 	// AllowedFiles: every changed path matches one of these regular expressions.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
 	// ProtectedFiles: no changed path matches one of these.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	ProtectedFiles []string `json:"protectedFiles,omitempty"`
 	// ModifyOnly: no file is added, deleted, renamed or copied.
 	ModifyOnly bool `json:"modifyOnly,omitempty"`
@@ -37,9 +42,12 @@ type Class struct {
 	MaxPatchFiles    int `json:"maxPatchFiles,omitempty"`
 	MaxModifiedLines int `json:"maxModifiedLines,omitempty"`
 	// DiffShape is a shape every changed line must have: links-only is R52's LinksOnly.
+	// +kubebuilder:validation:MaxLength=512
 	DiffShape string `json:"diffShape,omitempty"`
 	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is
 	// a gate path, so the pull request cannot change them (loops L7).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
 	// MaxPerDay caps this class's merges a day, under merge.autoMergesPerDay; 0 is no cap of its own.
 	MaxPerDay int `json:"maxPerDay,omitempty"`
@@ -55,24 +63,52 @@ type Class struct {
 	Author *Author `json:"author,omitempty"`
 	// ReleaseAgeCheck names the commit status that holds the release age (MC11), posted by an
 	// adopted login: Renovate's renovate/stability-days.
+	// +kubebuilder:validation:MaxLength=1024
 	ReleaseAgeCheck string `json:"releaseAgeCheck,omitempty"`
 	// CompanionFiles are the paths an added-entry pull request may append to beside its one added
 	// entry (a knowledge base's index and log), anchored like AllowedFiles.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	CompanionFiles []string `json:"companionFiles,omitempty"`
 	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
+	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
+	// Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
+	// and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
+	// Absent, the class runs as before.
+	// +kubebuilder:validation:MaxLength=253
+	Harness string `json:"harness,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	HarnessAllowed []string    `json:"harnessAllowed,omitempty"`
+	Escalation     *Escalation `json:"escalation,omitempty"`
+}
+
+// Escalation maps a signal group to a profile of harnessAllowed; an absent group goes to the human.
+// +kubebuilder:object:generate=true
+type Escalation struct {
+	// +kubebuilder:validation:MaxLength=253
+	OutOfBudget string `json:"outOfBudget,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	NotConverged string `json:"notConverged,omitempty"`
 }
 
 // Author is a class's author mode.
+// +kubebuilder:object:generate=true
 type Author struct {
 	Adopt *Adopt `json:"adopt,omitempty"`
 }
 
 // Adopt names the logins whose pull requests are adopted and the head branches they come from
 // (gh-aw's allowed-branches); every commit and every push of the branch must be theirs.
+// +kubebuilder:object:generate=true
 type Adopt struct {
-	Logins   []string `json:"logins"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	Logins []string `json:"logins"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
 	Branches []string `json:"branches"`
 }
 
@@ -80,6 +116,7 @@ type Adopt struct {
 func (c Class) Adopted() bool { return c.Author != nil && c.Author.Adopt != nil }
 
 // Monitor is a class's post-merge watch (MC7).
+// +kubebuilder:object:generate=true
 type Monitor struct {
 	// OracleRuns is how many scheduled detector runs after the merge must report none of the
 	// targets the pull request wrote; 0 reads none. Needs an oracle.
@@ -95,6 +132,7 @@ type Monitor struct {
 }
 
 // VerificationWatch is how long after the merge RunLore's verdict is waited for, and accepted.
+// +kubebuilder:object:generate=true
 type VerificationWatch struct {
 	Within Duration `json:"within"`
 }
@@ -102,7 +140,9 @@ type VerificationWatch struct {
 // FluxWatch names the GitRepository that delivers the repository to the factory's cluster, and
 // how long after it reaches the merge commit a Kustomization or HelmRelease turning not Ready is
 // blamed on the merge.
+// +kubebuilder:object:generate=true
 type FluxWatch struct {
+	// +kubebuilder:validation:MaxLength=1024
 	Source string   `json:"source"` // namespace/name
 	Within Duration `json:"within"`
 }
@@ -117,8 +157,11 @@ var sourceRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z
 
 // Oracle is an oracle-backed class's detector: the probe that turns its findings into a task,
 // the workflow on main whose runs report them, and the most findings one task holds.
+// +kubebuilder:object:generate=true
 type Oracle struct {
-	Probe       string `json:"probe"`
+	// +kubebuilder:validation:MaxLength=1024
+	Probe string `json:"probe"`
+	// +kubebuilder:validation:MaxLength=1024
 	Workflow    string `json:"workflow"`
 	MaxFindings int    `json:"maxFindings"`
 }

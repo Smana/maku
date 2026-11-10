@@ -491,11 +491,11 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
 		&meter.Meter{Runs: rc, Source: vm, PerReplica: cfg.Meter.ByReplica(), Every: cfg.Poll.Meter.Duration, OnRevoke: m.RunRevoked, Log: log,
 			OnCharge: m.Charged, OnCharges: m.RunCharges,
-			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: m.RunCost, OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
+			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: runCost(m), OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
 			Throttle: throttle(cfg),
-			Budgets:  cfg.Budgets, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
+			Budgets:  cfg.Budgets, Profiles: cfg.HarnessProfiles, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,
 			Ledger: live, Tasks: mgr.GetClient(), Namespace: ns},
@@ -751,4 +751,11 @@ func (e policyEditor) Preview(ctx context.Context, repository, file string) (any
 
 func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {
 	return e.Service.Timeline(ctx, repository, pr)
+}
+
+// runCost hands the meter's cost report to the metric, key by key.
+func runCost(m *fmetrics.Set) func(context.Context, meter.CostKey, float64, map[string]float64) {
+	return func(ctx context.Context, k meter.CostKey, usd float64, by map[string]float64) {
+		m.RunCost(ctx, k.Tier, k.Role, k.Cohort, k.Profile, usd, by)
+	}
 }

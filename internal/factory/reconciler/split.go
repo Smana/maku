@@ -69,12 +69,12 @@ const (
 
 // splitHandoff is the scoper's second answer (SL4, SR6): a split the task was offered goes to a
 // maintainer; any other is ignored and counted, and the task runs on its scope.
-func (r *Reconciler) splitHandoff(ctx context.Context, t *v1alpha1.Task, sp *envelope.Split, seq int64) error {
+func (r *Reconciler) splitHandoff(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, seq int64) error {
 	if t.Spec.Split == nil || len(sp.Children) > int(t.Spec.Split.MaxChildren) || sp.Validate() != nil {
 		r.ignoreSplit(ctx, t, seq)
-		return r.scopeEnd(ctx, t, "ready", seq)
+		return r.scopeEnd(ctx, t, sc, "ready", seq)
 	}
-	return r.proposeSplit(ctx, t, sp, seq)
+	return r.proposeSplit(ctx, t, sc, sp, seq)
 }
 
 // ignoreSplit records and counts a split the factory will not propose (SL14).
@@ -87,7 +87,10 @@ func (r *Reconciler) ignoreSplit(ctx context.Context, t *v1alpha1.Task, seq int6
 // proposeSplit is SL4 (SR7): Escalated, split_proposed, one comment and the label, no child. Not
 // end(), as bounce is not: the comment is the plan, and a proposal says nothing of the tier. The
 // whole task's scope is recorded ready, so a /factory retry runs it whole with no second scoper run.
-func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sp *envelope.Split, seq int64) error {
+// The scoper's recommendation is noted on the still unresolved profile: an approved family counts
+// on the parent, under its triage profile (R32), and the row keeps the counterfactual.
+func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, seq int64) error {
+	r.recommend(t, t.Status.Profile, sc)
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: "ready", Seq: seq}
 	t.Status.Split = &v1alpha1.SplitStatus{State: SplitProposed, Seq: seq, Of: int32(len(sp.Children))} //nolint:gosec // Validate bounds it to 2..5
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
@@ -150,7 +153,7 @@ func (r *Reconciler) approveSplit(ctx context.Context, t *v1alpha1.Task, c forge
 	}
 	r.leaveSplit(ctx, t, SplitApproved)
 	t.Status.Split.ApprovedBy = person
-	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "split") })
+	r.intervention(ctx, t, "split")
 	r.to(t, v1alpha1.PhaseSplit, "")
 	return nil
 }
@@ -436,6 +439,9 @@ func (r *Reconciler) inherit(ctx context.Context, t *v1alpha1.Task) (string, err
 	t.Spec.PredictedClass, t.Spec.DataClass = p.Spec.PredictedClass, p.Spec.DataClass // SL6: the parent's class
 	t.Spec.Steering, t.Spec.ScopeMode, t.Spec.Loop, t.Spec.Search = p.Spec.Steering, p.Spec.ScopeMode, p.Spec.Loop, p.Spec.Search
 	t.Spec.Template, t.Spec.Budget = triage.Matrix(p.Spec.PredictedClass, "issue", b.Tier), b
+	// R39: the family's membership in the evaluation is written here, the one place a part reads
+	// its parent; its merge reads the mark and never the parent.
+	t.Status.Evaluated = p.Status.Profile != nil
 	if t.Labels == nil {
 		t.Labels = map[string]string{}
 	}

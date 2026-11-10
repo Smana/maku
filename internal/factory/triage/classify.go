@@ -57,6 +57,12 @@ func Control(taskID string, percent int) bool {
 	return int64(h.Sum32()%100) < int64(percent) // widened, never narrowed (gosec G115)
 }
 
+// Cohort puts percent % of tasks in the evaluation's control cohort, hashed apart from Control so
+// the two groups are independent.
+func Cohort(taskID string, percent int) bool {
+	return Control("evaluation/"+taskID, percent)
+}
+
 // Classify is the one triage per task (§2): deterministic rules plus one C7 call.
 type Classify struct {
 	Cfg   *config.Config
@@ -86,10 +92,11 @@ func (c Classify) Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error
 	if dataClass == "" {
 		dataClass = c.Cfg.Defaults.DataClass
 	}
-	class, err := c.predictClass(ctx, t)
+	class, declared, err := c.predictClass(ctx, t)
 	if err != nil {
 		return Decision{}, err
 	}
+	cohort := CohortOf(t.Name, declared, c.Cfg.Evaluation.ControlPercent)
 	if Investigates(c.Cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}
@@ -97,7 +104,7 @@ func (c Classify) Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
 		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Budget: BudgetFor(c.Cfg, "light"),
-			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}}, nil
+			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared, Cohort: cohort}, nil
 	}
 	res, err := C7Response{}, errors.New("no classifier") // unset URL: no C7 service, no call
 	if c.Cfg.Triage.ClassifierURL != "" && c.C != nil {
@@ -122,28 +129,29 @@ func (c Classify) Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error
 		source = "runlore" // Matrix keys on the source kind: both take investigate
 	}
 	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass,
-		Budget: BudgetFor(c.Cfg, tier), Classification: cl}, nil
+		Budget: BudgetFor(c.Cfg, tier), Classification: cl, Declared: declared, Cohort: cohort}, nil
 }
 
 // predictClass: the schedule's class; else a maintainer-applied class:<name> label; else review.
 // RunLore tasks are always review. Labels are intent, never authority (§2, §8 T3).
-func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (string, error) {
+// declared is a class the schedule or a maintainer named, never one inferred.
+func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (class string, declared bool, err error) {
 	if Investigates(c.Cfg, t) {
-		return "review", nil
+		return "review", false, nil
 	}
 	if t.Spec.Source.Kind == "schedule" {
 		if _, ok := c.Cfg.RepositoryFor(t.Spec.Repository).Classes[t.Spec.PredictedClass]; ok {
-			return t.Spec.PredictedClass, nil
+			return t.Spec.PredictedClass, true, nil
 		}
-		return "review", nil
+		return "review", false, nil
 	}
 	gh := c.forge(t)
 	if t.Spec.Issue == 0 || gh == nil {
-		return c.inferred(t), nil
+		return c.inferred(t), false, nil
 	}
 	iss, err := gh.Issue(ctx, t.Spec.Issue)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	for _, l := range iss.Labels {
 		name, ok := strings.CutPrefix(l, "class:")
@@ -152,13 +160,13 @@ func (c Classify) predictClass(ctx context.Context, t *v1alpha1.Task) (string, e
 		}
 		evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if len(evs) > 0 && c.Cfg.RepositoryFor(t.Spec.Repository).IsMaintainer(evs[len(evs)-1].Actor) {
-			return name, nil
+			return name, true, nil
 		}
 	}
-	return c.inferred(t), nil
+	return c.inferred(t), false, nil
 }
 
 // inferred: K5, the factory's own record, never a label it applied. An origin task keeps the class

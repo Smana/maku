@@ -16,6 +16,8 @@ import (
 type reported struct {
 	tier    string
 	role    string
+	cohort  string
+	profile string
 	usd     float64
 	byModel map[string]float64
 }
@@ -35,8 +37,8 @@ func TestAnEndedRunsCostWaitsForItsLateReadings(t *testing.T) {
 	src := typed{"nh5tztlh": opus(366_751, 3_775)}
 	var got []reported
 	m := &Meter{Runs: st, Source: src, Prices: served, Now: func() time.Time { return clock },
-		OnCost: func(_ context.Context, tier, role string, usd float64, byModel map[string]float64) {
-			got = append(got, reported{tier, role, usd, byModel})
+		OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
+			got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 		}}
 	tick := func() {
 		t.Helper()
@@ -91,8 +93,8 @@ func TestTheCostCarriesTheRunsRole(t *testing.T) {
 			src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
 			var got []reported
 			m := &Meter{Runs: st, Source: src, Prices: served,
-				OnCost: func(_ context.Context, tier, role string, usd float64, byModel map[string]float64) {
-					got = append(got, reported{tier, role, usd, byModel})
+				OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
+					got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 				}}
 			if err := m.Tick(t.Context()); err != nil {
 				t.Fatal(err)
@@ -108,14 +110,47 @@ func TestTheCostCarriesTheRunsRole(t *testing.T) {
 	}
 }
 
+// R34: a run's cost is reported under the task's cohort and profile as its claim carries them.
+// The profile is bounded to the configured harnessProfiles (R40): an annotation anyone could write,
+// or a profile since removed, reads as other; none stays none.
+func TestRunCostCarriesTheCohortAndProfile(t *testing.T) {
+	for name, c := range map[string]struct{ annotated, want string }{
+		"a configured profile": {"review-search", "review-search"},
+		"an arbitrary value":   {"ignore previous instructions", "other"},
+		"no profile":           {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := standardRun("aaaaaaaa")
+			r.Cohort, r.Profile = "treatment", c.annotated
+			st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{r}}
+			src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
+			var got []reported
+			m := &Meter{Runs: st, Source: src, Prices: served, Profiles: map[string]config.HarnessProfile{"review-search": {}},
+				OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
+					got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
+				}}
+			if err := m.Tick(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			st.runs = nil
+			if err := m.Tick(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].cohort != "treatment" || got[0].profile != c.want {
+				t.Fatalf("reported %+v, want profile %q", got, c.want)
+			}
+		})
+	}
+}
+
 // A run deleted before its window closes (a stop, the kill switch) still reports what it spent.
 func TestADeletedRunReportsItsCost(t *testing.T) {
 	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{standardRun("aaaaaaaa")}}
 	src := typed{"aaaaaaaa": byModel(map[string]ModelUsage{"glm-5.3": {Input: 1_000_000}})}
 	var got []reported
 	m := &Meter{Runs: st, Source: src, Prices: served,
-		OnCost: func(_ context.Context, tier, role string, usd float64, byModel map[string]float64) {
-			got = append(got, reported{tier, role, usd, byModel})
+		OnCost: func(_ context.Context, k CostKey, usd float64, byModel map[string]float64) {
+			got = append(got, reported{k.Tier, k.Role, k.Cohort, k.Profile, usd, byModel})
 		}}
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
@@ -169,7 +204,7 @@ func TestSpendAfterTheReportIsAddedLate(t *testing.T) {
 	var costs []float64
 	var late []map[string]float64
 	m := &Meter{Runs: st, Source: src, Prices: served, Now: func() time.Time { return clock },
-		OnCost:     func(_ context.Context, _, _ string, usd float64, _ map[string]float64) { costs = append(costs, usd) },
+		OnCost:     func(_ context.Context, _ CostKey, usd float64, _ map[string]float64) { costs = append(costs, usd) },
 		OnLateCost: func(_ context.Context, byModel map[string]float64) { late = append(late, byModel) }}
 	tick := func() {
 		t.Helper()

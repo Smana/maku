@@ -15,16 +15,20 @@ import (
 )
 
 // Export writes a repository's central classes as a policy file (MP15): behaviour preserved, so
-// each class keeps its mode. review stays implicit. A class whose checks and testFirst no profile
-// holds is an error: the operator adds the profile first.
+// each class keeps its mode. review is written with its evaluation keys when it has a floor
+// (R30), and stays implicit without one. A class whose checks and testFirst no profile holds is
+// an error: the operator adds the profile first.
 func Export(rc *config.Repository, c *config.Config) (*File, error) {
 	f := &File{Factory: c.Factory, Classes: map[string]ClassPolicy{}}
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
-		if name == "review" {
+		if name == "review" && rc.Classes[name].Harness == "" {
 			continue
 		}
 		p, err := exportClass(rc.Classes[name], c)
+		if err == nil && name == "review" {
+			p = ClassPolicy{Harness: p.Harness, HarnessAllowed: p.HarnessAllowed, Escalation: p.Escalation}
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("class %s: %w", name, err))
 			continue
@@ -35,11 +39,26 @@ func Export(rc *config.Repository, c *config.Config) (*File, error) {
 }
 
 func exportClass(cl config.Class, c *config.Config) (ClassPolicy, error) {
-	harness, ok := profileFor(cl, c)
+	harness, ok := cl.Harness, cl.Harness != ""
+	if prof := c.HarnessProfiles[harness]; ok {
+		// Resolve reads checks and testFirst from the profile alone: a floor without them would drop the class's.
+		for _, b := range []struct {
+			key          string
+			class, floor bool
+		}{{"checks", cl.Checks, prof.Checks}, {"testFirst", cl.TestFirst, prof.TestFirst}} {
+			if b.class && !b.floor {
+				return ClassPolicy{}, fmt.Errorf("harness %q drops %s the class sets; name a harness with %s", harness, b.key, b.key)
+			}
+		}
+	}
+	if !ok {
+		harness, ok = profileFor(cl, c)
+	}
 	if !ok {
 		return ClassPolicy{}, fmt.Errorf("no harness profile holds checks=%t testFirst=%t adopted=%t", cl.Checks, cl.TestFirst, cl.Adopted())
 	}
-	p := ClassPolicy{Mode: ModeOff, Author: AuthorAgents, Harness: harness, Limits: Limits{MaxPerDay: cl.MaxPerDay}, Monitor: cl.Monitor}
+	p := ClassPolicy{Mode: ModeOff, Author: AuthorAgents, Harness: harness, Limits: Limits{MaxPerDay: cl.MaxPerDay}, Monitor: cl.Monitor,
+		HarnessAllowed: cl.HarnessAllowed, Escalation: cl.Escalation}
 	switch {
 	case cl.Live:
 		p.Mode = ModeLive
@@ -105,7 +124,8 @@ func profileFor(cl config.Class, c *config.Config) (string, bool) {
 func Marshal(f *File) ([]byte, error) { return yaml.Marshal(f) }
 
 // Compare lists how the repository's classes differ from the central ones, class by class, with
-// path and check lists read as sets. review is implicit on both sides.
+// path and check lists read as sets. review is compared on its evaluation keys alone (R30): a
+// central review with no floor is implicit, and the file not declaring it is no divergence.
 func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 	var out []string
 	names := map[string]bool{}
@@ -115,7 +135,9 @@ func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 	for n := range f.Classes {
 		names[n] = true
 	}
-	delete(names, "review")
+	if _, inRepo := f.Classes["review"]; !inRepo && rc.Classes["review"].Harness == "" {
+		delete(names, "review")
+	}
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		central, inCentral := rc.Classes[name]
 		repo, inRepo := f.Classes[name]

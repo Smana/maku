@@ -295,7 +295,12 @@ func (m *fakeMetrics) HandoffToMerge(_ context.Context, class, reason, how strin
 func (m *fakeMetrics) TaskTokens(_ context.Context, tokens int64, tier, template, class string) {
 	m.add("task_tokens " + strconv.FormatInt(tokens, 10) + " " + tier + " " + template + " " + class)
 }
-func (m *fakeMetrics) Intervention(_ context.Context, kind string) { m.add("intervention " + kind) }
+func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort, profile, recommended string) {
+	m.add("intervention " + kind + " " + cohort + " " + profile + " " + recommended)
+}
+func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
+	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
+}
 func (m *fakeMetrics) TierFit(_ context.Context, classifier, tier, fit string, control bool) {
 	m.add("tier_fit " + classifier + " " + tier + " " + fit + " " + strconv.FormatBool(control))
 }
@@ -516,8 +521,8 @@ func TestLabelToNarratedRun(t *testing.T) {
 	if tk = g.reconcile(t, "3buqdlot", 1); !tk.Status.UsageSettled || !strings.Contains(eventCommentBodies(g.f, 7)[2], "Merged by @Smana") {
 		t.Fatalf("settled: %+v %q", tk.Status, eventCommentBodies(g.f, 7))
 	}
-	want := []string{"time_to_pr issue standard solo", "pr review human_merged",
-		"tier_fit static standard over false", "task_tokens 0 standard solo review"}
+	want := []string{"time_to_pr issue standard solo", "pr review human_merged", "tier_fit static standard over false",
+		"task_tokens 0 standard solo review"} // no profile: the merge's provenance is not read (R39)
 	if strings.Join(g.metrics.recorded, "|") != strings.Join(want, "|") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
@@ -824,7 +829,7 @@ func TestStopAnnotation(t *testing.T) {
 			// still records the total, once, past its window (R49).
 			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
 			g.reconcile(t, "3buqdlot", 1)
-			if strings.Join(g.metrics.recorded, "|") != "intervention stop|task_tokens 0 standard solo review" {
+			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review" {
 				t.Fatalf("%q", g.metrics.recorded)
 			}
 		})
@@ -956,7 +961,7 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 	}
 	// The revoke is counted with the claim's annotation, not the status write: the replay finds the
 	// run already gone, so a deferred count would be lost (F30).
-	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop|task_tokens 0 standard solo review" {
+	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review" {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 }
@@ -1028,4 +1033,8 @@ func (g *rig) setPhaseSince(t *testing.T, name string, at time.Time) {
 // contains reports whether any comment holds s.
 func contains(comments []string, s string) bool {
 	return slices.ContainsFunc(comments, func(c string) bool { return strings.Contains(c, s) })
+}
+
+func (m *fakeMetrics) ProfileRecommendation(_ context.Context, class, cohort, recommended string, applied bool) {
+	m.add(fmt.Sprintf("profile %s %s %s %v", class, cohort, recommended, applied))
 }

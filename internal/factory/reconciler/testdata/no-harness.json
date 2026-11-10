@@ -1,0 +1,387 @@
+{
+  "internal api": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 666666,
+        "runMinutes": 45,
+        "runTokens": 392156,
+        "taskMicroUSD": 2000000,
+        "taskTokens": 1176470,
+        "tier": "standard"
+      },
+      "dataClass": "internal",
+      "loop": {
+        "continuations": 2,
+        "judgeModel": "tier-light",
+        "stallSteps": 40
+      },
+      "maxMicroUSD": 2000000,
+      "predictedClass": "review",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "off",
+      "search": true,
+      "source": {
+        "contentSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "key": "k",
+        "kind": "api",
+        "onBehalfOf": "slack:T01ABC/U02DEF",
+        "ref": "api:runlore",
+        "requestedBy": "system:runlore",
+        "sponsor": "github:smana",
+        "trust": "untrusted"
+      },
+      "template": "investigate",
+      "text": "Fix the dead link in docs/a.md."
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "issue": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 2550000,
+        "runMinutes": 45,
+        "runTokens": 1500000,
+        "taskMicroUSD": 5100000,
+        "taskTokens": 3000000,
+        "tier": "standard"
+      },
+      "dataClass": "public",
+      "issue": 7,
+      "loop": {
+        "continuations": 2,
+        "judgeModel": "tier-light",
+        "stallSteps": 40
+      },
+      "predictedClass": "review",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "scoper",
+      "search": true,
+      "source": {
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "key": "k",
+        "kind": "issue",
+        "ref": "Smana/cloud-native-ref#7",
+        "requestedBy": "github:Smana",
+        "trust": "untrusted"
+      },
+      "template": "pair",
+      "text": "fix it"
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "labelled issue": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 2550000,
+        "runMinutes": 45,
+        "runTokens": 1500000,
+        "taskMicroUSD": 5100000,
+        "taskTokens": 3000000,
+        "tier": "standard"
+      },
+      "dataClass": "public",
+      "issue": 7,
+      "loop": {
+        "continuations": 2,
+        "judgeModel": "tier-light",
+        "stallSteps": 40
+      },
+      "predictedClass": "review",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "scoper",
+      "search": true,
+      "source": {
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "key": "k",
+        "kind": "issue",
+        "ref": "Smana/cloud-native-ref#7",
+        "requestedBy": "github:Smana",
+        "trust": "untrusted"
+      },
+      "template": "pair",
+      "text": "fix it"
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "origin": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 2550000,
+        "runMinutes": 45,
+        "runTokens": 1500000,
+        "taskMicroUSD": 5100000,
+        "taskTokens": 3000000,
+        "tier": "standard"
+      },
+      "dataClass": "public",
+      "issue": 7,
+      "origin": "parent1",
+      "predictedClass": "tests",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "off",
+      "source": {
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "key": "k",
+        "kind": "issue",
+        "ref": "Smana/cloud-native-ref#7",
+        "requestedBy": "github:Smana",
+        "trust": "untrusted"
+      },
+      "template": "pair",
+      "text": "follow-up"
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "runlore": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 2550000,
+        "runMinutes": 45,
+        "runTokens": 1500000,
+        "taskMicroUSD": 5100000,
+        "taskTokens": 3000000,
+        "tier": "standard"
+      },
+      "dataClass": "internal",
+      "issue": 7,
+      "loop": {
+        "continuations": 2,
+        "judgeModel": "tier-light",
+        "stallSteps": 40
+      },
+      "predictedClass": "review",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "off",
+      "search": true,
+      "source": {
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "key": "k",
+        "kind": "runlore",
+        "ref": "Smana/cloud-native-ref#7",
+        "requestedBy": "github:Smana",
+        "trust": "untrusted"
+      },
+      "template": "investigate",
+      "text": "a finding"
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "schedule": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 2550000,
+        "runMinutes": 45,
+        "runTokens": 1500000,
+        "taskMicroUSD": 5100000,
+        "taskTokens": 3000000,
+        "tier": "standard"
+      },
+      "dataClass": "public",
+      "predictedClass": "tests",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "off",
+      "source": {
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "key": "k",
+        "kind": "schedule",
+        "ref": "Smana/cloud-native-ref#7",
+        "requestedBy": "github:Smana",
+        "trust": "untrusted"
+      },
+      "template": "pair",
+      "text": "add tests"
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "sponsored api": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 666666,
+        "runMinutes": 45,
+        "runTokens": 392156,
+        "taskMicroUSD": 2000000,
+        "taskTokens": 1176470,
+        "tier": "standard"
+      },
+      "dataClass": "public",
+      "loop": {
+        "continuations": 2,
+        "judgeModel": "tier-light",
+        "stallSteps": 40
+      },
+      "maxMicroUSD": 2000000,
+      "predictedClass": "review",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "scoper",
+      "search": true,
+      "source": {
+        "contentSHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "key": "k",
+        "kind": "api",
+        "onBehalfOf": "slack:T01ABC/U02DEF",
+        "ref": "api:slack-app",
+        "requestedBy": "system:slack-app",
+        "sponsor": "github:smana",
+        "trust": "untrusted"
+      },
+      "template": "pair",
+      "text": "Fix the dead link in docs/a.md."
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  },
+  "sponsored issue": {
+    "metadata": {
+      "name": "3buqdlot",
+      "namespace": "agent-system"
+    },
+    "spec": {
+      "budget": {
+        "model": "agent-default",
+        "runMicroUSD": 666666,
+        "runMinutes": 45,
+        "runTokens": 392156,
+        "taskMicroUSD": 2000000,
+        "taskTokens": 1176470,
+        "tier": "standard"
+      },
+      "dataClass": "public",
+      "issue": 7,
+      "loop": {
+        "continuations": 2,
+        "judgeModel": "tier-light",
+        "stallSteps": 40
+      },
+      "maxMicroUSD": 2000000,
+      "predictedClass": "review",
+      "repository": "Smana/cloud-native-ref",
+      "scopeMode": "scoper",
+      "search": true,
+      "source": {
+        "contentSHA256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "key": "k",
+        "kind": "issue",
+        "ref": "Smana/cloud-native-ref#7",
+        "requestedBy": "github:Smana",
+        "trust": "untrusted"
+      },
+      "template": "pair",
+      "text": "fix it"
+    },
+    "status": {
+      "classification": {
+        "classifier": "static",
+        "fallback": "static",
+        "tier": "standard"
+      },
+      "configHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "phase": "Triaged",
+      "phaseSince": "<time>",
+      "usage": {}
+    }
+  }
+}

@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
@@ -271,6 +272,41 @@ func TestACIFixRunSaysWhyItStarted(t *testing.T) {
 		if !strings.Contains(c, want) {
 			t.Fatalf("missing %q in %q", want, c)
 		}
+	}
+}
+
+// R33: the escalation step grants a fresh CI-repair allowance, counted from the fix runs spent
+// before it; each repair's room message and narration keep ids of their own.
+func TestAStepGrantsFreshCIRepairs(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	tk := g.get(t)
+	tk.Status.FixRuns, tk.Status.FixRunsBeforeStep = 2, 2 // both repairs spent, then stepped
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-frontier", Source: "escalation", Reason: "out_of_budget", Cohort: "treatment", Resolved: true}
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	red := green("SUCCESS")
+	red.Runs[1].State = "FAILURE"
+	g.f.SetChecks(12, red)
+	for i := range 2 {
+		id := rid(i + 1)
+		tk := g.reconcile(t, "3buqdlot", 2)
+		n := int64(i + 3)
+		if tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.FixRuns != int32(n) || tk.Status.Runs[len(tk.Status.Runs)-1].Trigger != "ci" ||
+			g.log.keys[fmt.Sprintf("ci/%d", n)] == 0 || !slices.Contains(tk.Status.Narrated, fmt.Sprintf("ci-fixing-%d", n)) {
+			t.Fatalf("repair %d: %s fixes %d, keys %v, narrated %v", i+1, tk.Status.Phase, tk.Status.FixRuns, g.log.keys, tk.Status.Narrated)
+		}
+		if c := append(g.f.Comments(7), g.f.Comments(12)...); !slices.ContainsFunc(c, func(b string) bool {
+			return strings.Contains(b, fmt.Sprintf("a run starts to fix it (%d/2)", i+1))
+		}) {
+			t.Fatalf("the count is the step's: %q", c)
+		}
+		g.runs.set(id, "Succeeded")
+		g.log.end(id, "Succeeded", "agent_finished")
+		g.reconcile(t, "3buqdlot", 1)
+	}
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "ci_red" {
+		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 }
 
@@ -1361,5 +1397,157 @@ func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
 	}
 	if a := g.f.Armed(); len(a) != 1 || a[0] != "PR_12 abc" {
 		t.Fatalf("merged %q, want the approved head", a)
+	}
+}
+
+func TestGateRecordsHumanCommits(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetActivity("agent/3buqdlot", forge.Push{Type: "push", Actor: "Smana", Before: "c1", After: "abc", At: now},
+		forge.Push{Type: "branch_creation", Actor: "ogenki-agents[bot]", After: "c1"})
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Reason != "human_commit_in_pr" || !got.Status.PullRequest.HumanCommits {
+		t.Fatalf("%s %v", got.Status.Reason, got.Status.PullRequest.HumanCommits)
+	}
+	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now})
+	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseDone || !got.Status.PullRequest.HumanCommits || taskOutcome(got) != "merged_human" {
+		t.Fatalf("kept through the merge: %s %v", got.Status.Phase, got.Status.PullRequest.HumanCommits)
+	}
+	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention human_commit none none none"}) {
+		t.Fatalf("the human's commit counts once, at the hand-off: %v", got)
+	}
+}
+
+// R39: a split's part reads no parent at its merge. The mark its triage wrote (status.evaluated, the
+// parent having a profile) decides: a part without it completes as on main while the parent's read
+// fails; a part with it keeps its provenance check, the parent's read failing all the same.
+func TestAPartReadsNoParentAtItsMerge(t *testing.T) {
+	bot, claim := "ogenki-agents[bot]", "docs: fix\n\nAgent-Run: "+rid(0)
+	for name, c := range map[string]struct {
+		evaluated bool
+		human     bool
+	}{
+		"no profile in the family": {false, false},
+		"a profiled family":        {true, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
+			tk := g.get(t)
+			tk.Spec.Parent = &v1alpha1.Parent{Task: "abcdefgh", Issue: 7, Index: 1, Of: 2}
+			if err := g.c.Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			tk = g.get(t)
+			tk.Status.Reason, tk.Status.Evaluated = "merge_gate_off", c.evaluated
+			if err := g.c.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
+				Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if key.Name == "abcdefgh" {
+						return errors.New("the parent's read refused")
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				}})
+			g.f.SetCommits(12, forge.Commit{SHA: "abc", Message: claim}, forge.Commit{SHA: "def", Message: "typo"})
+			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
+				HeadRef: "agent/3buqdlot", HeadSHA: "def", Author: bot, HeadMessage: claim})
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits != c.human || got.Status.PullRequest.MergeCommitSHA != "m1" {
+				t.Fatalf("%s %s %+v, want Done with human %v", got.Status.Phase, got.Status.Reason, got.Status.PullRequest, c.human)
+			}
+		})
+	}
+}
+
+// R39: the merged pull request's provenance is read for the evaluation alone. A task with no profile
+// completes as on main: no commit list, no branch record, whatever their state, and no human_commit.
+func TestANoProfileMergeCompletesAsOnMain(t *testing.T) {
+	for name, phase := range map[string]string{"via AwaitingHuman": v1alpha1.PhaseAwaitingHuman, "via AwaitingCI": v1alpha1.PhaseAwaitingCI} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, phase)
+			tk := g.get(t)
+			tk.Status.Reason = "merge_gate_off"
+			if err := g.c.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			g.f.SetActivityErr("agent/3buqdlot", errors.New("the branch record is down"))
+			g.f.SetCommitsTruncated(12)
+			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
+				HeadRef: "agent/3buqdlot", HeadSHA: "def", Author: "Smana"})
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits || got.Status.PullRequest.MergeCommitSHA != "m1" {
+				t.Fatalf("%s %s %+v", got.Status.Phase, got.Status.Reason, got.Status.PullRequest)
+			}
+			if got := interventions(g.metrics.recorded); len(got) != 0 {
+				t.Fatalf("no profile, no human_commit: %v", got)
+			}
+		})
+	}
+}
+
+// A human pushes and merges between two reconciles: the merged pull request is read by the gate's
+// provenance, never by who merged it: the room's reported head, every commit's Agent-Run claim, and
+// every push the agents App's in GitHub's record of the branch, read past the deletion that follows
+// a merge. A trailer a human kept proves nothing; a record nobody wrote proves nothing either.
+func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
+	bot, claim := "ogenki-agents[bot]", "docs: fix\n\nAgent-Run: "+rid(0)
+	botOnly := []forge.Push{{Type: "branch_deletion", Actor: "Smana", Before: "abc"},
+		{Type: "push", Actor: bot, Before: "c1", After: "abc"}, {Type: "branch_creation", Actor: bot, After: "c1"}}
+	humanPush := []forge.Push{{Type: "branch_deletion", Actor: "Smana", Before: "abc"},
+		{Type: "push", Actor: bot, Before: "c1", After: "abc"}, {Type: "push", Actor: "Smana", Before: "c0", After: "c1"},
+		{Type: "branch_creation", Actor: bot, After: "c0"}}
+	for name, c := range map[string]struct {
+		phase    string
+		commits  []forge.Commit
+		activity []forge.Push
+		human    bool
+	}{
+		"human push, via AwaitingHuman": {v1alpha1.PhaseAwaitingHuman, []forge.Commit{{SHA: "abc", Message: claim}, {SHA: "def", Message: "typo"}}, nil, true},
+		"human push, via AwaitingCI":    {v1alpha1.PhaseAwaitingCI, []forge.Commit{{SHA: "abc", Message: claim}, {SHA: "def", Message: "typo"}}, nil, true},
+		"bot-only, merged by hand":      {v1alpha1.PhaseAwaitingHuman, nil, nil, false},
+		"bot-only, merged at the gate":  {v1alpha1.PhaseAwaitingCI, nil, nil, false},
+		"bot-only, the branch deleted":  {v1alpha1.PhaseAwaitingHuman, []forge.Commit{{SHA: "c1", Message: claim}, {SHA: "abc", Message: claim}}, botOnly, false},
+		"a human's push under the reported head, trailers kept": {v1alpha1.PhaseAwaitingHuman,
+			[]forge.Commit{{SHA: "c0", Message: claim}, {SHA: "c1", Message: claim}, {SHA: "abc", Message: claim}}, humanPush, true},
+		"no push recorded": {v1alpha1.PhaseAwaitingHuman, nil, []forge.Push{}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, c.phase)
+			tk := g.get(t)
+			tk.Status.Reason = "merge_gate_off"
+			tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
+			if err := g.c.Status().Update(t.Context(), tk); err != nil {
+				t.Fatal(err)
+			}
+			head, want := "abc", "accepted"
+			if c.human {
+				want = "merged_human"
+			}
+			if c.commits != nil {
+				head = c.commits[len(c.commits)-1].SHA
+				g.f.SetCommits(12, c.commits...)
+			}
+			if c.activity != nil {
+				g.f.SetActivity("agent/3buqdlot", c.activity...)
+			}
+			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1", MergedAt: now,
+				HeadRef: "agent/3buqdlot", HeadSHA: head, Author: bot, HeadMessage: claim})
+			got := g.reconcile(t, "3buqdlot", 1)
+			if got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.HumanCommits != c.human || taskOutcome(got) != want {
+				t.Fatalf("%s %s human %v, want %s", got.Status.Phase, got.Status.Reason, got.Status.PullRequest.HumanCommits, want)
+			}
+			g.settled(t, "3buqdlot")
+			if !slices.ContainsFunc(g.metrics.recorded, func(m string) bool { return strings.HasPrefix(m, "task_outcome ") && strings.Contains(m, " "+want+" ") }) {
+				t.Fatalf("%v", g.metrics.recorded)
+			}
+			var counted []string
+			if c.human {
+				counted = []string{"intervention human_commit treatment review-floor none"}
+			}
+			if got := interventions(g.metrics.recorded); !slices.Equal(got, counted) {
+				t.Fatalf("interventions %v, want %v", got, counted)
+			}
+		})
 	}
 }
