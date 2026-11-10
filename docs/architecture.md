@@ -270,6 +270,8 @@ the same configuration. Only leader-only work stays leader-only.
   deadlocks on a fresh cluster, where the CRDs arrive with the chart. `SIGTERM` during the wait
   exits cleanly. After a restart, an object that is invalid is not served, because no earlier
   version remains.
+- A file no resource can fix fails the start at once, before any cluster call: empty, not YAML,
+  an unknown key, or a duplicated `coordination` or `hardening` block.
 - Every other error still fails the start at once. A `Forbidden` answer to the list fails it with a hint about the Role that must grant
   `get`, `list` and `watch` on the three kinds.
 - With none of the CRDs installed, the factory runs from the file alone and logs that once. A CRD

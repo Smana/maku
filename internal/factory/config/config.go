@@ -1381,6 +1381,29 @@ func CheckBlocks(raw []byte) error {
 	return nil
 }
 
+// CheckShape refuses a file no resource can make servable: empty, not YAML, a key Config does not
+// know, or a switch block written twice. It decodes strictly and does not validate, as the
+// factory's resources may still supply what the file lacks (factory resources: D14).
+func CheckShape(raw []byte) error {
+	if err := CheckBlocks(raw); err != nil {
+		return err
+	}
+	j, err := yaml.YAMLToJSON(raw)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if t := bytes.TrimSpace(j); len(t) == 0 || bytes.Equal(t, []byte("null")) {
+		return errors.New("config: the file is empty")
+	}
+	dec := json.NewDecoder(bytes.NewReader(j))
+	dec.DisallowUnknownFields()
+	var c Config
+	if err := dec.Decode(&c); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	return nil
+}
+
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
 func Parse(raw []byte) (*Config, error) {
 	if err := CheckBlocks(raw); err != nil {

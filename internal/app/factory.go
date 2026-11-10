@@ -651,7 +651,8 @@ func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, do
 
 // firstSync builds the config from the file at cfgPath and the factory's resources in ns, through
 // a plain client: the manager, whose reader the Source moves to next, needs the config to be
-// built. The file is read first, so a missing one fails before any cluster call. While nothing can
+// built. The file is read and its shape checked first (config.CheckShape), so a missing, empty or
+// malformed one fails before any cluster call. While nothing can
 // be served it waits for the resources (waitServable); any other error, including an unreachable
 // API server, fails the start (D14). kinds are the resource kinds the API server serves
 // (servedKinds), read once the config serves.
@@ -659,6 +660,10 @@ func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string, gate *
 	raw, err := os.ReadFile(filepath.Clean(cfgPath))
 	if err != nil {
 		return nil, nil, fmt.Errorf("config: %w", err)
+	}
+	// A file no resource can fix fails at once; only a file waiting for its resources waits.
+	if err := config.CheckShape(raw); err != nil {
+		return nil, nil, err
 	}
 	restCfg, err := ctrl.GetConfig()
 	if err != nil {
