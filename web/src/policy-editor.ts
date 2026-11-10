@@ -9,6 +9,9 @@
 
 import templateFile from "./policy-templates.json";
 import { canonical, highlight, keyFix } from "./policy-yaml";
+import { describeClass } from "./policy-describe";
+import { EXAMPLES } from "./policy-examples";
+import { docsLink, type Field, FIELDS, type Group, GROUPS } from "./policy-fields";
 
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
@@ -46,11 +49,8 @@ export function profilesFor(author: string, profiles: string[], adopted?: string
   return profiles.filter((p) => adopted.includes(p) === (author === "adopt"));
 }
 
-// The leaves the form edits, in the order it shows them. Any other leaf, and every any-branch, is
-// kept as it is and edited in the expert view.
-const listLeaves = ["allowedFiles", "holdoutChecks", "companionFiles"] as const;
-const numberLeaves = ["maxPatchFiles", "maxModifiedLines"] as const;
-const textLeaves = ["releaseAgeCheck", "requiredLabel"] as const;
+// The diff shapes the form offers. A leaf the field table has no field for, and every any-branch,
+// is kept as it is and edited in the YAML view.
 export const diffShapes = ["", "links-only", "semver-patch", "semver-minor", "added-entry"];
 
 function leaf(all: Leaf[], key: string): unknown {
@@ -119,21 +119,74 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
   return e;
 }
 
-function labelled(label: string, input: HTMLElement): HTMLLabelElement {
-  const l = el("label", undefined, "editor-field");
-  l.append(el("span", label), input);
-  return l;
+// hasValue reports whether c sets key, the field table's key (dotted for nested keys): a group
+// with no key set is folded behind its add button.
+function hasValue(c: ClassPolicy, key: string): boolean {
+  const all = c.conditions?.all ?? [];
+  switch (key) {
+    case "adopt.logins": return !!c.adopt?.logins.length;
+    case "adopt.branches": return !!c.adopt?.branches.length;
+    case "harnessAllowed": return !!c.harnessAllowed?.length;
+    case "escalation.outOfBudget": return !!c.escalation?.outOfBudget;
+    case "escalation.notConverged": return !!c.escalation?.notConverged;
+    case "protectedFiles": return !!c.conditions?.deny?.length;
+    case "changedFiles": return !!c.requiresApproval?.length;
+    case "maxPerDay": return !!c.limits?.maxPerDay;
+    case "followUpWindow": return !!c.monitor?.followUpWindow;
+    default: return all.some((l) => key in l);
+  }
 }
 
-// classForm renders the guided form for cls, calling change with the class as edited.
-export function classForm(cls: ClassPolicy, profiles: string[], change: (c: ClassPolicy) => void, adopted?: string[] | null): HTMLElement {
+// The list fields whose lines are regular expressions: each line is checked as one as it is typed.
+const patternKeys = new Set(["adopt.branches", "allowedFiles", "companionFiles", "protectedFiles", "changedFiles"]);
+// A class named review has no mode: like an off class, it takes harnessAllowed and escalation.
+const reviewOnly = (key: string) => key === "harnessAllowed" || key.startsWith("escalation.");
+let fieldIds = 0;
+
+// classForm renders the guided form for cls, calling change with the class as edited. Fields are
+// grouped by the question each answers (policy-fields); a group with nothing set folds behind its
+// add button. Above them, the class as a sentence, rewritten at each edit. name is the class's
+// name (empty for a new one), from the example it starts from, if any.
+export function classForm(cls: ClassPolicy, profiles: string[], change: (c: ClassPolicy) => void, adopted?: string[] | null,
+  guardrails: Record<string, unknown> = {}, name = "", from = ""): HTMLElement {
   const c: ClassPolicy = structuredClone(cls);
   c.conditions ??= {};
   const form = el("fieldset", undefined, "editor-form");
-  form.append(el("legend", "Class"));
-  const emit = () => change(structuredClone(c));
+  form.append(el("legend", from ? `New class from ${from}` : name ? `Editing ${name}` : "New class"));
+  const story = el("div", undefined, "class-story");
+  story.setAttribute("aria-live", "polite");
+  const tell = () => {
+    const s = describeClass(c, guardrails);
+    const ul = el("ul");
+    for (const w of s.when) ul.append(el("li", w));
+    story.replaceChildren(el("p", s.lead), ul, ...s.also.map((a) => el("p", a)));
+  };
+  const emit = () => { tell(); change(structuredClone(c)); };
+  form.append(story);
 
-  const select = (label: string, value: string, options: string[], set: (v: string) => void) => {
+  // field wraps one control in its label, key, help and guide link; data-key is the selector tests
+  // use. The control is named by the label alone and described by the help line.
+  const field = (key: string, label: string, help: string, anchor: string, input: HTMLElement, error?: HTMLElement) => {
+    const id = `field-${++fieldIds}`;
+    const l = el("label", undefined, "editor-field");
+    l.dataset.key = key;
+    const top = el("span", undefined, "field-top");
+    const name = el("span", label, "field-label");
+    name.id = `${id}-label`;
+    top.append(name, el("code", key, "field-key"));
+    const docs = el("a", "Learn more", "field-docs");
+    docs.href = docsLink(anchor);
+    docs.target = "_blank";
+    docs.rel = "noopener";
+    const h = el("p", help, "field-help");
+    h.id = `${id}-help`;
+    h.append(" ", docs);
+    input.setAttribute("aria-labelledby", name.id);
+    input.setAttribute("aria-describedby", error ? `${h.id} ${error.id = `${id}-error`}` : h.id);
+    l.append(top, input, ...(error ? [error] : []), h);
+    return l;
+  };
+  const selectOf = (options: string[], value: string, set: (v: string) => void) => {
     const s = el("select");
     for (const o of options) {
       const opt = el("option", o || "(none)");
@@ -142,80 +195,181 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
     }
     s.value = value;
     s.onchange = () => { set(s.value); emit(); };
-    form.append(labelled(label, s));
     return s;
   };
-  const text = (label: string, value: string, set: (v: string) => void, area = false) => {
-    const i = area ? el("textarea") : el("input");
+  const textOf = (value: string, set: (v: string) => void) => {
+    const i = el("input");
     i.value = value;
     i.oninput = () => { set(i.value); emit(); };
-    form.append(labelled(label, i));
     return i;
   };
-  const number = (label: string, value: unknown, set: (v: number) => void) => {
+  // listOf is a textarea of one value a line; a pattern list marks the lines that are not a
+  // regular expression, the first one named.
+  const listOf = (value: string[], set: (v: string[]) => void, patterns: boolean) => {
+    const t = el("textarea");
+    t.value = value.join("\n");
+    const err = el("p", "", "field-error");
+    err.hidden = true;
+    const check = () => {
+      if (!patterns) return;
+      const bad = t.value.split("\n").findIndex((x) => { if (!x.trim()) return false; try { new RegExp(x.trim()); return false; } catch { return true; } });
+      if (bad < 0) { t.removeAttribute("aria-invalid"); err.hidden = true; err.textContent = ""; return; }
+      t.setAttribute("aria-invalid", "true");
+      err.textContent = `Line ${bad + 1} is not a regular expression`;
+      err.hidden = false;
+    };
+    t.oninput = () => { check(); set(lines(t.value)); emit(); };
+    check();
+    return { input: t, error: patterns ? err : undefined };
+  };
+  const numberOf = (value: unknown, max: unknown, set: (v: number) => void) => {
     const i = el("input");
     i.type = "number";
-    i.min = "0";
+    i.min = "1";
+    if (typeof max === "number" && max > 0) i.max = String(max);
     i.value = typeof value === "number" ? String(value) : "";
     i.oninput = () => { set(i.value === "" ? NaN : Number(i.value)); emit(); };
-    form.append(labelled(label, i));
+    return i;
   };
 
-  select("mode", c.mode, ["shadow", "live", "off"], (v) => { c.mode = v; });
-  let harness: HTMLSelectElement | undefined;
-  const fill = () => {
-    const fit = profilesFor(c.author, profiles, adopted);
-    const options = fit.includes(c.harness) || c.harness === "" ? fit : [c.harness, ...fit];
-    harness!.replaceChildren(...["", ...options].map((o) => { const opt = el("option", o || "(none)"); opt.value = o; return opt; }));
-    harness!.value = c.harness;
+  const all = () => c.conditions!.all ?? [];
+  const setAll = (k: string) => (v: unknown) => { c.conditions!.all = setLeaf(all(), k, v); };
+  const escalate = (k: "outOfBudget" | "notConverged") => (v: string) => {
+    const e = { ...c.escalation, [k]: v.trim() };
+    if (!e[k]) delete e[k];
+    if (Object.keys(e).length) c.escalation = e; else delete c.escalation;
   };
-  select("author", c.author, ["agents", "adopt"], (v) => {
+  // control builds the input of f, writing through the setter its key has always had.
+  const control = (f: Field): { input: HTMLElement; error?: HTMLElement } => {
+    const list = (v: string[], set: (v: string[]) => void) => listOf(v, set, patternKeys.has(f.key));
+    switch (f.key) {
+      case "adopt.logins": return list(c.adopt?.logins ?? [], (v) => { c.adopt!.logins = v; });
+      case "adopt.branches": return list(c.adopt?.branches ?? [], (v) => { c.adopt!.branches = v; });
+      case "harnessAllowed": return list(c.harnessAllowed ?? [], (v) => { if (v.length) c.harnessAllowed = v; else delete c.harnessAllowed; });
+      case "escalation.outOfBudget": return { input: textOf(c.escalation?.outOfBudget ?? "", escalate("outOfBudget")) };
+      case "escalation.notConverged": return { input: textOf(c.escalation?.notConverged ?? "", escalate("notConverged")) };
+      case "protectedFiles": return list((c.conditions!.deny ?? []).flatMap((d) => d.protectedFiles), (p) => { c.conditions!.deny = p.length ? [{ protectedFiles: p }] : undefined; });
+      case "changedFiles": return list((c.requiresApproval ?? []).flatMap((a) => a.changedFiles), (p) => { c.requiresApproval = p.length ? [{ changedFiles: p }] : undefined; });
+      case "maxPerDay": return { input: numberOf(c.limits?.maxPerDay, guardrails.maxPerDay, (v) => { c.limits = isNaN(v) || v === 0 ? undefined : { maxPerDay: v }; }) };
+      case "followUpWindow": return { input: textOf(duration(c.monitor?.followUpWindow), (v) => {
+        if (v.trim() === "") delete c.monitor;
+        else c.monitor = { ...(c.monitor ?? {}), followUpWindow: v.trim() };
+      }) };
+    }
+    switch (f.kind) {
+      case "list": return list((leaf(all(), f.key) as string[] | undefined) ?? [], setAll(f.key));
+      case "number": return { input: numberOf(leaf(all(), f.key), guardrails[f.key], setAll(f.key)) };
+      case "text": return { input: textOf((leaf(all(), f.key) as string) ?? "", setAll(f.key)) };
+      case "bool": {
+        const b = el("input");
+        b.type = "checkbox";
+        b.checked = leaf(all(), f.key) === true;
+        b.onchange = () => { setAll(f.key)(b.checked); emit(); };
+        return { input: b };
+      }
+      case "shape": {
+        // An agents class takes links-only only; a shape the text already has stays selectable.
+        const v = (leaf(all(), f.key) as string) ?? "";
+        const fit = c.author === "adopt" ? diffShapes : ["", "links-only"];
+        // A shape decides whether companionFiles is shown: the groups are drawn again.
+        return { input: selectOf(fit.includes(v) ? fit : [...fit, v], v, (s) => { setAll(f.key)(s); redraw(); }) };
+      }
+    }
+  };
+  const put = (f: { key: string; label: string; help: string; anchor: string }, ctl: { input: HTMLElement; error?: HTMLElement }) =>
+    field(f.key, f.label, f.help, f.anchor, ctl.input, ctl.error);
+
+  // Mode stays above the groups; author and harness open "Who writes it", drawn with it, since the
+  // author decides which profiles and which fields the class takes.
+  form.append(put({ key: "mode", label: "Mode", anchor: "shadow-and-live",
+    help: "Live merges, shadow records what it would do and merges nothing, off decides nothing." },
+  { input: selectOf(["shadow", "live", "off"], c.mode, (v) => { c.mode = v; redraw(); }) }));
+  const author = () => put({ key: "author", label: "Written by", anchor: "a-class",
+    help: "Agents: the factory's own runs. Adopt: another App's pull requests, such as Renovate's." },
+  { input: selectOf(["agents", "adopt"], c.author, (v) => {
     c.author = v;
     if (v === "adopt") c.adopt ??= { logins: [], branches: [] }; else delete c.adopt;
     if (!profilesFor(v, profiles, adopted).includes(c.harness)) c.harness = profilesFor(v, profiles, adopted)[0] ?? "";
-    fill();
-  });
-  if (c.adopt) {
-    text("adopted logins (one a line)", c.adopt.logins.join("\n"), (v) => { c.adopt!.logins = lines(v); }, true);
-    text("adopted branches (one a line)", c.adopt.branches.join("\n"), (v) => { c.adopt!.branches = lines(v); }, true);
-  }
-  harness = select("harness profile (the central list)", c.harness, [], (v) => { c.harness = v; });
-  fill();
+    redraw();
+  }) });
+  const harness = () => {
+    const fit = profilesFor(c.author, profiles, adopted);
+    const options = fit.includes(c.harness) || c.harness === "" ? fit : [c.harness, ...fit];
+    return put({ key: "harness", label: "Harness profile", anchor: "central-config",
+      help: "How the factory runs this class's tasks, one of the profiles the factory defines." },
+    { input: selectOf(["", ...options], c.harness, (v) => { c.harness = v; }) });
+  };
 
-  form.append(el("h4", "Conditions (all must hold)"));
-  const all = () => c.conditions!.all ?? [];
-  for (const k of listLeaves) {
-    text(`${k} (one a line)`, ((leaf(all(), k) as string[] | undefined) ?? []).join("\n"), (v) => { c.conditions!.all = setLeaf(all(), k, lines(v)); }, true);
-  }
-  for (const k of numberLeaves) number(k, leaf(all(), k), (v) => { c.conditions!.all = setLeaf(all(), k, v); });
-  const mo = el("input");
-  mo.type = "checkbox";
-  mo.checked = leaf(all(), "modifyOnly") === true;
-  mo.onchange = () => { c.conditions!.all = setLeaf(all(), "modifyOnly", mo.checked); emit(); };
-  form.append(labelled("modifyOnly", mo));
-  select("diffShape", (leaf(all(), "diffShape") as string) ?? "", diffShapes, (v) => { c.conditions!.all = setLeaf(all(), "diffShape", v); });
-  for (const k of textLeaves) text(k, (leaf(all(), k) as string) ?? "", (v) => { c.conditions!.all = setLeaf(all(), k, v); });
+  const groupsAt = el("div", undefined, "editor-groups");
+  form.append(groupsAt);
   if ((c.conditions.any ?? []).length > 0 || leaf(all(), "oracle") !== undefined) {
-    form.append(el("p", "This class also has any-branches or an oracle: they are kept as they are; edit them in the expert view.", "notice"));
+    form.append(el("p", "This class also has any-branches or an oracle: they are kept as they are; edit them in the YAML view.", "notice"));
   }
-
-  form.append(el("h4", "Deny (any match refuses)"));
-  text("protectedFiles (one a line)", (c.conditions.deny ?? []).flatMap((d) => d.protectedFiles).join("\n"), (v) => {
-    const p = lines(v);
-    c.conditions!.deny = p.length ? [{ protectedFiles: p }] : undefined;
-  }, true);
-  form.append(el("h4", "Requires approval (asks a human even when live)"));
-  text("changedFiles (one a line)", (c.requiresApproval ?? []).flatMap((a) => a.changedFiles).join("\n"), (v) => {
-    const p = lines(v);
-    c.requiresApproval = p.length ? [{ changedFiles: p }] : undefined;
-  }, true);
-  form.append(el("h4", "Limits and monitor"));
-  number("limits.maxPerDay", c.limits?.maxPerDay, (v) => { c.limits = isNaN(v) || v === 0 ? undefined : { maxPerDay: v }; });
-  text("monitor.followUpWindow (e.g. 168h; empty: no monitor)", duration(c.monitor?.followUpWindow), (v) => {
-    if (v.trim() === "") delete c.monitor;
-    else c.monitor = { ...(c.monitor ?? {}), followUpWindow: v.trim() };
+  const shown = (f: Field) => f.shown(c) || (name === "review" && reviewOnly(f.key));
+  // A group once open stays open, so emptying its last field does not fold it under the cursor.
+  const open = new Set<Group>();
+  // The sections stay; a redraw refills each one under its heading.
+  const sections = GROUPS.map((g) => {
+    const sec = el("section", undefined, "editor-group");
+    sec.dataset.group = g.id;
+    groupsAt.append(sec);
+    return { g, sec, h: el("h3", g.title) };
   });
+  const redraw = () => {
+    // Redrawing replaces the controls: the one that had focus gets it back by its key.
+    const had = (document.activeElement?.closest(".editor-field") as HTMLElement | null)?.dataset.key;
+    for (const { g, sec, h } of sections) {
+      const fs = FIELDS.filter((f) => f.group === g.id && shown(f));
+      const top = g.id === "who" ? [author(), harness()] : [];
+      if (g.add && !open.has(g.id) && !fs.some((f) => hasValue(c, f.key))) {
+        const b = el("button", g.add, "group-add");
+        b.type = "button";
+        b.onclick = () => {
+          open.add(g.id);
+          redraw();
+          (sec.querySelector(":is(input, textarea, select)") as HTMLElement | null)?.focus();
+        };
+        sec.replaceChildren(h, ...top, b);
+        continue;
+      }
+      open.add(g.id);
+      sec.replaceChildren(h, ...top, ...fs.map((f) => put(f, control(f))));
+    }
+    if (had) (groupsAt.querySelector(`[data-key="${had}"] :is(input, textarea, select)`) as HTMLElement | null)?.focus();
+  };
+  redraw();
+  tell();
   return form;
+}
+
+// exampleGallery shows each template as an example: its level, why one would start from it, what
+// it does in words and its YAML; start(name) begins a new class from it.
+export function exampleGallery(start: (name: string) => void, guardrails: Record<string, unknown> = {}): HTMLElement {
+  const box = el("section", undefined, "example-gallery");
+  box.hidden = true;
+  for (const level of ["simple", "advanced"] as const) {
+    box.append(el("h3", level === "simple" ? "Simple" : "Advanced"));
+    const row = el("div", undefined, "example-row");
+    for (const ex of EXAMPLES.filter((e) => e.level === level)) {
+      const t = templates[ex.name]();
+      const s = describeClass(t, guardrails);
+      const card = el("article", undefined, "example-card");
+      card.dataset.example = ex.name;
+      const ul = el("ul");
+      for (const w of s.when) ul.append(el("li", w));
+      const yaml = el("details");
+      const pre = el("pre", undefined, "example-yaml");
+      pre.append(highlight(toYAML({ [ex.name]: t })));
+      yaml.append(el("summary", "YAML"), pre);
+      const go = el("button", "Start from this");
+      go.type = "button";
+      go.onclick = () => start(ex.name);
+      card.append(el("h4", ex.name), el("p", ex.why, "example-why"), el("p", s.lead), ul, ...s.also.map((a) => el("p", a)), yaml, go);
+      row.append(card);
+    }
+    box.append(row);
+  }
+  return box;
 }
 
 // cleanClass is a class as the form edited it, with the empty sections dropped.

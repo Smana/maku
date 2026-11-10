@@ -206,6 +206,13 @@ describe("the index and evidence pages", () => {
   });
 });
 
+// field is the editor's field of key; startFrom begins a new class from an example in the gallery.
+const field = (app: HTMLElement, key: string) => app.querySelector(`.editor-field[data-key="${key}"]`) as HTMLLabelElement;
+const startFrom = (app: HTMLElement, name: string) => {
+  (app.querySelector("button.example-open") as HTMLButtonElement).click();
+  (app.querySelector(`.example-card[data-example="${name}"] button`) as HTMLButtonElement).click();
+};
+
 describe("the policy editor", () => {
   it("writes the file as YAML: factory first, patterns double-quoted, scalar lists in flow", () => {
     expect(fileYAML({ factory: "aws-0", classes: { "docs-links": { mode: "off", author: "agents", harness: "p",
@@ -232,7 +239,7 @@ describe("the policy editor", () => {
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/repositories/Smana/cloud-native-ref/preview": preview }, calls));
     const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
     expect(yaml.value).toBe("factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n"); // the file as it is, comments and all
-    const cap = [...app.querySelectorAll(".editor-field")].find((l) => l.textContent?.startsWith("maxPatchFiles"))!.querySelector("input")!;
+    const cap = field(app, "maxPatchFiles").querySelector("input")!;
     cap.value = "5";
     cap.dispatchEvent(new Event("input"));
     expect(yaml.value).toContain("        - maxPatchFiles: 5\n");
@@ -249,10 +256,8 @@ describe("the policy editor", () => {
   it("starts a new class from a template, on a central profile", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
-    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
-    pick.value = "template:deps-patch";
-    pick.dispatchEvent(new Event("change"));
-    const mode = app.querySelector(".editor-form select") as HTMLSelectElement;
+    startFrom(app, "deps-patch");
+    const mode = field(app, "mode").querySelector("select")!;
     mode.value = "shadow";
     mode.dispatchEvent(new Event("change"));
     const yaml = (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
@@ -266,24 +271,133 @@ describe("the policy editor", () => {
     r.report = { ...r.report, harnessProfiles: ["adopted-none", "checked", "plain"], adoptedProfiles: ["adopted-none"],
       file: "factory: aws-0\n", policy: { factory: "aws-0" } };
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": r }));
-    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
     const yamlOf = () => (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
-    const edit = () => {
-      const mode = app.querySelector(".editor-form select") as HTMLSelectElement;
-      mode.dispatchEvent(new Event("change"));
-    };
-    pick.value = "template:docs-broad";
-    pick.dispatchEvent(new Event("change"));
+    const edit = () => field(app, "mode").querySelector("select")!.dispatchEvent(new Event("change"));
+    startFrom(app, "docs-broad");
     edit();
     expect(yamlOf()).toMatch(/  docs-broad:\n(    .*\n)*?    harness: "checked"\n/);
     expect(yamlOf()).toContain('  docs-links:\n    mode: "off"\n    author: "agents"\n    harness: "checked"\n');
     expect(yamlOf()).toContain('  revert:\n    mode: "off"\n');
-    const harness = [...app.querySelectorAll(".editor-form select")][2] as HTMLSelectElement;
+    const harness = field(app, "harness").querySelector("select")!;
     expect([...harness.options].map((o) => o.value)).not.toContain("adopted-none");
-    pick.value = "template:deps-patch";
-    pick.dispatchEvent(new Event("change"));
+    startFrom(app, "deps-patch");
     edit();
     expect(yamlOf()).toMatch(/  deps-patch:\n(    .*\n)*?    harness: "adopted-none"\n/);
+  });
+  it("labels every field in words, with its key, one help line and a link to the guide", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const f = field(app, "maxPatchFiles");
+    expect(f.querySelector(".field-label")?.textContent).toBe("Most files changed");
+    expect(f.querySelector("code.field-key")?.textContent).toBe("maxPatchFiles");
+    expect(f.querySelector(".field-help")?.textContent).toMatch(/factory's cap/);
+    expect(f.querySelector("a.field-docs")?.getAttribute("href")).toMatch(/merge-policies\.md#leaves$/);
+    expect(app.querySelector(".editor-form legend")?.textContent).toBe("Editing docs-links");
+  });
+  it("groups the fields by question under h3s, and folds a group with nothing set", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    expect([...app.querySelectorAll(".editor-group h3")].map((h) => h.textContent))
+      .toEqual(["Who writes it", "What it may touch", "How big it may be", "What must pass", "When to ask a maintainer", "Limits and follow-up"]);
+    const ask = app.querySelector('.editor-group[data-group="ask"]')!;
+    const add = ask.querySelector("button.group-add") as HTMLButtonElement;
+    expect(add.textContent).toBe("Add an approval rule");
+    expect(ask.querySelector(".editor-field")).toBeNull();
+    add.click();
+    expect(ask.querySelector('.editor-field[data-key="changedFiles"]')).not.toBeNull();
+  });
+  it("rewrites the class's sentence as the form changes", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const cap = field(app, "maxPatchFiles").querySelector("input")!;
+    cap.value = "4";
+    cap.dispatchEvent(new Event("input"));
+    expect(app.querySelector(".class-story")?.textContent).toContain("it changes at most 4 files");
+  });
+  it("lists only classes in the picker; examples come from the gallery", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
+    expect([...pick.options].map((o) => o.value)).toEqual(["docs-links"]);
+  });
+  it("keeps the expert YAML in a tab beside the form, the check below both", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const tabs = [...app.querySelectorAll('.policy-editor [role="tab"]')] as HTMLButtonElement[];
+    expect(tabs.map((t) => t.textContent)).toEqual(["Form", "YAML (expert)"]);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect((app.querySelector(".yaml-editor")!.closest('[role="tabpanel"]') as HTMLElement).hidden).toBe(true);
+    tabs[1].click();
+    expect((app.querySelector(".yaml-editor")!.closest('[role="tabpanel"]') as HTMLElement).hidden).toBe(false);
+    expect(app.querySelector(".editor-actions button")?.textContent).toBe("Check, compare and simulate");
+  });
+  it("offers simple and advanced examples, each explained, and starts the form from one", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    (app.querySelector("button.example-open") as HTMLButtonElement).click();
+    const g = app.querySelector("section.example-gallery") as HTMLElement;
+    expect(g.hidden).toBe(false);
+    expect([...g.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["Simple", "Advanced"]);
+    const card = g.querySelector('.example-card[data-example="infra-with-approval"]')!;
+    expect(card.querySelector(".example-why")?.textContent).toMatch(/network/);
+    expect(card.textContent).toContain("A maintainer approves it first if it changes ^infrastructure/network/.+$.");
+    (card.querySelector("button") as HTMLButtonElement).click();
+    expect(app.querySelector(".editor-form legend")?.textContent).toBe("New class from infra-with-approval");
+    expect((app.querySelector('input[aria-label="new class name"]') as HTMLInputElement).hidden).toBe(false);
+  });
+  it("offers harnessAllowed and escalation only to an off class, or the review class, and writes them", async () => {
+    const app = document.createElement("div");
+    const r = page();
+    r.report = { ...r.report, file: "factory: aws-0\n", policy: { factory: "aws-0", classes: {
+      "docs-links": { mode: "shadow", author: "agents", harness: "docs-standard" },
+      review: { mode: "", author: "agents", harness: "docs-standard" } } } };
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": r }));
+    expect(field(app, "harnessAllowed")).toBeNull();
+    const mode = field(app, "mode").querySelector("select")!;
+    mode.value = "off";
+    mode.dispatchEvent(new Event("change"));
+    const allowed = field(app, "harnessAllowed").querySelector("textarea")!;
+    allowed.value = "checked\nplain";
+    allowed.dispatchEvent(new Event("input"));
+    const out = field(app, "escalation.outOfBudget").querySelector("input")!;
+    out.value = "checked";
+    out.dispatchEvent(new Event("input"));
+    const yaml = (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
+    expect(yaml).toContain('    harnessAllowed: ["checked", "plain"]\n    escalation:\n      outOfBudget: "checked"\n');
+    out.value = "";
+    out.dispatchEvent(new Event("input"));
+    expect((app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value).not.toContain("escalation");
+    const pick = app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement;
+    pick.value = "review";
+    pick.dispatchEvent(new Event("change"));
+    expect(field(app, "harnessAllowed")).not.toBeNull();
+    expect(field(app, "escalation.notConverged")).not.toBeNull();
+  });
+  it("marks a pattern line that is not a regular expression", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const files = field(app, "allowedFiles").querySelector("textarea")!;
+    files.value = "^docs/.+$\n^docs/(.+$";
+    files.dispatchEvent(new Event("input"));
+    expect(files.getAttribute("aria-invalid")).toBe("true");
+    const err = field(app, "allowedFiles").querySelector(".field-error") as HTMLElement;
+    expect(err.hidden).toBe(false);
+    expect(err.textContent).toBe("Line 2 is not a regular expression");
+    files.value = "^docs/.+$";
+    files.dispatchEvent(new Event("input"));
+    expect(files.hasAttribute("aria-invalid")).toBe(false);
+    expect(err.hidden).toBe(true);
+  });
+  it("says whether the gallery is open on the button that opens it", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const open = app.querySelector("button.example-open") as HTMLButtonElement;
+    expect(open.getAttribute("aria-expanded")).toBe("false");
+    open.click();
+    expect(open.getAttribute("aria-expanded")).toBe("true");
+    startFrom(app, "deps-patch"); // the click closes it, then starting one closes it too
+    expect(open.getAttribute("aria-expanded")).toBe("false");
+    expect((app.querySelector("section.example-gallery") as HTMLElement).hidden).toBe(true);
   });
   it("holds every semver template to modifyOnly, as the factory's class check does", () => {
     for (const name of ["deps-patch", "deps-minor"]) {
@@ -298,15 +412,15 @@ describe("the policy editor", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ [repo]: page(), ...routes }));
     const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
     const type = (v: string) => { yaml.value = v; yaml.dispatchEvent(new Event("input")); };
-    const field = (name: string) => [...app.querySelectorAll(".editor-field")].find((l) => l.textContent?.startsWith(name))!.querySelector("input, textarea, select") as HTMLInputElement;
-    return { app, yaml, type, field };
+    const input = (key: string) => field(app, key)?.querySelector("input, textarea, select") as HTMLInputElement;
+    return { app, yaml, type, field: input };
   };
   it("reads the expert text back into the form, comments kept in the text", async () => {
     const { app, yaml, type, field } = await mount();
     type('# ours\nfactory: aws-0\nclasses:\n  docs-links:\n    mode: live # promoted\n    author: agents\n    harness: docs-standard\n' +
       "    conditions:\n      all:\n        - maxPatchFiles: 4\n  extra:\n    mode: off\n    author: agents\n    harness: docs-standard\n");
     expect(field("maxPatchFiles").value).toBe("4");
-    expect((app.querySelector(".editor-form select") as HTMLSelectElement).value).toBe("live");
+    expect(field("mode").value).toBe("live");
     expect([...(app.querySelector('select[aria-label="class to edit"]') as HTMLSelectElement).options].map((o) => o.value)).toContain("extra");
     expect(yaml.value).toContain("# promoted");
     field("maxPatchFiles").value = "5";
@@ -365,13 +479,15 @@ describe("the policy editor", () => {
     const commented = "# ours\nfactory: aws-0\nclasses:\n  docs-links:\n    mode: shadow # for now\n    author: agents\n    harness: docs-standard\n";
     type(commented);
     expect(warn()).toMatch(/2 comments/);
+    (app.querySelector('.editor-group[data-group="size"] button.group-add') as HTMLButtonElement).click();
     field("maxPatchFiles").value = "5";
     field("maxPatchFiles").dispatchEvent(new Event("input"));
     expect(yaml.value).not.toContain("#");
     const undo = [...app.querySelectorAll(".yaml-status button")].find((b) => b.textContent === "Undo") as HTMLButtonElement;
     undo.click();
     expect(yaml.value).toBe(commented);
-    expect(field("maxPatchFiles").value).toBe("");
+    expect(field("maxPatchFiles")).toBeUndefined(); // nothing set again: the size group folds
+    expect(app.querySelector('.editor-group[data-group="size"] button.group-add')).not.toBeNull();
   });
   it("copies and downloads the text as the file it replaces", async () => {
     const { app, yaml } = await mount();

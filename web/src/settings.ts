@@ -8,7 +8,7 @@
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
 import { evidenceLine, explain, ladderLine, post, read } from "./settings-api";
-import { classForm, cleanClass, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
+import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails } from "./policy-describe";
 import { mountBrand } from "./brand";
@@ -342,21 +342,40 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   file.factory = r.factory; // read-only: Maku never edits factory:
   file.classes ??= {};
   const profiles = r.harnessProfiles ?? [];
-  box.append(el("p", `factory: ${r.factory} (read-only). Guardrails: ${JSON.stringify(r.guardrails)}. Harness profiles: ${profiles.join(", ") || "none"}.`));
+  box.append(el("p", `This file belongs to the factory ${r.factory} (read-only). Harness profiles: ${profiles.join(", ") || "none"}.`, "editor-meta"));
   const pick = el("select");
   pick.setAttribute("aria-label", "class to edit");
   const fillPick = () => {
     const was = pick.value;
     pick.replaceChildren();
     for (const n of Object.keys(file.classes!)) { const o = el("option", n); o.value = n; pick.append(o); }
-    for (const t of Object.keys(templates)) { const o = el("option", `new from template: ${t}`); o.value = `template:${t}`; pick.append(o); }
     if ([...pick.options].some((o) => o.value === was)) pick.value = was;
   };
   fillPick();
+  // source is what the form edits: a class of the file, or a new class from an example.
+  let source: { kind: "class" | "template"; name: string } | undefined = pick.value ? { kind: "class", name: pick.value } : undefined;
   const name = el("input");
   name.placeholder = "new class name";
   name.setAttribute("aria-label", "new class name");
+  name.hidden = true;
   const formAt = el("div");
+  const gallery = exampleGallery((t) => {
+    source = { kind: "template", name: t };
+    name.value = t;
+    name.hidden = false;
+    gallery.hidden = true;
+    opener.setAttribute("aria-expanded", "false");
+    show();
+  }, r.guardrails);
+  gallery.id = `example-gallery-${r.repository.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+  const opener = el("button", "New class from an example", "example-open");
+  opener.type = "button";
+  opener.setAttribute("aria-expanded", "false");
+  opener.setAttribute("aria-controls", gallery.id);
+  opener.onclick = () => {
+    gallery.hidden = !gallery.hidden;
+    opener.setAttribute("aria-expanded", String(!gallery.hidden));
+  };
   const out = el("div");
   // The form writes the file without comments: say so before an edit there drops them.
   const warning = el("p", "", "notice comments-warning");
@@ -387,14 +406,22 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     note(text);
     file.classes = p.file.classes ?? {};
     fillPick();
-    if (!pick.value.startsWith("template:")) show();
+    if (source?.kind !== "template") {
+      source = pick.value ? { kind: "class", name: pick.value } : undefined;
+      show();
+    }
   }, manifest ? { path: r.manifestPath ?? "mergepolicy.yaml", label: "Copy MergePolicy manifest", get: (t) => built(t) } : undefined);
   const show = () => {
-    const v = pick.value;
-    let cls = v.startsWith("template:") ? templates[v.slice(9)]() : file.classes![v];
-    if (v.startsWith("template:") && !cls.harness) cls = { ...cls, harness: profilesFor(cls.author, profiles, r.adoptedProfiles)[0] ?? "" };
-    const key = () => (v.startsWith("template:") ? (name.value.trim() || v.slice(9)) : v);
-    name.hidden = !v.startsWith("template:");
+    const src = source;
+    if (!src) {
+      formAt.replaceChildren(el("p", "The file has no class yet: start one from an example.", "notice"));
+      return;
+    }
+    const tpl = src.kind === "template";
+    let cls = tpl ? templates[src.name]() : file.classes![src.name];
+    if (tpl && !cls.harness) cls = { ...cls, harness: profilesFor(cls.author, profiles, r.adoptedProfiles)[0] ?? "" };
+    const key = () => (tpl ? (name.value.trim() || src.name) : src.name);
+    name.hidden = !tpl;
     try {
       formAt.replaceChildren(classForm(cls, profiles, (c) => {
         // A file that declares classes declares docs-links and revert (OD-8): a first class brings
@@ -415,19 +442,64 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
           view.text.dispatchEvent(new Event("input"));
         };
         view.say(`The form edit dropped ${dropped} comment${dropped > 1 ? "s" : ""}. `, undo);
-      }, r.adoptedProfiles));
+      }, r.adoptedProfiles, r.guardrails, key(), tpl ? src.name : ""));
     } catch {
       formAt.replaceChildren(el("p", "The form cannot show this class as the text has it: edit it in the expert view.", "notice"));
     }
   };
-  pick.onchange = show;
-  box.append(labelled2("class", pick), name, warning, formAt);
-  box.append(el("h3", "Expert YAML view"), el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
-  if (manifest) box.append(el("p", "Built from the version the factory serves; a change the factory refused is not in it.", "notice"));
+  pick.onchange = () => {
+    source = { kind: "class", name: pick.value };
+    show();
+  };
+  // The form and the YAML are two tabs over one file; the check, below both, reads the YAML.
+  const tabs = el("div", undefined, "editor-tabs");
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "Edit the file as");
+  const panes: HTMLElement[] = [];
+  const tab = (label: string, pane: HTMLElement, on: boolean) => {
+    const b = el("button", label);
+    b.type = "button";
+    b.id = `${gallery.id}-tab-${panes.length}`;
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", String(on));
+    b.tabIndex = on ? 0 : -1;
+    pane.setAttribute("role", "tabpanel");
+    pane.setAttribute("aria-labelledby", b.id);
+    pane.hidden = !on;
+    b.onclick = () => {
+      for (const t of tabs.children) {
+        t.setAttribute("aria-selected", String(t === b));
+        (t as HTMLButtonElement).tabIndex = t === b ? 0 : -1;
+      }
+      for (const p of panes) p.hidden = p !== pane;
+    };
+    // Arrow keys move between the tabs, as a tablist's do.
+    b.onkeydown = (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      const all = [...tabs.children] as HTMLButtonElement[];
+      const next = all[(all.indexOf(b) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length];
+      next.focus();
+      next.click();
+    };
+    panes.push(pane);
+    tabs.append(b);
+  };
+  const picker = el("div", undefined, "editor-picker");
+  picker.append(labelled2("Class", pick), opener, name);
+  const formPane = el("div", undefined, "editor-pane");
+  formPane.append(picker, gallery, warning, formAt);
+  const yamlPane = el("div", undefined, "editor-pane");
+  yamlPane.append(el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
+  if (manifest) yamlPane.append(el("p", "Built from the version the factory serves; a change the factory refused is not in it.", "notice"));
+  tab("Form", formPane, true);
+  tab("YAML (expert)", yamlPane, false);
+  box.append(tabs, formPane, yamlPane);
   const check = el("button", "Check, compare and simulate", "primary");
   check.type = "button";
   check.disabled = !maintainer;
-  if (!maintainer) box.append(el("p", "Only a maintainer of the repository may check a proposal.", "notice"));
+  const actions = el("div", undefined, "editor-actions");
+  actions.append(check);
+  if (!maintainer) actions.append(el("p", "Only a maintainer of the repository may check a proposal.", "notice"));
   // run is the factory's check of text, shown below; a valid one's manifest is kept with its text.
   const run = async (text: string): Promise<Preview | undefined> => {
     try {
@@ -448,9 +520,9 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     await run(view.text.value);
     check.disabled = false;
   };
-  box.append(check, out);
+  box.append(out, actions);
   note(view.text.value);
-  if (pick.options.length) show();
+  show();
   return box;
 }
 
