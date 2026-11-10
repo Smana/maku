@@ -26,7 +26,7 @@ var (
 
 // Status renders the factory facts an issue's one live comment carries. It deliberately omits
 // live checks and spend: neither is a truthful, stable fact the factory owns at render time.
-func Status(t *v1alpha1.Task, roomsURL string) string {
+func Status(t *v1alpha1.Task, roomsURL string, mergeByApproval ...bool) string {
 	phase := strings.ToLower(t.Status.Phase)
 	if phase == "" {
 		phase = "unknown"
@@ -38,7 +38,12 @@ func Status(t *v1alpha1.Task, roomsURL string) string {
 	}
 
 	waiting := "nobody"
-	reason, next := summ.Waiting(&envelope.TaskFacts{Phase: t.Status.Phase, Reason: t.Status.Reason})
+	facts := &envelope.TaskFacts{Phase: t.Status.Phase, Reason: t.Status.Reason,
+		MergeByApproval: len(mergeByApproval) > 0 && mergeByApproval[0]}
+	if pr := t.Status.PullRequest; pr != nil {
+		facts.PR = &envelope.PRFact{Number: pr.Number, URL: pr.URL}
+	}
+	reason, next := summ.Waiting(facts)
 	if reason != "" {
 		waiting = reason
 		if next != "" {
@@ -103,11 +108,11 @@ func statusGeneration(t *v1alpha1.Task) int {
 
 // SyncStatus creates, adopts or edits the issue's one status comment. StatusComment records only
 // remote state known to have succeeded, so a lost Task update or a failed write is safe to retry.
-func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL string) error {
+func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL string, mergeByApproval ...bool) error {
 	if t.Spec.Issue == 0 {
 		return nil
 	}
-	body := Status(t, roomsURL)
+	body := Status(t, roomsURL, mergeByApproval...)
 	if ledger := t.Status.StatusComment; ledger != nil && ledger.ID != 0 && ledger.Body == body {
 		return nil
 	}
@@ -128,10 +133,10 @@ func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL str
 		return fmt.Errorf("narrate: list status comments: %w", err)
 	}
 	current, found := findStatusComment(comments, n.Login, recordedID)
+	if !found && recordedID != 0 {
+		current, found = findStatusComment(comments, n.Login, 0)
+	}
 	if !found {
-		if recordedID != 0 {
-			return fmt.Errorf("narrate: status comment %d was not found", recordedID)
-		}
 		id, err := f.CommentWithID(ctx, t.Spec.Issue, body)
 		if err != nil {
 			return fmt.Errorf("narrate: create status comment: %w", err)

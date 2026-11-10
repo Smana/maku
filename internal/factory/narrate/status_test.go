@@ -42,7 +42,7 @@ func TestStatus(t *testing.T) {
 	for _, want := range []string{
 		"Factory status · awaitinghuman · updated 2026-11-09 14:02 UTC",
 		"Room: [3buqdlot](https://rooms.example/r/3buqdlot)",
-		"waiting on: the factory does not merge this class: a maintainer reviews and merges it; next: a maintainer looks at the task's issue",
+		"waiting on: the factory does not merge this class: a maintainer reviews and merges it; next: a maintainer reviews and merges or closes the pull request on GitHub",
 		"Spec: sha256:" + strings.Repeat("a", 64) + " · 2 decisions · 1 assumption",
 		"PR: [#1234](https://github.com/Smana/repo/pull/1234)",
 	} {
@@ -58,6 +58,38 @@ func TestStatus(t *testing.T) {
 	if !strings.Contains(got, "<!-- agent-factory issue-status -->") ||
 		!strings.Contains(got, "<!-- agent-factory issue-status-owner task=aaaaaaaa generation=1 -->") {
 		t.Fatalf("status lacks its issue and owner markers:\n%s", got)
+	}
+	if len(got) > 4096 {
+		t.Fatalf("status body exceeds the Task ledger's bound: %d bytes", len(got))
+	}
+}
+
+func TestStatusWaitingGuidance(t *testing.T) {
+	tk := statusTask()
+	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
+	tk.Status.Reason = "class_unarmed"
+	if got := Status(tk, statusRoomsURL); !strings.Contains(got, "next: a maintainer looks at the task's issue") {
+		t.Fatalf("an issue-only hand-off points at the issue:\n%s", got)
+	}
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1234, URL: "https://github.com/Smana/repo/pull/1234"}
+	if got := Status(tk, statusRoomsURL); !strings.Contains(got, "next: a maintainer reviews and merges or closes the pull request on GitHub") {
+		t.Fatalf("a pull request hand-off points at the pull request:\n%s", got)
+	}
+}
+
+func TestStatusApproveToMergeGuidance(t *testing.T) {
+	tk := statusTask()
+	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
+	tk.Status.Reason = "class_unarmed"
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1234, URL: "https://github.com/Smana/repo/pull/1234"}
+	got := Status(tk, statusRoomsURL, true)
+	for _, want := range []string{
+		"waiting on: the factory does not merge this class on its own: it merges once a maintainer approves the current commit",
+		"next: a maintainer reviews, then approves the current commit or closes the pull request on GitHub; the merger App merges that commit",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("approve-to-merge status lacks %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -77,6 +109,25 @@ func TestSyncStatusNoOp(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("an unchanged status made forge calls: %q", f.calls)
+	}
+}
+
+func TestSyncStatusApproveToMerge(t *testing.T) {
+	f := &statusForge{Fake: forgetest.NewFake()}
+	n := Narrator{Forge: f, Login: bot}
+	tk := statusTask()
+	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
+	tk.Status.Reason = "class_unarmed"
+	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1234, URL: "https://github.com/Smana/repo/pull/1234"}
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, true); err != nil {
+		t.Fatal(err)
+	}
+	want := Status(tk, statusRoomsURL, true)
+	if tk.Status.StatusComment.Body != want || f.Comments(tk.Spec.Issue)[0] != want || f.count("edit") != 1 {
+		t.Fatalf("sync did not render approve-to-merge guidance: ledger %+v, calls %q", tk.Status.StatusComment, f.calls)
 	}
 }
 
@@ -136,6 +187,49 @@ func TestSyncStatusRecoversBeyondRecentWindow(t *testing.T) {
 	}
 	if f.count("recent") != 0 || f.count("all") != 1 || f.count("create") != 0 {
 		t.Fatalf("recovery used the wrong comment window: %q", f.calls)
+	}
+}
+
+func TestSyncStatusRecoversDeletedRecordedComment(t *testing.T) {
+	for _, recoverMarker := range []bool{false, true} {
+		name := "create a replacement"
+		if recoverMarker {
+			name = "adopt another marked comment"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := &statusForge{Fake: forgetest.NewFake()}
+			tk := statusTask()
+			tk.Status.StatusComment = &v1alpha1.StatusComment{ID: 999, Body: "the previous successful body"}
+			want := Status(tk, statusRoomsURL)
+			var existingID int64
+			if recoverMarker {
+				var err error
+				existingID, err = f.Fake.CommentWithID(t.Context(), tk.Spec.Issue, want)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+				t.Fatal(err)
+			}
+			if tk.Status.StatusComment.ID == 999 || tk.Status.StatusComment.Body != want {
+				t.Fatalf("the missing recorded id was not replaced: %+v", tk.Status.StatusComment)
+			}
+			if recoverMarker {
+				if tk.Status.StatusComment.ID != existingID || f.count("create") != 0 || len(f.Comments(tk.Spec.Issue)) != 1 {
+					t.Fatalf("marker recovery did not adopt the existing comment: ledger %+v, calls %q", tk.Status.StatusComment, f.calls)
+				}
+			} else if f.count("create") != 1 || len(f.Comments(tk.Spec.Issue)) != 1 {
+				t.Fatalf("the deleted comment was not recreated: calls %q", f.calls)
+			}
+			f.calls = nil
+			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.calls) != 0 {
+				t.Fatalf("the recovered status is not a zero-call no-op: %q", f.calls)
+			}
+		})
 	}
 }
 
