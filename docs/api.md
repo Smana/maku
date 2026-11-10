@@ -408,6 +408,7 @@ session reads what a person reads.
 | `room` | The room id |
 | `text` | The brief, Markdown: `Resume:` and the room, with the issue and its title when it has one; `Asked:`; `Acceptance:`, each check of the last handoff's scope in a code span; `Plan:`; `Changed since …`, at most 20 milestones with the rest counted; `Blocked on:`; `Fix:`, one line naming what to change, when the room's facts or its last notes name one of the three failures a person can fix — the factory App missing a permission, a check the App cannot read, a CI log host outside the egress policy; the one `Next:` step with its action link; `Links:`. A section whose data is absent is left out. The agents' words are quoted, never an instruction |
 | `cursor` | `seq:N`, the last event the changed block covered: pass it back as `since` |
+| `question?` | When the last scope is in `question` state, `{text, recommended}`: the scoper's question and first assumption (empty when there is none), from the same authorized room read as the brief. Omitted for every other scope state; the rendered `text` is unchanged. `maku mcp`'s local `need_answer` reads this first |
 
 | Status | When |
 |---|---|
@@ -663,7 +664,7 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, an optional revision envelope (`plan`, `hash`, `candidate`), and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, ranked gaps and the first as the compatibility question, `canStart`. One public-text-only model call below the round cap; it files nothing ([the planner](#the-planner-on-mcp)) |
 | `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, optional `candidate`, `on_behalf_of?` | The final plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
 | `coordination_plan` | any caller, when `human.intake.plan.enabled` and `coordination.mode` is not `off` | `text`, `candidates` (2 to 20), `primary`, `context?`, `id?`, `version?`, and a sponsored principal's `on_behalf_of` | A validated two-repository `CoordinationPlan`, its hash, diagnostics and the attempt's planning record. One call on the planner's route; it files nothing ([coordination](#coordination-on-mcp)) |
-| `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
+| `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor, question?}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
 
 The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`, `room_brief`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
 
@@ -685,9 +686,22 @@ room exists before `room_brief` shows it. `inbox` is one `needs_list` call: when
 says so in one line and names `rooms_list` with `mine`, rather than making a second call.
 
 The local relay's `need_answer` is the post-filing scoper-bounce counterpart, not a second broker
-planner: it reads the authorized `room_brief` question, confirms the answer and appends an issue-local
-Decision to the GitHub issue body. It never adds or removes a label; a maintainer re-applies
-`factory/ready`.
+planner. Its strict arguments are `{repo, issue, room?}`; without `room`, `rooms_list` supplies at most
+one match and several refuse as `ambiguous_room`. It acts only with `factory/needs-author` present and
+`factory/ready` absent. It reads the authorized `room_brief` `question` first, then falls back to the
+newest public factory `event=needs-author-…` comment. No room is acceptable only when that public comment
+supplies the question; an internal or missing question refuses as `needs_room_access`, naming the
+maintainer/room-reader path rather than exposing or inventing one.
+
+The form shows the question, recommendation and exact Decision-section append layout, with `<answer>`
+marking the single substitution the developer's trimmed one-line answer makes. `answer` is required and
+`send` defaults to false. Only an accepted form with send true re-reads the issue and, when body, labels
+and `updatedAt` are all unchanged, calls `gh issue edit --body-file=-` once. It never adds or removes a
+label. Success returns `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply
+factory/ready"}`. Decline, cancel, send false, no form capability (`needs_confirmation`), wrong labels,
+`issue_changed`, and every question/authorization refusal write nothing. A GitHub edit failure returns
+`not_answered` and no label operation; inspect the issue before retrying because a transport error cannot
+prove whether the remote edit landed.
 
 No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
 the CLI's ZITADEL client (formerly `roomctl`): the [actions](#actions)' rules, limits and rejections apply. Arguments are

@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Smana/maku/internal/factory/sanitize"
+	"github.com/Smana/maku/internal/mcpwire"
 )
 
 // AppendDecision appends one confirmed, single-line answer to an issue's Decisions section. Existing
@@ -157,4 +160,198 @@ func (c *cappedIssueView) Write(p []byte) (int, error) {
 		c.b.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
+}
+
+// needAnswerTool answers a scoper's post-filing question without taking label authority.
+const (
+	needAnswerTool   = "need_answer"
+	needsAuthorLabel = "factory/needs-author"
+)
+
+// needAnswerEntry is need_answer's tools/list entry. The answer and confirmation stay in the
+// elicitation, never in tool arguments an agent can supply itself.
+var needAnswerEntry = map[string]any{
+	"name": needAnswerTool,
+	"description": "Answer the scoper's question on an issue waiting with factory/needs-author. " +
+		"The authorized room brief supplies the question, with the newest public factory bounce comment as fallback. " +
+		"The developer confirms the answer and body append in a form; only the issue body is edited, never its labels. " +
+		"A maintainer must re-apply factory/ready afterwards.",
+	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","issue"],` +
+		`"properties":{"repo":{"type":"string"},"issue":{"type":"integer","minimum":1},"room":{"type":"string"}}}`),
+}
+
+type scopeQuestion struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended"`
+}
+
+// needAnswer appends one developer-confirmed answer to an issue whose scoper bounced it. It uses
+// the authorized room question first, and never turns an unavailable internal question into a guess.
+func (r *Relay) needAnswer(ctx context.Context, args json.RawMessage) any {
+	var in struct {
+		Repo  string `json:"repo"`
+		Issue int    `json:"issue"`
+		Room  string `json:"room"`
+	}
+	if err := mcpwire.DecodeArgs(args, &in); err != nil || !repoRE.MatchString(in.Repo) || in.Issue < 1 ||
+		(in.Room != "" && !roomIDRE.MatchString(in.Room)) {
+		return mcpwire.ToolError("invalid_arguments: need_answer takes repo (owner/name), issue (a positive number), and optionally one room id")
+	}
+	if r.Issues == nil {
+		return mcpwire.ToolError("unavailable: need_answer has no GitHub issue editor")
+	}
+	issueURL := fmt.Sprintf("https://github.com/%s/issues/%d", in.Repo, in.Issue)
+	result := func(answered bool) map[string]any {
+		out, _ := mcpwire.ToolResult(map[string]any{"answered": answered, "issue": issueURL, "started": false,
+			"next": "a maintainer must re-apply factory/ready"})
+		return out
+	}
+
+	initial, err := r.Issues.View(ctx, in.Repo, in.Issue)
+	if err != nil {
+		return mcpwire.ToolError("unavailable: read the issue before answering: " + OneLine(err.Error()))
+	}
+	if !slices.Contains(initial.Labels, needsAuthorLabel) || slices.Contains(initial.Labels, readyLabel) {
+		return mcpwire.ToolError("not_needs_author: need_answer requires factory/needs-author and no factory/ready; nothing was written")
+	}
+
+	room := in.Room
+	if room == "" {
+		rows, err := r.listRows(ctx, map[string]any{})
+		if err != nil {
+			return mcpwire.ToolError("unavailable: resolve the issue's room: " + OneLine(err.Error()))
+		}
+		var matches []string
+		for _, row := range rows {
+			if row.ID != "" && row.Issue == in.Issue && strings.EqualFold(row.Repository, in.Repo) {
+				matches = append(matches, row.ID)
+			}
+		}
+		if len(matches) > 1 {
+			return mcpwire.ToolError("ambiguous_room: the issue matches " + strconv.Itoa(len(matches)) +
+				" rooms; call need_answer again with one room id; nothing was written")
+		}
+		if len(matches) == 1 {
+			room = matches[0]
+		}
+	}
+
+	var question *scopeQuestion
+	if room != "" {
+		_, structured, isError, err := r.callBroker(ctx, "room_brief", map[string]any{"room": room})
+		if err == nil && !isError {
+			var brief struct {
+				Question *scopeQuestion `json:"question"`
+			}
+			if json.Unmarshal(structured, &brief) == nil && brief.Question != nil && strings.TrimSpace(brief.Question.Text) != "" {
+				question = brief.Question
+			}
+		}
+	}
+	if question == nil {
+		if q, ok := publicBounceQuestion(initial.Comments); ok {
+			question = &q
+		}
+	}
+	if question == nil {
+		return mcpwire.ToolError("needs_room_access: no authorized room brief or public bounce comment carries the question; " +
+			"ask a maintainer or a reader of the room to answer it; nothing was written")
+	}
+
+	// <answer> is the one substitution the developer makes in the exact record and section layout.
+	// AppendDecision applies the same layout to the returned one-line answer below.
+	previewBody, err := AppendDecision(initial.Body, "<answer>")
+	if err != nil {
+		return mcpwire.ToolError("invalid_decisions: " + OneLine(err.Error()) + "; nothing was written")
+	}
+	preview := strings.TrimPrefix(previewBody, initial.Body)
+	r.mu.Lock()
+	elicit := r.forms
+	r.mu.Unlock()
+	if !elicit {
+		return mcpwire.ToolError("needs_confirmation: need_answer asks the developer for an answer and explicit send confirmation, " +
+			"and this client cannot ask (no elicitation); nothing was written")
+	}
+	message := "Answer the scoper's question on " + issueURL + ".\n\nQuestion:\n" + question.Text +
+		"\n\nScoper's recommendation:\n" + question.Recommended +
+		"\n\nThe exact body append, with <answer> replaced by your trimmed one-line answer:\n" + preview +
+		"\n\nOnly the body is edited, never labels. A maintainer must re-apply factory/ready afterwards."
+	ans, err := r.ask(ctx, "elicitation/create", map[string]any{
+		"message": message,
+		"requestedSchema": map[string]any{"type": "object", "required": []string{"answer", "send"}, "properties": map[string]any{
+			"answer": map[string]any{"type": "string", "title": "Your one-line answer"},
+			"send":   map[string]any{"type": "boolean", "title": "Append this answer to the issue", "default": false},
+		}},
+	})
+	if err != nil {
+		return mcpwire.ToolError("needs_confirmation: the developer was not asked: " + OneLine(err.Error()) + "; nothing was written")
+	}
+	var form struct {
+		Action  string                     `json:"action"`
+		Content map[string]json.RawMessage `json:"content"`
+	}
+	if len(ans.Error) > 0 || json.Unmarshal(ans.Result, &form) != nil {
+		return mcpwire.ToolError("needs_confirmation: the client could not ask the developer; nothing was written")
+	}
+	send, _ := formBool(form.Content["send"])
+	if form.Action != "accept" || !send {
+		return result(false)
+	}
+	var answer string
+	if json.Unmarshal(form.Content["answer"], &answer) != nil {
+		return mcpwire.ToolError("invalid_answer: answer is one line of text; nothing was written")
+	}
+	newBody, err := AppendDecision(initial.Body, answer)
+	if err != nil {
+		return mcpwire.ToolError(OneLine(err.Error()) + "; nothing was written")
+	}
+
+	current, err := r.Issues.View(ctx, in.Repo, in.Issue)
+	if err != nil {
+		return mcpwire.ToolError("unavailable: re-read the issue before answering: " + OneLine(err.Error()) + "; nothing was written")
+	}
+	if current.Body != initial.Body || !slices.Equal(current.Labels, initial.Labels) || !current.UpdatedAt.Equal(initial.UpdatedAt) ||
+		!slices.Contains(current.Labels, needsAuthorLabel) || slices.Contains(current.Labels, readyLabel) {
+		return mcpwire.ToolError("issue_changed: the issue body, labels, or updatedAt changed while the answer was open; nothing was written")
+	}
+	if err := r.Issues.EditBody(ctx, in.Repo, in.Issue, newBody); err != nil {
+		return mcpwire.ToolError("not_answered: edit the issue body: " + OneLine(err.Error()))
+	}
+	return result(true)
+}
+
+var needsAuthorMarker = regexp.MustCompile(`<!-- agent-factory scope=[a-z2-7]{8} event=needs-author-[0-9]+ -->`)
+
+// publicBounceQuestion reads only the newest factory needs-author comment. An internal bounce has
+// the same marker but deliberately no question, so it fails closed rather than using an older one.
+func publicBounceQuestion(comments []IssueComment) (scopeQuestion, bool) {
+	var newest IssueComment
+	found := false
+	for _, comment := range comments {
+		if needsAuthorMarker.MatchString(comment.Body) && (!found || !comment.CreatedAt.Before(newest.CreatedAt)) {
+			newest, found = comment, true
+		}
+	}
+	if !found {
+		return scopeQuestion{}, false
+	}
+	const lead = "The scoper's question, and the assumption it would make otherwise:"
+	_, rest, ok := strings.Cut(newest.Body, lead)
+	if !ok {
+		return scopeQuestion{}, false
+	}
+	rest = strings.TrimLeft(rest, "\r\n")
+	fence, quoted, ok := strings.Cut(rest, "\n")
+	if !ok || strings.Trim(fence, "`") != "" || len(fence) < 3 {
+		return scopeQuestion{}, false
+	}
+	quoted, _, ok = strings.Cut(quoted, "\n"+fence)
+	if !ok {
+		return scopeQuestion{}, false
+	}
+	question, recommendation, ok := strings.Cut(quoted, "\nAssumption: ")
+	if !ok || strings.TrimSpace(question) == "" {
+		return scopeQuestion{}, false
+	}
+	return scopeQuestion{Text: question, Recommended: recommendation}, true
 }

@@ -44,6 +44,7 @@ var localHandlers = buildHandlers()
 func buildHandlers() map[string]localTool {
 	return map[string]localTool{
 		issueFileTool:    func(ctx context.Context, r *Relay, c localCall) any { return r.issueFile(ctx, c.Args) },
+		needAnswerTool:   func(ctx context.Context, r *Relay, c localCall) any { return r.needAnswer(ctx, c.Args) },
 		toolRoomWait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
 		toolRoomCheckout: func(ctx context.Context, r *Relay, c localCall) any { return r.roomCheckout(ctx, c) },
 		toolCoordinationCheckout: func(ctx context.Context, r *Relay, c localCall) any {
@@ -58,6 +59,7 @@ func buildHandlers() map[string]localTool {
 // localEntries are the local tools' tools/list entries, in the order they are appended.
 var localEntries = []any{
 	issueFileEntry,
+	needAnswerEntry,
 	roomWaitEntry,
 	roomCheckoutEntry,
 	coordinationCheckoutEntry,

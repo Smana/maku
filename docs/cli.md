@@ -127,8 +127,8 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 - The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
 - The tools: `rooms_list`, `room_summary`, `room_brief`, `room_tail`, `room_changes`, `needs_list`,
   `room_queue`, `room_fork` and `issue_draft` from the broker; `intake_plan` and `plan_check` too, when
-  the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `room_wait`
-  and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
+  the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `need_answer`,
+  `room_wait` and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
   events; `maku mcp` polls it for your agent. The broker also serves the prompts `factory_intake`
   (`request`), `handoff` (`what`, an alias for the same intake loop), `plan` (`what`), `status`
   (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash commands (see
@@ -153,6 +153,19 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   only when `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`: yes labels the issue `factory/ready` with
   your `gh`, which starts the factory. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
   call `issue_file` but cannot answer the form.
+- `need_answer {repo, issue, room?}` answers a scoper's post-filing question on the issue. It acts only
+  while `factory/needs-author` is present and `factory/ready` is absent. With no `room`, it resolves the
+  issue through `rooms_list`: several matches refuse as `ambiguous_room` rather than guessing. It reads
+  the authorized `room_brief` question first; if that is unavailable, only the newest factory
+  `event=needs-author-…` comment is the public fallback. No resolved room is not by itself an error for a
+  public issue, but a missing or internal-only question refuses as `needs_room_access` and writes nothing.
+  The form shows the question, recommendation and exact Decision-section layout, requires a one-line
+  `answer`, and defaults `send` to no. On explicit send it re-reads the issue and requires the body, labels
+  and `updatedAt` to be unchanged before one body-only `gh issue edit --body-file=-`. A decline, cancel,
+  false toggle, client without forms, wrong labels, conflict, or missing question writes nothing. Success
+  is `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply factory/ready"}`; the
+  tool never calls the labeler. An edit failure returns `not_answered` and applies no label: inspect the
+  issue before retrying, since the transport failure cannot prove whether GitHub accepted the edit.
 - Every tool and prompt that takes a room (`room_summary`, `room_brief`, `room_changes`, `room_queue`,
   `room_tail`, `room_fork`, `room_wait`, `room_checkout`, the `status` and `resume` prompts) accepts
   the room id, `#<issue>`
