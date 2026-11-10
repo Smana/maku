@@ -1,7 +1,7 @@
 # UI review: settings, Ogenki theme, run rail: design
 
 **Status:** design, agreed with the owner on 2026-11-10. **Scope:** `web/` (pages, CSS, preview,
-tests), `internal/summary` (two additive flow fields), `docs/web-ui.md`, `docs/merge-policies.md`
+tests), `internal/summary` (two additive flow fields), `internal/factory/policyview` (the MergePolicy status in the report), `internal/factory/config` + CRDs (a class `description`), `docs/web-ui.md`, `docs/merge-policies.md`
 (the settings editor section), `web/DESIGN.md` (new). **Not here:** the room header's metadata
 row, the expired-approval card, `maku status` text; these are follow-ups.
 
@@ -26,6 +26,12 @@ of each PR; `micro-interaction`, `accessible-animation`, `60fps-animation` and `
 every motion change in PRs 1 and 3.
 
 ## Part 1: Settings
+
+**Revision (2026-11-10, after the owner's local check).** The first cut read the repository file
+first. The target is the factory resources (`2026-11-09-factory-resources-design.md`, D4, D9,
+D10): a repository's classes are its `MergePolicy`, the repository file is a secondary input,
+and a change is a manifest the maintainer commits. §1.6 to §1.8 bind where they differ from
+§1.0 to §1.5.
 
 ### 1.0 Preview fixtures first
 
@@ -130,6 +136,56 @@ want this" (one or two lines), the YAML, and "Start from this".
 The examples stay in `web/src/policy-templates.json`, so `TestEveryEditorTemplatePassesCheck`
 checks the two new ones too. Level and "why" live in `web/src/policy-examples.ts`, keyed by
 template name; a test fails when a template has no entry or an entry has no template.
+
+### 1.6 MergePolicy first
+
+- **The report carries the MergePolicy's status.** `policyview`'s report gains `mergePolicyStatus`:
+  namespace, generation, observedGeneration, authority, the conditions (`Accepted`,
+  `RepositoryFileValid`, `InSync`) with reason and message, and per class its mode and last
+  decision with time. It is what `statuswriter.Desired` computes from the replica's snapshot, so
+  the page and `kubectl get mergepolicy` say the same thing on any replica, with no cluster read.
+  Absent for a repository not served from a MergePolicy, and from an older factory: the page then
+  renders as for a not-migrated repository.
+- **The repository page's header says it once:** the MergePolicy's name and namespace, its
+  conditions as words plus colour ("Accepted · in sync with `.github/agent-factory.yaml`",
+  or "Not in sync: 2 differences" with the condition's message), the authority (`central` or
+  `repository`), the generation, and one legend for the three modes. No class card repeats any of it.
+- **The repository file is one line** under the header (valid, in sync, or the divergence),
+  prominent only when the authority is `repository`, where an invalid file pauses auto-merge.
+- **Edits produce the MergePolicy manifest only** (copy, download), with the GitOps sentence once
+  in the editor footer. Promotion wording names the MergePolicy, never "the repository's policy
+  file"; `not_in_repository_policy` reads "promoted by editing the MergePolicy" on a
+  MergePolicy-served repository.
+- **Not migrated:** a repository with no MergePolicy renders its classes read-only, with
+  "Not migrated yet: `maku config migrate` prints its MergePolicy" and no editor.
+- **Repository table:** the "Classes served from" column becomes "MergePolicy" (its name and
+  Accepted / InSync as words, or "not migrated").
+- **Fixtures:** both preview repositories are MergePolicy-served; `Smana/cloud-native-ref` keeps
+  every evidence state and has `InSync=False` with two differences; a third, `Smana/legacy`, is
+  not migrated.
+
+### 1.7 A class card leads with its intent
+
+- **`description`**, a new optional field on a class: plain text, at most 280 characters, in
+  `config.Class` (so `MergePolicy.spec.classes`, the repository file and the manifest all carry
+  it). CRD, deepcopy and the chart's CRD copy regenerated; the policy check validates its length;
+  the editor edits it first, in a *What it is for* group; every template in
+  `policy-templates.json` gets one.
+- **The card, in order:** name, mode badge (`Live` / `Shadow` / `Off`, word and colour), the
+  description, a one-line condition summary (`docs/**/*.md · links only · ≤ 10 files ·
+  "Check links"`), the evidence bar for a shadow class only, then a folded **Conditions**
+  disclosure holding `describeClass`'s full sentences. Without a description, the summary line
+  leads.
+- **Said only when true:** no "No promotion requested", no "the class adds no condition of its
+  own" line (the summary says "base checks only"), no "not promotable" line on an off or live
+  class, no per-card "Served from".
+
+### 1.8 Search
+
+A filter field above the repository table and above a repository page's class cards. It matches,
+case-insensitive and in the browser, the repository and MergePolicy names (table) or the class
+name, mode and description (cards). It shows "3 of 12", an empty state naming the query with a
+clear button, keeps the query in `?q=`, and `/` focuses it. No API change.
 
 ## Part 2: Theme (Ogenki, full adoption)
 
