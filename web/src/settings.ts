@@ -230,7 +230,8 @@ function mergePolicyCell(r: Report): string {
   if (policyState(r) === "not-migrated") return "Not migrated";
   const st = r.mergePolicyStatus;
   const kept = st && { ...st, status: { ...st.status, conditions: st.status.conditions?.filter((c) => c.type === "Accepted" || c.type === "InSync") } };
-  return [r.mergePolicy!, ...conditionWords(kept).map((c) => c.word)].join(" · ");
+  const words = conditionWords(kept).map((c) => c.word);
+  return [r.mergePolicy!, ...(words.length ? words : ["status unknown"])].join(" · ");
 }
 
 async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {

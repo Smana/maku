@@ -165,30 +165,23 @@ describe("a class card", () => {
     const p = page();
     p.report.mergePolicy = "cnr";
     p.report.classes[0] = { class: "docs", source: "central", mode: "shadow", unproposed: "not_in_repository_policy", evidence: ev() };
-    const c = ctx(p);
-    const pick = document.createElement("select");
-    pick.setAttribute("aria-label", "class to edit");
-    pick.className = "";
-    for (const n of ["tests", "docs"]) { const o = document.createElement("option"); o.value = n; o.textContent = n; pick.append(o); }
-    pick.value = "tests";
-    const editor = document.createElement("section");
-    editor.className = "policy-editor";
-    editor.append(pick);
-    c.main.append(editor);
-    let changed = "";
-    pick.onchange = () => { changed = pick.value; };
-    const card = classCard(p.report.classes[0], c);
-    const actions = card.querySelector(".class-actions")!;
+    const actions = classCard(p.report.classes[0], ctx(p)).querySelector(".class-actions")!;
     expect(actions.textContent).toContain(PROMOTE);
     expect(actions.textContent).not.toContain("Not promotable");
-    const b = [...actions.querySelectorAll("button")].find((x) => x.textContent === "Edit this class")!;
-    b.click();
-    expect(changed).toBe("docs");
+    expect([...actions.querySelectorAll("button")].map((x) => x.textContent)).toContain("Edit this class"); // settings.test clicks it on a rendered page
   });
   it("shows a class's last decision from the MergePolicy's status", () => {
     const p = page();
     p.report.mergePolicyStatus = { namespace: "agent-system", generation: 3, status: { classes: [{ name: "docs", mode: "shadow", lastDecision: "would_merge:clean", lastDecisionAt: "2026-11-10T00:00:00Z" }] } };
-    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-last")?.textContent).toBe("Last decision: would merge (clean), 2026-11-10T00:00:00Z");
+    const now = () => Date.parse("2026-11-10T03:00:00Z");
+    const last = classCard(p.report.classes[0], { ...ctx(p), now }).querySelector(".class-last")!;
+    expect(last.textContent).toBe("Last decision: would merge (clean), 3 h ago");
+    expect(last.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-10T00:00:00Z");
+    expect(last.querySelector("time")?.title).toBe(new Date("2026-11-10T00:00:00Z").toLocaleString());
+    for (const [at, words] of [["2026-11-10T02:59:30Z", "just now"], ["2026-11-10T02:15:00Z", "45 min ago"], ["2026-11-09T03:00:00Z", "1 day ago"], ["2026-11-01T00:00:00Z", "9 days ago"], ["not a time", "not a time"]]) {
+      p.report.mergePolicyStatus.status.classes![0].lastDecisionAt = at;
+      expect(classCard(p.report.classes[0], { ...ctx(p), now }).querySelector(".class-last time")?.textContent).toBe(words);
+    }
     expect(classCard(page().report.classes[0], ctx()).querySelector(".class-last")).toBeNull();
   });
   it("counts a class eligible only under an approved exception as eligible, its bar not blocked", () => {

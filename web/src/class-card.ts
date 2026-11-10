@@ -14,7 +14,8 @@ import type { ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from 
 
 export const READING = "Reading evidence from GitHub…";
 
-export interface CardContext { page: RepositoryPage; get: typeof fetch; say: HTMLElement; reload: () => void; main: HTMLElement; policy?: PolicyFile }
+// now is the clock a card reads relative times against; Date.now when unset.
+export interface CardContext { page: RepositoryPage; get: typeof fetch; say: HTMLElement; reload: () => void; main: HTMLElement; policy?: PolicyFile; now?: () => number }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -77,6 +78,20 @@ function lastDecisionWords(code: string): string {
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
 }
 
+// timeAgo is iso as a <time>: how long ago in words, the locale's date and time on hover; an
+// unreadable value is shown as sent.
+function timeAgo(iso: string, now: number): HTMLTimeElement {
+  const t = el("time");
+  t.dateTime = iso;
+  const at = Date.parse(iso);
+  if (isNaN(at)) { t.textContent = iso; return t; }
+  t.title = new Date(at).toLocaleString();
+  const m = Math.max(0, Math.floor((now - at) / 60000));
+  const d = Math.floor(m / 1440);
+  t.textContent = m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${d} day${d > 1 ? "s" : ""} ago`;
+  return t;
+}
+
 // editClass selects a class in the page's editor, as its picker would.
 function editClass(main: HTMLElement, name: string) {
   const pick = main.querySelector<HTMLSelectElement>('.policy-editor select[aria-label="class to edit"]');
@@ -105,7 +120,11 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   if (policy) card.append(el("p", summaryLine(policy, r.guardrails), "class-summary"));
   else card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
   const last = r.mergePolicyStatus?.status.classes?.find((x) => x.name === c.class);
-  if (last?.lastDecision) card.append(el("p", `Last decision: ${lastDecisionWords(last.lastDecision)}${last.lastDecisionAt ? `, ${last.lastDecisionAt}` : ""}`, "class-last"));
+  if (last?.lastDecision) {
+    const p = el("p", `Last decision: ${lastDecisionWords(last.lastDecision)}`, "class-last");
+    if (last.lastDecisionAt) p.append(", ", timeAgo(last.lastDecisionAt, (ctx.now ?? Date.now)()));
+    card.append(p);
+  }
 
   const e = c.evidence;
   const act = el("div", undefined, "class-actions");

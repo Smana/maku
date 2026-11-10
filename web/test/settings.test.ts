@@ -188,7 +188,7 @@ describe("the index and evidence pages", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", two());
     const rows = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "cloud-native-ref", "1 live · 1 shadow", "docs-links 20/20"]);
+    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "cloud-native-ref · status unknown", "1 live · 1 shadow", "docs-links 20/20"]);
     expect([...app.querySelectorAll("table.repo-table thead th")].map((th) => th.textContent)[1]).toBe("MergePolicy");
     expect(rows[1][0]).toBe("Smana/broken");
     expect(rows[1][1]).toMatch(/^Not readable: /);
@@ -207,6 +207,17 @@ describe("the index and evidence pages", () => {
       "/api/policy/repositories/Smana/synced": synced, "/api/policy/repositories/Smana/legacy": legacy }));
     const from = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => tr.children[1].textContent);
     expect(from).toEqual(["cloud-native-ref · Accepted · Not in sync: 2 differences", "Not migrated"]);
+  });
+
+  it("says a MergePolicy's status is unknown when it has no Accepted or InSync condition", async () => {
+    const bare = page();
+    bare.report.mergePolicyStatus = { namespace: "agent-system", generation: 1, status: { conditions: [{ type: "RepositoryFileValid", status: "True" }] } };
+    const none = page();
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/bare", "Smana/none"] },
+      "/api/policy/repositories/Smana/bare": bare, "/api/policy/repositories/Smana/none": none }));
+    const from = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => tr.children[1].textContent);
+    expect(from).toEqual(["cloud-native-ref · status unknown", "cloud-native-ref · status unknown"]);
   });
 
   it("counts a report's classes by mode", () => {
@@ -356,6 +367,28 @@ describe("the policy editor", () => {
     box.value = "x".repeat(280);
     box.dispatchEvent(new Event("input"));
     expect(field(app, "description").textContent).toContain("280 of 280");
+    box.value = "   ";
+    box.dispatchEvent(new Event("input"));
+    expect((app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value).not.toContain("description:");
+  });
+  it("selects a central class in the editor's picker from its card's Edit this class", async () => {
+    const p = page();
+    const docs: ClassPolicy = { mode: "shadow", author: "agents", harness: "docs-standard", conditions: { all: [{ maxPatchFiles: 7 }] } };
+    p.report.served = { factory: "aws-0", classes: { "docs-links": p.report.policy!.classes!["docs-links"], docs } };
+    p.report.manifest = "kind: MergePolicy\n";
+    p.report.mergePolicyStatus = { namespace: "agent-system", generation: 2, status: { authority: "central" } };
+    p.report.classes = [{ class: "docs", source: "central", mode: "shadow", unproposed: "not_in_repository_policy", evidence: ev() }];
+    const app = document.createElement("div");
+    document.body.append(app);
+    try {
+      await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": p }));
+      const pick = app.querySelector<HTMLSelectElement>('.policy-editor select[aria-label="class to edit"]')!;
+      expect(pick.value).toBe("docs-links");
+      [...app.querySelectorAll<HTMLButtonElement>("#class-docs button")].find((b) => b.textContent === "Edit this class")!.click();
+      expect(pick.value).toBe("docs");
+      expect(document.activeElement).toBe(pick);
+      expect(app.querySelector(".class-story")?.textContent).toContain("it changes at most 7 files");
+    } finally { app.remove(); }
   });
   it("rewrites the class's sentence as the form changes", async () => {
     const app = document.createElement("div");
@@ -900,6 +933,9 @@ describe("the filter", () => {
     input.value = "typos";
     input.dispatchEvent(new Event("input"));
     expect(visible()).toEqual(["class-alpha"]);
+    input.value = "LIVE";
+    input.dispatchEvent(new Event("input"));
+    expect(visible()).toEqual(["class-delta"]); // by the mode badge
     input.value = "beta";
     input.dispatchEvent(new Event("input"));
     expect(visible()).toEqual(["class-beta"]);

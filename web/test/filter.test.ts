@@ -25,6 +25,13 @@ describe("filterField", () => {
     expect(mount(four).box.querySelector("input")).not.toBeNull();
   });
 
+  it("drops a stale ?q= when there are too few items to filter, keeping other params", () => {
+    history.replaceState(null, "", "/?path=%2Fx&q=cloud");
+    mount();
+    const q = new URLSearchParams(location.search);
+    expect([q.has("q"), q.get("path")]).toEqual([false, "/x"]);
+  });
+
   it("matches case-insensitively, every word, and counts", () => {
     const m = mount(four);
     expect(m.box.querySelector("label")?.textContent).toBe("Filter repositories");

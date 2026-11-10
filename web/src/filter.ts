@@ -17,7 +17,12 @@ export function filterField<T extends HTMLElement>(opts: {
 }): { box: HTMLElement; apply: () => void } {
   const box = document.createElement("div");
   box.className = "filter";
-  if (opts.items().length < MIN_ITEMS) return { box, apply: () => {} };
+  if (opts.items().length < MIN_ITEMS) {
+    // No field to show it: a query carried over from a longer list would only mislead a shared link.
+    const u = new URL(location.href);
+    if (u.searchParams.has("q")) { u.searchParams.delete("q"); history.replaceState(history.state, "", u); }
+    return { box, apply: () => {} };
+  }
 
   const input = document.createElement("input");
   input.type = "search";
