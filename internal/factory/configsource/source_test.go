@@ -109,6 +109,9 @@ func TestSyncAddsARepository(t *testing.T) {
 	if f, r, p := cfg.GenerationsFor("smana/other"); f != 0 || r != 3 || p != 5 {
 		t.Fatalf("generations: %d %d %d", f, r, p)
 	}
+	if g := cfg.Generations.Repos["smana/other"]; g.RepositoryName != "other" || g.PolicyName != "other" {
+		t.Fatalf("names: %+v", g)
+	}
 	if o := outcome(t, s, resources.KindRepository, "other"); !o.Accepted || o.ServedGeneration != 3 || o.ObservedGeneration != 3 {
 		t.Fatalf("outcome: %+v", o)
 	}

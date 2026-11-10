@@ -396,6 +396,16 @@ func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
 		t.Fatal(r.Manifest)
 	}
 
+	// Hand-named objects: the manifest carries their names, never a derived one.
+	cfg.Generations.Repos["smana/cloud-native-ref"] = config.RepoGenerations{Repository: 2, MergePolicy: 3, RepositoryName: "custom-repo", PolicyName: "custom-policy"}
+	r, err = s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil || r.MergePolicy != "custom-policy" || r.ManifestPath != "mergepolicy-custom-policy.yaml" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if objs, err := resources.Decode([]byte(r.Manifest)); err != nil || objs[0].Name != "custom-policy" || !strings.Contains(r.Manifest, "repositoryRef: custom-repo") {
+		t.Fatalf("%v\n%s", err, r.Manifest)
+	}
+
 	file := service(&fakeSource{file: "factory: aws-0\n", found: true}, time.Now)
 	r, err = file.Report(t.Context(), "Smana/cloud-native-ref")
 	if err != nil || r.Manifest != "" || r.MergePolicy != "" || r.ManifestPath != "" {

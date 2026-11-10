@@ -86,10 +86,10 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 
 	entries, _ := base["repositories"].([]any)
 	delete(base, "repositories")
-	parts := map[string]int{}
+	var repoNames []string
 	for _, e := range entries {
 		if m, ok := e.(map[string]any); ok {
-			parts[namePart(str(m, "name"))]++
+			repoNames = append(repoNames, str(m, "name"))
 		}
 	}
 	for _, e := range entries {
@@ -98,10 +98,7 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 			return nil, nil, fmt.Errorf("migrate: repositories[] entry is not a map: %v", e)
 		}
 		repository := str(m, "name")
-		name := namePart(repository)
-		if parts[name] > 1 {
-			name = dnsLabel(repository)
-		}
+		name := ObjectName(repository, repoNames)
 		rs := map[string]any{"factoryRef": factory, "repository": repository}
 		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "classAuthority"} {
 			if v, ok := m[k]; ok {

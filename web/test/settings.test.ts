@@ -421,7 +421,7 @@ describe("pending evidence", () => {
 });
 
 describe("a repository served from a MergePolicy", () => {
-  const manifest = "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata:\n  name: cloud-native-ref\n  namespace: factory\nspec:\n  classes:\n    docs-links:\n      author: agents\n      harness: docs-standard\n      mode: shadow\n  repositoryRef: cloud-native-ref\n";
+  const manifest = "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata:\n  name: cloud-native-ref\n  namespace: factory\nspec:\n  classes:\n    docs-links:\n      author: agents\n      harness: docs-standard\n      mode: shadow\n  merge:\n    mergerLogin: ogenki-agent-merger[bot]\n  repositoryRef: cloud-native-ref\n";
   const central = (): RepositoryPage => {
     const p = page();
     p.report = { ...p.report, mergePolicy: "cloud-native-ref", manifest, manifestPath: "mergepolicy-cloud-native-ref.yaml",
@@ -456,6 +456,8 @@ describe("a repository served from a MergePolicy", () => {
     expect(wrote[0]).toContain("repositoryRef: cloud-native-ref");
     expect(wrote[0]).toContain("mode: live");
     expect(wrote[0]).not.toContain("factory:");
+    expect(wrote[0]).toContain("merge:");
+    expect(wrote[0]).toContain("mergerLogin: ogenki-agent-merger[bot]");
   });
 
   it("is today's page without the manifest", async () => {

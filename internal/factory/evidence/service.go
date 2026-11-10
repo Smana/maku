@@ -427,13 +427,18 @@ func (s *Service) build(cfg *config.Config, rc *config.Repository, h head, class
 	}
 	r.Guardrails = cfg.MergeGuardrails
 	if _, _, gen := cfg.GenerationsFor(rc.Name); gen > 0 {
-		// Named as resources.Migrate names its objects: the Outcomes' names are not in the config.
-		names := make([]string, len(cfg.Repositories))
-		for i, x := range cfg.Repositories {
-			names[i] = x.Name
+		// The objects' own names, as served; Migrate's naming only when the config lacks them.
+		g := cfg.Generations.Repos[strings.ToLower(rc.Name)]
+		name, ref := g.PolicyName, g.RepositoryName
+		if name == "" || ref == "" {
+			names := make([]string, len(cfg.Repositories))
+			for i, x := range cfg.Repositories {
+				names[i] = x.Name
+			}
+			def := resources.ObjectName(rc.Name, names)
+			name, ref = cmp.Or(name, def), cmp.Or(ref, def)
 		}
-		name := resources.ObjectName(rc.Name, names)
-		m, err := resources.MergePolicyManifest(name, s.Namespace, name, rc.Classes, rc.Merge)
+		m, err := resources.MergePolicyManifest(name, s.Namespace, ref, rc.Classes, rc.Merge)
 		if err != nil {
 			return Report{}, fmt.Errorf("evidence: manifest: %w", err)
 		}

@@ -24,7 +24,12 @@ type Generations struct {
 
 // RepoGenerations are the generations of one repository's two objects: its Repository object
 // and its MergePolicy object. Zero means the file served that part.
-type RepoGenerations struct{ Repository, MergePolicy int64 }
+type RepoGenerations struct {
+	Repository, MergePolicy int64
+	// RepositoryName and PolicyName are the objects' names: a manifest for the repository must
+	// carry them, or applying it creates a second MergePolicy.
+	RepositoryName, PolicyName string
+}
 
 // GenerationsFor returns the generations repository was served under; zeros for a file entry.
 // The repository name is matched case-insensitively, as Repos is keyed lowercased.
