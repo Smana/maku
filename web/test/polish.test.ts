@@ -140,13 +140,13 @@ describe("text wrapping", () => {
 });
 
 describe("surfaces", () => {
-  it("rounds the approval card concentrically: its 6 px controls plus 8 px of padding", () => {
+  it("shapes the approval card as an Ogenki card", () => {
     const a = decl(outside, ".approval");
-    expect(a).toMatch(/border-radius:\s*calc\(var\(--radius-control\)\s*\+\s*8px\)/);
-    expect(a).toMatch(/padding:\s*8px 12px/);
+    expect(a).toMatch(/border-radius:\s*var\(--radius-md\)/);
+    expect(a).toMatch(/padding:\s*var\(--space-4\)/);
   });
   it("squares an open call's summary at the body's edge", () => {
-    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*var\(--radius-row\) var\(--radius-row\) 0 0/);
+    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*calc\(var\(--radius-md\) - 1px\) calc\(var\(--radius-md\) - 1px\) 0 0/);
   });
 });
 
@@ -299,8 +299,7 @@ describe("appearance", () => {
   it("draws the approval card's accent as a bar on a raised card, not a full outline", () => {
     const a = decl(outside, ".approval");
     expect(a).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
-    expect(a).toMatch(/box-shadow:\s*var\(--shadow-border\),\s*inset 3px 0 0 var\(--warning\)/);
-    expect(a).toMatch(/padding:\s*8px 12px 8px 15px/);
+    expect(a).toMatch(/box-shadow:\s*inset 3px 0 0 var\(--warning\)/);
   });
   it("draws deny as a ghost: no outline until hovered", () => {
     const d = decl(outside, "button.deny");
@@ -321,6 +320,6 @@ describe("appearance", () => {
     expect(root).toMatch(/--radius-row:\s*8px/);
     expect(root).toMatch(/--radius-card:\s*12px/);
     expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-md\)/);
-    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-md\)/);
   });
 });

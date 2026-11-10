@@ -23,13 +23,15 @@ describe("the aurora gradient", () => {
 });
 
 describe("cards", () => {
-  const cards = [".class-card", ".settings-card", ".cli-card", ".example-card", ".policy-header", ".settings .proposal"];
+  const cards = [".class-card", ".settings-card", ".cli-card", ".example-card", ".policy-header", ".settings .proposal",
+    ".approval", ".needs-other li.need", ".tool", ".not-migrated", ".grant", ".sk-msg"];
   it.each(cards)("%s takes the card shape", (sel) => {
     const b = rule(sel);
     expect(b).toMatch(/border-radius:\s*var\(--radius-md\)/);
-    expect(b).toMatch(/padding:\s*var\(--space-4\)/);
+    // a .tool is a dense one-line row: its summary keeps its own padding, the card shape is the frame
+    if (sel !== ".tool" && sel !== ".sk-msg") expect(b).toMatch(/padding:\s*var\(--space-4\)/);
     expect(b).toMatch(/border:\s*1px solid var\(--border\)/);
-    expect(b).not.toMatch(/box-shadow:\s*var\(--shadow-border\)/);
+    expect(b).not.toMatch(/box-shadow:\s*var\(--shadow-border/);
   });
   it("a hovered card raises through opacity or transform, never a background transition", () => {
     expect(rule(".settings-card::after")).toMatch(/background:\s*var\(--surface-raised\)/);
@@ -42,21 +44,25 @@ describe("cards", () => {
 describe("focus", () => {
   // A ring that must sit inside a clipped container keeps an inset offset.
   const insetAllowed: Record<string, string> = {
-    ".settings-nav a:focus-visible": "the nav row scrolls and is masked: an outset ring would be clipped",
+    ".settings-nav a:focus-visible": "inset only inside the max-width 640px media block, where the nav is an overflow-x:auto row that clips an outset ring; above 640px it takes the standard outer ring",
     ".settings .expert-yaml": "the textarea fills an overflow:hidden editor frame",
   };
-  const focusRules = rules.filter((r) => /:focus-visible/.test(r.sel) && /outline/.test(r.body));
+  const focusRules = rules.filter((r) => /:focus-visible/.test(r.sel) && /outline:/.test(r.body));
   it("has focus rules to check", () => expect(focusRules.length).toBeGreaterThan(5));
   it.each(focusRules.map((r) => [r.sel, r.body]))("%s is a 2px solid ring with a 2px gap", (sel, body) => {
     expect(body).toMatch(/outline:\s*2px solid var\(--ring\)/);
     const off = body.match(/outline-offset:\s*([^;]+)/)?.[1].trim();
-    if (sel in insetAllowed) expect(off).toBe("-2px");
-    else expect(off, sel).toBe("2px");
+    // the nav's base rule is the outer ring; its inset sits in the 640px media block (checked below)
+    expect(off, sel).toBe(sel === ".settings .expert-yaml" ? "-2px" : "2px");
   });
   it("lets only the allowlisted rules set an inset offset", () => {
     for (const r of rules) {
       if (/outline-offset:\s*-/.test(r.body)) expect(Object.keys(insetAllowed), r.sel).toContain(r.sel);
     }
+  });
+  it("insets the settings nav ring only in the phone block", () => {
+    const m = css.match(/@media \(max-width: 640px\) \{[\s\S]*?\.settings-nav a:focus-visible \{\s*outline-offset:\s*-2px/);
+    expect(m).not.toBeNull();
   });
   it("draws no focus ring with a box-shadow", () => {
     for (const r of rules) if (/:focus|:target/.test(r.sel)) expect(r.body, r.sel).not.toMatch(/box-shadow/);
