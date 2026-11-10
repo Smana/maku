@@ -47,6 +47,22 @@ func TestAnIssueWithoutAcceptanceBouncesEvenWhenTheScoperSaysReady(t *testing.T)
 	}
 }
 
+// A Decision is settled scope, not the operative Acceptance section the deterministic guard requires.
+func TestAcceptanceStillRequiresOperativeSection(t *testing.T) {
+	g := scoperOn(t, "docs: update the runbook\n\n## Decisions\nD1: run task check\n\n## Acceptance check\n\n## Notes\nNo operative check.")
+	before := len(g.f.Comments(7))
+	scopeHandoff(g, 0, readyScope())
+	tk := endScoper(t, g, "Succeeded", "agent_finished")
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "needs_author" || tk.Status.Scope.State != "question" {
+		t.Fatalf("%s %s %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Scope)
+	}
+	comments := g.f.Comments(7)[before:]
+	if len(comments) != 1 || !strings.Contains(comments[0], "The issue states no acceptance check: which command or observation proves it is done?") ||
+		!strings.Contains(comments[0], "Assumption:") {
+		t.Fatalf("comments %q", comments)
+	}
+}
+
 func TestAnIssueWithAcceptanceScopesReady(t *testing.T) {
 	g := scoperOn(t, withAC)
 	scopeHandoff(g, 0, readyScope())
