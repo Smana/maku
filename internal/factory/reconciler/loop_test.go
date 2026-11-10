@@ -30,7 +30,7 @@ func loopRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
 	steps := int32(40)
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
 	return g, g.reconcile(t, "3buqdlot", 3)
 }
 
@@ -53,7 +53,7 @@ func TestALoopEndEscalatesWithItsReason(t *testing.T) {
 	for end, words := range prose {
 		t.Run(end, func(t *testing.T) {
 			g, _ := loopRig(t)
-			g.r.Cfg.Loops = nil // a config change never moves a triaged task
+			g.r.Cfg.Current().Loops = nil // a config change never moves a triaged task
 			g.runs.set(rid(0), "Failed")
 			g.log.end(rid(0), "Failed", end)
 			tk := g.reconcile(t, "3buqdlot", 1)
@@ -90,12 +90,12 @@ func TestALoopRowReachesImplementerClaimsOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g, tk := loopRig(t)
 			if tc.changeConfig {
-				g.r.Cfg.Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
+				g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
 			}
-			s := g.r.implementerSpec(tk, "text")
+			s := g.r.implementerSpec(g.r.Cfg.Current(), tk, "text")
 			s.Role = tc.role
 			before := *tk.Spec.Loop
-			if err := g.r.startRun(t.Context(), tk, s, tc.trigger); err != nil {
+			if err := g.r.startRun(t.Context(), g.r.Cfg.Current(), tk, s, tc.trigger); err != nil {
 				t.Fatal(err)
 			}
 			got := g.runs.specs[runID(tk.Name, len(tk.Status.Runs)-1)].Loop
@@ -127,7 +127,7 @@ func TestALostLoopRunIsNotCountedBeforeItsResume(t *testing.T) {
 // A search-only claim (no loop row) the cluster refuses escalates the same way.
 func TestARefusedSearchClaimEscalates(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Search: true}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Search: true}}
 	creates := 0
 	g.runs.refuse = func(s runs.Spec) error {
 		if s.Role != "implementer" {
@@ -147,7 +147,7 @@ func TestARefusedSearchClaimEscalates(t *testing.T) {
 func TestARefusedLoopClaimEscalates(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
 	steps := int32(40)
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
 	creates := 0
 	g.runs.refuse = func(s runs.Spec) error {
 		if s.Role != "implementer" {

@@ -229,18 +229,18 @@ type ProfileChoice struct {
 // profileChoices are t's profiles to choose from: nil for a labelled task, a task without a
 // profile, or a class with no variant (nothing to choose); else the floor, then each variant
 // in config order.
-func (r *Reconciler) profileChoices(t *v1alpha1.Task) []ProfileChoice {
+func (r *Reconciler) profileChoices(cfg *config.Config, t *v1alpha1.Task) []ProfileChoice {
 	p := t.Status.Profile
 	if p == nil || p.Source == "label" {
 		return nil
 	}
-	cl := r.repo(t).Classes[t.Spec.PredictedClass]
+	cl := r.class(cfg, t, t.Spec.PredictedClass)
 	if len(cl.HarnessAllowed) == 0 {
 		return nil
 	}
-	out := []ProfileChoice{{Name: cl.Harness, Description: r.Cfg.HarnessProfiles[cl.Harness].Description, Floor: true}}
+	out := []ProfileChoice{{Name: cl.Harness, Description: cfg.HarnessProfiles[cl.Harness].Description, Floor: true}}
 	for _, name := range cl.HarnessAllowed {
-		out = append(out, ProfileChoice{Name: name, Description: r.Cfg.HarnessProfiles[name].Description})
+		out = append(out, ProfileChoice{Name: name, Description: cfg.HarnessProfiles[name].Description})
 	}
 	return out
 }

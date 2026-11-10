@@ -12,18 +12,19 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/narrate"
 )
 
 // resolveProfile settles t's profile from scope s (nil: the scoper left none); the count is deferred so a replay counts once.
-func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *envelope.Scope) error {
+func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, s *envelope.Scope) error {
 	if !unresolved(t) {
 		return nil
 	}
-	offered := len(r.profileChoices(t)) > 0
+	offered := len(r.profileChoices(cfg, t)) > 0
 	q := *t.Status.Profile
 	q.Resolved = true
-	r.recommend(t, &q, s)
+	r.recommend(cfg, t, &q, s)
 	switch d, persisted := decided(t); {
 	case persisted && d.Source == "scoper": // the spec write landed and the status write did not: the decision binds, not today's config
 		d.restore(&q)
@@ -33,7 +34,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 		q.Reason = "scoper_failed"
 	case q.Source == "control":
 	default:
-		name, reason, err := r.variantFor(ctx, t, s.Profile)
+		name, reason, err := r.variantFor(ctx, cfg, t, s.Profile)
 		if err != nil {
 			return err
 		}
@@ -41,10 +42,10 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 			q.Reason = reason
 			break
 		}
-		v, _ := r.Cfg.ProfileFor(r.repo(t).Classes[t.Spec.PredictedClass], name)
+		v, _ := cfg.ProfileFor(r.class(cfg, t, t.Spec.PredictedClass), name)
 		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || v.TestFirst,
 			Recommended: q.Recommended, Why: q.Why, Offered: offered}
-		if err := r.applyProfile(ctx, t, d); err != nil {
+		if err := r.applyProfile(ctx, cfg, t, d); err != nil {
 			return err
 		}
 		d.restore(&q)
@@ -52,7 +53,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 	*t.Status.Profile = q
 	narrateLater(t, narrate.ProfileChosen(q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
 	if offered {
-		class, cohort, rec, applied := t.Spec.PredictedClass, q.Cohort, r.recommendedLabel(t), q.Source == "scoper"
+		class, cohort, rec, applied := t.Spec.PredictedClass, q.Cohort, r.recommendedLabel(cfg, t), q.Source == "scoper"
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
 	}
 	return nil
@@ -60,8 +61,8 @@ func (r *Reconciler) resolveProfile(ctx context.Context, t *v1alpha1.Task, s *en
 
 // recommend notes scope s's recommendation on p, t's profile or a copy of it, when the class offers
 // a choice; nil, or a class with none, notes nothing.
-func (r *Reconciler) recommend(t *v1alpha1.Task, p *v1alpha1.ProfileStatus, s *envelope.Scope) {
-	if s == nil || p == nil || len(r.profileChoices(t)) == 0 {
+func (r *Reconciler) recommend(cfg *config.Config, t *v1alpha1.Task, p *v1alpha1.ProfileStatus, s *envelope.Scope) {
+	if s == nil || p == nil || len(r.profileChoices(cfg, t)) == 0 {
 		return
 	}
 	p.Recommended, p.Why = s.Profile, s.ProfileWhy
@@ -70,12 +71,12 @@ func (r *Reconciler) recommend(t *v1alpha1.Task, p *v1alpha1.ProfileStatus, s *e
 // recommendedLabel is the scoper's recommendation on t as a bounded metric label: a profile the
 // class offers or the one the task runs under (offered when it was applied), none without one,
 // other for a name no longer offered.
-func (r *Reconciler) recommendedLabel(t *v1alpha1.Task) string {
+func (r *Reconciler) recommendedLabel(cfg *config.Config, t *v1alpha1.Task) string {
 	rec := t.Status.Profile.Recommended
 	switch {
 	case rec == "":
 		return "none"
-	case rec == t.Status.Profile.Name, slices.ContainsFunc(r.profileChoices(t), func(c ProfileChoice) bool { return c.Name == rec }):
+	case rec == t.Status.Profile.Name, slices.ContainsFunc(r.profileChoices(cfg, t), func(c ProfileChoice) bool { return c.Name == rec }):
 		return rec
 	}
 	return "other"
@@ -121,19 +122,19 @@ func assumed(sc envelope.Scope) *envelope.Scope {
 	return &sc
 }
 
-func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name string) (string, string, error) {
-	cl := r.repo(t).Classes[t.Spec.PredictedClass]
+func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, name string) (string, string, error) {
+	cl := r.class(cfg, t, t.Spec.PredictedClass)
 	if name == "" || name == cl.Harness {
 		return "", "none", nil
 	}
-	if _, ok := r.Cfg.HarnessProfiles[name]; !ok {
+	if _, ok := cfg.HarnessProfiles[name]; !ok {
 		return "", "unknown", nil
 	}
-	v, ok := r.Cfg.ProfileFor(cl, name)
+	v, ok := cfg.ProfileFor(cl, name)
 	if !ok {
 		return "", "not_allowed", nil
 	}
-	if !r.Cfg.Applies() {
+	if !cfg.Applies() {
 		return "", "observe", nil
 	}
 	if v.TestFirst {
@@ -153,14 +154,14 @@ func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name stri
 
 // applyProfile persists decision d's spec and d itself in one update; a replay restores the status
 // from the persisted decision, never by deciding again.
-func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, d profileDecision) error {
+func (r *Reconciler) applyProfile(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d profileDecision) error {
 	class := t.Spec.PredictedClass
-	p, ok := r.Cfg.ProfileFor(r.repo(t).Classes[class], d.Name)
+	p, ok := cfg.ProfileFor(r.class(cfg, t, class), d.Name)
 	if !ok {
 		return fmt.Errorf("profile %q is not one of class %q's", d.Name, class)
 	}
 	before := t.Spec.DeepCopy()
-	r.profileSpec(t, class, p)
+	r.profileSpec(cfg, t, class, p)
 	// A changed mode would read the finished scoper's run as a triager proposal on replay.
 	t.Spec.ScopeMode = before.ScopeMode
 	raw, err := json.Marshal(d)
@@ -183,7 +184,7 @@ func (r *Reconciler) applyProfile(ctx context.Context, t *v1alpha1.Task, d profi
 }
 
 // resolveRetried runs before the retry changes any state, so a broker error replays the retry.
-func (r *Reconciler) resolveRetried(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) resolveRetried(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if !unresolved(t) || !scoperPlanned(t) || t.Status.Scope == nil || splitApproved(t) {
 		return nil
 	}
@@ -192,11 +193,11 @@ func (r *Reconciler) resolveRetried(ctx context.Context, t *v1alpha1.Task) error
 	case err != nil:
 		return err
 	case sc == nil:
-		return r.resolveProfile(ctx, t, nil)
+		return r.resolveProfile(ctx, cfg, t, nil)
 	case t.Status.Reason == ReasonNeedsAuthor || sc.Assumed:
-		return r.resolveProfile(ctx, t, assumed(sc.Scope))
+		return r.resolveProfile(ctx, cfg, t, assumed(sc.Scope))
 	}
-	return r.resolveProfile(ctx, t, &sc.Scope)
+	return r.resolveProfile(ctx, cfg, t, &sc.Scope)
 }
 
 func resolveUnscoped(t *v1alpha1.Task) {

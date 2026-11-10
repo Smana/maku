@@ -44,7 +44,7 @@ func TestVerifyingIsBounded(t *testing.T) {
 			if c.reason != "merged_unverified" {
 				return
 			}
-			settled := now.Add(c.after + g.r.settleWindow()) // the closing comment waits for the usage (#42)
+			settled := now.Add(c.after + g.r.settleWindow(g.r.Cfg.Current())) // the closing comment waits for the usage (#42)
 			g.r.Now = func() time.Time { return settled }
 			g.reconcile(t, "3buqdlot", 3)
 			n := 0
@@ -74,7 +74,7 @@ func TestTheMonitorReadsAnUnverifiedAutoMerge(t *testing.T) {
 	tk.Status.Monitor = &v1alpha1.MonitorStatus{Since: metav1.NewTime(now.Add(-2 * time.Hour))}
 	for reason, want := range map[string]string{"merged_verified": "healthy", "merged_unverified": "inconclusive"} {
 		tk.Status.Reason = reason
-		if got, err := g.r.mainSignal(t.Context(), tk); err != nil || got != want {
+		if got, err := g.r.mainSignal(t.Context(), g.r.Cfg.Current(), tk); err != nil || got != want {
 			t.Fatalf("%s: %q %v, want %q", reason, got, err, want)
 		}
 	}

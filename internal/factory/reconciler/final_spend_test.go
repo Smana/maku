@@ -49,7 +49,7 @@ func aSettled(end time.Time, tokens int64) *v1alpha1.Task {
 func factsPosted(t *testing.T, g *rig) *v1alpha1.Task {
 	t.Helper()
 	tk := stored(t, g.c)
-	tk.Status.Facts = &v1alpha1.FactsLedger{Seq: tk.Status.RoomSeq, Hash: factsKey(g.r.factsFor(tk)), Posted: true}
+	tk.Status.Facts = &v1alpha1.FactsLedger{Seq: tk.Status.RoomSeq, Hash: factsKey(g.r.factsFor(g.r.Cfg.Current(), tk)), Posted: true}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
 		t.Fatal(err)
 	}
@@ -72,14 +72,14 @@ func finalFacts(g *rig) []envelope.TaskFacts {
 func TestAFinalSpendLandsOnce(t *testing.T) {
 	end := now
 	g := newRig(t, aSettled(end, 0))
-	g.r.Cfg.Facts.FinalSpend = true
+	g.r.Cfg.Current().Facts.FinalSpend = true
 	factsPosted(t, g)
 	// One timed requeue, at the instant itself: not the poll interval, not a shorter one.
 	res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	at := g.r.settleWindow() + spendFinalMargin
+	at := g.r.settleWindow(g.r.Cfg.Current()) + spendFinalMargin
 	if res.RequeueAfter != at || at > 3*time.Minute {
 		t.Fatalf("requeue %s, want one wake-up at %s", res.RequeueAfter, at)
 	}
@@ -123,7 +123,7 @@ func TestAFinalSpendLandsOnce(t *testing.T) {
 func TestAFinalSpendTheRoomRefusedIsCountedOnItsRetry(t *testing.T) {
 	end := now
 	g := newRig(t, aSettled(end, 0))
-	g.r.Cfg.Facts.FinalSpend = true
+	g.r.Cfg.Current().Facts.FinalSpend = true
 	factsPosted(t, g)
 	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
 	g.r.Now = func() time.Time { return end.Add(3 * time.Minute) }
@@ -171,7 +171,7 @@ func TestAFinalSpendsConflictedWriteCountsItOnce(t *testing.T) {
 	g := newRig(t)
 	g.c, g.r.Client = c, c
 	seeingMeter(t, c)
-	g.r.Cfg.Facts.FinalSpend = true
+	g.r.Cfg.Current().Facts.FinalSpend = true
 	factsPosted(t, g) // the room's ledger before the final fact: seq 1, posted
 	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
 	g.r.Now = func() time.Time { return end.Add(3 * time.Minute) }
@@ -219,7 +219,7 @@ func TestATaskWithoutRunsNeverRequeuesForSpend(t *testing.T) {
 	tk := aSettled(now, 0)
 	tk.Status.Runs = nil
 	g := newRig(t, tk)
-	g.r.Cfg.Facts.FinalSpend = true
+	g.r.Cfg.Current().Facts.FinalSpend = true
 	g.r.Costs = fakeCosts{}
 	res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 	if err != nil || res.RequeueAfter != 0 {
@@ -239,7 +239,7 @@ func TestATaskWithoutRunsNeverRequeuesForSpend(t *testing.T) {
 func TestAWhyOnlyCostIsNeverAFinalFigure(t *testing.T) {
 	end := now
 	g := newRig(t, aSettled(end, 0))
-	g.r.Cfg.Facts.FinalSpend = true
+	g.r.Cfg.Current().Facts.FinalSpend = true
 	factsPosted(t, g)
 	g.r.Costs = fakeCosts{rid(0): {Why: meter.FallbackUnpriced}}
 	g.r.Now = func() time.Time { return end.Add(3 * time.Minute) }
@@ -301,11 +301,11 @@ func TestTheRoomStaysOpenForTheFinalSpend(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			end := now
 			g := newRig(t, aEnded(phase, end))
-			g.r.Cfg.Facts.FinalSpend = true
+			g.r.Cfg.Current().Facts.FinalSpend = true
 			factsPosted(t, g)
 			withRoom(t, g)
 			// The pass that settles the usage would close the room; the instant is still ahead of it.
-			g.r.Now = func() time.Time { return end.Add(g.r.settleWindow()) }
+			g.r.Now = func() time.Time { return end.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 			if err != nil {
 				t.Fatal(err)
@@ -318,7 +318,7 @@ func TestTheRoomStaysOpenForTheFinalSpend(t *testing.T) {
 			}
 			// The instant: the run is priced again, the final fact lands, and the room closes after it.
 			g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
-			g.r.Now = func() time.Time { return end.Add(g.r.settleWindow() + spendFinalMargin) }
+			g.r.Now = func() time.Time { return end.Add(g.r.settleWindow(g.r.Cfg.Current()) + spendFinalMargin) }
 			g.reconcile(t, "3buqdlot", 2)
 			got := finalFacts(g)
 			if len(got) != 1 || got[0].Spend == nil || got[0].Spend.UsedMicroUSD != 420_000 {
@@ -334,10 +334,10 @@ func TestTheRoomStaysOpenForTheFinalSpend(t *testing.T) {
 	t.Run("unpriced", func(t *testing.T) {
 		end := now
 		g := newRig(t, aSettled(end, 1_500)) // tokens, no dollars: the meter priced none of them
-		g.r.Cfg.Facts.FinalSpend = true
+		g.r.Cfg.Current().Facts.FinalSpend = true
 		factsPosted(t, g)
 		withRoom(t, g)
-		g.r.Now = func() time.Time { return end.Add(g.r.settleWindow() + spendFinalMargin) }
+		g.r.Now = func() time.Time { return end.Add(g.r.settleWindow(g.r.Cfg.Current()) + spendFinalMargin) }
 		g.reconcile(t, "3buqdlot", 1)
 		if posted := finalFacts(g); len(posted) != 0 {
 			t.Fatalf("an unpriced task claimed a final figure: %+v", posted)

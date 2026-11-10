@@ -107,3 +107,14 @@ func TestPolicyMetricsAreBounded(t *testing.T) {
 		t.Fatal("a reason outside the list")
 	}
 }
+
+// Factory resources D12: a repository a publish could not wire is counted under its config name.
+func TestConfigWireErrorsCountByRepository(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
+	s, scrape := rig(t, c, func() bool { return true })
+	s.ConfigWireError(t.Context(), "Smana/new")
+	s.ConfigWireError(t.Context(), "Smana/new")
+	if want := `maku_factory_config_wire_errors_total{repository="Smana/new"} 2`; !strings.Contains(scrape(), want) {
+		t.Fatalf("missing %s", want)
+	}
+}

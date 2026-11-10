@@ -43,7 +43,7 @@ func (r *Refresher) Start(ctx context.Context) error {
 // their ages. A failure is the Service's to log.
 func (r *Refresher) Tick(ctx context.Context) {
 	var owned []string
-	for _, rc := range r.Service.Cfg.Repos() {
+	for _, rc := range r.Service.Cfg.Current().Repos() {
 		if r.Owned != nil && r.Owned(rc.Name) {
 			owned = append(owned, rc.Name)
 		}

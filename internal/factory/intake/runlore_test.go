@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func runlore(t *testing.T) (*RunLore, client.Client, *forgetest.Fake) {
 	_ = v1alpha1.AddToScheme(s)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&v1alpha1.Task{}).Build()
 	f := forgetest.NewFake()
-	return &RunLore{Forge: f, Client: c, Namespace: "agent-system", Token: func() string { return "s3cret" },
+	return &RunLore{Forges: func(string) (RunLoreForge, bool) { return f, true }, Client: c, Namespace: "agent-system", Token: func() string { return "s3cret" },
 		Stopped: func(context.Context) bool { return false }, Now: func() time.Time { return time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC) },
 		Errors: &counter{}, Owned: func(string) bool { return true },
 		Cfg: &config.Config{Repository: "Smana/cloud-native-ref", RoomsURL: "https://rooms.priv.aws.ogenki.io",
@@ -213,7 +214,7 @@ func TestAHangUpAfterTheTaskStillFilesTheIssue(t *testing.T) {
 			return c.Patch(ctx, obj, p, opts...)
 		},
 	}).Build()
-	h.Forge = ctxForge{f}
+	h.Forges = func(string) (RunLoreForge, bool) { return ctxForge{f}, true }
 
 	b, _ := json.Marshal(finding)
 	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/intake/runlore", bytes.NewReader(b))
@@ -229,5 +230,23 @@ func TestAHangUpAfterTheTaskStillFilesTheIssue(t *testing.T) {
 	}
 	if len(l.Items) != 1 || l.Items[0].Spec.Issue == 0 {
 		t.Fatalf("the Task is not linked to its issue: %+v", l.Items)
+	}
+}
+
+// Factory resources D12: the connection is looked up per finding, on the repository the config
+// names now; with none (a publish dropped it, or wiring it failed), nothing is created or filed.
+func TestAFindingWithoutAConnectionFilesNothing(t *testing.T) {
+	h, c, f := runlore(t)
+	var asked []string
+	h.Forges = func(repo string) (RunLoreForge, bool) { asked = append(asked, repo); return nil, false }
+	if w := send(h, "s3cret", finding); w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "intake_failed") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var tasks v1alpha1.TaskList
+	if err := c.List(t.Context(), &tasks); err != nil || len(tasks.Items) != 0 || len(f.Created()) != 0 {
+		t.Fatalf("created %d tasks, %d issues (err %v)", len(tasks.Items), len(f.Created()), err)
+	}
+	if want := []string{"Smana/cloud-native-ref"}; !slices.Equal(asked, want) {
+		t.Fatalf("asked %v, want %v", asked, want)
 	}
 }

@@ -85,7 +85,7 @@ type IssuePoller struct {
 	Forge     issueForge
 	Client    client.Client
 	Namespace string
-	Cfg       *config.Config
+	Cfg       config.Source
 	// Repository names the config entry this poller serves, and Forge must be bound to it (v2
 	// D1). With one entry it may be left empty.
 	Repository string
@@ -121,19 +121,23 @@ type IssuePoller struct {
 	}
 }
 
-func (p *IssuePoller) repo() *config.Repository { return p.Cfg.RepositoryFor(p.Repository) }
+// repo is the poller's repository entry; nil when the published config no longer serves it.
+func (p *IssuePoller) repo(cfg *config.Config) *config.Repository {
+	return cfg.RepositoryFor(p.Repository)
+}
 
 // controlIssue is the kill switch's issue when it lives on this poller's repository, else 0.
-func (p *IssuePoller) controlIssue() int {
-	if ctl := p.Cfg.ControlFor(); ctl.Issue > 0 && strings.EqualFold(ctl.Repository, p.repo().Name) {
+func (p *IssuePoller) controlIssue(cfg *config.Config) int {
+	if ctl := cfg.ControlFor(); ctl.Issue > 0 && strings.EqualFold(ctl.Repository, p.repo(cfg).Name) {
 		return ctl.Issue
 	}
 	return 0
 }
 
-// owns: the task is on this poller's repository. One entry owns every task, as before the list.
-func (p *IssuePoller) owns(t *v1alpha1.Task) bool {
-	return len(p.Cfg.Repos()) == 1 || strings.EqualFold(t.Spec.Repository, p.repo().Name)
+// owns: the task is on this poller's repository, by name only. A task of a repository a publish
+// removed is nobody's, even when one entry is left; legacy tasks carry the entry's name.
+func (p *IssuePoller) owns(cfg *config.Config, t *v1alpha1.Task) bool {
+	return strings.EqualFold(t.Spec.Repository, p.repo(cfg).Name)
 }
 
 // NeedLeaderElection is true: two pollers would race each label.
@@ -164,14 +168,15 @@ func (p *IssuePoller) labelEvents(ctx context.Context, n int, label string) ([]f
 	return evs, len(evs) > 0, nil
 }
 
-func (p *IssuePoller) narrator() narrate.Narrator {
-	return narrate.Narrator{Forge: p.Forge, Login: p.Cfg.FactoryLogin}
+func (p *IssuePoller) narrator(cfg *config.Config) narrate.Narrator {
+	return narrate.Narrator{Forge: p.Forge, Login: cfg.FactoryLogin}
 }
 
 // Start polls at once, then every poll.issues, until ctx ends. A failed poll is counted and
 // logged, and the next one retries.
 func (p *IssuePoller) Start(ctx context.Context) error {
-	every := p.Cfg.Poll.Issues.Duration
+	cfg := p.Cfg.Current()
+	every := cfg.Poll.Issues.Duration
 	if every <= 0 {
 		return fmt.Errorf("intake: the issue poll period %s is not positive", every)
 	}
@@ -181,7 +186,11 @@ func (p *IssuePoller) Start(ctx context.Context) error {
 	}
 	c, stop := tick(every)
 	defer stop()
-	ctx = fmetrics.WithRepository(ctx, p.repo().Name) // v2 D10: this poller's errors are its repository's
+	name := p.Repository
+	if rc := p.repo(cfg); rc != nil {
+		name = rc.Name // the legacy poller names none: its one entry's
+	}
+	ctx = fmetrics.WithRepository(ctx, name) // v2 D10: this poller's errors are its repository's
 	for {
 		if err := p.Poll(ctx); err != nil {
 			if p.Errors != nil {
@@ -204,9 +213,13 @@ func (p *IssuePoller) Start(ctx context.Context) error {
 // others or the later passes waiting (F-6): the poll reports every failure once all have run. An
 // unread control issue alone stops the pass, since whether intake may start work is then unknown.
 func (p *IssuePoller) Poll(ctx context.Context) error {
+	cfg := p.Cfg.Current()
+	if p.repo(cfg) == nil {
+		return nil // a publish removed this poller's repository (factory resources D12): the pass is skipped
+	}
 	var errs []error
 	engaged := false // reflects the stop label this pass saw or set, so the reader's cache may not hold it yet; it errs safe if the publish fails
-	if n := p.controlIssue(); n > 0 {
+	if n := p.controlIssue(cfg); n > 0 {
 		iss, err := p.Forge.Issue(ctx, n)
 		if err != nil {
 			return err
@@ -218,23 +231,23 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 			errs = append(errs, err)
 		}
 	}
-	if err := p.stops(ctx); err != nil {
+	if err := p.stops(ctx, cfg); err != nil {
 		errs = append(errs, err)
 	}
-	if p.Owned == nil || !p.Owned(p.repo().Name) {
+	if p.Owned == nil || !p.Owned(p.repo(cfg).Name) {
 		return errors.Join(errs...) // another factory's, or nobody's: its labels wait for the owner (v2 D7)
 	}
-	if err := p.reverts(ctx); err != nil {
+	if err := p.reverts(ctx, cfg); err != nil {
 		errs = append(errs, err)
 	}
 	if engaged || p.Stopped(ctx) {
 		return errors.Join(errs...)
 	}
-	items, err := p.Forge.Labeled(ctx, p.repo().TriggerLabel)
+	items, err := p.Forge.Labeled(ctx, p.repo(cfg).TriggerLabel)
 	if err != nil {
 		return errors.Join(append(errs, fmt.Errorf("intake: %w", err))...)
 	}
-	started, err := p.publishes(ctx)
+	started, err := p.publishes(ctx, cfg)
 	if err != nil { // before factory/ready: the maintainer reads the filed issue, then starts it
 		errs = append(errs, err)
 	}
@@ -245,11 +258,11 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 		if started[it.Number] {
 			continue // a publish started its fix this pass: the cache may not hold it yet, the next poll answers the label
 		}
-		if err := p.one(ctx, it.Number); err != nil {
+		if err := p.one(ctx, cfg, it.Number); err != nil {
 			errs = append(errs, fmt.Errorf("#%d: %w", it.Number, err))
 		}
 	}
-	if err := p.orphans(ctx); err != nil {
+	if err := p.orphans(ctx, cfg); err != nil {
 		errs = append(errs, fmt.Errorf("orphans: %w", err))
 	}
 	return errors.Join(errs...)
@@ -287,39 +300,39 @@ func snapshot(i forge.Issue, clean func(string) (string, sanitize.Report)) (stri
 }
 
 // issueTask is the Task of issue n's snapshot, requested by requestedBy.
-func (p *IssuePoller) issueTask(n int, key, requestedBy string, iss forge.Issue, text, sum string) *v1alpha1.Task {
+func (p *IssuePoller) issueTask(cfg *config.Config, n int, key, requestedBy string, iss forge.Issue, text, sum string) *v1alpha1.Task {
 	return &v1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: taskid.Name(key), Namespace: p.Namespace, Labels: map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}},
 		Spec: v1alpha1.TaskSpec{
-			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", p.repo().Name, n), Key: key,
+			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", p.repo(cfg).Name, n), Key: key,
 				RequestedBy: requestedBy, Trust: "untrusted", ContentSHA256: sum},
-			Repository: p.repo().Name, Issue: n, IssueAuthor: iss.Author, Text: text, DataClass: p.Cfg.Defaults.DataClass,
+			Repository: p.repo(cfg).Name, Issue: n, IssueAuthor: iss.Author, Text: text, DataClass: cfg.Defaults.DataClass,
 		},
 	}
 }
 
-func (p *IssuePoller) one(ctx context.Context, n int) error {
-	label := p.repo().TriggerLabel
+func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error {
+	label := p.repo(cfg).TriggerLabel
 	evs, ok, err := p.labelEvents(ctx, n, label)
 	if err != nil || !ok {
 		return err
 	}
-	gen, last, ok := Generation(evs, p.repo().IsMaintainer)
+	gen, last, ok := Generation(evs, p.repo(cfg).IsMaintainer)
 	if !ok {
-		return p.refuse(ctx, n, last, "unauthorised_labeller")
+		return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
 	}
 	switch w, err := p.writer(ctx, last.Actor); {
 	case err != nil:
 		return err // no answer is no refusal: the label waits for the next poll
 	case !w:
-		return p.refuse(ctx, n, last, "unauthorised_labeller")
+		return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
 	}
 	if p.Demo { // the demo serves public repositories only; no answer is no refusal (fail closed)
 		switch public, err := p.Forge.Public(ctx); {
 		case err != nil:
 			return fmt.Errorf("repository visibility: %w", err)
 		case !public:
-			return p.refuse(ctx, n, last, "private_repository")
+			return p.refuse(ctx, cfg, n, last, "private_repository")
 		}
 	}
 	iss, err := p.Forge.Issue(ctx, n)
@@ -327,11 +340,11 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 		return err
 	}
 	// v4 MR2: a coordination issue never becomes a work Task from its own text.
-	if handled, err := p.coordinationIssue(ctx, n, iss, last); handled || err != nil {
+	if handled, err := p.coordinationIssue(ctx, cfg, n, iss, last); handled || err != nil {
 		return err
 	}
 	if iss.LastEditedAt.After(last.At) || iss.TitleEditedAt.After(last.At) {
-		return p.refuse(ctx, n, last, "edited_after_label") // R5: the body and the title are the snapshot
+		return p.refuse(ctx, cfg, n, last, "edited_after_label") // R5: the body and the title are the snapshot
 	}
 	clean := p.Sanitize
 	if clean == nil {
@@ -339,14 +352,14 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 	}
 	text, sum, rep := snapshot(iss, clean)
 	if rep.Withheld {
-		return p.refuse(ctx, n, last, "unsanitisable") // ruling SM: no task runs on a withheld text
+		return p.refuse(ctx, cfg, n, last, "unsanitisable") // ruling SM: no task runs on a withheld text
 	}
 	if rep.Changed() {
 		p.log().Info("issue text sanitised", "issue", n, "report", rep.String())
 	}
-	key := taskid.IssueKey(p.repo().Name, n, gen)
+	key := taskid.IssueKey(p.repo(cfg).Name, n, gen)
 	name := taskid.Name(key)
-	open, err := p.openTasks(ctx, n)
+	open, err := p.openTasks(ctx, cfg, n)
 	if err != nil {
 		return err
 	}
@@ -359,11 +372,11 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 		case t.Status.Phase == v1alpha1.PhaseEscalated:
 			superseded = append(superseded, t)
 		default:
-			return p.refuse(ctx, n, last, "task_active")
+			return p.refuse(ctx, cfg, n, last, "task_active")
 		}
 	}
 	if !slices.ContainsFunc(open, func(t *v1alpha1.Task) bool { return t.Name == name }) { // a created Task is past the door
-		if spent, err := p.personSpent(ctx, n, last); err != nil || spent {
+		if spent, err := p.personSpent(ctx, cfg, n, last); err != nil || spent {
 			return err
 		}
 	}
@@ -372,8 +385,8 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 			return err
 		}
 	}
-	t := p.issueTask(n, key, "github:"+last.Actor, iss, text, sum)
-	parent, err := p.childOf(ctx, n, iss)
+	t := p.issueTask(cfg, n, key, "github:"+last.Actor, iss, text, sum)
+	parent, err := p.childOf(ctx, cfg, n, iss)
 	if err != nil {
 		return err
 	}
@@ -381,7 +394,7 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 		t.Spec.Parent = parent
 		t.Labels[v1alpha1.LabelParent] = parent.Task
 	}
-	if o, err := p.originOf(ctx, n); err != nil {
+	if o, err := p.originOf(ctx, cfg, n); err != nil {
 		return err
 	} else if o != nil {
 		// RA9: the factory's own record, never the issue's text; K5: the class it inferred.
@@ -397,7 +410,7 @@ func (p *IssuePoller) one(ctx context.Context, n int) error {
 // when the issue's child-of label was last applied by the factory App, and an earlier generation of
 // the issue holds the link, which the API server keeps fixed. Anyone else's child-of label links
 // nothing: the task is an ordinary one.
-func (p *IssuePoller) childOf(ctx context.Context, n int, iss forge.Issue) (*v1alpha1.Parent, error) {
+func (p *IssuePoller) childOf(ctx context.Context, cfg *config.Config, n int, iss forge.Issue) (*v1alpha1.Parent, error) {
 	label := ""
 	for _, l := range iss.Labels {
 		if _, ok := v1alpha1.ParseChildOf(l); ok {
@@ -412,7 +425,7 @@ func (p *IssuePoller) childOf(ctx context.Context, n int, iss forge.Issue) (*v1a
 	if err != nil || !ok {
 		return nil, err
 	}
-	if by := evs[len(evs)-1].Actor; !forge.SameLogin(by, p.Cfg.FactoryLogin) {
+	if by := evs[len(evs)-1].Actor; !forge.SameLogin(by, cfg.FactoryLogin) {
 		p.log().Info("child-of label not applied by the factory: ignored", "issue", n, "actor", by)
 		return nil, nil
 	}
@@ -421,7 +434,7 @@ func (p *IssuePoller) childOf(ctx context.Context, n int, iss forge.Issue) (*v1a
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 	for i := range l.Items {
-		if par := l.Items[i].Spec.Parent; par != nil && p.owns(&l.Items[i]) {
+		if par := l.Items[i].Spec.Parent; par != nil && p.owns(cfg, &l.Items[i]) {
 			c := *par
 			return &c, nil
 		}
@@ -433,8 +446,8 @@ func (p *IssuePoller) childOf(ctx context.Context, n int, iss forge.Issue) (*v1a
 // gets a comment naming them, their cap and the reset, no Task, and the label removed, so
 // re-labelling tomorrow retries. Queued's reservation stays the exact check (D3): this one only
 // keeps an exhausted day from queueing work until midnight. In shadow it refuses nothing.
-func (p *IssuePoller) personSpent(ctx context.Context, n int, last forge.LabelEvent) (bool, error) {
-	b := p.Cfg.Budgets
+func (p *IssuePoller) personSpent(ctx context.Context, cfg *config.Config, n int, last forge.LabelEvent) (bool, error) {
+	b := cfg.Budgets
 	if !b.PerPerson.Enabled || p.Ledger == nil {
 		return false, nil
 	}
@@ -455,14 +468,14 @@ func (p *IssuePoller) personSpent(ctx context.Context, n int, last forge.LabelEv
 		p.log().Info("labeller's day is spent (shadow)", "issue", n, "person", person, "used_micro_usd", used, "cap_micro_usd", day)
 		return false, nil
 	}
-	if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n),
+	if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n),
 		narrate.PersonOverBudget(n, person, day, last.At)); err != nil {
 		return false, err
 	}
 	if p.Errors != nil {
 		p.Errors.AdmissionRefused(fmetrics.WithPrincipal(ctx, person), "person_budget_exhausted") // the labeller (SI4)
 	}
-	return true, p.Forge.RemoveLabel(ctx, n, p.repo().TriggerLabel)
+	return true, p.Forge.RemoveLabel(ctx, n, p.repo(cfg).TriggerLabel)
 }
 
 // writer is v2 D5's GitHub check on login; without CanWrite nobody is one.
@@ -478,15 +491,15 @@ func (p *IssuePoller) writer(ctx context.Context, login string) (bool, error) {
 }
 
 // refuse answers the label once, keyed by its time, then consumes it (R4).
-func (p *IssuePoller) refuse(ctx context.Context, n int, last forge.LabelEvent, reason string) error {
-	if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), narrate.Refused(n, reason, last.At)); err != nil {
+func (p *IssuePoller) refuse(ctx context.Context, cfg *config.Config, n int, last forge.LabelEvent, reason string) error {
+	if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), narrate.Refused(n, reason, last.At)); err != nil {
 		return err
 	}
-	return p.Forge.RemoveLabel(ctx, n, p.repo().TriggerLabel)
+	return p.Forge.RemoveLabel(ctx, n, p.repo(cfg).TriggerLabel)
 }
 
 // openTasks are this repository's issue n's tasks that have not ended.
-func (p *IssuePoller) openTasks(ctx context.Context, n int) ([]*v1alpha1.Task, error) {
+func (p *IssuePoller) openTasks(ctx context.Context, cfg *config.Config, n int) ([]*v1alpha1.Task, error) {
 	var l v1alpha1.TaskList
 	if err := p.Client.List(ctx, &l, client.InNamespace(p.Namespace), client.MatchingLabels{v1alpha1.LabelIssue: strconv.Itoa(n)}); err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
@@ -494,7 +507,7 @@ func (p *IssuePoller) openTasks(ctx context.Context, n int) ([]*v1alpha1.Task, e
 	var open []*v1alpha1.Task
 	for i := range l.Items {
 		// The issue label is a number, and two repositories share numbers: only this one's count.
-		if !v1alpha1.TerminalPhase(l.Items[i].Status.Phase) && p.owns(&l.Items[i]) {
+		if !v1alpha1.TerminalPhase(l.Items[i].Status.Phase) && p.owns(cfg, &l.Items[i]) {
 			open = append(open, &l.Items[i])
 		}
 	}
@@ -518,7 +531,7 @@ func (p *IssuePoller) annotateStop(ctx context.Context, t *v1alpha1.Task, why st
 // then consumes the label. A maintainer's stop with no running task stays, so a task started later
 // on that issue stops at once. Anyone else's is removed and answered once (ruling SP): left on,
 // it would stop that later task on their say.
-func (p *IssuePoller) stops(ctx context.Context) error {
+func (p *IssuePoller) stops(ctx context.Context, cfg *config.Config) error {
 	items, err := p.Forge.Labeled(ctx, LabelStop)
 	if err != nil {
 		return fmt.Errorf("intake: %w", err)
@@ -532,10 +545,10 @@ func (p *IssuePoller) stops(ctx context.Context) error {
 	}
 	var errs []error
 	for _, it := range items {
-		if it.Number == p.controlIssue() {
+		if it.Number == p.controlIssue(cfg) {
 			continue // the control issue keeps its factory/stop: removing it is how a human resumes (§6.1)
 		}
-		if err := p.stop(ctx, it.Number, l.Items); err != nil {
+		if err := p.stop(ctx, cfg, it.Number, l.Items); err != nil {
 			errs = append(errs, fmt.Errorf("stop #%d: %w", it.Number, err)) // its label stays: the next poll retries it
 		}
 	}
@@ -543,13 +556,13 @@ func (p *IssuePoller) stops(ctx context.Context) error {
 }
 
 // stop serves the factory/stop on issue or pull request n, given every task of the namespace.
-func (p *IssuePoller) stop(ctx context.Context, n int, all []v1alpha1.Task) error {
+func (p *IssuePoller) stop(ctx context.Context, cfg *config.Config, n int, all []v1alpha1.Task) error {
 	evs, ok, err := p.labelEvents(ctx, n, LabelStop)
 	if err != nil || !ok {
 		return err
 	}
-	if _, last, byMaintainer := Generation(evs, p.repo().IsMaintainer); !byMaintainer {
-		if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n),
+	if _, last, byMaintainer := Generation(evs, p.repo(cfg).IsMaintainer); !byMaintainer {
+		if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n),
 			narrate.StopIgnored(n, "unauthorised_stopper", last.At)); err != nil {
 			return err
 		}
@@ -558,7 +571,7 @@ func (p *IssuePoller) stop(ctx context.Context, n int, all []v1alpha1.Task) erro
 	hit := false
 	for i := range all {
 		t := &all[i]
-		if v1alpha1.TerminalPhase(t.Status.Phase) || !p.owns(t) {
+		if v1alpha1.TerminalPhase(t.Status.Phase) || !p.owns(cfg, t) {
 			continue
 		}
 		// SL13: a stop on a parent's issue stops its parts too, found by spec.parent, never by name.
@@ -580,7 +593,7 @@ func (p *IssuePoller) stop(ctx context.Context, n int, all []v1alpha1.Task) erro
 // PRs are closed, so this lists labelled items in every state. A maintainer's factory/drill on the
 // same PR, newest event, marks the revert a drill (AM6); it is read here only, so it must be on
 // the PR before factory/revert.
-func (p *IssuePoller) reverts(ctx context.Context) error {
+func (p *IssuePoller) reverts(ctx context.Context, cfg *config.Config) error {
 	items, err := p.Forge.Labeled(ctx, LabelRevert)
 	if err != nil || len(items) == 0 {
 		return err
@@ -591,7 +604,7 @@ func (p *IssuePoller) reverts(ctx context.Context) error {
 	}
 	var errs []error
 	for _, it := range items {
-		if err := p.revert(ctx, it.Number, l.Items); err != nil {
+		if err := p.revert(ctx, cfg, it.Number, l.Items); err != nil {
 			errs = append(errs, fmt.Errorf("revert #%d: %w", it.Number, err)) // its label stays: the next poll retries it
 		}
 	}
@@ -599,20 +612,20 @@ func (p *IssuePoller) reverts(ctx context.Context) error {
 }
 
 // revert serves the factory/revert on pull request n, given every task of the namespace.
-func (p *IssuePoller) revert(ctx context.Context, n int, all []v1alpha1.Task) error {
+func (p *IssuePoller) revert(ctx context.Context, cfg *config.Config, n int, all []v1alpha1.Task) error {
 	evs, ok, err := p.labelEvents(ctx, n, LabelRevert)
 	if err != nil || !ok {
 		return nil // GitHub has not listed it yet, or its newest events are unread: it waits
 	}
 	actor := evs[len(evs)-1].Actor
-	if !p.repo().IsMaintainer(actor) {
+	if !p.repo(cfg).IsMaintainer(actor) {
 		return nil // labels are intent, and only a maintainer's counts
 	}
 	if w, err := p.writer(ctx, actor); err != nil || !w {
 		return nil // a revert opens a pull request: a write, so D5's check holds it too
 	}
 	ann := map[string]string{v1alpha1.AnnotationRevert: "label"}
-	drill, err := p.drill(ctx, n)
+	drill, err := p.drill(ctx, cfg, n)
 	if err != nil {
 		return nil // unread, the drill is unknown: the revert waits rather than count as a revert
 	}
@@ -621,7 +634,7 @@ func (p *IssuePoller) revert(ctx context.Context, n int, all []v1alpha1.Task) er
 	}
 	for i := range all {
 		t := &all[i]
-		if ref := t.Status.PullRequest; ref != nil && ref.Number == n && (ref.AutoMerged || ref.MergedHow == "approved") && p.owns(t) {
+		if ref := t.Status.PullRequest; ref != nil && ref.Number == n && (ref.AutoMerged || ref.MergedHow == "approved") && p.owns(cfg, t) {
 			body, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": ann}})
 			obj := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: t.Name, Namespace: t.Namespace}}
 			if err := p.Client.Patch(ctx, obj, client.RawPatch(types.MergePatchType, body)); err != nil {
@@ -635,7 +648,7 @@ func (p *IssuePoller) revert(ctx context.Context, n int, all []v1alpha1.Task) er
 // drill reports whether the revert of pull request n is a maintainer's drill (AM6): the newest
 // factory/drill event is a maintainer's and the label is still on the pull request. Truncated
 // events verify nothing: the revert is a plain one, which counts towards the breaker.
-func (p *IssuePoller) drill(ctx context.Context, n int) (bool, error) {
+func (p *IssuePoller) drill(ctx context.Context, cfg *config.Config, n int) (bool, error) {
 	evs, err := p.Forge.LabelEvents(ctx, n, LabelDrill)
 	if errors.Is(err, forge.ErrEventsTruncated) {
 		p.log().Warn("drill label events truncated: the revert is not a drill", "pr", n, "events", len(evs))
@@ -644,7 +657,7 @@ func (p *IssuePoller) drill(ctx context.Context, n int) (bool, error) {
 		}
 		return false, nil
 	}
-	if err != nil || len(evs) == 0 || !p.repo().IsMaintainer(evs[len(evs)-1].Actor) {
+	if err != nil || len(evs) == 0 || !p.repo(cfg).IsMaintainer(evs[len(evs)-1].Actor) {
 		return false, err
 	}
 	pr, err := p.Forge.PullRequest(ctx, n)

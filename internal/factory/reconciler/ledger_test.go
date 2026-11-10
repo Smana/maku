@@ -93,7 +93,7 @@ func TestADrillRevertDoesNotTripTheBreaker(t *testing.T) {
 // D1: the daily cap counts today's labelled merges of every class, which a rebuild keeps.
 func TestTheDailyCapCountsTodaysLabelledMerges(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.AutoMergesPerDay = 1
+	g.r.Cfg.Current().Merge.AutoMergesPerDay = 1
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetPR(forge.PR{Number: 5, State: "MERGED", MergedAt: now.Add(-time.Hour), Labels: []string{AutoMergedLabel("revert")}})
 	g.f.SetPR(forge.PR{Number: 4, State: "MERGED", MergedAt: now.Add(-30 * time.Hour), Labels: []string{AutoMergedLabel("docs-links")}})
@@ -184,7 +184,7 @@ func revertedRig(t *testing.T) *rig {
 // it (D3), and a new head is a new decision.
 func TestTheShadowRecordCarriesItsHead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.reconcile(t, "3buqdlot", 1)
 	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "event=would-arm-1 head=abc paused=false capped=false -->") {
@@ -202,7 +202,7 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 		return g
 	}
 	classes := func(g *rig, docsLinks config.Class) {
-		g.r.Cfg.Classes = map[string]config.Class{"docs-links": docsLinks, "revert": {Shadow: true}}
+		g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": docsLinks, "revert": {Shadow: true}}
 	}
 	for _, tc := range []struct {
 		name string
@@ -218,7 +218,7 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 		{"would-arm, diff unread", func(t *testing.T) *rig {
 			g := greenRig(t)
 			predict(t, g, "plain") // no shape, no file condition, steering off: the diff is never read
-			g.r.Cfg.Classes["plain"] = config.Class{Shadow: true}
+			g.r.Cfg.Current().Classes["plain"] = config.Class{Shadow: true}
 			return g
 		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=-/0 lines=-/0 shape=n/a holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
 		{"hand-off before the rows", func(t *testing.T) *rig {
@@ -235,7 +235,7 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 		{"steering_path, diff read", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true})
-			g.r.Cfg.Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
 			g.f.SetFileStats(forge.FileStat{Path: ".github/agent-factory/steering/docs.md", Status: "modified", Additions: 2, Deletions: 1})
 			return g
 		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=human:steering_path files=1/0 lines=3/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->"},
@@ -283,7 +283,7 @@ func predict(t *testing.T, g *rig, class string) {
 // D2: every decision the gate acts on is counted by class, verdict and reason; a wait is not one.
 func TestTheGateCountsItsDecisions(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
 	pending := green("SUCCESS")
 	pending.Runs[0].State = "PENDING"
 	g.f.SetChecks(12, pending)

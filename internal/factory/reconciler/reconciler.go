@@ -28,6 +28,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -175,7 +176,7 @@ type Reconciler struct {
 	// client watches one ConfigMap, the stop object. Queued reserves its runs there (#78).
 	Ledger    client.Client
 	Namespace string
-	Cfg       *config.Config
+	Cfg       config.Source
 	Forge     TaskForge
 	Merger    forge.Merger // the merger App: checks, merges and reverts (R16)
 	// Flux reads Flux's objects on the factory's cluster for the post-merge monitor (MC7). nil:
@@ -210,9 +211,11 @@ type Reconciler struct {
 	Triage  triage.Triager
 	Metrics metrics
 	Now     func() time.Time
-	Nonce   func() string
-	Log     *slog.Logger
-	Trace   tracing.Sink // nil: tracing off (R46)
+	// Decisions remembers each class's latest merge decision for the resources' status; nil: off.
+	Decisions *decision.Recorder
+	Nonce     func() string
+	Log       *slog.Logger
+	Trace     tracing.Sink // nil: tracing off (R46)
 	// Costs is the run meter's per-run USD costs, which a task capped in USD sums (OD-6 (b));
 	// nil: every task is held to TaskTokens.
 	Costs costReader
@@ -224,6 +227,7 @@ type Reconciler struct {
 	Coordination coordinationPort
 
 	oldBroker sync.Once // the broker serves no task route: said once per process
+	notServed onceSet   // tasks whose repository is not served, said once each
 	ledger    mergeLedger
 	mon       monitorCache
 }
@@ -249,15 +253,28 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // Reconcile moves one task one step and writes its status when the step changed it.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	cfg := r.Cfg.Current()
 	var t v1alpha1.Task
 	if err := r.Client.Get(ctx, req.NamespacedName, &t); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.notServed.forget(req.Name) // deleted while its repository was unserved
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if _, migrating := t.Annotations[roomv1.AnnotationMigrating]; migrating {
 		return ctrl.Result{}, nil // a migrate-group copy without its status yet: lifting the guard requeues it
 	}
+	// Factory resources D12: a publish may remove the task's repository. Nothing about it is
+	// decided under another repository's settings, and it is no error: a later publish may serve it.
+	if r.repo(cfg, &t) == nil {
+		if r.notServed.once(t.Name) {
+			r.log().Info("repository not served: the task waits for a publish that serves it", "task", t.Name, "repository", t.Spec.Repository)
+		}
+		return ctrl.Result{RequeueAfter: notServedRequeue}, nil
+	}
+	r.notServed.forget(t.Name)
 	// v2 D10 and spend per identity SI4: the pass's series are the task's repository's and its payer's.
-	ctx, err := r.bind(fmetrics.WithPrincipal(fmetrics.WithRepository(ctx, t.Spec.Repository), r.payer(&t)), &t)
+	ctx, err := r.bind(fmetrics.WithPrincipal(fmetrics.WithRepository(ctx, t.Spec.Repository), r.payer(cfg, &t)), &t)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -266,21 +283,21 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// leaving a terminal task alone (§6.4, MC7): the factory owes the revert its watch, a
 	// maintainer's factory/revert its action, and a monitored merge its verdict, even after the
 	// task itself has ended.
-	watchWait := r.revertable(&t) || r.revertPending(&t) || r.monitorDue(&t)
+	watchWait := r.revertable(cfg, &t) || r.revertPending(&t) || r.monitorDue(cfg, &t)
 	var closeDue bool
 	var closeWait time.Duration
 	if ended {
 		var rerr error
-		if closeDue, _, closeWait, rerr = r.roomState(ctx, &t); rerr != nil {
+		if closeDue, _, closeWait, rerr = r.roomState(ctx, cfg, &t); rerr != nil {
 			return ctrl.Result{}, rerr
 		}
 	}
-	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(&t) && !r.spendFinalDue(&t) && !r.statusCommentDue(&t) && !closeDue {
+	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(cfg, &t) && !r.spendFinalDue(cfg, &t) && !r.statusCommentDue(cfg, &t) && !closeDue {
 		left := closeWait
 		// CD23's one timed requeue: the instant a terminal task's dollars are final, never a poll.
 		// Only an instant still ahead is scheduled — past it the pass below owes the fact, and
 		// scheduling it again would wake the task every second for a figure already posted.
-		if at, ok := r.spendFinalAt(&t); ok && r.Now().Before(at) {
+		if at, ok := r.spendFinalAt(cfg, &t); ok && r.Now().Before(at) {
 			left = soonest(left, max(at.Sub(r.Now()), time.Second))
 		}
 		return ctrl.Result{RequeueAfter: left}, nil // closeWait: the revert window still open (#56)
@@ -292,18 +309,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	fx := &effects{}
 	switch {
 	case !ended, watchWait:
-		err = r.step(context.WithValue(ctx, effectsKey{}, fx), &t)
+		err = r.step(context.WithValue(ctx, effectsKey{}, fx), cfg, &t)
 	case r.settling(&t):
-		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), &t)
+		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), cfg, &t)
 	}
 	if err == nil && ended && watchWait && r.settling(&t) {
 		// A task kept alive by a watch still settles its usage: the switch above took the watch.
-		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), &t)
+		err = r.settle(context.WithValue(ctx, effectsKey{}, fx), cfg, &t)
 	}
 	// CD23: the final spend. The pass that owes it prices the task's runs again — price is
 	// idempotent, a record only ever takes the larger cost — so the fact posted below carries the
 	// figure the meter settled on after the run left its active set.
-	finalSpend := r.spendFinalDue(&t)
+	finalSpend := r.spendFinalDue(cfg, &t)
 	if finalSpend {
 		r.price(ctx, &t)
 	}
@@ -317,19 +334,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			f(ctx)
 		}
 		r.waited(ctx, &t, before, &t.Status)
-		r.needed(ctx, &t, before, &t.Status)
+		r.needed(ctx, cfg, &t, before, &t.Status)
 	}
 	// Only a written outbox is posted (review M-a), only written facts reach the room, and only a
 	// written end exports the task's span: a write that conflicts posts and exports nothing, and its
 	// replay may take another path. The second write records what was posted and exported. Facts
 	// are advisory: a failed post is returned for a retry, and no phase waits on it.
-	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(&t) || r.statusCommentDue(&t) {
+	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(cfg, &t) || r.statusCommentDue(cfg, &t) {
 		queued := t.Status.DeepCopy()
-		err = errors.Join(err, r.drain(ctx, &t))
-		perr := r.postFacts(ctx, &t)
+		err = errors.Join(err, r.drain(ctx, cfg, &t))
+		perr := r.postFacts(ctx, cfg, &t)
 		err = errors.Join(err, perr)
-		if r.statusCommentDue(&t) {
-			err = errors.Join(err, r.syncStatusComment(ctx, &t))
+		if r.statusCommentDue(cfg, &t) {
+			err = errors.Join(err, r.syncStatusComment(ctx, cfg, &t))
 		}
 		r.endTrace(ctx, &t)
 		// CD23: the pass that landed the final fact records how long its dollars took to settle,
@@ -338,7 +355,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// final hash and Posted false: the Posted flip is what counts that retry, once, and a later
 		// reconcile that posts nothing counts nothing. A fact the pass could not claim (an unpriced
 		// run) counts nothing either.
-		final := finalSpend && perr == nil && r.spendIsFinal(&t) && t.Status.Facts != nil && t.Status.Facts.Posted &&
+		final := finalSpend && perr == nil && r.spendIsFinal(cfg, &t) && t.Status.Facts != nil && t.Status.Facts.Posted &&
 			(queued.Facts == nil || !queued.Facts.Posted || queued.Facts.Hash != t.Status.Facts.Hash)
 		if !equality.Semantic.DeepEqual(*queued, t.Status) {
 			if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
@@ -366,14 +383,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// folded into every requeue below, as the settle's is: a task whose room closed before the
 		// instant would otherwise never be woken for it.
 		var finalWait time.Duration
-		if at, ok := r.spendFinalAt(&t); ok && r.Now().Before(at) {
+		if at, ok := r.spendFinalAt(cfg, &t); ok && r.Now().Before(at) {
 			finalWait = max(at.Sub(r.Now()), time.Second)
 		}
 		// #56: the room closes once everything the task owes it has landed. Re-evaluated on the
 		// state this pass left, so the pass that posts the last fact closes it.
 		var closeLeft time.Duration
 		if err == nil {
-			if due, capped, wait, serr := r.roomState(ctx, &t); serr != nil {
+			if due, capped, wait, serr := r.roomState(ctx, cfg, &t); serr != nil {
 				err = serr
 			} else if due {
 				var closed bool
@@ -386,17 +403,17 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 		}
 		// The revert watch polls: a revert PR merges, closes or stalls on GitHub's clock, not ours.
-		if err == nil && (r.revertable(&t) || r.revertPending(&t)) {
-			return ctrl.Result{RequeueAfter: soonest(soonest(r.Cfg.Poll.Tasks.Duration, spanWait), finalWait)}, nil
+		if err == nil && (r.revertable(cfg, &t) || r.revertPending(&t)) {
+			return ctrl.Result{RequeueAfter: soonest(soonest(cfg.Poll.Tasks.Duration, spanWait), finalWait)}, nil
 		}
 		if err == nil && r.settling(&t) {
-			wait := r.settleLeft(&t) // for the settle, at its window, unless a merge under watch is due sooner
-			if r.monitorDue(&t) {
+			wait := r.settleLeft(cfg, &t) // for the settle, at its window, unless a merge under watch is due sooner
+			if r.monitorDue(cfg, &t) {
 				wait = min(wait, monitorEvery)
 			}
 			return ctrl.Result{RequeueAfter: soonest(soonest(wait, spanWait), finalWait)}, nil
 		}
-		if err == nil && r.monitorDue(&t) && (closeLeft <= 0 || closeLeft > monitorEvery) {
+		if err == nil && r.monitorDue(cfg, &t) && (closeLeft <= 0 || closeLeft > monitorEvery) {
 			return ctrl.Result{RequeueAfter: soonest(soonest(monitorEvery, spanWait), finalWait)}, nil // a merge under watch is read on its own clock
 		}
 		return ctrl.Result{RequeueAfter: soonest(soonest(closeLeft, spanWait), finalWait)}, err // closeLeft: the revert window or a driving person (#56)
@@ -407,10 +424,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if t.Status.Phase == v1alpha1.PhaseEscalated {
 		return ctrl.Result{RequeueAfter: escalatedPoll}, nil
 	}
-	return ctrl.Result{RequeueAfter: r.Cfg.Poll.Tasks.Duration}, nil
+	return ctrl.Result{RequeueAfter: cfg.Poll.Tasks.Duration}, nil
 }
 
-func (r *Reconciler) step(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	// MR2: a coordination parent and an integration Task take their own path before anything an
 	// ordinary task does, the stop machinery included: neither has a run to stop.
 	switch t.Spec.Kind {
@@ -418,9 +435,9 @@ func (r *Reconciler) step(ctx context.Context, t *v1alpha1.Task) error {
 		if v1alpha1.TerminalPhase(t.Status.Phase) {
 			return nil
 		}
-		return r.coordinating(ctx, t)
+		return r.coordinating(ctx, cfg, t)
 	case v1alpha1.TaskKindIntegration:
-		return r.integrating(ctx, t)
+		return r.integrating(ctx, cfg, t)
 	}
 	// A terminal task reaches step only for its revert (§6.4); the stop machinery must not
 	// rewrite an ended task into Stopped, and its runs are already over.
@@ -430,39 +447,39 @@ func (r *Reconciler) step(ctx context.Context, t *v1alpha1.Task) error {
 			return err
 		}
 		if stop {
-			return r.stop(ctx, t, why)
+			return r.stop(ctx, cfg, t, why)
 		}
 	}
 	switch t.Status.Phase {
 	case v1alpha1.PhaseReceived:
-		return r.received(ctx, t)
+		return r.received(ctx, cfg, t)
 	case v1alpha1.PhaseTriaged:
-		return r.triaged(ctx, t)
+		return r.triaged(ctx, cfg, t)
 	case v1alpha1.PhaseQueued:
-		return r.queued(ctx, t)
+		return r.queued(ctx, cfg, t)
 	case v1alpha1.PhaseSplit:
-		return r.splitting(ctx, t)
+		return r.splitting(ctx, cfg, t)
 	case v1alpha1.PhaseImplementing:
-		return r.implementing(ctx, t)
+		return r.implementing(ctx, cfg, t)
 	case v1alpha1.PhaseReviewing:
-		return r.reviewing(ctx, t)
+		return r.reviewing(ctx, cfg, t)
 	case v1alpha1.PhaseAwaitingHuman:
-		return r.awaitingHuman(ctx, t)
+		return r.awaitingHuman(ctx, cfg, t)
 	case v1alpha1.PhaseEscalated:
-		return r.escalated(ctx, t)
+		return r.escalated(ctx, cfg, t)
 	case v1alpha1.PhaseAwaitingCI:
-		return r.awaitingCI(ctx, t)
+		return r.awaitingCI(ctx, cfg, t)
 	case v1alpha1.PhaseAutoMerging:
-		return r.autoMerging(ctx, t)
+		return r.autoMerging(ctx, cfg, t)
 	case v1alpha1.PhaseVerifying:
-		return r.verifying(ctx, t)
+		return r.verifying(ctx, cfg, t)
 	case v1alpha1.PhaseReverted:
-		return r.revertWatch(ctx, t) // reached only while revertPending
+		return r.revertWatch(ctx, cfg, t) // reached only while revertPending
 	case v1alpha1.PhaseDone:
-		if r.revertable(t) {
-			return r.revert(ctx, t, "revert_requested")
+		if r.revertable(cfg, t) {
+			return r.revert(ctx, cfg, t, "revert_requested")
 		}
-		return r.monitor(ctx, t) // reached only when monitorDue
+		return r.monitor(ctx, cfg, t) // reached only when monitorDue
 	}
 	return nil
 }
@@ -491,8 +508,8 @@ func (r *Reconciler) log() *slog.Logger {
 
 // payer is the key the task's costs and yield count for (spend per identity SI1): the person its
 // next run is charged to, else the fleet.
-func (r *Reconciler) payer(t *v1alpha1.Task) string {
-	return runs.TaskPayer(t, r.Cfg.Budgets.PerPerson.Enabled)
+func (r *Reconciler) payer(cfg *config.Config, t *v1alpha1.Task) string {
+	return runs.TaskPayer(t, cfg.Budgets.PerPerson.Enabled)
 }
 
 // waited adds a written exit from AwaitingHuman or Escalated to the payer's waits (SI8): the time
@@ -511,16 +528,16 @@ func (r *Reconciler) waited(ctx context.Context, t *v1alpha1.Task, before, after
 // Escalated — a bounce as needs_author, the author's and not a maintainer's — and the first human
 // commit on its pull request, from whichever site set HumanCommits. Read off the write like waited,
 // so a refused write counts nothing and its replay counts once.
-func (r *Reconciler) needed(ctx context.Context, t *v1alpha1.Task, before, after *v1alpha1.TaskStatus) {
+func (r *Reconciler) needed(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, before, after *v1alpha1.TaskStatus) {
 	if after.Phase == v1alpha1.PhaseEscalated && before.Phase != after.Phase {
 		kind := "escalated"
 		if after.Reason == ReasonNeedsAuthor {
 			kind = "needs_author"
 		}
-		r.Metrics.Intervention(ctx, kind, cohortOf(t), profileOf(t), r.recommendedOf(t))
+		r.Metrics.Intervention(ctx, kind, cohortOf(t), profileOf(t), r.recommendedOf(cfg, t))
 	}
 	if after.PullRequest != nil && after.PullRequest.HumanCommits && (before.PullRequest == nil || !before.PullRequest.HumanCommits) {
-		r.Metrics.Intervention(ctx, "human_commit", cohortOf(t), profileOf(t), r.recommendedOf(t))
+		r.Metrics.Intervention(ctx, "human_commit", cohortOf(t), profileOf(t), r.recommendedOf(cfg, t))
 	}
 }
 
@@ -557,13 +574,50 @@ func (r *Reconciler) handedOffMerged(ctx context.Context, t *v1alpha1.Task, how 
 	record(ctx, func(ctx context.Context) { r.Metrics.HandoffToMerge(ctx, class, reason, how, d) })
 }
 
-// repo is the config entry of the task's repository (v2 D1).
-func (r *Reconciler) repo(t *v1alpha1.Task) *config.Repository {
-	return r.Cfg.RepositoryFor(t.Spec.Repository)
+// notServedRequeue is when a task whose repository the published config does not serve is looked
+// at again: a later publish may serve it again (factory resources D12).
+const notServedRequeue = 5 * time.Minute
+
+// onceSet holds names already reported, so a condition that persists is logged once per name.
+type onceSet struct {
+	mu   sync.Mutex
+	seen map[string]bool
 }
 
-func (r *Reconciler) narrator(ctx context.Context) narrate.Narrator {
-	return narrate.Narrator{Forge: r.gh(ctx), Login: r.Cfg.FactoryLogin}
+// once reports whether name is new, and records it.
+func (s *onceSet) once(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seen[name] {
+		return false
+	}
+	if s.seen == nil {
+		s.seen = map[string]bool{}
+	}
+	s.seen[name] = true
+	return true
+}
+
+func (s *onceSet) forget(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.seen, name)
+}
+
+// repo is the config entry of the task's repository (v2 D1); nil when the config does not serve it.
+func (r *Reconciler) repo(cfg *config.Config, t *v1alpha1.Task) *config.Repository {
+	return cfg.RepositoryFor(t.Spec.Repository)
+}
+
+// class is the task's repository's class name, the zero class when the repository does not declare
+// it or the config does not serve the repository.
+func (r *Reconciler) class(cfg *config.Config, t *v1alpha1.Task, name string) config.Class {
+	cl, _ := r.repo(cfg, t).Class(name)
+	return cl
+}
+
+func (r *Reconciler) narrator(ctx context.Context, cfg *config.Config) narrate.Narrator {
+	return narrate.Narrator{Forge: r.gh(ctx), Login: cfg.FactoryLogin}
 }
 
 // boundKey carries the reconciled task's connections (v2 D8): every GitHub call of the pass reads
@@ -604,8 +658,8 @@ func (r *Reconciler) merger(ctx context.Context) forge.Merger {
 }
 
 // onRepo: t is a task of rc's repository. One entry owns every task, as before the list.
-func (r *Reconciler) onRepo(t *v1alpha1.Task, rc *config.Repository) bool {
-	return len(r.Cfg.Repos()) == 1 || strings.EqualFold(t.Spec.Repository, rc.Name)
+func (r *Reconciler) onRepo(cfg *config.Config, t *v1alpha1.Task, rc *config.Repository) bool {
+	return len(cfg.Repos()) == 1 || strings.EqualFold(t.Spec.Repository, rc.Name)
 }
 
 func stopReasons() map[string]string {
@@ -633,7 +687,7 @@ func (r *Reconciler) stopRequested(ctx context.Context, t *v1alpha1.Task) (bool,
 // The runs are the cluster's, not status's (ruling SN): a run whose record was lost to a
 // conflicting status write is still the task's, and still stopped. The claims' last usage is
 // copied into the records first: once deleted, the settle can no longer read it (#55).
-func (r *Reconciler) stop(ctx context.Context, t *v1alpha1.Task, why string) error {
+func (r *Reconciler) stop(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, why string) error {
 	all, err := r.Runs.List(ctx)
 	if err != nil {
 		return err
@@ -661,7 +715,7 @@ func (r *Reconciler) stop(ctx context.Context, t *v1alpha1.Task, why string) err
 		}
 	}
 	if why != "kill_switch" {
-		r.intervention(ctx, t, "stop")
+		r.intervention(ctx, cfg, t, "stop")
 	}
 	exit := ""
 	if why == "superseded" {
@@ -682,7 +736,7 @@ func (r *Reconciler) stop(ctx context.Context, t *v1alpha1.Task, why string) err
 			return err
 		}
 	}
-	return r.end(ctx, t, v1alpha1.PhaseStopped, why)
+	return r.end(ctx, cfg, t, v1alpha1.PhaseStopped, why)
 }
 
 // narrateLater queues e in the task's outbox (ruling SO), written with the transition that caused it,
@@ -708,7 +762,7 @@ func narrateOn(t *v1alpha1.Task, n int, e narrate.Event) {
 // GitHub refuses for good (F-3) is dropped: it would hold back every later one and the room's close.
 // An entry still waiting for a target (R31) is skipped, not a failure, and dropped once the task
 // has ended without one: nothing will give it a target, and the outbox must empty for the close.
-func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) drain(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	var kept []v1alpha1.Narration
 	for i, o := range t.Status.Outbox {
 		if narrate.Closing(o.Key) && r.settling(t) {
@@ -727,7 +781,7 @@ func (r *Reconciler) drain(ctx context.Context, t *v1alpha1.Task) error {
 				continue
 			}
 		}
-		err := r.narrator(ctx).Post(ctx, t, n, narrate.Event{Key: o.Key, Body: o.Body})
+		err := r.narrator(ctx, cfg).Post(ctx, t, n, narrate.Event{Key: o.Key, Body: o.Body})
 		var pe *forge.PermanentError
 		switch {
 		case errors.As(err, &pe):
@@ -773,38 +827,38 @@ func target(t *v1alpha1.Task) int {
 // window (R49). An escalation names the maintainers (§6.3); the outcome records tier fit and the
 // task.final line the moment the task first ends. The reservations no claim holds any more are
 // released here (#55): every ending path, and every replay of one, passes through it.
-func (r *Reconciler) end(ctx context.Context, t *v1alpha1.Task, phase, reason string) error {
+func (r *Reconciler) end(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, phase, reason string) error {
 	if phase == v1alpha1.PhaseEscalated {
-		if stepped, err := r.stepUp(ctx, t, reason); stepped || err != nil {
+		if stepped, err := r.stepUp(ctx, cfg, t, reason); stepped || err != nil {
 			return err
 		}
 	}
-	r.ended(ctx, t, phase, reason)
+	r.ended(ctx, cfg, t, phase, reason)
 	return nil
 }
 
 // ended is end past the escalation step.
-func (r *Reconciler) ended(ctx context.Context, t *v1alpha1.Task, phase, reason string) {
-	r.finish(ctx, t, phase, reason, narrate.Ended(t, phase, reason, r.repo(t).Maintainers...))
+func (r *Reconciler) ended(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, phase, reason string) {
+	r.finish(ctx, cfg, t, phase, reason, narrate.Ended(t, phase, reason, r.repo(cfg, t).Maintainers...))
 }
 
 // finish is the ending every task shares: its unheld reservations released, the move, a terminal
 // approved parent's parts counted (SL14), the narration and the outcome.
-func (r *Reconciler) finish(ctx context.Context, t *v1alpha1.Task, phase, reason string, e narrate.Event) {
+func (r *Reconciler) finish(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, phase, reason string, e narrate.Event) {
 	r.releaseUnheld(ctx, t)
 	r.to(t, phase, reason)
 	if v1alpha1.TerminalPhase(phase) {
 		r.countFamily(ctx, t) // an approved parent stopped or expired: its landed parts count (SL14)
 	}
 	narrateLater(t, e)
-	r.outcome(ctx, t)
+	r.outcome(ctx, cfg, t)
 }
 
 // settleWindow bounds how long an ended task keeps refreshing its usage before the total is
 // recorded (R49): twice the meter's period — one reading can trail one tick — plus the travel of
 // the annotation the reading becomes.
-func (r *Reconciler) settleWindow() time.Duration {
-	return 2*r.Cfg.Poll.Meter.Duration + 30*time.Second
+func (r *Reconciler) settleWindow(cfg *config.Config) time.Duration {
+	return 2*cfg.Poll.Meter.Duration + 30*time.Second
 }
 
 // settling: the task has ended with runs whose usage has not settled yet (R49). A task without
@@ -818,14 +872,14 @@ func (r *Reconciler) settling(t *v1alpha1.Task) bool {
 // settled. Every read comes before the mark: a read that fails leaves the status as it was, and the
 // next pass retries. The metrics ride the same status write as the mark, so a conflicting write
 // replays both; the write that lands records them once.
-func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) settle(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if _, _, err := r.observe(ctx, t); err != nil {
 		return err
 	}
-	if at := endedAt(t); at != nil && r.Now().Sub(at.Time) < r.settleWindow() {
+	if at := endedAt(t); at != nil && r.Now().Sub(at.Time) < r.settleWindow(cfg) {
 		return nil
 	}
-	outcome, micro, ready, err := r.tally(ctx, t)
+	outcome, micro, ready, err := r.tally(ctx, cfg, t)
 	if err != nil || !ready {
 		return err // not ready: the parts still settle, and settleLeft requeues on the poll
 	}
@@ -838,23 +892,23 @@ func (r *Reconciler) settle(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	tokens, tier, tmpl, class := t.Status.Usage.Tokens, t.Spec.Budget.Tier, t.Spec.Template, t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.TaskTokens(ctx, tokens, tier, tmpl, class) })
-	r.count(ctx, t, outcome, micro)
+	r.count(ctx, cfg, t, outcome, micro)
 	return nil
 }
 
 // settleLeft is how much of the settle window an ended task still owes: it is requeued for its
 // settle, never on the poll interval an ended task otherwise skips. Past its own window a task
 // still settling waits for its family (R32), on the poll, no later than the family bound.
-func (r *Reconciler) settleLeft(t *v1alpha1.Task) time.Duration {
+func (r *Reconciler) settleLeft(cfg *config.Config, t *v1alpha1.Task) time.Duration {
 	at := endedAt(t)
 	if at == nil {
-		return r.Cfg.Poll.Tasks.Duration
+		return cfg.Poll.Tasks.Duration
 	}
 	since := r.Now().Sub(at.Time)
-	if left := r.settleWindow() - since; left > 0 {
+	if left := r.settleWindow(cfg) - since; left > 0 {
 		return max(left, time.Second)
 	}
-	return max(min(r.Cfg.Poll.Tasks.Duration, r.familyBound()-since), time.Second)
+	return max(min(cfg.Poll.Tasks.Duration, r.familyBound(cfg)-since), time.Second)
 }
 
 // spendFinalMargin is past the meter's own settle window, so the re-price reads a figure that has
@@ -885,31 +939,31 @@ func lastRunEnd(t *v1alpha1.Task) (time.Time, bool) {
 // spendFinalAt is when a terminal task's dollars are final (CD23): its last run's end, plus the
 // settle window, plus a margin. false for a task that never ran — there is nothing to settle — or
 // when facts.finalSpend is off.
-func (r *Reconciler) spendFinalAt(t *v1alpha1.Task) (time.Time, bool) {
-	if !r.Cfg.Facts.FinalSpend || !v1alpha1.TerminalPhase(t.Status.Phase) {
+func (r *Reconciler) spendFinalAt(cfg *config.Config, t *v1alpha1.Task) (time.Time, bool) {
+	if !cfg.Facts.FinalSpend || !v1alpha1.TerminalPhase(t.Status.Phase) {
 		return time.Time{}, false
 	}
 	end, ok := lastRunEnd(t)
 	if !ok {
 		return time.Time{}, false
 	}
-	return end.Add(r.settleWindow() + spendFinalMargin), true
+	return end.Add(r.settleWindow(cfg) + spendFinalMargin), true
 }
 
 // spendFinalDue: the pass that owes a terminal task's last word about its dollars (CD23) — the
 // instant has passed, and the room does not carry the fact this pass would post. That fact is the
 // final one when every run is priced, and the settled facts otherwise, so a task whose dollars
 // cannot be claimed is at rest here rather than posting a figure it would have to change.
-func (r *Reconciler) spendFinalDue(t *v1alpha1.Task) bool {
-	at, ok := r.spendFinalAt(t)
-	return ok && !r.Now().Before(at) && r.factsDue(t)
+func (r *Reconciler) spendFinalDue(cfg *config.Config, t *v1alpha1.Task) bool {
+	at, ok := r.spendFinalAt(cfg, t)
+	return ok && !r.Now().Before(at) && r.factsDue(cfg, t)
 }
 
 // spendIsFinal: the task's dollars are the last figure its room will read (CD23). Past the instant,
 // and only when every run of the task is priced: a final spend is a claim about money, so a run the
 // meter could only say Why about — or one it has no figure for — withholds it.
-func (r *Reconciler) spendIsFinal(t *v1alpha1.Task) bool {
-	at, ok := r.spendFinalAt(t)
+func (r *Reconciler) spendIsFinal(cfg *config.Config, t *v1alpha1.Task) bool {
+	at, ok := r.spendFinalAt(cfg, t)
 	return ok && !r.Now().Before(at) && allPriced(t)
 }
 
@@ -988,8 +1042,8 @@ func sameUTCDay(a, b time.Time) bool {
 }
 
 // admit is R6's text cap and §6.2's daily task cap; a rejected task does not count.
-func (r *Reconciler) admit(ctx context.Context, t *v1alpha1.Task) (string, error) {
-	if len(t.Spec.Text) > r.Cfg.Caps.MaxTextBytes {
+func (r *Reconciler) admit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (string, error) {
+	if len(t.Spec.Text) > cfg.Caps.MaxTextBytes {
 		return "text_too_long", nil
 	}
 	if t.Spec.Source.Kind == "adopt" {
@@ -1001,13 +1055,13 @@ func (r *Reconciler) admit(ctx context.Context, t *v1alpha1.Task) (string, error
 	if err != nil {
 		return "", err
 	}
-	if today >= r.Cfg.Caps.TasksPerDay {
+	if today >= cfg.Caps.TasksPerDay {
 		return "daily_task_cap", nil
 	}
 	return "", nil
 }
 
-func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	// A RunLore task's issue is written by the intake just after its creation (FA-8): wait for
 	// it, so the first narration has a place to land. Past two minutes the intake is gone and
 	// the task proceeds without one.
@@ -1018,44 +1072,44 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	if t.Spec.CoordinationParent != nil {
 		// MR2: a child's admission is its confirmed plan's, not the label intake's daily cap, and
 		// it comes before the splitter's Parent: the two lineages never mix.
-		return r.receivedCoordinationChild(ctx, t)
+		return r.receivedCoordinationChild(ctx, cfg, t)
 	}
-	reason, err := r.admit(ctx, t)
+	reason, err := r.admit(ctx, cfg, t)
 	if err != nil {
 		return err
 	}
 	if reason != "" {
-		return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, reason)
 	}
 	if r.Trace != nil && t.Status.Trace == nil { // R46: the task's root span, minted once at acceptance
 		tr, sp := tracing.Mint()
 		t.Status.Trace = &v1alpha1.TraceRef{TraceID: tr, SpanID: sp}
 	}
 	if t.Spec.Source.Kind == "adopt" {
-		return r.receivedAdopted(ctx, t)
+		return r.receivedAdopted(ctx, cfg, t)
 	}
 	if t.Spec.Parent != nil {
-		return r.receivedChild(ctx, t) // a part of a split: its parent's spec, no classifier (SL5)
+		return r.receivedChild(ctx, cfg, t) // a part of a split: its parent's spec, no classifier (SL5)
 	}
-	d, err := r.Triage.Triage(ctx, t)
+	d, err := r.Triage.Triage(ctx, cfg, t)
 	if err != nil {
 		return err
 	}
 	t.Spec.Template, t.Spec.PredictedClass, t.Spec.DataClass = d.Template, d.PredictedClass, d.DataClass
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
 	var profile *v1alpha1.ProfileStatus
-	if !triage.Investigates(r.Cfg, t) && !r.Cfg.Investigates(d.Template) { // a task routed to investigate never takes part in the evaluation
-		profile = r.floorProfile(t, d)
+	if !triage.Investigates(cfg, t) && !cfg.Investigates(d.Template) { // a task routed to investigate never takes part in the evaluation
+		profile = r.floorProfile(cfg, t, d)
 	}
 	var floor config.HarnessProfile
 	if profile != nil {
-		floor, _ = r.Cfg.ProfileFor(r.Cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass], profile.Name)
+		floor, _ = cfg.ProfileFor(r.class(cfg, t, d.PredictedClass), profile.Name)
 	}
-	r.profileSpec(t, d.PredictedClass, floor)
+	r.profileSpec(cfg, t, d.PredictedClass, floor)
 	if err := r.scopeAtTriage(ctx, t); err != nil {
 		return err // a note that cannot be read is retried, never read as none (SC4)
 	}
-	r.splitAtTriage(t, d.Classification)
+	r.splitAtTriage(cfg, t, d.Classification)
 	status := t.Status // Update returns the server's status into t; keep ours
 	if err := r.Client.Update(ctx, t); err != nil {
 		return err
@@ -1063,7 +1117,7 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 	t.Status = status
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
-	t.Status.ConfigHash = r.Cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
@@ -1071,35 +1125,35 @@ func (r *Reconciler) received(ctx context.Context, t *v1alpha1.Task) error {
 // profileSpec writes what profile p changes on t's spec: its template when set, the loop, search and
 // scope of its row (the class's when it names none), and its tier only when above t's, through the
 // same ceiling as triage so a sponsored task's cap holds. A zero p is the class's row: today's spec.
-func (r *Reconciler) profileSpec(t *v1alpha1.Task, class string, p config.HarnessProfile) {
+func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class string, p config.HarnessProfile) {
 	if p.Template != "" {
 		t.Spec.Template = p.Template
 	}
-	row := r.Cfg.RowFor(class, p)
+	row := cfg.RowFor(class, p)
 	t.Spec.Loop = nil
-	if lp := r.Cfg.LoopFor(row); lp != nil {
+	if lp := cfg.LoopFor(row); lp != nil {
 		judge := lp.JudgeModel
 		if t.Spec.DataClass != "public" && config.PublicOnly(judge) { // a provider judge is public tasks' only (v3 F15, F4)
 			judge = config.DefaultJudge
 		}
 		t.Spec.Loop = &v1alpha1.Loop{StallSteps: lp.StallSteps, Continuations: lp.Continuations, JudgeModel: judge}
 	}
-	t.Spec.Search = r.Cfg.SearchFor(row)
-	mode := r.Cfg.ScopeFor(row)
-	if r.Cfg.Investigates(t.Spec.Template) {
+	t.Spec.Search = cfg.SearchFor(row)
+	mode := cfg.ScopeFor(row)
+	if cfg.Investigates(t.Spec.Template) {
 		mode = config.ScopeOff // R38's investigate path is never scoped
 	}
 	t.Spec.ScopeMode = string(mode)
 	if slices.Index(tiers, p.Tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
-		t.Spec.Budget = triage.Ceiling(triage.BudgetFor(r.Cfg, p.Tier), t.Spec.MaxMicroUSD)
+		t.Spec.Budget = triage.Ceiling(triage.BudgetFor(cfg, p.Tier), t.Spec.MaxMicroUSD)
 	}
 }
 
 // floorProfile is the profile t is frozen under at triage: its class's floor, with the cohort's
 // source; nil for a class without a harness, whose task carries no status.profile.
-func (r *Reconciler) floorProfile(t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
-	cl := r.Cfg.RepositoryFor(t.Spec.Repository).Classes[d.PredictedClass]
-	p, ok := r.Cfg.ProfileFor(cl, cl.Harness)
+func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
+	cl := r.class(cfg, t, d.PredictedClass)
+	p, ok := cfg.ProfileFor(cl, cl.Harness)
 	if !ok {
 		return nil
 	}
@@ -1117,11 +1171,11 @@ func (r *Reconciler) floorProfile(t *v1alpha1.Task, d triage.Decision) *v1alpha1
 
 // triaged gives the task its room (R2). A room of that name the factory did not make escalates:
 // its runs would inherit another owner's data class (C3).
-func (r *Reconciler) triaged(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) triaged(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if t.Spec.CoordinationParent != nil { // MR2: a Room for another repository is never adopted
 		_, err := r.checkCoordinationLineage(ctx, t)
 		if reason := lineageReason(err); reason != "" {
-			return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+			return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, reason)
 		}
 		if err != nil {
 			return err
@@ -1133,11 +1187,11 @@ func (r *Reconciler) triaged(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, members...)
 	if errors.Is(err, rooms.ErrForeignRoom) {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "foreign_room")
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "foreign_room")
 	}
 	if apierrors.IsInvalid(err) && len(members) > 0 {
 		// an old Rooms CRD refuses a system: member: retrying cannot help, an operator must act
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "rooms_crd_outdated")
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "rooms_crd_outdated")
 	}
 	if err != nil {
 		return err
@@ -1218,7 +1272,7 @@ func unpriced(t *v1alpha1.Task) string {
 	return ""
 }
 
-func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	// A claim of the next run's deterministic id is a run the status does not know: the write
 	// that recorded it was lost (R48). Recorded, never duplicated, and before the caps: the run
 	// already holds its slot.
@@ -1227,7 +1281,7 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 		return err
 	}
 	if found {
-		return r.recordExisting(t, x)
+		return r.recordExisting(cfg, t, x)
 	}
 	// The records are refreshed here too (R49): a task waiting in Queued still holds ended runs
 	// whose late readings must land.
@@ -1237,18 +1291,18 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	// MR6: a coordination child's lineage, authority and the capability gate, re-read before every
 	// new run or resume and after an existing claim is adopted, before any slot or ledger admission.
 	if t.Spec.CoordinationParent != nil {
-		if held, err := r.coordinationHold(ctx, t); held || err != nil {
+		if held, err := r.coordinationHold(ctx, cfg, t); held || err != nil {
 			return err
 		}
 	}
-	ok, why, err := r.slotFree(ctx, t)
+	ok, why, err := r.slotFree(ctx, cfg, t)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		t.Status.Reason = why
 		if why == "waiting_room_busy" || why == "waiting_human_driver" { // the room is held, not the factory's own caps (N3)
-			narrateLater(t, narrate.Held(t, why, r.Cfg.RoomsURL))
+			narrateLater(t, narrate.Held(t, why, cfg.RoomsURL))
 		}
 		return nil
 	}
@@ -1259,13 +1313,13 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	late := t.Status.PullRequest != nil && len(t.Status.Runs) > 0
 	if late {
 		var done bool
-		if pr, done, err = r.lateReviews(ctx, t); err != nil || done {
+		if pr, done, err = r.lateReviews(ctx, cfg, t); err != nil || done {
 			return err
 		}
 	}
 	// A CI fix starts from the branch head: one a human pushed would ride the fix to a merge.
 	if late && t.Status.NextRole == "" && nextTrigger(t) == "ci" {
-		if handed, err := r.humanCommit(ctx, t, pr.HeadSHA); err != nil || handed {
+		if handed, err := r.humanCommit(ctx, cfg, t, pr.HeadSHA); err != nil || handed {
 			return err
 		}
 	}
@@ -1273,13 +1327,13 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	// whole reservation fits over its own settled spend or it does not start. The daily ledger
 	// below still reserves the run; neither widens the other.
 	if t.Spec.CoordinationParent != nil && coordination.AllocationLeft(t) < 0 {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
 	}
 	if !runFits(t) {
 		limit := taskLimit(t)
-		if r.Cfg.Budgets.EnforceTask || t.Sponsored() != "" { // F4: an api task's ceiling is never a shadow
+		if cfg.Budgets.EnforceTask || t.Sponsored() != "" { // F4: an api task's ceiling is never a shadow
 			record(ctx, func(ctx context.Context) { r.Metrics.RunRevoked(ctx, "budget-task", limit) })
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, "budget-task") // no new run past the task cap (C5)
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "budget-task") // no new run past the task cap (C5)
 		}
 		// R3: shadow first, a week of numbers before the flag flips.
 		record(ctx, func(ctx context.Context) { r.Metrics.RunRevoked(ctx, "budget-task-shadow", limit) })
@@ -1289,23 +1343,23 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	// R34: the factory's own day, checked before every run it starts, not only by the meter.
 	// M-8: an api task's principal that left the config would run in shadow: refuse it first.
-	if p := t.Sponsored(); p != "" && r.Cfg.PrincipalBy(p) == nil {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "principal_unknown")
+	if p := t.Sponsored(); p != "" && cfg.PrincipalBy(p) == nil {
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "principal_unknown")
 	}
-	limit, sponsored := r.Cfg.Budgets.DailyMicroUSD(runs.PrincipalFactory), r.sponsored(t)
+	limit, sponsored := cfg.Budgets.DailyMicroUSD(runs.PrincipalFactory), r.sponsored(cfg, t)
 	if limit > 0 {
-		over, err := r.reserveFactoryDay(ctx, t, limit)
+		over, err := r.reserveFactoryDay(ctx, cfg, t, limit)
 		switch {
 		case errors.Is(err, ledger.ErrPersonOverBudget): // D4/D5: the person's day, not the fleet's: refused, not queued
 			record(ctx, func(ctx context.Context) { r.Metrics.Revoked(ctx, "budget-person") })
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, "budget-person")
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "budget-person")
 		case errors.Is(err, ledger.ErrOverBudget):
 			t.Status.Reason = "waiting_daily_budget" // no new factory run until 00:00 UTC
 			return nil
 		case errors.Is(err, ledger.ErrMeterBlind): // an enforced cap the meter cannot feed holds (#54)
 			t.Status.Reason = "waiting_meter_blind"
 			return nil
-		case err != nil && (r.Cfg.Budgets.EnforcePrincipal || sponsored):
+		case err != nil && (cfg.Budgets.EnforcePrincipal || sponsored):
 			return err
 		case err != nil: // a shadow cap counts; it never holds a run
 			r.log().Warn("daily cap unreserved (shadow)", "task.id", t.Name, "err", err)
@@ -1338,16 +1392,16 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 		}
 	}
 	if t.Spec.Kind == v1alpha1.TaskKindIntegration { // MR10: its own spec, never a verifier's or implementerSpec
-		return r.startIntegration(ctx, t)
+		return r.startIntegration(ctx, cfg, t)
 	}
 	if late && t.Status.NextRole != "" {
-		return r.startVerifier(ctx, t, pr)
+		return r.startVerifier(ctx, cfg, t, pr)
 	}
 	// R38: a task of a [triager] template always runs the triager, retry included: no implementer
 	// run ever starts from an internal-origin task. A missing template is no team, so it is not a
 	// triager one either: the config's validation cannot guard a name removed after a task was
 	// triaged.
-	if r.Cfg.Investigates(t.Spec.Template) {
+	if cfg.Investigates(t.Spec.Template) {
 		text, ok, err := r.resumeBrief(ctx, t)
 		if err != nil {
 			return err
@@ -1355,21 +1409,21 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 		if !ok {
 			text = resumed(t, nextTrigger(t)) + TriagerBrief(t, r.Nonce())
 		}
-		s := r.implementerSpec(t, text)
+		s := r.implementerSpec(cfg, t, text)
 		s.Role = "triager"
-		return r.startRun(ctx, t, s, nextTrigger(t))
+		return r.startRun(ctx, cfg, t, s, nextTrigger(t))
 	}
 	if scoperDue(t) {
-		return r.startScoper(ctx, t)
+		return r.startScoper(ctx, cfg, t)
 	}
-	if r.testerDue(t) { // after the scoper: its scope belongs in the tester's brief (F3-R1)
-		return r.startTester(ctx, t)
+	if r.testerDue(cfg, t) { // after the scoper: its scope belongs in the tester's brief (F3-R1)
+		return r.startTester(ctx, cfg, t)
 	}
-	s, refs, trigger, err := r.nextImplementer(ctx, t)
+	s, refs, trigger, err := r.nextImplementer(ctx, cfg, t)
 	if err != nil {
 		return err
 	}
-	if err := r.startRun(ctx, t, s, trigger); err != nil {
+	if err := r.startRun(ctx, cfg, t, s, trigger); err != nil {
 		return err
 	}
 	if t.Status.Phase == v1alpha1.PhaseEscalated { // the cluster refused the loop claim: no run exists
@@ -1384,4 +1438,15 @@ func (r *Reconciler) queued(ctx context.Context, t *v1alpha1.Task) error {
 		r.log().Warn("queue consume failed", "task.id", t.Name, "run.id", current(t).ID, "err", err)
 	}
 	return nil
+}
+
+// recordConfig stamps the config a task was triaged under: its hash and, beside it, the
+// resource generations its repository was served under (D5: recorded, not pinned).
+func recordConfig(cfg *config.Config, t *v1alpha1.Task) {
+	t.Status.ConfigHash = cfg.Hash
+	f, r, p := cfg.GenerationsFor(t.Spec.Repository)
+	t.Status.ConfigGenerations = nil
+	if f != 0 || r != 0 || p != 0 {
+		t.Status.ConfigGenerations = &v1alpha1.ConfigGenerations{Factory: f, Repository: r, MergePolicy: p}
+	}
 }

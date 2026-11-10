@@ -18,6 +18,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/factory/resources"
 )
 
 // Source is the part of a repository's GitHub connection the evidence reads; *forge.GitHub.
@@ -96,6 +97,18 @@ type Report struct {
 	// only these, an agents class none of them (mergepolicy.Resolve).
 	AdoptedProfiles []string               `json:"adoptedProfiles"`
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
+	// For a repository served from a MergePolicy object: its name, the manifest of its central
+	// classes and merge block (what a GitOps pull request changes), the file name to save it
+	// under, and its classes in the policy file's shape (mergepolicy.Export), which the editor
+	// edits: the editor never edits spec.classes. Empty for a repository the file serves. Served
+	// is nil when a class has no file shape (Export's error).
+	MergePolicy  string            `json:"mergePolicy,omitempty"`
+	Manifest     string            `json:"manifest,omitempty"`
+	ManifestPath string            `json:"manifestPath,omitempty"`
+	Served       *mergepolicy.File `json:"served,omitempty"`
+	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
+	Namespace     string `json:"-"`
+	RepositoryRef string `json:"-"`
 }
 
 var (
@@ -135,10 +148,12 @@ func Reason(err error) string {
 // repository, started by the Refresher or by a report that finds it missing or older than TTL,
 // and a report serves what the last good read left (live: a page load cancelled those searches).
 type Service struct {
-	Cfg     *config.Config
+	Cfg     config.Source
 	Sources func(repository string) (Source, bool)
 	Now     func() time.Time
-	Log     *slog.Logger
+	// Namespace is the MergePolicy objects' namespace, for the manifest.
+	Namespace string
+	Log       *slog.Logger
 	// Parallel bounds the searches one read runs at once, DefaultParallel when 0; Deadline bounds
 	// the read, DefaultDeadline when 0.
 	Parallel int
@@ -200,8 +215,8 @@ func (s *Service) log() *slog.Logger {
 	return s.Log
 }
 
-func (s *Service) resolve(repository string) (*config.Repository, Source, error) {
-	rc := s.repository(repository)
+func (s *Service) resolve(cfg *config.Config, repository string) (*config.Repository, Source, error) {
+	rc := s.repository(cfg, repository)
 	if rc == nil {
 		return nil, nil, ErrUnknownRepository
 	}
@@ -215,7 +230,8 @@ func (s *Service) resolve(repository string) (*config.Repository, Source, error)
 // Report is repository's report: its policy, read again when older than TTL (an older one is
 // served when that read fails), and the evidence as last read, whose read it starts when due.
 func (s *Service) Report(ctx context.Context, repository string) (Report, error) {
-	rc, src, err := s.resolve(repository)
+	cfg := s.Cfg.Current()
+	rc, src, err := s.resolve(cfg, repository)
 	if err != nil {
 		return Report{}, err
 	}
@@ -249,15 +265,16 @@ func (s *Service) Report(ctx context.Context, repository string) (Report, error)
 	s.mu.Unlock()
 	if start {
 		// The request's values, never its cancellation: the read outlives the page load.
-		go func() { _ = s.read(context.WithoutCancel(ctx), rc, src) }()
+		go func() { _ = s.read(context.WithoutCancel(ctx), cfg, rc, src) }()
 	}
-	return s.build(rc, h, classes, at, reason)
+	return s.build(cfg, rc, h, classes, at, reason)
 }
 
 // Refresh reads repository's policy and every class's evidence now, unless a read of it runs
 // (ErrInFlight). A failure keeps the evidence last read.
 func (s *Service) Refresh(ctx context.Context, repository string) error {
-	rc, src, err := s.resolve(repository)
+	cfg := s.Cfg.Current()
+	rc, src, err := s.resolve(cfg, repository)
 	if err != nil {
 		return err
 	}
@@ -269,7 +286,7 @@ func (s *Service) Refresh(ctx context.Context, repository string) error {
 	}
 	e.done = make(chan struct{})
 	s.mu.Unlock()
-	return s.read(ctx, rc, src)
+	return s.read(ctx, cfg, rc, src)
 }
 
 // due is whether repository's evidence should be read again: missing or older than TTL, no read
@@ -288,8 +305,8 @@ func (s *Service) evidenceAt(repository string) (time.Time, bool) {
 	return at, !at.IsZero()
 }
 
-func (s *Service) repository(name string) *config.Repository {
-	for _, r := range s.Cfg.Repos() {
+func (s *Service) repository(cfg *config.Config, name string) *config.Repository {
+	for _, r := range cfg.Repos() {
 		if strings.EqualFold(r.Name, name) {
 			return &r
 		}
@@ -331,11 +348,11 @@ func (h head) parse() (*mergepolicy.File, string) {
 
 // read is one read of rc's policy and evidence, the caller having claimed the entry's done: it
 // runs under the Service's deadline, its classes Parallel at a time, and releases the claim.
-func (s *Service) read(ctx context.Context, rc *config.Repository, src Source) error {
+func (s *Service) read(ctx context.Context, cfg *config.Config, rc *config.Repository, src Source) error {
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Deadline, DefaultDeadline))
 	defer cancel()
 	start := s.Now()
-	h, classes, err := s.collectAll(ctx, rc, src, start)
+	h, classes, err := s.collectAll(ctx, cfg, rc, src, start)
 	now := s.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -363,7 +380,7 @@ func (s *Service) read(ctx context.Context, rc *config.Repository, src Source) e
 	return nil
 }
 
-func (s *Service) collectAll(ctx context.Context, rc *config.Repository, src Source, now time.Time) (head, map[string]Evidence, error) {
+func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config.Repository, src Source, now time.Time) (head, map[string]Evidence, error) {
 	h, err := readHead(ctx, src, now)
 	if err != nil {
 		return head{}, nil, err
@@ -373,10 +390,10 @@ func (s *Service) collectAll(ctx context.Context, rc *config.Repository, src Sou
 	if err != nil {
 		return head{}, nil, fmt.Errorf("evidence: %w", err)
 	}
-	l := Logins{Factory: s.Cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
+	l := Logins{Factory: cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")
-	minimum := s.Cfg.MergeGuardrails.MinPromotion()
-	cs := s.classes(rc, file)
+	minimum := cfg.MergeGuardrails.MinPromotion()
+	cs := s.classes(cfg, rc, file)
 	out := make([]Evidence, len(cs))
 	// Each class reads serially, so Parallel classes at once is Parallel searches at once.
 	g, gctx := errgroup.WithContext(ctx)
@@ -399,23 +416,45 @@ func (s *Service) collectAll(ctx context.Context, rc *config.Repository, src Sou
 }
 
 // build is the report of h, each class with its evidence in classes when read.
-func (s *Service) build(rc *config.Repository, h head, classes map[string]Evidence, at time.Time, reason string) (Report, error) {
+func (s *Service) build(cfg *config.Config, rc *config.Repository, h head, classes map[string]Evidence, at time.Time, reason string) (Report, error) {
 	file, perr := h.parse()
-	r := Report{Repository: rc.Name, Minimum: s.Cfg.MergeGuardrails.MinPromotion(), ReadAt: h.readAt, PolicyError: perr,
+	r := Report{Repository: rc.Name, Minimum: cfg.MergeGuardrails.MinPromotion(), ReadAt: h.readAt, PolicyError: perr,
 		EvidenceError: reason}
 	if !at.IsZero() {
 		r.EvidenceAt = &at
 	}
-	r.File, r.Policy, r.Factory, r.DefaultBranch = string(h.body), file, s.Cfg.Factory, h.branch
-	r.HarnessProfiles = slices.Sorted(maps.Keys(s.Cfg.HarnessProfiles))
+	r.File, r.Policy, r.Factory, r.DefaultBranch = string(h.body), file, cfg.Factory, h.branch
+	r.HarnessProfiles = slices.Sorted(maps.Keys(cfg.HarnessProfiles))
 	r.AdoptedProfiles = []string{}
 	for _, n := range r.HarnessProfiles {
-		if s.Cfg.HarnessProfiles[n].Template == config.TemplateNone {
+		if cfg.HarnessProfiles[n].Template == config.TemplateNone {
 			r.AdoptedProfiles = append(r.AdoptedProfiles, n)
 		}
 	}
-	r.Guardrails = s.Cfg.MergeGuardrails
-	for _, c := range s.classes(rc, file) {
+	r.Guardrails = cfg.MergeGuardrails
+	if _, _, gen := cfg.GenerationsFor(rc.Name); gen > 0 {
+		// The objects' own names, as served; Migrate's naming only when the config lacks them.
+		g := cfg.Generations.Repos[strings.ToLower(rc.Name)]
+		name, ref := g.PolicyName, g.RepositoryName
+		if name == "" || ref == "" {
+			names := make([]string, len(cfg.Repositories))
+			for i, x := range cfg.Repositories {
+				names[i] = x.Name
+			}
+			def := resources.ObjectName(rc.Name, names)
+			name, ref = cmp.Or(name, def), cmp.Or(ref, def)
+		}
+		m, err := resources.MergePolicyManifest(name, s.Namespace, ref, rc.Classes, rc.Merge)
+		if err != nil {
+			return Report{}, fmt.Errorf("evidence: manifest: %w", err)
+		}
+		r.MergePolicy, r.Manifest, r.ManifestPath = name, string(m), "mergepolicy-"+name+".yaml"
+		r.Namespace, r.RepositoryRef = s.Namespace, ref
+		if f, err := mergepolicy.Export(rc, cfg); err == nil {
+			r.Served = f
+		}
+	}
+	for _, c := range s.classes(cfg, rc, file) {
 		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode}
 		if e, ok := classes[c.name]; ok {
 			cr.Evidence = &e
@@ -449,8 +488,8 @@ const (
 )
 
 // classes are the repository file's classes when it declares any, else the central config's.
-func (s *Service) classes(rc *config.Repository, f *mergepolicy.File) []class {
-	agents := []string{searchLogin(s.Cfg.AgentsLogin)}
+func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepolicy.File) []class {
+	agents := []string{searchLogin(cfg.AgentsLogin)}
 	var out []class
 	if f != nil && len(f.Classes) > 0 {
 		for _, name := range slices.Sorted(maps.Keys(f.Classes)) {

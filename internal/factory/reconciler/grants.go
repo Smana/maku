@@ -26,8 +26,8 @@ type GrantClient interface {
 }
 
 // grantsOn is whether approval memory may read or move a grant: the switch on and the broker wired.
-func (r *Reconciler) grantsOn() bool {
-	return r.Cfg.PolicyManagement.ApprovalMemory && r.Grants != nil
+func (r *Reconciler) grantsOn(cfg *config.Config) bool {
+	return cfg.PolicyManagement.ApprovalMemory && r.Grants != nil
 }
 
 // needsGrants is whether deciding in under the snapshot could consult a grant: a valid policy whose
@@ -41,9 +41,9 @@ func needsGrants(in ArmInputs, snap mergepolicy.Snapshot, ok bool) bool {
 // grantRead looks the task's class's grants up immediately before a decision, never from a cache
 // (MP13): a failed lookup is a read that authorizes nothing. It records the active count and the
 // events the broker made on the way.
-func (r *Reconciler) grantRead(ctx context.Context, t *v1alpha1.Task, policyHash string) GrantRead {
+func (r *Reconciler) grantRead(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, policyHash string) GrantRead {
 	repository, class := strings.ToLower(t.Spec.Repository), t.Spec.PredictedClass
-	gs, events, err := r.Grants.LookupGrants(ctx, repository, class, policyHash, r.Cfg.MergeGuardrails.GrantLifetime())
+	gs, events, err := r.Grants.LookupGrants(ctx, repository, class, policyHash, cfg.MergeGuardrails.GrantLifetime())
 	if err != nil {
 		r.log().Warn("approval grants unread: none authorizes", "task.id", t.Name, "class", class, "err", err)
 		return GrantRead{}
@@ -67,19 +67,19 @@ func grantRef(ref string) (id string, version int, ok bool) {
 // grantHolds reads the grant a decision armed on again, immediately before the merge call
 // (MP12, MP13): the same id at the same version, still active under the policy in force. A
 // decision no grant armed holds; a lookup that fails, or a grant moved on, does not.
-func (r *Reconciler) grantHolds(ctx context.Context, t *v1alpha1.Task, d ArmDecision) bool {
+func (r *Reconciler) grantHolds(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d ArmDecision) bool {
 	if d.Rows.Grant == "" {
 		return true
 	}
 	id, version, ok := grantRef(d.Rows.Grant)
-	if !ok || !r.grantsOn() {
+	if !ok || !r.grantsOn(cfg) {
 		return false
 	}
-	snap, read := r.decidingPolicy(t)
+	snap, read := r.decidingPolicy(cfg, t)
 	if !read || snap.Err != nil {
 		return false
 	}
-	gr := r.grantRead(ctx, t, snap.Hash)
+	gr := r.grantRead(ctx, cfg, t, snap.Hash)
 	return gr.Read && slices.ContainsFunc(gr.List, func(g grant.Grant) bool {
 		return g.ID == id && g.Version == version && g.Status == grant.StatusActive && g.BoundTo(snap.Hash) && gr.At.Before(g.ExpiresAt)
 	})
@@ -87,13 +87,13 @@ func (r *Reconciler) grantHolds(ctx context.Context, t *v1alpha1.Task, d ArmDeci
 
 // grantUsed records a merge the grant authorized: on the task, for a revert to find, and with the
 // broker. The merge happened, so a failed record is logged and the task goes on.
-func (r *Reconciler) grantUsed(ctx context.Context, t *v1alpha1.Task, ref *v1alpha1.PullRequestRef, d ArmDecision, head string) {
+func (r *Reconciler) grantUsed(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, ref *v1alpha1.PullRequestRef, d ArmDecision, head string) {
 	if d.Rows.Grant == "" {
 		return
 	}
 	ref.Grant = d.Rows.Grant
 	id, version, ok := grantRef(d.Rows.Grant)
-	if !ok || !r.grantsOn() {
+	if !ok || !r.grantsOn(cfg) {
 		return
 	}
 	if err := r.Grants.UseGrant(ctx, id, version, ref.Number, head); err != nil {
@@ -110,7 +110,7 @@ func (r *Reconciler) grantUsed(ctx context.Context, t *v1alpha1.Task, ref *v1alp
 // "disabled immediately when an auto-merge they authorize is reverted"). A grant already out of
 // active is as good as disabled for this merge; any other failure is returned, so the revert's
 // pass retries it.
-func (r *Reconciler) disableGrant(ctx context.Context, t *v1alpha1.Task, why string) error {
+func (r *Reconciler) disableGrant(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, why string) error {
 	ref := t.Status.PullRequest
 	if ref == nil || ref.Grant == "" {
 		return nil
@@ -119,7 +119,7 @@ func (r *Reconciler) disableGrant(ctx context.Context, t *v1alpha1.Task, why str
 	if !ok {
 		return nil
 	}
-	if !r.grantsOn() {
+	if !r.grantsOn(cfg) {
 		r.log().Error("a grant's merge was reverted with approval memory off: disable it by hand", "task.id", t.Name, "grant", ref.Grant)
 		return nil
 	}
@@ -139,8 +139,8 @@ func (r *Reconciler) disableGrant(ctx context.Context, t *v1alpha1.Task, why str
 // decidingPolicy is the policy a grant of t's decision is bound to: a cut-over repository's
 // authority snapshot (stage 4), which gives none while it gives no authority, or else the snapshot
 // dual evaluation reads.
-func (r *Reconciler) decidingPolicy(t *v1alpha1.Task) (mergepolicy.Snapshot, bool) {
-	if p := r.gatePolicy(r.repo(t), t.Spec.Repository); p.on {
+func (r *Reconciler) decidingPolicy(cfg *config.Config, t *v1alpha1.Task) (mergepolicy.Snapshot, bool) {
+	if p := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository); p.on {
 		return p.snap, p.err == nil
 	}
 	if r.Policy == nil {

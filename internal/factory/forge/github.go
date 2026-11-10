@@ -51,6 +51,7 @@ type GitHub struct {
 	owner, name string
 	now         func() time.Time
 	last        atomic.Int64 // unix nanoseconds of the last successful call; 0 before any
+	called      atomic.Bool  // a call was made, whatever it answered
 }
 
 // Connect authenticates as the App, finds its installation on the repository and mints the first
@@ -104,6 +105,7 @@ func (g *GitHub) authed(base *http.Client) *http.Client {
 }
 
 func (g *GitHub) mark(err error) {
+	g.called.Store(true)
 	if err == nil {
 		g.last.Store(g.now().UnixNano())
 	}
@@ -118,6 +120,10 @@ func (g *GitHub) Healthy(now time.Time) bool {
 	d := now.Sub(time.Unix(0, t))
 	return d >= 0 && d < freshFor
 }
+
+// Checked is whether any call was made yet: before the first, Healthy's false says nothing
+// about GitHub.
+func (g *GitHub) Checked() bool { return g.called.Load() }
 
 // Ping runs on every replica every minute; the rate-limit endpoint costs no quota.
 func (g *GitHub) Ping(ctx context.Context) error {

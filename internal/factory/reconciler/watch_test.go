@@ -105,9 +105,9 @@ func TestRequestChangesStartsARevision(t *testing.T) {
 // submitted them in; one a maintainer later approved over, a comment and a dismissal are not.
 func TestEveryNewMaintainerReviewIsQueued(t *testing.T) {
 	g := newRig(t, awaiting(), roomOf("3buqdlot"))
-	g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "alice")
+	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
 	approved := forge.Review{ID: 960, Author: "BOB", State: "APPROVED", At: now.Add(-time.Minute)} // logins fold case
-	g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "bob")
+	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "bob")
 	g.f.SetPR(pr12(
 		changes(950, "Smana", "rename the file", 20*time.Minute),
 		changes(905, "ALICE", "created first, submitted second", 10*time.Minute), // logins fold case
@@ -576,7 +576,7 @@ func TestRetryToleratesClockSkew(t *testing.T) {
 // is the one narrated, and every new one is acted on once.
 func TestTheNewestRetryOnTheIssueOrThePR(t *testing.T) {
 	g := newRig(t, escalatedTask(true), roomOf("3buqdlot"))
-	g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "alice")
+	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
 	pr := pr12()
 	pr.Comments = []forge.Comment{{ID: 90, Author: "alice", Body: "Looked at it.\r\n/factory retry \r\nThanks", At: now.Add(-time.Minute)}}
 	g.f.SetPR(pr)
@@ -590,7 +590,7 @@ func TestTheNewestRetryOnTheIssueOrThePR(t *testing.T) {
 	}
 	// The newest wins wherever it sits: here the issue's, read after the pull request's.
 	g = newRig(t, escalatedTask(true), roomOf("3buqdlot"))
-	g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "alice")
+	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
 	pr.Comments = []forge.Comment{retryBy(92, "alice", 5*time.Minute)}
 	g.f.SetPR(pr)
 	g.f.SetComments(7, retryBy(93, "Smana", time.Minute))
@@ -755,7 +755,7 @@ func TestAMaintainerRestartsTheWait(t *testing.T) {
 	since := metav1.NewTime(now.Add(-15 * 24 * time.Hour))
 	tk.Status.PhaseSince = &since
 	g := newRig(t, tk)
-	g.r.Cfg.Maintainers = append(g.r.Cfg.Maintainers, "alice")
+	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
 	pr := pr12(forge.Review{ID: 1, Author: "Smana", State: "COMMENTED", At: now.Add(-time.Hour)})
 	pr.Comments = []forge.Comment{{ID: 2, Author: "someone", At: now.Add(-time.Minute)}}
 	g.f.SetPR(pr)
@@ -772,7 +772,7 @@ func TestAMaintainerRestartsTheWait(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseClosed || len(eventCommentBodies(g.f, 7)) != 1 {
 		t.Fatalf("14 days after it: closed, once reminded (the close is announced with the settled total, #42): %s %q", tk.Status.Phase, eventCommentBodies(g.f, 7))
 	}
-	g.r.Now = func() time.Time { return now.Add(24*time.Hour + time.Minute + g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(24*time.Hour + time.Minute + g.r.settleWindow(g.r.Cfg.Current())) }
 	g.reconcile(t, "3buqdlot", 1)
 	if c := eventCommentBodies(g.f, 7); len(c) != 2 || !strings.Contains(c[1], "Tokens used") {
 		t.Fatalf("the close is posted once the usage settles: %q", c)
@@ -988,7 +988,7 @@ func TestAnEscalatedTaskIsPolledSlowly(t *testing.T) {
 // narrated reason, on the rig's clock.
 func TestAnEscalatedTaskExpires(t *testing.T) {
 	g := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
-	g.r.Cfg.Caps.EscalatedHours = new(24)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(24)
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseEscalated {
 		t.Fatalf("ten minutes in: %s", got.Status.Phase)
 	}
@@ -998,7 +998,7 @@ func TestAnEscalatedTaskExpires(t *testing.T) {
 		t.Fatalf("%s %q", got.Status.Phase, got.Status.Reason)
 	}
 	// The ending waits for the usage to settle (#42), then the outbox drains.
-	g.r.Now = func() time.Time { return now.Add(24*time.Hour + g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(24*time.Hour + g.r.settleWindow(g.r.Cfg.Current())) }
 	g.reconcile(t, "3buqdlot", 2)
 	if c := eventCommentBodies(g.f, 7); len(c) == 0 || !strings.Contains(c[len(c)-1], "was stopped: ") || !strings.Contains(c[len(c)-1], "limit") {
 		t.Fatalf("the ending says why: %q", c)
@@ -1008,14 +1008,14 @@ func TestAnEscalatedTaskExpires(t *testing.T) {
 // A retry the maintainer already asked for wins over the limit, and a limit of 0 is no limit.
 func TestAnEscalationLimitYieldsToRetryAndZeroMeansOff(t *testing.T) {
 	g := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
-	g.r.Cfg.Caps.EscalatedHours = new(1)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(1)
 	g.r.Now = func() time.Time { return now.Add(48 * time.Hour) }
 	g.f.SetComments(7, retryBy(77, "smana", time.Minute))
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseQueued {
 		t.Fatalf("retry first: %s", got.Status.Phase)
 	}
 	off := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
-	off.r.Cfg.Caps.EscalatedHours = new(0)
+	off.r.Cfg.Current().Caps.EscalatedHours = new(0)
 	off.r.Now = func() time.Time { return now.Add(365 * 24 * time.Hour) }
 	if got := off.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseEscalated {
 		t.Fatalf("no limit configured: %s", got.Status.Phase)
@@ -1027,7 +1027,7 @@ func TestAnEscalationLimitSparesAHumanDriver(t *testing.T) {
 	room := roomOf("3buqdlot")
 	room.Status.Driver = "human:smana"
 	g := newRig(t, escalatedTask(false), room)
-	g.r.Cfg.Caps.EscalatedHours = new(1)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(1)
 	g.r.Now = func() time.Time { return now.Add(48 * time.Hour) }
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseEscalated {
 		t.Fatalf("a person is in the room: %s", got.Status.Phase)
@@ -1098,7 +1098,7 @@ func TestARetryThatEscalatesAgainIsNarrated(t *testing.T) {
 	tk.Status.Runs[0].Tokens, tk.Status.Usage.Tokens = 1_500_001, 1_500_001
 	tk.Status.Narrated = []string{narrate.Ended(tk, v1alpha1.PhaseEscalated, "agent_stuck").Key} // the first escalation, posted
 	g := newRig(t, tk, roomOf("3buqdlot"))
-	g.r.Cfg.Budgets.EnforceTask = true
+	g.r.Cfg.Current().Budgets.EnforceTask = true
 	g.f.SetComments(7, retryBy(77, "Smana", time.Minute))
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Retries != 1 {
 		t.Fatalf("%s %d", got.Status.Phase, got.Status.Retries)
@@ -1120,7 +1120,7 @@ func TestARetryCannotLiftTheTaskCap(t *testing.T) {
 	tk.Spec.Budget.TaskTokens = 3_000_000
 	tk.Status.Runs[0].Tokens, tk.Status.Usage.Tokens = 1_500_001, 1_500_001
 	g := newRig(t, tk, roomOf("3buqdlot"))
-	g.r.Cfg.Budgets.EnforceTask = true
+	g.r.Cfg.Current().Budgets.EnforceTask = true
 	g.f.SetComments(7, retryBy(77, "Smana", time.Minute))
 	got := g.reconcile(t, "3buqdlot", 2)
 	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" || got.Status.Retries != 0 ||

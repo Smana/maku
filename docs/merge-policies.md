@@ -834,6 +834,7 @@ record's fields are in [the factory](factory.md#the-merge-gate):
 | `policy=` | The snapshot decided under (cut over), or compared (dual). Match it against `sha256sum .github/agent-factory.yaml` at the commit; it is the `policy` a grant binds to |
 | `dual=` | `agree`, `explained`, `unread`, `unexplained`, `no_policy`. With anything but `agree` the factory logs `merge decision under the repository policy` with both decisions |
 | `grant=` | The grant and version that let it arm |
+| `policygen=` | The generation of the `MergePolicy` the decision used, [below](#factory-resources). Absent when the policy comes from the repository's file |
 
 The guardrails and profiles in force are the pod's config, bound by its checksum, not per record.
 `policy_unavailable` and `policy_invalid` decisions map to no stage on the timeline.
@@ -958,10 +959,22 @@ factory (`factoryURL` must point at it). Approval memory's page needs `human.app
 **Promote to live answers `not_promotable`.** The class is central (stage 4 not done) or not in
 shadow.
 
-## Factory resources (preview)
+## Factory resources
 
 The chart ships three kinds in `maku.ogenki.io/v1alpha1`: `Factory`, `Repository` and `MergePolicy`.
-The factory does not read them yet; the central config above stays the only thing that decides.
+The factory reads them on every replica, together with the config file, and a change applies
+without a restart. How is in [architecture](architecture.md#how-the-factory-reads-its-configuration).
+
+- **Live:** the catalogue and `repositories`, including each repository's classes and merge rules
+  and adding or removing a repository. **Needs a rollout:** the startup switches, among them
+  `policyManagement`, `coordination`, `hardening` and `api`. The
+  [table](architecture.md#live-fields-and-fields-that-need-a-rollout) lists both.
+- **A refused change** keeps the last accepted version while the factory runs. After a restart an
+  invalid object is not served, and a factory with nothing to serve does not start.
+- **A repository defined in both** the file and a resource is refused, never merged.
+- **Tasks record** `status.configGenerations` for the `Factory`, `Repository` and `MergePolicy` they
+  started under. It is a record, not a pin.
+
 Two offline commands prepare the move. `migrate` splits a config file into manifests and writes
 what stays in the file as a residual; `validate` lays manifests over a config file and refuses
 what the factory would refuse, one line each.
@@ -970,6 +983,65 @@ what the factory would refuse, one line each.
 maku config migrate --from config.yaml --residual residual.yaml > manifests.yaml
 maku config validate --config residual.yaml manifests.yaml   # ok: 3 accepted
 ```
+
+### Status
+
+The leader writes each object's `status`; the other replicas never do. It runs every 30 seconds
+and after every config sync, lists the three kinds without the cache (a kind whose CRD is not
+installed counts as empty) and writes an object only when its status changed. With no object it
+reads nothing else, and with none of the three CRDs installed it runs every 5 minutes, and after
+every sync.
+
+```bash
+kubectl get factory,repository,mergepolicy -n agent-system
+```
+
+An example output, with plausible values:
+
+```
+NAME                                   ACCEPTED   READY   REPOS   STOPPED   AGE
+factory.maku.ogenki.io/cnref           True       True    2       false     12d
+
+NAME                                   REPO                   FACTORY   ACCEPTED   CONNECTED   AGE
+repository.maku.ogenki.io/cnref        Smana/cloud-native-ref cnref     True       True        12d
+
+NAME                                   REPO    AUTHORITY    CLASSES   LIVE   ACCEPTED   AGE
+mergepolicy.maku.ogenki.io/cnref       cnref   repository   3         1      True       12d
+```
+
+The status and each of its conditions carry one `observedGeneration`: the generation the factory
+last looked at, which trails the object's own until it reads the newer one. A condition's
+`lastTransitionTime` moves only when its status does. A refused object keeps the last accepted
+version in service, and its message says which generation that is.
+
+| Condition | On | Status and reason |
+|---|---|---|
+| `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `NoMergePolicy`, `DuplicatePolicy`, `Invalid` |
+| `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
+| `RepositoryFileValid` | `MergePolicy` | `True` `Valid`; `False` `Invalid` (the file does not parse, or declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
+| `InSync` | `MergePolicy` | `True` `InSync`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
+| `Ready` | `Factory` | `True` `Ready`; `False` `NotAccepted`, `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
+
+With `policyManagement.read` off nothing watches the repository's file, so `RepositoryFileValid`
+and `InSync` stay `Unknown` with `PolicyReadOff`.
+
+A `MergePolicy` also reports its `authority` (`central` or `repository`) and one entry per class:
+the `mode` (`live`, `shadow` or `unarmed`) and the last decision as `verdict:reason`, with its
+time. The last decision is kept in memory and is best-effort: it is empty after a restart or a
+leader change, until the next decision. For a repository served from a `MergePolicy`, every
+decision marker carries `policygen=<n>`, the generation the decision used, so a decision can be
+matched to the `MergePolicy` that made it.
+
+For a repository served from a `MergePolicy`, [the settings page](web-ui.md#settings) offers **Copy
+MergePolicy manifest** and **Download**, a file named `mergepolicy-<name>.yaml` with the real
+object's name. A change is a GitOps pull request on that manifest, which Flux applies. The editor
+holds the served classes in the policy file's shape; the factory builds the manifest. Unedited, it
+is the served one. Edited, the page checks the text first, and the manifest is the check's: each
+class resolved as the gate decides on it. A text the factory refuses has no manifest, and neither
+has a class with `any` or `requiresApproval`, which `spec.classes` cannot hold. The manifest is
+built from the version the factory serves: a change the factory refused is not in it.
+
+Counts and spend are not in the status yet.
 
 ## How this page's examples are checked
 

@@ -48,7 +48,7 @@ func twoRepos(t *testing.T, st *store, w *writers, objs ...client.Object) http.H
 	t.Helper()
 	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(objs...).Build()
 	s := mkServer(t, st, c, false, false, "7f3cq2xz", 5_000_000)
-	s.Cfg.API.Repositories = []string{repoA, repoB}
+	s.Cfg.Current().API.Repositories = []string{repoA, repoB}
 	if w == nil {
 		w = &writers{can: map[string][]string{"human:291": {repoA, repoB}, "human:1": {repoA, repoB}}}
 	}
@@ -211,8 +211,8 @@ func TestSystemCallersAreScopedPerRepository(t *testing.T) {
 			st := &store{}
 			c := fake.NewClientBuilder().WithScheme(scheme()).Build()
 			s := mkServer(t, st, c, false, false, "7f3cq2xz", 5_000_000)
-			s.Cfg.API.Repositories = []string{repoA, repoB}
-			s.Cfg.API.SystemRepositories = tc.allowed
+			s.Cfg.Current().API.Repositories = []string{repoA, repoB}
+			s.Cfg.Current().API.SystemRepositories = tc.allowed
 			s.Auth = byToken{"sys": sys}
 			w := post(s.Handler(), "sys", on(tc.repo, nil))
 			if tc.code != http.StatusCreated {
@@ -239,7 +239,7 @@ func TestARepositoryNotOwnedStartsNoRun(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
 	st := &store{}
 	s := mkServer(t, st, c, false, false, "7f3cq2xz", 5_000_000)
-	s.Cfg.API.Repositories = []string{repoA, repoB}
+	s.Cfg.Current().API.Repositories = []string{repoA, repoB}
 	s.Access = writers{can: map[string][]string{"human:291": {repoA, repoB}}}
 	s.Owned = func(r string) bool { return r == repoA }
 	refusedWith(t, post(s.Handler(), "alice", on(repoB, nil)), http.StatusConflict, "repository_not_owned", st)

@@ -20,6 +20,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
 )
 
@@ -33,10 +34,10 @@ func mergeRig(t *testing.T, phase string, objs ...client.Object) *rig {
 	tk.Status.Runs[0].Finished = &ended
 	g := newRig(t, append([]client.Object{tk, roomOf("3buqdlot")}, objs...)...)
 	g.r.Merger = g.f // one fake records both Apps' calls
-	g.r.Cfg.AgentsLogin, g.r.Cfg.FactoryLogin = "ogenki-agents[bot]", "ogenki-agent-factory[bot]"
+	g.r.Cfg.Current().AgentsLogin, g.r.Cfg.Current().FactoryLogin = "ogenki-agents[bot]", "ogenki-agent-factory[bot]"
 	// The live path, proven offline now and live after the wave (Task 10.7); the shadow test flips it.
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}}
-	g.r.Cfg.Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]",
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}}
+	g.r.Cfg.Current().Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]",
 		MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 10, FixRuns: 2,
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}
@@ -119,7 +120,7 @@ func TestAMergeThatIsNotMergeableGoesToAHuman(t *testing.T) {
 // R41 (review G5): a revert's effect on its class is narrated where the kill switch lives.
 func TestARevertIsNarratedOnTheControlIssue(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseVerifying)
-	g.r.Cfg.ControlIssue = 1
+	g.r.Cfg.Current().ControlIssue = 1
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 	merged := metav1.NewTime(now)
@@ -183,7 +184,7 @@ func TestAGreenRevertIsMergedAtItsHead(t *testing.T) {
 // R32 (owner, 2026-09-27): before the wave the gate narrates what it would do and does nothing.
 func TestShadowNarratesAndNeverArms(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
 	g.f.SetChecks(12, green("SUCCESS"))
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "shadow_would_arm" ||
@@ -193,7 +194,7 @@ func TestShadowNarratesAndNeverArms(t *testing.T) {
 	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "would auto-merge: `docs-links`, checks green, verdict approve") {
 		t.Fatalf("%q", c)
 	}
-	if n, _ := g.r.armedToday(t.Context(), g.r.Cfg.RepositoryFor("")); n != 0 {
+	if n, _ := g.r.armedToday(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor("")); n != 0 {
 		t.Fatal("a shadow decision never counts against the daily cap")
 	}
 }
@@ -240,7 +241,7 @@ func TestMainRedRevertsAndPausesTheClass(t *testing.T) {
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 	merged := metav1.NewTime(now)
 	tk.Status.PullRequest.MergeCommitSHA, tk.Status.PullRequest.AutoMerged, tk.Status.PullRequest.MergedAt = "m1", true, &merged
-	tk.Status.ConfigHash = g.r.Cfg.Hash
+	tk.Status.ConfigHash = g.r.Cfg.Current().Hash
 	_ = g.c.Status().Update(t.Context(), &tk)
 	red := green("SUCCESS")
 	red.Runs[0].State = "FAILURE"
@@ -250,12 +251,12 @@ func TestMainRedRevertsAndPausesTheClass(t *testing.T) {
 		!strings.HasPrefix(strings.SplitN(g.f.Reverts()[0], " ", 2)[1], `Revert "`) || len(g.f.Armed()) != 1 {
 		t.Fatalf("%s %s %v %v", got.Status.Phase, got.Status.Reason, g.f.Reverts(), g.f.Armed())
 	}
-	paused, err := g.r.paused(t.Context(), g.r.Cfg.RepositoryFor(""), "docs-links")
+	paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links")
 	if err != nil || !paused {
 		t.Fatal("one revert pauses the class until the config changes (§6.4)")
 	}
-	g.r.Cfg.Hash = strings.Repeat("c", 64)
-	if paused, _ := g.r.paused(t.Context(), g.r.Cfg.RepositoryFor(""), "docs-links"); !paused {
+	g.r.Cfg.Current().Hash = strings.Repeat("c", 64)
+	if paused, _ := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links"); !paused {
 		t.Fatal("R41: a config change no longer lifts a demotion while the revert is among the class's last 10 merges")
 	}
 }
@@ -337,7 +338,7 @@ func TestCIRedGetsTwoFixRunsThenEscalates(t *testing.T) {
 // A cancelled required check is not a failure (#40): it is re-run, and no fix run is spent.
 func TestCancelledCheckIsRerunNotFixed(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.CheckReruns = 1
+	g.r.Cfg.Current().Merge.CheckReruns = 1
 	c := green("SUCCESS")
 	c.Runs[1].State, c.Runs[1].ID = "CANCELLED", 777
 	g.f.SetChecks(12, c)
@@ -353,7 +354,7 @@ func TestCancelledCheckRerunCapHandsOff(t *testing.T) {
 	for name, cap := range map[string]int32{"cap reached": 1, "re-run off": 0} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Merge.CheckReruns = cap
+			g.r.Cfg.Current().Merge.CheckReruns = cap
 			c := green("SUCCESS")
 			c.Runs[1].State, c.Runs[1].ID = "CANCELLED", 777
 			g.f.SetChecks(12, c)
@@ -372,7 +373,7 @@ func TestCancelledCheckRerunCapHandsOff(t *testing.T) {
 // A failure beside a cancellation is still a failure: the fix run starts, nothing is re-run.
 func TestFailureBesideCancelledStillFixed(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.CheckReruns = 1
+	g.r.Cfg.Current().Merge.CheckReruns = 1
 	c := green("SUCCESS")
 	c.Runs[0].State, c.Runs[1].State = "CANCELLED", "FAILURE"
 	g.f.SetChecks(12, c)
@@ -389,7 +390,7 @@ func TestAMaintainersRevertAfterDone(t *testing.T) {
 	for _, drill := range []bool{false, true} {
 		t.Run(fmt.Sprintf("drill=%v", drill), func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseDone)
-			g.r.Cfg.ControlIssue = 1
+			g.r.Cfg.Current().ControlIssue = 1
 			var tk v1alpha1.Task
 			_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 			merged := metav1.NewTime(now.Add(-48 * time.Hour))
@@ -408,7 +409,7 @@ func TestAMaintainersRevertAfterDone(t *testing.T) {
 			if got.Status.PullRequest.Drill != drill || slices.Contains(g.f.Added(rv), DrillLabel) != drill {
 				t.Fatalf("drill %v, revert #%d labelled %q", got.Status.PullRequest.Drill, rv, g.f.Added(rv))
 			}
-			if paused, err := g.r.paused(t.Context(), g.r.Cfg.RepositoryFor(""), "docs-links"); err != nil || paused == drill {
+			if paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links"); err != nil || paused == drill {
 				t.Fatalf("paused %v (drill %v): %v", paused, drill, err)
 			}
 			pr, ctl := strings.Join(g.f.Comments(12), "\n"), strings.Join(g.f.Comments(1), "\n")
@@ -483,19 +484,19 @@ func TestAHumanMergeOfADemotedClassRefillsTheWindow(t *testing.T) {
 	next.Name, next.Spec.PredictedClass = "2cleanmerge", "docs-links"
 	next.Status.PullRequest.Number, next.Status.PullRequest.NodeID, next.Status.Runs = 13, "PR_13", nil
 	g := mergeRig(t, v1alpha1.PhaseAwaitingHuman, reverted, next)
-	g.r.Cfg.Merge.Breaker = config.Breaker{Window: 2, MaxReverts: 1}
+	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 2, MaxReverts: 1}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "m1"})
 	g.f.SetPR(forge.PR{Number: 13, NodeID: "PR_13", State: "MERGED", MergedBy: "octocat", MergeCommitSHA: "m2"})
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseDone || tk.Status.PullRequest.MergedAt == nil {
 		t.Fatalf("prEnded must timestamp the merge too: %s %v", tk.Status.Phase, tk.Status.PullRequest.MergedAt)
 	}
-	if paused, _ := g.r.paused(t.Context(), g.r.Cfg.RepositoryFor(""), "docs-links"); !paused {
+	if paused, _ := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links"); !paused {
 		t.Fatal("one clean merge beside the revert does not lift the demotion")
 	}
 	if tk := g.reconcile(t, "2cleanmerge", 1); tk.Status.Phase != v1alpha1.PhaseDone || tk.Status.PullRequest.MergedAt == nil {
 		t.Fatalf("the second human merge: %s %v", tk.Status.Phase, tk.Status.PullRequest.MergedAt)
 	}
-	if paused, _ := g.r.paused(t.Context(), g.r.Cfg.RepositoryFor(""), "docs-links"); paused {
+	if paused, _ := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links"); paused {
 		t.Fatal("R41: clean merges of the demoted class must refill the window until the revert leaves it")
 	}
 }
@@ -514,21 +515,21 @@ func TestPausedRecoversOnlyOnMergesOlderThanTheClassMaturity(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingHuman, merged("1reverted", 9, 20*day, v1alpha1.PhaseReverted),
 		merged("2clean", 10, 5*day, v1alpha1.PhaseDone), merged("3clean", 11, 4*day, v1alpha1.PhaseDone),
 		merged("4clean", 13, 3*day, v1alpha1.PhaseDone))
-	g.r.Cfg.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, RecoverAfter: 3}
-	rc := g.r.Cfg.RepositoryFor("")
+	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, RecoverAfter: 3}
+	rc := g.r.Cfg.Current().RepositoryFor("")
 	gauge := func(paused bool) string { return fmt.Sprintf("class_paused %s docs-links %t", rc.Name, paused) }
 	// No monitor: the revertWindow (7 days) decides, and the three clean merges are younger.
-	if paused, err := g.r.paused(t.Context(), rc, "docs-links"); err != nil || !paused {
+	if paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), rc, "docs-links"); err != nil || !paused {
 		t.Fatalf("merges younger than the revertWindow are immature: paused %v err %v", paused, err)
 	}
 	if !slices.Contains(g.metrics.recorded, gauge(true)) {
 		t.Fatalf("the gauge reads 1: %v", g.metrics.recorded)
 	}
 	// A monitor of 2 days: the same merges are mature.
-	cl := g.r.Cfg.Classes["docs-links"]
+	cl := g.r.Cfg.Current().Classes["docs-links"]
 	cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 2 * day}}
-	g.r.Cfg.Classes["docs-links"] = cl
-	if paused, err := g.r.paused(t.Context(), g.r.Cfg.RepositoryFor(""), "docs-links"); err != nil || paused {
+	g.r.Cfg.Current().Classes["docs-links"] = cl
+	if paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links"); err != nil || paused {
 		t.Fatalf("merges older than the followUpWindow are mature: paused %v err %v", paused, err)
 	}
 	if !slices.Contains(g.metrics.recorded, gauge(false)) {
@@ -539,7 +540,7 @@ func TestPausedRecoversOnlyOnMergesOlderThanTheClassMaturity(t *testing.T) {
 // R42 (review G6): a red secret scan is a live credential in a public diff. No fix run: a human.
 func TestARedSecretScanEscalatesWithoutAFixRun(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.LeakScanCheck = "Security scanning"
+	g.r.Cfg.Current().Merge.LeakScanCheck = "Security scanning"
 	red := green("SUCCESS")
 	red.Runs = append(red.Runs, forge.Check{Name: "Security scanning", State: "FAILURE"})
 	g.f.SetChecks(12, red)
@@ -721,8 +722,8 @@ func TestASubstantiveHandOffStaysWithTheHuman(t *testing.T) {
 			},
 		},
 		"substantive reason": {
-			handOff: func(g *rig) { g.r.Cfg.Merge.AutoMergesPerDay = 0 }, // auto_merge_cap
-			after:   func(g *rig) { g.r.Cfg.Merge.AutoMergesPerDay = 10 },
+			handOff: func(g *rig) { g.r.Cfg.Current().Merge.AutoMergesPerDay = 0 }, // auto_merge_cap
+			after:   func(g *rig) { g.r.Cfg.Current().Merge.AutoMergesPerDay = 10 },
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -752,8 +753,8 @@ func TestASubstantiveHandOffStaysWithTheHuman(t *testing.T) {
 // factory/revert still opens the revert (R-B2).
 func TestAnApprovedMergeIsAHumanMergeTheMergerMade(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ApproveToMerge = true
-	g.r.Cfg.Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
 	g.f.SetChecks(12, green("SUCCESS"))
 	got := g.reconcile(t, "3buqdlot", 1)
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "class_unarmed" ||
@@ -835,7 +836,7 @@ func TestAHumanMergeAfterAnApprovedArmIsNotTheMergers(t *testing.T) {
 		t.Fatalf("%s %+v %q", got.Status.Phase, got.Status.PullRequest, g.f.Added(12))
 	}
 	got.Annotations = map[string]string{v1alpha1.AnnotationRevert: "label"}
-	if g.r.revertable(got) {
+	if g.r.revertable(g.r.Cfg.Current(), got) {
 		t.Fatal("a human's merge is never reverted by the factory")
 	}
 }
@@ -868,7 +869,7 @@ func TestAPushAfterAnApprovedArmSpendsTheArm(t *testing.T) {
 		t.Fatalf("%s %+v", got.Status.Phase, got.Status.PullRequest)
 	}
 	got.Annotations = map[string]string{v1alpha1.AnnotationRevert: "label"}
-	if g.r.revertable(got) {
+	if g.r.revertable(g.r.Cfg.Current(), got) {
 		t.Fatal("a maintainer's merge after a spent arm is never reverted by the factory")
 	}
 }
@@ -896,7 +897,7 @@ func TestAnApprovalReturnsATaskToTheGate(t *testing.T) {
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
-			g.r.Cfg.Merge.ApproveToMerge = true
+			g.r.Cfg.Current().Merge.ApproveToMerge = true
 			g.handedOff(t, tc.reason, maxGateReentries) // the cap never counts an approval
 			pr, _ := g.f.PullRequest(t.Context(), 12)
 			pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now}}
@@ -947,8 +948,8 @@ func TestALiftedRequestForChangesReturnsOnTheApproval(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Merge.ApproveToMerge = true
-			g.r.Cfg.Maintainers = []string{"Smana", "octocat"}
+			g.r.Cfg.Current().Merge.ApproveToMerge = true
+			g.r.Cfg.Current().Maintainers = []string{"Smana", "octocat"}
 			// Smana asked for changes on the old head; the revision run that answered them pushed abc.
 			request := forge.Review{ID: 70, Author: "Smana", State: "CHANGES_REQUESTED", Commit: "old", At: now.Add(-2 * time.Hour)}
 			g.patch(t, func(tk *v1alpha1.Task) { tk.Status.Handled = []int64{70, 71} })
@@ -981,7 +982,7 @@ func TestACappedTaskReturnsOnTheNextDay(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		t.Run(fmt.Sprintf("approveToMerge=%t", on), func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
-			g.r.Cfg.Merge.ApproveToMerge = on
+			g.r.Cfg.Current().Merge.ApproveToMerge = on
 			g.handedOff(t, "auto_merge_cap", 0)
 			if got := g.reconcile(t, "3buqdlot", 1); got.Status.Reason != "auto_merge_cap" {
 				t.Fatalf("same day: %s", got.Status.Reason)
@@ -1009,7 +1010,7 @@ func TestAPausedTaskReturnsWhenThePauseLifts(t *testing.T) {
 			reverted.Status.PullRequest.Number, reverted.Status.PullRequest.AutoMerged = 9, true
 			reverted.Status.PullRequest.MergedAt, reverted.Status.Runs = &old, nil
 			g := mergeRig(t, v1alpha1.PhaseAwaitingHuman, reverted)
-			g.r.Cfg.Merge.ApproveToMerge = on
+			g.r.Cfg.Current().Merge.ApproveToMerge = on
 			g.handedOff(t, "class_paused", 0)
 			if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "class_paused" {
 				t.Fatalf("still paused: %s %s", got.Status.Phase, got.Status.Reason)
@@ -1042,11 +1043,11 @@ func TestTheHandOffTextFollowsTheReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, on := range []bool{true, false} {
-		g.r.Cfg.Merge.ApproveToMerge = on
+		g.r.Cfg.Current().Merge.ApproveToMerge = on
 		for _, adopted := range []bool{false, true} {
 			for _, reason := range append(slices.Clone(approvable), byHand...) {
 				want := on && !adopted && slices.Contains(approvable, reason)
-				body := g.r.handOff(&tk, reason, adopted).Body
+				body := g.r.handOff(g.r.Cfg.Current(), &tk, reason, adopted).Body
 				if got := strings.Contains(body, "approve this pull request"); got != want || got == strings.Contains(body, "bypass rules") {
 					t.Errorf("on=%t adopted=%t %s: %q", on, adopted, reason, body)
 				}
@@ -1060,7 +1061,7 @@ func TestTheHandOffTextFollowsTheReason(t *testing.T) {
 // the same head again on every approval.
 func TestAHumanCommitUnderAnApprovalIsHandedOffByHand(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
 	pr, _ := g.f.PullRequest(t.Context(), 12)
 	pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now.Add(time.Minute)}}
 	g.f.SetPR(pr)
@@ -1085,7 +1086,7 @@ func TestAHumanCommitUnderAnApprovalIsHandedOffByHand(t *testing.T) {
 // again, so it merges instead of handing the same head off once more.
 func TestAnApprovalMergesAPatchTooLargeToRead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
 	g.f.SetDiffError(fmt.Errorf("wrapped: %w", forge.ErrDiffTooLarge))
 	g.f.SetChecks(12, green("SUCCESS"))
 	got := g.reconcile(t, "3buqdlot", 1)
@@ -1114,8 +1115,8 @@ func TestAnApprovalMergesAPatchTooLargeToRead(t *testing.T) {
 // that head returns the agent task to the gate, which merges it on the approval.
 func TestAnApprovalOfAShadowHandOffReturnsIt(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ApproveToMerge = true
-	g.r.Cfg.Classes["docs-links"] = config.Class{Shadow: true}
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Classes["docs-links"] = config.Class{Shadow: true}
 	g.patch(t, func(tk *v1alpha1.Task) { tk.Status.PullRequest.HeadSHA = "old" }) // what detectPR last wrote
 	g.f.SetChecks(12, green("SUCCESS"))
 	got := g.reconcile(t, "3buqdlot", 1)
@@ -1170,8 +1171,8 @@ func (m racingMerger) Merge(ctx context.Context, nodeID, head string) error {
 // irreversible, so what it decided is written whatever else moved the task meanwhile.
 func TestAnApprovedMergeSurvivesAConflictingWrite(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ApproveToMerge = true
-	g.r.Cfg.Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
 	g.f.SetChecks(12, green("SUCCESS"))
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman {
 		t.Fatalf("hand-off: %s %s", got.Status.Phase, got.Status.Reason)
@@ -1293,7 +1294,7 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 // (head, state, description); without it SetStatus is never called.
 func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.GateStatus = true
+	g.r.Cfg.Current().Merge.GateStatus = true
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.RefuseMerge("PR_12", forge.ErrHeadMoved) // stays at the gate: the same head is read again
 	g.reconcile(t, "3buqdlot", 1)
@@ -1306,7 +1307,7 @@ func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {
 
 func TestTheGatePostsAChangedVerdictOnTheSameHead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.GateStatus = true
+	g.r.Cfg.Current().Merge.GateStatus = true
 	_ = g.f.SetStatus(t.Context(), "abc", "success", GateStatusContext, "docs-links: merging") // an earlier pass
 	g.f.SetChecks(12, forge.Checks{Runs: green("SUCCESS").Runs[:1]})                           // a required check unreported
 	g.reconcile(t, "3buqdlot", 1)
@@ -1330,7 +1331,7 @@ func TestTheGatePostsEachDecisionPath(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Merge.GateStatus = true
+			g.r.Cfg.Current().Merge.GateStatus = true
 			g.f.SetChecks(12, c.checks)
 			g.reconcile(t, "3buqdlot", 1)
 			got := g.f.Statuses("abc")
@@ -1352,7 +1353,7 @@ func TestTheGatePostsNothingWithoutGateStatus(t *testing.T) {
 
 func TestAFailedStatusPostDoesNotChangeTheDecision(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.GateStatus = true
+	g.r.Cfg.Current().Merge.GateStatus = true
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetStatusError(errors.New("403: statuses: write"))
 	g.reconcile(t, "3buqdlot", 1)
@@ -1369,7 +1370,7 @@ func TestAFailedStatusPostDoesNotChangeTheDecision(t *testing.T) {
 // it. Before the report, nothing merges: R02 holds under an approval too.
 func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
 	g.log.evs = nil // the implementer's room_progress named the commit; no handoff did
 	g.f.SetActivity("agent/3buqdlot", forge.Push{Type: "branch_creation", Actor: "ogenki-agents[bot]", After: "abc", At: now.Add(-40 * time.Minute)})
 	pr, _ := g.f.PullRequest(t.Context(), 12)
@@ -1549,5 +1550,24 @@ func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
 				t.Fatalf("interventions %v, want %v", got, counted)
 			}
 		})
+	}
+}
+
+// The last decision per class is remembered as the marker is posted, with the MergePolicy
+// generation it was made under (D5); the marker carries policygen only above 0.
+func TestADecisionIsRecordedWithItsPolicyGeneration(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Generations = config.Generations{Repos: map[string]config.RepoGenerations{
+		strings.ToLower(awaiting().Spec.Repository): {MergePolicy: 6}}}
+	g.r.Decisions = &decision.Recorder{}
+	g.f.SetChecks(12, green("SUCCESS"))
+	tk := g.reconcile(t, "3buqdlot", 1)
+	got := g.r.Decisions.Latest(tk.Spec.Repository)["docs-links"]
+	if got.Verdict != "shadow" || got.Reason != "shadow_would_arm" || got.Generation != 6 || !got.At.Equal(g.r.Now()) {
+		t.Fatalf("%+v", got)
+	}
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=6 reviewer=") {
+		t.Fatalf("%q", c)
 	}
 }

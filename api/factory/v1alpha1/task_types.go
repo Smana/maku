@@ -571,6 +571,10 @@ type TaskStatus struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
+	// The generations of the factory's resources the task was triaged under (factory resources
+	// D5): recorded, not pinned. Unset when every generation is zero (the file served it).
+	// +optional
+	ConfigGenerations *ConfigGenerations `json:"configGenerations,omitempty"`
 	// The last room event seen for the running run (stuck detection, §6.3).
 	// +optional
 	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
@@ -1000,4 +1004,12 @@ type Narration struct {
 	// The factory's own words, never text a user wrote.
 	// +kubebuilder:validation:MaxLength=4096
 	Body string `json:"body"`
+}
+
+// ConfigGenerations are the generations of the factory's resources a task was triaged under
+// (factory resources D5): recorded, not pinned. Zero means the file.
+type ConfigGenerations struct {
+	Factory     int64 `json:"factory,omitempty"`
+	Repository  int64 `json:"repository,omitempty"`
+	MergePolicy int64 `json:"mergePolicy,omitempty"`
 }

@@ -157,8 +157,8 @@ func TestTheStoredTextStaysWithinTheTextCap(t *testing.T) {
 	cl.Shadow = true
 	cl.Oracle.MaxFindings = 16
 	sch := deadLinksScheduler(t, cl)
-	sch.Cfg.Caps.MaxTextBytes = 2000
-	sch.Cfg.Schedules[0].Text = strings.Repeat("x", 900)
+	sch.Cfg.Current().Caps.MaxTextBytes = 2000
+	sch.Cfg.Current().Schedules[0].Text = strings.Repeat("x", 900)
 	var fs []string
 	body := ""
 	for i := range 16 {
@@ -180,8 +180,8 @@ func TestTheStoredTextStaysWithinTheTextCap(t *testing.T) {
 	}
 	// A schedule text that leaves no room starts no task, and the pair is not retried every tick.
 	sch = deadLinksScheduler(t, cl)
-	sch.Cfg.Caps.MaxTextBytes = 2000
-	sch.Cfg.Schedules[0].Text = strings.Repeat("x", 1999)
+	sch.Cfg.Current().Caps.MaxTextBytes = 2000
+	sch.Cfg.Current().Schedules[0].Text = strings.Repeat("x", 1999)
 	if err := sch.Tick(t.Context()); err != nil || len(scheduledTasks(t, sch)) != 0 {
 		t.Fatalf("no room, no task: %v", err)
 	}

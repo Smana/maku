@@ -32,12 +32,12 @@ type fakeCoordination struct {
 	asked   []string
 }
 
-func (f *fakeCoordination) File(_ context.Context, name string) error {
+func (f *fakeCoordination) File(_ context.Context, _ *config.Config, name string) error {
 	f.files = append(f.files, name)
 	return f.fileErr
 }
 
-func (f *fakeCoordination) ExecuteReady(_ context.Context, _ *v1alpha1.CoordinationStatus, ids []string) error {
+func (f *fakeCoordination) ExecuteReady(_ context.Context, _ *config.Config, _ *v1alpha1.CoordinationStatus, ids []string) error {
 	for _, id := range ids {
 		f.asked = append(f.asked, id)
 		if err := f.ready[id]; err != nil {
@@ -86,7 +86,8 @@ func filedParent(p v1alpha1.CoordinationPlan, reason string) *v1alpha1.Task {
 func coordinationRig(t *testing.T, mode string, objs ...client.Object) (*rig, *fakeCoordination) {
 	t.Helper()
 	g := newRig(t, objs...)
-	g.r.Cfg.Coordination.Mode = mode
+	g.r.Cfg.Current().Coordination.Mode = mode
+	listRepos(g.r.Cfg.Current(), coordA, coordB) // a child's repository is served, never the rig's by fallback
 	fc := &fakeCoordination{ready: map[string]error{}}
 	g.r.Coordination = fc
 	return g, fc

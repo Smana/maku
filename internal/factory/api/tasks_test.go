@@ -170,7 +170,7 @@ func TestCreateTaskAdmission(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := newTaskServer(t, c.p, 0)
 			if c.edit != nil {
-				c.edit(s.Cfg)
+				c.edit(s.Cfg.Current())
 			}
 			rec := postTask(s, c.body, c.key)
 			if rec.Code != c.status || !strings.Contains(rec.Body.String(), c.reason) {
@@ -335,7 +335,7 @@ func TestCreateTaskReplayScope(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	// another principal, same key: its own name, so its own task and its own issue.
-	s.Cfg.API.Sponsored = append(s.Cfg.API.Sponsored, config.Sponsored{Name: "other", Sponsor: "Smana",
+	s.Cfg.Current().API.Sponsored = append(s.Cfg.Current().API.Sponsored, config.Sponsored{Name: "other", Sponsor: "Smana",
 		Repositories: []string{"Smana/cloud-native-ref"}, DailyUSD: 10, MaxCostUSD: 5})
 	s.Auth = byToken{"t": authn.Principal{Kind: envelope.ActorSystem, ID: "system:other", Sponsored: true}}
 	rec := postTask(s, strings.Replace(draft, `"onBehalfOf":"slack:T01ABC/U02DEF",`, "", 1), "k")

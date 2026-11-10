@@ -27,9 +27,9 @@ func TestYesterdaysPrincipalsReadZeroAtTheDaysFirstTick(t *testing.T) {
 	type told struct{ spent, limit int64 }
 	day := map[string]told{}
 	m := &Meter{Runs: st, Source: src, Ledger: c, Namespace: "agent-system",
-		Budgets: config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50},
-		Now:     func() time.Time { return now },
-		Day:     func(p string, spent, limit int64) { day[p] = told{spent, limit} }}
+		Cfg: priced(nil, nil, config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}),
+		Now: func() time.Time { return now },
+		Day: func(p string, spent, limit int64) { day[p] = told{spent, limit} }}
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}

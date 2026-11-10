@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,6 +38,9 @@ type Decision struct {
 	Steps   []Step    `json:"steps"`
 	// Revisions are what the decision was bound to (MP12), as far as its record holds them.
 	Revisions []Step `json:"revisions"`
+	// PolicyGeneration is the MergePolicy generation the decision used (policygen=), 0 for a
+	// record without it (a file policy, or an older record).
+	PolicyGeneration int64 `json:"policyGeneration"`
 	// CommentURL is the PR comment that holds the record; PolicyURL the policy file's history.
 	CommentURL string `json:"commentURL"`
 	PolicyURL  string `json:"policyURL"`
@@ -110,6 +114,7 @@ func Decisions(repository string, pr int, factory string, comments []Comment) Ti
 			rows[f[1]] = f[2]
 		}
 		d.Steps, d.Revisions = steps(d, rows), revisions(rows)
+		d.PolicyGeneration, _ = strconv.ParseInt(rows["policygen"], 10, 64)
 		t.Decisions = append(t.Decisions, d)
 	}
 	return t

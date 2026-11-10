@@ -195,7 +195,7 @@ func TestStatusCommentUsesApproveToMergeConfig(t *testing.T) {
 	tk.Status.Runs = []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Phase: "Succeeded", Started: &metav1.Time{Time: now.Add(-time.Minute)}, Finished: &metav1.Time{Time: now}}}
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", HeadSHA: "abc"}
 	g := newRig(t, tk)
-	g.r.Cfg.Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Merge.ApproveToMerge = true
 	g.f.SetPR(forge.PR{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", State: "OPEN", HeadSHA: "abc", HeadRef: "agent/3buqdlot"})
 
 	g.reconcile(t, "3buqdlot", 1)

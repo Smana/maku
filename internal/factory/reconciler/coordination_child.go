@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -58,18 +60,18 @@ func lineageReason(err error) string {
 // every repository, its frozen snapshot is the confirmed plan's, and its authorizer's authority
 // and the capability gate are re-read now. It never runs C7, the scoper or the splitter: class,
 // template, scope and budget are the plan's. A refused authority holds this child alone.
-func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) receivedCoordinationChild(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	p, err := r.checkCoordinationLineage(ctx, t)
 	if errors.Is(err, errCoordinationSuperseded) {
-		return r.stop(ctx, t, "superseded")
+		return r.stop(ctx, cfg, t, "superseded")
 	}
 	if reason := lineageReason(err); reason != "" {
-		return r.coordinationRejected(ctx, t, reason)
+		return r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return err
 	}
-	if held, err := r.coordinationAuthority(ctx, t, p); held || err != nil {
+	if held, err := r.coordinationAuthority(ctx, cfg, t, p); held || err != nil {
 		return err
 	}
 	if r.Trace != nil && t.Status.Trace == nil { // R46: the task's root span, minted once at acceptance
@@ -81,7 +83,7 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.
 	t.Status.Classification = &v1alpha1.Classification{Tier: c.Tier, Classifier: "coordination", Fallback: "static"}
 	// The generation's own share of the lifetime allocation: its Task's cap (MR8).
 	t.Status.Coordination = &v1alpha1.CoordinationStatus{PlanVersion: cp.PlanVersion, ChildID: cp.ChildID, AllocationMicroUSD: t.Spec.Budget.TaskMicroUSD}
-	t.Status.ConfigHash = r.Cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
@@ -89,12 +91,12 @@ func (r *Reconciler) receivedCoordinationChild(ctx context.Context, t *v1alpha1.
 // coordinationAuthority re-reads child t's authority under its parent p: held is true when it
 // does not pass, with the refusal's bounded reason on t. Nothing is cached, so a lost App, fence,
 // maintainer, permission, class or capability holds the next admission or run.
-func (r *Reconciler) coordinationAuthority(ctx context.Context, t *v1alpha1.Task, p *v1alpha1.Task) (bool, error) {
+func (r *Reconciler) coordinationAuthority(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, p *v1alpha1.Task) (bool, error) {
 	if r.Coordination == nil {
 		t.Status.Reason = coordination.ReasonPrerequisites
 		return true, nil
 	}
-	err := r.Coordination.ExecuteReady(ctx, p.Status.Coordination, []string{t.Spec.CoordinationParent.ChildID})
+	err := r.Coordination.ExecuteReady(ctx, cfg, p.Status.Coordination, []string{t.Spec.CoordinationParent.ChildID})
 	if err == nil {
 		return false, nil
 	}
@@ -109,21 +111,21 @@ func (r *Reconciler) coordinationAuthority(ctx context.Context, t *v1alpha1.Task
 // coordinationHold is queued's re-check before every new run or resume of a coordination child:
 // its lineage, then its authority; an integration Task's is integrationHold. held is true when it
 // does not start.
-func (r *Reconciler) coordinationHold(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+func (r *Reconciler) coordinationHold(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (bool, error) {
 	if t.Spec.Kind == v1alpha1.TaskKindIntegration {
-		return r.integrationHold(ctx, t)
+		return r.integrationHold(ctx, cfg, t)
 	}
 	p, err := r.checkCoordinationLineage(ctx, t)
 	if errors.Is(err, errCoordinationSuperseded) {
-		return true, r.stop(ctx, t, "superseded")
+		return true, r.stop(ctx, cfg, t, "superseded")
 	}
 	if reason := lineageReason(err); reason != "" {
-		return true, r.coordinationRejected(ctx, t, reason)
+		return true, r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return true, err
 	}
-	return r.coordinationAuthority(ctx, t, p)
+	return r.coordinationAuthority(ctx, cfg, t, p)
 }
 
 // currentGeneration is whether child t is st's current generation under a fingerprint the current

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, mountSettings, PENDING, poll, settingsFrame, type Evidence, type RepositoryPage } from "../src/settings";
-import { fileYAML, setLeaf, templates, toYAML } from "../src/policy-editor";
+import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, mountSettings, PENDING, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
+import { fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 20, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [{ model: "glm-5.3", mergedUnchanged: 20, changed: 1 }] },
@@ -417,5 +419,104 @@ describe("pending evidence", () => {
     await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
       "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
     expect(app.textContent).toContain(PENDING);
+  });
+});
+
+describe("a repository served from a MergePolicy", () => {
+  // The factory's own output (internal/factory/policyview/manifest_test.go writes it): its report
+  // of a repository served from a MergePolicy, and its preview of docs-links promoted to live.
+  const golden = JSON.parse(readFileSync(join(__dirname, "../../internal/factory/policyview/testdata/ui/merge-policy.json"), "utf8")) as
+    { report: Report; edited: string; preview: Preview };
+  const was = { ...poll };
+  afterEach(() => Object.assign(poll, was));
+  const central = (): RepositoryPage => ({ ...page(), report: structuredClone(golden.report) });
+  const preview = "/api/policy/repositories/Smana/cloud-native-ref/preview";
+  const mountWith = async (p: RepositoryPage, calls: string[] = []) => {
+    poll.times = 0;
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": p, [preview]: golden.preview }, calls));
+    return app;
+  };
+  const clipboard = () => {
+    const wrote: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t: string) => { wrote.push(t); } } });
+    return wrote;
+  };
+
+  it("edits the served classes in the file's shape, never spec.classes, and offers no GitHub edit", async () => {
+    const app = await mountWith(central());
+    const copy = app.querySelector(".yaml-bar button.copy") as HTMLButtonElement;
+    expect(copy.textContent).toBe("Copy MergePolicy manifest");
+    const dl = app.querySelector(".yaml-bar a.download") as HTMLAnchorElement;
+    expect(dl.getAttribute("download")).toBe("mergepolicy-cloud-native-ref.yaml");
+    expect([...app.querySelectorAll("a")].some((a) => /github\.com.*edit|on GitHub/.test(`${a.href} ${a.textContent}`))).toBe(false);
+    expect(app.textContent).toContain("GitOps pull request on the MergePolicy manifest");
+    expect(app.textContent).toContain("which Flux applies");
+    expect(app.textContent).toContain("Built from the version the factory serves; a change the factory refused is not in it.");
+    const yaml = (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
+    expect(yaml).toMatch(/harness: "?plain/);
+    expect(yaml).not.toMatch(/\b(live|shadow): true/);
+  });
+
+  it("copies the report's manifest while the text is as served, with no check", async () => {
+    const calls: string[] = [];
+    const app = await mountWith(central(), calls);
+    const wrote = clipboard();
+    (app.querySelector(".yaml-bar button.copy") as HTMLButtonElement).click();
+    await settle();
+    expect(wrote).toEqual([golden.report.manifest]);
+    expect(calls.some((c) => c.startsWith("POST"))).toBe(false);
+  });
+
+  it("checks an edited text first, then copies the factory's manifest of it", async () => {
+    const calls: string[] = [];
+    const app = await mountWith(central(), calls);
+    const wrote = clipboard();
+    const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
+    yaml.value = golden.edited;
+    yaml.dispatchEvent(new Event("input"));
+    (app.querySelector(".yaml-bar button.copy") as HTMLButtonElement).click();
+    await settle(); await settle(); await settle();
+    expect(calls.filter((c) => c.startsWith(`POST ${preview}`))).toEqual([`POST ${preview} ${JSON.stringify({ file: golden.edited })}`]);
+    expect(wrote).toEqual([golden.preview.manifest]);
+    expect(wrote[0]).toContain("live: true");
+    expect(app.textContent).not.toContain("edit the file on GitHub");
+
+    // The same text again: the latest check's manifest, no second check.
+    (app.querySelector(".yaml-bar button.copy") as HTMLButtonElement).click();
+    await settle(); await settle();
+    expect(calls.filter((c) => c.startsWith("POST"))).toHaveLength(1);
+    expect(wrote).toEqual([golden.preview.manifest, golden.preview.manifest]);
+  });
+
+  it("copies nothing for a text the factory refused", async () => {
+    const app = document.createElement("div");
+    poll.times = 0;
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": central(),
+      [preview]: { valid: false, errors: ["class docs-links: mode is not live, shadow or off"], simulation: { enabled: false } } }));
+    const wrote = clipboard();
+    const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
+    yaml.value = golden.edited.replace("mode: live", "mode: armed");
+    yaml.dispatchEvent(new Event("input"));
+    const copy = app.querySelector(".yaml-bar button.copy") as HTMLButtonElement;
+    copy.click();
+    await settle(); await settle(); await settle();
+    expect(wrote).toEqual([]);
+    expect(copy.textContent).toBe("No manifest: see the check below");
+    expect(app.textContent).toContain("mode is not live, shadow or off");
+  });
+
+  it("is today's page without the manifest", async () => {
+    const app = await mountWith(page());
+    expect(app.querySelector(".yaml-bar button.copy")?.textContent).toBe("Copy");
+    expect(app.querySelector(".yaml-bar a.download")?.getAttribute("download")).toBe("agent-factory.yaml");
+    expect(app.textContent).not.toContain("MergePolicy manifest");
+  });
+
+  it("keeps the repository file when the repository's own file is the authority", async () => {
+    const p = central();
+    p.report.classes[0].source = "repository";
+    const app = await mountWith(p);
+    expect(app.querySelector(".yaml-bar button.copy")?.textContent).toBe("Copy");
   });
 });

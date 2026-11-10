@@ -237,8 +237,9 @@ func (c *Config) RepositoryAuthoritative(r *Repository) bool {
 }
 
 // SetClassSource makes source the classes of every repository cut over to its own file (stage 4):
-// Repos and RepositoryFor return them, so every reader reads one set. The binary sets it once,
-// before anything reads the config; with the switch off it is never called.
+// Repos and RepositoryFor return them, so every reader reads one set. The binary sets it on every
+// config before it is published (config.Live.Prepare runs it on each publish, and on the first
+// config at registration); with the switch off it is never called.
 func (c *Config) SetClassSource(source func(repository string) (map[string]Class, bool)) {
 	c.classSource = source
 }

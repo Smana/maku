@@ -55,12 +55,12 @@ func (g *rig) ended(t *testing.T) *v1alpha1.Task {
 // mSHA, which changed website/content/docs/a.md line 7.
 func monitorRig(t *testing.T) *rig {
 	g := declaredRig(t)
-	cl := g.r.Cfg.Classes["dead-links"]
+	cl := g.r.Cfg.Current().Classes["dead-links"]
 	cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}
-	g.r.Cfg.Classes["dead-links"] = cl
-	g.r.Cfg.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
-	if g.r.Cfg.ControlFor().Issue == 0 {
-		g.r.Cfg.Control = config.Control{Repository: "Smana/cloud-native-ref", Issue: 3}
+	g.r.Cfg.Current().Classes["dead-links"] = cl
+	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	if g.r.Cfg.Current().ControlFor().Issue == 0 {
+		g.r.Cfg.Current().Control = config.Control{Repository: "Smana/cloud-native-ref", Issue: 3}
 	}
 	g.setDone(t, "3buqdlot", 12, "Smana", mSHA, now.Add(-2*time.Hour))
 	g.f.SetPullFiles(12, forge.FilePatch{Path: testFile, Status: "modified", Patch: "@@ -7 +7 @@\n-[x](https://a)\n+[x](https://b)\n"})
@@ -73,7 +73,7 @@ func monitorRig(t *testing.T) *rig {
 func TestAMonitorPassRefreshesTheClassPausedGauge(t *testing.T) {
 	g := monitorRig(t)
 	g.reconcile(t, "3buqdlot", 1)
-	want := "class_paused " + g.r.Cfg.RepositoryFor("").Name + " dead-links false"
+	want := "class_paused " + g.r.Cfg.Current().RepositoryFor("").Name + " dead-links false"
 	if !slices.Contains(g.metrics.recorded, want) {
 		t.Fatalf("want %q in %v", want, g.metrics.recorded)
 	}
@@ -112,9 +112,9 @@ func TestFollowUps(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := monitorRig(t)
-			cl := g.r.Cfg.Classes["dead-links"]
+			cl := g.r.Cfg.Current().Classes["dead-links"]
 			cl.Author = &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}}
-			g.r.Cfg.Classes["dead-links"] = cl
+			g.r.Cfg.Current().Classes["dead-links"] = cl
 			g.f.SetMerged(c.pr)
 			g.f.SetPullFiles(c.pr.Number, c.files...)
 			g.f.SetBlame(c.pr.MergeCommitSHA, testFile, c.blame...)
@@ -128,8 +128,8 @@ func TestFollowUps(t *testing.T) {
 				t.Fatal("the factory labels a follow-up it found (MC13)")
 			}
 			// M2: the control issue's copy has its own narration key, so it is posted too.
-			if c.follow && !contains(g.f.Comments(g.r.Cfg.ControlFor().Issue), "follow-up-"+strconv.Itoa(c.pr.Number)+" control") {
-				t.Fatalf("the control issue hears of the follow-up: %q", g.f.Comments(g.r.Cfg.ControlFor().Issue))
+			if c.follow && !contains(g.f.Comments(g.r.Cfg.Current().ControlFor().Issue), "follow-up-"+strconv.Itoa(c.pr.Number)+" control") {
+				t.Fatalf("the control issue hears of the follow-up: %q", g.f.Comments(g.r.Cfg.Current().ControlFor().Issue))
 			}
 			if c.follow && !g.metrics.has("pr dead-links follow_up") {
 				t.Fatalf("the follow-up outcome is counted: %v", g.metrics.recorded)
@@ -160,7 +160,7 @@ func TestMainSignal(t *testing.T) {
 		t.Fatalf("%+v reverts %v", tk.Status.Monitor, g.f.Reverts())
 	}
 	// M2: the same verdict reaches the kill-switch issue under its own key.
-	if ctl := g.r.Cfg.ControlFor().Issue; !contains(g.f.Comments(ctl), "monitor-12 control verdict=regression") {
+	if ctl := g.r.Cfg.Current().ControlFor().Issue; !contains(g.f.Comments(ctl), "monitor-12 control verdict=regression") {
 		t.Fatalf("the control issue %d hears of the regression: %q", ctl, g.f.Comments(ctl))
 	}
 	// a regression is counted once, however many passes watch on for follow-ups
@@ -197,14 +197,14 @@ func TestTheVerdictClosesTheWatch(t *testing.T) {
 		!slices.Contains(g.f.Added(12), MergedLabel("dead-links")) {
 		t.Fatalf("%+v %q", tk.Status.Monitor, g.f.Comments(12))
 	}
-	if g.r.monitorDue(tk) {
+	if g.r.monitorDue(g.r.Cfg.Current(), tk) {
 		t.Fatal("a posted verdict is not due again")
 	}
 	// R29, not vacuous (L14): a merged docs-links task, with its merge commit and time, is still
 	// never watched, because docs-links declares no monitor.
 	g = mergeRig(t, v1alpha1.PhaseDone)
 	g.setDone(t, "3buqdlot", 12, "Smana", mSHA, now.Add(-2*time.Hour))
-	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Monitor != nil || g.r.monitorDue(tk) {
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Monitor != nil || g.r.monitorDue(g.r.Cfg.Current(), tk) {
 		t.Fatal("docs-links declares no monitor (R29)")
 	}
 }
@@ -371,13 +371,13 @@ func TestPausedCountsTheTasksOwnMonitorOutcomes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g := monitorRig(t)
 			g.patch(t, func(tk *v1alpha1.Task) { tk.Status.Monitor = st })
-			rc := g.r.Cfg.RepositoryFor("Smana/cloud-native-ref")
-			if d, err := g.r.paused(t.Context(), rc, "dead-links"); err != nil || !d {
+			rc := g.r.Cfg.Current().RepositoryFor("Smana/cloud-native-ref")
+			if d, err := g.r.paused(t.Context(), g.r.Cfg.Current(), rc, "dead-links"); err != nil || !d {
 				t.Fatalf("demoted %v: %v", d, err)
 			}
 			g = monitorRig(t)
 			g.patch(t, func(tk *v1alpha1.Task) { tk.Status.Monitor = &v1alpha1.MonitorStatus{Since: st.Since, Main: "healthy"} })
-			if d, err := g.r.paused(t.Context(), rc, "dead-links"); err != nil || d {
+			if d, err := g.r.paused(t.Context(), g.r.Cfg.Current(), rc, "dead-links"); err != nil || d {
 				t.Fatalf("a healthy watch demotes nothing: %v %v", d, err)
 			}
 		})
@@ -422,9 +422,9 @@ func TestRebaseMergesAreReadOnlyWhenSafe(t *testing.T) {
 // until then a class that declares them ends inconclusive.
 func TestAnOpenSignalIsInconclusiveAtTheEnd(t *testing.T) {
 	g := monitorRig(t)
-	cl := g.r.Cfg.Classes["dead-links"]
+	cl := g.r.Cfg.Current().Classes["dead-links"]
 	cl.Monitor.OracleRuns, cl.Monitor.Flux = 2, &config.FluxWatch{Source: "flux-system/cnref", Within: config.Duration{Duration: time.Hour}}
-	g.r.Cfg.Classes["dead-links"] = cl
+	g.r.Cfg.Current().Classes["dead-links"] = cl
 	g.setDone(t, "3buqdlot", 12, "Smana", mSHA, now.Add(-167*time.Hour))
 	m := g.ended(t).Status.Monitor
 	if m.Oracle != "inconclusive" || m.Flux != "inconclusive" || m.Verdict != "inconclusive" || m.Main != "healthy" {
@@ -468,7 +468,7 @@ func TestTheMonitorCachesAreBounded(t *testing.T) {
 		t.Fatal("an open watch is throttled")
 	}
 	g.r.Now = func() time.Time { return now.Add(168*time.Hour + 2*searchLag) }
-	if _, _, err := g.r.mergedSince(t.Context(), tk, now, true); err != nil {
+	if _, _, err := g.r.mergedSince(t.Context(), g.r.Cfg.Current(), tk, now, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(g.r.mon.files) != 0 || len(g.r.mon.blame) != 0 {
@@ -492,14 +492,14 @@ func TestTheFinalReadBypassesTheMergedCache(t *testing.T) {
 	g := monitorRig(t)
 	tk := g.reconcile(t, "3buqdlot", 1)
 	from := now.Add(-3 * time.Hour)
-	if ps, _, _ := g.r.mergedSince(t.Context(), tk, from, false); len(ps) != 0 {
+	if ps, _, _ := g.r.mergedSince(t.Context(), g.r.Cfg.Current(), tk, from, false); len(ps) != 0 {
 		t.Fatal("nothing yet")
 	}
 	g.f.SetMerged(later(20, "Smana", "fix"))
-	if ps, _, _ := g.r.mergedSince(t.Context(), tk, from, false); len(ps) != 0 {
+	if ps, _, _ := g.r.mergedSince(t.Context(), g.r.Cfg.Current(), tk, from, false); len(ps) != 0 {
 		t.Fatal("the cache answers inside its interval")
 	}
-	if ps, _, _ := g.r.mergedSince(t.Context(), tk, from, true); len(ps) != 1 {
+	if ps, _, _ := g.r.mergedSince(t.Context(), g.r.Cfg.Current(), tk, from, true); len(ps) != 1 {
 		t.Fatal("fresh reads again")
 	}
 }
@@ -557,7 +557,7 @@ func TestMergedAtIsGitHubsEverywhere(t *testing.T) {
 // settles while it is watched.
 func TestTheSettleRequeueDoesNotDelayTheMonitor(t *testing.T) {
 	g := monitorRig(t)
-	g.r.Cfg.Poll.Meter = config.Duration{Duration: 10 * time.Minute} // settle window 20m30s
+	g.r.Cfg.Current().Poll.Meter = config.Duration{Duration: 10 * time.Minute} // settle window 20m30s
 	g.patch(t, func(tk *v1alpha1.Task) {
 		tk.Status.Runs = []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial"}}
 		ps := metav1.NewTime(now)
@@ -583,10 +583,10 @@ const (
 func verifyRig(t *testing.T, requestedBy, verdict string, within time.Duration, mergedAgo time.Duration) *rig {
 	t.Helper()
 	g := monitorRig(t)
-	cl := g.r.Cfg.Classes["dead-links"]
+	cl := g.r.Cfg.Current().Classes["dead-links"]
 	cl.Monitor.Verification = &config.VerificationWatch{Within: config.Duration{Duration: within}}
-	g.r.Cfg.Classes["dead-links"] = cl
-	g.r.Cfg.API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, Verification: true}}
+	g.r.Cfg.Current().Classes["dead-links"] = cl
+	g.r.Cfg.Current().API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, Verification: true}}
 	g.setDone(t, "3buqdlot", 12, "Smana", mSHA, now.Add(-mergedAgo))
 	orig := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: originTask, Namespace: "agent-system"},
 		Spec: v1alpha1.TaskSpec{Repository: "Smana/cloud-native-ref", Source: v1alpha1.Source{Kind: "api", RequestedBy: requestedBy}},
@@ -663,8 +663,8 @@ func TestVerificationSignal(t *testing.T) {
 		if got := g.reconcile(t, "3buqdlot", 1).Status.Monitor.FollowUpIssue; got != filed || len(g.f.Created()) != 1 {
 			t.Fatalf("adopted %d, filed %d, created %d", got, filed, len(g.f.Created()))
 		}
-		rc := g.r.Cfg.RepositoryFor("Smana/cloud-native-ref")
-		if paused, err := g.r.paused(t.Context(), rc, "dead-links"); err != nil || !paused {
+		rc := g.r.Cfg.Current().RepositoryFor("Smana/cloud-native-ref")
+		if paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), rc, "dead-links"); err != nil || !paused {
 			t.Fatalf("maxFollowUps 1: the class's next arm reads class_paused: %v %v", paused, err)
 		}
 	})

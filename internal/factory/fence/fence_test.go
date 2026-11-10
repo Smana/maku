@@ -78,7 +78,7 @@ func TestOwnership(t *testing.T) {
 		"Smana/garbled": {"factory: [\n", true, nil},
 	}}
 	var recorded sync.Map
-	f := &Fence{Name: "aws-0", Read: fs.read, Repositories: []string{"Smana/mine", "Smana/theirs", "Smana/absent", "Smana/garbled", "Smana/unwired"},
+	f := &Fence{Name: "aws-0", Read: fs.read, Repositories: listed("Smana/mine", "Smana/theirs", "Smana/absent", "Smana/garbled", "Smana/unwired"),
 		Stale: 15 * time.Minute, Now: func() time.Time { return now },
 		OnState: func(_ context.Context, repo string, owned bool) { recorded.Store(repo, owned) }}
 	if f.Owned("Smana/mine") {
@@ -123,7 +123,7 @@ func TestRefreshHandsTheOwnedFileToOnFile(t *testing.T) {
 		"o/broken": {err: errors.New("github down")},
 	}}
 	var got []string
-	f := &Fence{Name: "aws-0", Read: fs.read, Repositories: []string{"o/mine", "o/theirs", "o/broken"},
+	f := &Fence{Name: "aws-0", Read: fs.read, Repositories: listed("o/mine", "o/theirs", "o/broken"),
 		Stale: time.Hour, Now: time.Now,
 		OnFile: func(_ context.Context, repo string, body []byte) { got = append(got, repo+"="+string(body)) }}
 	if err := f.Refresh(t.Context()); err == nil {
@@ -132,4 +132,67 @@ func TestRefreshHandsTheOwnedFileToOnFile(t *testing.T) {
 	if want := []string{"o/mine=factory: aws-0\nclasses: {}\n"}; !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
+}
+
+func listed(names ...string) func() []string { return func() []string { return names } }
+
+// Factory resources D12: the list is read per pass, so a repository a publish adds is read on the
+// next pass, and one it removes is no longer owned, its state dropped.
+func TestRefreshFollowsTheListedRepositories(t *testing.T) {
+	fs := &files{by: map[string]file{
+		"o/a": {body: "factory: aws-0\n", found: true},
+		"o/b": {body: "factory: aws-0\n", found: true},
+	}}
+	names := []string{"o/a"}
+	f := &Fence{Name: "aws-0", Read: fs.read, Repositories: func() []string { return names },
+		Stale: time.Hour, Now: time.Now}
+	_ = f.Refresh(t.Context())
+	if !f.Owned("o/a") || f.Owned("o/b") {
+		t.Fatalf("first pass: a %v, b %v", f.Owned("o/a"), f.Owned("o/b"))
+	}
+	names = []string{"o/b"}
+	_ = f.Refresh(t.Context())
+	if f.Owned("o/a") || !f.Owned("o/b") {
+		t.Fatalf("after the publish: a %v, b %v", f.Owned("o/a"), f.Owned("o/b"))
+	}
+	f.mu.RLock()
+	_, kept := f.state["o/a"]
+	f.mu.RUnlock()
+	if kept {
+		t.Fatal("a removed repository's state lingers")
+	}
+}
+
+// A Kick refreshes at once, between periods; kicks coalesce and never block.
+func TestKickRefreshesBetweenPeriods(t *testing.T) {
+	fs := &files{by: map[string]file{"o/a": {body: "factory: aws-0\n", found: true}}}
+	var mu sync.Mutex
+	names, passes := []string{"o/none"}, 0
+	read := func(ctx context.Context, repo string) ([]byte, bool, error) {
+		mu.Lock()
+		passes++
+		mu.Unlock()
+		return fs.read(ctx, repo)
+	}
+	f := &Fence{Name: "aws-0", Read: read, Repositories: func() []string { mu.Lock(); defer mu.Unlock(); return slices.Clone(names) },
+		Every: time.Hour, Stale: time.Hour, Now: time.Now}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = f.Start(ctx) }()
+	wait := func(what string, ok func() bool) {
+		deadline := time.Now().Add(5 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	wait("no first pass", func() bool { mu.Lock(); defer mu.Unlock(); return passes > 0 })
+	mu.Lock()
+	names = []string{"o/a"}
+	mu.Unlock()
+	f.Kick()
+	f.Kick()
+	wait("a kick did not refresh before the hour", func() bool { return f.Owned("o/a") })
 }

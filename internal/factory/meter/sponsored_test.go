@@ -58,7 +58,7 @@ func TestARunCapHoldsATierWithoutAUSDCap(t *testing.T) {
 	var revoked []revocation
 	var fell []string
 	m := usdMeter(st, typed{"aaaaaaaa": typedUsage(Usage{Input: 400_000, Output: 30_000})}, &revoked, &fell)
-	m.RunUSD = nil
+	with(m, func(c *config.Config) { c.Tiers = nil })
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestASponsoredPrincipalsDayRevokesWithoutEnforcePrincipal(t *testing.T) {
 	}}
 	c := fake.NewClientBuilder().WithScheme(cmScheme()).WithObjects(
 		ledgerDay(t, "20260927", map[string]int64{"system:slack-app": 10_000_000, "github:alice": 99_000_000}, nil)).Build()
-	m := &Meter{Runs: st, Source: source{"aaaaaaaa": 1_000, "bbbbbbbb": 1_000}, Budgets: cfg.Budgets, Ledger: c, Namespace: "agent-system",
+	m := &Meter{Runs: st, Source: source{"aaaaaaaa": 1_000, "bbbbbbbb": 1_000}, Cfg: priced(nil, nil, cfg.Budgets), Ledger: c, Namespace: "agent-system",
 		Now: func() time.Time { return day }}
 	if err := m.Tick(t.Context()); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestASponsoredRunWithoutItsCapIsRevoked(t *testing.T) {
 			var revoked []revocation
 			var fell []string
 			m := usdMeter(st, typed{"aaaaaaaa": typedUsage(Usage{Input: 1_000, Output: 100})}, &revoked, &fell)
-			m.Budgets = cfg.Budgets
+			with(m, func(c *config.Config) { c.Budgets = cfg.Budgets })
 			if err := m.Tick(t.Context()); err != nil {
 				t.Fatal(err)
 			}

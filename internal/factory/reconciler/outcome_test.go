@@ -226,7 +226,7 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 // pass that records the task's tokens, outcome and USD (R34).
 func (g *rig) settled(t *testing.T, name string) *v1alpha1.Task {
 	t.Helper()
-	at := g.r.Now().Add(g.r.settleWindow())
+	at := g.r.Now().Add(g.r.settleWindow(g.r.Cfg.Current()))
 	g.r.Now = func() time.Time { return at }
 	return g.reconcile(t, name, 1)
 }
@@ -429,7 +429,7 @@ func TestAFailedFamilyReadRetriesTheCount(t *testing.T) {
 			return cl.List(ctx, l, opts...)
 		}})
 	refuse = true
-	g.r.Now = func() time.Time { return now.Add(time.Hour + g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(time.Hour + g.r.settleWindow(g.r.Cfg.Current())) }
 	if _, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: taskKey("3buqdlot")}); err == nil {
 		t.Fatal("the refusal should surface")
 	}
@@ -466,13 +466,13 @@ func TestAParentWaitsForItsPartsToSettle(t *testing.T) {
 				t.Fatal(p.Status.Phase)
 			}
 			ended := g.r.Now()
-			g.r.Now = func() time.Time { return ended.Add(g.r.settleWindow()) }
+			g.r.Now = func() time.Time { return ended.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: taskKey("3buqdlot")})
 			if err != nil {
 				t.Fatal(err)
 			}
 			p := g.get(t)
-			if p.Status.UsageSettled || len(taskOutcomes(g.metrics.recorded)) != 0 || res.RequeueAfter != g.r.Cfg.Poll.Tasks.Duration {
+			if p.Status.UsageSettled || len(taskOutcomes(g.metrics.recorded)) != 0 || res.RequeueAfter != g.r.Cfg.Current().Poll.Tasks.Duration {
 				t.Fatalf("the parent waits for the part on the poll: settled %v %v requeue %s", p.Status.UsageSettled, g.metrics.recorded, res.RequeueAfter)
 			}
 			want := "0.1"
@@ -482,10 +482,10 @@ func TestAParentWaitsForItsPartsToSettle(t *testing.T) {
 				if err := g.c.Status().Update(t.Context(), ch); err != nil {
 					t.Fatal(err)
 				}
-				g.r.Now = func() time.Time { return ended.Add(g.r.settleWindow() + time.Minute) }
+				g.r.Now = func() time.Time { return ended.Add(g.r.settleWindow(g.r.Cfg.Current()) + time.Minute) }
 				want = "0.45"
 			} else {
-				g.r.Now = func() time.Time { return ended.Add(2 * g.r.settleWindow()) }
+				g.r.Now = func() time.Time { return ended.Add(2 * g.r.settleWindow(g.r.Cfg.Current())) }
 			}
 			p = g.reconcile(t, "3buqdlot", 2)
 			if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasSuffix(got[0], " accepted "+want) || !p.Status.UsageSettled {
@@ -502,7 +502,7 @@ func TestARevertBeforeTheSettleRevisesNothing(t *testing.T) {
 	tk := g.reconcile(t, "3buqdlot", 3)
 	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment", Resolved: true}
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
-	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseDone, "merged"); err != nil {
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), tk, v1alpha1.PhaseDone, "merged"); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
@@ -512,9 +512,9 @@ func TestARevertBeforeTheSettleRevisesNothing(t *testing.T) {
 	if tk.Status.EndedAt == nil || !tk.Status.EndedAt.Equal(tk.Status.PhaseSince) || tk.Status.Outcome != "accepted" {
 		t.Fatalf("the first end is frozen: %+v %q", tk.Status.EndedAt, tk.Status.Outcome)
 	}
-	half := g.r.settleWindow() / 2
+	half := g.r.settleWindow(g.r.Cfg.Current()) / 2
 	g.r.Now = func() time.Time { return now.Add(half) }
-	if err := g.r.end(t.Context(), tk, v1alpha1.PhaseReverted, "main_red"); err != nil {
+	if err := g.r.end(t.Context(), g.r.Cfg.Current(), tk, v1alpha1.PhaseReverted, "main_red"); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
@@ -524,7 +524,7 @@ func TestARevertBeforeTheSettleRevisesNothing(t *testing.T) {
 	if tk.Status.Phase != v1alpha1.PhaseReverted || !tk.Status.EndedAt.Time.Equal(now) || tk.Status.Outcome != "accepted" {
 		t.Fatalf("%s %v %q", tk.Status.Phase, tk.Status.EndedAt, tk.Status.Outcome)
 	}
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) } // the first end's window, not the revert's
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) } // the first end's window, not the revert's
 	tk = g.reconcile(t, "3buqdlot", 2)
 	want := []string{"task_outcome review treatment review-search scoper none accepted 0"}
 	if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) || !tk.Status.UsageSettled {
@@ -550,7 +550,7 @@ func TestTaskUSDIsCountedOnceTheUsageSettled(t *testing.T) {
 		t.Fatal(tk.Status.Phase)
 	}
 	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}} // priced after the end: a late reading
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow() - time.Second) }
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current()) - time.Second) }
 	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.UsageSettled || len(taskOutcomes(g.metrics.recorded)) != 0 {
 		t.Fatalf("counted inside the window: %v", g.metrics.recorded)
 	}
@@ -568,7 +568,7 @@ func TestAnUnresolvedTaskThatFailsIsCounted(t *testing.T) {
 	if tk := endScoper(t, g, "Succeeded", "agent_finished"); tk.Status.Reason != ReasonNeedsAuthor || tk.Status.Profile.Resolved {
 		t.Fatalf("%s %q %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Profile)
 	}
-	g.r.Cfg.Caps.EscalatedHours = new(168)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(168)
 	g.r.Now = func() time.Time { return now.Add(200 * time.Hour) }
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseStopped || tk.Status.Reason != "escalation_expired" {

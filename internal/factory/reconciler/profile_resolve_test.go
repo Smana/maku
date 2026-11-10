@@ -94,7 +94,7 @@ func TestResolutionTable(t *testing.T) {
 				}
 				sc = &s
 			}
-			if err := g.r.resolveProfile(t.Context(), tk, sc); err != nil {
+			if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, sc); err != nil {
 				t.Fatal(err)
 			}
 			p := tk.Status.Profile
@@ -155,7 +155,7 @@ func TestResolutionRetriesChecksReadErrors(t *testing.T) {
 	sc := readyScope()
 	sc.Profile = "review-tested"
 
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err == nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err == nil {
 		t.Fatal("the checks read should fail")
 	}
 	if p := tk.Status.Profile; p.Resolved || countProfile(g.metrics.recorded) != 0 {
@@ -163,7 +163,7 @@ func TestResolutionRetriesChecksReadErrors(t *testing.T) {
 	}
 
 	merger.err = nil
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
 	if p := tk.Status.Profile; !p.Resolved || p.Name != "review-tested" || p.Source != "scoper" || !p.TestFirst {
@@ -238,13 +238,13 @@ func TestADeletedProfileKeepsTheFrozenOne(t *testing.T) {
 	g, tk := triagedRig(t, cf, "", testsDecl)
 	sc := readyScope()
 	sc.Profile = "review-tested"
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
 	delete(cf.HarnessProfiles, "review-tested")
 	cf.Classes["review"] = config.Class{Harness: "review-floor"}
-	if !g.r.testFirst(tk) || !g.r.implementerSpec(tk, "brief").Checks || !g.r.testerDue(tk) {
-		t.Fatalf("testFirst %v checks %v", g.r.testFirst(tk), g.r.implementerSpec(tk, "brief").Checks)
+	if !g.r.testFirst(g.r.Cfg.Current(), tk) || !g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief").Checks || !g.r.testerDue(g.r.Cfg.Current(), tk) {
+		t.Fatalf("testFirst %v checks %v", g.r.testFirst(g.r.Cfg.Current(), tk), g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief").Checks)
 	}
 }
 
@@ -254,7 +254,7 @@ func TestResolutionNeverLowersTheTier(t *testing.T) {
 	tk.Spec.Budget = triage.BudgetFor(cf, "frontier")
 	sc := readyScope()
 	sc.Profile = "review-search"
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
 	if tk.Status.Profile.Name != "review-search" || tk.Spec.Budget.Tier != "frontier" {
@@ -269,7 +269,7 @@ func TestASplitChildKeepsToday(t *testing.T) {
 	before := *tk.Status.Profile
 	sc := readyScope()
 	sc.Profile = "review-search"
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
 	if *tk.Status.Profile != before || len(tk.Status.Outbox) != 0 || countProfile(g.metrics.recorded) != 0 {
@@ -292,9 +292,9 @@ func harnessedScoper(t *testing.T, edit func(*v1alpha1.Task)) *rig {
 		edit(tk)
 	}
 	g := newRig(t, tk)
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
-	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
-	harnessed(g.r.Cfg)
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
+	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	harnessed(g.r.Cfg.Current())
 	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
 	g.reconcile(t, "3buqdlot", 3)
 	return g
@@ -366,7 +366,7 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 func harnessedSplit(t *testing.T, n int) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := splitRigWith(t, "frontier", false, nil)
-	harnessed(g.r.Cfg)
+	harnessed(g.r.Cfg.Current())
 	g.reconcile(t, "3buqdlot", 3)
 	sc := readyScope()
 	sc.Profile, sc.ProfileWhy = "review-wide", "two pages"
@@ -505,13 +505,13 @@ func TestARefusedSpecWriteLeavesItUnresolved(t *testing.T) {
 		}})
 	sc := readyScope()
 	sc.Profile = "review-search"
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err == nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err == nil {
 		t.Fatal("the refusal should surface")
 	}
 	if p := tk.Status.Profile; p.Resolved || p.Name != "review-floor" || p.Recommended != "" || len(tk.Status.Outbox) != 0 || countProfile(g.metrics.recorded) != 0 {
 		t.Fatalf("%+v %+v %v", p, tk.Status.Outbox, g.metrics.recorded)
 	}
-	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
 	if p := tk.Status.Profile; !p.Resolved || p.Name != "review-search" || tk.Spec.Loop.StallSteps != 7 || len(tk.Status.Outbox) != 1 || countProfile(g.metrics.recorded) != 1 {
@@ -684,7 +684,7 @@ func TestANewGenerationResolvesFromItsOwnScoper(t *testing.T) {
 	g.f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: answered.Add(time.Minute)},
 		forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: now.Add(-time.Hour)})
 	g.f.SetLabeled("factory/ready", forge.Item{Number: 7})
-	g.r.Cfg.TriggerLabel, g.r.Cfg.Poll.Issues = "factory/ready", config.Duration{Duration: time.Minute}
+	g.r.Cfg.Current().TriggerLabel, g.r.Cfg.Current().Poll.Issues = "factory/ready", config.Duration{Duration: time.Minute}
 	poller := &intake.IssuePoller{Forge: g.f, Client: g.c, Namespace: "agent-system", Cfg: g.r.Cfg, Errors: intakeErrors{},
 		Stopped: func(context.Context) bool { return false }, CanWrite: func(context.Context, string) (bool, error) { return true, nil },
 		Owned: func(string) bool { return true }, Now: g.r.Now}

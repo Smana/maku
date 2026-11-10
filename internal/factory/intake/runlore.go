@@ -48,9 +48,9 @@ type Finding struct {
 	Text        string  `json:"text"`
 }
 
-// runloreForge is the part of the forge the intake uses, as the factory App (issues:write is in
+// RunLoreForge is the part of the forge the intake uses, as the factory App (issues:write is in
 // its scope).
-type runloreForge interface {
+type RunLoreForge interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
 }
 
@@ -59,13 +59,15 @@ type runloreForge interface {
 // notify route), on every replica like the run-request API. Token re-reads the mounted bearer
 // secret at each request, so a rotation needs no restart (AGENTS.md).
 type RunLore struct {
-	// Forge is the factory App on cfg.RunLoreRepository(), where the findings are filed (v2 D6).
-	Forge runloreForge
+	// Forges is the factory App's connection to a repository, false when it has none. The intake
+	// files on cfg.RunLoreRepository() (v2 D6), looked up per request: the repository set is live
+	// (factory resources D12).
+	Forges func(repository string) (RunLoreForge, bool)
 	// Owned is v2 D7's fence; nil owns nothing.
 	Owned     func(repository string) bool
 	Client    client.Client
 	Namespace string
-	Cfg       *config.Config
+	Cfg       config.Source
 	Token     func() string
 	Stopped   func(context.Context) bool // the stop object (§6.1): intake pauses while it holds
 	Now       func() time.Time
@@ -94,10 +96,11 @@ const runloreDrain = 15 * time.Second
 // runloreDrain, and returns only once the drain has, in the run-request API server's shape
 // (internal/factory/api): a finding past its Task's create files its issue before the exit.
 func (h *RunLore) Start(ctx context.Context) error {
+	cfg := h.Cfg.Current()
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", h.Cfg.RunLore.Listen)
+	ln, err := lc.Listen(ctx, "tcp", cfg.RunLore.Listen)
 	if err != nil {
-		return fmt.Errorf("runlore: listen %s: %w", h.Cfg.RunLore.Listen, err)
+		return fmt.Errorf("runlore: listen %s: %w", cfg.RunLore.Listen, err)
 	}
 	return serve(ctx, h.httpServer(), ln, runloreDrain)
 }
@@ -113,15 +116,15 @@ func (h *RunLore) httpServer() *http.Server {
 
 // unconfigured makes a misprovisioned intake visible: an intake error counter on every refusal and
 // a warning at most once a minute.
-func (h *RunLore) unconfigured(ctx context.Context) {
+func (h *RunLore) unconfigured(ctx context.Context, cfg *config.Config) {
 	if h.Errors != nil {
-		h.Errors.IntakeError(fmetrics.WithRepository(ctx, h.Cfg.RunLoreRepository()), "runlore")
+		h.Errors.IntakeError(fmetrics.WithRepository(ctx, cfg.RunLoreRepository()), "runlore")
 	}
 	now := h.Now().UnixNano()
 	last := h.warnedAt.Load()
 	if now-last >= int64(unconfiguredWarnEvery) && h.warnedAt.CompareAndSwap(last, now) {
 		h.log().Warn("runlore intake refuses every request: its token is missing or empty",
-			"file", h.Cfg.RunLore.TokenFile)
+			"file", cfg.RunLore.TokenFile)
 	}
 }
 
@@ -139,11 +142,12 @@ func reply(w http.ResponseWriter, code int, v any) {
 }
 
 func (h *RunLore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	cfg := h.Cfg.Current()
 	// The chart mounts the token Secret optional: without it the intake is off, never open.
 	// An empty bearer must not match an empty token.
 	token := h.Token()
 	if token == "" {
-		h.unconfigured(r.Context())
+		h.unconfigured(r.Context(), cfg)
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "intake_unconfigured"})
 		return
 	}
@@ -156,7 +160,7 @@ func (h *RunLore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "factory_stopped"})
 		return
 	}
-	if h.Owned == nil || !h.Owned(h.Cfg.RunLoreRepository()) { // v2 D7: files nothing on another factory's
+	if h.Owned == nil || !h.Owned(cfg.RunLoreRepository()) { // v2 D7: files nothing on another factory's
 		reply(w, http.StatusConflict, map[string]string{"error": "repository_not_owned"})
 		return
 	}
@@ -165,14 +169,14 @@ func (h *RunLore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "bad_finding"})
 		return
 	}
-	if (f.Verdict != "action_required" && f.Verdict != "action_suggested") || f.Confidence < h.Cfg.RunLore.MinConfidence {
+	if (f.Verdict != "action_required" && f.Verdict != "action_suggested") || f.Confidence < cfg.RunLore.MinConfidence {
 		reply(w, http.StatusAccepted, map[string]any{"accepted": false, "reason": "below_threshold"})
 		return
 	}
-	code, body, err := h.intake(r.Context(), f)
+	code, body, err := h.intake(r.Context(), cfg, f)
 	if err != nil {
 		if h.Errors != nil {
-			h.Errors.IntakeError(fmetrics.WithRepository(r.Context(), h.Cfg.RunLoreRepository()), "runlore")
+			h.Errors.IntakeError(fmetrics.WithRepository(r.Context(), cfg.RunLoreRepository()), "runlore")
 		}
 		// The finding's alert and resource are attacker-influenced: log the key's task name, never them.
 		h.log().Warn("runlore intake failed", "task", taskid.Name(taskid.RunloreKey(f.AlertName, f.ResourceRef)), "err", err)
@@ -185,7 +189,11 @@ func (h *RunLore) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // intake dedups the finding while a task for its key is open (SC-9), holds OD-9's daily cap,
 // then creates the task before the issue: the task's name is the key's hash, so a replay racing
 // on the other replica loses on AlreadyExists and opens no second issue.
-func (h *RunLore) intake(ctx context.Context, f Finding) (int, any, error) {
+func (h *RunLore) intake(ctx context.Context, cfg *config.Config, f Finding) (int, any, error) {
+	gh, ok := h.Forges(cfg.RunLoreRepository())
+	if !ok {
+		return 0, nil, fmt.Errorf("runlore.repository %s has no GitHub connection", cfg.RunLoreRepository())
+	}
 	key := taskid.RunloreKey(f.AlertName, f.ResourceRef)
 	group := taskid.Name(key)
 	var same v1alpha1.TaskList
@@ -207,14 +215,14 @@ func (h *RunLore) intake(ctx context.Context, f Finding) (int, any, error) {
 			today++
 		}
 	}
-	if today >= h.Cfg.RunLore.DailyCap {
+	if today >= cfg.RunLore.DailyCap {
 		return http.StatusTooManyRequests, map[string]string{"error": "runlore_daily_cap"}, nil
 	}
 	text := findingfmt.Text(f.Title, f.Verdict, f.Confidence, f.ResourceRef, f.AlertName, f.Severity, f.Cluster, f.Text)
 	sum := sha256.Sum256([]byte(text))
 	text, _ = sanitize.Text(text) // G2, R43: alert and log text are written outside the platform too
-	if len(text) > h.Cfg.Caps.MaxTextBytes && h.Cfg.Caps.MaxTextBytes > 0 {
-		text = strings.ToValidUTF8(text[:max(h.Cfg.Caps.MaxTextBytes-64, 0)], "") + "\n[finding truncated by the factory]"
+	if len(text) > cfg.Caps.MaxTextBytes && cfg.Caps.MaxTextBytes > 0 {
+		text = strings.ToValidUTF8(text[:max(cfg.Caps.MaxTextBytes-64, 0)], "") + "\n[finding truncated by the factory]"
 	}
 	name := taskid.Name(fmt.Sprintf("%s:gen%d", key, len(same.Items)+1))
 	t := &v1alpha1.Task{
@@ -227,7 +235,7 @@ func (h *RunLore) intake(ctx context.Context, f Finding) (int, any, error) {
 			// Alert and log text are attacker-influenced (§8 T1): untrusted, fenced for the harness.
 			Source: v1alpha1.Source{Kind: "runlore", Ref: f.AlertName + "/" + f.ResourceRef, Key: key,
 				RequestedBy: "system:runlore", Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
-			Repository: h.Cfg.RunLoreRepository(), Text: text, DataClass: "internal",
+			Repository: cfg.RunLoreRepository(), Text: text, DataClass: "internal",
 		},
 	}
 	if err := h.Client.Create(ctx, t); apierrors.IsAlreadyExists(err) {
@@ -237,12 +245,12 @@ func (h *RunLore) intake(ctx context.Context, f Finding) (int, any, error) {
 	}
 	// The issue is public: alert, resource, verdict and the room, never the finding (R33); the
 	// identifiers reach it through finding.LabelSafe (TW6).
-	title, body := findingfmt.StubIssue(f.AlertName, f.ResourceRef, f.Severity, f.Verdict, f.Confidence, name, h.Cfg.RoomsURL)
+	title, body := findingfmt.StubIssue(f.AlertName, f.ResourceRef, f.Severity, f.Verdict, f.Confidence, name, cfg.RoomsURL)
 	// Past the Task, a caller that hangs up must not orphan it: filing and linking outlive ctx
 	// (F-8), as api/internal.go's intake does.
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fileTimeout)
 	defer cancel()
-	iss, err := h.Forge.CreateIssue(fctx, title, body, []string{"factory/proposed"})
+	iss, err := gh.CreateIssue(fctx, title, body, []string{"factory/proposed"})
 	if err != nil {
 		return 0, nil, err
 	}

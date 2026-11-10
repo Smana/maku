@@ -19,6 +19,10 @@ const (
 	reasonPolicyInvalid = "policy_invalid"
 )
 
+// reasonRepositoryNotServed: the task's repository is not in the published config (a publish
+// removed it). Nothing is decided under another repository's settings (factory resources D12).
+const reasonRepositoryNotServed = "repository_not_served"
+
 // gatePolicy is a cut-over repository's policy for one pass of the gate (stage 4), read once so
 // both of the pass's decisions bind to the same snapshot (MP12). on is false for every other
 // repository, and for every repository with policyManagement.repositoryAuthority off.
@@ -30,8 +34,8 @@ type gatePolicy struct {
 
 // gatePolicy reads the task's repository's policy when the repository is cut over. Without an
 // Authority source a cut-over repository has no readable policy, and pauses.
-func (r *Reconciler) gatePolicy(rc *config.Repository, repository string) gatePolicy {
-	if !r.Cfg.RepositoryAuthoritative(rc) {
+func (r *Reconciler) gatePolicy(cfg *config.Config, rc *config.Repository, repository string) gatePolicy {
+	if !cfg.RepositoryAuthoritative(rc) {
 		return gatePolicy{}
 	}
 	if r.Authority == nil {
@@ -81,6 +85,9 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 // Nothing arms or shadows: human merges continue.
 func noAuthority(in ArmInputs, p gatePolicy) ArmDecision {
 	rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository)
+	if rc == nil {
+		return notServedDecision(in)
+	}
 	rows := recordOf(in, config.Class{})
 	rows.Policy = shortHash(p.snap.Hash)
 	d, done := baseChecks(in, rc)

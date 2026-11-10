@@ -21,7 +21,7 @@ import (
 // neverTriage fails the test when the classifier is asked about an adopted Task.
 type neverTriage struct{ t *testing.T }
 
-func (n neverTriage) Triage(context.Context, *v1alpha1.Task) (triage.Decision, error) {
+func (n neverTriage) Triage(context.Context, *config.Config, *v1alpha1.Task) (triage.Decision, error) {
 	n.t.Helper()
 	n.t.Error("an adopted task is never triaged")
 	return triage.Decision{}, errors.New("triaged")
@@ -51,8 +51,8 @@ func receivedRig(t *testing.T) *rig {
 // room, a run, or a place in the daily task cap.
 func TestAnAdoptedTaskGoesStraightToTheGate(t *testing.T) {
 	g := receivedRig(t)
-	g.r.Cfg.Caps.TasksPerDay = 1 // other tasks already fill the day
-	g.r.Cfg.Budgets.PerPerson.Enabled = true
+	g.r.Cfg.Current().Caps.TasksPerDay = 1 // other tasks already fill the day
+	g.r.Cfg.Current().Budgets.PerPerson.Enabled = true
 	other := issueTask("5otheraa", 8, "x")
 	other.Status.Phase = v1alpha1.PhaseImplementing
 	if err := g.c.Create(t.Context(), other); err != nil {
@@ -77,7 +77,7 @@ func TestAnAdoptedTaskGoesStraightToTheGate(t *testing.T) {
 // The text cap stays: an oversized adopted text is still refused.
 func TestAnAdoptedTaskKeepsTheTextCap(t *testing.T) {
 	g := receivedRig(t)
-	g.r.Cfg.Caps.MaxTextBytes = 5
+	g.r.Cfg.Current().Caps.MaxTextBytes = 5
 	if tk := g.reconcile(t, adoptTask, 1); tk.Status.Phase != v1alpha1.PhaseRejected || tk.Status.Reason != "text_too_long" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
@@ -141,16 +141,16 @@ func TestTheAdoptedLifecycle(t *testing.T) {
 	})
 	t.Run("a merge by Renovate ends it, under watch", func(t *testing.T) {
 		g := adoptRig(t)
-		cl := g.r.Cfg.Classes["deps-patch"]
+		cl := g.r.Cfg.Current().Classes["deps-patch"]
 		cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}
-		g.r.Cfg.Classes["deps-patch"] = cl
+		g.r.Cfg.Current().Classes["deps-patch"] = cl
 		g.reconcile(t, adoptTask, 1)
 		g.editPR(func(p *forge.PR) {
 			p.State, p.MergedBy, p.MergedAt, p.MergeCommitSHA = "MERGED", bot, now, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 		})
 		tk := g.reconcile(t, adoptTask, 1)
 		if tk.Status.Phase != v1alpha1.PhaseDone || tk.Status.Reason != "merged" || tk.Status.PullRequest.MergedBy != bot ||
-			!g.r.monitorDue(tk) {
+			!g.r.monitorDue(g.r.Cfg.Current(), tk) {
 			t.Fatalf("%s %s %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.PullRequest)
 		}
 	})
@@ -186,21 +186,21 @@ func adoptedCrowd(n int, phase string) []client.Object {
 func TestAdoptedTasksFillNoCap(t *testing.T) {
 	t.Run("tasksPerDay", func(t *testing.T) {
 		g := newRig(t, append(adoptedCrowd(10, v1alpha1.PhaseAwaitingCI), issueTask("3buqdlot", 7, "x"))...)
-		g.r.Cfg.Caps.TasksPerDay = 1
+		g.r.Cfg.Current().Caps.TasksPerDay = 1
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseTriaged {
 			t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 		}
 	})
 	t.Run("activeTasks", func(t *testing.T) {
 		g := newRig(t, append(adoptedCrowd(10, v1alpha1.PhaseAwaitingCI), issueTask("3buqdlot", 7, "x"))...)
-		g.r.Cfg.Caps.ActiveTasks = 1
+		g.r.Cfg.Current().Caps.ActiveTasks = 1
 		if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing {
 			t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 		}
 	})
 	t.Run("awaitingHumanWIP", func(t *testing.T) {
 		g := newRig(t, append(adoptedCrowd(10, v1alpha1.PhaseAwaitingHuman), issueTask("3buqdlot", 7, "x"))...)
-		g.r.Cfg.Caps.AwaitingHumanWIP = 1
+		g.r.Cfg.Current().Caps.AwaitingHumanWIP = 1
 		if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing {
 			t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 		}

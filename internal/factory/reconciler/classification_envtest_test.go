@@ -48,7 +48,7 @@ func TestEnvtestAnOracleClassClassificationIsAcceptedByTheCRD(t *testing.T) {
 	if err := c.Create(ctx, tk); err != nil {
 		t.Fatal(err)
 	}
-	d, err := triage.Classify{Cfg: cf, Forge: forgetest.NewFake()}.Triage(ctx, tk)
+	d, err := triage.Classify{Forge: forgetest.NewFake()}.Triage(ctx, cf, tk)
 	if err != nil {
 		t.Fatal(err)
 	}

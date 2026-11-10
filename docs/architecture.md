@@ -205,6 +205,72 @@ PgBouncer, so `LISTEN` holds a plain session.
 | The daily retention job | up to 8, in practice 1 |
 | The Atlas operator's migrations | 1–2 |
 
+## How the factory reads its configuration
+
+Every factory replica builds its configuration from two inputs: the config file the chart renders,
+and the `Factory`, `Repository` and `MergePolicy` resources in `agent-system`. A change to a
+resource applies without a restart.
+
+```mermaid
+flowchart LR
+  file["config.yaml<br/>(chart ConfigMap)"]
+  res["Factory, Repository,<br/>MergePolicy<br/>(agent-system)"]
+  src["configsource.Source<br/>every replica"]
+  asm["resources.Assemble"]
+  live[("config.Live")]
+  rd["Readers<br/>call Current() once per decision"]
+  sub["Subscribers<br/>connections, fence, pollers,<br/>meter, metrics"]
+  res -- "list + watch, 5 min resync" --> src
+  file --> src
+  src --> asm --> live
+  live --> rd
+  live -- "on publish" --> sub
+```
+
+`Source` lists the three kinds through the uncached API reader, so a replica never serves a stale
+cache. When `Assemble` refuses an object, `Source` substitutes the last spec it accepted for that
+object and assembles again; the result goes into `config.Live`. A watch event on any of the three
+kinds, or the five-minute resync, runs it again. A reader calls `Current()` once at the top of a
+decision and drops the result afterwards, so one decision never sees two configurations.
+
+On each publish the subscribers re-derive what depends on the catalogue:
+
+- Repository connections are synced. A repository already served keeps its working connection when
+  a reconnect fails, and the factory retries every minute. A new repository that cannot be wired
+  (a GitHub App not installed, a merger key missing) is not served, and
+  `maku_factory_config_wire_errors_total{repository}` counts it.
+- The fence's repository list, the issue pollers, the meter and the metric labels are rebuilt.
+- A removed repository's `repository_owned` gauge keeps its last value until the next restart.
+- A removed repository's tasks are never decided under another repository's settings. Each one
+  waits, looked at again every five minutes, until a publish serves its repository again. Its
+  issue poller skips its passes until then, and the API refuses its requests with
+  `repository_not_allowed`.
+
+The source runs on every replica, not only the leader, so a follower serves the settings API from
+the same configuration. Only leader-only work stays leader-only.
+
+### Live fields and fields that need a rollout
+
+| Live: applies on the next decision | Startup: needs a rollout |
+|---|---|
+| The catalogue: `control`, `defaults`, `tiers`, `templates`, `caps`, `budgets`, `facts`, `brief`, `resume`, `scoper`, `loops`, `harnessProfiles`, `mergeGuardrails`, `meter.prices`, `triage.controlPercent` | `policyManagement`, `coordination`, `hardening`, `api`, `runs`, `sandbox`, `demo`, `broker`, `github`, `factory` |
+| `repositories`: adding or removing one, and each one's settings, classes and merge rules | `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`, `runlore.listen`, `triage.classifierURL` |
+
+### What happens when a change is refused, and at startup
+
+- A refused object keeps its last accepted version, but only while the process runs. The version
+  lives in memory.
+- Before it starts the manager, the factory runs the first sync. If nothing can be served, it
+  refuses to start. After a restart, an object that is invalid is not served, because no earlier
+  version remains.
+- A `Forbidden` answer to the list fails the start with a hint about the Role that must grant
+  `get`, `list` and `watch` on the three kinds.
+- With none of the CRDs installed, the factory runs from the file alone and logs that once. A CRD
+  installed later is picked up by the resync.
+- A task records `status.configGenerations` (`factory`, `repository`, `mergePolicy`) beside its
+  `configHash`. The record says what the task started under; it does not pin the task, which reads
+  the current configuration like any other.
+
 ## Nothing is lost while the sandbox lives
 
 The harness keeps its own event store, so a broker or database outage delays the log without losing

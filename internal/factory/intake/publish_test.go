@@ -66,7 +66,7 @@ func publishing(t *testing.T, text string, tk *v1alpha1.Task, actors ...string) 
 	f.SetLabeled(LabelPublish, forge.Item{Number: 7})
 	f.SetIssue(forge.Issue{Number: 7, Title: "RunLore: A on r", Body: "stub"})
 	p, c := poller(t, f, tk)
-	p.Cfg.Maintainers = []string{"Smana"}
+	p.Cfg.Current().Maintainers = []string{"Smana"}
 	p.Now = func() time.Time { return t0.Add(time.Hour) }
 	p.Redact = testRedactor(t)
 	p.Proposal = func(context.Context, *v1alpha1.Task) (string, error) {
@@ -428,7 +428,7 @@ func TestOriginOfAStartedIssue(t *testing.T) {
 			labelled(f, c.issue, "Smana")
 			f.SetIssue(forge.Issue{Number: c.issue, Title: "docs(alerts): x", Body: c.body, Author: "ogenki-agent-factory[bot]"})
 			p, cl := poller(t, f, c.objs...)
-			p.Cfg.Repositories = []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"},
+			p.Cfg.Current().Repositories = []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"},
 				{Name: "Smana/other", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"}}
 			p.Repository = "Smana/cloud-native-ref"
 			if err := p.Poll(t.Context()); err != nil {
@@ -575,8 +575,8 @@ const proposalWithFiles = proposalOK + "\n## Files\n- `observability/base/rules/
 func startsPublishing(t *testing.T, starts bool, text string, tk *v1alpha1.Task) (*IssuePoller, *forgetest.Fake, client.Client) {
 	t.Helper()
 	p, f, c := publishing(t, text, tk, "Smana")
-	p.Cfg.Classes = hostClasses()
-	p.Cfg.API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, PublishStarts: starts}}
+	p.Cfg.Current().Classes = hostClasses()
+	p.Cfg.Current().API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, PublishStarts: starts}}
 	return p, f, c
 }
 
@@ -689,7 +689,7 @@ func TestPublishStarts(t *testing.T) {
 			t.Fatal("the first poll errs")
 		}
 		f.SetEvents(501, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: t0})
-		if err := p.one(t.Context(), 501); err != nil { // a poll that ran factory/ready on the filed issue
+		if err := p.one(t.Context(), p.Cfg.Current(), 501); err != nil { // a poll that ran factory/ready on the filed issue
 			t.Fatal(err)
 		}
 		if err := p.Poll(t.Context()); err != nil {

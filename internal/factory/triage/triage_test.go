@@ -16,7 +16,7 @@ func cfg() *config.Config {
 }
 
 func TestStaticUsesTheDefaults(t *testing.T) {
-	d, err := Static{Cfg: cfg()}.Triage(t.Context(), &v1alpha1.Task{})
+	d, err := Static{}.Triage(t.Context(), cfg(), &v1alpha1.Task{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestStaticUsesTheDefaults(t *testing.T) {
 
 // The task's own data class wins over the default.
 func TestStaticKeepsTheTasksDataClass(t *testing.T) {
-	d, _ := Static{Cfg: cfg()}.Triage(t.Context(), &v1alpha1.Task{Spec: v1alpha1.TaskSpec{DataClass: "internal"}})
+	d, _ := Static{}.Triage(t.Context(), cfg(), &v1alpha1.Task{Spec: v1alpha1.TaskSpec{DataClass: "internal"}})
 	if d.DataClass != "internal" {
 		t.Fatal(d.DataClass)
 	}

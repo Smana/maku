@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
@@ -26,7 +27,8 @@ func TestServedModelsAreTheReadingsModelLabels(t *testing.T) {
 			var revoked []revocation
 			var fell []string
 			m := usdMeter(st, typed{"aaaaaaaa": c.u}, &revoked, &fell)
-			m.Prices, m.Costs = served, &Costs{}
+			with(m, func(c *config.Config) { c.Meter.Prices = served })
+			m.Costs = &Costs{}
 			if err := m.Tick(t.Context()); err != nil {
 				t.Fatal(err)
 			}

@@ -1709,6 +1709,23 @@ func TestHealthyIsFalseBeforeAnyCall(t *testing.T) {
 	}
 }
 
+// Checked tells a connection never tried from one that failed: false until the first call,
+// whatever it answers, then true for good.
+func TestCheckedAfterTheFirstCall(t *testing.T) {
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	g := &GitHub{now: func() time.Time { return now }}
+	if g.Checked() {
+		t.Fatal("no call yet")
+	}
+	g.mark(errors.New("refused"))
+	if !g.Checked() || g.Healthy(now) {
+		t.Fatal("a failed call is a check, and no success")
+	}
+	if r := newRig(t); !r.g.Checked() {
+		t.Fatal("Connect's mint is a call")
+	}
+}
+
 func write(t *testing.T, s string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "f")

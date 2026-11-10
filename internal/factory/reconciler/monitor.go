@@ -80,13 +80,13 @@ type derivedBlame struct {
 
 // monitorDue: a Done task merged through a class that declares a monitor (R29), whose verdict is
 // not posted yet. Reverted tasks are not watched: the revert is their outcome.
-func (r *Reconciler) monitorDue(t *v1alpha1.Task) bool {
+func (r *Reconciler) monitorDue(cfg *config.Config, t *v1alpha1.Task) bool {
 	ref := t.Status.PullRequest
 	if t.Status.Phase != v1alpha1.PhaseDone || ref == nil || ref.MergedAt == nil || ref.MergeCommitSHA == "" {
 		return false
 	}
-	cl, ok := r.repo(t).Classes[t.Spec.PredictedClass]
-	if undecidedAdoptedMerge(t, r.repo(t)) {
+	cl, ok := r.repo(cfg, t).Classes[t.Spec.PredictedClass]
+	if undecidedAdoptedMerge(t, r.repo(cfg, t)) {
 		return false // Renovate's automerge of a head the gate never decided is not the class's merge
 	}
 	if !ok || cl.Monitor == nil || (t.Status.Monitor != nil && t.Status.Monitor.Posted) {
@@ -119,11 +119,11 @@ func Worst(vs ...string) string {
 
 // monitor reads every open signal once, labels what it learns on GitHub (R30, R31), and posts the
 // verdict when it is final. Whatever wakes the reconciler, GitHub is read once per monitorEvery.
-func (r *Reconciler) monitor(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) monitor(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if last, ok := r.mon.lastPass(t.Name); ok && r.Now().Sub(last) < monitorEvery {
 		return nil
 	}
-	ref, cl := t.Status.PullRequest, r.repo(t).Classes[t.Spec.PredictedClass]
+	ref, cl := t.Status.PullRequest, r.repo(cfg, t).Classes[t.Spec.PredictedClass]
 	pr, err := r.gh(ctx).PullRequest(ctx, ref.Number)
 	if err != nil {
 		return err
@@ -146,17 +146,17 @@ func (r *Reconciler) monitor(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	r.label(ctx, pr, MergedLabel(t.Spec.PredictedClass))
 	if m.Main == "" {
-		if m.Main, err = r.mainSignal(ctx, t); err != nil {
+		if m.Main, err = r.mainSignal(ctx, cfg, t); err != nil {
 			return err
 		}
 	}
 	if cl.Monitor.OracleRuns > 0 && m.Oracle == "" {
-		m.Oracle = r.oracleSignal(ctx, t, cl)
+		m.Oracle = r.oracleSignal(ctx, cfg, t, cl)
 	}
 	if cl.Monitor.Flux != nil && m.Flux == "" {
 		m.Flux = r.fluxSignal(ctx, t, *cl.Monitor.Flux)
 	}
-	if vw := cl.Monitor.Verification; vw != nil && m.Verified == "" && r.verifiedBy(ctx, t) {
+	if vw := cl.Monitor.Verification; vw != nil && m.Verified == "" && r.verifiedBy(ctx, cfg, t) {
 		switch v := m.Verification; {
 		case v != nil && v.Verdict == "resolved":
 			m.Verified = "healthy"
@@ -170,7 +170,7 @@ func (r *Reconciler) monitor(ctx context.Context, t *v1alpha1.Task) error {
 			record(ctx, func(ctx context.Context) { r.Metrics.MonitorVerification(ctx, class, verdict) })
 		}
 	}
-	r.followUps(ctx, t, cl)
+	r.followUps(ctx, cfg, t, cl)
 	ended := r.Now().Sub(m.Since.Time) >= cl.Monitor.FollowUpWindow.Duration+searchLag
 	signals := []*string{&m.Main}
 	if cl.Monitor.OracleRuns > 0 {
@@ -203,19 +203,19 @@ func (r *Reconciler) monitor(ctx context.Context, t *v1alpha1.Task) error {
 		r.label(ctx, pr, RegressionLabel)
 	}
 	if m.Verified == "regression" && m.FollowUpIssue == 0 {
-		r.fileFollowUp(ctx, t)
+		r.fileFollowUp(ctx, cfg, t)
 	}
 	if m.Verdict != "" && !m.Posted {
 		if first {
 			class, verdict := t.Spec.PredictedClass, m.Verdict
 			record(ctx, func(ctx context.Context) { r.Metrics.MonitorVerdict(ctx, class, verdict) })
 		}
-		demotes := r.repo(t).Merge.Breaker.MaxFollowUps > 0
-		narrateOn(t, ref.Number, narrate.MonitorVerdict(t, ref.Number, m.Verdict, monitorWhy(m, t.Spec.Origin, r.Cfg.RoomsURL), false, demotes))
+		demotes := r.repo(cfg, t).Merge.Breaker.MaxFollowUps > 0
+		narrateOn(t, ref.Number, narrate.MonitorVerdict(t, ref.Number, m.Verdict, monitorWhy(m, t.Spec.Origin, cfg.RoomsURL), false, demotes))
 		if m.Verdict == "regression" {
 			// M2: its own key, or narrateOn drops it as the PR's comment already queued.
-			if n := r.controlIssue(t); n > 0 {
-				narrateOn(t, n, narrate.MonitorVerdict(t, ref.Number, m.Verdict, monitorWhy(m, t.Spec.Origin, r.Cfg.RoomsURL), true, demotes))
+			if n := r.controlIssue(cfg, t); n > 0 {
+				narrateOn(t, n, narrate.MonitorVerdict(t, ref.Number, m.Verdict, monitorWhy(m, t.Spec.Origin, cfg.RoomsURL), true, demotes))
 			}
 		}
 		m.Posted = m.Verdict != "regression" || ended // a regression is posted at once and watched on for follow-ups
@@ -227,7 +227,7 @@ func (r *Reconciler) monitor(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	// AM9, R-I6: refresh the class's class_paused gauge, so a class with no decision still reports.
 	// paused records it; a failed read leaves the last value and never fails the pass.
-	if _, err := r.paused(ctx, r.repo(t), t.Spec.PredictedClass); err != nil {
+	if _, err := r.paused(ctx, cfg, r.repo(cfg, t), t.Spec.PredictedClass); err != nil {
 		r.log().Warn("class_paused refresh failed", "task.id", t.Name, "class", t.Spec.PredictedClass, "err", err)
 	}
 	return nil
@@ -260,7 +260,7 @@ func monitorWhy(m *v1alpha1.MonitorStatus, origin, roomsURL string) []string {
 
 // verifiedBy: the merge's task came from an investigate task of an internal principal that
 // verifies (R12). Anything else (no origin, a sponsored principal, an unreadable origin) is no signal.
-func (r *Reconciler) verifiedBy(ctx context.Context, t *v1alpha1.Task) bool {
+func (r *Reconciler) verifiedBy(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Spec.Origin == "" {
 		return false
 	}
@@ -268,15 +268,15 @@ func (r *Reconciler) verifiedBy(ctx context.Context, t *v1alpha1.Task) bool {
 	if err := r.Client.Get(ctx, client.ObjectKey{Namespace: t.Namespace, Name: t.Spec.Origin}, &o); err != nil {
 		return false
 	}
-	ip := r.Cfg.InternalBy(o.Spec.Source.RequestedBy)
+	ip := cfg.InternalBy(o.Spec.Source.RequestedBy)
 	return ip != nil && ip.Verification
 }
 
 // fileFollowUp files RA12's stub once, on the pass that first reads persisting. A failed filing is
 // logged and tried again by the next pass; the record is the Task's status, written with the pass.
-func (r *Reconciler) fileFollowUp(ctx context.Context, t *v1alpha1.Task) {
+func (r *Reconciler) fileFollowUp(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) {
 	m, ref := t.Status.Monitor, t.Status.PullRequest
-	title, body := narrate.FollowUpIssue(t.Name, ref.Number, m.Verification.Alert.Name, t.Spec.Origin, r.Cfg.RoomsURL)
+	title, body := narrate.FollowUpIssue(t.Name, ref.Number, m.Verification.Alert.Name, t.Spec.Origin, cfg.RoomsURL)
 	// The issue may exist already (its status write was lost, or its create timed out): adopt it by its marker.
 	marker := narrate.FollowUpMarker(t.Name)
 	// Only issues updated since the merge are read: factory/proposed accumulates, and one page of all of
@@ -287,7 +287,7 @@ func (r *Reconciler) fileFollowUp(ctx context.Context, t *v1alpha1.Task) {
 		r.log().Warn("RunLore follow-up issue lookup failed; filing without it", "task.id", t.Name, "err", err)
 	}
 	for _, i := range found {
-		if forge.SameLogin(i.Author, r.Cfg.FactoryLogin) && strings.Contains(i.Body, marker) {
+		if forge.SameLogin(i.Author, cfg.FactoryLogin) && strings.Contains(i.Body, marker) {
 			m.FollowUpIssue = i.Number
 			return
 		}
@@ -312,12 +312,12 @@ func cmpOpen(s string) string {
 // and is read like any other merge. Any other merge reads the commit's checks: red is a
 // regression at once, green once verifyFor has passed is healthy, and a check still pending after
 // twice that is inconclusive; otherwise it stays open.
-func (r *Reconciler) mainSignal(ctx context.Context, t *v1alpha1.Task) (string, error) {
+func (r *Reconciler) mainSignal(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (string, error) {
 	ref, m := t.Status.PullRequest, t.Status.Monitor
 	if ref.AutoMerged && t.Status.Reason != "merged_unverified" {
 		return "healthy", nil
 	}
-	rc := r.repo(t)
+	rc := r.repo(cfg, t)
 	runs, err := r.merger(ctx).CommitChecks(ctx, ref.MergeCommitSHA)
 	if err != nil {
 		return "", err
@@ -345,8 +345,8 @@ const oracleWait = 72 * time.Hour
 // a run that reports a target the merge wrote as gone is a regression; a run that did not succeed
 // or whose findings are refused is inconclusive; OracleRuns clean runs are healthy. Any read that
 // fails leaves the signal open, so the next pass reads again; open after oracleWait is inconclusive.
-func (r *Reconciler) oracleSignal(ctx context.Context, t *v1alpha1.Task, cl config.Class) string {
-	m, rc := t.Status.Monitor, r.repo(t)
+func (r *Reconciler) oracleSignal(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, cl config.Class) string {
+	m, rc := t.Status.Monitor, r.repo(cfg, t)
 	if cl.Oracle == nil { // config refuses oracleRuns without an oracle; never read a workflow of nothing
 		return "inconclusive"
 	}
@@ -505,9 +505,9 @@ func (c *monitorCache) prune(cutoff time.Time) {
 }
 
 // longestWindow is the longest followUpWindow any class declares.
-func (r *Reconciler) longestWindow() time.Duration {
+func (r *Reconciler) longestWindow(cfg *config.Config) time.Duration {
 	var w time.Duration
-	for _, rc := range r.Cfg.Repos() {
+	for _, rc := range cfg.Repos() {
 		for _, cl := range rc.Classes {
 			if cl.Monitor != nil {
 				w = max(w, cl.Monitor.FollowUpWindow.Duration)
@@ -521,7 +521,7 @@ func (r *Reconciler) longestWindow() time.Duration {
 // fresh asks for a read now. A search that truncates is read again from the middle of the window:
 // what it returns is then incomplete for a task that needs the earlier half, which the caller
 // learns from complete. The cache lock is not held across the GitHub calls.
-func (r *Reconciler) mergedSince(ctx context.Context, t *v1alpha1.Task, from time.Time, fresh bool) (pulls []forge.MergedPull, complete bool, err error) {
+func (r *Reconciler) mergedSince(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, from time.Time, fresh bool) (pulls []forge.MergedPull, complete bool, err error) {
 	c := &r.mon
 	c.mu.Lock()
 	hit, ok := c.merged[t.Spec.Repository]
@@ -529,7 +529,7 @@ func (r *Reconciler) mergedSince(ctx context.Context, t *v1alpha1.Task, from tim
 	if ok && !fresh && r.Now().Sub(hit.at) < monitorEvery && !hit.from.After(from) {
 		return hit.pulls, true, nil
 	}
-	c.prune(r.Now().Add(-r.longestWindow() - searchLag))
+	c.prune(r.Now().Add(-r.longestWindow(cfg) - searchLag))
 	read := from
 	pulls, err = r.merger(ctx).MergedSince(ctx, read)
 	if errors.Is(err, forge.ErrMergedTruncated) {
@@ -609,12 +609,12 @@ func (r *Reconciler) blameAt(ctx context.Context, t *v1alpha1.Task, sha, path st
 // the later pull request's own parent says (the merges are squash merges). A read that fails or
 // cannot say (no blame, an omitted patch, a truncated search) is never "no follow-up": it sets
 // FollowUpsUnread, which keeps the watch from ending healthy.
-func (r *Reconciler) followUps(ctx context.Context, t *v1alpha1.Task, cl config.Class) {
+func (r *Reconciler) followUps(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, cl config.Class) {
 	ref, m := t.Status.PullRequest, t.Status.Monitor
 	// L6, search lag: every read starts before the merge, so a pull request the index was slow to
 	// show is found by the next one.
 	// The final pass reads fresh: the cache's 10 minutes would otherwise hide the window's last.
-	merged, complete, err := r.mergedSince(ctx, t, m.Since.Add(-searchLag), r.Now().Sub(m.Since.Time) >= cl.Monitor.FollowUpWindow.Duration+searchLag)
+	merged, complete, err := r.mergedSince(ctx, cfg, t, m.Since.Add(-searchLag), r.Now().Sub(m.Since.Time) >= cl.Monitor.FollowUpWindow.Duration+searchLag)
 	if err != nil {
 		r.log().Warn("follow-up read failed", "task.id", t.Name, "err", err)
 		m.FollowUpsUnread = true
@@ -658,7 +658,7 @@ func (r *Reconciler) followUps(ctx context.Context, t *v1alpha1.Task, cl config.
 			}
 		}
 		if found {
-			r.followUpFound(ctx, t, p)
+			r.followUpFound(ctx, cfg, t, p)
 		}
 	}
 	m.FollowUpsUnread = unread
@@ -707,7 +707,7 @@ func (r *Reconciler) overlaps(ctx context.Context, t *v1alpha1.Task, p forge.Mer
 
 // followUpFound records p as a fix of the monitored merge: on the status, as a label on GitHub
 // (MC13), as an outcome, and on the merge's pull request and the control issue, each its own key (M2).
-func (r *Reconciler) followUpFound(ctx context.Context, t *v1alpha1.Task, p forge.MergedPull) {
+func (r *Reconciler) followUpFound(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, p forge.MergedPull) {
 	ref, m := t.Status.PullRequest, t.Status.Monitor
 	if len(m.FollowUps) >= maxFollowUps {
 		return
@@ -718,7 +718,7 @@ func (r *Reconciler) followUpFound(ctx context.Context, t *v1alpha1.Task, p forg
 	class := t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "follow_up") })
 	narrateOn(t, ref.Number, narrate.FollowUpFound(t, ref.Number, p.Number, false))
-	if n := r.controlIssue(t); n > 0 {
+	if n := r.controlIssue(cfg, t); n > 0 {
 		narrateOn(t, n, narrate.FollowUpFound(t, ref.Number, p.Number, true))
 	}
 }
@@ -726,8 +726,8 @@ func (r *Reconciler) followUpFound(ctx context.Context, t *v1alpha1.Task, p forg
 // controlIssue is the kill switch's issue when it lives on the task's repository, else 0: a
 // comment is posted through the task's repository, so another repository's issue of the same
 // number is never its to write (as intake's controlIssue decides).
-func (r *Reconciler) controlIssue(t *v1alpha1.Task) int {
-	if ctl := r.Cfg.ControlFor(); ctl.Issue > 0 && strings.EqualFold(ctl.Repository, t.Spec.Repository) {
+func (r *Reconciler) controlIssue(cfg *config.Config, t *v1alpha1.Task) int {
+	if ctl := cfg.ControlFor(); ctl.Issue > 0 && strings.EqualFold(ctl.Repository, t.Spec.Repository) {
 		return ctl.Issue
 	}
 	return 0

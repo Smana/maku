@@ -46,7 +46,7 @@ func TestFollowUpsAndRegressionsDemote(t *testing.T) {
 // demoted: a human merge of the class (factory/merged) and its follow-up's label.
 func TestADemotionOnFollowUpSurvivesEveryTaskDeleted(t *testing.T) {
 	g := declaredRig(t)
-	g.r.Cfg.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 	g.f.SetPR(forge.PR{Number: 40, State: "MERGED", MergedBy: "Smana", MergedAt: now.Add(-48 * time.Hour),
 		Labels: []string{MergedLabel("dead-links")}})
 	g.f.SetPR(forge.PR{Number: 41, State: "MERGED", MergedBy: "Smana", MergedAt: now.Add(-24 * time.Hour),
@@ -55,7 +55,7 @@ func TestADemotionOnFollowUpSurvivesEveryTaskDeleted(t *testing.T) {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	g = declaredRig(t)
-	g.r.Cfg.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 	g.f.SetPR(forge.PR{Number: 40, State: "MERGED", MergedBy: "renovate[bot]", MergedAt: now.Add(-48 * time.Hour),
 		Labels: []string{MergedLabel("dead-links"), RegressionLabel}})
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Reason != "class_paused" {
@@ -64,7 +64,7 @@ func TestADemotionOnFollowUpSurvivesEveryTaskDeleted(t *testing.T) {
 }
 
 func followUpBreaker(g *rig) {
-	g.r.Cfg.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 }
 
 // A fix in review is not yet a fix: an OPEN follow-up-of pull request demotes nothing.
@@ -94,14 +94,14 @@ func TestAMergeWithBothLabelsIsOneLedgerEntry(t *testing.T) {
 	if err := g.c.Get(t.Context(), keyFor("3buqdlot"), &tk); err != nil {
 		t.Fatal(err)
 	}
-	byClass, err := g.r.githubLedger(t.Context(), g.r.repo(&tk))
+	byClass, err := g.r.githubLedger(t.Context(), g.r.repo(g.r.Cfg.Current(), &tk))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n := len(byClass["dead-links"]); n != 10 {
 		t.Fatalf("ten merges, one entry each: %d", n)
 	}
-	if d, _ := Demoted(byClass["dead-links"], g.r.repo(&tk).Merge.Breaker); !d {
+	if d, _ := Demoted(byClass["dead-links"], g.r.repo(g.r.Cfg.Current(), &tk).Merge.Breaker); !d {
 		t.Fatal("the tenth merge's follow-up is inside the window")
 	}
 }

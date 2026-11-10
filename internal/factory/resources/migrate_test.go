@@ -145,7 +145,7 @@ func TestMigrateANRConfig(t *testing.T) {
 func TestDecodeRefusesABooleanOff(t *testing.T) {
 	for _, spec := range []string{"{loops: {default: {scope: off}}}", "{harnessProfiles: {plain: {loop: false}}}"} {
 		_, err := Decode([]byte("apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: f}\nspec: " + spec + "\n"))
-		if err == nil || !strings.Contains(err.Error(), `write "off"`) || !strings.Contains(err.Error(), "spec.") {
+		if err == nil || !strings.Contains(err.Error(), `not a boolean`) || !strings.Contains(err.Error(), "spec.") {
 			t.Errorf("%s: %v", spec, err)
 		}
 	}

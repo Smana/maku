@@ -116,3 +116,25 @@ func TestMakuConfigValidateReportsRefusalsWithoutAConfig(t *testing.T) {
 		t.Fatalf("error: %v\n%s", err, out.String())
 	}
 }
+
+// A switch block written twice in the file is refused by validate, as the factory refuses it.
+func TestMakuConfigValidateRefusesADuplicatedSwitchBlock(t *testing.T) {
+	dir, file := writeConfigFixture(t)
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, append(raw, "hardening: {}\nhardening: {}\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	orphan := filepath.Join(dir, "orphan.yaml")
+	if err := os.WriteFile(orphan, []byte(orphanPolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	err = m.run(t.Context(), []string{"config", "validate", "--config", file, orphan})
+	if err == nil || !strings.Contains(err.Error(), "hardening is written twice") {
+		t.Fatalf("error: %v\n%s", err, out.String())
+	}
+}

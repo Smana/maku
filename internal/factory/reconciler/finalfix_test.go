@@ -61,7 +61,7 @@ func TestAnotherRoomErrorKeepsRetrying(t *testing.T) {
 // the light tier's.
 func TestAnAPITasksScoperIsCappedByItsCeiling(t *testing.T) {
 	g := newRig(t)
-	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	for name, c := range map[string]struct {
 		api       bool
 		runTokens int64
@@ -77,7 +77,7 @@ func TestAnAPITasksScoperIsCappedByItsCeiling(t *testing.T) {
 				sponsor(tk, 2_000_000)
 			}
 			tk.Spec.Budget.RunTokens = c.runTokens
-			if s := g.r.scoperSpec(tk, "text"); s.MaxTokens != c.want {
+			if s := g.r.scoperSpec(g.r.Cfg.Current(), tk, "text"); s.MaxTokens != c.want {
 				t.Fatalf("MaxTokens %d, want %d", s.MaxTokens, c.want)
 			}
 		})

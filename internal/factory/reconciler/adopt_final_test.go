@@ -27,9 +27,9 @@ func handedOff(t *testing.T, g *rig, reason string) {
 }
 
 func liveClass(g *rig) {
-	cl := g.r.Cfg.Classes["deps-patch"]
+	cl := g.r.Cfg.Current().Classes["deps-patch"]
 	cl.Live, cl.Shadow = true, false
-	g.r.Cfg.Classes["deps-patch"] = cl
+	g.r.Cfg.Current().Classes["deps-patch"] = cl
 }
 
 // R45, amended: every transient adopted hand-off returns on a new head, counted; in a live class
@@ -79,7 +79,7 @@ func TestPausedIgnoresAnUndecidedAdoptedMerge(t *testing.T) {
 	for name, decided := range map[string]string{"decided": "9999999999999999999999999999999999999999", "undecided": adoptHead} {
 		t.Run(name, func(t *testing.T) {
 			g := adoptRig(t)
-			g.r.Cfg.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+			g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 			var tk v1alpha1.Task
 			if err := g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: adoptTask}, &tk); err != nil {
 				t.Fatal(err)
@@ -92,7 +92,7 @@ func TestPausedIgnoresAnUndecidedAdoptedMerge(t *testing.T) {
 			if err := g.c.Status().Update(t.Context(), &tk); err != nil {
 				t.Fatal(err)
 			}
-			paused, err := g.r.paused(t.Context(), g.r.repo(&tk), "deps-patch")
+			paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.repo(g.r.Cfg.Current(), &tk), "deps-patch")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,16 +114,16 @@ func TestAnAdoptedMergeIsWatchedOnlyAtADecidedHead(t *testing.T) {
 		return g.reconcile(t, adoptTask, 1)
 	}
 	monitored := func(g *rig) *rig {
-		cl := g.r.Cfg.Classes["deps-patch"]
+		cl := g.r.Cfg.Current().Classes["deps-patch"]
 		cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}
-		g.r.Cfg.Classes["deps-patch"] = cl
+		g.r.Cfg.Current().Classes["deps-patch"] = cl
 		return g
 	}
 	t.Run("the decided head", func(t *testing.T) {
 		g := monitored(adoptRig(t))
 		g.reconcile(t, adoptTask, 1) // shadow_would_arm at adoptHead
 		tk := merge(g)
-		if !g.r.monitorDue(tk) {
+		if !g.r.monitorDue(g.r.Cfg.Current(), tk) {
 			t.Fatalf("a merge of the decided head is watched: %+v", tk.Status.PullRequest)
 		}
 		g.reconcile(t, adoptTask, 1)
@@ -136,8 +136,8 @@ func TestAnAdoptedMergeIsWatchedOnlyAtADecidedHead(t *testing.T) {
 		g.reconcile(t, adoptTask, 1)
 		g.cleanHead(newHead) // Renovate rebased and its automerge landed before the gate read it
 		tk := merge(g)
-		if tk.Status.Phase != v1alpha1.PhaseDone || g.r.monitorDue(tk) {
-			t.Fatalf("%s due %v", tk.Status.Phase, g.r.monitorDue(tk))
+		if tk.Status.Phase != v1alpha1.PhaseDone || g.r.monitorDue(g.r.Cfg.Current(), tk) {
+			t.Fatalf("%s due %v", tk.Status.Phase, g.r.monitorDue(g.r.Cfg.Current(), tk))
 		}
 		g.reconcile(t, adoptTask, 2)
 		if slices.Contains(g.f.Added(30), MergedLabel("deps-patch")) {
@@ -148,8 +148,8 @@ func TestAnAdoptedMergeIsWatchedOnlyAtADecidedHead(t *testing.T) {
 		g := monitored(adoptRig(t))
 		g.review(30, 7, "Smana", "CHANGES_REQUESTED")
 		g.reconcile(t, adoptTask, 1) // changes_requested: handed off, never decided
-		if tk := merge(g); tk.Status.Phase != v1alpha1.PhaseDone || g.r.monitorDue(tk) {
-			t.Fatalf("%s due %v", tk.Status.Phase, g.r.monitorDue(tk))
+		if tk := merge(g); tk.Status.Phase != v1alpha1.PhaseDone || g.r.monitorDue(g.r.Cfg.Current(), tk) {
+			t.Fatalf("%s due %v", tk.Status.Phase, g.r.monitorDue(g.r.Cfg.Current(), tk))
 		}
 	})
 }
@@ -193,11 +193,11 @@ func TestTheAdoptedVetoIsARepositoryMembers(t *testing.T) {
 // M1: an adopted Task whose class was removed or no longer adopts never reads room "": it hands off.
 func TestAnAdoptedTaskWhoseClassIsGoneHandsOff(t *testing.T) {
 	for name, edit := range map[string]func(*rig){
-		"removed": func(g *rig) { g.r.Cfg.Classes = map[string]config.Class{"other": {Shadow: true}} },
+		"removed": func(g *rig) { g.r.Cfg.Current().Classes = map[string]config.Class{"other": {Shadow: true}} },
 		"no author": func(g *rig) {
-			cl := g.r.Cfg.Classes["deps-patch"]
+			cl := g.r.Cfg.Current().Classes["deps-patch"]
 			cl.Author = nil
-			g.r.Cfg.Classes["deps-patch"] = cl
+			g.r.Cfg.Current().Classes["deps-patch"] = cl
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

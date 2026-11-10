@@ -29,14 +29,14 @@ func scoperPlanned(t *v1alpha1.Task) bool {
 // scoperSpec is the scoper's claim: a triager run at the light tier's run caps whatever the task's
 // tier (SO2), on the task's model until per-role models exist (SC10). The tier label is what the
 // meter caps the run's USD by. Its spend counts toward the task's caps as every run's does.
-func (r *Reconciler) scoperSpec(t *v1alpha1.Task, text string) runs.Spec {
-	s := r.implementerSpec(t, text)
+func (r *Reconciler) scoperSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
+	s := r.implementerSpec(cfg, t, text)
 	s.Role = "triager"
 	// Offered a split, the scoper also plans every part, and the light tier's run cap is what ended drill
 	// 6ysg5vvt's (budget-run at $0.51 in cache reads, before any handoff): it runs at the task's own tier,
 	// which implementerSpec already set. Otherwise the light tier's caps.
 	if t.Spec.Split == nil {
-		light := r.Cfg.Tiers["light"]
+		light := cfg.Tiers["light"]
 		s.Tier, s.MaxTokens, s.MaxMinutes = "light", light.RunTokens, light.RunMinutes
 	}
 	if t.Spec.Source.Kind == "api" && t.Spec.Budget.RunTokens > 0 { // never above the ceiling-derived run (C4)
@@ -46,15 +46,15 @@ func (r *Reconciler) scoperSpec(t *v1alpha1.Task, text string) runs.Spec {
 }
 
 // startScoper starts the scoper run, or resumes a lost one with its own brief.
-func (r *Reconciler) startScoper(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) startScoper(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	text, ok, err := r.resumeBrief(ctx, t)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		text = ScoperBrief(t, r.Nonce(), r.Cfg.Scoper, r.profileChoices(t))
+		text = ScoperBrief(t, r.Nonce(), cfg.Scoper, r.profileChoices(cfg, t))
 	}
-	return r.startRun(ctx, t, r.scoperSpec(t, text), nextTrigger(t))
+	return r.startRun(ctx, cfg, t, r.scoperSpec(cfg, t, text), nextTrigger(t))
 }
 
 // The bounce's reason and label (SC8). The label is an output the factory never reads.
@@ -72,9 +72,9 @@ var escalatesScoper = []string{"manual", "revoked", "deleted", "budget-task", "b
 
 // scoped ends the scoper run (SC8, SC11): the implementer is queued with the scope, or without it
 // when the run left none; a question bounces the task to its issue's author.
-func (r *Reconciler) scoped(ctx context.Context, t *v1alpha1.Task, phase, reason string) error {
+func (r *Reconciler) scoped(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, phase, reason string) error {
 	if slices.Contains(escalatesScoper, reason) {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reason)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 	}
 	sc, split, seq, summary, err := r.lastScope(ctx, t)
 	if err != nil {
@@ -94,17 +94,17 @@ func (r *Reconciler) scoped(ctx context.Context, t *v1alpha1.Task, phase, reason
 	}
 	switch {
 	case sc == nil && phase == "Succeeded":
-		return r.scopeEnd(ctx, t, nil, "missing", 0)
+		return r.scopeEnd(ctx, cfg, t, nil, "missing", 0)
 	case sc == nil:
-		return r.scoperFailed(ctx, t, reason)
+		return r.scoperFailed(ctx, cfg, t, reason)
 	case sc.State == envelope.ScopeReady && split != nil:
-		return r.splitHandoff(ctx, t, sc, split, seq)
+		return r.splitHandoff(ctx, cfg, t, sc, split, seq)
 	case sc.State == envelope.ScopeReady:
-		return r.scopeEnd(ctx, t, sc, "ready", seq)
+		return r.scopeEnd(ctx, cfg, t, sc, "ready", seq)
 	case t.Spec.Issue == 0: // a schedule has no author to ask
-		return r.scopeEnd(ctx, t, assumed(*sc), "assumed", seq)
+		return r.scopeEnd(ctx, cfg, t, assumed(*sc), "assumed", seq)
 	}
-	return r.bounce(ctx, t, sc, seq)
+	return r.bounce(ctx, cfg, t, sc, seq)
 }
 
 // The acceptance the issue states, read as the judge reads it (loop_policy.acceptance, HR3): a heading
@@ -186,7 +186,7 @@ func (r *Reconciler) lastScope(ctx context.Context, t *v1alpha1.Task) (*envelope
 // (HR2: the harness's budget_calls) or any other end that fails open: the task runs whole,
 // unscoped, and the room says so (drill 6ysg5vvt). A run cap and the tool-call limit are each
 // counted apart from other failures. The note is best effort.
-func (r *Reconciler) scoperFailed(ctx context.Context, t *v1alpha1.Task, reason string) error {
+func (r *Reconciler) scoperFailed(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) error {
 	what, outcome := "the scoper's run ended before handing off ("+narrate.Reason(reason)+")", "failed"
 	switch reason {
 	case "budget-run":
@@ -199,7 +199,7 @@ func (r *Reconciler) scoperFailed(ctx context.Context, t *v1alpha1.Task, reason 
 		func(ctx context.Context) error { return r.Client.Status().Update(ctx, t) }); err != nil {
 		r.log().Warn("the scoper's failure note not posted", "task.id", t.Name, "err", err)
 	}
-	return r.scopeEndAs(ctx, t, nil, "failed", 0, outcome)
+	return r.scopeEndAs(ctx, cfg, t, nil, "failed", 0, outcome)
 }
 
 // mentionsSplit: the handoff's summary speaks of splitting the task.
@@ -224,13 +224,13 @@ func (r *Reconciler) unstatedSplit(ctx context.Context, t *v1alpha1.Task) {
 
 // scopeEnd records the scoper's outcome, resolves the profile on sc (nil: no scope) and queues the
 // implementer's first run.
-func (r *Reconciler) scopeEnd(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, state string, seq int64) error {
-	return r.scopeEndAs(ctx, t, sc, state, seq, state)
+func (r *Reconciler) scopeEnd(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sc *envelope.Scope, state string, seq int64) error {
+	return r.scopeEndAs(ctx, cfg, t, sc, state, seq, state)
 }
 
 // scopeEndAs is scopeEnd counted under outcome, which may say more than the recorded state.
-func (r *Reconciler) scopeEndAs(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, state string, seq int64, outcome string) error {
-	if err := r.resolveProfile(ctx, t, sc); err != nil {
+func (r *Reconciler) scopeEndAs(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sc *envelope.Scope, state string, seq int64, outcome string) error {
+	if err := r.resolveProfile(ctx, cfg, t, sc); err != nil {
 		return err
 	}
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: state, Seq: seq}
@@ -243,7 +243,7 @@ func (r *Reconciler) scopeEndAs(ctx context.Context, t *v1alpha1.Task, sc *envel
 
 // bounce is SC8: Escalated, needs_author, one comment and the label. Not end(): its Ended comment
 // would be a second one, and a question says nothing of the tier.
-func (r *Reconciler) bounce(ctx context.Context, t *v1alpha1.Task, sc *envelope.Scope, seq int64) error {
+func (r *Reconciler) bounce(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sc *envelope.Scope, seq int64) error {
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: "question", Seq: seq}
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
 	record(ctx, func(ctx context.Context) { r.Metrics.ScoperRun(ctx, class, "question") })
@@ -254,8 +254,8 @@ func (r *Reconciler) bounce(ctx context.Context, t *v1alpha1.Task, sc *envelope.
 	})
 	r.releaseUnheld(ctx, t)
 	r.to(t, v1alpha1.PhaseEscalated, ReasonNeedsAuthor)
-	narrateLater(t, narrate.NeedsAuthor(t, sc.Question, sc.Assumptions[0], r.repo(t).Maintainers, r.Cfg.RoomsURL))
-	r.outcome(ctx, t)
+	narrateLater(t, narrate.NeedsAuthor(t, sc.Question, sc.Assumptions[0], r.repo(cfg, t).Maintainers, cfg.RoomsURL))
+	r.outcome(ctx, cfg, t)
 	return nil
 }
 

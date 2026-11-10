@@ -30,8 +30,8 @@ import (
 // coordinationPort is the coordination service the reconciler drives (v4 MR2):
 // *coordination.Service implements it.
 type coordinationPort interface {
-	File(ctx context.Context, parentTask string) error
-	ExecuteReady(ctx context.Context, cs *v1alpha1.CoordinationStatus, ids []string) error
+	File(ctx context.Context, cfg *config.Config, parentTask string) error
+	ExecuteReady(ctx context.Context, cfg *config.Config, cs *v1alpha1.CoordinationStatus, ids []string) error
 }
 
 // reasonWaitingDependency is a dependent child's entry while a producer has not landed.
@@ -42,7 +42,7 @@ const reasonWaitingDependency = "waiting_dependency"
 // scopes, splits, arms, merges or reverts anything. Under execute, once every confirmation is
 // present, it files through the service, whose gate re-reads every authority first; once filed,
 // it creates each independent child Task in its own repository. It holds no active slot.
-func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) coordinating(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if t.Status.Trace == nil { // the parent's root span, exported at its end with its family's links
 		tr, sp := tracing.Mint()
 		t.Status.Trace = &v1alpha1.TraceRef{TraceID: tr, SpanID: sp}
@@ -52,7 +52,7 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		return nil
 	}
 	if t.Status.RoomRef == "" {
-		switch err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, coordinationWatchers(r.Cfg)...); {
+		switch err := rooms.Ensure(ctx, r.Client, r.Namespace, t.Name, t.Spec.DataClass, t.Spec.Repository, coordinationWatchers(cfg)...); {
 		case errors.Is(err, rooms.ErrForeignRoom):
 			t.Status.Reason = "foreign_room" // never adopted: an operator removes it
 			return nil
@@ -74,7 +74,7 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 	if parentStopped(t) {
 		return nil
 	}
-	if r.Coordination == nil || r.Cfg.Coordination.Mode != config.CoordinationExecute || !coordination.Complete(cs) {
+	if r.Coordination == nil || cfg.Coordination.Mode != config.CoordinationExecute || !coordination.Complete(cs) {
 		return nil
 	}
 	// §6.1: the stop object pauses intake, and filing or admitting a child is intake. On doubt too.
@@ -82,7 +82,7 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 		return err
 	}
 	if t.Status.Reason != coordination.ReasonFiled {
-		err := r.Coordination.File(ctx, t.Name)
+		err := r.Coordination.File(ctx, cfg, t.Name)
 		reason := coordination.Reason(err)
 		switch {
 		case err == nil:
@@ -96,10 +96,10 @@ func (r *Reconciler) coordinating(ctx context.Context, t *v1alpha1.Task) error {
 	if err := r.replaceGenerations(ctx, t); err != nil {
 		return err
 	}
-	if err := r.admitCoordinationChildren(ctx, t); err != nil {
+	if err := r.admitCoordinationChildren(ctx, cfg, t); err != nil {
 		return err
 	}
-	if err := r.coordinateIntegration(ctx, t); err != nil {
+	if err := r.coordinateIntegration(ctx, cfg, t); err != nil {
 		return err
 	}
 	return r.proposeRecovery(ctx, t)
@@ -136,10 +136,10 @@ func parentStopped(t *v1alpha1.Task) bool { return t.Annotations[v1alpha1.Annota
 
 // coordinationRejected ends coordination Task t Rejected for a lineage refusal, counted once on its
 // repository with the end.
-func (r *Reconciler) coordinationRejected(ctx context.Context, t *v1alpha1.Task, reason string) error {
+func (r *Reconciler) coordinationRejected(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) error {
 	repo := t.Spec.Repository
 	record(ctx, func(ctx context.Context) { r.Metrics.CoordinationAdmissionRefused(ctx, repo, reason) })
-	return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+	return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, reason)
 }
 
 // coordinationRefused sets *reason to code, counting the refusal on repository once: when the
@@ -348,7 +348,7 @@ func (r *Reconciler) reservationHeld(ctx context.Context, t *v1alpha1.Task) (boo
 // admitCoordinationChildren creates each filed child's Task once and records it on the parent.
 // An independent child is created at once; a dependent child only once every required artifact
 // is landed and the execute gate passes again, and it is created with those references (MR7).
-func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) admitCoordinationChildren(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	cs := t.Status.Coordination
 	for _, c := range cs.Plan.Children {
 		i := slices.IndexFunc(cs.Children, func(x v1alpha1.CoordinationChildStatus) bool { return x.ID == c.ID })
@@ -365,7 +365,7 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 			if !landed {
 				continue
 			}
-			if err := r.Coordination.ExecuteReady(ctx, cs, []string{c.ID}); err != nil {
+			if err := r.Coordination.ExecuteReady(ctx, cfg, cs, []string{c.ID}); err != nil {
 				reason := coordination.Reason(err)
 				if reason == "" {
 					return err
@@ -376,13 +376,13 @@ func (r *Reconciler) admitCoordinationChildren(ctx context.Context, t *v1alpha1.
 			refs, _ = coordination.ConsumedArtifacts(c, cs.Artifacts)
 		}
 		gen := max(st.Generation, 1)
-		child := coordination.ChildTask(r.Namespace, r.Cfg, t, c, st.Issue, gen)
+		child := coordination.ChildTask(r.Namespace, cfg, t, c, st.Issue, gen)
 		child.Spec.CoordinationArtifacts = refs
 		if gen > 1 {
 			// A replacement: the execute gate is re-read for it, and it holds only what every
 			// earlier generation left of the lifetime allocation (MR8).
 			if len(c.DependsOn) == 0 {
-				if err := r.Coordination.ExecuteReady(ctx, cs, []string{c.ID}); err != nil {
+				if err := r.Coordination.ExecuteReady(ctx, cfg, cs, []string{c.ID}); err != nil {
 					reason := coordination.Reason(err)
 					if reason == "" {
 						return err

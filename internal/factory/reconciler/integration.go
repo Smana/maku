@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -47,24 +49,24 @@ const (
 // at admission, the ordinary slot, allocation and daily reservation in queued, then one triager
 // run of integrationSpec, never implementerSpec, a verifier, a PR or a merger call. Its result is
 // the run's typed integration_result alone. An Escalated attempt waits for the recovery path.
-func (r *Reconciler) integrating(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) integrating(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	switch t.Status.Phase {
 	case "":
-		return r.receivedIntegration(ctx, t)
+		return r.receivedIntegration(ctx, cfg, t)
 	case v1alpha1.PhaseQueued:
-		return r.queued(ctx, t)
+		return r.queued(ctx, cfg, t)
 	case v1alpha1.PhaseImplementing:
-		return r.integrationRunning(ctx, t)
+		return r.integrationRunning(ctx, cfg, t)
 	}
 	return nil
 }
 
 // receivedIntegration admits an integration Task: one lineage in the primary repository, its
 // manifest the one its parent holds now, and its own Room on the primary.
-func (r *Reconciler) receivedIntegration(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) receivedIntegration(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	_, m, err := r.integrationLineage(ctx, t)
 	if reason := integrationRefusal(err); reason != "" {
-		return r.coordinationRejected(ctx, t, reason)
+		return r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return err
@@ -82,7 +84,7 @@ func (r *Reconciler) receivedIntegration(ctx context.Context, t *v1alpha1.Task) 
 	}
 	t.Status.RoomRef = t.Name
 	t.Status.Result = &v1alpha1.IntegrationResult{State: coordination.ResultPending, ManifestHash: coordination.ManifestHash(m)}
-	t.Status.ConfigHash = r.Cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseQueued, "")
 	return nil
 }
@@ -138,14 +140,14 @@ func (r *Reconciler) integrationLineage(ctx context.Context, t *v1alpha1.Task) (
 // integrationHold is queued's re-check before an integration run: the stop object, the lineage
 // and manifest, and the execute gate over the parent's plan with the primary's authority re-read.
 // held is true when it does not start.
-func (r *Reconciler) integrationHold(ctx context.Context, t *v1alpha1.Task) (bool, error) {
+func (r *Reconciler) integrationHold(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (bool, error) {
 	if on, err := killswitch.Engaged(ctx, r.Client, r.Namespace); on || err != nil {
 		t.Status.Reason = "kill_switch"
 		return true, err
 	}
 	p, _, err := r.integrationLineage(ctx, t)
 	if reason := integrationRefusal(err); reason != "" {
-		return true, r.coordinationRejected(ctx, t, reason)
+		return true, r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return true, err
@@ -154,7 +156,7 @@ func (r *Reconciler) integrationHold(ctx context.Context, t *v1alpha1.Task) (boo
 		t.Status.Reason = coordination.ReasonPrerequisites
 		return true, nil
 	}
-	if err := r.Coordination.ExecuteReady(ctx, p.Status.Coordination, []string{coordination.PrimaryChild(p.Status.Coordination)}); err != nil {
+	if err := r.Coordination.ExecuteReady(ctx, cfg, p.Status.Coordination, []string{coordination.PrimaryChild(p.Status.Coordination)}); err != nil {
 		reason := coordination.Reason(err)
 		if reason == "" {
 			return true, err
@@ -166,15 +168,15 @@ func (r *Reconciler) integrationHold(ctx context.Context, t *v1alpha1.Task) (boo
 }
 
 // startIntegration starts t's one triager run on its current manifest.
-func (r *Reconciler) startIntegration(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) startIntegration(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	_, m, err := r.integrationLineage(ctx, t)
 	if reason := integrationRefusal(err); reason != "" {
-		return r.coordinationRejected(ctx, t, reason)
+		return r.coordinationRejected(ctx, cfg, t, reason)
 	}
 	if err != nil {
 		return err
 	}
-	return r.startRun(ctx, t, r.integrationSpec(t, m), "initial")
+	return r.startRun(ctx, cfg, t, r.integrationSpec(t, m), "initial")
 }
 
 // integrationSpec is an integration run (MR10, MR17): triager on the primary, in the integration
@@ -203,22 +205,22 @@ func IntegrationBrief(t *v1alpha1.Task, m coordination.IntegrationManifest) stri
 // integrationRunning follows the one run: a typed pass of a run that succeeded is passed, a typed
 // failure or a run that succeeded with no result is failed, and a run its infrastructure lost, or
 // that failed with no result, escalates integration_pending with no acceptance.
-func (r *Reconciler) integrationRunning(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) integrationRunning(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	run, found, err := r.observe(ctx, t)
 	if err != nil {
 		return err
 	}
 	if !found {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
 	}
-	if err := r.boundPending(ctx, t, run); err != nil {
+	if err := r.boundPending(ctx, cfg, t, run); err != nil {
 		return err
 	}
 	if !runs.Terminal(run.Phase) {
 		if s, err := r.stuck(ctx, t, run); err != nil || !s {
 			return err
 		}
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
 	}
 	reason := r.finished(ctx, t, run)
 	if reason == "" {
@@ -226,7 +228,7 @@ func (r *Reconciler) integrationRunning(ctx context.Context, t *v1alpha1.Task) e
 	}
 	current(t).Reason = reason
 	if infraLost(run) {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
 	}
 	want := ""
 	if t.Status.Result != nil {
@@ -239,17 +241,17 @@ func (r *Reconciler) integrationRunning(ctx context.Context, t *v1alpha1.Task) e
 	switch {
 	case ok && res.State == coordination.ResultPassed && run.Phase == "Succeeded":
 		t.Status.Result = &res
-		return r.end(ctx, t, v1alpha1.PhaseDone, reasonIntegrationPassed)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseDone, reasonIntegrationPassed)
 	case ok && res.State == coordination.ResultFailed:
 		t.Status.Result = &res
 	case !ok && run.Phase == "Failed" && run.Revoked == "":
 		// The harness reports nothing typed and exits non-zero when it cannot fetch, check out or
 		// verify a subject: the sandbox failed, not the acceptance.
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
 	default:
 		t.Status.Result = &v1alpha1.IntegrationResult{State: coordination.ResultFailed, Reason: reasonIntegrationNoResult, ManifestHash: want}
 	}
-	return r.end(ctx, t, v1alpha1.PhaseDone, reasonIntegrationFailed)
+	return r.end(ctx, cfg, t, v1alpha1.PhaseDone, reasonIntegrationFailed)
 }
 
 // integrationResult is the newest integration_result of t's current run naming manifest hash
@@ -319,7 +321,7 @@ func (r *Reconciler) childFacts(ctx context.Context, cs *v1alpha1.CoordinationSt
 // then schedules at most one attempt: a held dependent's pre-merge check once its dependencies
 // landed, or the final check once every child landed. The parent stays filed throughout: its
 // children's lineage reads it.
-func (r *Reconciler) coordinateIntegration(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) coordinateIntegration(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	cs := t.Status.Coordination
 	facts, err := r.childFacts(ctx, cs)
 	if err != nil {
@@ -363,7 +365,7 @@ func (r *Reconciler) coordinateIntegration(ctx context.Context, t *v1alpha1.Task
 		if err != nil {
 			return nil // a merge this pass cannot bind exactly: nothing runs on it
 		}
-		return r.startAttempt(ctx, t, m, coordination.PrimaryChild(cs))
+		return r.startAttempt(ctx, cfg, t, m, coordination.PrimaryChild(cs))
 	}
 	if !cs.Plan.Integration.EffectiveBeforeDependents() {
 		return nil
@@ -378,14 +380,14 @@ func (r *Reconciler) coordinateIntegration(ctx context.Context, t *v1alpha1.Task
 		if err != nil {
 			continue // a dependency not landed, or a head not exact: it stays held
 		}
-		return r.startAttempt(ctx, t, m, c.ID)
+		return r.startAttempt(ctx, cfg, t, m, c.ID)
 	}
 	return nil
 }
 
 // startAttempt creates one integration Task for m once: never for a manifest already attempted,
 // past maxRuns, or behind a refused execute gate, whose reason lands on child's entry.
-func (r *Reconciler) startAttempt(ctx context.Context, t *v1alpha1.Task, m coordination.IntegrationManifest, child string) error {
+func (r *Reconciler) startAttempt(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, m coordination.IntegrationManifest, child string) error {
 	cs := t.Status.Coordination
 	hash := coordination.ManifestHash(m)
 	if slices.ContainsFunc(cs.IntegrationAttempts, func(a v1alpha1.IntegrationAttempt) bool { return a.ManifestHash == hash }) {
@@ -400,7 +402,7 @@ func (r *Reconciler) startAttempt(ctx context.Context, t *v1alpha1.Task, m coord
 		hold(coordination.ReasonOf(err))
 		return nil
 	}
-	if err := r.Coordination.ExecuteReady(ctx, cs, []string{coordination.PrimaryChild(cs)}); err != nil {
+	if err := r.Coordination.ExecuteReady(ctx, cfg, cs, []string{coordination.PrimaryChild(cs)}); err != nil {
 		reason := coordination.Reason(err)
 		if reason == "" {
 			return err
@@ -408,7 +410,7 @@ func (r *Reconciler) startAttempt(ctx context.Context, t *v1alpha1.Task, m coord
 		hold(reason)
 		return nil
 	}
-	it := coordination.IntegrationTask(r.Namespace, r.Cfg, t, m, len(cs.IntegrationAttempts)+1)
+	it := coordination.IntegrationTask(r.Namespace, cfg, t, m, len(cs.IntegrationAttempts)+1)
 	if err := r.Client.Create(ctx, it); err != nil && !apierrors.IsAlreadyExists(err) {
 		return err
 	}
