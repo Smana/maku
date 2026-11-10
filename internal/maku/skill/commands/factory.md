@@ -7,9 +7,16 @@ subcommand; the rest is its argument. Show each tool's text as it is, and never 
 
 - `handoff [what]`: call `intake_plan` with the developer's own words for what they gave (default:
   the side task just discussed) and the context you have — the repository you are in, the paths you
-  read — then show its text as it is and ask its question if it carries one. Once the developer has
-  answered, call `issue_file` with the plan and its hash: it files the plan's first issue, so say
-  when a longer plan's others are not filed. Never write the plan yourself and never apply a label.
+  read — then show its text as it is. While gaps remain, ask only the first gap with its
+  recommendation and why, and offer "accept the rest" at every question. For an answer, call
+  `intake_plan` with the original request and the revision envelope: base `plan`, its `hash`, and
+  edited `candidate`. Resolve only the answered clarification markers and append their matching D/A
+  records; leave all other material unchanged. Show the revised plan and repeat with its first gap.
+  To accept the rest, replace every remaining marker with its recommendation, append each matching A
+  record, and call `plan_check` with the same revision envelope. When no gaps remain, finish with
+  `plan_check`, show the final draft and every assumption, then call `issue_file` with the returned
+  plan and its new hash: it files the plan's first issue, so say when a longer plan's others are not
+  filed. Never write the plan yourself and never apply a label.
   If `intake_plan` is not listed the planner is off: write the issue in the template's three sections
   (`## What is wrong`, `## What it should be`, `## Acceptance check`), have `issue_draft` check it,
   then call `issue_file`, and say the broker planned nothing.
