@@ -479,6 +479,9 @@ type TaskStatus struct {
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	Outbox []Narration `json:"outbox,omitempty"`
+	// StatusComment is the issue's one live status comment and its last successful remote body.
+	// +optional
+	StatusComment *StatusComment `json:"statusComment,omitempty"`
 	// The last clientSeq the task took for a task_state message or its facts in its room (ruling
 	// SK). The broker keeps one message per clientSeq, so the ledger is its own field, never trimmed
 	// like narrated, and only rises: the next message is roomSeq + 1, persisted before it is posted.
@@ -533,6 +536,15 @@ type TaskStatus struct {
 	// Result is an integration Task's outcome (MR10).
 	// +optional
 	Result *IntegrationResult `json:"result,omitempty"`
+}
+
+// StatusComment is the durable identity and last successful body of a task's issue status comment.
+type StatusComment struct {
+	// +optional
+	ID int64 `json:"id,omitempty"`
+	// +kubebuilder:validation:MaxLength=4096
+	// +optional
+	Body string `json:"body,omitempty"`
 }
 
 // ScopeStatus is the scoper's outcome on its task.
