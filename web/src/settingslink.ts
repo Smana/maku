@@ -3,6 +3,8 @@
 // The Settings entry point every page header carries beside the brand: a gear and a label, so the
 // settings pages are found without knowing their URL.
 
+import { api } from "./api";
+
 const NS = "http://www.w3.org/2000/svg";
 
 function gear(): SVGSVGElement {
@@ -26,14 +28,16 @@ function gear(): SVGSVGElement {
   return svg;
 }
 
-// mountSettingsLink appends the link to host and returns it.
-export function mountSettingsLink(host: HTMLElement, href = "/settings"): HTMLAnchorElement {
+// mountSettingsLink appends the link to host, hidden until the settings API proves the feature is on.
+export function mountSettingsLink(host: HTMLElement, href = "/settings", get: typeof fetch = fetch): HTMLAnchorElement {
   const a = document.createElement("a");
   a.className = "settings-link";
   a.href = href;
+  a.hidden = true;
   const label = document.createElement("span");
   label.textContent = "Settings";
   a.append(gear(), label);
   host.append(a);
+  void api("/api/policy/repositories", {}, get).then((r) => { a.hidden = !r.ok; }).catch(() => { a.hidden = true; });
   return a;
 }
