@@ -117,6 +117,12 @@ spec:
                         type: string
                       maxItems: 64
                       type: array
+                    description:
+                      description: |-
+                        Description says what the class is for, in plain words, for the settings pages and
+                        `kubectl get`; the gate never reads it.
+                      maxLength: 280
+                      type: string
                     diffShape:
                       description: 'DiffShape is a shape every changed line must have:
                         links-only is R52''s LinksOnly.'

@@ -57,7 +57,7 @@ func exportClass(cl config.Class, c *config.Config) (ClassPolicy, error) {
 	if !ok {
 		return ClassPolicy{}, fmt.Errorf("no harness profile holds checks=%t testFirst=%t adopted=%t", cl.Checks, cl.TestFirst, cl.Adopted())
 	}
-	p := ClassPolicy{Mode: ModeOff, Author: AuthorAgents, Harness: harness, Limits: Limits{MaxPerDay: cl.MaxPerDay}, Monitor: cl.Monitor,
+	p := ClassPolicy{Description: cl.Description, Mode: ModeOff, Author: AuthorAgents, Harness: harness, Limits: Limits{MaxPerDay: cl.MaxPerDay}, Monitor: cl.Monitor,
 		HarnessAllowed: cl.HarnessAllowed, Escalation: cl.Escalation}
 	switch {
 	case cl.Live:

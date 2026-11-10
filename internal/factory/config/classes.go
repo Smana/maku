@@ -19,8 +19,12 @@ import (
 // can remove; an absent one is not checked, so a class that declares none is decided as before.
 // +kubebuilder:object:generate=true
 type Class struct {
-	Live   bool `json:"live,omitempty"`
-	Shadow bool `json:"shadow,omitempty"`
+	// Description says what the class is for, in plain words, for the settings pages and
+	// `kubectl get`; the gate never reads it.
+	// +kubebuilder:validation:MaxLength=280
+	Description string `json:"description,omitempty"`
+	Live        bool   `json:"live,omitempty"`
+	Shadow      bool   `json:"shadow,omitempty"`
 	// Checks switches the repository's checks on for the class's public implementer and reviewer
 	// runs (v3 feature 3, RC8): the claim's spec.loop.checks and the repository's checks.egress.
 	Checks bool `json:"checks,omitempty"`
@@ -201,6 +205,9 @@ func ValidateClass(name string, cl Class, bad func(string, ...any)) { validateCl
 
 // validateClass reports one class's problems.
 func validateClass(name string, cl Class, bad func(string, ...any)) {
+	if n := utf8.RuneCountInString(cl.Description); n > 280 {
+		bad("class %s: description is %d characters, at most 280", name, n)
+	}
 	if cl.Live && cl.Shadow {
 		bad("class %s: live and shadow never together (R32)", name)
 	}
