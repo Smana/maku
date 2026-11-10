@@ -134,7 +134,10 @@ func (d *desirer) accepted(cs *[]metav1.Condition, gen int64, o *configsource.Ou
 }
 
 func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
-	st := v1alpha1.FactoryStatus{ObservedGeneration: f.Generation, Stopped: d.in.Stopped, Repositories: len(d.served)}
+	st := v1alpha1.FactoryStatus{ObservedGeneration: f.Generation, Stopped: d.in.Stopped}
+	if d.in.Config != nil {
+		st.Repositories = len(d.in.Config.Repos())
+	}
 	o := d.outcome(resources.KindFactory, f.Name)
 	d.accepted(&st.Conditions, f.Generation, o)
 	ready := func(status metav1.ConditionStatus, reason, msg string) {

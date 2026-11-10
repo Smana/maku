@@ -190,9 +190,19 @@ func TestMergePolicyAuthorityAndClasses(t *testing.T) {
 	t.Run("cut over shows the repository file's classes", func(t *testing.T) {
 		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository, Classes: map[string]config.Class{"stale": {}}})
 		c.PolicyManagement.RepositoryAuthority = true
+		c.SetClassSource(func(string) (map[string]config.Class, bool) {
+			return map[string]config.Class{"fromfile": {Shadow: true}, "docs": {Live: true}}, true
+		})
 		got := Desired(policyIn(c), nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
 		if got.Authority != "repository" {
 			t.Errorf("authority %q", got.Authority)
+		}
+		var listed []string
+		for _, cl := range got.Classes {
+			listed = append(listed, cl.Name+"="+cl.Mode)
+		}
+		if strings.Join(listed, ",") != "docs=live,fromfile=shadow" || got.ClassCount != 2 || got.LiveCount != 1 {
+			t.Errorf("classes %v, count %d, live %d; want the file's, not the stale central one", listed, got.ClassCount, got.LiveCount)
 		}
 	})
 	t.Run("repository authority needs the central switch", func(t *testing.T) {
