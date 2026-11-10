@@ -148,8 +148,8 @@ export function settingsFrame(app: HTMLElement, title: string, section: Section,
   return main;
 }
 
-function table(head: string[], rows: (string | Node)[][]): HTMLTableElement {
-  const t = el("table", undefined, "rooms settings-table");
+function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableElement {
+  const t = el("table", undefined, `rooms settings-table ${cls}`.trim());
   const tr = el("tr");
   for (const h of head) tr.append(el("th", h));
   t.append(el("thead"), el("tbody"));
@@ -199,15 +199,64 @@ export async function mountSettings(app: HTMLElement, path: string, get: typeof 
   if (repo) return repositoryPage(app, `${decodeURIComponent(repo[1])}/${decodeURIComponent(repo[2])}`, get, theme);
   if (path === "/settings/merge-policies") return repositories(app, get, theme);
   if (path === "/settings/evidence") return evidencePage(app, get, theme);
+  return home(app, get, theme);
+}
+
+// modeCounts is a report's classes by mode, the words the list and the home card show.
+export function modeCounts(r: Report): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const c of r.classes) out[c.mode] = (out[c.mode] ?? 0) + 1;
+  return out;
+}
+
+const countsText = (n: Record<string, number>) =>
+  ["live", "shadow", "off"].filter((m) => n[m]).map((m) => `${n[m]} ${m}`).join(" · ") || "no class";
+
+// readAll reads each repository's page, at most limit at a time; a failed read is its Error, in place.
+export async function readAll(repos: string[], get: typeof fetch, limit = 4): Promise<(RepositoryPage | Error)[]> {
+  const out: (RepositoryPage | Error)[] = new Array(repos.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < repos.length) {
+      const i = next++;
+      try { out[i] = await read<RepositoryPage>(`/api/policy/repositories/${repos[i]}`, get); }
+      catch (e) { out[i] = e instanceof Error ? e : new Error(String(e)); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, repos.length) }, worker));
+  return out;
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+function card(href: string, title: string, purpose: string, counts: string): HTMLAnchorElement {
+  const a = link(href, "");
+  a.className = "settings-card";
+  a.append(el("h2", title), el("p", purpose), el("p", counts, "settings-card-counts"));
+  return a;
+}
+
+async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Settings", "/settings", theme);
-  const ul = el("ul");
-  for (const [href, text] of [["/settings/merge-policies", "Merge policies: each repository's classes, their evidence and promotion"],
-    ["/settings/evidence", "Evidence: every class's promotion evidence"]]) {
-    const li = el("li");
-    li.append(link(href, text));
-    ul.append(li);
-  }
-  main.append(ul);
+  const box = el("div", undefined, "settings-cards");
+  main.append(box);
+  let repos: string[] = [];
+  let pages: (RepositoryPage | Error)[] = [];
+  let grants: number | undefined;
+  try { ({ repositories: repos } = await read<{ repositories: string[] }>("/api/policy/repositories", get)); pages = await readAll(repos, get); } catch { /* counts unknown */ }
+  try { grants = (await read<{ grants: unknown[] }>("/api/approval-memory", get)).grants.length; } catch { /* counts unknown */ }
+  const ok = pages.filter((p): p is RepositoryPage => !(p instanceof Error));
+  const modes: Record<string, number> = {};
+  for (const p of ok) for (const [m, n] of Object.entries(modeCounts(p.report))) modes[m] = (modes[m] ?? 0) + n;
+  const eligible = ok.flatMap((p) => p.report.classes).filter((c) => c.mode === "shadow" && c.evidence?.eligible).length;
+  const unknown = "Counts unavailable right now.";
+  box.append(
+    card("/settings/merge-policies", "Merge policies", "Which agent pull requests may merge on their own, per repository.",
+      repos.length ? `${plural(repos.length, "repository", "repositories")} · ${countsText(modes)}` : unknown),
+    card("/settings/evidence", "Evidence", "How close each shadow class is to being promoted to live.",
+      ok.length ? `${plural(eligible, "class", "classes")} eligible to promote` : unknown),
+    card("/settings/approval-memory", "Approval memory", "Approvals you saved so a later, similar pull request can merge without asking again.",
+      grants === undefined ? unknown : plural(grants, "saved grant")));
 }
 
 async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
@@ -218,13 +267,15 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       main.append(el("p", "No repository you can read is configured."));
       return;
     }
-    const ul = el("ul");
-    for (const r of repositories) {
-      const li = el("li");
-      li.append(link(`/settings/merge-policies/${r}`, r));
-      ul.append(li);
-    }
-    main.append(ul);
+    const pages = await readAll(repositories, get);
+    main.append(table(["Repository", "Classes served from", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
+      const p = pages[i];
+      if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
+      const r = p.report;
+      const from = r.mergePolicy ? `MergePolicy ${r.mergePolicy}` : r.classes.some((c) => c.source === "repository") ? "its own .github/agent-factory.yaml" : "the factory's central config";
+      const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
+      return [link(`/settings/merge-policies/${repo}`, repo), from, countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
+    }), "repo-table"));
   } catch (e) { failed(main, e); }
 }
 
@@ -233,8 +284,13 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
   try {
     const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
     const rows: (string | Node)[][] = [];
-    for (const r of repositories) {
-      const page = await read<RepositoryPage>(`/api/policy/repositories/${r}`, get);
+    const pages = await readAll(repositories, get);
+    for (const [i, r] of repositories.entries()) {
+      const page = pages[i];
+      if (page instanceof Error) {
+        rows.push([link(`/settings/merge-policies/${r}`, r), "-", "-", "Not readable", "-", explain(page.message)]);
+        continue;
+      }
       for (const c of page.report.classes) {
         const e = c.evidence;
         rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? evidenceLine(e) : PENDING, e ? ladderLine(e) : "-",

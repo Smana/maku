@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, mountSettings, PENDING, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
+import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, modeCounts, mountSettings, PENDING, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
 import { fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
 
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
@@ -145,11 +145,38 @@ describe("the repository page", () => {
 });
 
 describe("the index and evidence pages", () => {
-  it("lists the repositories the caller reads, and every class's evidence", async () => {
+  const two = () => fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref", "Smana/broken"] },
+    "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/approval-memory": { grants: [{}, {}] } });
+
+  it("opens settings on one card per section, each the link, with its counts", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings", two());
+    const cards = [...app.querySelectorAll("a.settings-card")];
+    expect(cards.map((a) => a.getAttribute("href"))).toEqual(["/settings/merge-policies", "/settings/evidence", "/settings/approval-memory"]);
+    expect(cards[0].textContent).toContain("2 repositories");
+    expect(cards[0].textContent).toContain("1 live · 1 shadow");
+    expect(cards[1].textContent).toContain("1 class eligible to promote");
+    expect(cards[2].textContent).toContain("2 saved grants");
+    expect(app.querySelector("main ul")).toBeNull(); // no bullet list
+  });
+
+  it("lists each repository with where its classes come from and its classes by mode", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", two());
+    const rows = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
+    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "its own .github/agent-factory.yaml", "1 live · 1 shadow", "docs-links 20/20"]);
+    expect(rows[1][0]).toBe("Smana/broken");
+    expect(rows[1][1]).toMatch(/^Not readable: /);
+    expect(app.querySelector('table.repo-table a[href="/settings/merge-policies/Smana/cloud-native-ref"]')).not.toBeNull();
+  });
+
+  it("counts a report's classes by mode", () => {
+    expect(modeCounts(page().report)).toEqual({ live: 1, shadow: 1 });
+  });
+
+  it("lists every class's evidence", async () => {
     const get = fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] }, "/api/policy/repositories/Smana/cloud-native-ref": page() });
     const app = document.createElement("div");
-    await mountSettings(app, "/settings/merge-policies", get);
-    expect(app.querySelector('a[href="/settings/merge-policies/Smana/cloud-native-ref"]')).not.toBeNull();
     await mountSettings(app, "/settings/evidence", get);
     expect(app.textContent).toContain("docs-links");
     expect(app.textContent).toContain("eligible");
