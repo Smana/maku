@@ -727,7 +727,7 @@ func plannerConfig() config.Config {
 			TTL: config.Duration{Duration: 90 * time.Second}},
 		Intake: config.IntakeConfig{Plan: config.PlanConfig{
 			Enabled: true, URL: "http://ai-gateway.envoy-gateway-system.svc:8080/v1",
-			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, Fallback: "composer",
+			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, MaxRounds: 4, Fallback: "composer",
 			ReasoningEffort: "low",
 			Repositories:    []string{"Smana/AI-Native-Ref"},
 			Classes: map[string]config.PlanClass{"docs-links": {
@@ -798,8 +798,8 @@ func TestIntakeIsWiredFromConfig(t *testing.T) {
 		in.Model.Deadline != config.DefaultPlanDeadline || in.Model.HC == nil || in.Model.ReasoningEffort != "low" {
 		t.Fatalf("model = %+v", in.Model)
 	}
-	if in.Daily != 7 || in.Fallback != "composer" || in.Now == nil {
-		t.Fatalf("cap %d, fallback %q, now set %v", in.Daily, in.Fallback, in.Now != nil)
+	if in.Daily != 7 || in.MaxRounds != 4 || in.Fallback != "composer" || in.Now == nil {
+		t.Fatalf("cap %d, rounds %d, fallback %q, now set %v", in.Daily, in.MaxRounds, in.Fallback, in.Now != nil)
 	}
 	// plan_check runs the redactor issue_draft does, so a server whose actor has none would refuse
 	// every plan it was shown.

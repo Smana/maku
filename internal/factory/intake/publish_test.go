@@ -119,6 +119,18 @@ func TestPublishFilesTheProposalOnce(t *testing.T) {
 	}
 }
 
+// Publishing is an external filing door even though the proposal came from an agent's output.
+func TestFinalDraftDoors(t *testing.T) {
+	text := strings.Replace(proposalOK, "The rule counts Job pods.", "[NEEDS CLARIFICATION: g1 which Job?]", 1)
+	p, f, _ := publishing(t, text, investigated("3buqdlot"), "Smana")
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Created()) != 0 || !strings.Contains(strings.Join(f.Comments(7), "\n"), "did not publish #7's proposal") {
+		t.Fatalf("publishing accepted an unresolved marker: %v %q", f.Created(), f.Comments(7))
+	}
+}
+
 // A replay on a task already published: a pointer to the issue, nothing created.
 func TestPublishReplayNamesTheIssue(t *testing.T) {
 	tk := investigated("3buqdlot")

@@ -129,6 +129,9 @@ const (
 	// DefaultDailyPlans is the per-requester daily cap (spec §budget): one call per plan attempt,
 	// never a retry loop.
 	DefaultDailyPlans = 50
+	// DefaultMaxRounds is the clarification-round cap. Reaching it accepts the remaining
+	// recommendations deterministically rather than making another model call.
+	DefaultMaxRounds = 10
 )
 
 // The degraded composer's two positions (CD18): it is off unless a deployment says `composer`, and
@@ -169,6 +172,9 @@ type PlanConfig struct {
 	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 	// DailyPlans is the cap per requester per UTC day; empty takes DefaultDailyPlans.
 	DailyPlans int `json:"dailyPlans,omitempty"`
+	// MaxRounds is the clarification-round cap; empty takes DefaultMaxRounds. A revision that
+	// reaches it is finished deterministically, with every remaining recommendation accepted.
+	MaxRounds int `json:"maxRounds,omitempty"`
 	// Fallback is "off" or "composer": only the second reaches the degraded deterministic composer,
 	// and it is unreachable otherwise (CD18).
 	Fallback string `json:"fallback,omitempty"`
@@ -189,9 +195,9 @@ type PlanClass struct {
 	Source     string   `json:"source"`
 }
 
-// IntakePlan is the planner's config with its defaults applied: `tier-frontier`, 20 s, 50 plans a day
-// and the degraded composer off. A caller reads this rather than re-spelling a default, so an absent
-// block and a block that leaves the four out serve the same values.
+// IntakePlan is the planner's config with its defaults applied: `tier-frontier`, 20 s, 50 plans a day,
+// 10 clarification rounds and the degraded composer off. A caller reads this rather than re-spelling
+// a default, so an absent block and a block that leaves them out serve the same values.
 func (c Config) IntakePlan() PlanConfig { return c.Human.Intake.Plan.withDefaults() }
 
 // withDefaults fills what a file may leave out. Only the absent value is defaulted: an explicit
@@ -205,6 +211,9 @@ func (p PlanConfig) withDefaults() PlanConfig {
 	}
 	if p.DailyPlans == 0 {
 		p.DailyPlans = DefaultDailyPlans
+	}
+	if p.MaxRounds == 0 {
+		p.MaxRounds = DefaultMaxRounds
 	}
 	if p.Fallback == "" {
 		p.Fallback = PlanFallbackOff
@@ -254,6 +263,9 @@ func (i IntakeConfig) validate() []error {
 	}
 	if p.DailyPlans < 1 {
 		errs = append(errs, fmt.Errorf("human.intake.plan.dailyPlans: %d must be at least 1 per requester", p.DailyPlans))
+	}
+	if p.MaxRounds < 1 {
+		errs = append(errs, fmt.Errorf("human.intake.plan.maxRounds: %d must be at least 1", p.MaxRounds))
 	}
 	if p.Fallback != PlanFallbackOff && p.Fallback != PlanFallbackComposer {
 		errs = append(errs, fmt.Errorf("human.intake.plan.fallback: %q is not %q or %q (CD18)", p.Fallback, PlanFallbackOff, PlanFallbackComposer))

@@ -427,10 +427,11 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 	return &humanapi.Intake{Classes: classes, Allow: allow,
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
 			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort},
-		Public:   intakePublicity(vis, accessTTL(cfg.Human)),
-		Daily:    plan.DailyPlans,
-		Fallback: plan.Fallback,
-		Now:      time.Now}, nil
+		Public:    intakePublicity(vis, accessTTL(cfg.Human)),
+		Daily:     plan.DailyPlans,
+		MaxRounds: plan.MaxRounds,
+		Fallback:  plan.Fallback,
+		Now:       time.Now}, nil
 }
 
 // roomRuns is the one watch method roomObserver reads; *runwatch.Watcher has it.

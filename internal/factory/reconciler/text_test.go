@@ -675,7 +675,7 @@ func TestScoperBriefListsProfiles(t *testing.T) {
 			tk.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: 3}
 			gold = "scoper_brief_split.golden"
 		}
-		// Captured from main's ScoperBrief before profiles existed.
+		// Captured from the merged ScoperBrief before profiles are offered.
 		want, err := os.ReadFile("testdata/" + gold)
 		if err != nil {
 			t.Fatal(err)

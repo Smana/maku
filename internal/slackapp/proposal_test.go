@@ -31,6 +31,11 @@ func planFixture(t *testing.T, name string) intake.Plan {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatalf("decode the plan fixture: %v", err)
 	}
+	// Plan.JSON writes an empty ranked view as [], including for this legacy fixture whose JSON
+	// predates gaps. Keep expected values in that same wire-normalized form; the hash ignores it.
+	if p.Gaps == nil {
+		p.Gaps = []intake.Gap{}
+	}
 	return p
 }
 
@@ -530,6 +535,79 @@ func TestProposalSectionsCarryTheQuestion(t *testing.T) {
 	}
 	if !shown {
 		t.Error("the plan's own question was not shown")
+	}
+}
+
+// An old proposal's hash and rendering survive a metadata round-trip. A ranked answer from a newer
+// broker still fills Slack's one-question protocol field from the first gap, without changing the
+// thread's initial-shape intake_plan call or showing the later gaps as extra questions.
+func TestLegacyPlanCompatibility(t *testing.T) {
+	legacy := planFixture(t, "slack-one-issue")
+	legacy.Question = &intake.Question{Text: "legacy question?", Recommended: intake.Answer{Answer: "legacy answer"}}
+	legacyHash := intake.Hash(legacy)
+	proposal, err := newProposal(legacy, legacyHash, "U07JY4EQNDN", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeText, beforeBlocks, err := proposalSections(proposal, nil, nil, "C03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := &Metadata{EventType: proposalEventType, EventPayload: mustJSON(t, proposal)}
+	rawMeta, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire Metadata
+	if err := json.Unmarshal(rawMeta, &wire); err != nil {
+		t.Fatal(err)
+	}
+	recovered, ok := wire.proposalPayload()
+	if !ok {
+		t.Fatal("legacy proposal did not survive its metadata")
+	}
+	afterText, afterBlocks, err := proposalSections(recovered, nil, nil, "C03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Hash != legacyHash || afterText != beforeText || string(afterBlocks) != string(beforeBlocks) {
+		t.Fatal("legacy proposal hash or rendering changed")
+	}
+
+	ranked := planFixture(t, "slack-one-issue")
+	ranked.Gaps = []intake.Gap{
+		{ID: "g1", Text: "first ranked?", Recommended: intake.Answer{Answer: "first answer", Why: "ranked first"}},
+		{ID: "g2", Text: "second ranked?", Recommended: intake.Answer{Answer: "second answer"}},
+	}
+	ranked.Question = nil
+	rawPlan, err := ranked.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newFakeBroker(t, "", `{"structuredContent":{"plan":`+string(rawPlan)+`,"hash":"`+intake.Hash(ranked)+`","question":null,"canStart":false}}`)
+	broker := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
+	result, err := broker.IntakePlan(context.Background(), IntakeRequest{Text: "revise", Candidates: []string{ranked.Repository}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Question == nil || result.Question.Text != "first ranked?" || result.Plan.Question == nil ||
+		result.Plan.Question.Text != "first ranked?" {
+		t.Fatalf("the first gap did not fill Slack's Question: %+v", result)
+	}
+	rankedProposal, err := newProposal(result.Plan, result.Hash, "U07JY4EQNDN", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, _, err := proposalSections(rankedProposal, result.Question, nil, "C03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "first ranked?") || strings.Contains(text, "second ranked?") {
+		t.Fatalf("ranked proposal does not show only its first gap: %s", text)
+	}
+	if got := f.calls[0].Params.Arguments; len(got) != 4 || got["text"] != "revise" ||
+		got["plan"] != nil || got["hash"] != nil || got["candidate"] != nil {
+		t.Fatalf("Slack's initial-shape intake_plan protocol changed: %+v", got)
 	}
 }
 

@@ -17,11 +17,13 @@ import (
 // its revision, the config's class table, and — when the broker is answering in a Slack channel —
 // that channel's ceiling (CD17).
 type ComposeIn struct {
-	Surface Surface
-	Model   string
-	Now     time.Time
-	Rev     int
-	Classes map[string]Class
+	Surface    Surface
+	Model      string
+	Now        time.Time
+	Rev        int
+	Round      int
+	RoundsLeft int
+	Classes    map[string]Class
 	// CeilingUSD and CeilingSource are the channel's ceiling, when the channel has one: `maxCostUSD`
 	// and the string that says so (`channel:C1.maxCostUSD`). Zero means no channel ceiling.
 	CeilingUSD    float64
@@ -66,6 +68,8 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 	p := Plan{
 		APIVersion:   APIVersion,
 		Rev:          in.Rev,
+		Round:        in.Round,
+		RoundsLeft:   in.RoundsLeft,
 		Planner:      Planner{Model: in.Model, Surface: string(in.Surface), At: in.Now},
 		Repository:   strings.ToLower(strings.TrimSpace(d.Repository)),
 		Alternatives: slices.Clone(d.Alternatives),
@@ -112,9 +116,7 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 	}
 	p.Budget = Budget{CeilingUSD: ceiling, Source: source}
 	p.RepositoryEvidence = evidenceWithoutLinks(d.Evidence)
-	if q := d.Question; q != nil {
-		p.Question = &Question{Text: q.Text, Recommended: q.Recommended}
-	}
+	p = WithGaps(p, d.Gaps)
 	p.Hash = Hash(p)
 
 	if len(dropped) > 0 {

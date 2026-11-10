@@ -77,7 +77,7 @@ flowchart LR
 | Broker → Kubernetes | The API server | Read and delete `AgentRun`s, never create; CRUD on `Room`s; no cluster-admin |
 
 One boundary crosses out to a model, and only one. A broker's planner reaches an LLM: `intake_plan`
-— off unless the broker's config turns it on — makes **one** `chat/completions` call per attempt,
+— off unless the broker's config turns it on — makes **at most one** `chat/completions` call per attempt,
 in-cluster and straight to the AI Gateway's data-plane Service (no vendor egress from the broker, and
 the gateway sees the client `planner`), on the pinned alias `tier-frontier`, with a 20 s deadline
 that stays under `/mcp`'s 25 s bound and a reply capped at 64 KiB. What it sends is public text
@@ -87,6 +87,19 @@ plan only through the strict decode, the roles and the money come from the confi
 the model, and the call is audited by the plan's hash, the model, the token counts and the outcome,
 never by the text. It files nothing and stores nothing: the plan is shown, and the consumer that
 owns the message re-validates it through `plan_check` before anything is filed.
+
+A clarification revision carries the verified base plan, its hash and an edited candidate. The broker
+permits only marker replacements and their Decision/Assumption records, recomputes the remaining
+ranked gaps and returns a new material hash. `plan_check` applies the same revision deterministically
+with no model call. Every initial or revision `intake_plan` spends one `dailyPlans` slot, including the
+cap-reaching revision; `plan_check` spends none. `maxRounds` independently ends one intake by turning
+the remaining recommendations into assumptions without another model call.
+
+Intermediate composition remains marker-tolerant. Final `plan_check`, `issue_draft`/`issue_file`,
+`run_create`, factory task creation, hardening issue output and proposal publishing all fail closed on
+an unresolved marker or malformed Decisions section. Strict decoding also makes mixed versions fail
+closed: an older broker refuses revision fields and `gaps`, while a newer broker preserves legacy
+hashes and maps only the first ranked gap to the old `Question` view for Slack and room rendering.
 
 ## One task's life
 

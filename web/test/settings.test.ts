@@ -520,4 +520,3 @@ describe("a repository served from a MergePolicy", () => {
     expect(app.querySelector(".yaml-bar button.copy")?.textContent).toBe("Copy");
   });
 });
-

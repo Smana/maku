@@ -11,10 +11,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/httpx"
 )
 
@@ -35,6 +37,8 @@ const (
 	maxTitleRunes = 256
 	maxBodyBytes  = 16 << 10
 )
+
+var gapIDRE = regexp.MustCompile(`^g[1-9][0-9]*$`)
 
 // The sentinels the caller maps to the closed refusal list: each spells its own reason, so a wrapped
 // error already reads as the line a person is shown, and `errors.Is` on it is the whole mapping —
@@ -103,16 +107,19 @@ type DraftRequest struct {
 	Context    string
 	Candidates []string
 	Classes    []string
+	// Candidate is the broker-verified revision to re-plan. It is serialized as its own JSON
+	// envelope, separately from Context's 4 KiB bound; settled text and Decisions are data to preserve.
+	Candidate *Plan
 }
 
 // Draft is the model's answer, as it arrives and before config has a say: the repository and the
-// evidence behind it, the alternatives, one to three issues, and at most one question.
+// evidence behind it, the alternatives, one to three issues, and its ranked clarification gaps.
 type Draft struct {
-	Repository   string         `json:"repository"`
-	Evidence     []Evidence     `json:"evidence"`
-	Alternatives []Alternative  `json:"alternatives"`
-	Issues       []DraftIssue   `json:"issues"`
-	Question     *DraftQuestion `json:"question"`
+	Repository   string        `json:"repository"`
+	Evidence     []Evidence    `json:"evidence"`
+	Alternatives []Alternative `json:"alternatives"`
+	Issues       []DraftIssue  `json:"issues"`
+	Gaps         []Gap         `json:"gaps"`
 }
 
 // DraftIssue is one issue as the reply composed it. Roles and BudgetUSD exist only so that a reply
@@ -125,13 +132,6 @@ type DraftIssue struct {
 	DependsOn []int    `json:"dependsOn"`
 	Roles     []string `json:"roles"`
 	BudgetUSD float64  `json:"budgetUSD"`
-}
-
-// DraftQuestion is the at most one thing the reply says must be decided before the work starts, with
-// its recommendation.
-type DraftQuestion struct {
-	Text        string `json:"text"`
-	Recommended Answer `json:"recommended"`
 }
 
 // Usage is what the call cost, from the reply's own `usage`: the broker attributes a spend it can
@@ -157,6 +157,7 @@ type GovernedRequest struct {
 	Context      string
 	Candidates   []string
 	Classes      []string
+	candidate    *Plan // plan/v1 revisions only; coordination's typed outputs have no candidate
 	SystemPrompt string
 }
 
@@ -166,12 +167,19 @@ type GovernedRequest struct {
 // nobody approved.
 func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, error) {
 	var d Draft
+	prompt := systemPrompt
+	if req.Candidate != nil {
+		prompt += revisionSystemPrompt
+	}
 	usage, err := m.Generate(ctx, GovernedRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, SystemPrompt: systemPrompt}, &d)
+		Classes: req.Classes, candidate: req.Candidate, SystemPrompt: prompt}, &d)
 	if err != nil {
 		return Draft{}, Usage{}, err
 	}
 	if detail := d.invalid(); detail != "" {
+		return Draft{}, Usage{}, errPlannerInvalid(detail)
+	}
+	if detail := d.invalidModelGapCoverage(); detail != "" {
 		return Draft{}, Usage{}, errPlannerInvalid(detail)
 	}
 	return d, usage, nil
@@ -182,7 +190,8 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 // attempt. The answer is decoded strictly into out, unknown fields and trailing content refused, so
 // each caller's own type is its contract; the bounds of its fields are the caller's to hold.
 func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usage, error) {
-	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates, Classes: req.Classes})
+	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
+		Classes: req.Classes, Candidate: req.candidate})
 	if err != nil {
 		return Usage{}, err
 	}
@@ -367,8 +376,72 @@ func (d Draft) invalid() string {
 			return fmt.Sprintf("evidence[%d].text: %d characters, the bound is %d", i, n, maxEvidenceRunes)
 		}
 	}
-	if q := d.Question; q != nil && (strings.TrimSpace(q.Text) == "" || strings.TrimSpace(q.Recommended.Answer) == "") {
-		return "question: it carries text and a recommended answer, or it is absent"
+	seenGaps := make(map[string]struct{}, len(d.Gaps))
+	for i, g := range d.Gaps {
+		if strings.TrimSpace(g.ID) == "" {
+			return fmt.Sprintf("gaps[%d].id: empty, each gap names its one clarification marker", i)
+		}
+		if !gapIDRE.MatchString(g.ID) {
+			return fmt.Sprintf("gaps[%d].id: it is a canonical g[1-9][0-9]* identifier", i)
+		}
+		if _, ok := seenGaps[g.ID]; ok {
+			return fmt.Sprintf("gaps[%d].id: already used by another gap", i)
+		}
+		seenGaps[g.ID] = struct{}{}
+		switch g.Section {
+		case "what-is-wrong", "what-it-should-be", "acceptance-check", "scope":
+		default:
+			return fmt.Sprintf("gaps[%d].section: it is what-is-wrong, what-it-should-be, acceptance-check, or scope", i)
+		}
+		if strings.TrimSpace(g.Text) == "" || strings.TrimSpace(g.Recommended.Answer) == "" {
+			return fmt.Sprintf("gaps[%d]: it carries text and a recommended answer", i)
+		}
+		markers := 0
+		for _, is := range d.Issues {
+			markers += clarificationMarkerCount(is.Body, g.ID)
+		}
+		if markers != 1 {
+			return fmt.Sprintf("gaps[%d].id: it names exactly one clarification marker already in an issue body", i)
+		}
 	}
 	return ""
+}
+
+// invalidModelGapCoverage closes the model reply's marker set: Compose may hold an intermediate
+// marker without gaps, but a model reply must account for every parsed marker exactly once.
+func (d Draft) invalidModelGapCoverage() string {
+	totalMarkers := 0
+	for i, is := range d.Issues {
+		markers, err := sanitize.ClarificationMarkers(is.Body)
+		if err != nil {
+			return fmt.Sprintf("issues[%d].body: it has a malformed clarification marker", i)
+		}
+		totalMarkers += len(markers)
+	}
+	if totalMarkers != len(d.Gaps) {
+		return fmt.Sprintf("gaps: every clarification marker needs one ranked gap, got %d markers and %d gaps", totalMarkers, len(d.Gaps))
+	}
+	return ""
+}
+
+// clarificationMarkerCount counts complete, non-empty [NEEDS CLARIFICATION: id text] markers. The
+// space after id keeps g1 from naming g10's marker.
+func clarificationMarkerCount(body, id string) int {
+	prefix := "[NEEDS CLARIFICATION: " + id + " "
+	count := 0
+	for {
+		i := strings.Index(body, prefix)
+		if i < 0 {
+			return count
+		}
+		body = body[i+len(prefix):]
+		end := strings.IndexByte(body, ']')
+		if end < 0 {
+			return count
+		}
+		if strings.TrimSpace(body[:end]) != "" {
+			count++
+		}
+		body = body[end+1:]
+	}
 }

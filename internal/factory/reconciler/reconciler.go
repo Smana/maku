@@ -69,7 +69,10 @@ type RoomLog interface {
 // TaskForge is the part of the forge the reconciler uses, as the factory App.
 type TaskForge interface {
 	RecentComments(ctx context.Context, number int) ([]forge.Comment, error)
+	AllComments(ctx context.Context, number int) ([]forge.Comment, error)
 	Comment(ctx context.Context, number int, body string) error
+	CommentWithID(ctx context.Context, number int, body string) (int64, error)
+	EditComment(ctx context.Context, id int64, body string) error
 	AddLabels(ctx context.Context, number int, labels ...string) error
 	PullRequestForBranch(ctx context.Context, branch string) (int, error)
 	PullRequest(ctx context.Context, number int) (forge.PR, error)
@@ -289,7 +292,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, rerr
 		}
 	}
-	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(cfg, &t) && !r.spendFinalDue(cfg, &t) && !closeDue {
+	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(cfg, &t) && !r.spendFinalDue(cfg, &t) && !r.statusCommentDue(cfg, &t) && !closeDue {
 		left := closeWait
 		// CD23's one timed requeue: the instant a terminal task's dollars are final, never a poll.
 		// Only an instant still ahead is scheduled — past it the pass below owes the fact, and
@@ -337,11 +340,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// written end exports the task's span: a write that conflicts posts and exports nothing, and its
 	// replay may take another path. The second write records what was posted and exported. Facts
 	// are advisory: a failed post is returned for a retry, and no phase waits on it.
-	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(cfg, &t) {
+	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(cfg, &t) || r.statusCommentDue(cfg, &t) {
 		queued := t.Status.DeepCopy()
 		err = errors.Join(err, r.drain(ctx, cfg, &t))
 		perr := r.postFacts(ctx, cfg, &t)
 		err = errors.Join(err, perr)
+		if r.statusCommentDue(cfg, &t) {
+			err = errors.Join(err, r.syncStatusComment(ctx, cfg, &t))
+		}
 		r.endTrace(ctx, &t)
 		// CD23: the pass that landed the final fact records how long its dollars took to settle,
 		// from the last run's end. postFacts persists the fact's hash before it calls the room, so a

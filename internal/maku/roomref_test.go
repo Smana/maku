@@ -184,7 +184,7 @@ func TestRoomBriefResolvesReferences(t *testing.T) {
 			t.Fatalf("room_brief does not say it takes a reference: %v", tool)
 		}
 	}
-	if got := strings.Join(names, ","); got != "room_summary,room_brief,issue_file,room_wait,room_checkout,coordination_checkout,coordination_open" {
+	if got := strings.Join(names, ","); got != "room_summary,room_brief,issue_file,need_answer,room_wait,room_checkout,coordination_checkout,coordination_open" {
 		t.Fatalf("the tools are the broker's plus maku's: %s", got)
 	}
 }

@@ -32,6 +32,9 @@ type Config struct {
 	Issuer    string `json:"issuer"`    // ZITADEL
 	ClientID  string `json:"clientID"`  // the maku native app
 	ProjectID string `json:"projectID"` // a token's aud must hold it, and ZITADEL adds it only when asked
+	// FactoryLogin is the factory App's GitHub login. need_answer trusts public bounce comments from
+	// this login alone; empty disables that fallback while leaving authorized room_brief questions available.
+	FactoryLogin string `json:"factoryLogin,omitempty"`
 	// HumanMode is the broker's human listener mode as discovery reported it: "local" means no IdP and
 	// no token, and the three values above are empty. Empty is OIDC, an older broker's answer.
 	HumanMode string `json:"humanMode,omitempty"`

@@ -27,6 +27,10 @@ const (
 	ReasonNoWrite = "no_write"
 	// ReasonInvalidDraft is `sanitize.CheckDraft`'s own message, verbatim.
 	ReasonInvalidDraft = "invalid_draft"
+	// ReasonUnresolvedMarker: a final plan still has a ranked gap or a live clarification marker.
+	ReasonUnresolvedMarker = "unresolved_marker"
+	// ReasonInvalidDecisions: a final issue's Decisions section does not hold the closed grammar.
+	ReasonInvalidDecisions = "invalid_decisions"
 	// ReasonPlannerInvalid: the reply, or the plan, is not the shape the contract asks for.
 	ReasonPlannerInvalid = "planner_invalid"
 	// ReasonPlannerUnavailable: the plan service is down or over budget.
@@ -60,6 +64,8 @@ var sentences = map[string]string{
 	ReasonRepositoryNotAllowed:      "no repository the allowlist serves and you may write in matches this request; name one of the repositories listed",
 	ReasonNoWrite:                   "you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it",
 	ReasonInvalidDraft:              "the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order",
+	ReasonUnresolvedMarker:          "the plan still has a clarification to answer; resolve every gap and remove every marker before filing",
+	ReasonInvalidDecisions:          "the Decisions section is not valid; use ascending, unique single-line D/A records with positive gap references",
 	ReasonPlannerInvalid:            "the plan is not the shape the contract asks for (%s); ask again",
 	ReasonPlannerUnavailable:        "the plan service is unavailable; try again later",
 	ReasonPlannerTimeout:            "the plan service did not answer inside its deadline; try again",
@@ -232,6 +238,33 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 		// At most one question is the shape's (Question is one value); a question with nothing to
 		// answer is the one way a plan can carry two halves of a question and neither of them.
 		return refuse(ReasonPlannerInvalid, "question: it carries text and a recommended answer, or it is absent")
+	}
+	return nil
+}
+
+// CheckFinal is Check plus the external filing rules. Intermediate plans may carry ranked gaps and
+// their body markers; a final plan may carry neither, and every issue's optional Decisions section
+// must hold the shared grammar. The two new refusals use the closed list's fixed sentences rather
+// than echoing draft text.
+func CheckFinal(p Plan, candidates []string, classes map[string]Class) *Refusal {
+	if r := Check(p, candidates, classes); r != nil {
+		return r
+	}
+	if len(p.Gaps) > 0 {
+		return refuse(ReasonUnresolvedMarker, "")
+	}
+	for _, is := range p.Issues {
+		if _, err := sanitize.CheckFinalDraft(is.Title, is.Body); err != nil {
+			switch {
+			case strings.HasPrefix(err.Error(), "unresolved_marker:"):
+				return refuse(ReasonUnresolvedMarker, "")
+			case strings.HasPrefix(err.Error(), "invalid_decisions:"):
+				return refuse(ReasonInvalidDecisions, "")
+			default:
+				// Check already ran the same template validation, so this is defensive only.
+				return &Refusal{Reason: ReasonInvalidDraft, Sentence: err.Error()}
+			}
+		}
 	}
 	return nil
 }

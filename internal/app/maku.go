@@ -40,10 +40,11 @@ const (
 )
 
 const makuUsage = `usage: maku <command>
-  configure --url URL [--issuer URL --client-id ID --project-id ID]
+  configure --url URL [--issuer URL --client-id ID --project-id ID --factory-login LOGIN]
                                   the broker's URL is enough: it serves the other three. A local install
                                   is http://localhost:<forwarded port>
-  configure --from URL [--yes]    replace the whole config with the values the broker serves (a rooms page
+  configure --from URL [--yes] [--factory-login LOGIN]
+                                  replace the whole config with the values the broker serves (a rooms page
                                   URL works): the fix for a stale client id after a rebuild
   login                           sign in with the device flow
   doctor [--client <name>]        check the VPN, the CA, your login and your GitHub link, with the fix of each;
@@ -317,6 +318,7 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 	fs.StringVar(&cfg.Issuer, "issuer", "", "the ZITADEL issuer URL (default: the broker's)")
 	fs.StringVar(&cfg.ClientID, "client-id", "", "the maku client id (default: the broker's)")
 	fs.StringVar(&cfg.ProjectID, "project-id", "", "the rooms project id (default: the broker's)")
+	fs.StringVar(&cfg.FactoryLogin, "factory-login", "", "the factory App's GitHub login, trusted for public scoper comments")
 	if _, err := flags(fs, args); err != nil {
 		return err
 	}
@@ -351,6 +353,7 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 			return fmt.Errorf("configure: %w", err)
 		}
 		cfg.Issuer, cfg.ClientID, cfg.ProjectID = cmp.Or(cfg.Issuer, found.Issuer), cmp.Or(cfg.ClientID, found.ClientID), cmp.Or(cfg.ProjectID, found.ProjectID)
+		cfg.FactoryLogin = cmp.Or(cfg.FactoryLogin, found.FactoryLogin)
 		cfg.HumanMode = found.HumanMode
 	}
 	if err := cfg.Validate(); err != nil {
@@ -496,8 +499,8 @@ func (r Maku) mcp(ctx context.Context, cfg maku.Config, tokPath string, args []s
 	if hints == nil {
 		hints = os.Stderr
 	}
-	relay := &maku.Relay{URL: cfg.URL, HC: r.HC, Token: maku.SharedToken(r.HC, cfg, tokPath), File: maku.GH, Label: maku.GHLabel,
-		Dir: r.Dir, Log: slog.New(slog.NewTextHandler(hints, nil))}
+	relay := &maku.Relay{URL: cfg.URL, HC: r.HC, Token: maku.SharedToken(r.HC, cfg, tokPath), File: maku.GH, Issues: maku.GHIssues{}, FactoryLogin: cfg.FactoryLogin,
+		Label: maku.GHLabel, Dir: r.Dir, Log: slog.New(slog.NewTextHandler(hints, nil))}
 	return relay.Serve(ctx, in, r.Out)
 }
 

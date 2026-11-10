@@ -90,6 +90,39 @@ func TestPlanTextForATerminal(t *testing.T) {
 	}
 }
 
+// Legacy plans keep their own Question and hash; ranked plans expose only the first gap through
+// that same compatibility view rather than making older renderers understand a second question list.
+func TestLegacyPlanCompatibility(t *testing.T) {
+	legacy := hostilePlan()
+	legacyHash := intake.Hash(legacy)
+	var before bytes.Buffer
+	if err := Plan(&before, legacy, "", Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	if intake.Hash(legacy) != legacyHash || !strings.Contains(before.String(), "which page") {
+		t.Fatalf("legacy rendering changed: %s", before.String())
+	}
+
+	ranked := legacy
+	ranked.Question = nil
+	ranked.Gaps = []intake.Gap{
+		{ID: "g1", Text: "first ranked?", Recommended: intake.Answer{Answer: "first answer"}},
+		{ID: "g2", Text: "second ranked?", Recommended: intake.Answer{Answer: "second answer"}},
+	}
+	var after bytes.Buffer
+	if err := Plan(&after, ranked, "", Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	out := after.String()
+	if !strings.Contains(out, "first ranked?") || !strings.Contains(out, "first answer") ||
+		strings.Contains(out, "second ranked?") || strings.Contains(out, "second answer") {
+		t.Fatalf("ranked compatibility view is not only the first gap:\n%s", out)
+	}
+	if intake.Hash(ranked) != legacyHash {
+		t.Fatal("display gaps changed the legacy plan hash")
+	}
+}
+
 // A body holding a fence of its own is fenced by a longer one: the block never closes early.
 func TestPlanFencesOutrunTheBody(t *testing.T) {
 	p := hostilePlan()

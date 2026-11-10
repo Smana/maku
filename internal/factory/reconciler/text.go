@@ -276,7 +276,9 @@ const scoperHow = "Turn the task into a bounded task: the change, why, and that 
 	"changes what gets built and no reasonable default exists; then ask exactly one question, answerable in a sentence, " +
 	"and still write the whole scope, the assumption a maintainer may proceed on first. A task naming a link to fix but " +
 	"not its target, where the repository shows one replacement, is an assumption. A task asking to move a panel to " +
-	"\"the other dashboard\", where two dashboards qualify, is a question.\n"
+	"\"the other dashboard\", where two dashboards qualify, is a question.\n" +
+	"Every `D<n>:` or `A<n>:` Decision or Assumption line, with or without a `[g<n>]` gap reference, is settled by the " +
+	"author and MUST NOT be reopened. Ask questions only about requirements that no settled Decision or Assumption covers.\n"
 
 // scoperHandoff is SC6's one binding call. Offered a split, it names split as an argument of that same
 // call: drill ziawgisq's scoper wrote its split in room_post and the summary only, and the task ran whole.

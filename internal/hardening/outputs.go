@@ -140,7 +140,7 @@ func DecodeOutput(t OutputType, payload json.RawMessage, allow []string) (any, R
 		}
 		return *p, refuseUnless(ok)
 	case *IssuePayload:
-		d, err := sanitize.CheckDraft(p.Title, p.Body)
+		d, err := sanitize.CheckFinalDraft(p.Title, p.Body)
 		if err != nil {
 			return nil, RefuseSchema
 		}

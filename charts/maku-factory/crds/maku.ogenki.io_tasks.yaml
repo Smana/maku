@@ -2419,6 +2419,23 @@ spec:
                 - seq
                 - state
                 type: object
+              statusComment:
+                description: StatusComment is the issue's one live status comment
+                  and its last successful remote body.
+                properties:
+                  body:
+                    maxLength: 4096
+                    type: string
+                  id:
+                    format: int64
+                    type: integer
+                  inactive:
+                    description: |-
+                      Inactive means this Task no longer owes status updates after a permanent refusal or an
+                      ownership stand-down. It does not mean the last remote write succeeded; ID and Body keep
+                      their last successful values.
+                    type: boolean
+                type: object
               trace:
                 description: 'The task''s root span (R46): minted at acceptance, exported
                   once when the task ends.'

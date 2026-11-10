@@ -94,9 +94,9 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 		}
 		return n
 	}
-	if n := len(names); n < 5 || strings.Join(names[n-5:], ",") != "issue_file,room_wait,room_checkout,coordination_checkout,coordination_open" ||
+	if n := len(names); n < 6 || strings.Join(names[n-6:], ",") != "issue_file,need_answer,room_wait,room_checkout,coordination_checkout,coordination_open" ||
 		count("rooms_list") != 1 || count("room_summary") != 1 || count("room_changes") != 1 {
-		t.Fatalf("the broker's tools, then issue_file, room_wait, room_checkout and coordination_checkout: %v", names)
+		t.Fatalf("the broker's tools, then issue_file, need_answer, room_wait, room_checkout and coordination_checkout: %v", names)
 	}
 	if res := ask(3, "tools/call", map[string]any{"name": "room_queue", "arguments": map[string]any{"room": roomID, "text": "use v2"}}); strings.Contains(fmt.Sprint(res), "isError:true") {
 		t.Fatalf("queue: %v", res)

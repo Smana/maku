@@ -356,7 +356,8 @@ func TestSetupInstallsTheFactoryCommand(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, w := range []string{"description:", "$ARGUMENTS", "handoff", "status", "inbox", "issue_draft", "issue_file", "room_summary", "rooms_list", "never apply a label"} {
+				for _, w := range []string{"description:", "$ARGUMENTS", "handoff", "status", "inbox", "issue_draft", "issue_file", "room_summary", "rooms_list", "never apply a label",
+					"first gap", "accept the rest", "revision envelope", "base `plan`", "`hash`", "`candidate`", "`plan_check`"} {
 					if !strings.Contains(string(b), w) {
 						t.Errorf("the command lacks %q:\n%s", w, b)
 					}

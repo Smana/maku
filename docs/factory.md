@@ -406,6 +406,18 @@ it, on the same branch and pull request. The step renews the task's usual limits
 rounds and the CI fix runs count from it (`status.fixRunsBeforeStep`), so a stepped task gets
 `merge.fixRuns` repairs of its own. The escalated task's end comment names the profile already tried.
 
+An issue task also has one live **Factory status** comment, created by the reconciler with the first
+event narration, never by the intake poller; a refused intake label creates no Task and no status
+comment. Later material transitions edit that same comment, while an unchanged reconcile makes no
+GitHub status calls. It shows the phase and its last transition time, room and waiting guidance,
+spec hash, Decision and Assumption counts, and pull request. Live checks, token usage and spend are
+deliberately omitted. Its ID and last successful body are persisted in Task status; recovery reads
+all issue comments, a newer generation adopts it, and an older generation cannot edit it. Transient
+creation or edit failures retry without rolling back the task transition or its event comments. A
+permanent GitHub refusal or an ownership stand-down marks the status inactive instead: that Task
+makes no further status calls, without inventing a successful ID or body, and terminal room close
+can proceed.
+
 A maintainer's **Request changes** is answered where it was made, on the pull request:
 
 | Event (key) | When | Says |

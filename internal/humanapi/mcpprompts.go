@@ -46,28 +46,35 @@ func refText(s string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// factoryIntakeText is the canonical intake loop (D6). The broker's planner remains the only
+// planner: the harness asks and edits, while intake_plan and plan_check validate every revision.
+// The guarded planner-off route is the pre-existing handoff exception, not another planning flow.
+func factoryIntakeText(what string) string {
+	return "Call `intake_plan` with the developer's own words, " + orElse(what, "the side task we just discussed") +
+		", and the context you have: the repository you are in and the paths you read. Show its text as it is. " +
+		"While gaps remain, ask only the first gap with its recommendation and why, and offer \"accept the rest\" at every question. " +
+		"For an answer, resolve only its clarification markers and append their matching D/A records (Decision/Assumption) in a candidate. " +
+		"Call `intake_plan` with the original request and the revision envelope `plan` (the base plan), `hash` (the base plan's hash), " +
+		"and `candidate`; show each revised plan as it is and repeat with its first gap. " + acceptRestInstructions +
+		" When no gaps remain, finish with `plan_check`, show the final draft and every assumption, then call `issue_file` with the returned " +
+		"plan and its new hash. It files the plan's first issue, so with a longer plan say the others are not filed. " +
+		"Only if `intake_plan` is not listed, the planner is off: write the issue in the template's three sections " +
+		"(`## What is wrong`, `## What it should be`, `## Acceptance check`), have `issue_draft` check it, then call " +
+		"`issue_file`, and say the broker planned nothing rather than passing a plan you wrote as the planner's. " +
+		"Never write the plan yourself and never apply a label."
+}
+
 // mcpPrompts are the prompts a human's maku is offered; a sponsored principal has none.
-//
-// The handoff prompt is CD1 and CD6 in one message: the session's model passes the developer's
-// words and the context it has to `intake_plan`, the broker's one governed planner, and files what
-// comes back through `issue_file` — it is not a second planner, and a plan it composed itself would
-// be a plan no guard and no hash ever held. One exception, ratified: `human.intake.plan.enabled` is
-// false by default, so where the tool is absent the prompt falls back to the pre-planner route, and
-// says the broker planned nothing rather than letting a hand-written issue pass as a plan.
 var mcpPrompts = []mcpPrompt{
 	{
-		name: "handoff", description: "Hand a side task to the agent factory as one issue.",
+		name: "factory_intake", description: "Plan a side task through clarification, then hand it to the agent factory.",
+		args: []promptArg{{"request", "the side task; default: the one just discussed"}},
+		text: func(a map[string]string) string { return factoryIntakeText(a["request"]) },
+	},
+	{
+		name: "handoff", description: "Hand a side task to the agent factory as one issue (alias for factory_intake).",
 		args: []promptArg{{"what", "the side task; default: the one just discussed"}},
-		text: func(a map[string]string) string {
-			return "Call `intake_plan` with the developer's own words, " + orElse(a["what"], "the side task we just discussed") +
-				", and the context you have: the repository you are in and the paths you read. " +
-				"Show its text as it is. Then call `issue_file` with the plan and its hash, once the developer answers its form; " +
-				"it files the plan's first issue, so with a longer plan say the others are not filed. " +
-				"Only if `intake_plan` is not listed, the planner is off: write the issue in the template's three sections " +
-				"(`## What is wrong`, `## What it should be`, `## Acceptance check`), have `issue_draft` check it, then call " +
-				"`issue_file`, and say the broker planned nothing rather than passing a plan you wrote as the planner's. " +
-				"Never write the plan yourself and never apply a label."
-		},
+		text: func(a map[string]string) string { return factoryIntakeText(a["what"]) },
 	},
 	{
 		name: "plan", description: "Plan a side task for the agent factory, without filing it.",
