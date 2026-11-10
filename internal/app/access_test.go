@@ -112,6 +112,13 @@ func writeReader(t *testing.T, path, pat, idp string) {
 	}
 }
 
+func TestFactoryAppUsesGitHubAPIURL(t *testing.T) {
+	t.Setenv("ROOMS_GITHUB_API_URL", "https://e2e-stub.e2e.svc.cluster.local/")
+	if got := factoryApp(t.TempDir()).API; got != "https://e2e-stub.e2e.svc.cluster.local/" {
+		t.Fatalf("factory App API root = %q", got)
+	}
+}
+
 // D7's wiring: the login from the user's GitHub link, read with the reader secret at every
 // cache miss, then the App's permission, both under the config's TTL.
 func TestRoomAccess(t *testing.T) {

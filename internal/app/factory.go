@@ -73,10 +73,10 @@ import (
 
 // The factory's outbound bounds and GitHub's API root.
 const (
-	githubAPI     = "https://api.github.com/"
-	githubTimeout = 15 * time.Second
-	brokerTimeout = 15 * time.Second
-	vmTimeout     = 10 * time.Second
+	githubAPIDefault = "https://api.github.com/"
+	githubTimeout    = 15 * time.Second
+	brokerTimeout    = 15 * time.Second
+	vmTimeout        = 10 * time.Second
 	// C7's own deadline is 2 s.
 	classifierTimeout = 3 * time.Second
 	// pingEvery keeps the installation token warm and forge.Healthy true on every replica.
@@ -88,6 +88,14 @@ const (
 	fenceEvery = 5 * time.Minute
 	fenceStale = 15 * time.Minute
 )
+
+// githubAPIURL returns the in-cluster test root when set, and GitHub's public API otherwise.
+func githubAPIURL() string {
+	if root := os.Getenv("ROOMS_GITHUB_API_URL"); root != "" {
+		return root
+	}
+	return githubAPIDefault
+}
 
 // RunFactory runs agent-factory (SP3): the Task reconciler, the issue poller, the run meter
 // and the stop's sweep on the leader; the run-request API on :8082 (TLS when api.tls is set), :9090 metrics and probes
@@ -209,7 +217,7 @@ func demoGitToken(cfg *config.Config, served func() []string, c client.Client, l
 			if err != nil {
 				return forge.Token{}, err
 			}
-			return forge.Mint(ctx, hc, githubAPI, forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
+			return forge.Mint(ctx, hc, githubAPIURL(), forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
 				Owner: owner, Repositories: names, Permissions: demo.Permissions()})
 		}}, nil
 }
@@ -863,7 +871,7 @@ func connectMerger(ctx context.Context, log *slog.Logger, cfg *config.Config, re
 		return forge.Absent{}, nil
 	}
 	return forge.Connect(ctx, forge.Options{Repository: repository, AppIDFile: cfg.GitHub.MergerAppIDFile,
-		PrivateKeyFile: cfg.GitHub.MergerKeyFile, APIURL: githubAPI, UserAgent: "agent-factory-merger/" + version.Version,
+		PrivateKeyFile: cfg.GitHub.MergerKeyFile, APIURL: githubAPIURL(), UserAgent: "agent-factory-merger/" + version.Version,
 		HTTP: httpx.New(githubTimeout, nil), Now: time.Now, Permissions: forge.MergerPermissions(cfg.AnyCheckReruns(), cfg.AnyLive() || cfg.AnyMonitored(), cfg.AnyGateStatus())})
 }
 
