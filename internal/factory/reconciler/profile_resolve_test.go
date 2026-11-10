@@ -136,6 +136,41 @@ func TestResolutionTable(t *testing.T) {
 	}
 }
 
+type fileAtErrorMerger struct {
+	forge.Merger
+	err error
+}
+
+func (m *fileAtErrorMerger) FileAt(ctx context.Context, path, ref string) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.Merger.FileAt(ctx, path, ref)
+}
+
+func TestResolutionRetriesChecksReadErrors(t *testing.T) {
+	g, tk := triagedRig(t, resolveCfg("apply", 0), "", testsDecl)
+	merger := &fileAtErrorMerger{Merger: g.f, err: errors.New("GitHub is temporarily unavailable")}
+	g.r.Merger = merger
+	sc := readyScope()
+	sc.Profile = "review-tested"
+
+	if err := g.r.resolveProfile(t.Context(), tk, &sc); err == nil {
+		t.Fatal("the checks read should fail")
+	}
+	if p := tk.Status.Profile; p.Resolved || countProfile(g.metrics.recorded) != 0 {
+		t.Fatalf("the failed read resolved the profile: %+v, metrics %v", p, g.metrics.recorded)
+	}
+
+	merger.err = nil
+	if err := g.r.resolveProfile(t.Context(), tk, &sc); err != nil {
+		t.Fatal(err)
+	}
+	if p := tk.Status.Profile; !p.Resolved || p.Name != "review-tested" || p.Source != "scoper" || !p.TestFirst {
+		t.Fatalf("profile after retry %+v", p)
+	}
+}
+
 // The step that resolves fails its status write: the replay writes the spec once, queues one line
 // and counts once.
 func TestResolutionReplaysOnce(t *testing.T) {

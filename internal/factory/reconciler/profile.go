@@ -140,8 +140,12 @@ func (r *Reconciler) variantFor(ctx context.Context, t *v1alpha1.Task, name stri
 		if t.Spec.DataClass != "public" {
 			return "", "internal", nil
 		}
-		if paths, err := r.testPaths(ctx, t); err != nil || len(paths) == 0 {
-			return "", "no_tests_paths", nil // an unreadable declaration declares no paths
+		paths, err := r.testPaths(ctx, t)
+		if err != nil {
+			return "", "", err
+		}
+		if len(paths) == 0 {
+			return "", "no_tests_paths", nil
 		}
 	}
 	return name, "", nil
