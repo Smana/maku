@@ -972,6 +972,9 @@ without a restart. How is in [architecture](architecture.md#how-the-factory-read
 - **A refused change** keeps the last accepted version while the factory runs. After a restart an
   invalid object is not served, and a factory with nothing to serve waits, unready, until its
   resources are applied.
+- **Deleting the only `Repository`** leaves nothing servable: the factory logs `config not servable,
+  keeping the current one` and keeps serving the last config until it restarts. A restart then
+  waits, not Ready, until a `Repository` is applied again.
 - **A repository defined in both** the file and a resource is refused, never merged.
 - **Tasks record** `status.configGenerations` for the `Factory`, `Repository` and `MergePolicy` they
   started under. It is a record, not a pin.
@@ -984,6 +987,10 @@ what the factory would refuse, one line each.
 maku config migrate --from config.yaml --residual residual.yaml > manifests.yaml
 maku config validate --config residual.yaml manifests.yaml   # ok: 3 accepted
 ```
+
+The residual is the file to deploy. A catalogue key left in the file next to a `Factory` is
+ignored, with a warning at every start. When the file comes from a Helm values file, remove the
+migrated keys from the values rather than overriding them with `key: null`.
 
 ### Status
 
