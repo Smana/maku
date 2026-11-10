@@ -294,6 +294,23 @@ describe("the policy editor", () => {
     expect(f.querySelector("a.field-docs")?.getAttribute("href")).toMatch(/merge-policies\.md#leaves$/);
     expect(app.querySelector(".editor-form legend")?.textContent).toBe("Editing docs-links");
   });
+  it("keeps the help and the guide link out of the label, so clicking them never toggles a checkbox", async () => {
+    const app = document.createElement("div");
+    document.body.append(app);
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));
+    const f = field(app, "modifyOnly");
+    expect(f.tagName).toBe("DIV");
+    const box = f.querySelector("input")!;
+    const label = f.querySelector("label")!;
+    expect(label.htmlFor).toBe(box.id);
+    expect(label.contains(f.querySelector(".field-help"))).toBe(false);
+    const before = box.checked;
+    (f.querySelector(".field-help") as HTMLElement).click();
+    expect(box.checked).toBe(before);
+    label.click();
+    expect(box.checked).toBe(!before);
+    app.remove();
+  });
   it("groups the fields by question under h3s, and folds a group with nothing set", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page() }));

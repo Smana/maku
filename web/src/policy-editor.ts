@@ -164,13 +164,17 @@ export function classForm(cls: ClassPolicy, profiles: string[], change: (c: Clas
   const emit = () => { tell(); change(structuredClone(c)); };
   form.append(story);
 
-  // field wraps one control in its label, key, help and guide link; data-key is the selector tests
-  // use. The control is named by the label alone and described by the help line.
+  // field wraps one control, its label, key, help and guide link in a div; data-key is the selector
+  // tests use. Only the label (name and key) is a <label for>: the help and the guide link sit
+  // beside it, so clicking them never toggles a checkbox. The control is named by the label's
+  // name alone and described by the help line.
   const field = (key: string, label: string, help: string, anchor: string, input: HTMLElement, error?: HTMLElement) => {
     const id = `field-${++fieldIds}`;
-    const l = el("label", undefined, "editor-field");
+    const l = el("div", undefined, "editor-field");
     l.dataset.key = key;
-    const top = el("span", undefined, "field-top");
+    input.id = `${id}-control`;
+    const top = el("label", undefined, "field-top");
+    top.htmlFor = input.id;
     const name = el("span", label, "field-label");
     name.id = `${id}-label`;
     top.append(name, el("code", key, "field-key"));
