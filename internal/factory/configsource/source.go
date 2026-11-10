@@ -91,7 +91,8 @@ type Source struct {
 	outcomes   []Outcome
 	synced     Synced
 	warnings   []string // the last set logged
-	crdsAbsent bool
+	crdsAbsent bool     // the last Sync found the CRDs absent
+	crdsLogged bool     // the absence was logged once
 
 	kickOnce sync.Once
 	kick     chan struct{}
@@ -119,6 +120,13 @@ func (s *Source) Outcomes() ([]Outcome, Synced) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.outcomes), s.synced
+}
+
+// CRDsAbsent reports whether the last Sync found the factory CRDs not installed.
+func (s *Source) CRDsAbsent() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.crdsAbsent
 }
 
 func (s *Source) now() time.Time {
@@ -210,6 +218,7 @@ func (s *Source) sync(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.crdsAbsent = false
 	objs, err := s.list(ctx)
 	if err != nil {
 		s.synced = Synced{At: s.now(), Err: err}
@@ -446,8 +455,9 @@ func (s *Source) list(ctx context.Context) ([]resources.Object, error) {
 			}
 		}
 	}
-	if absent && !s.crdsAbsent {
-		s.crdsAbsent = true
+	s.crdsAbsent = absent
+	if absent && !s.crdsLogged {
+		s.crdsLogged = true
 		s.log().Warn("the factory CRDs are not installed: running from the config file alone")
 	}
 	return objs, nil

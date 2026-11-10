@@ -270,6 +270,9 @@ the same configuration. Only leader-only work stays leader-only.
   deadlocks on a fresh cluster, where the CRDs arrive with the chart. `SIGTERM` during the wait
   exits cleanly. After a restart, an object that is invalid is not served, because no earlier
   version remains.
+- Deleting the only `Repository` leaves nothing servable. The factory logs `config not servable,
+  keeping the current one` and keeps serving the last config until it restarts; a restart then
+  waits, not Ready, until a `Repository` is applied again.
 - A file no resource can fix fails the start at once, before any cluster call: empty, not YAML,
   an unknown key, or a duplicated `coordination` or `hardening` block.
 - Every other error still fails the start at once. A `Forbidden` answer to the list fails it with a hint about the Role that must grant

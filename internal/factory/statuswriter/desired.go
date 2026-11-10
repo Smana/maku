@@ -225,6 +225,10 @@ func sortedByName(ps []v1alpha1.MergePolicy) []v1alpha1.MergePolicy {
 	return out
 }
 
+// mergePolicy computes a MergePolicy's status. A policy refused DuplicatePolicy is not the one the
+// factory serves for its repository: it reports its own spec's classes, each mode computed from
+// that spec, and no authority and no last decision, which are the served policy's. Its file
+// conditions are still those of the repository's file.
 func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatus {
 	o := d.outcome(resources.KindMergePolicy, p.Name)
 	g := observed(o, p.Generation)
@@ -239,15 +243,20 @@ func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatu
 		d.fileConditions(&st, g, "", false)
 		return st
 	}
-	st.Authority = config.ClassAuthorityCentral
-	if d.in.Config.RepositoryAuthoritative(&rc) {
-		st.Authority = config.ClassAuthorityRepository
-	}
+	classes := rc.Classes
 	var last map[string]decision.Last
-	if d.in.Decisions != nil {
-		last = d.in.Decisions(repository)
+	if o.Reason == v1alpha1.ReasonDuplicatePolicy && !o.Accepted {
+		classes = p.Spec.Classes
+	} else {
+		st.Authority = config.ClassAuthorityCentral
+		if d.in.Config.RepositoryAuthoritative(&rc) {
+			st.Authority = config.ClassAuthorityRepository
+		}
+		if d.in.Decisions != nil {
+			last = d.in.Decisions(repository)
+		}
 	}
-	for name, c := range rc.Classes {
+	for name, c := range classes {
 		cs := v1alpha1.ClassStatus{Name: name, Mode: "unarmed"}
 		switch {
 		case c.Live:

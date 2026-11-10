@@ -356,3 +356,27 @@ func TestRepositoryNamesNoDuplicatePolicy(t *testing.T) {
 		t.Errorf("mergePolicy %q, want none", m)
 	}
 }
+
+// A MergePolicy refused DuplicatePolicy reports its own spec's classes, never the served one's: no
+// authority, no last decision.
+func TestDuplicatePolicyReportsItsOwnClasses(t *testing.T) {
+	rc := config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}, "deps": {Shadow: true}}}
+	dup := configsource.Outcome{Kind: resources.KindMergePolicy, Name: "b", Repository: repo, Reason: v1alpha1.ReasonDuplicatePolicy, Message: "several"}
+	p := policyObj("b", "r", 1)
+	p.Spec.Classes = map[string]config.Class{"mine": {Shadow: true}, "other": {}}
+	in := Inputs{
+		Config:   cfg(rc),
+		Outcomes: []configsource.Outcome{dup},
+		Decisions: func(string) map[string]decision.Last {
+			return map[string]decision.Last{"mine": {Verdict: "merge", Reason: "ok", At: now.Time}}
+		},
+	}
+	got := Desired(in, nil, nil, []v1alpha1.MergePolicy{p}, now).MergePolicies["b"]
+	if got.Authority != "" || got.LiveCount != 0 || got.ClassCount != 2 {
+		t.Fatalf("authority %q live %d count %d, want none, 0, 2", got.Authority, got.LiveCount, got.ClassCount)
+	}
+	if len(got.Classes) != 2 || got.Classes[0].Name != "mine" || got.Classes[0].Mode != "shadow" || got.Classes[0].LastDecision != "" ||
+		got.Classes[1].Name != "other" || got.Classes[1].Mode != "unarmed" {
+		t.Fatalf("classes %+v, want the policy's own mine/shadow and other/unarmed, no decision", got.Classes)
+	}
+}

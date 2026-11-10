@@ -533,6 +533,8 @@ spec:
                 format: int64
                 type: integer
               repositories:
+                description: 'Always serialized, zero included: the printer columns
+                  read them.'
                 minimum: 0
                 type: integer
               stopped:

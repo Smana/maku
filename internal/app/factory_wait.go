@@ -20,6 +20,9 @@ const (
 	servableFirst    = 5 * time.Second
 	servableMax      = 60 * time.Second
 	servableLogEvery = time.Minute
+
+	applyHint = "apply the factory's Factory, Repository and MergePolicy resources"
+	fileHint  = "the factory CRDs are not installed and the config file alone holds nothing to serve: fix the file"
 )
 
 // errStoppedWaiting is the wait ended by the process's context: a clean exit, not a failed start.
@@ -59,27 +62,34 @@ func (g *startupGate) handler(inner http.Handler) http.Handler {
 // waitServable runs sync until it serves. While it fails with configsource.ErrNotServable (the
 // file holds only plumbing and the resources are not applied yet) the factory waits instead of
 // failing the start (D14): /readyz says why, the delay doubles from first to limit, and a warning
-// with the error and the refusals goes out once per servableLogEvery. Any other error returns at
-// once; ctx ending returns errStoppedWaiting. refused may be nil.
+// with the error and the refusals goes out once per logEvery; with no CRDs installed it points at
+// the file instead of the resources. Any other error returns at once; ctx ending, even while a
+// Sync is in flight, returns errStoppedWaiting. state may be nil.
 func waitServable(ctx context.Context, log *slog.Logger, gate *startupGate, sync func(context.Context) error,
-	refused func() []string, first, limit time.Duration,
+	state func() waitState, first, limit, logEvery time.Duration,
 ) error {
 	delay := first
 	var logged time.Time
 	for {
 		err := sync(ctx)
+		if err != nil && ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return fmt.Errorf("%w: %w", errStoppedWaiting, context.Cause(ctx))
+		}
 		if !errors.Is(err, configsource.ErrNotServable) {
 			gate.waiting.Store(nil)
 			return err
 		}
 		gate.wait(err.Error())
-		if now := time.Now(); logged.IsZero() || now.Sub(logged) >= servableLogEvery {
-			var r []string
-			if refused != nil {
-				r = refused()
+		if now := time.Now(); logged.IsZero() || now.Sub(logged) >= logEvery {
+			var st waitState
+			if state != nil {
+				st = state()
 			}
-			log.Warn("waiting for a servable config: apply the factory's Factory, Repository and MergePolicy resources",
-				"error", err, "refused", r, "retry", delay)
+			hint := applyHint
+			if st.crdsAbsent {
+				hint = fileHint
+			}
+			log.Warn("waiting for a servable config: "+hint, "error", err, "refused", st.refused, "retry", delay)
 			logged = now
 		}
 		t := time.NewTimer(delay)
@@ -93,16 +103,22 @@ func waitServable(ctx context.Context, log *slog.Logger, gate *startupGate, sync
 	}
 }
 
-// refusals lists the objects the last Sync did not serve, as Kind name: Reason message.
-func refusals(src *configsource.Source) func() []string {
-	return func() []string {
+// waitState is what the last Sync left: the objects it refused, and whether it saw no CRDs.
+type waitState struct {
+	refused    []string
+	crdsAbsent bool
+}
+
+// waitStateOf reads the Source's refusals, as Kind name: Reason message, and whether its CRDs are absent.
+func waitStateOf(src *configsource.Source) func() waitState {
+	return func() waitState {
 		outs, _ := src.Outcomes()
-		var r []string
+		st := waitState{crdsAbsent: src.CRDsAbsent()}
 		for _, o := range outs {
 			if !o.Accepted {
-				r = append(r, fmt.Sprintf("%s %s: %s %s", o.Kind, o.Name, o.Reason, o.Message))
+				st.refused = append(st.refused, fmt.Sprintf("%s %s: %s %s", o.Kind, o.Name, o.Reason, o.Message))
 			}
 		}
-		return r
+		return st
 	}
 }
