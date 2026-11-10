@@ -532,16 +532,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 /* A tool row: one line, the detail behind the toggle */
 .tool {
   background: var(--card); color: var(--card-foreground);
-  border-radius: var(--radius-row); margin: 6px 0; max-width: var(--log-w);
-  box-shadow: var(--shadow-border);
+  border: 1px solid var(--border); border-radius: var(--radius-md); margin: 6px 0; max-width: var(--log-w);
 }
-.tool summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; list-style: none; flex-wrap: wrap; border-radius: var(--radius-row); }
+.tool summary { display: flex; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; list-style: none; flex-wrap: wrap; border-radius: calc(var(--radius-md) - 1px); }
 .tool summary::before { content: "▸"; color: var(--placeholder); }
 .tool[open] summary::before { content: "▾"; }
 .tool summary::-webkit-details-marker { display: none; }
-.tool[open] > summary { border-radius: var(--radius-row) var(--radius-row) 0 0; } /* its bottom meets the body's rule */
-.tool.st-rejected, .tool.st-error { box-shadow: var(--shadow-border), inset 3px 0 0 color-mix(in srgb, var(--destructive) 65%, var(--card)); }
-.tool.st-rejected { box-shadow: var(--shadow-border), inset 3px 0 0 color-mix(in srgb, var(--warning) 80%, var(--card)); }
+.tool[open] > summary { border-radius: calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 0 0; } /* its bottom meets the body's rule */
+.tool.st-rejected, .tool.st-error { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--destructive) 65%, var(--card)); } /* its t-status word says which */
+.tool.st-rejected { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--warning) 80%, var(--card)); }
 .t-name { color: var(--link); font-weight: 700; }
 .t-prompt { color: var(--placeholder); }
 /* A call's status (P3): ok a muted check, running the link colour, the rest in words. */
@@ -625,9 +624,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .step-sep { color: var(--placeholder); }
 .step-dur { margin-left: auto; color: var(--placeholder); }
 /* Inside a step a call is a line, not a card: the rail groups them. */
-.step-body > .tool { background: transparent; box-shadow: none; margin: 0; }
+.step-body > .tool { background: transparent; border-color: transparent; box-shadow: none; margin: 0; }
 .step-body > .tool > summary:hover { background: color-mix(in srgb, var(--card) 70%, transparent); }
-.step-body > .tool[open] { background: var(--card); box-shadow: var(--shadow-border); margin: 4px 0; }
+.step-body > .tool[open] { background: var(--card); border: 1px solid var(--border); margin: 4px 0; }
 .step-body > .fold { margin: 2px 0 2px 10px; }
 .step-body .mark { max-width: none; } /* its time aligns with the call lines' */
 /* An actor's colour, keyed on its id: decoration beside the name, which carries the meaning. */
@@ -700,9 +699,9 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .needs-other li.needs-stale, .needs-other li.needs-unread { color: var(--muted-foreground); font-size: var(--text-small); }
 /* The 6 px reason field and buttons plus the 8 px of padding, concentric. The accent is a bar,
    as a rejected call's is, on the card's own edge; the left padding clears its 3 px. */
-.approval { border-radius: calc(var(--radius-control) + 8px); padding: 8px 12px 8px 15px; display: grid; gap: 6px;
+.approval { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 6px;
   background: var(--card); color: var(--card-foreground); min-width: 0;
-  box-shadow: var(--shadow-border), inset 3px 0 0 var(--warning); }
+  box-shadow: inset 3px 0 0 var(--warning); }
 .approval-command { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-meta { color: var(--muted-foreground); font-size: var(--text-small); overflow-wrap: anywhere; }
 .approval-json > summary { cursor: pointer; color: var(--muted-foreground); font-size: var(--text-small); }
@@ -711,9 +710,9 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .approval-decide input { flex: 1 1 12em; min-width: 0; }
 /* A need decided elsewhere or by another control (needs.ts's needCard): the approval card's surface
    and bar, its heading, its sentence, and one action that is always there. */
-.needs-other li.need { border-radius: calc(var(--radius-control) + 8px); padding: 10px 12px 10px 15px; display: grid; gap: 4px;
+.needs-other li.need { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 4px;
   background: var(--card); color: var(--card-foreground); min-width: 0;
-  box-shadow: var(--shadow-border), inset 3px 0 0 var(--warning); }
+  box-shadow: inset 3px 0 0 var(--warning); }
 .need-title { margin: 0; font-weight: 700; }
 .need-what, .need-why { margin: 0; font-size: var(--text-small); }
 .need-why { color: var(--muted-foreground); }
@@ -806,7 +805,7 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 .raw-events > summary { cursor: pointer; padding: 4px 0; }
 /* Until the first frame (P9): three message shapes, pulsing where motion is welcome. */
 .skeleton { padding: 8px 16px; display: grid; gap: 12px; max-width: var(--log-w); }
-.sk-msg { height: 56px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); }
+.sk-msg { height: 56px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
 .sk-msg:nth-child(2) { width: 70%; }
 .sk-msg:nth-child(3) { width: 85%; }
 @media (prefers-reduced-motion: no-preference) {
@@ -847,7 +846,7 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 .refresh-status { color: var(--muted-foreground); font-size: var(--text-small); font-variant-numeric: tabular-nums; }
 .refresh-status[data-failed] { color: var(--destructive-text); }
 .refresh-pause { padding: 0 10px; }
-table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collapse; background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); overflow: hidden; }
+table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
 .rooms th, .rooms td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: baseline; font-variant-numeric: tabular-nums; }
 .rooms tbody tr:last-child td { border-bottom: 0; }
 .rooms th { color: var(--muted-foreground); white-space: nowrap; }
@@ -1088,12 +1087,13 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .settings-nav a[aria-current="page"]::after {
   content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--primary);
 }
-.settings-nav a:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; border-radius: var(--radius-control); }
+.settings-nav a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: var(--radius-control); }
 /* Approval memory inside the settings chrome: the header's title is its h1, and it aligns with the other pages. */
 @media (max-width: 640px) {
   /* One row that scrolls sideways; its right edge fades, saying the tabs go on. */
   .settings-nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav a:focus-visible { outline-offset: -2px; } /* the scrolling row clips an outset ring */
   .settings-nav { -webkit-mask: linear-gradient(to right, #000 calc(100% - 24px), transparent); mask: linear-gradient(to right, #000 calc(100% - 24px), transparent); }
 }
 main.settings.approval-memory { margin: 0 16px; padding: 0; max-width: none; }
@@ -1142,7 +1142,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .policy-condition-message { margin: 8px 0 0; font-size: var(--text-small); color: var(--muted-foreground); overflow-wrap: anywhere; }
 .policy-authority, .policy-read { margin: 8px 0 0; font-size: var(--text-small); color: var(--muted-foreground); }
 .policy-read { font-variant-numeric: tabular-nums; }
-.not-migrated { padding: 12px 16px; border-radius: var(--radius-row); background: var(--card); box-shadow: var(--shadow-border); }
+.not-migrated { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
 /* The three modes, once: a card's badge is the word only. */
 .mode-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; list-style: none; margin: 0 0 8px; padding: 0; font-size: var(--text-small); color: var(--muted-foreground); }
 .mode-legend li { display: flex; gap: 6px; align-items: baseline; }
@@ -1272,7 +1272,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 /* Approval memory (/settings/approval-memory): one card per saved grant, its predicate as code. */
 .grants-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
 .grants { list-style: none; padding: 0; display: grid; gap: 8px; }
-.grant { border: 1px solid var(--border); border-radius: var(--radius-row); padding: 10px 12px; background: var(--card); }
+.grant { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
 .grant-predicate { font-family: var(--font-mono); font-size: var(--text-small); overflow-wrap: anywhere; margin: 6px 0; }
 .grant-facts, .grants-note { color: var(--muted-foreground); font-size: var(--text-small); }
 .grant-actions { display: flex; gap: 6px; margin-top: 6px; }
