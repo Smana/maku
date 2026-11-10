@@ -15,7 +15,7 @@ import { docsLink, type Field, FIELDS, type Group, GROUPS } from "./policy-field
 
 export type Leaf = Record<string, unknown>;
 export interface ClassPolicy {
-  mode: string; author: string; adopt?: { logins: string[]; branches: string[] }; harness: string;
+  description?: string; mode: string; author: string; adopt?: { logins: string[]; branches: string[] }; harness: string;
   harnessAllowed?: string[]; escalation?: { outOfBudget?: string; notConverged?: string };
   conditions?: { all?: Leaf[]; any?: Leaf[][]; deny?: { protectedFiles: string[] }[] };
   requiresApproval?: { changedFiles: string[] }[];
