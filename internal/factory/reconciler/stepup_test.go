@@ -50,7 +50,7 @@ func stepRig(t *testing.T, cf *config.Config, edit func(*v1alpha1.Task)) (*rig, 
 	}
 	g := newRig(t, tk, roomOf("3buqdlot"))
 	g.r.Cfg = cf
-	g.r.Triage = triage.Static{Cfg: cf}
+	g.r.Triage = triage.Static{}
 	st := tk.Status
 	tk = g.get(t)
 	tk.Status = st

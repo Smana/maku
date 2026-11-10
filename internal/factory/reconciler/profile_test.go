@@ -73,7 +73,7 @@ func profileRig(t *testing.T, c *config.Config, tk *v1alpha1.Task, label string)
 	t.Helper()
 	g := newRig(t, tk)
 	g.r.Cfg = c
-	g.r.Triage = triage.Classify{Cfg: c, Forge: g.f}
+	g.r.Triage = triage.Classify{Forge: g.f}
 	if tk.Spec.Issue != 0 {
 		var labels []string
 		if label != "" {
@@ -115,7 +115,7 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 func mainSpec(t *testing.T, g *rig, tk *v1alpha1.Task) v1alpha1.TaskSpec {
 	t.Helper()
 	tk = tk.DeepCopy()
-	d, err := g.r.Triage.Triage(t.Context(), tk)
+	d, err := g.r.Triage.Triage(t.Context(), g.r.Cfg.Current(), tk)
 	if err != nil {
 		t.Fatal(err)
 	}
