@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
@@ -373,6 +374,37 @@ func TestRefresherReadsOwnedRepositories(t *testing.T) {
 	r.Tick(t.Context())
 	if src.searches() != n || ages["Smana/cloud-native-ref"] != time.Minute {
 		t.Fatalf("read again inside the TTL, or no age: %v", ages)
+	}
+}
+
+func TestReportCarriesThePolicyStatus(t *testing.T) {
+	cfg := serviceCfg()
+	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 3}}}
+	src := func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true }
+	calls := 0
+	found := true
+	s := &Service{Cfg: cfg, Namespace: "factory", Sources: src, Now: time.Now,
+		PolicyStatus: func(_ context.Context, name string) (PolicyStatus, bool) {
+			calls++
+			if name != "cloud-native-ref" || !found {
+				return PolicyStatus{}, false
+			}
+			return PolicyStatus{Namespace: "factory", Generation: 3, Status: factoryv1.MergePolicyStatus{Authority: "central"}}, true
+		}}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil || r.MergePolicyStatus == nil || r.MergePolicyStatus.Namespace != "factory" ||
+		r.MergePolicyStatus.Generation != 3 || r.MergePolicyStatus.Status.Authority != "central" {
+		t.Fatalf("%+v %v", r.MergePolicyStatus, err)
+	}
+	found = false
+	if r, err = s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.MergePolicyStatus != nil {
+		t.Fatalf("a miss is no status: %+v %v", r.MergePolicyStatus, err)
+	}
+	// A repository the file serves never asks.
+	calls = 0
+	cfg.Generations = config.Generations{}
+	if r, err = s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.MergePolicyStatus != nil || calls != 0 {
+		t.Fatalf("%+v %v calls=%d", r.MergePolicyStatus, err, calls)
 	}
 }
 

@@ -482,13 +482,21 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
 	var evidenceRefresh *evidence.Refresher
 	if cfg.PolicyManagement.Promotion {
-		ev := &evidence.Service{Cfg: live, Namespace: ns, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
-			c, ok := conns.get(repo)
-			if !ok || c.gh == nil {
-				return nil, false
-			}
-			return evidenceSource{c.gh}, true
-		}}
+		ev := &evidence.Service{Cfg: live, Namespace: ns, Now: time.Now, Log: log,
+			// The cached client, on every replica: a miss is no status, never an error page.
+			PolicyStatus: func(ctx context.Context, name string) (evidence.PolicyStatus, bool) {
+				var mp factoryv1.MergePolicy
+				if err := mgr.GetClient().Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &mp); err != nil {
+					return evidence.PolicyStatus{}, false
+				}
+				return evidence.PolicyStatus{Namespace: ns, Generation: mp.Generation, Status: mp.Status}, true
+			}, Sources: func(repo string) (evidence.Source, bool) {
+				c, ok := conns.get(repo)
+				if !ok || c.gh == nil {
+					return nil, false
+				}
+				return evidenceSource{c.gh}, true
+			}}
 		apiSrv.Evidence = ev
 		evidenceRefresh = &evidence.Refresher{Service: ev, Owned: fenced.Owned, OnAge: m.PolicyEvidenceAge}
 		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: live, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {

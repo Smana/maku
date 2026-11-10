@@ -126,6 +126,50 @@
           "harness": "plain"
         }
       }
+    },
+    "mergePolicyStatus": {
+      "namespace": "agent-system",
+      "generation": 3,
+      "status": {
+        "observedGeneration": 3,
+        "conditions": [
+          {
+            "type": "Accepted",
+            "status": "True",
+            "observedGeneration": 3,
+            "lastTransitionTime": "2026-11-10T00:00:00Z",
+            "reason": "Accepted",
+            "message": ""
+          },
+          {
+            "type": "RepositoryFileValid",
+            "status": "True",
+            "observedGeneration": 3,
+            "lastTransitionTime": "2026-11-10T00:00:00Z",
+            "reason": "Valid",
+            "message": ""
+          },
+          {
+            "type": "InSync",
+            "status": "False",
+            "observedGeneration": 3,
+            "lastTransitionTime": "2026-11-10T00:00:00Z",
+            "reason": "Diverges",
+            "message": "docs: only in the central config; tests: only in the central config"
+          }
+        ],
+        "authority": "central",
+        "classCount": 1,
+        "liveCount": 0,
+        "classes": [
+          {
+            "name": "docs-links",
+            "mode": "shadow",
+            "lastDecision": "would_merge:clean",
+            "lastDecisionAt": "2026-11-10T00:00:00Z"
+          }
+        ]
+      }
     }
   }
 }

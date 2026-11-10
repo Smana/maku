@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
@@ -73,6 +74,14 @@ type ClassReport struct {
 	Unproposed string `json:"unproposed,omitempty"`
 }
 
+// PolicyStatus is a MergePolicy's stored status as the leader wrote it, and the object's
+// generation and namespace: what `kubectl get mergepolicy` shows.
+type PolicyStatus struct {
+	Namespace  string                      `json:"namespace"`
+	Generation int64                       `json:"generation"`
+	Status     factoryv1.MergePolicyStatus `json:"status"`
+}
+
 // Report is a repository's policy as read at ReadAt, and its classes' promotion evidence as read
 // at EvidenceAt.
 type Report struct {
@@ -106,6 +115,8 @@ type Report struct {
 	Manifest     string            `json:"manifest,omitempty"`
 	ManifestPath string            `json:"manifestPath,omitempty"`
 	Served       *mergepolicy.File `json:"served,omitempty"`
+	// MergePolicyStatus is the object's stored status, nil when there is none to read.
+	MergePolicyStatus *PolicyStatus `json:"mergePolicyStatus,omitempty"`
 	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
 	Namespace     string `json:"-"`
 	RepositoryRef string `json:"-"`
@@ -153,7 +164,9 @@ type Service struct {
 	Now     func() time.Time
 	// Namespace is the MergePolicy objects' namespace, for the manifest.
 	Namespace string
-	Log       *slog.Logger
+	// PolicyStatus reads the named MergePolicy from the manager's cache; nil reports none.
+	PolicyStatus func(ctx context.Context, name string) (PolicyStatus, bool)
+	Log          *slog.Logger
 	// Parallel bounds the searches one read runs at once, DefaultParallel when 0; Deadline bounds
 	// the read, DefaultDeadline when 0.
 	Parallel int
@@ -267,7 +280,7 @@ func (s *Service) Report(ctx context.Context, repository string) (Report, error)
 		// The request's values, never its cancellation: the read outlives the page load.
 		go func() { _ = s.read(context.WithoutCancel(ctx), cfg, rc, src) }()
 	}
-	return s.build(cfg, rc, h, classes, at, reason)
+	return s.build(ctx, cfg, rc, h, classes, at, reason)
 }
 
 // Refresh reads repository's policy and every class's evidence now, unless a read of it runs
@@ -416,7 +429,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 }
 
 // build is the report of h, each class with its evidence in classes when read.
-func (s *Service) build(cfg *config.Config, rc *config.Repository, h head, classes map[string]Evidence, at time.Time, reason string) (Report, error) {
+func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repository, h head, classes map[string]Evidence, at time.Time, reason string) (Report, error) {
 	file, perr := h.parse()
 	r := Report{Repository: rc.Name, Minimum: cfg.MergeGuardrails.MinPromotion(), ReadAt: h.readAt, PolicyError: perr,
 		EvidenceError: reason}
@@ -450,6 +463,11 @@ func (s *Service) build(cfg *config.Config, rc *config.Repository, h head, class
 		}
 		r.MergePolicy, r.Manifest, r.ManifestPath = name, string(m), "mergepolicy-"+name+".yaml"
 		r.Namespace, r.RepositoryRef = s.Namespace, ref
+		if s.PolicyStatus != nil {
+			if st, ok := s.PolicyStatus(ctx, name); ok {
+				r.MergePolicyStatus = &st
+			}
+		}
 		if f, err := mergepolicy.Export(rc, cfg); err == nil {
 			r.Served = f
 		}

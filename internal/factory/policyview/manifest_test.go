@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
+
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
@@ -136,7 +139,22 @@ func TestUIMergePolicyGolden(t *testing.T) {
 	_, cfg, _, _ := served(t)
 	cfg.Generations.Repos["smana/cloud-native-ref"] = config.RepoGenerations{Repository: 2, MergePolicy: 3}
 	ev := &evidence.Service{Cfg: config.NewLive(cfg), Namespace: "agent-system", Now: time.Now,
-		Sources: func(string) (evidence.Source, bool) { return quietSource{}, true }}
+		Sources: func(string) (evidence.Source, bool) { return quietSource{}, true },
+		PolicyStatus: func(context.Context, string) (evidence.PolicyStatus, bool) {
+			at := metav1.NewTime(time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC))
+			cond := func(typ string, st metav1.ConditionStatus, reason, msg string) metav1.Condition {
+				return metav1.Condition{Type: typ, Status: st, Reason: reason, Message: msg, LastTransitionTime: at, ObservedGeneration: 3}
+			}
+			return evidence.PolicyStatus{Namespace: "agent-system", Generation: 3, Status: factoryv1.MergePolicyStatus{
+				ObservedGeneration: 3, Authority: "central", ClassCount: 1,
+				Conditions: []metav1.Condition{
+					cond("Accepted", metav1.ConditionTrue, "Accepted", ""),
+					cond("RepositoryFileValid", metav1.ConditionTrue, "Valid", ""),
+					cond("InSync", metav1.ConditionFalse, "Diverges", "docs: only in the central config; tests: only in the central config"),
+				},
+				Classes: []factoryv1.ClassStatus{{Name: "docs-links", Mode: "shadow", LastDecision: "would_merge:clean", LastDecisionAt: &at}},
+			}}, true
+		}}
 	rep, err := ev.Report(t.Context(), "Smana/cloud-native-ref")
 	if err != nil || rep.Served == nil || rep.Manifest == "" {
 		t.Fatalf("%v %+v", err, rep)
