@@ -1028,8 +1028,9 @@ and `InSync` stay `Unknown` with `PolicyReadOff`.
 A `MergePolicy` also reports its `authority` (`central` or `repository`) and one entry per class:
 the `mode` (`live`, `shadow` or `unarmed`) and the last decision as `verdict:reason`, with its
 time. The last decision is kept in memory and is best-effort: it is empty after a restart or a
-leader change, until the next decision. Every decision marker carries `policygen=<n>`, the
-generation the decision used, so a decision can be matched to the `MergePolicy` that made it.
+leader change, until the next decision. For a repository served from a `MergePolicy`, every
+decision marker carries `policygen=<n>`, the generation the decision used, so a decision can be
+matched to the `MergePolicy` that made it.
 
 For a repository served from a `MergePolicy`, [the settings page](web-ui.md#settings) offers **Copy
 MergePolicy manifest** and **Download**, a file named `mergepolicy-<name>.yaml` with the real

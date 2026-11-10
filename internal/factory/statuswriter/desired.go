@@ -44,6 +44,9 @@ const (
 	ConditionInSync              = "InSync"
 	ConditionReady               = "Ready"
 
+	// ReasonPending is Accepted's reason before the factory looked at the object.
+	ReasonPending = "Pending"
+
 	syncFreshness      = 15 * time.Minute
 	maxDivergences     = 5
 	maxLastDecisionLen = 63
@@ -134,7 +137,7 @@ func (d *desirer) outcome(kind resources.Kind, name string) *configsource.Outcom
 func (d *desirer) accepted(cs *[]metav1.Condition, gen int64, o *configsource.Outcome) {
 	switch {
 	case o == nil:
-		d.set(cs, gen, v1alpha1.ConditionAccepted, metav1.ConditionUnknown, "Pending", "the factory has not looked at this object yet")
+		d.set(cs, gen, v1alpha1.ConditionAccepted, metav1.ConditionUnknown, ReasonPending, "the factory has not looked at this object yet")
 	case o.Accepted:
 		d.set(cs, gen, v1alpha1.ConditionAccepted, metav1.ConditionTrue, "Served", "")
 	case o.ServedGeneration > 0:
@@ -204,6 +207,10 @@ func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePo
 		}
 	}
 	for _, p := range sortedByName(policies) {
+		// Several MergePolicies naming the Repository are all refused: it names none of them.
+		if o := d.outcome(resources.KindMergePolicy, p.Name); o != nil && !o.Accepted && o.Reason == v1alpha1.ReasonDuplicatePolicy {
+			continue
+		}
 		if p.Spec.RepositoryRef == r.Name {
 			st.MergePolicy = p.Name
 			break

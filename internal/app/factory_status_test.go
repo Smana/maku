@@ -33,3 +33,18 @@ func TestNeverCheckedIsNoOutage(t *testing.T) {
 		t.Error("a checked, unhealthy connection is down")
 	}
 }
+
+// A repository listed without its factory connection (gh nil) is not connected, and no outage
+// of GitHub's.
+func TestStatusWithoutAFactoryConnection(t *testing.T) {
+	conns := &repoConns{order: []string{"acme/app"}, by: map[string]repoConn{"acme/app": {}}}
+	if got, msg := conns.connection("acme/app", time.Now()); got != metav1.ConditionFalse || msg != "no GitHub connection" {
+		t.Errorf("Connected %s %q", got, msg)
+	}
+	if got, _ := conns.connection("acme/other", time.Now()); got != metav1.ConditionFalse {
+		t.Errorf("an unlisted repository: Connected %s", got)
+	}
+	if !conns.githubUp(time.Now()) {
+		t.Error("no connection is no outage")
+	}
+}

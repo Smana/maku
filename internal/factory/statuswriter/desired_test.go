@@ -343,3 +343,16 @@ func TestOneObservedGenerationPerObject(t *testing.T) {
 	check("Repository", r.ObservedGeneration, r.Conditions, v1alpha1.ConditionAccepted, ConditionConnected)
 	check("MergePolicy", p.ObservedGeneration, p.Conditions, v1alpha1.ConditionAccepted, ConditionRepositoryFileValid, ConditionInSync)
 }
+
+// Two MergePolicies name the Repository: both are refused DuplicatePolicy, and the Repository
+// names neither.
+func TestRepositoryNamesNoDuplicatePolicy(t *testing.T) {
+	dup := func(name string) configsource.Outcome {
+		return configsource.Outcome{Kind: resources.KindMergePolicy, Name: name, Reason: v1alpha1.ReasonDuplicatePolicy, Message: "several"}
+	}
+	in := Inputs{Config: cfg(), Outcomes: []configsource.Outcome{dup("a"), dup("b")}}
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 1)}, []v1alpha1.MergePolicy{policyObj("a", "r", 1), policyObj("b", "r", 1)}, now)
+	if m := got.Repositories["r"].MergePolicy; m != "" {
+		t.Errorf("mergePolicy %q, want none", m)
+	}
+}

@@ -29,19 +29,11 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 			Outcomes: outcomes, Synced: synced, Config: src.Live.Current(),
 			WireErr: conns.wireErr,
 			Connected: func(repository string) (metav1.ConditionStatus, string) {
-				rc, ok := conns.get(repository)
-				if !ok {
-					return metav1.ConditionFalse, "no GitHub connection"
-				}
-				return connection(rc.gh, time.Now())
+				return conns.connection(repository, time.Now())
 			},
 			Decisions: rec.Latest,
+			GitHubUp:  conns.githubUp(time.Now()),
 		}
-		var ghs []ghHealth
-		for _, rc := range conns.all() {
-			ghs = append(ghs, rc.gh)
-		}
-		in.GitHubUp = githubUp(ghs, time.Now())
 		if w := watch(); w != nil {
 			in.Snapshot = w.Snapshot
 		}
@@ -52,6 +44,26 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 		in.Stopped = stopped
 		return in
 	}
+}
+
+// connection is repository's Connected; one without a factory connection is not connected.
+func (c *repoConns) connection(repository string, now time.Time) (metav1.ConditionStatus, string) {
+	rc, ok := c.get(repository)
+	if !ok || rc.gh == nil {
+		return metav1.ConditionFalse, "no GitHub connection"
+	}
+	return connection(rc.gh, now)
+}
+
+// githubUp is githubUp over the served repositories' factory connections.
+func (c *repoConns) githubUp(now time.Time) bool {
+	var ghs []ghHealth
+	for _, rc := range c.all() {
+		if rc.gh != nil {
+			ghs = append(ghs, rc.gh)
+		}
+	}
+	return githubUp(ghs, now)
 }
 
 // ghHealth is a repository's GitHub connection as the status reads it; *forge.GitHub.
