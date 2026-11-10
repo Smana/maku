@@ -260,10 +260,17 @@ the same configuration. Only leader-only work stays leader-only.
 
 - A refused object keeps its last accepted version, but only while the process runs. The version
   lives in memory.
-- Before it starts the manager, the factory runs the first sync. If nothing can be served, it
-  refuses to start. After a restart, an object that is invalid is not served, because no earlier
+- Before it starts the manager, the factory runs the first sync. If nothing can be served (the file
+  holds only plumbing and the resources are not applied yet), it waits instead of exiting. `:9090`
+  is already up: `/healthz` and `/startupz` answer 200, and `/readyz` answers 503 with
+  `waiting for a servable config:` and the reason. The sync is retried every 5 seconds, doubling
+  up to 60, with a warning once a minute that carries the error and the refused objects. Once a
+  sync serves, the start goes on, and `/readyz` turns 200 only when the manager's caches have
+  synced. A GitOps rollout therefore neither crash-loops while Flux applies the resources nor
+  deadlocks on a fresh cluster, where the CRDs arrive with the chart. `SIGTERM` during the wait
+  exits cleanly. After a restart, an object that is invalid is not served, because no earlier
   version remains.
-- A `Forbidden` answer to the list fails the start with a hint about the Role that must grant
+- Every other error still fails the start at once. A `Forbidden` answer to the list fails it with a hint about the Role that must grant
   `get`, `list` and `watch` on the three kinds.
 - With none of the CRDs installed, the factory runs from the file alone and logs that once. A CRD
   installed later is picked up by the resync.

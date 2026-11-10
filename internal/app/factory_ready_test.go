@@ -26,7 +26,7 @@ func TestFactoryReadiness(t *testing.T) {
 	}{
 		{"ready", true, "/readyz", http.StatusOK},
 		{"not ready before the caches synced", false, "/readyz", http.StatusServiceUnavailable},
-		{"started once the config parsed: the server starts after it", false, "/startupz", http.StatusOK},
+		{"started at once: a factory waiting for its resources is not killed", false, "/startupz", http.StatusOK},
 		{"alive whatever GitHub says", false, "/healthz", http.StatusOK},
 	} {
 		t.Run(c.name, func(t *testing.T) {
