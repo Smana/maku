@@ -33,7 +33,7 @@ func served(t *testing.T) (base []byte, cfg *config.Config, rc *config.Repositor
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}}
+	cfg.HarnessProfiles["plain"] = config.HarnessProfile{} // beside the file's own profiles, which its docs class names
 	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {
 		Repository: 2, MergePolicy: 3, RepositoryName: "cnr", PolicyName: "cnr-policy"}}}
 	rc = cfg.RepositoryFor("Smana/cloud-native-ref")
