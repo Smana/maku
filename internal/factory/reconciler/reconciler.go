@@ -28,6 +28,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -207,9 +208,11 @@ type Reconciler struct {
 	Triage  triage.Triager
 	Metrics metrics
 	Now     func() time.Time
-	Nonce   func() string
-	Log     *slog.Logger
-	Trace   tracing.Sink // nil: tracing off (R46)
+	// Decisions remembers each class's latest merge decision for the resources' status; nil: off.
+	Decisions *decision.Recorder
+	Nonce     func() string
+	Log       *slog.Logger
+	Trace     tracing.Sink // nil: tracing off (R46)
 	// Costs is the run meter's per-run USD costs, which a task capped in USD sums (OD-6 (b));
 	// nil: every task is held to TaskTokens.
 	Costs costReader

@@ -191,3 +191,22 @@ func TestCheckSplitsParseErrorsByClass(t *testing.T) {
 		t.Fatalf("%q", pv.Errors)
 	}
 }
+
+// A record carries the MergePolicy generation it was decided under as policygen=; an older
+// record has none and reads as generation 0, with the rest of the timeline unchanged.
+func TestDecisionsReadThePolicyGeneration(t *testing.T) {
+	with := "<!-- agent-factory-decision head=a30 class=docs-broad decision=arm:armed files=1/10 lines=2/200 shape=ok " +
+		"holdout=ok oracle=n/a age=n/a evidence=ok paused=false capped=false policy=0123456789ab policygen=4 reviewer=glm-5.3 -->"
+	old := "<!-- agent-factory-decision head=a31 class=docs-broad decision=arm:armed files=1/10 lines=2/200 shape=ok " +
+		"holdout=ok oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=glm-5.3 -->"
+	tl := Decisions("Smana/cloud-native-ref", 26, "ogenki-agent-factory[bot]", []Comment{
+		comment(1, "ogenki-agent-factory[bot]", "2026-10-01T00:00:00Z", with),
+		comment(2, "ogenki-agent-factory[bot]", "2026-10-02T00:00:00Z", old),
+	})
+	if len(tl.Decisions) != 2 || tl.Decisions[0].PolicyGeneration != 4 || tl.Decisions[1].PolicyGeneration != 0 {
+		t.Fatalf("%+v", tl.Decisions)
+	}
+	if d := tl.Decisions[0]; d.Verdict != "arm" || !strings.Contains(d.Revisions[0].Detail, "0123456789ab") {
+		t.Fatalf("%+v", d)
+	}
+}

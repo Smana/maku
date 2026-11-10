@@ -20,6 +20,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
 )
 
@@ -1549,5 +1550,24 @@ func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
 				t.Fatalf("interventions %v, want %v", got, counted)
 			}
 		})
+	}
+}
+
+// The last decision per class is remembered as the marker is posted, with the MergePolicy
+// generation it was made under (D5); the marker carries policygen only above 0.
+func TestADecisionIsRecordedWithItsPolicyGeneration(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Generations = config.Generations{Repos: map[string]config.RepoGenerations{
+		strings.ToLower(awaiting().Spec.Repository): {MergePolicy: 6}}}
+	g.r.Decisions = &decision.Recorder{}
+	g.f.SetChecks(12, green("SUCCESS"))
+	tk := g.reconcile(t, "3buqdlot", 1)
+	got := g.r.Decisions.Latest(tk.Spec.Repository)["docs-links"]
+	if got.Verdict != "shadow" || got.Reason != "shadow_would_arm" || got.Generation != 6 || !got.At.Equal(g.r.Now()) {
+		t.Fatalf("%+v", got)
+	}
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=6 reviewer=") {
+		t.Fatalf("%q", c)
 	}
 }
