@@ -162,8 +162,8 @@ function leafSummary(k: string, v: unknown): string {
   switch (k) {
     case "allowedFiles": return strs(v) ? joinOr(v) : named(k);
     case "companionFiles": return strs(v) ? `with ${joinOr(v)}` : named(k);
-    case "maxPatchFiles": return pos(v) ? `≤ ${v} files` : named(k);
-    case "maxModifiedLines": return pos(v) ? `≤ ${v} lines` : named(k);
+    case "maxPatchFiles": return pos(v) ? `≤ ${v} ${v === 1 ? "file" : "files"}` : named(k);
+    case "maxModifiedLines": return pos(v) ? `≤ ${v} ${v === 1 ? "line" : "lines"}` : named(k);
     case "modifyOnly": return v === true ? "modify only" : named(k);
     case "diffShape": return typeof v === "string" ? (Object.hasOwn(shapes, v) ? shapes[v].replace(/^the diff /, "") : `shape ${v}`) : named(k);
     case "holdoutChecks": return strs(v) ? joinOr(quoted(v), "and") : named(k);
@@ -189,7 +189,7 @@ export function summaryLine(c: ClassPolicy, guardrails: Record<string, unknown> 
   parts.push(...all.flatMap(leafSummaries));
   const has = (k: string) => all.some((l) => isObj(l) && k in l);
   for (const [k, unit] of [["maxPatchFiles", "files"], ["maxModifiedLines", "lines"]] as const) {
-    if (!has(k) && pos(guardrails[k])) parts.push(`≤ ${guardrails[k]} ${unit}`);
+    if (!has(k) && pos(guardrails[k])) parts.push(`≤ ${guardrails[k]} ${guardrails[k] === 1 ? unit.slice(0, -1) : unit}`);
   }
   const anyRaw: unknown = cond.any;
   if (anyRaw !== undefined && !Array.isArray(anyRaw)) parts.push(named("any"));

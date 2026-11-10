@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { classCard, evidenceBar, READING } from "../src/class-card";
 import type { Evidence, RepositoryPage } from "../src/settings";
 
+const PROMOTE = "To promote, set live: true on this class in the MergePolicy and merge the change.";
+
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 14, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [] },
   clean: 14, bad: 0, immature: 0, pending: 0, bound: 0.1, budget: 0.2, widen: false,
@@ -19,18 +21,44 @@ const page = (): RepositoryPage => ({
 const ctx = (p = page()) => ({ page: p, get: fetch, say: document.createElement("p"), reload: () => {}, main: document.createElement("main"), policy: p.report.policy });
 
 describe("a class card", () => {
-  it("names the class, its mode and what the mode means, then the class as sentences", () => {
+  it("leads with the name, the mode word, the summary, the evidence bar, then the folded conditions", () => {
     const c = classCard(page().report.classes[0], ctx());
     expect(c.id).toBe("class-docs");
     expect(c.querySelector("h3")?.textContent).toBe("docs");
-    expect(c.querySelector(".mode-badge")?.textContent).toBe("Shadow · records what it would do, merges nothing");
-    expect(c.querySelector(".mode-badge")?.getAttribute("data-mode")).toBe("shadow");
-    expect(c.textContent).toContain("it changes at most 10 files");
+    const badge = c.querySelector(".mode-badge")!;
+    expect(badge.textContent).toBe("Shadow");
+    expect(badge.getAttribute("data-mode")).toBe("shadow");
+    expect(badge.getAttribute("title")).toBe("records what it would do, merges nothing");
+    expect(c.querySelector(".class-intent")).toBeNull();
+    const order = [...c.children].map((e) => e.className || e.tagName.toLowerCase());
+    expect(order.slice(0, 4)).toEqual(["class-card-head", "class-summary", "evidence-bar", "evidence-ladder"]);
+    expect(c.querySelector(".class-summary")?.textContent).toBe("≤ 10 files");
+    const more = c.querySelector("details.class-conditions")!;
+    expect(more.querySelector("summary")?.textContent).toBe("Conditions");
+    expect(more.textContent).toContain("it changes at most 10 files");
+    expect(c.querySelector(".class-source")).toBeNull();
   });
-  it("says a class set by the factory is set there, not a bare (central)", () => {
+  it("puts the description between the badge and the summary", () => {
+    const p = page();
+    p.report.policy!.classes!.docs.description = "Docs-only pull requests with links intact.";
+    const c = classCard(p.report.classes[0], ctx(p));
+    expect([...c.children].slice(0, 3).map((e) => e.className)).toEqual(["class-card-head", "class-intent", "class-summary"]);
+    expect(c.querySelector(".class-intent")?.textContent).toBe("Docs-only pull requests with links intact.");
+  });
+  it("shows the badge as the bare word for each mode", () => {
+    for (const [mode, word] of [["live", "Live"], ["shadow", "Shadow"], ["off", "Off"]]) {
+      const p = page();
+      p.report.classes[0].mode = mode;
+      expect(classCard(p.report.classes[0], ctx(p)).querySelector(".mode-badge")?.textContent).toBe(word);
+    }
+  });
+  it("says a class set by the factory has its conditions there, and never a per-card source", () => {
     const p = page();
     p.report.classes[0].source = "central";
-    expect(classCard(p.report.classes[0], ctx(p)).textContent).toContain("Set by the factory's central config");
+    const c = classCard(p.report.classes[0], { ...ctx(p), policy: undefined });
+    expect(c.querySelector(".class-summary")?.textContent).toBe("This class's conditions are set in the factory's config and are not shown here.");
+    expect(c.querySelector(".class-source")).toBeNull();
+    expect(c.querySelector("details.class-conditions")).toBeNull();
   });
   it("shows the evidence as progress toward the minimum, with the count in words", () => {
     const bar = evidenceBar(ev());
@@ -47,20 +75,6 @@ describe("a class card", () => {
     const blocked = evidenceBar(ev({ clean: 25, eligible: false, blockers: ["no_drill"] }));
     expect(blocked.getAttribute("data-blocked")).toBe("true");
     expect((blocked.querySelector(".evidence-fill") as HTMLElement).style.width).toBe("95%");
-  });
-  it("names a MergePolicy as the source of a class it serves", () => {
-    const p = page();
-    p.report.classes[0].source = "central";
-    p.report.mergePolicy = "cloud-native-ref";
-    p.report.manifest = "kind: MergePolicy\n";
-    const c = classCard(p.report.classes[0], ctx(p));
-    expect(c.querySelector(".class-source")?.textContent).toBe("Served from the MergePolicy cloud-native-ref");
-  });
-  it("says a class whose conditions the page cannot see is set in the factory's config", () => {
-    const p = page();
-    p.report.classes[0].source = "central";
-    const c = classCard(p.report.classes[0], { ...ctx(p), policy: undefined });
-    expect(c.textContent).toContain("This class's conditions are set in the factory's config and are not shown here.");
   });
   it("offers no promotion nor exception while the class has a promotion open", () => {
     for (const [state, eligible] of [["requested", true], ["pr_opened", false]] as const) {
@@ -89,10 +103,13 @@ describe("a class card", () => {
     expect(c.querySelector(".evidence-reading")?.textContent).toBe("Evidence for this class is still being read.");
     expect([...c.querySelectorAll("button")].some((b) => b.textContent === "Promote to live")).toBe(false);
   });
-  it("says there is no promotion request in one line, not an empty table", () => {
+  it("says nothing of promotions or exceptions the class does not have", () => {
     const c = classCard(page().report.classes[0], ctx());
     expect(c.querySelector("table")).toBeNull();
-    expect(c.textContent).toContain("No promotion requested.");
+    expect(c.querySelector(".class-promotions")).toBeNull();
+    expect(c.querySelector(".class-exceptions")).toBeNull();
+    expect(c.textContent).not.toContain("No promotion requested");
+    expect(c.textContent).not.toContain("adds no condition of its own");
   });
   it("lists the class's own promotion and exception inside it", () => {
     const p = page();
@@ -115,14 +132,16 @@ describe("a class card", () => {
     expect(c.textContent).toContain("Live \u00b7 40 clean decisions recorded.");
     expect(c.querySelector(".evidence-detail")).not.toBeNull();
     expect(c.textContent).not.toContain("Not promotable");
+    expect(c.querySelector(".class-actions")?.textContent).toBe("");
   });
-  it("shows an off class no bar: one line, and why it cannot be promoted", () => {
+  it("shows an off class no bar: one line, and no word on promotion", () => {
     const p = page();
     p.report.classes[0] = { class: "docs", source: "repository", mode: "off", unproposed: "not_shadow", evidence: ev({ clean: 0 }) };
     const c = classCard(p.report.classes[0], ctx(p));
     expect(c.querySelector('[role="meter"]')).toBeNull();
     expect(c.textContent).toContain("Off: no decisions recorded.");
-    expect(c.textContent).toContain("Not promotable here: the class is not in shadow.");
+    expect(c.textContent).not.toContain("Not promotable");
+    expect(c.querySelector(".class-actions")?.textContent).toBe("");
   });
   it("writes eligibility as sentences, never bare codes", () => {
     const say = (e: Partial<Evidence>, over: Partial<RepositoryPage> = {}) => {
@@ -136,10 +155,50 @@ describe("a class card", () => {
     const exceptions = [{ id: "e1", repository: "o/r", class: "docs", minimum: 12, justification: "x", requestedBy: "me", requestedAt: "", state: "approved", expiresAt: "2999-01-01T00:00:00Z" }] as RepositoryPage["exceptions"];
     expect(say({ clean: 14 }, { exceptions })).toBe("Eligible to promote under exception e1 (12 clean decisions required).");
   });
-  it("says why a shadow class cannot be proposed in words", () => {
+  it("says why a shadow class of a repository file cannot be proposed, in words", () => {
     const p = page();
     p.report.classes[0] = { class: "docs", source: "central", mode: "shadow", unproposed: "not_in_repository_policy", evidence: ev() };
     expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-actions")?.textContent)
       .toBe("Not promotable here: the class is not declared in the repository's policy file.");
+  });
+  it("tells a shadow class of a central MergePolicy to promote there, and offers to edit it", () => {
+    const p = page();
+    p.report.mergePolicy = "cnr";
+    p.report.classes[0] = { class: "docs", source: "central", mode: "shadow", unproposed: "not_in_repository_policy", evidence: ev() };
+    const c = ctx(p);
+    const pick = document.createElement("select");
+    pick.setAttribute("aria-label", "class to edit");
+    pick.className = "";
+    for (const n of ["tests", "docs"]) { const o = document.createElement("option"); o.value = n; o.textContent = n; pick.append(o); }
+    pick.value = "tests";
+    const editor = document.createElement("section");
+    editor.className = "policy-editor";
+    editor.append(pick);
+    c.main.append(editor);
+    let changed = "";
+    pick.onchange = () => { changed = pick.value; };
+    const card = classCard(p.report.classes[0], c);
+    const actions = card.querySelector(".class-actions")!;
+    expect(actions.textContent).toContain(PROMOTE);
+    expect(actions.textContent).not.toContain("Not promotable");
+    const b = [...actions.querySelectorAll("button")].find((x) => x.textContent === "Edit this class")!;
+    b.click();
+    expect(changed).toBe("docs");
+  });
+  it("shows a class's last decision from the MergePolicy's status", () => {
+    const p = page();
+    p.report.mergePolicyStatus = { namespace: "agent-system", generation: 3, status: { classes: [{ name: "docs", mode: "shadow", lastDecision: "would_merge:clean", lastDecisionAt: "2026-11-10T00:00:00Z" }] } };
+    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-last")?.textContent).toBe("Last decision: would merge (clean), 2026-11-10T00:00:00Z");
+    expect(classCard(page().report.classes[0], ctx()).querySelector(".class-last")).toBeNull();
+  });
+  it("counts a class eligible only under an approved exception as eligible, its bar not blocked", () => {
+    const p = page();
+    p.report.classes[0] = { class: "docs", source: "repository", mode: "shadow", evidence: ev({ clean: 14, eligible: false, blockers: ["below_minimum"] }) };
+    p.exceptions = [{ id: "e1", repository: "o/r", class: "docs", minimum: 12, justification: "x", requestedBy: "me", requestedAt: "", state: "approved", expiresAt: "2999-01-01T00:00:00Z" }];
+    const c = classCard(p.report.classes[0], ctx(p));
+    expect(c.querySelector(".evidence-bar")?.hasAttribute("data-blocked")).toBe(false);
+    expect(c.querySelector(".evidence-eligibility")?.textContent).toContain("exception e1");
+    p.exceptions = [];
+    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".evidence-bar")?.getAttribute("data-blocked")).toBe("true");
   });
 });

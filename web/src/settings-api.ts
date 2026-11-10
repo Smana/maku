@@ -82,7 +82,6 @@ const differences = (message?: string) => (message ? message.split(";").filter((
 export function conditionWords(st?: MergePolicyStatus): { word: string; tone: Tone; message?: string }[] {
   return (st?.status.conditions ?? []).map((c) => {
     const message = c.message || undefined;
-    const known = c.status === "True" || c.status === "False" || c.status === "Unknown";
     switch (c.type) {
       case "Accepted":
         if (c.status === "True") return { word: "Accepted", tone: "ok" as Tone };
@@ -101,7 +100,7 @@ export function conditionWords(st?: MergePolicyStatus): { word: string; tone: To
         if (c.status === "False") return { word: "Repository file invalid", tone: "bad" as Tone, message };
         break;
     }
-    return { word: known ? `${c.type}: ${c.status}` : `${c.type}: ${String(c.status)}`, tone: "unknown" as Tone, message };
+    return { word: `${c.type}: ${String(c.status)}`, tone: "unknown" as Tone, message };
   });
 }
 
@@ -124,11 +123,4 @@ export function fileLine(r: Report): { text: string; prominent: boolean } {
     return { text: `.github/agent-factory.yaml differs from the MergePolicy${n ? ` in ${n} place${n > 1 ? "s" : ""}` : ""}; the MergePolicy wins.`, prominent: false };
   }
   return { text: ".github/agent-factory.yaml matches the MergePolicy.", prominent: false };
-}
-
-// servedFrom names what serves a repository's classes: its MergePolicy only while that is the
-// authority, else its own file once it declares a class, else the factory's central config.
-export function servedFrom(r: Report): string {
-  if (centralManifest(r) !== undefined) return `the MergePolicy ${r.mergePolicy}`;
-  return r.classes.some((c) => c.source === "repository") ? "its own .github/agent-factory.yaml" : "the factory's central config";
 }

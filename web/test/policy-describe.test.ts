@@ -205,12 +205,13 @@ describe("summaryLine", () => {
     expect(summaryLine(base)).toBe("Base checks only");
   });
   it("joins an any's branches with or", () => {
-    expect(summaryLine({ ...base, conditions: { any: [[{ maxPatchFiles: 1 }], [{ modifyOnly: true }]] } })).toBe("≤ 1 files or modify only");
+    expect(summaryLine({ ...base, conditions: { any: [[{ maxPatchFiles: 1 }], [{ modifyOnly: true }]] } })).toBe("≤ 1 file or modify only");
   });
   it("keeps an unknown key visible", () => {
     expect(summaryLine({ ...base, conditions: { all: [{ wat: 1 }] } })).toBe("a condition this page does not describe (wat)");
   });
   it("falls back to the factory's caps", () => {
     expect(summaryLine(base, { maxPatchFiles: 20, maxPerDay: 5 })).toBe("≤ 20 files · 5 a day");
+    expect(summaryLine(base, { maxPatchFiles: 1, maxModifiedLines: 1 })).toBe("≤ 1 file · ≤ 1 line");
   });
 });

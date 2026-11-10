@@ -7,10 +7,10 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { centralManifest, evidenceLine, explain, ladderLine, post, read, servedFrom } from "./settings-api";
+import { centralManifest, conditionWords, evidenceLine, explain, fileLine, ladderLine, policyState, post, read } from "./settings-api";
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
-import { describeGuardrails } from "./policy-describe";
+import { describeGuardrails, modeMeaning } from "./policy-describe";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -132,7 +132,7 @@ function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableEl
 }
 
 // Re-exported where the page's tests and neighbours import them from.
-export { centralManifest, evidenceLine, explain, ladderLine, servedFrom } from "./settings-api";
+export { centralManifest, evidenceLine, explain, ladderLine } from "./settings-api";
 export { READING } from "./class-card";
 
 // evidenceAge is when the shown evidence was read, and why it is older when the newest read failed.
@@ -223,6 +223,15 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
       grants === undefined ? unknown : plural(grants, "saved grant")));
 }
 
+// mergePolicyCell is a repository's MergePolicy in the list: its name and whether it was accepted
+// and is in sync, or that the repository is not migrated.
+function mergePolicyCell(r: Report): string {
+  if (policyState(r) === "not-migrated") return "Not migrated";
+  const st = r.mergePolicyStatus;
+  const kept = st && { ...st, status: { ...st.status, conditions: st.status.conditions?.filter((c) => c.type === "Accepted" || c.type === "InSync") } };
+  return [r.mergePolicy!, ...conditionWords(kept).map((c) => c.word)].join(" · ");
+}
+
 async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Merge policies", "/settings/merge-policies", theme);
   try {
@@ -232,12 +241,12 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       return;
     }
     const pages = await readAll(repositories, get);
-    main.append(table(["Repository", "Classes served from", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
+    main.append(table(["Repository", "MergePolicy", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
       const p = pages[i];
       if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
       const r = p.report;
       const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
-      return [link(`/settings/merge-policies/${repo}`, repo), servedFrom(r), countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
+      return [link(`/settings/merge-policies/${repo}`, repo), mergePolicyCell(r), countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
     }), "repo-table"));
   } catch (e) { failed(main, e); }
 }
@@ -277,13 +286,12 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const reload = () => void repositoryPage(app, repository, get, theme);
   const say = el("p", "", "notice");
   const r = page.report;
-  const gitops = centralManifest(r) !== undefined;
-  const lead = (text: string) => el("p", text, "lead");
-  main.append(lead(`Policy read ${r.readAt}. ${repository}'s classes are served from ${servedFrom(r)}.`),
-  lead(gitops
-    ? "A change is a GitOps pull request on the MergePolicy manifest, which Flux applies. Edit the classes below, then copy or download the manifest; Maku never edits the cluster or the repository."
-    : "A promotion changes the class's mode in the repository's .github/agent-factory.yaml, through a pull request you open and a human merges. Maku records the request and never edits the file."),
-  say);
+  const state = policyState(r);
+  main.append(policyHeader(r), modeLegend(), say);
+  const file = fileLine(r);
+  const fl = el("p", file.text, "file-line");
+  fl.dataset.prominent = String(file.prominent);
+  main.append(fl);
   if (r.policyError) main.append(el("p", `The repository's policy file is ${r.policyError}: the central classes are shown.`, "notice"));
 
   main.append(el("h2", "Classes"));
@@ -324,8 +332,53 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   };
   main.append(tl);
 
+  if (state === "not-migrated") return;
   main.append(el("h2", "Policy editor"));
   main.append(editor(r, page.you.maintainer, get));
+}
+
+// policyHeader says once what serves the page's classes: the MergePolicy, its authority and
+// generation, and each of its conditions as words with a tone. Nothing below repeats it.
+function policyHeader(r: Report): HTMLElement {
+  if (policyState(r) === "not-migrated") {
+    const box = el("p", "Not migrated yet: ", "not-migrated");
+    box.append(el("code", "maku config migrate"), " prints its MergePolicy.");
+    return box;
+  }
+  const state = policyState(r);
+  const st = r.mergePolicyStatus;
+  const head = el("header", undefined, "policy-header");
+  const dl = el("dl");
+  const row = (k: string, v: string) => dl.append(el("dt", k), el("dd", v));
+  row("MergePolicy", r.mergePolicy!);
+  if (st) row("Namespace", st.namespace);
+  row("Authority", st?.status.authority ?? state);
+  if (st) row("Generation", String(st.generation));
+  head.append(dl);
+  const chips = el("ul", undefined, "policy-conditions");
+  for (const c of conditionWords(st)) {
+    const li = el("li", c.word, "policy-condition");
+    li.dataset.tone = c.tone;
+    if (c.message) li.title = c.message;
+    chips.append(li);
+  }
+  head.append(chips);
+  if (state === "repository") head.append(el("p", "The repository's .github/agent-factory.yaml decides the classes; the MergePolicy defers to it.", "policy-authority"));
+  head.append(el("p", `Policy read ${r.readAt}.`, "policy-read"));
+  return head;
+}
+
+// modeLegend says once what the three modes mean; a card's badge is only the word.
+function modeLegend(): HTMLElement {
+  const ul = el("ul", undefined, "mode-legend");
+  for (const m of ["live", "shadow", "off"]) {
+    const li = el("li");
+    const b = el("span", modeMeaning(m).label, "mode-badge");
+    b.dataset.mode = m;
+    li.append(b, ` ${modeMeaning(m).meaning}`);
+    ul.append(li);
+  }
+  return ul;
 }
 
 function pending(r: Report): boolean {
@@ -558,6 +611,10 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     check.disabled = false;
   };
   box.append(out, actions);
+  // Said once, here: the page's header says who holds the classes; this says how a change reaches them.
+  box.append(el("p", manifest
+    ? "Copy or download the manifest and commit it by pull request; Flux applies it. Maku never edits the cluster or the repository."
+    : "A promotion changes the class's mode in the repository's .github/agent-factory.yaml, through a pull request you open and a human merges. Maku records the request and never edits the file.", "editor-footer"));
   note(view.text.value);
   show();
   return box;

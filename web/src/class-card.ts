@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// One merge class on its repository's page: its name and mode (with what the mode means), the
-// class in words, its evidence toward promotion, and its own promotion request and exception. The
+// One merge class on its repository's page: its name and mode, what it is for, its conditions in
+// one line (in full, folded), its evidence toward promotion, and its own promotion request and
+// exception. What serves the class (the MergePolicy) is the page header's to say, once. The
 // broker decides every write: a button here is only a convenience it would also refuse.
 // Runtime values come from settings-api.ts; settings.ts is imported for its types only, as it
 // imports this module.
 
-import { describeClass, modeMeaning } from "./policy-describe";
+import { describeClass, modeMeaning, summaryLine } from "./policy-describe";
 import type { PolicyFile } from "./policy-editor";
-import { centralManifest, evidenceLine, explain, post, servedFrom } from "./settings-api";
+import { evidenceLine, explain, policyState, post } from "./settings-api";
 import type { ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
@@ -20,14 +21,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
   if (text !== undefined) e.textContent = text;
   if (cls) e.className = cls;
   return e;
-}
-
-// The factory sends "repository" (the policy file's class) or "central"; anything else is shown as
-// sent. A central class is the MergePolicy's while that serves the repository (servedFrom).
-function sourceLine(c: ClassReport, r: RepositoryPage["report"]): string {
-  if (c.source === "repository") return "Declared in the repository's .github/agent-factory.yaml";
-  if (c.source !== "central") return c.source;
-  return centralManifest(r) !== undefined ? `Served from ${servedFrom(r)}` : "Set by the factory's central config";
 }
 
 // The factory's blocker codes (internal/factory/evidence: BlockBelowMinimum, BlockBadOutcome,
@@ -42,8 +35,11 @@ const unproposedWords: Record<string, string> = {
   not_shadow: "the class is not in shadow",
   not_in_repository_policy: "the class is not declared in the repository's policy file",
 };
+const PROMOTE_IN_POLICY = "To promote, set live: true on this class in the MergePolicy and merge the change.";
 
-export function evidenceBar(e: Evidence): HTMLElement {
+// evidenceBar is a class's clean decisions toward the minimum; eligible says whether it may promote
+// (an approved exception can make it so where the evidence alone does not).
+export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
   const box = el("div", undefined, "evidence-bar");
   box.setAttribute("role", "meter");
   box.setAttribute("aria-valuemin", "0");
@@ -52,7 +48,7 @@ export function evidenceBar(e: Evidence): HTMLElement {
   box.setAttribute("aria-label", "clean decisions toward promotion");
   // A blocked class is not one step from promotion, however many clean decisions it has: its bar
   // never reads as full.
-  const blocked = !e.eligible && (e.blockers ?? []).length > 0;
+  const blocked = !eligible && (e.blockers ?? []).length > 0;
   if (blocked) box.dataset.blocked = "true";
   const fill = el("span", undefined, "evidence-fill");
   fill.style.width = `${Math.min(blocked ? 95 : 100, Math.round((100 * e.clean) / Math.max(1, e.minimum)))}%`;
@@ -75,47 +71,71 @@ const ladder = (e: Evidence) => {
   return ol;
 };
 
+// lastDecisionWords reads the factory's "would_merge:clean" as "would merge (clean)".
+function lastDecisionWords(code: string): string {
+  const [what, why] = code.split(":", 2);
+  return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
+}
+
+// editClass selects a class in the page's editor, as its picker would.
+function editClass(main: HTMLElement, name: string) {
+  const pick = main.querySelector<HTMLSelectElement>('.policy-editor select[aria-label="class to edit"]');
+  if (!pick || ![...pick.options].some((o) => o.value === name)) return;
+  pick.value = name;
+  pick.dispatchEvent(new Event("change"));
+  pick.scrollIntoView?.({ block: "center" });
+  pick.focus();
+}
+
 export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const card = el("article", undefined, "class-card");
   card.id = `class-${c.class}`;
   const head = el("header", undefined, "class-card-head");
   const m = modeMeaning(c.mode);
-  const badge = el("span", `${m.label} · ${m.meaning}`, "mode-badge");
+  // The badge is the word; what it means is the page's legend, and this tooltip.
+  const badge = el("span", m.label, "mode-badge");
   badge.dataset.mode = c.mode;
+  badge.title = m.meaning;
   head.append(el("h3", c.class), badge);
-  card.append(head, el("p", sourceLine(c, ctx.page.report), "class-source"));
-
-  const policy = ctx.policy?.classes?.[c.class];
-  if (policy) {
-    const s = describeClass(policy, ctx.page.report.guardrails);
-    const when = el("ul", undefined, "class-when");
-    for (const w of s.when) when.append(el("li", w));
-    card.append(el("p", s.lead, "class-lead"), when, ...s.also.map((a) => el("p", a, "class-also")));
-  } else card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-lead"));
+  card.append(head);
 
   const r = ctx.page.report;
+  const policy = ctx.policy?.classes?.[c.class];
+  if (policy?.description) card.append(el("p", policy.description, "class-intent"));
+  if (policy) card.append(el("p", summaryLine(policy, r.guardrails), "class-summary"));
+  else card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
+  const last = r.mergePolicyStatus?.status.classes?.find((x) => x.name === c.class);
+  if (last?.lastDecision) card.append(el("p", `Last decision: ${lastDecisionWords(last.lastDecision)}${last.lastDecisionAt ? `, ${last.lastDecisionAt}` : ""}`, "class-last"));
+
   const e = c.evidence;
   const act = el("div", undefined, "class-actions");
   // A live class has been promoted and an off one decides nothing: neither is moving toward
-  // promotion, so neither shows the bar, the ladder or a promotion button.
+  // promotion, so neither shows the bar, the ladder or a promotion button, nor says it cannot.
   const words = (code: string) => unproposedWords[code] ?? code.replaceAll("_", " ");
-  const notPromotable = c.unproposed && c.mode !== "live" ? `Not promotable here: ${words(c.unproposed)}.` : "";
+  const notPromotable = () => {
+    if (c.mode !== "shadow" || !c.unproposed) return;
+    if (c.unproposed === "not_in_repository_policy" && policyState(r) === "central") {
+      const b = el("button", "Edit this class", "link-button");
+      b.type = "button";
+      b.onclick = () => editClass(ctx.main, c.class);
+      act.append(el("span", PROMOTE_IN_POLICY), " ", b);
+    } else act.textContent = `Not promotable here: ${words(c.unproposed)}.`;
+  };
   if (!e) {
     // The page says once that evidence is being read; a card speaks only for a class added since
     // the last read, when the rest of the page already has its evidence.
     if (r.evidenceAt) card.append(el("p", "Evidence for this class is still being read.", "evidence-reading"));
-    act.textContent = notPromotable;
+    notPromotable();
   } else if (c.mode === "live") {
     card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), el("p", evidenceLine(e), "evidence-detail"));
   } else if (c.mode === "off") {
     card.append(el("p", e.clean === 0 ? "Off: no decisions recorded." : evidenceLine(e), "evidence-detail"));
-    act.textContent = notPromotable;
   } else {
-    card.append(evidenceBar(e), ladder(e), el("p", evidenceLine(e), "evidence-detail"));
-    const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
-    if (reviewers) card.append(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
     const exc = ctx.page.exceptions.find((x) => x.class === c.class && x.state === "approved" && Date.parse(x.expiresAt ?? "") > Date.now());
     const eligible = e.eligible || (!!exc && e.clean >= exc.minimum && e.bad === 0 && e.drill === "passed");
+    card.append(evidenceBar(e, eligible), ladder(e), el("p", evidenceLine(e), "evidence-detail"));
+    const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
+    if (reviewers) card.append(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
     card.append(el("p", eligible
       ? (e.eligible ? "Eligible to promote: enough clean decisions, no bad outcome, drill passed." : `Eligible to promote under exception ${exc!.id} (${exc!.minimum} clean decisions required).`)
       : `Not yet eligible: ${(e.blockers ?? []).map((k) => blockerWords[k] ?? k.replaceAll("_", " ")).join(", ") || "no reason given"}.`, "evidence-eligibility"));
@@ -138,16 +158,29 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
       b.type = "button";
       b.onclick = () => exceptionForm(act, r.repository, c.class, r.minimum, ctx);
       act.append(b);
-    } else act.textContent = notPromotable;
+    } else notPromotable();
   }
-  card.append(act, promotionsOf(c.class, ctx), exceptionsOf(c.class, ctx));
+  // The full sentences, folded: the summary line above is what most readers need.
+  if (policy) {
+    const s = describeClass(policy, r.guardrails);
+    const more = el("details", undefined, "class-conditions");
+    const when = el("ul", undefined, "class-when");
+    for (const w of s.when) when.append(el("li", w));
+    more.append(el("summary", "Conditions"), el("p", s.lead, "class-lead"), when, ...s.also.map((a) => el("p", a, "class-also")));
+    card.append(more);
+  }
+  card.append(act);
+  const ps = promotionsOf(c.class, ctx);
+  if (ps) card.append(ps);
+  const xs = exceptionsOf(c.class, ctx);
+  if (xs) card.append(xs);
   return card;
 }
 
-function promotionsOf(cls: string, ctx: CardContext): HTMLElement {
+function promotionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
   const box = el("div", undefined, "class-promotions");
   const ps = ctx.page.promotions.filter((p) => p.class === cls);
-  if (ps.length === 0) { box.append(el("p", "No promotion requested.", "class-empty")); return box; }
+  if (ps.length === 0) return undefined;
   for (const p of ps) {
     const line = el("p", `Promotion requested by ${p.requestedBy} on ${p.requestedAt}: ${p.state === "pr_opened" ? "pull request opened" : p.state.replaceAll("_", " ")}`);
     if (p.pullRequest) {
@@ -163,9 +196,11 @@ function promotionsOf(cls: string, ctx: CardContext): HTMLElement {
   return box;
 }
 
-function exceptionsOf(cls: string, ctx: CardContext): HTMLElement {
+function exceptionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
   const box = el("div", undefined, "class-exceptions");
-  for (const x of ctx.page.exceptions.filter((y) => y.class === cls)) {
+  const xs = ctx.page.exceptions.filter((y) => y.class === cls);
+  if (xs.length === 0) return undefined;
+  for (const x of xs) {
     box.append(el("p", `Exception: ${x.minimum} clean decisions instead of ${ctx.page.report.minimum}, ${x.state}` +
       (x.decidedBy ? ` by ${x.decidedBy}` : "") + (x.expiresAt ? ` until ${x.expiresAt}` : "") + `. \u201c${x.justification}\u201d`));
     if (ctx.page.you.operator && x.state === "requested") {

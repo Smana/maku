@@ -17,7 +17,7 @@ const ev = (over: Partial<Evidence> = {}): Evidence => ({
 
 const page = (over: Partial<RepositoryPage> = {}): RepositoryPage => ({
   report: { repository: "Smana/cloud-native-ref", minimum: 20, readAt: "2026-11-08T00:00:00Z", evidenceAt: "2026-11-08T00:00:00Z", factory: "aws-0", defaultBranch: "main",
-    harnessProfiles: ["docs-standard"], guardrails: { maxPatchFiles: 20 }, file: "factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n",
+    harnessProfiles: ["docs-standard"], guardrails: { maxPatchFiles: 20 }, mergePolicy: "cloud-native-ref", file: "factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n",
     policy: { factory: "aws-0", classes: { "docs-links": { mode: "shadow", author: "agents", harness: "docs-standard",
       conditions: { all: [{ allowedFiles: ["^docs/.+\\.md$"] }, { maxPatchFiles: 10 }] } } } }, classes: [
     { class: "docs-links", source: "repository", mode: "shadow", evidence: ev(),
@@ -184,27 +184,29 @@ describe("the index and evidence pages", () => {
     expect(cards[1].textContent).not.toContain("unavailable");
   });
 
-  it("lists each repository with where its classes come from and its classes by mode", async () => {
+  it("lists each repository with its MergePolicy and its classes by mode", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", two());
     const rows = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "its own .github/agent-factory.yaml", "1 live · 1 shadow", "docs-links 20/20"]);
+    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "cloud-native-ref", "1 live · 1 shadow", "docs-links 20/20"]);
+    expect([...app.querySelectorAll("table.repo-table thead th")].map((th) => th.textContent)[1]).toBe("MergePolicy");
     expect(rows[1][0]).toBe("Smana/broken");
     expect(rows[1][1]).toMatch(/^Not readable: /);
     expect(app.querySelector('table.repo-table a[href="/settings/merge-policies/Smana/cloud-native-ref"]')).not.toBeNull();
   });
 
-  it("names the MergePolicy only when it serves the classes, not when the repository's own file declares them", async () => {
-    const own = page();
-    own.report.mergePolicy = "cnr";
-    own.report.manifest = "kind: MergePolicy\n";
-    const served = structuredClone(own);
-    served.report.classes = served.report.classes.map((c) => ({ ...c, source: "central" }));
+  it("names the MergePolicy with its Accepted and InSync words, or says the repository is not migrated", async () => {
+    const synced = page();
+    synced.report.mergePolicyStatus = { namespace: "agent-system", generation: 3, status: { authority: "central", conditions: [
+      { type: "Accepted", status: "True" }, { type: "RepositoryFileValid", status: "True" },
+      { type: "InSync", status: "False", message: "docs: only in the central config; tests: only in the central config" }] } };
+    const legacy = page();
+    delete legacy.report.mergePolicy;
     const app = document.createElement("div");
-    await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/own", "Smana/served"] },
-      "/api/policy/repositories/Smana/own": own, "/api/policy/repositories/Smana/served": served }));
+    await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/synced", "Smana/legacy"] },
+      "/api/policy/repositories/Smana/synced": synced, "/api/policy/repositories/Smana/legacy": legacy }));
     const from = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => tr.children[1].textContent);
-    expect(from).toEqual(["its own .github/agent-factory.yaml", "the MergePolicy cnr"]);
+    expect(from).toEqual(["cloud-native-ref · Accepted · Not in sync: 2 differences", "Not migrated"]);
   });
 
   it("counts a report's classes by mode", () => {
@@ -729,8 +731,9 @@ describe("a repository served from a MergePolicy", () => {
     const dl = app.querySelector(".yaml-bar a.download") as HTMLAnchorElement;
     expect(dl.getAttribute("download")).toBe("mergepolicy-cloud-native-ref.yaml");
     expect([...app.querySelectorAll("a")].some((a) => /github\.com.*edit|on GitHub/.test(`${a.href} ${a.textContent}`))).toBe(false);
-    expect(app.textContent).toContain("GitOps pull request on the MergePolicy manifest");
-    expect(app.textContent).toContain("which Flux applies");
+    expect(app.textContent).toContain("Copy or download the manifest and commit it by pull request; Flux applies it. Maku never edits the cluster or the repository.");
+    expect(app.textContent?.split("Flux applies it")).toHaveLength(2); // said once, in the editor footer
+    expect(app.querySelector(".policy-editor .editor-footer")).not.toBeNull();
     expect(app.textContent).toContain("Built from the version the factory serves; a change the factory refused is not in it.");
     const yaml = (app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement).value;
     expect(yaml).toMatch(/harness: "?plain/);
@@ -792,10 +795,45 @@ describe("a repository served from a MergePolicy", () => {
     expect(app.textContent).not.toContain("MergePolicy manifest");
   });
 
-  it("keeps the repository file when the repository's own file is the authority", async () => {
+  it("keeps the repository file path when the repository's own file is the authority, and says the file decides", async () => {
     const p = central();
     p.report.classes[0].source = "repository";
+    p.report.mergePolicyStatus!.status.authority = "repository";
+    p.report.mergePolicyStatus!.status.conditions = [{ type: "RepositoryFileValid", status: "False", message: "line 3" }];
     const app = await mountWith(p);
     expect(app.querySelector(".yaml-bar button.copy")?.textContent).toBe("Copy");
+    expect(app.querySelector(".policy-header")?.textContent).toContain("repository");
+    expect(app.querySelector(".policy-authority")?.textContent).toContain(".github/agent-factory.yaml decides");
+    expect(app.querySelector(".policy-editor .editor-footer")?.textContent).toContain("a pull request you open and a human merges");
+    const fl = app.querySelector(".file-line")!;
+    expect(fl.getAttribute("data-prominent")).toBe("true");
+    expect(fl.textContent).toContain("auto-merge is paused");
+  });
+
+  it("heads the page with the MergePolicy once: name, namespace, authority, generation, conditions, and the mode legend", async () => {
+    const app = await mountWith(central());
+    const headers = app.querySelectorAll("header.policy-header");
+    expect(headers).toHaveLength(1);
+    const h = headers[0];
+    const dl = [...h.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+    expect(dl).toEqual([["MergePolicy", "cloud-native-ref"], ["Namespace", "agent-system"], ["Authority", "central"], ["Generation", "3"]]);
+    const chips = [...h.querySelectorAll(".policy-condition")].map((c) => [c.textContent, c.getAttribute("data-tone")]);
+    expect(chips).toEqual([["Accepted", "ok"], ["Repository file valid", "ok"], ["Not in sync: 2 differences", "warn"]]);
+    expect([...app.querySelectorAll(".mode-legend .mode-badge")].map((b) => b.textContent)).toEqual(["Live", "Shadow", "Off"]);
+    expect(app.querySelector(".mode-legend")?.textContent).toContain("records what it would do, merges nothing");
+    expect(app.querySelector(".class-source")).toBeNull();
+    expect(app.querySelector(".file-line")?.getAttribute("data-prominent")).toBe("false");
+    expect(app.querySelector(".file-line")?.textContent).toContain("differs from the MergePolicy in 2 places");
+  });
+
+  it("renders a repository with no MergePolicy read-only: the notice, the cards, no editor", async () => {
+    const p = page();
+    delete p.report.mergePolicy;
+    const app = await mountWith(p);
+    expect(app.querySelector(".not-migrated")?.textContent).toBe("Not migrated yet: maku config migrate prints its MergePolicy.");
+    expect(app.querySelector(".policy-header")).toBeNull();
+    expect(app.querySelector(".policy-editor")).toBeNull();
+    expect([...app.querySelectorAll("h2")].some((h) => h.textContent === "Policy editor")).toBe(false);
+    expect(app.querySelectorAll(".class-card")).toHaveLength(2);
   });
 });
