@@ -41,6 +41,19 @@ for every source.
 
 ---
 
+### Task 0: A removed repository's tasks are nobody's (carried from plan 2's review)
+
+**Files:** `internal/factory/intake/issues.go` (`owns`, ~139), `internal/factory/reconciler/reconciler.go` (`notServed`, ~258), and the tests beside them.
+
+- `owns` answers true for every task whenever exactly one repository is configured. After a 2→1 publish, the remaining repository's poller treats the removed repository's tasks as its own: `stops` (~573), `reverts` (~636), `openTasks` (~509) and `publish.go`. A stop or revert label on its issue or PR number *n* can then annotate the removed repository's task with the same number.
+
+  Compare with `strings.EqualFold(t.Spec.Repository, p.repo(cfg).Name)` only. Legacy tasks carry the entry's name, so they still match.
+- The `notServed` once-set never forgets a task deleted while its repository is unserved: forget it on the NotFound path.
+- [ ] Tests first: after a 2→1 publish, a stop label on the remaining repository's issue *n* does not touch the removed repository's task *n*. A deleted task is forgotten. Run them and watch them fail.
+- [ ] Implement. `task check` passes. Commit `fix(intake): a task belongs to its own repository only`.
+
+---
+
 ### Task 1: The last-decision recorder
 
 **Files:** create `internal/factory/decision/recorder.go` and `recorder_test.go`. Modify the
