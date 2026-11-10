@@ -34,7 +34,8 @@ describe("Maku typography", () => {
     expect(rule(".bubble .md, .handoff > .md, .notes")).toMatch(/font-weight:\s*400/);
     expect(rule("body")).toMatch(/font:\s*400 /);
     expect(rule("strong, b")).toMatch(/font-weight:\s*700/);
-    expect(rule(".md :is(h1, h2, h3, h4, h5, h6)")).toMatch(/font-weight:\s*700/);
+    expect(rule(".md :is(h2, h3, h4, h5, h6)")).toMatch(/font-weight:\s*700/);
+    expect(rule(".md h1")).toMatch(/font-weight:\s*700/);
   });
 
   it("uses the readable Maku type scale", () => {
@@ -198,11 +199,11 @@ describe("The room list", () => {
 
 describe("Markdown in a message", () => {
   it("keeps headings in the conversation's scale, never the browser's 2em", () => {
-    const all = rule(".md :is(h1, h2, h3, h4, h5, h6)");
+    const all = rule(".md :is(h2, h3, h4, h5, h6)");
     expect(all).toMatch(/font-size:\s*var\(--text-body\)/);
     expect(all).toMatch(/font-weight:\s*700/);
-    // An h1 in a message is no larger than its h2: the scale has no step between body and heading.
-    expect(css).not.toMatch(/\.md h1\s*{/);
+    // An h1 in a message is the one step above: the heading size, so the hierarchy reads.
+    expect(rule(".md h1")).toMatch(/font-size:\s*var\(--text-heading\)/);
   });
   it("sets inline code apart from prose", () => {
     expect(rule(".md :not(pre) > code")).toMatch(/background:/);

@@ -320,7 +320,7 @@ describe("appearance", () => {
     expect(root).toMatch(/--radius-control:\s*6px/);
     expect(root).toMatch(/--radius-row:\s*8px/);
     expect(root).toMatch(/--radius-card:\s*12px/);
-    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-md\)/);
     expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-card\)/);
   });
 });

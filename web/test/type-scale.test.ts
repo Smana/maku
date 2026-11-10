@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
+// A shorthand's size is a token, followed by its own leading token, at the start of the size slot.
+const SHORTHAND = /^inherit$|^(?:[\w.]+\s+)*var\(--text-(display|heading|body|small|eyebrow)\)\/var\(--leading-\1\)(?:\s|$)/;
 const fonts = join(__dirname, "../src/assets/fonts");
 
 describe("fonts", () => {
@@ -30,7 +32,13 @@ describe("type scale", () => {
     const rules = css.replace(/\/\*[\s\S]*?\*\//g, "");
     const decls = [...rules.matchAll(/(?:^|[{;\s])font:\s*([^;}]+)/g)].map((m) => m[1].trim());
     expect(decls.length).toBeGreaterThan(0);
-    for (const d of decls) expect(d, d).toMatch(/^inherit$|var\(--text-(display|heading|body|small|eyebrow)\)\/var\(--leading-\1\)/);
+    for (const d of decls) expect(d, d).toMatch(SHORTHAND);
+  });
+  it("refuses a literal size in a shorthand, next to a token or not", () => {
+    for (const bad of ["500 13px/16px var(--font-mono)", "500 var(--text-small)/20px var(--font-mono)",
+      "500 14px/var(--leading-small) var(--font-mono)", "500 var(--text-small)/var(--leading-body) var(--font-mono)"])
+      expect(bad).not.toMatch(SHORTHAND);
+    expect("500 var(--text-eyebrow)/var(--leading-eyebrow) var(--font-mono)").toMatch(SHORTHAND);
   });
   it("defines the scale", () => {
     for (const [k, v] of [["display", "32px"], ["heading", "22px"], ["body", "16px"], ["small", "14px"], ["eyebrow", "13px"]])
@@ -46,4 +54,13 @@ describe("type scale", () => {
       expect(m[2], m[1]).toMatch(/letter-spacing:\s*0\.08em/);
     }
   });
+});
+
+it("sets the markdown h1 at the heading size and h2 to h6 at body size, bold", () => {
+  expect(css).toMatch(/\.md h1\s*{[^}]*font-size:\s*var\(--text-heading\)/);
+  expect(css).toMatch(/\.md :is\(h2, h3, h4, h5, h6\)\s*{[^}]*font-size:\s*var\(--text-body\)[^}]*font-weight:\s*700/);
+});
+
+it("keeps a column head on one line", () => {
+  expect(css).toMatch(/\.rooms th\s*{[^}]*white-space:\s*nowrap/);
 });
