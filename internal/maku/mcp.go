@@ -48,6 +48,9 @@ type Relay struct {
 	File  IssueFiler                            // files an accepted draft; nil refuses issue_file
 	// Issues reads and edits an existing issue for need_answer; nil refuses that tool.
 	Issues IssueEditor
+	// FactoryLogin is the only comment author need_answer trusts for its public fallback.
+	// Empty disables that fallback; an authorized room_brief question remains available.
+	FactoryLogin string
 	// Label puts a label on the issue just filed, as the developer; nil refuses to start one.
 	Label Labeler
 	// Dir is the directory maku keeps its files in: what the client declares at initialize is

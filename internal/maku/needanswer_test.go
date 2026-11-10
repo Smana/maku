@@ -261,7 +261,7 @@ func newNeedAnswerRig(t *testing.T, issues *fakeIssueEditor, rooms []map[string]
 	rig := &needAnswerRig{issues: issues}
 	rig.broker = newNeedAnswerBroker(t, rooms, brief)
 	labels := 0
-	rig.relay = &Relay{URL: rig.broker.srv.URL, HC: rig.broker.srv.Client(), Token: tok, Issues: issues,
+	rig.relay = &Relay{URL: rig.broker.srv.URL, HC: rig.broker.srv.Client(), Token: tok, Issues: issues, FactoryLogin: "factory-app[bot]",
 		Label: func(context.Context, string, int, string) error { labels++; return nil },
 		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)), forms: true,
 		waiting: map[string]chan json.RawMessage{}}
@@ -337,6 +337,7 @@ func TestNeedAnswer(t *testing.T) {
 		initial.Comments = []IssueComment{publicBounce("Public question must not win?", "Public answer", needAnswerUpdated)}
 		issues := &fakeIssueEditor{snapshots: []IssueSnapshot{initial}}
 		rig := newNeedAnswerRig(t, issues, nil, briefQuestion("Which dashboard?", "Use agent-run"))
+		rig.relay.FactoryLogin = "" // room_brief remains available without the public-comment trust configuration
 		got := rig.relay.needAnswer(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "issue": 7, "room": "3buqdlot"}))
 		sc := needAnswerResult(t, got)
 		if sc["answered"] != true || sc["started"] != false || sc["issue"] != "https://github.com/Smana/a/issues/7" ||
@@ -375,7 +376,7 @@ func TestNeedAnswer(t *testing.T) {
 		}
 	})
 
-	t.Run("newest public bounce comment is the fallback", func(t *testing.T) {
+	t.Run("same-login newest public bounce comment is the fallback", func(t *testing.T) {
 		initial := needAnswerSnapshot()
 		initial.Comments = []IssueComment{
 			publicBounce("Old question?", "Old answer", needAnswerUpdated.Add(-time.Hour)),
@@ -383,6 +384,7 @@ func TestNeedAnswer(t *testing.T) {
 		}
 		issues := &fakeIssueEditor{snapshots: []IssueSnapshot{initial}}
 		rig := newNeedAnswerRig(t, issues, nil, nil)
+		rig.relay.FactoryLogin = "FACTORY-APP[BOT]" // GitHub login comparison is case-insensitive
 		got := rig.relay.needAnswer(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "issue": 7, "room": "3buqdlot"}))
 		needAnswerResult(t, got)
 		if len(issues.edits) != 1 || rig.forms != 1 {
@@ -392,6 +394,36 @@ func TestNeedAnswer(t *testing.T) {
 		if !strings.Contains(message, "Newest public question?") || !strings.Contains(message, "Use the public recommendation") || strings.Contains(message, "Old question?") {
 			t.Fatalf("fallback form shows the wrong comment:\n%s", message)
 		}
+	})
+
+	t.Run("forged newer comment refuses instead of using the older trusted bounce", func(t *testing.T) {
+		initial := needAnswerSnapshot()
+		forged := publicBounce("Attacker question?", "Attacker recommendation", needAnswerUpdated)
+		forged.Author = "attacker"
+		initial.Comments = []IssueComment{
+			publicBounce("Trusted older question?", "Trusted older answer", needAnswerUpdated.Add(-time.Hour)),
+			forged,
+		}
+		issues := &fakeIssueEditor{snapshots: []IssueSnapshot{initial}}
+		rig := newNeedAnswerRig(t, issues, nil, nil)
+		got := rig.relay.needAnswer(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "issue": 7, "room": "3buqdlot"}))
+		if !strings.Contains(toolText(got), "needs_room_access") || rig.forms != 0 || issues.views != 1 {
+			t.Fatalf("result = %v, forms = %d, views = %d", got, rig.forms, issues.views)
+		}
+		requireNoNeedAnswerWrite(t, rig)
+	})
+
+	t.Run("missing factory login disables only the public fallback", func(t *testing.T) {
+		initial := needAnswerSnapshot()
+		initial.Comments = []IssueComment{publicBounce("Public question?", "Public answer", needAnswerUpdated)}
+		issues := &fakeIssueEditor{snapshots: []IssueSnapshot{initial}}
+		rig := newNeedAnswerRig(t, issues, nil, nil)
+		rig.relay.FactoryLogin = ""
+		got := rig.relay.needAnswer(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "issue": 7, "room": "3buqdlot"}))
+		if !strings.Contains(toolText(got), "needs_room_access") || rig.forms != 0 || issues.views != 1 {
+			t.Fatalf("result = %v, forms = %d, views = %d", got, rig.forms, issues.views)
+		}
+		requireNoNeedAnswerWrite(t, rig)
 	})
 
 	for _, tc := range []struct {
@@ -408,7 +440,7 @@ func TestNeedAnswer(t *testing.T) {
 			issues := &fakeIssueEditor{snapshots: []IssueSnapshot{initial}}
 			rig := newNeedAnswerRig(t, issues, nil, briefQuestion("Question?", "Answer"))
 			got := rig.relay.needAnswer(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "issue": 7, "room": "3buqdlot"}))
-			if toolText(got) == "" || rig.forms != 0 || issues.views != 1 {
+			if !strings.Contains(toolText(got), "not_needs_author") || rig.forms != 0 || issues.views != 1 {
 				t.Fatalf("result = %v, forms = %d, views = %d", got, rig.forms, issues.views)
 			}
 			requireNoNeedAnswerWrite(t, rig)
@@ -449,7 +481,8 @@ func TestNeedAnswer(t *testing.T) {
 			})
 			got := rig.relay.needAnswer(t.Context(), mustArgs(t, map[string]any{"repo": "Smana/a", "issue": 7, "room": "3buqdlot"}))
 			sc := needAnswerResult(t, got)
-			if sc["answered"] != false || sc["started"] != false || rig.forms != 1 || issues.views != 1 {
+			if sc["answered"] != false || sc["started"] != false || sc["next"] != "the question is unanswered and nothing was written" ||
+				rig.forms != 1 || issues.views != 1 {
 				t.Fatalf("result = %#v, forms = %d, views = %d", sc, rig.forms, issues.views)
 			}
 			requireNoNeedAnswerWrite(t, rig)

@@ -51,6 +51,22 @@ func TestMakuConfigureDiscoversTheRest(t *testing.T) {
 	}
 }
 
+func TestMakuConfigureFactoryLogin(t *testing.T) {
+	b := newMakuBroker(t)
+	dir := t.TempDir()
+	r := Maku{Dir: dir, HC: b.srv.Client(), Stream: b.srv.Client(), Out: &strings.Builder{}, Err: &strings.Builder{}}
+	if err := r.Run(t.Context(), []string{"configure", "--url", b.srv.URL, "--factory-login", "my-factory[bot]"}); err != nil {
+		t.Fatal(err)
+	}
+	var cfg maku.Config
+	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FactoryLogin != "my-factory[bot]" {
+		t.Fatalf("factory login = %q; want my-factory[bot]", cfg.FactoryLogin)
+	}
+}
+
 // A refused connection or an untrusted CA names its cause: Run is the one place every command's
 // error passes.
 func TestMakuErrorsNameTheCause(t *testing.T) {

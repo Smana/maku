@@ -173,7 +173,7 @@ const (
 var needAnswerEntry = map[string]any{
 	"name": needAnswerTool,
 	"description": "Answer the scoper's question on an issue waiting with factory/needs-author. " +
-		"The authorized room brief supplies the question, with the newest public factory bounce comment as fallback. " +
+		"The authorized room brief supplies the question, with the newest public comment by the configured factory App login as fallback. " +
 		"The developer confirms the answer and body append in a form; only the issue body is edited, never its labels. " +
 		"A maintainer must re-apply factory/ready afterwards.",
 	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","issue"],` +
@@ -202,8 +202,11 @@ func (r *Relay) needAnswer(ctx context.Context, args json.RawMessage) any {
 	}
 	issueURL := fmt.Sprintf("https://github.com/%s/issues/%d", in.Repo, in.Issue)
 	result := func(answered bool) map[string]any {
-		out, _ := mcpwire.ToolResult(map[string]any{"answered": answered, "issue": issueURL, "started": false,
-			"next": "a maintainer must re-apply factory/ready"})
+		next := "a maintainer must re-apply factory/ready"
+		if !answered {
+			next = "the question is unanswered and nothing was written"
+		}
+		out, _ := mcpwire.ToolResult(map[string]any{"answered": answered, "issue": issueURL, "started": false, "next": next})
 		return out
 	}
 
@@ -249,7 +252,7 @@ func (r *Relay) needAnswer(ctx context.Context, args json.RawMessage) any {
 		}
 	}
 	if question == nil {
-		if q, ok := publicBounceQuestion(initial.Comments); ok {
+		if q, ok := publicBounceQuestion(initial.Comments, r.FactoryLogin); ok {
 			question = &q
 		}
 	}
@@ -324,7 +327,9 @@ var needsAuthorMarker = regexp.MustCompile(`<!-- agent-factory scope=[a-z2-7]{8}
 
 // publicBounceQuestion reads only the newest factory needs-author comment. An internal bounce has
 // the same marker but deliberately no question, so it fails closed rather than using an older one.
-func publicBounceQuestion(comments []IssueComment) (scopeQuestion, bool) {
+// The newest marker's author must be the configured factory App: a forged newer comment disables the
+// fallback entirely instead of exposing an older trusted question or presenting the attacker as the scoper.
+func publicBounceQuestion(comments []IssueComment, factoryLogin string) (scopeQuestion, bool) {
 	var newest IssueComment
 	found := false
 	for _, comment := range comments {
@@ -332,7 +337,7 @@ func publicBounceQuestion(comments []IssueComment) (scopeQuestion, bool) {
 			newest, found = comment, true
 		}
 	}
-	if !found {
+	if !found || factoryLogin == "" || !strings.EqualFold(newest.Author, factoryLogin) {
 		return scopeQuestion{}, false
 	}
 	const lead = "The scoper's question, and the assumption it would make otherwise:"

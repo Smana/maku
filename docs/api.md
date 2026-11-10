@@ -689,16 +689,20 @@ The local relay's `need_answer` is the post-filing scoper-bounce counterpart, no
 planner. Its strict arguments are `{repo, issue, room?}`; without `room`, `rooms_list` supplies at most
 one match and several refuse as `ambiguous_room`. It acts only with `factory/needs-author` present and
 `factory/ready` absent. It reads the authorized `room_brief` `question` first, then falls back to the
-newest public factory `event=needs-author-…` comment. No room is acceptable only when that public comment
-supplies the question; an internal or missing question refuses as `needs_room_access`, naming the
-maintainer/room-reader path rather than exposing or inventing one.
+newest public factory `event=needs-author-…` comment only when its author case-insensitively matches the
+CLI config's `factoryLogin` (set by `maku configure --factory-login`). An empty login disables the
+fallback; a forged newer comment refuses it rather than using an older trusted comment. No room is
+acceptable only when that trusted public comment supplies the question; an internal, untrusted, or
+missing question refuses as `needs_room_access`, naming the maintainer/room-reader path rather than
+exposing or inventing one.
 
 The form shows the question, recommendation and exact Decision-section append layout, with `<answer>`
 marking the single substitution the developer's trimmed one-line answer makes. `answer` is required and
 `send` defaults to false. Only an accepted form with send true re-reads the issue and, when body, labels
 and `updatedAt` are all unchanged, calls `gh issue edit --body-file=-` once. It never adds or removes a
 label. Success returns `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply
-factory/ready"}`. Decline, cancel, send false, no form capability (`needs_confirmation`), wrong labels,
+factory/ready"}`. Decline, cancel, and send false instead return `next:"the question is unanswered and
+nothing was written"`; those choices, no form capability (`needs_confirmation`), wrong labels,
 `issue_changed`, and every question/authorization refusal write nothing. A GitHub edit failure returns
 `not_answered` and no label operation; inspect the issue before retrying because a transport error cannot
 prove whether the remote edit landed.

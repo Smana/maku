@@ -29,8 +29,8 @@ maku login                                    # device flow: open the printed UR
 maku doctor                                   # check the setup
 ```
 
-- `configure` reads the issuer, client id and project id from the broker's unauthenticated `/.well-known/roomctl`. Pass `--issuer`, `--client-id` or `--project-id` to override one. The URL must be `https`, except for a local install (`humanMode: local`), whose listener is the `kubectl port-forward`: `http://localhost:<port>` is accepted on `localhost` or a loopback address only, and anything else in clear is refused before any request.
-- `configure --from <rooms URL>` replaces the whole config with what the broker serves now (a room page's URL works: only its origin is used). Use it after a platform rebuild: a stale client id makes the identity provider answer `invalid_client`, and `maku login` then prints this fix. It refuses a non-`https` URL or issuer — a local install configures with `--url http://localhost:<port>` instead — and cannot be combined with the other flags. It prints the four values it will write (and the old ones when they change) and, on a terminal, asks `y/N`; `--yes` skips the question. An issuer outside the URL's registrable domain (`rooms.ogenki.io` and `auth.ogenki.io` share one) is refused unless `--yes` says you checked it.
+- `configure` reads the issuer, client id and project id from the broker's unauthenticated `/.well-known/roomctl`. Pass `--issuer`, `--client-id` or `--project-id` to override one. `--factory-login LOGIN` saves the factory App's GitHub login (for example `my-factory[bot]`): `need_answer` trusts public bounce comments from that login alone. If it is empty, including in an older config, the public fallback refuses securely while authorized `room_brief` questions remain available. The URL must be `https`, except for a local install (`humanMode: local`), whose listener is the `kubectl port-forward`: `http://localhost:<port>` is accepted on `localhost` or a loopback address only, and anything else in clear is refused before any request.
+- `configure --from <rooms URL>` replaces the whole config with what the broker serves now (a room page's URL works: only its origin is used). Use it after a platform rebuild: a stale client id makes the identity provider answer `invalid_client`, and `maku login` then prints this fix. It refuses a non-`https` URL or issuer — a local install configures with `--url http://localhost:<port>` instead — and cannot be combined with the other broker-value flags. `--factory-login` is the one override: it sets the public-comment trust identity alongside the discovered values. It prints the four broker values it will write (and the old ones when they change) and, on a terminal, asks `y/N`; `--yes` skips the question. An issuer outside the URL's registrable domain (`rooms.ogenki.io` and `auth.ogenki.io` share one) is refused unless `--yes` says you checked it.
 - A local broker needs no `login` and takes no token: `login` says so, `token` says so, and no request carries an `Authorization` header.
 - The config and token files sit in `<user config dir>/maku/` (`config.json`, `token.json`), owner-only. The directory a CLI before v0.30.0 wrote (formerly `roomctl/`, beside it) is copied there once, the first time `maku` runs without one; the old directory stays.
 - `login` prints `Open <verification URL> and enter the code …` (the URL is the one your identity provider returns), then `logged in; …`.
@@ -42,8 +42,8 @@ maku doctor                                   # check the setup
 
 | Command | What it does |
 |---|---|
-| `configure --url URL [--issuer URL --client-id ID --project-id ID]` | Saves the config. The broker's URL is enough |
-| `configure --from URL [--yes]` | Replaces the config with the values the broker serves now, whatever is stored |
+| `configure --url URL [--issuer URL --client-id ID --project-id ID --factory-login LOGIN]` | Saves the config. The broker's URL is enough; the factory login enables the trusted public-comment fallback |
+| `configure --from URL [--yes] [--factory-login LOGIN]` | Replaces the config with the values the broker serves now, whatever is stored, with an optional factory-login override |
 | `login` | Signs in with the device flow |
 | `setup <claude\|codex\|copilot\|cursor\|gemini\|opencode> [--project] [--print]` | Registers `maku mcp` as the `factory` MCP server of a coding agent and writes the factory-handoff skill and, for `claude` and `opencode`, the short `/factory` command ([below](#short-commands)). `--project` writes under the repository's top instead of your home; `--print` shows what it would do and writes nothing |
 | `demo app --dir DIR [--owner ORG] [--name NAME]` | The laptop demo's GitHub App, through GitHub's App manifest flow. Serves a page on `127.0.0.1` that posts the manifest (seven permissions, `actions: write` among them so a cancelled `ci` can be re-run, no webhook events, private) to GitHub, takes the callback once its `state` matches, converts the code and writes `app_id`, `private_key` (mode 0600), `slug` and `html_url` into DIR (mode 0700), each file is written through a temporary file and renamed into place (a symlink there is replaced, not followed), `html_url` last: its presence means the set is complete. It then prints the link that installs the App on your repository. The callback works once and only for the `127.0.0.1` host. It never prints the key and gives up after five minutes. `--owner` creates the App in an organization |
@@ -157,14 +157,17 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   while `factory/needs-author` is present and `factory/ready` is absent. With no `room`, it resolves the
   issue through `rooms_list`: several matches refuse as `ambiguous_room` rather than guessing. It reads
   the authorized `room_brief` question first; if that is unavailable, only the newest factory
-  `event=needs-author-…` comment is the public fallback. No resolved room is not by itself an error for a
-  public issue, but a missing or internal-only question refuses as `needs_room_access` and writes nothing.
+  `event=needs-author-…` comment is the public fallback, and its author must case-insensitively match the
+  configured `factoryLogin`. A forged newer comment or an empty login refuses the fallback rather than
+  using an older comment. No resolved room is not by itself an error for a public issue, but a missing,
+  untrusted, or internal-only question refuses as `needs_room_access` and writes nothing.
   The form shows the question, recommendation and exact Decision-section layout, requires a one-line
   `answer`, and defaults `send` to no. On explicit send it re-reads the issue and requires the body, labels
   and `updatedAt` to be unchanged before one body-only `gh issue edit --body-file=-`. A decline, cancel,
   false toggle, client without forms, wrong labels, conflict, or missing question writes nothing. Success
   is `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply factory/ready"}`; the
-  tool never calls the labeler. An edit failure returns `not_answered` and applies no label: inspect the
+  tool never calls the labeler. Decline, cancel, and false send return `next:"the question is unanswered
+  and nothing was written"`. An edit failure returns `not_answered` and applies no label: inspect the
   issue before retrying, since the transport failure cannot prove whether GitHub accepted the edit.
 - Every tool and prompt that takes a room (`room_summary`, `room_brief`, `room_changes`, `room_queue`,
   `room_tail`, `room_fork`, `room_wait`, `room_checkout`, the `status` and `resume` prompts) accepts
