@@ -241,7 +241,7 @@ a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-ra
 .dark .brand-mark-dark { display: block; }
 .dark .brand-mark-light { display: none; }
 .brand-wordmark { font: 700 var(--text-heading)/var(--leading-heading) var(--font-display); letter-spacing: -0.03em; }
-.brand:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
+.brand:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
 /* The dock: the composer on the left (the text over its row: deliver to, the notice, send),
    the act notice, the theme button and the connection on the right; one column on a phone. */
 /* Sticky, not fixed: it sits in the flow at the page's end, so once scrolled there it
@@ -293,7 +293,7 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 }
 .seg input:not(:checked, :disabled):hover + span { color: var(--foreground); }
 .seg input:checked + span { background: var(--card); color: var(--foreground); font-weight: 700; box-shadow: var(--shadow-border); }
-.seg input:focus-visible + span { outline: 2px solid var(--ring); outline-offset: 1px; }
+.seg input:focus-visible + span { outline: 2px solid var(--ring); outline-offset: 2px; }
 .seg input:disabled + span { opacity: .5; }
 .dock-meta { justify-content: flex-end; }
 .page-dock .status { color: var(--muted-foreground); font-size: var(--text-small); font-variant-numeric: tabular-nums; }
@@ -361,7 +361,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 }
 .session > summary:hover, .cli-setup > summary:hover, .notes details > summary:hover, .fold > summary:hover, .step-calls > summary:hover, .controls .advanced > summary:hover, .approval-json > summary:hover { color: var(--foreground); }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
-  outline: 2px solid var(--ring); outline-offset: 1px;
+  outline: 2px solid var(--ring); outline-offset: 2px;
 }
 .page-header button { background: transparent; color: var(--brand-header-foreground); }
 
@@ -416,7 +416,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   display: inline-block; width: 64px; height: 6px; border-radius: 3px; vertical-align: middle;
   background: color-mix(in srgb, var(--brand-header-foreground) 12%, transparent); position: relative;
 }
-.meter-bar::after { content: ""; position: absolute; inset: 0; width: var(--fill, 0%); background: var(--primary); border-radius: 3px; }
+.meter-bar::after { content: ""; position: absolute; inset: 0; width: var(--fill, 0%); background: var(--aurora-bar); border-radius: 3px; }
 .waiting, .closed { font-size: var(--text-small); color: var(--brand-header-foreground); opacity: .9; }
 .strip-head { display: grid; gap: 4px; min-width: 0; }
 .strip-tail:empty { display: none; }
@@ -424,9 +424,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .strip-next {
   display: grid; gap: 2px; padding: 8px 12px; border-radius: 8px; width: fit-content; max-width: 100%;
   background: color-mix(in srgb, var(--brand-header-foreground) 6%, transparent);
-  border-left: 3px solid var(--warning);
 }
-.strip-next .waiting { opacity: 1; }
+.strip-next .waiting { opacity: 1; font-weight: 700; } /* the emphasis is the weight, not a stripe */
 .next-label { color: var(--brand-header-foreground); opacity: .7; }
 .page-header .waiting code {
   padding: .1em .35em; border-radius: 4px;
@@ -650,7 +649,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24em; overflow
 .md a { overflow-wrap: anywhere; }
 /* Markdown in a message stays in the conversation's scale: a heading is a bold line, never the
    browser's 2em poster, and inline code reads as code inside the prose. */
-.md :is(h1, h2, h3, h4, h5, h6) { font-size: var(--text-body); line-height: 1.4; font-weight: 700; margin: .9em 0 .3em; }
+.md h1 { font-size: var(--text-heading); line-height: var(--leading-heading); font-weight: 700; margin: .9em 0 .3em; }
+.md :is(h2, h3, h4, h5, h6) { font-size: var(--text-body); line-height: 1.4; font-weight: 700; margin: .9em 0 .3em; }
 .md :not(pre) > code { font-size: var(--text-small); padding: .1em .35em; border-radius: 4px; background: color-mix(in srgb, var(--foreground) 7%, transparent); }
 .md pre { padding: 8px 10px; border-radius: 6px; background: color-mix(in srgb, var(--foreground) 5%, transparent); }
 .status-error, .status-rejected { color: var(--destructive); }
@@ -760,7 +760,7 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
    its Copy button. Concentric radii: the card 14 px, a block 10 px, the button 6 px at 4 px
    in. A block wraps its lines (a word breaks only when nothing else fits), so the fold never
    scrolls sideways; the button floats, so the command's later lines run under it. */
-.cli-card { background: var(--card); color: var(--card-foreground); box-shadow: var(--shadow-border); border-radius: var(--radius-card); padding: 16px; max-width: 80ch; min-width: 0; }
+.cli-card { background: var(--card); color: var(--card-foreground); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); max-width: 80ch; min-width: 0; }
 .cli-message { margin: 0; }
 .cli-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; counter-reset: cli-step; }
 .cli-step { counter-increment: cli-step; display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 12px; row-gap: 6px; }
@@ -850,7 +850,7 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collapse; background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); overflow: hidden; }
 .rooms th, .rooms td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: baseline; font-variant-numeric: tabular-nums; }
 .rooms tbody tr:last-child td { border-bottom: 0; }
-.rooms th { color: var(--muted-foreground); }
+.rooms th { color: var(--muted-foreground); white-space: nowrap; }
 .rooms th:first-child, .rooms .room-row td:first-child { width: 1%; white-space: nowrap; }
 .rooms .needs-pill { background: var(--warning); color: var(--warning-solid-foreground); border-radius: 999px; padding: 2px 10px; font-weight: 700; font-size: var(--text-small); }
 /* A row opens its room: the task link's ::after covers the row (the stretched-link pattern),
@@ -1103,11 +1103,11 @@ main.settings.approval-memory > h1:first-child { display: none; }
 
 /* Settings home: one card per section, the whole card the link. */
 .settings-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 8px 0 24px; }
-.settings-card { display: block; padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border);
-  color: var(--card-foreground); text-decoration: none; position: relative; transition: transform 150ms ease-out; }
-/* The hover shadow is a layer faded in, so only opacity and transform animate. */
-.settings-card::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
-  box-shadow: var(--shadow-border-hover); opacity: 0; transition: opacity 150ms ease-out; }
+.settings-card { display: block; border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card);
+  color: var(--card-foreground); text-decoration: none; position: relative; isolation: isolate; transition: transform 150ms ease-out; }
+/* The hover raise is a layer faded in behind the text, so only opacity and transform animate. */
+.settings-card::after { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+  background: var(--surface-raised); opacity: 0; transition: opacity 150ms ease-out; }
 .settings-card:hover { transform: translateY(-1px); }
 .settings-card:hover::after { opacity: 1; }
 .settings-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
@@ -1122,7 +1122,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 
 /* The repository's MergePolicy, said once above its classes: facts as a list of pairs, then each
    condition as a word on its tone. Tones pair a colour with the word, never the colour alone. */
-.policy-header { margin: 0 0 12px; padding: 14px 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); }
+.policy-header { margin: 0 0 12px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
 .policy-header dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
 .policy-header dt { color: var(--muted-foreground); line-height: var(--leading-body); }
 .policy-header dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
@@ -1153,8 +1153,8 @@ main.settings.approval-memory > h1:first-child { display: none; }
 
 /* A class: name, mode in words, the class as sentences, its evidence. */
 .policy-classes { display: grid; gap: 12px; }
-.class-card { padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); }
-.class-card:target { box-shadow: 0 0 0 2px var(--ring); }
+.class-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
+.class-card:target { outline: 2px solid var(--ring); outline-offset: 2px; }
 .class-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between; }
 .mode-badge { padding: 2px 10px; border-radius: 999px; font-size: var(--text-small); border: 1px solid var(--border); }
 .mode-badge[data-mode="live"] { border-color: var(--success); color: var(--success-text); }
@@ -1178,7 +1178,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .class-when { margin: 4px 0 8px; padding-left: 20px; }
 .evidence-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
 .evidence-track { flex: 1 1 8em; min-width: 8em; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
-.evidence-fill { display: block; height: 100%; background: var(--primary); }
+.evidence-fill { display: block; height: 100%; background: var(--aurora-bar); }
 /* A blocked class is not about to promote: its fill is muted, never the accent of progress. */
 .evidence-bar[data-blocked="true"] .evidence-fill { background: var(--muted-foreground); }
 .evidence-count { font-size: var(--text-small); font-variant-numeric: tabular-nums; }
@@ -1204,7 +1204,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 
 /* The gallery: simple, then advanced. */
 .example-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 8px 0 16px; }
-.example-card { padding: 14px 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.example-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .example-card h4 { margin: 0; font-family: var(--font-mono); font-size: var(--text-small); }
 .example-why { color: var(--muted-foreground); margin: 0; }
 .example-card button { align-self: flex-start; margin-top: auto; }
@@ -1235,7 +1235,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
   .settings .repo-table td:nth-child(n + 3) { font-size: var(--text-small); color: var(--muted-foreground); }
   .settings .repo-table td:nth-child(n + 3)[data-label]::before { content: attr(data-label) ": "; }
 }
-.settings .proposal { background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); padding: 12px 16px; margin-bottom: 16px; }
+.settings .proposal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: 16px; }
 .settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: var(--text-small); }
 .settings textarea { display: block; width: 100%; min-height: 4em; margin: 4px 0; }
 .settings .editor-form { border: 1px solid var(--border); border-radius: var(--radius-row); padding: 8px 16px; }
@@ -1290,7 +1290,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
   border: 1px solid color-mix(in srgb, var(--brand-header-foreground) 22%, transparent);
   transition: background-color 120ms ease, color 120ms ease; }
 .page-header .settings-link:hover { background: color-mix(in srgb, var(--brand-header-foreground) 10%, transparent); }
-.page-header .settings-link:focus-visible { outline: 2px solid var(--brand-header-foreground); outline-offset: 2px; }
+.page-header .settings-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .page-header .settings-link + .theme-toggle { margin-left: 8px; }
 
 /* The filter over a list: label, field, count; hidden items leave the layout. */
