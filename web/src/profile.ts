@@ -20,5 +20,5 @@ export function renderProfile(root: HTMLElement, s: Summary): void {
   if (p.recommended) d.append(el("p", { className: "profile-recommended", textContent: `Recommended: ${p.recommended}` }));
   if (p.reason) d.append(el("p", { className: "profile-reason", textContent: `Reason: ${p.reason}` }));
   if (p.why) d.append(el("p", { className: "profile-why", textContent: `Why: ${p.why}` }));
-  root.append(d);
+  root.replaceChildren(d);
 }

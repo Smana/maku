@@ -48,6 +48,7 @@ describe("the Harness profile fold", () => {
     const root = render(summary(frontier()));
     root.querySelector("details")!.open = true;
     renderProfile(root, summary(frontier()));
+    expect(root.querySelectorAll("details.profile")).toHaveLength(1);
     expect(root.querySelector("details")!.open).toBe(true);
   });
 });
