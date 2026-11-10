@@ -666,7 +666,6 @@ func servedKinds(c client.Client) ([]client.Object, error) {
 type publishMetrics interface {
 	holdoutGauge
 	ClassWithHoldout(ctx context.Context, repository, class string)
-	RepositoryOwned(ctx context.Context, repository string, owned bool)
 	ConfigWireError(ctx context.Context, repository string)
 	ListRepositories(names ...string)
 	ChargePeople(on bool)
@@ -684,14 +683,10 @@ type wiring struct {
 }
 
 // served moves the pollers, the metrics' repository list and the fence onto the served set once
-// a sync changed it; before is the set served before it, whose dropped repositories read not owned.
-func (w *wiring) served(ctx context.Context, before []string) []string {
+// a sync changed it. A dropped repository's repository_owned keeps its last value: a 0 would
+// fire FactoryRepositoryNotOwned for a repository nobody serves.
+func (w *wiring) served() []string {
 	names := w.conns.names()
-	for _, b := range before {
-		if !slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, b) }) {
-			w.m.RepositoryOwned(ctx, b, false) // while the list still names it
-		}
-	}
 	w.m.ListRepositories(names...)
 	w.pollers.Sync(names)
 	if w.kick != nil {
@@ -715,7 +710,6 @@ func (w *wiring) guard(ctx context.Context) {
 func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
 	return func(prev, next *config.Config) {
 		defer w.guard(ctx)
-		before := w.conns.names()
 		if err := w.conns.sync(ctx, next); err != nil {
 			w.log.Error("config published: a repository is not wired yet; retried every minute", "err", err)
 		}
@@ -725,7 +719,7 @@ func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
 				w.m.ClassWithHoldout(ctx, g.repository, g.class) // while the list still names it
 			}
 		}
-		names := w.served(ctx, before)
+		names := w.served()
 		w.m.ChargePeople(next.Budgets.PerPerson.Enabled)
 		budgets := meter.RunUSD(next)
 		for tier := range meter.RunUSD(prev) {
@@ -744,7 +738,6 @@ func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
 // retry wires cur() again while a repository failed to wire (I1), then follows the served set.
 func (w *wiring) retry(ctx context.Context, cur func() *config.Config) {
 	defer w.guard(ctx)
-	before := w.conns.names()
 	ran, err := w.conns.retry(ctx, cur)
 	if !ran {
 		return
@@ -754,7 +747,7 @@ func (w *wiring) retry(ctx context.Context, cur func() *config.Config) {
 	} else {
 		w.log.Info("config wiring retried: every repository is wired")
 	}
-	w.served(ctx, before)
+	w.served()
 }
 
 // retrier retries a failed wiring every period on every replica: each wires its own connections.

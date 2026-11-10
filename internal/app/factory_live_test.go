@@ -134,17 +134,11 @@ type fakePublishMetrics struct {
 	budgets  map[string]float64
 	holdouts []string
 	cleared  []string
-	unowned  []string
 	wireErrs []string
 }
 
 func (m *fakePublishMetrics) ClassWithHoldout(_ context.Context, repo, class string) {
 	m.cleared = append(m.cleared, repo+"/"+class)
-}
-func (m *fakePublishMetrics) RepositoryOwned(_ context.Context, repo string, owned bool) {
-	if !owned {
-		m.unowned = append(m.unowned, repo)
-	}
 }
 func (m *fakePublishMetrics) ConfigWireError(_ context.Context, repo string) {
 	m.wireErrs = append(m.wireErrs, repo)
@@ -214,12 +208,10 @@ func TestOnPublishRederivesWhatTheStartupDerived(t *testing.T) {
 	if !slices.Equal(m.holdouts, []string{"o/b/docs"}) {
 		t.Fatalf("holdout gauge %v", m.holdouts)
 	}
-	// M1: what the publish made stale reads 0, recorded while the old list still names it.
+	// M1: a class the publish made stale reads 0, recorded while the old list still names it. A
+	// removed repository's repository_owned keeps its last value (fakePublishMetrics has no setter).
 	if want := []string{"o/a/fixed", "o/a/off", "o/gone/docs"}; !slices.Equal(m.cleared, want) {
 		t.Fatalf("holdout gauges cleared %v, want %v", m.cleared, want)
-	}
-	if !slices.Equal(m.unowned, []string{"o/gone"}) {
-		t.Fatalf("repository_owned cleared %v", m.unowned)
 	}
 	if kicks != 1 {
 		t.Fatalf("the fence was kicked %d times, want once", kicks)
