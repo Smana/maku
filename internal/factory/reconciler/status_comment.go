@@ -12,10 +12,13 @@ import (
 // statusCommentDue reports whether an issue task has narration to represent, or a recorded status
 // to repair, without making a GitHub call on an already-current reconcile.
 func (r *Reconciler) statusCommentDue(t *v1alpha1.Task) bool {
+	comment := t.Status.StatusComment
+	if comment != nil && comment.Inactive {
+		return false
+	}
 	if t.Spec.Issue == 0 {
 		return false
 	}
-	comment := t.Status.StatusComment
 	if comment == nil && len(t.Status.Outbox) == 0 && len(t.Status.Narrated) == 0 {
 		return false
 	}
@@ -25,5 +28,8 @@ func (r *Reconciler) statusCommentDue(t *v1alpha1.Task) bool {
 // syncStatusComment records the remote identity and body in t.Status; Reconcile's second status
 // update persists them alongside the outbox and facts results.
 func (r *Reconciler) syncStatusComment(ctx context.Context, t *v1alpha1.Task) error {
+	if comment := t.Status.StatusComment; comment != nil && comment.Inactive {
+		return nil
+	}
 	return r.narrator(ctx).SyncStatus(ctx, t, r.Cfg.RoomsURL, r.repo(t).Merge.ApproveToMerge)
 }

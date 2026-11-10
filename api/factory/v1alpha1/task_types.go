@@ -538,13 +538,18 @@ type TaskStatus struct {
 	Result *IntegrationResult `json:"result,omitempty"`
 }
 
-// StatusComment is the durable identity and last successful body of a task's issue status comment.
+// StatusComment is the durable identity, last successful body and activity of a task's issue status comment.
 type StatusComment struct {
 	// +optional
 	ID int64 `json:"id,omitempty"`
 	// +kubebuilder:validation:MaxLength=4096
 	// +optional
 	Body string `json:"body,omitempty"`
+	// Inactive means this Task no longer owes status updates after a permanent refusal or an
+	// ownership stand-down. It does not mean the last remote write succeeded; ID and Body keep
+	// their last successful values.
+	// +optional
+	Inactive bool `json:"inactive,omitempty"`
 }
 
 // ScopeStatus is the scoper's outcome on its task.

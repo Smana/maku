@@ -386,8 +386,11 @@ comment. Later material transitions edit that same comment, while an unchanged r
 GitHub status calls. It shows the phase and its last transition time, room and waiting guidance,
 spec hash, Decision and Assumption counts, and pull request. Live checks, token usage and spend are
 deliberately omitted. Its ID and last successful body are persisted in Task status; recovery reads
-all issue comments, a newer generation adopts it, and an older generation cannot edit it. Failed
-creation or edits retry without rolling back the task transition or its event comments.
+all issue comments, a newer generation adopts it, and an older generation cannot edit it. Transient
+creation or edit failures retry without rolling back the task transition or its event comments. A
+permanent GitHub refusal or an ownership stand-down marks the status inactive instead: that Task
+makes no further status calls, without inventing a successful ID or body, and terminal room close
+can proceed.
 
 A maintainer's **Request changes** is answered where it was made, on the pull request:
 

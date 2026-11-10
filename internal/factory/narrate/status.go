@@ -108,7 +108,11 @@ func statusGeneration(t *v1alpha1.Task) int {
 
 // SyncStatus creates, adopts or edits the issue's one status comment. StatusComment records only
 // remote state known to have succeeded, so a lost Task update or a failed write is safe to retry.
+// A permanent refusal or an ownership stand-down records Inactive without fabricating remote state.
 func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL string, mergeByApproval ...bool) error {
+	if ledger := t.Status.StatusComment; ledger != nil && ledger.Inactive {
+		return nil
+	}
 	if t.Spec.Issue == 0 {
 		return nil
 	}
@@ -130,6 +134,10 @@ func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL str
 	}
 	comments, err := f.AllComments(ctx, t.Spec.Issue)
 	if err != nil {
+		if statusPermanent(err) {
+			retireStatus(t)
+			return nil
+		}
 		return fmt.Errorf("narrate: list status comments: %w", err)
 	}
 	current, found := findStatusComment(comments, n.Login, recordedID)
@@ -139,21 +147,42 @@ func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL str
 	if !found {
 		id, err := f.CommentWithID(ctx, t.Spec.Issue, body)
 		if err != nil {
+			if statusPermanent(err) {
+				retireStatus(t)
+				return nil
+			}
 			return fmt.Errorf("narrate: create status comment: %w", err)
 		}
 		t.Status.StatusComment = &v1alpha1.StatusComment{ID: id, Body: body}
 		return nil
 	}
 	if !statusMayOwn(t, current.Body) {
+		retireStatus(t)
 		return nil
 	}
 	if current.Body != body {
 		if err := f.EditComment(ctx, current.ID, body); err != nil {
+			if statusPermanent(err) {
+				retireStatus(t)
+				return nil
+			}
 			return fmt.Errorf("narrate: edit status comment %d: %w", current.ID, err)
 		}
 	}
 	t.Status.StatusComment = &v1alpha1.StatusComment{ID: current.ID, Body: body}
 	return nil
+}
+
+func statusPermanent(err error) bool {
+	var permanent *forge.PermanentError
+	return errors.As(err, &permanent)
+}
+
+func retireStatus(t *v1alpha1.Task) {
+	if t.Status.StatusComment == nil {
+		t.Status.StatusComment = &v1alpha1.StatusComment{}
+	}
+	t.Status.StatusComment.Inactive = true
 }
 
 func findStatusComment(comments []forge.Comment, login string, id int64) (forge.Comment, bool) {

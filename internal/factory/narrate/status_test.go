@@ -278,6 +278,55 @@ func TestSyncStatusRetriesFailedEdit(t *testing.T) {
 	}
 }
 
+func TestSyncStatusPermanentRefusalRetires(t *testing.T) {
+	for _, operation := range []string{"list", "create", "edit"} {
+		t.Run(operation, func(t *testing.T) {
+			f := &statusForge{Fake: forgetest.NewFake()}
+			n := Narrator{Forge: f, Login: bot}
+			tk := statusTask()
+			refusal := &forge.PermanentError{Status: 404, Err: errors.New("issue is gone")}
+			var previous v1alpha1.StatusComment
+			switch operation {
+			case "list":
+				f.allErr = refusal
+			case "create":
+				f.createErr = refusal
+			case "edit":
+				if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+					t.Fatal(err)
+				}
+				previous = *tk.Status.StatusComment
+				tk.Status.Phase = v1alpha1.PhaseReviewing
+				f.editErr = refusal
+			}
+
+			f.calls = nil
+			if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+				t.Fatalf("a permanent refusal must retire synchronization, not retry: %v", err)
+			}
+			ledger := tk.Status.StatusComment
+			if ledger == nil || !ledger.Inactive {
+				t.Fatalf("the permanent refusal was not recorded as inactive: %+v", ledger)
+			}
+			if operation == "edit" {
+				if ledger.ID != previous.ID || ledger.Body != previous.Body {
+					t.Fatalf("retirement falsified the last successful write: before %+v, after %+v", previous, ledger)
+				}
+			} else if ledger.ID != 0 || ledger.Body != "" {
+				t.Fatalf("a failed first synchronization fabricated remote state: %+v", ledger)
+			}
+
+			f.calls = nil
+			if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.calls) != 0 {
+				t.Fatalf("an inactive status made forge calls: %q", f.calls)
+			}
+		})
+	}
+}
+
 func TestSyncStatusGenerationOwnership(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
@@ -317,8 +366,17 @@ func TestSyncStatusGenerationOwnership(t *testing.T) {
 				if gotBody != want || current.Status.StatusComment == nil || current.Status.StatusComment.ID != id || current.Status.StatusComment.Body != want {
 					t.Fatalf("current generation did not adopt and edit: ledger %+v\nbody %s", current.Status.StatusComment, gotBody)
 				}
-			} else if gotBody != ownerBody || current.Status.StatusComment != nil || f.count("edit") != 0 || f.count("create") != 0 {
-				t.Fatalf("a generation without ownership wrote status: ledger %+v, calls %q", current.Status.StatusComment, f.calls)
+			} else if gotBody != ownerBody || current.Status.StatusComment == nil || !current.Status.StatusComment.Inactive || f.count("edit") != 0 || f.count("create") != 0 {
+				t.Fatalf("a generation without ownership wrote status or did not stand down: ledger %+v, calls %q", current.Status.StatusComment, f.calls)
+			}
+			if !tc.wantWrite {
+				f.calls = nil
+				if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), current, statusRoomsURL); err != nil {
+					t.Fatal(err)
+				}
+				if len(f.calls) != 0 {
+					t.Fatalf("a generation that stood down listed or wrote again: %q", f.calls)
+				}
 			}
 		})
 	}
@@ -326,8 +384,8 @@ func TestSyncStatusGenerationOwnership(t *testing.T) {
 
 type statusForge struct {
 	*forgetest.Fake
-	calls              []string
-	createErr, editErr error
+	calls                      []string
+	allErr, createErr, editErr error
 }
 
 func (f *statusForge) Comment(ctx context.Context, n int, body string) error {
@@ -358,6 +416,9 @@ func (f *statusForge) RecentComments(ctx context.Context, n int) ([]forge.Commen
 
 func (f *statusForge) AllComments(ctx context.Context, n int) ([]forge.Comment, error) {
 	f.calls = append(f.calls, "all")
+	if f.allErr != nil {
+		return nil, f.allErr
+	}
 	return f.Fake.AllComments(ctx, n)
 }
 

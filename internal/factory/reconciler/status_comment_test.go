@@ -113,8 +113,19 @@ func TestStatusCommentGenerationOwnership(t *testing.T) {
 	if got := strings.Join(statusCommentBodies(f.Fake, 7), ""); got != newBody || f.count("create") != 0 || f.count("edit") != 0 {
 		t.Fatalf("escalated generation 1 overwrote generation 2: body %q, calls %q", got, f.calls)
 	}
-	if tk.Status.StatusComment == nil || tk.Status.StatusComment.Body != oldBody {
-		t.Fatalf("the refused generation changed its successful-body ledger: %+v", tk.Status.StatusComment)
+	if tk.Status.StatusComment == nil || tk.Status.StatusComment.Body != oldBody || !tk.Status.StatusComment.Inactive {
+		t.Fatalf("the refused generation did not preserve its old body and stand down: %+v", tk.Status.StatusComment)
+	}
+	if f.count("all") != 1 {
+		t.Fatalf("ownership refusal made status calls %q, want one listing", f.calls)
+	}
+	f.calls = nil
+	oldRig.reconcile(t, "aaaaaaaa", 1)
+	if len(f.calls) != 0 {
+		t.Fatalf("the superseded generation kept synchronizing: %q", f.calls)
+	}
+	if got := strings.Join(statusCommentBodies(f.Fake, 7), ""); got != newBody {
+		t.Fatalf("a later reconcile edited generation 2: %q", got)
 	}
 }
 
@@ -149,6 +160,32 @@ func TestStatusCommentFailuresDoNotBlockTransition(t *testing.T) {
 	}
 }
 
+func TestStatusCommentGoneIssueDoesNotHoldRoomOpen(t *testing.T) {
+	tk := endedTask(v1alpha1.PhaseDone)
+	tk.Status.Narrated = []string{"started-0"}
+	g := newRig(t, tk)
+	withRoom(t, g)
+	f := &reconcilerStatusForge{Fake: g.f, allErr: &forge.PermanentError{Status: 404, Err: errors.New("issue is gone")}}
+	g.r.Forge = f
+
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil {
+		t.Fatalf("a permanently gone issue blocked the terminal reconcile: %v", err)
+	}
+	tk = g.reconcile(t, "3buqdlot", 0)
+	if !roomGone(t, g) {
+		t.Fatal("a permanently gone issue kept the terminal room open")
+	}
+	if tk.Status.StatusComment == nil || !tk.Status.StatusComment.Inactive || tk.Status.StatusComment.ID != 0 || tk.Status.StatusComment.Body != "" {
+		t.Fatalf("the gone issue did not retire without fabricating remote state: %+v", tk.Status.StatusComment)
+	}
+
+	f.calls = nil
+	g.reconcile(t, "3buqdlot", 1)
+	if len(f.calls) != 0 {
+		t.Fatalf("the retired gone issue was listed or written again: %q", f.calls)
+	}
+}
+
 func TestStatusCommentUsesApproveToMergeConfig(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, "x")
 	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
@@ -175,8 +212,8 @@ func TestStatusCommentUsesApproveToMergeConfig(t *testing.T) {
 
 type reconcilerStatusForge struct {
 	*forgetest.Fake
-	calls     []string
-	createErr error
+	calls             []string
+	allErr, createErr error
 }
 
 func (f *reconcilerStatusForge) CommentWithID(ctx context.Context, n int, body string) (int64, error) {
@@ -194,6 +231,9 @@ func (f *reconcilerStatusForge) EditComment(ctx context.Context, id int64, body 
 
 func (f *reconcilerStatusForge) AllComments(ctx context.Context, n int) ([]forge.Comment, error) {
 	f.calls = append(f.calls, "all")
+	if f.allErr != nil {
+		return nil, f.allErr
+	}
 	return f.Fake.AllComments(ctx, n)
 }
 
