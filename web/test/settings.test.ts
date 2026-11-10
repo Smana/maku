@@ -73,7 +73,8 @@ describe("the repository page", () => {
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", get);
     expect(app.textContent).toContain("20/20 clean");
     expect(app.textContent).toContain("glm-5.3 20/21");
-    expect(app.textContent).toContain("not shadow");
+    expect(app.textContent).toContain("Live since promotion");
+    expect(app.textContent).not.toContain("not shadow");
     const buttons = [...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live");
     expect(buttons).toHaveLength(1);
     buttons[0].click();
@@ -130,7 +131,7 @@ describe("the repository page", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": short, "/api/policy/exceptions/cccccccc": {} }, calls));
-    expect(app.textContent).toContain("below_minimum");
+    expect(app.textContent).toContain("Not yet eligible: fewer clean decisions than the minimum.");
     const card = app.querySelector("#class-docs-links")!;
     expect([...card.querySelectorAll("button")].some((b) => b.textContent === "Ask an operator for an exception")).toBe(true);
     const approve = [...card.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;

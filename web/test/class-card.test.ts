@@ -60,4 +60,41 @@ describe("a class card", () => {
     expect(c.querySelector('a[href="https://github.com/o/r/pull/7"]')).not.toBeNull();
     expect(c.textContent).toContain("Exception: 12 clean decisions instead of 20, approved");
   });
+  it("shows a live class no bar, no ladder and no promotion, one line of what it has done", () => {
+    const p = page();
+    p.report.classes[0] = { class: "docs", source: "repository", mode: "live", unproposed: "not_shadow", evidence: ev({ clean: 40, eligible: true, blockers: [] }) };
+    const c = classCard(p.report.classes[0], ctx(p));
+    expect(c.querySelector('[role="meter"]')).toBeNull();
+    expect(c.querySelector(".evidence-ladder")).toBeNull();
+    expect([...c.querySelectorAll("button")].some((b) => b.textContent === "Promote to live")).toBe(false);
+    expect(c.textContent).toContain("Live since promotion \u00b7 40 clean decisions recorded.");
+    expect(c.querySelector(".evidence-detail")).not.toBeNull();
+    expect(c.textContent).not.toContain("Not promotable");
+  });
+  it("shows an off class no bar: one line, and why it cannot be promoted", () => {
+    const p = page();
+    p.report.classes[0] = { class: "docs", source: "repository", mode: "off", unproposed: "not_shadow", evidence: ev({ clean: 0 }) };
+    const c = classCard(p.report.classes[0], ctx(p));
+    expect(c.querySelector('[role="meter"]')).toBeNull();
+    expect(c.textContent).toContain("Off: no decisions recorded.");
+    expect(c.textContent).toContain("Not promotable here: the class is not in shadow.");
+  });
+  it("writes eligibility as sentences, never bare codes", () => {
+    const say = (e: Partial<Evidence>, over: Partial<RepositoryPage> = {}) => {
+      const p = { ...page(), ...over };
+      p.report.classes[0] = { class: "docs", source: "repository", mode: "shadow", evidence: ev(e) };
+      return classCard(p.report.classes[0], ctx(p)).querySelector(".evidence-eligibility")?.textContent;
+    };
+    expect(say({ eligible: true, blockers: [] })).toBe("Eligible to promote: enough clean decisions, no bad outcome, drill passed.");
+    expect(say({ blockers: ["below_minimum", "bad_outcome", "no_drill", "odd_one"] }))
+      .toBe("Not yet eligible: fewer clean decisions than the minimum, a bad outcome was recorded, the revert drill has not passed, odd one.");
+    const exceptions = [{ id: "e1", repository: "o/r", class: "docs", minimum: 12, justification: "x", requestedBy: "me", requestedAt: "", state: "approved", expiresAt: "2999-01-01T00:00:00Z" }] as RepositoryPage["exceptions"];
+    expect(say({ clean: 14 }, { exceptions })).toBe("Eligible to promote under exception e1 (12 clean decisions required).");
+  });
+  it("says why a shadow class cannot be proposed in words", () => {
+    const p = page();
+    p.report.classes[0] = { class: "docs", source: "central", mode: "shadow", unproposed: "not_in_repository_policy", evidence: ev() };
+    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-actions")?.textContent)
+      .toBe("Not promotable here: the class is not declared in the repository's policy file.");
+  });
 });

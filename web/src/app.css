@@ -1068,8 +1068,12 @@ main.settings.approval-memory > h1:first-child { display: none; }
 /* Settings home: one card per section, the whole card the link. */
 .settings-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 8px 0 24px; }
 .settings-card { display: block; padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border);
-  color: var(--card-foreground); text-decoration: none; transition: box-shadow 150ms ease-out, transform 150ms ease-out; }
-.settings-card:hover { box-shadow: var(--shadow-border-hover); transform: translateY(-1px); }
+  color: var(--card-foreground); text-decoration: none; position: relative; transition: transform 150ms ease-out; }
+/* The hover shadow is a layer faded in, so only opacity and transform animate. */
+.settings-card::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: var(--shadow-border-hover); opacity: 0; transition: opacity 150ms ease-out; }
+.settings-card:hover { transform: translateY(-1px); }
+.settings-card:hover::after { opacity: 1; }
 .settings-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .settings .settings-card h2 { margin: 0 0 4px; font-size: 18px; }
 .settings-card p { margin: 0 0 8px; color: var(--muted-foreground); max-width: 60ch; }
@@ -1091,8 +1095,8 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .mode-badge[data-mode="off"] { color: var(--muted-foreground); }
 .class-source, .evidence-detail, .class-empty { color: var(--muted-foreground); font-size: 14px; }
 .class-when { margin: 4px 0 8px; padding-left: 20px; }
-.evidence-bar { display: flex; align-items: center; gap: 10px; margin: 8px 0 4px; }
-.evidence-track { flex: 1; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
+.evidence-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
+.evidence-track { flex: 1 1 8em; min-width: 8em; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
 .evidence-fill { display: block; height: 100%; background: var(--primary); }
 .evidence-count { font-size: 14px; font-variant-numeric: tabular-nums; }
 .evidence-ladder { display: flex; flex-wrap: wrap; gap: 4px 12px; list-style: none; padding: 0; margin: 0 0 4px; font-size: 13px; color: var(--muted-foreground); }
@@ -1127,7 +1131,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 @keyframes settle-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .editor-group, .example-gallery:not([hidden]) { animation: none; }
-  .settings-card { transition: none; }
+  .settings-card, .settings-card::after { transition: none; }
   .settings-card:hover { transform: none; }
 }
 
