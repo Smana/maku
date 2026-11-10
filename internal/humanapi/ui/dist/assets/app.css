@@ -848,8 +848,8 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rooms .room-row a:not(.task-link), .rooms .room-row button { position: relative; z-index: 1; }
 /* The room id is copied into maku: above the link too, so it selects and a click stays put. */
 .rooms td.room-id { position: relative; z-index: 1; cursor: text; }
-/* The strip's phase chip (.page-header .chip), on the card's tokens; 50%, not the strip's 45%,
-   so its border still holds 3:1 on a hovered row. */
+/* The strip's phase chip (.page-header .chip), on the card's tokens; 50%, so its border holds 3:1 on a card
+   and on a hovered row. */
 .rooms .chip-phase {
   color: var(--card-foreground); background: transparent;
   border-color: color-mix(in srgb, var(--card-foreground) 50%, var(--card));

@@ -33,7 +33,10 @@ const pairs = (t: Tokens) => [
   ["warning text on its tint", t["--warning-foreground"], mix(t["--warning"], t["--card"], 0.18), 4.5],
   ["primary button text", t["--primary-foreground"], t["--primary"], 4.5],
   ["the header's text", t["--brand-header-foreground"], t["--brand-header"], 4.5],
-  ["the strip's chip borders", mix(t["--brand-header-foreground"], t["--brand-header"], 0.5), t["--brand-header"], 3],
+  // No strip chip border pair: .page-header .chip paints its border transparent.
+  ["the budget chip in warn level on the header (--warning as text)", t["--warning"], t["--brand-header"], 4.5],
+  ["--warning as text on a card", t["--warning"], t["--card"], 4.5],
+  ["--warning as text on the page", t["--warning"], t["--muted"], 4.5],
   ["the needs-you pill", t["--warning-solid-foreground"], t["--warning"], 4.5],
   ["the budget meter's fill", t["--primary"], mix(t["--brand-header-foreground"], t["--brand-header"], 0.12), 3],
   ["the needs-you border", t["--warning-border"], t["--card"], 3],
@@ -114,7 +117,6 @@ const rows = (t: Tokens, i: 0 | 1): Row[] => {
   const warnTint = mix(t["--warning"], t["--card"], 0.18);
   const humanTint = mix(t["--primary"], t["--card"], 0.10);
   const hdr12 = mix(t["--brand-header-foreground"], t["--brand-header"], 0.12);
-  const hdr50 = mix(t["--brand-header-foreground"], t["--brand-header"], 0.5);
   const T = 4.5, U = 3;
   const m = (d: string, fg: string, bg: string, min: number, e: [number, number]): Row => [d, fg, bg, min, e[i]];
   return [
@@ -147,7 +149,6 @@ const rows = (t: Tokens, i: 0 | 1): Row[] => {
     m("destructive foreground on destructive fill", t["--destructive-foreground"], t["--destructive"], T, [5.24, 7.11]),
     m("accent foreground on accent fill", t["--accent-foreground"], t["--accent"], T, [5.29, 10.31]),
     // Non-text: meaningful boundaries and focus rings.
-    m("header chip border (50%) on header", hdr50, t["--brand-header"], U, [3.35, 4.78]),
     m("primary meter fill on header-foreground 12% mix", t["--primary"], hdr12, U, [4.66, 5.31]),
     m("warning border on card", t["--warning-border"], t["--card"], U, [5.60, 9.35]),
     m("ring on header", t["--ring"], t["--brand-header"], U, [5.97, 7.26]),
