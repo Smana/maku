@@ -1084,6 +1084,32 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .settings h2 { font-size: 20px; margin: 28px 0 8px; }
 .settings h3 { font-size: 16px; margin: 0; }
 
+/* The repository's MergePolicy, said once above its classes: facts as a list of pairs, then each
+   condition as a word on its tone. Tones pair a colour with the word, never the colour alone. */
+.policy-header { margin: 0 0 12px; padding: 14px 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); }
+.policy-header dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
+.policy-header dt { color: var(--muted-foreground); font-size: 13px; line-height: 1.6; }
+.policy-header dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+@media (min-width: 721px) {
+  .policy-header dl { grid-template-columns: max-content minmax(0, 24em) max-content minmax(0, 1fr); column-gap: 16px; }
+}
+.policy-conditions { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 12px 0 0; padding: 0; }
+.policy-condition { padding: 2px 10px; border-radius: 999px; font-size: 13px; border: 1px solid var(--border); color: var(--muted-foreground); }
+.policy-condition[title] { cursor: help; }
+.policy-condition[data-tone="ok"] { border-color: var(--success); color: var(--success-text); }
+.policy-condition[data-tone="warn"] { border-color: var(--warning-border); color: var(--warning-foreground); background: color-mix(in srgb, var(--warning) 12%, var(--card)); }
+.policy-condition[data-tone="bad"] { border-color: var(--destructive); color: var(--destructive-text); }
+.policy-authority, .policy-read { margin: 8px 0 0; font-size: 14px; color: var(--muted-foreground); }
+.policy-read { font-size: 13px; font-variant-numeric: tabular-nums; }
+.not-migrated { padding: 12px 16px; border-radius: var(--radius-row); background: var(--card); box-shadow: var(--shadow-border); }
+/* The three modes, once: a card's badge is the word only. */
+.mode-legend { display: flex; flex-wrap: wrap; gap: 6px 20px; list-style: none; margin: 0 0 8px; padding: 0; font-size: 14px; color: var(--muted-foreground); }
+.mode-legend li { display: flex; gap: 6px; align-items: baseline; }
+.mode-legend .mode-badge { flex: none; }
+.file-line { margin: 4px 0 0; font-size: 14px; color: var(--muted-foreground); }
+.file-line[data-prominent="true"] { padding: 8px 12px; border: 1px solid var(--warning-border); border-radius: var(--radius-row);
+  background: color-mix(in srgb, var(--warning) 12%, var(--card)); color: var(--warning-foreground); font-weight: 500; }
+
 /* A class: name, mode in words, the class as sentences, its evidence. */
 .policy-classes { display: grid; gap: 12px; }
 .class-card { padding: 16px; border-radius: var(--radius-card); background: var(--card); box-shadow: var(--shadow-border); }
@@ -1094,6 +1120,17 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .mode-badge[data-mode="shadow"] { border-color: var(--primary); color: var(--link); }
 .mode-badge[data-mode="off"] { color: var(--muted-foreground); }
 .class-source, .evidence-detail, .class-empty { color: var(--muted-foreground); font-size: 14px; }
+.class-card .class-intent { margin: 8px 0 4px; color: var(--card-foreground); }
+.settings .class-card .class-summary { max-width: 88ch; margin: 6px 0; font: 13px/1.5 ui-monospace, monospace; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.class-card .class-last { margin: 4px 0; font-size: 13px; color: var(--muted-foreground); }
+.class-last time { font-variant-numeric: tabular-nums; }
+/* The full conditions, folded: the summary darkens on hover, the body settles in when opened. */
+.class-conditions { margin-top: 8px; }
+.class-conditions > summary { width: fit-content; cursor: pointer; font-size: 14px; color: var(--muted-foreground);
+  transition-property: color; transition-duration: 150ms; transition-timing-function: ease-out; }
+.class-conditions > summary:hover, .class-conditions[open] > summary { color: var(--foreground); }
+.class-conditions > summary::marker { color: var(--muted-foreground); }
+.class-conditions > :not(summary) { margin-top: 6px; }
 .class-when { margin: 4px 0 8px; padding-left: 20px; }
 .evidence-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
 .evidence-track { flex: 1 1 8em; min-width: 8em; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
@@ -1130,10 +1167,11 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .example-yaml { font-size: 13px; overflow-x: auto; }
 
 /* A new group or a revealed gallery fades in; nothing moves under reduced motion. */
-.editor-group, .example-gallery:not([hidden]) { animation: settle-in 180ms ease-out; }
+.editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary) { animation: settle-in 180ms ease-out; }
 @keyframes settle-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .editor-group, .example-gallery:not([hidden]) { animation: none; }
+  .editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary) { animation: none; }
+  .class-conditions > summary { transition: none; }
   .settings-card, .settings-card::after { transition: none; }
   .settings-card:hover { transform: none; }
 }
@@ -1142,6 +1180,15 @@ main.settings.approval-memory > h1:first-child { display: none; }
   .settings .editor-field { grid-template-columns: minmax(0, 1fr); }
   .field-help, .field-error, .field-count { grid-column: 1; }
   .settings .settings-table { display: block; overflow-x: auto; }
+  /* The repository table stacks on a phone: each row a block, name and MergePolicy first, the
+     counts below them; the column heads stay for a screen reader. */
+  .settings .repo-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .settings .repo-table tbody, .settings .repo-table tr { display: block; }
+  .settings .repo-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 12px; padding: 10px 12px; }
+  .settings .repo-table tr + tr { border-top: 1px solid var(--border); }
+  .settings .repo-table td { display: block; padding: 0; border: 0; overflow-wrap: anywhere; }
+  .settings .repo-table td:nth-child(-n + 2) { grid-column: 1 / -1; }
+  .settings .repo-table td:nth-child(n + 3) { font-size: 13px; color: var(--muted-foreground); }
 }
 .settings .proposal { background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); padding: 12px 16px; margin-bottom: 16px; }
 .settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: 13px; }
@@ -1208,3 +1255,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .filter input { min-width: 0; flex: 1 1 220px; max-width: 360px; padding: 6px 10px; border: 1px solid var(--input); border-radius: var(--radius-control); background: var(--background); color: var(--foreground); }
 .filter-count { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .filter-empty { flex-basis: 100%; margin: 0; }
+@media (max-width: 720px) {
+  .filter label { flex-basis: 100%; }
+  .filter input { flex-basis: 100%; max-width: none; }
+}
