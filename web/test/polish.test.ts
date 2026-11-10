@@ -173,13 +173,13 @@ describe("fork here on touch screens", () => {
     expect(bar).toMatch(/visibility:\s*visible/);
     expect(bar).toMatch(/pointer-events:\s*auto/);
   });
-  it("is drawn quiet on touch: no border, background or shadow, muted 13 px text", () => {
+  it("is drawn quiet on touch: no border, background or shadow, muted small text", () => {
     const b = decl(touch, ".row-tools .fork-here");
     expect(b).toMatch(/border:\s*(0|none)/);
     expect(b).toMatch(/background:\s*none|background:\s*transparent/);
     expect(b).toMatch(/box-shadow:\s*none/);
     expect(b).toMatch(/color:\s*var\(--muted-foreground\)/);
-    expect(b).toMatch(/font-size:\s*13px/);
+    expect(b).toMatch(/font-size:\s*var\(--text-small\)/);
     expect(b).not.toMatch(/min-height:\s*[1-9]/);
   });
   it("gets its 44 px hit area from ::after, not from visible padding", () => {
@@ -276,8 +276,8 @@ describe("layout", () => {
 // The appearance pass (2026-11-06): hierarchy from size and opacity, one radius scale, the
 // approval card's accent as a bar, the connection as a dot.
 describe("appearance", () => {
-  it("sets the room title bigger and lighter, smaller again on a phone", () => {
-    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*22px/);
+  it("sets the room title at display size, a heading on a phone", () => {
+    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*var\(--text-heading\)/);
   });
   it("sets a header fact's value at full ink and mutes its name and the run's id, model and effort", () => {
     expect(decl(outside, ".page-header .chip")).toMatch(/color:\s*var\(--brand-header-foreground\)/);
