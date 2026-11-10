@@ -23,6 +23,7 @@ package configsource
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -66,6 +67,10 @@ type key struct {
 	kind resources.Kind
 	name string
 }
+
+// ErrNotServable is the first Sync's error when nothing can be served: Assemble refused the file
+// with the resources listed. The factory waits on it for its resources (D14).
+var ErrNotServable = errors.New("no config can be served")
 
 // Source builds the factory's config from its file and its resources.
 type Source struct {
@@ -244,7 +249,7 @@ func (s *Source) sync(ctx context.Context) error {
 		s.outcomes = outcomes(listed, r, first, aerr)
 		s.synced = Synced{At: s.now(), Err: aerr}
 		if s.Live == nil {
-			return fmt.Errorf("no config can be served: %w", aerr)
+			return fmt.Errorf("%w: %w", ErrNotServable, aerr)
 		}
 		s.log().Error("config not servable, keeping the current one", "error", aerr)
 		return nil

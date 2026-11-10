@@ -244,26 +244,39 @@ func requirePublic(ctx context.Context, names []string, public func(ctx context.
 	return nil
 }
 
-func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) error {
+func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) (err error) {
 	cfgPath, ns, err := factoryEnv(getenv)
 	if err != nil {
 		return err
 	}
+	exp, err := metrics.NewExporter(metrics.FactoryBuildInfo, version.Version)
+	if err != nil {
+		return err
+	}
+	defer shutdownMetrics(ctx, log, exp)
+	// :9090 answers before the first Sync, so a factory waiting for its resources is alive and
+	// started, and not ready until the manager's caches synced. It stops last, after the manager.
+	gate := &startupGate{}
+	down := newDrainFlag(ctx)
+	ops, err := startOps(ctx, log, gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, ops.stop()) }()
 	// D5, D14: the config is the file and the factory's resources, built before anything reads
-	// it. The first Sync reads through a plain client, as the manager does not exist yet; a config
-	// that cannot be served fails the start.
-	src, kinds, err := firstSync(ctx, log, cfgPath, ns)
+	// it. The first Sync reads through a plain client, as the manager does not exist yet. While
+	// nothing can be served the start waits for the resources; any other error fails it.
+	src, kinds, err := firstSync(ops.ctx, log, cfgPath, ns, gate)
+	if errors.Is(err, errStoppedWaiting) {
+		log.Info("agent-factory stopped while waiting for a servable config")
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	live := src.Live
 	cfg := live.Current() // the startup fields (D12): read once, never re-derived
 	warnIgnored(log, cfg)
-	exp, err := metrics.NewExporter(metrics.FactoryBuildInfo, version.Version)
-	if err != nil {
-		return err
-	}
-	defer shutdownMetrics(ctx, log, exp)
 	sink, tp, shutdownTrace, err := taskSink(ctx, cfg.Tracing.OTLPEndpoint)
 	if err != nil {
 		return err
@@ -579,32 +592,51 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// D12: each publish re-wires the repositories and re-derives what the startup derived. It is
 	// registered once every runnable is built, and a failure in it is logged, never fatal.
 	live.Subscribe(onPublish(ctx, wired))
-	down := newDrainFlag(ctx)
-	ops := factoryOps(mgr.GetCache().WaitForCacheSync, down.Draining, exp.Handler())
-	return serveFactory(ctx, log, mgr, ops, down, ns)
+	gate.serve(mgr.GetCache().WaitForCacheSync)
+	return serveFactory(ops.ctx, log, mgr, down, ns)
 }
 
-// serveFactory runs the manager until ctx ends or it fails; :9090 stops last, so the drain's
-// final counts are scraped and /readyz answers 503 meanwhile, as the broker's does.
-func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, ops http.Handler, down *drainFlag, ns string) error {
+// opsRun is :9090 serving from the start of runFactory. ctx is the run's: :9090 failing cancels
+// it, as the pod is then unprobeable.
+type opsRun struct {
+	ctx       context.Context
+	cancelRun context.CancelFunc
+	stopOps   context.CancelFunc
+	done      chan error
+}
+
+// startOps serves h on opsAddr until stop.
+func startOps(ctx context.Context, log *slog.Logger, h http.Handler) (*opsRun, error) {
 	var lc net.ListenConfig
-	opsLn, err := lc.Listen(ctx, "tcp", opsAddr)
+	ln, err := lc.Listen(ctx, "tcp", opsAddr)
 	if err != nil {
-		return fmt.Errorf("ops listener: %w", err)
+		return nil, fmt.Errorf("ops listener: %w", err)
 	}
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
+	o := &opsRun{done: make(chan error, 1)}
+	o.ctx, o.cancelRun = context.WithCancel(ctx)
 	opsCtx, stopOps := context.WithCancel(context.WithoutCancel(ctx))
-	defer stopOps()
-	opsDone := make(chan error, 1)
+	o.stopOps = stopOps
 	go func() {
-		err := serveHTTP(opsCtx, opsServer(ops, log), opsLn, opsDrain)
+		err := serveHTTP(opsCtx, opsServer(h, log), ln, opsDrain)
 		if err != nil {
-			cancelRun() // :9090 failing takes the rest down: the pod is unprobeable
+			o.cancelRun()
 		}
-		opsDone <- err
+		o.done <- err
 	}()
-	g, gctx := errgroup.WithContext(runCtx)
+	return o, nil
+}
+
+// stop drains :9090 and returns its error; call it once, after everything else stopped.
+func (o *opsRun) stop() error {
+	o.stopOps()
+	o.cancelRun()
+	return <-o.done
+}
+
+// serveFactory runs the manager until ctx ends or it fails; :9090 (opsRun) stops after it, so the
+// drain's final counts are scraped and /readyz answers 503 meanwhile, as the broker's does.
+func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, down *drainFlag, ns string) error {
+	g, gctx := errgroup.WithContext(ctx)
 	stopWatch := context.AfterFunc(gctx, down.Begin) // the manager dying is a shutdown too
 	defer stopWatch()
 	g.Go(func() error {
@@ -614,20 +646,24 @@ func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, op
 		return nil
 	})
 	log.Info("agent-factory starting", "version", version.Version, "namespace", ns)
-	err = g.Wait()
-	stopOps()
-	return errors.Join(err, <-opsDone)
+	return g.Wait()
 }
 
 // firstSync builds the config from the file at cfgPath and the factory's resources in ns, through
 // a plain client: the manager, whose reader the Source moves to next, needs the config to be
-// built. The file is read first, so a missing one fails before any cluster call. Any error,
-// including an unreachable API server, fails the start (D14). kinds are the resource kinds the
-// API server serves (servedKinds).
-func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string) (src *configsource.Source, kinds []client.Object, err error) {
+// built. The file is read and its shape checked first (config.CheckShape), so a missing, empty or
+// malformed one fails before any cluster call. While nothing can
+// be served it waits for the resources (waitServable); any other error, including an unreachable
+// API server, fails the start (D14). kinds are the resource kinds the API server serves
+// (servedKinds), read once the config serves.
+func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string, gate *startupGate) (src *configsource.Source, kinds []client.Object, err error) {
 	raw, err := os.ReadFile(filepath.Clean(cfgPath))
 	if err != nil {
 		return nil, nil, fmt.Errorf("config: %w", err)
+	}
+	// A file no resource can fix fails at once; only a file waiting for its resources waits.
+	if err := config.CheckShape(raw); err != nil {
+		return nil, nil, err
 	}
 	restCfg, err := ctrl.GetConfig()
 	if err != nil {
@@ -644,7 +680,7 @@ func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string) (src *
 		return nil, nil, fmt.Errorf("config client: %w", err)
 	}
 	src = &configsource.Source{Reader: plain, Namespace: ns, File: raw, Log: log}
-	if err := src.Sync(ctx); err != nil {
+	if err := waitServable(ctx, log, gate, src.Sync, refusals(src), servableFirst, servableMax); err != nil {
 		return nil, nil, forbiddenHint(err, ns)
 	}
 	if kinds, err = servedKinds(plain); err != nil {
@@ -841,8 +877,9 @@ func taskSink(ctx context.Context, endpoint string) (tracing.Sink, trace.TracerP
 	}, nil
 }
 
-// factoryOps is :9090 for the factory: /readyz once the caches synced; /startupz at once, since
-// the server starts only after the config parsed. Readiness does not look at GitHub (#58): an
+// factoryOps is :9090 for the factory: /readyz once the caches synced; /startupz at once, as the
+// server starts before the first Sync and a factory waiting for its resources (waitServable) must
+// not be killed by the startup probe. Readiness does not look at GitHub (#58): an
 // outage would unready every replica at once, and an unready replica serves nothing less than a
 // ready one — the API and the intake need no GitHub call to answer, and the loops that do
 // retry on their own. The outage shows in the loops' error logs and the intake error counter.

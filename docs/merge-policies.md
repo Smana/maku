@@ -970,7 +970,8 @@ without a restart. How is in [architecture](architecture.md#how-the-factory-read
   `policyManagement`, `coordination`, `hardening` and `api`. The
   [table](architecture.md#live-fields-and-fields-that-need-a-rollout) lists both.
 - **A refused change** keeps the last accepted version while the factory runs. After a restart an
-  invalid object is not served, and a factory with nothing to serve does not start.
+  invalid object is not served, and a factory with nothing to serve waits, unready, until its
+  resources are applied.
 - **A repository defined in both** the file and a resource is refused, never merged.
 - **Tasks record** `status.configGenerations` for the `Factory`, `Repository` and `MergePolicy` they
   started under. It is a record, not a pin.
