@@ -1,13 +1,10 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/* Maku's design tokens. Light is the default; the .dark block applies when theme.ts puts
-   the class on <html> (the app-wizard's contract: a media query would ignore the user's
-   explicit choice).
-   The brand's supplied colours are Ink #0A0A0F, Surface #14141C, Paper #F3F2FA, Core #8B5CF6
-   and Muted #9B9AAE. Core is for the mark, not text: it is 3.81:1 on Paper and 4.33:1 on
-   Surface, and Paper on Core is 3.81:1. So --primary, --link and --ring are the derived
-   #6D28D9 (light) and #A78BFA (dark), and Muted is secondary text on dark only (2.48:1 on
-   Paper). web/test/contrast.test.ts pins every value and pair below. --input is a 3:1
-   boundary in both schemes (WCAG 1.4.11); --surface-raised is the dock's surface. */
+/* Maku's design tokens: Day (:root, the default) and Night (.dark, when theme.ts puts the class
+   on <html>; the app-wizard's contract: a media query would ignore the user's explicit choice).
+   The values are the Ogenki design system's Day and Night. Where a use has no Ogenki twin
+   (--input, --placeholder, the warning family, --accent) or an Ogenki value falls short of its
+   pair, a derived token carries it. web/test/contrast.test.ts pins every value and pair below.
+   --input is a 3:1 boundary in both schemes (WCAG 1.4.11); --surface-raised is the dock's surface. */
 @font-face { font-family: "Space Grotesk"; src: url("/assets/fonts/SpaceGrotesk-Variable.woff2") format("woff2"); font-weight: 300 700; font-style: normal; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("/assets/fonts/Inter-Variable.woff2") format("woff2"); font-weight: 100 900; font-style: normal; font-display: swap; }
 @font-face { font-family: "Inter"; src: url("/assets/fonts/Inter-Variable-Italic.woff2") format("woff2"); font-weight: 100 900; font-style: italic; font-display: swap; }
@@ -20,51 +17,68 @@
   --log-w: 72ch;
   /* One radius scale: a control, a row (a call, the table, the composer), a card. */
   --radius-control: 6px; --radius-row: 8px; --radius-card: 12px;
+  --radius-sm: 8px; --radius-md: 16px; --radius-pill: 9999px;
+  /* The Ogenki 4 px spacing scale. */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-6: 24px; --space-8: 32px; --space-12: 48px; --space-16: 64px;
   color-scheme: light;
 
-  --flow-writer: #0e7490; /* the run rail: a writer's lane */
-  --flow-judge: #6d28d9; /* a judge's lane */
-  --flow-plan: #b45309; /* a plan step no run has reached */
+  /* Ogenki raw tokens (Day). */
+  --surface-000: #f5f6fc;
+  --surface-100: #fdfdff;
+  --surface-200: #eceef8;
+  --line: #b9bfdc;
+  --blue: #1d63b0;
+  --violet: #6a4bd8;
+  --pink: #c2306f;
+  --green: #11795a;
+  --amber: #965800;
+  --ink-on-accent: #fdfdff;
+  --aurora-bar: linear-gradient(90deg, #ff6fb5 0%, #a78bfa 100%);
 
-  --background: #ffffff;
-  --foreground: #0a0a0f; /* Ink */
-  --card: #ffffff;
-  --card-foreground: #0a0a0f;
+  --flow-writer: #1d63b0; /* the run rail: a writer's lane */
+  --flow-judge: #6a4bd8; /* a judge's lane */
+  --flow-plan: #965800; /* a plan step no run has reached */
 
-  --muted: #f3f2fa; /* Paper: the page and inset surfaces */
-  --muted-foreground: #5e5a6e; /* secondary text: 5.97:1 on the page */
-  --border: #d8d5e3;
-  --input: #7e788c; /* an input's boundary: 4.24:1 on a card */
-  --surface-raised: #fcfbff; /* the dock: a card, lifted by its shadow */
+  --background: #f5f6fc;
+  --foreground: #12163a;
+  --card: #fdfdff;
+  --card-foreground: #12163a;
 
-  --primary: #6d28d9; /* Core, darkened until Paper text on it reads */
-  --primary-foreground: #f3f2fa;
-  --ring: #6d28d9;
-  --link: #6d28d9;
+  --muted: #f5f6fc; /* the page and inset surfaces */
+  --muted-foreground: #545b85; /* secondary text */
+  --border: #b9bfdc;
+  --input: #7a82a8; /* an input's boundary: derived, 3:1 on a card and on the dock */
+  --surface-raised: #eceef8; /* the dock; hover and table headers */
 
-  --accent: #6ab825; /* actor green: decorative, use sparingly */
-  --accent-foreground: #0a0a0f;
+  --primary: #1d63b0;
+  --primary-foreground: #fdfdff;
+  --ring: #1d63b0;
+  --link: #1d63b0;
 
-  --success: #4d8f14;
-  --success-foreground: #0a0a0f;
-  --success-text: #3a7410;
+  --accent: #11795a; /* actor green: decorative, use sparingly */
+  --accent-foreground: #fdfdff;
 
-  --warning: #ed9d13;
-  --warning-foreground: #4a2f00; /* warning text on a tint, the page or a card */
-  --warning-solid-foreground: #4a2f00; /* the needs-you pill, on solid amber */
-  --warning-border: #b36f00;
+  --success: #11795a;
+  --success-foreground: #fdfdff;
+  --success-text: #11795a;
 
-  --destructive: #d22323;
-  --destructive-foreground: #ffffff;
-  /* Destructive text where --destructive falls short: the deny button, the error status,
-     notices, on the card, the page and the dock's raised surface. */
-  --destructive-text: #d02323;
+  --warning: #965800;
+  --warning-foreground: #6b3f00; /* warning text on a tint, the page or a card */
+  --warning-solid-foreground: #fdfdff; /* the needs-you pill, on solid amber */
+  --warning-border: #965800;
 
-  /* The page header: white, so the supplied light-theme mark sits on Paper/white. */
-  --brand-header: #ffffff;
-  --brand-header-foreground: #0a0a0f;
+  --destructive: #c2306f;
+  --destructive-foreground: #fdfdff;
+  /* Destructive text: the deny button, the error status, notices, on the card, the page and
+     the dock's raised surface. */
+  --destructive-text: #c2306f;
 
-  --placeholder: #6b6b6b;
+  /* The page header: the card's colour in Day. */
+  --brand-header: #fdfdff;
+  --brand-header-foreground: #12163a;
+
+  --placeholder: #545b85;
 
   /* Elevation: a layered transparent shadow lifts a card off whatever surface
      ends up underneath; a border colour doesn't. Structural borders stay borders. */
@@ -87,50 +101,62 @@
 .dark {
   color-scheme: dark;
 
-  --flow-writer: #22d3ee;
+  /* Ogenki raw tokens (Night). */
+  --surface-000: #0d1330;
+  --surface-100: #161c42;
+  --surface-200: #1f2754;
+  --line: #3a4478;
+  --blue: #5aa9f0;
+  --violet: #a78bfa;
+  --pink: #ff6fb5;
+  --green: #3ddc97;
+  --amber: #ffb547;
+  --ink-on-accent: #0d1330;
+
+  --flow-writer: #5aa9f0;
   --flow-judge: #a78bfa;
-  --flow-plan: #f5a524;
+  --flow-plan: #ffb547;
 
-  --background: #0a0a0f; /* Ink */
-  --foreground: #f3f2fa; /* Paper */
-  --card: #14141c; /* Surface */
-  --card-foreground: #f3f2fa;
+  --background: #0d1330;
+  --foreground: #eef0fa;
+  --card: #161c42;
+  --card-foreground: #eef0fa;
 
-  --muted: #0a0a0f; /* the page: Ink, so cards and the header lift off it */
-  --muted-foreground: #9b9aae; /* supplied Muted: 7.17:1 on Ink, 6.65:1 on Surface */
-  --border: #3c3949;
-  --input: #777185; /* an input's boundary: 3.63:1 on the dock */
-  --surface-raised: #1c1b26; /* the dock */
+  --muted: #0d1330; /* the page, so cards and the header lift off it */
+  --muted-foreground: #a9b1d6;
+  --border: #3a4478;
+  --input: #6f79b0; /* an input's boundary: derived, 3:1 on a card and on the dock */
+  --surface-raised: #1f2754; /* the dock */
 
-  --primary: #a78bfa; /* Core, lightened for text on Ink and Surface */
-  --primary-foreground: #0a0a0f;
-  --ring: #a78bfa;
-  --link: #a78bfa;
+  --primary: #5aa9f0;
+  --primary-foreground: #0d1330;
+  --ring: #5aa9f0;
+  --link: #5aa9f0;
 
-  --accent: #6ab825;
-  --accent-foreground: #0a0a0f;
+  --accent: #3ddc97;
+  --accent-foreground: #0d1330;
 
-  --success: #6ab825;
-  --success-foreground: #0a0a0f;
-  --success-text: #7fcf3a;
+  --success: #3ddc97;
+  --success-foreground: #0d1330;
+  --success-text: #3ddc97;
 
-  --warning: #ed9d13;
+  --warning: #ffb547;
   /* Light amber: warning text renders on a faint warning tint. */
-  --warning-foreground: #f5c97f;
-  --warning-solid-foreground: #0a0a0f;
-  --warning-border: #ed9d13;
+  --warning-foreground: #ffcf85;
+  --warning-solid-foreground: #0d1330;
+  --warning-border: #ffb547;
 
-  --destructive: #f37171;
-  --destructive-foreground: #0a0a0f;
-  --destructive-text: #f47e7e;
+  --destructive: #ff6fb5;
+  --destructive-foreground: #0d1330;
+  --destructive-text: #ff6fb5;
 
-  /* The page header: Surface, so the supplied dark-theme mark sits on Ink/Surface. */
-  --brand-header: #14141c;
-  --brand-header-foreground: #f3f2fa;
+  /* The page header: the page's colour in Night. */
+  --brand-header: #0d1330;
+  --brand-header-foreground: #eef0fa;
 
-  --placeholder: #9b9aae;
+  --placeholder: #a9b1d6;
 
-  /* Layered depth shadows are invisible against Ink: collapse to the ring. */
+  /* Layered depth shadows are invisible against the page: collapse to the ring. */
   --shadow-border: 0 0 0 1px rgb(255 255 255 / 0.08);
   --shadow-border-hover: 0 0 0 1px rgb(255 255 255 / 0.13);
   --shadow-dock: 0 -1px 0 rgb(255 255 255 / 0.10), 0 -6px 16px -4px rgb(0 0 0 / 0.45);
