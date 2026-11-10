@@ -209,6 +209,19 @@ their `status`.
 - **Persisting the last accepted version** across restarts (D14).
 - **Pinning a task to its generations** (D5): recorded, not pinned.
 
+## Notes from implementation (2026-11-10)
+
+- **D11, `Factory.Ready` in v1:** True when the Factory is accepted, GitHub answers for every served
+  repository, and the last config sync succeeded within 15 minutes. There is no broker probe yet;
+  "broker reachable" waits for a probe the factory does not have today.
+- **D10, the repository file's divergences:** they appear in the `InSync` condition's message (at
+  most five, then "and N more"), not in a `status.repositoryFile.diff` field.
+- **D5, decisions:** each decision marker carries `policygen=<n>`, the generation of the MergePolicy it
+  used, when the repository is served from one.
+- **D9, the manifest:** the settings pages build the MergePolicy manifest on the factory, from the
+  edited classes resolved like a preview, with the real object names. The browser never converts
+  between the repository file's shape and `spec.classes`.
+
 ## Review against v0.40.2
 
 Checked against `main` at 88e4c110 and ai-native-ref's values file, 2026-11-09. What changed the
