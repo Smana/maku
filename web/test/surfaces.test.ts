@@ -45,7 +45,7 @@ describe("focus", () => {
   // A ring that must sit inside a clipped container keeps an inset offset.
   const insetAllowed: Record<string, string> = {
     ".settings-nav a:focus-visible": "inset only inside the max-width 640px media block, where the nav is an overflow-x:auto row that clips an outset ring; above 640px it takes the standard outer ring",
-    ".settings .expert-yaml": "the textarea fills an overflow:hidden editor frame",
+    ".settings .expert-yaml:focus-visible": "the textarea fills an overflow:hidden editor frame",
   };
   const focusRules = rules.filter((r) => /:focus-visible/.test(r.sel) && /outline:/.test(r.body));
   it("has focus rules to check", () => expect(focusRules.length).toBeGreaterThan(5));
@@ -53,7 +53,10 @@ describe("focus", () => {
     expect(body).toMatch(/outline:\s*2px solid var\(--ring\)/);
     const off = body.match(/outline-offset:\s*([^;]+)/)?.[1].trim();
     // the nav's base rule is the outer ring; its inset sits in the 640px media block (checked below)
-    expect(off, sel).toBe(sel === ".settings .expert-yaml" ? "-2px" : "2px");
+    expect(off, sel).toBe(sel === ".settings .expert-yaml:focus-visible" ? "-2px" : "2px");
+  });
+  it("rings every allowlisted rule, so each inset is checked as a ring too", () => {
+    for (const sel of Object.keys(insetAllowed)) expect(focusRules.map((r) => r.sel), sel).toContain(sel);
   });
   it("lets only the allowlisted rules set an inset offset", () => {
     for (const r of rules) {
@@ -73,5 +76,44 @@ describe("the next-step box", () => {
   it("has no side stripe", () => {
     const b = rule(".strip-next");
     expect(b).not.toMatch(/border-(left|right|inline)/);
+  });
+});
+
+describe("a status", () => {
+  // A status is a word plus a colour; the colour sits on the card's own 1 px border or on the
+  // status icon, never on a side stripe curving round a 16 px corner.
+  const stateRules = [".approval", ".needs-other li.need", ".approval, .needs-other li.need", ".tool.st-rejected", ".tool.st-error",
+    ".rooms .row-status"];
+  it.each(stateRules)("%s draws no side stripe", (sel) => {
+    const b = rule(sel);
+    expect(b).not.toMatch(/inset\s+-?\d+px\s+0\s+0/);
+    expect(b).not.toMatch(/border-(left|right|inline)/);
+  });
+  it.each([
+    [".approval, .needs-other li.need", "--warning-border"],
+    [".tool.st-rejected", "--warning-border"],
+    [".tool.st-error", "--destructive"],
+  ])("%s tones its border with %s", (sel, tok) => {
+    expect(rule(sel)).toMatch(new RegExp(`border-color:\\s*var\\(${tok}\\)`));
+  });
+  it.each([
+    ["running", "--primary"], ["waiting-you", "--warning-border"], ["finished", "--success"], ["failed", "--destructive"],
+  ])("colours a room row's %s icon with %s", (kind, tok) => {
+    const sel = rules.filter((r) => r.sel.includes(`.rooms .row-status[data-kind="${kind}"] .row-status-icon`));
+    expect(sel.map((r) => r.body).join(";")).toMatch(new RegExp(`color:\\s*var\\(${tok}\\)`));
+  });
+});
+
+describe("a selected card", () => {
+  // The one card a person selects is the class a link points at (#class-<name>).
+  it("adds a 1 px primary border", () => {
+    expect(rule(".class-card:target")).toMatch(/border-color:\s*var\(--primary\)/);
+  });
+});
+
+describe("the browser's own surfaces", () => {
+  it("tints checkboxes, radios and text selection from the palette", () => {
+    expect(rule("html")).toMatch(/accent-color:\s*var\(--primary\)/);
+    expect(rule("::selection")).toMatch(/background:\s*color-mix\(in srgb, var\(--primary\) 25%, transparent\)/);
   });
 });
