@@ -250,6 +250,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	cfg := r.Cfg.Current()
 	var t v1alpha1.Task
 	if err := r.Client.Get(ctx, req.NamespacedName, &t); err != nil {
+		if apierrors.IsNotFound(err) {
+			r.notServed.forget(req.Name) // deleted while its repository was unserved
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if _, migrating := t.Annotations[roomv1.AnnotationMigrating]; migrating {

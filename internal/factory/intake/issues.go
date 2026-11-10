@@ -134,9 +134,10 @@ func (p *IssuePoller) controlIssue(cfg *config.Config) int {
 	return 0
 }
 
-// owns: the task is on this poller's repository. One entry owns every task, as before the list.
+// owns: the task is on this poller's repository, by name only. A task of a repository a publish
+// removed is nobody's, even when one entry is left; legacy tasks carry the entry's name.
 func (p *IssuePoller) owns(cfg *config.Config, t *v1alpha1.Task) bool {
-	return len(cfg.Repos()) == 1 || strings.EqualFold(t.Spec.Repository, p.repo(cfg).Name)
+	return strings.EqualFold(t.Spec.Repository, p.repo(cfg).Name)
 }
 
 // NeedLeaderElection is true: two pollers would race each label.

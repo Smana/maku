@@ -11,6 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -323,5 +324,33 @@ func TestARemovedRepositorysPollerDoesNothing(t *testing.T) {
 	}
 	if got := f.Removed(7); len(got) != 0 {
 		t.Fatalf("B's poller consumed a label: %q", got)
+	}
+}
+
+// After a publish drops B, A's poller owns A's tasks only: a stop label on A's issue 7 never
+// reaches B's task on its issue 7.
+func TestARemovedRepositorysTasksAreNobodys(t *testing.T) {
+	task := func(name, repo string) *v1alpha1.Task {
+		return &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "agent-system"},
+			Spec:   v1alpha1.TaskSpec{Issue: 7, Repository: repo},
+			Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing}}
+	}
+	f := forgetest.NewFake()
+	f.SetLabeled(LabelStop, forge.Item{Number: 7})
+	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: LabelStop, At: t0})
+	p, c := poller(t, f, task("3buqdlot", "Smana/a"), task("4buqdlot", "Smana/b"))
+	twoRepositories(p)
+	p.Cfg.Current().Repositories = p.Cfg.Current().Repositories[:1] // the 2 to 1 publish
+	p.Cfg.Current().Control = config.Control{}
+	p.Repository = "Smana/a"
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"3buqdlot": "label", "4buqdlot": ""} {
+		var got v1alpha1.Task
+		_ = c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: name}, &got)
+		if got.Annotations[v1alpha1.AnnotationStop] != want {
+			t.Errorf("%s: %v", name, got.Annotations)
+		}
 	}
 }
