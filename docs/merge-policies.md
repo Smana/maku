@@ -204,6 +204,16 @@ flowchart TD
 | Deny | `protectedFiles` is the second condition checked, after `allowedFiles`: a file both outside the allow list and protected reports `file_not_allowed`. Either way a human merges |
 | Built-in shape | `docs-links` and `revert` are held to `diffShape: links-only` when they declare none, and may declare no other |
 
+### description
+
+A class's `description` says, in one plain sentence, what the class is for: "Fixes a broken link in
+the docs, and nothing else." It is optional plain text of at most **280** characters, and it
+travels with the class into `.github/agent-factory.yaml`, the central config and
+`MergePolicy.spec.classes`. **The gate never reads it**: two classes that differ only in their
+description decide every pull request alike. The [settings page](web-ui.md#settings) leads each
+class card with it, and the editor edits it first, in its *What it is for* group; without one, the
+card leads with the class's conditions in one line.
+
 ### Shadow and live
 
 A shadow class runs every row a live one does and records `shadow_would_arm` (or
@@ -300,6 +310,7 @@ mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did 
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
+| `description` | string | none | Plain text, at most 280 characters. [What the class is for](#description); the gate never reads it |
 | `mode` | `live` \| `shadow` \| `off` | required | Refused on `review`: a human merges it |
 | `author` | `agents` \| `adopt` | required | Refused on `review` |
 | `adopt` | `{logins: [..], branches: [..]}` | — | Required with `author: adopt`, refused otherwise. Logins end in `[bot]`; branches are `^` plus a literal prefix (`^renovate/`) |
@@ -698,12 +709,22 @@ part of this release.
 With `policyManagement.promotion` on (factory and broker), `/settings/merge-policies/<owner>/<name>`
 holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
 
-The page shows the repository's guardrails as sentences, then one card per class, then the editor.
-The editor has two tabs, **Form** and **YAML (expert)**. **Check** sits below both.
+The page is MergePolicy-first. A header says once what serves the classes: the `MergePolicy`'s
+name and namespace, its authority (`central` or `repository`), its generation, and each
+[condition](#factory-resources) as a word on its colour ("Accepted", "Not in sync: 2
+differences", the message on hover), then one legend for the three modes. One line under it says
+what `.github/agent-factory.yaml` is to the classes now: matching, differing (the `MergePolicy`
+wins), or, under `repository` authority, invalid, which pauses auto-merge and is shown as a notice.
+A repository with no `MergePolicy` says "Not migrated yet: `maku config migrate` prints its
+MergePolicy", shows its file's classes read-only and has no editor.
+
+Then the guardrails as sentences, one card per class (its [description](#description), its
+conditions in one line, its evidence, the full sentences folded under **Conditions**), and the
+editor. The editor has two tabs, **Form** and **YAML (expert)**. **Check** sits below both.
 
 | Part | Edits |
 |---|---|
-| Form | One class, picked from a list or started with **New class from an example**. `mode` sits above the groups; the rest is grouped by question: *Who writes it* (`author`, the harness from the central list, `adopt.logins` and `adopt.branches` for an adopted class, and `harnessAllowed` and `escalation` for an off class and the review class only), *What it may touch* (`allowedFiles`, `companionFiles` with an `added-entry` shape, `protectedFiles` from `deny`), *How big it may be* (`maxPatchFiles`, `maxModifiedLines`, `modifyOnly`, `diffShape`), *What must pass* (`holdoutChecks`, and `releaseAgeCheck` and `requiredLabel` for an adopted class), *When to ask a maintainer* (`requiresApproval`'s `changedFiles`), *Limits and follow-up* (`limits.maxPerDay`, `monitor.followUpWindow`). Each field carries a plain label, its YAML key, a help line and a link to this page; empty groups fold behind an "Add ..." button. A live sentence above the groups reads the class back in words. `any` branches and `oracle` are kept as they are. A new class never takes the name of one the file has: the editor suffixes it (`-2`, `-3`...) and says so |
+| Form | One class, picked from a list or started with **New class from an example**. `mode` sits above the groups; the rest is grouped by question: *What it is for* (`description`, with its count to 280), *Who writes it* (`author`, the harness from the central list, `adopt.logins` and `adopt.branches` for an adopted class, and `harnessAllowed` and `escalation` for an off class and the review class only), *What it may touch* (`allowedFiles`, `companionFiles` with an `added-entry` shape, `protectedFiles` from `deny`), *How big it may be* (`maxPatchFiles`, `maxModifiedLines`, `modifyOnly`, `diffShape`), *What must pass* (`holdoutChecks`, and `releaseAgeCheck` and `requiredLabel` for an adopted class), *When to ask a maintainer* (`requiresApproval`'s `changedFiles`), *Limits and follow-up* (`limits.maxPerDay`, `monitor.followUpWindow`). Each field carries a plain label, its YAML key, a help line and a link to this page; empty groups fold behind an "Add ..." button. A live sentence above the groups reads the class back in words. `any` branches and `oracle` are kept as they are. A new class never takes the name of one the file has: the editor suffixes it (`-2`, `-3`...) and says so |
 | Examples | Simple: `docs-broad`, `deps-patch`, `generated-files`. Advanced: `deps-minor`, `docs-or-tests`, `infra-with-approval`. All start in shadow; `deps-minor` is shadow only. The harness starts on the first central profile the template's author may take (`template: none` for the deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
 | YAML (expert) | The whole file, same validation. `factory:` is refused if changed. An error's line opens this tab |
 

@@ -193,8 +193,8 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 | Page | Shows |
 |---|---|
 | `/settings` | Section cards (merge policies, evidence, approval memory) with live counts |
-| `/settings/merge-policies` | One row per repository: where its classes come from, its classes by mode, the class closest to promotion |
-| `/settings/merge-policies/<owner>/<name>` | One card per class: its mode and what it means, the class in words, evidence toward the [promotion](factory.md#promotion) with the widening steps, its promotion and exception; the factory's guardrails in words |
+| `/settings/merge-policies` | One row per repository: its `MergePolicy` with its Accepted and InSync conditions in words (or "Not migrated", or "status unknown" before the factory reports them), its classes by mode, the class closest to promotion |
+| `/settings/merge-policies/<owner>/<name>` | A header saying once what serves the classes: the `MergePolicy`, its namespace, authority and generation, its conditions as words on their colour, and a legend for the three modes; one line on `.github/agent-factory.yaml` (a notice only when an invalid file pauses auto-merge). Then one card per class: its name and mode word, its [description](merge-policies.md#description), its conditions in one line, its last decision, evidence toward the [promotion](factory.md#promotion) with the widening steps, the full conditions folded, its promotion and exception. A repository with no `MergePolicy` says "Not migrated yet" and has no editor |
 | `/settings/merge-policies/<owner>/<name>/decisions/<pr>` | The pull request's decision timeline |
 | `/settings/evidence` | Every class of every repository you read, in one table |
 
@@ -205,6 +205,13 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
 
 The broker checks each of these on every request; a hidden button is only a convenience.
+
+With four items or more, the repository table and a repository page's class cards have a filter
+above them. It matches, case-insensitive, every word typed against the repository and
+`MergePolicy` names (table) or a class's name, mode and description (cards), shows "3 of 9
+repositories", and names the query with a **Clear** button when nothing matches. The query is kept
+in `?q=`, so a filtered page can be shared; `/` focuses the field, except while you type in another
+one, and Escape clears it.
 
 ## When something fails
 

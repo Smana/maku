@@ -128,9 +128,10 @@ chat and raw views, the controls and the composer.
 - `http://127.0.0.1:4180/preview/preview.html` (add `?live` to replay the session at reading pace)
 - `http://127.0.0.1:4180/preview/full.html` (add `?theme=dark` for the dark palette)
 - `http://127.0.0.1:4180/preview/settings.html?path=/settings/merge-policies/Smana/cloud-native-ref`
-  (a repository's own policy file, every evidence state) and `…/Smana/maku` (served from a
-  MergePolicy, the factory's golden); `?path=/settings`, `/settings/merge-policies`,
-  `/settings/evidence` and `/settings/approval-memory` for the others
+  (a central MergePolicy out of sync with its file in two places, every evidence state),
+  `…/Smana/maku` (the factory's golden, with its status) and `…/Smana/legacy` (not migrated);
+  `?path=/settings/merge-policies` lists nine repositories, enough to filter (add `&q=cloud`);
+  `?path=/settings`, `/settings/evidence` and `/settings/approval-memory` for the others
 
 `full.html` takes `?finished`, `?split` or `?part` to show the rail's Replay, a split task or a part's room (default: a task in flight); the demo shows the rail as it replays. The built files stay out of git. Buttons on the full page send nothing.
 

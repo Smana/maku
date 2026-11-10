@@ -2,15 +2,17 @@
 
 // The offline settings preview: the settings pages and approval memory as main.ts routes them, fed
 // canned answers instead of the broker. `npm run preview`, then open /preview/settings.html with
-// ?path= set to one of: /settings, /settings/merge-policies, /settings/merge-policies/Smana/maku
-// (served from a MergePolicy), /settings/merge-policies/Smana/cloud-native-ref (its own policy file,
-// every evidence state), /settings/evidence, /settings/approval-memory. ?theme=dark for the dark palette.
+// ?path= set to one of: /settings, /settings/merge-policies (nine repositories, enough to filter),
+// /settings/merge-policies/Smana/maku (the policyview golden: a MergePolicy with its status),
+// /settings/merge-policies/Smana/cloud-native-ref (a central MergePolicy out of sync with its file,
+// every evidence state), /settings/merge-policies/Smana/legacy (not migrated), /settings/evidence,
+// /settings/approval-memory. ?theme=dark for the dark palette, ?q= to filter a list.
 
 import { mountApprovalMemory } from "../src/approval-memory";
 import { mountSettings, settingsFrame } from "../src/settings";
 import { applyTheme, initTheme } from "../src/theme";
 import golden from "../../internal/factory/policyview/testdata/ui/merge-policy.json";
-import { cnrPage } from "./settings-fixtures";
+import { cnrPage, legacyPage, smallPages } from "./settings-fixtures";
 
 const params = new URLSearchParams(location.search);
 const path = params.get("path") ?? "/settings";
@@ -18,7 +20,9 @@ const path = params.get("path") ?? "/settings";
 const answers: Record<string, unknown> = {
   "/api/policy/repositories/Smana/maku": { report: golden.report, promotions: [], exceptions: [], you: { login: "Smana", maintainer: true, operator: false } },
   "/api/policy/repositories/Smana/cloud-native-ref": cnrPage,
-  "/api/policy/repositories": { repositories: ["Smana/maku", "Smana/cloud-native-ref"] },
+  "/api/policy/repositories/Smana/legacy": legacyPage,
+  ...Object.fromEntries(Object.entries(smallPages).map(([r, p]) => [`/api/policy/repositories/${r}`, p])),
+  "/api/policy/repositories": { repositories: ["Smana/maku", "Smana/cloud-native-ref", "Smana/legacy", ...Object.keys(smallPages)] },
   "/api/approval-memory": { grants: [] },
 };
 const get = (async (url: string) => {
