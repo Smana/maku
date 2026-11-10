@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -680,12 +681,18 @@ type wiring struct {
 	pollers interface{ Sync(repos []string) }
 	m       publishMetrics
 	kick    func() // a fence refresh, not waiting for it; nil kicks nothing
+
+	// servedMu holds a served() from reading the set to applying it, so a retry that read the set
+	// before a publish changed it cannot apply it after the publish's.
+	servedMu sync.Mutex
 }
 
 // served moves the pollers, the metrics' repository list and the fence onto the served set once
 // a sync changed it. A dropped repository's repository_owned keeps its last value: a 0 would
 // fire FactoryRepositoryNotOwned for a repository nobody serves.
 func (w *wiring) served() []string {
+	w.servedMu.Lock()
+	defer w.servedMu.Unlock()
 	names := w.conns.names()
 	w.m.ListRepositories(names...)
 	w.pollers.Sync(names)

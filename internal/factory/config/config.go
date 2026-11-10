@@ -1369,12 +1369,22 @@ func Load(path string) (*Config, error) {
 	return Parse(raw)
 }
 
-// Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
-func Parse(raw []byte) (*Config, error) {
+// CheckBlocks refuses a switch block (coordination, hardening), or a key inside it, written twice
+// in raw. A caller that decodes raw into a map before Parse runs it first: the map has kept the
+// last block silently by then (factory resources: Assemble).
+func CheckBlocks(raw []byte) error {
 	for _, block := range []string{"coordination", "hardening"} {
 		if err := blockOnce(raw, block); err != nil {
-			return nil, fmt.Errorf("config: %w", err)
+			return fmt.Errorf("config: %w", err)
 		}
+	}
+	return nil
+}
+
+// Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
+func Parse(raw []byte) (*Config, error) {
+	if err := CheckBlocks(raw); err != nil {
+		return nil, err
 	}
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {

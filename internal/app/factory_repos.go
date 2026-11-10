@@ -55,10 +55,12 @@ type repoConns struct {
 
 	syncMu sync.Mutex // serializes sync and retry
 
-	mu      sync.RWMutex
-	order   []string
-	by      map[string]repoConn
-	pending bool // the last sync failed a repository: retry it
+	mu    sync.RWMutex
+	order []string
+	by    map[string]repoConn
+	// errs is each listed repository's last wiring error, keyed lowercased; a sync that wires it,
+	// or drops it, clears it. Any entry makes the next retry run.
+	errs map[string]error
 }
 
 // newRepoConns connects through GitHub: the factory App, and the merger App (connectMerger). In
@@ -108,7 +110,7 @@ func (c *repoConns) retry(ctx context.Context, cur func() *config.Config) (ran b
 	c.syncMu.Lock()
 	defer c.syncMu.Unlock()
 	c.mu.RLock()
-	pending := c.pending
+	pending := len(c.errs) > 0
 	c.mu.RUnlock()
 	if !pending {
 		return false, nil
@@ -123,8 +125,10 @@ func (c *repoConns) syncLocked(ctx context.Context, cfg *config.Config) error {
 	by := map[string]repoConn{}
 	var order []string
 	var errs []error
+	failed := map[string]error{}
 	fail := func(name string, err error) {
 		errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		failed[strings.ToLower(name)] = err
 		if c.failed != nil {
 			c.failed(ctx, name)
 		}
@@ -161,9 +165,17 @@ func (c *repoConns) syncLocked(ctx context.Context, cfg *config.Config) error {
 		order = append(order, r.Name)
 	}
 	c.mu.Lock()
-	c.by, c.order, c.pending = by, order, len(errs) > 0
+	c.by, c.order, c.errs = by, order, failed
 	c.mu.Unlock()
 	return errors.Join(errs...)
+}
+
+// wireErr is repository's last wiring error, nil when its last sync wired it or it is not listed.
+// Plan 3's Connected condition reads it.
+func (c *repoConns) wireErr(repository string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.errs[strings.ToLower(repository)]
 }
 
 // names are the served repositories, in the config's order.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -307,5 +308,102 @@ func TestOnPublishRecoversAPanic(t *testing.T) {
 	onPublish(t.Context(), newWiring(newFakeWiring().conns(), &fakePollers{panics: true}, m, &logs, &kicks))(repos("o/a"), repos("o/a"))
 	if !slices.Equal(m.wireErrs, []string{"*"}) || !strings.Contains(logs.String(), "panicked") {
 		t.Fatalf("wire errors %v, log %s", m.wireErrs, logs.String())
+	}
+}
+
+// Plan 3's Connected condition reads each repository's last wiring error: set by a failed sync,
+// cleared by one that wires it, and none for a repository that wired or was dropped.
+func TestWireErrIsPerRepositoryAndClearedOnSuccess(t *testing.T) {
+	w := newFakeWiring()
+	conns := w.conns()
+	w.refuse["o/bad"] = true
+	cfg := repos("o/a", "o/bad")
+	if err := conns.sync(t.Context(), cfg); err == nil {
+		t.Fatal("o/bad must fail")
+	}
+	if conns.wireErr("o/a") != nil || conns.wireErr("O/BAD") == nil {
+		t.Fatalf("o/a %v, o/bad %v", conns.wireErr("o/a"), conns.wireErr("o/bad"))
+	}
+	delete(w.refuse, "o/bad")
+	if ran, err := conns.retry(t.Context(), func() *config.Config { return cfg }); !ran || err != nil {
+		t.Fatalf("retry %v %v", ran, err)
+	}
+	if conns.wireErr("o/bad") != nil {
+		t.Fatalf("a wired repository keeps its error: %v", conns.wireErr("o/bad"))
+	}
+	w.refuse["o/gone"] = true
+	if err := conns.sync(t.Context(), repos("o/a", "o/gone")); err == nil {
+		t.Fatal("o/gone must fail")
+	}
+	if err := conns.sync(t.Context(), repos("o/a")); err != nil {
+		t.Fatal(err)
+	}
+	if conns.wireErr("o/gone") != nil {
+		t.Fatal("a dropped repository keeps its error")
+	}
+	if ran, _ := conns.retry(t.Context(), func() *config.Config { return repos("o/a") }); ran {
+		t.Fatal("a retry ran with nothing pending")
+	}
+}
+
+// orderedPollers blocks the first Sync until released, so a test can interleave two served() calls.
+type orderedPollers struct {
+	mu      sync.Mutex
+	synced  [][]string
+	entered chan struct{}
+	release chan struct{}
+	first   bool
+}
+
+func (p *orderedPollers) Sync(repos []string) {
+	p.mu.Lock()
+	block := !p.first
+	p.first = true
+	p.mu.Unlock()
+	if block {
+		close(p.entered)
+		<-p.release
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.synced = append(p.synced, slices.Clone(repos))
+}
+
+// A retry's served() that read the set before a publish changed it must not apply that stale set
+// after the publish's: names are read and applied under one lock, so the last applied is the latest.
+func TestServedNeverAppliesAStaleSetAfterAPublish(t *testing.T) {
+	w := newFakeWiring()
+	conns := w.conns()
+	if err := conns.sync(t.Context(), repos("o/a")); err != nil {
+		t.Fatal(err)
+	}
+	p := &orderedPollers{entered: make(chan struct{}), release: make(chan struct{})}
+	m := &fakePublishMetrics{budgets: map[string]float64{}}
+	wr := &wiring{log: slog.New(slog.DiscardHandler), conns: conns, pollers: p, m: m}
+	done := make(chan struct{})
+	go func() { defer close(done); wr.served() }() // the retry: reads ["o/a"], then blocks applying it
+	<-p.entered
+	if err := conns.sync(t.Context(), repos("o/a", "o/b")); err != nil {
+		t.Fatal(err)
+	}
+	second := make(chan struct{})
+	go func() { defer close(second); wr.served() }() // the publish's
+	// Unlocked, the publish's applies its set now; locked, it waits for the retry's. Give it the
+	// chance either way, so the stale order shows every time it is possible.
+	for deadline := time.Now().Add(200 * time.Millisecond); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		p.mu.Lock()
+		n := len(p.synced)
+		p.mu.Unlock()
+		if n > 0 {
+			break
+		}
+	}
+	close(p.release)
+	<-done
+	<-second
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if last := p.synced[len(p.synced)-1]; !slices.Equal(last, []string{"o/a", "o/b"}) {
+		t.Fatalf("the pollers end on %v, a stale set: %v", last, p.synced)
 	}
 }

@@ -81,12 +81,15 @@ grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three 
 ## Config
 
 `config` is rendered as-is into `/etc/agent-factory/config/config.yaml` (a ConfigMap; a change
-rolls the pods). The factory also reads the `Factory`, `Repository` and `MergePolicy` resources
-live: the catalogue and `repositories` apply without a rollout, whether they come from the file or
-from a resource. The startup keys (`policyManagement`, `coordination`, `hardening`, `api`, `runs`,
-`sandbox`, `demo`, `broker`, `github`, the `meter` URLs and query, `poll`, `tracing`, the logins,
-`roomsURL`, `factory`) still need one, which this ConfigMap's change gives. With no CRDs installed
-the factory runs from the file alone ([the full table](../../docs/architecture.md#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
+rolls the pods through its `checksum/config` annotation). The factory also reads the `Factory`,
+`Repository` and `MergePolicy` resources live: a change to one of them applies the catalogue and
+`repositories` without a rollout. A repository a change adds that fails to wire (its GitHub App
+installation, a merger key) is retried every minute, as is a served one whose merger reconnect
+failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `api`, `runs`,
+`sandbox`, `demo`, `broker`, `github`, `meter.url`, `meter.query`, `meter.logsURL`,
+`meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`,
+`runlore.listen`, `triage.classifierURL`, `factory`) are read once, at the start the rollout
+gives. With no CRDs installed the factory runs from the file alone ([the full table](../../docs/architecture.md#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
 [docs/factory.md](../../docs/factory.md#the-config-file). Keys added since a file was written
 default to the platform's values, so an older file loads unchanged: `api.groups` (`agents-admin`,
 `agents-member`) and a schedule's `probeAuthor` (`renovate[bot]`). The daily budgets are in USD:

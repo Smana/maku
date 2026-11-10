@@ -94,6 +94,10 @@ func (c candidate) objects() []Object {
 // Assemble keeps no history. D5's "keep the last accepted version" is the caller's: it substitutes
 // each refused object's last accepted spec, when it has one, and calls Assemble again.
 func Assemble(file []byte, objs []Object) (Result, error) {
+	// The map below keeps a duplicated switch block's last copy silently: read the raw bytes first.
+	if err := config.CheckBlocks(file); err != nil {
+		return Result{}, fmt.Errorf("config file: %w", err)
+	}
 	var base map[string]any
 	if err := yaml.Unmarshal(file, &base); err != nil {
 		return Result{}, fmt.Errorf("config file: %w", err)

@@ -85,6 +85,7 @@ type Source struct {
 	lastGood   map[key]resources.Object
 	outcomes   []Outcome
 	synced     Synced
+	warnings   []string // the last set logged
 	crdsAbsent bool
 
 	kickOnce sync.Once
@@ -232,8 +233,11 @@ func (s *Source) sync(ctx context.Context) error {
 	if len(replaced) > 0 {
 		r, aerr = resources.Assemble(s.File, objs)
 	}
-	for _, w := range r.Warnings {
-		s.log().Warn("config", "warning", w)
+	if w := slices.Sorted(slices.Values(r.Warnings)); !slices.Equal(w, s.warnings) {
+		for _, x := range w {
+			s.log().Warn("config", "warning", x)
+		}
+		s.warnings = w
 	}
 
 	if aerr != nil {
