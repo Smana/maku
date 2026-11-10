@@ -122,6 +122,30 @@ spec:
                         links-only is R52''s LinksOnly.'
                       maxLength: 512
                       type: string
+                    escalation:
+                      description: Escalation maps a signal group to a profile of
+                        harnessAllowed; an absent group goes to the human.
+                      properties:
+                        notConverged:
+                          maxLength: 253
+                          type: string
+                        outOfBudget:
+                          maxLength: 253
+                          type: string
+                      type: object
+                    harness:
+                      description: |-
+                        Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
+                        and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
+                        Absent, the class runs as before.
+                      maxLength: 253
+                      type: string
+                    harnessAllowed:
+                      items:
+                        maxLength: 253
+                        type: string
+                      maxItems: 64
+                      type: array
                     holdoutChecks:
                       description: |-
                         HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is

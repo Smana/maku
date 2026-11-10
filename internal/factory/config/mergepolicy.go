@@ -49,6 +49,7 @@ type HarnessProfile struct {
 	TestFirst bool    `json:"testFirst,omitempty"`
 	Loop      LoopRef `json:"loop,omitempty"`
 	// Description is the line the scoper's brief shows: when to choose the profile.
+	// +kubebuilder:validation:MaxLength=120
 	Description string `json:"description,omitempty"`
 }
 

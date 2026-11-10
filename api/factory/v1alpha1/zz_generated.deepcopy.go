@@ -558,6 +558,7 @@ func (in *FactorySpec) DeepCopyInto(out *FactorySpec) {
 		}
 	}
 	in.MergeGuardrails.DeepCopyInto(&out.MergeGuardrails)
+	out.Evaluation = in.Evaluation
 	if in.Prices != nil {
 		in, out := &in.Prices, &out.Prices
 		*out = make(map[string]config.Price, len(*in))

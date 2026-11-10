@@ -77,14 +77,20 @@ type Class struct {
 	// Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
 	// and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
 	// Absent, the class runs as before.
-	Harness        string      `json:"harness,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	Harness string `json:"harness,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
 	HarnessAllowed []string    `json:"harnessAllowed,omitempty"`
 	Escalation     *Escalation `json:"escalation,omitempty"`
 }
 
 // Escalation maps a signal group to a profile of harnessAllowed; an absent group goes to the human.
+// +kubebuilder:object:generate=true
 type Escalation struct {
-	OutOfBudget  string `json:"outOfBudget,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	OutOfBudget string `json:"outOfBudget,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
 	NotConverged string `json:"notConverged,omitempty"`
 }
 

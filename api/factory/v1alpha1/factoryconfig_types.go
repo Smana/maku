@@ -49,6 +49,8 @@ type FactorySpec struct {
 	// +kubebuilder:validation:MaxProperties=16
 	HarnessProfiles map[string]config.HarnessProfile `json:"harnessProfiles,omitempty"`
 	MergeGuardrails config.MergeGuardrails           `json:"mergeGuardrails,omitzero"`
+	// Evaluation is the team evaluation's cohort share and mode, read per decision.
+	Evaluation config.Evaluation `json:"evaluation,omitzero"`
 	// +kubebuilder:validation:MaxProperties=32
 	Prices map[string]config.Price `json:"prices,omitempty"`
 }

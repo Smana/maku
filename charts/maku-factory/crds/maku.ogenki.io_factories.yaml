@@ -180,6 +180,20 @@ spec:
                     maxLength: 253
                     type: string
                 type: object
+              evaluation:
+                description: Evaluation is the team evaluation's cohort share and
+                  mode, read per decision.
+                properties:
+                  controlPercent:
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  mode:
+                    enum:
+                    - observe
+                    - apply
+                    type: string
+                type: object
               facts:
                 description: |-
                   Facts are what a terminal task tells its room about its dollars (CD23). A switch here lands with
@@ -203,6 +217,11 @@ spec:
                   properties:
                     checks:
                       type: boolean
+                    description:
+                      description: 'Description is the line the scoper''s brief shows:
+                        when to choose the profile.'
+                      maxLength: 120
+                      type: string
                     loop:
                       description: LoopRef names a row of loops, or off.
                       maxLength: 253

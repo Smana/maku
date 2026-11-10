@@ -146,6 +146,9 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 		"defaults": map[string]any{"template": "solo", "tier": "standard", "dataClass": "public", "predictedClass": "review"},
 		"caps":     map[string]any{"activeTasks": 1, "concurrentRuns": 1, "tasksPerDay": 1, "maxTextBytes": 14336, "awaitingHumanWIP": 1},
 		"triage":   map[string]any{"controlPercent": 20},
+		"harnessProfiles": map[string]any{"base": map[string]any{"template": "solo"},
+			"rich": map[string]any{"template": "pair"}},
+		"evaluation": map[string]any{"controlPercent": 30, "mode": "apply"},
 	}}
 	r, err := Assemble(file(t), []Object{f})
 	if err != nil {
@@ -154,7 +157,8 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 	if refused(r, KindFactory, "aws-0") != "" {
 		t.Fatalf("refused: %+v", r.Refused)
 	}
-	if r.Config.Tiers["light"].RunTokens != 1000 || r.Config.Caps.ActiveTasks != 1 || r.Config.Triage.ControlPercent != 20 {
+	if r.Config.Tiers["light"].RunTokens != 1000 || r.Config.Caps.ActiveTasks != 1 || r.Config.Triage.ControlPercent != 20 ||
+		r.Config.Evaluation.ControlPercent != 30 || !r.Config.Applies() {
 		t.Fatalf("the Factory's catalogue did not apply: %+v", r.Config.Tiers)
 	}
 	if r.Config.Triage.ClassifierURL == "" {

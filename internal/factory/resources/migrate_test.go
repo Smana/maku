@@ -41,7 +41,8 @@ func TestMigrateRoundTrips(t *testing.T) {
 	}
 	if !equalRepos(t, want.Repos(), got.Config.Repos()) || !equalJSON(t, want.Tiers, got.Config.Tiers) ||
 		!equalJSON(t, want.Templates, got.Config.Templates) || !equalJSON(t, want.Caps, got.Config.Caps) ||
-		!equalJSON(t, want.Budgets, got.Config.Budgets) || !equalJSON(t, want.Triage, got.Config.Triage) {
+		!equalJSON(t, want.Budgets, got.Config.Budgets) || !equalJSON(t, want.Triage, got.Config.Triage) ||
+		!equalJSON(t, want.Evaluation, got.Config.Evaluation) || !equalJSON(t, want.HarnessProfiles, got.Config.HarnessProfiles) {
 		t.Fatalf("the round trip changed the config\nmanifests:\n%s\nresidual:\n%s", manifests, residual)
 	}
 }

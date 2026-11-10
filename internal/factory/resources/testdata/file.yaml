@@ -3,7 +3,7 @@ repositories:
   - name: Smana/cloud-native-ref
     maintainers: [Smana]
     triggerLabel: factory/ready
-    classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}, tests: {}, dashboards: {}}
+    classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {harness: base, harnessAllowed: [rich], escalation: {notConverged: rich}}, tests: {}, dashboards: {}}
     merge:
       requiredChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Rendered manifest diff 📝", "Check the shell scripts 💻", "Check the documentation links 🔗", "Validate Vector Log Parsing Configuration (vlsingle)", "Validate Vector Log Parsing Configuration (vlcluster)"]
       verifyChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Check the shell scripts 💻", "Check the documentation links 🔗"]
@@ -33,6 +33,10 @@ templates:
   pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
   trio: {roles: [implementer, tester, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
+harnessProfiles:
+  base: {template: solo, description: the class's floor}
+  rich: {template: pair, description: a reviewer for a change that needs one}
+evaluation: {controlPercent: 20, mode: observe}
 caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
 budgets: {enforceTask: false, enforcePrincipal: false, factoryDailyUSD: 42.50, humanDailyUSD: 8.50}
 api:

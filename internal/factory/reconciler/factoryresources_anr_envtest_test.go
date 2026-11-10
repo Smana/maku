@@ -22,14 +22,6 @@ func TestMigratedANRConfigPassesAdmission(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
 	}
-	file, err := os.ReadFile(filepath.Join("..", "resources", "testdata", "anr.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifests, _, err := resources.Migrate(file, "default")
-	if err != nil {
-		t.Fatal(err)
-	}
 	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd")}, ErrorIfCRDPathMissing: true}
 	restCfg, err := env.Start()
 	if err != nil {
@@ -37,6 +29,28 @@ func TestMigratedANRConfigPassesAdmission(t *testing.T) {
 	}
 	defer func() { _ = env.Stop() }()
 	c, err := client.New(restCfg, client.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// anr.yaml is ai-native-ref's config; file.yaml also carries the keys ANR does not set yet
+	// (the team evaluation's evaluation, a class's harness, harnessAllowed and escalation). The
+	// apiserver makes kube-public itself, so the two sets, alike in names, never meet.
+	for _, f := range []struct {
+		file, ns string
+		want     int
+	}{{"anr.yaml", "default", 7}, {"file.yaml", "kube-public", 3}} {
+		admit(t, c, f.file, f.ns, f.want)
+	}
+}
+
+// admit creates every document Migrate makes of testdata/file in ns and wants that many.
+func admit(t *testing.T, c client.Client, file, ns string, want int) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "resources", "testdata", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, _, err := resources.Migrate(b, ns)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +64,13 @@ func TestMigratedANRConfigPassesAdmission(t *testing.T) {
 			continue
 		}
 		if err := c.Create(t.Context(), &u); err != nil {
-			t.Errorf("create %s %s: %v", u.GetKind(), u.GetName(), err)
+			t.Errorf("%s: create %s %s: %v", file, u.GetKind(), u.GetName(), err)
 			continue
 		}
 		created++
 	}
-	// One Factory, and a Repository and a MergePolicy for each of the three repositories.
-	if created != 7 && !t.Failed() {
-		t.Fatalf("created %d objects, want 7", created)
+	// One Factory, and a Repository and a MergePolicy for each repository.
+	if created != want && !t.Failed() {
+		t.Fatalf("%s: created %d objects, want %d", file, created, want)
 	}
 }
