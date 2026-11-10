@@ -209,6 +209,17 @@ describe("the index and evidence pages", () => {
     expect(from).toEqual(["cloud-native-ref · Accepted · Not in sync: 2 differences", "Not migrated"]);
   });
 
+  it("labels each cell with its column, for the stacked phone table, and scopes its styles to the settings header", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", two());
+    expect([...app.querySelectorAll("table.repo-table tbody tr")[0].children].map((td) => td.getAttribute("data-label")))
+      .toEqual(["Repository", "MergePolicy", "Classes", "Closest to promotion"]);
+    const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
+    expect(css).toMatch(/td:nth-child\(n \+ 3\)\[data-label\]::before \{ content: attr\(data-label\) ": "; \}/);
+    // The room page's p.policy-conditions is not the header's chip row.
+    expect(css).not.toMatch(/(^|\n)\.policy-conditions\s*\{/);
+  });
+
   it("says a MergePolicy's status is unknown when it has no Accepted or InSync condition", async () => {
     const bare = page();
     bare.report.mergePolicyStatus = { namespace: "agent-system", generation: 1, status: { conditions: [{ type: "RepositoryFileValid", status: "True" }] } };
@@ -731,16 +742,19 @@ describe("pending evidence", () => {
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
     await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20/20 clean");
-    expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toBe("Evidence as of 2026-11-08T00:05:00Z.");
+    expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toMatch(/^Evidence read .+\.$/);
+    expect(app.querySelector(".policy-classes .evidence-age time")?.getAttribute("datetime")).toBe("2026-11-08T00:05:00Z");
     expect(app.querySelector("section.policy-editor")).toBe(editor);
     expect([...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live")).toHaveLength(1);
   });
 
   it("says why the evidence shown is older", () => {
     const r = page().report;
-    expect(evidenceAge({ ...r, evidenceAt: "2026-11-08T00:00:00Z", evidenceError: "rate_limited" }))
-      .toBe("as of 2026-11-08T00:00:00Z (the newest read failed: rate limited)");
-    expect(evidenceAge({ ...r, evidenceAt: undefined, evidenceError: "deadline_exceeded" })).toBe(`${READING} (the last read failed: deadline exceeded)`);
+    const text = (xs: (string | Node)[]) => { const p = document.createElement("p"); p.append(...xs); return p.textContent; };
+    const now = Date.parse("2026-11-08T02:00:00Z");
+    expect(text(evidenceAge({ ...r, evidenceAt: "2026-11-08T00:00:00Z", evidenceError: "rate_limited" }, now)))
+      .toBe("Evidence read 2 h ago (the newest read failed: rate limited).");
+    expect(text(evidenceAge({ ...r, evidenceAt: undefined, evidenceError: "deadline_exceeded" }, now))).toBe(`${READING} (the last read failed: deadline exceeded)`);
   });
 
   it("writes a pending class on the evidence page", async () => {
@@ -876,6 +890,46 @@ describe("a repository served from a MergePolicy", () => {
     expect(app.querySelector(".file-line")?.textContent).toContain("differs from the MergePolicy in 2 places");
   });
 
+  it("shows each condition's message as text: the differences listed under the chips, another message as a line", async () => {
+    const p = central();
+    p.report.mergePolicyStatus!.status.conditions = [{ type: "Accepted", status: "False", reason: "Invalid", message: "spec.classes.docs: unknown key" },
+      { type: "InSync", status: "False", reason: "Diverges", message: "docs: only in the central config; tests: only in the central config" }];
+    const h = (await mountWith(p)).querySelector("header.policy-header")!;
+    const d = h.querySelector("details.policy-differences")!;
+    expect(d.querySelector("summary")?.textContent).toBe("What differs");
+    expect([...d.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["docs: only in the central config", "tests: only in the central config"]);
+    expect(h.querySelector(".policy-condition-message")?.textContent).toBe("Refused: spec.classes.docs: unknown key");
+  });
+
+  it("says the status's generation only when it lags the spec, and when the policy was read as a <time>", async () => {
+    const p = central();
+    const st = p.report.mergePolicyStatus!;
+    const gen = async () => {
+      const h = (await mountWith(p)).querySelector("header.policy-header")!;
+      return [...h.querySelectorAll("dt")].find((dt) => dt.textContent === "Generation")?.nextElementSibling?.textContent;
+    };
+    st.generation = 4;
+    st.status.observedGeneration = 3;
+    expect(await gen()).toBe("4 (status from generation 3)");
+    st.status.observedGeneration = 4;
+    expect(await gen()).toBe("4");
+    const read = (await mountWith(p)).querySelector(".policy-read time");
+    expect(read?.getAttribute("datetime")).toBe(p.report.readAt);
+  });
+
+  it("folds a policy file error into the file line: one line, never a second notice", async () => {
+    const p = central();
+    p.report.policyError = "invalid";
+    const app = await mountWith(p);
+    expect(app.querySelector(".file-line")?.textContent).toBe(".github/agent-factory.yaml is invalid; the MergePolicy serves the classes.");
+    expect(app.textContent).not.toContain("the central classes are shown");
+    const legacy = page();
+    delete legacy.report.mergePolicy;
+    legacy.report.policyError = "invalid";
+    const l = await mountWith(legacy);
+    expect([...l.querySelectorAll("p")].filter((x) => x.textContent?.includes("policy file is invalid")).map((x) => x.className)).toEqual(["file-line"]);
+  });
+
   it("renders a repository with no MergePolicy read-only: the notice, the cards, no editor", async () => {
     const p = page();
     delete p.report.mergePolicy;
@@ -911,6 +965,20 @@ describe("the filter", () => {
     input.value = "smana/d";
     input.dispatchEvent(new Event("input"));
     expect([...app.querySelectorAll<HTMLElement>("table.repo-table tbody tr")].filter((tr) => !tr.hidden).map((tr) => tr.children[0].textContent)).toEqual(["Smana/d"]);
+  });
+
+  it("matches the table on the repository and MergePolicy names only, never the counts or the closest class", async () => {
+    const routes: Record<string, unknown> = { "/api/policy/repositories": { repositories: repos } };
+    for (const r of repos) routes[`/api/policy/repositories/${r}`] = page();
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies", fakeFetch(routes));
+    const input = app.querySelector<HTMLInputElement>(".filter input")!;
+    const shown = () => [...app.querySelectorAll<HTMLElement>("table.repo-table tbody tr")].filter((tr) => !tr.hidden).length;
+    for (const q of ["shadow", "docs-links", "unknown"]) {
+      input.value = q;
+      input.dispatchEvent(new Event("input"));
+      expect(shown(), q).toBe(0);
+    }
   });
 
   it("offers no field over a short table", async () => {

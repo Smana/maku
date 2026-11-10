@@ -38,6 +38,17 @@ describe("a class card", () => {
     expect(more.textContent).toContain("it changes at most 10 files");
     expect(c.querySelector(".class-source")).toBeNull();
   });
+  it("wraps the summary phrase by phrase, and says a central class's conditions live in the MergePolicy when it cannot show them", () => {
+    const p = page();
+    p.report.guardrails = { maxPerDay: 5 };
+    const sum = classCard(p.report.classes[0], ctx(p)).querySelector(".class-summary")!;
+    expect([...sum.querySelectorAll(".summary-part")].map((x) => x.textContent)).toEqual(["≤ 10 files ·", "5 a day"]);
+    expect(sum.textContent).toBe("≤ 10 files · 5 a day");
+    p.report.mergePolicy = "mp";
+    p.report.classes[0].source = "central";
+    expect(classCard(p.report.classes[0], { ...ctx(p), policy: undefined }).querySelector(".class-summary")?.textContent)
+      .toBe("This class's conditions are set in the MergePolicy and cannot be shown here.");
+  });
   it("puts the description between the badge and the summary", () => {
     const p = page();
     p.report.policy!.classes!.docs.description = "Docs-only pull requests with links intact.";
@@ -115,8 +126,16 @@ describe("a class card", () => {
     const p = page();
     p.promotions = [{ id: "p1", repository: "o/r", class: "docs", threshold: 20, requestedBy: "me", requestedAt: "2026-11-09", state: "pr_opened", pullRequest: 7 }];
     p.exceptions = [{ id: "e1", repository: "o/r", class: "docs", minimum: 12, justification: "low blast radius, docs only", requestedBy: "me", requestedAt: "2026-11-08", state: "approved" }];
-    const c = classCard(p.report.classes[0], ctx(p));
-    expect(c.textContent).toContain("Promotion requested by me on 2026-11-09: pull request opened #7 (threshold 20)");
+    p.exceptions[0].expiresAt = "2026-12-08T09:00:00Z";
+    const now = () => Date.parse("2026-11-10T00:00:00Z");
+    const c = classCard(p.report.classes[0], { ...ctx(p), now });
+    expect(c.textContent).toContain("Promotion requested by me 1 day ago: pull request opened #7 (threshold 20)");
+    expect(c.querySelector(".class-promotions time")?.getAttribute("datetime")).toBe("2026-11-09");
+    const until = c.querySelector(".class-exceptions time")!;
+    expect(c.querySelector(".class-exceptions")?.textContent).toContain(` until ${until.textContent}.`);
+    expect(until.textContent).toBe(new Date("2026-12-08T09:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }));
+    expect(classCard(p.report.classes[0], { ...ctx(p), now: () => Date.parse("2027-01-01T00:00:00Z") }).querySelector(".class-exceptions")?.textContent)
+      .toContain(", expired 23 days ago.");
     p.promotions[0] = { ...p.promotions[0], threshold: 12, exceptionId: "e1" };
     expect(classCard(p.report.classes[0], ctx(p)).textContent).toContain("pull request opened #7 (under exception e1, threshold 12)");
     expect(c.querySelector('a[href="https://github.com/o/r/pull/7"]')).not.toBeNull();

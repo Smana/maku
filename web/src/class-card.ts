@@ -9,7 +9,7 @@
 
 import { describeClass, modeMeaning, summaryLine } from "./policy-describe";
 import type { PolicyFile } from "./policy-editor";
-import { evidenceLine, explain, policyState, post } from "./settings-api";
+import { evidenceLine, explain, policyState, post, timeText } from "./settings-api";
 import type { ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
@@ -78,20 +78,6 @@ function lastDecisionWords(code: string): string {
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
 }
 
-// timeAgo is iso as a <time>: how long ago in words, the locale's date and time on hover; an
-// unreadable value is shown as sent.
-function timeAgo(iso: string, now: number): HTMLTimeElement {
-  const t = el("time");
-  t.dateTime = iso;
-  const at = Date.parse(iso);
-  if (isNaN(at)) { t.textContent = iso; return t; }
-  t.title = new Date(at).toLocaleString();
-  const m = Math.max(0, Math.floor((now - at) / 60000));
-  const d = Math.floor(m / 1440);
-  t.textContent = m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${d} day${d > 1 ? "s" : ""} ago`;
-  return t;
-}
-
 // editClass selects a class in the page's editor, as its picker would.
 function editClass(main: HTMLElement, name: string) {
   const pick = main.querySelector<HTMLSelectElement>('.policy-editor select[aria-label="class to edit"]');
@@ -103,6 +89,7 @@ function editClass(main: HTMLElement, name: string) {
 }
 
 export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
+  const now = () => (ctx.now ?? Date.now)();
   const card = el("article", undefined, "class-card");
   card.id = `class-${c.class}`;
   const head = el("header", undefined, "class-card-head");
@@ -117,12 +104,22 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const r = ctx.page.report;
   const policy = ctx.policy?.classes?.[c.class];
   if (policy?.description) card.append(el("p", policy.description, "class-intent"));
-  if (policy) card.append(el("p", summaryLine(policy, r.guardrails), "class-summary"));
-  else card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
+  if (policy) {
+    // Each phrase wraps as a unit, so "5 a day" never splits across two lines.
+    const sum = el("p", undefined, "class-summary");
+    // The dot ends the phrase before it, inside its unit, so no line starts with one.
+    const parts = summaryLine(policy, r.guardrails).split(" · ");
+    parts.forEach((part, i) => sum.append(el("span", i < parts.length - 1 ? `${part} ·` : part, "summary-part"), i < parts.length - 1 ? " " : ""));
+    card.append(sum);
+  } else {
+    card.append(el("p", policyState(r) === "central"
+      ? "This class's conditions are set in the MergePolicy and cannot be shown here."
+      : "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
+  }
   const last = r.mergePolicyStatus?.status.classes?.find((x) => x.name === c.class);
   if (last?.lastDecision) {
     const p = el("p", `Last decision: ${lastDecisionWords(last.lastDecision)}`, "class-last");
-    if (last.lastDecisionAt) p.append(", ", timeAgo(last.lastDecisionAt, (ctx.now ?? Date.now)()));
+    if (last.lastDecisionAt) p.append(", ", timeText(last.lastDecisionAt, now()));
     card.append(p);
   }
 
@@ -201,7 +198,8 @@ function promotionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
   const ps = ctx.page.promotions.filter((p) => p.class === cls);
   if (ps.length === 0) return undefined;
   for (const p of ps) {
-    const line = el("p", `Promotion requested by ${p.requestedBy} on ${p.requestedAt}: ${p.state === "pr_opened" ? "pull request opened" : p.state.replaceAll("_", " ")}`);
+    const line = el("p", `Promotion requested by ${p.requestedBy} `);
+    line.append(timeText(p.requestedAt, (ctx.now ?? Date.now)()), `: ${p.state === "pr_opened" ? "pull request opened" : p.state.replaceAll("_", " ")}`);
     if (p.pullRequest) {
       const a = el("a", ` #${p.pullRequest}`);
       a.href = `https://github.com/${p.repository}/pull/${p.pullRequest}`;
@@ -220,8 +218,11 @@ function exceptionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
   const xs = ctx.page.exceptions.filter((y) => y.class === cls);
   if (xs.length === 0) return undefined;
   for (const x of xs) {
-    box.append(el("p", `Exception: ${x.minimum} clean decisions instead of ${ctx.page.report.minimum}, ${x.state}` +
-      (x.decidedBy ? ` by ${x.decidedBy}` : "") + (x.expiresAt ? ` until ${x.expiresAt}` : "") + `. \u201c${x.justification}\u201d`));
+    const line = el("p", `Exception: ${x.minimum} clean decisions instead of ${ctx.page.report.minimum}, ${x.state}` + (x.decidedBy ? ` by ${x.decidedBy}` : ""));
+    const now = (ctx.now ?? Date.now)();
+    if (x.expiresAt) line.append(Date.parse(x.expiresAt) < now ? ", expired " : " until ", timeText(x.expiresAt, now));
+    line.append(`. \u201c${x.justification}\u201d`);
+    box.append(line);
     if (ctx.page.you.operator && x.state === "requested") {
       const act = el("span", undefined, "class-actions");
       for (const d of ["approved", "refused"]) {

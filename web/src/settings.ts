@@ -7,7 +7,7 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { centralManifest, conditionWords, evidenceLine, explain, fileLine, ladderLine, policyState, post, read } from "./settings-api";
+import { centralManifest, conditionWords, evidenceLine, explain, fileLine, ladderLine, policyState, post, read, timeText } from "./settings-api";
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
@@ -122,8 +122,9 @@ function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableEl
   t.tHead!.append(tr);
   for (const r of rows) {
     const row = el("tr");
-    for (const c of r) {
+    for (const [i, c] of r.entries()) {
       const td = el("td");
+      td.dataset.label = head[i] ?? ""; // a stacked phone table shows it
       td.append(c);
       row.append(td);
     }
@@ -136,10 +137,11 @@ function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableEl
 export { centralManifest, evidenceLine, explain, ladderLine } from "./settings-api";
 export { READING } from "./class-card";
 
-// evidenceAge is when the shown evidence was read, and why it is older when the newest read failed.
-export function evidenceAge(r: Report): string {
-  if (!r.evidenceAt) return r.evidenceError ? `${READING} (the last read failed: ${r.evidenceError.replaceAll("_", " ")})` : READING;
-  return `as of ${r.evidenceAt}` + (r.evidenceError ? ` (the newest read failed: ${r.evidenceError.replaceAll("_", " ")})` : "");
+// evidenceAge is when the shown evidence was read, as a sentence, and why it is older when the
+// newest read failed.
+export function evidenceAge(r: Report, now: number = Date.now()): (string | Node)[] {
+  if (!r.evidenceAt) return [r.evidenceError ? `${READING} (the last read failed: ${r.evidenceError.replaceAll("_", " ")})` : READING];
+  return ["Evidence read ", timeText(r.evidenceAt, now), (r.evidenceError ? ` (the newest read failed: ${r.evidenceError.replaceAll("_", " ")})` : "") + "."];
 }
 
 // poll is how often, and how many times, a page with pending evidence asks again; a test shortens it.
@@ -251,7 +253,7 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       return [link(`/settings/merge-policies/${repo}`, repo), mergePolicyCell(r), countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
     }), "repo-table");
     const { box } = filterField({ label: "Filter repositories", noun: ["repository", "repositories"],
-      items: () => [...repoTable.tBodies[0].rows], text: (tr) => tr.textContent ?? "" });
+      items: () => [...repoTable.tBodies[0].rows], text: (tr) => `${tr.cells[0].textContent} ${(tr.cells[1].textContent ?? "").split(" · ")[0]}` }); // the two names, not the counts
     main.append(box, repoTable);
   } catch (e) { failed(main, e); }
 }
@@ -297,7 +299,6 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const fl = el("p", file.text, "file-line");
   fl.dataset.prominent = String(file.prominent);
   main.append(fl);
-  if (r.policyError) main.append(el("p", `The repository's policy file is ${r.policyError}: the central classes are shown.`, "notice"));
 
   main.append(el("h2", "Classes"));
   const guard = el("ul", undefined, "guardrails");
@@ -306,8 +307,8 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const classes = el("section", undefined, "policy-classes");
   main.append(classes);
   const policyOf = (p: RepositoryPage) => (centralManifest(p.report) ? p.report.served : p.report.policy);
-  const draw = (p: RepositoryPage) => classes.replaceChildren(
-    el("p", p.report.evidenceAt ? `Evidence ${evidenceAge(p.report)}.` : evidenceAge(p.report), "evidence-age"),
+  const age = (p: RepositoryPage) => { const e = el("p", undefined, "evidence-age"); e.append(...evidenceAge(p.report)); return e; };
+  const draw = (p: RepositoryPage) => classes.replaceChildren(age(p),
     ...p.report.classes.map((c) => classCard(c, { page: p, get, say, reload, main, policy: policyOf(p) })));
   draw(page);
   const filter = filterField({ label: "Filter classes", noun: ["class", "classes"],
@@ -362,7 +363,9 @@ function policyHeader(r: Report): HTMLElement {
   row("MergePolicy", r.mergePolicy!);
   if (st) row("Namespace", st.namespace);
   row("Authority", st?.status.authority ?? state);
-  if (st) row("Generation", String(st.generation));
+  // A status that lags the spec describes an older generation: say which, only then.
+  const seen = st?.status.observedGeneration;
+  if (st) row("Generation", String(st.generation) + (seen !== undefined && seen < st.generation ? ` (status from generation ${seen})` : ""));
   head.append(dl);
   const chips = el("ul", undefined, "policy-conditions");
   for (const c of conditionWords(st)) {
@@ -372,8 +375,22 @@ function policyHeader(r: Report): HTMLElement {
     chips.append(li);
   }
   head.append(chips);
+  // Each condition's message, visible: a title alone never shows on touch or to the keyboard.
+  for (const c of conditionWords(st)) {
+    if (!c.message) continue;
+    const parts = c.message.split(";").map((x) => x.trim()).filter(Boolean);
+    if (c.word.startsWith("Not in sync:") && parts.length > 1) {
+      const d = el("details", undefined, "policy-differences");
+      const ul = el("ul");
+      for (const x of parts) ul.append(el("li", x));
+      d.append(el("summary", "What differs"), ul);
+      head.append(d);
+    } else head.append(el("p", `${c.word}: ${c.message}`, "policy-condition-message"));
+  }
   if (state === "repository") head.append(el("p", "The repository's .github/agent-factory.yaml decides the classes; the MergePolicy defers to it.", "policy-authority"));
-  head.append(el("p", `Policy read ${r.readAt}.`, "policy-read"));
+  const read = el("p", "Policy read ", "policy-read");
+  read.append(timeText(r.readAt), ".");
+  head.append(read);
   return head;
 }
 

@@ -1093,12 +1093,17 @@ main.settings.approval-memory > h1:first-child { display: none; }
 @media (min-width: 721px) {
   .policy-header dl { grid-template-columns: max-content minmax(0, 24em) max-content minmax(0, 1fr); column-gap: 16px; }
 }
-.policy-conditions { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 12px 0 0; padding: 0; }
+.policy-header .policy-conditions { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 12px 0 0; padding: 0; }
 .policy-condition { padding: 2px 10px; border-radius: 999px; font-size: 13px; border: 1px solid var(--border); color: var(--muted-foreground); }
 .policy-condition[title] { cursor: help; }
 .policy-condition[data-tone="ok"] { border-color: var(--success); color: var(--success-text); }
 .policy-condition[data-tone="warn"] { border-color: var(--warning-border); color: var(--warning-foreground); background: color-mix(in srgb, var(--warning) 12%, var(--card)); }
 .policy-condition[data-tone="bad"] { border-color: var(--destructive); color: var(--destructive-text); }
+.policy-differences { margin: 8px 0 0; font-size: 14px; }
+.policy-differences > summary { width: fit-content; cursor: pointer; color: var(--muted-foreground); }
+.policy-differences > summary:hover, .policy-differences[open] > summary { color: var(--foreground); }
+.policy-differences ul { margin: 4px 0 0; padding-left: 20px; }
+.policy-condition-message { margin: 8px 0 0; font-size: 14px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .policy-authority, .policy-read { margin: 8px 0 0; font-size: 14px; color: var(--muted-foreground); }
 .policy-read { font-size: 13px; font-variant-numeric: tabular-nums; }
 .not-migrated { padding: 12px 16px; border-radius: var(--radius-row); background: var(--card); box-shadow: var(--shadow-border); }
@@ -1123,7 +1128,10 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .class-card .class-intent { margin: 8px 0 4px; color: var(--card-foreground); }
 .settings .class-card .class-summary { max-width: 88ch; margin: 6px 0; font: 13px/1.5 ui-monospace, monospace; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .class-card .class-last { margin: 4px 0; font-size: 13px; color: var(--muted-foreground); }
-.class-last time { font-variant-numeric: tabular-nums; }
+/* A time inside a settings sentence reads as part of it, not as the log's mono timestamp. */
+.settings p time { font: inherit; font-variant-numeric: tabular-nums; }
+/* A summary phrase wraps as a unit; one longer than the line still wraps inside. */
+.class-summary .summary-part { display: inline-block; max-width: 100%; }
 /* The full conditions, folded: the summary darkens on hover, the body settles in when opened. */
 .class-conditions { margin-top: 8px; }
 .class-conditions > summary { width: fit-content; cursor: pointer; font-size: 14px; color: var(--muted-foreground);
@@ -1167,10 +1175,10 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .example-yaml { font-size: 13px; overflow-x: auto; }
 
 /* A new group or a revealed gallery fades in; nothing moves under reduced motion. */
-.editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary) { animation: settle-in 180ms ease-out; }
+.editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary), .policy-differences[open] > ul { animation: settle-in 180ms ease-out; }
 @keyframes settle-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary) { animation: none; }
+  .editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary), .policy-differences[open] > ul { animation: none; }
   .class-conditions > summary { transition: none; }
   .settings-card, .settings-card::after { transition: none; }
   .settings-card:hover { transform: none; }
@@ -1189,6 +1197,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
   .settings .repo-table td { display: block; padding: 0; border: 0; overflow-wrap: anywhere; }
   .settings .repo-table td:nth-child(-n + 2) { grid-column: 1 / -1; }
   .settings .repo-table td:nth-child(n + 3) { font-size: 13px; color: var(--muted-foreground); }
+  .settings .repo-table td:nth-child(n + 3)[data-label]::before { content: attr(data-label) ": "; }
 }
 .settings .proposal { background: var(--card); box-shadow: var(--shadow-border); border-radius: var(--radius-row); padding: 12px 16px; margin-bottom: 16px; }
 .settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: 13px; }

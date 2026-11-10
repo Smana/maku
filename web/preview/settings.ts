@@ -18,7 +18,8 @@ const params = new URLSearchParams(location.search);
 const path = params.get("path") ?? "/settings";
 // Longest prefix first: "/api/policy/repositories" is a prefix of every repository's route.
 const answers: Record<string, unknown> = {
-  "/api/policy/repositories/Smana/maku": { report: golden.report, promotions: [], exceptions: [], you: { login: "Smana", maintainer: true, operator: false } },
+  // The golden is cloud-native-ref's report: named for its own row here, the golden file untouched.
+  "/api/policy/repositories/Smana/maku": { report: { ...golden.report, repository: "Smana/maku", mergePolicy: "maku" }, promotions: [], exceptions: [], you: { login: "Smana", maintainer: true, operator: false } },
   "/api/policy/repositories/Smana/cloud-native-ref": cnrPage,
   "/api/policy/repositories/Smana/legacy": legacyPage,
   ...Object.fromEntries(Object.entries(smallPages).map(([r, p]) => [`/api/policy/repositories/${r}`, p])),

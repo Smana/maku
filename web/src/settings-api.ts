@@ -75,7 +75,20 @@ export function centralManifest(r: Report): string | undefined {
 
 export type Tone = "ok" | "warn" | "bad" | "unknown";
 
-const differences = (message?: string) => (message ? message.split(";").filter((x) => x.trim() !== "").length : 0);
+// differences is how many differences an InSync message lists: statuswriter joins up to five with
+// "; " and, past five, appends "; and N more".
+export function differences(message?: string): number {
+  const parts = (message ?? "").split(";").map((x) => x.trim()).filter(Boolean);
+  const more = parts.at(-1)?.match(/^and (\d+) more$/);
+  return more ? parts.length - 1 + Number(more[1]) : parts.length;
+}
+
+// Why an InSync or RepositoryFileValid condition is Unknown, as statuswriter's reasons say it.
+const unknownWhy: Record<string, string> = {
+  PolicyReadOff: "the factory does not read repository files",
+  NotServed: "the MergePolicy is not served yet",
+  NotRead: "the file has not been read yet",
+};
 
 // conditionWords reads each condition of a MergePolicy's status in the page's words; a type it
 // does not know shows as sent.
@@ -90,10 +103,12 @@ export function conditionWords(st?: MergePolicyStatus): { word: string; tone: To
       case "InSync":
         if (c.status === "True") return { word: "In sync with .github/agent-factory.yaml", tone: "ok" as Tone };
         if (c.status === "False") {
+          if (c.reason === "FileInvalid") return { word: "Not in sync: file invalid", tone: "bad" as Tone, message };
           const n = differences(c.message);
           return { word: n ? `Not in sync: ${n} difference${n > 1 ? "s" : ""}` : "Not in sync", tone: "warn" as Tone, message };
         }
         if (c.status === "Unknown" && c.reason === "PolicyReadOff") return { word: "File not read", tone: "unknown" as Tone, message };
+        if (c.status === "Unknown" && c.reason && Object.hasOwn(unknownWhy, c.reason)) return { word: "Not compared yet", tone: "unknown" as Tone, message };
         break;
       case "RepositoryFileValid":
         if (c.status === "True") return { word: "Repository file valid", tone: "ok" as Tone };
@@ -106,21 +121,45 @@ export function conditionWords(st?: MergePolicyStatus): { word: string; tone: To
 
 const condition = (r: Report, type: string) => r.mergePolicyStatus?.status.conditions?.find((c) => c.type === type);
 
-// fileLine says what the repository's .github/agent-factory.yaml is to its classes now; prominent
-// only when it needs the reader's attention (an invalid file under repository authority).
+// fileLine says what the repository's .github/agent-factory.yaml is to its classes now, and only
+// what the report shows to be true; prominent only when it needs the reader's attention: an
+// invalid file under repository authority, or a not-migrated repository whose file is refused.
 export function fileLine(r: Report): { text: string; prominent: boolean } {
   const state = policyState(r);
-  if (state === "not-migrated") return { text: "Classes come from .github/agent-factory.yaml.", prominent: false };
-  if (state === "repository") {
-    if (condition(r, "RepositoryFileValid")?.status === "False") {
-      return { text: ".github/agent-factory.yaml is invalid: auto-merge is paused until it is fixed.", prominent: true };
-    }
-    return { text: "The classes come from .github/agent-factory.yaml, which the MergePolicy defers to.", prominent: false };
+  const F = ".github/agent-factory.yaml";
+  if (state === "not-migrated") {
+    if (r.policyError) return { text: `The repository's policy file is ${r.policyError}: the central classes are shown.`, prominent: true };
+    return { text: `Classes come from ${F}.`, prominent: false };
   }
+  const valid = condition(r, "RepositoryFileValid");
   const sync = condition(r, "InSync");
+  const invalid = !!r.policyError || valid?.status === "False" || sync?.reason === "FileInvalid";
+  if (state === "repository") {
+    if (invalid) return { text: `${F} is invalid: auto-merge is paused until it is fixed.`, prominent: true };
+    return { text: `The classes come from ${F}, which the MergePolicy defers to.`, prominent: false };
+  }
+  if (invalid) return { text: `${F} is invalid; the MergePolicy serves the classes.`, prominent: false };
+  if (sync?.status === "True") return { text: `${F} matches the MergePolicy.`, prominent: false };
   if (sync?.status === "False") {
     const n = differences(sync.message);
-    return { text: `.github/agent-factory.yaml differs from the MergePolicy${n ? ` in ${n} place${n > 1 ? "s" : ""}` : ""}; the MergePolicy wins.`, prominent: false };
+    return { text: `${F} differs from the MergePolicy${n ? ` in ${n} place${n > 1 ? "s" : ""}` : ""}; the MergePolicy wins.`, prominent: false };
   }
-  return { text: ".github/agent-factory.yaml matches the MergePolicy.", prominent: false };
+  const why = sync?.reason && Object.hasOwn(unknownWhy, sync.reason) ? unknownWhy[sync.reason] : "the MergePolicy has no status yet";
+  return { text: `${F} has not been compared with the MergePolicy yet (${why}).`, prominent: false };
+}
+
+// timeText is iso as a <time>: how long ago in words for a past time, the locale's date for a
+// future one, the locale's date and time on hover; an unreadable value is shown as sent.
+export function timeText(iso: string, now: number = Date.now()): HTMLTimeElement {
+  const t = document.createElement("time");
+  t.dateTime = iso;
+  const at = Date.parse(iso);
+  if (isNaN(at)) { t.textContent = iso; return t; }
+  const d = new Date(at);
+  t.title = d.toLocaleString();
+  if (at > now + 60000) { t.textContent = d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); return t; }
+  const m = Math.max(0, Math.floor((now - at) / 60000));
+  const days = Math.floor(m / 1440);
+  t.textContent = m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${days} day${days > 1 ? "s" : ""} ago`;
+  return t;
 }
