@@ -20,7 +20,8 @@ is served from one, and the UI's file actions use it.
 YAML out), D10 and D11 (the v1 status: conditions, authority, per-class mode and last decision,
 Connected, Ready, Stopped; **no counts**), D13 (only the leader writes status). **Builds on plans 1
 and 2:**
-- `configsource.Source.Outcomes() []Outcome{Kind, Name, ObservedGeneration, ServedGeneration, Accepted, Reason, Message}`;
+- `configsource.Source.Outcomes() ([]Outcome, Synced)` with `Outcome{Kind, Name, Repository, ObservedGeneration, ServedGeneration, Accepted, Reason, Message}` and `Synced{At, Err}` (the last Sync's time and error), and `Source.OnSynced func()`, called after each Sync with no lock held. **Never call `Outcomes` from a `config.Live` subscriber**: Publish runs under the Source's lock;
+- `repoConns.wireErr(name) error`, each repository's last wiring error (nil once wired);
 - `config.Live` (`Current`, `Subscribe`);
 - the status types in `api/factory/v1alpha1/factoryconfig_types.go`.
 
@@ -63,6 +64,7 @@ func (r *Recorder) Latest(repository string) map[string]Last                    
 - [ ] Test first: record two decisions for one class out of order, and `Latest` returns the newer. Repository keys are case-insensitive. `Latest` returns a copy. Concurrent `Record`/`Latest` passes under `-race`.
 - [ ] Implement. Give the reconciler a `Decisions *decision.Recorder` field (nil-safe: skip when nil). At each site that posts a marker, record repository, class, verdict, reason and the time it posts with (the reconciler's clock).
 - [ ] Add a reconciler test: a merge decision posted by an existing test path is recorded. Reuse a test that already asserts a marker.
+- [ ] **D5, carried from plan 2's final review:** each merge decision records the MergePolicy generation it used. Add `policy=<n>` to the decision marker when `cfg.GenerationsFor(repo)` gives a MergePolicy generation above 0, and keep it in `Last` (`Generation int64`). `policyview.Decisions` keeps parsing markers without it, and an old marker parses with generation 0. Test both.
 - [ ] `task check` passes. Commit `feat(decision): remember each class's latest decision`.
 
 ---
@@ -77,6 +79,8 @@ func (r *Recorder) Latest(repository string) map[string]Last                    
 // Inputs are what the factory knows besides the objects themselves.
 type Inputs struct {
 	Outcomes   []configsource.Outcome
+	Synced     configsource.Synced // stale or failing source → Factory Ready=False, reason SyncFailing
+	WireErr    func(repository string) error // the repository's last wiring error, nil when wired
 	Config     *config.Config                      // the published config
 	Connected  func(repository string) (bool, string) // healthy, and a message when not
 	Snapshot   func(repository string) (mergepolicy.Snapshot, bool) // nil when policyManagement.read is off
@@ -97,7 +101,9 @@ Return typed values: `v1alpha1.FactoryStatus`, `RepositoryStatus` and `MergePoli
   - Otherwise: False, with the outcome's reason and message.
   - An object missing from the outcomes: Unknown, reason `Pending`.
 - **Repository:**
-  - `Connected` comes from `Connected(spec.repository)`, but only when the repository is served (it appears in `Config.Repos()`). Otherwise it is False with reason `NotServed`.
+  - `Connected` comes from `Connected(spec.repository)`, but only when the repository is served (it appears in `Config.Repos()`).
+  - When it is not served and `WireErr` returns an error: False, reason `WiringFailed`, with the error as the message.
+  - When it is not served otherwise: False, reason `NotServed`.
   - `status.mergePolicy` names the MergePolicy whose `spec.repositoryRef` is this Repository's name.
 - **MergePolicy:**
   - `authority` = `Config.RepositoryAuthoritative(r)` ? `repository` : `central`, for the served repository.
@@ -107,7 +113,7 @@ Return typed values: `v1alpha1.FactoryStatus`, `RepositoryStatus` and `MergePoli
 - **Factory:**
   - `repositories` = `len(Config.Repos())`.
   - `stopped` = `Stopped`.
-  - `Ready` is True when the Factory is accepted and `GitHubUp`. Otherwise it is False with reason `NotAccepted` or `GitHubDown`.
+  - `Ready` is True when the Factory is accepted, `GitHubUp`, and `Synced.Err == nil` with `Synced.At` within 15 minutes. Otherwise it is False with reason `NotAccepted`, `GitHubDown` or `SyncFailing` (the message carries `Synced.Err`, or "no sync since <At>").
 - A refused object's other conditions are still computed when its repository is served, from its last good version.
 
 - [ ] Table tests first, one per rule above, built from plain structs. No API server. Run them and watch them fail.
@@ -147,7 +153,8 @@ func (w *Writer) WriteOnce(ctx context.Context) error      // list the three kin
     - `Decisions` from the recorder;
     - `Stopped` from `killswitch.Engaged` (an error counts as false and is logged);
     - `GitHubUp` from `conns.healthy(time.Now())`;
-  - `live.Subscribe(func(_, _ *config.Config) { w.Kick() })`, `mgr.Add(w)`.
+  - `src.OnSynced = w.Kick` (NOT a `live.Subscribe`: a subscriber runs under the Source's lock), `mgr.Add(w)`.
+  - Inputs also read `Synced` from `src.Outcomes()` and `WireErr` from `conns.wireErr`.
 - [ ] `task check` passes. Commit `feat(factory): the leader writes the factory resources' status`.
 
 ---
@@ -187,6 +194,6 @@ func (w *Writer) WriteOnce(ctx context.Context) error      // list the three kin
 
 ## Self-review
 
-- **Spec coverage:** D10 → task 2 (MergePolicy fields) and task 3. D11 → task 2 (Repository, Factory). D13 → task 3 (leader-only). D9 → task 4.
+- **Spec coverage:** D5 (each decision records its MergePolicy generation) → task 1. D10 → task 2 (MergePolicy fields) and task 3. D11 → task 2 (Repository, Factory). D13 → task 3 (leader-only). D9 → task 4.
 - **Deliberately not here:** counts and spend (#420), and persisting the last decision.
 - **Types:** `decision.Recorder`, `decision.Last`, `statuswriter.Inputs`, `Desired`, `Writer` are consistent across tasks.
