@@ -311,8 +311,8 @@ export function previewView(p: Preview, at: (msg: string) => number | undefined 
 
 // fileActions copies text or downloads it as the file at path. The label says it was copied:
 // the change of word, not a motion, is the signal.
-export function fileActions(text: () => string, path: string): HTMLElement[] {
-  const copy = el("button", "Copy", "copy");
+export function fileActions(text: () => string, path: string, label = "Copy"): HTMLElement[] {
+  const copy = el("button", label, "copy");
   copy.type = "button";
   let reset: ReturnType<typeof setTimeout> | undefined;
   copy.onclick = async () => {
@@ -323,7 +323,7 @@ export function fileActions(text: () => string, path: string): HTMLElement[] {
       copy.textContent = "Copy failed: select the text";
     }
     clearTimeout(reset);
-    reset = setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+    reset = setTimeout(() => { copy.textContent = label; }, 1500);
   };
   const download = el("a", "Download", "download");
   download.setAttribute("download", path.split("/").at(-1)!);
@@ -345,7 +345,10 @@ export interface YamlView {
 
 // yamlEditor is the expert view: a textarea over its own highlighted copy, with line numbers, the
 // lines an error is about marked, a status line, and copy and download. input is each edit.
-export function yamlEditor(initial: string, path: string, input: (text: string) => void): YamlView {
+// out, when given, is what copy and download give instead of the text as it is: the text as the
+// file it becomes (a MergePolicy manifest), named path, its copy button labelled label.
+export interface YamlOut { path: string; label: string; wrap: (text: string) => string }
+export function yamlEditor(initial: string, path: string, input: (text: string) => void, out?: YamlOut): YamlView {
   const text = el("textarea", undefined, "expert-yaml");
   text.setAttribute("aria-label", "expert YAML view");
   text.spellcheck = false;
@@ -371,7 +374,8 @@ export function yamlEditor(initial: string, path: string, input: (text: string) 
     paint();
   };
   const bar = el("div", undefined, "yaml-bar");
-  bar.append(el("span", path, "yaml-name"), ...fileActions(() => text.value, path));
+  bar.append(el("span", out?.path ?? path, "yaml-name"),
+    ...(out ? fileActions(() => out.wrap(text.value), out.path, out.label) : fileActions(() => text.value, path)));
   const stack = el("div", undefined, "yaml-stack");
   stack.append(hl, text);
   const body = el("div", undefined, "yaml-body");

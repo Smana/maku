@@ -5,7 +5,7 @@
 // parser (mergepolicy.Parse) stays the judge of the file; this only keeps the form and the text
 // in step and points at places.
 
-import { CORE_SCHEMA, load, type YAMLException } from "js-yaml";
+import { CORE_SCHEMA, dump, load, type YAMLException } from "js-yaml";
 import type { PolicyFile } from "./policy-editor";
 
 // A Shape is where a value sits in the file: a mapping's known fields in the Go types' order, a
@@ -246,4 +246,22 @@ export function locate(text: string, msg: string): number | undefined {
   const key = keyIn(body);
   const hit = key === undefined ? undefined : keyLine(lines, key, from, to);
   return hit ?? (c ? from + 1 : undefined);
+}
+
+// manifestClasses reads the classes out of a MergePolicy manifest's spec.
+export function manifestClasses(manifest: string): PolicyFile["classes"] {
+  const m = load(manifest, { schema: CORE_SCHEMA }) as { spec?: { classes?: PolicyFile["classes"] } } | undefined;
+  return m?.spec?.classes ?? {};
+}
+
+// wrapManifest is the manifest with its spec.classes replaced by the classes of text, the file
+// the editor holds. Text that does not parse leaves the manifest as it was.
+export function wrapManifest(manifest: string, text: string): string {
+  const p = parsePolicy(text);
+  const m = load(manifest, { schema: CORE_SCHEMA }) as { spec?: Record<string, unknown> };
+  if (!p.ok || !m || typeof m !== "object") return manifest;
+  m.spec ??= {};
+  if (p.file.classes && Object.keys(p.file.classes).length) m.spec.classes = p.file.classes;
+  else delete m.spec.classes;
+  return dump(m, { lineWidth: -1, noRefs: true, sortKeys: true });
 }

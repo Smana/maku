@@ -469,7 +469,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
 	var evidenceRefresh *evidence.Refresher
 	if cfg.PolicyManagement.Promotion {
-		ev := &evidence.Service{Cfg: live, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
+		ev := &evidence.Service{Cfg: live, Namespace: ns, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false

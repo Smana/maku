@@ -18,6 +18,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/factory/resources"
 )
 
 // Source is the part of a repository's GitHub connection the evidence reads; *forge.GitHub.
@@ -96,6 +97,12 @@ type Report struct {
 	// only these, an agents class none of them (mergepolicy.Resolve).
 	AdoptedProfiles []string               `json:"adoptedProfiles"`
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
+	// For a repository served from a MergePolicy object: its name, the manifest of its central
+	// classes and merge block (what a GitOps pull request changes), and the file name to save it
+	// under. Empty for a repository the file serves.
+	MergePolicy  string `json:"mergePolicy,omitempty"`
+	Manifest     string `json:"manifest,omitempty"`
+	ManifestPath string `json:"manifestPath,omitempty"`
 }
 
 var (
@@ -138,7 +145,9 @@ type Service struct {
 	Cfg     config.Source
 	Sources func(repository string) (Source, bool)
 	Now     func() time.Time
-	Log     *slog.Logger
+	// Namespace is the MergePolicy objects' namespace, for the manifest.
+	Namespace string
+	Log       *slog.Logger
 	// Parallel bounds the searches one read runs at once, DefaultParallel when 0; Deadline bounds
 	// the read, DefaultDeadline when 0.
 	Parallel int
@@ -417,6 +426,19 @@ func (s *Service) build(cfg *config.Config, rc *config.Repository, h head, class
 		}
 	}
 	r.Guardrails = cfg.MergeGuardrails
+	if _, _, gen := cfg.GenerationsFor(rc.Name); gen > 0 {
+		// Named as resources.Migrate names its objects: the Outcomes' names are not in the config.
+		names := make([]string, len(cfg.Repositories))
+		for i, x := range cfg.Repositories {
+			names[i] = x.Name
+		}
+		name := resources.ObjectName(rc.Name, names)
+		m, err := resources.MergePolicyManifest(name, s.Namespace, name, rc.Classes, rc.Merge)
+		if err != nil {
+			return Report{}, fmt.Errorf("evidence: manifest: %w", err)
+		}
+		r.MergePolicy, r.Manifest, r.ManifestPath = name, string(m), "mergepolicy-"+name+".yaml"
+	}
 	for _, c := range s.classes(cfg, rc, file) {
 		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode}
 		if e, ok := classes[c.name]; ok {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -132,6 +133,39 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		}
 		return s
 	}(), "---\n")), residual, nil
+}
+
+// ObjectName is the name Migrate gives repository's Repository and MergePolicy objects: its name
+// part, or the whole name when another of repositories shares that part.
+func ObjectName(repository string, repositories []string) string {
+	n := namePart(repository)
+	for _, o := range repositories {
+		if o != repository && namePart(o) == n {
+			return dnsLabel(repository)
+		}
+	}
+	return n
+}
+
+// MergePolicyManifest is the YAML of a MergePolicy named name in ns, for the Repository object
+// repositoryRef, holding classes and merge as given (empty ones are left out).
+func MergePolicyManifest(name, ns, repositoryRef string, classes, merge any) ([]byte, error) {
+	spec := map[string]any{"repositoryRef": repositoryRef}
+	for k, v := range map[string]any{"classes": classes, "merge": merge} {
+		if v == nil {
+			continue
+		}
+		if rv := reflect.ValueOf(v); rv.IsZero() || ((rv.Kind() == reflect.Map || rv.Kind() == reflect.Slice) && rv.Len() == 0) {
+			continue
+		}
+		spec[k] = v
+	}
+	return yaml.Marshal(map[string]any{
+		"apiVersion": "maku.ogenki.io/v1alpha1",
+		"kind":       string(KindMergePolicy),
+		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"spec":       spec,
+	})
 }
 
 // namePart is the repository's name without its owner, as a DNS-1123 label.

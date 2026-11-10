@@ -419,3 +419,57 @@ describe("pending evidence", () => {
     expect(app.textContent).toContain(PENDING);
   });
 });
+
+describe("a repository served from a MergePolicy", () => {
+  const manifest = "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata:\n  name: cloud-native-ref\n  namespace: factory\nspec:\n  classes:\n    docs-links:\n      author: agents\n      harness: docs-standard\n      mode: shadow\n  repositoryRef: cloud-native-ref\n";
+  const central = (): RepositoryPage => {
+    const p = page();
+    p.report = { ...p.report, mergePolicy: "cloud-native-ref", manifest, manifestPath: "mergepolicy-cloud-native-ref.yaml",
+      classes: p.report.classes.map((c) => ({ ...c, source: "central", proposal: undefined, unproposed: "not_in_repository_policy" })) };
+    return p;
+  };
+  const mountWith = async (p: RepositoryPage) => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": p }));
+    return app;
+  };
+
+  it("offers the manifest, wrapped around what the editor holds, and no GitHub edit", async () => {
+    const app = await mountWith(central());
+    const copy = app.querySelector(".yaml-bar button.copy") as HTMLButtonElement;
+    expect(copy.textContent).toBe("Copy MergePolicy manifest");
+    const dl = app.querySelector(".yaml-bar a.download") as HTMLAnchorElement;
+    expect(dl.getAttribute("download")).toBe("mergepolicy-cloud-native-ref.yaml");
+    expect([...app.querySelectorAll("a")].some((a) => /github\.com.*edit|on GitHub/.test(`${a.href} ${a.textContent}`))).toBe(false);
+    expect(app.textContent).toContain("GitOps pull request on the MergePolicy manifest");
+    expect(app.textContent).toContain("which Flux applies");
+
+    const wrote: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (t: string) => { wrote.push(t); } } });
+    const yaml = app.querySelector("textarea.expert-yaml") as HTMLTextAreaElement;
+    yaml.value = yaml.value.replace(`mode: "shadow"`, `mode: "live"`);
+    yaml.dispatchEvent(new Event("input"));
+    copy.click();
+    await settle();
+    expect(wrote[0]).toContain("kind: MergePolicy");
+    expect(wrote[0]).toContain("name: cloud-native-ref");
+    expect(wrote[0]).toContain("repositoryRef: cloud-native-ref");
+    expect(wrote[0]).toContain("mode: live");
+    expect(wrote[0]).not.toContain("factory:");
+  });
+
+  it("is today's page without the manifest", async () => {
+    const app = await mountWith(page());
+    expect(app.querySelector(".yaml-bar button.copy")?.textContent).toBe("Copy");
+    expect(app.querySelector(".yaml-bar a.download")?.getAttribute("download")).toBe("agent-factory.yaml");
+    expect(app.textContent).not.toContain("MergePolicy manifest");
+  });
+
+  it("keeps the repository file when the repository's own file is the authority", async () => {
+    const p = central();
+    p.report.classes[0].source = "repository";
+    const app = await mountWith(p);
+    expect(app.querySelector(".yaml-bar button.copy")?.textContent).toBe("Copy");
+  });
+});
+
