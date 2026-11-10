@@ -168,3 +168,25 @@ func TestARemovedRepositoryIsNotDecidedUnderTheRemainingOne(t *testing.T) {
 		t.Fatalf("decided %s %s for a repository not served", d.Verdict, d.Reason)
 	}
 }
+
+// A task deleted while its repository is unserved is forgotten, so the set does not grow.
+func TestADeletedUnservedTaskIsForgotten(t *testing.T) {
+	g := newRig(t, taskOn("3buqdlot", "Smana/elsewhere"))
+	twoRepos(g)
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil {
+		t.Fatal(err)
+	}
+	var tk v1alpha1.Task
+	if err := g.c.Get(t.Context(), reqFor("3buqdlot").NamespacedName, &tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.c.Delete(t.Context(), &tk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil {
+		t.Fatal(err)
+	}
+	if !g.r.notServed.once("3buqdlot") {
+		t.Fatal("a deleted task is still remembered as not served")
+	}
+}

@@ -69,7 +69,8 @@ not touch. In `config.runs.namespace` (default `agents`), a second Role manages 
 
 The factory's own Role reads (`get`, `list`, `watch`) the three kinds and updates their `status`:
 every replica lists them to build its configuration. Without that grant the factory refuses to
-start, and the message names the Role. See [architecture](../../docs/architecture.md#how-the-factory-reads-its-configuration).
+start, and the message names the Role. Only the leader writes the status (every 30 seconds and after
+each config sync); the other replicas read. See [architecture](../../docs/architecture.md#how-the-factory-reads-its-configuration).
 
 Three ClusterRoles cover the `Factory`, `Repository` and `MergePolicy` kinds for people, not for
 the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or `admin`

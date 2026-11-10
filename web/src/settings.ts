@@ -27,6 +27,15 @@ export interface Report {
   evidenceAt?: string; evidenceError?: string;
   file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null; adoptedProfiles?: string[] | null;
   guardrails: Record<string, unknown>;
+  // Set when the repository is served from a MergePolicy object: its name, its manifest as the
+  // factory renders it, the file name to save that under, and its classes in the file's shape.
+  mergePolicy?: string; manifest?: string; manifestPath?: string; served?: PolicyFile;
+}
+
+// centralManifest is the report's MergePolicy manifest when the central classes are the merge
+// authority (no class comes from the repository's file); undefined otherwise.
+export function centralManifest(r: Report): string | undefined {
+  return r.manifest && !r.classes.some((c) => c.source === "repository") ? r.manifest : undefined;
 }
 export interface Step2 { row: string; status: string; detail?: string }
 export interface Decision {
@@ -245,7 +254,11 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const reload = () => void repositoryPage(app, repository, get, theme);
   const say = el("p", "", "notice");
   const r = page.report;
-  main.append(el("p", `Policy read ${r.readAt}. A promotion changes the class's mode in ${repository}'s own .github/agent-factory.yaml, ` +
+  const gitops = centralManifest(r) !== undefined;
+  main.append(el("p", gitops
+    ? `Policy read ${r.readAt}. ${repository}'s classes are served from the MergePolicy ${r.mergePolicy}: a change is a GitOps pull request on the MergePolicy manifest, which Flux applies. ` +
+      "Edit the classes below, then copy or download the manifest; Maku never edits the cluster or the repository."
+    : `Policy read ${r.readAt}. A promotion changes the class's mode in ${repository}'s own .github/agent-factory.yaml, ` +
     "through a pull request you open and a human merges: Maku records the request and never edits the file. " +
     "Until the repository is cut over to its own policy, the central config stays the merge authority."), say);
   if (r.policyError) main.append(el("p", `The repository's policy file is ${r.policyError}: the central classes are shown.`, "notice"));
@@ -358,7 +371,10 @@ function classesTable(box: HTMLElement, page: RepositoryPage, get: typeof fetch,
 // text, and text that parses refills the form. Check is the factory's, for a maintainer.
 export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLElement {
   const box = el("section", undefined, "policy-editor");
-  const file: PolicyFile = structuredClone(r.policy ?? { factory: r.factory, classes: {} });
+  const manifest = centralManifest(r);
+  // Served from a MergePolicy: the editor holds the served classes in the file's shape, as the
+  // factory exports them; the factory builds spec.classes of them, never the page.
+  const file: PolicyFile = structuredClone((manifest ? r.served : r.policy) ?? { factory: r.factory, classes: {} });
   file.factory = r.factory; // read-only: Maku never edits factory:
   file.classes ??= {};
   const profiles = r.harnessProfiles ?? [];
@@ -384,7 +400,17 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     const n = comments(text);
     warning.textContent = n ? `The file has ${n} comment${n > 1 ? "s" : ""}. A form edit rewrites it without them: edit in the expert view to keep them.` : "";
   };
-  const view = yamlEditor(r.file ?? fileYAML(file), ".github/agent-factory.yaml", (text) => {
+  // The manifest copied is the factory's: the report's while the text is as served, else the
+  // latest valid check's of this very text, checked first when it changed since.
+  const seed = manifest ? fileYAML(file) : r.file ?? fileYAML(file);
+  let last: { text: string; manifest: string } | undefined;
+  const built = async (text: string): Promise<string | undefined> => {
+    if (text === seed) return manifest;
+    if (last?.text === text) return last.manifest;
+    const p = await run(text);
+    return p?.valid ? p.manifest : undefined;
+  };
+  const view = yamlEditor(seed, ".github/agent-factory.yaml", (text) => {
     const p = parsePolicy(text);
     const form = formAt.querySelector("fieldset");
     if (form) form.disabled = !p.ok;
@@ -398,7 +424,7 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
     file.classes = p.file.classes ?? {};
     fillPick();
     if (!pick.value.startsWith("template:")) show();
-  });
+  }, manifest ? { path: r.manifestPath ?? "mergepolicy.yaml", label: "Copy MergePolicy manifest", get: (t) => built(t) } : undefined);
   const show = () => {
     const v = pick.value;
     let cls = v.startsWith("template:") ? templates[v.slice(9)]() : file.classes![v];
@@ -433,19 +459,29 @@ export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLE
   pick.onchange = show;
   box.append(labelled2("class", pick), name, warning, formAt);
   box.append(el("h3", "Expert YAML view"), el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
+  if (manifest) box.append(el("p", "Built from the version the factory serves; a change the factory refused is not in it.", "notice"));
   const check = el("button", "Check, compare and simulate", "primary");
   check.type = "button";
   check.disabled = !maintainer;
   if (!maintainer) box.append(el("p", "Only a maintainer of the repository may check a proposal.", "notice"));
-  check.onclick = async () => {
-    check.disabled = true;
-    const text = view.text.value;
+  // run is the factory's check of text, shown below; a valid one's manifest is kept with its text.
+  const run = async (text: string): Promise<Preview | undefined> => {
     try {
       const p = (await post(`/api/policy/repositories/${r.repository}/preview`, { file: text }, get)) as Preview;
       const at = (msg: string) => locate(text, msg);
       view.mark((p.errors ?? []).map(at).filter((n) => n !== undefined));
-      out.replaceChildren(previewView(p, at, (line) => view.reveal(line), (line, from, to) => view.replaceKey(line, from, to)));
-    } catch (e) { out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice")); }
+      // Served from a MergePolicy, the change is the manifest's: no file to submit on GitHub.
+      out.replaceChildren(previewView(manifest ? { ...p, proposal: undefined } : p, at, (line) => view.reveal(line), (line, from, to) => view.replaceKey(line, from, to)));
+      if (p.valid && p.manifest) last = { text, manifest: p.manifest };
+      return p;
+    } catch (e) {
+      out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice"));
+      return undefined;
+    }
+  };
+  check.onclick = async () => {
+    check.disabled = true;
+    await run(view.text.value);
     check.disabled = false;
   };
   box.append(check, out);

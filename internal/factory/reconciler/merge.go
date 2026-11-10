@@ -228,7 +228,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			// it: no fix run, no re-run of its CI. A maintainer or its author takes it from here.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
 			r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
-			narrateLater(t, withRecord(narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
+			narrateLater(t, r.withRecord(cfg, narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
 			return nil
 		}
 		if d.Verdict == "ci_red" {
@@ -236,7 +236,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		}
 		return r.rerunCancelled(ctx, cfg, t, pr, checks)
 	case "escalate": // R42: nothing the factory may fix
-		narrateOn(t, pr.Number, withRecord(narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
+		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, d.Reason)
 	case "human":
 		if d.Matched != "" && d.Matched != t.Spec.PredictedClass {
@@ -252,7 +252,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		}
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA // what reenter holds the hand-off to
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
-		narrateLater(t, withRecord(r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
+		narrateLater(t, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
 	case "shadow": // R32: the decision is recorded and narrated; a maintainer merges or closes
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
@@ -261,10 +261,10 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA
 		if adoptedTask(t) {
 			t.Status.PullRequest.DecidedHeadSHA = pr.HeadSHA
-			narrateOn(t, pr.Number, withRecord(narrate.WouldArmAdopted(t, cl, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
+			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArmAdopted(t, cl, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
 			return nil
 		}
-		narrateOn(t, pr.Number, withRecord(narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
+		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
 		return nil
 	}
 	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
@@ -275,7 +275,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		d.Rows.Grant = ""
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
-		narrateLater(t, withRecord(r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
+		narrateLater(t, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
 	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
@@ -288,7 +288,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			return nil
 		case errors.Is(err, forge.ErrNotMergeable):
 			r.to(t, v1alpha1.PhaseAwaitingHuman, "not_mergeable")
-			narrateLater(t, withRecord(narrate.WaitingForHuman(t, "not_mergeable"), t, d, pr.HeadSHA))
+			narrateLater(t, r.withRecord(cfg, narrate.WaitingForHuman(t, "not_mergeable"), t, d, pr.HeadSHA))
 			return nil
 		default:
 			return err
@@ -307,9 +307,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		r.grantUsed(ctx, cfg, t, ref, d, pr.HeadSHA)
 	}
 	r.to(t, v1alpha1.PhaseAutoMerging, "")
-	ev := withRecord(narrate.Armed(t), t, d, pr.HeadSHA)
+	ev := r.withRecord(cfg, narrate.Armed(t), t, d, pr.HeadSHA)
 	if ref.MergedHow == "approved" {
-		ev = withRecord(narrate.ArmedByApproval(t, d.Approver), t, d, pr.HeadSHA)
+		ev = r.withRecord(cfg, narrate.ArmedByApproval(t, d.Approver), t, d, pr.HeadSHA)
 	}
 	// A failed patch leaves the pass's own write to carry the decision: the narration rides with it.
 	err = r.decidedWrite(ctx, t, base)
@@ -346,11 +346,17 @@ func (r *Reconciler) decidedWrite(ctx context.Context, t, base *v1alpha1.Task) e
 	return nil
 }
 
-// withRecord appends the decision's record (AM8) to the comment that narrates it: the hand-off,
+// withRecord (with the MergePolicy generation of cfg, D5) appends the decision's record (AM8) to the comment that narrates it: the hand-off,
 // the would-arm or the arm. It is a marker line of its own (R-m11), so the event's marker, and the
 // tally that reads it, are unchanged.
-func withRecord(ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
-	ev.Body += "\n\n" + decision.Marker(head, t.Spec.PredictedClass, d.Verdict, cmp.Or(d.Reason, "armed"), d.Rows)
+func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
+	_, _, gen := cfg.GenerationsFor(t.Spec.Repository)
+	d.Rows.Generation = gen
+	reason := cmp.Or(d.Reason, "armed")
+	ev.Body += "\n\n" + decision.Marker(head, t.Spec.PredictedClass, d.Verdict, reason, d.Rows)
+	if r.Decisions != nil {
+		r.Decisions.Record(t.Spec.Repository, t.Spec.PredictedClass, d.Verdict, reason, r.Now(), gen)
+	}
 	return ev
 }
 

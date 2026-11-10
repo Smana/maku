@@ -247,3 +247,4 @@ export function locate(text: string, msg: string): number | undefined {
   const hit = key === undefined ? undefined : keyLine(lines, key, from, to);
   return hit ?? (c ? from + 1 : undefined);
 }
+

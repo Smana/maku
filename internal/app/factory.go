@@ -43,6 +43,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/fence"
@@ -58,6 +59,7 @@ import (
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/statuswriter"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
@@ -292,10 +294,21 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// From here the Source reads through the manager's uncached reader. Nothing else syncs before
 	// the manager starts it, so swapping the reader after the first Sync races with nothing.
 	src.Reader = mgr.GetAPIReader()
+	// The leader publishes the resources' status, on its own ticker and after each Sync. The hook
+	// runs with no lock held (a live.Subscribe subscriber would run under the Source's lock, and
+	// Outcomes would deadlock).
+	var policyWatch *mergepolicy.Watch // nil while policyManagement.read is off
+	recorder := &decision.Recorder{}
+	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns, Log: log,
+		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, log)}
+	src.OnSynced = statusWriter.Kick
 	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {
 		return err
 	}
 	if err := mgr.Add(src); err != nil {
+		return fmt.Errorf("manager: %w", err)
+	}
+	if err := mgr.Add(statusWriter); err != nil {
 		return fmt.Errorf("manager: %w", err)
 	}
 	m, err := fmetrics.New(exp.Meter(), mgr.GetClient(), ns, elected(mgr))
@@ -324,6 +337,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	var authority func(string) (mergepolicy.Snapshot, error)
 	if cfg.PolicyManagement.Read {
 		w := &mergepolicy.Watch{Cfg: live, Metrics: m, Log: log, Now: time.Now, Stale: fenceStale}
+		policyWatch = w
 		fenced.OnFile = w.Observe
 		if cfg.PolicyManagement.DualEvaluation || cfg.PolicyManagement.ApprovalMemory {
 			snapshots = w.Snapshot
@@ -356,7 +370,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		Triage: triage.Classify{C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
-		Trace: sink, Costs: costs}
+		Trace: sink, Costs: costs, Decisions: recorder}
 	if cfg.PolicyManagement.ApprovalMemory { // stage 5: grants read from the broker, never cached
 		rec.Grants = broker
 	}
@@ -455,7 +469,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
 	var evidenceRefresh *evidence.Refresher
 	if cfg.PolicyManagement.Promotion {
-		ev := &evidence.Service{Cfg: live, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
+		ev := &evidence.Service{Cfg: live, Namespace: ns, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false

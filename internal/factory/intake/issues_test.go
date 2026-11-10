@@ -70,6 +70,11 @@ func poller(t *testing.T, f issueForge, objs ...client.Object) (*IssuePoller, cl
 	s := runtime.NewScheme()
 	_ = v1alpha1.AddToScheme(s)
 	_ = corev1.AddToScheme(s)
+	for _, o := range objs { // tasks carry their repository's name, as the intake writes them
+		if tk, ok := o.(*v1alpha1.Task); ok && tk.Spec.Repository == "" {
+			tk.Spec.Repository = "Smana/cloud-native-ref"
+		}
+	}
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&v1alpha1.Task{}).WithObjects(objs...).Build()
 	return &IssuePoller{Forge: f, Client: c, Namespace: "agent-system", Stopped: func(context.Context) bool { return false },
 		Cfg: &config.Config{Repository: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready",

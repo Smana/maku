@@ -31,6 +31,10 @@ type Rows struct {
 	// requiresApproval subset, as "<id>:<version>" (merge policy stage 5, MP12); "" when none did,
 	// and then it does not print.
 	Grant string
+	// Generation is the MergePolicy generation the decision was made under (0: the policy comes
+	// from the file, and then nothing prints). It prints as policygen=<n>, not policy=, which
+	// already carries the policy's hash.
+	Generation int64
 }
 
 // Marker is the hidden one-line record appended to the decision's comment. It is a line of its
@@ -48,6 +52,9 @@ func Marker(head, class, verdict, reason string, r Rows) string {
 	}
 	if r.Grant != "" {
 		dual += " grant=" + r.Grant
+	}
+	if r.Generation > 0 {
+		dual += " policygen=" + strconv.FormatInt(r.Generation, 10)
 	}
 	return fmt.Sprintf("<!-- agent-factory-decision head=%s class=%s decision=%s:%s files=%s/%d lines=%s/%d shape=%s holdout=%s oracle=%s age=%s evidence=%s paused=%s capped=%s%s reviewer=%s -->",
 		dash(head), dash(class), dash(verdict), dash(reason), count(r.Files, r.Counted), r.MaxFiles, count(r.Lines, r.Counted), r.MaxLines,

@@ -365,7 +365,7 @@ func generations(accepted []resources.Object) config.Generations {
 				g.Repos = map[string]config.RepoGenerations{}
 			}
 			e := g.Repos[repoOf[o.Name]]
-			e.Repository = o.Generation
+			e.Repository, e.RepositoryName = o.Generation, o.Name
 			g.Repos[repoOf[o.Name]] = e
 		case resources.KindMergePolicy:
 			ref, _ := o.Spec["repositoryRef"].(string)
@@ -376,7 +376,7 @@ func generations(accepted []resources.Object) config.Generations {
 				g.Repos = map[string]config.RepoGenerations{}
 			}
 			e := g.Repos[repoOf[ref]]
-			e.MergePolicy = o.Generation
+			e.MergePolicy, e.PolicyName = o.Generation, o.Name
 			g.Repos[repoOf[ref]] = e
 		}
 	}
