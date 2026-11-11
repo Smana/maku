@@ -42,7 +42,7 @@ func factoryApp(dir string) *github.App {
 	if dir == "" {
 		return nil
 	}
-	return &github.App{Dir: dir, API: githubAPI, HC: httpx.New(posterGitHubTimeout, nil), Now: time.Now}
+	return &github.App{Dir: dir, API: githubAPIURL(), HC: httpx.New(posterGitHubTimeout, nil), Now: time.Now}
 }
 
 // accessApp is the factory App D7 reads through, mounted at dir (ROOMS_GITHUB_APP_DIR); nil when

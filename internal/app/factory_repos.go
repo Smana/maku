@@ -69,7 +69,7 @@ func newRepoConns(log *slog.Logger) *repoConns {
 	c := &repoConns{log: log, by: map[string]repoConn{}}
 	c.connectGH = func(ctx context.Context, cfg *config.Config, repository string) (*forge.GitHub, error) {
 		gh, err := forge.Connect(ctx, forge.Options{Repository: repository, AppIDFile: cfg.GitHub.AppIDFile,
-			PrivateKeyFile: cfg.GitHub.PrivateKeyFile, APIURL: githubAPI, UserAgent: "agent-factory/" + version.Version,
+			PrivateKeyFile: cfg.GitHub.PrivateKeyFile, APIURL: githubAPIURL(), UserAgent: "agent-factory/" + version.Version,
 			HTTP: httpx.New(githubTimeout, nil), Now: time.Now})
 		if err != nil || !cfg.Demo {
 			return gh, err

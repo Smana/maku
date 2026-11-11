@@ -14,6 +14,7 @@ mkdir -p "$tmp/docs/superpowers/plans" "$tmp/internal/humanapi"
 printf 'old plan: ghcr.io/smana/room-broker and roomctl\n' > "$tmp/docs/superpowers/plans/p.md"
 printf 'mux.HandleFunc("GET /api/roomctl", s.setup)\nViaRoomctl = "roomctl"\n' > "$tmp/internal/humanapi/server.go"
 printf 'The audience room-broker and the Service room-broker.agent-system keep their names.\n' > "$tmp/docs/ok.md"
+printf 'The pre-rebrand OIDC client id and audiences keep roomctl: {"client_id":"roomctl","aud":["project","roomctl"]}.\n' > "$tmp/docs/ok-oidc.md"
 printf 'Releases before v0.30.0 carry the `Smana/agent-platform` identity.\n' > "$tmp/docs/history.md"
 bash "$here/names.sh" "$tmp"
 printf 'image: ghcr.io/smana/room-broker:v0.29.9\n' > "$tmp/docs/bad-image.md"
@@ -27,7 +28,7 @@ for f in docs/bad-image.md docs/bad-cli.md bad.go docs/bad-path.md docs/bad-char
   grep -q "^$f:1:" <<<"$out" || { echo "names.sh missed $f"; exit 1; }
 done
 grep -q 'FAIL: an old name' <<<"$out"
-if grep -qE 'superpowers|humanapi|ok\.md|history\.md' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+if grep -qE 'superpowers|humanapi|ok(-oidc)?\.md|history\.md' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
 # Phase 2: the group as a group fails; a label or annotation key and the lease pass (plan D1, D12).
 printf 'apiVersion: agents.ogenki.io/v1alpha1\n' > "$tmp/docs/bad-group.md"
 printf '  - apiGroups: [agents.ogenki.io]\n' > "$tmp/bad-rbac.yaml"
