@@ -207,3 +207,45 @@ func TestFoldFlow(t *testing.T) {
 		})
 	}
 }
+
+func TestFoldFlowHumanMessages(t *testing.T) {
+	const a, b = "aaaa1111", "bbbb2222"
+	human := envelope.Actor{Kind: envelope.ActorHuman, ID: "human:ana"}
+	say := func(seq int64, d envelope.Delivery) envelope.Event {
+		return fev(seq, "", envelope.Message, human, envelope.MessagePayload{Kind: envelope.KindChat, Text: "hi", Delivery: d})
+	}
+	own := fev(7, a, envelope.Message, fAgent, envelope.MessagePayload{Kind: envelope.KindChat, Text: "x", Delivery: envelope.DeliveryNone})
+	tests := []struct {
+		name        string
+		evs         []envelope.Event
+		wantSteered [2]int
+		wantChat    [2]int
+	}{
+		{"a steer inside a run", []envelope.Event{fjoin(1, a, "implementer"), say(5, envelope.DeliverySteering), fleft(9, a)}, [2]int{1}, [2]int{}},
+		{"a steer at the join seq counts", []envelope.Event{fjoin(5, a, "implementer"), say(5, envelope.DeliverySteering), fleft(9, a)}, [2]int{1}, [2]int{}},
+		{"a steer at the leave seq counts", []envelope.Event{fjoin(1, a, "implementer"), say(9, envelope.DeliverySteering), fleft(9, a)}, [2]int{1}, [2]int{}},
+		{"a steer before the run counts nowhere", []envelope.Event{say(2, envelope.DeliverySteering), fjoin(5, a, "implementer")}, [2]int{}, [2]int{}},
+		{"a steer after the run left counts nowhere", []envelope.Event{fjoin(1, a, "implementer"), fleft(4, a), say(5, envelope.DeliverySteering)}, [2]int{}, [2]int{}},
+		{"chat during no run counts nowhere", []envelope.Event{say(2, envelope.DeliveryNone), fjoin(5, a, "implementer")}, [2]int{}, [2]int{}},
+		{"chat during a run counts as chat", []envelope.Event{fjoin(1, a, "implementer"), say(3, envelope.DeliveryNone)}, [2]int{}, [2]int{1}},
+		{"a steer during a live run counts", []envelope.Event{fjoin(1, a, "implementer"), say(3, envelope.DeliverySteering)}, [2]int{1}, [2]int{}},
+		{"overlapping runs each count the same steer", []envelope.Event{fjoin(1, a, "implementer"), fjoin(2, b, "reviewer"), say(3, envelope.DeliverySteering)}, [2]int{1, 1}, [2]int{}},
+		{"a run's own message counts nothing", []envelope.Event{fjoin(1, a, "implementer"), own, fjudge(8, a, "met")}, [2]int{}, [2]int{}},
+		{"a queued message counts on no node", []envelope.Event{fjoin(1, a, "implementer"), say(3, envelope.DeliveryQueued)}, [2]int{}, [2]int{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var st State
+			for _, ev := range tc.evs {
+				foldFlow(&st, ev)
+			}
+			var gotS, gotC [2]int
+			for i := range st.flow.runs {
+				gotS[i], gotC[i] = st.flow.runs[i].steered, st.flow.runs[i].chat
+			}
+			if gotS != tc.wantSteered || gotC != tc.wantChat {
+				t.Fatalf("steered %v chat %v, want %v %v", gotS, gotC, tc.wantSteered, tc.wantChat)
+			}
+		})
+	}
+}

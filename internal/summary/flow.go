@@ -61,6 +61,7 @@ type flowRun struct {
 	at, leftAt                 time.Time
 	tools                      ToolCount
 	judge                      JudgeMark
+	steered, chat              int // human messages sent while the run was open (RR1, RR2)
 	scoped, split              bool
 }
 
@@ -144,6 +145,11 @@ func foldFlow(st *State, ev envelope.Event) {
 		return
 	}
 
+	if ev.Type == envelope.Message && ev.RunID == "" && ev.Actor.Kind == envelope.ActorHuman {
+		f.countHuman(ev)
+		return
+	}
+
 	r := f.run(ev.RunID)
 	if r == nil {
 		return
@@ -172,6 +178,28 @@ func foldFlow(st *State, ev envelope.Event) {
 			return
 		}
 		r.handoff, r.scoped, r.split = handoffLine(h.Summary), h.Scope != nil, h.Split != nil
+	}
+}
+
+// countHuman counts a human's message on every run open at its seq, boundaries inclusive: a run is
+// open from its join to its leave, or without end while live. A steering message counts as steered,
+// one with no delivery as chat, a queued one on no node (it waits for the next run), and one sent
+// while no run is open nowhere. A run's own messages and judge verdicts never reach it.
+func (f *flowState) countHuman(ev envelope.Event) {
+	var m envelope.MessagePayload
+	if json.Unmarshal(ev.Payload, &m) != nil || (m.Delivery != envelope.DeliverySteering && m.Delivery != envelope.DeliveryNone) {
+		return
+	}
+	for i := range f.runs {
+		r := &f.runs[i]
+		if ev.Seq < r.from || (r.to != 0 && ev.Seq > r.to) {
+			continue
+		}
+		if m.Delivery == envelope.DeliverySteering {
+			r.steered++
+		} else {
+			r.chat++
+		}
 	}
 }
 
@@ -231,9 +259,13 @@ type FlowNode struct {
 	Effort    string     `json:"effort,omitempty"`
 	Judge     *JudgeMark `json:"judge,omitempty"`
 	Tools     ToolCount  `json:"tools"`
-	Edge      string     `json:"edge,omitempty"`
-	StartedBy string     `json:"startedBy,omitempty"`
-	Reason    string     `json:"reason,omitempty"`
+	// Steered and Chat count the humans' messages sent while the run was open (RR1, RR2): steering
+	// ones, and ones with no delivery. A queued message, waiting for the next run, counts on none.
+	Steered   int    `json:"steered,omitempty"`
+	Chat      int    `json:"chat,omitempty"`
+	Edge      string `json:"edge,omitempty"`
+	StartedBy string `json:"startedBy,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 	// Handoff is the agent's own words, redacted at append: the page labels it as their claim.
 	Handoff string `json:"handoff,omitempty"`
 }
@@ -385,6 +417,7 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 		}
 		n.Effort = r.effort
 		n.Tools, n.StartedBy, n.Reason, n.Handoff = r.tools, r.startedBy, r.reason, r.handoff
+		n.Steered, n.Chat = r.steered, r.chat
 		j.scoped, j.split = r.scoped, r.split
 	}
 	// The fold reads the log unvalidated. The model, effort, judge, persona and handoff are bounded
