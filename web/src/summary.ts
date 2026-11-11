@@ -16,7 +16,7 @@ export interface FlowNode {
   run: string; persona: string; role: string; round: number;
   startedAt?: string; endedAt?: string; fromSeq: number; toSeq: number; outcome?: string;
   verdict?: string; microUSD?: number; model?: string; models?: string[]; effort?: string; judge?: { count: number; last: string };
-  tools: { ok: number; failed: number }; edge?: string; startedBy?: string; reason?: string; handoff?: string;
+  tools: { ok: number; failed: number }; steered?: number; chat?: number; edge?: string; startedBy?: string; reason?: string; handoff?: string;
 }
 export interface Milestone { phase: string; at: string; seq: number }
 export interface SplitPart { index: number; issue: number; room: string; outcome?: string }
@@ -124,6 +124,8 @@ export interface Summary {
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
   actions: { kind: string; what: string; cli?: string }[];
   notes: { untrusted: true; items: { at: string; run: string; text: string }[] };
+  // The notes queued for the next run, oldest first; absent when none waits (omitzero).
+  queued?: { untrusted: true; items: { ref: number; author: string; text: string }[] };
   flow?: Flow;
   coordination?: CoordinationView;
   cursor: string;
@@ -142,13 +144,15 @@ export async function fetchSummary(id: string, get: typeof fetch = fetch): Promi
   return s;
 }
 
-// changesSummary is whether the broker's fold (internal/summary) reads e: only then is the
-// summary refetched, never on a run's chat or tool calls.
+// changesSummary is whether the summary reads e, in the broker's fold (internal/summary) or in the
+// queue it attaches: only then is the summary refetched, never on a run's chat or tool calls. A
+// human's message moves a node's steered or chat count, or the queued notes; a queued note moves
+// the queue whoever posts it (a sponsored principal posts as a system actor).
 export function changesSummary(e: RoomEvent): boolean {
   const kind = e.payload?.kind;
   switch (e.type) {
-    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase";
-    case "message": return kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
+    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase" || kind === "queued_removed";
+    case "message": return e.actor?.kind === "human" || e.payload?.delivery === "queued" || kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
     case "handoff": case "participant": return true;
     case "approval_requested": case "approval_decided": return true;
   }

@@ -106,10 +106,11 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     recover: (r) => recoverCoordination(id, r, o.get),
     refresh: () => loadSummary(),
   });
-  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
+  const pane = mountRailPane({ select: (run) => { void runView.select(run); }, you: () => snap?.you.principal }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
-  const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
+  const showRail = (sum: Summary) =>
+    pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0, sum.queued?.items?.length ?? 0);
   // The pinned block (the unsandboxed banner, then the header) and the dock place the sticky rail between them.
   let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {

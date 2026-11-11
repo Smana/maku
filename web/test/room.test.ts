@@ -803,6 +803,15 @@ describe("the room page", () => {
     };
     const flow = { nodes: [node({})], ghosts: ["reviewer"] };
 
+    it("the summary's queued notes reach the rail", async () => {
+      const get = vi.fn(async (url: string) => isNeeds(url) ? noNeeds()
+        : { ok: true, status: 200, json: async () => ({ ...sumWith(flow), queued: { untrusted: true, items: [{ ref: 7, author: "human:a", text: "x" }] } }) }) as unknown as typeof fetch;
+      const q = page(get);
+      q.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(q.app.querySelector(".rail-queued")!.textContent).toBe("1 queued → next run");
+    });
+
     it("a summary with a flow shows the rail", async () => {
       const { p } = await withFlow(flow);
       expect(p.app.querySelector<HTMLElement>(".room-body.has-rail aside.rail")!.hidden).toBe(false);

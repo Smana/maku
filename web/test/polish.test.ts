@@ -242,7 +242,7 @@ describe("layout", () => {
   it("lets the conversation's column grow with the window on a wide screen, the rail at its right edge", () => {
     expect(decl(outside, ":root")).toMatch(/--log-w:\s*72ch/);
     expect(decl(wide, ".room-body")).toMatch(/--log-w:\s*none/);
-    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
+    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*360px/);
     expect(decl(wide, ".bubble .md, .handoff > .md, .notes")).toMatch(/max-width:\s*100ch/);
   });
   it("fills the window's height, the dock at the bottom of a short room", () => {
@@ -267,7 +267,7 @@ describe("layout", () => {
   });
   it("shares the conversation's grid with the composer on a wide screen", () => {
     const d = decl(wide, ".page-dock");
-    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
+    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*360px/);
     // 16 px of the main's padding past the measure, plus the room body's 16 px gap: the meta sits under the rail.
     expect(d).toMatch(/column-gap:\s*32px/);
   });
@@ -326,5 +326,43 @@ describe("appearance", () => {
     expect(root).toMatch(/--radius-card:\s*12px/);
     expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-md\)/);
     expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-md\)/);
+  });
+});
+
+// The rail at full size (UI review Part 3): state reads from the chip, the ✓ and the lane border,
+// never a faded node, so text keeps its contrast.
+describe("the rail at full size", () => {
+  /** Every rule, anywhere in the sheet, whose selector list names `sel`. */
+  const rules = (sel: string) => [...css.matchAll(/([^{}]+){([^{}]*)}/g)]
+    .filter((m) => m[1].split(",").map((x) => x.trim()).includes(sel)).map((m) => m[2]);
+  it.each([
+    '.rail-node[data-state="done"] > .rail-button', '.rail-node[data-state="ghost"] > .rail-button',
+    '.rail-node[data-state="ghost"] .rail-button', '.rail-milestone[data-state="ghost"]',
+    '.rail-dot[data-state="done"]', '.rail-edge[data-state="ghost"] .rail-stroke',
+  ])("%s keeps full opacity", (sel) => {
+    for (const body of rules(sel)) expect(body).not.toMatch(/opacity:\s*0?\.\d/);
+  });
+  it("lifts button:disabled's fade off a ghost's (disabled) button", () => {
+    expect(decl(outside, '.rail-node[data-state="ghost"] .rail-button')).toMatch(/opacity:\s*1;/);
+  });
+  it("keeps the ghost edge dashed", () => {
+    expect(decl(outside, '.rail-edge[data-state="ghost"] .rail-stroke')).toMatch(/stroke-dasharray/);
+  });
+  it("sets the persona and meta on the type scale, the glyph at 22 px", () => {
+    expect(decl(outside, ".rail-persona")).toMatch(/font-size:\s*var\(--text-body\)/);
+    expect(decl(outside, ".rail")).toMatch(/font-size:\s*var\(--text-small\)/);
+    const g = decl(outside, ".rail-line .glyph");
+    expect(g).toMatch(/width:\s*22px/);
+    expect(g).toMatch(/height:\s*22px/);
+  });
+  it("fades a new mark in with opacity and transform only, and moves nothing under reduced motion", () => {
+    const moving = media("(prefers-reduced-motion: no-preference)");
+    const m = moving.match(/\.arrive\s*{[^}]*animation:\s*rail-arrive\s+(\d+)ms/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(150);
+    expect(Number(m![1])).toBeLessThanOrEqual(200);
+    const kf = moving.match(/@keyframes rail-arrive\s*{([^}]*)}/)![1];
+    for (const prop of kf.matchAll(/([\w-]+):/g)) expect(["opacity", "transform"]).toContain(prop[1]);
+    expect(outside).not.toMatch(/rail-arrive/);
   });
 });

@@ -19,7 +19,11 @@
     {"v":1,"id":"e7","seq":7,"roomId":"26zfnuxm","runId":"cf4ato2x","actor":{"kind":"system","id":"system:room-broker"},"type":"state_changed","origin":"broker","ts":"2026-10-07T19:15:01Z","redactions":[],
      "payload":{"kind":"run_phase","phase":"Running","model":"agent-default"}},
     {"v":1,"id":"e8","seq":8,"roomId":"26zfnuxm","runId":"cf4ato2x","actor":{"kind":"agent","id":"agent:cf4ato2x","role":"implementer"},"type":"state_changed","origin":"harness","ts":"2026-10-07T19:15:02Z","redactions":[],
-     "payload":{"kind":"harness_status","status":"running","previous":"","effort":"high"}}
+     "payload":{"kind":"harness_status","status":"running","previous":"","effort":"high"}},
+    {"v":1,"id":"e9","seq":9,"roomId":"26zfnuxm","actor":{"kind":"human","id":"human:own","role":"owner"},"type":"message","origin":"client","ts":"2026-10-07T19:16:00Z","redactions":[],
+     "payload":{"kind":"chat","text":"keep the fix to the two lines","delivery":"steering"}},
+    {"v":1,"id":"e10","seq":10,"roomId":"26zfnuxm","actor":{"kind":"human","id":"human:own","role":"owner"},"type":"message","origin":"client","ts":"2026-10-07T19:16:30Z","redactions":[],
+     "payload":{"kind":"chat","text":"thanks","delivery":"none"}}
   ],
   "viewer": {"role": "owner", "approver": true, "driver": true, "webUI": true},
   "now": "2026-10-07T19:30:00Z",
@@ -68,7 +72,11 @@
         "url": "https://rooms.example/r/26zfnuxm#01M4A",
         "room": "26zfnuxm",
         "at": "2026-10-07T19:15:00Z",
-        "action": {"kind": "decide", "label": "decide in the room", "url": "https://rooms.example/r/26zfnuxm#01M4A"}
+        "action": {
+          "kind": "decide",
+          "label": "decide in the room",
+          "url": "https://rooms.example/r/26zfnuxm#01M4A"
+        }
       }
     ],
     "step": {
@@ -118,10 +126,12 @@
           "tools": {
             "ok": 0,
             "failed": 0
-          }
+          },
+          "steered": 1,
+          "chat": 1
         }
       ]
     },
-    "cursor": "seq:8"
+    "cursor": "seq:10"
   }
 }

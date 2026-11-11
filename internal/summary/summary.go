@@ -75,9 +75,9 @@ type State struct {
 	flow         flowState
 }
 
-// Clone is a copy of st that folds on apart from it. Add writes Pending, Agents, Notes and the
-// run models in place, so a fold kept for later readers hands each a clone. Facts, Verdict and
-// Judge are replaced by Add, never written through, so the clone shares them.
+// Clone is a copy of st that folds on apart from it. Add writes Pending, Agents, Notes, the run
+// models and the flow's slices in place, so a fold kept for later readers hands each a clone.
+// Facts, Verdict and Judge are replaced by Add, never written through, so the clone shares them.
 func (st State) Clone() State {
 	c := st
 	c.Pending = maps.Clone(st.Pending)
@@ -94,6 +94,7 @@ func (st State) Clone() State {
 	c.flow.runs = slices.Clone(st.flow.runs)
 	c.flow.phases = slices.Clone(st.flow.phases)
 	c.flow.requested = slices.Clone(st.flow.requested)
+	c.flow.human = slices.Clone(st.flow.human)
 	return c
 }
 

@@ -612,4 +612,21 @@ func TestACloneFoldsApart(t *testing.T) {
 	if len(c.Pending) != 0 || len(c.Agents) != 0 || len(c.Notes) != 2 || c.LLM.Effort != "high" || c.PrevLLM.Effort != "high" {
 		t.Fatalf("the clone did not fold on: %+v", c)
 	}
+	// The humans' messages too: three in the prefix leave their slice room to grow in place, so two
+	// clones that each add one must not write the same slot.
+	human := envelope.Actor{Kind: envelope.ActorHuman, ID: "human:ana"}
+	say := func(seq int64, d envelope.Delivery) envelope.Event {
+		e := ev(seq, envelope.Message, human, envelope.MessagePayload{Kind: envelope.KindChat, Text: "hi", Delivery: d})
+		e.RunID = "" // a human's message belongs to no run
+		return e
+	}
+	said := append(slices.Clone(prefix), say(6, envelope.DeliverySteering), say(7, envelope.DeliveryNone), say(8, envelope.DeliverySteering))
+	steer, chat := []envelope.Event{say(9, envelope.DeliverySteering)}, []envelope.Event{say(9, envelope.DeliveryNone)}
+	from := summary.Fold(said)
+	a, b := from.Clone(), from.Clone()
+	a.Add(steer)
+	b.Add(chat)
+	if !reflect.DeepEqual(a, summary.Fold(append(slices.Clone(said), steer...))) || !reflect.DeepEqual(b, summary.Fold(append(slices.Clone(said), chat...))) {
+		t.Fatal("two clones folding the humans' messages wrote into each other")
+	}
 }

@@ -460,3 +460,126 @@ describe("split", () => {
   });
 });
 
+describe("a finished task", () => {
+  it("has no replay controls, and a refetch applies at once", () => {
+    const { rail } = mount();
+    rail.set(flow, "Merged", now);
+    expect(rail.el.querySelector(".rail-replays, .rail-replay")).toBeNull();
+    const names = [...rail.el.querySelectorAll("button")].map((b) => b.textContent);
+    expect(names).not.toContain("Replay");
+    expect(names).not.toContain("Next");
+    expect(names).not.toContain("Skip");
+    const later: Flow = { ...flow, nodes: [...flow.nodes, node({ run: "r-m", persona: "merger", fromSeq: 91 })] };
+    rail.set(later, "Merged", now);
+    expect(nodeOf(rail, "r-m")).not.toBeNull();
+  });
+});
+
+// The room's activity on a node (summary/v1 steered and chat, the summary's queued notes).
+describe("activity", () => {
+  const msg = (seq: number, delivery: string, o: Partial<RoomEvent> = {}) =>
+    ev({ seq, type: "message", actor: { kind: "human", id: "human:ana" }, ts: "2026-11-03T10:18:00Z", payload: { kind: "chat", text: "x", delivery }, ...o });
+
+  it("a steered node shows its count, and its card lists who and when from the events the page holds", () => {
+    const { rail } = mount();
+    rail.live(msg(5, "steering")); // before the node's window
+    rail.live(msg(12, "steering"));
+    rail.live(msg(12, "steering")); // a reconnect's replay
+    rail.live(msg(13, "none")); // chat, not a steer
+    rail.live(msg(14, "steering", { actor: { kind: "system", id: "system:factory" } })); // not a human
+    rail.live(msg(15, "steering", { runId: "r-1" })); // a run's own message
+    rail.set({ nodes: [node({ fromSeq: 10, steered: 2 })] }, "Implementing", now);
+    const li = rail.el.querySelector<HTMLElement>("li.rail-node")!;
+    expect(li.querySelector(".rail-steered")!.textContent).toBe("↪ steered ×2");
+    li.querySelector("button")!.focus();
+    const lines = [...card(rail).querySelectorAll(".rail-steers > li")].map((x) => x.textContent);
+    expect(lines).toEqual(["ana, 2 min ago", "1 earlier"]);
+  });
+
+  it("names the viewer's steers you, and another human's as the conversation does", () => {
+    const rail = mountRail({ select: () => {}, you: () => "human:ana" });
+    document.body.replaceChildren(rail.el);
+    rail.live(msg(12, "steering"));
+    rail.live(msg(13, "steering", { actor: { kind: "human", id: "human:bo", role: "owner" } }));
+    rail.set({ nodes: [node({ fromSeq: 10, steered: 2 })] }, "Implementing", now);
+    rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.focus();
+    expect([...card(rail).querySelectorAll(".rail-steers > li")].map((x) => x.textContent)).toEqual(["owner · bo, 2 min ago", "you, 2 min ago"]);
+  });
+
+  it("a steer the stream delivers after the summary joins the open card", () => {
+    const { rail } = mount();
+    rail.set({ nodes: [node({ fromSeq: 10, steered: 1 })] }, "Implementing", now);
+    rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.focus();
+    expect([...card(rail).querySelectorAll(".rail-steers > li")].map((x) => x.textContent)).toEqual(["1 earlier"]);
+    rail.live(msg(20, "steering"));
+    expect([...card(rail).querySelectorAll(".rail-steers > li")].map((x) => x.textContent)).toEqual(["ana, 2 min ago"]);
+  });
+
+  it.each([[0], [undefined]])("steered %s draws no mark and lists nothing", (steered) => {
+    const { rail } = mount();
+    rail.live(msg(12, "steering"));
+    rail.set({ nodes: [node({ fromSeq: 10, steered })] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-steered")).toBeNull();
+    rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.focus();
+    expect(card(rail).querySelector(".rail-steers")).toBeNull();
+  });
+
+  // One fixture for Go and TS: the broker's golden summary carries a steer and a chat on its node.
+  it("draws the marks of the broker's golden flow", () => {
+    const golden = JSON.parse(readFileSync(join(__dirname, "../../internal/summary/testdata/normal.json"), "utf8")) as { want: { flow: Flow } };
+    const { rail } = mount();
+    rail.set(golden.want.flow, "Implementing", now);
+    expect(rail.el.querySelector(".rail-steered")!.textContent).toBe("↪ steered ×1");
+    expect(rail.el.querySelector(".rail-chat")!.textContent).toBe("1");
+  });
+
+  it("a node with chat shows the chat icon and its count, named for assistive tech", () => {
+    const { rail } = mount();
+    rail.set({ nodes: [node({ chat: 3 })] }, "Implementing", now);
+    const c = rail.el.querySelector<HTMLElement>("li.rail-node .rail-chat")!;
+    expect(c.querySelector("svg")).not.toBeNull();
+    expect(c.textContent).toBe("3");
+    expect(c.getAttribute("aria-label")).toBe("3 chat messages during this run");
+    rail.set({ nodes: [node({ chat: 0 })] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-chat")).toBeNull();
+  });
+
+  it("queued notes sit on the next ghost node", () => {
+    const { rail } = mount();
+    rail.set(flow, "Implementing", now, undefined, 2);
+    const chips = rail.el.querySelectorAll(".rail-queued");
+    expect(chips).toHaveLength(1);
+    expect(chips[0].closest('li.rail-node[data-state="ghost"]')).not.toBeNull();
+    expect(chips[0].textContent).toBe("2 queued → next run");
+  });
+
+  it("with no ghost, the queued chip sits in the gap after the live node", () => {
+    const { rail } = mount();
+    rail.set({ nodes: [scoper, implementer] }, "Implementing", now, undefined, 1);
+    const next = nodeOf(rail, "r-i").nextElementSibling!;
+    expect(next.classList.contains("rail-queued")).toBe(true);
+    expect(next.textContent).toBe("1 queued → next run");
+  });
+
+  it("an empty queue draws no chip", () => {
+    const { rail } = mount();
+    rail.set(flow, "Implementing", now, undefined, 0);
+    expect(rail.el.querySelector(".rail-queued")).toBeNull();
+    rail.set({ nodes: [implementer] }, "Implementing", now);
+    expect(rail.el.querySelector(".rail-queued")).toBeNull();
+  });
+
+  it("a new mark or chip arrives; the first paint and an unchanged one do not", () => {
+    const { rail } = mount();
+    const arrived = () => [...rail.el.querySelectorAll(".arrive")].map((x) => x.className);
+    rail.set({ nodes: [node({ steered: 1, chat: 1 })], ghosts: ["reviewer"] }, "Implementing", now, undefined, 1);
+    expect(arrived()).toEqual([]);
+    rail.set({ nodes: [node({ steered: 1, chat: 1 })], ghosts: ["reviewer"] }, "Implementing", now, undefined, 1);
+    expect(arrived()).toEqual([]);
+    rail.set({ nodes: [node({ steered: 2, chat: 1 })], ghosts: ["reviewer"] }, "Implementing", now, undefined, 2);
+    expect(arrived()).toEqual(["rail-steered arrive", "rail-queued arrive"]);
+    rail.el.querySelector(".rail-steered")!.dispatchEvent(new Event("animationend"));
+    expect(arrived()).toEqual(["rail-queued arrive"]);
+  });
+});
+

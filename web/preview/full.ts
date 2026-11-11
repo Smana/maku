@@ -12,7 +12,7 @@
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 //   ?long         unbreakable lines (long-fixtures.ts): a sed command, a gh api needs card, a served model behind an alias
 // One rail fixture (flow-fixtures.ts), the first of:
-//   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
+//   ?finished     every run ended, a reviewer, the milestones to Done
 //   ?split        a scoper whose handoff split into three parts
 //   ?many         a long task: retries and reviewers, a rail taller than the window, the unsandboxed banner above the header
 //   ?part         a part's room, linked back to its parent
@@ -68,7 +68,9 @@ async function run() {
   const loaded = Date.now();
   const lastAt = Date.parse(events[events.length - 1].ts);
   const page = mountPreviewPage(document.getElementById("app")!, { snap, unsandboxed: params.has("many"),
-    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
+    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow,
+      // A note queued for the next run, so the rail shows its chip (none once the task is over).
+      ...(finished ? {} : { queued: { untrusted: true, items: [{ ref: 26, author: "human:291847362183", text: "Add the dashboard's screenshot to the PR." }] } }) },
     count: events.length, dashboards,
     ...(params.has("needs") || long ? { needs: async () => ({ apiVersion: "needs/v1", items: long ? [LONG_NEED, ...NEED_FIXTURES] : NEED_FIXTURES }) } : {}), now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });

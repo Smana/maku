@@ -140,7 +140,7 @@ chat and raw views, the controls and the composer.
   `?path=/settings/merge-policies` lists nine repositories, enough to filter (add `&q=cloud`);
   `?path=/settings`, `/settings/evidence` and `/settings/approval-memory` for the others
 
-`full.html` takes `?finished`, `?split` or `?part` to show the rail's Replay, a split task or a part's room (default: a task in flight); the demo shows the rail as it replays. The built files stay out of git. Buttons on the full page send nothing.
+`full.html` takes `?finished`, `?split` or `?part` to show a finished task, a split task or a part's room (default: a task in flight); the demo shows the rail as it replays. The built files stay out of git. Buttons on the full page send nothing.
 
 ### Screenshots with Chromium
 

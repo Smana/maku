@@ -47,7 +47,17 @@ type Milestone struct {
 type flowState struct {
 	runs      []flowRun // first-seen order, the last envelope.MaxRuns
 	phases    []Milestone
+	human     []humanMsg     // the last maxHumanMsgs steering or no-delivery human messages, by seq
 	requested []requestedRun // first-seen order, at most envelope.MaxRuns: runs asked for, not yet joined
+}
+
+// maxHumanMsgs bounds the human messages kept for counting: the oldest fall off, so a node older
+// than the last 512 such messages under-counts rather than the fold growing without bound.
+const maxHumanMsgs = 512
+
+type humanMsg struct {
+	seq   int64
+	steer bool
 }
 
 type requestedRun struct{ run, by string }
@@ -144,6 +154,11 @@ func foldFlow(st *State, ev envelope.Event) {
 		return
 	}
 
+	if ev.Type == envelope.Message && ev.RunID == "" && ev.Actor.Kind == envelope.ActorHuman {
+		f.noteHuman(ev)
+		return
+	}
+
 	r := f.run(ev.RunID)
 	if r == nil {
 		return
@@ -173,6 +188,39 @@ func foldFlow(st *State, ev envelope.Event) {
 		}
 		r.handoff, r.scoped, r.split = handoffLine(h.Summary), h.Scope != nil, h.Split != nil
 	}
+}
+
+// noteHuman keeps a human's message to be counted on the nodes open at its seq. Only a human
+// actor counts: system actors are not humans, since sponsored principals and the factory's
+// narration both post as system, while humans acting through Slack are recorded as human. A
+// steering message counts as steered, one with no delivery as chat, a queued one on no node (it
+// waits for the next run).
+func (f *flowState) noteHuman(ev envelope.Event) {
+	var m envelope.MessagePayload
+	if json.Unmarshal(ev.Payload, &m) != nil || (m.Delivery != envelope.DeliverySteering && m.Delivery != envelope.DeliveryNone) {
+		return
+	}
+	f.human = append(f.human, humanMsg{ev.Seq, m.Delivery == envelope.DeliverySteering})
+	if len(f.human) > maxHumanMsgs {
+		f.human = f.human[len(f.human)-maxHumanMsgs:]
+	}
+}
+
+// countHuman counts the kept messages inside a node's window, from..to inclusive and open-ended
+// while to is 0, the same window the node shows (RR2): every run open at a message's seq counts
+// it, none counts one sent while no run is open.
+func (f *flowState) countHuman(from, to int64) (steered, chat int) {
+	for _, h := range f.human {
+		if h.seq < from || (to != 0 && h.seq > to) {
+			continue
+		}
+		if h.steer {
+			steered++
+		} else {
+			chat++
+		}
+	}
+	return steered, chat
 }
 
 // takeRequested returns who asked for run id, and forgets the request.
@@ -231,9 +279,13 @@ type FlowNode struct {
 	Effort    string     `json:"effort,omitempty"`
 	Judge     *JudgeMark `json:"judge,omitempty"`
 	Tools     ToolCount  `json:"tools"`
-	Edge      string     `json:"edge,omitempty"`
-	StartedBy string     `json:"startedBy,omitempty"`
-	Reason    string     `json:"reason,omitempty"`
+	// Steered and Chat count the humans' messages sent while the run was open (RR1, RR2): steering
+	// ones, and ones with no delivery. A queued message, waiting for the next run, counts on none.
+	Steered   int    `json:"steered,omitempty"`
+	Chat      int    `json:"chat,omitempty"`
+	Edge      string `json:"edge,omitempty"`
+	StartedBy string `json:"startedBy,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 	// Handoff is the agent's own words, redacted at append: the page labels it as their claim.
 	Handoff string `json:"handoff,omitempty"`
 }
@@ -285,12 +337,12 @@ func flowView(st State) *Flow {
 	if st.Facts != nil {
 		for _, rf := range st.Facts.Runs {
 			inFacts[rf.ID] = true
-			joins = append(joins, joinRun(&rf, st.flow.run(rf.ID)))
+			joins = append(joins, joinRun(&st.flow, &rf, st.flow.run(rf.ID)))
 		}
 	}
 	for i := range st.flow.runs {
 		if r := &st.flow.runs[i]; !inFacts[r.id] {
-			joins = append(joins, joinRun(nil, r))
+			joins = append(joins, joinRun(&st.flow, nil, r))
 		}
 	}
 	slices.SortStableFunc(joins, func(a, b flowJoin) int {
@@ -344,7 +396,7 @@ func flowView(st State) *Flow {
 
 // joinRun is one node from a run's facts, its log, or both. Everything taken from the log is
 // bounded here: it is rendered as text.
-func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
+func joinRun(human *flowState, rf *envelope.RunFact, r *flowRun) flowJoin {
 	var j flowJoin
 	n := &j.node
 	if rf != nil {
@@ -385,6 +437,7 @@ func joinRun(rf *envelope.RunFact, r *flowRun) flowJoin {
 		}
 		n.Effort = r.effort
 		n.Tools, n.StartedBy, n.Reason, n.Handoff = r.tools, r.startedBy, r.reason, r.handoff
+		n.Steered, n.Chat = human.countHuman(n.FromSeq, n.ToSeq)
 		j.scoped, j.split = r.scoped, r.split
 	}
 	// The fold reads the log unvalidated. The model, effort, judge, persona and handoff are bounded

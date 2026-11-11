@@ -5,33 +5,25 @@
 // path keyed by data-run, so a later set can tell new nodes from old.
 
 import type { RoomEvent } from "./conn";
-import { idTail } from "./chat";
+import { actorName, idTail } from "./chat";
 import { el } from "./controls";
-import { chip, detail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
+import { chip, detail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
-import { replay } from "./replay";
-import type { Flow, FlowNode } from "./summary";
+import { ago, type Flow, type FlowNode } from "./summary";
 
-export interface RailHandlers { select(run: string | undefined): void }
-
-// Replay's clock and motion preference, injectable so a test needs no real time.
-export interface RailOptions {
-  reduced?: () => boolean;
-  schedule?: (fn: () => void, ms: number) => unknown;
-  cancel?: (h: unknown) => void;
-}
-
-const prefersReduced = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+// you, when given, is the viewer's principal, so the steer card names the viewer's own steers "you".
+export interface RailHandlers { select(run: string | undefined): void; you?(): string | undefined }
 
 export interface Rail {
   el: HTMLElement;
-  // cursor is the seq the summary folded through: live counts only past it. A replay frame has none.
-  set(f: Flow | undefined, phase: string, now: number, cursor?: number): void;
+  // cursor is the seq the summary folded through: live counts only past it. queued is how many
+  // notes wait for the next run (the summary's queued).
+  set(f: Flow | undefined, phase: string, now: number, cursor?: number, queued?: number): void;
   tick(now: number): void;
   live(e: RoomEvent): void;
   mark(run: string | undefined): void;
   chosen(run: string | undefined): void;
-  // The page is leaving: end a running replay without applying a held refetch.
+  // The page is leaving: drop what mount() listens to.
   dispose(): void;
 }
 
@@ -43,6 +35,9 @@ const edgeGap = 8;
 const cardGap = 4;
 // How long a pointer has to cross that gap.
 const crossMs = 150;
+// The steers kept for the card, newest last: the summary's fold keeps as many (internal/summary
+// maxHumanMsgs), so a node's count past this is "earlier" either way.
+const maxSteers = 512;
 
 // A room id is a C2 id; nothing else reaches an href.
 const roomId = /^[a-z2-7]{8}$/;
@@ -58,6 +53,13 @@ let cards = 0;
 
 // A ghost's index shifts when an earlier one goes live; its persona is what stays.
 const stable = (run: string) => run.replace(/^plan-\d+-/, "plan-");
+
+// A steer is a human's steering message (internal/summary noteHuman): a run's own message, or a
+// system actor's, is not.
+interface Steer { seq: number; actor: RoomEvent["actor"]; ts: string }
+const steerOf = (e: RoomEvent): Steer | undefined =>
+  e.type === "message" && !e.runId && e.actor.kind === "human" && e.payload?.delivery === "steering"
+    ? { seq: e.seq, actor: e.actor, ts: e.ts } : undefined;
 
 // Without animationend the class would stay and a re-render would replay it.
 function animate(e: Element, cls: string): void {
@@ -93,7 +95,7 @@ function roundMark(n: FlowNode): string {
   return c.text;
 }
 
-export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
+export function mountRail(h: RailHandlers): Rail {
   const root = el("aside", { className: "rail", hidden: true });
   const nav = el("nav");
   nav.setAttribute("aria-label", "Task path");
@@ -104,13 +106,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
   card.setAttribute("role", "tooltip");
   const announcer = el("p", { className: "rail-live" });
   announcer.setAttribute("aria-live", "polite");
-  const controls = el("div", { className: "rail-replays", hidden: true });
-  const mkBtn = (label: string) => el("button", { type: "button", className: "rail-replay", textContent: label, hidden: true });
-  const replayBtn = mkBtn("Replay");
-  const nextBtn = mkBtn("Next");
-  const skipBtn = mkBtn("Skip");
-  controls.append(replayBtn, nextBtn, skipBtn);
-  root.append(controls, nav, card, announcer);
+  root.append(nav, card, announcer);
 
   let flow: Flow | undefined;
   let phaseNow = "";
@@ -129,14 +125,12 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     for (const x of extra) if (x.run === n.run) { if (x.failed) t.failed++; else t.ok++; }
     return t;
   };
+  let steers: Steer[] = [];
+  let queued = 0;
   const ages = new Map<string, HTMLElement>();
   const buttons = new Map<string, HTMLButtonElement>();
 
-  // While a replay runs, a refetch is held here and applied when it ends.
-  let running: { skip(): void; next(): void; stop(): void } | undefined;
-  let held: { f: Flow | undefined; phase: string; now: number; cursor?: number } | undefined;
-
-  let prev: { runs: Set<string>; edges: Set<string>; judges: Map<string, number>; done: Set<string> } | undefined;
+  let prev: { runs: Set<string>; edges: Set<string>; judges: Map<string, number>; done: Set<string>; marks: Map<string, number> } | undefined;
 
   const nodeOf = (run: string) => flow?.nodes.find((n) => n.run === run);
 
@@ -152,6 +146,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     if (names.length) lines.push(el("p", { textContent: `Models: ${names.join(" · ")}` }));
     if (n.reason) lines.push(el("p", { textContent: n.reason }));
     if (n.startedBy) lines.push(el("p", { textContent: `started by ${idTail(n.startedBy)}` }));
+    if (n.steered) lines.push(...steerLines(n, n.steered));
     const first = n.handoff?.split("\n")[0].trim();
     if (first) {
       const claim = el("p", { className: "rail-claim" });
@@ -159,6 +154,16 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       lines.push(claim);
     }
     card.replaceChildren(...lines);
+  }
+
+  // Who steered the node and when, newest first, from the steers the page holds in its window
+  // (from..to inclusive, open while to is 0, as the fold counts them); "earlier" for the rest.
+  function steerLines(n: FlowNode, count: number): HTMLElement[] {
+    const held = steers.filter((x) => x.seq >= n.fromSeq && (n.toSeq === 0 || x.seq <= n.toSeq)).reverse();
+    const ol = el("ol", { className: "rail-steers" });
+    ol.append(...held.map((x) => el("li", { textContent: `${actorName(x.actor, h.you?.())}, ${ago(x.ts, clock)}` })));
+    if (count > held.length) ol.append(el("li", { className: "rail-earlier", textContent: `${count - held.length} earlier` }));
+    return [el("p", { className: "rail-card-head", textContent: "Steered by" }), ol];
   }
 
   // The card is fixed to the viewport beside its button, outside the rail's scroll box, which would
@@ -228,6 +233,8 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     const age = el("span", { className: "rail-detail", textContent: detail(n, clock) });
     if (isLive(n)) ages.set(n.run, age);
     b.append(line, age);
+    const marks = activity(n);
+    if (marks) b.append(marks);
     const m = modelsOf(n);
     if (m.served.length || m.asked) {
       const models = el("span", { className: "rail-models" });
@@ -259,6 +266,23 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     return li;
   }
 
+  // The room's activity on a node: the steers, then the chat, each absent at zero.
+  function activity(n: FlowNode): HTMLElement | undefined {
+    if (!n.steered && !n.chat) return undefined;
+    const row = el("span", { className: "rail-activity" });
+    if (n.steered) row.append(el("span", { className: "rail-steered", textContent: `↪ steered ×${n.steered}` }));
+    if (n.chat) {
+      const c = el("span", { className: "rail-chat" });
+      c.setAttribute("role", "img");
+      c.setAttribute("aria-label", `${n.chat} chat message${n.chat === 1 ? "" : "s"} during this run`);
+      c.append(glyph("chat"), String(n.chat));
+      row.append(c);
+    }
+    return row;
+  }
+
+  const queuedText = () => `${queued} queued → next run`;
+
   function ghostItem(persona: string, i: number): HTMLLIElement {
     const li = el("li", { className: "rail-node" });
     li.dataset.run = `plan-${i}-${persona}`;
@@ -271,6 +295,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     line.append(glyph(glyphFor(persona, "")), el("span", { className: "rail-persona", textContent: personaLabel(persona) }), chipEl);
     b.append(line, el("span", { className: "rail-detail" }));
     li.append(b);
+    if (i === 0 && queued) li.append(el("span", { className: "rail-queued", textContent: queuedText() }));
     return li;
   }
 
@@ -295,7 +320,21 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     const edges = new Set<string>();
     const judges = new Map<string, number>();
     const done = new Set<string>();
+    const marks = new Map<string, number>();
     const last = prev;
+    // A mark or chip that is new, or whose count grew, arrives.
+    const arrive = (key: string, e: Element | null, n: number) => {
+      if (!e) return;
+      marks.set(key, n);
+      if (last && n > (last.marks.get(key) ?? 0)) animate(e, "arrive");
+    };
+    for (const li of path.querySelectorAll<HTMLElement>("li.rail-node")) {
+      const n = nodeOf(li.dataset.run!);
+      const k = stable(li.dataset.run!);
+      arrive(`steered:${k}`, li.querySelector(".rail-steered"), n?.steered ?? 0);
+      arrive(`chat:${k}`, li.querySelector(".rail-chat"), n?.chat ?? 0);
+    }
+    arrive("queued", path.querySelector(".rail-queued"), queued);
     for (const li of path.querySelectorAll<HTMLElement>("li.rail-node")) {
       const k = stable(li.dataset.run!);
       runs.add(k);
@@ -323,7 +362,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       done.add(li.dataset.phase!);
       if (last && !last.done.has(li.dataset.phase!)) animate(li, "fill");
     }
-    prev = { runs, edges, judges, done };
+    prev = { runs, edges, judges, done, marks };
   }
 
   function applyMarks(): void {
@@ -365,6 +404,8 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       items.push(li);
       prev = li.dataset.run;
     });
+    // With no ghost to carry it, the queue sits in the gap after the last (the live) node.
+    if (queued && !flow.ghosts?.length) items.push(el("li", { className: "rail-queued", textContent: queuedText() }));
     if (flow.split) {
       const ol = el("ol", { className: "rail-parts" });
       for (const p of parts(flow.split)) {
@@ -401,9 +442,9 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     if (focused) buttons.get(focused)?.focus();
   }
 
-
-  function show(f: Flow | undefined, phase: string, now: number, cursor?: number): void {
+  function show(f: Flow | undefined, phase: string, now: number, cursor?: number, q = 0): void {
     flow = f;
+    queued = q;
     phaseNow = phase;
     clock = now;
     if (cursor === undefined) extra = [];
@@ -420,47 +461,12 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       known = new Set(f.nodes.map((n) => n.run));
     }
     render();
-    sync();
   }
-
-  function sync(): void {
-    const ended = !!flow && flow.nodes.length > 0 && terminal.has(phaseNow);
-    controls.hidden = !ended && !running;
-    replayBtn.hidden = !ended || !!running;
-    skipBtn.hidden = !running;
-    nextBtn.hidden = !running || !(opts.reduced ?? prefersReduced)();
-  }
-
-  function finish(): void {
-    running = undefined;
-    const h = held;
-    held = undefined;
-    if (h) show(h.f, h.phase, h.now, h.cursor);
-    sync();
-  }
-
-  replayBtn.onclick = () => {
-    if (!flow || running) return;
-    const f = flow, phase = phaseNow;
-    const r = replay({ set: (g, p, n) => show(g, p, n) }, f, phase, {
-      reduced: (opts.reduced ?? prefersReduced)(), schedule: opts.schedule, cancel: opts.cancel,
-    });
-    running = r;
-    void r.done.then(() => { if (running === r) finish(); });
-    sync();
-  };
-  nextBtn.onclick = () => running?.next();
-  skipBtn.onclick = () => {
-    if (!running) return;
-    running.skip();
-    finish();
-  };
 
   return {
     el: root,
-    set(f, phase, now, cursor) {
-      if (running) held = { f, phase, now, cursor };
-      else show(f, phase, now, cursor);
+    set(f, phase, now, cursor, q) {
+      show(f, phase, now, cursor, q);
     },
     tick(now) {
       clock = now;
@@ -470,6 +476,12 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       }
     },
     live(e) {
+      const st = steerOf(e);
+      if (st && !steers.some((x) => x.seq === st.seq)) {
+        steers = [...steers, st].sort((a, b) => a.seq - b.seq).slice(-maxSteers);
+        const n = carded ? nodeOf(carded) : undefined;
+        if (n) fillCard(n);
+      }
       if (e.type !== "tool_result" || !e.runId) return;
       const n = nodeOf(e.runId);
       if (!n || !isLive(n) || e.seq <= Math.max(through, extra.at(-1)?.seq ?? 0)) return;
@@ -487,10 +499,6 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     },
     dispose() {
       removeEventListener("scroll", follow, { capture: true });
-      running?.stop();
-      running = undefined;
-      held = undefined;
-      sync();
     },
   };
 }
