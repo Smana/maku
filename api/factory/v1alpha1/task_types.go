@@ -429,6 +429,7 @@ type ProfileStatus struct {
 // phases fill.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.trace) || has(self.trace)",message="a task's trace is never removed: its runs are parented on it"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.usageSettled) || !oldSelf.usageSettled || (has(self.usageSettled) && self.usageSettled)",message="settled usage stays settled"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.overlap) || has(self.overlap)",message="a task's overlap evaluation is never removed"
 type TaskStatus struct {
 	// +kubebuilder:validation:Enum=Received;Rejected;Triaged;Queued;Implementing;NoOp;Reviewing;AwaitingCI;AutoMerging;AwaitingHuman;Merged;Verifying;Done;Reverted;Escalated;Closed;Stopped;Split;Coordinating
 	// +optional
@@ -441,6 +442,9 @@ type TaskStatus struct {
 	// The C7 answer, recorded as-is (§2).
 	// +optional
 	Classification *Classification `json:"classification,omitempty"`
+	// The bounded outcome-overlap evaluation, persisted before implementation starts.
+	// +optional
+	Overlap *OverlapStatus `json:"overlap,omitempty"`
 	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness.
 	// +optional
 	Profile *ProfileStatus `json:"profile,omitempty"`
