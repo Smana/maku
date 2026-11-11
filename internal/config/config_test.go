@@ -652,6 +652,61 @@ func TestLoadSlackDecide(t *testing.T) {
 	}
 }
 
+// human.slackIntents is the classifier's switch: off by default; on, it names a declared sponsored
+// principal, one workspace and the gateway route, and every bound has a default (SI3, SI13, SI18).
+const slackIntentsBlock = access + "  roomctlClientIDFile: /etc/room-broker/oidc/roomctl\n  mcp:\n    enabled: true\n" +
+	"    sponsored: [{name: slack-app, clientIDFile: /etc/slack/client-id}]\n" +
+	"  slackIntents:\n    principal: slack-app\n    teamID: T01ABC\n    url: http://gw/v1\n    apiKeyFile: /etc/classifier/key\n"
+
+const intentsConfig = slackIntentsBlock + "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+
+func TestSlackIntentsDefaults(t *testing.T) {
+	if c, err := Load(write(t, valid)); err != nil {
+		t.Fatal(err)
+	} else if _, on := c.SlackIntents(); on {
+		t.Fatal("slackIntents is on by default")
+	}
+	cfg, err := Load(write(t, valid+intentsConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, on := cfg.SlackIntents()
+	if !on {
+		t.Fatal("the block is set and reads as off")
+	}
+	if got.MinConfidence != 0.7 || got.ConfirmTTL.Duration != 10*time.Minute || got.MaxInputChars != 2000 ||
+		got.DailyCalls != 500 || got.PerUserPerHour != 20 || got.RetentionDays != 30 ||
+		got.Model != ClassifyModel || got.Deadline.Duration != 5*time.Second {
+		t.Fatalf("defaults = %+v", got)
+	}
+}
+
+func TestSlackIntentsRefusals(t *testing.T) {
+	for name, c := range map[string]struct{ body, want string }{
+		"a principal that is not sponsored": {strings.Replace(intentsConfig, "principal: slack-app\n    teamID: T01ABC\n    url", "principal: other\n    teamID: T01ABC\n    url", 1), "human.slackIntents.principal"},
+		"a bad team":                        {strings.Replace(intentsConfig, "teamID: T01ABC", "teamID: x", 1), "human.slackIntents.teamID"},
+		"minConfidence above one":           {strings.Replace(intentsConfig, "url: http://gw/v1", "url: http://gw/v1\n    minConfidence: 1.5", 1), "human.slackIntents.minConfidence"},
+		"minConfidence negative":            {strings.Replace(intentsConfig, "url: http://gw/v1", "url: http://gw/v1\n    minConfidence: -0.2", 1), "human.slackIntents.minConfidence"},
+		"a confirmTTL under a minute":       {strings.Replace(intentsConfig, "url: http://gw/v1", "url: http://gw/v1\n    confirmTTL: 30s", 1), "human.slackIntents.confirmTTL"},
+		"a confirmTTL over an hour":         {strings.Replace(intentsConfig, "url: http://gw/v1", "url: http://gw/v1\n    confirmTTL: 2h", 1), "human.slackIntents.confirmTTL"},
+		"maxInputChars under 200":           {strings.Replace(intentsConfig, "url: http://gw/v1", "url: http://gw/v1\n    maxInputChars: 100", 1), "human.slackIntents.maxInputChars"},
+		"another model":                     {strings.Replace(intentsConfig, "url: http://gw/v1", "url: http://gw/v1\n    model: tier-frontier", 1), "human.slackIntents.model"},
+		"no url":                            {strings.Replace(intentsConfig, "    url: http://gw/v1\n", "", 1), "human.slackIntents.url"},
+		"no apiKeyFile":                     {strings.Replace(intentsConfig, "    apiKeyFile: /etc/classifier/key\n", "", 1), "human.slackIntents.apiKeyFile"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(write(t, valid+c.body))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+	local := strings.Replace(localConfig, "human:\n", "human:\n  slackIntents:\n    principal: slack-app\n    teamID: T01ABC\n", 1)
+	if _, err := Load(write(t, local)); err == nil || !strings.Contains(err.Error(), "human.slackIntents") {
+		t.Fatalf("mode local: %v", err)
+	}
+}
+
 // v0.31.0 serves the maku_ names only, so the one-release switch is gone, and strict decode refuses it.
 func TestLoadRefusesTheMetricsSwitch(t *testing.T) {
 	for _, body := range []string{valid + "metrics:\n  makuNames: true\n", valid + "metrics:\n  makuNames: false\n"} {
