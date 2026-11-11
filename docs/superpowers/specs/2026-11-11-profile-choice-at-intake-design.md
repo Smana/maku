@@ -63,20 +63,24 @@ sequenceDiagram
 | O2 | **Override.** The user can pin a profile with `profile:<name>` (an issue label, or an intake field). It is honoured only if the class's floor or `harnessAllowed` lists it, refused otherwise with a plain reason, and recorded as `source=label` | A free choice of any profile: bypasses TE2, the floor rule |
 | O3 | **Introspection.** A read-only MCP tool shows the options: classes, their profiles, the roles each profile runs, the merge mode | Options only inside the plan: the user cannot ask "what else is there" |
 | P1 | **The word is "profile", never "workflow".** Docs, UI, tools and messages say *harness profile* (first use) and *profile* after. See [Vocabulary](#vocabulary) | "workflow": already means a GitHub Actions workflow in these docs (`oracle.workflow`, holdout workflows, `.github/workflows/`), and no `Workflow` object exists |
-| P2 | **The catalogue is read live from the factory**, through `GET /v1/catalogue/{owner}/{name}` built from the accepted snapshot, cached by the broker for 60 s. `human.intake.plan.classes` becomes a fallback, then goes (stage 5) | (a) a second copy in broker config: drifts from `MergePolicy` the day a class is promoted. (b) the broker reading the CRs itself: a second Kubernetes reader and RBAC for the broker, and it would miss the repository file |
+| P2 | **The catalogue is read live from the factory**, through `GET /v1/catalogue/{owner}/{name}` built from the accepted snapshot, cached by the broker for 60 s per repository and caller (P18). `human.intake.plan.classes` becomes a fallback, then goes (stage 5) | (a) a second copy in broker config: drifts from `MergePolicy` the day a class is promoted. (b) the broker reading the CRs itself: a second Kubernetes reader and RBAC for the broker, and it would miss the repository file |
 | P3 | **The merge outcome is the broker's, not the model's.** It is derived from the class's mode and `approveToMerge`; the model writes only `why` | The model naming the outcome: it would be wrong the day a class is promoted |
 | P4 | **Accepting the suggestion pins nothing.** The default on confirm is *the factory's choice*: the class (when its route carries one, P7) and no `profile:`. A profile is pinned only when the user picks one, the suggested one included | Every accepted suggestion pins: each intake task would leave the evaluation's cohorts, and the planner would silently replace the scoper |
 | P5 | **Only a maintainer may pin** (`Repository.spec.maintainers`), the same rule as a `class:` label (T3: labels are intent, never authority). On GitHub the label's last applier is checked; on `run_create` the sponsor's linked login. Anyone else gets the suggestion only: the surfaces offer no pin, and a pin that arrives anyway is refused `not_maintainer` (owner, 2026-11-11) | Anyone with write access may pin since variants never go below the floor: true for safety, not for cost, as a variant can raise the tier |
 | P6 | **The factory is the authority; intake is an early check.** `plan_check` refuses a pin the catalogue refuses; triage checks again, because a label added on GitHub never passed intake. A pin refused at triage runs the task as if unpinned and says why | Intake-only checking: a hand-applied label would bypass it |
-| P7 | **The class reaches the factory.** `issue_file`'s "start" applies `class:<c>` (and `profile:<p>` when pinned) with the developer's `gh` **before** `factory/ready`; `run_create` gains `class` and `profile` fields bound by the plan hash | Leaving the class display-only, as today: the suggestion would describe a run that does not happen |
-| P8 | **Only a profile pin puts a task in the `labeled` cohort; a class label alone no longer excludes it from the evaluation** (owner, 2026-11-11). `source=label` then means one thing: a person chose the profile. Past `source=label` data, recorded under the old rule, is annotated "class label" in the dashboards and in `docs/factory.md` | Today's rule (a declared class is `labeled`): with P7, every intake task would leave the evaluation |
+| P7 | **The class reaches the factory.** `issue_file`'s "start" applies `class:<c>` (and `profile:<p>` when pinned) with the developer's `gh` **before** `factory/ready`; `run_create` gains `class` and `profile` fields bound by the plan hash. The labels are applied through `gh api -X POST repos/{r}/issues/{n}/labels -f labels[]=<label>`, which creates a missing label (`gh issue edit --add-label` fails on one); `factory/ready` keeps its current path (2026-11-11, owner: use defaults) | Leaving the class display-only, as today: the suggestion would describe a run that does not happen |
+| P8 | **Only a profile pin puts a task in the `labeled` cohort; a class label alone no longer excludes it from the evaluation** (owner, 2026-11-11). This holds for every source, a scheduled task's `predictClass` included (2026-11-11, owner: use defaults). `source=label` then means one thing: a person chose the profile. Past `source=label` data, recorded under the old rule, is annotated "class label" in the dashboards and in `docs/factory.md` | Today's rule (a declared class is `labeled`): with P7, every intake task would leave the evaluation |
 | P9 | **A pin is honoured in `observe` and in `apply`.** The evaluation mode governs the scoper's recommendation only; a pinned task is never offered one (`profileChoices` is nil for `source=label`, as today) | Pins only in `apply`: `observe` would ignore a person's explicit choice |
 | P10 | **Escalation never steps to the profile a task already runs, pinned or scoper-chosen alike: it asks a human straight away** (owner, 2026-11-11). `stepUp` skips when the class's target equals the active profile. **Behaviour change:** today a scoper-applied variant that equals the escalation target runs once more under the same profile; from stage 3 it escalates to a maintainer instead. Escalation from a different profile is unchanged | (a) no escalation for pins: a pinned task that runs out of budget would skip a richer profile. (b) keeping the same-profile rerun for scoper picks: one rule for two cases, and a rerun under unchanged settings rarely converges |
 | P11 | **One introspection tool, `classes_list`**, with an optional `class` argument for the detail | Two tools (`classes_list` and `policy_explain`): the second is the first filtered |
 | P12 | **Refusals are a closed list** with one sentence each, shared by intake and triage (see [Refusals](#refusals)) | Free-text reasons: a metric cannot label them and a reader gets three spellings |
 | P13 | **The planner and the scoper stay independent.** The planner's suggestion is never passed to the scoper as a hint; how often they agree is a metric (`agent_factory_profile_agreement_total`) (owner, 2026-11-11) | A hint: the scoper would echo the planner, and the evaluation could no longer compare them |
-| P14 | **A `plan/v1` confirmed after the upgrade is re-planned as `plan/v2` and shown again**, with its new hash, before anything is filed (owner, 2026-11-11). `plan_changed` is never the user's dead end | (a) refusing it `plan_changed` and leaving the user to start over. (b) accepting `plan/v1` for one release: a plan filed without the suggestion the user was meant to see |
+| P14 | **A `plan/v1` confirmed after the upgrade is upgraded to `plan/v2` and shown again**, with its new hash, before anything is filed (owner, 2026-11-11). The upgrade is deterministic, with no model call (`plan_check` makes none, and a re-plan would spend the requester's `dailyPlans`): same issues, `profile: ""`, a suggestion computed from the catalogue with the factory's choice and an empty `why`, never filed (2026-11-11, owner: use defaults). `plan_changed` is never the user's dead end | (a) refusing it `plan_changed` and leaving the user to start over. (b) accepting `plan/v1` for one release: a plan filed without the suggestion the user was meant to see |
 | P15 | **A profile is offered at intake only if it sets `template`**, so the roles shown are always exact. A profile without one stays valid as a floor and still runs; the catalogue lists it with `offered: false, notOffered: "no_template"` (owner, 2026-11-11) | Showing "pair, or trio at tier frontier": a guess the user cannot confirm |
+| P16 | **Merge order is 1 → 4 → 2 → 3 → 5** (owner, 2026-11-11: use defaults). Stage 4 (P8) depends on nothing in 2 or 3: before pins exist nothing is `labeled`. Stage numbers keep their names | Stage order 1 → 2 → 3 → 4: between stages 2 and 4 every maintainer intake task would be `labeled` |
+| P17 | **The catalogue route serves humans and sponsored principals.** A human, or a sponsored principal whose `onBehalfOf` resolves to a login exactly as `POST /v1/tasks` resolves it; `maintainer` is that login's. The route is mounted whenever the API is, not behind `policyManagement.promotion` (owner, 2026-11-11: use defaults) | The `/v1/policy/evidence` reader (`human_only`): the Slack App, a sponsored principal, would get no catalogue |
+| P18 | **The catalogue cache is keyed by caller.** Key `(lowercase repository, caller login)`, 60 s TTL, bounded LRU of 256 entries (owner, 2026-11-11: use defaults) | Per repository only: one caller's `maintainer` flag would be served to another |
+| P19 | **Classes are validated per plan repository.** The model is given each candidate repository's offered classes; `Check` validates `issues[].class` against the plan repository's catalogue, and the ceiling is that class's `ceilingUSD` (owner, 2026-11-11: use defaults). Material `roles` follow the floor, not the suggestion (see [The plan](#the-plan-planv2)) | The broker's global class table: a plan weighing several repositories would use another's classes |
 
 ## Vocabulary
 
@@ -137,15 +141,15 @@ saying "workflow" is reserved for GitHub Actions.
   `unarmed`, as in the `policy` task fact.
 - **`maintainer`** is the caller's own flag (P5), so a surface can say before filing that a pin will
   be refused.
-- The broker caches per repository for 60 s. A factory that does not answer: until stage 5 the broker
+- The broker caches per (lowercase repository, caller login) for 60 s, because the answer carries the caller's `maintainer` flag (P18), in a bounded LRU of 256 entries. A factory that does not answer: until stage 5 the broker
   falls back to `human.intake.plan.classes` and plans without a suggestion; from stage 5 it refuses
   `catalogue_unavailable`.
 
 ## The plan: `plan/v2`
 
 Two fields per issue. `apiVersion` is material, so every hash changes at the upgrade. A `plan/v1`
-confirmed after it (a Slack proposal posted before, or a harness mid-loop) is re-planned as `plan/v2`
-from the same request and answers, and shown again with its suggestion and new hash; the user
+confirmed after it (a Slack proposal posted before, or a harness mid-loop) is upgraded to `plan/v2`
+deterministically, with no model call (P14): same issues, the factory's choice and an empty `why`, shown again with its new hash; the user
 confirms that one (P14).
 
 | Field | Material? | Who writes it | Meaning |
@@ -171,8 +175,7 @@ developer`), or, when the user keeps the factory's choice and the suggestion dif
 (`A<n> profile: factory's choice; suggested review-frontier`), so the GitHub issue carries what was
 chosen.
 
-The roles shown (`issues[].roles`) come from the pinned or suggested profile's template. With the
-factory's choice and a floor without a template, the plan says the roles are chosen at triage (P15).
+The material roles (`issues[].roles`) are the pinned profile's template, else the floor's template, else `[]` ("chosen at triage", P15), because an unpinned task runs the floor or the scoper's pick, not the suggestion (P19). The suggested profile's roles are display only, inside `suggestion`.
 
 ## Override and the factory
 
@@ -310,7 +313,6 @@ lists the factory's evaluation mode and control share. Read-only, as D9 of facto
 | `intake_profile_refusals_total` (broker) | `surface`, `reason` | pins refused at intake |
 | `intake_catalogue_reads_total` (broker) | `outcome` = `hit`\|`miss`\|`error` | catalogue reads |
 | `agent_factory_profile_pins_total` (factory) | `class`, `profile`, `outcome` = `honoured`\|`refused`, `reason` | pins seen at triage |
-
 | `agent_factory_profile_agreement_total` (factory) | `class`, `outcome` = `agree`\|`differ`\|`no_suggestion`\|`no_recommendation` | resolved tasks of a class that offers a choice: the planner's suggestion (`spec.intake.suggested`) against the scoper's recommendation (P13). The issue path carries no suggestion, so it counts `no_suggestion` |
 
 `class` and `profile` are config names (bounded); a name no longer in config is `other`, as
@@ -324,10 +326,10 @@ lists the factory's evaluation mode and control share. Read-only, as D9 of facto
 | 1 | Catalogue endpoint, `classes_list`, the settings *Profiles* row | none: read-only |
 | 2 | `plan/v2` with `suggestion` (display), shown in the skill and Slack; `run_create` and `issue_file` carry the class (P7) | maintainers' intake tasks now carry their class |
 | 3 | Pins: the `profile` revision, `profile:` label, `TaskRequest.profile`, triage checks, `requested`/`refused`, refusals, metrics, P10 | pinned tasks run their profile; same-profile escalation asks a human (P10) |
-| 4 | P8, the cohort rule; the "class label" annotation on past `source=label` data | class-labelled tasks join the cohorts |
+| 4 | P8, the cohort rule (merged second, P16); the "class label" annotation on past `source=label` data | class-labelled tasks join the cohorts |
 | 5 | Drop `human.intake.plan.classes` | broker needs the catalogue |
 
-Each stage is one Maku release; ai-native-ref bumps the pin per stage. Stages 2 and 4 change what the
+Each stage is one Maku release, merged in the order 1, 4, 2, 3, 5 (P16); ai-native-ref bumps the pin per stage. Stages 2 and 4 change what the
 evaluation counts, so each starts with `evaluation.mode: observe` on the live factory.
 
 ## Testing
@@ -339,7 +341,7 @@ evaluation counts, so each starts with `evaluation.mode: observe` on the live fa
 - Triage: each refusal, label order with `factory/ready`, label applier checks, refused pin runs
   unpinned, honoured pin is `labeled`/`label` in observe and apply.
 - Escalation: no step to the active profile, for a pinned and a scoper-applied task alike.
-- Upgrade: a `plan/v1` confirmed after the upgrade is re-planned and shown again, never filed (P14).
+- Upgrade: a `plan/v1` confirmed after the upgrade is upgraded without a model call and shown again, never filed (P14).
 - Agreement metric: `agree`, `differ`, `no_suggestion`, `no_recommendation`.
 - Surfaces: skill text, Slack proposal lines and select, `issue_file` label order, settings row.
 - Full gate: `task check`. Live proof on the next aws-0 session: one pinned, one refused, one default.
