@@ -1037,12 +1037,20 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 #app > .room-body { flex: 1 0 auto; }
 #app > .page-dock { margin-top: auto; }
 .room-body:not(.has-rail) > .rail { display: none; }
-.rail-dots { gap: 6px; align-items: center; margin: 8px 16px 0; padding: 6px 8px; min-height: var(--hit); background: var(--card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
-.rail-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--flow-writer); }
-.rail-dot[data-tone="judge"] { background: var(--flow-judge); }
-.rail-dot[data-state="ghost"] { background: transparent; border: 2px dashed var(--flow-plan); box-sizing: border-box; }
+/* The narrow strip: "scoper ✓ · tester ✓ · implementer ● · reviewer ○". Inline text, so a long path
+   wraps at the separators (or anywhere) instead of scrolling; the glyph beside each word carries the
+   state, the lane colour only tints it. */
+.rail-dots {
+  box-sizing: border-box; max-width: calc(100% - 32px); margin: 8px 16px 0; padding: 6px 8px; min-height: var(--hit);
+  text-align: left; font: inherit; font-size: var(--text-small); line-height: var(--leading-small); overflow-wrap: anywhere;
+  color: var(--foreground); background: var(--card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.rail-dot { white-space: nowrap; }
+.rail-dot-glyph { color: var(--flow-writer); }
+.rail-dot[data-tone="judge"] .rail-dot-glyph { color: var(--flow-judge); }
+.rail-dot[data-state="ghost"] .rail-dot-glyph { color: var(--flow-plan); }
 @media (max-width: 1099.98px) {
-  .room-body.has-rail > .rail-dots:not([hidden]) { display: flex; }
+  .room-body.has-rail > .rail-dots:not([hidden]) { display: block; }
   .room-body.has-rail > .rail.open {
     display: block; position: fixed; z-index: 3; top: 0; right: 0; bottom: 0; width: min(320px, 100vw);
     overflow-y: auto; padding: 16px; box-sizing: border-box; background: var(--surface-raised); box-shadow: var(--shadow-dock);
