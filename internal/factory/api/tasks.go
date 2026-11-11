@@ -256,17 +256,10 @@ const reasonLinkUnverified = "link_unverified"
 func (s *Server) sponsorOf(ctx context.Context, cfg *config.Config, sp *config.Sponsored, in TaskRequest) (string, int, string) {
 	login := sp.Sponsor
 	if in.OnBehalfOf != "" {
-		id, found := strings.CutPrefix(in.OnBehalfOf, "slack:")
-		if !found {
-			return "", http.StatusForbidden, "not_linked" // only slack:<team>/<user> links exist
-		}
-		var ok bool
-		if login, ok = sp.OnBehalfOf.Slack[id]; !ok {
-			var code int
-			var reason string
-			if login, code, reason = s.selfServeLogin(ctx, sp, id, in.Repository); reason != "" {
-				return "", code, reason
-			}
+		var code int
+		var reason string
+		if login, code, reason = s.onBehalfLogin(ctx, sp, in.OnBehalfOf, in.Repository); reason != "" {
+			return "", code, reason
 		}
 	}
 	rc := cfg.RepositoryFor(in.Repository)
@@ -277,6 +270,20 @@ func (s *Server) sponsorOf(ctx context.Context, cfg *config.Config, sp *config.S
 		return "", http.StatusForbidden, "not_a_maintainer"
 	}
 	return strings.ToLower(login), 0, ""
+}
+
+// onBehalfLogin is the GitHub login a non-empty onBehalfOf names: the config's map first, else the
+// self-serve link, never a login the caller sent. It does not ask whether the login maintains
+// anything: sponsorOf holds it to the maintainers, and the catalogue only reports whether it is one.
+func (s *Server) onBehalfLogin(ctx context.Context, sp *config.Sponsored, onBehalfOf, repository string) (string, int, string) {
+	id, found := strings.CutPrefix(onBehalfOf, "slack:")
+	if !found {
+		return "", http.StatusForbidden, "not_linked" // only slack:<team>/<user> links exist
+	}
+	if login, ok := sp.OnBehalfOf.Slack[id]; ok {
+		return login, 0, ""
+	}
+	return s.selfServeLogin(ctx, sp, id, repository)
 }
 
 // selfServeLogin is the GitHub login a Slack user's self-serve link resolves to on repository.

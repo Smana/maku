@@ -171,6 +171,8 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
 		mux.HandleFunc("POST /v1/coordinations/{task}/recovery", s.recoverCoordination)
 	}
+	// P17: the catalogue is mounted whenever the API is, not behind policyManagement.promotion.
+	mux.HandleFunc(catalogueRoute, s.catalogue)
 	if s.promotionOn(cfg) { // stage 6: off lists no policy route, so each is a 404
 		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
 		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
