@@ -161,8 +161,14 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   configured `factoryLogin`. A forged newer comment or an empty login refuses the fallback rather than
   using an older comment. No resolved room is not by itself an error for a public issue, but a missing,
   untrusted, or internal-only question refuses as `needs_room_access` and writes nothing.
-  The form shows the question, recommendation and exact Decision-section layout, requires a one-line
-  `answer`, and defaults `send` to no. On explicit send it re-reads the issue and requires the body, labels
+  When the question is the acceptance question (the scoper's "which command or observation proves it is
+  done?"), the answer is written into `## Acceptance check` first: the section is created after "What it
+  should be" (before `## Decisions`) when the issue has none, a `[NEEDS CLARIFICATION: g<n> …]` marker in it
+  is replaced, and an existing section with text and no marker gets the answer as a new paragraph. The
+  matching `D<n>: Acceptance check: <answer>` record follows. Any other question appends only the Decision.
+  The form shows the question, recommendation and the full line diff of the body, takes a one-line
+  `answer` (blank accepts the recommendation, with the scoper's "No acceptance stated; proceed on the
+  scoper's own:" lead dropped), and defaults `send` to no. On explicit send it re-reads the issue and requires the body, labels
   and `updatedAt` to be unchanged before one body-only `gh issue edit --body-file=-`. A decline, cancel,
   false toggle, client without forms, wrong labels, conflict, or missing question writes nothing. Success
   is `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply factory/ready"}`; the
@@ -295,7 +301,7 @@ broker refuses revision fields or `gaps`; a newer broker keeps legacy hashes and
 the old `Question` view, so existing Slack proposals still render and confirm.
 
 After filing, `need_answer` is the scoper-bounce counterpart: it reads the authorized room question,
-confirms the answer and appends the next issue-local Decision to the issue body. It never adds or
+confirms the answer and appends the next issue-local Decision to the issue body; an acceptance answer is also written into `## Acceptance check`, created when the issue has none. It never adds or
 removes a label; a maintainer re-applies `factory/ready` when the answer is ready for another run.
 
 The refusals you can meet, with the next step. The broker answers a plan or a check it will not make
