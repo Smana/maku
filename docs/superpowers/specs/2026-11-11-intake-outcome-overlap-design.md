@@ -92,7 +92,7 @@ Return at most **20 candidates** across these sources, in order:
 
 1. Task CRs across issue, sponsored API, and scheduled intake.
 2. AgentRun history and room outcomes.
-3. GitHub issues/PRs, only for matched-candidate evidence or unresolved coverage gaps.
+3. GitHub issues/PRs, only for matched-candidate evidence. Absence outside the retrieved sources is a documented blind spot, not a trigger for unrestricted history search.
 
 Do not perform unrestricted semantic GitHub searches. Do not add an index until profiling shows a
 need; any future index is a separate optimization.
@@ -136,6 +136,7 @@ Active states are `Received`, `Triaged`, `Queued`, `Implementing`, `Reviewing`, 
 post-merge verification remains work in progress.
 
 `no_match` means **no duplicate found in the checked sources**, never proof that no duplicate exists.
+The scoper may return `no_match` after examining all candidates and ruling every one out as irrelevant.
 A candidate-source outage produces `unverified_overlap`; Task-status write failures retry
 reconciliation without proceeding.
 
