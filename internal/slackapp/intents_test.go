@@ -56,7 +56,7 @@ func TestShadowAnswersAsToday(t *testing.T) {
 	rig.replySaid("U02DEF", "1729.9001", reply)
 
 	posts := rig.posts()
-	if len(posts) != 1 || posts[0].text != strings.ReplaceAll(unknownQuestionLine, "%s", answerPage_()) || posts[0].meta != nil {
+	if len(posts) != 1 || posts[0].text != strings.ReplaceAll(unknownQuestionLine, "%s", roomPageLink()) || posts[0].meta != nil {
 		t.Fatalf("shadow must post exactly today's unknown line: %+v", posts)
 	}
 	if n := len(rig.broker.intents); n != 1 {
@@ -88,8 +88,8 @@ func TestShadowAnswersAsToday(t *testing.T) {
 	}
 }
 
-// answerPage_ is the room page the unknown line names.
-func answerPage_() string { return "<" + answerPage + "|the room page>" }
+// roomPageLink is the room page the unknown line names.
+func roomPageLink() string { return "<" + answerPage + "|the room page>" }
 
 func TestPhaseWordIsTheStatusKind(t *testing.T) {
 	rig, ab, _ := shadowRig(t, Channel{Intents: IntentsShadow})
