@@ -68,7 +68,9 @@ async function run() {
   const loaded = Date.now();
   const lastAt = Date.parse(events[events.length - 1].ts);
   const page = mountPreviewPage(document.getElementById("app")!, { snap, unsandboxed: params.has("many"),
-    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
+    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow,
+      // A note queued for the next run, so the rail shows its chip (none once the task is over).
+      ...(finished ? {} : { queued: { untrusted: true, items: [{ ref: 26, author: "human:291847362183", text: "Add the dashboard's screenshot to the PR." }] } }) },
     count: events.length, dashboards,
     ...(params.has("needs") || long ? { needs: async () => ({ apiVersion: "needs/v1", items: long ? [LONG_NEED, ...NEED_FIXTURES] : NEED_FIXTURES }) } : {}), now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });

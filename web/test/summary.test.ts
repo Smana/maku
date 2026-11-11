@@ -207,6 +207,12 @@ describe("changesSummary", () => {
   ] as const)("%s %j: %s", (type, payload, want) => {
     expect(changesSummary(ev(type, payload))).toBe(want);
   });
+  // A human's message moves a node's steered or chat count, or the queued notes; a queued note
+  // removed leaves the queue. The rail draws all three from the summary.
+  it.each([["steering"], ["none"], ["queued"]])("a human's %s message refetches", (delivery) => {
+    expect(changesSummary({ ...ev("message", { kind: "chat", delivery }), actor: { kind: "human", id: "human:a" } })).toBe(true);
+  });
+  it("a removed queued note refetches", () => expect(changesSummary(ev("state_changed", { kind: "queued_removed" }))).toBe(true));
 });
 
 // One fixture for Go and TS: the broker's own golden summaries, read where internal/summary keeps them.

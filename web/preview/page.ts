@@ -150,7 +150,7 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
       strip.update({ roomId: summary.room, snap, phase: state.phase, driver: state.driver, sealedBy: state.closed, sealed: state.sealed,
         summary, needs: needs.count(), now: state.latest(), running: state.running(), ran: state.ran(),
         dashboards: o.dashboards });
-      pane.show(summary.flow, summary.status.phase, now());
+      pane.show(summary.flow, summary.status.phase, now(), undefined, summary.queued?.items?.length ?? 0);
       runView.set(summary.flow?.nodes ?? []);
     },
     setSummary(s) { summary = s; },

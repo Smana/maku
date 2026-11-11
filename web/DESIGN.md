@@ -224,7 +224,7 @@ column. It is never a kicker above a heading and never a sentence.
 ## Layout
 
 The room page is three bands: the header (title strip), the log with the rail beside it from
-1100 px (`--log-w` column, then a 300 px rail), and the dock pinned at the foot. Below 1100 px
+1100 px (`--log-w` column, then a 360 px rail), and the dock pinned at the foot. Below 1100 px
 the rail folds into a row that opens it as a drawer. Phone breakpoints sit at 640 px (header and
 dock reflow, the settings nav becomes a scrolling row) and 720 px (settings forms and the
 repository table stack).

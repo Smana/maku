@@ -928,15 +928,15 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .icon-dot { fill: currentColor; }
 
 /* The run rail (rail.ts): a node's lane colour comes from data-tone, a plan step's from
-   data-state=ghost; role text never reaches a class. Past runs dim so the live one leads. */
+   data-state=ghost; role text never reaches a class. No node fades: a finished one's lane mutes
+   (its tone at 70% over the card, 3:1) and a ghost's is dashed, so its text keeps full contrast. */
 .rail { font-size: var(--text-small); min-width: 0; overflow-wrap: anywhere; }
 .rail[hidden] { display: none; }
 .rail-path, .rail-milestones { list-style: none; margin: 0; padding: 0; }
 .rail-node { position: relative; --lane: var(--flow-writer); }
 .rail-node[data-tone="judge"] { --lane: var(--flow-judge); }
 .rail-node[data-state="ghost"] { --lane: var(--flow-plan); }
-.rail-node[data-state="ghost"] > .rail-button { opacity: 0.6; }
-.rail-node[data-state="done"] > .rail-button { opacity: 0.72; }
+.rail-node[data-state="done"] > .rail-button { border-left-color: color-mix(in srgb, var(--lane) 70%, var(--card)); }
 .rail-button {
   display: grid; gap: 2px; width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left;
   font: inherit; color: var(--foreground); background: var(--card); cursor: pointer;
@@ -946,9 +946,11 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .rail-button[aria-current="true"] { border-color: var(--lane); }
 .rail-button[aria-pressed="true"] { background: var(--accent); color: var(--accent-foreground); }
-.rail-node[data-state="ghost"] .rail-button { background: transparent; border-style: dashed; cursor: default; }
-.rail-line { display: flex; gap: 6px; align-items: center; min-width: 0; }
-.rail-line .glyph { flex: none; width: 18px; height: 18px; color: var(--lane); }
+/* A ghost's button is disabled: it opts out of button:disabled's fade, as every node does. */
+.rail-node[data-state="ghost"] .rail-button { background: transparent; border-style: dashed; cursor: default; opacity: 1; }
+.rail-node[data-state="ghost"] .rail-persona { color: var(--muted-foreground); }
+.rail-line { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.rail-line .glyph { flex: none; width: 22px; height: 22px; color: var(--lane); }
 .rail-persona { font-size: var(--text-body); font-weight: 500; min-width: 0; }
 .rail-chip { margin-left: auto; white-space: nowrap; color: var(--muted-foreground); }
 .rail-chip[data-kind="ok"] { color: var(--success-text); }
@@ -956,6 +958,17 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-chip[data-kind="live"] { color: var(--lane); }
 .rail-judge { color: var(--flow-judge); white-space: nowrap; }
 .rail-detail { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+/* The room's activity on a node: who steered it (the card lists them), and its chat as a count. */
+.rail-activity { display: flex; flex-wrap: wrap; gap: 0 12px; align-items: center; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.rail-steered { color: var(--foreground); white-space: nowrap; }
+.rail-chat { display: inline-flex; gap: 4px; align-items: center; }
+.rail-chat .glyph { width: 16px; height: 16px; }
+.rail-chat .glyph path { vector-effect: non-scaling-stroke; }
+/* The notes waiting for the next run: on the next ghost, or in the gap after the live node. */
+.rail-queued {
+  display: block; width: fit-content; margin: 4px 0 0 12px; padding: 0 8px; border: 1px dashed var(--border); border-radius: 999px;
+  color: var(--muted-foreground); font-variant-numeric: tabular-nums;
+}
 /* Every served model, then the alias asked for, dimmer, when no served model is it. */
 .rail-models { display: flex; flex-wrap: wrap; gap: 0 4px; color: var(--muted-foreground); }
 .rail-models > :not(:first-child)::before { content: "·\00a0"; }
@@ -963,12 +976,11 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-asked { opacity: 0.8; }
 .rail-asked::after { content: " (asked)"; }
 /* A picked node's lines take its foreground: muted text on the accent was unreadable (v0.40.0). */
-.rail-button[aria-pressed="true"] :is(.rail-detail, .rail-models, .rail-model, .rail-chip, .rail-judge) { color: inherit; }
-.rail-node[data-state="done"] > .rail-button[aria-pressed="true"] { opacity: 1; }
+.rail-button[aria-pressed="true"] :is(.rail-detail, .rail-models, .rail-model, .rail-chip, .rail-judge, .rail-activity, .rail-steered) { color: inherit; }
 .rail-edge { display: flex; align-items: center; gap: 6px; padding-left: 4px; }
 .rail-edge svg { flex: none; }
 .rail-stroke { fill: none; stroke: var(--border); stroke-width: 2; }
-.rail-edge[data-state="ghost"] .rail-stroke { stroke: var(--flow-plan); stroke-dasharray: 3 3; opacity: 0.6; }
+.rail-edge[data-state="ghost"] .rail-stroke { stroke: var(--flow-plan); stroke-dasharray: 3 3; }
 .rail-edge-label { color: var(--muted-foreground); }
 .rail-round > button {
   width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left; font: inherit;
@@ -983,7 +995,7 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-milestones { display: grid; gap: 4px; margin-top: 8px; }
 .rail-milestone { display: flex; gap: 6px; align-items: center; color: var(--muted-foreground); }
 .rail-milestone::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted-foreground); }
-.rail-milestone[data-state="ghost"] { color: var(--flow-plan); opacity: 0.6; }
+.rail-milestone[data-state="ghost"] { color: var(--flow-plan); }
 .rail-milestone[data-state="ghost"]::before { background: transparent; border: 1px dashed var(--flow-plan); }
 /* Fixed, placed by rail.ts beside its node: inside the rail's scroll box it was clipped (v0.40.0).
    Its height is capped to the room the window has; a longer card scrolls on its own. */
@@ -995,13 +1007,18 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-card[hidden] { display: none; }
 .rail-card p { margin: 0; }
 .rail-card .hint { margin-left: 8px; color: var(--muted-foreground); }
+.rail-card .rail-card-head { margin-top: 6px; color: var(--muted-foreground); }
+.rail-steers { list-style: none; margin: 0; padding: 0; }
+.rail-earlier { color: var(--muted-foreground); }
 @media (prefers-reduced-motion: no-preference) {
   .rail-node.enter { animation: rail-enter 150ms ease-out; }
   .rail-stroke.draw { stroke-dasharray: var(--len); animation: rail-draw 400ms ease-out; }
   .rail-judge.tick { display: inline-block; animation: rail-tick 200ms ease-out; }
   .rail-milestone.fill::before { animation: rail-fill 300ms ease-out; }
+  .rail .arrive { animation: rail-arrive 180ms ease-out; }
   .rail-node[data-state="live"] > .rail-button { animation: rail-breathe 2.4s ease-in-out infinite; }
   @keyframes rail-enter { from { opacity: 0; transform: scale(0.96); } }
+  @keyframes rail-arrive { from { opacity: 0; transform: translateY(2px); } }
   @keyframes rail-draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
   @keyframes rail-tick { 50% { transform: scale(1.4); } }
   @keyframes rail-fill { from { transform: scale(0); } }
@@ -1024,7 +1041,6 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .rail-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--flow-writer); }
 .rail-dot[data-tone="judge"] { background: var(--flow-judge); }
 .rail-dot[data-state="ghost"] { background: transparent; border: 2px dashed var(--flow-plan); box-sizing: border-box; }
-.rail-dot[data-state="done"] { opacity: 0.72; }
 @media (max-width: 1099.98px) {
   .room-body.has-rail > .rail-dots:not([hidden]) { display: flex; }
   .room-body.has-rail > .rail.open {
@@ -1036,11 +1052,11 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 }
 @media (min-width: 1100px) {
   /* The column takes the window's width and the rail sits at its right edge; the composer shares
-     the grid (the rail's 300 px, the same 32 px gap). Cards grow with the column (no --log-w
+     the grid (the rail's 360 px, the same 32 px gap). Cards grow with the column (no --log-w
      cap here), prose inside them keeps a readable measure. */
   .room-body { --log-w: none; }
-  .page-dock { grid-template-columns: minmax(0, 1fr) 300px; column-gap: 32px; }
-  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 16px; align-items: start; padding-right: 16px; }
+  .page-dock { grid-template-columns: minmax(0, 1fr) 360px; column-gap: 32px; }
+  .room-body.has-rail { display: grid; grid-template-columns: minmax(0, 1fr) 360px; column-gap: 16px; align-items: start; padding-right: 16px; }
   .bubble .md, .handoff > .md, .notes { max-width: 100ch; }
   .room-body.has-rail > :not(.rail) { grid-column: 1; }
   .room-body.has-rail > .rail {

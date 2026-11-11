@@ -65,6 +65,15 @@ const pairs = (t: Tokens) => [
   ["the writer lane on a card", t["--flow-writer"], t["--card"], 3],
   ["the judge lane on a card", t["--flow-judge"], t["--card"], 3],
   ["the plan's ghosts on a card", t["--flow-plan"], t["--card"], 3],
+  // No fade on a ghost or a finished node (UI review Part 3): their text holds 4.5:1 on its own.
+  // A ghost's button is transparent, so it sits on the page as well as beside the cards.
+  ["the ghost milestone's word on a card", t["--flow-plan"], t["--card"], 4.5],
+  ["the ghost milestone's word on the page", t["--flow-plan"], t["--background"], 4.5],
+  ["a ghost node's persona on a card", t["--muted-foreground"], t["--card"], 4.5],
+  ["a ghost node's persona on the page", t["--muted-foreground"], t["--background"], 4.5],
+  // A finished node's lane: its tone at 70% over the card, muted beside the live node's yet 3:1.
+  ["a finished writer's muted lane border on a card", mix(t["--flow-writer"], t["--card"], 0.7), t["--card"], 3],
+  ["a finished judge's muted lane border on a card", mix(t["--flow-judge"], t["--card"], 0.7), t["--card"], 3],
   // The dock (P4, P8): its own surface, the composer's boundary, the delivery segments.
   ["text on the dock", t["--foreground"], t["--surface-raised"], 4.5],
   ["muted text on the dock (session line, hints)", t["--muted-foreground"], t["--surface-raised"], 4.5],

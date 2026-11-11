@@ -124,6 +124,8 @@ export interface Summary {
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
   actions: { kind: string; what: string; cli?: string }[];
   notes: { untrusted: true; items: { at: string; run: string; text: string }[] };
+  // The notes queued for the next run, oldest first; absent when none waits (omitzero).
+  queued?: { untrusted: true; items: { ref: number; author: string; text: string }[] };
   flow?: Flow;
   coordination?: CoordinationView;
   cursor: string;
@@ -142,13 +144,14 @@ export async function fetchSummary(id: string, get: typeof fetch = fetch): Promi
   return s;
 }
 
-// changesSummary is whether the broker's fold (internal/summary) reads e: only then is the
-// summary refetched, never on a run's chat or tool calls.
+// changesSummary is whether the summary reads e, in the broker's fold (internal/summary) or in the
+// queue it attaches: only then is the summary refetched, never on a run's chat or tool calls. A
+// human's message moves a node's steered or chat count, or the queued notes.
 export function changesSummary(e: RoomEvent): boolean {
   const kind = e.payload?.kind;
   switch (e.type) {
-    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase";
-    case "message": return kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
+    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase" || kind === "queued_removed";
+    case "message": return e.actor?.kind === "human" || kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
     case "handoff": case "participant": return true;
     case "approval_requested": case "approval_decided": return true;
   }
