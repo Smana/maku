@@ -545,7 +545,7 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 			row.Coordination = &o
 		}
 		ins = append(ins, s.statusIn(room, row, web, live, expired))
-		if row.State == summary.StateFailed {
+		if row.State == summary.StateFailed || row.Task == "Escalated" { // an escalation names its reason too
 			failed[row.ID] = roomctrl.ForkSeq(room)
 		}
 		out = append(out, row)

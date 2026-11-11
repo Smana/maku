@@ -89,7 +89,7 @@ describe("the run status line", () => {
     strip.update(input({ summary: state({ state: "failed", phase: "Rejected", reasonCode: "ci_red" }) }));
     expect(text()).toBe(" Failed — CI stayed red");
     strip.update(input({ summary: state({ state: "waiting_for_human", phase: "Escalated", reason: "budget-task" }) }));
-    expect(text()).toBe(" Waiting — a maintainer decides"); // an escalated task waits, whatever its reason
+    expect(text()).toBe(" Escalated — a maintainer decides"); // an escalated task says so; a prose reason never enters the words
     strip.update(input({ summary: undefined, sealed: true }));
     expect(text()).toBe(" Stopped");
   });
@@ -98,7 +98,7 @@ describe("the run status line", () => {
     strip.update(input({ summary: undefined }));
     expect((h.querySelector(".run-status") as HTMLElement).hidden).toBe(true);
     strip.update(input({ summary: state({ state: "waiting_for_human", phase: "Escalated", reason: "<img src=x onerror=alert(1)>" }) }));
-    expect(h.querySelector(".run-status")?.textContent).toBe(" Waiting — a maintainer decides");
+    expect(h.querySelector(".run-status")?.textContent).toBe(" Escalated — a maintainer decides");
     expect(h.querySelector(".run-status img")).toBeNull();
   });
 });
@@ -227,7 +227,7 @@ describe("the title strip", () => {
   it("drops the phase chip under a status line, the raw phase its tooltip", () => {
     const { h, strip } = mount();
     strip.update(input({ summary: summary({ phase: "Escalated", reason: undefined, next: undefined }) }));
-    expect(h.querySelector(".run-status")?.textContent).toBe(" Waiting — a maintainer decides");
+    expect(h.querySelector(".run-status")?.textContent).toBe(" Escalated — a maintainer decides");
     expect(h.querySelector(".run-status")?.getAttribute("title")).toBe("phase: Escalated · room: Active");
     expect(h.querySelector(".chip-phase")).toBeNull();
   });

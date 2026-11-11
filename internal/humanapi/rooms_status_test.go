@@ -70,7 +70,7 @@ func TestRoomRowStatusIsTheStatusLine(t *testing.T) {
 	}{
 		{shared: "running with a role and age", task: &v1alpha1.TaskStatus{Phase: "Implementing"}, run: running},
 		{shared: "running between runs", task: &v1alpha1.TaskStatus{Phase: "Implementing"}},
-		{shared: "pr opened, waiting for ci", task: &v1alpha1.TaskStatus{Phase: "AwaitingCI", PR: 189}},
+		{shared: "AwaitingCI is waiting on CI, not finished", task: &v1alpha1.TaskStatus{Phase: "AwaitingCI", PR: 189}},
 		{shared: "several approvals for the viewer", task: &v1alpha1.TaskStatus{Phase: "Implementing"}, pending: 3, approvals: three},
 		{shared: "an issue to answer", task: &v1alpha1.TaskStatus{Phase: "Escalated", Issue: 7}, evs: answer},
 		{shared: "pr opened, handed to the reviewer", task: &v1alpha1.TaskStatus{Phase: "Reviewing", PR: 189}},
@@ -80,7 +80,7 @@ func TestRoomRowStatusIsTheStatusLine(t *testing.T) {
 		{shared: "a pr to review and merge", task: &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 42},
 			evs: []envelope.Event{{V: 1, Seq: 2, RoomID: roomID, Type: envelope.StateChanged, TS: now,
 				Payload: envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman", PR: &envelope.PRFact{Number: 42}})}}},
-		{shared: "escalated with a failure reason still waits", task: &v1alpha1.TaskStatus{Phase: "Escalated"}, evs: facts("Escalated", "budget-task")},
+		{shared: "escalated with a failure reason says it", task: &v1alpha1.TaskStatus{Phase: "Escalated"}, evs: facts("Escalated", "budget-task")},
 		{shared: "escalated for a maintainer", task: &v1alpha1.TaskStatus{Phase: "Escalated"}, evs: facts("Escalated", "contract_disputed")},
 		{shared: "idle room", room: "Idle"},
 		{shared: "done and merged", task: &v1alpha1.TaskStatus{Phase: "Done", PR: 189}},
@@ -166,7 +166,7 @@ func TestRoomRowStatusIsTheSummarysStatus(t *testing.T) {
 	}{
 		{name: "rejected for ci_red", phase: "Rejected", evs: []envelope.Event{fact(1, "Rejected", "ci_red")}, h: admin("boss"), want: "Failed — CI stayed red"},
 		{name: "rejected on the budget", phase: "Rejected", evs: []envelope.Event{fact(1, "Rejected", "budget-task")}, h: admin("boss"), want: "Failed — budget reached"},
-		{name: "escalated for budget-task", phase: "Escalated", evs: []envelope.Event{fact(1, "Escalated", "budget-task")}, h: admin("boss"), want: "Waiting — a maintainer decides"},
+		{name: "escalated for budget-task", phase: "Escalated", evs: []envelope.Event{fact(1, "Escalated", "budget-task")}, h: admin("boss"), want: "Escalated — budget reached"},
 		{name: "reverted", phase: "Reverted", evs: []envelope.Event{fact(1, "Reverted", "")}, h: admin("boss"), want: "Failed — the merge was reverted"},
 		{name: "an approval the viewer may decide", phase: "Implementing", evs: []envelope.Event{fact(1, "Implementing", ""), ask},
 			approvals: []store.Approval{approval}, h: admin("boss"), want: "Waiting for you — approve a pending action"},

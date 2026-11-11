@@ -7,7 +7,7 @@
 
 import { span } from "./duration";
 export type StatusKind = "running" | "queued" | "waiting-you" | "waiting-other" | "waiting-pr" | "waiting"
-  | "finished" | "done" | "failed" | "stopped";
+  | "done" | "failed" | "stopped";
 
 export interface RunStatus { kind: StatusKind | ""; icon: string; words: string }
 
@@ -50,7 +50,11 @@ export function statusLine(i: StatusIn): RunStatus {
   if (i.step?.kind === "pr" && pr > 0 && i.step.approve) return s("waiting-pr", "⏳", `Waiting — review and approve PR #${pr}`);
   if (i.step?.kind === "pr" && pr > 0) return s("waiting-pr", "⏳", `Waiting — review and merge PR #${pr}`);
   if (i.step?.kind === "answer" && issue > 0) return s("waiting", "⏳", `Waiting — answer the question on issue #${issue}`);
-  if (i.phase === "Escalated") return s("waiting", "⏳", "Waiting — a maintainer decides");
+  if (i.phase === "Escalated") {
+    const w = i.reasonCode && Object.hasOwn(FAILURES, i.reasonCode) ? FAILURES[i.reasonCode] : "";
+    return s("waiting", "⏳", w ? `Escalated — ${w}` : "Escalated — a maintainer decides");
+  }
+  if (i.phase === "AwaitingHuman") return s("waiting", "⏳", "Waiting on a maintainer");
   if (i.state === "waiting_for_human") return s("waiting", "⏳", "Waiting — for the next message or run");
   if (i.state === "queued") return s("queued", "○", "Queued");
   if (i.state === "running") {
@@ -59,8 +63,9 @@ export function statusLine(i: StatusIn): RunStatus {
       const parts = [i.runRole && ROLE.test(i.runRole) ? i.runRole : "", isNaN(t) ? "" : span((i.now ?? Date.now()) - t)].filter(Boolean);
       return s("running", "●", parts.length ? `Running — ${parts.join(", ")}` : "Running");
     }
-    if (pr > 0 && i.phase === "Reviewing") return s("finished", "✓", `Finished — PR #${pr} opened, handed to the reviewer`);
-    if (pr > 0 && i.phase === "AwaitingCI") return s("finished", "✓", `Finished — PR #${pr} opened, waiting for CI`);
+    // The headline is the task's state, never the last run's.
+    if (pr > 0 && i.phase === "Reviewing") return s("running", "●", `Reviewing — PR #${pr} handed to the reviewer`);
+    if (i.phase === "AwaitingCI") return s("waiting", "⏳", pr > 0 ? `Waiting on CI — PR #${pr}` : "Waiting on CI");
     return s("running", "●", "Running — between runs");
   }
   return { kind: "", icon: "", words: "" };
