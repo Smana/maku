@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -345,7 +344,7 @@ func cardDeadlineOf(e webhook.Event) (unix int64, ok bool) {
 // other wait keeps today's line, so a forge.pr approval in the same thread reads as it always did.
 func (a *App) cardWanted(e webhook.Event, th Thread) bool {
 	ch, served := a.Channels[th.Channel]
-	return served && ch.Approvals && slices.Contains(ch.Repositories, e.Repo) &&
+	return served && ch.Approvals && servesRepo(ch.Repositories, e.Repo) &&
 		e.Class == pressClass && approvalIDRE.MatchString(e.ApprovalID) && envelope.ValidBranch(e.Branch)
 }
 

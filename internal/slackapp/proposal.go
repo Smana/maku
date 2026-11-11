@@ -1370,7 +1370,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		return refuse("channel", "Not filed: this channel is no longer served; ask an operator to add it to the Slack App's channels.")
 	case intake.Hash(p.Plan) != p.Hash:
 		return refuse("hash", "Not filed: this proposal no longer matches its check; mention me again to re-plan it.")
-	case !slices.Contains(ch.Repositories, p.Plan.Repository):
+	case !servesRepo(ch.Repositories, p.Plan.Repository):
 		return refuse("repository", fmt.Sprintf("Not filed: %s isn't served in this channel; ask an operator to add it to the channel's repositories.",
 			slackText(p.Plan.Repository)))
 	case len(p.Plan.Issues) != 1: // Slack files one issue: a proposal was posted only if it had one
@@ -1427,8 +1427,9 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	// The filed tag is what closes the thread to further edits, so a payload that will not marshal is
 	// logged with that consequence named rather than dropped: the tag still goes out, with the empty
 	// object every decoder refuses.
+	repo, _ := canonicalRepo(ch.Repositories, p.Plan.Repository) // served: checked above
 	mark := func(room string) *Metadata {
-		payload, perr := metaPayload(MarkerPayload{Repo: p.Plan.Repository, Room: room})
+		payload, perr := metaPayload(MarkerPayload{Repo: repo, Room: room})
 		if perr != nil {
 			a.log().Error("filed mark payload: the proposal stays editable", "err", perr)
 			payload = json.RawMessage(`{}`)
@@ -1436,7 +1437,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		return &Metadata{EventType: filedEventType, EventPayload: payload}
 	}
 	res, err := a.Broker.RunCreate(ctx, RunCreate{
-		Draft:      Draft{Repo: p.Plan.Repository, Title: p.Plan.Issues[0].Title, Body: p.Plan.Issues[0].Body},
+		Draft:      Draft{Repo: repo, Title: p.Plan.Issues[0].Title, Body: p.Plan.Issues[0].Body},
 		Plan:       raw,
 		PlanHash:   p.Hash,
 		MaxCostUSD: ch.MaxCostUSD,
@@ -1446,7 +1447,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	})
 	var r Refused
 	if errors.As(err, &r) {
-		code, text, passing := notFiled(string(r), user, p.Plan.Repository, confirm)
+		code, text, passing := notFiled(string(r), user, repo, confirm)
 		if passing {
 			return retry(code, text)
 		}

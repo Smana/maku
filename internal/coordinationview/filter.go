@@ -81,7 +81,12 @@ func mayRead(ctx context.Context, viewer Viewer, access RepositoryReader, repo s
 		return false
 	}
 	if viewer.Sponsored {
-		return viewer.Repositories[repo]
+		for r, ok := range viewer.Repositories { // GitHub's names are case-insensitive
+			if ok && strings.EqualFold(r, repo) {
+				return true
+			}
+		}
+		return false
 	}
 	login, err := access.Login(ctx, viewer.Sub, repo)
 	if err != nil || login == "" {

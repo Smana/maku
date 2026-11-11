@@ -164,6 +164,9 @@ func TestCoordinationFilterIntersectionHasNoAdminBypass(t *testing.T) {
 			f.readErr = map[string]error{repoB: errors.New("github 502")}
 			return f
 		}, 1},
+		{"a sponsored principal's list is read case-insensitively", Viewer{Sub: "system:slack", Sponsored: true, Repositories: map[string]bool{strings.ToUpper(repoA): true, strings.ToUpper(repoB): true}}, func() *fakeAccess {
+			return &fakeAccess{}
+		}, 0},
 		{"a sponsored principal is bounded by its repositories", Viewer{Sub: "system:slack", Sponsored: true, Repositories: map[string]bool{repoA: true}}, func() *fakeAccess {
 			return &fakeAccess{}
 		}, 1},

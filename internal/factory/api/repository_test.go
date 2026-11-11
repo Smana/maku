@@ -228,10 +228,24 @@ func TestSystemCallersAreScopedPerRepository(t *testing.T) {
 
 var _ = runtime.NewScheme
 
-// spec.repository becomes the run's octo-sts audience: only the config's spelling is admitted.
-func TestTheRepositoryIsSpelledAsListed(t *testing.T) {
+// spec.repository becomes the run's octo-sts audience: a request in another case is matched, and the
+// run is written with the config's spelling only.
+func TestTheRepositoryIsWrittenAsListed(t *testing.T) {
+	for name, asked := range map[string]string{
+		"the planner's lowercase form": "smana/cloud-native-ref",
+		"shouting":                     "SMANA/CLOUD-NATIVE-REF",
+		"as listed":                    repoA,
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := &store{}
+			w := post(twoRepos(t, st, nil), "alice", on(asked, nil))
+			if w.Code != http.StatusCreated || len(st.created) != 1 || st.created[0].Repository != repoA {
+				t.Fatalf("%d %s, created %+v; want one run for %s", w.Code, w.Body, st.created, repoA)
+			}
+		})
+	}
 	st := &store{}
-	refusedWith(t, post(twoRepos(t, st, nil), "alice", on("smana/AI-native-ref", nil)), http.StatusForbidden, "repository_not_allowed", st)
+	refusedWith(t, post(twoRepos(t, st, nil), "alice", on("smana/other", nil)), http.StatusForbidden, "repository_not_allowed", st)
 }
 
 // v2 D7: a repository whose fence file does not name this factory starts no API run, whoever asks.
