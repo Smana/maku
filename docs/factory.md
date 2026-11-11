@@ -173,8 +173,9 @@ For this mapping, active phases are `Received`, `Triaged`, `Queued`, `Implementi
 independent of the execution-cap-oriented `ActivePhase` set.
 
 A source outage produces `unverified_overlap` even when an exact-active candidate was also read:
-missing evidence never becomes a refusal. Empty candidate sets and exact matches create no scoper
-run. Any other candidate set is persisted **pending**, with empty `classification` and `checkedAt`,
+missing evidence never becomes a refusal. Empty candidate sets and exact-active matches create no
+scoper run; exact non-active matches can be evaluated by the scoper. Any other candidate set is
+persisted **pending**, with empty `classification` and `checkedAt`,
 before its deterministic triager evaluation starts. That read-only run precedes the ordinary scoper,
 tester and implementer. An active assessment must cite an active supplied candidate; every citation
 must name a supplied id; fabricated citations and unsupported active/no-match conclusions become
