@@ -219,6 +219,7 @@ type Set struct {
 	intakePlans       metric.Int64Counter
 	intakePlanSeconds metric.Float64Histogram
 	intakePlanTokens  metric.Int64Counter
+	intakeCatalogue   metric.Int64Counter
 
 	// slack is the Slack App's two proposal families (CD7, CD25). The broker's Set carries them so their
 	// names, descriptions and label vocabularies have one spelling; only the App records on them, and
@@ -307,6 +308,10 @@ func New(meter metric.Meter) (*Set, error) {
 	check(err)
 	// intake_plan_tokens{surface,kind}: the call's cost, from the response's own usage.
 	s.intakePlanTokens, err = meter.Int64Counter("intake_plan_tokens", metric.WithDescription("Tokens the planner spent, by kind."))
+	check(err)
+	// intake_catalogue_reads_total{outcome}: the broker's reads of the factory's catalogue; hit came
+	// from its cache, miss from the factory, error is a read that failed (never cached).
+	s.intakeCatalogue, err = meter.Int64Counter("intake_catalogue_reads_total", metric.WithDescription("Catalogue reads by the broker, from cache, from the factory or failed."))
 	check(err)
 	// needs_list_total{surface,principal,outcome} -> maku_needs_list_total (MakuName's needs_ case):
 	// needs/v1's adoption, per door and per caller.
@@ -558,6 +563,25 @@ func (s *Set) IntakePlan(ctx context.Context, surface, outcome, reason string) {
 		attrs = append(attrs, attribute.String("reason", reason))
 	}
 	s.intakePlans.Add(ctx, 1, metric.WithAttributes(attrs...))
+}
+
+// The outcomes of a catalogue read: the closed vocabulary of intake_catalogue_reads_total.
+const (
+	CatalogueHit   = "hit"
+	CatalogueMiss  = "miss"
+	CatalogueError = "error"
+)
+
+// IntakeCatalogueRead counts one read of the factory's catalogue by outcome (CatalogueHit,
+// CatalogueMiss or CatalogueError); any other spelling is counted as an error, so the label stays
+// closed.
+func (s *Set) IntakeCatalogueRead(ctx context.Context, outcome string) {
+	switch outcome {
+	case CatalogueHit, CatalogueMiss, CatalogueError:
+	default:
+		outcome = CatalogueError
+	}
+	s.intakeCatalogue.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
 }
 
 // IntakePlanSeconds records one plan attempt's duration, the model call included.
