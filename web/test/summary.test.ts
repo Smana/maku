@@ -149,7 +149,7 @@ describe("needsItems", () => {
     const block = needs(s);
     expect(block.querySelector(".need-title")?.textContent).toBe("Approve the pull request");
     expect(block.querySelector("a.need-go")?.textContent).toBe("Approve the head on the pull request ↗");
-    expect(block.textContent).toContain("the merge gate reads the approval of the head");
+    expect(block.textContent).toContain("the merge gate reads the approval there");
     expect(block.textContent).not.toContain("Merge the pull request");
     expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
   });

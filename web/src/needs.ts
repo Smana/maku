@@ -10,7 +10,7 @@
 // of it enters the DOM as text.
 
 import type { NeedItem, NeedsPage } from "./api";
-import { decideStatus, deadlineText, ruleFor } from "./approval-help";
+import { decideStatus, deadlineText, expiredAt, expiredText, ruleFor } from "./approval-help";
 import { focusRow } from "./chat";
 import type { Snapshot } from "./conn";
 import { act, approvalAnchor, approvalCard, button, el, keyed, named, type Sender } from "./controls";
@@ -55,8 +55,20 @@ function outLink(label: string, url: string): Node {
 
 // needCard is one item the route lists, as a card that always ends in its one action: the control
 // on this page when the room has one (hand the driver back, close the room, the coordination panel),
-// else a link to where it is done, with a line saying the room has no button for it. The route
+// else a link to where it is done, with a line saying where it happens. The route
 // ordered the items (CD21): this list never reorders them.
+// Where the action happens, one line per kind (D3); a merge that wants an approval says whose.
+const GITHUB_LINE: Record<string, string> = {
+  merge: "Merging happens on GitHub.",
+  review: "Reviewing happens on GitHub.",
+  question: "Answer it on GitHub.",
+  failed_check: "Fix it on GitHub.",
+  plan_confirmation: "Confirm it on GitHub.",
+};
+const githubLine = (n: NeedItem) => n.kind === "merge" && n.approve
+  ? "Approve the pull request on GitHub: the merge gate reads the approval there."
+  : GITHUB_LINE[n.kind] ?? "This happens on GitHub.";
+
 function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }): HTMLLIElement {
   const li = el("li", { className: "need" });
   li.dataset.kind = n.kind;
@@ -85,9 +97,7 @@ function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }):
   } else {
     const url = a?.url || n.url;
     bar.append(url ? outLink(label, url) : where(cap(label)));
-    if (url && isHttps(url)) bar.append(where(n.kind === "merge" && n.approve
-      ? "On GitHub: the merge gate reads the approval of the head, so the room has no button for it."
-      : "On GitHub: the room has no button for it."));
+    if (url && isHttps(url)) bar.append(where(githubLine(n)));
   }
   li.append(bar);
   return li;
@@ -121,7 +131,18 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   // with four-eyes, whoever prompted the turn waits for another. The card says which, and
   // the broker still checks four-eyes and who decided first.
   type Approval = ReturnType<RoomState["approvals"]>[number];
-  const standing = (a: Approval) => decideStatus({ you: you(), sealed: state.sealed, fourEyes: fourEyes(), prompters: a.prompters });
+  const standing = (a: Approval, withDeadline = true) =>
+    decideStatus({ you: you(), sealed: state.sealed, fourEyes: fourEyes(), prompters: a.prompters, expiresAt: withDeadline ? a.expiresAt : undefined });
+  // An approval past its deadline is closed by the broker within ~30 s (approval_decided{expired});
+  // by the browser's clock the card stops offering a decision at the deadline, in place.
+  const expire = (li: HTMLElement, hhmm: string) => {
+    li.dataset.state = "expired";
+    const status = li.querySelector<HTMLElement>(".approval-status");
+    if (status) { status.textContent = expiredText(hhmm); status.dataset.can = "false"; }
+    const dl = li.querySelector<HTMLElement>(".approval-deadline");
+    if (dl) dl.textContent = "Expired";
+    li.querySelector(".approval-decide")?.remove();
+  };
   let others = 0;
   // The list under the cards: the route's items once a read answered (listed), the summary's until
   // then (summarised), and two lines — why a read failed, and the rooms the route could not read.
@@ -150,6 +171,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     outcomes.append(el("p", { textContent: `If you approve: ${rule.approve}` }), el("p", { textContent: `If you deny: ${rule.deny}` }));
     const deadline = el("p", { className: "approval-deadline", textContent: deadlineText(a.expiresAt) });
     deadline.dataset.expires = a.expiresAt;
+    const late = expiredAt(a.expiresAt);
     const status = el("p", { className: "approval-status", textContent: st.text });
     status.dataset.can = String(st.can);
     const details = el("details", { className: "approval-details" });
@@ -167,6 +189,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       if (row) focusRow(row); // the row, and any fold around it, opened and focused
     };
     details.before(link);
+    if (late) { expire(li, late); return li; }
     if (!st.can) return li;
     const reason = named(el("input", { name: "decisionReason", maxLength: 1024, placeholder: "reason (optional)" }), "reason for the decision (optional)");
     const send = (decision: string) => () => {
@@ -190,9 +213,13 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   // the route: a frame that draws cannot wait, and a replay draws hundreds of them.
   const render = () => {
     const pending = state.approvals();
-    rows(pending.map((a) => { const st = standing(a); return { key: a.approvalId, sig: st.text, build: () => card(a, st) }; }));
+    // The signature leaves the deadline out: a card turns expired in place, not rebuilt.
+    rows(pending.map((a) => ({ key: a.approvalId, sig: standing(a, false).text, build: () => card(a, standing(a)) })));
     // The deadline counts down without a rebuild, which would drop a reason being typed.
     for (const d of approvals.querySelectorAll<HTMLElement>("p.approval-deadline")) {
+      const li = d.closest<HTMLElement>("li.approval");
+      const late = expiredAt(d.dataset.expires);
+      if (late && li) { if (li.dataset.state !== "expired") expire(li, late); continue; }
       const text = deadlineText(d.dataset.expires ?? "");
       if (d.textContent !== text) d.textContent = text;
     }
@@ -279,7 +306,7 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     // approvalCounts: the pending approvals, and those this viewer may decide.
     approvalCounts(): { total: number; mine: number } {
       if (state.sealed) return { total: 0, mine: 0 };
-      const all = state.approvals();
+      const all = state.approvals().filter((a) => !expiredAt(a.expiresAt));
       return { total: all.length, mine: all.filter((a) => standing(a).can).length };
     },
     // focusFirst takes the reader, and the keyboard focus, to the first card.

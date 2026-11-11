@@ -312,7 +312,8 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 .dock-meta .act-notice:empty { display: none; }
 @media (max-width: 640px) {
   :root { --hit: 44px; }
-  /* Static, not sticky: pinned, the header and the dock took two thirds of an 844 px screen. */
+  /* The header is static here (pinned, it took a third of an 844 px screen); the dock stays sticky and
+     the room body and the needs cards reserve its height (--dock-h), so it never covers a decision. */
   .page-header { position: static; padding: 14px; row-gap: 14px; }
   .brand { gap: 14px; }
   .brand img { width: 28px; height: 28px; }
@@ -745,6 +746,12 @@ a.need-go {
 a.need-go:hover { box-shadow: var(--shadow-border-hover); text-decoration: underline; }
 @media (prefers-reduced-motion: no-preference) { a.need-go:active { scale: .96; } }
 .need-where { color: var(--muted-foreground); font-size: var(--text-small); }
+/* A card is scrolled to (the pill, a hash) clear of the sticky dock, buttons included. */
+.approval, .needs-other li.need { scroll-margin-bottom: calc(var(--dock-h, 0px) + 8px); }
+.approval-decide { scroll-margin-bottom: calc(var(--dock-h, 0px) + 8px); }
+/* Expired: no decision on offer; the word in the warning text colour, the bar quiet. */
+.approval[data-state="expired"]::before { background: var(--border); }
+.approval[data-state="expired"] .approval-deadline { color: var(--warning-foreground); font-weight: 700; }
 button.primary { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
 /* Deny is a ghost: the destructive word, no outline; hover tints it. */
 button.deny { color: var(--destructive-text); border-color: transparent; background: transparent; }
@@ -1036,7 +1043,7 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 
 /* The room body: the conversation, and the rail beside it from 1100 px up. Below that the rail is
    a drawer a row of dots opens. --header-h and --dock-h come from room.ts (CSSOM). */
-.room-body { min-width: 0; }
+.room-body { min-width: 0; padding-bottom: var(--dock-h, 0px); }
 .rail-dots, .rail-close { display: none; }
 /* The page fills the window: the dock stays at the bottom when the room is short. */
 /* overflow-x clip: a line no rule wraps is cut here, never the whole page scrolled sideways

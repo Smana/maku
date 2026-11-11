@@ -189,7 +189,7 @@ describe("the room page", () => {
     try {
       p.join(live({ approver: true }), 0);
       p.last().recv(agent(1, "approval_requested", { approvalId: "ap1", callId: "c1", class: "forge.other",
-        action: { command: "git push" }, expiresAt: "2026-10-06T11:00:00Z" }));
+        action: { command: "git push" }, expiresAt: "2099-10-06T11:00:00Z" }));
       const panel = p.app.querySelector<HTMLElement>("section.needs")!;
       panel.scrollIntoView = () => {};
       p.app.querySelector<HTMLButtonElement>(".needs-pill")!.click();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deadlineText, decideStatus, EXPIRY, RULES, ruleFor } from "../src/approval-help";
+import { deadlineText, decideStatus, expiredAt, EXPIRY, RULES, ruleFor } from "../src/approval-help";
 
 const at = (h: number, m: number, day = 28) => new Date(2026, 9, day, h, m, 0);
 
@@ -59,3 +59,17 @@ describe("decideStatus", () => {
   });
 });
 
+
+describe("an expired deadline", () => {
+  const you = { principal: "human:a", role: "owner", approver: true };
+  const exp = at(16, 30).toISOString();
+  it("says so from the deadline on, and never 'You can decide.'", () => {
+    expect(decideStatus({ you, expiresAt: exp, now: at(16, 29).getTime() })).toEqual({ can: true, text: "You can decide." });
+    const st = decideStatus({ you, expiresAt: exp, now: at(16, 30).getTime() });
+    expect(st).toEqual({ can: false, text: "No one decided by 16:30, so the agent was told no. It can ask again." });
+  });
+  it("reads no deadline as never expired", () => {
+    expect(expiredAt("", at(17, 0).getTime())).toBeUndefined();
+    expect(expiredAt("nope", at(17, 0).getTime())).toBeUndefined();
+  });
+});
