@@ -164,6 +164,57 @@ type DriverPayload struct {
 	Reason string `json:"reason"` // given | requested | taken | lease_expired
 }
 
+// OverlapAssessment is an outcome-overlap scoper's read-only classification. Citations name only
+// candidate IDs supplied in its brief; the reconciler additionally checks them against those candidates.
+type OverlapAssessment struct {
+	Classification string   `json:"classification"`
+	Citations      []string `json:"citations,omitempty"`
+	Sources        []string `json:"sources,omitempty"`
+	BlindSpots     []string `json:"blindSpots,omitempty"`
+	Note           string   `json:"note,omitempty"`
+}
+
+// OverlapAssessmentSchema is the triager-only overlap property of room_handoff's input schema.
+const OverlapAssessmentSchema = `{"type":"object","additionalProperties":false,"required":["classification"],"properties":{` +
+	`"classification":{"type":"string","enum":["active_duplicate","completed_duplicate","prior_attempt","partial_overlap","unverified_overlap","no_match"]},` +
+	`"citations":{"type":"array","maxItems":20,"items":{"type":"string","minLength":1,"maxLength":128}},` +
+	`"sources":{"type":"array","maxItems":4,"items":{"type":"string","enum":["tasks","runs","rooms","github"]}},` +
+	`"blindSpots":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":256}},` +
+	`"note":{"type":"string","maxLength":512}}}`
+
+// ErrOverlapAssessment is every refusal of an assessment's bounded shape.
+var ErrOverlapAssessment = errors.New("overlap: one known classification; at most 20 citations, four checked sources and eight blind spots")
+
+// Validate checks the assessment's independent shape and bounds. Candidate-specific claims are the
+// reconciler's contract: only it knows which IDs and active candidates were actually supplied.
+func (a OverlapAssessment) Validate() error {
+	classifications := []string{"active_duplicate", "completed_duplicate", "prior_attempt", "partial_overlap", "unverified_overlap", "no_match"}
+	sources := []string{"tasks", "runs", "rooms", "github"}
+	text := func(s string, limit int, required bool) bool {
+		return (!required || strings.TrimSpace(s) != "") && len(s) <= limit && utf8.ValidString(s) && !strings.ContainsFunc(s, Control)
+	}
+	list := func(values []string, limit, each int) bool {
+		if len(values) > limit {
+			return false
+		}
+		for _, value := range values {
+			if !text(value, each, true) {
+				return false
+			}
+		}
+		return true
+	}
+	good := slices.Contains(classifications, a.Classification) && list(a.Citations, 20, 128) && list(a.BlindSpots, 8, 256) &&
+		text(a.Note, 512, false) && len(a.Sources) <= 4
+	for _, source := range a.Sources {
+		good = good && slices.Contains(sources, source)
+	}
+	if !good {
+		return ErrOverlapAssessment
+	}
+	return nil
+}
+
 // HandoffPayload is a handoff event's payload: work passed between roles.
 type HandoffPayload struct {
 	FromRole string `json:"fromRole"`
@@ -176,6 +227,8 @@ type HandoffPayload struct {
 	// Split is the scoper's second answer (splitter design SL2): a triager's handoff only, always
 	// beside Scope, the whole task.
 	Split *Split `json:"split,omitempty"`
+	// Overlap is an outcome-overlap scoper's classification: a triager's handoff only.
+	Overlap *OverlapAssessment `json:"overlap,omitempty"`
 }
 
 // MaxProgressNote bounds a progress note, in characters.

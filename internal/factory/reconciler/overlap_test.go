@@ -449,3 +449,7 @@ func (m *fakeMetrics) OverlapEvaluation(_ context.Context, classification, sourc
 func (m *fakeMetrics) OverlapEvaluationDuration(_ context.Context, _ time.Duration) {
 	m.add("overlap_duration")
 }
+
+func (m *fakeMetrics) OverlapScoperRun(_ context.Context, outcome string) {
+	m.add("overlap_scoper " + outcome)
+}

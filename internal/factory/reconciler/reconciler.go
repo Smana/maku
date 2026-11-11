@@ -142,6 +142,7 @@ type metrics interface {
 	CoordinationFamily(ctx context.Context, repository, outcome string)
 	CoordinationAdmissionRefused(ctx context.Context, repository, reason string)
 	OverlapEvaluation(ctx context.Context, classification, source string)
+	OverlapScoperRun(ctx context.Context, outcome string)
 	OverlapEvaluationDuration(ctx context.Context, duration time.Duration)
 	CoordinationChild(ctx context.Context, repository, class, outcome string)
 	CoordinationIntegrationRun(ctx context.Context, repository, purpose, result string)
@@ -1397,6 +1398,9 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 				return err
 			}
 		}
+	}
+	if overlapPending(t) {
+		return r.startOverlapScoper(ctx, cfg, t)
 	}
 	if t.Spec.Kind == v1alpha1.TaskKindIntegration { // MR10: its own spec, never a verifier's or implementerSpec
 		return r.startIntegration(ctx, cfg, t)

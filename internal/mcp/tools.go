@@ -178,14 +178,15 @@ func RoomTools(log Log, red Redactor, now func() time.Time) []Tool {
 			// The scope and the split are the scoper's (scoper design SC6, splitter design SL2): only the
 			// triager is shown them.
 			RoleSchemas: map[string]json.RawMessage{"triager": json.RawMessage(handoffSchema(
-				`,"scope":` + envelope.ScopeSchema + `,"split":` + envelope.SplitSchema))},
+				`,"scope":` + envelope.ScopeSchema + `,"split":` + envelope.SplitSchema + `,"overlap":` + envelope.OverlapAssessmentSchema))},
 			Call: func(ctx context.Context, c Caller, args json.RawMessage) (any, error) {
 				var a struct {
-					ToRole  string          `json:"toRole"`
-					Summary string          `json:"summary"`
-					Commit  string          `json:"commit"`
-					Scope   *envelope.Scope `json:"scope"`
-					Split   *envelope.Split `json:"split"`
+					ToRole  string                      `json:"toRole"`
+					Summary string                      `json:"summary"`
+					Commit  string                      `json:"commit"`
+					Scope   *envelope.Scope             `json:"scope"`
+					Split   *envelope.Split             `json:"split"`
+					Overlap *envelope.OverlapAssessment `json:"overlap"`
 				}
 				if mcpwire.DecodeArgs(args, &a) != nil || !isRole(a.ToRole) || !text(a.Summary, maxSummary) || !commitRE.MatchString(a.Commit) {
 					return nil, argError("toRole is implementer, reviewer, tester or triager; summary 1 to 8192 bytes; commit the full 40-hex sha from git rev-parse HEAD, never an abbreviation")
@@ -205,8 +206,11 @@ func RoomTools(log Log, red Redactor, now func() time.Time) []Tool {
 				if a.Split != nil && (a.Scope == nil || a.Scope.State != envelope.ScopeReady || a.Split.Validate() != nil) {
 					return nil, argError(envelope.ErrSplit.Error())
 				}
+				if a.Overlap != nil && (c.Run.Role != "triager" || a.Overlap.Validate() != nil) {
+					return nil, argError(envelope.ErrOverlapAssessment.Error())
+				}
 				p := envelope.HandoffPayload{FromRole: c.Run.Role, ToRole: a.ToRole,
-					Summary: a.Summary, Commit: a.Commit, Branch: c.Run.Branch, Scope: a.Scope, Split: a.Split}
+					Summary: a.Summary, Commit: a.Commit, Branch: c.Run.Branch, Scope: a.Scope, Split: a.Split, Overlap: a.Overlap}
 				// Stored as json.Marshal writes it, where <, > and & cost six bytes: a payload over the limit
 				// would be replaced by the oversize stub, silently dropping the scope and the split.
 				if len(envelope.Must(p)) > envelope.MaxPayload {

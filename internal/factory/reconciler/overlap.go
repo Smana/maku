@@ -46,7 +46,8 @@ func (r *Reconciler) overlapDue(ctx context.Context, cfg *config.Config, t *v1al
 			o.ScoperRun = runID(t.Name, len(t.Status.Runs))
 			return true, nil
 		}
-		if o.Classification == v1alpha1.OverlapActiveDuplicate && cfg.Intake.Overlap.Mode == config.OverlapEnforce {
+		if o.Classification == v1alpha1.OverlapActiveDuplicate && cfg.Intake.Overlap.Mode == config.OverlapEnforce &&
+			(o.ScoperRun == "" || cfg.Intake.Overlap.ScoperEnforcement) {
 			return true, r.end(ctx, cfg, t, v1alpha1.PhaseRejected, "overlap_active_duplicate")
 		}
 		return false, nil
