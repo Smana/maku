@@ -240,6 +240,37 @@ func TestCreateTaskAdmission(t *testing.T) {
 	})
 }
 
+// A replay of a Task rejected by outcome-overlap enforcement stays rejected and files nothing again.
+func TestCreateTaskRejectedOverlapReplay(t *testing.T) {
+	s, f := newTaskServer(t, slack, 0)
+	if rec := postTask(s, draft, "k"); rec.Code != 201 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	ts := tasks(t, s)
+	if len(ts) != 1 {
+		t.Fatalf("tasks %d", len(ts))
+	}
+	tk := ts[0]
+	checked := metav1.NewTime(now)
+	tk.Status.Phase = factoryv1.PhaseRejected
+	tk.Status.Reason = "overlap_active_duplicate"
+	tk.Status.Overlap = &factoryv1.OverlapStatus{Fingerprint: strings.Repeat("a", 64),
+		Classification: factoryv1.OverlapActiveDuplicate, CheckedAt: &checked,
+		Matches: []factoryv1.OverlapMatch{{Task: "aaaaaaa2", Relation: "exact", Phase: factoryv1.PhaseImplementing}}}
+	if err := s.Rooms.Update(t.Context(), &tk); err != nil {
+		t.Fatal(err)
+	}
+	rec := postTask(s, draft, "k")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"duplicate":true`) || len(f.got) != 1 {
+		t.Fatalf("rejected replay %d %s, issues %d", rec.Code, rec.Body, len(f.got))
+	}
+	got := tasks(t, s)[0]
+	if got.Status.Phase != factoryv1.PhaseRejected || got.Status.Reason != "overlap_active_duplicate" || got.Status.Overlap == nil ||
+		got.Status.Overlap.Classification != factoryv1.OverlapActiveDuplicate {
+		t.Fatalf("rejected replay changed the result: %+v", got.Status)
+	}
+}
+
 // R12: a failed filing leaves the Task without an issue; a replay finds it and files nothing.
 func TestCreateTaskIssueFails(t *testing.T) {
 	s, f := newTaskServer(t, slack, 0)

@@ -141,6 +141,8 @@ type metrics interface {
 	// The coordination series (v4 observability), each on the repository it is about.
 	CoordinationFamily(ctx context.Context, repository, outcome string)
 	CoordinationAdmissionRefused(ctx context.Context, repository, reason string)
+	OverlapEvaluation(ctx context.Context, classification, source string)
+	OverlapEvaluationDuration(ctx context.Context, duration time.Duration)
 	CoordinationChild(ctx context.Context, repository, class, outcome string)
 	CoordinationIntegrationRun(ctx context.Context, repository, purpose, result string)
 	CoordinationWait(ctx context.Context, repository, reason string, d time.Duration)
@@ -205,6 +207,8 @@ type Reconciler struct {
 	// repository's policy is unreadable, and its auto-merge pauses.
 	Authority func(repository string) (mergepolicy.Snapshot, error)
 	Runs      RunClient
+	// Overlap retrieves outcome-overlap candidates; nil reads the factory's own sources.
+	Overlap overlapEvaluator
 	// Kind is the runs kind, required: SetupWithManager watches its AgentRuns.
 	Kind    runwatch.Kind
 	Rooms   RoomLog
@@ -1080,6 +1084,9 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	}
 	if reason != "" {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, reason)
+	}
+	if due, err := r.overlapDue(ctx, cfg, t); due || err != nil {
+		return err // a new result persists before trace, triage, room, run, or budget effects
 	}
 	if r.Trace != nil && t.Status.Trace == nil { // R46: the task's root span, minted once at acceptance
 		tr, sp := tracing.Mint()

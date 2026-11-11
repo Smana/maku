@@ -145,6 +145,9 @@ func TestTokensAndReasons(t *testing.T) {
 	if Reason("kill_switch") != "the factory's kill switch is engaged" || Reason("something_new") != "something_new" {
 		t.Fatal("known reasons read as prose; an unknown one is shown as it is")
 	}
+	if got := Reason("overlap_active_duplicate"); got != "an active task is already pursuing the same outcome" {
+		t.Fatalf("overlap_active_duplicate reads %q", got)
+	}
 }
 
 // gcp-0, 2026-10-29, task xlcx2775: a judge continuation ran into the wall clock and escalated as
