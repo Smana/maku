@@ -58,6 +58,8 @@ events.
 | `maku_rooms_human_mcp_calls_total` | counter | `tool`, `outcome` | `POST /mcp` tool calls: `ok`, `refused` (the tool's own refusal or a room read's) or `error`. A `room_tail` task counts `ok` when it is created and `error` when a read of it fails |
 | `maku_rooms_slack_links_total` | counter | `outcome` | The [Slack self-serve link](slack.md#self-serve-link): `link_code`, `linked`, `unlinked`, and the refusals `code_invalid`, `not_linked_github`, `wrong_team`, `too_many_links`, `too_many_codes`, `already_linked`, `not_web` (a maku or MCP token on the page), `bad_origin`, `error` |
 | `maku_rooms_slack_decisions_total` | counter | `result`, `decision` | The Slack App's [deciding route](api.md#post-apislackdecisions), one count per answer: `result` is the closed code it answered with (`approved`, `denied` and every refusal of that table, `bad_request`, `rate_limited`, `unavailable`), and `decision` the decision it answered with, empty when the answer carried none. A replayed click counts as the decision it answered with, while the log keeps its one event. A rise in `result="unavailable"` is a store, room or log read that failed; the App retries those, and no other code |
+| `maku_intent_classify_total` | counter | `outcome` | The broker's [`intent_classify`](api.md#intent_classify-on-mcp) calls: `ok`, `low_confidence` and `invalid_output` (the model's answer, read as unknown), `timeout`, `capped` (the App's daily or the author's hourly cap) and `error` (the gateway). See [intents in shadow](#intents-in-shadow) |
+| `maku_intent_classify_duration_seconds` | histogram | — | One classification, the model call included |
 | `maku_rooms_verdict_posts_total` | counter | `result` | Verdict comments `posted`, `not_posted` or `error` |
 | `maku_rooms_driver_changes_total` | counter | — | Driver token changes: a human's request, give or take, and the leader's lease expiries |
 | `maku_rooms_approvals_pending` | gauge | — | Undecided approvals in open rooms: the sum of the Rooms' `status.pendingApprovals` |
@@ -144,6 +146,8 @@ kubectl wait -n agent-system job/retention-check --for=condition=Complete --time
 kubectl logs -n agent-system job/retention-check          # one "purged expired rooms" line per run, with its rooms and events counts
 kubectl delete job -n agent-system retention-check
 ```
+
+The same job deletes the intent samples of channels that opted in, once each is past the `retentionDays` the broker stamped on it (30 by default), and logs one `purged expired intent samples` line. A sample is a person's reply, redacted: nothing else the platform stores holds thread text.
 
 Each room's purge runs under its own `statement_timeout` of 10 minutes (`SET LOCAL`, the purge
 transaction only), not the broker's 15 s. Keep the CronJob's `activeDeadlineSeconds`, if it sets
@@ -611,6 +615,20 @@ Other things to know:
 
 `RoomWebhookDisabled` fires on `max by (subscriber) (maku_rooms_webhook_disabled) == 1`. The rule lives in
 ai-native-ref's `vmrule-agent-factory.yaml`, which comes with ai-native-ref's PR F: until it merges, nothing alerts.
+
+### Intents in shadow
+
+Stage 1 of [natural-language intents](slack.md#understanding-a-reply): the classifier runs on one channel, the thread keeps today's unknown line, and a person labels what it saw before anything acts on a label. The switch is off everywhere until each step below is done.
+
+1. **Host.** The gateway's `classifier` client and its key (alias `tier-light`), mounted where `human.slackIntents.apiKeyFile` names it. Set `human.slackIntents` on the broker ([integration](integration.md#the-brokers-configuration)), with `principal` the Slack App's sponsored name and `teamID` its workspace. Check that the broker lists `intent_classify` for the App and for nobody else.
+2. **Turn on.** In the App's config, one channel: `intents: shadow`, and `collectReplies: true` only with that channel's agreement.
+3. **Measure.** Over a few days of real replies: `maku_slack_intents_total{tier="1"}` by `intent` and `outcome`, `maku_intent_classify_total{outcome}` (`ok`, `low_confidence`, `invalid_output`, `timeout`, `capped`, `error`) and `maku_intent_classify_duration_seconds`. A rising `capped` is `dailyCalls` or `perUserPerHour` too low for the channel; a rising `invalid_output` is a model or gateway change.
+4. **Export and label.** `kubectl exec -n agent-system deploy/room-broker -- maku-broker intent-samples --days 7 > samples.jsonl`: one JSON object per reply with its `intent`, `confidence` and `channel`, and nothing else on stdout. Write the correct label beside each. Samples are stored redacted and deleted after `retentionDays`, so export before then.
+5. **Compute.** Write-intent precision is, of the replies labelled `steer`, `amend`, `stop` or `retry`, the share whose correct label is the same. Stage 2 waits for 95 % or more. `task intent:eval` runs the committed synthetic set against a live model (`INTENT_EVAL_URL`, `INTENT_EVAL_KEY_FILE`) and fails under the same bar, which is how a model or prompt change is checked before it reaches a channel.
+6. **Tune.** `minConfidence` (0.7), `confirmTTL` (10 minutes) and `maxInputChars` (2,000) are config, not code: set them from the unknown share and, once confirms exist, the cancelled-plus-expired share.
+7. **Turn off.** `intents: off` on the channel stops tier 1 on the next config load, and unsetting `human.slackIntents` removes the tool. Stored samples stay until their retention.
+
+**Pre-flight after a move.** Any Slack session after the App moved (a cloud move, a new domain) starts by pressing one proposal's Confirm: `factory_slack_requests_total{route="interactions"}` must rise. The Interactivity request URL is a [setting of its own](slack.md#manifest); stale, a press gets Slack's `could not handle this payload` while events still arrive.
 
 ### Finished rooms close
 
