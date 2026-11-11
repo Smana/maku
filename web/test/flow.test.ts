@@ -44,10 +44,10 @@ describe("isLive", () => {
 describe("detail", () => {
   const now = Date.parse("2026-10-08T11:00:00Z");
   it("joins duration and cost; the models have their own line", () =>
-    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 m · $0.82"));
+    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 min · $0.82"));
   it("leaves a missing part out with its dot", () =>
     expect(detail(node({ startedAt: undefined, microUSD: 10000 }), now)).toBe("$0.01"));
-  it("counts a live run up to now", () => expect(detail(node({ endedAt: undefined }), now)).toBe("60 m"));
+  it("counts a live run up to now", () => expect(detail(node({ endedAt: undefined }), now)).toBe("1 h"));
   it("a run over with no end time has no duration, rather than one that grows", () =>
     expect(detail(node({ endedAt: undefined, outcome: "ended", microUSD: 10000 }), now)).toBe("$0.01"));
 });

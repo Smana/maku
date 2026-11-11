@@ -11,7 +11,7 @@ import type { Snapshot } from "./conn";
 import { bannerText } from "./approval-help";
 import { el, shortPrincipal } from "./controls";
 import { type Dashboard, expandDashboards } from "./dashboards";
-import { span } from "./duration";
+import { span, timeEl } from "./duration";
 import { statusIcon } from "./icons";
 import type { Latest } from "./room-state";
 import { type RunStatus, statusLine } from "./run-status";
@@ -69,17 +69,18 @@ export function plainText(src: string): string {
 
 // nowParts is the Now line: what, its status, and how long ago; with no agent present, the
 // last activity, which no longer runs. Three parts, so the lead and the meta can recede.
-function nowParts(n: Latest, t: number, present: boolean): [lead: string, text: string, meta: string] {
-  const meta = (present ? [n.status, ago(n.ts, t)] : [ago(n.ts, t)]).filter(Boolean).map((m) => ` · ${m}`).join("");
-  return [present ? "Now ▸ " : "No run · last: ", plainText(n.text), meta];
+function nowParts(n: Latest, t: number, present: boolean): [lead: string, text: string, status: string, age: string] {
+  return [present ? "Now ▸ " : "No run · last: ", plainText(n.text), present && n.status ? ` · ${n.status}` : "", ago(n.ts, t)];
 }
 
 // setNow fills the Now button with its parts, as text, only when the line changed.
 function setNow(b: HTMLElement, n: Latest, t: number, present: boolean): void {
-  const [lead, text, meta] = nowParts(n, t, present);
-  if (b.textContent === lead + text + meta) return;
-  b.replaceChildren(el("span", { className: "now-lead", textContent: lead }), el("span", { className: "now-text", textContent: text }),
-    el("span", { className: "now-meta", textContent: meta }));
+  const [lead, text, status, age] = nowParts(n, t, present);
+  if (b.textContent === lead + text + status + (age ? ` · ${age}` : "")) return;
+  const meta = el("span", { className: "now-meta", textContent: status });
+  const at = Date.parse(n.ts);
+  if (age) meta.append(" · ", timeEl(t - at, n.ts, "ago"));
+  b.replaceChildren(el("span", { className: "now-lead", textContent: lead }), el("span", { className: "now-text", textContent: text }), meta);
 }
 
 // nowLine says what the agent is doing: the latest activity, a button that takes the
@@ -119,8 +120,10 @@ function runParts(st: Summary["status"], t: number): [cls: string, text: string]
 function setRun(c: Element, st: Summary["status"], t: number): void {
   const parts = runParts(st, t);
   if (c.textContent === parts.map((p) => p[1]).join(" · ")) return;
+  const at = st.run?.startedAt ?? "";
   c.replaceChildren(...parts.flatMap(([cls, text], n) => [
-    ...(n ? [el("span", { className: "sep", textContent: " · " })] : []), el("span", { className: cls, textContent: text })]));
+    ...(n ? [el("span", { className: "sep", textContent: " · " })] : []),
+    cls === "run-age" ? Object.assign(timeEl(t - Date.parse(at), at, "span"), { className: cls }) : el("span", { className: cls, textContent: text })]));
 }
 
 // statusOf is the room's run status: the summary's own state, phase and facts, and the viewer's approvals.

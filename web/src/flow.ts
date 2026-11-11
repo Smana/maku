@@ -4,6 +4,7 @@
 // the plan steps still to come. Role, persona, outcome and model are the log's text: each is
 // matched against a fixed table with a fallback, never rendered into a class name.
 
+import { span, timeEl } from "./duration";
 import type { Flow, FlowNode } from "./summary";
 
 export type Tone = "judge" | "writer";
@@ -40,22 +41,32 @@ export function chip(n: FlowNode): { text: string; kind: ChipKind } {
   return { text: "ended", kind: "" };
 }
 
-function duration(ms: number): string {
-  const m = Math.max(0, Math.round(ms / 60000));
-  if (m >= 1) return `${m} m`;
-  return `${Math.max(0, Math.round(ms / 1000))} s`;
-}
-
-// detail is the node's duration and cost; a part the log lacks is left out. Its models are modelsOf's.
-export function detail(n: FlowNode, now: number): string {
-  const parts: string[] = [];
+// detailParts is the node's duration (with the instant it counts from) and its cost; a part the log
+// lacks is left out. Its models are modelsOf's.
+export function detailParts(n: FlowNode, now: number): { ms?: number; at?: string; cost?: string } {
+  const out: { ms?: number; at?: string; cost?: string } = {};
   const start = n.startedAt ? Date.parse(n.startedAt) : NaN;
   if (!Number.isNaN(start) && (n.endedAt || isLive(n))) {
     const end = n.endedAt ? Date.parse(n.endedAt) : now;
-    if (!Number.isNaN(end)) parts.push(duration(end - start));
+    if (!Number.isNaN(end)) { out.ms = end - start; out.at = n.startedAt; }
   }
-  if (n.microUSD) parts.push(`$${(n.microUSD / 1e6).toFixed(2)}`);
-  return parts.join(" · ");
+  if (n.microUSD) out.cost = `$${(n.microUSD / 1e6).toFixed(2)}`;
+  return out;
+}
+
+// detail is detailParts as one line of text: "14 min · $0.82".
+export function detail(n: FlowNode, now: number): string {
+  const d = detailParts(n, now);
+  return [d.ms === undefined ? "" : span(d.ms), d.cost ?? ""].filter(Boolean).join(" · ");
+}
+
+// fillDetail sets a node's age line: the duration as a <time>, then the cost.
+export function fillDetail(e: HTMLElement, n: FlowNode, now: number): void {
+  const d = detailParts(n, now);
+  const kids: (Node | string)[] = [];
+  if (d.ms !== undefined) kids.push(timeEl(d.ms, d.at!, "span"));
+  if (d.cost) kids.push(kids.length ? ` · ${d.cost}` : d.cost);
+  e.replaceChildren(...kids);
 }
 
 // modelsOf is what a node ran on: every model served (provenance.servedModels), then the alias its

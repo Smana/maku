@@ -3,6 +3,7 @@
 import { api, nav, SignInRequired } from "./api";
 import { type AutoRefreshOptions, mountAutoRefresh } from "./autorefresh";
 import { mountBrand } from "./brand";
+import { timeEl } from "./duration";
 import { statusIcon } from "./icons";
 import { maxRows } from "./limits";
 import { ago } from "./summary";
@@ -164,9 +165,8 @@ function roomRow(row: RoomRow, now: Date): HTMLTableRowElement {
   const repo = cell("td", c.repo);
   repo.className = "repo";
   const status = statusCell(row.status, c.phase);
-  const last = cell("td", c.last || "—");
   const t = lastMs(row);
-  if (t) last.title = new Date(t).toLocaleString();
+  const last = cell("td", t ? timeEl(now.getTime() - t, new Date(t).toISOString(), "ago") : "—");
   const code = document.createElement("code");
   code.textContent = c.id;
   const id = cell("td", code);

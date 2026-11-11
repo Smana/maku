@@ -322,6 +322,9 @@ describe("the title strip", () => {
     const parts = [...h.querySelectorAll(".chip-run > :not(.sep)")].map((e) => [e.className, e.textContent]);
     expect(parts.slice(0, 4)).toEqual([["run-role", "implementer"], ["run-id", "ikely2yk"], ["run-model", "agent-default"], ["run-model", "high"]]);
     expect(parts[4][0]).toBe("run-age");
+    const age = h.querySelector<HTMLTimeElement>(".chip-run time.run-age")!;
+    expect(age.dateTime).toBe(new Date(age.dateTime).toISOString());
+    expect(age.title).toBe(new Date(age.dateTime).toLocaleString());
   });
   it("clusters the facts: the run, its cost, its links, who may reach it", () => {
     const { h, strip } = mount();

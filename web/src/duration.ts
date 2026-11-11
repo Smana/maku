@@ -26,3 +26,16 @@ export function ago(ms: number): string {
   const [a, au] = parts(ms);
   return `${a} ${au} ago`;
 }
+
+// timeEl is a duration as a <time>: its words ("span" or "ago"), the instant it counts from as
+// datetime and, on hover, as the locale's date and time. An unreadable instant is left off.
+export function timeEl(ms: number, at: string, form: "span" | "ago"): HTMLTimeElement {
+  const t = document.createElement("time");
+  t.textContent = form === "span" ? span(ms) : ago(ms);
+  const d = new Date(at);
+  if (!isNaN(d.getTime())) {
+    t.dateTime = d.toISOString();
+    t.title = d.toLocaleString();
+  }
+  return t;
+}

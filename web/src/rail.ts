@@ -7,7 +7,7 @@
 import type { RoomEvent } from "./conn";
 import { actorName, idTail } from "./chat";
 import { el } from "./controls";
-import { chip, detail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, tone, type Row } from "./flow";
+import { chip, fillDetail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
 import { ago, type Flow, type FlowNode } from "./summary";
 
@@ -230,7 +230,8 @@ export function mountRail(h: RailHandlers): Rail {
     const line = el("span", { className: "rail-line" });
     line.append(glyph(glyphFor(n.persona, n.role)), persona, chipEl);
     if (n.judge?.count) line.append(el("span", { className: "rail-judge", textContent: `◇×${n.judge.count}`, title: `${n.judge.count} judge verdicts` }));
-    const age = el("span", { className: "rail-detail", textContent: detail(n, clock) });
+    const age = el("span", { className: "rail-detail" });
+    fillDetail(age, n, clock);
     if (isLive(n)) ages.set(n.run, age);
     b.append(line, age);
     const marks = activity(n);
@@ -472,7 +473,7 @@ export function mountRail(h: RailHandlers): Rail {
       clock = now;
       for (const [run, age] of ages) {
         const n = nodeOf(run);
-        if (n) age.textContent = detail(n, now);
+        if (n) fillDetail(age, n, now);
       }
     },
     live(e) {
