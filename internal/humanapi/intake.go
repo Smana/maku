@@ -315,6 +315,13 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	if ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
+	// A request that names a repository is planned for that repository or refused, before a daily
+	// slot or a model call is spent: the planner never picks a different one (#469). The reply that
+	// re-plans carries its words in the context, so it is read the same way.
+	candidates, ref = intake.CheckNamed(a.Text+"\n"+a.Context, s.knownRepositories(a, candidates), candidates)
+	if ref != nil {
+		return s.finishPlan(ctx, run, nil, false, ref)
+	}
 	if !s.Intake.take(req.Key) {
 		return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonDailyPlansReached))
 	}
@@ -595,6 +602,19 @@ func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs)
 		return req, nil, ref
 	}
 	return req, candidates, nil
+}
+
+// knownRepositories is every repository the broker can tell a request names: the allowlist, the
+// ones the request listed and the candidates.
+func (s *Server) knownRepositories(a intakeArgs, candidates []string) []string {
+	known := slices.Clone(candidates)
+	known = append(known, a.asked()...)
+	for repository, on := range s.Intake.Allow {
+		if on {
+			known = append(known, repository)
+		}
+	}
+	return known
 }
 
 // intakeLogin is the GitHub login behind a ZITADEL account, resolved through the repositories this

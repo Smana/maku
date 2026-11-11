@@ -54,6 +54,7 @@ result, and any refusal, before you offer to file. Say the one line, then the ne
 | Answer | Say | Next |
 |---|---|---|
 | `repository_not_allowed` | this repository is not enrolled in the factory | enrolment is a `Repository` and a `MergePolicy` object in the factory's config repo plus a `.github/agent-factory.yaml` fence file in the repository; a maintainer does it. Do not file and label anyway |
+| `repository_not_served_here` | the repository you named is not served here; the refusal lists the ones that are | an operator adds it to the repositories served here (the Slack channel's list, or the planner's allowlist). Never plan it for another repository |
 | `off` | starting the factory from here is off for this repository (enrolled repositories hit it too) | file the issue; a maintainer adds the trigger label (`factory/ready`) to start it |
 | `private_repository_unsupported` | the factory does not take private repositories | none from here |
 | `repository_not_owned` | another factory owns this repository | ask a maintainer |

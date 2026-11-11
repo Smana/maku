@@ -764,6 +764,11 @@ func notProposed(refusal, user string, served ...string) (code, text string, pas
 	case code == "no_write" && what != "":
 		return code, "Not proposed: <@" + user + "> cannot write to " + slackText(what) +
 			", the repositories this channel serves; ask an operator for one you may write in.", false
+	case code == "repository_not_served_here":
+		// The broker's sentence names the repository the person typed and the ones served here, so it
+		// is the line: it already says the fix.
+		_, sentence, _ := strings.Cut(strings.TrimPrefix(refusal, "rejected: "), ": ")
+		return code, "Not proposed: " + slackText(strings.TrimSpace(sentence)), false
 	case code == "not_linked":
 		// The one refusal that sends the person somewhere they can act here: `link` is the App's own
 		// command, and the broker's sentence for it ("link it first") names no way to do that.
@@ -1062,9 +1067,10 @@ func (a *App) planFailed(ctx context.Context, channel, thread, user string, serv
 // orientations are the refusals a person fixes themselves, and the counter's word for each: a closed
 // set, one per cause, so a live session reads which one hit (factory_slack_requests_total{outcome}).
 var orientations = map[string]string{
-	"not_linked":             "not_linked",
-	"repository_not_allowed": "repo_not_allowed",
-	"no_write":               "no_write",
+	"not_linked":                 "not_linked",
+	"repository_not_allowed":     "repo_not_allowed",
+	"no_write":                   "no_write",
+	"repository_not_served_here": "repo_not_served",
 }
 
 // orientationTail is what a first-time mentioner needs after the cause and the fix: the repositories

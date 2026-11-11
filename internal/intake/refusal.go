@@ -45,6 +45,10 @@ const (
 	// outsider is never echoed: naming it back would confirm a repository the requester may not know
 	// exists (CD5, §security).
 	ReasonRepositoryNotInCandidates = "repository_not_in_candidates"
+	// ReasonRepositoryNotServedHere: the request names a repository that is not in the candidate set.
+	// Unlike repository_not_in_candidates it names that repository and the candidates, because the
+	// requester typed the name: the plan is never made for a different one (#469).
+	ReasonRepositoryNotServedHere = "repository_not_served_here"
 	// ReasonInvalidClass: the class is not one this broker's config defines.
 	ReasonInvalidClass = "invalid_class"
 	// ReasonNotLinked: the requester's account is not linked to GitHub, so write access is unknown.
@@ -72,6 +76,7 @@ var sentences = map[string]string{
 	ReasonPlanChanged:               "the plan was superseded; the newer one is the one to confirm",
 	ReasonRepositoryUnverified:      "GitHub could not confirm this repository, so the planner will not guess; try again later",
 	ReasonRepositoryNotInCandidates: "the plan names a repository outside the ones this request may use; name one of them",
+	ReasonRepositoryNotServedHere:   "%s; an operator adds it to the repositories served here",
 	ReasonInvalidClass:              "the class is not one this broker's config defines (%s); name one of the classes it serves",
 	ReasonNotLinked:                 "your account is not linked to GitHub, so the broker cannot tell what you may write; link it first",
 	ReasonDailyPlansReached:         "you have used today's plans; the cap resets at 00:00 UTC",
