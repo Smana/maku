@@ -1660,7 +1660,9 @@ one-entry `repositories` with `control` on that repository, and its `api.reposit
 allowlist as written. A file mixing the two shapes fails the start.
 
 **Each repository has its own GitHub connections**, the factory App's and the merger's, one pair
-per entry; a repository either App is not installed on fails the start. Each entry has its own issue
+per entry; a repository either App is not installed on is refused alone: it is not served, its `Repository`
+reports `Connected=False` (`WiringFailed`), the others are served, and the factory retries every
+minute until the App is installed. Each entry has its own issue
 poller, and a task only ever reads and writes its own repository through its own pair. The daily
 auto-merge cap and the breaker count that repository's merges only.
 

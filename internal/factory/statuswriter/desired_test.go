@@ -297,6 +297,13 @@ func TestFactory(t *testing.T) {
 	}{
 		{"ready", Inputs{Outcomes: acc, Synced: fresh, GitHubUp: true}, metav1.ConditionTrue, "Ready", ""},
 		{"not accepted", Inputs{Synced: fresh, GitHubUp: true}, metav1.ConditionFalse, "NotAccepted", "the Factory is not accepted"},
+		// #448: a refused edit does not take a serving factory down; Ready names what is served.
+		{"last good serving", Inputs{Outcomes: []configsource.Outcome{{Kind: resources.KindFactory, Name: "f", ObservedGeneration: 2, ServedGeneration: 1,
+			Reason: v1alpha1.ReasonInvalid, Message: "x"}}, Synced: fresh, GitHubUp: true}, metav1.ConditionTrue, "ServingLastGood", "serving generation 1; generation 2 refused"},
+		{"last good, github down", Inputs{Outcomes: []configsource.Outcome{{Kind: resources.KindFactory, Name: "f", ObservedGeneration: 2, ServedGeneration: 1,
+			Reason: v1alpha1.ReasonInvalid, Message: "x"}}, Synced: fresh}, metav1.ConditionFalse, "GitHubDown", "a served repository's GitHub connection is unhealthy"},
+		{"refused, nothing served", Inputs{Outcomes: []configsource.Outcome{{Kind: resources.KindFactory, Name: "f", ObservedGeneration: 2,
+			Reason: v1alpha1.ReasonInvalid, Message: "x"}}, Synced: fresh, GitHubUp: true}, metav1.ConditionFalse, "NotAccepted", "the Factory is not accepted"},
 		{"github down", Inputs{Outcomes: acc, Synced: fresh}, metav1.ConditionFalse, "GitHubDown", "a served repository's GitHub connection is unhealthy"},
 		{"sync failing", Inputs{Outcomes: acc, GitHubUp: true, Synced: configsource.Synced{At: now.Time, Err: errors.New("list denied")}}, metav1.ConditionFalse, "SyncFailing", "list denied"},
 		{"sync stale", Inputs{Outcomes: acc, GitHubUp: true, Synced: configsource.Synced{At: now.Add(-16 * time.Minute)}}, metav1.ConditionFalse, "SyncFailing", "no sync since 2026-11-10T11:44:00Z"},

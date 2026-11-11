@@ -179,6 +179,7 @@ func (s *Server) coordinationPlanTool(ctx context.Context, p authn.Principal, ar
 		if !ok {
 			return nil, err
 		}
+		run.cause = causeOf(err)
 		return s.finishCoordination(ctx, run, nil, ref)
 	}
 
@@ -247,6 +248,9 @@ func (s *Server) finishCoordination(ctx context.Context, run planRun, res *coord
 	}
 	if reason != "" {
 		line = append(line, "reason", reason)
+	}
+	if run.cause != "" {
+		line = append(line, "cause", run.cause)
 	}
 	if n := run.usage.PromptTokens + run.usage.CompletionTokens; n > 0 {
 		line = append(line, "promptTokens", run.usage.PromptTokens, "completionTokens", run.usage.CompletionTokens)

@@ -221,6 +221,14 @@ their `status`.
 - **D11, `Factory.Ready` in v1:** True when the Factory is accepted, GitHub answers for every served
   repository, and the last config sync succeeded within 15 minutes. There is no broker probe yet;
   "broker reachable" waits for a probe the factory does not have today.
+- **D5, a refused Factory edit (#448):** `Factory.Ready` stays `True` while the last accepted generation
+  serves, with reason `ServingLastGood` and the message `serving generation N; generation M refused`;
+  `Accepted=False` carries the error and the factory logs one `generation refused` WARN line per refused
+  generation. `Assemble` blames the candidate whose removal drops a line of the current error before one
+  that only changes the text, and a Factory removed as culprit does not drag the pairs into refusal.
+- **D14, an unreachable repository (#447):** the App missing on a listed repository is that repository's
+  `Connected=False` (`WiringFailed`) at start as on a publish; the factory serves the others and the
+  minute retry wires it.
 - **D10, the repository file's divergences:** they appear in the `InSync` condition's message (at
   most five, then "and N more"), not in a `status.repositoryFile.diff` field.
 - **D5, decisions:** each decision marker carries `policygen=<n>`, the generation of the MergePolicy it

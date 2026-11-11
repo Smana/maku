@@ -1052,7 +1052,9 @@ mergepolicy.maku.ogenki.io/cnref       cnref   repository   3         1      Tru
 The status and each of its conditions carry one `observedGeneration`: the generation the factory
 last looked at, which trails the object's own until it reads the newer one. A condition's
 `lastTransitionTime` moves only when its status does. A refused object keeps the last accepted
-version in service, and its message says which generation that is.
+version in service, and its message says which generation that is. The factory logs one WARN line,
+`generation refused`, with the `kind`, `name`, `generation`, `serving` generation and the first
+error, the first time it refuses a generation.
 
 | Condition | On | Status and reason |
 |---|---|---|
@@ -1060,7 +1062,7 @@ version in service, and its message says which generation that is.
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
 | `RepositoryFileValid` | `MergePolicy` | `True` `Valid`; `False` `Invalid` (the file does not parse, or declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
 | `InSync` | `MergePolicy` | `True` `InSync`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
-| `Ready` | `Factory` | `True` `Ready`; `False` `NotAccepted`, `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
+| `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
 With `policyManagement.read` off nothing watches the repository's file, so `RepositoryFileValid`
 and `InSync` stay `Unknown` with `PolicyReadOff`.

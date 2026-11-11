@@ -353,6 +353,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		if !ok {
 			return nil, err // not one of the call's three failures: the tool answers "unavailable"
 		}
+		run.cause = causeOf(err)
 		// Only an initial plan may degrade to the template. A failed revision must never discard
 		// the person's settled answers in favour of a freshly composed draft.
 		if revised == nil {
@@ -663,6 +664,21 @@ type planRun struct {
 	requester intake.Requester
 	start     time.Time
 	usage     intake.Usage
+	// cause is why the planner call failed, for the operator's audit line alone: the model's
+	// error names a status, a deadline or a missing key file, never the key itself.
+	cause string
+}
+
+// maxCause bounds a cause in the log.
+const maxCause = 300
+
+// causeOf is err's text for the audit line, bounded.
+func causeOf(err error) string {
+	c := err.Error()
+	if len(c) > maxCause {
+		c = c[:maxCause] + "..."
+	}
+	return c
 }
 
 // planAnswer is intake_plan's structuredContent: the plan, the hash the broker computed over it, the
@@ -704,6 +720,9 @@ func (s *Server) finishPlan(ctx context.Context, run planRun, plan *intake.Plan,
 	}
 	if ref != nil {
 		line = append(line, "reason", ref.Reason)
+	}
+	if run.cause != "" {
+		line = append(line, "cause", run.cause)
 	}
 	if n := run.usage.PromptTokens + run.usage.CompletionTokens; n > 0 {
 		line = append(line, "promptTokens", run.usage.PromptTokens, "completionTokens", run.usage.CompletionTokens)

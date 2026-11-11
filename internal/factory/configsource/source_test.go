@@ -350,3 +350,38 @@ func TestCRDsAbsentFollowsTheLastSync(t *testing.T) {
 		t.Fatalf("err %v, CRDsAbsent %v: want present", err, s.CRDsAbsent())
 	}
 }
+
+// #448: a refused generation is logged once, at WARN, with the kind, name, generation and the
+// first error; a resync that finds it refused again says nothing more.
+func TestSyncLogsARefusedGenerationOnce(t *testing.T) {
+	ctx := t.Context()
+	s, c := source(t, repoObj("other", "Smana/Other", 1), policyObj(t, "other", "other", 1, nil))
+	var logs strings.Builder
+	s.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := s.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var p v1alpha1.MergePolicy
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "other"}, &p); err != nil {
+		t.Fatal(err)
+	}
+	p.Generation = 2
+	p.Spec.Classes = map[string]config.Class{"docs-links": {Live: true, Shadow: true}, "revert": {Shadow: true}}
+	if err := c.Update(ctx, &p); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.Sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := logs.String()
+	if n := strings.Count(out, "generation refused"); n != 1 {
+		t.Fatalf("%d refusal lines, want 1:\n%s", n, out)
+	}
+	for _, w := range []string{"level=WARN", "kind=MergePolicy", "name=other", "generation=2", "serving=1", "live and shadow"} {
+		if !strings.Contains(out, w) {
+			t.Fatalf("log lacks %q:\n%s", w, out)
+		}
+	}
+}

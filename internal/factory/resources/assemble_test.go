@@ -330,3 +330,34 @@ func TestAssembleBadFactoryIsTheCulpritNotThePairs(t *testing.T) {
 		t.Fatalf("accepted = %d objects, want both pairs", len(r.Accepted))
 	}
 }
+
+// #448: after migration the file holds no repository, and control.repository is a Factory value
+// naming a repository only a Repository object lists. A bad Factory is the culprit with its own
+// error: it is never blamed through "not a listed repository" errors that come from removing a pair.
+func TestAssembleBadFactoryMessageHasNoFalseRepositoryErrors(t *testing.T) {
+	manifests, residual, err := Migrate(file(t), "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range objs {
+		if objs[i].Kind != KindFactory {
+			continue
+		}
+		tpl, _ := objs[i].Spec["templates"].(map[string]any)
+		pair, _ := tpl["pair"].(map[string]any)
+		pair["roles"] = []any{"implementer", "astronaut"}
+	}
+	r, _ := Assemble(residual, objs)
+	x := refusal(r, KindFactory, "aws-0")
+	if x == nil || !strings.Contains(x.Message, "astronaut") || strings.Contains(x.Message, "repositories is empty") ||
+		strings.Contains(x.Message, "not a listed repository") {
+		t.Fatalf("Factory refusal: %+v", x)
+	}
+	if len(r.Refused) != 1 {
+		t.Fatalf("only the Factory is at fault: %+v", r.Refused)
+	}
+}
