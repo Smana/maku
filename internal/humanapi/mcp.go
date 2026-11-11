@@ -144,6 +144,9 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 				"## Acceptance check, no secret; hidden characters are stripped. It files nothing: show the draft to the developer, then use issue_file.",
 			schema: json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","title","body"],"properties":{"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},"title":{"type":"string","minLength":1,"maxLength":1024},"body":{"type":"string","minLength":1,"maxLength":16384}}}`)},
 	}
+	if s.Catalogue != nil { // classes_list reads the factory's catalogue: no reader, no tool
+		all = append(all, s.classesListTool())
+	}
 	// needs_list is one list with GET /api/needs, so the operator's switch governs both doors: off, the
 	// tool is on neither list, and a call is `unknown tool` — the App never reads needs the feature is
 	// off for (CD28). It is last, as the newest read.
@@ -220,7 +223,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 // room-scoped read, which lists what the room has to act on with a link and no decision (CD28). The two
 // legacy room reads stay need-free.
 var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
-	mcpwire.CoordinationPlan}
+	mcpwire.CoordinationPlan, ClassesList}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
 // the bearer is one of theirs. Its expiry is checked as a human's is.

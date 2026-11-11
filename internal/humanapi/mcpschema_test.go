@@ -40,7 +40,7 @@ func untyped(node any, path string) []string {
 func TestEveryToolSchemaNodeNamesItsType(t *testing.T) {
 	// Both lists, with the planner on: a tool a deployment can switch on passes the same test as
 	// the ones it always has. needs_list too: every tool's input and output alike.
-	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "session"))
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "session"), withCatalogue(&fakeFactoryCatalogue{}))
 	for name, h := range map[string]http.Header{"a human's": viaRoomctl("dev"), "the App's": bearer("slack-app")} {
 		_, out := rpc(t, e, h, "tools/list", nil)
 		b, _ := json.Marshal(out["result"])
@@ -63,6 +63,9 @@ func TestEveryToolSchemaNodeNamesItsType(t *testing.T) {
 			for _, bad := range untyped(tool.OutputSchema, tool.Name+".output") {
 				t.Errorf("%s: %s", name, bad)
 			}
+		}
+		if !slices.Contains(names, ClassesList) {
+			t.Errorf("%s list does not carry classes_list: %v", name, names)
 		}
 		if !slices.Contains(names, mcpwire.IntakePlan) || !slices.Contains(names, mcpwire.PlanCheck) {
 			t.Errorf("%s list does not carry the planner's two tools: %v", name, names)

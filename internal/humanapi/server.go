@@ -175,6 +175,9 @@ type Server struct {
 	// Coordination is coordination_plan (v4 MR4): listed beside the planner while its mode is not
 	// off. Nil, or off, lists nothing.
 	Coordination *CoordinationPlanner
+	// Catalogue reads what a repository offers at intake from the factory (classes_list and the
+	// settings pages' Profiles row). Nil lists no classes_list and leaves the pages without it.
+	Catalogue *CatalogueCache
 	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
 	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
 	Policy *Policy

@@ -385,13 +385,27 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		sponsoredRepos = h.MCP.SponsoredRepositories()
 	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Intake: in, Coordination: coord, SponsoredRepositories: sponsoredRepos,
+		Intake: in, Coordination: coord, Catalogue: catalogueCache(cfg, m), SponsoredRepositories: sponsoredRepos,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID:        projectID,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
 		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards}, nil
+}
+
+// catalogueCache is the broker's reader of the factory's catalogue (profile choice at intake,
+// stage 1): nil while no factory is configured, which lists no classes_list. The URL is the
+// config's, never a request's, and the caller's own token travels with each read.
+func catalogueCache(cfg config.Config, m *metrics.Set) *humanapi.CatalogueCache {
+	if cfg.FactoryURL == "" {
+		return nil
+	}
+	var reads humanapi.CatalogueReads // a nil *metrics.Set must not become a non-nil interface
+	if m != nil {
+		reads = m
+	}
+	return humanapi.NewCatalogueCache(runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}, reads, nil)
 }
 
 // intakeServer is human.intake.plan as the human API serves it (v3.x conversational intake): the
