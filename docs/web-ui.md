@@ -193,9 +193,9 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 
 | Page | Shows |
 |---|---|
-| `/settings` | Section cards (merge policies, evidence, approval memory) with live counts |
+| `/settings` | Section cards (merge policies, evidence, approval memory) with live counts; the merge policies card also reads the factory's team evaluation: `evaluation: observe · control 20 %` |
 | `/settings/merge-policies` | One row per repository: its `MergePolicy` with its Accepted and InSync conditions in words (or "Not migrated", or "status unknown" before the factory reports them), its classes by mode, the class closest to promotion |
-| `/settings/merge-policies/<owner>/<name>` | A header saying once what serves the classes: the `MergePolicy`, its namespace, authority and generation, its conditions as words on their colour, and a legend for the three modes; one line on `.github/agent-factory.yaml` (a notice only when an invalid file pauses auto-merge). Then one card per class: its name and mode word, its [description](merge-policies.md#description), its conditions in one line, its last decision, its track record toward the [promotion](factory.md#promotion) in words (each part with a hover explanation) with the 29 / 46 / 61 steps, and what blocks it as actions (`needs 16 more clean merges`, `1 bad merge to explain`, `run a rollback drill (factory/drill)`), the full conditions folded, its promotion and exception. A repository with no `MergePolicy` says "Not migrated yet" and has no editor |
+| `/settings/merge-policies/<owner>/<name>` | A header saying once what serves the classes: the `MergePolicy`, its namespace, authority and generation, its conditions as words on their colour, and a legend for the three modes; one line on `.github/agent-factory.yaml` (a notice only when an invalid file pauses auto-merge). Then one card per class: its name and mode word, its [description](merge-policies.md#description), its conditions in one line, its last decision, its track record toward the [promotion](factory.md#promotion) in words (each part with a hover explanation) with the 29 / 46 / 61 steps, and what blocks it as actions (`needs 16 more clean merges`, `1 bad merge to explain`, `run a rollback drill (factory/drill)`), the full conditions folded, a read-only **Profiles** row (below), its promotion and exception. A repository with no `MergePolicy` says "Not migrated yet" and has no editor |
 | `/settings/merge-policies/<owner>/<name>/decisions/<pr>` | The pull request's decision timeline |
 | `/settings/evidence` | Every class of every repository you read, in one table: Repository, Class, Mode, Track record (`4 of 20 clean merges · 1 bad · 2 awaiting outcome · worst-case bad rate ≤ 75 % · no rollback drill yet`, each part explained on hover) and Blocks promotion (the actions above, or `eligible`). One line above the table says what the 29 / 46 / 61 ladder proves. A row the factory is still reading shows `reading GitHub…` in its cells, never data-like words |
 
@@ -205,6 +205,15 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 | A maintainer (write on GitHub), MergePolicy under `central` authority | **Check** a proposal in the policy editor (guided form, templates or expert YAML): validation, structural change, simulation and the `MergePolicy` manifest, to copy or download and commit where the platform's GitOps applies it. A shadow class is promoted by editing the `MergePolicy`: its card says "set `live: true` on this class in the MergePolicy and merge the change" and **Edit this class** opens it in the editor. Ask an operator for an exception below the minimum, with a justification |
 | A maintainer, under `repository` authority or not migrated | **Check** in the policy editor (none on a not-migrated page): the file to submit with its edit link. **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification. A not-migrated page has no editor but keeps these promotion and exception requests: they are the broker's records, and the file proposal works there as before |
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
+
+The **Profiles** row on a class card says which harness profile the class runs under: the floor, the
+variants a maintainer may pin or the scoper may recommend, where an out-of-budget or not-converged run
+escalates, and each profile's roles and tier (`Floor review-floor: roles chosen at triage`, `Variant
+review-frontier: roles implementer, tester, reviewer · tier frontier · tests first`). A floor with no
+`template` says its roles are chosen at triage, because the factory picks them from the class and the
+tier. It comes from the factory's [catalogue](api.md#get-v1catalogueownername), so a class the catalogue
+does not offer at intake (`revert`, an adopted or an oracle class) has no row, and a page whose catalogue
+the factory did not answer has none either. The row writes nothing: pinning a profile is not a setting.
 
 The broker checks each of these on every request; a hidden button is only a convenience.
 

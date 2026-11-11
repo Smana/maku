@@ -147,6 +147,14 @@ secondary text on Ink only, never on a light theme.
 
 Wordmark: Space Grotesk 700, lowercase `maku`, tracking −3%. Body: Space Grotesk 400 for message prose, 500 for the UI chrome, or system sans.
 
+## Words with one meaning
+
+**Workflow** is reserved for a GitHub Actions workflow: `oracle.workflow`, the holdout workflows and
+`.github/workflows/`. What a class runs under is a **harness profile** (a *profile* after the first
+use on a page): the name in the code and the API (`HarnessProfile`, `harnessProfiles`,
+`classes.<c>.harness`, `Task.status.profile`), a named row of `template`, `tier`, `checks`,
+`testFirst` and `loop`, not a sequence a user edits. Maku has no workflow object.
+
 ## Technical names
 
 Since v0.30.0 every artifact carries the name; identities that other systems key on keep theirs.

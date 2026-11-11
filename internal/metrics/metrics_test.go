@@ -524,6 +524,38 @@ func TestIntakeSeriesAreTheSpecsNames(t *testing.T) {
 	}
 }
 
+// The catalogue's reads are maku_intake_catalogue_reads_total{outcome}, a closed vocabulary.
+func TestIntakeCatalogueReadsMetric(t *testing.T) {
+	if got := MakuName("intake_catalogue_reads_total"); got != "maku_intake_catalogue_reads_total" {
+		t.Fatalf("MakuName = %q", got)
+	}
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "v0.34.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.IntakeCatalogueRead(ctx, CatalogueHit)
+	s.IntakeCatalogueRead(ctx, CatalogueHit)
+	s.IntakeCatalogueRead(ctx, CatalogueMiss)
+	s.IntakeCatalogueRead(ctx, CatalogueError)
+	s.IntakeCatalogueRead(ctx, "Smana/cloud-native-ref") // a repository never labels a series
+	got := series(scrape(t, exp.Handler()))
+	for key, want := range map[string]string{
+		`maku_intake_catalogue_reads_total{outcome="hit"}`:   "2",
+		`maku_intake_catalogue_reads_total{outcome="miss"}`:  "1",
+		`maku_intake_catalogue_reads_total{outcome="error"}`: "2",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q: %v", key, got[key], want, got)
+		}
+	}
+}
+
 // CD7 and CD25's evidence: the App's two families are served under maku_slack_*, so the names the
 // dashboard and the acceptance queries hold are the ones a scrape carries — the plural
 // maku_slack_thread_answers_total, since the label is a set of questions, and the proposal counter's

@@ -1225,6 +1225,10 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .class-conditions > summary::marker { color: var(--muted-foreground); }
 .class-conditions > :not(summary) { margin-top: 6px; }
 .class-when { margin: 4px 0 8px; padding-left: 20px; }
+.class-profiles { margin-top: 8px; }
+.class-profiles > h4 { margin: 0 0 4px; font-size: var(--text-small); font-weight: 500; color: var(--muted-foreground); }
+.class-profile-list { margin: 0 0 4px; padding-left: 20px; }
+.class-escalation { margin: 0; font-size: var(--text-small); color: var(--muted-foreground); }
 .evidence-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
 .evidence-track { flex: 1 1 8em; min-width: 8em; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
 /* Solid, not the aurora: the repository page draws one bar per class, and a screen gets one gradient. */
