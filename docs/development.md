@@ -81,7 +81,7 @@ Three CSS tests guard it, so a token or a size change starts there:
 |---|---|
 | `web/test/contrast.test.ts` | a token value or a pair that moved: every text pair at 4.5:1, every border, icon, input boundary and focus ring at 3:1, in both themes |
 | `web/test/type-scale.test.ts` | a `font-size` or `font:` shorthand off the 32 / 22 / 16 / 14 / 13 px scale, a family not through `--font-display`, `--font-sans` or `--font-mono`, an eyebrow that is not mono uppercase at 0.08em |
-| `web/test/surfaces.test.ts` | the aurora gradient anywhere but the budget and evidence bars, a card off the Ogenki shape, a side stripe, a focus ring that is not 2 px with a 2 px gap |
+| `web/test/surfaces.test.ts` | the aurora gradient anywhere but the budget bar, a card off the Ogenki shape, a side stripe, a focus ring that is not 2 px with a 2 px gap |
 
 Room text is untrusted, so there are three rules, all tested in `web/test/render.test.ts`:
 

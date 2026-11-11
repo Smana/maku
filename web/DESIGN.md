@@ -138,7 +138,7 @@ prose, JetBrains Mono carries everything a machine wrote: ids, commands, timesta
 - Flat, bordered surfaces in three steps: page, card, raised.
 - One type scale of five sizes; emphasis by weight or colour.
 - Colour means state; a state is always a word too.
-- One gradient, the aurora, on two kinds of bar only.
+- One gradient per screen: the aurora, on the budget bar only.
 
 ## Colors
 
@@ -241,10 +241,11 @@ and `--shadow-border-hover`, a button's hover ring. Cards carry none.
 ### Named Rules
 **The No-Glow Rule.** No glow backgrounds, no coloured halo, no glass on a working page.
 
-**The One-Gradient Rule.** `--aurora-bar` (pink to violet, 90deg) fills the token budget bar
-(`.meter-bar::after`) and the evidence bar (`.evidence-fill`) and nothing else. A budget past
-80 % or spent turns its bar solid amber or pink; a blocked evidence bar is muted.
-`web/test/surfaces.test.ts` pins the two users.
+**The One-Gradient Rule.** At most one gradient per screen. `--aurora-bar` (pink to violet,
+90deg) fills the room page's token budget bar (`.meter-bar::after`) and nothing else. A budget
+past 80 % or spent turns its bar solid amber or pink. The evidence bar repeats once per class on
+a repository page, so it fills with solid `--primary`, muted when blocked.
+`web/test/surfaces.test.ts` pins the one user.
 
 ## Shapes
 
@@ -274,8 +275,10 @@ Borders are 1 px. A thicker border survives only on the rail's lanes.
 - **Corner Style:** 16 px (`--radius-md`).
 - **Background:** Panel (`--card`).
 - **Shadow Strategy:** none (see Elevation & Depth).
-- **Border:** 1 px hairline. A state tones the border itself: a pending approval or need, and a
-  refused call, in `--warning-border`; a failed call in `--destructive`.
+- **Border:** 1 px hairline. A refused call tones its border `--warning-border`, a failed call
+  `--destructive`. A pending approval or need keeps a 3 px `--warning-border` bar on its left
+  edge (the owner's choice, #345), drawn straight between the 16 px corners, never bent round
+  them.
 - **Hover:** a link card (settings home) fades a raised layer in behind its text and lifts 1 px.
 - **Selected:** the 1 px border turns `--primary`. Today only the class a link points at
   (`.class-card:target`) is selectable.
@@ -318,7 +321,8 @@ words ("Running — implementer, 13 min"). The icon is aria-hidden; the words sa
 
 ### Don't:
 - **Don't** draw a side stripe (a coloured `border-left` or an inset bar) on a card, a row or a
-  list item: tone the card's own 1 px border or the status icon.
+  list item: tone the card's own 1 px border or the status icon. The one exception is the
+  approval and need bar, straight and inside the card.
 - **Don't** add a font size, a font family literal or a second gradient.
 - **Don't** put literal white text on an accent, or a colour outside the tokens.
 - **Don't** use emoji; icons are 2 px-stroke line SVGs in one ink.

@@ -700,8 +700,8 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 /* A list that could not be refreshed, and a room whose state could not be read: information under the
    list, not needs themselves, so the pill does not count them. */
 .needs-other li.needs-stale, .needs-other li.needs-unread { color: var(--muted-foreground); font-size: var(--text-small); }
-/* A pending approval: the card shape, its waiting state the 1 px border in the warning tone
-   (below), as a refused call's is; the Needs you heading and pill say it in words. */
+/* A pending approval: the card shape, its waiting state a 3 px warning bar on its left edge
+   (below); the Needs you heading and pill say it in words. */
 .approval { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 6px;
   background: var(--card); color: var(--card-foreground); min-width: 0; }
 .approval-command { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -711,10 +711,14 @@ input::placeholder, textarea::placeholder { color: var(--placeholder); }
 .approval-decide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .approval-decide input { flex: 1 1 12em; min-width: 0; }
 /* A need decided elsewhere or by another control (needs.ts's needCard): the approval card's surface
-   and toned border, its heading, its sentence, and one action that is always there. */
+   and bar, its heading, its sentence, and one action that is always there. */
 .needs-other li.need { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: 4px;
   background: var(--card); color: var(--card-foreground); min-width: 0; }
-.approval, .needs-other li.need { border-color: var(--warning-border); }
+/* The bar is straight: it runs between the 16 px corners rather than bending round them. */
+.approval, .needs-other li.need { position: relative; }
+.approval::before, .needs-other li.need::before {
+  content: ""; position: absolute; left: -1px; top: var(--radius-md); bottom: var(--radius-md); width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--warning-border); pointer-events: none; }
 .need-title { margin: 0; font-weight: 700; }
 .need-what, .need-why { margin: 0; font-size: var(--text-small); }
 .need-why { color: var(--muted-foreground); }
@@ -1181,7 +1185,8 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .class-when { margin: 4px 0 8px; padding-left: 20px; }
 .evidence-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 8px 0 4px; }
 .evidence-track { flex: 1 1 8em; min-width: 8em; max-width: 320px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
-.evidence-fill { display: block; height: 100%; background: var(--aurora-bar); }
+/* Solid, not the aurora: the repository page draws one bar per class, and a screen gets one gradient. */
+.evidence-fill { display: block; height: 100%; background: var(--primary); }
 /* A blocked class is not about to promote: its fill is muted, never the accent of progress. */
 .evidence-bar[data-blocked="true"] .evidence-fill { background: var(--muted-foreground); }
 .evidence-count { font-size: var(--text-small); font-variant-numeric: tabular-nums; }
