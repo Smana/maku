@@ -6,6 +6,7 @@
 // applies the embedded schema as rooms_owner, from ROOMS_MIGRATION_DATABASE_URL (an init
 // container, or a one-off outside the Atlas operator). `maku-broker migrate-group --from <group>
 // --to <group> [--apply]` moves Rooms and Tasks between API groups (dry run without `--apply`).
+// `maku-broker intent-samples [--days N]` prints an opted-in channel's labelled replies as JSON lines.
 // Its wiring is app.RunBroker.
 package main
 
