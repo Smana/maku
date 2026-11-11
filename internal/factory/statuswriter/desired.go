@@ -160,7 +160,7 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 	}
 	sync := d.in.Synced
 	switch {
-	case o == nil || !o.Accepted:
+	case o == nil || (!o.Accepted && o.ServedGeneration == 0):
 		ready(metav1.ConditionFalse, "NotAccepted", "the Factory is not accepted")
 	case !d.in.GitHubUp:
 		ready(metav1.ConditionFalse, "GitHubDown", "a served repository's GitHub connection is unhealthy")
@@ -170,6 +170,10 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 		ready(metav1.ConditionFalse, "SyncFailing", "no sync yet")
 	case d.now.Sub(sync.At) > syncFreshness:
 		ready(metav1.ConditionFalse, "SyncFailing", "no sync since "+sync.At.UTC().Format(time.RFC3339))
+	case !o.Accepted:
+		// The last accepted generation keeps serving (D5): the factory is up, and Accepted says why
+		// the edit is not (#448).
+		ready(metav1.ConditionTrue, "ServingLastGood", fmt.Sprintf("serving generation %d; generation %d refused", o.ServedGeneration, o.ObservedGeneration))
 	default:
 		ready(metav1.ConditionTrue, "Ready", "")
 	}
