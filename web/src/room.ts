@@ -221,7 +221,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // mounted page, rewriting them in place every second. It stops with the page, and on
   // its own once the page has left app (a re-mount or the "no such room" page replaced it).
   const ticker = setInterval(() => {
-    if (!app.contains(header)) { clearInterval(ticker); ro?.disconnect(); scrollIndex.disconnect(); rail.dispose(); }
+    if (!app.contains(header)) { clearInterval(ticker); ro?.disconnect(); scrollIndex.disconnect(); rail.dispose(); strip.dispose(); }
     else { needsPanelView.refresh(); refreshStrip(); rail.tick(Date.now()); }
   }, 1000);
   // The summary loads on mount, then at most once a second while events it folds arrive
@@ -367,6 +367,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       ro?.disconnect();
       scrollIndex.disconnect();
       rail.dispose();
+      strip.dispose();
       const back = document.createElement("a");
       back.href = "/";
       back.textContent = "See the rooms you can read";

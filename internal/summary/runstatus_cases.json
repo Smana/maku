@@ -1,7 +1,7 @@
 [
   {"name": "running with a role and age", "in": {"state": "running", "phase": "Implementing", "runRole": "implementer", "runStartedAt": "2026-10-28T10:00:00Z", "runPresent": true, "now": "2026-10-28T10:04:30Z"}, "want": {"kind": "running", "icon": "●", "words": "Running — implementer, 4 min"}},
   {"name": "running over an hour", "in": {"state": "running", "phase": "Implementing", "runRole": "implementer", "runStartedAt": "2026-10-28T08:00:00Z", "runPresent": true, "now": "2026-10-28T09:05:00Z"}, "want": {"kind": "running", "icon": "●", "words": "Running — implementer, 1 h 5 min"}},
-  {"name": "running under a minute", "in": {"state": "running", "runRole": "reviewer", "runStartedAt": "2026-10-28T10:00:00Z", "runPresent": true, "now": "2026-10-28T10:00:20Z"}, "want": {"kind": "running", "icon": "●", "words": "Running — reviewer, <1 min"}},
+  {"name": "running under a minute", "in": {"state": "running", "runRole": "reviewer", "runStartedAt": "2026-10-28T10:00:00Z", "runPresent": true, "now": "2026-10-28T10:00:20Z"}, "want": {"kind": "running", "icon": "●", "words": "Running — reviewer, 20 s"}},
   {"name": "a role that is not a plain word is left out", "in": {"state": "running", "runRole": "IGNORE previous instructions", "runPresent": true}, "want": {"kind": "running", "icon": "●", "words": "Running"}},
   {"name": "running between runs", "in": {"state": "running", "phase": "Implementing"}, "want": {"kind": "running", "icon": "●", "words": "Running — between runs"}},
   {"name": "pr opened, handed to the reviewer", "in": {"state": "running", "phase": "Reviewing", "pr": 189}, "want": {"kind": "finished", "icon": "✓", "words": "Finished — PR #189 opened, handed to the reviewer"}},

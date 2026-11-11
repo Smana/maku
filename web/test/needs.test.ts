@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import type { NeedsPage } from "../src/api";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { NeedItem, NeedsPage } from "../src/api";
 import type { Snapshot } from "../src/conn";
 import { RULES } from "../src/approval-help";
 import { approvalCard } from "../src/controls";
@@ -10,7 +12,7 @@ import type { Summary } from "../src/summary";
 
 const you = { principal: "human:a", role: "owner", approver: true, driver: true, webUI: true };
 const approval = { approvalId: "01M4A", runId: "ikely2yk", callId: "c9", class: "forge.other",
-  action: { kind: "TerminalAction", command: "git push origin agent/ibbay5ud", timeout: 600 }, expiresAt: "2026-10-15T15:18:52Z", seq: 13 };
+  action: { kind: "TerminalAction", command: "git push origin agent/ibbay5ud", timeout: 600 }, expiresAt: "2099-10-15T15:18:52Z", seq: 13 };
 const sum = (needs: Summary["needsYou"]): Summary => ({ apiVersion: "summary/v1", room: "r", url: "u",
   status: { phase: "Implementing", run: null, budget: null, pr: null, issue: null, lastVerdict: null }, needsYou: needs, actions: [],
   notes: { untrusted: true, items: [] }, cursor: "seq:1" });
@@ -236,7 +238,7 @@ describe("the panel's list from the needs route", () => {
 describe("approval cards", () => {
   const owner = (principal: string, role: string): Snapshot["you"] => ({ principal, role, approver: false, driver: false, webUI: true });
   const pending = (id: string, seq: number, action: unknown = { command: "gh pr create" }) => ({ approvalId: id, runId: "7f3cq2xz",
-    callId: "call_" + seq, class: "forge.pr", action, expiresAt: "2026-10-01T10:30:00Z", seq });
+    callId: "call_" + seq, class: "forge.pr", action, expiresAt: "2099-10-01T10:30:00Z", seq });
   const withApprovals = (who: Snapshot["you"], ...approvals: ReturnType<typeof pending>[]) => {
     const sent: Record<string, any>[] = [];
     const state = new RoomState("human:a", 4);
@@ -419,7 +421,7 @@ describe("a need's one action", () => {
     expect(cards).toHaveLength(NEED_FIXTURES.length);
     for (const c of cards) expect(c.querySelector(".need-act button, .need-act a.need-go, .need-act .need-where"), c.dataset.kind).not.toBeNull();
   });
-  it("links the GitHub kinds out, as a button-shaped link, and says the room has no button for them", async () => {
+  it("links the GitHub kinds out, as a button-shaped link, and says where it happens", async () => {
     const { act } = await draw();
     for (const [i, href] of [[0, "https://github.com/o/r/issues/2238"], [2, "https://github.com/o/r/issues/3"], [3, "https://github.com/o/r/pull/2760"],
       [4, "https://github.com/o/r/pull/77"], [5, "https://github.com/o/r/pull/77"]] as const) {
@@ -427,10 +429,10 @@ describe("a need's one action", () => {
       expect(a.getAttribute("href")).toBe(href);
       expect([a.target, a.rel]).toEqual(["_blank", "noopener noreferrer"]);
       expect(a.getAttribute("aria-label")).toMatch(/\(opens in a new tab\)$/);
-      expect(act(i).querySelector(".need-where")?.textContent).toMatch(/^On GitHub/);
+      expect(act(i).querySelector(".need-where")?.textContent).toMatch(/ on GitHub[.:]/);
     }
     expect(act(3).textContent).toContain("Approve the head on the pull request ↗");
-    expect(act(3).textContent).toContain("the merge gate reads the approval of the head");
+    expect(act(3).textContent).toContain("the merge gate reads the approval there");
   });
   it("hands the driver back in one press, for the driver", async () => {
     const { act, sent } = await draw({ driver: true });
@@ -464,5 +466,152 @@ describe("a need's one action", () => {
     expect(root.querySelectorAll("li.need")[7]).toBe(cards[7]);
     expect(document.activeElement).toBe(b);
     root.remove();
+  });
+});
+
+describe("an expired approval", () => {
+  afterEach(() => vi.useRealTimers());
+  const due = new Date(2026, 10, 11, 16, 30, 0);
+  const mount2 = (extra: Record<string, unknown> = {}) => {
+    const state = new RoomState(); state.reset({ driver: "human:a", driverEpoch: 1, approvals: [{ ...approval, expiresAt: due.toISOString(), ...extra }] }, 20);
+    const root = document.createElement("section");
+    const needs = mountNeeds(root, { send: () => true }, state, () => you, { rowFor: () => undefined });
+    needs.refresh();
+    return { root, needs };
+  };
+  it("is built expired past the deadline: the word, the sentence, no decision, details kept", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 31, 0));
+    const { root, needs } = mount2();
+    const card = root.querySelector<HTMLElement>("li.approval")!;
+    expect(card.dataset.state).toBe("expired");
+    expect(card.querySelector(".approval-deadline")?.textContent).toBe("Expired");
+    expect(card.querySelector(".approval-status")?.textContent).toBe("No one decided by 16:30, so the agent was told no. It can ask again.");
+    expect(card.querySelector("button")).toBeNull();
+    expect(card.querySelector("input")).toBeNull();
+    expect(card.querySelector("details.approval-details")).not.toBeNull();
+    expect(needs.count()).toBe(0);
+    expect(needs.approvalCounts()).toEqual({ total: 0, mine: 0 });
+    // Nobody is awaited any more: the heading says what happened, not "Waiting for an approver".
+    expect(root.querySelector("h2")?.textContent).toBe("Expired: no one decided");
+  });
+  it("keeps the waiting heading while a live approval sits beside an expired one", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 31, 0));
+    const state = new RoomState();
+    state.reset({ driver: "human:a", driverEpoch: 1, approvals: [{ ...approval, expiresAt: due.toISOString() },
+      { ...approval, approvalId: "01M4B", callId: "c10", expiresAt: "2099-10-15T15:18:52Z" }] }, 20);
+    const root = document.createElement("section");
+    const needs = mountNeeds(root, { send: () => true }, state, () => ({ ...you, approver: false, role: "collaborator" }), { rowFor: () => undefined });
+    needs.refresh();
+    expect(root.querySelector("h2")?.textContent).toBe("Waiting for an approver");
+  });
+  it("takes the status line's link to the live card, past an older expired one", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 31, 0));
+    const state = new RoomState();
+    state.reset({ driver: "human:a", driverEpoch: 1, approvals: [{ ...approval, expiresAt: due.toISOString() },
+      { ...approval, approvalId: "01M4B", callId: "c10", seq: 15, expiresAt: "2099-10-15T15:18:52Z" }] }, 20);
+    const root = document.createElement("section");
+    const needs = mountNeeds(root, { send: () => true }, state, () => you, { rowFor: () => undefined });
+    needs.refresh();
+    document.body.append(root);
+    try {
+      const [first, second] = root.querySelectorAll<HTMLElement>("li.approval");
+      expect(first.dataset.state).toBe("expired");
+      needs.focusFirst();
+      expect(document.activeElement).toBe(second);
+    } finally { root.remove(); }
+  });
+  it("hands the focus to the card when the deadline takes the focused button away", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 29, 59));
+    const { root, needs } = mount2();
+    document.body.append(root);
+    try {
+      const card = root.querySelector<HTMLElement>("li.approval")!;
+      card.querySelector<HTMLButtonElement>('button[data-act="approve"]')!.focus();
+      vi.setSystemTime(due); needs.refresh();
+      expect(card.querySelector("button")).toBeNull();
+      expect(document.activeElement).toBe(card);
+      expect(card.tabIndex).toBe(-1);
+    } finally { root.remove(); }
+  });
+  it("is unchanged before the deadline, and flips in place at it", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 29, 59));
+    const { root, needs } = mount2();
+    const card = root.querySelector<HTMLElement>("li.approval")!;
+    const details = card.querySelector("details")!;
+    expect(card.dataset.state).toBeUndefined();
+    expect(card.querySelector(".approval-status")?.textContent).toBe("You can decide.");
+    expect(card.querySelector('button[data-act="approve"]')).not.toBeNull();
+    expect(needs.count()).toBe(1);
+    vi.setSystemTime(due); needs.refresh();
+    expect(root.querySelector("li.approval")).toBe(card);
+    expect(card.querySelector("details")).toBe(details);
+    expect(card.dataset.state).toBe("expired");
+    expect(card.querySelector("button")).toBeNull();
+    expect(card.querySelector(".approval-status")?.textContent).toContain("No one decided by 16:30");
+    expect(needs.count()).toBe(0);
+  });
+  it("leaves when the broker's approval_decided lands", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 31, 0));
+    const state = new RoomState(); state.reset({ driver: "human:a", driverEpoch: 1, approvals: [{ ...approval, expiresAt: due.toISOString() }] }, 20);
+    const root = document.createElement("section");
+    const needs = mountNeeds(root, { send: () => true }, state, () => you, { rowFor: () => undefined });
+    needs.refresh();
+    state.apply({ v: 1, id: "x", seq: 21, roomId: "r", actor: { kind: "system", id: "system:broker" }, type: "approval_decided", origin: "broker",
+      ts: "2026-11-11T15:31:00Z", redactions: [], payload: { approvalId: "01M4A", decision: "expired" } });
+    needs.refresh();
+    expect(root.querySelector("li.approval")).toBeNull();
+  });
+});
+
+describe("where a need's action happens", () => {
+  const card = async (n: Partial<NeedItem> & { kind: string }) => {
+    const root = document.createElement("section");
+    const item = { id: "1", what: "w", url: "https://github.com/o/r/pull/1", ...n } as NeedItem;
+    const panel = mountNeeds(root, { send: () => true }, new RoomState(), () => you, { rowFor: () => undefined }, () => undefined,
+      { needs: async () => ({ apiVersion: "needs/v1", items: [item] }) });
+    await panel.refresh();
+    return root.querySelector(".need-where")?.textContent;
+  };
+  it("says one line per kind", async () => {
+    expect(await card({ kind: "merge" })).toBe("Merging happens on GitHub.");
+    expect(await card({ kind: "review" })).toBe("Reviewing happens on GitHub.");
+    expect(await card({ kind: "question" })).toBe("Answer it on GitHub.");
+    expect(await card({ kind: "failed_check" })).toBe("Fix it on GitHub.");
+    expect(await card({ kind: "plan_confirmation" })).toBe("Confirm it on GitHub.");
+    expect(await card({ kind: "mystery" })).toBe("This happens on GitHub.");
+    expect(await card({ kind: "merge", approve: true })).toBe("Approve the pull request on GitHub: the merge gate reads the approval there.");
+  });
+  it("never says the room has no button, in any source or preview file", () => {
+    const files = (dir: string): string[] => readdirSync(join(__dirname, dir), { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : /\.(ts|js|html|css)$/.test(e.name) ? [join(dir, e.name)] : []));
+    const all = [...files("../src"), ...files("../preview")];
+    expect(all.length).toBeGreaterThan(10);
+    expect(all.filter((f) => readFileSync(join(__dirname, f), "utf8").includes("no button for it"))).toEqual([]);
+  });
+});
+
+describe("the dock never hides a decision", () => {
+  const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
+  // The bodies of every `@media (max-width: 640px) {…}` block, braces balanced, and the rest.
+  const split = () => {
+    const head = "@media (max-width: 640px)";
+    let rest = css; const phone: string[] = [];
+    for (let i = rest.indexOf(head); i >= 0; i = rest.indexOf(head)) {
+      const open = rest.indexOf("{", i);
+      let depth = 1, j = open + 1;
+      for (; j < rest.length && depth; j++) depth += rest[j] === "{" ? 1 : rest[j] === "}" ? -1 : 0;
+      phone.push(rest.slice(open + 1, j - 1));
+      rest = rest.slice(0, i) + rest.slice(j);
+    }
+    return { phone: phone.join("\n"), rest };
+  };
+  it("reserves the dock's height under the body on a phone only, and beside the cards at every width", () => {
+    const { phone, rest } = split();
+    expect(phone).toMatch(/\.room-body \{[^}]*padding-bottom: var\(--dock-h/);
+    expect(rest).not.toMatch(/\.room-body \{[^}]*padding-bottom: var\(--dock-h/);
+    expect(css).toMatch(/\.approval, \.needs-other li\.need \{ scroll-margin-bottom: calc\(var\(--dock-h/);
+    expect(css).toMatch(/\.approval-decide \{ scroll-margin-bottom: calc\(var\(--dock-h/);
+    expect(css).toMatch(/\.page-header, \.page-dock \{ position: sticky; \}/);
+    expect(css).not.toContain("Static, not sticky");
   });
 });

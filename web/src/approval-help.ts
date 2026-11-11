@@ -5,6 +5,8 @@
 // fixed prose chosen by the broker's bounded class code (§6); nothing the agent wrote
 // is ever the reason. An unknown code reads as the generic rule.
 
+import { span } from "./duration";
+
 export interface Rule { intent: string; why: string; approve: string; deny: string }
 
 const DENIED = "the agent is told no and none of it runs; it may try another way.";
@@ -60,12 +62,6 @@ export const ruleFor = (cls: string): Rule => (Object.hasOwn(RULES, cls) ? RULES
 const pad = (n: number) => String(n).padStart(2, "0");
 const clock = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-function inMinutes(ms: number): string {
-  const m = Math.floor(ms / 60000);
-  if (m < 1) return "under a minute";
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
-}
-
 export const EXPIRY = "the request expires and the agent is told no";
 
 // deadlineText: "decide by HH:MM (in N min); if nobody decides: …". Another day's deadline
@@ -76,8 +72,18 @@ export function deadlineText(expiresAt: string, now: number = Date.now()): strin
   const left = due.getTime() - now;
   if (left <= 0) return `The deadline has passed (${clock(due)}); ${EXPIRY}.`;
   const day = due.toDateString() === new Date(now).toDateString() ? "" : `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())} `;
-  return `Decide by ${day}${clock(due)} (in ${inMinutes(left)}); if nobody decides: ${EXPIRY}.`;
+  return `Decide by ${day}${clock(due)} (in ${span(left)}); if nobody decides: ${EXPIRY}.`;
 }
+
+// expiredAt: the deadline's local HH:MM once `now` is at or past it; undefined before, or with no
+// readable deadline. The one test the card, its status and the count share.
+export function expiredAt(expiresAt: string | undefined, now: number = Date.now()): string | undefined {
+  const due = new Date(expiresAt ?? "");
+  if (!expiresAt || isNaN(due.getTime()) || due.getFullYear() < 2000 || due.getTime() > now) return undefined;
+  return clock(due);
+}
+
+export const expiredText = (hhmm: string) => `No one decided by ${hhmm}, so the agent was told no. It can ask again.`;
 
 export interface Standing {
   principal: string; role: string; approver: boolean;
@@ -86,20 +92,14 @@ export interface Standing {
 // decideStatus says whether the viewer may decide this approval, and why not. The broker
 // still enforces it (four-eyes, who decided first); this only explains. prompters absent
 // (an older broker) never hides the buttons.
-export function decideStatus(o: { you?: Standing; sealed?: boolean; fourEyes?: boolean; prompters?: string[] }): { can: boolean; text: string } {
+export function decideStatus(o: { you?: Standing; sealed?: boolean; fourEyes?: boolean; prompters?: string[]; expiresAt?: string; now?: number }): { can: boolean; text: string } {
   const y = o.you;
   if (o.sealed) return { can: false, text: "This room is sealed: nothing here can be decided." };
+  const late = expiredAt(o.expiresAt, o.now);
+  if (late) return { can: false, text: expiredText(late) };
   if (!y || !(y.approver || y.role === "owner")) return { can: false, text: "Waiting for an approver: only approvers decide, and you are not one in this room." };
   if (o.fourEyes && o.prompters?.includes(y.principal)) {
     return { can: false, text: "Waiting for another approver: you prompted this turn (four-eyes)." };
   }
   return { can: true, text: "You can decide." };
-}
-
-// bannerText is the strip's line for pending approvals; "" when none. mine are those the
-// viewer may decide.
-export function bannerText(total: number, mine: number): string {
-  if (total <= 0) return "";
-  if (mine > 0) return `⏳ ${mine} approval${mine === 1 ? " waits" : "s wait"} for you`;
-  return `⏳ ${total} approval${total === 1 ? " waits" : "s wait"} for another approver`;
 }

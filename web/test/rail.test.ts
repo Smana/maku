@@ -243,7 +243,10 @@ describe("rail", () => {
       const m = nodeOf(rail, run).querySelector<HTMLElement>(".rail-models")!;
       return { served: [...m.querySelectorAll(".rail-model")].map((x) => x.textContent), asked: m.querySelector(".rail-asked")?.textContent };
     };
-    expect(nodeOf(rail, "a").querySelector(".rail-detail")!.textContent).toBe("6 m · $0.23");
+    expect(nodeOf(rail, "a").querySelector(".rail-detail")!.textContent).toBe("6 min · $0.23");
+    const t = nodeOf(rail, "a").querySelector<HTMLTimeElement>(".rail-detail time")!;
+    expect(t.dateTime).toBe("2026-11-03T10:00:00.000Z");
+    expect(t.title).toBe(new Date("2026-11-03T10:00:00Z").toLocaleString());
     expect(models("a")).toEqual({ served: ["glm-5.3"], asked: "agent-default" });
     expect(models("b")).toEqual({ served: ["glm-5.3"], asked: undefined });
     expect(models("c")).toEqual({ served: ["glm-5.3", "claude-haiku-4.5"], asked: "agent-default" });

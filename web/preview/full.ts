@@ -8,6 +8,7 @@
 //   ?escalated    the factory's escalated room
 //   ?stress       a long Now line and a 64-hex digest (the phone bugs)
 //   ?needs        every needs/v1 kind as the route serves it (needs-fixtures.ts), each with its one action
+//   ?atdock       scrolls the live approval card to the bottom edge: its buttons clear the sticky dock
 //   ?briefs       the factory's task snapshot and a run's brief, as the live room posts them (folded)
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 //   ?long         unbreakable lines (long-fixtures.ts): a sed command, a gh api needs card, a served model behind an alias
@@ -58,6 +59,10 @@ async function run() {
       runModel: { run: status0.run!.id, model: "agent-default", effort: "high" } }
     : status0;
   if (params.has("escalated") || running) Object.assign(snap, { driver: "system:factory", dataClass: "public" });
+  // One live approval and one whose deadline has passed (the card turns expired by the browser's clock).
+  const first = snap.approvals?.[0];
+  if (first) snap.approvals = [{ ...first, expiresAt: new Date(Date.now() + 25 * 60_000).toISOString() },
+    { ...first, approvalId: "01M4B", callId: "call_-7231403244767930901", class: "forge.push", seq: 15, expiresAt: new Date(Date.now() - 5 * 60_000).toISOString() }];
   const long = params.has("long");
   const fx0 = flowFixture(flowName(params));
   const fx = long ? { ...fx0, flow: longFlow(fx0.flow) } : fx0;
@@ -90,6 +95,10 @@ async function run() {
   for (const e of events) page.apply(e);
   page.setStatus(`live · ${events.length} events (offline fixture)`);
   page.settle();
+  if (params.has("atdock")) setTimeout(() => {
+    const c = document.getElementById("approval-01M4A")!;
+    c.scrollIntoView({ block: "end" });
+  }, 300);
   // ?stress: a long Now line and a 64-hex digest in a message, the two phone bugs this fixture shows.
   if (new URLSearchParams(location.search).has("stress")) {
     const now = document.querySelector(".now-link");

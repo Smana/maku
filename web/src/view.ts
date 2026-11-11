@@ -3,6 +3,7 @@
 import { api, nav, SignInRequired } from "./api";
 import { type AutoRefreshOptions, mountAutoRefresh } from "./autorefresh";
 import { mountBrand } from "./brand";
+import { timeEl } from "./duration";
 import { statusIcon } from "./icons";
 import { maxRows } from "./limits";
 import { ago } from "./summary";
@@ -138,7 +139,8 @@ function statusCell(st: RowStatus | undefined, phase: string): HTMLElement {
   else icon.textContent = st.icon; // a kind this page predates: the broker's character
   const words = document.createElement("span");
   words.className = "row-status-words";
-  words.textContent = st.text;
+  // The list does not tick between refreshes: a run's age in seconds would stand still, so it is left out.
+  words.textContent = st.kind === "running" ? st.text.replace(/(?:, | — )\d+ s$/, "") : st.text;
   line.append(icon, " ", words);
   td.title = phase;
   td.append(line);
@@ -164,9 +166,8 @@ function roomRow(row: RoomRow, now: Date): HTMLTableRowElement {
   const repo = cell("td", c.repo);
   repo.className = "repo";
   const status = statusCell(row.status, c.phase);
-  const last = cell("td", c.last || "—");
   const t = lastMs(row);
-  if (t) last.title = new Date(t).toLocaleString();
+  const last = cell("td", t ? timeEl(now.getTime() - t, new Date(t).toISOString(), "ago") : "—");
   const code = document.createElement("code");
   code.textContent = c.id;
   const id = cell("td", code);

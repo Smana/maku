@@ -97,17 +97,8 @@ func failureWords() map[string]string {
 	}
 }
 
-// Elapsed is a duration at a glance: "<1 min", "4 min", "1 h 5 min".
-func Elapsed(from, now time.Time) string {
-	m := int(max(0, now.Sub(from)) / time.Minute)
-	switch {
-	case m < 1:
-		return "<1 min"
-	case m < 60:
-		return fmt.Sprintf("%d min", m)
-	}
-	return fmt.Sprintf("%d h %d min", m/60, m%60)
-}
+// Elapsed is a duration at a glance, by the one duration rule (Span): "40 s", "4 min", "1 h 5 min".
+func Elapsed(from, now time.Time) string { return Span(now.Sub(from)) }
 
 // StatusLine is the room's status, "" kind when the state is one this broker does not know.
 func StatusLine(in StatusIn) RunStatus {

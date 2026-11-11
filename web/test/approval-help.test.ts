@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bannerText, deadlineText, decideStatus, EXPIRY, RULES, ruleFor } from "../src/approval-help";
+import { deadlineText, decideStatus, expiredAt, EXPIRY, RULES, ruleFor } from "../src/approval-help";
 
 const at = (h: number, m: number, day = 28) => new Date(2026, 9, day, h, m, 0);
 
@@ -22,9 +22,9 @@ describe("deadlineText", () => {
   it("gives the clock time, the minutes left and what happens on silence", () => {
     expect(deadlineText(at(10, 30).toISOString(), now)).toBe(`Decide by 10:30 (in 30 min); if nobody decides: ${EXPIRY}.`);
   });
-  it("counts hours, and says under a minute", () => {
+  it("counts hours, and reads seconds below a minute", () => {
     expect(deadlineText(at(12, 5).toISOString(), now)).toContain("(in 2 h 5 min)");
-    expect(deadlineText(new Date(now + 20_000).toISOString(), now)).toContain("(in under a minute)");
+    expect(deadlineText(new Date(now + 20_000).toISOString(), now)).toContain("(in 20 s)");
   });
   it("shows the date of another day's deadline", () => {
     expect(deadlineText(at(9, 5, 29).toISOString(), now)).toContain("Decide by 2026-10-29 09:05 (in 23 h 5 min)");
@@ -59,12 +59,17 @@ describe("decideStatus", () => {
   });
 });
 
-describe("bannerText", () => {
-  it("counts what waits for the viewer, else for another approver, else nothing", () => {
-    expect(bannerText(1, 1)).toBe("⏳ 1 approval waits for you");
-    expect(bannerText(3, 2)).toBe("⏳ 2 approvals wait for you");
-    expect(bannerText(2, 0)).toBe("⏳ 2 approvals wait for another approver");
-    expect(bannerText(1, 0)).toBe("⏳ 1 approval waits for another approver");
-    expect(bannerText(0, 0)).toBe("");
+
+describe("an expired deadline", () => {
+  const you = { principal: "human:a", role: "owner", approver: true };
+  const exp = at(16, 30).toISOString();
+  it("says so from the deadline on, and never 'You can decide.'", () => {
+    expect(decideStatus({ you, expiresAt: exp, now: at(16, 29).getTime() })).toEqual({ can: true, text: "You can decide." });
+    const st = decideStatus({ you, expiresAt: exp, now: at(16, 30).getTime() });
+    expect(st).toEqual({ can: false, text: "No one decided by 16:30, so the agent was told no. It can ask again." });
+  });
+  it("reads no deadline as never expired", () => {
+    expect(expiredAt("", at(17, 0).getTime())).toBeUndefined();
+    expect(expiredAt("nope", at(17, 0).getTime())).toBeUndefined();
   });
 });

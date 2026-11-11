@@ -108,7 +108,6 @@ describe("hit areas", () => {
     expect(decl(outside, ".page-header .chip a::after")).toMatch(/inset:\s*-5px -2px/);
     expect(decl(outside, ".page-header .needs-pill::after")).toMatch(/inset:\s*-3px 0/);
     expect(decl(phone, ".page-header .needs-pill::after")).toMatch(/inset:\s*-8px 0/);
-    expect(decl(phone, ".page-header .strip-chips")).toMatch(/padding-block:\s*8px;[^}]*margin-block:\s*-8px/);
   });
   it("grows the Now line on a phone, where its clamp would clip a pseudo-element", () => {
     expect(decl(phone, ".page-header .now-link")).toMatch(/padding-block:\s*12px;[^}]*margin-block:\s*-12px/);
@@ -281,12 +280,12 @@ describe("appearance", () => {
   });
   it("sets a header fact's value at full ink and mutes its name and the run's id, model and effort", () => {
     expect(decl(outside, ".page-header .chip")).toMatch(/color:\s*var\(--brand-header-foreground\)/);
-    expect(decl(outside, ".page-header .fact-label, .page-header .chip-run > :not(.run-role)"))
+    expect(decl(outside, ".page-header .fact-label, .page-header .chip-run > :not(.run-role), .page-header .chip-run-detail"))
       .toMatch(/color:\s*color-mix\(in srgb, var\(--brand-header-foreground\) 68%, var\(--brand-header\)\)/);
     expect(decl(outside, ".page-header .run-role")).toMatch(/font-weight:\s*700/);
   });
   it("groups the header's facts by proximity, never a divider that would lead a wrapped line", () => {
-    expect(decl(outside, ".strip-chips")).toMatch(/gap:\s*6px 32px/);
+    expect(decl(outside, ".strip-tier2")).toMatch(/gap:\s*6px 32px/);
     expect(decl(outside, ".fact-group")).toMatch(/gap:\s*4px 12px/);
     expect(css).not.toMatch(/\.fact-group[^{]*{[^}]*border-left/);
   });

@@ -5,6 +5,7 @@
 // side runs (internal/summary/testdata/runstatus.json). The words are fixed phrases, numbers and a
 // role the page bounds: text an agent wrote never enters the line.
 
+import { span } from "./duration";
 export type StatusKind = "running" | "queued" | "waiting-you" | "waiting-other" | "waiting-pr" | "waiting"
   | "finished" | "done" | "failed" | "stopped";
 
@@ -32,12 +33,6 @@ const FAILURES: Record<string, string> = {
 
 const ROLE = /^[a-z][a-z0-9-]{0,23}$/;
 
-// elapsed is a duration at a glance: "<1 min", "4 min", "1 h 5 min".
-export function elapsed(fromMs: number, nowMs: number): string {
-  const m = Math.floor(Math.max(0, nowMs - fromMs) / 60000);
-  return m < 1 ? "<1 min" : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
-}
-
 export function statusLine(i: StatusIn): RunStatus {
   const s = (kind: StatusKind, icon: string, words: string): RunStatus => ({ kind, icon, words });
   const fail = (): RunStatus => {
@@ -61,7 +56,7 @@ export function statusLine(i: StatusIn): RunStatus {
   if (i.state === "running") {
     if (i.runPresent) {
       const t = i.runStartedAt ? Date.parse(i.runStartedAt) : NaN;
-      const parts = [i.runRole && ROLE.test(i.runRole) ? i.runRole : "", isNaN(t) ? "" : elapsed(t, i.now ?? Date.now())].filter(Boolean);
+      const parts = [i.runRole && ROLE.test(i.runRole) ? i.runRole : "", isNaN(t) ? "" : span((i.now ?? Date.now()) - t)].filter(Boolean);
       return s("running", "●", parts.length ? `Running — ${parts.join(", ")}` : "Running");
     }
     if (pr > 0 && i.phase === "Reviewing") return s("finished", "✓", `Finished — PR #${pr} opened, handed to the reviewer`);

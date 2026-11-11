@@ -413,7 +413,7 @@ function refreshStep(step: HTMLElement) {
   const line = stepLine(t);
   const sum = calls.querySelector(":scope > summary")!;
   sum.replaceChildren(el("span", "step-head", line.head));
-  // Visible separators keep the accessible name readable: "Ran 3 commands · 1 rejected · 0:15".
+  // Visible separators keep the accessible name readable: "Ran 3 commands · 1 rejected · 15 s".
   const sep = () => el("span", "step-sep", " · ");
   if (line.exceptions) sum.append(sep(), el("span", "step-exc", line.exceptions));
   if (line.duration) sum.append(sep(), el("span", "step-dur", line.duration));

@@ -9,6 +9,7 @@
 import { api, type NeedItem } from "./api";
 import type { RoomEvent } from "./conn";
 import { approvalAnchor, el } from "./controls";
+import { ago as durationAgo, timeEl } from "./duration";
 
 export interface RunModel { run: string; model?: string; effort?: string }
 
@@ -172,14 +173,10 @@ export function when(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-// ago reads a timestamp relative to now: "12 s ago", "4 min ago", "2 h ago".
+// ago reads a timestamp relative to now by the one duration rule: "just now", "4 min ago", "37 d ago".
 export function ago(iso: string, now: number): string {
   const t = Date.parse(iso);
-  if (isNaN(t)) return "";
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  if (s < 60) return `${s} s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  return `${Math.floor(s / 3600)} h ago`;
+  return isNaN(t) ? "" : durationAgo(now - t);
 }
 
 // focusApproval reveals the approval card for id in the needs-you panel and focuses its
@@ -257,8 +254,11 @@ export function renderNotes(root: HTMLElement, s: Summary, now = Date.now()): vo
   const box = el("div", { className: "notes" });
   box.dataset.block = "notes";
   const latest = el("p", { className: "note-latest" });
-  latest.append(el("span", { textContent: [last.run, ago(last.at, now), last.text].filter(Boolean).join(" · ") }),
-    el("span", { className: "hint", textContent: "the agent's claim" }));
+  const lead = el("span", { textContent: last.run ?? "" });
+  const at = Date.parse(last.at);
+  if (!isNaN(at)) lead.append(last.run ? " · " : "", timeEl(now - at, last.at, "ago"));
+  if (last.text) lead.append(lead.textContent ? " · " : "", last.text);
+  latest.append(lead, el("span", { className: "hint", textContent: "the agent's claim" }));
   box.append(latest);
   const rest = items.slice(0, -1).reverse();
   if (rest.length) {
