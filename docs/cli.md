@@ -126,7 +126,9 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 
 - The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
 - The tools: `rooms_list`, `room_summary`, `room_brief`, `room_tail`, `room_changes`, `needs_list`,
-  `room_queue`, `room_fork` and `issue_draft` from the broker; `intake_plan` and `plan_check` too, when
+  `room_queue`, `room_fork` and `issue_draft` from the broker; `classes_list` too, when the broker has a
+  factory to ask (it shows the classes and harness profiles a repository offers, and changes nothing);
+  `intake_plan` and `plan_check` too, when
   the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `need_answer`,
   `room_wait` and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
   events; `maku mcp` polls it for your agent. The broker also serves the prompts `factory_intake`

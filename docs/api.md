@@ -476,7 +476,7 @@ unknown fields refused (`400 bad_json`).
 |---|---|---|
 | `GET /settings`, `/settings/merge-policies`, `/settings/merge-policies/{owner}/{name}`, `/settings/merge-policies/{owner}/{name}/decisions/{pr}`, `/settings/evidence` | Any member | The UI, on a direct load |
 | `GET /api/policy/repositories` | Any member | `{repositories}`: the configured repositories the caller reads on GitHub |
-| `GET /api/policy/repositories/{owner}/{name}` | A reader of it | `{report, promotions, exceptions, you}`: each class's mode, source, evidence (absent while the factory reads it: `report.evidenceAt` is the last good read, `evidenceError` why a newer one failed) and proposal; the newest 100 records of each kind; the caller's `login`, `maintainer` and `operator`. `404` for a repository the caller cannot read or the factory does not list |
+| `GET /api/policy/repositories/{owner}/{name}` | A reader of it | `{report, promotions, exceptions, you, catalogue}`: each class's mode, source, evidence (absent while the factory reads it: `report.evidenceAt` is the last good read, `evidenceError` why a newer one failed) and proposal; the newest 100 records of each kind; the caller's `login`, `maintainer` and `operator`; and the repository's [catalogue](#get-v1catalogueownername) as the factory answers it for the caller, `null` when none is wired or the factory does not answer (the page still reads). `404` for a repository the caller cannot read or the factory does not list |
 | `POST /api/policy/repositories/{owner}/{name}/preview` | A maintainer (write) | `{file}` (at most 256 KiB) → the factory's check of a proposed policy file: `{valid, errors?, structural, simulation: {enabled, rows, counts}, strictness, proposal}`. Nothing is written |
 | `GET /api/policy/repositories/{owner}/{name}/decisions/{pr}` | A reader of it | The pull request's [decision timeline](factory.md#promotion): each record's stages, conditions, verdict and revisions, with the comment and policy links |
 | `POST /api/policy/promotions` | A maintainer (write) | `{repository, class, exceptionId?}` → `201 {promotion, proposal}`. `409 not_promotable` (not a shadow class of the repository's file), `evidence_pending` (the factory is still reading it), `not_eligible`, `promotion_open`, `exception_unusable`; `404 no_such_class` |
@@ -736,6 +736,25 @@ room's reader, on any replica, from the log.
 Another person's task id, or a malformed one, is `-32602 no such task`. A room read that fails for
 a while is `-32603`: poll again. There is no `tasks/list` or `tasks/cancel` (`-32601`), and no task
 is `input_required`: that state belongs to [`run_create`](#sponsored-principals-on-mcp).
+
+### `classes_list` on `/mcp`
+
+`classes_list` shows what a repository offers at intake: the [catalogue](#get-v1catalogueownername) as
+lines to show as they are (text) and as `structuredContent`. It is read-only and changes nothing. It is
+listed only when the broker has a `factoryURL`; without one it is an unknown tool.
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `classes_list` | `repository` (owner/name, required); `class?` (a class name, for its detail); `on_behalf_of?` (`slack:<team>/<user>`), a sponsored principal's alone and required of it | Without `class`, one line per offered class (`docs-links · live · merges on its own when the gate's conditions hold · profile links-solo`), the evaluation mode and control share, and whether the caller may pin. With `class`, that class's ceiling, floor, variants, escalation targets and each profile's roles, tier, tests-first, loop and description. `structuredContent` is the catalogue, cut to that class and its profiles when `class` is set |
+
+A human reads the catalogue as themselves; the Slack App reads it for the user it names. Refusals are
+`not_found` (no such repository, or the caller cannot read it: the same words either way),
+`not_linked`, `not_permitted`, `no_such_class`, `invalid_arguments` and
+`catalogue_unavailable: The factory's list of classes could not be read; try again in a minute.` Only a
+maintainer is told "You may pin ..."; anyone else is told the factory chooses the profile. A class
+description is a maintainer's text, so it is quoted on one line and a name with markup is set in a code
+span. Each call is counted in `maku_rooms_human_mcp_calls_total{tool="classes_list"}`, and each read of
+the factory in `maku_intake_catalogue_reads_total{outcome="hit"|"miss"|"error"}`.
 
 ### The planner on `/mcp`
 
@@ -1100,6 +1119,61 @@ profiles, `Structural` against the current policy (the file's classes, else the 
 exported), and, with `policyManagement.simulation`, `reconciler.Simulate` on the embedded
 conformance fixtures. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
 decision timeline from the factory's own comments, for a reader.
+
+### `GET /v1/catalogue/{owner}/{name}`
+
+What a repository offers at intake: its classes, the harness profile each runs, the roles that
+profile's template runs and how the class merges. It answers from the factory's accepted config
+snapshot (the `Factory`, `Repository` and `MergePolicy` objects, and the repository file under
+`classAuthority: repository`) and reads nothing on GitHub but the caller's own access. The broker
+reads it with the caller's token and keeps each answer for 60 seconds per repository and caller, in
+at most 256 entries, because the answer carries the caller's `maintainer` flag.
+
+The route is on the same port as the policy routes but is **not** behind `policyManagement.promotion`:
+it is mounted whenever the API is. Callers:
+
+- A human token reads it as themselves: `maintainer` is whether their linked GitHub login is in the
+  repository's `maintainers`, and `false` for a login that is not linked.
+- A sponsored principal names the Slack user it reads for in `?onBehalfOf=slack:<team>/<user>`,
+  resolved exactly as [`POST /v1/tasks`](#post-v1tasks) resolves it (the config's map, else the
+  self-serve link); `maintainer` is that login's. Without `onBehalfOf`, `403 human_only`; for a user
+  with no link, `403 not_linked`.
+- An internal principal or a machine token is `403 human_only`.
+
+A repository the config does not serve, one outside a sponsored principal's list, or one the caller
+cannot read is the same `404 not_found`: the answer names nothing. `503 link_unverified` when the
+caller's GitHub login cannot be resolved. The body is `Cache-Control: no-store`:
+
+```json
+{
+  "repository": "Smana/cloud-native-ref",
+  "generations": {"factory": 12, "repository": 4, "mergePolicy": 9},
+  "evaluation": {"mode": "observe", "controlPercent": 20},
+  "approveToMerge": true,
+  "maintainer": true,
+  "classes": [
+    {"name": "docs-links", "description": "Dead links in docs", "mode": "live", "ceilingUSD": 2,
+     "floor": "links-solo", "allowed": [], "escalation": null}
+  ],
+  "profiles": {
+    "links-solo": {"template": "solo", "roles": ["implementer"], "tier": "light", "checks": false,
+                   "testFirst": false, "loop": "", "description": "One file of links", "offered": true}
+  }
+}
+```
+
+- **Classes offered:** every class of the repository except `revert` (the factory's own), adopted
+  classes (`author.adopt`: another author's pull requests) and oracle classes (their tasks come from a
+  detector). `review` is always offered, from the factory default when the repository omits it.
+- **`mode`:** `live`, `shadow` or `off`; `unarmed` for every class while the merge gate is off for the
+  whole factory. `approveToMerge` is true only with the gate on and `merge.approveToMerge` set.
+- **`ceilingUSD`:** the task cap of the tier the class's floor profile runs at, else of the factory's
+  default tier.
+- **`offered`:** a profile can be suggested or pinned at intake only when it sets `template`, so the
+  roles shown are exact. One without carries `offered: false, notOffered: "no_template"` and `roles:
+  null`; it stays valid as a class's floor.
+- **`generations`:** the object generations the answer was built from; zero means the repository file
+  served that part.
 
 ## Webhooks
 
