@@ -72,13 +72,19 @@ type Plan struct {
 // Planner is who composed a plan, on which surface, when. Display: the model and the surface are
 // audited beside the hash, and a person reading a proposal is told what wrote it.
 type Planner struct {
-	Model   string    `json:"model"`
-	Surface string    `json:"surface"`
-	At      time.Time `json:"at"`
+	Model string `json:"model"`
+	// ServedModel is the `model` the gateway's reply named: what actually answered behind the
+	// alias, so a swap behind `tier-frontier` shows in the plan. Empty when the reply names none
+	// and for the composer. Display only: `Hash` never reads it.
+	ServedModel string    `json:"servedModel,omitempty"`
+	Surface     string    `json:"surface"`
+	At          time.Time `json:"at"`
 }
 
 // Evidence is one reason the planner chose a repository: a path, a thread, a channel. Text is
 // untrusted and inert; URL is either empty or a link the broker built, never one the model sent.
+// Kind is `model_claim` for everything the model wrote (nothing on this path reads the repository to
+// check it) and `candidate` for the composer's own line.
 type Evidence struct {
 	Kind string `json:"kind"`
 	Text string `json:"text"`

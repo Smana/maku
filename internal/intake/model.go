@@ -139,6 +139,8 @@ type DraftIssue struct {
 // amounts ride along when the governed route supplies them (v4 MR4); today's gateway supplies none,
 // and a broker-side call has no AgentRun id to invent in their place.
 type Usage struct {
+	// Model is the `model` the gateway's reply named, empty when it names none.
+	Model            string
 	PromptTokens     int
 	CompletionTokens int
 	AttemptID        string
@@ -301,6 +303,7 @@ type chatReply struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Model string `json:"model"`
 	Usage *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
@@ -337,7 +340,7 @@ func decodeReply(body []byte, out any) (Usage, error) {
 		// strict decode above never saw.
 		return Usage{}, errPlannerInvalid("the reply carries more than the one JSON object")
 	}
-	return Usage{PromptTokens: reply.Usage.PromptTokens, CompletionTokens: reply.Usage.CompletionTokens}, nil
+	return Usage{Model: strings.TrimSpace(reply.Model), PromptTokens: reply.Usage.PromptTokens, CompletionTokens: reply.Usage.CompletionTokens}, nil
 }
 
 // invalid is "" when the reply is the shape and the bounds the contract sets, and otherwise the field

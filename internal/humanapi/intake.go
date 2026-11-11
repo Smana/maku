@@ -364,7 +364,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
 
-	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), Now: s.Intake.now(),
+	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), ServedModel: usage.Model, Now: s.Intake.now(),
 		Rev: planRev, Round: 1, RoundsLeft: s.Intake.MaxRounds - 1,
 		Classes: s.Intake.Classes, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
 	if revised != nil {
@@ -378,6 +378,9 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		}
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
+	// The deterministic floor: gaps the model did not ask for, from the bodies and the request alone.
+	// It runs before the guard so the guard checks the plan that will be shown.
+	plan = intake.ApplyFloor(plan, a.Text+"\n"+a.modelContext())
 	// The plan is checked before it is shown: a reply that names a repository, an alternative or a
 	// class outside what this request may use is refused whole, and the outsider is never echoed.
 	if ref := intake.Check(plan, candidates, s.Intake.Classes); ref != nil {

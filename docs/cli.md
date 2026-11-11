@@ -263,7 +263,9 @@ Its sections, in the order they are read:
 - **The repository, and its evidence.** The head line names the one repository the plan files into
   and the plan's hash. `Why this repository` is the planner's own reading — a path, a thread, a
   channel — one quoted item per line and never a link: the links are the broker's to build, never
-  the model's. A repository outside the ones this request may use refuses the plan whole, and is
+  the model's. The broker reads no repository to check it, so the heading says `(unverified: …)`
+  and every item has `kind: model_claim`. The head line also names the model the gateway reported
+  answering (`served by …`) when it differs from the alias. A repository outside the ones this request may use refuses the plan whole, and is
   not named back.
 - **The issue.** One numbered line per issue (one to three), then `Issue 1`, `Issue 2` … with each
   draft as it will be filed. One call files the **first**: with a longer plan, say the others are

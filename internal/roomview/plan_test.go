@@ -135,3 +135,20 @@ func TestPlanFencesOutrunTheBody(t *testing.T) {
 		t.Fatalf("the fence does not outrun the body:\n%s", b.String())
 	}
 }
+
+// #456: evidence the model wrote is shown as its claim, and a served model that differs from the
+// alias is named, so neither a guess nor a model swap reads as a verified fact.
+func TestPlanLabelsUnverifiedEvidenceAndServedModel(t *testing.T) {
+	p := hostilePlan()
+	p.RepositoryEvidence = []intake.Evidence{{Kind: intake.ModelClaim, Text: "FACTORY_STATUS.md is missing"}}
+	p.Planner.ServedModel = "mistral-medium-2604"
+	var b bytes.Buffer
+	if err := Plan(&b, p, "", Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Why this repository (unverified", "served by mistral-medium-2604"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %q:\n%s", want, b.String())
+		}
+	}
+}

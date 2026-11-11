@@ -136,6 +136,11 @@ so the substance that must be confirmed is already hash-bound. This keeps `plan/
 does not invalidate in-flight Slack proposals. An acceptance marker lives in `## Acceptance check`; a scope
 marker lives before the first required heading; the other markers live in their named sections.
 
+The gap floor (#456) adds gaps the model did not, by the same rules, so `Gaps` and the markers stay two views
+of one set. `planner.servedModel` and the `model_claim` evidence kind are display fields outside `Material`:
+`plan/v1` hashes are unchanged, and a plan from before them verifies as it did (`servedModel` is
+`omitempty`). Neither needs a version bump.
+
 A newer client sending revision fields or a plan with `gaps` to an older broker fails closed through strict
 decoding. A newer broker keeps old plans' hashes and the `Question` mapping, so old Slack and room clients
 continue to render and confirm them.
@@ -290,6 +295,14 @@ The implementation plan must include table-driven tests for:
 - acceptance remaining in its operative section and the scoper's settled-Decision prompt contract;
 - status-comment ID persistence, crash recovery past 50 comments, generation ownership, no-op reconciles,
   failed creation/edit retries, and the real/fake `TaskForge` contracts.
+
+- the deterministic gap floor (#456, D2/D3): a table of requests and bodies against the gaps the broker
+  adds (no observable behaviour, no acceptance command or observation, no named file, path or
+  component), each with its marker in the right section, a rank after the model's, an ID after every
+  `g<n>` already used, and the existing marker/gap/record correlation, the cap's acceptance and the body
+  bound intact; the live case (a vague request, `gaps: []`, unchecked evidence) through `intake_plan`;
+- evidence honesty (#456): every model evidence line is `kind: model_claim`, rendered as unverified, and
+  `planner.servedModel` records the gateway's reported model.
 
 The repository gate is `task check`.
 

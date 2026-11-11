@@ -95,6 +95,17 @@ with no model call. Every initial or revision `intake_plan` spends one `dailyPla
 cap-reaching revision; `plan_check` spends none. `maxRounds` independently ends one intake by turning
 the remaining recommendations into assumptions without another model call.
 
+**The broker does not take the model's word that nothing is missing.** After the model answers, a
+deterministic gap floor reads each issue body (no model call) and adds ranked gaps, after the model's
+own, with a marker in the right section and a conservative recommendation. It fires when "What it
+should be" names no observable behaviour, when "Acceptance check" has neither a backticked command nor a
+`MUST`/`SHOULD` observation, and when the request itself names no file, path or component (the plan's own
+citations never count: nothing on this path reads the repository, so a file the plan cites is the
+model's guess). An element the model already asked about is left alone. For the same reason the evidence
+the model writes is labelled `kind: model_claim` and shown as unverified, and `planner.servedModel` records
+the model the gateway reported answering next to the alias, so a swap behind `tier-frontier` is visible.
+Both are outside the material hash.
+
 Intermediate composition remains marker-tolerant. Final `plan_check`, `issue_draft`/`issue_file`,
 `run_create`, factory task creation, hardening issue output and proposal publishing all fail closed on
 an unresolved marker or malformed Decisions section. Strict decoding also makes mixed versions fail
