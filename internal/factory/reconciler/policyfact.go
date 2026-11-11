@@ -8,6 +8,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
@@ -25,7 +26,7 @@ func policyOf(cfg *config.Config, rc *config.Repository, t *v1alpha1.Task) *enve
 	gateOn := cfg.NeedsMerger()
 	// With the gate off the hand-off (merge_gate_off) comes before any approval is read, so no
 	// approval merges; an adopted class keeps the class path (AM1).
-	p := &envelope.PolicyFact{Mode: modeOf(cl), GateOff: !gateOn, Adopted: cl.Adopted(),
+	p := &envelope.PolicyFact{Mode: policyMode(cl), GateOff: !gateOn, Adopted: cl.Adopted(),
 		ApproveToMerge: gateOn && rc.Merge.ApproveToMerge && !cl.Adopted()}
 	if envelope.ValidClassName(class) {
 		p.Class = class
@@ -44,19 +45,16 @@ func policyOf(cfg *config.Config, rc *config.Repository, t *v1alpha1.Task) *enve
 			continue
 		}
 		c := rc.Classes[name]
-		p.Classes = append(p.Classes, envelope.PolicyClass{Name: name, Mode: modeOf(c), Adopted: c.Adopted()})
+		p.Classes = append(p.Classes, envelope.PolicyClass{Name: name, Mode: policyMode(c), Adopted: c.Adopted()})
 	}
 	return p
 }
 
-// modeOf is the gate's outcome for a class: live arms, shadow decides and never arms, neither is
-// a maintainer's merge (R32).
-func modeOf(c config.Class) string {
-	switch {
-	case c.Live:
-		return envelope.PolicyLive
-	case c.Shadow:
-		return envelope.PolicyShadow
+// policyMode is the gate's outcome for a class in the envelope's words: live and shadow as the
+// catalogue reads them, anything else unarmed, which is what envelope.validMode accepts.
+func policyMode(c config.Class) string {
+	if m := catalogue.ModeOf(c, true); m == catalogue.ModeLive || m == catalogue.ModeShadow {
+		return m
 	}
 	return envelope.PolicyUnarmed
 }
