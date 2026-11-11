@@ -85,7 +85,7 @@ PR    #2239 (https://github.com/Smana/cloud-native-ref/pull/2239) · reviewer ap
 Needs you
 1. approve "git push to agent/26zfnuxm" by 19:45 UTC → https://rooms.example/r/26zfnuxm#01M4A
 
-Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved · 10 min · $0.03 → implementer (human review) running · 18 min · $0.10
+Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved · 10 min · $0.03 → implementer (human review) running · 18 min · ↪ steered ×2 · 1 chat · $0.10
 
 Agents' notes, their claims, not checked
 - 19:12 UTC cf4ato2x "found both versions on line 12-13, fixing"
@@ -99,7 +99,7 @@ room no `Needs you` or `You can`. The spend line reads dollars when the factory 
 and tokens (`182 k of 1.5 M tokens (12 %)`) when it did not; token counts read like the room
 page's, under 1,000 as is, then `k`, then `M`. Times are UTC, dated when not today. A run that
 ended reads `succeeded`, `failed` and so on, and a stopped task's unfinished run reads `ended`,
-never `running`. On a terminal, with `NO_COLOR` unset, the state word is bold when it needs you.
+never `running`. A run in the runs line counts the humans' messages sent while it was open, as the room page's rail does: `↪ steered ×N` and `N chat`, each left out at zero. Durations read the two largest units (`40 s`, `12 min`, `5 h 47 min`, `37 d 17 h`) and a past time its largest unit (`18 min ago`, `just now` under a minute), as on the room page. An approval past its deadline is not listed. On a terminal, with `NO_COLOR` unset, the state word is bold when it needs you.
 The agents' text is quoted; an approval is a link to its card on the room page, never a command.
 
 Room links print only under the broker's own address: the card takes it from the summary's URL

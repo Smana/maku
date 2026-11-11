@@ -295,7 +295,8 @@ Borders are 1 px, with the side stripes listed under Don't as the only exception
 - **Border:** 1 px hairline. A refused call tones its border `--warning-border`, a failed call
   `--destructive`. A pending approval or need keeps a 3 px `--warning-border` bar on its left
   edge (the owner's choice, #345), drawn straight between the 16 px corners, never bent round
-  them.
+  them. An expired approval (`data-state="expired"`) greys that bar to `--border` and sets
+  `Expired` in bold `--warning-foreground`: a word plus a tone, never the tone alone.
 - **Hover:** a link card (settings home) fades a raised layer in behind its text and lifts 1 px.
 - **Selected:** the 1 px border turns `--primary`. Today only the class a link points at
   (`.class-card:target`) is selectable.
@@ -322,6 +323,26 @@ inside a clipping container (the settings nav's phone row, the YAML editor's tex
 ### Status line
 A room's status, in the room list and the title strip: an icon in its state's colour, then the
 words ("Running — implementer, 13 min"). The icon is aria-hidden; the words say it all.
+
+### Room header tiers
+The title strip's facts sit in two tiers (`web/src/strip.ts`). **Tier 1** (`.strip-tier1`) is
+what a glance needs: the phase when no status line says it, the run's persona and age, the
+`Needs you · N` pill; it always shows and wraps. **Tier 2** (`.strip-tier2`) is the rest (run id,
+model, effort, tokens, spend, PR, dashboards, data, driver, View only), inside
+`details.strip-details`: open on a desktop with its summary hidden, closed behind `Details` at
+640 px and below. `matchMedia("(min-width: 641px)")` sets `open` when the width crosses the line,
+never `::details-content`, so a browser without it still shows tier 2 on a desktop. Nothing in
+the header scrolls sideways. The **Next** box below holds only what the room waits on; what a
+Needs-you card holds is the pill's, never repeated in the box.
+
+### Durations
+One rule, one helper per language: `web/src/duration.ts` (`span`, `ago`, `timeEl`) and
+`internal/summary/duration.go` (`Span`, `Ago`, which `internal/roomview` wraps), both tested
+against `internal/roomview/testdata/durations.json`.
+A span is the two largest units, a zero second unit left out: `40 s`, `12 min`, `5 h 47 min`,
+`37 d 17 h`. A past instant is its largest unit plus `ago` (`12 min ago`, `37 d ago`), and
+`just now` under a minute. On the web the words sit in a `<time datetime>` with the exact local
+time on hover. Never a third formatter.
 
 ## Do's and Don'ts
 
