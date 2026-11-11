@@ -79,7 +79,7 @@ Three CSS tests guard it, so a token or a size change starts there:
 
 | Test | Refuses |
 |---|---|
-| `web/test/contrast.test.ts` | a token value or a pair that moved: every text pair at 4.5:1, every border, icon, input boundary and focus ring at 3:1, in both themes |
+| `web/test/contrast.test.ts` | a token value or a pair that moved: every text pair at 4.5:1; every meaningful boundary (an input, a state border, the focus ring, a status icon, the budget bar's aurora stops) at 3:1, in both themes. The 1 px hairline `--border` (about 1.8:1) is decorative and unpinned |
 | `web/test/type-scale.test.ts` | a `font-size` or `font:` shorthand off the 32 / 22 / 16 / 14 / 13 px scale, a family not through `--font-display`, `--font-sans` or `--font-mono`, an eyebrow that is not mono uppercase at 0.08em |
 | `web/test/surfaces.test.ts` | the aurora gradient anywhere but the budget bar, a card off the Ogenki shape, a side stripe, a focus ring that is not 2 px with a 2 px gap |
 
