@@ -90,6 +90,8 @@ func failureWords() map[string]string {
 	return map[string]string{
 		"budget-task": "budget reached", "resume_budget": "budget reached", "ci_red": "CI stayed red",
 		"ci_cancelled": "a check was cancelled", "deadline": "time limit reached", "agent_error": "the agent stopped on an error",
+		"model_unavailable_billing": "the model provider refused: billing", "model_unavailable_auth": "the model provider refused: auth",
+		"model_unavailable_quota": "the model provider refused: quota", "scoper_failed": "the scope was not checked",
 		"agent_stuck": "the agent was stuck", "stuck": "no activity", "stalled": "no progress",
 		"not_met": "the acceptance checks are unmet", "judge_impossible": "cannot be done as asked", "pod_lost": "the sandbox was lost",
 		"run_unschedulable": "no capacity for the run", "secret_scan_red": "the secret scan failed",

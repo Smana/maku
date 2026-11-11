@@ -1650,6 +1650,10 @@ func (in *TaskStatus) DeepCopyInto(out *TaskStatus) {
 		in, out := &in.EndedAt, &out.EndedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.ModelHoldUntil != nil {
+		in, out := &in.ModelHoldUntil, &out.ModelHoldUntil
+		*out = (*in).DeepCopy()
+	}
 	if in.Narrated != nil {
 		in, out := &in.Narrated, &out.Narrated
 		*out = make([]string, len(*in))

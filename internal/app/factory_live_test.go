@@ -407,3 +407,27 @@ func TestServedNeverAppliesAStaleSetAfterAPublish(t *testing.T) {
 		t.Fatalf("the pollers end on %v, a stale set: %v", last, p.synced)
 	}
 }
+
+// #447: at startup a repository the App cannot reach is that repository's refusal. The factory
+// starts, serves the others, and the periodic retry wires it once the App is installed.
+func TestStartupWireServesTheReachableRepositories(t *testing.T) {
+	w := newFakeWiring()
+	conns := w.conns()
+	w.refuse["o/bad"] = true
+	cfg := repos("o/a", "o/bad", "o/c")
+	var logs bytes.Buffer
+	startupWire(t.Context(), slog.New(slog.NewTextHandler(&logs, nil)), conns, cfg)
+	if !slices.Equal(conns.names(), []string{"o/a", "o/c"}) {
+		t.Fatalf("served %v", conns.names())
+	}
+	if conns.wireErr("o/bad") == nil || !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "o/bad") {
+		t.Fatalf("wire error %v, log %s", conns.wireErr("o/bad"), logs.String())
+	}
+	delete(w.refuse, "o/bad")
+	if ran, err := conns.retry(t.Context(), func() *config.Config { return cfg }); !ran || err != nil {
+		t.Fatalf("retry %v %v", ran, err)
+	}
+	if !slices.Equal(conns.names(), []string{"o/a", "o/bad", "o/c"}) {
+		t.Fatalf("served after the App is installed %v", conns.names())
+	}
+}

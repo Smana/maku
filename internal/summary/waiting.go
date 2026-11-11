@@ -190,6 +190,10 @@ func reasons() map[string]string {
 		"pod_lost":                  "the sandbox was lost (spot reclaim or eviction)",
 		"deadline":                  "the run hit its wall-clock limit",
 		"agent_error":               "the agent stopped on an error",
+		"model_unavailable_billing": "the model provider refused: billing (insufficient balance or no resource package)",
+		"model_unavailable_auth":    "the model provider refused: authentication (the API key was rejected)",
+		"model_unavailable_quota":   "the model provider refused: quota or rate limit",
+		"scoper_failed":             "the scoper failed before it checked the scope (scope not checked), so the implementer was not started",
 		"agent_stuck":               "the agent reported that it was stuck",
 		"judge_impossible":          "the completion judge found the task cannot be done as asked",
 		"stalled":                   "the run made no commit within its step limit, a judge continuation added none within its time box, or two continuations in a row added none",
@@ -298,6 +302,10 @@ func nextStep(reason string, byApproval bool) string {
 		return "a maintainer comments `/factory split` to approve the parts, or `/factory retry` to run the task whole"
 	case "budget-family":
 		return "the parts that merged stay merged: open the rest of the work as a new issue, or close this one"
+	case "model_unavailable_billing", "model_unavailable_auth", "model_unavailable_quota":
+		return "nothing to do while it is held: the task runs again by itself; if it escalates, fix the model provider (recharge the account, rotate the key, or wait out the quota), then a maintainer comments `/factory retry`"
+	case "scoper_failed":
+		return "a maintainer reads the room, then comments `/factory retry` to run the scoper again, or closes the issue"
 	case "needs_author":
 		return "the issue's author edits the issue to answer and a maintainer re-applies `factory/ready`, or a maintainer comments `/factory retry` to proceed on the scoper's assumption"
 	}

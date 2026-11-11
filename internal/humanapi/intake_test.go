@@ -584,6 +584,23 @@ func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 	}
 }
 
+// #449: the answer to the client stays generic, and the operator's audit line names the cause: the
+// gateway's status here, and never the key.
+func TestAPlannerFailureNamesItsCauseInTheLog(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"))
+	e.intake.fail(http.StatusServiceUnavailable)
+	got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	if !got.isError || strings.Contains(got.text, "503") {
+		t.Fatalf("the client's answer stays generic: %s", got.text)
+	}
+	logs := e.intake.logged()
+	for _, want := range []string{`"reason":"planner_unavailable"`, `"cause":"planner_unavailable: the gateway answered 503`} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("the audit line lacks %s: %s", want, logs)
+		}
+	}
+}
+
 // A below-cap revision spends exactly one model call; reaching the round cap is deterministic and
 // spends none. A failed re-plan never turns into the degraded composer, which belongs to initial plans.
 func TestRevisionMakesOneOrNoModelCall(t *testing.T) {

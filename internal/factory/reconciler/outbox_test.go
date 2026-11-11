@@ -172,7 +172,7 @@ func TestNothingIsPostedBeforeItsTransitionIsWritten(t *testing.T) {
 	g.runs.set(rid(0), "Succeeded")
 	g.log.end(rid(0), "Succeeded", "agent_finished")
 	conflict = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the conflict is returned")
 	}
 	if c := eventCommentBodies(g.f, 7); len(c) != 1 {

@@ -509,6 +509,15 @@ type TaskStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Resumes int32 `json:"resumes,omitempty"`
+	// Consecutive runs the model provider refused (billing, authentication, quota): each holds the
+	// task in Queued until ModelHoldUntil, and past the reconciler's bound it escalates. A run that
+	// ends any other way clears it.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ModelHolds int32 `json:"modelHolds,omitempty"`
+	// The instant the task's next run may start after a model provider refusal.
+	// +optional
+	ModelHoldUntil *metav1.Time `json:"modelHoldUntil,omitempty"`
 	// Returns from a transient AwaitingHuman hand-off to the merge gate (N1), every cause
 	// counted; capped by the reconciler, so a flapping input cannot loop the gate.
 	// +kubebuilder:validation:Minimum=0

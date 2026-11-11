@@ -282,7 +282,10 @@ On each publish the subscribers re-derive what depends on the catalogue:
 - Repository connections are synced. A repository already served keeps its working connection when
   a reconnect fails, and the factory retries every minute. A new repository that cannot be wired
   (a GitHub App not installed, a merger key missing) is not served, and
-  `maku_factory_config_wire_errors_total{repository}` counts it.
+  `maku_factory_config_wire_errors_total{repository}` counts it. The same holds at start: such a
+  repository is logged (`a repository is not wired yet`), its `Connected` condition is `False`
+  `WiringFailed` with the error, the factory serves the others, and the retry wires it within a
+  minute of the cause being fixed, with no restart.
 - The fence's repository list, the issue pollers, the meter and the metric labels are rebuilt.
 - A removed repository's `repository_owned` gauge keeps its last value until the next restart.
 - A removed repository's tasks are never decided under another repository's settings. Each one
@@ -319,7 +322,7 @@ the same configuration. Only leader-only work stays leader-only.
   waits, not Ready, until a `Repository` is applied again.
 - A file no resource can fix fails the start at once, before any cluster call: empty, not YAML,
   an unknown key, or a duplicated `coordination` or `hardening` block.
-- Every other error still fails the start at once. A `Forbidden` answer to the list fails it with a hint about the Role that must grant
+- Every other error still fails the start at once, except a repository that cannot be wired (above). A `Forbidden` answer to the list fails it with a hint about the Role that must grant
   `get`, `list` and `watch` on the three kinds.
 - With none of the CRDs installed, the factory runs from the file alone and logs that once. A CRD
   installed later is picked up by the resync.

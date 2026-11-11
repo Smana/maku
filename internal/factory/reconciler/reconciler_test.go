@@ -374,6 +374,9 @@ func (m *fakeMetrics) SplitChild(_ context.Context, class, outcome string) {
 
 func (m *fakeMetrics) RevisionDeferred(context.Context) { m.add("revision_deferred") }
 
+func (m *fakeMetrics) ModelRefused(_ context.Context, cause, role string) {
+	m.add("model_refused " + cause + " " + role)
+}
 func (m *fakeMetrics) Resumed(_ context.Context, reason string) { m.add("resumed " + reason) }
 func (m *fakeMetrics) RoomClosedAtCap(_ context.Context, reason string) {
 	m.add("room_closed_at_cap " + reason)
@@ -944,8 +947,9 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	conflict = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
-		t.Fatal("the conflict is returned")
+	// #452: a conflict is an expected retry, not an error the controller logs: requeued at once.
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
+		t.Fatalf("the conflict requeues without an error: %+v, %v", res, err)
 	}
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseStopped {
 		t.Fatal(tk.Status.Phase)
@@ -953,8 +957,8 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 	// A conflicting settle replays the recording with the mark, so the metric lands once (R49).
 	conflict = true
 	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
-		t.Fatal("the conflicting settle write is returned")
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
+		t.Fatalf("the conflicting settle write requeues without an error: %+v, %v", res, err)
 	}
 	if tk := g.reconcile(t, "3buqdlot", 1); !tk.Status.UsageSettled {
 		t.Fatalf("settled on the replay: %+v", tk.Status)

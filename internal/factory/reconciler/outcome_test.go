@@ -200,7 +200,7 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 				return out
 			}
 			refuse = true
-			if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+			if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 				t.Fatal("the refused write is returned")
 			}
 			if p := g.get(t).Status.Profile; len(outcomes()) != 0 || (p != nil && p.Counted) {
@@ -276,7 +276,7 @@ func TestAnEscalationCountsOnce(t *testing.T) {
 			g.reconcile(t, "3buqdlot", 1)
 			g.r.Now = func() time.Time { return now.Add(11 * time.Minute) }
 			refuse = true
-			if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+			if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 				t.Fatal("the refused write is returned")
 			}
 			if got := interventions(g.metrics.recorded); len(got) != 0 {

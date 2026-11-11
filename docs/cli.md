@@ -308,7 +308,7 @@ with one reason of a closed list, each with its own sentence; the whole list is
 | `repository_not_allowed` | Name the repository as `owner/name`, or pick one of the ones the refusal lists: those are the repositories you may file into. A candidate that is private is left out of that list without a word |
 | `no_write` | Your GitHub access to that repository is read-only, and the planner plans only what you may push to. Ask for one you may write in, or show the plan to someone who can file it |
 | `planner_timeout` | The one call outlived its deadline (20 s, under `/mcp`'s 25 s). Ask again, with the same words or a shorter context |
-| `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository |
+| `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository. The cause (the gateway's status, a missing or empty key file, a DNS or connection error) is in the broker's `intake plan` log line, as `cause=`; ask the operator |
 | `plan_changed` | The plan and the hash you passed do not hold together: it was edited after it was shown. Show the newer plan and confirm that one, never the older text |
 | `unresolved_marker` | A final draft still has a gap or clarification marker. Resolve it through a revision, or accept the remaining recommendations |
 | `invalid_decisions` | Fix the Decisions records: one line each, with ascending unique IDs and valid gap references |

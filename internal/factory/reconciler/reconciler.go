@@ -124,6 +124,7 @@ type metrics interface {
 	PolicyLoadError(ctx context.Context, repository, reason string)
 	ClassPaused(ctx context.Context, repository, class string, paused bool)
 	Resumed(ctx context.Context, reason string)
+	ModelRefused(ctx context.Context, cause, role string)
 	LoopRun(ctx context.Context, class, end string)
 	ContractEnd(ctx context.Context, class, end string)
 	RoomClosedAtCap(ctx context.Context, reason string)
@@ -333,6 +334,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		r.capOutbox(&t)
 		if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
 			r.mon.forget(t.Name) // the pass was not recorded: its retry must not wait out the throttle
+			if err == nil && apierrors.IsConflict(uerr) {
+				// #452: the task changed under the pass: an expected retry, not an error. Nothing
+				// was recorded, so the replay re-reads the task and decides again.
+				r.log().Debug("the task changed during the pass: replayed", "task.id", t.Name)
+				return ctrl.Result{RequeueAfter: conflictRequeue}, nil
+			}
 			return ctrl.Result{}, errors.Join(err, uerr)
 		}
 		for _, f := range fx.after {
@@ -364,6 +371,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			(queued.Facts == nil || !queued.Facts.Posted || queued.Facts.Hash != t.Status.Facts.Hash)
 		if !equality.Semantic.DeepEqual(*queued, t.Status) {
 			if uerr := r.Client.Status().Update(ctx, &t); uerr != nil {
+				if err == nil && apierrors.IsConflict(uerr) { // #452: as above; the drain is idempotent
+					r.log().Debug("the task changed while its outbox posted: replayed", "task.id", t.Name)
+					return ctrl.Result{RequeueAfter: conflictRequeue}, nil
+				}
 				return ctrl.Result{}, errors.Join(err, uerr)
 			}
 			if final {
@@ -431,6 +442,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	return ctrl.Result{RequeueAfter: cfg.Poll.Tasks.Duration}, nil
 }
+
+// conflictRequeue is the replay of a pass whose status write lost an optimistic-concurrency race (#452).
+const conflictRequeue = 100 * time.Millisecond
 
 func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	// MR2: a coordination parent and an integration Task take their own path before anything an
@@ -1295,6 +1309,10 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	// whose late readings must land.
 	if _, _, err := r.observe(ctx, t); err != nil {
 		return err
+	}
+	// #450: after a model provider refusal the next run waits out its backoff; the poll wakes the task.
+	if r.modelHeld(t) {
+		return nil
 	}
 	// MR6: a coordination child's lineage, authority and the capability gate, re-read before every
 	// new run or resume and after an existing claim is adopted, before any slot or ledger admission.

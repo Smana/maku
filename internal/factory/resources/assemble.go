@@ -128,16 +128,26 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 		// Success first: a removal that makes Parse succeed names the culprit. Only when none
 		// does, the first removal that changes the error does (two culprits). Judging by a
 		// changed error alone would blame a pair whose message merely depends on a bad Factory.
-		culprit, changed := -1, -1
+		// A removal that drops one of the current error's lines names its culprit before one that
+		// merely changes the text: removing a pair adds "not a listed repository" lines and keeps
+		// every old one, so it is never blamed for a bad Factory (#448).
+		culprit, dropped, changed := -1, -1, -1
+		curLines := errLines(cur)
 		for i := range set {
 			_, _, e := tryParse(base, slices.Concat(set[:i:i], set[i+1:]))
 			if e == nil {
 				culprit = i
 				break
 			}
+			if dropped < 0 && !containsAll(errLines(e.Error()), curLines) {
+				dropped = i
+			}
 			if changed < 0 && e.Error() != cur {
 				changed = i
 			}
+		}
+		if culprit < 0 {
+			culprit = dropped
 		}
 		if culprit < 0 {
 			culprit = changed
@@ -149,7 +159,16 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 			set = nil
 		} else {
 			refuseInvalid(set[culprit], cur)
+			factoryOut := set[culprit].factory != nil
 			set = slices.Concat(set[:culprit:culprit], set[culprit+1:])
+			if factoryOut {
+				// Without the Factory the file may hold no catalogue: what then fails is that, not
+				// the pairs, which stay unrefused. The caller puts the Factory's last good back.
+				cfg, warnings, err = tryParse(base, set)
+				if err != nil {
+					break
+				}
+			}
 		}
 		cfg, warnings, err = tryParse(base, set)
 	}
@@ -162,6 +181,22 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 	})
 	res.Config, res.Warnings = cfg, warnings
 	return res, err
+}
+
+// errLines are the lines of Parse's joined error, the "config: " prefix of the first one removed:
+// it is on whichever line comes first, so it would make one error's line differ from itself.
+func errLines(msg string) []string {
+	return strings.Split(strings.TrimPrefix(msg, "config: "), "\n")
+}
+
+// containsAll is true when every element of want is in have.
+func containsAll(have, want []string) bool {
+	for _, w := range want {
+		if !slices.Contains(have, w) {
+			return false
+		}
+	}
+	return true
 }
 
 // structural applies the refusals that need no Parse and returns the candidate set: pairs sorted

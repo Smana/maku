@@ -90,9 +90,10 @@ type Source struct {
 	lastGood   map[key]resources.Object
 	outcomes   []Outcome
 	synced     Synced
-	warnings   []string // the last set logged
-	crdsAbsent bool     // the last Sync found the CRDs absent
-	crdsLogged bool     // the absence was logged once
+	warnings   []string      // the last set logged
+	crdsAbsent bool          // the last Sync found the CRDs absent
+	crdsLogged bool          // the absence was logged once
+	refusedLog map[key]int64 // the generation of each refusal already logged
 
 	kickOnce sync.Once
 	kick     chan struct{}
@@ -256,6 +257,7 @@ func (s *Source) sync(ctx context.Context) error {
 
 	if aerr != nil {
 		s.outcomes = outcomes(listed, r, first, aerr)
+		s.logRefusals()
 		s.synced = Synced{At: s.now(), Err: aerr}
 		if s.Live == nil {
 			return fmt.Errorf("%w: %w", ErrNotServable, aerr)
@@ -290,8 +292,30 @@ func (s *Source) sync(ctx context.Context) error {
 	}
 	s.lastGood = good
 	s.outcomes = outcomes(listed, r, first, nil)
+	s.logRefusals()
 	s.synced = Synced{At: s.now()}
 	return nil
+}
+
+// logRefusals logs each refused generation once, at WARN: the conditions record it, and an operator
+// reading the log should not have to read them. The first line of the error is the cause; the rest
+// is in Accepted's message. A generation that is accepted later, or an object that is gone, is forgotten.
+func (s *Source) logRefusals() {
+	next := map[key]int64{}
+	for _, o := range s.outcomes {
+		if o.Accepted {
+			continue
+		}
+		k := key{o.Kind, o.Name}
+		next[k] = o.ObservedGeneration
+		if s.refusedLog[k] == o.ObservedGeneration {
+			continue
+		}
+		first, _, _ := strings.Cut(o.Message, "\n")
+		s.log().Warn("generation refused", "kind", string(o.Kind), "name", o.Name, "generation", o.ObservedGeneration,
+			"serving", o.ServedGeneration, "reason", o.Reason, "error", first)
+	}
+	s.refusedLog = next
 }
 
 // outcomes reports every listed object; first holds the first-pass refusals of replaced objects.

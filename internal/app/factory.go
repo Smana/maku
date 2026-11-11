@@ -149,6 +149,14 @@ func warnConfig(log *slog.Logger, cfg *config.Config, m holdoutGauge) {
 	}
 }
 
+// startupWire wires the config's repositories at start. A repository that cannot be wired is
+// refused alone (#447): the factory serves the others and the retrier connects it later.
+func startupWire(ctx context.Context, log *slog.Logger, conns *repoConns, cfg *config.Config) {
+	if err := conns.sync(ctx, cfg); err != nil {
+		log.Warn("a repository is not wired yet: the factory serves the others and retries every minute", "err", err)
+	}
+}
+
 // repoClass is one class of one repository.
 type repoClass struct{ repository, class string }
 
@@ -303,11 +311,10 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	// A repository whose installation is missing fails the start, never a silent skip (v2 D8).
+	// A repository whose installation is missing is left out, never silently: it is logged, its
+	// Connected condition says why, and the retry wires it once the App is installed (#447).
 	conns := newRepoConns(log)
-	if err := conns.sync(ctx, cfg); err != nil {
-		return err
-	}
+	startupWire(ctx, log, conns, cfg)
 	mgr, err := newFactoryManager(log, ns, cfg.Runs, kinds)
 	if err != nil {
 		return err

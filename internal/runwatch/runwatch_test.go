@@ -250,6 +250,8 @@ type fakeStore struct {
 	drafts    []envelope.Draft
 	status    string
 	end       string
+	errCode   string // the last harness_error's code and detail
+	errDetail string
 	keys      map[string]bool
 	appendErr error
 	statusErr error
@@ -275,6 +277,10 @@ func (f *fakeStore) Append(_ context.Context, d envelope.Draft) (envelope.Event,
 
 func (f *fakeStore) LastHarnessStatus(context.Context, string, string) (string, error) {
 	return f.status, f.statusErr
+}
+
+func (f *fakeStore) LastHarnessError(context.Context, string, string) (string, string, error) {
+	return f.errCode, f.errDetail, nil
 }
 
 func (f *fakeStore) LastHarnessEnd(context.Context, string, string) (string, error) {
@@ -689,5 +695,30 @@ func TestTheRunningStepCarriesTheModelAndUnsandboxed(t *testing.T) {
 	want := `{"kind":"run_phase","model":"agent-default","phase":"Running","unsandboxed":true}`
 	if got := string(fs.drafts[1].Payload); got != want {
 		t.Fatalf("run_phase %s, want %s", got, want)
+	}
+}
+
+// A run that ended on the model provider's refusal is not the agent's error (#450): the end
+// reason names the platform condition, and an ordinary harness error stays agent_error.
+func TestAProviderRefusalEndsTheRunAsModelUnavailable(t *testing.T) {
+	for _, c := range []struct{ name, code, detail, want string }{
+		{"billing", "LLMRateLimitError", "litellm.RateLimitError: Insufficient balance or no resource package. Please recharge.", "model_unavailable_billing"},
+		{"auth", "LLMAuthenticationError", "invalid api key", "model_unavailable_auth"},
+		{"an outage", "LLMServiceUnavailableError", "connection reset", "agent_error"},
+		{"no harness error", "", "", "agent_error"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &fakeStore{keys: map[string]bool{}, status: "error", errCode: c.code, errDetail: c.detail}
+			e := &Events{Store: fs}
+			r, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
+			r.FinishedAt = r.StartedAt.Add(5 * time.Minute)
+			if err := e.Observe(t.Context(), r); err != nil {
+				t.Fatal(err)
+			}
+			want := `state_changed:{"kind":"run_phase","phase":"Failed","reason":"` + c.want + `"}`
+			if !slices.Contains(payloads(fs.drafts), want) {
+				t.Fatalf("got %v, want %s", payloads(fs.drafts), want)
+			}
+		})
 	}
 }

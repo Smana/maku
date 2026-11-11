@@ -801,7 +801,7 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 | `unresolved_marker` | a final plan still has a ranked gap or a live/malformed clarification marker; answer it through a revision |
 | `invalid_decisions` | the optional Decisions section has malformed, duplicate or descending records |
 | `planner_invalid` | the plan is not the shape the contract asks for (`<field>: <value>, the bound is …`); ask again |
-| `planner_unavailable` | the plan service is unavailable; try again later |
+| `planner_unavailable` | the plan service is unavailable; try again later. The answer stays generic: the broker's `intake plan` log line carries the cause as `cause=` (never the key) |
 | `planner_timeout` | the plan service did not answer inside its deadline; try again |
 | `plan_changed` | the plan was superseded; the newer one is the one to confirm |
 | `repository_unverified` | GitHub could not confirm this repository, so the planner will not guess; try again later |

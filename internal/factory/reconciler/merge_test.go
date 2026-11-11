@@ -1269,7 +1269,7 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 		}
 	}}
 	key := types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}
-	if _, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key}); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key}); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the pass's own write conflicts")
 	}
 	if got := g.reconcile(t, "3buqdlot", 0); got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.RevertNumber != 901 {

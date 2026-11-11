@@ -229,7 +229,7 @@ Delete the repository on GitHub yourself (Settings, Danger Zone); the script nev
 | "<deployment> did not roll out; its last log lines" | The script prints that deployment's logs. A `MAKU_VERSION` older than the chart is a common cause: the images refuse its values |
 | "has no .github/agent-factory.yaml (it is not from the template): the factory will ignore it" | Add that file on the default branch, containing exactly `factory: demo` |
 | `gh is logged in but has no admin rights` | You do not administer the repository: add the labels, the issues and the ruleset by hand as the script lists them |
-| The factory is not Ready, and its log says it cannot find the App's installation | The App is not installed on `DEMO_REPO` (a wrong or deleted App also shows here, as a 401 or 404 from GitHub). Install it from the App's page, then run `task demo` again |
+| The factory serves nothing, and its log says `a repository is not wired yet` with the App's installation not found | The App is not installed on `DEMO_REPO` (a wrong or deleted App also shows here, as a 401 or 404 from GitHub). Install it from the App's page: the factory connects within a minute, with no restart |
 | "a previous run left a half-made App: a NEW App will be created" | The browser step stopped before the key came back. Delete the old App at the address the script prints, then let it create a new one |
 | "no GITHUB_APP_ID and GITHUB_APP_KEY_FILE, and no terminal for the browser flow" | Run in a terminal, or pass an existing App |
 | "the current context is now ..., not the ... you confirmed" under `CLUSTER=current` | Your kubeconfig's context changed since you confirmed. Type the new one to confirm, or switch back |

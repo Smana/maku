@@ -169,6 +169,7 @@ type Set struct {
 	githubUp             metric.Int64Gauge
 	traceAbandoned       metric.Int64Counter
 	resumes              metric.Int64Counter
+	modelRefused         metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
 	overlapEvaluations   metric.Int64Counter
@@ -425,6 +426,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.resumes, err = meter.Int64Counter("agent_factory_resumes_total",
 		metric.WithDescription("Runs the factory resumed on its own after their pod was disrupted or lost, by the AgentRun's reason."))
+	check(err)
+	s.modelRefused, err = meter.Int64Counter("agent_factory_model_refused_total",
+		metric.WithDescription("Runs the model provider refused, by cause (billing, auth, quota) and role: a platform condition the task is held for, never the agent's error (#450). Alert on its increase."))
 	check(err)
 	s.contracts, err = meter.Int64Counter("agent_factory_contracts_total",
 		metric.WithDescription("Tester runs as they end, by class and end: ready, not_testable, contract_not_red, contract_outside_tests, contract_invalid or unreported (test-first tester R23)."))
@@ -1047,6 +1051,12 @@ func (s *Set) InputExcludesCache(ctx context.Context, model string) {
 // (disruption design §6).
 func (s *Set) Resumed(ctx context.Context, reason string) {
 	s.resumes.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", oneOf(reason, resumeReasons()))))
+}
+
+// ModelRefused counts a run the model provider refused, by cause and the run's role (#450).
+func (s *Set) ModelRefused(ctx context.Context, cause, role string) {
+	s.modelRefused.Add(ctx, 1, metric.WithAttributes(attribute.String("cause", oneOf(cause, []string{"billing", "auth", "quota"})),
+		attribute.String("role", oneOf(role, []string{"implementer", "reviewer", "tester", "triager"}))))
 }
 
 // LoopRun counts an implementer run under the loop policy once it ends, by its task's class and end.

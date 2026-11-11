@@ -199,6 +199,10 @@ func reasons() map[string]string {
 		"coordination_lineage":        "this coordination child carries another lineage than its plan's",
 		"coordination_parent_missing": "this coordination child's parent is not a filed coordination",
 		"agent_error":                 "the agent stopped on an error",
+		"model_unavailable_billing":   "the model provider refused: billing (insufficient balance or no resource package)",
+		"model_unavailable_auth":      "the model provider refused: authentication (the API key was rejected)",
+		"model_unavailable_quota":     "the model provider refused: quota or rate limit",
+		"scoper_failed":               "the scoper failed before it checked the scope (scope not checked), so the implementer was not started",
 		"agent_stuck":                 "the agent reported that it was stuck",
 		"judge_impossible":            "the completion judge found the task cannot be done as asked",
 		"loop_unsupported":            "the cluster does not support the loop policy or repository checks yet (the run claim was refused), so no run started",
@@ -622,6 +626,15 @@ func Resuming(t *v1alpha1.Task, runID, role string, n, limit int) Event {
 		body += " The new review run uses no review round."
 	}
 	return Event{Key: fmt.Sprintf("resume-%d", n), Body: body}
+}
+
+// ModelHeld says the model provider refused run runID and the task waits and runs again on its own, n
+// of limit (#450). The refusal is a platform condition, not the agent's error: the reason names it.
+func ModelHeld(t *v1alpha1.Task, runID, reason string, delay time.Duration, n, limit int) Event {
+	body := fmt.Sprintf("Agent factory task `%s`: run `%s` stopped because %s. This is a platform condition, not the agent's error: "+
+		"the task is held and runs again in %s (%d/%d); it escalates after %d refusals in a row.",
+		t.Name, runID, Reason(reason), delay.Round(time.Minute), n, limit, limit)
+	return Event{Key: fmt.Sprintf("model-held-%d", n), Body: body}
 }
 
 // safePath is a contract file the narration may name: the tester wrote the trailer, so anything
