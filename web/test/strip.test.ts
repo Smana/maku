@@ -353,7 +353,7 @@ describe("the title strip", () => {
     strip.update(input({ summary: summary({ runModel: { run: "ikely2yk", model: "agent-default", effort: "high" } }) }));
     const parts = (sel: string) => [...h.querySelectorAll(`${sel} > :not(.sep)`)].map((e) => [e.className, e.textContent]);
     expect(parts(".chip-run-detail")).toEqual([["run-id", "ikely2yk"], ["run-model", "agent-default"], ["run-model", "high"]]);
-    expect(parts(".chip-run").map((p) => p[0])).toEqual(["run-role", "run-age"]);
+    expect(parts(".chip-run").map((p) => p[0])).toEqual(["run-role", "dur run-age"]);
     const age = h.querySelector<HTMLTimeElement>(".chip-run time.run-age")!;
     expect(age.dateTime).toBe(new Date(age.dateTime).toISOString());
     expect(age.title).toBe(new Date(age.dateTime).toLocaleString());
@@ -364,7 +364,7 @@ describe("the title strip", () => {
     strip.update(input({ summary: summary({ phase: "" }), needs: 2 }));
     const tier1 = h.querySelector(".strip-chips > .strip-tier1")!;
     expect([...tier1.children].map((c) => c.classList[c.classList.length - 1])).toEqual(["chip-phase", "chip-run", "needs-pill"]);
-    expect([...tier1.querySelectorAll(".chip-run > :not(.sep)")].map((c) => c.className)).toEqual(["run-role", "run-age"]);
+    expect([...tier1.querySelectorAll(".chip-run > :not(.sep)")].map((c) => c.className)).toEqual(["run-role", "dur run-age"]);
     expect(tier1.querySelector("time.run-age")).not.toBeNull();
   });
   it("folds the rest into a closed Details disclosure, which keeps its state across a rebuild", () => {

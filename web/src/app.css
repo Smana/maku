@@ -201,6 +201,8 @@ time, .t-time, .step-dur, .replay-progress, .t-prompt {
   font-family: var(--font-mono); font-size: var(--text-small); line-height: var(--leading-small);
   font-variant-numeric: tabular-nums;
 }
+/* A duration (duration.ts's timeEl) is one word to the reader: "37 d ago" never breaks inside. */
+.dur { white-space: nowrap; }
 p, li { text-wrap: pretty; }
 /* The eyebrow: a label that names a column, a section or a fact, never a sentence or a heading's
    kicker. The rules below keep each one's colour. The settings dt keeps the body's leading, so it

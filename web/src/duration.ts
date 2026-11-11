@@ -31,6 +31,7 @@ export function ago(ms: number): string {
 // datetime and, on hover, as the locale's date and time. An unreadable instant is left off.
 export function timeEl(ms: number, at: string, form: "span" | "ago"): HTMLTimeElement {
   const t = document.createElement("time");
+  t.className = "dur"; // one line: app.css keeps "37 d ago" whole
   t.textContent = form === "span" ? span(ms) : ago(ms);
   const d = new Date(at);
   if (!isNaN(d.getTime())) {

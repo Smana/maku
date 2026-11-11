@@ -141,7 +141,11 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     if (status) { status.textContent = expiredText(hhmm); status.dataset.can = "false"; }
     const dl = li.querySelector<HTMLElement>(".approval-deadline");
     if (dl) dl.textContent = "Expired";
-    li.querySelector(".approval-decide")?.remove();
+    const bar = li.querySelector(".approval-decide");
+    // The focus would fall to the body with the button it sat on: it stays on the card.
+    const held = !!bar?.contains(document.activeElement);
+    bar?.remove();
+    if (held) { li.tabIndex = -1; li.focus({ preventScroll: true }); }
   };
   let others = 0;
   // The list under the cards: the route's items once a read answered (listed), the summary's until
@@ -258,8 +262,9 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     others = items.length;
     const show = items.length + pending.length + unread.length + (stale ? 1 : 0) > 0;
     // A viewer who decides nothing here and has no merge, answer or hold reads the cards as
-    // someone else's turn.
-    const heading = panel.count() > 0 ? "Needs you" : "Waiting for an approver";
+    // someone else's turn; when every card left is expired, no one is awaited any more.
+    const lapsed = pending.length > 0 && pending.every((a) => expiredAt(a.expiresAt));
+    const heading = panel.count() > 0 ? "Needs you" : lapsed ? "Expired: no one decided" : "Waiting for an approver";
     if (title.textContent !== heading) title.textContent = heading;
     root.hidden = !show;
   };

@@ -123,6 +123,12 @@ function detailParts(st: Summary["status"]): Parts {
   return [["run-id", r.id], ["run-model", m?.model], ["run-model", m?.effort]];
 }
 
+// withClass adds cls beside the element's own classes (a <time>'s "dur").
+function withClass<T extends Element>(e: T, cls: string): T {
+  e.classList.add(cls);
+  return e;
+}
+
 // setParts fills a chip with its parts, dot-separated, the empty ones left out; the age as a
 // <time>. Text only; only when changed.
 function setParts(c: Element, all: Parts, t: number, at = ""): void {
@@ -130,7 +136,7 @@ function setParts(c: Element, all: Parts, t: number, at = ""): void {
   if (c.textContent === parts.map((p) => p[1]).join(" · ")) return;
   c.replaceChildren(...parts.flatMap(([cls, text], n) => [
     ...(n ? [el("span", { className: "sep", textContent: " · " })] : []),
-    cls === "run-age" ? Object.assign(timeEl(t - Date.parse(at), at, "span"), { className: cls }) : el("span", { className: cls, textContent: text })]));
+    cls === "run-age" ? withClass(timeEl(t - Date.parse(at), at, "span"), cls) : el("span", { className: cls, textContent: text })]));
 }
 
 const setRun = (c: Element, st: Summary["status"], t: number) => setParts(c, runParts(st, t), t, st.run?.startedAt);

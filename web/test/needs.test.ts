@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NeedItem, NeedsPage } from "../src/api";
@@ -491,7 +491,31 @@ describe("an expired approval", () => {
     expect(card.querySelector("details.approval-details")).not.toBeNull();
     expect(needs.count()).toBe(0);
     expect(needs.approvalCounts()).toEqual({ total: 0, mine: 0 });
+    // Nobody is awaited any more: the heading says what happened, not "Waiting for an approver".
+    expect(root.querySelector("h2")?.textContent).toBe("Expired: no one decided");
+  });
+  it("keeps the waiting heading while a live approval sits beside an expired one", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 31, 0));
+    const state = new RoomState();
+    state.reset({ driver: "human:a", driverEpoch: 1, approvals: [{ ...approval, expiresAt: due.toISOString() },
+      { ...approval, approvalId: "01M4B", callId: "c10", expiresAt: "2099-10-15T15:18:52Z" }] }, 20);
+    const root = document.createElement("section");
+    const needs = mountNeeds(root, { send: () => true }, state, () => ({ ...you, approver: false, role: "collaborator" }), { rowFor: () => undefined });
+    needs.refresh();
     expect(root.querySelector("h2")?.textContent).toBe("Waiting for an approver");
+  });
+  it("hands the focus to the card when the deadline takes the focused button away", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 29, 59));
+    const { root, needs } = mount2();
+    document.body.append(root);
+    try {
+      const card = root.querySelector<HTMLElement>("li.approval")!;
+      card.querySelector<HTMLButtonElement>('button[data-act="approve"]')!.focus();
+      vi.setSystemTime(due); needs.refresh();
+      expect(card.querySelector("button")).toBeNull();
+      expect(document.activeElement).toBe(card);
+      expect(card.tabIndex).toBe(-1);
+    } finally { root.remove(); }
   });
   it("is unchanged before the deadline, and flips in place at it", () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 29, 59));
@@ -541,8 +565,12 @@ describe("where a need's action happens", () => {
     expect(await card({ kind: "mystery" })).toBe("This happens on GitHub.");
     expect(await card({ kind: "merge", approve: true })).toBe("Approve the pull request on GitHub: the merge gate reads the approval there.");
   });
-  it("never says the room has no button", () => {
-    expect(readFileSync(join(__dirname, "../src/needs.ts"), "utf8")).not.toContain("no button for it");
+  it("never says the room has no button, in any source or preview file", () => {
+    const files = (dir: string): string[] => readdirSync(join(__dirname, dir), { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : /\.(ts|js|html|css)$/.test(e.name) ? [join(dir, e.name)] : []));
+    const all = [...files("../src"), ...files("../preview")];
+    expect(all.length).toBeGreaterThan(10);
+    expect(all.filter((f) => readFileSync(join(__dirname, f), "utf8").includes("no button for it"))).toEqual([]);
   });
 });
 
