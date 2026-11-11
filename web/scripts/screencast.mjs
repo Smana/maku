@@ -8,7 +8,7 @@
 //     node web/scripts/screencast.mjs docs/assets/maku-room.webp
 //
 // Recorded in a 1100×800 window, the narrowest that keeps the rail beside the conversation (it
-// folds to dots below 1100 px), at device scale 2. A camera then crops each frame, wide for the
+// folds to a labelled strip below 1100 px), at device scale 2. A camera then crops each frame, wide for the
 // room list, the steer and the approval, close on the rail while a node draws and on the
 // finished task's rail, and scales it to 800×582, the width the README shows it at. Frames are
 // assembled by img2webp (libwebp) if on PATH, else by magick.
