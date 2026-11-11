@@ -140,6 +140,38 @@ func TestHandoffCarriesTheBranchAndValidates(t *testing.T) {
 	}
 }
 
+func TestOverlapAssessmentHandoff(t *testing.T) {
+	log := &memLog{}
+	h := tool(tools(log), "room_handoff")
+	triager := Caller{Run: runwatch.Run{ID: "7f3cq2xz", Room: "3kq7x2ma", Role: "triager", Branch: "agent/3kq7x2ma"}}
+	args := `{"toRole":"implementer","summary":"Overlap classified.","commit":"4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3","overlap":{"classification":"partial_overlap","citations":["task:aaaaaaa2"],"sources":["tasks","rooms"],"blindSpots":["unsearched history"],"note":"Shared link wording only."}}`
+	if _, err := h.Call(t.Context(), triager, json.RawMessage(args)); err != nil {
+		t.Fatal(err)
+	}
+	var p envelope.HandoffPayload
+	if err := json.Unmarshal(log.drafts[0].Payload, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Overlap == nil || p.Overlap.Classification != "partial_overlap" || len(p.Overlap.Citations) != 1 || p.Overlap.Citations[0] != "task:aaaaaaa2" ||
+		len(p.Overlap.BlindSpots) != 1 || p.Overlap.Note != "Shared link wording only." {
+		t.Fatalf("typed overlap assessment = %+v", p.Overlap)
+	}
+	if !strings.Contains(string(h.RoleSchemas["triager"]), `"overlap"`) || strings.Contains(string(h.InputSchema), `"overlap"`) {
+		t.Fatal("overlap assessment must be listed to the triager only")
+	}
+	for _, bad := range []string{
+		`{"toRole":"implementer","summary":"x","commit":"4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3","overlap":{"classification":"perhaps"}}`,
+		`{"toRole":"implementer","summary":"x","commit":"4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3","overlap":{"classification":"no_match","sources":["internet"]}}`,
+	} {
+		if _, err := h.Call(t.Context(), triager, json.RawMessage(bad)); err == nil {
+			t.Errorf("accepted invalid assessment %s", bad)
+		}
+	}
+	if _, err := h.Call(t.Context(), impl, json.RawMessage(args)); err == nil {
+		t.Fatal("an implementer supplied the triager's overlap assessment")
+	}
+}
+
 // Every argument is untrusted model output: an unknown field, a control
 // character, an oversize or blank value is refused before anything is stored,
 // with an error the model can act on.

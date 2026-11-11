@@ -161,8 +161,11 @@ func TestTaskCRDKeepsTheTraceIds(t *testing.T) {
 	for _, v := range status.XValidations {
 		statusRules[v.Rule] = true
 	}
-	if len(status.XValidations) != 2 || !statusRules["!has(oldSelf.trace) || has(self.trace)"] {
+	if len(status.XValidations) != 3 || !statusRules["!has(oldSelf.trace) || has(self.trace)"] {
 		t.Errorf("status rules %v: a trace is never removed (review M3)", status.XValidations)
+	}
+	if !statusRules["!has(oldSelf.overlap) || has(self.overlap)"] {
+		t.Errorf("status rules %v: an overlap record is never removed", status.XValidations)
 	}
 	// R49: settled usage stays settled. The omitempty bool needs the has() guards: absent in the
 	// old object is not false, and absent in the new one is not true.

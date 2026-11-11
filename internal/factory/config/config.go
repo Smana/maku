@@ -115,6 +115,8 @@ type Config struct {
 	Repositories []Repository `json:"repositories,omitempty"`
 	// Control is the global kill switch's issue (§6.1, v2 D2): one issue stops every repository.
 	Control Control `json:"control,omitzero"`
+	// Intake configures behavior shared by every intake source. Overlap evaluation is off unless set.
+	Intake Intake `json:"intake,omitzero"`
 
 	// The legacy single-repository shape (v2 D1), read as a one-entry Repositories for one minor
 	// release and refused beside it. Parse moves these into Repositories and Control and empties
@@ -1369,14 +1371,17 @@ func Load(path string) (*Config, error) {
 	return Parse(raw)
 }
 
-// CheckBlocks refuses a switch block (coordination, hardening), or a key inside it, written twice
-// in raw. A caller that decodes raw into a map before Parse runs it first: the map has kept the
-// last block silently by then (factory resources: Assemble).
+// CheckBlocks refuses a switch block (coordination, hardening, intake overlap), or a key inside
+// it, written twice in raw. A caller that decodes raw into a map before Parse runs it first: the
+// map has kept the last block silently by then (factory resources: Assemble).
 func CheckBlocks(raw []byte) error {
 	for _, block := range []string{"coordination", "hardening"} {
 		if err := blockOnce(raw, block); err != nil {
 			return fmt.Errorf("config: %w", err)
 		}
+	}
+	if err := checkOverlapBlocks(raw); err != nil {
+		return fmt.Errorf("config: %w", err)
 	}
 	return nil
 }
@@ -1447,6 +1452,7 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	c.Scoper = c.Scoper.WithDefaults()
 	c.Coordination.ApplyDefaults()
+	c.Intake.Overlap.ApplyDefaults()
 	if c.Hardening.Mode == "" { // the block is absent: its UnmarshalJSON applied them otherwise
 		c.Hardening.ApplyDefaults()
 	}
@@ -1571,6 +1577,7 @@ func (c *Config) Validate() error {
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	c.Coordination.Validate(bad)
 	c.validateHardening(bad)
+	c.Intake.Overlap.Validate(bad)
 	rs := c.Repos()
 	switch {
 	case len(rs) == 0:

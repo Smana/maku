@@ -255,6 +255,7 @@ func reasons() map[string]string {
 		"pr_closed":                   "the pull request was closed",
 		"text_too_long":               "the issue text is longer than the factory accepts (14 KiB)",
 		"daily_task_cap":              "the factory has reached its daily task cap",
+		"overlap_active_duplicate":    "an active task is already pursuing the same outcome",
 		"kill_switch":                 "the factory's kill switch is engaged",
 		"stopped_by_label":            "a maintainer applied factory/stop",
 		"stopped_by_annotation":       "an operator stopped it",

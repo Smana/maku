@@ -138,6 +138,9 @@ func (r *Reconciler) recordExisting(cfg *config.Config, t *v1alpha1.Task, x runs
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
 		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)}})
+	if overlapPending(t) && x.Role == "triager" {
+		t.Status.Overlap.ScoperRun = x.ID
+	}
 	t.Status.NextTrigger, t.Status.NextRole = "", ""
 	r.to(t, phaseFor(x.Role), "adopted")
 	return nil
@@ -541,6 +544,9 @@ func (r *Reconciler) boundPending(ctx context.Context, cfg *config.Config, t *v1
 	if err := r.deleteRun(ctx, run.ID); err != nil {
 		return err
 	}
+	if overlapScoperRun(t) {
+		return r.finishOverlap(ctx, cfg, t, nil, "overlap scoper claim was never scheduled")
+	}
 	return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "run_unschedulable")
 }
 
@@ -647,6 +653,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		return err
 	}
 	if !found {
+		if overlapScoperRun(t) {
+			return r.finishOverlap(ctx, cfg, t, nil, "overlap scoper claim was missing")
+		}
 		why := r.lostReason(ctx, t)
 		if scoperRun(t) && why == "run_lost" { // SC11, #451: a scoper whose claim vanished is a failed scoper
 			return r.scoperFailed(ctx, cfg, t, why)
@@ -665,6 +674,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		if s, err := r.stuck(ctx, t, run); err != nil || s {
 			if err != nil {
 				return err
+			}
+			if overlapScoperRun(t) {
+				return r.finishOverlap(ctx, cfg, t, nil, "overlap scoper became stuck")
 			}
 			if scoperRun(t) { // SC11, #451: a stuck scoper is a failed scoper
 				return r.scoperFailed(ctx, cfg, t, "stuck")
@@ -703,6 +715,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		default:
 			reason = why
 		}
+	}
+	if overlapScoperRun(t) {
+		return r.overlapScoperEnded(ctx, cfg, t)
 	}
 	if testerRun(t) {
 		return r.testerEnded(ctx, cfg, t, reason)
@@ -829,7 +844,7 @@ func (r *Reconciler) resumeBrief(ctx context.Context, t *v1alpha1.Task) (string,
 		return "", false, err
 	}
 	marker, text := "", x.TaskText
-	if scoperRun(t) && strings.HasPrefix(text, runs.ScoperMarkerPrefix) {
+	if (scoperRun(t) || overlapScoperRun(t)) && strings.HasPrefix(text, runs.ScoperMarkerPrefix) {
 		if i := strings.IndexByte(text, '\n'); i >= 0 {
 			marker, text = text[:i+1], text[i+1:]
 		}

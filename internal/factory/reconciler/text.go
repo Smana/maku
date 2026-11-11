@@ -105,7 +105,7 @@ func firstBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
 	if t.Spec.Parent != nil { // a part's scope first: the judge reads the part's checks before the whole issue's (loop_policy.acceptance)
 		extra = scopeBlock(sc, nonce) + steeringBlock(t, nonce)
 	}
-	extra += contractBlock(t.Status.Contract, nonce)
+	extra += contractBlock(t.Status.Contract, nonce) + overlapEvidenceBlock(t.Status.Overlap)
 	return fit(b.String(), extra, snapshotBlock(t, fence), t)
 }
 
@@ -482,7 +482,7 @@ func reviseBrief(t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, 
 	log, _ := brief.Build(t.Status.RoomRef, "implementer", cleanLog(evs, nonce), nil, nonce)
 	steer, scope := steeringBlock(t, nonce), scopeBlock(sc, nonce)
 	contract := contractBlock(t.Status.Contract, nonce) // F3-R6: every implementer brief of a task with a contract
-	steer += contract
+	steer += contract + overlapEvidenceBlock(t.Status.Overlap)
 	if scope != "" && sc.Seq > 0 && b.Len()+len(steer)+len(scope)+len(log) > limit { // a part's scope is in no handoff of its room: it never moves (SR15)
 		scope = scopePointer(sc) // the scope stays in the room, whole (scoper plan S8)
 	}
@@ -574,6 +574,42 @@ func queuedBlock(queued []rooms.Queued, fence, nonce string, room int) (string, 
 		q.WriteString(more(len(queued) - len(refs)))
 	}
 	return fmt.Sprintf("\n%s\n%s%s\n", fence, q.String(), fence), refs
+}
+
+// overlapEvidenceBlock carries an evaluation's classification and citations into implementation
+// briefs. Every value is factory-generated or a bounded ID; candidate goal and room text stay out.
+func overlapEvidenceBlock(o *v1alpha1.OverlapStatus) string {
+	if o == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Outcome-overlap evidence\n")
+	classification := o.Classification
+	if classification == "" {
+		classification = "pending"
+	}
+	fmt.Fprintf(&b, "Classification: `%s`. Checked sources: `%s`.\n", classification, strings.Join(o.Sources, ", "))
+	if o.Note != "" {
+		fmt.Fprintf(&b, "%s\n", o.Note)
+	}
+	for _, match := range o.Matches {
+		fmt.Fprintf(&b, "- `%s` match", match.Relation)
+		if match.Task != "" {
+			fmt.Fprintf(&b, ": Task `%s`", match.Task)
+		}
+		if match.Run != "" {
+			fmt.Fprintf(&b, ", run `%s`", match.Run)
+		}
+		if match.Issue > 0 {
+			fmt.Fprintf(&b, ", issue #%d", match.Issue)
+		}
+		if match.PR > 0 {
+			fmt.Fprintf(&b, ", PR #%d", match.PR)
+		}
+		fmt.Fprintf(&b, ", phase `%s`.\n", match.Phase)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // The evidence a revision brief quotes from GitHub (CD12).

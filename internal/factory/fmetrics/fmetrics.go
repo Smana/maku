@@ -64,7 +64,12 @@ func tiers() []string           { return []string{"light", "standard", "frontier
 func cohorts() []string         { return []string{"labeled", "control", "treatment", "none"} }
 func intakeSources() []string   { return []string{"issue", "runlore", "schedule", "api", "adopt"} }
 func resumeReasons() []string   { return []string{"Disrupted", "PodLost"} }
-func roomCapReasons() []string  { return []string{"human_driver", "facts_due"} }
+func overlapSources() []string  { return []string{"tasks", "runs", "rooms", "github"} }
+func overlapClassifications() []string {
+	return []string{v1alpha1.OverlapActiveDuplicate, v1alpha1.OverlapCompletedDuplicate, v1alpha1.OverlapPriorAttempt,
+		v1alpha1.OverlapPartialOverlap, v1alpha1.OverlapUnverifiedOverlap, v1alpha1.OverlapNoMatch}
+}
+func roomCapReasons() []string { return []string{"human_driver", "facts_due"} }
 func admissionReasons() []string {
 	return []string{"repository_differs_from_the_room", "repository_differs_from_the_branch", "repository_permission", "repository_not_owned",
 		"person_budget_exhausted"}
@@ -138,6 +143,8 @@ var (
 	// CD23: the settle window itself (2.5 m at the default meter poll), then a slow meter, a slow
 	// post, and the 15-minute retention bound past which no settled cost is readable any more.
 	spendFinalBuckets = []float64{60, 150, 300, 600, 900, 1800, 3600}
+	// Overlap retrieval ranges from a local exact match to candidate reads and scoped review.
+	overlapEvaluationBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60}
 )
 
 // Set is the factory's instruments. Record through its methods, which fix each label set.
@@ -165,6 +172,9 @@ type Set struct {
 	modelRefused         metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
+	overlapEvaluations   metric.Int64Counter
+	overlapScoperRuns    metric.Int64Counter
+	overlapEvaluation    metric.Float64Histogram
 	profileRecs          metric.Int64Counter
 	taskOutcomes         metric.Int64Counter
 	taskUSD              metric.Float64Counter
@@ -380,6 +390,16 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.scoperRuns, err = meter.Int64Counter("agent_factory_scoper_runs_total",
 		metric.WithDescription("Scoper runs as they end, by class and outcome: ready, question, assumed, missing, failed, budget or budget_calls (scoper design SC11, SC12; harness roles HR2)."))
+	check(err)
+	s.overlapEvaluations, err = meter.Int64Counter("agent_factory_overlap_evaluations_total",
+		metric.WithDescription("Outcome-overlap evaluations by bounded classification and checked source; no goal or candidate text."))
+	check(err)
+	s.overlapScoperRuns, err = meter.Int64Counter("agent_factory_overlap_scoper_runs_total",
+		metric.WithDescription("Outcome-overlap scoper runs by their bounded classification outcome."))
+	check(err)
+	s.overlapEvaluation, err = meter.Float64Histogram("agent_factory_overlap_evaluation_seconds",
+		metric.WithDescription("Time spent retrieving and classifying outcome-overlap candidates."),
+		metric.WithExplicitBucketBoundaries(overlapEvaluationBuckets...))
 	check(err)
 	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
 		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied."))
@@ -1085,6 +1105,25 @@ func (s *Set) SteeringRead(ctx context.Context, class, read string) {
 func (s *Set) ScoperRun(ctx context.Context, class, outcome string) {
 	s.scoperRuns.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
 		attribute.String("outcome", oneOf(outcome, []string{"ready", "question", "assumed", "missing", "failed", "budget", "budget_calls"})), s.repoOf(ctx)))
+}
+
+// OverlapEvaluation counts one outcome-overlap evaluation by its bounded classification and checked
+// source. Unknown values read other, never the supplied text.
+func (s *Set) OverlapEvaluation(ctx context.Context, classification, source string) {
+	s.overlapEvaluations.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("classification", oneOf(classification, overlapClassifications())),
+		attribute.String("source", oneOf(source, overlapSources()))))
+}
+
+// OverlapScoperRun counts one outcome-overlap scoper run by its bounded classification outcome.
+func (s *Set) OverlapScoperRun(ctx context.Context, outcome string) {
+	s.overlapScoperRuns.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("outcome", oneOf(outcome, overlapClassifications()))))
+}
+
+// OverlapEvaluationDuration records retrieval and classification time without payload labels.
+func (s *Set) OverlapEvaluationDuration(ctx context.Context, duration time.Duration) {
+	s.overlapEvaluation.Record(ctx, duration.Seconds())
 }
 
 // ProfileRecommendation counts a resolved task that was offered profiles; recommended comes from

@@ -151,6 +151,15 @@ fq '[.repositories[0].classes[] | select(.shadow != true)] | length == 0' 'every
 fq '[.repositories[0].classes[] | select((.allowedFiles | length) == 0)] | length == 0' 'every class carries allowedFiles'
 fq '.github.mergerAppIDFile == .github.appIDFile and .github.mergerKeyFile == .github.privateKeyFile' 'the merger signs with the same App files'
 fq '(has("meter") | not) and (.api | has("humanIssuer") | not)' 'no meter, no human API keys'
+# The umbrella passes the overlap rollout through the factory's config, with no parallel value.
+for mode in shadow enforce; do
+  out="$(helm template af . -n maku "${args[@]}" --set maku-factory.config.intake.overlap.mode="$mode" \
+    --set maku-factory.config.intake.overlap.scoperEnforcement=true)"
+  fcfg="$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out")"
+  got="$(yq '.intake.overlap.mode' - <<<"$fcfg")"
+  [ "$got" = "$mode" ] || { echo "FAIL: factory config.intake.overlap.mode=$mode rendered as '$got'" >&2; fail=1; }
+  fq '.intake.overlap.scoperEnforcement == true' 'overlap scoperEnforcement passthrough'
+done
 # clusterDomain must agree at the three places that carry it
 msg="$(helm template af . -n maku "${args[@]}" --set clusterDomain=a.test --set maku.clusterDomain=a.test 2>&1 >/dev/null || true)"
 grep -qF 'clusterDomain' <<<"$msg" && grep -qF 'must be equal' <<<"$msg" || { echo "FAIL: a clusterDomain that differs from maku-factory's does not fail" >&2; fail=1; }

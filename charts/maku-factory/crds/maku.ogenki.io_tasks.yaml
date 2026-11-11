@@ -1945,6 +1945,103 @@ spec:
                 - reverted
                 - failed
                 type: string
+              overlap:
+                description: The bounded outcome-overlap evaluation, persisted before
+                  implementation starts.
+                properties:
+                  checkedAt:
+                    description: Empty while candidate review is pending.
+                    format: date-time
+                    type: string
+                  classification:
+                    description: Empty while candidate review is pending.
+                    enum:
+                    - active_duplicate
+                    - completed_duplicate
+                    - prior_attempt
+                    - partial_overlap
+                    - unverified_overlap
+                    - no_match
+                    type: string
+                  fingerprint:
+                    description: SHA-256 of the repository-scoped canonical goal,
+                      in lowercase hexadecimal.
+                    maxLength: 64
+                    pattern: ^[a-f0-9]{64}$
+                    type: string
+                  matches:
+                    items:
+                      description: OverlapMatch cites one candidate without copying
+                        its untrusted text into Task status.
+                      properties:
+                        issue:
+                          minimum: 1
+                          type: integer
+                        phase:
+                          description: The candidate's existing Task phase or outcome.
+                          maxLength: 64
+                          type: string
+                        pr:
+                          minimum: 1
+                          type: integer
+                        relation:
+                          enum:
+                          - exact
+                          - lexical
+                          type: string
+                        run:
+                          description: The candidate run's C2 id.
+                          maxLength: 8
+                          pattern: ^[a-z2-7]{8}$
+                          type: string
+                        task:
+                          maxLength: 8
+                          pattern: ^[a-z2-7]{8}$
+                          type: string
+                      required:
+                      - phase
+                      - relation
+                      type: object
+                    maxItems: 20
+                    type: array
+                  note:
+                    maxLength: 512
+                    type: string
+                  scoperRun:
+                    description: The deterministic evaluation run's C2 id.
+                    maxLength: 8
+                    pattern: ^[a-z2-7]{8}$
+                    type: string
+                  sources:
+                    description: The sources actually checked; absence outside them
+                      is not evidence of no match.
+                    items:
+                      enum:
+                      - tasks
+                      - runs
+                      - rooms
+                      - github
+                      type: string
+                    maxItems: 4
+                    type: array
+                required:
+                - fingerprint
+                type: object
+                x-kubernetes-validations:
+                - message: classification and checkedAt are both empty while review
+                    is pending
+                  rule: has(self.classification) == has(self.checkedAt)
+                - message: a final overlap classification and its evidence never change
+                  rule: '!has(oldSelf.classification) || (has(self.classification)
+                    && self.classification == oldSelf.classification && has(self.matches)
+                    == has(oldSelf.matches) && (!has(self.matches) || self.matches
+                    == oldSelf.matches) && has(self.sources) == has(oldSelf.sources)
+                    && (!has(self.sources) || self.sources == oldSelf.sources) &&
+                    has(self.note) == has(oldSelf.note) && (!has(self.note) || self.note
+                    == oldSelf.note))'
+                - message: scoperRun may advance only while overlap review is pending
+                  rule: '!has(oldSelf.classification) || (has(self.scoperRun) == has(oldSelf.scoperRun)
+                    && (!has(self.scoperRun) || self.scoperRun == oldSelf.scoperRun))'
               phase:
                 enum:
                 - Received
@@ -2513,6 +2610,8 @@ spec:
             - message: settled usage stays settled
               rule: '!has(oldSelf.usageSettled) || !oldSelf.usageSettled || (has(self.usageSettled)
                 && self.usageSettled)'
+            - message: a task's overlap evaluation is never removed
+              rule: '!has(oldSelf.overlap) || has(self.overlap)'
         required:
         - spec
         type: object

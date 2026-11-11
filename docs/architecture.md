@@ -117,7 +117,9 @@ sequenceDiagram
 
   M->>GH: label the issue
   F->>GH: poll maintainer-labelled issues
-  F->>F: create the Task, triage template, tier and budget
+  F->>F: create the Task; initial outcome-overlap evaluation when enabled
+  Note over F: an enforced exact-active match is rejected here; ambiguous candidates get one read-only evaluation run
+  F->>F: triage template, tier and budget
   F->>BR: create the Room CR (Kubernetes API, reconciled by the broker)
   F->>P: create the implementer AgentRun with roomRef
   P->>BR: bridge mirrors the harness into the room
@@ -148,6 +150,48 @@ sequenceDiagram
 | 6. Review and revise | A person steers in the room, or requests changes on the pull request (queued as the room's message); the next run starts from the brief | [concepts](concepts.md) |
 | 7. Resume a lost sandbox | The next run rebuilds its context from the log | [room log](room-log.md) |
 | 8. Approve and merge | The merger App merges, or a maintainer does | [security](security.md) |
+
+### Outcome-overlap evaluation
+
+The factory's initial Task admission can compare an outcome across issue, sponsored API and
+scheduled intake without adding a service or changing the room protocol. The feature is off by
+default; `shadow` persists the same decisions without refusing, while `enforce` permits exact-active
+refusal and a separate `scoperEnforcement` selector permits scoper-confirmed refusal.
+
+```mermaid
+flowchart LR
+  intake["issue / sponsored API / schedule Task"] --> retrieve["canonical goal + repository fingerprint<br/>Tasks → Runs → retained Rooms<br/>GitHub refs for retained candidates only"]
+  retrieve --> persist["persist bounded status.overlap<br/>at most 20 cited candidates"]
+  persist --> result{"initial result"}
+  result -->|source failed| unverified["final unverified_overlap"]
+  result -->|no candidates| nomatch["final no_match"]
+  result -->|exact active| exact{"enforce?"}
+  exact -->|yes| reject["Rejected: overlap_active_duplicate<br/>no AgentRun or implementation reservation"]
+  exact -->|no, shadow| active["final active_duplicate, advisory"]
+  result -->|other candidates| scope["one deterministic read-only triager<br/>existing reservation, resume and adoption"]
+  scope --> final2["persist final classification + checkedAt"]
+  final2 --> full{"active_duplicate<br/>and full enforcement?"}
+  full -->|yes| reject2["Rejected; evaluation spend remains<br/>no implementation run or reservation"]
+  full -->|no| lifecycle["existing scoper / tester / implementer lifecycle"]
+  unverified --> lifecycle
+  nomatch --> lifecycle
+  active --> lifecycle
+```
+
+The fingerprint is SHA-256 over the lowercase repository, a NUL separator and the sanitized goal's
+NFKC/case/punctuation/whitespace-normalized form. Lexical retrieval is deterministic and bounded;
+there is no unrestricted GitHub search, separate overlap store or initial index. `no_match` covers
+only the sources actually checked. A source failure or inconclusive evaluation is
+`unverified_overlap`, never an automatic refusal.
+
+A final status record replays without new retrieval or classification. Pending candidate review has
+empty classification and `checkedAt`, persists before its evaluation run, and keeps that deterministic
+identity through restart, lost-write adoption and rollback to `shadow` or `off`. Only confirmed active
+duplicates can refuse. All other classifications continue through the existing lifecycle, including
+its ordinary scoper, test-first and fresh-run recovery. Status and telemetry carry ids, phases,
+classifications, checked sources and counts, never goal or candidate payloads. The field and phase
+contract is in [the factory](factory.md#outcome-overlap-detection); rollout and evidence collection
+are in [Operations](operations.md#outcome-overlap-rollout-and-shadow-evidence).
 
 A second run whose bridge says hello while the first is live gets `409 room_busy`, and the broker
 appends `state_changed{kind: limit, reason: concurrent_run}`. The lease holds the work, not only
@@ -257,7 +301,7 @@ the same configuration. Only leader-only work stays leader-only.
 | Live: applies on the next decision | Startup: needs a rollout |
 |---|---|
 | The catalogue: `control`, `defaults`, `tiers`, `templates`, `caps`, `budgets`, `facts`, `brief`, `resume`, `scoper`, `loops`, `harnessProfiles`, `mergeGuardrails`, `meter.prices`, `triage.controlPercent` | `policyManagement`, `coordination`, `hardening`, `api`, `runs`, `sandbox`, `demo`, `broker`, `github`, `factory` |
-| `repositories`: adding or removing one, and each one's settings, classes and merge rules | `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`, `runlore.listen`, `triage.classifierURL` |
+| `repositories`: adding or removing one, and each one's settings, classes and merge rules | `intake`, `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`, `runlore.listen`, `triage.classifierURL` |
 
 ### What happens when a change is refused, and at startup
 

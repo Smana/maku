@@ -269,6 +269,9 @@ absent rather than 0.
 | `maku_factory_class_paused` | gauge | `repository`, `class` | 1 while the breaker holds the class paused, 0 once it reads clear (AM9); recorded at each gate decision and each monitor pass of the class's merges, so a class with neither keeps its last value: a class without a monitor that recovers by maturity alone (AM7) reads 1 until its next decision. Recorded for shadow and unarmed classes too, where a pause is inert (AM4) |
 | `maku_factory_steering_reads_total` | counter | `class`, `read`, `repository` | Steering notes read at triage, in a mode other than `off`: `used`, `absent`, `invalid`, or `unowned` (the repository's fence does not name this factory, or its cache is stale: not read) |
 | `maku_factory_scoper_runs_total` | counter | `class`, `outcome`, `repository` | Scoper runs as they end: `ready`, `question`, `assumed`, `missing`, `failed`, `budget` (the run cap ended it before any handoff; its `status.scope` is `failed`), `budget_calls` (the harness stopped it at `scoper.maxToolCalls` tool calls before any handoff; its `status.scope` is `failed`). A scoper that ends without a handoff says so in the room |
+| `maku_factory_overlap_evaluations_total` | counter | `classification`, `source` | Persisted final [outcome-overlap evaluations](factory.md#outcome-overlap-detection), once per checked source: six classifications and `tasks`, `runs`, `rooms`, `github`. Pending and replays add nothing. One evaluation with several sources increments several series, so do not sum these labels to count Tasks |
+| `maku_factory_overlap_scoper_runs_total` | counter | `outcome` | Deterministic candidate-evaluation scoper runs by final classification; a failed, missing, malformed or inconclusive assessment counts `unverified_overlap`. Exact-active and empty-candidate evaluations create no scoper and no observation; exact non-active matches can be evaluated by the scoper |
+| `maku_factory_overlap_evaluation_seconds` | histogram | — | Initial candidate retrieval/evaluation time, recorded after its status persists. It does not include the subsequent candidate-scoper run; replays and failed status writes record nothing |
 | `maku_factory_profile_recommendations_total` | counter | `class`, `cohort`, `recommended`, `applied` | Resolved tasks offered profiles: the scoper's recommendation (`none` without one, `other` for a name not offered) and whether it was applied (`true` only for the treatment cohort under `evaluation.mode: apply`) |
 | `maku_factory_task_outcomes_total` | counter | `class`, `cohort`, `profile`, `source`, `recommended`, `outcome`, `repository` | Ended tasks with a profile, once each, when their usage has settled: 2× the meter poll period + 30s after the first end (`status.endedAt`), on a requeue. The outcome is the first end's (`status.outcome`): a `Reverted` before the settle neither changes it nor restarts the window. `accepted` (merged, every commit of the pull request bound to a push of the factory's; a commit that cannot be proven the factory's reads as a human's), `merged_human`, `no_op`, `closed`, `stopped`, `rejected`, `reverted`, `failed`. The merged pull request's commits and branch record are read for this alone: a task with no profile and no `status.evaluated` mark (a part's triage writes it when the parent has a profile; the merge never reads the parent) completes as before the evaluation and reads neither. `recommended` is the scoper's recommendation as `profile_recommendations_total` labels it (an offered name, `none`, `other`), so a control task compares with the treatment tasks recommended the same profile. An approved split's family counts once, on the parent, under the parent's triage profile, over every part of the split, opened or not: `accepted` when every part merged with no human commit, `merged_human` when any part had one, else the first other outcome by part index; a part never opened, or not ended when the parent counts, reads as the parent's own outcome, a part the parent recorded reverted as `reverted`. The parent counts once every part's usage has settled too, waiting on the task poll past its own window and no longer than twice the window from its end, after which it counts what it has (a part deleted, or never ended). A read the count needs that fails (the family's) leaves the task unsettled and uncounted; the next pass retries. The parts carry no profile and count nothing of their own |
 | `maku_factory_task_usd_total` | counter | `class`, `cohort`, `profile`, `recommended`, `outcome` | USD of those tasks, every attempt summed, counted with the outcome once the usage has settled, so a cost the meter prices after the end is in it; an approved split's family sums the parent's and every part's, every generation, each part's once settled (or as it stands at the bound). A task that never ran counts at its end: it has nothing to settle |
@@ -290,6 +293,82 @@ absent rather than 0.
 | `maku_revision_deferred_total` | counter | — | First runs that gave up a slot-time to a revision while `caps.preferRevisions` is on (CD22); the row's reason is `waiting_revision_first` ([when the factory waits for you](factory.md#when-the-factory-waits-for-you)). The design's own family name, so it is served without the `maku_factory_` prefix |
 
 A label value outside its known set is recorded as `other`; `repository` takes only the configured repositories' names.
+
+### Outcome-overlap rollout and shadow evidence
+
+[Outcome-overlap detection](factory.md#outcome-overlap-detection) is configured in the factory
+file, through the chart's `config` value, and is **off by default**. The file change rolls the
+factory pods:
+
+```yaml
+intake:
+  overlap:
+    mode: shadow
+    scoperEnforcement: false
+```
+
+| Stage | Configuration | What may refuse |
+|---|---|---|
+| Shadow (first) | `mode: shadow`; leave `scoperEnforcement: false` | Nothing. Retrieval, classification, candidate scoper runs, status and metrics are active |
+| Limited enforcement | `mode: enforce`, `scoperEnforcement: false` | Exact-active matches only; scoper-active results remain advisory |
+| Full enforcement (last) | `mode: enforce`, `scoperEnforcement: true` | Exact-active and valid scoper-confirmed active matches |
+
+The selector is inert outside `enforce` and never controls exact-active refusal. Only
+`active_duplicate` can refuse. `completed_duplicate`, `prior_attempt`, `partial_overlap`,
+`unverified_overlap` and `no_match` always proceed. An exact refusal creates no AgentRun or run
+reservation; a scoper refusal has already used its one evaluation run and reservation, whose spend
+remains recorded, but starts no implementation run or reservation.
+
+**Collect shadow evidence before each enforcement step.** Unit/envtest fixtures establish behavior,
+not production precision. Use real shadow Tasks from every enabled intake path and retain the
+reviewed sample, including the citations on which each decision was based:
+
+1. Seed or select an exact active cross-source duplicate (issue/API/schedule), a reworded candidate,
+   and examples whose expected outcomes are completed, prior, partial and no-match. Include an
+   unavailable-source or inconclusive-scoper case in a controlled environment for unverified. The
+   six expected classifications are `active_duplicate`, `completed_duplicate`, `prior_attempt`,
+   `partial_overlap`, `unverified_overlap` and `no_match`.
+2. Inspect the bounded Task records rather than goal text in telemetry. This lists the evidence
+   fields without dumping issue or candidate payloads:
+
+   ```bash
+   kubectl get tasks -n agent-system -o json | jq -r '
+     .items[] | select(.status.overlap != null) |
+     [.metadata.name, .spec.repository, .spec.source.kind, .status.phase,
+      (.status.reason // ""), (.status.overlap.classification // "pending"),
+      ((.status.overlap.matches // []) | length),
+      ((.status.overlap.sources // []) | join(",")),
+      (.status.overlap.scoperRun // ""), (.status.overlap.note // "")] | @tsv'
+   ```
+
+3. Have a reviewer compare every shadow `active_duplicate` with its cited active Task/run/issue/PR
+   and record true and false positives. Review false negatives against the same sample too. Check
+   that `no_match` names only the sources actually checked, that `unverified_overlap` preserves its
+   uncertainty, and that no match list exceeds 20. Metrics cannot provide this review: by design
+   they have no repository, goal, candidate or citation labels.
+4. Read `maku_factory_overlap_evaluations_total` by classification/source,
+   `maku_factory_overlap_scoper_runs_total` by outcome and
+   `maku_factory_overlap_evaluation_seconds` for initial retrieval latency. In shadow, an
+   `overlap_active_duplicate` Task reason is a defect: shadow never refuses. Confirm that pending
+   evaluations settle and that repeated reconciles do not increase evaluation or scoper counters.
+5. Exercise refusal and replay separately in a test or staging environment: exact-active refusal
+   must have zero AgentRuns/reservations; full scoper refusal must have only its evaluation run and
+   recorded evaluation spend; a persisted result and a restarted/lost-write pending evaluation must
+   not retrieve or create twice. A new generation from re-label/retry must produce fresh evidence.
+
+Advance only after the reviewed evidence is accepted for that stage: exact-active precision/timing
+for limited enforcement, plus scoper citation validity, classification quality and replay/recovery
+for full enforcement. There is no default numeric precision threshold in the factory; record the
+review's acceptance decision. **Do not claim production precision from fixtures or from an
+unreviewed shadow sample.**
+
+**Rollback and partial rollback.** Clear `scoperEnforcement` to return from full to limited
+enforcement without disabling exact-active refusal. Set `mode: shadow` to stop all overlap refusals
+while continuing to collect evidence, or `mode: off` to stop new retrieval and status evaluation.
+Never delete Task history as part of rollback. Final records continue to replay, and an evaluation
+already pending finishes or adopts its deterministic run even under `shadow` or `off`; its outcome
+is advisory after rollback. Existing room recovery, tester contracts, independent reviews and
+fresh-run revisions are unchanged.
 
 ### Coordination
 
