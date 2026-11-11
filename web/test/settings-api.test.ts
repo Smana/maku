@@ -88,7 +88,7 @@ describe("timeText", () => {
   const now = Date.parse("2026-11-10T12:00:00Z");
   const cases: [string, string][] = [
     ["2026-11-10T11:59:30Z", "just now"], ["2026-11-10T11:15:00Z", "45 min ago"], ["2026-11-10T09:00:00Z", "3 h ago"],
-    ["2026-11-09T12:00:00Z", "1 day ago"], ["2026-11-01T12:00:00Z", "9 days ago"], ["soon", "soon"],
+    ["2026-11-09T12:00:00Z", "1 d ago"], ["2026-11-01T12:00:00Z", "9 d ago"], ["soon", "soon"],
     ["2026-12-08T09:00:00Z", new Date("2026-12-08T09:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })],
   ];
   for (const [iso, want] of cases) it(`${iso} reads ${want}`, () => {

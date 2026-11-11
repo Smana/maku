@@ -129,13 +129,13 @@ describe("a class card", () => {
     p.exceptions[0].expiresAt = "2026-12-08T09:00:00Z";
     const now = () => Date.parse("2026-11-10T00:00:00Z");
     const c = classCard(p.report.classes[0], { ...ctx(p), now });
-    expect(c.textContent).toContain("Promotion requested by me 1 day ago: pull request opened #7 (threshold 20)");
+    expect(c.textContent).toContain("Promotion requested by me 1 d ago: pull request opened #7 (threshold 20)");
     expect(c.querySelector(".class-promotions time")?.getAttribute("datetime")).toBe("2026-11-09");
     const until = c.querySelector(".class-exceptions time")!;
     expect(c.querySelector(".class-exceptions")?.textContent).toContain(` until ${until.textContent}.`);
     expect(until.textContent).toBe(new Date("2026-12-08T09:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }));
     expect(classCard(p.report.classes[0], { ...ctx(p), now: () => Date.parse("2027-01-01T00:00:00Z") }).querySelector(".class-exceptions")?.textContent)
-      .toContain(", expired 23 days ago.");
+      .toContain(", expired 23 d ago.");
     p.promotions[0] = { ...p.promotions[0], threshold: 12, exceptionId: "e1" };
     expect(classCard(p.report.classes[0], ctx(p)).textContent).toContain("pull request opened #7 (under exception e1, threshold 12)");
     expect(c.querySelector('a[href="https://github.com/o/r/pull/7"]')).not.toBeNull();
@@ -197,7 +197,7 @@ describe("a class card", () => {
     expect(last.textContent).toBe("Last decision: would merge (clean), 3 h ago");
     expect(last.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-10T00:00:00Z");
     expect(last.querySelector("time")?.title).toBe(new Date("2026-11-10T00:00:00Z").toLocaleString());
-    for (const [at, words] of [["2026-11-10T02:59:30Z", "just now"], ["2026-11-10T02:15:00Z", "45 min ago"], ["2026-11-09T03:00:00Z", "1 day ago"], ["2026-11-01T00:00:00Z", "9 days ago"], ["not a time", "not a time"]]) {
+    for (const [at, words] of [["2026-11-10T02:59:30Z", "just now"], ["2026-11-10T02:15:00Z", "45 min ago"], ["2026-11-09T03:00:00Z", "1 d ago"], ["2026-11-01T00:00:00Z", "9 d ago"], ["not a time", "not a time"]]) {
       p.report.mergePolicyStatus.status.classes![0].lastDecisionAt = at;
       expect(classCard(p.report.classes[0], { ...ctx(p), now }).querySelector(".class-last time")?.textContent).toBe(words);
     }

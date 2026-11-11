@@ -11,6 +11,7 @@ import type { Snapshot } from "./conn";
 import { bannerText } from "./approval-help";
 import { el, shortPrincipal } from "./controls";
 import { type Dashboard, expandDashboards } from "./dashboards";
+import { span } from "./duration";
 import { statusIcon } from "./icons";
 import type { Latest } from "./room-state";
 import { type RunStatus, statusLine } from "./run-status";
@@ -47,8 +48,7 @@ export function fmtTokens(n: number): string {
 function since(iso: string, now: number): string {
   const t = Date.parse(iso);
   if (isNaN(t)) return "";
-  const m = Math.max(0, Math.floor((now - t) / 60000));
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+  return span(now - t);
 }
 
 // plainText reduces an agent's markdown to one line of text for a place that cannot render it

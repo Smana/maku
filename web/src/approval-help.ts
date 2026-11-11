@@ -5,6 +5,8 @@
 // fixed prose chosen by the broker's bounded class code (§6); nothing the agent wrote
 // is ever the reason. An unknown code reads as the generic rule.
 
+import { span } from "./duration";
+
 export interface Rule { intent: string; why: string; approve: string; deny: string }
 
 const DENIED = "the agent is told no and none of it runs; it may try another way.";
@@ -60,12 +62,6 @@ export const ruleFor = (cls: string): Rule => (Object.hasOwn(RULES, cls) ? RULES
 const pad = (n: number) => String(n).padStart(2, "0");
 const clock = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-function inMinutes(ms: number): string {
-  const m = Math.floor(ms / 60000);
-  if (m < 1) return "under a minute";
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
-}
-
 export const EXPIRY = "the request expires and the agent is told no";
 
 // deadlineText: "decide by HH:MM (in N min); if nobody decides: …". Another day's deadline
@@ -76,7 +72,7 @@ export function deadlineText(expiresAt: string, now: number = Date.now()): strin
   const left = due.getTime() - now;
   if (left <= 0) return `The deadline has passed (${clock(due)}); ${EXPIRY}.`;
   const day = due.toDateString() === new Date(now).toDateString() ? "" : `${due.getFullYear()}-${pad(due.getMonth() + 1)}-${pad(due.getDate())} `;
-  return `Decide by ${day}${clock(due)} (in ${inMinutes(left)}); if nobody decides: ${EXPIRY}.`;
+  return `Decide by ${day}${clock(due)} (in ${span(left)}); if nobody decides: ${EXPIRY}.`;
 }
 
 export interface Standing {

@@ -1,0 +1,11 @@
+[
+  {"ms": 0, "span": "0 s", "ago": "just now"},
+  {"ms": 40000, "span": "40 s", "ago": "just now"},
+  {"ms": 60000, "span": "1 min", "ago": "1 min ago"},
+  {"ms": 720000, "span": "12 min", "ago": "12 min ago"},
+  {"ms": 18000000, "span": "5 h", "ago": "5 h ago"},
+  {"ms": 20820000, "span": "5 h 47 min", "ago": "5 h ago"},
+  {"ms": 86400000, "span": "1 d", "ago": "1 d ago"},
+  {"ms": 3258000000, "span": "37 d 17 h", "ago": "37 d ago"},
+  {"ms": 3258060000, "span": "37 d 17 h", "ago": "37 d ago"}
+]

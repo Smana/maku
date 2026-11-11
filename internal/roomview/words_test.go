@@ -96,10 +96,12 @@ func TestAgo(t *testing.T) {
 		t    time.Time
 		want string
 	}{
-		"minutes": {now.Add(-3 * time.Minute), "3 min ago"},
-		"hours":   {now.Add(-2 * time.Hour), "2 h ago"},
-		"a day":   {now.Add(-25 * time.Hour), "2026-10-07"},
-		"future":  {now.Add(time.Minute), "0 min ago"},
+		"just now": {now.Add(-30 * time.Second), "just now"},
+		"minutes":  {now.Add(-3 * time.Minute), "3 min ago"},
+		"hours":    {now.Add(-2 * time.Hour), "2 h ago"},
+		"a day":    {now.Add(-25 * time.Hour), "1 d ago"},
+		"a month":  {now.Add(-37 * 24 * time.Hour), "37 d ago"},
+		"future":   {now.Add(time.Minute), "just now"},
 	} {
 		if got := ago(tc.t, now); got != tc.want {
 			t.Errorf("%s: ago = %q, want %q", name, got, tc.want)

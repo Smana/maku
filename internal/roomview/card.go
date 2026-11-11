@@ -601,16 +601,7 @@ func duration(r envelope.RunFact, now time.Time, over bool) (string, bool) {
 	case end.IsZero():
 		return "", false
 	}
-	m := max(0, int(end.Sub(r.StartedAt)/time.Minute))
-	switch {
-	case m < 1:
-		return "under 1 min", true
-	case m < 60:
-		return strconv.Itoa(m) + " min", true
-	case m%60 == 0:
-		return strconv.Itoa(m/60) + " h", true
-	}
-	return fmt.Sprintf("%d h %d min", m/60, m%60), true
+	return spanText(end.Sub(r.StartedAt)), true
 }
 
 func (c *card) notes(s summary.Summary) {

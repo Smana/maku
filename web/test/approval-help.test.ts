@@ -22,9 +22,9 @@ describe("deadlineText", () => {
   it("gives the clock time, the minutes left and what happens on silence", () => {
     expect(deadlineText(at(10, 30).toISOString(), now)).toBe(`Decide by 10:30 (in 30 min); if nobody decides: ${EXPIRY}.`);
   });
-  it("counts hours, and says under a minute", () => {
+  it("counts hours, and reads seconds below a minute", () => {
     expect(deadlineText(at(12, 5).toISOString(), now)).toContain("(in 2 h 5 min)");
-    expect(deadlineText(new Date(now + 20_000).toISOString(), now)).toContain("(in under a minute)");
+    expect(deadlineText(new Date(now + 20_000).toISOString(), now)).toContain("(in 20 s)");
   });
   it("shows the date of another day's deadline", () => {
     expect(deadlineText(at(9, 5, 29).toISOString(), now)).toContain("Decide by 2026-10-29 09:05 (in 23 h 5 min)");

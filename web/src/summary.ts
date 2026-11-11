@@ -9,6 +9,7 @@
 import { api, type NeedItem } from "./api";
 import type { RoomEvent } from "./conn";
 import { approvalAnchor, el } from "./controls";
+import { ago as durationAgo } from "./duration";
 
 export interface RunModel { run: string; model?: string; effort?: string }
 
@@ -172,14 +173,10 @@ export function when(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-// ago reads a timestamp relative to now: "12 s ago", "4 min ago", "2 h ago".
+// ago reads a timestamp relative to now by the one duration rule: "just now", "4 min ago", "37 d ago".
 export function ago(iso: string, now: number): string {
   const t = Date.parse(iso);
-  if (isNaN(t)) return "";
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  if (s < 60) return `${s} s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  return `${Math.floor(s / 3600)} h ago`;
+  return isNaN(t) ? "" : durationAgo(now - t);
 }
 
 // focusApproval reveals the approval card for id in the needs-you panel and focuses its

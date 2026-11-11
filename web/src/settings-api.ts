@@ -5,6 +5,7 @@
 // importing the page that draws it.
 
 import { api } from "./api";
+import { ago } from "./duration";
 import type { Evidence, MergePolicyStatus, Report } from "./settings";
 
 // A refusal's bounded code, as the broker writes it, else the status.
@@ -158,8 +159,6 @@ export function timeText(iso: string, now: number = Date.now()): HTMLTimeElement
   const d = new Date(at);
   t.title = d.toLocaleString();
   if (at > now + 60000) { t.textContent = d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }); return t; }
-  const m = Math.max(0, Math.floor((now - at) / 60000));
-  const days = Math.floor(m / 1440);
-  t.textContent = m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${days} day${days > 1 ? "s" : ""} ago`;
+  t.textContent = ago(now - at);
   return t;
 }

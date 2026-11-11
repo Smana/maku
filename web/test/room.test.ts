@@ -81,11 +81,11 @@ describe("the room page", () => {
     expect(p.app.querySelector(".now")?.textContent).toBe("No run yet");
     p.last().recv(event(1, "participant", { principal: "agent:ikely2yk", change: "joined", role: "implementer" }));
     p.last().recv(agent(2, "tool_call", { callId: "c1", tool: "terminal", args: { command: "go test ./..." } }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · 5 s ago");
-    vi.advanceTimersByTime(3000);
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · 8 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · just now");
+    vi.advanceTimersByTime(63000);
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · 1 min ago");
     p.last().recv(agent(3, "tool_result", { callId: "c1", status: "error", output: "FAIL" }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · error · 8 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · error · 1 min ago");
   });
 
   it("takes the Now line's click to its row and opens it", () => {
@@ -172,11 +172,11 @@ describe("the room page", () => {
     expect(shown()).toBe(false);
     p.last().recv(event(2, "participant", { principal: "agent:ikely2yk", change: "joined", role: "implementer" }));
     p.last().recv(agent(3, "message", { kind: "chat", text: "on it", delivery: "none" }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ on it · message · 5 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ on it · message · just now");
     expect([shown(), steer().disabled]).toEqual([true, false]);
     steer().checked = true;
     p.last().recv(event(4, "participant", { principal: "agent:ikely2yk", change: "left" }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("No run · last: on it · 5 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("No run · last: on it · just now");
     expect(p.app.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
     expect([shown(), steer().disabled]).toEqual([false, true]);
     expect(p.app.querySelector('input[name="delivery"]:checked')).toBeNull(); // a steer with no run: chosen again

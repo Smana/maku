@@ -86,9 +86,9 @@ describe("the title strip", () => {
     strip.onNowClick((seq) => { clicked = seq; });
     strip.update({ roomId: "3kq7x2ma", snap, phase: "Active", driver: snap.driver, needs: 0,
       now: { seq: 27, text: "terminal git log --oneline -3", status: "running", ts: new Date(Date.now() - 12_000).toISOString() } });
-    expect(h.querySelector(".now")?.textContent).toBe("Now ▸ terminal git log --oneline -3 · running · 12 s ago");
+    expect(h.querySelector(".now")?.textContent).toBe("Now ▸ terminal git log --oneline -3 · running · just now");
     expect([...h.querySelectorAll(".now-link > span")].map((e) => [e.className, e.textContent]))
-      .toEqual([["now-lead", "Now ▸ "], ["now-text", "terminal git log --oneline -3"], ["now-meta", " · running · 12 s ago"]]);
+      .toEqual([["now-lead", "Now ▸ "], ["now-text", "terminal git log --oneline -3"], ["now-meta", " · running · just now"]]);
     (h.querySelector(".now button") as HTMLButtonElement).click();
     expect(clicked).toBe(27);
   });
@@ -121,7 +121,7 @@ describe("the title strip", () => {
     const strip = mountStrip(h, () => t);
     const i = input({ now: { seq: 3, text: "hi", status: "message", ts: "2026-10-04T13:59:58Z" } });
     strip.update(i);
-    expect(h.querySelector(".now")?.textContent).toBe("Now ▸ hi · message · 2 s ago");
+    expect(h.querySelector(".now")?.textContent).toBe("Now ▸ hi · message · just now");
     t += 4 * 60_000;
     strip.update(i);
     expect(h.querySelector(".now")?.textContent).toBe("Now ▸ hi · message · 4 min ago");
@@ -419,7 +419,7 @@ describe("the title strip", () => {
     const at = () => Date.parse("2026-10-04T14:00:00Z");
     it.each([
       ["a room that never ran, a human's message aside", { ran: false, summary: summary({ run: null }), now: { ...hi, status: "message" as const } }, "No run yet"],
-      ["a run that ended, with its last activity", { ran: true, now: hi }, "No run · last: hi · 2 s ago"],
+      ["a run that ended, with its last activity", { ran: true, now: hi }, "No run · last: hi · just now"],
       ["a run that ended with no activity seen", { ran: true, now: undefined }, "No run"],
     ])("%s", (_name, over, want) => {
       const h = document.createElement("header");

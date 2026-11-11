@@ -178,17 +178,8 @@ func dollars(micro int64) string {
 	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
 }
 
-// ago is how long before now t was: minutes, then hours, and from a day on its date.
-func ago(t, now time.Time) string {
-	d := now.Sub(t)
-	switch {
-	case d >= 24*time.Hour:
-		return t.UTC().Format("2006-01-02")
-	case d >= time.Hour:
-		return strconv.Itoa(int(d/time.Hour)) + " h ago"
-	}
-	return strconv.Itoa(max(0, int(d/time.Minute))) + " min ago"
-}
+// ago is how long before now t was, in the one duration rule: "12 min ago", "5 h ago", "37 d ago".
+func ago(t, now time.Time) string { return agoText(now.Sub(t)) }
 
 // stamp is t in UTC, and says so: the time alone on now's UTC day, else the date and the time.
 func stamp(t, now time.Time) string {
