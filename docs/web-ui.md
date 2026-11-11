@@ -226,8 +226,9 @@ moves it to the next of three modes:
 | `theme: system` | Day or Night as the OS prefers, following it when it changes; the mode until you choose |
 
 The choice is kept in the browser (`localStorage`), so it holds across rooms and reloads. Both
-themes are the Ogenki design system's, and every text and border pair meets WCAG AA in each: a
-status is always a word as well as a colour. The design reference is
+themes are the Ogenki design system's. In each, every text pair and every boundary you must see
+(an input, a state border, the focus ring, a status icon) meets WCAG AA; the hairline between
+surfaces is decorative. A status is always a word as well as a colour. The design reference is
 [`web/DESIGN.md`](../web/DESIGN.md).
 
 ## When something fails

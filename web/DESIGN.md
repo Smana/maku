@@ -30,7 +30,6 @@ colors:
   day-input: "#7a82a8"
   day-warning-text: "#6b3f00"
   day-ink-on-accent: "#fdfdff"
-  brand: "#00549c"
 typography:
   display:
     fontFamily: "Space Grotesk, Arial, sans-serif"
@@ -165,20 +164,24 @@ A deep navy ground with a cool blue voice; amber, pink and green are kept for st
 - **Night Ground / Day Paper** (`--background`, `--muted`): the page, and inset surfaces.
 - **Panel** (`--card`): cards, the table, bubbles, inputs.
 - **Raised** (`--surface-raised`): the dock, a hovered card, table headers.
-- **Hairline** (`--border`): every 1 px border and divider.
+- **Hairline** (`--border`): every 1 px border and divider. Decorative: about 1.8:1 on a card,
+  never the only edge of something you must find. The boundaries that must be seen meet 3:1:
+  `--input`, a state border (`--warning-border`, `--destructive`), the focus ring, a status icon.
 - **Ink / Muted Ink** (`--foreground`, `--muted-foreground`): text and secondary text, readable on
   all three surfaces in both themes. `--placeholder` is muted ink.
 - **Input Edge** (`--input`, night `#6f79b0`, day `#7a82a8`): a form control's boundary, derived to
   reach 3:1 on a card and on the dock where the hairline does not.
-- **Logo Blue** (`brand`): the mark's colour only.
+- **The maku mark** keeps its own colours (`#8B5CF6` core with `#0A0A0F` ink in Day,
+  `#F3F2FA` in Night); Ogenki's logo blue is not used.
 
 ### Named Rules
 **The Word-and-Colour Rule.** A state is always a word plus a colour: "Waiting for you" with an
 amber clock, "rejected" with its icon. Never a coloured dot, border or bar alone.
 
 **The Ink-on-Accent Rule.** Text on an accent fill (the primary button, the Needs you pill, a
-solid warning) uses `--ink-on-accent` and its aliases (`--primary-foreground`,
-`--warning-solid-foreground`, …), never literal white.
+solid warning) uses `--ink-on-accent`, or a semantic twin set to the same value (`--primary-foreground`,
+`--warning-solid-foreground`, …), never literal white. The twins repeat the hex rather than
+`var()` it; `contrast.test.ts` pins them equal.
 
 **The Derived-Token Rule.** When an Ogenki value misses its contrast pair, keep the Ogenki value
 and give that one use a derived token (`--input`, `--warning-foreground`). Never shift the base.
@@ -226,7 +229,11 @@ the rail folds into a row that opens it as a drawer. Phone breakpoints sit at 64
 dock reflow, the settings nav becomes a scrolling row) and 720 px (settings forms and the
 repository table stack).
 
-Spacing is the Ogenki 4 px scale (`--space-1` to `--space-16`: 4, 8, 12, 16, 24, 32, 48, 64). Page
+Spacing tokens are the Ogenki 4 px scale (`--space-1` to `--space-16`: 4, 8, 12, 16, 24, 32, 48,
+64), for new work: most existing rules still write literal px (6, 10, 14 among them), and only
+`--space-4` (card padding) is referenced so far. The same holds for the raw Ogenki tokens
+(`--surface-*`, `--line`, `--blue`, …): declared and pinned, while rules read the semantic
+names. Page
 gutters are 16 px at every width; the settings pages inset their content 16 px more. Group tightly, separate generously.
 
 Every interactive target reaches `--hit`: 40 px on a dense desktop, 44 px at 640 px and below. A
@@ -235,14 +242,23 @@ control drawn smaller extends with a pseudo-element, never over a neighbour's.
 ## Elevation & Depth
 
 Flat by tone. Depth comes from the three surfaces (page, card, raised) and the 1 px hairline, not
-from shadows. Two shadows remain: `--shadow-dock`, under the dock that floats over the stream,
-and `--shadow-border-hover`, a button's hover ring. Cards carry none.
+from shadows. Cards carry none. The shadows that remain:
+
+### Shadow Vocabulary
+- **Dock** (`--shadow-dock`): under the dock that floats over the stream, and the rail drawer.
+- **Ring** (`--shadow-border`): the log's own boxes, which are not cards: a bubble and the brief
+  (both at `--radius-card`, 12 px), the checked delivery segment, and the rail popover (with the
+  dock shadow).
+- **Hover ring** (`--shadow-border-hover`): a button, a need's Go link and a rail button on
+  hover.
 
 ### Named Rules
 **The No-Glow Rule.** No glow backgrounds, no coloured halo, no glass on a working page.
 
 **The One-Gradient Rule.** At most one gradient per screen. `--aurora-bar` (pink to violet,
-90deg) fills the room page's token budget bar (`.meter-bar::after`) and nothing else. A budget
+90deg) fills the room page's token budget bar (`.meter-bar::after`) and nothing else. Night uses
+Ogenki's aurora; Day derives its own from Day pink to Day violet, so both stops hold 3:1 on the
+bar's track (the bar is a meaningful graphic). A budget
 past 80 % or spent turns its bar solid amber or pink. The evidence bar repeats once per class on
 a repository page, so it fills with solid `--primary`, muted when blocked.
 `web/test/surfaces.test.ts` pins the one user.
@@ -252,10 +268,11 @@ a repository page, so it fills with solid `--primary`, muted when blocked.
 Gentle, concentric corners. A card is 16 px (`--radius-md`), a row (a call's body, the
 composer, the YAML editor) 8 px (`--radius-row`), a control 6 px (`--radius-control`), a pill
 9999 px. A box inside a bordered box takes the outer radius minus the border (a tool row's
-summary is `calc(var(--radius-md) - 1px)`). `--radius-card` (12 px) survives on a few bubbles and
-the brief; new work uses `--radius-md`.
+summary is `calc(var(--radius-md) - 1px)`). `--radius-card` (12 px) survives on bubbles and
+the brief; new work uses `--radius-md`. Literal 6 px and 999px radii remain in older rules; they
+equal `--radius-control` and `--radius-pill`.
 
-Borders are 1 px. A thicker border survives only on the rail's lanes.
+Borders are 1 px, with the side stripes listed under Don't as the only exceptions.
 
 ## Components
 
@@ -314,15 +331,22 @@ words ("Running — implementer, 13 min"). The icon is aria-hidden; the words sa
   boundary or the focus ring. The test is the gate; a pair that fails gets a derived token.
 - **Do** say every state in words as well as in colour.
 - **Do** set code, ids, times and counters in `--font-mono` with tabular numerals.
-- **Do** animate with opacity and transform only, 150 to 200 ms ease-out, and put every
-  animation inside `prefers-reduced-motion: no-preference`; under reduce, nothing moves and marks
-  simply appear. Hover may fade a colour or the hover ring over 150 ms.
+- **Do** animate with opacity and transform only, 150 to 200 ms ease-out. Gate motion on
+  `prefers-reduced-motion: no-preference`, or cancel it in a `reduce` block (the file does both:
+  the press scale and the rail sit inside `no-preference`, `settle-in` and the settings-card lift
+  are cancelled under `reduce`); under reduce, nothing moves and marks simply appear. Hover may fade a colour or the hover ring over 150 ms.
 - **Do** use the theme's `accent-color` and selection tint; they come from `--primary`.
 
 ### Don't:
 - **Don't** draw a side stripe (a coloured `border-left` or an inset bar) on a card, a row or a
-  list item: tone the card's own 1 px border or the status icon. The one exception is the
-  approval and need bar, straight and inside the card.
+  list item: tone the card's own 1 px border or the status icon. The stripes that ship, and
+  stay:
+  - the approval and need bar: 3 px `--warning-border`, a `::before` drawn straight between the
+    16 px corners (the owner's choice, #345);
+  - the rail's lanes: `.rail-button` and `.rail-coordination-node`, 3 px in the lane's colour
+    (the rail's redesign, PR 3, owns them);
+  - the step thread: `.step-calls`, a 2 px hairline (pink-tinted when the step failed) that ties
+    a step's calls together.
 - **Don't** add a font size, a font family literal or a second gradient.
 - **Don't** put literal white text on an accent, or a colour outside the tokens.
 - **Don't** use emoji; icons are 2 px-stroke line SVGs in one ink.
