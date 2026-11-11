@@ -1152,3 +1152,50 @@ func TestIntakePlanVagueRequestGetsTheFloor(t *testing.T) {
 		t.Fatalf("%+v", d.Plan.Planner)
 	}
 }
+
+// #469: a request that names a repository this surface does not serve is refused before any model
+// call, on both surfaces, and never planned for a different repository.
+func TestIntakePlanRefusesANamedRepositoryNotServedHere(t *testing.T) {
+	withAllow := intakeOption(t, func(_ *fakeIntake, in *Intake) {
+		in.Allow = map[string]bool{"Smana/ai-native-ref": true, "Smana/runlore": true, "Smana/runlore-kb": true}
+	})
+	for _, tc := range []struct {
+		name    string
+		sponsor bool
+		args    map[string]any
+		refused bool
+	}{
+		{"session, the live case", false, map[string]any{"text": "let's add mistral support to runlore"}, true},
+		{"session, owner/name", false, map[string]any{"text": "add mistral to Smana/runlore"}, true},
+		{"session, a re-plan reply in the context", false, map[string]any{"text": "the docs are wrong", "context": "Reply 1: you're wrong I specifically asked runlore"}, true},
+		{"slack, the live case", true, map[string]any{"text": "let's add mistral support to runlore", "on_behalf_of": "slack:T01ABC/U02DEF",
+			"candidates": []string{"Smana/cloud-native-ref", "Smana/ai-native-ref"}}, true},
+		{"slack, a named candidate is planned", true, map[string]any{"text": "the ai-native-ref install guide is wrong", "on_behalf_of": "slack:T01ABC/U02DEF",
+			"candidates": []string{"Smana/ai-native-ref"}}, false},
+		{"session, nothing named", false, planArgs(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := []option{mcpOn, withIntake(t, "session"), withAllow}
+			who := viaRoomctl("dev")
+			if tc.sponsor {
+				opts = []option{mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"), withAllow}
+				who = bearer("slack-app")
+			}
+			e := setup(t, opts...)
+			got := call(t, e, who, "intake_plan", tc.args)
+			if tc.refused {
+				if !got.isError || !strings.Contains(got.text, "repository_not_served_here") ||
+					!strings.Contains(got.text, "runlore isn't served here") || !strings.Contains(got.text, "ai-native-ref") {
+					t.Fatalf("%s", got.text)
+				}
+				if e.intake.calls() != 0 {
+					t.Fatalf("a refused request called the model %d times", e.intake.calls())
+				}
+				return
+			}
+			if got.isError {
+				t.Fatalf("%s", got.text)
+			}
+		})
+	}
+}

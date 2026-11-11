@@ -24,6 +24,9 @@ func TestMentionRefusalOrients(t *testing.T) {
 				"<https://rooms.example|the rooms page>"}},
 		{"repository_not_allowed", "repository_not_allowed: none of the candidates", "repo_not_allowed",
 			[]string{"this channel serves Smana/ai-native-ref, Smana/cloud-native-ref", "<https://rooms.example|the rooms page>"}},
+		{"repository_not_served_here", "repository_not_served_here: runlore isn't served here (served: Smana/ai-native-ref); an operator adds it to the repositories served here",
+			"repo_not_served",
+			[]string{"Not proposed: runlore isn't served here (served: Smana/ai-native-ref); an operator adds it", "<https://rooms.example|the rooms page>"}},
 		{"no_write", "no_write: no push access", "no_write",
 			[]string{"cannot write to Smana/ai-native-ref, Smana/cloud-native-ref", "<https://rooms.example|the rooms page>"}},
 	} {
