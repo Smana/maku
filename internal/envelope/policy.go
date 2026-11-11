@@ -45,6 +45,35 @@ type PolicyFact struct {
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
+// ProfileFact is the harness profile a task runs under, its evaluation cohort and the scoper's
+// recommendation. It is the Task status projected into the room, never a fresh decision.
+type ProfileFact struct {
+	Name        string `json:"name"`
+	Source      string `json:"source"`
+	Cohort      string `json:"cohort"`
+	Recommended string `json:"recommended,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Why         string `json:"why,omitempty"`
+}
+
+func (p ProfileFact) validate() error {
+	switch {
+	case p.Name == "" || utf8.RuneCountInString(p.Name) > 63:
+		return errors.New("name is 1 to 63 characters")
+	case !slices.Contains([]string{"label", "floor", "control", "scoper", "escalation"}, p.Source):
+		return errors.New("source is label, floor, control, scoper or escalation")
+	case !slices.Contains([]string{"labeled", "control", "treatment"}, p.Cohort):
+		return errors.New("cohort is labeled, control or treatment")
+	case utf8.RuneCountInString(p.Recommended) > 63:
+		return errors.New("recommended is at most 63 characters")
+	case utf8.RuneCountInString(p.Reason) > 32:
+		return errors.New("reason is at most 32 characters")
+	case utf8.RuneCountInString(p.Why) > 200:
+		return errors.New("why is at most 200 characters")
+	}
+	return nil
+}
+
 // PolicyConditions are a class's declared conditions, as the factory config names them.
 type PolicyConditions struct {
 	AllowedFiles     []string `json:"allowedFiles,omitempty"`

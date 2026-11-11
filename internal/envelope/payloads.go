@@ -217,6 +217,8 @@ type TaskFacts struct {
 	Monitor string `json:"monitor,omitempty"`
 	// Policy is the merge policy that governs the task, as the factory's config declares it.
 	Policy *PolicyFact `json:"policy,omitempty"`
+	// Profile is the harness profile and evaluation cohort the task runs under.
+	Profile *ProfileFact `json:"profile,omitempty"`
 }
 
 // MaxPlan bounds TaskFacts.Plan.
@@ -469,6 +471,11 @@ func (f TaskFacts) Validate() error {
 	if f.Policy != nil {
 		if err := f.Policy.validate(); err != nil {
 			return fmt.Errorf("task facts: policy: %w", err)
+		}
+	}
+	if f.Profile != nil {
+		if err := f.Profile.validate(); err != nil {
+			return fmt.Errorf("task facts: profile: %w", err)
 		}
 	}
 	if f.Split != nil {
