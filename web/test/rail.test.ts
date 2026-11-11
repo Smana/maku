@@ -458,5 +458,18 @@ describe("split", () => {
     expect(first.textContent).toBe("part 2 of 3 of #50");
     expect(first.querySelector("a")!.getAttribute("href")).toBe("/r/cccccccc");
   });
+
+  it("a finished task has no replay controls, and a refetch applies at once", () => {
+    const { rail } = mount();
+    rail.set(flow, "Merged", now);
+    expect(rail.el.querySelector(".rail-replays, .rail-replay")).toBeNull();
+    const names = [...rail.el.querySelectorAll("button")].map((b) => b.textContent);
+    expect(names).not.toContain("Replay");
+    expect(names).not.toContain("Next");
+    expect(names).not.toContain("Skip");
+    const later: Flow = { ...flow, nodes: [...flow.nodes, node({ run: "r-m", persona: "merger", fromSeq: 91 })] };
+    rail.set(later, "Merged", now);
+    expect(nodeOf(rail, "r-m")).not.toBeNull();
+  });
 });
 

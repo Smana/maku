@@ -12,7 +12,7 @@
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 //   ?long         unbreakable lines (long-fixtures.ts): a sed command, a gh api needs card, a served model behind an alias
 // One rail fixture (flow-fixtures.ts), the first of:
-//   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
+//   ?finished     every run ended, a reviewer, the milestones to Done
 //   ?split        a scoper whose handoff split into three parts
 //   ?many         a long task: retries and reviewers, a rail taller than the window, the unsandboxed banner above the header
 //   ?part         a part's room, linked back to its parent

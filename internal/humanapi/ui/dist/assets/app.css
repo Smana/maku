@@ -197,7 +197,7 @@ strong, b { font-weight: 700; }
 /* Code, commands and tool I/O are monospace at 14 px; IDs, timestamps and counters at 13 px
    with tabular numerals. Prose, bubbles and cards stay in the sans. */
 .t-cmd, .t-command, .approval-command, pre, code { font: var(--text-small)/var(--leading-small) var(--font-mono); }
-time, .t-time, .step-dur, .replay-progress, .t-prompt {
+time, .t-time, .step-dur, .t-prompt {
   font-family: var(--font-mono); font-size: var(--text-small); line-height: var(--leading-small);
   font-variant-numeric: tabular-nums;
 }
@@ -328,12 +328,8 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 }
 /* Not live: under the strip, why and when the page retries. The unsandboxed banner sits above the strip. */
 .banner, .banner-unsandboxed { background: color-mix(in srgb, var(--warning) 18%, var(--card)); color: var(--warning-foreground); padding: 6px 16px; }
-/* The live demo (web/preview/demo.ts): its banner, and the replay bar as the dock's first row. */
+/* The live demo (web/preview/demo.ts): its banner. */
 .demo-banner a { color: inherit; text-decoration: underline; }
-.replay-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: var(--text-small); }
-.replay-bar button, .replay-bar select { min-height: 40px; }
-.replay-bar select { font: inherit; background: var(--card); color: var(--card-foreground); border: 1px solid var(--input); border-radius: 6px; padding: 0 8px; }
-.replay-progress { color: var(--muted-foreground); }
 main { padding: 8px 16px 16px; max-width: 100%; }
 
 button {
@@ -1057,10 +1053,6 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
 .run-view-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .run-view-title { font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
 .run-view-note { margin: 0 0 8px; color: var(--muted-foreground); }
-.rail-replays { display: flex; gap: 6px; margin-bottom: 8px; }
-.rail-replays[hidden], .rail-replay[hidden] { display: none; }
-.rail-replay { font: inherit; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
-.rail-replay:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
 /* The coordination panel: a parent's family, apart from the run rail and its split parts. */
 .rail-coordination { display: grid; gap: 8px; margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }

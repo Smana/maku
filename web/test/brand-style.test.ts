@@ -56,7 +56,7 @@ describe("Maku typography", () => {
   });
 
   it("keeps code, IDs, and timestamps monospace without monospacing prose", () => {
-    const mono = rule("time, .t-time, .step-dur, .replay-progress, .t-prompt");
+    const mono = rule("time, .t-time, .step-dur, .t-prompt");
     expect(mono).toMatch(/font-family:\s*var\(--font-mono\)/);
     expect(mono).toMatch(/font-size:\s*var\(--text-small\)/);
     expect(mono).toMatch(/tabular-nums/);

@@ -9,29 +9,19 @@ import { idTail } from "./chat";
 import { el } from "./controls";
 import { chip, detail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, terminal, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
-import { replay } from "./replay";
 import type { Flow, FlowNode } from "./summary";
 
 export interface RailHandlers { select(run: string | undefined): void }
 
-// Replay's clock and motion preference, injectable so a test needs no real time.
-export interface RailOptions {
-  reduced?: () => boolean;
-  schedule?: (fn: () => void, ms: number) => unknown;
-  cancel?: (h: unknown) => void;
-}
-
-const prefersReduced = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-
 export interface Rail {
   el: HTMLElement;
-  // cursor is the seq the summary folded through: live counts only past it. A replay frame has none.
+  // cursor is the seq the summary folded through: live counts only past it.
   set(f: Flow | undefined, phase: string, now: number, cursor?: number): void;
   tick(now: number): void;
   live(e: RoomEvent): void;
   mark(run: string | undefined): void;
   chosen(run: string | undefined): void;
-  // The page is leaving: end a running replay without applying a held refetch.
+  // The page is leaving: drop what mount() listens to.
   dispose(): void;
 }
 
@@ -93,7 +83,7 @@ function roundMark(n: FlowNode): string {
   return c.text;
 }
 
-export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
+export function mountRail(h: RailHandlers): Rail {
   const root = el("aside", { className: "rail", hidden: true });
   const nav = el("nav");
   nav.setAttribute("aria-label", "Task path");
@@ -104,13 +94,7 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
   card.setAttribute("role", "tooltip");
   const announcer = el("p", { className: "rail-live" });
   announcer.setAttribute("aria-live", "polite");
-  const controls = el("div", { className: "rail-replays", hidden: true });
-  const mkBtn = (label: string) => el("button", { type: "button", className: "rail-replay", textContent: label, hidden: true });
-  const replayBtn = mkBtn("Replay");
-  const nextBtn = mkBtn("Next");
-  const skipBtn = mkBtn("Skip");
-  controls.append(replayBtn, nextBtn, skipBtn);
-  root.append(controls, nav, card, announcer);
+  root.append(nav, card, announcer);
 
   let flow: Flow | undefined;
   let phaseNow = "";
@@ -131,10 +115,6 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
   };
   const ages = new Map<string, HTMLElement>();
   const buttons = new Map<string, HTMLButtonElement>();
-
-  // While a replay runs, a refetch is held here and applied when it ends.
-  let running: { skip(): void; next(): void; stop(): void } | undefined;
-  let held: { f: Flow | undefined; phase: string; now: number; cursor?: number } | undefined;
 
   let prev: { runs: Set<string>; edges: Set<string>; judges: Map<string, number>; done: Set<string> } | undefined;
 
@@ -420,47 +400,12 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
       known = new Set(f.nodes.map((n) => n.run));
     }
     render();
-    sync();
   }
-
-  function sync(): void {
-    const ended = !!flow && flow.nodes.length > 0 && terminal.has(phaseNow);
-    controls.hidden = !ended && !running;
-    replayBtn.hidden = !ended || !!running;
-    skipBtn.hidden = !running;
-    nextBtn.hidden = !running || !(opts.reduced ?? prefersReduced)();
-  }
-
-  function finish(): void {
-    running = undefined;
-    const h = held;
-    held = undefined;
-    if (h) show(h.f, h.phase, h.now, h.cursor);
-    sync();
-  }
-
-  replayBtn.onclick = () => {
-    if (!flow || running) return;
-    const f = flow, phase = phaseNow;
-    const r = replay({ set: (g, p, n) => show(g, p, n) }, f, phase, {
-      reduced: (opts.reduced ?? prefersReduced)(), schedule: opts.schedule, cancel: opts.cancel,
-    });
-    running = r;
-    void r.done.then(() => { if (running === r) finish(); });
-    sync();
-  };
-  nextBtn.onclick = () => running?.next();
-  skipBtn.onclick = () => {
-    if (!running) return;
-    running.skip();
-    finish();
-  };
 
   return {
     el: root,
     set(f, phase, now, cursor) {
-      if (running) held = { f, phase, now, cursor };
-      else show(f, phase, now, cursor);
+      show(f, phase, now, cursor);
     },
     tick(now) {
       clock = now;
@@ -487,10 +432,6 @@ export function mountRail(h: RailHandlers, opts: RailOptions = {}): Rail {
     },
     dispose() {
       removeEventListener("scroll", follow, { capture: true });
-      running?.stop();
-      running = undefined;
-      held = undefined;
-      sync();
     },
   };
 }
