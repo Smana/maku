@@ -12,7 +12,7 @@ const flow: Flow = {
   ghosts: ["reviewer"],
 };
 const mount = (f: Flow) => {
-  const pane = mountRailPane(() => {});
+  const pane = mountRailPane({ select: () => {} });
   document.body.append(pane.body);
   pane.show(f, "running", Date.now());
   return { pane, dots: pane.body.querySelector<HTMLButtonElement>(".rail-dots")! };
@@ -44,6 +44,18 @@ describe("the narrow strip", () => {
     expect(dots.getAttribute("aria-expanded")).toBe("true");
     pane.body.querySelector<HTMLElement>(".rail-close")!.click();
     expect(dots.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+describe("the pane", () => {
+  it("hands the viewer to the rail, so the viewer's steers read you", () => {
+    const pane = mountRailPane({ select: () => {}, you: () => "human:ana" });
+    document.body.replaceChildren(pane.body);
+    pane.rail.live({ v: 1, id: "e", seq: 3, roomId: "r", actor: { kind: "human", id: "human:ana" }, type: "message", origin: "humanapi",
+      ts: new Date().toISOString(), redactions: [], payload: { kind: "chat", text: "x", delivery: "steering" } });
+    pane.show({ nodes: [node("implementer", { fromSeq: 1, toSeq: 0, steered: 1 })] }, "Implementing", Date.now());
+    pane.body.querySelector<HTMLButtonElement>("li.rail-node button")!.focus();
+    expect(pane.body.querySelector(".rail-steers > li")!.textContent).toMatch(/^you, /);
   });
 });
 

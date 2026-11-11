@@ -50,12 +50,16 @@ export function swatchClass(id: string): string {
   return `swatch-${h % 6}`;
 }
 
-// who names the actor: "you" for the viewer, else its room role and short id, the
-// full id as the title, after its colour swatch.
+// actorName is how the conversation names an actor: "you" for the viewer, else its room role
+// and short id. The rail's steer card names a steerer the same way.
+export function actorName(actor: RoomEvent["actor"], you?: string): string {
+  return actor.id === you ? "you" : actor.role ? `${actor.role} · ${idTail(actor.id)}` : idTail(actor.id);
+}
+
+// who names the actor with actorName, the full id as the title, after its colour swatch.
 function who(ev: RoomEvent, you?: string): HTMLElement[] {
   const id = ev.actor.id;
-  const name = id === you ? "you" : ev.actor.role ? `${ev.actor.role} · ${idTail(id)}` : idTail(id);
-  const w = el("span", "who", name);
+  const w = el("span", "who", actorName(ev.actor, you));
   w.title = id;
   return [el("span", `swatch ${swatchClass(id)}`), w];
 }

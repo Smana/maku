@@ -4,7 +4,7 @@
 // and the drawer a narrow screen opens. room.ts and the offline preview mount it the same way.
 
 import { chip, isLive, personaLabel, tone } from "./flow";
-import { mountRail, type Rail } from "./rail";
+import { mountRail, type Rail, type RailHandlers } from "./rail";
 import type { Flow } from "./summary";
 
 // stripItem says one step of the path as a glyph and a word: the glyph is text, so the strip reads
@@ -30,10 +30,10 @@ export interface RailPane {
   show(flow: Flow | undefined, phase: string, now: number, cursor?: number, queued?: number): void;
 }
 
-// mountRailPane puts regions in order inside the body. select is called with the run a node
-// picks, after the drawer has closed.
-export function mountRailPane(select: (run: string | undefined) => void, ...regions: HTMLElement[]): RailPane {
-  const rail = mountRail({ select: (run) => { setOpen(false); select(run); } });
+// mountRailPane puts regions in order inside the body. h.select is called with the run a node
+// picks, after the drawer has closed; h.you goes to the rail as is.
+export function mountRailPane(h: RailHandlers, ...regions: HTMLElement[]): RailPane {
+  const rail = mountRail({ select: (run) => { setOpen(false); h.select(run); }, you: h.you });
   const dots = document.createElement("button");
   dots.type = "button";
   dots.className = "rail-dots";

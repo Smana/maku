@@ -81,7 +81,7 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   mountThemeButton(meta, o.theme);
   meta.append(status);
   footer.append(session, composerEl, meta);
-  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, main, forkPanel);
+  const pane = mountRailPane({ select: (run) => { void runView.select(run); }, you: () => snap.you.principal }, needsPanel, lead, main, forkPanel);
   const { rail } = pane;
   const sandbox = document.createElement("div");
   sandbox.className = "banner-unsandboxed";

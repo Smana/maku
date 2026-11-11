@@ -5,13 +5,14 @@
 // path keyed by data-run, so a later set can tell new nodes from old.
 
 import type { RoomEvent } from "./conn";
-import { idTail } from "./chat";
+import { actorName, idTail } from "./chat";
 import { el } from "./controls";
 import { chip, detail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
 import { ago, type Flow, type FlowNode } from "./summary";
 
-export interface RailHandlers { select(run: string | undefined): void }
+// you, when given, is the viewer's principal, so the steer card names the viewer's own steers "you".
+export interface RailHandlers { select(run: string | undefined): void; you?(): string | undefined }
 
 export interface Rail {
   el: HTMLElement;
@@ -55,10 +56,10 @@ const stable = (run: string) => run.replace(/^plan-\d+-/, "plan-");
 
 // A steer is a human's steering message (internal/summary noteHuman): a run's own message, or a
 // system actor's, is not.
-interface Steer { seq: number; who: string; ts: string }
+interface Steer { seq: number; actor: RoomEvent["actor"]; ts: string }
 const steerOf = (e: RoomEvent): Steer | undefined =>
   e.type === "message" && !e.runId && e.actor.kind === "human" && e.payload?.delivery === "steering"
-    ? { seq: e.seq, who: idTail(e.actor.id), ts: e.ts } : undefined;
+    ? { seq: e.seq, actor: e.actor, ts: e.ts } : undefined;
 
 // Without animationend the class would stay and a re-render would replay it.
 function animate(e: Element, cls: string): void {
@@ -160,7 +161,7 @@ export function mountRail(h: RailHandlers): Rail {
   function steerLines(n: FlowNode, count: number): HTMLElement[] {
     const held = steers.filter((x) => x.seq >= n.fromSeq && (n.toSeq === 0 || x.seq <= n.toSeq)).reverse();
     const ol = el("ol", { className: "rail-steers" });
-    ol.append(...held.map((x) => el("li", { textContent: `${x.who}, ${ago(x.ts, clock)}` })));
+    ol.append(...held.map((x) => el("li", { textContent: `${actorName(x.actor, h.you?.())}, ${ago(x.ts, clock)}` })));
     if (count > held.length) ol.append(el("li", { className: "rail-earlier", textContent: `${count - held.length} earlier` }));
     return [el("p", { className: "rail-card-head", textContent: "Steered by" }), ol];
   }

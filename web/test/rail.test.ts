@@ -496,6 +496,16 @@ describe("activity", () => {
     expect(lines).toEqual(["ana, 2 min ago", "1 earlier"]);
   });
 
+  it("names the viewer's steers you, and another human's as the conversation does", () => {
+    const rail = mountRail({ select: () => {}, you: () => "human:ana" });
+    document.body.replaceChildren(rail.el);
+    rail.live(msg(12, "steering"));
+    rail.live(msg(13, "steering", { actor: { kind: "human", id: "human:bo", role: "owner" } }));
+    rail.set({ nodes: [node({ fromSeq: 10, steered: 2 })] }, "Implementing", now);
+    rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.focus();
+    expect([...card(rail).querySelectorAll(".rail-steers > li")].map((x) => x.textContent)).toEqual(["owner · bo, 2 min ago", "you, 2 min ago"]);
+  });
+
   it("a steer the stream delivers after the summary joins the open card", () => {
     const { rail } = mount();
     rail.set({ nodes: [node({ fromSeq: 10, steered: 1 })] }, "Implementing", now);
@@ -512,6 +522,15 @@ describe("activity", () => {
     expect(rail.el.querySelector(".rail-steered")).toBeNull();
     rail.el.querySelector<HTMLButtonElement>("li.rail-node button")!.focus();
     expect(card(rail).querySelector(".rail-steers")).toBeNull();
+  });
+
+  // One fixture for Go and TS: the broker's golden summary carries a steer and a chat on its node.
+  it("draws the marks of the broker's golden flow", () => {
+    const golden = JSON.parse(readFileSync(join(__dirname, "../../internal/summary/testdata/normal.json"), "utf8")) as { want: { flow: Flow } };
+    const { rail } = mount();
+    rail.set(golden.want.flow, "Implementing", now);
+    expect(rail.el.querySelector(".rail-steered")!.textContent).toBe("↪ steered ×1");
+    expect(rail.el.querySelector(".rail-chat")!.textContent).toBe("1");
   });
 
   it("a node with chat shows the chat icon and its count, named for assistive tech", () => {
