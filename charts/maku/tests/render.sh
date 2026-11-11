@@ -239,6 +239,17 @@ bad 'broker.roomTools.auth "oauth" is not key or tokenreview' --set broker.roomT
 bad 'broker.roomTools.auth tokenreview needs broker.runIssuer.mode tokenreview' --set broker.roomTools.auth=tokenreview \
   --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
 
+# human.slackIntents (natural-language intents, SI3): rendered verbatim with the block, off when unset
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents == null)' 'slackIntents is off unless the values set it'
+si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false \
+  --set broker.factoryURL=https://agent-factory.agent-system.svc:8082 \
+  --set broker.human.roomctlClientIDFile=/r --set broker.human.mcp.enabled=true \
+  --set 'broker.human.mcp.sponsored[0].name=slack-app' --set 'broker.human.mcp.sponsored[0].clientIDFile=/s' \
+  --set broker.human.slackIntents.principal=slack-app --set broker.human.slackIntents.teamID=T01ABC \
+  --set broker.human.slackIntents.url=http://gw.ai.svc:8080/v1 --set broker.human.slackIntents.apiKeyFile=/etc/classifier/key)"
+out="$si"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -249,6 +260,8 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$f
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
+go run ./tests/loadconfig broker-slackintents "$tmp/slackintents.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/roomtools-tokenreview.yaml"

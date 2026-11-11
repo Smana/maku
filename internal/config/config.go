@@ -102,6 +102,9 @@ type HumanConfig struct {
 	// SlackDecide turns on POST /api/slack/decisions: the Slack App's Approve/Deny buttons decide a
 	// forge.push approval. Off unless set: the path is then the mux's 404.
 	SlackDecide *SlackDecideConfig `json:"slackDecide,omitempty"`
+	// SlackIntents serves intent_classify, the Slack App's read-only classification of a thread reply
+	// (natural-language intents, SI3). Off unless set: the tool is then on no list.
+	SlackIntents *SlackIntentsConfig `json:"slackIntents,omitempty"`
 	// Intake is the governed planner (v3.x conversational intake, CD5, CD17, CD18). Off unless the
 	// block turns it on: no block, no tool on any list.
 	Intake IntakeConfig `json:"intake,omitzero"`
@@ -356,6 +359,137 @@ var slackTeamRE = regexp.MustCompile(`^T[A-Z0-9]{2,20}$`)
 type SlackDecideConfig struct {
 	Principal string `json:"principal"`
 	TeamID    string `json:"teamID"`
+}
+
+// The classifier's one alias and its defaults (SI3, SI13, SI18, SI19). The alias is a constant as
+// PlanModel is: the gateway serves it to the `classifier` client, and any other alias is a different,
+// unreviewed spend.
+const (
+	// ClassifyModel is the one alias intent_classify may name.
+	ClassifyModel = "tier-light"
+	// DefaultClassifyDeadline bounds the one call; a reply is waiting in a thread.
+	DefaultClassifyDeadline = 5 * time.Second
+	// DefaultMinConfidence is SI18's threshold: under it a classification is unknown.
+	DefaultMinConfidence = 0.7
+	// DefaultConfirmTTL is SI18's lifetime of a confirm message.
+	DefaultConfirmTTL = 10 * time.Minute
+	// DefaultMaxInputChars is SI18's cap on the reply the model is shown.
+	DefaultMaxInputChars = 2000
+	// DefaultIntentDailyCalls is SI13's cap on the App's calls in a UTC day.
+	DefaultIntentDailyCalls = 500
+	// DefaultIntentPerUserPerHour is SI13's per-user cap.
+	DefaultIntentPerUserPerHour = 20
+	// DefaultIntentRetentionDays is SI19's retention of an opted-in channel's replies.
+	DefaultIntentRetentionDays = 30
+)
+
+// SlackIntentsConfig is human.slackIntents: the sponsored principal (the Slack App) that may ask for
+// a classification, the one workspace whose users are classified, the route to the gateway and the
+// bounds of the call (SI3, SI12, SI13, SI18, SI19). On, it serves intent_classify; off, no list names
+// it.
+type SlackIntentsConfig struct {
+	Principal string `json:"principal"`
+	TeamID    string `json:"teamID"`
+	// URL is the in-cluster AI Gateway data-plane Service, and APIKeyFile the mounted `classifier`
+	// key, read at use so a rotation needs no restart.
+	URL        string `json:"url"`
+	APIKeyFile string `json:"apiKeyFile"`
+	// Model is the pinned alias, and the only value it may hold; empty takes ClassifyModel.
+	Model    string   `json:"model,omitempty"`
+	Deadline Duration `json:"deadline,omitzero"`
+	// MinConfidence, ConfirmTTL and MaxInputChars are SI18's tunable thresholds.
+	MinConfidence float64  `json:"minConfidence,omitempty"`
+	ConfirmTTL    Duration `json:"confirmTTL,omitzero"`
+	MaxInputChars int      `json:"maxInputChars,omitempty"`
+	// DailyCalls and PerUserPerHour are SI13's caps on the App's own budget.
+	DailyCalls     int `json:"dailyCalls,omitempty"`
+	PerUserPerHour int `json:"perUserPerHour,omitempty"`
+	// RetentionDays is how long an opted-in channel's replies are kept (SI19).
+	RetentionDays int `json:"retentionDays,omitempty"`
+}
+
+// withDefaults fills what a file may leave out; only the absent value is defaulted, so a typo such as
+// `confirmTTL: 0s`-by-omission never hides and a negative stays negative and is refused.
+func (c SlackIntentsConfig) withDefaults() SlackIntentsConfig {
+	if c.Model == "" {
+		c.Model = ClassifyModel
+	}
+	if c.Deadline.Duration == 0 {
+		c.Deadline.Duration = DefaultClassifyDeadline
+	}
+	if c.MinConfidence == 0 {
+		c.MinConfidence = DefaultMinConfidence
+	}
+	if c.ConfirmTTL.Duration == 0 {
+		c.ConfirmTTL.Duration = DefaultConfirmTTL
+	}
+	if c.MaxInputChars == 0 {
+		c.MaxInputChars = DefaultMaxInputChars
+	}
+	if c.DailyCalls == 0 {
+		c.DailyCalls = DefaultIntentDailyCalls
+	}
+	if c.PerUserPerHour == 0 {
+		c.PerUserPerHour = DefaultIntentPerUserPerHour
+	}
+	if c.RetentionDays == 0 {
+		c.RetentionDays = DefaultIntentRetentionDays
+	}
+	return c
+}
+
+// SlackIntents is human.slackIntents with its defaults applied, and whether the block is set.
+func (c Config) SlackIntents() (SlackIntentsConfig, bool) {
+	if c.Human.SlackIntents == nil {
+		return SlackIntentsConfig{}, false
+	}
+	return c.Human.SlackIntents.withDefaults(), true
+}
+
+// validate reports every problem in the block at once, reading the defaulted values. sponsored is
+// the names human.mcp.sponsored declares.
+func (c SlackIntentsConfig) validate(sponsored []SponsoredConfig) []error {
+	c = c.withDefaults()
+	var errs []error
+	if !slices.ContainsFunc(sponsored, func(sp SponsoredConfig) bool { return sp.Name == c.Principal }) {
+		errs = append(errs, fmt.Errorf("human.slackIntents.principal: %q is not one of human.mcp.sponsored", c.Principal))
+	}
+	if !slackTeamRE.MatchString(c.TeamID) {
+		errs = append(errs, fmt.Errorf("human.slackIntents.teamID: %q is not a Slack workspace id", c.TeamID))
+	}
+	if c.URL == "" {
+		errs = append(errs, errors.New("human.slackIntents.url: is required: the route is named, never guessed"))
+	} else if u, err := url.Parse(c.URL); err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		errs = append(errs, fmt.Errorf("human.slackIntents.url: %q must be an absolute http(s)://host[:port]/ URL with no userinfo", c.URL))
+	}
+	if c.APIKeyFile == "" {
+		errs = append(errs, errors.New("human.slackIntents.apiKeyFile: is required: a classifier with no key would 401 every call"))
+	}
+	if c.Model != ClassifyModel {
+		errs = append(errs, fmt.Errorf("human.slackIntents.model: %q is not %s, the one alias the gateway serves this client", c.Model, ClassifyModel))
+	}
+	if c.Deadline.Duration <= 0 || c.Deadline.Duration > DefaultPlanDeadline {
+		errs = append(errs, fmt.Errorf("human.slackIntents.deadline: %s must be above 0 and at most %s", c.Deadline.Duration, DefaultPlanDeadline))
+	}
+	if c.MinConfidence <= 0 || c.MinConfidence > 1 {
+		errs = append(errs, fmt.Errorf("human.slackIntents.minConfidence: %g must be above 0 and at most 1", c.MinConfidence))
+	}
+	if c.ConfirmTTL.Duration < time.Minute || c.ConfirmTTL.Duration > time.Hour {
+		errs = append(errs, fmt.Errorf("human.slackIntents.confirmTTL: %s must be between 1m and 1h", c.ConfirmTTL.Duration))
+	}
+	if c.MaxInputChars < 200 {
+		errs = append(errs, fmt.Errorf("human.slackIntents.maxInputChars: %d must be at least 200", c.MaxInputChars))
+	}
+	if c.DailyCalls < 1 {
+		errs = append(errs, fmt.Errorf("human.slackIntents.dailyCalls: %d must be at least 1", c.DailyCalls))
+	}
+	if c.PerUserPerHour < 1 {
+		errs = append(errs, fmt.Errorf("human.slackIntents.perUserPerHour: %d must be at least 1", c.PerUserPerHour))
+	}
+	if c.RetentionDays < 1 {
+		errs = append(errs, fmt.Errorf("human.slackIntents.retentionDays: %d must be at least 1", c.RetentionDays))
+	}
+	return errs
 }
 
 // NeedsConfig switches the human listener's needs route (CD28). An absent block is on: needs/v1 is a
@@ -830,6 +964,7 @@ func (h HumanConfig) validate(system []string) []error {
 			{"human.access", h.Access != nil, "the local user is an admin, and D7 gates members only"},
 			{"human.slackLink", h.SlackLink != nil, "a link code names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackDecide", h.SlackDecide != nil, "a decision names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.slackIntents", h.SlackIntents != nil, "a classification names a sponsored principal and a Slack link, neither of which mode local has"},
 		} {
 			if f.refused {
 				errs = append(errs, fmt.Errorf("%s: mode local takes no %s: %s", f.name, strings.TrimPrefix(f.name, "human."), f.why))
@@ -956,6 +1091,9 @@ func (h HumanConfig) validate(system []string) []error {
 		if h.Access == nil {
 			errs = append(errs, errors.New("human.slackDecide needs human.access: a decision is the linked human's room standing and repository write"))
 		}
+	}
+	if i := h.SlackIntents; i != nil {
+		errs = append(errs, i.validate(h.MCP.Sponsored)...)
 	}
 	if a := h.Access; a != nil {
 		if a.ReaderFile == "" {

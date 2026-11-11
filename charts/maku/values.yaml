@@ -33,6 +33,8 @@ broker:
   human:
     mode: oidc
     # issuer, jwksURL, clientIDFile, projectIDFile, origin, groups, access ... (internal/config)
+    # slackIntents: {principal, teamID, url, apiKeyFile, ...} serves intent_classify, the Slack App's
+    # read-only classification of a thread reply (docs/slack.md). Unset, the tool is on no list.
   # The agents' room tools listener, :8090 (internal/config's roomTools, I8). On by default, as every
   # existing deployment runs it; ROOMS_MCP_KEY alone decides whether calls are accepted, so bring it
   # through extraEnv. Off, the broker binds no :8090 at all. auth (unset is key): key trusts a gateway's
