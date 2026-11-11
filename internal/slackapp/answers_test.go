@@ -183,8 +183,8 @@ func TestThreadQuestionVocabulary(t *testing.T) {
 		{name: "stop it", phrase: "stop it", label: "stop", reads: 0,
 			want: []string{"I can't stop a run from here. Apply the `factory/stop` label on the issue, or use Stop on the room page: <" + answerPage + "|"}},
 		{name: "an unknown phrase", phrase: "please fix the tests", label: "unknown", reads: 0,
-			want: []string{"Progress is in this thread; approvals and steering are on the room page: <" + answerPage + "|",
-				"Ask `status`, `needs me`, `what changed` or `the pull request`."}},
+			want: []string{"approvals and steering are on <" + answerPage + "|",
+				"`status`, `needs me`, `what changed`, `the pull request`"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

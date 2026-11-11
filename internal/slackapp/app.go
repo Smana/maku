@@ -108,20 +108,21 @@ const (
 // where the channel's approvals flag is on — a card's button decides. A thread reply is read only
 // to amend an unfiled draft; none is ever a command (invariant 8) and no reply is ever a decision.
 type App struct {
-	Slack       Slack
-	Broker      BrokerAPI
-	Threads     Threads
-	Verifier    Verifier
-	WebhookKeys func() ([][]byte, error)
-	TeamID      string
-	BotUserID   string
-	RoomsURL    string
-	Channels    map[string]Channel
-	Proposals   Proposals    // the proposal flow's switch (CD7): on, a mention is planned and posted as one proposal
-	Async       func(func()) // runs an event's handling after the 200 (tests); nil means the App's workers
-	Now         func() time.Time
-	Metrics     Recorder
-	Logger      *slog.Logger
+	Slack         Slack
+	Broker        BrokerAPI
+	Threads       Threads
+	Verifier      Verifier
+	WebhookKeys   func() ([][]byte, error)
+	TeamID        string
+	BotUserID     string
+	RoomsURL      string
+	Channels      map[string]Channel
+	Proposals     Proposals     // the proposal flow's switch (CD7): on, a mention is planned and posted as one proposal
+	PlanningAfter time.Duration // how long a plan runs before the thread shows a "planning…" status; zero means 4s
+	Async         func(func())  // runs an event's handling after the 200 (tests); nil means the App's workers
+	Now           func() time.Time
+	Metrics       Recorder
+	Logger        *slog.Logger
 
 	events, deliveries seen       // event_id and webhook-id
 	answered           seen       // the ✅ refusals said, by draft, user and reason: each is said once
@@ -811,6 +812,7 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 	}
 	// refuse says a refusal once per draft, user and reason: a re-added ✅ does not repeat it.
 	refuse := func(reason, text string) string {
+		a.log().Info("check mark refused", "reason", reason, "channel", channel, "user", user)
 		if a.answered.add(itemTS + "/" + user + "/" + reason) {
 			sayMeta(text, nil)
 		}

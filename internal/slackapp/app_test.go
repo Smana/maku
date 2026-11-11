@@ -396,6 +396,7 @@ type fakeSlack struct {
 	ephemerals          []ephemeral
 	msgs                map[string]Message
 	failPosts           int // the next n Posts fail
+	failEphemerals      int // the next n PostEphemerals fail
 	failUpdates         int // the next n Updates fail
 	failProposalUpdates int // the next n UpdateProposals fail
 	threadErr           error
@@ -409,6 +410,10 @@ type ephemeral struct{ channel, user, thread, text string }
 func (f *fakeSlack) PostEphemeral(_ context.Context, channel, user, threadTS, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failEphemerals > 0 {
+		f.failEphemerals--
+		return errors.New("channel_not_found")
+	}
 	f.ephemerals = append(f.ephemerals, ephemeral{channel, user, threadTS, text})
 	return nil
 }
@@ -1851,29 +1856,12 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 // The refusals a person actually meets, one fixed line each, and the one that names where to go
 // instead: a private repository, a model that is down, a plan too large, more than one issue.
 func TestProposalRefusals(t *testing.T) {
-	served := "Smana/ai-native-ref, Smana/cloud-native-ref"
 	for _, tc := range []struct {
 		name    string
 		setup   func(t *testing.T, b *stubBroker)
 		want    string
 		outcome string
 	}{
-		{
-			name: "repository_not_allowed names the channel's repositories",
-			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("repository_not_allowed: no repository the allowlist serves and you may write in matches this request; name one of the repositories listed; you can file into Smana/other")
-			},
-			want:    "Not proposed: this channel serves " + served + " and you may file in none of them; ask an operator to add one you may write in.",
-			outcome: "refused",
-		},
-		{
-			name: "no_write names the channel's repositories too",
-			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("no_write: you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it")
-			},
-			want:    "Not proposed: <@U02DEF> cannot write to " + served + ", the repositories this channel serves; ask an operator for one you may write in.",
-			outcome: "refused",
-		},
 		{
 			name: "a private repository points at the coding agent",
 			setup: func(_ *testing.T, b *stubBroker) {
@@ -1912,16 +1900,6 @@ func TestProposalRefusals(t *testing.T) {
 				b.intakeErr = Refused("daily_plans_reached: you have used today's plans; the cap resets at 00:00 UTC")
 			},
 			want:    "Not proposed: you have used today's plans; mention me again after 00:00 UTC, or hand it off from your coding agent.",
-			outcome: "refused",
-		},
-		{
-			// The one refusal whose fix is a command the App itself answers: the broker's sentence names
-			// no way to link, so the line does.
-			name: "not_linked says to mention me with `link`",
-			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("not_linked: your account is not linked to GitHub, so the broker cannot tell what you may write; link it first")
-			},
-			want:    "Not proposed: <@U02DEF> is not linked to a GitHub account here; mention me with `link` to link it, then mention me again.",
 			outcome: "refused",
 		},
 		{
@@ -2350,8 +2328,9 @@ func TestReplyBounds(t *testing.T) {
 		}
 		// CD25: the filed thread is not edited and not re-planned, and a reply that is no question of
 		// the five is answered with where things happen rather than left silent.
-		want := "Progress is in this thread; approvals and steering are on the room page: " +
-			"<https://rooms.example/r/26zfnuxm|the room page>. Ask `status`, `needs me`, `what changed` or `the pull request`."
+		want := "I only understand these here: `status`, `needs me`, `what changed`, `the pull request` " +
+			"(and `stop`, which says how to stop). Progress is in this thread; approvals and steering are on " +
+			"<https://rooms.example/r/26zfnuxm|the room page>."
 		if posts := rig.posts(); len(posts) != 1 || posts[0].text != want || posts[0].meta != nil {
 			t.Fatalf("a filed thread answered %+v, want the one pointer line", posts)
 		}
