@@ -775,7 +775,10 @@ card says to set `live: true` on the class in the `MergePolicy` and merge that c
 **Edit this class** opens it in the editor. A not-migrated repository keeps the file proposal and
 the exception requests; it only has no editor. The proposal changes the one `mode:` line and is parsed again.
 Evidence is cached 10 minutes per repository and replica. The 29/46/61 ladder and the
-Clopper-Pearson bound are shown, never acted on.
+Clopper-Pearson bound are shown, never acted on. The Evidence page and the class cards put them
+in words: `worst-case bad rate ≤ N %` is the bound at 95 % confidence, `awaiting outcome` the
+immature merges (inside the monitor window), and each blocker reads as its action: `needs N more
+clean merges`, `N bad merge(s) to explain`, `run a rollback drill (factory/drill)`.
 
 Below the minimum, a maintainer requests an exception (a lower minimum, a justification of 20 to
 2,000 characters); one of `policyManagement.operators` approves or refuses it once. An approved

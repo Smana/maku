@@ -7,7 +7,7 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { centralManifest, conditionWords, evidenceLine, explain, fileLine, ladderLine, policyState, post, read, timeText } from "./settings-api";
+import { centralManifest, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, timeText, trackRecord } from "./settings-api";
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
@@ -134,7 +134,7 @@ function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableEl
 }
 
 // Re-exported where the page's tests and neighbours import them from.
-export { centralManifest, evidenceLine, explain, ladderLine } from "./settings-api";
+export { blockerActions, centralManifest, explain, LADDER_LEGEND, trackRecord, trackRecordParts } from "./settings-api";
 export { READING } from "./class-card";
 
 // evidenceAge is when the shown evidence was read, as a sentence, and why it is older when the
@@ -258,6 +258,13 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
   } catch (e) { failed(main, e); }
 }
 
+// loadingCell is what a cell of a row whose evidence the factory is still reading holds.
+function loadingCell(): HTMLElement {
+  const s = el("span", "reading GitHub\u2026", "reading");
+  s.title = "The factory is reading this class's pull requests from GitHub; the row fills in on its own.";
+  return s;
+}
+
 async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Evidence", "/settings/evidence", theme);
   try {
@@ -268,19 +275,20 @@ async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
     for (const [i, r] of repositories.entries()) {
       const page = pages[i];
       if (page instanceof Error) {
-        rows.push([link(`/settings/merge-policies/${r}`, r), "-", "-", "Not readable", "-", explain(page.message)]);
+        rows.push([link(`/settings/merge-policies/${r}`, r), "-", "-", "Not readable", explain(page.message)]);
         continue;
       }
       for (const c of page.report.classes) {
         const e = c.evidence;
         reading ||= !e;
-        rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? evidenceLine(e) : "pending", e ? ladderLine(e) : "-",
-          !e ? "pending" : e.eligible ? "eligible" : (e.blockers ?? []).join(", ")]);
+        // A row still being read says so in its own cells, never in the words of data.
+        const blocks = !e ? loadingCell() : e.eligible ? "eligible" : blockerActions(e).join(", ") || "no reason given";
+        rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? trackRecord(e) : loadingCell(), blocks]);
       }
     }
-    // Pending rows say so in a word; the page says once that the evidence is being read.
+    // A row being read says so in its cells; the page says once that the evidence is being read.
     if (reading) main.append(el("p", READING, "evidence-age"));
-    main.append(table(["Repository", "Class", "Mode", "Evidence", "Widening 29/46/61", "Eligibility"], rows));
+    main.append(el("p", LADDER_LEGEND, "ladder-legend"), table(["Repository", "Class", "Mode", "Track record", "Blocks promotion"], rows));
   } catch (e) { failed(main, e); }
 }
 

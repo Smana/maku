@@ -48,13 +48,49 @@ export async function read<T>(path: string, get: typeof fetch): Promise<T> {
   return (await r.json()) as T;
 }
 
-// evidenceLine is a class's evidence in one line, the numbers MP7 decides on.
-export function evidenceLine(e: Evidence): string {
-  return `${e.clean}/${e.minimum} clean · ${e.bad} bad · ${e.immature} immature · ${e.pending} pending · bound ${e.bound.toFixed(3)} · drill ${e.drill}`;
+// LADDER_LEGEND is the one line that says what the 29 / 46 / 61 ladder is; it is the same for every
+// class, so a page says it once rather than on every row.
+export const LADDER_LEGEND = "29 / 46 / 61 clean merges in a row prove a bad rate under ~10 % / 6.5 % / 5 % at 95 % confidence; shown, never acted on.";
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+// trackRecordParts is a class's evidence in words, each with the explanation shown on hover.
+export function trackRecordParts(e: Evidence): { text: string; title: string }[] {
+  const parts = [
+    { text: `${e.clean} of ${e.minimum} clean merges`, title: "Shadow decisions a maintainer merged unchanged, toward the minimum needed to promote." },
+    { text: `${e.bad} bad`, title: "Merges of this class that were reverted, followed up or regressed. One must be explained before promotion." },
+  ];
+  if (e.immature > 0) parts.push({ text: `${e.immature} awaiting outcome`, title: "Merged, but still inside the monitor window: they neither count nor block yet." });
+  if (e.pending > 0) parts.push({ text: `${e.pending} awaiting a verdict`, title: "Past the monitor window, with no verdict recorded yet." });
+  parts.push({ text: `worst-case bad rate \u2264 ${Math.round(e.bound * 100)} %`, title: `Worst-case bad rate \u2264 ${Math.round(e.bound * 100)} % at 95 % confidence (the Clopper-Pearson upper bound on the clean merges so far). It falls as clean merges accumulate.` });
+  parts.push(e.drill === "passed"
+    ? { text: "rollback drill passed", title: "A factory/drill revert of one of the class's pull requests merged." }
+    : { text: e.drill === "none" ? "no rollback drill yet" : `rollback drill ${e.drill.replaceAll("_", " ")}`, title: "Promotion needs a factory/drill revert of one of the class's pull requests to merge." });
+  return parts;
 }
 
-export function ladderLine(e: Evidence): string {
-  return e.ladder.map((s) => `${s.merges}${s.reached ? " ✓" : ""}`).join(" / ");
+// trackRecord is trackRecordParts as one line, each part carrying its explanation as a title.
+export function trackRecord(e: Evidence): HTMLElement {
+  const box = document.createElement("span");
+  box.className = "track-record";
+  trackRecordParts(e).forEach((p, i) => {
+    if (i > 0) box.append(" \u00b7 ");
+    const s = document.createElement("span");
+    s.textContent = p.text;
+    s.title = p.title;
+    box.append(s);
+  });
+  return box;
+}
+
+// blockerActions are a class's promotion blockers as what to do; an unknown code is shown with spaces.
+export function blockerActions(e: Evidence): string[] {
+  return (e.blockers ?? []).map((k) => {
+    if (k === "below_minimum") return `needs ${plural(Math.max(1, e.minimum - e.clean), "more clean merge", "more clean merges")}`;
+    if (k === "bad_outcome") return `${plural(Math.max(1, e.bad), "bad merge", "bad merges")} to explain`;
+    if (k === "no_drill" || k === "drill_not_passed") return "run a rollback drill (factory/drill)";
+    return k.replaceAll("_", " ");
+  });
 }
 
 export type PolicyState = "central" | "repository" | "not-migrated";

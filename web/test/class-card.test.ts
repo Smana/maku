@@ -169,10 +169,20 @@ describe("a class card", () => {
       return classCard(p.report.classes[0], ctx(p)).querySelector(".evidence-eligibility")?.textContent;
     };
     expect(say({ eligible: true, blockers: [] })).toBe("Eligible to promote: enough clean decisions, no bad outcome, drill passed.");
-    expect(say({ blockers: ["below_minimum", "bad_outcome", "no_drill", "odd_one"] }))
-      .toBe("Not yet eligible: fewer clean decisions than the minimum, a bad outcome was recorded, the revert drill has not passed, odd one.");
+    expect(say({ clean: 4, bad: 1, blockers: ["below_minimum", "bad_outcome", "no_drill", "odd_one"] }))
+      .toBe("Blocks promotion: needs 16 more clean merges, 1 bad merge to explain, run a rollback drill (factory/drill), odd one.");
     const exceptions = [{ id: "e1", repository: "o/r", class: "docs", minimum: 12, justification: "x", requestedBy: "me", requestedAt: "", state: "approved", expiresAt: "2999-01-01T00:00:00Z" }] as RepositoryPage["exceptions"];
     expect(say({ clean: 14 }, { exceptions })).toBe("Eligible to promote under exception e1 (12 clean decisions required).");
+  });
+  it("writes the track record in words, each part with its hover explanation", () => {
+    const p = page();
+    p.report.classes[0] = { class: "docs", source: "repository", mode: "shadow", evidence: ev({ clean: 4, bad: 1, immature: 2, bound: 0.751, drill: "none" }) };
+    const d = classCard(p.report.classes[0], ctx(p)).querySelector(".evidence-detail")!;
+    expect(d.textContent).toBe("4 of 20 clean merges \u00b7 1 bad \u00b7 2 awaiting outcome \u00b7 worst-case bad rate \u2264 75 % \u00b7 no rollback drill yet");
+    const titles = [...d.querySelectorAll("span[title]")].map((s) => s.getAttribute("title"));
+    expect(titles.join("|")).toContain("inside the monitor window");
+    expect(titles.join("|")).toContain("Worst-case bad rate \u2264 75 % at 95 % confidence");
+    expect(d.textContent).not.toMatch(/bound|immature|widening/i);
   });
   it("says why a shadow class of a repository file cannot be proposed, in words", () => {
     const p = page();
