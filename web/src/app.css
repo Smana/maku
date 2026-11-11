@@ -384,14 +384,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .strip-tier1 { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
 .strip-tier1:empty { display: none; }
 .strip-tier2 { display: flex; flex-wrap: wrap; gap: 6px 32px; align-items: center; }
-/* Tier 2 folds behind Details on a phone. Above 640 px it is always open, its toggle gone: the
-   closed <details> shows its content through ::details-content, so the phone's state stays put. */
+/* Tier 2 folds behind Details on a phone. Above 640 px strip.ts opens it (matchMedia) and the
+   toggle goes. */
 .strip-details > summary { cursor: pointer; width: fit-content; font-size: var(--text-small); line-height: var(--leading-small); color: color-mix(in srgb, var(--brand-header-foreground) 68%, var(--brand-header)); }
 .strip-details > summary:hover { color: var(--brand-header-foreground); }
 .strip-details[open] > summary { margin-bottom: 6px; }
 @media (min-width: 641px) {
   .strip-details > summary { display: none; }
-  .strip-details::details-content { content-visibility: visible; }
 }
 /* Tier 2's facts in four clusters (strip.ts's group): the run, its cost, its links, who and what
    may reach it. Proximity alone groups them, 12 px inside a cluster and 32 px between: a divider

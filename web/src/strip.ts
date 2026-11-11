@@ -314,12 +314,19 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
   header.append(root);
   const title = el("h1", { className: "strip-title" });
   // The facts: tier 1 always shows and wraps; tier 2 wraps open on a desktop and folds behind
-  // Details on a phone (CSS). The disclosure is kept across rebuilds, so it stays as the reader left it.
+  // Details on a phone. The disclosure is kept across rebuilds, so it stays as the reader left it.
   const row = el("div", { className: "strip-chips" });
   const tier1 = el("div", { className: "strip-tier1" });
   const details = el("details", { className: "strip-details" });
   const tier2 = el("div", { className: "strip-tier2" });
   details.append(el("summary", { textContent: "Details" }), tier2);
+  // Open above 640 px (the CSS hides its toggle there), closed by default below; set again only
+  // when the width crosses the line, so a phone reader's choice stands. matchMedia, not
+  // ::details-content: every browser then shows tier 2 on a desktop.
+  const wide = typeof matchMedia === "function" ? matchMedia("(min-width: 641px)") : undefined;
+  const fit = () => { details.open = !!wide?.matches; };
+  fit();
+  wide?.addEventListener("change", fit);
   row.append(tier1);
   const pill = el("button", { type: "button", className: "needs-pill" });
   head.append(title, row);
@@ -422,5 +429,7 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
     onNeedsClick(f: () => void): void { onNeeds = f; },
     onApprovalsClick(f: () => void): void { onApprovals = f; },
     onNowClick(f: (seq: number) => void): void { onNow = f; },
+    // dispose drops the width listener: the page calls it when the strip leaves.
+    dispose(): void { wide?.removeEventListener("change", fit); },
   };
 }

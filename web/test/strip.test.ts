@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fmtTokens, mountStrip, plainText, shortPrincipal, type StripInput } from "../src/strip";
 import type { Summary } from "../src/summary";
 
@@ -379,6 +379,49 @@ describe("the title strip", () => {
     expect(h.querySelector("details.strip-details")).toBe(d);
     expect(d.open).toBe(true);
   });
+  // Tier 2 opens by matchMedia, not by ::details-content: every browser shows it on a desktop.
+  describe("Details by width", () => {
+    const WIDE = "(min-width: 641px)";
+    type Listener = () => void;
+    const media = (wide: boolean) => {
+      const listeners = new Set<Listener>();
+      const mq = { matches: wide, media: WIDE,
+        addEventListener: (_: string, f: Listener) => { listeners.add(f); },
+        removeEventListener: (_: string, f: Listener) => { listeners.delete(f); } };
+      vi.stubGlobal("matchMedia", (q: string) => { expect(q).toBe(WIDE); return mq; });
+      return { listeners, set(w: boolean) { mq.matches = w; for (const f of [...listeners]) f(); } };
+    };
+    afterEach(() => { vi.unstubAllGlobals(); });
+    const details = (h: HTMLElement) => h.querySelector<HTMLDetailsElement>("details.strip-details")!;
+
+    it("opens on a desktop", () => {
+      media(true);
+      const { h, strip } = mount();
+      strip.update(input());
+      expect(details(h).open).toBe(true);
+    });
+    it("stays closed on a phone, and keeps the reader's choice across a rebuild", () => {
+      media(false);
+      const { h, strip } = mount();
+      strip.update(input());
+      expect(details(h).open).toBe(false);
+      details(h).open = true;
+      strip.update(input({ summary: summary({ budget: { usedTokens: 1, limitTokens: 10 } }) }));
+      expect(details(h).open).toBe(true);
+    });
+    it("follows the width as it changes, and drops its listener when disposed", () => {
+      const m = media(false);
+      const { h, strip } = mount();
+      strip.update(input());
+      m.set(true);
+      expect(details(h).open).toBe(true);
+      m.set(false);
+      expect(details(h).open).toBe(false);
+      expect(m.listeners.size).toBe(1);
+      strip.dispose();
+      expect(m.listeners.size).toBe(0);
+    });
+  });
   it("has no Details when there is nothing to fold", () => {
     const { h, strip } = mount();
     strip.update({ roomId: "3kq7x2ma", phase: "", driver: "", needs: 0 });
@@ -607,10 +650,10 @@ describe("the strip on a phone", () => {
     expect(decl(desktop, ".fact-group")).toMatch(/flex-wrap:\s*wrap/);
     expect(phone).not.toMatch(/\.fact-group\s*{[^}]*nowrap/);
   });
-  it("opens tier 2 above 640 px with its summary hidden, a closed disclosure below", () => {
+  it("hides the Details toggle above 640 px, and never hides it below", () => {
     const wide = [...css.matchAll(/@media \(min-width: 641px\)\s*{([\s\S]*?)\n}\n/g)].map((m) => m[1]).join("\n");
     expect(decl(wide, ".strip-details > summary")).toMatch(/display:\s*none/);
-    expect(decl(wide, ".strip-details::details-content")).toMatch(/content-visibility:\s*visible/);
+    expect(css).not.toMatch(/::details-content/); // matchMedia opens it: no browser-gated CSS
     expect(phone).not.toMatch(/strip-details[^{]*{[^}]*display:\s*none/);
   });
   it("gives the Details toggle a full target on a phone", () => {
