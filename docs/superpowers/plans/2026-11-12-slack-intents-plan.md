@@ -340,7 +340,7 @@ Flags: broker `human.slackAmend`; factory `intents` + `amend`; App `intentAction
 
 ## Spec gaps
 
-Found while planning. The ruling above is the plan's default; each needs the owner's yes before its stage.
+**Accepted 2026-11-11 (owner: use defaults).** Found while planning; every ruling above stands and is now a decision in the spec (SI20–SI26, and amendments to SI2, SI3, SI5, SI9, SI10, SI11, SI12, SI19). Gap 11 is out of scope (SI24), gap 12 is SI26, gap 13 is SI25.
 
 1. **Shadow has no switch** (R1): `intents` is a boolean in SI10, and stage 1 needs a third state.
 2. **The App cannot see the broker's route flags** (R2): SI15 depends on `human.slackStop`, which only the broker knows. The plan adds `intentActions`.
