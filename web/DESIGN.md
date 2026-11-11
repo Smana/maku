@@ -225,9 +225,9 @@ column. It is never a kicker above a heading and never a sentence.
 
 The room page is three bands: the header (title strip), the log with the rail beside it from
 1100 px (`--log-w` column, then a 360 px rail), and the dock pinned at the foot. Below 1100 px
-the rail folds into a row that opens it as a drawer. Phone breakpoints sit at 640 px (header and
-dock reflow, the settings nav becomes a scrolling row) and 720 px (settings forms and the
-repository table stack).
+the rail folds into a labelled strip (each run's persona and its state glyph) that opens it as a
+drawer. Phone breakpoints sit at 640 px (header and dock reflow, the settings nav becomes a
+scrolling row) and 720 px (settings forms and the repository table stack).
 
 Spacing tokens are the Ogenki 4 px scale (`--space-1` to `--space-16`: 4, 8, 12, 16, 24, 32, 48,
 64), for new work: most existing rules still write literal px (6, 10, 14 among them), and only
@@ -343,8 +343,8 @@ words ("Running — implementer, 13 min"). The icon is aria-hidden; the words sa
   stay:
   - the approval and need bar: 3 px `--warning-border`, a `::before` drawn straight between the
     16 px corners (the owner's choice, #345);
-  - the rail's lanes: `.rail-button` and `.rail-coordination-node`, 3 px in the lane's colour
-    (the rail's redesign, PR 3, owns them);
+  - the rail's lanes: `.rail-button` and `.rail-coordination-node`, 3 px in the lane's colour,
+    muted to 70 % over the card once the run ends, dashed for a planned step;
   - the step thread: `.step-calls`, a 2 px hairline (pink-tinted when the step failed) that ties
     a step's calls together.
 - **Don't** add a font size, a font family literal or a second gradient.
