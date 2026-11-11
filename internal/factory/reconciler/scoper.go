@@ -66,7 +66,7 @@ const (
 // escalatesScoper are the scoper ends that escalate as any run's (scoper plan S14): a person
 // stopped it, or the task, its payer or the fleet has no budget left, or the cluster had no
 // capacity (run_unschedulable) or the task no budget (resume_budget) for it: capacity and budget
-// ends, not the scoper's failure. Every other end fails open.
+// ends, not the scoper's failure. Every other end without a handoff goes to scoperFailed.
 var escalatesScoper = []string{"manual", "revoked", "deleted", "budget-task", "budget-principal", "budget-fleet", "budget-person",
 	"run_unschedulable", "resume_budget"}
 
@@ -94,7 +94,8 @@ func (r *Reconciler) scoped(ctx context.Context, cfg *config.Config, t *v1alpha1
 	}
 	switch {
 	case sc == nil && phase == "Succeeded":
-		return r.scopeEnd(ctx, cfg, t, nil, "missing", 0)
+		// It finished and handed off no scope: the agent's own end, which fails open, said in the room.
+		return r.scopeNotChecked(ctx, cfg, t, "the scoper finished without handing off a scope", "missing", "missing")
 	case sc == nil:
 		return r.scoperFailed(ctx, cfg, t, reason)
 	case sc.State == envelope.ScopeReady && split != nil:
@@ -182,24 +183,38 @@ func (r *Reconciler) lastScope(ctx context.Context, t *v1alpha1.Task) (*envelope
 	return nil, nil, 0, "", nil
 }
 
-// scoperFailed is a scoper run that ended without a handoff, on its run cap, its tool-call limit
-// (HR2: the harness's budget_calls) or any other end that fails open: the task runs whole,
-// unscoped, and the room says so (drill 6ysg5vvt). A run cap and the tool-call limit are each
-// counted apart from other failures. The note is best effort.
+// scoperFailed is a scoper run that ended without a handoff. Its own limits, the run cap and the
+// tool-call limit (HR2: the harness's budget_calls), fail open as designed (drill 6ysg5vvt): the
+// task runs whole, unscoped, and the room says the scope was not checked. Every other end is a
+// failure of the scoper or its infrastructure, and the implementer never starts unscoped after it
+// (#451): the task escalates as scoper_failed, the issue and the room saying the scope was not
+// checked. A provider's refusal never reaches here: it holds the task like any run's (#450). A run cap
+// and the tool-call limit are each counted apart from other failures. The note is best effort.
 func (r *Reconciler) scoperFailed(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) error {
-	what, outcome := "the scoper's run ended before handing off ("+narrate.Reason(reason)+")", "failed"
 	switch reason {
 	case "budget-run":
-		what, outcome = "the scoper ran out of budget before handing off", "budget"
+		return r.scopeNotChecked(ctx, cfg, t, "the scoper ran out of budget before handing off", "failed", "budget")
 	case envelope.EndBudgetCalls:
-		what, outcome = "the scoper reached its tool-call limit before handing off", envelope.EndBudgetCalls
+		return r.scopeNotChecked(ctx, cfg, t, "the scoper reached its tool-call limit before handing off", "failed", envelope.EndBudgetCalls)
 	}
-	r.log().Warn("the scoper ended without a handoff; the task runs whole", "task.id", t.Name, "reason", reason)
-	if err := narrate.Room(ctx, r.Rooms, t, "scope-failed", "Agent factory: "+what+"; the task runs whole, with no scope or split.",
+	r.log().Warn("the scoper failed; the task escalates instead of running unscoped", "task.id", t.Name, "reason", reason)
+	class := t.Spec.PredictedClass
+	record(ctx, func(ctx context.Context) { r.Metrics.ScoperRun(ctx, class, "failed") })
+	return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonScoperFailed)
+}
+
+// ReasonScoperFailed is the escalation of a task whose scoper failed (#451): its scope was not checked.
+const ReasonScoperFailed = "scoper_failed"
+
+// scopeNotChecked is a scoper end the design lets the task go on after, with no scope: the room says
+// the scope was not checked, and the implementer is queued. The note is best effort.
+func (r *Reconciler) scopeNotChecked(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, what, state, outcome string) error {
+	r.log().Warn("the scoper ended without a handoff; the task runs whole, scope not checked", "task.id", t.Name, "what", what)
+	if err := narrate.Room(ctx, r.Rooms, t, "scope-failed", "Agent factory: "+what+"; scope not checked, so the task runs whole, with no scope or split.",
 		func(ctx context.Context) error { return r.Client.Status().Update(ctx, t) }); err != nil {
 		r.log().Warn("the scoper's failure note not posted", "task.id", t.Name, "err", err)
 	}
-	return r.scopeEndAs(ctx, cfg, t, nil, "failed", 0, outcome)
+	return r.scopeEndAs(ctx, cfg, t, nil, state, 0, outcome)
 }
 
 // mentionsSplit: the handoff's summary speaks of splitting the task.

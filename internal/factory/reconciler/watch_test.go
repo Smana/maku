@@ -198,7 +198,7 @@ func TestARevisionIsStartedOnceThroughALostWrite(t *testing.T) {
 	g.f.SetPR(pr12(changes(901, "Smana", "fix it", time.Minute)))
 	g.reconcile(t, "3buqdlot", 1) // Queued
 	lose = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the lost write is returned")
 	}
 	tk := g.reconcile(t, "3buqdlot", 2)
@@ -616,7 +616,7 @@ func TestARetryIsActedOnOnce(t *testing.T) {
 	g.c, g.r.Client = c, c
 	g.f.SetComments(7, retryBy(77, "Smana", -time.Hour)) // GitHub's clock an hour ahead
 	lose = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the lost write is returned")
 	}
 	if tk := g.reconcile(t, "3buqdlot", 2); tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.Retries != 1 {

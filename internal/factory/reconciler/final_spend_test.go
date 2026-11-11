@@ -176,7 +176,7 @@ func TestAFinalSpendsConflictedWriteCountsItOnce(t *testing.T) {
 	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 420_000}}
 	g.r.Now = func() time.Time { return end.Add(3 * time.Minute) }
 	armed = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the lost write is returned")
 	}
 	if tk := stored(t, g.c); tk.Status.Facts.Posted || tk.Status.Facts.Seq != 2 {

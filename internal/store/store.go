@@ -380,6 +380,18 @@ func (s *Store) LastHarnessStatus(ctx context.Context, roomID, runID string) (st
 	return status, err
 }
 
+// LastHarnessError is the code and detail of the run's last harness_error (a conversation error the
+// harness reported), "" for either when absent.
+func (s *Store) LastHarnessError(ctx context.Context, roomID, runID string) (code, detail string, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT coalesce(payload->>'code', ''), coalesce(payload->>'detail', '') FROM events
+		WHERE room_id = $1 AND run_id = $2 AND type = 'state_changed' AND payload->>'kind' = 'harness_error'
+		ORDER BY seq DESC LIMIT 1`, roomID, runID).Scan(&code, &detail)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	return code, detail, err
+}
+
 // LastHarnessEnd is the run's last loop end reason the bridge recorded (harness_end), "" for none.
 func (s *Store) LastHarnessEnd(ctx context.Context, roomID, runID string) (string, error) {
 	var reason string

@@ -18,6 +18,8 @@ import (
 type Appender interface {
 	Append(ctx context.Context, d envelope.Draft) (envelope.Event, bool, error)
 	LastHarnessStatus(ctx context.Context, roomID, runID string) (string, error)
+	// LastHarnessError is the code and detail of the last harness_error the bridge mirrored for the run, "" for none.
+	LastHarnessError(ctx context.Context, roomID, runID string) (code, detail string, err error)
 	// LastHarnessEnd is the harness end reason (envelope.LoopEnd) the bridge recorded for the run, "" if none.
 	LastHarnessEnd(ctx context.Context, roomID, runID string) (string, error)
 	// Cursor is the highest seq stored for an idempotency scope, 0 if none: here,
@@ -109,6 +111,16 @@ func (e *Events) Observe(ctx context.Context, r Run) error {
 		return fmt.Errorf("runwatch: refusals of run %s: %w", r.ID, err)
 	}
 	reason, rules := e.endReason(r, status, end, busy > 0)
+	if reason == "agent_error" {
+		// A provider's refusal (billing, auth, quota) is a platform condition, not the agent's error (#450).
+		code, detail, err := e.Store.LastHarnessError(ctx, r.Room, r.ID)
+		if err != nil {
+			return fmt.Errorf("runwatch: harness error of run %s: %w", r.ID, err)
+		}
+		if refusal := envelope.ModelRefusal(code, detail); refusal != "" {
+			reason = refusal
+		}
+	}
 	if err := put(stepEnded, envelope.StateChanged, envelope.StatePayload("run_phase",
 		map[string]any{"phase": r.Phase, "reason": reason}), rules...); err != nil {
 		return err

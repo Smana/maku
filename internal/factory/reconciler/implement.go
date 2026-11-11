@@ -648,8 +648,8 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	}
 	if !found {
 		why := r.lostReason(ctx, t)
-		if scoperRun(t) && why == "run_lost" { // SC11: a scoper whose claim vanished fails open
-			return r.scopeEnd(ctx, cfg, t, nil, "failed", 0)
+		if scoperRun(t) && why == "run_lost" { // SC11, #451: a scoper whose claim vanished is a failed scoper
+			return r.scoperFailed(ctx, cfg, t, why)
 		}
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, why)
 	}
@@ -666,8 +666,8 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 			if err != nil {
 				return err
 			}
-			if scoperRun(t) { // SC11: a stuck scoper fails open
-				return r.scopeEnd(ctx, cfg, t, nil, "failed", 0)
+			if scoperRun(t) { // SC11, #451: a stuck scoper is a failed scoper
+				return r.scoperFailed(ctx, cfg, t, "stuck")
 			}
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "stuck")
 		}
@@ -684,6 +684,10 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		}
 	}
 	current(t).Reason = reason
+	if envelope.ModelUnavailable(reason) { // #450: the provider's refusal holds the task, whatever the role
+		return r.holdForModel(ctx, cfg, t, reason)
+	}
+	clearModelHold(t)
 	r.interventions(ctx, cfg, t)
 	if infraLost(run) {
 		done, err := r.handedOff(ctx, t)

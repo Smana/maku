@@ -42,3 +42,20 @@ func TestLastHarnessEnd(t *testing.T) {
 		t.Fatalf("another run: %q, %v", got, err)
 	}
 }
+
+// #450: the run's last harness_error, which decides whether a failed run ended on a provider refusal.
+func TestLastHarnessError(t *testing.T) {
+	s, _, _, _ := open(t)
+	if code, detail, err := s.LastHarnessError(t.Context(), room, "7f3cq2xz"); err != nil || code != "" || detail != "" {
+		t.Fatalf("no error yet: %q %q, %v", code, detail, err)
+	}
+	if _, _, err := s.Append(t.Context(), envelope.Draft{RoomID: room, RunID: "7f3cq2xz",
+		Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:7f3cq2xz", Role: "implementer"},
+		Type:  envelope.StateChanged, Origin: envelope.OriginHarness, OriginClient: "bridge:7f3cq2xz", OriginSeq: 1,
+		Payload: envelope.StatePayload("harness_error", map[string]any{"code": "LLMRateLimitError", "detail": "recharge"})}); err != nil {
+		t.Fatal(err)
+	}
+	if code, detail, err := s.LastHarnessError(t.Context(), room, "7f3cq2xz"); err != nil || code != "LLMRateLimitError" || detail != "recharge" {
+		t.Fatalf("got %q %q, %v", code, detail, err)
+	}
+}

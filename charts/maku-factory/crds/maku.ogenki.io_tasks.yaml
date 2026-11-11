@@ -1723,6 +1723,19 @@ spec:
                   §6.3).
                 format: date-time
                 type: string
+              modelHoldUntil:
+                description: The instant the task's next run may start after a model
+                  provider refusal.
+                format: date-time
+                type: string
+              modelHolds:
+                description: |-
+                  Consecutive runs the model provider refused (billing, authentication, quota): each holds the
+                  task in Queued until ModelHoldUntil, and past the reconciler's bound it escalates. A run that
+                  ends any other way clears it.
+                format: int32
+                minimum: 0
+                type: integer
               monitor:
                 description: |-
                   The post-merge monitor (merge gate classes MC7), for a class that declares one: each signal's

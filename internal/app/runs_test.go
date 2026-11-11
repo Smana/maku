@@ -49,6 +49,10 @@ func (f *fakeRunLog) LastHarnessStatus(context.Context, string, string) (string,
 	return "", nil
 }
 
+func (f *fakeRunLog) LastHarnessError(context.Context, string, string) (string, string, error) {
+	return "", "", nil
+}
+
 func (f *fakeRunLog) LastHarnessEnd(context.Context, string, string) (string, error) {
 	return "", nil
 }

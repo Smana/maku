@@ -132,7 +132,6 @@ func TestAScoperWithoutAScopeFailsOpen(t *testing.T) {
 	for name, c := range map[string]struct{ phase, reason, state, outcome string }{
 		"finished without one": {"Succeeded", "agent_finished", "missing", "missing"},
 		"its run cap":          {"BudgetExhausted", "budget-run", "failed", "budget"},
-		"an agent error":       {"Failed", "agent_error", "failed", "failed"},
 		// HR2: the harness stopped the scoper at its tool-call limit.
 		"its tool-call limit": {"Failed", "budget_calls", "failed", "budget_calls"},
 	} {
@@ -275,25 +274,45 @@ func TestAScopersMarkerStaysItsFirstLineOnResume(t *testing.T) {
 	}
 }
 
-// SC11: a stuck scoper's claim is deleted and the implementer starts unscoped.
-func TestAStuckScoperFailsOpen(t *testing.T) {
+// #451: the scoper's own failure never starts the implementer unscoped: the task escalates as
+// scoper_failed, the room and the issue say the scope was not checked, and no run starts.
+func TestAFailedScoperEscalatesAsScoperFailed(t *testing.T) {
+	for name, reason := range map[string]string{"an agent error": "agent_error", "a lost sandbox": "pod_lost", "the agent stuck": "agent_stuck"} {
+		t.Run(name, func(t *testing.T) {
+			g := scoperRig(t)
+			tk := endScoper(t, g, "Failed", reason)
+			if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "scoper_failed" || len(g.runs.specs) != 1 {
+				t.Fatalf("%s %q runs=%d", tk.Status.Phase, tk.Status.Reason, len(g.runs.specs))
+			}
+			if c := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(c, "scope not checked") {
+				t.Fatalf("%q", c)
+			}
+			if !slices.Contains(g.metrics.recorded, "scoper review failed") {
+				t.Fatalf("metrics %v", g.metrics.recorded)
+			}
+		})
+	}
+}
+
+// SC11 (changed by #451): a stuck scoper escalates as scoper_failed instead of failing open.
+func TestAStuckScoperEscalates(t *testing.T) {
 	g := scoperRig(t)
 	g.runs.set(rid(0), "Running")
 	g.reconcile(t, "3buqdlot", 1) // the stuck clock starts at the first Running sight
 	g.r.Now = func() time.Time { return now.Add(StuckAfter + time.Minute) }
 	tk := g.reconcile(t, "3buqdlot", 1)
-	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope == nil || tk.Status.Scope.State != "failed" || len(g.runs.runs) != 0 {
-		t.Fatalf("%s %+v %v", tk.Status.Phase, tk.Status.Scope, g.runs.runs)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "scoper_failed" || len(g.runs.runs) != 0 {
+		t.Fatalf("%s %q %v", tk.Status.Phase, tk.Status.Reason, g.runs.runs)
 	}
 }
 
-// SC11: a scoper whose claim vanished (not a person's delete) fails open.
-func TestAVanishedScoperFailsOpen(t *testing.T) {
+// SC11 (changed by #451): a scoper whose claim vanished (not a person's delete) escalates as scoper_failed.
+func TestAVanishedScoperEscalates(t *testing.T) {
 	g := scoperRig(t)
 	delete(g.runs.runs, rid(0))
 	tk := g.reconcile(t, "3buqdlot", 1)
-	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope == nil || tk.Status.Scope.State != "failed" {
-		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "scoper_failed" {
+		t.Fatalf("%s %q", tk.Status.Phase, tk.Status.Reason)
 	}
 }
 
@@ -434,8 +453,7 @@ func TestAScoperOfferedASplitRunsAtTheTasksTier(t *testing.T) {
 // silently. It still fails open, and the room says why; the metric tells budget from other failures.
 func TestAScoperOutOfBudgetBeforeItsHandoffIsSaid(t *testing.T) {
 	for name, c := range map[string]struct{ phase, reason, note, outcome string }{
-		"its run cap":    {"BudgetExhausted", "budget-run", "the scoper ran out of budget before handing off", "budget"},
-		"an agent error": {"Failed", "agent_error", "the scoper's run ended before handing off", "failed"},
+		"its run cap": {"BudgetExhausted", "budget-run", "the scoper ran out of budget before handing off", "budget"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := scoperRig(t)
@@ -449,7 +467,7 @@ func TestAScoperOutOfBudgetBeforeItsHandoffIsSaid(t *testing.T) {
 					note = s
 				}
 			}
-			if !strings.Contains(note, c.note) || !strings.Contains(note, "no scope or split") ||
+			if !strings.Contains(note, c.note) || !strings.Contains(note, "scope not checked") ||
 				!slices.Contains(g.metrics.recorded, "scoper review "+c.outcome) {
 				t.Fatalf("note %q, metrics %v", note, g.metrics.recorded)
 			}
