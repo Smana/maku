@@ -15,9 +15,10 @@ type fakeCosts map[string]meter.Cost
 
 func (f fakeCosts) Get(id string) (meter.Cost, bool) { c, ok := f[id]; return c, ok }
 
-// OD-6 (b) for the task: a pair task's runs, 95 % cache reads, pass 4.5 M tokens and stay far
-// under the standard tier's $5.10; the same volume uncached leaves no room for another $2.55 run.
-// A run the meter cannot price holds the task to its 3 M tokens, said once.
+// OD-6 (b) for the task, as #465 amended it: a pair task's runs, 95 % cache reads, pass 4.5 M
+// tokens and stay far under the standard tier's $5.10, yet the 3 M token cap holds beside the
+// dollar one. The same volume uncached is held by the dollars first. A run the meter cannot price
+// holds the task to its 3 M tokens, said once.
 func TestTaskUSDCapPricesCacheReads(t *testing.T) {
 	glm := func(in, cached, out int64) int64 { // GLM-5.3 list, micro-USD
 		return int64(math.Round(float64(in-cached)*1.40 + float64(cached)*0.26 + float64(out)*4.40))
@@ -37,8 +38,8 @@ func TestTaskUSDCapPricesCacheReads(t *testing.T) {
 		started  bool
 		want     []string
 	}{
-		"95 % cached: $1.78 of $5.10":    {false, "", true, nil},
-		"the same volume uncached":       {true, "", false, []string{"revoked budget-task", "limit task-usd"}},
+		"95 % cached: $1.78 of $5.10":    {false, "", false, []string{"revoked budget-task", "limit task-tokens"}},
+		"the same volume uncached":       {true, "", false, []string{"revoked budget-task", "limit task-tokens"}},
 		"an unpriced run: the token cap": {false, meter.FallbackUnpriced, false, []string{"fallback task unpriced", "revoked budget-task", "limit task-tokens"}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -98,4 +99,36 @@ func countOf(s []string, v string) int {
 		}
 	}
 	return n
+}
+
+// #465: task ozdjcnhn (standard tier, 3 M tokens, $5.10) reached 4,008,132 tokens at $1.47 and its
+// reviewer still started: the dollar cap ruled alone. The token cap holds as well: no run starts
+// without a whole run's tokens left, whatever the dollars say.
+func TestTaskTokenCapHoldsWhileUnderTheUSDCap(t *testing.T) {
+	tk := awaiting()
+	tk.Spec.Template = "pair"
+	tk.Spec.Budget = v1alpha1.Budget{Tier: "standard", Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000,
+		RunMinutes: 45, RunMicroUSD: 2_550_000, TaskMicroUSD: 5_100_000}
+	tk.Status.Phase, tk.Status.NextTrigger = v1alpha1.PhaseQueued, "review"
+	costs := fakeCosts{}
+	tk.Status.Runs = nil
+	for i, tokens := range []int64{2_004_066, 2_004_066} { // 4,008,132 together
+		tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(i), Role: "implementer", Trigger: "initial",
+			Phase: "Succeeded", Tokens: tokens, Started: awaiting().Status.Runs[0].Started})
+		costs[rid(i)] = meter.Cost{MicroUSD: 735_000} // $1.47 in all
+	}
+	g := newRig(t, tk, roomOf("3buqdlot"))
+	g.f.SetPR(pr12())
+	g.r.Cfg.Current().Budgets.EnforceTask = true
+	g.r.Costs = costs
+	got := g.reconcile(t, "3buqdlot", 1)
+	if _, started := g.runs.specs[rid(2)]; started {
+		t.Fatalf("a run started past the task's token cap: %s %s", got.Status.Phase, got.Status.Reason)
+	}
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" {
+		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	}
+	if !slices.Contains(g.metrics.recorded, "limit task-tokens") {
+		t.Errorf("the limit named is not the token cap: %q", g.metrics.recorded)
+	}
 }
