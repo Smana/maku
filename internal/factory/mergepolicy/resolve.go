@@ -65,7 +65,7 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 	if none := profile.Template == config.TemplateNone; none != adopted {
 		return Resolved{}, fmt.Errorf("class %s: %w: harness %q: template none runs nothing, and only an adopted class takes it", name, ErrGuardrail, p.Harness)
 	}
-	cl := config.Class{Live: p.Mode == ModeLive, Shadow: p.Mode == ModeShadow,
+	cl := config.Class{Description: p.Description, Live: p.Mode == ModeLive, Shadow: p.Mode == ModeShadow,
 		Checks: profile.Checks, TestFirst: profile.TestFirst, MaxPerDay: p.Limits.MaxPerDay, Monitor: p.Monitor}
 	// Only a class that declares variants carries its floor into the gate's class: without them,
 	// harness is MP2's checks and testFirst, read above, and the class runs as before. On review

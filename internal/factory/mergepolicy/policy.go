@@ -75,6 +75,7 @@ type File struct {
 // and escalation only (R30): its merge authority is implicit, so mode and author are absent there
 // and required everywhere else.
 type ClassPolicy struct {
+	Description      string             `json:"description,omitempty"`
 	Mode             Mode               `json:"mode,omitempty"`
 	Author           string             `json:"author,omitempty"`
 	Adopt            *config.Adopt      `json:"adopt,omitempty"`

@@ -204,6 +204,16 @@ flowchart TD
 | Deny | `protectedFiles` is the second condition checked, after `allowedFiles`: a file both outside the allow list and protected reports `file_not_allowed`. Either way a human merges |
 | Built-in shape | `docs-links` and `revert` are held to `diffShape: links-only` when they declare none, and may declare no other |
 
+### description
+
+A class's `description` says, in one plain sentence, what the class is for: "Fixes a broken link in
+the docs, and nothing else." It is optional plain text of at most **280** characters, and it
+travels with the class into `.github/agent-factory.yaml`, the central config and
+`MergePolicy.spec.classes`. **The gate never reads it**: two classes that differ only in their
+description decide every pull request alike. The [settings page](web-ui.md#settings) leads each
+class card with it, and the editor edits it first, in its *What it is for* group; without one, the
+card leads with the class's conditions in one line.
+
 ### Shadow and live
 
 A shadow class runs every row a live one does and records `shadow_would_arm` (or
@@ -300,6 +310,7 @@ mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did 
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
+| `description` | string | none | Plain text, at most 280 characters. [What the class is for](#description); the gate never reads it |
 | `mode` | `live` \| `shadow` \| `off` | required | Refused on `review`: a human merges it |
 | `author` | `agents` \| `adopt` | required | Refused on `review` |
 | `adopt` | `{logins: [..], branches: [..]}` | — | Required with `author: adopt`, refused otherwise. Logins end in `[bot]`; branches are `^` plus a literal prefix (`^renovate/`) |
@@ -698,19 +709,37 @@ part of this release.
 With `policyManagement.promotion` on (factory and broker), `/settings/merge-policies/<owner>/<name>`
 holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
 
-| Mode | Edits |
+The page is MergePolicy-first. A header says once what serves the classes: the `MergePolicy`'s
+name and namespace, its authority (`central` or `repository`), its generation (with "status from
+generation N" when the status lags the spec), and each [condition](#factory-resources) as a word on
+its colour ("Accepted", "Not in sync: 2 differences"), its message shown under them (the
+differences under **What differs**), then one legend for the three modes. One line under it says
+what `.github/agent-factory.yaml` is to the classes, and only what the status shows: it matches
+(`InSync=True`), it differs (the `MergePolicy` wins), it is invalid, or it has not been compared
+yet, with the reason. Under `repository` authority an invalid file pauses auto-merge and the line
+is a notice. A repository with no `MergePolicy` says "Not migrated yet: `maku config migrate`
+prints its MergePolicy" and has no editor; its cards keep their promotion and exception requests.
+
+Then the guardrails as sentences, one card per class (its [description](#description), its
+conditions in one line, its evidence, the full sentences folded under **Conditions**), and the
+editor. The editor has two tabs, **Form** and **YAML (expert)**. **Check** sits below both.
+
+| Part | Edits |
 |---|---|
-| Guided form | One class: mode, author and `adopt`, harness (from the central list), the `all` leaves except `oracle`, `deny`, `requiresApproval`, `limits`, `monitor.followUpWindow`. `any` branches and `oracle` are kept as they are |
-| Templates | `docs-broad`, `deps-patch`, `deps-minor` (shadow only), `generated-files`, all in shadow. The harness starts on the first central profile the template's author may take (`template: none` for the two deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
-| Expert YAML | The whole file, same validation. `factory:` is refused if changed |
+| Form | One class, picked from a list or started with **New class from an example**. `mode` sits above the groups; the rest is grouped by question: *What it is for* (`description`, with its count to 280), *Who writes it* (`author`, the harness from the central list, `adopt.logins` and `adopt.branches` for an adopted class, and `harnessAllowed` and `escalation` for an off class and the review class only), *What it may touch* (`allowedFiles`, `companionFiles` with an `added-entry` shape, `protectedFiles` from `deny`), *How big it may be* (`maxPatchFiles`, `maxModifiedLines`, `modifyOnly`, `diffShape`), *What must pass* (`holdoutChecks`, and `releaseAgeCheck` and `requiredLabel` for an adopted class), *When to ask a maintainer* (`requiresApproval`'s `changedFiles`), *Limits and follow-up* (`limits.maxPerDay`, `monitor.followUpWindow`). Each field carries a plain label, its YAML key, a help line and a link to this page; empty groups fold behind an "Add ..." button. A live sentence above the groups reads the class back in words. `any` branches and `oracle` are kept as they are. A new class never takes the name of one the file has: the editor suffixes it (`-2`, `-3`...) and says so |
+| Examples | Simple: `docs-broad`, `deps-patch`, `generated-files`. Advanced: `deps-minor`, `docs-or-tests`, `infra-with-approval`. All start in shadow; `deps-minor` is shadow only. The harness starts on the first central profile the template's author may take (`template: none` for the deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
+| YAML (expert) | The whole file, same validation. `factory:` is refused if changed. An error's line opens this tab |
 
 **Check** sends the file to the factory (`POST /api/policy/repositories/<owner>/<name>/preview`): the
 gate's `Parse`, `Validate`, `Resolve`, the structural change against the current policy (the file's
 classes, or the central ones as `export` would write them), the fixture replay when `simulation` is on,
-and the strictness counterfactual of the class's recent decisions. The answer is the whole file and
-the GitHub edit link on the default branch. **Maku writes nothing**: paste the file into the edit
-page and open the pull request yourself. Since a policy pull request touches `.github/`, a human
-merges it.
+and the strictness counterfactual of the class's recent decisions. What it answers depends on who
+holds the merge authority. **Maku writes nothing** either way:
+
+| Authority | The answer | You |
+|---|---|---|
+| `central` (a `MergePolicy` serves the classes) | The `MergePolicy` manifest the factory builds from the file, offered as **Copy MergePolicy manifest** and **Download** (`mergepolicy-<name>.yaml`) | Commit the manifest where the platform's GitOps applies it |
+| `repository`, or not migrated | The whole file and the GitHub edit link on the default branch | Paste the file into the edit page and open the pull request; it touches `.github/`, so a human merges it |
 
 ### Promotion: shadow to live
 
@@ -740,8 +769,11 @@ A class is eligible when all three hold (`evidence.Evaluate`):
 | `bad_outcome` | No mature, conclusive merge of the class was reverted (other than a drill), followed up or regressed |
 | `no_drill` | A `factory/drill` revert of one of the class's pull requests merged |
 
-Only a class of the repository's own file is promotable (`not_in_repository_policy` otherwise), and
-only from `shadow` (`not_shadow`). The proposal changes the one `mode:` line and is parsed again.
+Only a class of the repository's own file is promotable here (`not_in_repository_policy` otherwise),
+and only from `shadow` (`not_shadow`). Under `central` authority there is no file proposal: the
+card says to set `live: true` on the class in the `MergePolicy` and merge that change, and
+**Edit this class** opens it in the editor. A not-migrated repository keeps the file proposal and
+the exception requests; it only has no editor. The proposal changes the one `mode:` line and is parsed again.
 Evidence is cached 10 minutes per repository and replica. The 29/46/61 ladder and the
 Clopper-Pearson bound are shown, never acted on.
 

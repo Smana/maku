@@ -295,3 +295,36 @@ func TestReviewEvaluationSurvivesTheCutover(t *testing.T) {
 		t.Fatalf("%v %+v", err, f.Classes["review"])
 	}
 }
+
+// The description travels: export writes it, resolve reads it, and a difference is one divergence.
+func TestClassDescriptionTravels(t *testing.T) {
+	c := central()
+	c.Factory = "aws-0"
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
+		"plain": {Shadow: true, Description: "Keep links working"},
+	}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Classes["plain"].Description; got != "Keep links working" {
+		t.Fatalf("export description %q", got)
+	}
+	r, err := Resolve("plain", f.Classes["plain"], c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Class.Description != "Keep links working" {
+		t.Fatalf("resolve description %q", r.Class.Description)
+	}
+	if d := Compare(rc, f, c); len(d) != 0 {
+		t.Fatalf("export then compare differs: %v", d)
+	}
+	p := f.Classes["plain"]
+	p.Description = "Something else"
+	f.Classes["plain"] = p
+	d := Compare(rc, f, c)
+	if len(d) != 1 || !strings.Contains(d[0], "description") {
+		t.Fatalf("want one description divergence, got %v", d)
+	}
+}

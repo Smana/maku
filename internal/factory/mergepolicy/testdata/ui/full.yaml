@@ -1,6 +1,7 @@
 factory: "aws-0"
 classes:
   a-docs:
+    description: "Keep the docs links working"
     mode: "live"
     author: "agents"
     harness: "docs-standard"

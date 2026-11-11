@@ -193,18 +193,27 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 
 | Page | Shows |
 |---|---|
-| `/settings/merge-policies` | The configured repositories you read on GitHub |
-| `/settings/merge-policies/<owner>/<name>` | Each class: mode and where it is declared, the [promotion evidence](factory.md#promotion) in one line, reviewer models, the 29/46/61 ladder, eligibility; the promotion requests and exceptions |
+| `/settings` | Section cards (merge policies, evidence, approval memory) with live counts |
+| `/settings/merge-policies` | One row per repository: its `MergePolicy` with its Accepted and InSync conditions in words (or "Not migrated", or "status unknown" before the factory reports them), its classes by mode, the class closest to promotion |
+| `/settings/merge-policies/<owner>/<name>` | A header saying once what serves the classes: the `MergePolicy`, its namespace, authority and generation, its conditions as words on their colour, and a legend for the three modes; one line on `.github/agent-factory.yaml` (a notice only when an invalid file pauses auto-merge). Then one card per class: its name and mode word, its [description](merge-policies.md#description), its conditions in one line, its last decision, evidence toward the [promotion](factory.md#promotion) with the widening steps, the full conditions folded, its promotion and exception. A repository with no `MergePolicy` says "Not migrated yet" and has no editor |
 | `/settings/merge-policies/<owner>/<name>/decisions/<pr>` | The pull request's decision timeline |
 | `/settings/evidence` | Every class of every repository you read, in one table |
 
 | Who | May |
 |---|---|
 | A reader of the repository | Read everything above |
-| A maintainer (write on GitHub) | **Check** a proposal in the policy editor (guided form, templates or expert YAML): validation, structural change, simulation and the file to submit with its edit link. **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification |
+| A maintainer (write on GitHub), MergePolicy under `central` authority | **Check** a proposal in the policy editor (guided form, templates or expert YAML): validation, structural change, simulation and the `MergePolicy` manifest, to copy or download and commit where the platform's GitOps applies it. A shadow class is promoted by editing the `MergePolicy`: its card says "set `live: true` on this class in the MergePolicy and merge the change" and **Edit this class** opens it in the editor. Ask an operator for an exception below the minimum, with a justification |
+| A maintainer, under `repository` authority or not migrated | **Check** in the policy editor (none on a not-migrated page): the file to submit with its edit link. **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification. A not-migrated page has no editor but keeps these promotion and exception requests: they are the broker's records, and the file proposal works there as before |
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
 
 The broker checks each of these on every request; a hidden button is only a convenience.
+
+With four items or more, the repository table and a repository page's class cards have a filter
+above them. It matches, case-insensitive, every word typed against the repository and
+`MergePolicy` names (table) or a class's name, mode and description (cards), shows "3 of 9
+repositories", and names the query with a **Clear** button when nothing matches. The query is kept
+in `?q=`, so a filtered page can be shared; `/` focuses the field, except while you type in another
+one, and Escape clears it.
 
 ## When something fails
 

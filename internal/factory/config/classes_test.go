@@ -3,6 +3,8 @@
 package config
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -231,6 +233,27 @@ func TestBadCatalogClassFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(withClasses(t, c.classes))); err == nil || !strings.Contains(err.Error(), c.err) {
 				t.Fatalf("got %v, want %q", err, c.err)
+			}
+		})
+	}
+}
+
+func TestValidateClassDescription(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		desc string
+		bad  bool
+	}{
+		{"empty is fine", "", false},
+		{"280 runes is fine", strings.Repeat("é", 280), false},
+		{"281 runes is refused", strings.Repeat("a", 281), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			ValidateClass("docs", Class{Description: tc.desc}, func(f string, a ...any) { got = append(got, fmt.Sprintf(f, a...)) })
+			hit := slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, "description") })
+			if hit != tc.bad {
+				t.Fatalf("problems %q, want a description problem: %t", got, tc.bad)
 			}
 		})
 	}

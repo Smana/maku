@@ -1,6 +1,7 @@
 factory: "aws-0"
 classes:
   deps-minor:
+    description: "Watch Renovate's minor bumps in shadow to learn how often they are safe. It decides nothing live: the factory keeps this shape in shadow only."
     mode: "shadow"
     author: "adopt"
     adopt:
