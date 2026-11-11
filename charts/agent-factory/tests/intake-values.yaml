@@ -1,0 +1,91 @@
+# Test-only values for task chart:intake:k3d. Every credential and endpoint belongs to the throwaway
+# cluster; nothing here changes the chart's demo defaults or names a real external service.
+demo:
+  model:
+    baseURL: https://e2e-stub.e2e.svc.cluster.local/v1
+    name: tier-light
+    apiKey: e2e-throwaway-model-key
+
+maku:
+  broker:
+    publicURL: https://rooms.e2e.test
+    human:
+      mode: oidc
+      issuer: https://e2e-stub.e2e.svc.cluster.local
+      jwksURL: https://e2e-stub.e2e.svc.cluster.local/oauth/v2/keys
+      clientIDFile: /etc/e2e/config/client-id
+      roomctlClientIDFile: /etc/e2e/config/roomctl-client-id
+      projectIDFile: /etc/e2e/config/project-id
+      origin: https://rooms.e2e.test
+      groups: {admin: agents-admin, member: agents-member}
+      access:
+        readerFile: /etc/e2e/config/reader.json
+      mcp:
+        enabled: true
+        sessionStart: [owner/repo]
+      intake:
+        plan:
+          enabled: true
+          url: https://e2e-stub.e2e.svc.cluster.local/v1
+          apiKeyFile: /etc/e2e/config/planner-key
+          repositories: [owner/repo]
+          maxRounds: 2
+          classes:
+            docs:
+              roles: [scoper, implementer, reviewer]
+              ceilingUSD: 1
+              source: class:docs
+    extraEnv:
+      - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
+      - {name: ROOMS_GITHUB_APP_DIR, value: /etc/e2e/github}
+      - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+    extraVolumes:
+      - name: e2e-config
+        secret: {secretName: e2e-broker-config, defaultMode: 0440}
+      - name: e2e-ca
+        secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+      - name: e2e-github
+        secret: {secretName: agent-factory-github, defaultMode: 0440}
+    extraVolumeMounts:
+      - {name: e2e-config, mountPath: /etc/e2e/config, readOnly: true}
+      - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
+      - {name: e2e-github, mountPath: /etc/e2e/github, readOnly: true}
+
+maku-factory:
+  # The demo uses one throwaway App for the factory and merger. Mount it at both expected paths.
+  mergerSecret: agent-factory-github
+  extraEnv:
+    - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
+    - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+  extraVolumes:
+    - name: e2e-ca
+      secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+  extraVolumeMounts:
+    - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
+  config:
+    repositories:
+      - name: owner/repo
+        maintainers: [dev]
+        triggerLabel: factory/ready
+        classes:
+          docs: {shadow: true, allowedFiles: ['^docs/.+$']}
+          docs-links: {shadow: true, allowedFiles: ['^.+\.(md|mdx|adoc|rst)$']}
+          revert: {shadow: true, allowedFiles: ['^.+$']}
+        merge:
+          requiredChecks: [ci]
+          verifyChecks: [ci]
+          leakScanCheck: ci
+          gateStatus: true
+          policyBot: false
+          approveToMerge: true
+          mergerLogin: maku-demo[bot]
+          autoMergesPerDay: 5
+          fixRuns: 2
+          checkReruns: 1
+          verifyFor: 30m
+          revertWindow: 168h
+          breaker: {window: 10, maxReverts: 1}
+    loops:
+      docs: {scope: scoper, judge: tier-light}
+      docs-links: {scope: scoper, judge: tier-light}
+      review: {scope: scoper, judge: tier-light}

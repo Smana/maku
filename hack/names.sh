@@ -16,7 +16,8 @@ allow=(':!docs/superpowers' ':!web/test/fixtures' ':!docs/naming.md' ':!hack/nam
   # which renames it. Drop this entry once that lands.
   ':!web/src/strip.ts')
 # roomctl's identifiers that stay on the wire or in config (plan D1).
-legacy='/api/roomctl|/\.well-known/roomctl|mcp_needs_roomctl|ViaRoomctl|roomctlClientIDFile|RoomctlClient|roomctl-client-id|room-broker-roomctl|/etc/room-broker/roomctl|roomctl-version|machine-sent via roomctl|formerly `?roomctl|still runs? roomctl|roomctl.s config|isRoomctl'
+# The pre-rebrand OIDC client id and its audiences also keep roomctl (the k3d stub's signed token).
+legacy='/api/roomctl|/\.well-known/roomctl|mcp_needs_roomctl|ViaRoomctl|roomctlClientIDFile|RoomctlClient|roomctl-client-id|room-broker-roomctl|/etc/room-broker/roomctl|roomctl-version|machine-sent via roomctl|formerly `?roomctl|still runs? roomctl|roomctl.s config|isRoomctl|roomctl",|roomctl"[]})]|--client-id roomctl|ClientID != "roomctl"'
 # The signer identity releases before v0.30.0 carry, which the cosign examples still accept.
 history='carry the `Smana/agent-platform` identity'
 old='room-broker|room-bridge|agent-factory|agent-harness|run-controller|factory-slack-app'

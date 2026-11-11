@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Smana/maku/internal/intake"
@@ -657,7 +658,9 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		return "refused", false
 	}
 
-	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{
+	st := &planStatus{}
+	defer a.settle(ctx, ev.Channel, st, planDoneLine)
+	res, err := a.plan(ctx, ev.Channel, thread, st, IntakeRequest{
 		Text:       text,
 		Candidates: ch.Repositories,
 		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
@@ -694,7 +697,7 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		// two cards binding two hashes (Review Focus 1, CD7).
 		return a.updateProposal(ctx, ev.Channel, latest.TS, *prev, prop, res.Question), false
 	}
-	return a.postProposal(ctx, ev.Channel, thread, prop, res.Question), false
+	return a.postProposalIn(ctx, ev.Channel, thread, st, prop, res.Question), false
 }
 
 // proposalClosedLine is the mention's answer in a thread whose task is filed or cancelled: one line,
@@ -764,8 +767,8 @@ func notProposed(refusal, user string, served ...string) (code, text string, pas
 	case code == "not_linked":
 		// The one refusal that sends the person somewhere they can act here: `link` is the App's own
 		// command, and the broker's sentence for it ("link it first") names no way to do that.
-		return code, "Not proposed: <@" + user + "> is not linked to a GitHub account here; mention me with " +
-			"`link` to link it, then mention me again.", false
+		return code, "Not proposed: <@" + user + "> is not linked to a GitHub account here. Fix: mention me with " +
+			"`@factory link`, open the link I send you, then mention me again.", false
 	case code == "private_repository_unsupported":
 		return code, "Not proposed: the planner reads public repositories only; use your coding agent " +
 			"(`issue_draft` then `issue_file`), or wait for the internal route.", false
@@ -912,7 +915,9 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	if len(text) > maxProposalRequestBytes {
 		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large")
 	}
-	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{
+	st := &planStatus{}
+	defer a.settle(ctx, ev.Channel, st, planDoneLine)
+	res, err := a.plan(ctx, ev.Channel, thread, st, IntakeRequest{
 		Text:       text,
 		Context:    followUps(msgs, thread, a.BotUserID, p.Author, maxProposalContextBytes),
 		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
@@ -965,10 +970,69 @@ func (a *App) refusedWith(ctx context.Context, channel, thread, line, code strin
 	return code
 }
 
+const (
+	// defaultPlanningAfter is how long a plan may take before the thread is told it is being made.
+	defaultPlanningAfter = 4 * time.Second
+	planningLine         = "Planning… this can take a few seconds."
+	planDoneLine         = "Planning finished."
+)
+
+// planStatus is the one "planning…" message a slow plan posts: ts is empty until it is, and settled
+// once it was turned into the proposal or closed, so it is written at most once more.
+type planStatus struct {
+	ts      string
+	settled bool
+}
+
+// plan calls intake_plan and, when the planner has not answered within PlanningAfter, posts the one
+// status message in the thread so it does not look dead. A fast plan posts nothing.
+func (a *App) plan(ctx context.Context, channel, thread string, st *planStatus, in IntakeRequest) (IntakeResult, error) {
+	type answer struct {
+		res IntakeResult
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		res, err := a.Broker.IntakePlan(ctx, in)
+		done <- answer{res, err}
+	}()
+	after := a.PlanningAfter
+	if after == 0 {
+		after = defaultPlanningAfter
+	}
+	timer := time.NewTimer(after)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.res, r.err
+	case <-timer.C:
+	}
+	if ts, err := a.Slack.Post(ctx, channel, thread, planningLine, nil); err != nil {
+		a.log().Warn("slack post failed", "channel", channel, "err", err)
+	} else {
+		st.ts = ts
+	}
+	r := <-done
+	return r.res, r.err
+}
+
+// settle closes a status the proposal did not replace: the same message, edited once, best effort.
+func (a *App) settle(ctx context.Context, channel string, st *planStatus, text string) {
+	if st == nil || st.ts == "" || st.settled {
+		return
+	}
+	st.settled = true
+	if err := a.Slack.Update(ctx, channel, st.ts, text, json.RawMessage("[]")); err != nil {
+		a.log().Warn("planning status update failed", "channel", channel, "err", err)
+	}
+}
+
 // planFailed answers a broker call that gave no plan, as the thread says it (CD18): the refusal's own
 // line, a broker that no longer plans, and the planner being unreachable each have
 // one sentence. "" means the call did not fail; otherwise the answer is the outcome the caller counts
-// — "refused" for a decision, "error" for a passing failure whose fix is to ask again.
+// — "refused" for a decision, "error" for a passing failure whose fix is to ask again, and for the
+// three refusals a person can fix themselves their own word (orientations), so the next live session
+// can tell which cause hit.
 func (a *App) planFailed(ctx context.Context, channel, thread, user string, served []string, err error) string {
 	var r Refused
 	switch {
@@ -978,7 +1042,11 @@ func (a *App) planFailed(ctx context.Context, channel, thread, user string, serv
 		return a.refusedLine(ctx, channel, thread, planUnsupported)
 	case errors.As(err, &r):
 		code, line, passing := notProposed(string(r), user, served...)
-		a.log().Info("proposal refused", "code", code, "channel", channel) // the reason, never the request's text
+		// The reason, never the request's text.
+		a.log().Info("proposal refused", "reason", code, "channel", channel, "user", user)
+		if outcome, ok := orientations[code]; ok {
+			return a.orient(ctx, channel, thread, user, line+orientationTail(code, served, a.pageRoot()), outcome)
+		}
 		if passing {
 			return a.refusedWith(ctx, channel, thread, line, "error") // a passing failure: the line states the fix
 		}
@@ -989,6 +1057,40 @@ func (a *App) planFailed(ctx context.Context, channel, thread, user string, serv
 		return "error"
 	}
 	return "error"
+}
+
+// orientations are the refusals a person fixes themselves, and the counter's word for each: a closed
+// set, one per cause, so a live session reads which one hit (factory_slack_requests_total{outcome}).
+var orientations = map[string]string{
+	"not_linked":             "not_linked",
+	"repository_not_allowed": "repo_not_allowed",
+	"no_write":               "no_write",
+}
+
+// orientationTail is what a first-time mentioner needs after the cause and the fix: the repositories
+// the channel serves (the line already names them for the two repository causes) and the rooms page.
+func orientationTail(code string, served []string, root string) string {
+	tail := ""
+	if code == "not_linked" && len(served) > 0 {
+		tail += " This channel serves " + slackText(strings.Join(served, ", ")) + "."
+	}
+	if root != "" {
+		tail += " More: <" + root + "|the rooms page>."
+	}
+	return tail
+}
+
+// orient tells the mentioner alone why nothing was proposed (chat.postEphemeral, covered by chat:write),
+// so the thread stays clean; an ephemeral Slack refuses is said in the thread instead. The outcome is
+// the cause's own word, "error" when neither could be said.
+func (a *App) orient(ctx context.Context, channel, thread, user, line, outcome string) string {
+	if err := a.Slack.PostEphemeral(ctx, channel, user, thread, line); err != nil {
+		a.log().Warn("slack ephemeral post failed, answering in the thread", "channel", channel, "err", err)
+		if !a.sayLine(ctx, channel, thread, line) {
+			return "error"
+		}
+	}
+	return outcome
 }
 
 // notShown answers a plan the message cannot hold, with the thread's one line and the outcome the
@@ -1032,6 +1134,13 @@ const proposalReplacedLine = "This proposal was replaced below."
 //
 // The outcome is what the caller counts: "proposed", "too_large", "multi_issue" or "error".
 func (a *App) postProposal(ctx context.Context, channel, thread string, p ProposalPayload, q *intake.Question) string {
+	return a.postProposalIn(ctx, channel, thread, nil, p, q)
+}
+
+// postProposalIn is postProposal that, when the planner was slow enough to post a status (st), writes
+// the proposal over that message in place rather than beside it. A status Slack will not edit is left to
+// the caller's settle, and the proposal is posted as a new message.
+func (a *App) postProposalIn(ctx context.Context, channel, thread string, st *planStatus, p ProposalPayload, q *intake.Question) string {
 	say := func(text string) bool { return a.sayLine(ctx, channel, thread, text) }
 	tooLarge := func() string {
 		if !say(notPostedLine(errProposalTooLarge)) {
@@ -1072,6 +1181,13 @@ func (a *App) postProposal(ctx context.Context, channel, thread string, p Propos
 		}
 		a.log().Warn("proposal metadata failed", "channel", channel, "err", err)
 		return "error"
+	}
+	if st != nil && st.ts != "" && !st.settled {
+		if err := a.Slack.UpdateProposal(ctx, channel, st.ts, text, blocks, meta); err == nil {
+			st.settled = true
+			return "proposed"
+		}
+		a.log().Warn("planning status not replaced in place", "channel", channel)
 	}
 	if _, err := a.Slack.PostCard(ctx, channel, thread, text, blocks, meta); err != nil {
 		a.log().Warn("slack post failed", "channel", channel, "err", err)

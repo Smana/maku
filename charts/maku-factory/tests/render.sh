@@ -130,6 +130,19 @@ ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | ((.rules | l
 for crd in factories repositories mergepolicies; do
   [ -f "crds/maku.ogenki.io_${crd}.yaml" ] || { echo "FAIL: the chart ships the ${crd} CRD" >&2; fail=1; }
 done
+# Test-only injection is empty by default, and accepts the same env/volume shapes as the broker.
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ROOMS_GITHUB_API_URL")' "no GitHub API override by default"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "e2e-ca")' "no extra volume by default"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "e2e-ca")' "no extra volume mount by default"
+base="$out"
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set 'extraEnv[0].name=ROOMS_GITHUB_API_URL' --set 'extraEnv[0].value=https://e2e-stub.e2e.svc.cluster.local/' \
+  --set 'extraVolumes[0].name=e2e-ca' --set 'extraVolumes[0].secret.secretName=e2e-ca' \
+  --set 'extraVolumeMounts[0].name=e2e-ca' --set 'extraVolumeMounts[0].mountPath=/etc/e2e-ca' --set 'extraVolumeMounts[0].readOnly=true')"
+ykind Deployment "$ctr.env[] | select(.name == \"ROOMS_GITHUB_API_URL\") | .value == \"https://e2e-stub.e2e.svc.cluster.local/\"" "extraEnv injects the in-cluster GitHub API root"
+ykind Deployment "$(vol e2e-ca).secret.secretName == \"e2e-ca\"" "extraVolumes injects the test CA"
+ykind Deployment "$(mnt e2e-ca) | (.mountPath == \"/etc/e2e-ca\" and .readOnly == true)" "extraVolumeMounts mounts the test CA read-only"
+out="$base"
 out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
   --set api.tls.secretName=agent-factory-api-tls --set api.tls.issuerRef.name=openbao)"
 ykind Certificate '.spec.secretName == "agent-factory-api-tls"' "the Certificate writes api.tls.secretName"

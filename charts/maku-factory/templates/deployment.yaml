@@ -40,6 +40,9 @@ spec:
             - name: POD_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - {name: FACTORY_CONFIG, value: /etc/agent-factory/config/config.yaml}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           ports:
             - {name: ops, containerPort: 9090, protocol: TCP}
             - {name: api, containerPort: 8082, protocol: TCP}
@@ -67,6 +70,9 @@ spec:
             - {name: sponsored, mountPath: /etc/agent-factory-sponsored, readOnly: true}
             {{- if .Values.api.tls.secretName }}
             - {name: api-tls, mountPath: /etc/agent-factory-api-tls, readOnly: true}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
             {{- end }}
       volumes:
         - name: config
@@ -105,4 +111,7 @@ spec:
         - name: api-tls
           # S-1: the run-request API's pair, re-read on renewal; 0440 with fsGroup, as the other secrets.
           secret: {secretName: {{ .Values.api.tls.secretName }}, defaultMode: 0440, items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -46,8 +46,8 @@ const (
 		"Stop on the room page: "
 	// unknownQuestionLine takes the room page: a phrase outside the vocabulary is not guessed at, it is
 	// answered with where the work is and what can be asked.
-	unknownQuestionLine = "Progress is in this thread; approvals and steering are on the room page: %s. " +
-		"Ask `status`, `needs me`, `what changed` or `the pull request`."
+	unknownQuestionLine = "I only understand these here: `status`, `needs me`, `what changed`, `the pull request` " +
+		"(and `stop`, which says how to stop). Progress is in this thread; approvals and steering are on %s."
 )
 
 const (

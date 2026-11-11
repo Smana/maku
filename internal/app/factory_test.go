@@ -36,6 +36,22 @@ import (
 	"github.com/Smana/maku/internal/runwatch"
 )
 
+func TestGitHubAPIURL(t *testing.T) {
+	t.Setenv("ROOMS_GITHUB_API_URL", "")
+	if got := githubAPIURL(); got != "https://api.github.com/" {
+		t.Fatalf("default API root = %q", got)
+	}
+	t.Setenv("ROOMS_GITHUB_API_URL", "https://e2e-stub.e2e.svc.cluster.local/")
+	if got := githubAPIURL(); got != "https://e2e-stub.e2e.svc.cluster.local/" {
+		t.Fatalf("API root = %q", got)
+	}
+	t.Setenv("ROOMS_GITHUB_API_URL", "http://e2e-stub.e2e.svc.cluster.local/")
+	_, err := factoryApp(t.TempDir()).UserLogin(t.Context(), "Smana", "demo", 583231)
+	if err == nil || !strings.Contains(err.Error(), "the API URL must be https://<host>/") {
+		t.Fatalf("invalid API root: %v, want the existing client validation", err)
+	}
+}
+
 func TestRunFactoryRefuses(t *testing.T) {
 	env := func(kv ...string) func(string) string {
 		m := map[string]string{}
