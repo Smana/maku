@@ -53,7 +53,8 @@ result, and any refusal, before you offer to file. Say the one line, then the ne
 
 | Answer | Say | Next |
 |---|---|---|
-| `repository_not_allowed`, `off` | this repository is not enrolled in the factory | enrolment is a `Repository` and a `MergePolicy` object in the factory's config repo plus a `.github/agent-factory.yaml` fence file in the repository; a maintainer does it. Do not file and label anyway |
+| `repository_not_allowed` | this repository is not enrolled in the factory | enrolment is a `Repository` and a `MergePolicy` object in the factory's config repo plus a `.github/agent-factory.yaml` fence file in the repository; a maintainer does it. Do not file and label anyway |
+| `off` | starting the factory from here is off for this repository (enrolled repositories hit it too) | file the issue; a maintainer adds the trigger label (`factory/ready`) to start it |
 | `private_repository_unsupported` | the factory does not take private repositories | none from here |
 | `repository_not_owned` | another factory owns this repository | ask a maintainer |
 | `no_write` | you cannot write to this repository | file it for the developer to label, or ask for access |
