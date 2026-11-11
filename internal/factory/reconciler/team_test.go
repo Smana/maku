@@ -309,7 +309,7 @@ func TestAReviewerIsStartedOnceThroughALostWrite(t *testing.T) {
 	g.finish(rid(0), "Succeeded", "agent_finished")
 	g.reconcile(t, "3buqdlot", 1) // → Queued for the reviewer
 	lose = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the lost write is returned")
 	}
 	tk := g.reconcile(t, "3buqdlot", 2)
@@ -633,7 +633,7 @@ func TestARecordedVerifierKeepsItsHead(t *testing.T) {
 	g.finish(rid(1), "Succeeded", "agent_finished") // no verdict: the same role runs again
 	g.reconcile(t, "3buqdlot", 1)                   // → Queued for the second reviewer
 	lose = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the lost write is returned")
 	}
 	tk := g.reconcile(t, "3buqdlot", 1) // the reviewer rid(2) is recorded, with the head it was given

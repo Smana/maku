@@ -72,7 +72,7 @@ stateDiagram-v2
   Queued --> Implementing: tester, implementer or triager run
   Queued --> Reviewing: reviewer run
   Queued --> AwaitingHuman: human commit, pull request ended
-  Implementing --> Queued: tester ended, next verifier, lost sandbox resumed
+  Implementing --> Queued: tester ended, next verifier, lost sandbox resumed, model provider refused (held)
   Implementing --> Escalated: the tester's branch was not its alone (contract_invalid), the implementer disputes the contract (contract_disputed)
   Implementing --> AwaitingCI: solo template done
   Implementing --> AwaitingHuman: revision a maintainer asked for
@@ -340,6 +340,8 @@ every maintainer.
 | `stuck` | The run showed no room activity for 10 minutes |
 | `deadline` | The run hit its wall-clock limit (`tiers.<tier>.runMinutes`) |
 | `agent_error`, `agent_stuck` | The agent stopped on an error, or said it was stuck |
+| `model_unavailable_billing`, `model_unavailable_auth`, `model_unavailable_quota` | The model provider refused the run six times in a row (the hold bound) (see [Model provider refusals](#model-provider-refusals)): its balance is empty, its key was rejected, or its quota is spent. Fix the provider, then `/factory retry` |
+| `scoper_failed` | The scoper failed (an agent error, a stuck or lost run) before it checked the scope, so the implementer was not started: the status comment says "scope not checked". `/factory retry` runs the scoper again |
 | `judge_impossible`, `stalled`, `not_met` | Under the [loop policy](#the-config-file) (`loops`): the completion judge found the task impossible, the run made no commit within its step limit (or a judge continuation added none within its 15-minute time box), or the judge still found the acceptance checks unmet after the last continuation (or a continuation did not finish within its time box). The harness ends a continuation before the run's wall clock, so a continuation ends with the loop's reason, not `deadline`; its note in the room names which continuation and why. The issue gets the category; the judge's text stays in the room |
 | `pod_lost`, `Disrupted`, `PodLost`, `PodFailed` | The sandbox failed or was lost and was not resumed. A sandbox lost to its node is resumed by itself, up to `resume.maxPerTask` times |
 | `resumes_exhausted`, `resume_budget` | The sandbox was lost again, and no resume or no budget is left |
@@ -373,6 +375,20 @@ A task ends with one of these:
 | `Closed` | `pr_closed`, `stale`, `child_dropped` (a part's issue closed unmerged, or a part reverted) |
 | `Stopped` | `stopped_by_label`, `stopped_by_annotation`, `superseded`, `kill_switch`, `escalation_expired`, `family_dropped` (a part stopped because another part was dropped or reverted) |
 | `Reverted` | `main_red`, `revert_requested` |
+
+
+### Model provider refusals
+
+A run the model provider refuses (its balance is empty, its key is rejected, its quota or rate
+limit is spent) is a platform condition, not the agent's error. The broker reads the run's last
+`harness_error` (litellm's exception class and message) and ends the run `model_unavailable_billing`,
+`model_unavailable_auth` or `model_unavailable_quota` instead of `agent_error`. The factory then
+holds the task: it goes back to `Queued` with that reason, the room and the issue's status comment
+say "the model provider refused: billing" (or `auth`, `quota`), and the same work runs again, as a
+resume, after a backoff of 1, 2, 4, 8, 16 and then 30 minutes. A refusal sixth in a row escalates the
+task with the refusal as its reason; a run that ends any other way clears the count. A hold uses none
+of the task's resumes or review rounds. Each refusal is logged at `Warn` and counted in
+`maku_factory_model_refused_total{cause,role}`, so one alert on its increase covers every task.
 
 ## Narration
 
@@ -1731,8 +1747,12 @@ change, the files, the paths to leave alone, a plan, its assumptions and its acc
 Every implementer brief carries it after the steering note. The brief asks for the handoff as soon
 as the scope is known, within `scoper.nudgeAt` tool calls (25 by default). The harness bounds its
 exploration: it nudges at `scoper.nudgeAt` tool calls and ends the run at `scoper.maxToolCalls`
-(40 by default), counted as `budget_calls`. A scoper that ends without a handoff, on any end,
-starts the implementer unscoped, and the room says so. A run cap counts as `budget` in
+(40 by default), counted as `budget_calls`. A scoper that ends without a handoff on its own
+limits (the run cap or the tool-call limit) or after finishing with no scope starts the implementer
+unscoped, and the room says "scope not checked". Any other failure of the scoper (an agent error, a
+stuck or lost run) never starts the implementer unscoped: the task escalates as `scoper_failed`, and
+the issue's status comment says the scope was not checked. A model provider's refusal is neither: it
+holds the task like any run's ([the hold](#model-provider-refusals)). A run cap counts as `budget` in
 `maku_factory_scoper_runs_total`, the tool-call limit as `budget_calls`. A person's stop, an
 exhausted budget (task, payer, fleet or person), an unschedulable run (`run_unschedulable`), no
 budget to resume it (`resume_budget`) or a deleted claim escalate as any run's. A question no

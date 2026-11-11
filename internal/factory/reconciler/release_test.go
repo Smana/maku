@@ -177,7 +177,7 @@ func TestAReplayedStopReleases(t *testing.T) {
 	held := g.r.Ledger
 	g.r.Ledger = brokenLedger{g.c} // the first stop's release fails: a crash before it
 	halt(t, g, "annotation")
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the stop's status write is lost")
 	}
 	g.r.Ledger = held

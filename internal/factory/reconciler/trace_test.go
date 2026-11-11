@@ -154,7 +154,7 @@ func TestTheSpanIsExportedOnlyOnceItsEndIsWritten(t *testing.T) {
 	g.r.Trace = sink
 	stopTask(t, g, g.reconcile(t, "3buqdlot", 3))
 	conflict = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the conflict is returned")
 	}
 	if len(sink.got) != 0 {
@@ -294,7 +294,7 @@ func TestTheSpanIsExportedAtLeastOnce(t *testing.T) {
 	g.r.Trace = sink
 	stopTask(t, g, g.reconcile(t, "3buqdlot", 3))
 	armed = true
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the second write's conflict is returned")
 	}
 	armed = false

@@ -446,7 +446,7 @@ func TestAFactoryReservationSettlesOnceAcrossRestarts(t *testing.T) {
 	g.c, g.r.Client = c, c // g.r.Ledger keeps the rig's own client: the ledger is not the Task's
 	g.r.Cfg.Current().Budgets = config.Budgets{FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50, EnforcePrincipal: true}
 	g.reconcile(t, "3buqdlot", 2) // Queued
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the write recording the run is lost")
 	}
 	if used, ids := ledgerOf(t, g); used != 2_550_000 || !slices.Equal(ids, []string{rid(0)}) {

@@ -56,7 +56,7 @@ func TestLostWriteTerminalOrphanRecordedOnce(t *testing.T) {
 		g.log.evs = append(g.log.evs, chatAt(int64(i+1)))
 	}
 	g.reconcile(t, "3buqdlot", 2) // Queued
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the write recording the run is lost")
 	}
 	if len(g.runs.runs) != 1 {
@@ -95,7 +95,7 @@ func TestLostWriteThenPRMergedStillRecords(t *testing.T) {
 	g.reconcile(t, "3buqdlot", 2) // the PR is found
 	g.finish(rid(0), "Succeeded", "agent_finished")
 	g.reconcile(t, "3buqdlot", 1) // → Queued for the reviewer
-	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
+	if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 		t.Fatal("the write recording the reviewer is lost")
 	}
 	// The reviewer ended with 300 tokens; the pull request merged while the write was lost.
