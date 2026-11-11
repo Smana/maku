@@ -114,6 +114,9 @@ describe("the title strip", () => {
     expect(h.querySelector(".now-hint")).toBeNull();
     strip.update(input({ summary: summary({ run: undefined, reason: undefined, next: undefined }) }));
     expect(h.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
+    // An approval step is the Needs-you card's, not NEXT's: it tells no way forward here.
+    strip.update(input({ summary: { ...summary({ run: undefined, reason: undefined, next: undefined }), step: { kind: "approve", label: "approve here" } } }));
+    expect(h.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
   });
   it("re-renders the Now line's age on the same input as the clock moves", () => {
     let t = Date.parse("2026-10-04T14:00:00Z");
@@ -139,7 +142,7 @@ describe("the title strip", () => {
     const [h1, link, btn] = [h.querySelector("h1"), h.querySelector("a"), h.querySelector(".now-link")];
     t += 60_000;
     strip.update(i);
-    expect(h.querySelector(".chip-run")?.textContent).toBe("implementer · ikely2yk · 5 min");
+    expect(h.querySelector(".chip-run")?.textContent).toBe("implementer · 5 min");
     expect(h.querySelector(".now")?.textContent).toBe("Now ▸ hi · running · 1 min ago");
     expect(h.querySelector("h1")).toBe(h1);
     expect(h.querySelector("a")).toBe(link);
@@ -218,6 +221,36 @@ describe("the title strip", () => {
     strip.update(input({ sealed: true, summary: summary({ phase: "Closed", reason: undefined, next: undefined }) }));
     expect(h.querySelector(".next-label")).toBeNull();
   });
+  // D5: NEXT says only what the room waits on; what Needs you holds, the pill takes you to.
+  describe("NEXT", () => {
+    const yourMove = (h: HTMLElement) => [...h.querySelectorAll(".strip-next .waiting")].map((d) => d.textContent);
+    it("holds only the waiting line while approvals wait in Needs you", () => {
+      const { h, strip } = mount();
+      strip.update(input({ approvals: { total: 2, mine: 2 }, needs: 2, summary: { ...summary(), step: { kind: "approve", label: "approve here" } } }));
+      expect(yourMove(h)).toEqual(["The policy needs a maintainer's approval → an approver decides"]);
+      expect(h.querySelector(".approvals-banner")).toBeNull();
+    });
+    it("keeps a step that is no Needs-you item, and drops one that is", () => {
+      const { h, strip } = mount();
+      const step = { kind: "pr" as const, label: "review and merge or close PR #77", url: "https://github.com/o/r/pull/77" };
+      strip.update(input({ summary: { ...summary(), step } }));
+      expect(yourMove(h)).toEqual(["The policy needs a maintainer's approval → an approver decides", "Your move: review and merge or close PR #77"]);
+      const merge = { kind: "merge" as const, id: "77", what: "merge it", url: step.url };
+      strip.update(input({ needs: 1, summary: { ...summary(), step, needsYou: [merge] } }));
+      expect(yourMove(h)).toEqual(["The policy needs a maintainer's approval → an approver decides"]);
+      const answer = { kind: "answer" as const, label: "answer the question on issue #3", url: "https://github.com/o/r/issues/3" };
+      const question = { kind: "question" as const, id: "3", what: "a question", url: answer.url };
+      strip.update(input({ needs: 1, summary: { ...summary(), step: answer, needsYou: [question] } }));
+      expect(yourMove(h)).toEqual(["The policy needs a maintainer's approval → an approver decides"]);
+    });
+    it("is absent with nothing to say", () => {
+      const { h, strip } = mount();
+      strip.update(input({ approvals: { total: 1, mine: 1 }, needs: 1,
+        summary: { ...summary({ reason: undefined, next: undefined }), step: { kind: "approve", label: "approve here" } } }));
+      expect(h.querySelector(".strip-next")).toBeNull();
+      expect(h.querySelector(".next-label")).toBeNull();
+    });
+  });
   it("sets a backticked command as code with a copy button, and the rest as text", async () => {
     const { h, strip } = mount();
     let copied = "";
@@ -238,15 +271,13 @@ describe("the title strip", () => {
       Reflect.deleteProperty(navigator, "clipboard");
     }
   });
-  it("names the one step and links the PR for a room held on GitHub", () => {
+  it("names a step no Needs-you card holds, and links the PR for a room held on GitHub", () => {
     const { h, strip } = mount();
     const step = { kind: "pr" as const, label: "review and merge or close PR #77", url: "https://github.com/o/r/pull/77" };
     strip.update({ roomId: "3kq7x2ma", snap, phase: "Active", driver: snap.driver, summary: { ...summary(), step }, needs: 0 });
     const line = [...h.querySelectorAll(".waiting")].find((d) => d.textContent?.startsWith("Your move"))!;
     expect(line.textContent).toBe("Your move: review and merge or close PR #77");
     expect(line.querySelector("a")?.getAttribute("href")).toBe(step.url);
-    strip.update({ roomId: "3kq7x2ma", snap, phase: "Active", driver: snap.driver, summary: { ...summary(), step: { kind: "approve", label: "approve here" } }, needs: 1 });
-    expect(h.textContent).toContain("Your move: approve here, in Needs you below");
     // An off-GitHub URL is not linked, only said.
     strip.update({ roomId: "3kq7x2ma", snap, phase: "Active", driver: snap.driver, needs: 0,
       summary: { ...summary(), step: { kind: "answer", label: "answer the question on issue #3", url: "https://evil.example/x" } } });
@@ -285,24 +316,23 @@ describe("the title strip", () => {
     const h = document.createElement("header");
     const strip = mountStrip(h, () => Date.parse("2026-10-04T14:04:30Z"));
     strip.update(input());
-    expect(h.querySelector(".chip-run")?.textContent).toBe("implementer · ikely2yk · 4 min");
+    expect(h.querySelector(".strip-tier1 .chip-run")?.textContent).toBe("implementer · 4 min");
+    expect(h.querySelector(".strip-tier2 .chip-run-detail")?.textContent).toBe("ikely2yk");
   });
   it("names the run's model (its claim's) and effort (its harness's)", () => {
     const at = () => Date.parse("2026-10-04T14:12:30Z");
     const chipFor = (over: Partial<Summary["status"]>) => {
       const h = document.createElement("header");
       mountStrip(h, at).update(input({ summary: summary(over) }));
-      return h.querySelector(".chip-run")?.textContent;
+      return h.querySelector(".chip-run-detail")?.textContent;
     };
-    expect(chipFor({ runModel: { run: "ikely2yk", model: "agent-default", effort: "high" } }))
-      .toBe("implementer · ikely2yk · agent-default · high · 12 min");
+    expect(chipFor({ runModel: { run: "ikely2yk", model: "agent-default", effort: "high" } })).toBe("ikely2yk · agent-default · high");
     // The last run's, when the facts' run is that one (the agent left, the chip still shows).
-    expect(chipFor({ lastRunModel: { run: "ikely2yk", model: "agent-default", effort: "low" } }))
-      .toBe("implementer · ikely2yk · agent-default · low · 12 min");
-    expect(chipFor({ runModel: { run: "ikely2yk", effort: "max" } })).toBe("implementer · ikely2yk · max · 12 min");
+    expect(chipFor({ lastRunModel: { run: "ikely2yk", model: "agent-default", effort: "low" } })).toBe("ikely2yk · agent-default · low");
+    expect(chipFor({ runModel: { run: "ikely2yk", effort: "max" } })).toBe("ikely2yk · max");
     // Another run's model is not this run's; with neither known the chip is as before.
-    expect(chipFor({ runModel: { run: "zzzzzzzz", model: "agent-default", effort: "high" } })).toBe("implementer · ikely2yk · 12 min");
-    expect(chipFor({})).toBe("implementer · ikely2yk · 12 min");
+    expect(chipFor({ runModel: { run: "zzzzzzzz", model: "agent-default", effort: "high" } })).toBe("ikely2yk");
+    expect(chipFor({})).toBe("ikely2yk");
   });
   it("keeps the model and effort when the run's age moves in place", () => {
     let t = Date.parse("2026-10-04T14:04:30Z");
@@ -310,27 +340,56 @@ describe("the title strip", () => {
     const strip = mountStrip(h, () => t);
     const i = input({ summary: summary({ runModel: { run: "ikely2yk", model: "agent-default", effort: "high" } }) });
     strip.update(i);
-    const chip = h.querySelector(".chip-run");
+    const [chip, detail] = [h.querySelector(".chip-run"), h.querySelector(".chip-run-detail")];
     t += 60_000;
     strip.update(i);
     expect(h.querySelector(".chip-run")).toBe(chip);
-    expect(chip?.textContent).toBe("implementer · ikely2yk · agent-default · high · 5 min");
+    expect(h.querySelector(".chip-run-detail")).toBe(detail);
+    expect(chip?.textContent).toBe("implementer · 5 min");
+    expect(detail?.textContent).toBe("ikely2yk · agent-default · high");
   });
-  it("leads the run chip with its role, the rest as receding parts", () => {
+  it("leads the run chip with its role and age, the id, model and effort receding in the details", () => {
     const { h, strip } = mount();
     strip.update(input({ summary: summary({ runModel: { run: "ikely2yk", model: "agent-default", effort: "high" } }) }));
-    const parts = [...h.querySelectorAll(".chip-run > :not(.sep)")].map((e) => [e.className, e.textContent]);
-    expect(parts.slice(0, 4)).toEqual([["run-role", "implementer"], ["run-id", "ikely2yk"], ["run-model", "agent-default"], ["run-model", "high"]]);
-    expect(parts[4][0]).toBe("run-age");
+    const parts = (sel: string) => [...h.querySelectorAll(`${sel} > :not(.sep)`)].map((e) => [e.className, e.textContent]);
+    expect(parts(".chip-run-detail")).toEqual([["run-id", "ikely2yk"], ["run-model", "agent-default"], ["run-model", "high"]]);
+    expect(parts(".chip-run").map((p) => p[0])).toEqual(["run-role", "run-age"]);
     const age = h.querySelector<HTMLTimeElement>(".chip-run time.run-age")!;
     expect(age.dateTime).toBe(new Date(age.dateTime).toISOString());
     expect(age.title).toBe(new Date(age.dateTime).toLocaleString());
   });
-  it("clusters the facts: the run, its cost, its links, who may reach it", () => {
+  // D1: tier 1 is what a glance needs; tier 2 the rest, folded behind Details on a phone.
+  it("puts the phase, the persona, the run's age and Needs you in tier 1, in that order", () => {
     const { h, strip } = mount();
-    strip.update(input({ dashboards: [{ label: "Room", url: "https://g.example.com/?r={room}" }] }));
-    const groups = [...h.querySelectorAll<HTMLElement>(".strip-chips > .fact-group")].map((g) => [g.dataset.group, [...g.children].map((c) => c.classList[1])]);
-    expect(groups).toEqual([["run", ["chip-phase", "chip-run"]], ["cost", ["chip-budget"]], ["links", ["chip-pr", "chip-dashboards"]], ["who", ["chip-class", "chip-driver"]]]);
+    strip.update(input({ summary: summary({ phase: "" }), needs: 2 }));
+    const tier1 = h.querySelector(".strip-chips > .strip-tier1")!;
+    expect([...tier1.children].map((c) => c.classList[c.classList.length - 1])).toEqual(["chip-phase", "chip-run", "needs-pill"]);
+    expect([...tier1.querySelectorAll(".chip-run > :not(.sep)")].map((c) => c.className)).toEqual(["run-role", "run-age"]);
+    expect(tier1.querySelector("time.run-age")).not.toBeNull();
+  });
+  it("folds the rest into a closed Details disclosure, which keeps its state across a rebuild", () => {
+    const { h, strip } = mount();
+    strip.update(input());
+    const d = h.querySelector<HTMLDetailsElement>(".strip-chips > details.strip-details")!;
+    expect(d.open).toBe(false);
+    expect(d.querySelector(":scope > summary")?.textContent).toBe("Details");
+    expect(d.querySelector(":scope > .strip-tier2")).not.toBeNull();
+    d.open = true;
+    strip.update(input({ summary: summary({ budget: { usedTokens: 1, limitTokens: 10 } }) }));
+    expect(h.querySelector("details.strip-details")).toBe(d);
+    expect(d.open).toBe(true);
+  });
+  it("has no Details when there is nothing to fold", () => {
+    const { h, strip } = mount();
+    strip.update({ roomId: "3kq7x2ma", phase: "", driver: "", needs: 0 });
+    expect(h.querySelector("details.strip-details")).toBeNull();
+  });
+  it("clusters tier 2's facts: the run, its cost, its links, who may reach it", () => {
+    const { h, strip } = mount();
+    strip.update(input({ dashboards: [{ label: "Room", url: "https://g.example.com/?r={room}" }],
+      summary: summary({ lastVerdict: { by: "reviewer", verdict: "approved", at: "2026-10-04T13:00:00Z" } }) }));
+    const groups = [...h.querySelectorAll<HTMLElement>(".strip-tier2 > .fact-group")].map((g) => [g.dataset.group, [...g.children].map((c) => c.classList[1])]);
+    expect(groups).toEqual([["run", ["chip-run-detail", "chip-verdict"]], ["cost", ["chip-budget"]], ["links", ["chip-pr", "chip-dashboards"]], ["who", ["chip-class", "chip-driver"]]]);
     expect([...h.querySelectorAll(".fact-label")].map((l) => l.textContent)).toEqual(["Tokens", "Dashboards:", "Data:", "Driven by"]);
   });
   it("puts a run's model in as text", () => {
@@ -338,7 +397,7 @@ describe("the title strip", () => {
     const evil = "<img src=x onerror=alert(1)>";
     strip.update(input({ summary: summary({ runModel: { run: "ikely2yk", model: evil, effort: evil } }) }));
     expect(h.querySelector("img")).toBeNull();
-    expect(h.querySelector(".chip-run")?.textContent).toContain(evil);
+    expect(h.querySelector(".chip-run-detail")?.textContent).toContain(evil);
   });
   it("names another driver short, the full id and what a driver does as a title", () => {
     const { h, strip } = mount();
@@ -404,7 +463,8 @@ describe("the title strip", () => {
     const { h, strip } = mount();
     strip.update(input({ summary: summary({ run: { id: "run-1", role: "implementer" }, budget: null, pr: null,
       issue: { number: 3, url: "https://github.com/o/r/issues/3" }, reason: undefined, next: undefined }) }));
-    expect(h.querySelector(".chip-run")?.textContent).toBe("implementer · run-1");
+    expect(h.querySelector(".chip-run")?.textContent).toBe("implementer");
+    expect(h.querySelector(".chip-run-detail")?.textContent).toBe("run-1");
     expect(h.querySelector(".chip-budget")).toBeNull();
     expect(h.querySelector("h1")?.textContent).toBe("Room 3kq7x2ma");
     expect(h.textContent).not.toMatch(/undefined|null|NaN/);
@@ -433,6 +493,7 @@ describe("the title strip", () => {
       expect(h.querySelector(".now")?.textContent).toBe(want);
       expect(h.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
       expect(h.querySelector(".chip-run")).toBeNull(); // the facts' run is over: no ageing chip
+      expect(h.querySelector(".chip-run-detail")).toBeNull();
     });
     it("links the last activity to its row", () => {
       const h = document.createElement("header");
@@ -449,7 +510,7 @@ describe("the title strip", () => {
       strip.update(input({ running: false, ran: true, now: hi }));
       strip.update(input({ running: true, ran: true, now: hi }));
       expect(h.querySelector(".now")?.textContent).toBe("Now ▸ hi · ok · 4 min ago");
-      expect(h.querySelector(".chip-run")?.textContent).toBe("implementer · ikely2yk · 4 min");
+      expect(h.querySelector(".chip-run")?.textContent).toBe("implementer · 4 min");
     });
   });
   it("shows the last verdict, as maku status does", () => {
@@ -482,7 +543,7 @@ describe("the title strip", () => {
       expect(h.querySelector(".needs-pill")).toBeNull();
       strip.update(input({ needs: 3 }));
       expect(h.querySelector(".needs-pill")?.textContent).toBe("Needs you · 3");
-      expect(h.querySelector(".strip-chips")!.lastElementChild?.className).toBe("needs-pill"); // the row's end
+      expect(h.querySelector(".strip-tier1")!.lastElementChild?.className).toBe("needs-pill"); // tier 1's end
     } finally {
       h.remove();
     }
@@ -514,7 +575,7 @@ describe("the broker's golden summaries in the strip", () => {
     if (want.status.pr) expect(h.textContent).toContain(`#${want.status.pr.number}`);
     if (want.status.issue) expect(h.textContent).toContain(`#${want.status.issue.number}`);
     const told = [want.status.runModel, want.status.lastRunModel].find((m) => m && m.run === want.status.run?.id);
-    if (told?.model) expect(h.querySelector(".chip-run")?.textContent).toContain(` · ${told.model} · `);
+    if (told?.model) expect(h.querySelector(".chip-run-detail")?.textContent).toContain(` · ${told.model}`);
     expect(h.textContent).not.toMatch(/undefined|null|NaN|Invalid Date/);
   });
 });
@@ -540,30 +601,27 @@ describe("the strip on a phone", () => {
     strip.update(input({ summary: undefined }));
     expect(h.querySelector(".strip-title")?.getAttribute("title")).toBe("Room 3kq7x2ma");
   });
-  it("keeps the chips on one line that scrolls sideways, its scrollbar hidden", () => {
-    const chips = decl(phone, ".page-header .strip-chips");
-    expect(chips).toMatch(/flex-wrap:\s*nowrap/);
-    expect(chips).toMatch(/overflow-x:\s*auto/);
-    expect(chips).toMatch(/scrollbar-width:\s*none/);
-    expect(phone).toMatch(/\.page-header \.strip-chips::-webkit-scrollbar\s*{[^}]*display:\s*none/);
+  it("lets nothing in the strip scroll sideways: both tiers wrap", () => {
+    expect(css).not.toMatch(/\.strip[^{]*{[^}]*(overflow-x:\s*auto|flex-wrap:\s*nowrap)/);
+    for (const sel of [".strip-tier1", ".strip-tier2"]) expect(decl(desktop, sel), sel).toMatch(/flex-wrap:\s*wrap/);
+    expect(decl(desktop, ".fact-group")).toMatch(/flex-wrap:\s*wrap/);
+    expect(phone).not.toMatch(/\.fact-group\s*{[^}]*nowrap/);
   });
-  it("leaves room in the scrolling row for the Needs-you pill's focus ring", () => {
-    const chips = decl(phone, ".page-header .strip-chips");
-    const pad = chips.match(/padding-block:\s*(\d+)px/);
-    expect(pad, "padding-block").not.toBeNull();
-    expect(Number(pad![1])).toBeGreaterThanOrEqual(3); // a 2 px ring 1 px off the pill
-    expect(chips).toMatch(new RegExp(`margin-block:\\s*-${pad![1]}px`));
+  it("opens tier 2 above 640 px with its summary hidden, a closed disclosure below", () => {
+    const wide = [...css.matchAll(/@media \(min-width: 641px\)\s*{([\s\S]*?)\n}\n/g)].map((m) => m[1]).join("\n");
+    expect(decl(wide, ".strip-details > summary")).toMatch(/display:\s*none/);
+    expect(decl(wide, ".strip-details::details-content")).toMatch(/content-visibility:\s*visible/);
+    expect(phone).not.toMatch(/strip-details[^{]*{[^}]*display:\s*none/);
   });
-  it("puts Needs you first in the row, so it never scrolls out of sight", () => {
-    expect(decl(phone, ".page-header .needs-pill")).toMatch(/order:\s*-1/);
-    expect(decl(phone, ".page-header .strip-chips > *")).toMatch(/flex:\s*none/);
+  it("gives the Details toggle a full target on a phone", () => {
+    expect(decl(phone, ".strip-details > summary")).toMatch(/padding-block:\s*12px;[^}]*margin-block:\s*-12px/);
   });
   it("clamps the title, the waiting lines and the Now line to two lines each", () => {
     for (const sel of [".strip-title", ".page-header .waiting", ".page-header .now-link"]) expect(decl(phone, sel), sel).toMatch(clamp2);
   });
   it("leaves the desktop strip as it was", () => {
     expect(desktop).not.toMatch(/line-clamp|scrollbar-width/);
-    expect(decl(desktop, ".strip-chips")).toMatch(/flex-wrap:\s*wrap/);
+    expect(decl(desktop, ".strip-tier2")).toMatch(/flex-wrap:\s*wrap/);
   });
 });
 
@@ -583,8 +641,8 @@ describe("formatting", () => {
   });
 });
 
-// Operator-configured dashboards (human.dashboards): one chip in the chip row, so a phone's
-// strip keeps its one sideways line; none configured, no element at all.
+// Operator-configured dashboards (human.dashboards): one chip in tier 2's links; none
+// configured, no element at all.
 describe("the strip's dashboards", () => {
   const templates = [
     { label: "Room metrics", url: "https://grafana.example.com/d/agent-room/x?var-room={room}" },
@@ -602,7 +660,7 @@ describe("the strip's dashboards", () => {
   it("fills the room's ids, and opens each in a new tab with no referrer", () => {
     const { h, strip } = mount();
     strip.update(input({ dashboards: templates, summary: summary({ task: "3kq7x2ma" }) }));
-    const chip = h.querySelector(".strip-chips > .fact-group[data-group=links] > .chip-dashboards")!;
+    const chip = h.querySelector(".strip-tier2 > .fact-group[data-group=links] > .chip-dashboards")!;
     expect(chip.textContent).toBe("Dashboards: Room metrics · Run · Task");
     expect(links(h).map((a) => a.href)).toEqual([
       "https://grafana.example.com/d/agent-room/x?var-room=3kq7x2ma",
@@ -629,35 +687,6 @@ describe("the strip's dashboards", () => {
     const { h, strip } = mount();
     strip.update(input({ dashboards: [{ label: "Plain", url: "http://grafana.example.com/?r={room}" }] }));
     expect(h.querySelector(".chip-dashboards")).toBeNull();
-  });
-});
-
-describe("the approvals banner", () => {
-  const banner = (h: HTMLElement) => h.querySelector<HTMLAnchorElement>("a.approvals-banner");
-  it("counts the approvals waiting for you, and links to the cards", () => {
-    const { h, strip } = mount();
-    let clicked = 0;
-    strip.onApprovalsClick(() => { clicked++; });
-    strip.update(input({ approvals: { total: 2, mine: 2 } }));
-    expect(banner(h)?.textContent).toBe("⏳ 2 approvals wait for you — review");
-    banner(h)!.click();
-    expect(clicked).toBe(1);
-  });
-  it("says another approver when the viewer cannot decide any", () => {
-    const { h, strip } = mount();
-    strip.update(input({ approvals: { total: 1, mine: 0 } }));
-    expect(banner(h)?.textContent).toBe("⏳ 1 approval waits for another approver — review");
-  });
-  it("is hidden when none wait, when the room is sealed, and leaves with the last approval", () => {
-    const { h, strip } = mount();
-    strip.update(input());
-    expect(banner(h)).toBeNull();
-    strip.update(input({ approvals: { total: 1, mine: 1 } }));
-    expect(banner(h)).not.toBeNull();
-    strip.update(input({ approvals: { total: 0, mine: 0 } }));
-    expect(banner(h)).toBeNull();
-    strip.update(input({ approvals: { total: 1, mine: 1 }, sealed: true }));
-    expect(banner(h)).toBeNull();
   });
 });
 

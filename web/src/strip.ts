@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The title strip heads the room page: the status line, the task's title (its issue's
-// link), the facts (run, budget, PR, data class, who drives, a watcher's View only), what
-// comes next, and what needs you. A fact that is the norm says nothing: the role shows only
+// link), the facts in two tiers, what comes next. Tier 1 is what a glance needs (the phase,
+// the run's persona and age, what needs you); tier 2 the rest (the run's id, model and
+// effort, budget, PR, dashboards, data class, who drives, a watcher's View only), folded
+// behind Details on a phone. A fact that is the norm says nothing: the role shows only
 // when it stops you, and the phase only when no status line says more. It renders from the state frame alone until a summary arrives,
 // so a summary that cannot be fetched leaves a working strip. Every string here may
 // be agent- or human-written: all of it enters the DOM as text.
 
 import type { Snapshot } from "./conn";
-import { bannerText } from "./approval-help";
 import { el, shortPrincipal } from "./controls";
 import { type Dashboard, expandDashboards } from "./dashboards";
 import { span, timeEl } from "./duration";
@@ -101,30 +102,38 @@ function nowLine(i: StripInput, t: number, onNow: (seq: number) => void): HTMLEl
   } else line.textContent = present ? "Now ▸ the run has started" : ran ? "No run" : "No run yet";
   // A room that already says what comes next (a /factory retry, a PR to merge) gets no
   // second, contrary way forward.
-  const told = !!(i.summary?.status.next || i.summary?.step);
+  const told = !!(i.summary?.status.next || ownStep(i.summary));
   const lead = !present && !told && i.snap && (i.snap.you.role === "owner" || i.snap.you.driver);
   return lead ? [line, el("span", { className: "now-hint", textContent: "Start one under Session › Run" })] : [line];
 }
 
-// runParts is the run chip: role · id · model · effort · age. The model and effort are the run's own
-// (the present run's or the last's, matched by id), each left out when the log does not say it.
-function runParts(st: Summary["status"], t: number): [cls: string, text: string][] {
+type Parts = [cls: string, text: string | undefined][];
+
+// runParts is the run chip, tier 1's: persona · age. The age moves in place every second.
+function runParts(st: Summary["status"], t: number): Parts {
   const r = st.run!;
-  const m = [st.runModel, st.lastRunModel].find((x) => x?.run === r.id);
-  const parts: [string, string | undefined][] = [["run-role", r.role], ["run-id", r.id], ["run-model", m?.model], ["run-model", m?.effort],
-    ["run-age", r.startedAt ? since(r.startedAt, t) : ""]];
-  return parts.filter((p): p is [string, string] => !!p[1]);
+  return [["run-role", r.role], ["run-age", r.startedAt ? since(r.startedAt, t) : ""]];
 }
 
-// setRun fills the run chip: the role leads, the id, model and effort recede. Text only; only when changed.
-function setRun(c: Element, st: Summary["status"], t: number): void {
-  const parts = runParts(st, t);
+// detailParts is the run's detail chip, tier 2's: id · model · effort. The model and effort are the
+// run's own (the present run's or the last's, matched by id), each left out when the log does not say it.
+function detailParts(st: Summary["status"]): Parts {
+  const r = st.run!;
+  const m = [st.runModel, st.lastRunModel].find((x) => x?.run === r.id);
+  return [["run-id", r.id], ["run-model", m?.model], ["run-model", m?.effort]];
+}
+
+// setParts fills a chip with its parts, dot-separated, the empty ones left out; the age as a
+// <time>. Text only; only when changed.
+function setParts(c: Element, all: Parts, t: number, at = ""): void {
+  const parts = all.filter((p): p is [string, string] => !!p[1]);
   if (c.textContent === parts.map((p) => p[1]).join(" · ")) return;
-  const at = st.run?.startedAt ?? "";
   c.replaceChildren(...parts.flatMap(([cls, text], n) => [
     ...(n ? [el("span", { className: "sep", textContent: " · " })] : []),
     cls === "run-age" ? Object.assign(timeEl(t - Date.parse(at), at, "span"), { className: cls }) : el("span", { className: cls, textContent: text })]));
 }
+
+const setRun = (c: Element, st: Summary["status"], t: number) => setParts(c, runParts(st, t), t, st.run?.startedAt);
 
 // statusOf is the room's run status: the summary's own state, phase and facts, and the viewer's approvals.
 function statusOf(i: StripInput, t: number): RunStatus {
@@ -188,7 +197,7 @@ function group(name: string, items: (HTMLElement | undefined)[]): HTMLElement[] 
 
 // dashboardsChip is the "Dashboards:" group, filled with the room's ids: the run is the
 // facts' current or last one, else the history's last, else the state frame's last. A chip
-// in the chip row, so a phone's strip keeps its one sideways line. Undefined when no link shows.
+// in tier 2's links. Undefined when no link shows.
 function dashboardsChip(i: StripInput): HTMLElement | undefined {
   const s = i.summary;
   const run = s?.status.run?.id || s?.runs?.at(-1)?.id || i.snap?.runs?.at(-1)?.id;
@@ -199,18 +208,21 @@ function dashboardsChip(i: StripInput): HTMLElement | undefined {
   return chip("chip-dashboards", ...body);
 }
 
-// chips are the facts row. status is whether a status line heads the strip: then it says
-// where the task stands, and the phase is its tooltip, not a chip.
-function chips(i: StripInput, now: number, status: boolean): HTMLElement[] {
+// chips are the facts, as [tier 1, tier 2]. status is whether a status line heads the strip:
+// then it says where the task stands, and the phase is its tooltip, not a chip.
+function chips(i: StripInput, now: number, status: boolean): [HTMLElement[], HTMLElement[]] {
   const st = i.summary?.status;
-  const run: HTMLElement[] = [], cost: HTMLElement[] = [], links: HTMLElement[] = [], who: HTMLElement[] = [];
+  const tier1: HTMLElement[] = [], run: HTMLElement[] = [], cost: HTMLElement[] = [], links: HTMLElement[] = [], who: HTMLElement[] = [];
   const phase = st?.phase || i.phase;
-  if (phase && !status) run.push(chip("chip-phase", phase));
+  if (phase && !status) tier1.push(chip("chip-phase", phase));
   // The facts' run outlives it: with no agent present, its age would keep counting.
   if (st?.run && i.running !== false) {
     const c = chip("chip-run");
     setRun(c, st, now);
-    run.push(c);
+    tier1.push(c);
+    const d = chip("chip-run-detail");
+    setParts(d, detailParts(st), now);
+    run.push(d);
   }
   if (st?.lastVerdict) run.push(chip("chip-verdict", `last verdict: ${st.lastVerdict.by} ${st.lastVerdict.verdict}`));
   if (st?.budget) {
@@ -258,7 +270,18 @@ function chips(i: StripInput, now: number, status: boolean): HTMLElement[] {
     c.title = `Your role here: ${you.role || "none"}`;
     who.push(c);
   }
-  return [...group("run", run), ...group("cost", cost), ...group("links", links), ...group("who", who)];
+  return [tier1, [...group("run", run), ...group("cost", cost), ...group("links", links), ...group("who", who)]];
+}
+
+// The Needs-you kind that holds each step: its card says the same thing, and the pill takes you
+// there. An approval step is always one (the broker sets it from a live approval it lists).
+const STEP_NEED: Record<string, string> = { approve: "approval", pr: "merge", answer: "question" };
+
+// ownStep is the summary's step when no Needs-you item holds it: only then does NEXT name it.
+function ownStep(s?: Summary): Summary["step"] {
+  const step = s?.step;
+  if (!step || step.kind === "approve" || s?.needsYou?.some((n) => n.kind === STEP_NEED[step.kind])) return undefined;
+  return step;
 }
 
 // sealedText is the closed line: who closed the room and when, else what sealed it.
@@ -290,7 +313,14 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
   root.append(statusRow, head, tail, nowRow);
   header.append(root);
   const title = el("h1", { className: "strip-title" });
+  // The facts: tier 1 always shows and wraps; tier 2 wraps open on a desktop and folds behind
+  // Details on a phone (CSS). The disclosure is kept across rebuilds, so it stays as the reader left it.
   const row = el("div", { className: "strip-chips" });
+  const tier1 = el("div", { className: "strip-tier1" });
+  const details = el("details", { className: "strip-details" });
+  const tier2 = el("div", { className: "strip-tier2" });
+  details.append(el("summary", { textContent: "Details" }), tier2);
+  row.append(tier1);
   const pill = el("button", { type: "button", className: "needs-pill" });
   head.append(title, row);
   let onNeeds = () => {};
@@ -311,12 +341,16 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         title.title = text; // a phone clamps the title to two lines: the whole of it on hover
       }
       document.title = phase ? `${text} · ${phase} · Maku` : `${text} · Maku`;
-      const { now: latest, sealedBy, needs, approvals: pend, ...rest } = i;
+      const { now: latest, sealedBy, needs, approvals: _pend, ...rest } = i;
       const status = statusOf(i, t);
       const headKey = JSON.stringify([rest, !!status.kind]);
       if (headKey !== shown.head) {
-        for (const c of [...row.querySelectorAll(":scope > .fact-group")]) c.remove();
-        row.prepend(...chips(i, t, !!status.kind));
+        const [one, two] = chips(i, t, !!status.kind);
+        for (const c of [...tier1.children]) if (c !== pill) c.remove();
+        tier1.prepend(...one);
+        tier2.replaceChildren(...two);
+        if (two.length === 0) details.remove();
+        else if (!details.isConnected) row.append(details);
         shown.head = headKey;
       } else if (st?.run) {
         const run = head.querySelector(".chip-run");
@@ -325,9 +359,10 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
       if (needs > 0) {
         const p = `Needs you · ${needs}`;
         if (pill.textContent !== p) pill.textContent = p;
-        if (!pill.isConnected || pill.nextElementSibling) row.append(pill);
+        if (pill.parentElement !== tier1 || pill.nextElementSibling) tier1.append(pill);
       } else pill.remove();
       const step = i.summary?.step;
+      const own = ownStep(i.summary);
       // A line that waits for an approval takes you to its card; one that waits for a PR links it.
       const toCard = status.kind === "waiting-you" || status.kind === "waiting-other";
       const prUrl = status.kind === "waiting-pr" && isGitHubUrl(step?.url) ? step!.url! : "";
@@ -352,7 +387,7 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         shown.status = statusKey;
       }
       const present = i.running ?? !!latest;
-      const nowKey = JSON.stringify([latest, i.running, i.ran || !!st?.run, i.snap?.you.role, i.snap?.you.driver, !!(st?.next || i.summary?.step)]);
+      const nowKey = JSON.stringify([latest, i.running, i.ran || !!st?.run, i.snap?.you.role, i.snap?.you.driver, !!(st?.next || own)]);
       if (nowKey !== shown.now) {
         nowRow.replaceChildren(...nowLine(i, t, (seq) => onNow(seq)));
         shown.now = nowKey;
@@ -360,7 +395,7 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
         const b = nowRow.querySelector<HTMLElement>(".now-link");
         if (b) setNow(b, latest, t, present);
       }
-      const tailKey = JSON.stringify([sealedBy, i.sealed, i.snap?.you.principal, st?.phase, i.phase, st?.reason, st?.next, i.summary?.step, pend?.total, pend?.mine]);
+      const tailKey = JSON.stringify([sealedBy, i.sealed, i.snap?.you.principal, st?.phase, i.phase, st?.reason, st?.next, own]);
       if (tailKey !== shown.tail) {
         const lines: HTMLElement[] = [];
         if (sealedBy || i.sealed) lines.push(el("div", { className: "closed", textContent: sealedText(i) }));
@@ -369,20 +404,11 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
           line.append(...withCode(cap([st.reason, st.next].filter(Boolean).join(" → "))));
           lines.push(line);
         }
-        // Nothing at the top said an approval waits: this line does, and takes you to its card.
-        const banner = sealedBy || i.sealed ? "" : bannerText(pend?.total ?? 0, pend?.mine ?? 0);
-        if (banner) {
-          const a = el("a", { className: "approvals-banner", href: "#needs-title", textContent: `${banner} — review` });
-          a.onclick = (e) => { e.preventDefault(); onApprovals(); };
-          lines.push(el("div", { className: "waiting approvals-line" }));
-          lines[lines.length - 1].append(a);
-        }
-        if (step && !sealedBy && !i.sealed) {
-          // A PR-held room has nothing to decide here: say where to act, and link it.
+        // A step no Needs-you card holds: say where to act, and link it on GitHub. What the
+        // cards hold (an approval, a merge, a question), the pill takes you to.
+        if (own && !sealedBy && !i.sealed) {
           const line = el("div", { className: "waiting", textContent: "Your move: " });
-          line.append(step.kind !== "approve" && isGitHubUrl(step.url)
-            ? safeLink(step.label, step.url!)
-            : document.createTextNode(step.kind === "approve" ? `${step.label}, in Needs you below` : step.label));
+          line.append(isGitHubUrl(own.url) ? safeLink(own.label, own.url!) : document.createTextNode(own.label));
           lines.push(line);
         }
         // What comes next, headed as such; a closed room has nothing next.

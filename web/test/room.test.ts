@@ -643,12 +643,13 @@ describe("the room page", () => {
       expect(panel.querySelector("#approval-01M4A .approval-command")?.textContent).toBe("git push");
     });
 
-    it("raises a banner in the strip and a four-eyes note on the card of whoever prompted the turn", () => {
+    it("says another approver in the status line and a four-eyes note on the card of whoever prompted the turn", () => {
       const p = page();
       p.join({ ...snapshot({ principal: "human:b", approver: true }), fourEyes: true }, 0,
         event(1, "approval_requested", { approvalId: "01M4A", callId: "c1", class: "forge.pr", action: {}, expiresAt: "2099-01-01T00:00:00Z",
           prompters: ["human:b"] }));
-      expect(p.app.querySelector("a.approvals-banner")?.textContent).toBe("⏳ 1 approval waits for another approver — review");
+      expect(p.app.querySelector(".run-status-words")?.textContent).toBe("Waiting for another approver");
+      expect(p.app.querySelector(".approvals-banner")).toBeNull();
       expect(p.app.querySelector("#approval-01M4A .approval-status")?.textContent).toContain("you prompted this turn (four-eyes)");
       p.app.remove();
     });

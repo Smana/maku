@@ -91,11 +91,3 @@ export function decideStatus(o: { you?: Standing; sealed?: boolean; fourEyes?: b
   }
   return { can: true, text: "You can decide." };
 }
-
-// bannerText is the strip's line for pending approvals; "" when none. mine are those the
-// viewer may decide.
-export function bannerText(total: number, mine: number): string {
-  if (total <= 0) return "";
-  if (mine > 0) return `⏳ ${mine} approval${mine === 1 ? " waits" : "s wait"} for you`;
-  return `⏳ ${total} approval${total === 1 ? " waits" : "s wait"} for another approver`;
-}

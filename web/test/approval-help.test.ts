@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bannerText, deadlineText, decideStatus, EXPIRY, RULES, ruleFor } from "../src/approval-help";
+import { deadlineText, decideStatus, EXPIRY, RULES, ruleFor } from "../src/approval-help";
 
 const at = (h: number, m: number, day = 28) => new Date(2026, 9, day, h, m, 0);
 
@@ -59,12 +59,3 @@ describe("decideStatus", () => {
   });
 });
 
-describe("bannerText", () => {
-  it("counts what waits for the viewer, else for another approver, else nothing", () => {
-    expect(bannerText(1, 1)).toBe("⏳ 1 approval waits for you");
-    expect(bannerText(3, 2)).toBe("⏳ 2 approvals wait for you");
-    expect(bannerText(2, 0)).toBe("⏳ 2 approvals wait for another approver");
-    expect(bannerText(1, 0)).toBe("⏳ 1 approval waits for another approver");
-    expect(bannerText(0, 0)).toBe("");
-  });
-});
