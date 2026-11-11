@@ -11,6 +11,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -24,12 +25,12 @@ import (
 
 // twoRepositories: B has its own maintainer and label, and the control issue lives on A (v2 D1, D2).
 func twoRepositories(p *IssuePoller) {
-	p.Cfg.Repository, p.Cfg.Maintainers, p.Cfg.TriggerLabel = "", nil, ""
-	p.Cfg.Repositories = []config.Repository{
+	p.Cfg.Current().Repository, p.Cfg.Current().Maintainers, p.Cfg.Current().TriggerLabel = "", nil, ""
+	p.Cfg.Current().Repositories = []config.Repository{
 		{Name: "Smana/a", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"},
 		{Name: "Smana/b", Maintainers: []string{"Other"}, TriggerLabel: "factory/go"},
 	}
-	p.Cfg.Control = config.Control{Repository: "Smana/a", Issue: 1}
+	p.Cfg.Current().Control = config.Control{Repository: "Smana/a", Issue: 1}
 }
 
 // A poller serves its own entry: its label, its maintainers, its name on the task and the key.
@@ -190,9 +191,9 @@ func TestTheSameIssueNumberOnTwoRepositories(t *testing.T) {
 // v2 D6: RunLore's task names the repository the config gives it, not the first by accident.
 func TestRunLoreFilesOnItsConfiguredRepository(t *testing.T) {
 	h, c, _ := runlore(t)
-	h.Cfg.Repository = ""
-	h.Cfg.Repositories = []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}
-	h.Cfg.RunLore.Repository = "Smana/b"
+	h.Cfg.Current().Repository = ""
+	h.Cfg.Current().Repositories = []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}
+	h.Cfg.Current().RunLore.Repository = "Smana/b"
 	if w := send(h, "s3cret", finding); w.Code != 201 {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
@@ -295,5 +296,61 @@ func TestStopsOutliveTheFence(t *testing.T) {
 	_ = c.Get(t.Context(), client.ObjectKeyFromObject(running), &got)
 	if got.Annotations[v1alpha1.AnnotationStop] != "label" {
 		t.Fatalf("the stop was not honoured: %v", got.Annotations)
+	}
+}
+
+// A publish that drops B (2→1, factory resources D12) stops B's poller cold: its pass is skipped,
+// never run under A's label and maintainers, though B's issue carries A's label from A's maintainer.
+func TestARemovedRepositorysPollerDoesNothing(t *testing.T) {
+	f := forgetest.NewFake()
+	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: t0})
+	f.SetLabeled("factory/ready", forge.Item{Number: 7})
+	f.SetIssue(forge.Issue{Number: 7, Title: "Fix", Body: "it"})
+	p, c := poller(t, f)
+	twoRepositories(p)
+	p.Repository = "Smana/b"
+	two := p.Cfg.Current()
+	two.Hash = "two"
+	live := config.NewLive(two)
+	p.Cfg = live
+	next := *two
+	next.Repositories, next.Hash = two.Repositories[:1], "one"
+	live.Publish(&next)
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if ts := tasks(t, c); len(ts) != 0 {
+		t.Fatalf("B's poller ran under A's settings: %+v", ts)
+	}
+	if got := f.Removed(7); len(got) != 0 {
+		t.Fatalf("B's poller consumed a label: %q", got)
+	}
+}
+
+// After a publish drops B, A's poller owns A's tasks only: a stop label on A's issue 7 never
+// reaches B's task on its issue 7.
+func TestARemovedRepositorysTasksAreNobodys(t *testing.T) {
+	task := func(name, repo string) *v1alpha1.Task {
+		return &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "agent-system"},
+			Spec:   v1alpha1.TaskSpec{Issue: 7, Repository: repo},
+			Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing}}
+	}
+	f := forgetest.NewFake()
+	f.SetLabeled(LabelStop, forge.Item{Number: 7})
+	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: LabelStop, At: t0})
+	p, c := poller(t, f, task("3buqdlot", "Smana/a"), task("4buqdlot", "Smana/b"))
+	twoRepositories(p)
+	p.Cfg.Current().Repositories = p.Cfg.Current().Repositories[:1] // the 2 to 1 publish
+	p.Cfg.Current().Control = config.Control{}
+	p.Repository = "Smana/a"
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"3buqdlot": "label", "4buqdlot": ""} {
+		var got v1alpha1.Task
+		_ = c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: name}, &got)
+		if got.Annotations[v1alpha1.AnnotationStop] != want {
+			t.Errorf("%s: %v", name, got.Annotations)
+		}
 	}
 }

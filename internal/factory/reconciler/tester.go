@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	"sigs.k8s.io/yaml"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -23,8 +25,8 @@ import (
 // testerDue (F3-R1): the class writes its tests first, the task is public and holds no contract, and no
 // tester ran yet, or the last one was lost and resumes. Records, not a status field, say the stage ran:
 // a /factory retry after the tester's end does not run it twice.
-func (r *Reconciler) testerDue(t *v1alpha1.Task) bool {
-	if !r.testerPlanned(t) || t.Status.Contract != nil {
+func (r *Reconciler) testerDue(cfg *config.Config, t *v1alpha1.Task) bool {
+	if !r.testerPlanned(cfg, t) || t.Status.Contract != nil {
 		return false
 	}
 	if len(t.Status.Runs) > 0 && current(t).Role == "tester" {
@@ -35,8 +37,8 @@ func (r *Reconciler) testerDue(t *v1alpha1.Task) bool {
 
 // testerPlanned: the task runs a tester at some point, before or after it has. A contract a tester
 // did not write means none will run; the one it wrote leaves it in the plan.
-func (r *Reconciler) testerPlanned(t *v1alpha1.Task) bool {
-	return r.testFirst(t) && t.Spec.DataClass == "public" && (t.Status.Contract == nil || ranTester(t))
+func (r *Reconciler) testerPlanned(cfg *config.Config, t *v1alpha1.Task) bool {
+	return r.testFirst(cfg, t) && t.Spec.DataClass == "public" && (t.Status.Contract == nil || ranTester(t))
 }
 
 // ranTester: the records hold a tester run.
@@ -45,23 +47,31 @@ func ranTester(t *v1alpha1.Task) bool {
 }
 
 // testFirst: the task's class writes its tests first and its template has an implementer to follow.
-func (r *Reconciler) testFirst(t *v1alpha1.Task) bool {
-	return r.repo(t).TestFirstFor(t.Spec.PredictedClass) && slices.Contains(r.Cfg.Templates[t.Spec.Template].Roles, "implementer")
+func (r *Reconciler) testFirst(cfg *config.Config, t *v1alpha1.Task) bool {
+	return r.testFirstOn(cfg, t) && slices.Contains(cfg.Templates[t.Spec.Template].Roles, "implementer")
+}
+
+// testFirstOn: a decision frozen at triage survives later config changes; a task without one reads live config.
+func (r *Reconciler) testFirstOn(cfg *config.Config, t *v1alpha1.Task) bool {
+	if t.Status.Profile != nil {
+		return t.Status.Profile.TestFirst
+	}
+	return r.repo(cfg, t).TestFirstFor(t.Spec.PredictedClass)
 }
 
 // testerRun: the task's current run is its tester's.
 func testerRun(t *v1alpha1.Task) bool { return len(t.Status.Runs) > 0 && current(t).Role == "tester" }
 
 // testerSpec (F3-R2): the implementer's claim, on the task's own model and caps (R19), as a tester.
-func (r *Reconciler) testerSpec(t *v1alpha1.Task, text string) runs.Spec {
-	s := r.implementerSpec(t, text)
+func (r *Reconciler) testerSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
+	s := r.implementerSpec(cfg, t, text)
 	s.Role = "tester"
-	r.withChecks(&s, t)
+	r.withChecks(cfg, &s, t)
 	return s
 }
 
 // startTester starts the tester run, or resumes a lost one with its own brief.
-func (r *Reconciler) startTester(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) startTester(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	text, ok, err := r.resumeBrief(ctx, t)
 	if err != nil {
 		return err
@@ -73,7 +83,7 @@ func (r *Reconciler) startTester(ctx context.Context, t *v1alpha1.Task) error {
 		}
 		text = TesterBrief(t, r.Nonce(), sc)
 	}
-	return r.startRun(ctx, t, r.testerSpec(t, text), nextTrigger(t))
+	return r.startRun(ctx, cfg, t, r.testerSpec(cfg, t, text), nextTrigger(t))
 }
 
 // contractPushWait is how long after the tester run's end GitHub's record of its push is waited for
@@ -97,11 +107,11 @@ var testerEnds = []string{"contract_ready", "not_testable", "contract_not_red", 
 
 // testerEnded (R14, F3-R3..R5): a person or a budget stopping it escalates as any run; otherwise GitHub
 // says whether the tester's harness pushed a contract.
-func (r *Reconciler) testerEnded(ctx context.Context, t *v1alpha1.Task, reason string) error {
+func (r *Reconciler) testerEnded(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) error {
 	if slices.Contains(escalatesScoper, reason) {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reason)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 	}
-	c, end, err := r.readContract(ctx, t)
+	c, end, err := r.readContract(ctx, cfg, t)
 	switch {
 	case err != nil:
 		return err
@@ -110,7 +120,7 @@ func (r *Reconciler) testerEnded(ctx context.Context, t *v1alpha1.Task, reason s
 		return nil
 	case end == "contract_invalid" || end == "contract_too_large":
 		record(ctx, func(ctx context.Context) { r.Metrics.ContractEnd(ctx, t.Spec.PredictedClass, end) })
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, end)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, end)
 	case c != nil:
 		t.Status.Contract = c
 		end = "ready"
@@ -127,7 +137,7 @@ func (r *Reconciler) testerEnded(ctx context.Context, t *v1alpha1.Task, reason s
 // readContract is F3-R4: the contract the tester's push made, from GitHub's record of the push and
 // the commit's trailers, or the end when there is none: "wait" (the push is not recorded yet),
 // "contract_invalid", the end note's category, or "unreported".
-func (r *Reconciler) readContract(ctx context.Context, t *v1alpha1.Task) (*v1alpha1.ContractStatus, string, error) {
+func (r *Reconciler) readContract(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (*v1alpha1.ContractStatus, string, error) {
 	cur := current(t)
 	branch := "agent/" + t.Name
 	ps, err := r.gh(ctx).BranchActivity(ctx, branch)
@@ -160,7 +170,7 @@ func (r *Reconciler) readContract(ctx context.Context, t *v1alpha1.Task) (*v1alp
 	// trailers name exactly those files. That the tests are red on the base is proven at merge, by the
 	// required contract check (row 2b), not here.
 	tip := ps[0].After
-	pc, err := r.pushedBy(ctx, branch, []string{r.Cfg.AgentsLogin}, tip)
+	pc, err := r.pushedBy(ctx, branch, []string{cfg.AgentsLogin}, tip)
 	if err != nil {
 		return nil, "", err
 	}
@@ -214,6 +224,25 @@ type checksDecl struct {
 	} `json:"tests"`
 }
 
+// checksAt is the declaration at ref; an absent or malformed one declares nothing.
+func (r *Reconciler) checksAt(ctx context.Context, ref string) (checksDecl, error) {
+	var d checksDecl
+	raw, err := r.merger(ctx).FileAt(ctx, ".github/agent-checks.yaml", ref)
+	if err != nil {
+		return d, err
+	}
+	if raw == "" || yaml.Unmarshal([]byte(raw), &d) != nil {
+		return checksDecl{}, nil
+	}
+	return d, nil
+}
+
+// testPaths are the paths the default branch's declaration lets a tester write.
+func (r *Reconciler) testPaths(ctx context.Context, _ *v1alpha1.Task) ([]string, error) {
+	d, err := r.checksAt(ctx, defaultBranch)
+	return d.Tests.Paths, err
+}
+
 // underPath is the declaration's rule: the path itself, or any path under a prefix ending in "/".
 func underPath(path string, prefixes []string) bool {
 	return slices.ContainsFunc(prefixes, func(p string) bool { return path == p || (strings.HasSuffix(p, "/") && strings.HasPrefix(path, p)) })
@@ -223,12 +252,11 @@ func underPath(path string, prefixes []string) bool {
 // file of the commit is added or modified, under tests.paths and not a runner file, and the trailers'
 // files are exactly them. An absent or unreadable declaration is a refusal.
 func (r *Reconciler) testsOnly(ctx context.Context, cm forge.Commit, trailers []string) (bool, error) {
-	raw, err := r.merger(ctx).FileAt(ctx, ".github/agent-checks.yaml", cm.Parents[0])
+	d, err := r.checksAt(ctx, cm.Parents[0])
 	if err != nil {
 		return false, err
 	}
-	var d checksDecl
-	if raw == "" || yaml.Unmarshal([]byte(raw), &d) != nil || len(d.Tests.Paths) == 0 {
+	if len(d.Tests.Paths) == 0 {
 		return false, nil
 	}
 	var changed []string

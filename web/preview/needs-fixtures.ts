@@ -4,7 +4,7 @@ import type { NeedItem } from "../src/api";
 
 // Every needs/v1 kind as the route serves it (internal/summary's needs.go and coordination_needs.go),
 // and the one action each card must end in: the control here when the room has one, else a link out
-// with the line saying the room has no button for it. The preview's ?needs page and needs.test.ts both read this table.
+// with the line saying where the action happens (on GitHub). The preview's ?needs page and needs.test.ts both read this table.
 export const NEED_FIXTURES: NeedItem[] = [
   { kind: "plan_confirmation", id: "2238", what: "a maintainer comments `/factory split` on issue #2238 to accept the parts, or `/factory retry` to run the task whole",
     url: "https://github.com/o/r/issues/2238", action: { kind: "comment", label: "comment on the issue", url: "https://github.com/o/r/issues/2238" } },

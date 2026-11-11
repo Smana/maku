@@ -53,7 +53,7 @@ type Adopter struct {
 	Clients   func(repository string) (ScheduleForge, ScheduleMerger, bool)
 	Client    client.Client
 	Namespace string
-	Cfg       *config.Config
+	Cfg       config.Source
 	// Owned is v2 D7's fence: a repository not owned by this factory adopts nothing.
 	Owned   func(repository string) bool
 	Stopped func(context.Context) bool
@@ -116,12 +116,13 @@ func (a *Adopter) Tick(ctx context.Context) error {
 	if a.Stopped(ctx) {
 		return nil
 	}
+	cfg := a.Cfg.Current()
 	var errs []error
-	for _, rc := range a.Cfg.Repos() {
+	for _, rc := range cfg.Repos() {
 		if a.Owned == nil || !a.Owned(rc.Name) || len(adoptedClasses(&rc)) == 0 {
 			continue
 		}
-		if err := a.tick(fmetrics.WithRepository(ctx, rc.Name), &rc); err != nil {
+		if err := a.tick(fmetrics.WithRepository(ctx, rc.Name), cfg, &rc); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", rc.Name, err))
 		}
 	}
@@ -141,7 +142,7 @@ func adoptedClasses(rc *config.Repository) []string {
 	return out
 }
 
-func (a *Adopter) tick(ctx context.Context, rc *config.Repository) error {
+func (a *Adopter) tick(ctx context.Context, cfg *config.Config, rc *config.Repository) error {
 	var l v1alpha1.TaskList
 	if err := a.Client.List(ctx, &l, client.InNamespace(a.Namespace)); err != nil {
 		return err
@@ -187,7 +188,7 @@ func (a *Adopter) tick(ctx context.Context, rc *config.Repository) error {
 		if !ok {
 			continue
 		}
-		created, err := a.create(ctx, rc, p, key, class)
+		created, err := a.create(ctx, cfg, rc, p, key, class)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -279,10 +280,10 @@ func (a *Adopter) judge(key string) {
 	a.judged[key] = true
 }
 
-func (a *Adopter) create(ctx context.Context, rc *config.Repository, p forge.PRSummary, key, class string) (bool, error) {
+func (a *Adopter) create(ctx context.Context, cfg *config.Config, rc *config.Repository, p forge.PRSummary, key, class string) (bool, error) {
 	text := fmt.Sprintf("Adopted pull request #%d from %s (%s).", p.Number, p.Author, p.HeadRef)
 	sum := sha256.Sum256([]byte(text))
-	dataClass := a.Cfg.Defaults.DataClass
+	dataClass := cfg.Defaults.DataClass
 	t := &v1alpha1.Task{
 		ObjectMeta: metav1.ObjectMeta{Name: taskid.Name(key), Namespace: a.Namespace},
 		Spec: v1alpha1.TaskSpec{

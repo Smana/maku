@@ -75,7 +75,7 @@ type Scheduler struct {
 	Clients   func(repository string) (ScheduleForge, ScheduleMerger, bool)
 	Client    client.Client
 	Namespace string
-	Cfg       *config.Config
+	Cfg       config.Source
 	// Owned is v2 D7's fence: an entry not owned by this factory fires nothing; nil owns nothing.
 	Owned   func(repository string) bool
 	Stopped func(context.Context) bool
@@ -129,18 +129,19 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 	if s.Stopped(ctx) {
 		return nil
 	}
+	cfg := s.Cfg.Current()
 	var errs []error
-	for _, rc := range s.Cfg.Repos() {
+	for _, rc := range cfg.Repos() {
 		if s.Owned == nil || !s.Owned(rc.Name) {
 			continue // another factory's, or nobody's (v2 D7)
 		}
-		errs = append(errs, s.tick(ctx, &rc)...)
+		errs = append(errs, s.tick(ctx, cfg, &rc)...)
 	}
 	return errors.Join(errs...)
 }
 
 // tick is one repository's schedules, each stamped with that repository (v2 D1).
-func (s *Scheduler) tick(ctx context.Context, rc *config.Repository) []error {
+func (s *Scheduler) tick(ctx context.Context, cfg *config.Config, rc *config.Repository) []error {
 	var errs []error
 	for _, e := range rc.Schedules {
 		now := s.Now().UTC()
@@ -152,7 +153,7 @@ func (s *Scheduler) tick(ctx context.Context, rc *config.Repository) []error {
 		text := e.Text
 		var findings []v1alpha1.Finding
 		if e.Probe != "" {
-			found, detail, fs, err := s.probe(ctx, rc, e)
+			found, detail, fs, err := s.probe(ctx, cfg, rc, e)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", e.Name, err))
 				continue
@@ -164,7 +165,7 @@ func (s *Scheduler) tick(ctx context.Context, rc *config.Repository) []error {
 		}
 		dataClass := e.DataClass
 		if dataClass == "" {
-			dataClass = s.Cfg.Defaults.DataClass
+			dataClass = cfg.Defaults.DataClass
 		}
 		sum := sha256.Sum256([]byte(text))
 		t := &v1alpha1.Task{
@@ -207,13 +208,13 @@ func (s *Scheduler) settle(key string) {
 
 // probe runs the schedule's probe: whether it found work, the text it adds, and the findings an
 // oracle class's task carries.
-func (s *Scheduler) probe(ctx context.Context, rc *config.Repository, e config.Schedule) (bool, string, []v1alpha1.Finding, error) {
+func (s *Scheduler) probe(ctx context.Context, cfg *config.Config, rc *config.Repository, e config.Schedule) (bool, string, []v1alpha1.Finding, error) {
 	switch e.Probe {
 	case "renovate-red":
 		found, detail, err := s.renovateRed(ctx, rc, e.ProbeAuthor)
 		return found, detail, nil, err
 	case "dead-links":
-		return s.deadLinksProbe(ctx, rc, e)
+		return s.deadLinksProbe(ctx, cfg, rc, e)
 	}
 	return false, "", nil, fmt.Errorf("intake: unknown probe %q", e.Probe)
 }
@@ -234,7 +235,7 @@ func (s *Scheduler) conns(rc *config.Repository) (ScheduleForge, ScheduleMerger,
 // schedule is still open (loops L9); else the findings both newest detector runs agree on. A run
 // the probe does not trust (ErrFindingsRefused) starts nothing: it is logged and counted, not a
 // failed tick.
-func (s *Scheduler) deadLinksProbe(ctx context.Context, rc *config.Repository, e config.Schedule) (bool, string, []v1alpha1.Finding, error) {
+func (s *Scheduler) deadLinksProbe(ctx context.Context, cfg *config.Config, rc *config.Repository, e config.Schedule) (bool, string, []v1alpha1.Finding, error) {
 	cl := rc.Classes[e.Class]
 	if (!cl.Live && !cl.Shadow) || cl.Oracle == nil {
 		return false, "", nil, nil
@@ -290,7 +291,7 @@ func (s *Scheduler) deadLinksProbe(ctx context.Context, rc *config.Repository, e
 	// The stored text is e.Text, a blank line and this detail: all of it within caps.maxTextBytes. A
 	// budget of nothing is "nothing fits", never "no bound".
 	budget := 0
-	if limit := s.Cfg.Caps.MaxTextBytes; limit > 0 {
+	if limit := cfg.Caps.MaxTextBytes; limit > 0 {
 		if budget = limit - len(e.Text) - 2; budget <= 0 {
 			s.remember(key, pair)
 			s.log().Info("dead-links text cap leaves no room", "schedule", e.Name)

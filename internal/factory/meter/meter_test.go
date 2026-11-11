@@ -386,8 +386,8 @@ func TestGateway429sAndThePrincipalsDay(t *testing.T) {
 	remaining := map[string]int64{}
 	m := &Meter{Runs: st, Source: source{"aaaaaaaa": 200, "bbbbbbbb": 5_000_000, "cccccccc": 200_000, "dddddddd": 4_900_000},
 		Throttle: throttled{"aaaaaaaa": true, "bbbbbbbb": true}, B1Ceiling: 5_000_000,
-		Budgets: config.Budgets{EnforcePrincipal: true, FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50},
-		Ledger:  c, Namespace: "agent-system",
+		Cfg:    priced(nil, nil, config.Budgets{EnforcePrincipal: true, FactoryDailyUSD: 42.50, HumanDailyUSD: 8.50}),
+		Ledger: c, Namespace: "agent-system",
 		Now: func() time.Time { return day }, Day: func(p string, n, c int64) { remaining[p] = max(0, c-n) }}
 	if err := m.Tick(context.Background()); err != nil {
 		t.Fatal(err)
@@ -437,8 +437,8 @@ func TestMidnightCrossingSplitsSpend(t *testing.T) {
 	src := source{"aaaaaaaa": 100}
 	c := fake.NewClientBuilder().WithScheme(cmScheme()).Build()
 	m := &Meter{Runs: st, Source: src, Ledger: c, Namespace: "agent-system",
-		Budgets: config.Budgets{EnforcePrincipal: true, HumanDailyUSD: 0.000200}, // 200 micro-USD
-		Now:     func() time.Time { return now }}
+		Cfg: priced(nil, nil, config.Budgets{EnforcePrincipal: true, HumanDailyUSD: 0.000200}), // 200 micro-USD
+		Now: func() time.Time { return now }}
 	if err := m.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}

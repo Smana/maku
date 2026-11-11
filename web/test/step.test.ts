@@ -33,12 +33,14 @@ describe("stepLine", () => {
   it("says tool calls once any call is not the terminal", () => {
     expect(stepLine(tally(c("ok", t(1), t(2)), c("ok", t(3), t(4), "room_read"))).head).toBe("Ran 2 tool calls");
   });
-  it("names rejected then failed calls, and spans first start to last end as m:ss", () => {
+  it("names rejected then failed calls, and spans first start to last end by the duration rule", () => {
     const line = stepLine(tally(c("ok", t(1), t(2)), c("error", t(3), t(4)), c("rejected", t(5), t(16))));
-    expect(line).toEqual({ head: "Ran 3 commands", exceptions: "1 rejected · 1 failed", duration: "0:15" });
+    expect(line).toEqual({ head: "Ran 3 commands", exceptions: "1 rejected · 1 failed", duration: "15 s" });
   });
-  it("rolls seconds over into minutes", () => {
-    expect(stepLine(tally(c("ok", "2026-10-18T07:54:00Z", t(1)), c("ok", t(2), "2026-10-18T07:56:05Z"))).duration).toBe("2:05");
+  it("rolls seconds over into minutes, and minutes into hours", () => {
+    expect(stepLine(tally(c("ok", "2026-10-18T07:54:00Z", t(1)), c("ok", t(2), "2026-10-18T07:56:05Z"))).duration).toBe("2 min");
+    // The page's one duration rule (duration.ts): past the hour, hours and minutes, never "75:03".
+    expect(stepLine(tally(c("ok", "2026-10-18T07:54:00Z", t(1)), c("ok", t(2), "2026-10-18T09:09:03Z"))).duration).toBe("1 h 15 min");
   });
   it("counts plumbing alone as changes", () => {
     expect(stepLine(tally(undefined, undefined)).head).toBe("2 changes");

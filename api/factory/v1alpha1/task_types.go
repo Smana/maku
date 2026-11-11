@@ -397,6 +397,34 @@ type Budget struct {
 	TaskMicroUSD int64 `json:"taskMicroUSD,omitempty"`
 }
 
+// ProfileStatus is the harness profile a task runs under and how it was chosen. Checks and
+// TestFirst are frozen here: a profile removed from config later changes nothing.
+type ProfileStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=label;floor;control;scoper;escalation
+	Source string `json:"source"`
+	// +kubebuilder:validation:Enum=labeled;control;treatment
+	Cohort string `json:"cohort"`
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Recommended string `json:"recommended,omitempty"`
+	// +kubebuilder:validation:MaxLength=200
+	// +optional
+	Why string `json:"why,omitempty"`
+	// +optional
+	Checks bool `json:"checks,omitempty"`
+	// +optional
+	TestFirst bool `json:"testFirst,omitempty"`
+	// +optional
+	Resolved bool `json:"resolved,omitempty"`
+	// +optional
+	Counted bool `json:"counted,omitempty"`
+}
+
 // TaskStatus is the task's audit record: the whole §4 record, including the fields later
 // phases fill.
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.trace) || has(self.trace)",message="a task's trace is never removed: its runs are parented on it"
@@ -413,6 +441,9 @@ type TaskStatus struct {
 	// The C7 answer, recorded as-is (§2).
 	// +optional
 	Classification *Classification `json:"classification,omitempty"`
+	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness.
+	// +optional
+	Profile *ProfileStatus `json:"profile,omitempty"`
 	// +kubebuilder:validation:MaxItems=256
 	// +optional
 	Runs []RunRecord `json:"runs,omitempty"`
@@ -434,10 +465,26 @@ type TaskStatus struct {
 	// the total is final. Written once, with the one TaskTokens the settle records.
 	// +optional
 	UsageSettled bool `json:"usageSettled,omitempty"`
+	// The task's first end (R34): the settle window counts from it, and Outcome is what it ended
+	// as. A later Reverted revises neither.
+	// +optional
+	EndedAt *metav1.Time `json:"endedAt,omitempty"`
+	// +kubebuilder:validation:Enum=accepted;merged_human;no_op;closed;stopped;rejected;reverted;failed
+	// +optional
+	Outcome string `json:"outcome,omitempty"`
+	// A split's part whose outcome the team evaluation counts, under its parent's profile (R32):
+	// written at its triage when the parent has one. Its merge's provenance is read for the mark
+	// (R39), never for the parent.
+	// +optional
+	Evaluated bool `json:"evaluated,omitempty"`
 	// +optional
 	ReviewRounds int32 `json:"reviewRounds,omitempty"`
 	// +optional
 	FixRuns int32 `json:"fixRuns,omitempty"`
+	// FixRuns when the escalation step queued the task's run under its richer profile: the step
+	// grants a fresh allowance, so merge.fixRuns counts from here (R33).
+	// +optional
+	FixRunsBeforeStep int32 `json:"fixRunsBeforeStep,omitempty"`
 	// Re-runs of a cancelled required check, capped by merge.checkReruns. A cancelled check is
 	// not a failure, so it never spends a fix run.
 	// +optional
@@ -479,6 +526,9 @@ type TaskStatus struct {
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	Outbox []Narration `json:"outbox,omitempty"`
+	// StatusComment is the issue's one live status comment and its last successful remote body.
+	// +optional
+	StatusComment *StatusComment `json:"statusComment,omitempty"`
 	// The last clientSeq the task took for a task_state message or its facts in its room (ruling
 	// SK). The broker keeps one message per clientSeq, so the ledger is its own field, never trimmed
 	// like narrated, and only rises: the next message is roomSeq + 1, persisted before it is posted.
@@ -491,7 +541,7 @@ type TaskStatus struct {
 	Facts *FactsLedger `json:"facts,omitempty"`
 	// The trigger of the next implementer run, set when the task goes back to Queued (Δ5) and
 	// cleared once that run exists.
-	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume
+	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation
 	// +optional
 	NextTrigger string `json:"nextTrigger,omitempty"`
 	// The scoper's outcome (scoper design SC12), set once when its run ends and kept when the task
@@ -521,6 +571,10 @@ type TaskStatus struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	ConfigHash string `json:"configHash,omitempty"`
+	// The generations of the factory's resources the task was triaged under (factory resources
+	// D5): recorded, not pinned. Unset when every generation is zero (the file served it).
+	// +optional
+	ConfigGenerations *ConfigGenerations `json:"configGenerations,omitempty"`
 	// The last room event seen for the running run (stuck detection, §6.3).
 	// +optional
 	LastActivity *metav1.Time `json:"lastActivity,omitempty"`
@@ -533,6 +587,20 @@ type TaskStatus struct {
 	// Result is an integration Task's outcome (MR10).
 	// +optional
 	Result *IntegrationResult `json:"result,omitempty"`
+}
+
+// StatusComment is the durable identity, last successful body and activity of a task's issue status comment.
+type StatusComment struct {
+	// +optional
+	ID int64 `json:"id,omitempty"`
+	// +kubebuilder:validation:MaxLength=4096
+	// +optional
+	Body string `json:"body,omitempty"`
+	// Inactive means this Task no longer owes status updates after a permanent refusal or an
+	// ownership stand-down. It does not mean the last remote write succeeded; ID and Body keep
+	// their last successful values.
+	// +optional
+	Inactive bool `json:"inactive,omitempty"`
 }
 
 // ScopeStatus is the scoper's outcome on its task.
@@ -654,7 +722,7 @@ type RunRecord struct {
 	// +kubebuilder:validation:Enum=implementer;reviewer;tester;triager
 	Role string `json:"role"`
 	// Why the run exists.
-	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume
+	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation
 	Trigger string `json:"trigger"`
 	// +optional
 	Round int32 `json:"round,omitempty"`
@@ -848,6 +916,9 @@ type PullRequestRef struct {
 	MergedBy string `json:"mergedBy,omitempty"`
 	// +optional
 	AutoMerged bool `json:"autoMerged,omitempty"`
+	// HumanCommits is never cleared: one human commit makes the merge merged_human, not accepted.
+	// +optional
+	HumanCommits bool `json:"humanCommits,omitempty"`
 	// MergedHow says who judged the merge the merger made (human path AM1): "class", the class's
 	// own conditions (AutoMerged), or "approved", a maintainer's approval of the head, named in
 	// ApprovedBy. Empty for a merge the merger did not make.
@@ -926,10 +997,19 @@ type Usage struct {
 type Narration struct {
 	// +kubebuilder:validation:MaxLength=128
 	Key string `json:"key"`
-	// The issue or PR it goes to.
-	// +kubebuilder:validation:Minimum=1
+	// The issue or PR it goes to; 0 waits for the task's first target (a profile announcement
+	// queued before a schedule's task has a pull request).
+	// +kubebuilder:validation:Minimum=0
 	Number int `json:"number"`
 	// The factory's own words, never text a user wrote.
 	// +kubebuilder:validation:MaxLength=4096
 	Body string `json:"body"`
+}
+
+// ConfigGenerations are the generations of the factory's resources a task was triaged under
+// (factory resources D5): recorded, not pinned. Zero means the file.
+type ConfigGenerations struct {
+	Factory     int64 `json:"factory,omitempty"`
+	Repository  int64 `json:"repository,omitempty"`
+	MergePolicy int64 `json:"mergePolicy,omitempty"`
 }

@@ -267,19 +267,15 @@ type Meter struct {
 	PerReplica bool
 	// Throttle maps gateway 429s to runs; nil: no 429 mapping (VL implements it).
 	Throttle Throttled
-	// Budgets are the daily ceilings; enforced only when EnforcePrincipal (R3's shadow first).
-	Budgets config.Budgets
+	// Cfg is the live config, read once per tick (factory resources D12): budgets (the daily
+	// ceilings, enforced only when EnforcePrincipal, R3's shadow first), meter.prices, each
+	// tier's USD run cap (RunUSD), and harnessProfiles, which bound a run's cost profile label
+	// (R40). nil reads an empty config: no price, no cap, no budget, no profile.
+	Cfg config.Source
 	// B1Ceiling is the gateway's per-run ceiling (config.RunTokenCeiling), in the unit B1 charges
 	// (b1Spend): a 429 at or above it is the run spending its own bucket, below it the fleet's
 	// (R13). Zero: never name B1.
 	B1Ceiling int64
-	// Prices are meter.prices, by the model that served the tokens (or the claim's logical model,
-	// for tokens no model label names); RunUSD each tier's USD run cap (config.Tier.RunUSD). A run
-	// of a tier with a cap is revoked on its USD cost, not its MaxTokens, when every model that
-	// served it is priced and its reading typed; otherwise on MaxTokens, reported through
-	// OnFallback.
-	Prices map[string]config.Price
-	RunUSD map[string]float64
 	// Costs receives each tick's run costs, for the task cap; nil: nobody reads them.
 	Costs *Costs
 	Every time.Duration
@@ -302,7 +298,7 @@ type Meter struct {
 	// with its tier and costRole: endSettle after the meter, having seen it live, sees it end, or
 	// when it is deleted first. OnFallback of a run of a USD-capped tier capped in tokens instead,
 	// once per run.
-	OnCost     func(ctx context.Context, tier, role string, usd float64, byModel map[string]float64)
+	OnCost     func(ctx context.Context, key CostKey, usd float64, byModel map[string]float64)
 	OnFallback func(ctx context.Context, why string)
 	// OnLateCost is told of what a run spent after its cost was reported, by served model: a
 	// reading slower than endSettle corrects the total spend, never the reported cost.
@@ -352,7 +348,7 @@ type Meter struct {
 	pruned   string                      // the last UTC day whose old ledgers were deleted
 	told     map[string]bool             // the principals Day was told of on toldDay
 	toldDay  string                      // the UTC day told counts
-	live     map[string]costKey          // priced runs seen live, by tier and role: their cost is still to report
+	live     map[string]CostKey          // priced runs seen live, by tier and role: their cost is still to report
 	ended    map[string]time.Time        // live-seen runs, by when this meter first saw them ended
 	settled  map[string]map[string]int64 // reported runs: the micro-USD by served model reported
 	fell     map[string]bool             // runs whose fallback was reported
@@ -616,8 +612,8 @@ func (m *Meter) unsettled(id string) int64 {
 
 // usdCap is the run's cap in micro-USD, or 0 and why it is capped in tokens instead ("" for a
 // tier with no USD cap). why is the run's pricing verdict this tick: "" when priced or unread.
-func (m *Meter) usdCap(r runs.Run, why string) (int64, string) {
-	tier := int64(math.Round(m.RunUSD[r.Tier] * 1e6))
+func usdCap(runUSD map[string]float64, r runs.Run, why string) (int64, string) {
+	tier := int64(math.Round(runUSD[r.Tier] * 1e6))
 	// An api task's run carries its own cap, a third of its ceiling (F4, C-1): the lower holds.
 	c := r.MaxMicroUSD
 	if tier > 0 && (c <= 0 || tier < c) {
@@ -630,6 +626,38 @@ func (m *Meter) usdCap(r runs.Run, why string) (int64, string) {
 		return 0, why
 	}
 	return c, ""
+}
+
+// inputs are what one tick reads of the live config (factory resources D12).
+type inputs struct {
+	prices   map[string]config.Price
+	runUSD   map[string]float64
+	budgets  config.Budgets
+	profiles map[string]config.HarnessProfile
+}
+
+// inputs loads the config once: meter.prices, by the model that served the tokens (or the
+// claim's logical model, for tokens no model label names); each tier's USD run cap (RunUSD); the
+// budgets; the harness profiles. A run of a tier with a cap is revoked on its USD cost, not its
+// MaxTokens, when every model that served it is priced and its reading typed; otherwise on
+// MaxTokens, reported through OnFallback.
+func (m *Meter) inputs() inputs {
+	if m.Cfg == nil {
+		return inputs{}
+	}
+	cfg := m.Cfg.Current()
+	return inputs{prices: cfg.Meter.Prices, runUSD: RunUSD(cfg), budgets: cfg.Budgets, profiles: cfg.HarnessProfiles}
+}
+
+// RunUSD is each tier's USD run cap (config.Tier.RunUSD), for the tiers that set one.
+func RunUSD(cfg *config.Config) map[string]float64 {
+	out := map[string]float64{}
+	for name, t := range cfg.Tiers {
+		if t.RunUSD > 0 {
+			out[name] = t.RunUSD
+		}
+	}
+	return out
 }
 
 // forget drops the memory of runs that no longer exist, first reporting the cost of any deleted
@@ -744,6 +772,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 		}
 	}
 	defer m.forget(ctx, all)
+	in := m.inputs() // the config, once for this tick
 	day := m.now().UTC().Format(ledger.DayLayout)
 	// What a failed write landed, and what earlier meters settled, before any run is charged.
 	learnErr := errors.Join(m.resolve(ctx), m.learn(ctx, all))
@@ -767,7 +796,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 		case !u.Typed:
 			why = FallbackUntyped
 		default:
-			raw, model := runCosts(m.Prices, r.Model, u)
+			raw, model := runCosts(in.prices, r.Model, u)
 			if model != "" {
 				why = FallbackUnpriced
 				m.unpriced(ctx, r, model)
@@ -790,7 +819,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 			c.Served = u.served()
 			costs[r.ID] = c
 		}
-		if caps[r.ID], why = m.usdCap(r, why); why != "" {
+		if caps[r.ID], why = usdCap(in.runUSD, r, why); why != "" {
 			m.fallback(ctx, r, why)
 		}
 		if n := m.unsettled(r.ID); n > 0 { // charged to the day it is observed in (R07)
@@ -828,7 +857,7 @@ func (m *Meter) Tick(ctx context.Context) error {
 			m.charge(ctx, a, charge)
 		}
 		if m.Day != nil {
-			m.tellDay(day, spent)
+			m.tellDay(in.budgets, day, spent)
 		}
 	}
 	for _, r := range all {
@@ -841,12 +870,12 @@ func (m *Meter) Tick(ctx context.Context) error {
 		}
 		var limit string
 		if !runs.Terminal(r.Phase) && r.Revoked == "" {
-			if reason, l := m.revocation(r, n, b1Spend(n, usd, r.ID), usd[r.ID], caps[r.ID], hit[r.ID],
-				m.daySpent(r, spent)); reason != "" {
+			if reason, l := m.revocation(in.budgets, r, n, b1Spend(n, usd, r.ID), usd[r.ID], caps[r.ID], hit[r.ID],
+				daySpent(in.budgets, r, spent)); reason != "" {
 				kv[runs.AnnRevoked], limit = reason, l
 			}
 		}
-		m.observeCost(ctx, r, usd)
+		m.observeCost(ctx, r, usd, in.profiles)
 		if len(kv) == 0 {
 			continue
 		}
@@ -1233,12 +1262,12 @@ func charged(r runs.Run) []string {
 //
 // Unless EnforcePrincipal (R3's shadow), only a sponsored principal's day counts: it is a bound
 // whatever that flag says (F4, R7).
-func (m *Meter) daySpent(r runs.Run, spent map[string]int64) bool {
+func daySpent(b config.Budgets, r runs.Run, spent map[string]int64) bool {
 	for _, k := range charged(r) {
-		if !m.Budgets.EnforcePrincipal && !m.Budgets.Sponsored(k) {
+		if !b.EnforcePrincipal && !b.Sponsored(k) {
 			continue
 		}
-		if spent != nil && spent[k] >= m.dailyCap(k) {
+		if spent != nil && spent[k] >= b.DailyMicroUSD(k) {
 			return true
 		}
 	}
@@ -1248,9 +1277,9 @@ func (m *Meter) daySpent(r runs.Run, spent map[string]int64) bool {
 // revocation names why a live run must stop, and the limit that fired, in the order the design
 // lists the caps (C5). A run capped in USD is not held to its MaxTokens: pricing cache reads at
 // their own rate is the point (OD-3), and B1 bounds the same money at the gateway.
-func (m *Meter) revocation(r runs.Run, tokens, b1, usd, capUSD int64, throttled bool, daySpent bool) (reason, limit string) {
+func (m *Meter) revocation(b config.Budgets, r runs.Run, tokens, b1, usd, capUSD int64, throttled bool, daySpent bool) (reason, limit string) {
 	switch {
-	case r.MaxMicroUSD <= 0 && m.Budgets.Sponsored(r.ChargedTo): // F4, N-1: fail closed, never on the tier's cap
+	case r.MaxMicroUSD <= 0 && b.Sponsored(r.ChargedTo): // F4, N-1: fail closed, never on the tier's cap
 		return ReasonBudgetRun, LimitRunUSD
 	case capUSD > 0 && usd >= capUSD:
 		return ReasonBudgetRun, LimitRunUSD
@@ -1331,7 +1360,7 @@ func (m *Meter) excludesCache(ctx context.Context, r runs.Run, model string) {
 // observeCost reports a priced run's cost once, endSettle after the first tick that sees it
 // ended following one that saw it live: a run that ended before this meter started is not
 // counted again.
-func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int64) {
+func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int64, profiles map[string]config.HarnessProfile) {
 	if _, priced := usd[r.ID]; !priced {
 		return
 	}
@@ -1341,9 +1370,9 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 	}
 	if !runs.Terminal(r.Phase) {
 		if m.live == nil {
-			m.live = map[string]costKey{}
+			m.live = map[string]CostKey{}
 		}
-		m.live[r.ID] = costKey{tier: r.Tier, role: costRole(r)}
+		m.live[r.ID] = CostKey{Tier: r.Tier, Role: costRole(r), Cohort: r.Cohort, Profile: profileLabel(profiles, r.Profile)}
 		return
 	}
 	if _, ok := m.live[r.ID]; !ok {
@@ -1362,8 +1391,18 @@ func (m *Meter) observeCost(ctx context.Context, r runs.Run, usd map[string]int6
 	}
 }
 
-// costKey is what a run's cost is reported by: its tier and costRole.
-type costKey struct{ tier, role string }
+// CostKey is what a run's cost is reported by: its tier and costRole, and the task's cohort and
+// profile when the run started (R34), "" without.
+type CostKey struct{ Tier, Role, Cohort, Profile string }
+
+// profileLabel bounds a claim's profile annotation to the configured harnessProfiles (R40): a
+// value anyone could write, or a profile since removed, is "other"; none stays "".
+func profileLabel(profiles map[string]config.HarnessProfile, p string) string {
+	if _, ok := profiles[p]; p == "" || ok {
+		return p
+	}
+	return "other"
+}
 
 // costRole is the role a run's cost is reported under (harness roles HR6): the claim's role, except
 // that a factory triager run whose brief opens with the scoper marker is "scoper". The marker counts
@@ -1395,7 +1434,7 @@ func (m *Meter) report(ctx context.Context, id string) {
 	}
 	m.settled[id] = at
 	if m.OnCost != nil {
-		m.OnCost(ctx, key.tier, key.role, float64(e.usd)/1e6, by)
+		m.OnCost(ctx, key, float64(e.usd)/1e6, by)
 	}
 }
 
@@ -1430,22 +1469,20 @@ func (m *Meter) liveSpend() map[string]map[string]float64 {
 	return out
 }
 
-func (m *Meter) dailyCap(principal string) int64 { return m.Budgets.DailyMicroUSD(principal) }
-
 // tellDay hands Day every principal in day's ledger. At a day's first tick it first tells each
 // principal of the day before that is not in it yet a spend of 0: a gauge moves only when
 // recorded, and an 80% alert must not outlive midnight (TC8).
-func (m *Meter) tellDay(day string, spent map[string]int64) {
+func (m *Meter) tellDay(b config.Budgets, day string, spent map[string]int64) {
 	if m.toldDay != day {
 		for p := range m.told {
 			if _, ok := spent[p]; !ok {
-				m.Day(p, 0, m.dailyCap(p))
+				m.Day(p, 0, b.DailyMicroUSD(p))
 			}
 		}
 		m.told, m.toldDay = map[string]bool{}, day
 	}
 	for p, n := range spent {
-		m.Day(p, n, m.dailyCap(p))
+		m.Day(p, n, b.DailyMicroUSD(p))
 		m.told[p] = true
 	}
 }

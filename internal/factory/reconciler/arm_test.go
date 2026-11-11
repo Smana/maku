@@ -431,7 +431,7 @@ func TestAValidApprovalArmsBesideAMovedOne(t *testing.T) {
 // not a human's.
 func TestAnApprovalArmsOutsideTheCaps(t *testing.T) {
 	for name, spent := range map[string]func(*ArmInputs){
-		"the day's cap":   func(in *ArmInputs) { in.ArmedToday = in.Cfg.Merge.AutoMergesPerDay },
+		"the day's cap":   func(in *ArmInputs) { in.ArmedToday = in.Cfg.Current().Merge.AutoMergesPerDay },
 		"the class's cap": func(in *ArmInputs) { in.ClassArmedToday = 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -535,8 +535,8 @@ func TestTheGateReadsTheHeadsPushForAnApproval(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Merge.ApproveToMerge = true
-			g.r.Cfg.Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+			g.r.Cfg.Current().Merge.ApproveToMerge = true
+			g.r.Cfg.Current().Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
 			pr, _ := g.f.PullRequest(t.Context(), 12)
 			pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now}}
 			g.f.SetPR(pr)

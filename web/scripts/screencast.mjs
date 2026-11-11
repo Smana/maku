@@ -8,9 +8,9 @@
 //     node web/scripts/screencast.mjs docs/assets/maku-room.webp
 //
 // Recorded in a 1100×800 window, the narrowest that keeps the rail beside the conversation (it
-// folds to dots below 1100 px), at device scale 2. A camera then crops each frame, wide for the
-// room list, the steer and the approval, close on the rail while a node draws and through the
-// finished task's Replay, and scales it to 800×582, the width the README shows it at. Frames are
+// folds to a labelled strip below 1100 px), at device scale 2. A camera then crops each frame, wide for the
+// room list, the steer and the approval, close on the rail while a node draws and on the
+// finished task's rail, and scales it to 800×582, the width the README shows it at. Frames are
 // assembled by img2webp (libwebp) if on PATH, else by magick.
 
 import { spawn, execFileSync, spawnSync } from "node:child_process";
@@ -31,7 +31,6 @@ const outW = 800, outH = 582;
 const aspect = outW / outH;
 const wide = { x: 0, y: 0, w: W, h: W / aspect };
 const defaultFrameMs = 120;
-const replayMaxMs = 20_000; // Replay's own cap
 const listMs = 2_500;
 const demoMaxMs = 60_000; // the approval card is held on screen, whatever the speed
 const holdMs = 2_000; // the ending (the Next box, the rail's last state) stays on screen
@@ -88,28 +87,6 @@ async function record(page, ms, frames, dir, { done = async () => false, scroll 
 
 // SCREENCAST_FRAMES=DIR keeps the frames there, to look at before committing the WebP.
 const kept = process.env.SCREENCAST_FRAMES;
-// Chrome's own screencast: a frame per paint, at its paint time, so short transitions stay
-// smooth where a screenshot loop stutters.
-async function paints(page, ms, frames, dir, done, crop) {
-  const cdp = await page.context().newCDPSession(page);
-  const shot = [];
-  cdp.on("Page.screencastFrame", ({ data, metadata, sessionId }) => {
-    const file = join(dir, `p${String(frames.length + shot.length).padStart(5, "0")}.jpg`);
-    writeFileSync(file, Buffer.from(data, "base64"));
-    shot.push({ file, at: metadata.timestamp * 1000 });
-    void cdp.send("Page.screencastFrameAck", { sessionId });
-  });
-  await cdp.send("Page.startScreencast", { format: "jpeg", quality: 92, everyNthFrame: 1 });
-  const end = Date.now() + ms;
-  while (Date.now() < end && !(await done())) await new Promise((r) => setTimeout(r, 100));
-  await cdp.send("Page.stopScreencast");
-  await cdp.detach();
-  for (let i = 0; i < shot.length; i++) {
-    const next = shot[i + 1]?.at ?? shot[i].at + 40;
-    frames.push({ file: shot[i].file, crop, ms: Math.max(16, Math.round(next - shot[i].at)) });
-  }
-}
-
 // settleCamera turns each frame's target into where the camera is by then: it eases towards a new
 // target over about a second, so a zoom reads as a move and not a cut.
 function settleCamera(frames) {
@@ -201,19 +178,14 @@ try {
   const end = await onRail(page);
   await record(page, holdMs, frames, dir, { at: async () => ({ crop: end }) });
 
-  // A finished task replays its rail: the diagram drawn node by node, close up.
+  // A finished task's rail, close up; its card names every model that served a step.
   await page.goto("http://127.0.0.1:4181/preview/full.html?finished&theme=light");
   await page.addStyleTag({ content: spotlightCSS });
-  const replay = page.locator(".rail-replay", { hasText: "Replay" });
-  await replay.waitFor();
+  await page.locator(".rail-node").first().waitFor();
   await spotlight(page, true);
   const close = await onRail(page);
   await record(page, 1_200, frames, dir, { at: async () => ({ crop: close }) });
-  await replay.click();
-  await page.waitForTimeout(100);
-  await paints(page, replayMaxMs, frames, dir, () => replay.isVisible(), close);
   await record(page, holdMs, frames, dir, { at: async () => ({ crop: close }) });
-  // The card names every model that served a step.
   await page.locator('.rail-node:has(.rail-persona:text-is("implementer")) .rail-button').first().hover();
   await record(page, holdMs, frames, dir, { at: async () => ({ crop: close }) });
   await browser.close();

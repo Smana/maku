@@ -792,3 +792,28 @@ func TestCIEvidenceIsOffByDefault(t *testing.T) {
 		t.Fatal("a switch outside brief must fail the rollout (§4)")
 	}
 }
+
+// CheckShape refuses what no resource can fix and passes what resources may complete.
+func TestCheckShape(t *testing.T) {
+	for name, tc := range map[string]struct {
+		raw     string
+		wantErr string
+	}{
+		"plumbing only, invalid as a whole": {"factory: aws-0\n", ""},
+		"empty":                             {"", "the file is empty"},
+		"null document":                     {"null\n", "the file is empty"},
+		"not YAML":                          {"factory: [aws-0\n", "config:"},
+		"unknown key":                       {"factory: aws-0\nbrokr: {}\n", "config:"},
+		"hardening written twice":           {"hardening: {mode: off}\nhardening: {mode: off}\n", "config:"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := CheckShape([]byte(tc.raw))
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("err %v, want none", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("err %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

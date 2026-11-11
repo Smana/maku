@@ -130,19 +130,32 @@ func TestTwoRepositories(t *testing.T) {
 	if b.NeedsMerger() || !a.NeedsMerger() || !c.NeedsMerger() {
 		t.Fatal("the merger is needed when any repository's class is live or shadow")
 	}
-	if u := c.RepositoryFor("Smana/unlisted"); u.Name != "Smana/unlisted" || len(u.Maintainers) != 0 || len(u.Classes) != 0 || len(u.Merge.RequiredChecks) != 0 {
-		t.Fatalf("an unlisted repository among several gets nothing: %+v", u)
+	if u := c.RepositoryFor("Smana/unlisted"); u != nil {
+		t.Fatalf("an unlisted repository among several is not served: %+v", u)
 	}
 }
 
-// One entry governs every task, whatever repository the task names: the behaviour before the list.
-func TestOneEntryGovernsEveryName(t *testing.T) {
+// One entry governs a task that names no repository, the behaviour before the list; a task that
+// names another repository is not served, so a repository removed by a publish is never decided
+// under the remaining one's settings (factory resources D12).
+func TestOneEntryGovernsOnlyTheUnnamed(t *testing.T) {
 	c, err := Parse([]byte(good))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := c.RepositoryFor("Smana/elsewhere"); r.Name != "Smana/cloud-native-ref" || !r.IsMaintainer("Smana") {
+	if r := c.RepositoryFor(""); r == nil || r.Name != "Smana/cloud-native-ref" || !r.IsMaintainer("Smana") {
 		t.Fatalf("%+v", r)
+	}
+	if r := c.RepositoryFor("Smana/elsewhere"); r != nil {
+		t.Fatalf("an unlisted name is served by the only entry: %+v", r)
+	}
+	// nil answers no maintainer and no merger: a caller that only asks those stands down.
+	var none *Repository
+	if none.IsMaintainer("Smana") || none.NeedsMerger() || none.AnyLive() || none.AnyMonitored() || none.TestFirstFor("x") {
+		t.Fatal("a repository not served has no maintainer and no class")
+	}
+	if on, _ := none.ChecksFor("x"); on {
+		t.Fatal("a repository not served runs no checks")
 	}
 }
 

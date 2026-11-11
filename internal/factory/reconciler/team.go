@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -29,8 +31,8 @@ const roomLogPatience = 30 * time.Minute
 
 // nextVerifier is the template's next reviewer after role, or "" when none follows. The tester is
 // the test writer since v3 feature 4 (TO1): a template that still lists it loads without it.
-func (r *Reconciler) nextVerifier(t *v1alpha1.Task, after string) string {
-	roles := r.Cfg.Templates[t.Spec.Template].Roles
+func (r *Reconciler) nextVerifier(cfg *config.Config, t *v1alpha1.Task, after string) string {
+	roles := cfg.Templates[t.Spec.Template].Roles
 	i := slices.Index(roles, after)
 	if i < 0 {
 		return ""
@@ -53,14 +55,14 @@ func otherTier(tier string) string {
 
 // verifierSpec: a read-only role starts from the task's branch with the pull request as its task (R25);
 // startVerifier adds a reviewer's brief (HR4), which needs the room.
-func (r *Reconciler) verifierSpec(t *v1alpha1.Task, role string) runs.Spec {
-	s := r.implementerSpec(t, "")
+func (r *Reconciler) verifierSpec(cfg *config.Config, t *v1alpha1.Task, role string) runs.Spec {
+	s := r.implementerSpec(cfg, t, "")
 	s.Role, s.TaskText, s.TaskURL, s.BaseRef = role, "", t.Status.PullRequest.URL, "agent/"+t.Name
-	r.withChecks(&s, t)
+	r.withChecks(cfg, &s, t)
 	if role == "reviewer" { // "on a different tier from the implementer where possible" (§3); R47
 		s.Tier = otherTier(t.Spec.Budget.Tier)
-		s.Model = r.Cfg.Tiers[s.Tier].Model
-		if m := r.Cfg.Templates[t.Spec.Template].ReviewerModel; m != "" {
+		s.Model = cfg.Tiers[s.Tier].Model
+		if m := cfg.Templates[t.Spec.Template].ReviewerModel; m != "" {
 			s.Model = m
 		}
 	}
@@ -79,18 +81,18 @@ func (r *Reconciler) requestVerifier(t *v1alpha1.Task, role string) {
 // the chain starts again from the template's first verifier, so a ready task holds every
 // verifier's approve of the same head. When a chain begins the run before is the implementer, whose
 // record has no head, and NextRole is the first verifier already.
-func (r *Reconciler) startVerifier(ctx context.Context, t *v1alpha1.Task, pr forge.PR) error {
+func (r *Reconciler) startVerifier(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) error {
 	role := t.Status.NextRole
 	if role == "tester" { // queued before the tester became the test writer: it is the reviewer's turn
-		if role = r.nextVerifier(t, "implementer"); role == "" {
+		if role = r.nextVerifier(cfg, t, "implementer"); role == "" {
 			t.Status.NextRole = ""
 			return r.ready(ctx, t)
 		}
 	}
 	if current(t).HeadSHA != pr.HeadSHA {
-		role = r.nextVerifier(t, "implementer")
+		role = r.nextVerifier(cfg, t, "implementer")
 	}
-	s := r.verifierSpec(t, role)
+	s := r.verifierSpec(cfg, t, role)
 	if role == "reviewer" { // HR4: the factory's brief rides beside the pull request (task.url)
 		sc, err := r.taskScope(ctx, t)
 		if err != nil {
@@ -99,7 +101,7 @@ func (r *Reconciler) startVerifier(ctx context.Context, t *v1alpha1.Task, pr for
 		s.TaskText = ReviewerBrief(t, r.Nonce(), sc)
 	}
 	s.Head = pr.HeadSHA // rides the claim (AnnHead): a replay that records the run knows its head
-	if err := r.startRun(ctx, t, s, "review"); err != nil {
+	if err := r.startRun(ctx, cfg, t, s, "review"); err != nil {
 		return err
 	}
 	t.Status.NextRole = ""
@@ -114,22 +116,22 @@ func (r *Reconciler) ready(_ context.Context, t *v1alpha1.Task) error {
 
 // maxRounds is the template's bound on review rounds: every revision a verdict asks for, and every
 // review run that has to start again, uses one.
-func (r *Reconciler) maxRounds(t *v1alpha1.Task) int32 {
-	return r.Cfg.Templates[t.Spec.Template].MaxReviewRounds
+func (r *Reconciler) maxRounds(cfg *config.Config, t *v1alpha1.Task) int32 {
+	return cfg.Templates[t.Spec.Template].MaxReviewRounds
 }
 
 // reviewing waits for the reviewer run to end, then acts on its own verdict: an approve
 // of the pull request's unmoved head goes to the next verifier or to ready; changes send the task
 // back to Queued for a revision, until the rounds run out; anything else is no verdict.
-func (r *Reconciler) reviewing(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	run, found, err := r.observe(ctx, t)
 	if err != nil {
 		return err
 	}
 	if !found {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, r.lostReason(ctx, t))
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, r.lostReason(ctx, t))
 	}
-	if err := r.boundPending(ctx, t, run); err != nil {
+	if err := r.boundPending(ctx, cfg, t, run); err != nil {
 		return err
 	}
 	if !runs.Terminal(run.Phase) {
@@ -137,7 +139,7 @@ func (r *Reconciler) reviewing(ctx context.Context, t *v1alpha1.Task) error {
 			if err != nil {
 				return err
 			}
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, "stuck")
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "stuck")
 		}
 		return nil
 	}
@@ -147,21 +149,21 @@ func (r *Reconciler) reviewing(ctx context.Context, t *v1alpha1.Task) error {
 	}
 	cur := current(t)
 	cur.Reason = reason
-	r.interventions(ctx, t)
+	r.interventions(ctx, cfg, t)
 	v, why, err := r.verdict(ctx, t)
 	if err != nil {
-		return r.roomUnreadable(ctx, t, err)
+		return r.roomUnreadable(ctx, cfg, t, err)
 	}
 	if why != "" {
 		switch {
-		case r.resumable(t, run):
-			r.resume(ctx, t, run)
+		case r.resumable(cfg, t, run):
+			r.resume(ctx, cfg, t, run)
 			return nil
-		case infraLost(run) && !runFits(t) && r.Cfg.Budgets.EnforceTask:
+		case infraLost(run) && !runFits(t) && cfg.Budgets.EnforceTask:
 			// As a lost implementer: noVerdict would narrate a review run that queued() then refuses.
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, "resume_budget")
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "resume_budget")
 		}
-		return r.noVerdict(ctx, t, why)
+		return r.noVerdict(ctx, cfg, t, why)
 	}
 	if v.Verdict == "approve" {
 		// A pull request merged or closed meanwhile ends the task through ready's AwaitingCI, or
@@ -173,19 +175,18 @@ func (r *Reconciler) reviewing(ctx context.Context, t *v1alpha1.Task) error {
 		// Never approve a moved head: the verdict names the commit the run was given, which is
 		// still the pull request's head. An adopted run's head is "", which no commit prefixes.
 		if pr.HeadSHA != cur.HeadSHA || !strings.HasPrefix(cur.HeadSHA, v.Commit) {
-			return r.noVerdict(ctx, t, "verdict_stale")
+			return r.noVerdict(ctx, cfg, t, "verdict_stale")
 		}
 		cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
-		if next := r.nextVerifier(t, cur.Role); next != "" {
+		if next := r.nextVerifier(cfg, t, cur.Role); next != "" {
 			r.requestVerifier(t, next)
 			return nil
 		}
 		return r.ready(ctx, t)
 	}
 	cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
-	if t.Status.ReviewRounds >= r.maxRounds(t) {
-		narrateOn(t, t.Status.PullRequest.Number, narrate.RoundsExhausted(t, v))
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "review_rounds_exhausted")
+	if t.Status.ReviewRounds >= r.maxRounds(cfg, t) {
+		return r.roundsExhausted(ctx, cfg, t, v)
 	}
 	t.Status.ReviewRounds++
 	t.Status.NextTrigger = "review"
@@ -196,10 +197,10 @@ func (r *Reconciler) reviewing(ctx context.Context, t *v1alpha1.Task) error {
 // roomUnreadable: the run ended and its verdict is in a room the factory cannot read. The task
 // says so while it retries; a room the broker has no log for escalates at once, and any other
 // failure roomLogPatience after the run's end. Never an approve.
-func (r *Reconciler) roomUnreadable(ctx context.Context, t *v1alpha1.Task, err error) error {
+func (r *Reconciler) roomUnreadable(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, err error) error {
 	if errors.Is(err, rooms.ErrNoRoom) || r.Now().Sub(current(t).Finished.Time) >= roomLogPatience {
 		r.log().Warn("review verdict unreadable", "task.id", t.Name, "run.id", current(t).ID, "err", err)
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "room_log_unreadable")
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "room_log_unreadable")
 	}
 	t.Status.Reason = "waiting_room_log"
 	return err
@@ -230,18 +231,29 @@ func (r *Reconciler) verdict(ctx context.Context, t *v1alpha1.Task) (rooms.Verdi
 // noVerdict fails closed: a review run that ended without a verdict the factory can act on is never
 // an approve. A new run of the same role is queued while review rounds remain; then the task
 // escalates.
-func (r *Reconciler) noVerdict(ctx context.Context, t *v1alpha1.Task, why string) error {
+func (r *Reconciler) noVerdict(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, why string) error {
 	cur := current(t)
 	cur.Verdict, t.Status.Verdict = "none", "none"
-	if t.Status.ReviewRounds >= r.maxRounds(t) {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, "no_verdict")
+	if t.Status.ReviewRounds >= r.maxRounds(cfg, t) {
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "no_verdict")
 	}
 	t.Status.ReviewRounds++
 	// Past an enforced cap queued() escalates budget-task, after lateReviews (#30): never narrate a
 	// review run it refuses.
-	if runFits(t) || !r.Cfg.Budgets.EnforceTask {
+	if runFits(t) || !cfg.Budgets.EnforceTask {
 		narrateLater(t, narrate.NoVerdict(t, cur.ID, why))
 	}
 	r.requestVerifier(t, cur.Role)
+	return nil
+}
+
+// roundsExhausted escalates a task out of review rounds unless it steps; only an escalation narrates the verdict.
+func (r *Reconciler) roundsExhausted(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, v rooms.Verdict) error {
+	const reason = "review_rounds_exhausted"
+	if stepped, err := r.stepUp(ctx, cfg, t, reason); stepped || err != nil {
+		return err
+	}
+	narrateOn(t, t.Status.PullRequest.Number, narrate.RoundsExhausted(t, v))
+	r.ended(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 	return nil
 }

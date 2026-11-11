@@ -32,7 +32,7 @@ func queuedFor(name, reason string, runCount int) *v1alpha1.Task {
 func TestAFirstRunYieldsToARevision(t *testing.T) {
 	ctx := t.Context()
 	g := newRig(t, queuedFor("bbbbbbbb", "waiting_run_slot", 2), roomOf("bbbbbbbb"), issueTask("aaaaaaaa", 7, "x"))
-	g.r.Cfg.Caps.PreferRevisions = true
+	g.r.Cfg.Current().Caps.PreferRevisions = true
 	tk := g.reconcile(t, "aaaaaaaa", 3) // Received → Triaged → Queued
 	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Reason != "waiting_revision_first" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
@@ -73,7 +73,7 @@ func TestANeighbourOnACapIsNoReasonToYield(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t, queuedFor("bbbbbbbb", c.neighbour, 2), issueTask("aaaaaaaa", 7, "x"))
-			g.r.Cfg.Caps.PreferRevisions = true
+			g.r.Cfg.Current().Caps.PreferRevisions = true
 			for i := range c.live {
 				id := "zzzzzzz" + string(rune('a'+i))
 				g.runs.runs[id] = runs.Run{ID: id, Principal: runs.PrincipalFactory, Phase: "Running"}

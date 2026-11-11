@@ -2,6 +2,7 @@
 
 // The run rail's flows for full.html, built on test/fixtures/live-session.jsonl: one implementer
 // run, ikely2yk, whose log seqs are 4 (joined) to 27 (the last event; 3 ok and 1 rejected result).
+// Its steered count is one past the log's one steer (seq 18), so the card shows "1 earlier".
 // The runs before it are facts the log of this room does not hold, so their fromSeq is 0.
 
 import { ghostsAfter } from "../src/flow";
@@ -20,11 +21,11 @@ const scoper: FlowNode = {
 // A node's edge names the edge into it, from the node before.
 const tester: FlowNode = {
   run: "testerb3", persona: "tester", role: "tester", round: 1, startedAt: "2026-10-04T13:32:00Z", endedAt: "2026-10-04T13:48:00Z",
-  fromSeq: 0, toSeq: 0, outcome: "succeeded", models: ["glm-5.3"], tools: none, edge: "plan",
+  fromSeq: 0, toSeq: 0, outcome: "succeeded", models: ["glm-5.3"], tools: none, chat: 1, edge: "plan",
 };
 const implementer: FlowNode = {
   run: "ikely2yk", persona: "implementer", role: "implementer", round: 1, startedAt: "2026-10-04T13:59:58.050000Z",
-  fromSeq: 4, toSeq: 0, model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"], effort: "high", judge: { count: 2, last: "not_yet" }, tools: { ok: 3, failed: 1 }, edge: "failing test",
+  fromSeq: 4, toSeq: 0, model: "glm-5.3", models: ["claude-haiku-4.5", "glm-5.3"], effort: "high", judge: { count: 2, last: "not_yet" }, tools: { ok: 3, failed: 1 }, steered: 2, chat: 3, edge: "failing test",
 };
 const reviewer: FlowNode = {
   run: "reviewc4", persona: "reviewer", role: "reviewer", round: 1, startedAt: "2026-10-04T14:09:00Z", endedAt: "2026-10-04T14:14:00Z",

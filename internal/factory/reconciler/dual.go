@@ -57,14 +57,14 @@ func readsDiff(r mergepolicy.Resolved, class string) bool {
 // dual records a decision's dual evaluation, with policyManagement.dualEvaluation on: the counter,
 // a log line with both decisions, and the record's policy and dual fields. It changes nothing the
 // gate acts on: central's verdict is still the decision.
-func (r *Reconciler) dual(ctx context.Context, t *v1alpha1.Task, in ArmInputs, central ArmDecision, d *ArmDecision) {
+func (r *Reconciler) dual(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, in ArmInputs, central ArmDecision, d *ArmDecision) {
 	// A cut-over repository's decision is the repository's own: there is no central one to compare.
-	if !r.Cfg.PolicyManagement.DualEvaluation || r.Policy == nil || r.Cfg.RepositoryAuthoritative(r.repo(t)) {
+	if !cfg.PolicyManagement.DualEvaluation || r.Policy == nil || cfg.RepositoryAuthoritative(r.repo(cfg, t)) {
 		return
 	}
 	snap, ok := r.Policy(t.Spec.Repository)
-	if r.grantsOn() && needsGrants(in, snap, ok) { // stage 5: read immediately before the decision
-		in.Grants = r.grantRead(ctx, t, snap.Hash)
+	if r.grantsOn(cfg) && needsGrants(in, snap, ok) { // stage 5: read immediately before the decision
+		in.Grants = r.grantRead(ctx, cfg, t, snap.Hash)
 	}
 	repo, agreement := dualOf(central, in, snap, ok)
 	d.Rows.Policy, d.Rows.Dual = shortHash(snap.Hash), agreement

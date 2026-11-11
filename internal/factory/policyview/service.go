@@ -22,13 +22,13 @@ type CommentReader func(ctx context.Context, pr int) ([]Comment, error)
 // Service serves the editor's check and the decision timeline for configured repositories.
 // Comments is the repository's comment reader, false without a connection.
 type Service struct {
-	Cfg      *config.Config
+	Cfg      config.Source
 	Reports  Reports
 	Comments func(repository string) (CommentReader, bool)
 }
 
-func (s *Service) repository(name string) (*config.Repository, error) {
-	for _, r := range s.Cfg.Repos() {
+func (s *Service) repository(cfg *config.Config, name string) (*config.Repository, error) {
+	for _, r := range cfg.Repos() {
 		if strings.EqualFold(r.Name, name) {
 			return &r, nil
 		}
@@ -38,7 +38,8 @@ func (s *Service) repository(name string) (*config.Repository, error) {
 
 // Preview checks file against repository's current policy (Check).
 func (s *Service) Preview(ctx context.Context, repository, file string) (Preview, error) {
-	rc, err := s.repository(repository)
+	cfg := s.Cfg.Current()
+	rc, err := s.repository(cfg, repository)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -46,12 +47,13 @@ func (s *Service) Preview(ctx context.Context, repository, file string) (Preview
 	if err != nil {
 		return Preview{}, err
 	}
-	return Check(s.Cfg, rc, rep, file), nil
+	return Check(cfg, rc, rep, file), nil
 }
 
 // Timeline is pr's decisions, from the factory's own comments on it.
 func (s *Service) Timeline(ctx context.Context, repository string, pr int) (Timeline, error) {
-	rc, err := s.repository(repository)
+	cfg := s.Cfg.Current()
+	rc, err := s.repository(cfg, repository)
 	if err != nil {
 		return Timeline{}, err
 	}
@@ -63,5 +65,5 @@ func (s *Service) Timeline(ctx context.Context, repository string, pr int) (Time
 	if err != nil {
 		return Timeline{}, fmt.Errorf("policyview: %w", err)
 	}
-	return Decisions(rc.Name, pr, s.Cfg.FactoryLogin, cs), nil
+	return Decisions(rc.Name, pr, cfg.FactoryLogin, cs), nil
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { glyph, glyphFor, type GlyphName } from "../src/glyphs";
 
-const names: GlyphName[] = ["scope", "search", "checklist", "tools", "eye", "branch", "person", "github", "shield"];
+const names: GlyphName[] = ["scope", "search", "checklist", "tools", "eye", "branch", "person", "github", "shield", "chat"];
 
 describe("glyphFor", () => {
   it.each([

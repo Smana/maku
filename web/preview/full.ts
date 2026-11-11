@@ -8,11 +8,12 @@
 //   ?escalated    the factory's escalated room
 //   ?stress       a long Now line and a 64-hex digest (the phone bugs)
 //   ?needs        every needs/v1 kind as the route serves it (needs-fixtures.ts), each with its one action
+//   ?atdock       scrolls the live approval card to the bottom edge: its buttons clear the sticky dock
 //   ?briefs       the factory's task snapshot and a run's brief, as the live room posts them (folded)
 //   ?running      the factory's running room: a status line, spend, model and effort, every fact the header shows
 //   ?long         unbreakable lines (long-fixtures.ts): a sed command, a gh api needs card, a served model behind an alias
 // One rail fixture (flow-fixtures.ts), the first of:
-//   ?finished     every run ended, a reviewer, the milestones to Done: Replay shows
+//   ?finished     every run ended, a reviewer, the milestones to Done
 //   ?split        a scoper whose handoff split into three parts
 //   ?many         a long task: retries and reviewers, a rail taller than the window, the unsandboxed banner above the header
 //   ?part         a part's room, linked back to its parent
@@ -58,6 +59,10 @@ async function run() {
       runModel: { run: status0.run!.id, model: "agent-default", effort: "high" } }
     : status0;
   if (params.has("escalated") || running) Object.assign(snap, { driver: "system:factory", dataClass: "public" });
+  // One live approval and one whose deadline has passed (the card turns expired by the browser's clock).
+  const first = snap.approvals?.[0];
+  if (first) snap.approvals = [{ ...first, expiresAt: new Date(Date.now() + 25 * 60_000).toISOString() },
+    { ...first, approvalId: "01M4B", callId: "call_-7231403244767930901", class: "forge.push", seq: 15, expiresAt: new Date(Date.now() - 5 * 60_000).toISOString() }];
   const long = params.has("long");
   const fx0 = flowFixture(flowName(params));
   const fx = long ? { ...fx0, flow: longFlow(fx0.flow) } : fx0;
@@ -68,7 +73,9 @@ async function run() {
   const loaded = Date.now();
   const lastAt = Date.parse(events[events.length - 1].ts);
   const page = mountPreviewPage(document.getElementById("app")!, { snap, unsandboxed: params.has("many"),
-    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow },
+    summary: { ...summary, status: { ...status, phase, task: summary.room, ...(finished ? { run: null } : {}) }, flow: fx.flow,
+      // A note queued for the next run, so the rail shows its chip (none once the task is over).
+      ...(finished ? {} : { queued: { untrusted: true, items: [{ ref: 26, author: "human:291847362183", text: "Add the dashboard's screenshot to the PR." }] } }) },
     count: events.length, dashboards,
     ...(params.has("needs") || long ? { needs: async () => ({ apiVersion: "needs/v1", items: long ? [LONG_NEED, ...NEED_FIXTURES] : NEED_FIXTURES }) } : {}), now: () => lastAt + Date.now() - loaded,
     nothingSent: "Offline preview: nothing was sent.", sessionOpen: new URLSearchParams(location.search).has("session"), theme });
@@ -88,6 +95,10 @@ async function run() {
   for (const e of events) page.apply(e);
   page.setStatus(`live · ${events.length} events (offline fixture)`);
   page.settle();
+  if (params.has("atdock")) setTimeout(() => {
+    const c = document.getElementById("approval-01M4A")!;
+    c.scrollIntoView({ block: "end" });
+  }, 300);
   // ?stress: a long Now line and a 64-hex digest in a message, the two phone bugs this fixture shows.
   if (new URLSearchParams(location.search).has("stress")) {
     const now = document.querySelector(".now-link");

@@ -22,6 +22,11 @@ import (
 // broker's sentence about the plan itself — `intake.TemplateLabel` for a degraded one — and is
 // written first, so a reader cannot mistake a template draft for the planner's.
 func Plan(w io.Writer, p intake.Plan, label string, o Options) error {
+	if len(p.Gaps) > 0 {
+		// A ranked plan still has one compatibility question. A legacy plan has no Gaps, so its own
+		// Question is left untouched; neither mapping participates in the material hash.
+		p = intake.WithGaps(p, p.Gaps)
+	}
 	md := o.Format == Markdown
 	now := o.Now
 	if now.IsZero() {

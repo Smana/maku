@@ -68,7 +68,7 @@ func TestTaskUSDCapPricesCacheReads(t *testing.T) {
 			}
 			g := newRig(t, tk, roomOf("3buqdlot"))
 			g.f.SetPR(pr12())
-			g.r.Cfg.Budgets.EnforceTask = true
+			g.r.Cfg.Current().Budgets.EnforceTask = true
 			g.r.Costs = costs
 			got := g.reconcile(t, "3buqdlot", 1)
 			if _, started := g.runs.specs[rid(3)]; started != c.started {

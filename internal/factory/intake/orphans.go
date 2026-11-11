@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -36,7 +38,7 @@ func orphaned(name string) narrate.Event {
 // that name, is all that survived a cluster rebuild — the Task, its room and its runs are gone.
 // It is labelled factory/orphaned and answered once; nothing is ever adopted from it (R52: the
 // branch and the footer are forgeable hints, so the factory starts no work from them).
-func (p *IssuePoller) orphans(ctx context.Context) error {
+func (p *IssuePoller) orphans(ctx context.Context, cfg *config.Config) error {
 	pulls, err := p.Forge.AgentPulls(ctx)
 	if err != nil {
 		return fmt.Errorf("list agent pull requests: %w", err)
@@ -62,7 +64,7 @@ func (p *IssuePoller) orphans(ctx context.Context) error {
 				continue // the narration waits for the label it announces
 			}
 		}
-		if err := p.narrator().PostOnce(ctx, pr.Number, "orphan", orphaned(m[1])); err != nil {
+		if err := p.narrator(cfg).PostOnce(ctx, pr.Number, "orphan", orphaned(m[1])); err != nil {
 			errs = append(errs, fmt.Errorf("narrate #%d: %w", pr.Number, err))
 		}
 	}

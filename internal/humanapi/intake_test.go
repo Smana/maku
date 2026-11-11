@@ -239,14 +239,15 @@ func intakeOption(t *testing.T, set func(*fakeIntake, *Intake)) option {
 			w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev", "u2", "u3"}} })
 			w.gate(s)
 			s.Intake = &Intake{
-				Classes:  intakeClasses(),
-				Allow:    map[string]bool{"Smana/ai-native-ref": true},
-				Model:    v.intake.model(),
-				Public:   publicRepos{"smana/ai-native-ref": true},
-				Links:    v.intake.links,
-				Daily:    50,
-				Fallback: "off",
-				Now:      v.intake.clock,
+				Classes:   intakeClasses(),
+				Allow:     map[string]bool{"Smana/ai-native-ref": true},
+				Model:     v.intake.model(),
+				Public:    publicRepos{"smana/ai-native-ref": true},
+				Links:     v.intake.links,
+				Daily:     50,
+				MaxRounds: 10,
+				Fallback:  "off",
+				Now:       v.intake.clock,
 			}
 			s.Logger = slog.New(slog.NewJSONHandler(v.intake.logs, nil))
 		}
@@ -305,6 +306,71 @@ func planFixture(t *testing.T, name string) intake.Plan {
 	return p
 }
 
+// revisionPlans is a verified round-one base with two ranked gaps and the harness's first edit:
+// g1 is settled, g2 remains, and D1 is the one new record Revise's grammar requires.
+func revisionPlans(t *testing.T) (base, candidate intake.Plan) {
+	t.Helper()
+	base = planFixture(t, "single")
+	base.Rev, base.Round, base.RoundsLeft = 4, 1, 2
+	base.Issues[0].Body = "## What is wrong\nThe install link 404s.\n" +
+		"[NEEDS CLARIFICATION: g1 Which install URL?]\n" +
+		"[NEEDS CLARIFICATION: g2 Who owns the page?]\n\n" +
+		"## What it should be\nA link that resolves.\n\n" +
+		"## Acceptance check\nThe link resolves."
+	base.Gaps = []intake.Gap{
+		{ID: "g1", Section: "what-is-wrong", Text: "Which install URL?", Recommended: intake.Answer{
+			Answer: "https://example.test/install", Why: "it is the documented location"}},
+		{ID: "g2", Section: "what-is-wrong", Text: "Who owns the page?", Recommended: intake.Answer{
+			Answer: "The docs team owns the page.", Why: "they maintain the guide"}},
+	}
+	base.Question = &intake.Question{Text: base.Gaps[0].Text, Recommended: base.Gaps[0].Recommended}
+	base.Hash = intake.Hash(base)
+	candidate = cloneIntakePlan(t, base)
+	candidate.Issues[0].Body = strings.Replace(candidate.Issues[0].Body,
+		"[NEEDS CLARIFICATION: g1 Which install URL?]", "https://example.test/install", 1) +
+		"\n\n## Decisions\nD1 [g1]: Use the documented install URL"
+	return base, candidate
+}
+
+func cloneIntakePlan(t *testing.T, p intake.Plan) intake.Plan {
+	t.Helper()
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone intake.Plan
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
+}
+
+// revisionModelReply carries the verified edit through a model re-plan, leaving g2 open.
+func revisionModelReply(t *testing.T, candidate intake.Plan) []byte {
+	t.Helper()
+	draft, err := json.Marshal(map[string]any{
+		"repository": candidate.Repository,
+		"issues": []any{map[string]any{
+			"title": candidate.Issues[0].Title, "body": candidate.Issues[0].Body, "class": candidate.Issues[0].Class,
+		}},
+		"gaps": candidate.Gaps[1:],
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := json.Marshal(string(draft))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []byte(`{"choices":[{"message":{"content":` + string(content) + `}}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":20}}`)
+}
+
+func revisionArgs(base, candidate intake.Plan) map[string]any {
+	return map[string]any{"text": "the install link is dead", "plan": base,
+		"hash": intake.Hash(base), "candidate": candidate}
+}
+
 // metricsBody is /metrics as these tests scrape it: the series a refused plan is counted under.
 func metricsBody(t *testing.T, e env) string {
 	t.Helper()
@@ -337,8 +403,9 @@ func TestIntakePlanFromASession(t *testing.T) {
 		t.Fatalf("%+v", d.Plan.Issues[0])
 	}
 	// The plan says which surface produced it, and it is the caller's, not a value the request named.
-	if d.Plan.Planner.Surface != e.intake.surface || d.Plan.Planner.Model != "tier-frontier" || d.Plan.Rev != 1 {
-		t.Fatalf("%+v", d.Plan.Planner)
+	if d.Plan.Planner.Surface != e.intake.surface || d.Plan.Planner.Model != "tier-frontier" || d.Plan.Rev != 1 ||
+		d.Plan.Round != 1 || d.Plan.RoundsLeft != 9 {
+		t.Fatalf("%+v", d.Plan)
 	}
 	// A session cannot claim a user or widen its ceiling: both are a sponsored principal's alone.
 	for _, bad := range []map[string]any{{"text": "x", "ceiling": 99}, {"text": "x", "on_behalf_of": "slack:T01ABC/U02DEF"}} {
@@ -504,7 +571,7 @@ func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 		Degraded bool
 	}
 	_ = json.Unmarshal([]byte(got.structured), &d)
-	if !d.Degraded || d.Plan.Planner.Surface != e.intake.surface {
+	if !d.Degraded || d.Plan.Planner.Surface != e.intake.surface || d.Plan.Round != 1 || d.Plan.RoundsLeft != 9 {
 		t.Fatalf("%+v", d)
 	}
 
@@ -517,9 +584,152 @@ func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 	}
 }
 
+// A below-cap revision spends exactly one model call; reaching the round cap is deterministic and
+// spends none. A failed re-plan never turns into the degraded composer, which belongs to initial plans.
+func TestRevisionMakesOneOrNoModelCall(t *testing.T) {
+	t.Run("below cap", func(t *testing.T) {
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}),
+			intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 3 }))
+		base, candidate := revisionPlans(t)
+		e.intake.replyWith(revisionModelReply(t, candidate))
+		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		if got.isError {
+			t.Fatal(got.text)
+		}
+		var answer planAnswer
+		if err := json.Unmarshal(got.structured, &answer); err != nil {
+			t.Fatal(err)
+		}
+		if e.intake.calls() != 1 {
+			t.Fatalf("a below-cap revision made %d model calls", e.intake.calls())
+		}
+		if answer.Plan.Rev != 4 || answer.Plan.Round != 2 || answer.Plan.RoundsLeft != 1 {
+			t.Fatalf("revision metadata = rev %d round %d left %d", answer.Plan.Rev, answer.Plan.Round, answer.Plan.RoundsLeft)
+		}
+		if answer.Hash == intake.Hash(base) || answer.Hash != intake.Hash(answer.Plan) || answer.Plan.Hash != answer.Hash {
+			t.Fatalf("the revised hash was not renewed: %+v", answer)
+		}
+		if !strings.Contains(answer.Plan.Issues[0].Body, "D1 [g1]: Use the documented install URL") ||
+			!strings.Contains(e.intake.sent(), "Verified candidate plan to revise:") {
+			t.Fatalf("the verified candidate was not carried through: %+v", answer.Plan.Issues[0])
+		}
+	})
+
+	t.Run("cap reaches a final plan without a call and spends one daily slot", func(t *testing.T) {
+		e := setup(t, mcpOn, withIntakeDaily(t, 1), actorOn(&actLog{}),
+			intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 2 }))
+		base, candidate := revisionPlans(t)
+		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		if got.isError {
+			t.Fatal(got.text)
+		}
+		var answer planAnswer
+		if err := json.Unmarshal(got.structured, &answer); err != nil {
+			t.Fatal(err)
+		}
+		if e.intake.calls() != 0 {
+			t.Fatalf("the cap made %d model calls", e.intake.calls())
+		}
+		if answer.Plan.Round != 2 || answer.Plan.RoundsLeft != 0 || len(answer.Plan.Gaps) != 0 || answer.Plan.Question != nil {
+			t.Fatalf("the cap did not return a final plan: %+v", answer.Plan)
+		}
+		if !strings.Contains(answer.Plan.Issues[0].Body, "A2 [g2]: assumed The docs team owns the page.") ||
+			strings.Contains(answer.Plan.Issues[0].Body, "NEEDS CLARIFICATION") {
+			t.Fatalf("the remaining recommendation was not accepted: %s", answer.Plan.Issues[0].Body)
+		}
+		if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
+			!strings.Contains(got.text, "daily_plans_reached") || e.intake.calls() != 0 {
+			t.Fatalf("the deterministic revision did not spend its daily slot: %s", got.text)
+		}
+	})
+
+	t.Run("a failed revision never uses the degraded composer", func(t *testing.T) {
+		e := setup(t, mcpOn, withIntakeFallback(t, "composer"), actorOn(&actLog{}),
+			intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 3 }))
+		base, candidate := revisionPlans(t)
+		e.intake.fail(http.StatusServiceUnavailable)
+		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		if !got.isError || !strings.Contains(got.text, "planner_unavailable") || strings.Contains(got.text, intake.TemplateLabel) {
+			t.Fatalf("revision fallback = %s", got.text)
+		}
+		if e.intake.calls() != 1 {
+			t.Fatalf("the failed revision made %d model calls", e.intake.calls())
+		}
+	})
+}
+
 // plan_check is the door every consumer re-validates through, so these tests hold it to the plan
 // package's own goldens: a plan the broker answered is accepted as it is, and a plan that is not the
 // one it answered is refused before anything is filed.
+
+// A revision envelope returns the deterministic candidate and its new hash, without a model call.
+// The legacy unmodified-plan shape remains, but neither shape can finish with a live marker.
+func TestPlanCheckRevision(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	base, candidate := revisionPlans(t)
+	finalCandidate := cloneIntakePlan(t, candidate)
+	finalCandidate.Issues[0].Body = strings.Replace(finalCandidate.Issues[0].Body,
+		"[NEEDS CLARIFICATION: g2 Who owns the page?]", "The docs team owns the page.", 1) +
+		"\nA2 [g2]: Accept the documented owner"
+	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+		"plan": base, "hash": intake.Hash(base), "candidate": finalCandidate,
+	})
+	if got.isError {
+		t.Fatal(got.text)
+	}
+	var checked planChecked
+	if err := json.Unmarshal(got.structured, &checked); err != nil {
+		t.Fatal(err)
+	}
+	if checked.Plan.Round != 2 || checked.Plan.RoundsLeft != 8 || checked.Plan.Rev != 4 ||
+		checked.Hash == intake.Hash(base) || checked.Hash != intake.Hash(checked.Plan) || checked.Plan.Hash != checked.Hash {
+		t.Fatalf("the revised answer is not the candidate's new version: %+v", checked)
+	}
+	if len(checked.Plan.Gaps) != 0 || strings.Contains(checked.Plan.Issues[0].Body, "NEEDS CLARIFICATION") {
+		t.Fatalf("a final revision retained a gap: %+v", checked.Plan)
+	}
+
+	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+		"plan": base, "hash": intake.Hash(base),
+	}); !got.isError || !strings.Contains(got.text, "unresolved_marker") {
+		t.Fatalf("the legacy shape accepted a live marker: %s", got.text)
+	}
+
+	changedHash := map[string]any{"plan": base, "hash": intake.Hash(base), "candidate": candidate}
+	changedHash["hash"] = intake.Hash(planFixture(t, "three"))
+	if got := call(t, e, viaRoomctl("dev"), "plan_check", changedHash); !got.isError ||
+		!strings.Contains(got.text, "plan_changed") {
+		t.Fatalf("base drift = %s", got.text)
+	}
+
+	var mixed map[string]any
+	raw, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &mixed); err != nil {
+		t.Fatal(err)
+	}
+	mixed["futureVersionField"] = true
+	malformed := map[string]any{"plan": base, "hash": intake.Hash(base), "candidate": mixed}
+	if got := call(t, e, viaRoomctl("dev"), "plan_check", malformed); !got.isError ||
+		!strings.Contains(got.text, "invalid_arguments") {
+		t.Fatalf("mixed-version candidate = %s", got.text)
+	}
+	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+		"hash": intake.Hash(base), "candidate": candidate,
+	}); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		t.Fatalf("candidate without its base = %s", got.text)
+	}
+	if got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+		"text": "revise", "candidate": candidate,
+	}); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		t.Fatalf("incomplete intake revision = %s", got.text)
+	}
+	if e.intake.calls() != 0 {
+		t.Fatalf("plan_check and malformed envelopes made %d model calls", e.intake.calls())
+	}
+}
 
 // Offline proof 4, first half: a plan changed after the render is refused; an unchanged one is
 // accepted and re-validated with the same validator. The refusal is the one metric plan_check writes.
@@ -730,6 +940,37 @@ func TestPlanCheckResolvesTheRequesterAsIntakePlanDoes(t *testing.T) {
 	}
 }
 
+// A client that declares no prompts capability never reads factory_intake. The initialize
+// instructions and intake_plan's own description must therefore carry the whole short loop, rather
+// than leaving that client to compose a plan or file without the final check.
+func TestIntakeInstructionsWithoutPrompt(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"))
+	h := viaRoomctl("dev")
+	_, initialized := rpc(t, e, h, "initialize", map[string]any{
+		"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
+	})
+	instructions, _ := initialized["result"].(map[string]any)["instructions"].(string)
+	_, listed := rpc(t, e, h, "tools/list", nil)
+	description := ""
+	for _, item := range listed["result"].(map[string]any)["tools"].([]any) {
+		tool := item.(map[string]any)
+		if tool["name"] == "intake_plan" {
+			description, _ = tool["description"].(string)
+		}
+	}
+	if description == "" {
+		t.Fatal("tools/list has no intake_plan description")
+	}
+	for surface, text := range map[string]string{"server instructions": instructions, "intake_plan description": description} {
+		flatText := flat(text)
+		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check", "issue_file"} {
+			if !strings.Contains(flatText, want) {
+				t.Errorf("%s lack %q for a prompts-less client:\n%s", surface, want, text)
+			}
+		}
+	}
+}
+
 // The schema is the client's copy of the check, so it must not disagree with it: each bound is the
 // broker's own constant, and a ceiling of zero is "no channel ceiling" — a value the broker accepts,
 // so a schema refusing it would refuse a request the broker answers.
@@ -752,6 +993,11 @@ func TestTheIntakeSchemasAgreeWithTheBroker(t *testing.T) {
 	}
 	if plan.AdditionalProperties == nil || *plan.AdditionalProperties {
 		t.Error("intake_plan's schema is not closed")
+	}
+	for _, field := range []string{"plan", "hash", "candidate"} {
+		if _, ok := plan.Properties[field]; !ok {
+			t.Errorf("intake_plan's revision envelope does not name %s", field)
+		}
 	}
 	for name, want := range map[string]struct {
 		got *int
@@ -784,6 +1030,9 @@ func TestTheIntakeSchemasAgreeWithTheBroker(t *testing.T) {
 	}
 	if !slices.Equal(check.Required, []string{"plan", "hash"}) {
 		t.Errorf("plan_check requires %v", check.Required)
+	}
+	if _, ok := check.Properties["candidate"]; !ok {
+		t.Error("plan_check's schema does not name candidate")
 	}
 	if got := check.Properties["hash"].Pattern; got != hashRE.String() {
 		t.Errorf("hash pattern %q, the broker's is %q", got, hashRE.String())

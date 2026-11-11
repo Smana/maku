@@ -129,6 +129,19 @@ func openTask(name string) *factoryv1.Task {
 		Status: factoryv1.TaskStatus{Phase: factoryv1.PhaseImplementing}}
 }
 
+// A titled task is an external filing door: an unresolved planner marker creates neither Task nor issue.
+func TestFinalDraftDoors(t *testing.T) {
+	s, f := newTaskServer(t, slack, 0)
+	body := strings.Replace(draft, `x\u200b`, `[NEEDS CLARIFICATION: g1 which check?]`, 1)
+	rec := postTask(s, body, "k")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid_draft") {
+		t.Fatalf("factory task creation accepted a marker: %d %s", rec.Code, rec.Body)
+	}
+	if len(f.got) != 0 || len(tasks(t, s)) != 0 {
+		t.Fatal("a marker filed an issue or created a Task")
+	}
+}
+
 // F4, R4–R12: admission in its order, both identities on the Task, the issue filed once, no label.
 func TestCreateTaskAdmission(t *testing.T) {
 	for name, c := range map[string]struct {
@@ -157,7 +170,7 @@ func TestCreateTaskAdmission(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := newTaskServer(t, c.p, 0)
 			if c.edit != nil {
-				c.edit(s.Cfg)
+				c.edit(s.Cfg.Current())
 			}
 			rec := postTask(s, c.body, c.key)
 			if rec.Code != c.status || !strings.Contains(rec.Body.String(), c.reason) {
@@ -322,7 +335,7 @@ func TestCreateTaskReplayScope(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	// another principal, same key: its own name, so its own task and its own issue.
-	s.Cfg.API.Sponsored = append(s.Cfg.API.Sponsored, config.Sponsored{Name: "other", Sponsor: "Smana",
+	s.Cfg.Current().API.Sponsored = append(s.Cfg.Current().API.Sponsored, config.Sponsored{Name: "other", Sponsor: "Smana",
 		Repositories: []string{"Smana/cloud-native-ref"}, DailyUSD: 10, MaxCostUSD: 5})
 	s.Auth = byToken{"t": authn.Principal{Kind: envelope.ActorSystem, ID: "system:other", Sponsored: true}}
 	rec := postTask(s, strings.Replace(draft, `"onBehalfOf":"slack:T01ABC/U02DEF",`, "", 1), "k")

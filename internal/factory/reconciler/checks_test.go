@@ -18,25 +18,25 @@ import (
 // carry spec.loop.checks and the repository's egress; every other claim is today's.
 func TestASwitchedOnClassChecksItsPublicImplementerAndReviewer(t *testing.T) {
 	g := newRig(t)
-	repo := g.r.Cfg.Repos()[0]
+	repo := g.r.Cfg.Current().Repos()[0]
 	repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {}, "docs": {Checks: true}, "tests": {}}
 	repo.Checks = config.Checks{Egress: []string{"golang", "pypi"}}
-	g.r.Cfg.Repositories = []config.Repository{repo}
+	g.r.Cfg.Current().Repositories = []config.Repository{repo}
 	task := func(class, dataClass string) *v1alpha1.Task {
 		tk := issueTask("3buqdlot", 7, "fix")
 		tk.Spec.PredictedClass, tk.Spec.DataClass = class, dataClass
 		tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
 		return tk
 	}
-	on := []runs.Spec{g.r.implementerSpec(task("docs", "public"), "brief"), g.r.verifierSpec(task("docs", "public"), "reviewer"),
-		g.r.testerSpec(task("docs", "public"), "brief")}
+	on := []runs.Spec{g.r.implementerSpec(g.r.Cfg.Current(), task("docs", "public"), "brief"), g.r.verifierSpec(g.r.Cfg.Current(), task("docs", "public"), "reviewer"),
+		g.r.testerSpec(g.r.Cfg.Current(), task("docs", "public"), "brief")}
 	for _, s := range on {
 		if !s.Checks || !reflect.DeepEqual(s.EgressProfiles, []string{"golang", "pypi"}) {
 			t.Fatalf("%s: checks %v egress %v, want on with [golang pypi]", s.Role, s.Checks, s.EgressProfiles)
 		}
 	}
-	off := []runs.Spec{g.r.testerSpec(task("docs", "internal"), "brief"), g.r.implementerSpec(task("docs", "internal"), "brief"),
-		g.r.implementerSpec(task("tests", "public"), "brief"), g.r.implementerSpec(task("review", "public"), "brief")}
+	off := []runs.Spec{g.r.testerSpec(g.r.Cfg.Current(), task("docs", "internal"), "brief"), g.r.implementerSpec(g.r.Cfg.Current(), task("docs", "internal"), "brief"),
+		g.r.implementerSpec(g.r.Cfg.Current(), task("tests", "public"), "brief"), g.r.implementerSpec(g.r.Cfg.Current(), task("review", "public"), "brief")}
 	for _, s := range off {
 		u := runs.Build(runwatch.DefaultKind, s)
 		for _, key := range []string{"loop", "egress"} {

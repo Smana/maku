@@ -88,7 +88,7 @@ func rigGrant() grant.Grant {
 // what dual evaluation alone writes.
 func TestApprovalMemoryOffReadsNoGrant(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true}
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }
 	g.r.Grants = refusingGrants{t}
 	g.f.SetChecks(12, green("SUCCESS"))
@@ -114,8 +114,8 @@ func TestDualEvaluationConsultsAGrantReadImmediatelyBefore(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true, ApprovalMemory: true}
-			g.r.Cfg.MergeGuardrails.MaxGrantLifetime = config.Duration{Duration: 30 * 24 * time.Hour}
+			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true, ApprovalMemory: true}
+			g.r.Cfg.Current().MergeGuardrails.MaxGrantLifetime = config.Duration{Duration: 30 * 24 * time.Hour}
 			g.r.Policy = func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }
 			g.r.Grants = tc.grants
 			files := changed("[x](https://example.com/old)", "[x](https://example.com/new)")
@@ -144,7 +144,7 @@ func TestDualEvaluationConsultsAGrantReadImmediatelyBefore(t *testing.T) {
 // subset.
 func TestNoLookupWithoutAnApprovalSubset(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true, ApprovalMemory: true}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true, ApprovalMemory: true}
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) {
 		s, ok := approvalSnapshot()
 		r := s.Classes["docs-links"]
@@ -183,7 +183,7 @@ func TestAGrantIsReadAgainBeforeTheMergeCall(t *testing.T) {
 			r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Read: true, ApprovalMemory: tc.on}},
 				Grants: tc.grants, Metrics: &fakeMetrics{}, Now: func() time.Time { return now },
 				Policy: func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }}
-			if got := r.grantHolds(t.Context(), tk, tc.d); got != tc.want {
+			if got := r.grantHolds(t.Context(), r.Cfg.Current(), tk, tc.d); got != tc.want {
 				t.Fatalf("got %v, calls %q", got, tc.grants.calls)
 			}
 		})
@@ -197,11 +197,11 @@ func TestAMergeOnAGrantRecordsItsUse(t *testing.T) {
 		Grants: f, Metrics: &fakeMetrics{}}
 	tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Repository: "Smana/cloud-native-ref", PredictedClass: "docs-links"}}
 	ref := &v1alpha1.PullRequestRef{Number: 12}
-	r.grantUsed(t.Context(), tk, ref, ArmDecision{Verdict: "arm", Rows: rigDecisionRows("aaaaaaaaaaaaaaaaaaaaaaaaaa:3")}, "abc")
+	r.grantUsed(t.Context(), r.Cfg.Current(), tk, ref, ArmDecision{Verdict: "arm", Rows: rigDecisionRows("aaaaaaaaaaaaaaaaaaaaaaaaaa:3")}, "abc")
 	if ref.Grant != "aaaaaaaaaaaaaaaaaaaaaaaaaa:3" || !slices.Equal(f.calls, []string{"use aaaaaaaaaaaaaaaaaaaaaaaaaa 3 12 abc"}) {
 		t.Fatalf("%q %q", ref.Grant, f.calls)
 	}
-	r.grantUsed(t.Context(), tk, &v1alpha1.PullRequestRef{Number: 13}, ArmDecision{Verdict: "arm"}, "abc")
+	r.grantUsed(t.Context(), r.Cfg.Current(), tk, &v1alpha1.PullRequestRef{Number: 13}, ArmDecision{Verdict: "arm"}, "abc")
 	if len(f.calls) != 1 {
 		t.Fatalf("a merge without a grant used one: %q", f.calls)
 	}
@@ -224,7 +224,7 @@ func TestARevertDisablesTheGrantItsMergeUsed(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseVerifying)
 			f := &fakeGrants{disabled: tc.disabled}
 			g.r.Grants = f
-			g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true, ApprovalMemory: true}
+			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, ApprovalMemory: true}
 			var tk v1alpha1.Task
 			_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 			if tc.drill { // a maintainer's drill: factory/revert with the drill annotation (AM6)
@@ -234,7 +234,7 @@ func TestARevertDisablesTheGrantItsMergeUsed(t *testing.T) {
 			merged := metav1.NewTime(now)
 			tk.Status.PullRequest.MergeCommitSHA, tk.Status.PullRequest.AutoMerged, tk.Status.PullRequest.MergedAt = "m1", true, &merged
 			tk.Status.PullRequest.Grant = "aaaaaaaaaaaaaaaaaaaaaaaaaa:1"
-			tk.Status.ConfigHash = g.r.Cfg.Hash
+			tk.Status.ConfigHash = g.r.Cfg.Current().Hash
 			_ = g.c.Status().Update(t.Context(), &tk)
 			red := green("SUCCESS")
 			red.Runs[0].State = "FAILURE"

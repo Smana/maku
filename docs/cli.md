@@ -29,8 +29,8 @@ maku login                                    # device flow: open the printed UR
 maku doctor                                   # check the setup
 ```
 
-- `configure` reads the issuer, client id and project id from the broker's unauthenticated `/.well-known/roomctl`. Pass `--issuer`, `--client-id` or `--project-id` to override one. The URL must be `https`, except for a local install (`humanMode: local`), whose listener is the `kubectl port-forward`: `http://localhost:<port>` is accepted on `localhost` or a loopback address only, and anything else in clear is refused before any request.
-- `configure --from <rooms URL>` replaces the whole config with what the broker serves now (a room page's URL works: only its origin is used). Use it after a platform rebuild: a stale client id makes the identity provider answer `invalid_client`, and `maku login` then prints this fix. It refuses a non-`https` URL or issuer — a local install configures with `--url http://localhost:<port>` instead — and cannot be combined with the other flags. It prints the four values it will write (and the old ones when they change) and, on a terminal, asks `y/N`; `--yes` skips the question. An issuer outside the URL's registrable domain (`rooms.ogenki.io` and `auth.ogenki.io` share one) is refused unless `--yes` says you checked it.
+- `configure` reads the issuer, client id and project id from the broker's unauthenticated `/.well-known/roomctl`. Pass `--issuer`, `--client-id` or `--project-id` to override one. `--factory-login LOGIN` saves the factory App's GitHub login (for example `my-factory[bot]`): `need_answer` trusts public bounce comments from that login alone. If it is empty, including in an older config, the public fallback refuses securely while authorized `room_brief` questions remain available. The URL must be `https`, except for a local install (`humanMode: local`), whose listener is the `kubectl port-forward`: `http://localhost:<port>` is accepted on `localhost` or a loopback address only, and anything else in clear is refused before any request.
+- `configure --from <rooms URL>` replaces the whole config with what the broker serves now (a room page's URL works: only its origin is used). Use it after a platform rebuild: a stale client id makes the identity provider answer `invalid_client`, and `maku login` then prints this fix. It refuses a non-`https` URL or issuer — a local install configures with `--url http://localhost:<port>` instead — and cannot be combined with the other broker-value flags. `--factory-login` is the one override: it sets the public-comment trust identity alongside the discovered values. It prints the four broker values it will write (and the old ones when they change) and, on a terminal, asks `y/N`; `--yes` skips the question. An issuer outside the URL's registrable domain (`rooms.ogenki.io` and `auth.ogenki.io` share one) is refused unless `--yes` says you checked it.
 - A local broker needs no `login` and takes no token: `login` says so, `token` says so, and no request carries an `Authorization` header.
 - The config and token files sit in `<user config dir>/maku/` (`config.json`, `token.json`), owner-only. The directory a CLI before v0.30.0 wrote (formerly `roomctl/`, beside it) is copied there once, the first time `maku` runs without one; the old directory stays.
 - `login` prints `Open <verification URL> and enter the code …` (the URL is the one your identity provider returns), then `logged in; …`.
@@ -42,8 +42,8 @@ maku doctor                                   # check the setup
 
 | Command | What it does |
 |---|---|
-| `configure --url URL [--issuer URL --client-id ID --project-id ID]` | Saves the config. The broker's URL is enough |
-| `configure --from URL [--yes]` | Replaces the config with the values the broker serves now, whatever is stored |
+| `configure --url URL [--issuer URL --client-id ID --project-id ID --factory-login LOGIN]` | Saves the config. The broker's URL is enough; the factory login enables the trusted public-comment fallback |
+| `configure --from URL [--yes] [--factory-login LOGIN]` | Replaces the config with the values the broker serves now, whatever is stored, with an optional factory-login override |
 | `login` | Signs in with the device flow |
 | `setup <claude\|codex\|copilot\|cursor\|gemini\|opencode> [--project] [--print]` | Registers `maku mcp` as the `factory` MCP server of a coding agent and writes the factory-handoff skill and, for `claude` and `opencode`, the short `/factory` command ([below](#short-commands)). `--project` writes under the repository's top instead of your home; `--print` shows what it would do and writes nothing |
 | `demo app --dir DIR [--owner ORG] [--name NAME]` | The laptop demo's GitHub App, through GitHub's App manifest flow. Serves a page on `127.0.0.1` that posts the manifest (seven permissions, `actions: write` among them so a cancelled `ci` can be re-run, no webhook events, private) to GitHub, takes the callback once its `state` matches, converts the code and writes `app_id`, `private_key` (mode 0600), `slug` and `html_url` into DIR (mode 0700), each file is written through a temporary file and renamed into place (a symlink there is replaced, not followed), `html_url` last: its presence means the set is complete. It then prints the link that installs the App on your repository. The callback works once and only for the `127.0.0.1` host. It never prints the key and gives up after five minutes. `--owner` creates the App in an organization |
@@ -85,7 +85,7 @@ PR    #2239 (https://github.com/Smana/cloud-native-ref/pull/2239) · reviewer ap
 Needs you
 1. approve "git push to agent/26zfnuxm" by 19:45 UTC → https://rooms.example/r/26zfnuxm#01M4A
 
-Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved · 10 min · $0.03 → implementer (human review) running · 18 min · $0.10
+Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved · 10 min · $0.03 → implementer (human review) running · 18 min · ↪ steered ×2 · 1 chat · $0.10
 
 Agents' notes, their claims, not checked
 - 19:12 UTC cf4ato2x "found both versions on line 12-13, fixing"
@@ -99,7 +99,7 @@ room no `Needs you` or `You can`. The spend line reads dollars when the factory 
 and tokens (`182 k of 1.5 M tokens (12 %)`) when it did not; token counts read like the room
 page's, under 1,000 as is, then `k`, then `M`. Times are UTC, dated when not today. A run that
 ended reads `succeeded`, `failed` and so on, and a stopped task's unfinished run reads `ended`,
-never `running`. On a terminal, with `NO_COLOR` unset, the state word is bold when it needs you.
+never `running`. A run in the runs line counts the humans' messages sent while it was open, as the room page's rail does: `↪ steered ×N` and `N chat`, each left out at zero. Durations read the two largest units (`40 s`, `12 min`, `5 h 47 min`, `37 d 17 h`) and a past time its largest unit (`18 min ago`, `just now` under a minute), as on the room page. An approval past its deadline is not listed. On a terminal, with `NO_COLOR` unset, the state word is bold when it needs you.
 The agents' text is quoted; an approval is a link to its card on the room page, never a command.
 
 Room links print only under the broker's own address: the card takes it from the summary's URL
@@ -127,11 +127,18 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 - The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
 - The tools: `rooms_list`, `room_summary`, `room_brief`, `room_tail`, `room_changes`, `needs_list`,
   `room_queue`, `room_fork` and `issue_draft` from the broker; `intake_plan` and `plan_check` too, when
-  the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `room_wait`
-  and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
-  events; `maku mcp` polls it for your agent. The broker also serves the prompts `handoff` (`what`),
-  `plan` (`what`), `status` (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash
-  commands (see [Short commands](#short-commands) for how to type them).
+  the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `need_answer`,
+  `room_wait` and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
+  events; `maku mcp` polls it for your agent. The broker also serves the prompts `factory_intake`
+  (`request`), `handoff` (`what`, an alias for the same intake loop), `plan` (`what`), `status`
+  (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash commands (see
+  [Short commands](#short-commands) for how to type them).
+- `factory_intake` is the canonical filing loop: show `intake_plan`'s text, ask only the first gap
+  with its recommendation, offer "accept the rest" at every question, and revise through the base
+  `plan` + `hash` + edited `candidate` envelope with matching D/A records. When no gaps remain, it
+  finishes with `plan_check`, shows the final draft and assumptions, then calls `issue_file`. A client
+  without MCP prompt support gets the same short contract from `intake_plan`'s description and the
+  server instructions; neither route makes the client a second planner.
 - `resume` is the one to start a session with: it calls `needs_list` once, then `room_brief` of the
   first room that needs you — or of the room you passed — and names the brief's `Next:` line as the
   one step. `inbox` is one `needs_list` call: when the list is empty it says so in one line and names
@@ -146,6 +153,22 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   only when `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`: yes labels the issue `factory/ready` with
   your `gh`, which starts the factory. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
   call `issue_file` but cannot answer the form.
+- `need_answer {repo, issue, room?}` answers a scoper's post-filing question on the issue. It acts only
+  while `factory/needs-author` is present and `factory/ready` is absent. With no `room`, it resolves the
+  issue through `rooms_list`: several matches refuse as `ambiguous_room` rather than guessing. It reads
+  the authorized `room_brief` question first; if that is unavailable, only the newest factory
+  `event=needs-author-…` comment is the public fallback, and its author must case-insensitively match the
+  configured `factoryLogin`. A forged newer comment or an empty login refuses the fallback rather than
+  using an older comment. No resolved room is not by itself an error for a public issue, but a missing,
+  untrusted, or internal-only question refuses as `needs_room_access` and writes nothing.
+  The form shows the question, recommendation and exact Decision-section layout, requires a one-line
+  `answer`, and defaults `send` to no. On explicit send it re-reads the issue and requires the body, labels
+  and `updatedAt` to be unchanged before one body-only `gh issue edit --body-file=-`. A decline, cancel,
+  false toggle, client without forms, wrong labels, conflict, or missing question writes nothing. Success
+  is `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply factory/ready"}`; the
+  tool never calls the labeler. Decline, cancel, and false send return `next:"the question is unanswered
+  and nothing was written"`. An edit failure returns `not_answered` and applies no label: inspect the
+  issue before retrying, since the transport failure cannot prove whether GitHub accepted the edit.
 - Every tool and prompt that takes a room (`room_summary`, `room_brief`, `room_changes`, `room_queue`,
   `room_tail`, `room_fork`, `room_wait`, `room_checkout`, the `status` and `resume` prompts) accepts
   the room id, `#<issue>`
@@ -185,12 +208,18 @@ over.
 
 | Tool | What it does | What it answers |
 |---|---|---|
-| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it | `plan/v1`, the hash the broker computed over it, at most one question to put to you, and `canStart`: whether you may start the factory on it. One model call, on public text only; it files nothing |
-| `plan_check` | Re-validates a plan you were shown, against the hash the broker answered with | The plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
+| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it; a clarification revision also carries the base plan, its hash and your edited candidate | `plan/v1`, the hash the broker computed over it, ranked gaps with the first as the compatibility question, and `canStart`: whether you may start the factory on it. One model call below the round cap, on public text only; it files nothing |
+| `plan_check` | Re-validates a final plan you were shown, against the hash the broker answered with; an optional candidate applies a deterministic final revision | The final plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
 
-`issue_file` calls `plan_check` itself, so you never call it by hand: it is there so an agent can
-re-check a plan before showing you a form for it, and so a plan that changed after it was shown
-files nothing rather than something else.
+The canonical intake loop calls `plan_check` for the final draft (including an accept-the-rest
+revision), then `issue_file` with the returned plan and new hash. `issue_file` calls `plan_check`
+again itself, so a plan that changed after it was shown files nothing rather than something else.
+
+To answer a gap, your agent passes `intake_plan` the original request fields plus the revision envelope:
+`plan` (the base plan), `hash` (its hash) and `candidate` (the edited plan). Only marker replacements
+and their new Decision/Assumption records may change. The broker verifies the base and returns the
+candidate's new hash. To accept every remaining recommendation, the agent records each as an
+`A<n> [g<n>]` assumption and calls `plan_check` with the same envelope; no model call is needed.
 
 What a plan shows, as `intake_plan` answers and your agent shows it back:
 
@@ -239,20 +268,35 @@ Its sections, in the order they are read:
 - **The acceptance check.** `## Acceptance check`, the third heading inside the issue's block, with
   `## What is wrong` and `## What it should be` before it: the factory reads the same three sections
   on a hand-written issue, and a draft without them is refused before a plan exists.
+- **The decisions.** An optional `## Decisions` section after Acceptance check records answers as
+  `D1 [g1]: <choice>, because <reason>` and assumptions as `A2 [g2]: assumed <answer>, because <why>`.
+  IDs ascend and stay unique in each issue; numeric gaps are allowed when a split issue carries only
+  the records it needs. Intermediate plans may retain markers; final filing refuses them.
 - **The ceiling.** `Ceiling $2.00 · class:docs`: the money this plan's work is charged against and
   where that number came from, both from the broker's config. The roles and the money are the
   config's whatever the reply says, and a class the config does not define makes no plan.
 
-A plan may carry one question, with the broker's recommendation and why. It is the one thing the
-planner needs from you to plan the rest of the work, and the answer is yours. A plan marked
-`degraded` came from the broker's deterministic template rather than the model
+A plan may carry ranked gaps; the `Question` shown here is only the first, with the broker's
+recommendation and why. Answer it through the revision envelope, then repeat with the next first gap.
+The answer is yours. A plan marked `degraded` came from the broker's deterministic template rather than the model
 (`human.intake.plan.fallback: composer`): it says so in its first line, and it is not the
 natural-language planner.
 
-Each attempt costs one of your day's plans (`human.intake.plan.dailyPlans` per requester, reset at
-00:00 UTC) and one model call: there is no retry loop. Neither tool files, labels, stores or
-approves anything: the plan is shown, and `issue_file` files its first issue once you answer its
-form.
+The initial plan and every `intake_plan` revision cost one of your day's plans
+(`human.intake.plan.dailyPlans` per requester, reset at 00:00 UTC); `plan_check` costs none.
+`human.intake.plan.maxRounds` (default 10) separately caps clarification rounds in one intake. Below
+the cap a revision makes one model call. The cap-reaching revision instead records all remaining
+recommendations as assumptions and returns a final plan without another model call, but still spends
+its daily slot. Thus `maxRounds` ends one conversation; `dailyPlans` bounds all attempts that day.
+
+Neither tool files, labels, stores or approves anything: the plan is shown, and `issue_file` files its
+first issue once you answer its form. Strict decoding makes mixed versions fail closed: an older
+broker refuses revision fields or `gaps`; a newer broker keeps legacy hashes and maps the first gap to
+the old `Question` view, so existing Slack proposals still render and confirm.
+
+After filing, `need_answer` is the scoper-bounce counterpart: it reads the authorized room question,
+confirms the answer and appends the next issue-local Decision to the issue body. It never adds or
+removes a label; a maintainer re-applies `factory/ready` when the answer is ready for another run.
 
 The refusals you can meet, with the next step. The broker answers a plan or a check it will not make
 with one reason of a closed list, each with its own sentence; the whole list is
@@ -266,6 +310,8 @@ with one reason of a closed list, each with its own sentence; the whole list is
 | `planner_timeout` | The one call outlived its deadline (20 s, under `/mcp`'s 25 s). Ask again, with the same words or a shorter context |
 | `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository |
 | `plan_changed` | The plan and the hash you passed do not hold together: it was edited after it was shown. Show the newer plan and confirm that one, never the older text |
+| `unresolved_marker` | A final draft still has a gap or clarification marker. Resolve it through a revision, or accept the remaining recommendations |
+| `invalid_decisions` | Fix the Decisions records: one line each, with ascending unique IDs and valid gap references |
 
 ### OpenCode's background service
 
@@ -307,7 +353,7 @@ also write one command file, `factory.md`, that calls the same prompts' tools:
 
 | Type | Does |
 |---|---|
-| `/factory handoff [what]` | plans it with `intake_plan` and shows the plan, then files its first issue with `issue_file` and the plan's hash; with the planner off, writes the issue, has `issue_draft` check it, and files it |
+| `/factory handoff [what]` | runs the canonical `factory_intake` loop: clarify one first gap at a time or accept the rest, finish with `plan_check`, then file the first issue through `issue_file`; with the planner off, writes the issue, has `issue_draft` check it, and files it |
 | `/factory status [room]` | `room_summary` of the room; none: your most recently updated room |
 | `/factory resume [room]` | `needs_list` once, then `room_brief` of the first room that needs you (or of the room you passed); names the brief's `Next:` line as the one step |
 | `/factory inbox` | `needs_list` once: the rooms that need you. Empty, it says so and names `rooms_list` with `mine` |
@@ -389,11 +435,13 @@ server, a shell fallback section runs the same jobs through `gh` and `maku`.
 
 It does:
 
-- Hand your own words, and the context it has read, to the broker's planner (`intake_plan`), show the
-  plan as it is — its question included — and file its first issue with `issue_file`, plan and hash
-  together, only once you answer the form. With the planner off, or in a shell with no MCP server, it
-  writes the issue in the template's three sections, has `issue_draft` check it, and says the broker
-  planned nothing rather than passing a plan it wrote as the planner's.
+- Invoke the broker's canonical `factory_intake` prompt (`handoff` is its alias), or follow the same
+  contract from `intake_plan`'s description when the client has no prompts. It asks only the first
+  gap, offers "accept the rest", applies answers through the base plan + hash + candidate revision
+  envelope with D/A records, and finishes with `plan_check` then `issue_file`. With the planner off,
+  or in a shell with no MCP server, it writes the issue in the template's three sections, has
+  `issue_draft` check it, and says the broker planned nothing rather than passing a plan it wrote as
+  the planner's.
 - Follow a task: find the room, and report phase, run, PR and the newest notes.
 - Say "it needs you" first when something waits on you, giving the link: approvals stay on the room page.
 - Answer "anything waiting on me?".

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chip, detail, ghostMerge, modelsOf, ghostsAfter, isLive, parts, personaLabel, rows, tone } from "../src/flow";
+import { chip, detail, fillDetail, ghostMerge, modelsOf, ghostsAfter, isLive, parts, personaLabel, rows, tone } from "../src/flow";
 import type { Flow, FlowNode } from "../src/summary";
 
 const node = (o: Partial<FlowNode> = {}): FlowNode => ({
@@ -44,10 +44,20 @@ describe("isLive", () => {
 describe("detail", () => {
   const now = Date.parse("2026-10-08T11:00:00Z");
   it("joins duration and cost; the models have their own line", () =>
-    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 m · $0.82"));
+    expect(detail(node({ microUSD: 820000, model: "glm-5.3", models: ["glm-5.3"] }), now)).toBe("14 min · $0.82"));
   it("leaves a missing part out with its dot", () =>
     expect(detail(node({ startedAt: undefined, microUSD: 10000 }), now)).toBe("$0.01"));
-  it("counts a live run up to now", () => expect(detail(node({ endedAt: undefined }), now)).toBe("60 m"));
+  it("counts a live run up to now", () => expect(detail(node({ endedAt: undefined }), now)).toBe("1 h"));
+  it("keeps the <time> a tick leaves unchanged, so its hover holds, and redraws one that moved", () => {
+    const e = document.createElement("div");
+    const live = node({ endedAt: undefined, microUSD: 10000 });
+    fillDetail(e, live, now);
+    const t = e.querySelector("time")!;
+    fillDetail(e, live, now + 1000); // "1 h" still
+    expect(e.querySelector("time")).toBe(t);
+    fillDetail(e, live, now + 60_000);
+    expect(e.textContent).toBe("1 h 1 min · $0.01");
+  });
   it("a run over with no end time has no duration, rather than one that grows", () =>
     expect(detail(node({ endedAt: undefined, outcome: "ended", microUSD: 10000 }), now)).toBe("$0.01"));
 });

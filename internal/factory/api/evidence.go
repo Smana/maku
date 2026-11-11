@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
@@ -28,8 +30,8 @@ type ReadChecker interface {
 }
 
 // promotionOn is whether policyManagement.promotion serves the evidence routes: off is a 404.
-func (s *Server) promotionOn() bool {
-	return s.Cfg.PolicyManagement.Promotion && s.Evidence != nil
+func (s *Server) promotionOn(cfg *config.Config) bool {
+	return cfg.PolicyManagement.Promotion && s.Evidence != nil
 }
 
 // policyReader is a human caller; sponsored and system principals read no evidence.
@@ -59,8 +61,8 @@ func (s *Server) reads(ctx context.Context, p authn.Principal, repository string
 }
 
 // configured is repository as the config spells it, "" when it lists none.
-func (s *Server) configured(repository string) string {
-	for _, r := range s.Cfg.Repos() {
+func (s *Server) configured(cfg *config.Config, repository string) string {
+	for _, r := range cfg.Repos() {
 		if strings.EqualFold(r.Name, repository) {
 			return r.Name
 		}
@@ -72,6 +74,7 @@ func (s *Server) configured(repository string) string {
 // evidence, for a reader of it on GitHub (MP17). A repository the caller cannot read, or the
 // config does not list, is a 404 alike, so the answer tells no repository's existence.
 func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, ok := s.policyReader(w, r)
 	if !ok {
 		return
@@ -81,7 +84,7 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "repository_required")
 		return
 	}
-	repo := s.readable(w, r, p, asked)
+	repo := s.readable(cfg, w, r, p, asked)
 	if repo == "" {
 		return
 	}
@@ -99,12 +102,13 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 // policyRepositories is GET /v1/policy/repositories: the configured repositories the caller reads.
 // One that cannot be checked is left out, never shown.
 func (s *Server) policyRepositories(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, ok := s.policyReader(w, r)
 	if !ok {
 		return
 	}
 	out := []string{}
-	for _, rc := range s.Cfg.Repos() {
+	for _, rc := range cfg.Repos() {
 		if can, err := s.reads(r.Context(), p, rc.Name); err == nil && can {
 			out = append(out, rc.Name)
 		}
@@ -126,8 +130,8 @@ const maxPreviewBody = mergepolicy.MaxFileBytes + 4<<10
 
 // readable answers the caller's read of repository, refusing for them when not: the repository as
 // the config spells it, or "".
-func (s *Server) readable(w http.ResponseWriter, r *http.Request, p authn.Principal, asked string) string {
-	repo := s.configured(asked)
+func (s *Server) readable(cfg *config.Config, w http.ResponseWriter, r *http.Request, p authn.Principal, asked string) string {
+	repo := s.configured(cfg, asked)
 	if repo == "" {
 		refuse(w, http.StatusNotFound, "not_found")
 		return ""
@@ -147,6 +151,7 @@ func (s *Server) readable(w http.ResponseWriter, r *http.Request, p authn.Princi
 // checked strictly, compared structurally and simulated (MP8, MP16). It writes nothing: the answer
 // is the file to submit and the GitHub page to submit it from.
 func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, ok := s.policyReader(w, r)
 	if !ok {
 		return
@@ -161,7 +166,7 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "bad_json")
 		return
 	}
-	repo := s.readable(w, r, p, in.Repository)
+	repo := s.readable(cfg, w, r, p, in.Repository)
 	if repo == "" {
 		return
 	}
@@ -184,6 +189,7 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 // policyDecisions is GET /v1/policy/decisions?repository=owner/name&pr=N: the pull request's
 // decision timeline, for a reader of the repository.
 func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, ok := s.policyReader(w, r)
 	if !ok {
 		return
@@ -193,7 +199,7 @@ func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "pr_required")
 		return
 	}
-	repo := s.readable(w, r, p, r.URL.Query().Get("repository"))
+	repo := s.readable(cfg, w, r, p, r.URL.Query().Get("repository"))
 	if repo == "" {
 		return
 	}

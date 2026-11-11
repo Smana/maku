@@ -550,9 +550,16 @@ func (c *card) runs(s summary.Summary) {
 	if len(s.Runs) == 0 {
 		return
 	}
+	nodes := map[string]summary.FlowNode{}
+	if s.Flow != nil {
+		for _, n := range s.Flow.Nodes {
+			nodes[n.Run] = n
+		}
+	}
 	parts := make([]string, len(s.Runs))
 	for i, r := range s.Runs {
-		parts[i] = c.runPhrase(r)
+		n := nodes[r.ID]
+		parts[i] = c.runPhrase(r, n.Steered, n.Chat)
 	}
 	c.line("")
 	c.line(c.head("Runs") + " " + strings.Join(parts, " → "))
@@ -561,8 +568,9 @@ func (c *card) runs(s summary.Summary) {
 // runPhrase is a run as the line reads it: its role, its trigger, how it ended, how long it took
 // and what it cost. A run with no end and no outcome is running, and its time counts to Now. An
 // outcome the factory set without an end (a stopped task's last run) is that outcome, never
-// running, and has no time to count.
-func (c *card) runPhrase(r envelope.RunFact) string {
+// running, and has no time to count. Steered and chat are the humans' messages counted on the
+// run's flow node, shown after the time and left out at zero.
+func (c *card) runPhrase(r envelope.RunFact, steered, chat int) string {
 	reviews := r.Role == "reviewer" // a tester writes tests: shown as a writer (TO1)
 	s := c.text(r.Role, false)
 	if !reviews && clean(r.Trigger) != "" {
@@ -583,6 +591,12 @@ func (c *card) runPhrase(r envelope.RunFact) string {
 	if d, ok := duration(r, c.o.Now, c.over); ok {
 		s += " · " + d
 	}
+	if steered > 0 {
+		s += " · ↪ steered ×" + strconv.Itoa(steered)
+	}
+	if chat > 0 {
+		s += " · " + strconv.Itoa(chat) + " chat"
+	}
 	if r.MicroUSD > 0 {
 		s += " · " + dollars(r.MicroUSD)
 	}
@@ -601,16 +615,7 @@ func duration(r envelope.RunFact, now time.Time, over bool) (string, bool) {
 	case end.IsZero():
 		return "", false
 	}
-	m := max(0, int(end.Sub(r.StartedAt)/time.Minute))
-	switch {
-	case m < 1:
-		return "under 1 min", true
-	case m < 60:
-		return strconv.Itoa(m) + " min", true
-	case m%60 == 0:
-		return strconv.Itoa(m/60) + " h", true
-	}
-	return fmt.Sprintf("%d h %d min", m/60, m%60), true
+	return spanText(end.Sub(r.StartedAt)), true
 }
 
 func (c *card) notes(s summary.Summary) {

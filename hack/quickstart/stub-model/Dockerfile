@@ -1,5 +1,5 @@
 # Stdlib-only stub for quickstart-e2e; built with the repo root as context.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 COPY hack/quickstart/stub-model ./hack/quickstart/stub-model

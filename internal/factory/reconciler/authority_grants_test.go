@@ -31,7 +31,7 @@ func TestACutOverRepositoryConsultsItsGrants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			snap, _ := approvalSnapshot()
 			g := cutOverRig(t, snap, nil)
-			g.r.Cfg.PolicyManagement.ApprovalMemory = true
+			g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
 			g.r.Grants = tc.grants
 			files := changed("[x](https://example.com/old)", "[x](https://example.com/new)")
 			g.f.SetFiles(files.Base, files.Head)
@@ -71,7 +71,7 @@ func TestAGrantOfACutOverRepositoryIsReadAgainUnderItsAuthority(t *testing.T) {
 					t.Fatal("a cut-over repository's grant read under the dual-evaluation snapshot")
 					return mergepolicy.Snapshot{}, false
 				}}
-			if got := r.grantHolds(t.Context(), tk, armed); got != tc.want {
+			if got := r.grantHolds(t.Context(), r.Cfg.Current(), tk, armed); got != tc.want {
 				t.Fatalf("got %v, calls %q", got, f.calls)
 			}
 			if tc.want && !slices.Contains(f.calls, "lookup smana/cloud-native-ref docs-links "+rigHash+" "+config.DefaultGrantLifetime.String()) {

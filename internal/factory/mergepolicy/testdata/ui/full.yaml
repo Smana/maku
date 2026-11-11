@@ -1,6 +1,7 @@
 factory: "aws-0"
 classes:
   a-docs:
+    description: "Keep the docs links working"
     mode: "live"
     author: "agents"
     harness: "docs-standard"
@@ -11,6 +12,10 @@ classes:
       logins: ["renovate[bot]"]
       branches: ["^renovate/"]
     harness: "docs-standard"
+    harnessAllowed: ["docs-search", "docs-frontier"]
+    escalation:
+      outOfBudget: "docs-frontier"
+      notConverged: "docs-search"
     conditions:
       all:
         - oracle:

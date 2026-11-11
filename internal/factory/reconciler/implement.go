@@ -34,26 +34,26 @@ import (
 const runEndGrace = time.Minute
 
 // slotFree: the active-task and concurrent-run caps (§6.2), and never while a human drives (C4).
-func (r *Reconciler) slotFree(ctx context.Context, t *v1alpha1.Task) (bool, string, error) {
+func (r *Reconciler) slotFree(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (bool, string, error) {
 	active, err := r.countTasks(ctx, func(o *v1alpha1.Task) bool {
 		return o.Name != t.Name && o.Spec.Source.Kind != "adopt" && v1alpha1.ActivePhase(o.Status.Phase)
 	})
 	if err != nil {
 		return false, "", err
 	}
-	if active >= r.Cfg.Caps.ActiveTasks {
+	if active >= cfg.Caps.ActiveTasks {
 		return false, "waiting_active_tasks", nil
 	}
 	// A live class may auto-merge its PR, so human review WIP is not its bottleneck; the shadow
 	// and unclassified work is exactly what lands on the review queue.
-	if len(t.Status.Runs) == 0 && !r.repo(t).Classes[t.Spec.PredictedClass].Live {
+	if len(t.Status.Runs) == 0 && !r.repo(cfg, t).Classes[t.Spec.PredictedClass].Live {
 		wip, err := r.countTasks(ctx, func(o *v1alpha1.Task) bool {
 			return o.Spec.Source.Kind != "adopt" && o.Status.Phase == v1alpha1.PhaseAwaitingHuman
 		})
 		if err != nil {
 			return false, "", err
 		}
-		if wip >= r.Cfg.Caps.AwaitingHumanWIP {
+		if wip >= cfg.Caps.AwaitingHumanWIP {
 			return false, "waiting_review_wip", nil // back-pressure on the reviewers (§6.2)
 		}
 	}
@@ -75,13 +75,13 @@ func (r *Reconciler) slotFree(ctx context.Context, t *v1alpha1.Task) (bool, stri
 			return false, "waiting_room_busy", nil
 		}
 	}
-	if live >= r.Cfg.Caps.ConcurrentRuns {
+	if live >= cfg.Caps.ConcurrentRuns {
 		return false, "waiting_run_slot", nil
 	}
 	// CD22: a revision goes first. preferRevisions waits only for a task whose next run continues it and
 	// which a *slot* holds: a neighbour stopped by any other cap is not waiting for the slot, and priority
 	// never overrides a limit. A first run waits one slot-time; nothing is reserved.
-	if r.Cfg.Caps.PreferRevisions && len(t.Status.Runs) == 0 {
+	if cfg.Caps.PreferRevisions && len(t.Status.Runs) == 0 {
 		waiting, err := r.revisionWaiting(ctx, t)
 		if err != nil {
 			return false, "", err
@@ -121,7 +121,7 @@ func runID(task string, n int) string { return taskid.Run(task, n) }
 // the write that recorded it was lost, so the replay found the claim by its deterministic id.
 // The claim is the record — its own role, start seq, head and tokens, whatever its phase — never
 // the replay's spec, which may hold a newer brief or a later room seq.
-func (r *Reconciler) recordExisting(t *v1alpha1.Task, x runs.Run) error {
+func (r *Reconciler) recordExisting(cfg *config.Config, t *v1alpha1.Task, x runs.Run) error {
 	if x.TaskID != t.Name {
 		return fmt.Errorf("record run %s of task %s: the id belongs to task %q", x.ID, t.Name, x.TaskID)
 	}
@@ -137,7 +137,7 @@ func (r *Reconciler) recordExisting(t *v1alpha1.Task, x runs.Run) error {
 	}
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
-		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(t, x)}})
+		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)}})
 	t.Status.NextTrigger, t.Status.NextRole = "", ""
 	r.to(t, phaseFor(x.Role), "adopted")
 	return nil
@@ -160,26 +160,34 @@ func sourceURL(t *v1alpha1.Task) string {
 
 // implementerSpec: every run of a task writes agent/<taskId> (C3); baseRef main, because the
 // harness resumes origin/<branch> when an earlier run pushed it (SP1 R7).
-func (r *Reconciler) implementerSpec(t *v1alpha1.Task, text string) runs.Spec {
+func (r *Reconciler) implementerSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := runs.Spec{TaskID: t.Name, Role: "implementer", Repository: t.Spec.Repository, BaseRef: "main",
 		Branch: "agent/" + t.Name, TaskText: text, Principal: runs.PrincipalFactory, DataClass: t.Spec.DataClass,
 		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef, SourceURL: sourceURL(t), Queue: runs.QueueFactory,
 		MaxTokens: t.Spec.Budget.RunTokens, MaxMinutes: t.Spec.Budget.RunMinutes, Traceparent: traceparent(t), Tier: t.Spec.Budget.Tier,
 		CoordinationArtifacts: t.Spec.CoordinationArtifacts}
-	r.withChecks(&s, t)
+	r.withChecks(cfg, &s, t)
 	return s
 }
 
 // withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a class
 // that has them (v3 feature 3, RC8): spec.loop.checks and the repository's checks.egress. Any other
 // run, an internal one included, is today's.
-func (r *Reconciler) withChecks(s *runs.Spec, t *v1alpha1.Task) {
-	on, egress := r.repo(t).ChecksFor(t.Spec.PredictedClass)
-	if !on || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
+func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Task) {
+	if !r.checksOn(cfg, t) || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
 		s.Checks, s.EgressProfiles = false, nil
 		return
 	}
-	s.Checks, s.EgressProfiles = true, egress
+	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(cfg, t).Checks.Egress)
+}
+
+// checksOn: a decision frozen at triage survives later config changes; a task without one reads live config.
+func (r *Reconciler) checksOn(cfg *config.Config, t *v1alpha1.Task) bool {
+	if t.Status.Profile != nil {
+		return t.Status.Profile.Checks
+	}
+	on, _ := r.repo(cfg, t).ChecksFor(t.Spec.PredictedClass)
+	return on
 }
 
 // reserveFactoryDay is §6.2's "SP3 at admission" for the factory's own principal (R34), admitted
@@ -190,21 +198,23 @@ func (r *Reconciler) withChecks(s *runs.Spec, t *v1alpha1.Task) {
 // that names the room would hold the task's next run until the meter's next tick.
 //
 // With per-person caps on, the same entry also charges the person who caused the run (D2, D3).
-func (r *Reconciler) reserveFactoryDay(ctx context.Context, t *v1alpha1.Task, limit int64) (string, error) {
+func (r *Reconciler) reserveFactoryDay(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, limit int64) (string, error) {
 	if r.Ledger == nil {
 		return "", errors.New("the daily cap needs the ledger client")
 	}
-	person := r.person(t)
+	person := r.person(cfg, t)
 	// F4, ledger ruling I1: a sponsored principal's day is a bound, not a shadow, whatever
 	// budgets.enforcePrincipal says, and whatever the fleet's own day.
-	enforce := r.Cfg.Budgets.EnforcePrincipal || r.sponsored(t)
+	enforce := cfg.Budgets.EnforcePrincipal || r.sponsored(cfg, t)
 	return ledger.Reserve(ctx, r.Ledger, r.Namespace, r.Now(), runID(t.Name, len(t.Status.Runs)),
 		ledger.Reservation{Principal: runs.PrincipalFactory, Person: person, MaxMicroUSD: runMicroUSD(t.Spec.Budget)}, limit,
-		r.Cfg.Budgets.DailyMicroUSD(person), enforce)
+		cfg.Budgets.DailyMicroUSD(person), enforce)
 }
 
 // sponsored is whether the task's runs are charged to a declared sponsored principal.
-func (r *Reconciler) sponsored(t *v1alpha1.Task) bool { return r.Cfg.PrincipalBy(r.person(t)) != nil }
+func (r *Reconciler) sponsored(cfg *config.Config, t *v1alpha1.Task) bool {
+	return cfg.PrincipalBy(r.person(cfg, t)) != nil
+}
 
 // runMicroUSD is what one run of the task may spend, as the day ledger reserves it: its USD run
 // cap, or its token cap at the reference rate for a tier capped in tokens (TC7).
@@ -217,11 +227,11 @@ func runMicroUSD(b v1alpha1.Budget) int64 {
 
 // person is the key the task's runs are charged to beside the fleet: an api task's principal
 // always (R7), otherwise the person while per-person caps are on.
-func (r *Reconciler) person(t *v1alpha1.Task) string {
+func (r *Reconciler) person(cfg *config.Config, t *v1alpha1.Task) string {
 	if p := t.Sponsored(); p != "" && t.Status.RetriedBy == "" {
 		return p
 	}
-	if !r.Cfg.Budgets.PerPerson.Enabled {
+	if !cfg.Budgets.PerPerson.Enabled {
 		return ""
 	}
 	return t.Payer()
@@ -235,7 +245,7 @@ func traceparent(t *v1alpha1.Task) string {
 	return tracing.Traceparent(t.Status.Trace.TraceID, t.Status.Trace.SpanID)
 }
 
-func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec, trigger string) error {
+func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, s runs.Spec, trigger string) error {
 	// The room's lastSeq before the run: its handoff, verdict and end are read after it, never
 	// from the start of a long room (EventsSince stops at 10,000 events). It rides the claim
 	// (AnnStartSeq), so a replay that finds the claim records the seq the run was given.
@@ -243,7 +253,10 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 	if err != nil {
 		return err
 	}
-	s.RunID, s.StartSeq, s.ChargedTo = runID(t.Name, len(t.Status.Runs)), last, r.person(t)
+	s.RunID, s.StartSeq, s.ChargedTo = runID(t.Name, len(t.Status.Runs)), last, r.person(cfg, t)
+	if p := t.Status.Profile; p != nil { // the meter labels the run's cost with them (R34)
+		s.Cohort, s.Profile = p.Cohort, p.Name
+	}
 	if t.Spec.MaxMicroUSD > 0 { // F4, C-1: the meter holds an api task's run to its own cap, not the tier's
 		s.MaxMicroUSD = runMicroUSD(t.Spec.Budget)
 	}
@@ -255,7 +268,7 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 	// Search rides every implementer claim of a task triaged with it (v3 feature 5, ST9), the loop's
 	// keys only when its loop is on.
 	s.Search = t.Spec.Search && s.Role == "implementer"
-	source := r.pinModel(t, &s)
+	source := r.pinModel(cfg, t, &s)
 	err = r.Runs.Create(ctx, s)
 	unbriefed := false
 	if refusedSchema(err) && s.Role == "reviewer" && s.TaskText != "" && s.TaskURL != "" {
@@ -274,7 +287,7 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 			// Retrying cannot help; hand the task to a maintainer instead of backing off forever.
 			if (s.Loop != nil || s.Checks || s.Search) && refusedSchema(err) {
 				r.log().Warn("loop, repository checks or search claim refused by the cluster", "task.id", t.Name, "err", err)
-				return r.end(ctx, t, v1alpha1.PhaseEscalated, "loop_unsupported")
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "loop_unsupported")
 			}
 			return err
 		}
@@ -285,7 +298,7 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 		if !found {
 			return err
 		}
-		return r.recordExisting(t, x)
+		return r.recordExisting(cfg, t, x)
 	}
 	now := metav1.NewTime(r.Now())
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Trigger: trigger,
@@ -293,7 +306,7 @@ func (r *Reconciler) startRun(ctx context.Context, t *v1alpha1.Task, s runs.Spec
 		Provenance: v1alpha1.RunProvenance{ModelSource: source}})
 	t.Status.NextTrigger = ""
 	r.to(t, phaseFor(s.Role), "")
-	narrateLater(t, narrate.Started(t, s, r.Cfg.RoomsURL))
+	narrateLater(t, narrate.Started(t, s, cfg.RoomsURL))
 	if unbriefed {
 		r.unbriefedReviewer(ctx, t)
 	}
@@ -318,8 +331,8 @@ const (
 // the block renders it as data. A source that cannot be read yields one plain sentence — one however
 // many checks failed, since it is one permission and one fix — and never fails the pass (fast-follow
 // 6); with brief.ciEvidence off it reads nothing at all.
-func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []evidenceItem, notes []string) {
-	if !r.Cfg.Brief.CIEvidence || t.Status.PullRequest == nil || t.Status.PullRequest.Number == 0 {
+func (r *Reconciler) evidence(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (items []evidenceItem, notes []string) {
+	if !cfg.Brief.CIEvidence || t.Status.PullRequest == nil || t.Status.PullRequest.Number == 0 {
 		return nil, nil
 	}
 	n := t.Status.PullRequest.Number
@@ -333,7 +346,7 @@ func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []ev
 		// revision, whatever its earlier runs have acted on. A stranger's review is advice to a
 		// maintainer (Δ5), and a request its author approved over is lifted.
 		for _, rv := range openChangeRequests(pr.Reviews, false) {
-			if !r.repo(t).IsMaintainer(rv.Author) {
+			if !r.repo(cfg, t).IsMaintainer(rv.Author) {
 				continue
 			}
 			items = append(items, evidenceItem{source: evidenceReview, where: reviewWhere(rv, n), text: rv.Body})
@@ -379,9 +392,9 @@ func (r *Reconciler) evidence(ctx context.Context, t *v1alpha1.Task) (items []ev
 // revisionBrief is the revision brief as the factory builds it: the room's log and queue, and, with
 // brief.ciEvidence, what the review asked for and what CI said (CD12). One place, so a test that
 // renders the brief renders what production does.
-func (r *Reconciler) revisionBrief(ctx context.Context, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped) (string, []int64) {
-	items, notes := r.evidence(ctx, t)
-	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes})
+func (r *Reconciler) revisionBrief(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, evs []envelope.Event, queued []rooms.Queued, sc *Scoped, tail string) (string, []int64) {
+	items, notes := r.evidence(ctx, cfg, t)
+	return reviseBrief(t, evs, queued, r.Nonce(), sc, evidenceSet{items: items, notes: notes, tail: tail})
 }
 
 // reviewWhere is where a review's body came from, as the brief names it.
@@ -440,12 +453,12 @@ func (r *Reconciler) unbriefedReviewer(ctx context.Context, t *v1alpha1.Task) {
 // role and the tier it runs on (v3 F15, F3), and returns which config chose the run's model, for its
 // provenance. ModelFor is "" unless the claim's data class is public: an internal run keeps its
 // tier's model, or the template's reviewerModel, whatever the row says (F4).
-func (r *Reconciler) pinModel(t *v1alpha1.Task, s *runs.Spec) string {
-	if m := r.Cfg.ModelFor(t.Spec.PredictedClass, s.DataClass, s.Role, s.Tier); m != "" {
+func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
+	if m := cfg.ModelFor(t.Spec.PredictedClass, s.DataClass, s.Role, s.Tier); m != "" {
 		s.Model = m
 		return v1alpha1.ModelSourceClassModels
 	}
-	if s.Role == "reviewer" && r.Cfg.Templates[t.Spec.Template].ReviewerModel != "" {
+	if s.Role == "reviewer" && cfg.Templates[t.Spec.Template].ReviewerModel != "" {
 		return v1alpha1.ModelSourceReviewerModel
 	}
 	return v1alpha1.ModelSourceTier
@@ -454,8 +467,8 @@ func (r *Reconciler) pinModel(t *v1alpha1.Task, s *runs.Spec) string {
 // modelSourceOf is pinModel's answer for a run adopted from its claim (R48), derived from the
 // claim's model: only loops.<class>.models names a provider alias, and a reviewer on the
 // template's reviewerModel ran on it.
-func (r *Reconciler) modelSourceOf(t *v1alpha1.Task, x runs.Run) string {
-	switch rm := r.Cfg.Templates[t.Spec.Template].ReviewerModel; {
+func (r *Reconciler) modelSourceOf(cfg *config.Config, t *v1alpha1.Task, x runs.Run) string {
+	switch rm := cfg.Templates[t.Spec.Template].ReviewerModel; {
 	case config.PublicOnly(x.Model):
 		return v1alpha1.ModelSourceClassModels
 	case x.Role == "reviewer" && rm != "" && x.Model == rm:
@@ -520,15 +533,15 @@ func pending(phase string) bool { return phase == "" || phase == "Pending" }
 // A run still Pending past caps.maxPendingMinutes whose record never saw it start (observe) and
 // whose claim carries no usage never ran, so deleting it loses no usage; the task escalates as
 // run_unschedulable, and a maintainer's /factory retry starts a fresh run.
-func (r *Reconciler) boundPending(ctx context.Context, t *v1alpha1.Task, run runs.Run) error {
+func (r *Reconciler) boundPending(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, run runs.Run) error {
 	if !pending(current(t).Phase) || run.Tokens > 0 || run.Created.IsZero() ||
-		r.Now().Sub(run.Created) < time.Duration(r.Cfg.Caps.MaxPendingMinutes)*time.Minute {
+		r.Now().Sub(run.Created) < time.Duration(cfg.Caps.MaxPendingMinutes)*time.Minute {
 		return nil
 	}
 	if err := r.deleteRun(ctx, run.ID); err != nil {
 		return err
 	}
-	return r.end(ctx, t, v1alpha1.PhaseEscalated, "run_unschedulable")
+	return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "run_unschedulable")
 }
 
 // deleteRun deletes a claim and releases its reservation (#55): a claim deleted while live
@@ -628,7 +641,7 @@ func (r *Reconciler) finished(ctx context.Context, t *v1alpha1.Task, run runs.Ru
 	return strings.ToLower(run.Phase)
 }
 
-func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	run, found, err := r.observe(ctx, t)
 	if err != nil {
 		return err
@@ -636,11 +649,11 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 	if !found {
 		why := r.lostReason(ctx, t)
 		if scoperRun(t) && why == "run_lost" { // SC11: a scoper whose claim vanished fails open
-			return r.scopeEnd(ctx, t, "failed", 0)
+			return r.scopeEnd(ctx, cfg, t, nil, "failed", 0)
 		}
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, why)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, why)
 	}
-	if err := r.boundPending(ctx, t, run); err != nil {
+	if err := r.boundPending(ctx, cfg, t, run); err != nil {
 		return err
 	}
 	if t.Status.PullRequest == nil {
@@ -654,9 +667,9 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 				return err
 			}
 			if scoperRun(t) { // SC11: a stuck scoper fails open
-				return r.scopeEnd(ctx, t, "failed", 0)
+				return r.scopeEnd(ctx, cfg, t, nil, "failed", 0)
 			}
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, "stuck")
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "stuck")
 		}
 		return nil
 	}
@@ -671,24 +684,24 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 		}
 	}
 	current(t).Reason = reason
-	r.interventions(ctx, t)
+	r.interventions(ctx, cfg, t)
 	if infraLost(run) {
 		done, err := r.handedOff(ctx, t)
 		if err != nil {
 			return err
 		}
-		switch why := r.resumeBlock(t); {
+		switch why := r.resumeBlock(cfg, t); {
 		case done:
 			run.Phase = "Succeeded" // it finished before its sandbox was lost: nothing to resume
 		case why == "":
-			r.resume(ctx, t, run)
+			r.resume(ctx, cfg, t, run)
 			return nil
 		default:
 			reason = why
 		}
 	}
 	if testerRun(t) {
-		return r.testerEnded(ctx, t, reason)
+		return r.testerEnded(ctx, cfg, t, reason)
 	}
 	if t.Spec.Loop != nil && current(t).Role == "implementer" {
 		end := "other"
@@ -701,23 +714,23 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 		record(ctx, func(ctx context.Context) { r.Metrics.LoopRun(ctx, t.Spec.PredictedClass, end) })
 	}
 	if scoperRun(t) {
-		return r.scoped(ctx, t, run.Phase, reason)
+		return r.scoped(ctx, cfg, t, run.Phase, reason)
 	}
 	// R38: the triager's output reaches a public implementer only through a human. Its summary
 	// stays in the room (internal); the issue gets the room link and the next step, nothing else.
 	if current(t).Role == "triager" {
 		if run.Phase != "Succeeded" {
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, reason)
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 		}
 		evs, _, err := r.Rooms.EventsSince(ctx, t.Status.RoomRef, current(t).StartSeq, handoffTo("implementer"))
 		if err != nil {
 			return err
 		}
 		if len(evs) == 0 {
-			return r.end(ctx, t, v1alpha1.PhaseNoOp, "no_action")
+			return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, "no_action")
 		}
-		narrateLater(t, narrate.ProposalReady(t, r.Cfg.RoomsURL, r.Cfg.PublishStarts(t.Spec.Source.Kind, t.Spec.Source.RequestedBy)))
-		return r.end(ctx, t, v1alpha1.PhaseDone, "proposal_ready")
+		narrateLater(t, narrate.ProposalReady(t, cfg.RoomsURL, cfg.PublishStarts(t.Spec.Source.Kind, t.Spec.Source.RequestedBy)))
+		return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "proposal_ready")
 	}
 	// F3-R7: an implementer that holds a contract and hands off to the tester disputes it. No dispute
 	// round (TF6): a maintainer decides, whatever the run's phase.
@@ -729,16 +742,16 @@ func (r *Reconciler) implementing(ctx context.Context, t *v1alpha1.Task) error {
 			return err
 		}
 		if len(evs) > 0 {
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, "contract_disputed")
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "contract_disputed")
 		}
 	}
 	switch {
 	case run.Phase == "Succeeded" && t.Status.PullRequest != nil:
-		return r.afterWriter(ctx, t)
+		return r.afterWriter(ctx, cfg, t)
 	case run.Phase == "Succeeded":
-		return r.end(ctx, t, v1alpha1.PhaseNoOp, "no_pr")
+		return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, "no_pr")
 	default:
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, reason)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 	}
 }
 
@@ -773,8 +786,8 @@ func infraLost(run runs.Run) bool {
 // so it never spends past the cap, even while the cap is shadow elsewhere (disruption design §4).
 // The usage it reads can trail the meter by one poll.meter, so a resume can overshoot the cap by
 // what the lost run spent in its last poll, and no more.
-func (r *Reconciler) resumeBlock(t *v1alpha1.Task) string {
-	if int(t.Status.Resumes) >= r.Cfg.Resume.MaxPerTask {
+func (r *Reconciler) resumeBlock(cfg *config.Config, t *v1alpha1.Task) string {
+	if int(t.Status.Resumes) >= cfg.Resume.MaxPerTask {
 		return "resumes_exhausted"
 	}
 	if !runFits(t) {
@@ -784,8 +797,8 @@ func (r *Reconciler) resumeBlock(t *v1alpha1.Task) string {
 }
 
 // resumable: the run was lost to its infrastructure and resumeBlock lets it resume.
-func (r *Reconciler) resumable(t *v1alpha1.Task, run runs.Run) bool {
-	return infraLost(run) && r.resumeBlock(t) == ""
+func (r *Reconciler) resumable(cfg *config.Config, t *v1alpha1.Task, run runs.Run) bool {
+	return infraLost(run) && r.resumeBlock(cfg, t) == ""
 }
 
 // handedOff: the room holds a handoff of the task's current run, so its agent finished its work
@@ -824,7 +837,7 @@ func (r *Reconciler) resumeBrief(ctx context.Context, t *v1alpha1.Task) (string,
 // and in the same room (disruption design §4). The new run is a new AgentRun with the task's next
 // deterministic id (R48), so a replay after a lost status write never starts two; the lost one
 // stays Failed. A reviewer's re-run spends no review round.
-func (r *Reconciler) resume(ctx context.Context, t *v1alpha1.Task, run runs.Run) {
+func (r *Reconciler) resume(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, run runs.Run) {
 	t.Status.Resumes++
 	n, why := int(t.Status.Resumes), run.Reason
 	record(ctx, func(ctx context.Context) { r.Metrics.Resumed(ctx, why) })
@@ -834,7 +847,7 @@ func (r *Reconciler) resume(ctx context.Context, t *v1alpha1.Task, run runs.Run)
 		t.Status.NextTrigger = "resume"
 		r.to(t, v1alpha1.PhaseQueued, "")
 	}
-	narrateLater(t, narrate.Resuming(t, run.ID, run.Role, n, r.Cfg.Resume.MaxPerTask))
+	narrateLater(t, narrate.Resuming(t, run.ID, run.Role, n, cfg.Resume.MaxPerTask))
 }
 
 // cause is why the current implementer run's work exists: a resumed run carries on the run it
@@ -853,7 +866,7 @@ func cause(t *v1alpha1.Task) string {
 // the template's first verifier after the implementer runs, or the task is ready (solo). A CI fix
 // is verified like any revision: it moved the head, and the gate only arms on a verdict of the
 // head it decides (R03), so skipping the review would hand it off as verdict_stale (N1).
-func (r *Reconciler) afterWriter(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) afterWriter(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if cause(t) == "human" {
 		pr, err := r.readPR(ctx, t)
 		if err != nil {
@@ -865,7 +878,7 @@ func (r *Reconciler) afterWriter(ctx context.Context, t *v1alpha1.Task) error {
 			reason = "scope_changed"
 		}
 		r.to(t, v1alpha1.PhaseAwaitingHuman, reason)
-		narrateOn(t, reviewTarget(t), narrate.Revised(t, rv, r.Cfg.RoomsURL))
+		narrateOn(t, reviewTarget(t), narrate.Revised(t, rv, cfg.RoomsURL))
 		return nil
 	}
 	if cause(t) == "ci" { // a push after the fix's own is a human's: never reviewed into a merge
@@ -873,11 +886,11 @@ func (r *Reconciler) afterWriter(ctx context.Context, t *v1alpha1.Task) error {
 		if err != nil {
 			return err
 		}
-		if handed, err := r.humanCommit(ctx, t, pr.HeadSHA); err != nil || handed {
+		if handed, err := r.humanCommit(ctx, cfg, t, pr.HeadSHA); err != nil || handed {
 			return err
 		}
 	}
-	if next := r.nextVerifier(t, "implementer"); next != "" {
+	if next := r.nextVerifier(cfg, t, "implementer"); next != "" {
 		r.requestVerifier(t, next)
 		return nil
 	}
@@ -910,29 +923,29 @@ func (r *Reconciler) detectPR(ctx context.Context, t *v1alpha1.Task, run runs.Ru
 	return nil
 }
 
-func (r *Reconciler) awaitingHuman(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) awaitingHuman(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	pr, err := r.readPR(ctx, t)
 	if err != nil {
 		return err
 	}
-	if r.prEnded(ctx, t, pr) {
-		return nil
+	if ended, err := r.prEnded(ctx, cfg, t, pr); ended || err != nil {
+		return err
 	}
-	r.countApproves(ctx, t, pr)
+	r.countApproves(ctx, cfg, t, pr)
 	if adoptedTask(t) {
-		return r.awaitingHumanAdopted(ctx, t, pr)
+		return r.awaitingHumanAdopted(ctx, cfg, t, pr)
 	}
-	if rvs := r.changesRequested(t, pr); len(rvs) > 0 {
-		return r.revise(ctx, t, pr, rvs)
+	if rvs := r.changesRequested(cfg, t, pr); len(rvs) > 0 {
+		return r.revise(ctx, cfg, t, pr, rvs)
 	}
 	// A return the factory cannot read is no return: it never blocks the reminder and stale close.
-	if back, err := r.reenter(ctx, t, pr); err != nil {
+	if back, err := r.reenter(ctx, cfg, t, pr); err != nil {
 		r.log().Warn("merge gate return unreadable", "task.id", t.Name, "reason", t.Status.Reason, "err", err)
 	} else if back {
 		return nil
 	}
-	r.showApproval(t, pr)
-	return r.remind(ctx, t, pr)
+	r.showApproval(cfg, t, pr)
+	return r.remind(ctx, cfg, t, pr)
 }
 
 // showApproval shows a maintainer's approval of an agents pull request with merge.approveToMerge off,
@@ -942,12 +955,12 @@ func (r *Reconciler) awaitingHuman(ctx context.Context, t *v1alpha1.Task) error 
 // every by-hand reason's guidance read it. A dismissed or vetoed approval is shown no longer. It
 // reads the pull request awaitingHuman already holds: no GitHub call of its own. With approveToMerge
 // on, or an adopted class, an approval is the gate's to read (approvalReturn, reenter).
-func (r *Reconciler) showApproval(t *v1alpha1.Task, pr forge.PR) {
-	if r.repo(t).Merge.ApproveToMerge || gateOf(r.repo(t), t.Spec.PredictedClass).Adopted() {
+func (r *Reconciler) showApproval(cfg *config.Config, t *v1alpha1.Task, pr forge.PR) {
+	if r.repo(cfg, t).Merge.ApproveToMerge || gateOf(r.repo(cfg, t), t.Spec.PredictedClass).Adopted() {
 		return
 	}
 	ref := t.Status.PullRequest
-	rv, st := shownApproval(pr, r.repo(t), runsEnded(t))
+	rv, st := shownApproval(pr, r.repo(cfg, t), runsEnded(t))
 	if st != "approved" && st != envelope.ApprovalOlderCommit && st != envelope.ApprovalBeforeRunsEnded {
 		ref.Approval = nil
 		return
@@ -972,21 +985,24 @@ func (r *Reconciler) showApproval(t *v1alpha1.Task, pr forge.PR) {
 // countApproves counts each maintainer's APPROVED review once (§7: how dark the factory is):
 // a gate that still needed a human's approve is not dark. The review id rides status.handled,
 // the same list that dedups request-changes reviews and commands.
-func (r *Reconciler) countApproves(ctx context.Context, t *v1alpha1.Task, pr forge.PR) {
+func (r *Reconciler) countApproves(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) {
 	for _, rv := range pr.Reviews {
-		if rv.State == "APPROVED" && r.repo(t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) {
+		if rv.State == "APPROVED" && r.repo(cfg, t).IsMaintainer(rv.Author) && !slices.Contains(t.Status.Handled, rv.ID) {
 			markHandled(t, rv.ID)
-			record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "approve") })
+			r.intervention(ctx, cfg, t, "approve")
 		}
 	}
 }
 
 // prEnded ends the task when its pull request was merged or closed. A closed one carrying
 // factory/stale was the stale close's (remind): its replay after a lost status write still says so.
-func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR) bool {
+func (r *Reconciler) prEnded(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	class := t.Spec.PredictedClass
 	switch pr.State {
 	case "MERGED":
+		if err := r.mergedHumanCommits(ctx, cfg, t, pr); err != nil {
+			return false, err
+		}
 		t.Status.PullRequest.MergedBy, t.Status.PullRequest.MergeCommitSHA = pr.MergedBy, pr.MergeCommitSHA
 		noteMergedHead(t, pr)
 		// R41: like the CI gate's bypass record, the timestamp is what puts the merge in the
@@ -995,18 +1011,16 @@ func (r *Reconciler) prEnded(ctx context.Context, t *v1alpha1.Task, pr forge.PR)
 		t.Status.PullRequest.MergedAt = &now
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
 		r.handedOffMerged(ctx, t, "human")
-		_ = r.end(ctx, t, v1alpha1.PhaseDone, "merged")
-		return true
+		return true, r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
 	case "CLOSED":
 		reason := "pr_closed"
 		if slices.Contains(pr.Labels, labelStale) {
 			reason = "stale"
 		}
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "closed") })
-		_ = r.end(ctx, t, v1alpha1.PhaseClosed, reason)
-		return true
+		return true, r.end(ctx, cfg, t, v1alpha1.PhaseClosed, reason)
 	}
-	return false
+	return false, nil
 }
 
 // stamp fills what the run ran on from its claim (R10): each field once, never changed, so a later

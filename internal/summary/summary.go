@@ -75,9 +75,9 @@ type State struct {
 	flow         flowState
 }
 
-// Clone is a copy of st that folds on apart from it. Add writes Pending, Agents, Notes and the
-// run models in place, so a fold kept for later readers hands each a clone. Facts, Verdict and
-// Judge are replaced by Add, never written through, so the clone shares them.
+// Clone is a copy of st that folds on apart from it. Add writes Pending, Agents, Notes, the run
+// models and the flow's slices in place, so a fold kept for later readers hands each a clone.
+// Facts, Verdict and Judge are replaced by Add, never written through, so the clone shares them.
 func (st State) Clone() State {
 	c := st
 	c.Pending = maps.Clone(st.Pending)
@@ -94,6 +94,7 @@ func (st State) Clone() State {
 	c.flow.runs = slices.Clone(st.flow.runs)
 	c.flow.phases = slices.Clone(st.flow.phases)
 	c.flow.requested = slices.Clone(st.flow.requested)
+	c.flow.human = slices.Clone(st.flow.human)
 	return c
 }
 
@@ -200,10 +201,11 @@ type Summary struct {
 		Task string `json:"task,omitempty"`
 		// State is the coarse state (Coarse): set by the caller, which holds the Room's projected
 		// phase and its runs; the fold alone has neither.
-		State  string               `json:"state,omitempty"`
-		Run    *envelope.RunFact    `json:"run"`
-		Budget *envelope.BudgetFact `json:"budget"`
-		Spend  *envelope.SpendFact  `json:"spend,omitempty"` // the task's dollars, beside Budget's tokens
+		State   string                `json:"state,omitempty"`
+		Run     *envelope.RunFact     `json:"run"`
+		Budget  *envelope.BudgetFact  `json:"budget"`
+		Profile *envelope.ProfileFact `json:"profile,omitempty"` // the task's harness profile and cohort
+		Spend   *envelope.SpendFact   `json:"spend,omitempty"`   // the task's dollars, beside Budget's tokens
 		// SpendFinal is CD23: Spend is the task's last figure, priced again after the settle window
 		// and never bucketed by the factory's facts key. Absent while the dollars may still move, and
 		// for a task whose runs the meter could not price — a surface that shows the figure reads this
@@ -440,6 +442,7 @@ func View(st State, room, url string, sub policy.Subject, standing GitHubStandin
 	if f := st.Facts; f != nil {
 		s.Status.Task = room
 		s.Status.Phase, s.Status.Run, s.Status.Budget, s.Status.PR, s.Status.Issue = f.Phase, f.Run, f.Budget, f.PR, f.Issue
+		s.Status.Profile = f.Profile
 		s.Runs = slices.Clone(f.Runs) // a copy, not the fold state's slice
 		if f.Spend != nil {
 			sp := *f.Spend

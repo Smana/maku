@@ -236,20 +236,57 @@ func (f *Fake) now() time.Time {
 }
 
 // Comment implements the forge's Comment, as the factory App.
-func (f *Fake) Comment(_ context.Context, n int, body string) error {
+func (f *Fake) Comment(ctx context.Context, n int, body string) error {
+	_, err := f.CommentWithID(ctx, n, body)
+	return err
+}
+
+// CommentWithID implements the forge's CommentWithID, allocating monotonically increasing ids.
+func (f *Fake) CommentWithID(_ context.Context, n int, body string) (int64, error) {
 	now := f.now()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextID++
 	f.comments[n] = append(f.comments[n], forge.Comment{ID: f.nextID, Author: "ogenki-agent-factory[bot]", Body: body, At: now})
-	return nil
+	return f.nextID, nil
 }
 
-// RecentComments implements the forge's RecentComments.
+// EditComment implements the forge's EditComment, changing only the matching comment's body.
+func (f *Fake) EditComment(_ context.Context, id int64, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, cs := range f.comments {
+		for i := range cs {
+			if cs[i].ID == id {
+				cs[i].Body = body
+				cs[i].Edited = true
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("comment %d not found", id)
+}
+
+// RecentComments implements the forge's RecentComments: the newest 50, newest first.
 func (f *Fake) RecentComments(_ context.Context, n int) ([]forge.Comment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.comments[n]), nil
+	return newestComments(f.comments[n], 50), nil
+}
+
+// AllComments implements the forge's AllComments: every comment, newest first.
+func (f *Fake) AllComments(_ context.Context, n int) ([]forge.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return newestComments(f.comments[n], len(f.comments[n])), nil
+}
+
+// newestComments returns at most limit comments from the end of an oldest-first store, newest first.
+func newestComments(cs []forge.Comment, limit int) []forge.Comment {
+	cs = cs[max(len(cs)-limit, 0):]
+	out := slices.Clone(cs)
+	slices.Reverse(out)
+	return out
 }
 
 // AddLabels implements the forge's AddLabels, and the labels show on the stored agent pulls, as

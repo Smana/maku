@@ -159,7 +159,7 @@ func TestInternalPrincipalRefusals(t *testing.T) {
 	})
 	t.Run("a repository the principal does not list", func(t *testing.T) {
 		s, f := internalServer(t)
-		s.Cfg.API.InternalPrincipals[0].Repositories = []string{"Smana/other"}
+		s.Cfg.Current().API.InternalPrincipals[0].Repositories = []string{"Smana/other"}
 		w := postTask(s, incident(0.9), key)
 		if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "repository_not_allowed") || len(f.got) != 0 {
 			t.Fatalf("%d %s", w.Code, w.Body)
@@ -234,12 +234,12 @@ func TestTheFactoryDailyTaskCapIsRefusedBeforeAnyStub(t *testing.T) {
 				seed("c", "label", factoryv1.PhaseRejected, now), seed("d", "adopt", factoryv1.PhaseDone, now),
 				seed("e", "label", factoryv1.PhaseDone, now.Add(-24*time.Hour)))
 			s.Auth = byToken{"t": c.p}
-			s.Cfg.Caps.TasksPerDay = 2
+			s.Cfg.Current().Caps.TasksPerDay = 2
 			w := postTask(s, c.body, key)
 			if w.Code != c.status || !strings.Contains(w.Body.String(), `"error":"daily_task_cap"`) || len(f.got) != 0 || len(tasks(t, s)) != 5 {
 				t.Fatalf("%d %s, %d issues, %d tasks", w.Code, w.Body, len(f.got), len(tasks(t, s)))
 			}
-			s.Cfg.Caps.TasksPerDay = 3 // the rejected, adopted and yesterday's tasks leave one slot
+			s.Cfg.Current().Caps.TasksPerDay = 3 // the rejected, adopted and yesterday's tasks leave one slot
 			if w := postTask(s, c.body, key); w.Code != http.StatusCreated {
 				t.Fatalf("under the cap: %d %s", w.Code, w.Body)
 			}

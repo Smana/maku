@@ -369,17 +369,6 @@ func diffFacts(prev, cur *envelope.TaskFacts, e envelope.Event) []Milestone {
 	return ms
 }
 
-// span is how long d is, at a glance.
-func span(d time.Duration) string {
-	switch {
-	case d >= 24*time.Hour:
-		return strconv.Itoa(int(d/(24*time.Hour))) + " d"
-	case d >= time.Hour:
-		return strconv.Itoa(int(d/time.Hour)) + " h"
-	}
-	return strconv.Itoa(max(0, int(d/time.Minute))) + " min"
-}
-
 // Changes writes view 4: a header, then one line per milestone, then how many more there are.
 func Changes(w io.Writer, c ChangeSet, o Options) error {
 	v := &card{o: o}
@@ -389,7 +378,7 @@ func Changes(w io.Writer, c ChangeSet, o Options) error {
 	}
 	head = v.bold(head)
 	if !c.Since.IsZero() {
-		head += " (" + span(o.Now.Sub(c.Since)) + ")"
+		head += " (" + spanText(o.Now.Sub(c.Since)) + ")"
 	}
 	v.line(head)
 	v.line("")

@@ -68,13 +68,20 @@ serves it statically:
 npm --prefix web run preview   # http://127.0.0.1:4180/preview/preview.html (?live replays)
 ```
 
-The palette is Maku's: `web/src/app.css` holds the design tokens (light first, a `.dark`
-block) derived from the brand colours, Ink `#0A0A0F`, Surface `#14141C`, Paper `#F3F2FA`,
-Core `#8B5CF6` and Muted `#9B9AAE`. Core marks and accents but is never normal text, so
-`--primary`, `--link` and `--ring` are a derived violet that reaches 4.5:1;
-`web/test/contrast.test.ts` pins every token and text pair, so a token change starts there.
-`web/src/theme.ts` keeps the three-mode theme (light/dark/system, the `dark` class on
+The theme is the Ogenki design system's: `web/src/app.css` holds the design tokens, Day in
+`:root` (light) and Night in `.dark`, on the same semantic names (`--background`, `--card`,
+`--primary`, …), so a component never picks a colour of its own. [`web/DESIGN.md`](../web/DESIGN.md)
+is the reference for UI work: the token map, the type scale, cards, focus, the one gradient and the
+motion rules. `web/src/theme.ts` keeps the three-mode theme (light/dark/system, the `dark` class on
 `<html>`, the `app-wizard:theme` storage key).
+
+Three CSS tests guard it, so a token or a size change starts there:
+
+| Test | Refuses |
+|---|---|
+| `web/test/contrast.test.ts` | a token value or a pair that moved: every text pair at 4.5:1; every meaningful boundary (an input, a state border, the focus ring, a status icon, the budget bar's aurora stops) at 3:1, in both themes. The 1 px hairline `--border` (about 1.8:1) is decorative and unpinned |
+| `web/test/type-scale.test.ts` | a `font-size` or `font:` shorthand off the 32 / 22 / 16 / 14 / 13 px scale, a family not through `--font-display`, `--font-sans` or `--font-mono`, an eyebrow that is not mono uppercase at 0.08em |
+| `web/test/surfaces.test.ts` | the aurora gradient anywhere but the budget bar, a card off the Ogenki shape, a side stripe, a focus ring that is not 2 px with a 2 px gap |
 
 Room text is untrusted, so there are three rules, all tested in `web/test/render.test.ts`:
 
@@ -96,9 +103,9 @@ demo alike:
 |---|---|
 | `svg/maku-mark-{light,dark}.svg` | the header mark, byte-identical to `docs/assets/brand/svg/` |
 | `favicon/` | `favicon.svg`, `favicon-16.png`, `favicon-32.png`, `apple-touch-icon.png`, byte-identical to `docs/assets/brand/favicon/` |
-| `fonts/` | Space Grotesk latin 400, 500 and 700 as WOFF2, self-hosted under the SIL OFL 1.1 in `fonts/LICENSE` |
+| `fonts/` | Space Grotesk (headings), Inter upright and italic (body) and JetBrains Mono (code, ids, metrics) as variable WOFF2, each under the SIL OFL 1.1 in its `fonts/LICENSE-<family>.txt` |
 
-The fonts load with `font-display: swap` over a system-sans fallback, from this origin only: the
+The fonts load with `font-display: swap` over an Arial or Courier New fallback, from this origin only: the
 CSP allows `font-src 'self'` and nothing reaches a font CDN. `web/test/assets.test.ts` pins the
 file list, the byte identity and every HTML entry's paths.
 
@@ -127,8 +134,13 @@ chat and raw views, the controls and the composer.
 
 - `http://127.0.0.1:4180/preview/preview.html` (add `?live` to replay the session at reading pace)
 - `http://127.0.0.1:4180/preview/full.html` (add `?theme=dark` for the dark palette)
+- `http://127.0.0.1:4180/preview/settings.html?path=/settings/merge-policies/Smana/cloud-native-ref`
+  (a central MergePolicy out of sync with its file in two places, every evidence state),
+  `…/Smana/maku` (the factory's golden, with its status) and `…/Smana/legacy` (not migrated);
+  `?path=/settings/merge-policies` lists nine repositories, enough to filter (add `&q=cloud`);
+  `?path=/settings`, `/settings/evidence` and `/settings/approval-memory` for the others
 
-`full.html` takes `?finished`, `?split` or `?part` to show the rail's Replay, a split task or a part's room (default: a task in flight); the demo shows the rail as it replays. The built files stay out of git. Buttons on the full page send nothing.
+`full.html` takes `?finished`, `?split` or `?part` to show a finished task, a split task or a part's room (default: a task in flight); the demo shows the rail as it replays. The built files stay out of git. Buttons on the full page send nothing.
 
 ### Screenshots with Chromium
 

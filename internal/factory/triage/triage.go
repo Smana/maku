@@ -16,11 +16,32 @@ type Decision struct {
 	Template, PredictedClass, DataClass string
 	Budget                              v1alpha1.Budget
 	Classification                      v1alpha1.Classification
+	// Declared is a class a maintainer or a schedule named; Cohort is the evaluation's group.
+	Declared bool
+	Cohort   string
+}
+
+// The evaluation cohorts a task is frozen in at triage.
+const (
+	CohortLabeled   = "labeled"
+	CohortControl   = "control"
+	CohortTreatment = "treatment"
+)
+
+// CohortOf is a task's evaluation group: a declared class is labeled, else percent % are control.
+func CohortOf(taskID string, declared bool, percent int) string {
+	switch {
+	case declared:
+		return CohortLabeled
+	case Cohort(taskID, percent):
+		return CohortControl
+	}
+	return CohortTreatment
 }
 
 // Triager decides once per task.
 type Triager interface {
-	Triage(ctx context.Context, t *v1alpha1.Task) (Decision, error)
+	Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error)
 }
 
 // BudgetFor is the tier's caps and model (§6.2, R11).
@@ -31,18 +52,19 @@ func BudgetFor(cfg *config.Config, tier string) v1alpha1.Budget {
 }
 
 // Static is phase 1's triage: the config's defaults for every task.
-type Static struct{ Cfg *config.Config }
+type Static struct{}
 
 // Triage returns the defaults; a task's own data class wins over the default one.
-func (s Static) Triage(_ context.Context, t *v1alpha1.Task) (Decision, error) {
-	d := s.Cfg.Defaults
+func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error) {
+	d := cfg.Defaults
 	dataClass := t.Spec.DataClass
 	if dataClass == "" {
 		dataClass = d.DataClass
 	}
 	return Decision{Template: d.Template, PredictedClass: d.PredictedClass, DataClass: dataClass,
-		Budget:         BudgetFor(s.Cfg, d.Tier),
-		Classification: v1alpha1.Classification{Tier: d.Tier, Classifier: "static", Fallback: "static"}}, nil
+		Budget:         BudgetFor(cfg, d.Tier),
+		Classification: v1alpha1.Classification{Tier: d.Tier, Classifier: "static", Fallback: "static"},
+		Cohort:         CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)}, nil
 }
 
 // sponsoredRuns is how many whole runs a ceiling holds: implementer, tester and reviewer. runFits

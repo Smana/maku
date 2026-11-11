@@ -4,7 +4,7 @@ Asked: #2251, the factory posts the release note it drafts
 Acceptance: `go test ./internal/factory/reconciler/ -run TestReleaseNote`
 Plan: scope ready · budget $2.00 ceiling
 
-Changed since 2026-11-04 21:10 UTC (11 h):
+Changed since 2026-11-04 21:10 UTC (11 h 50 min):
 - 21:26 the implementer started
 - 21:48 note `gh: Resource not accessible by integration (HTTP 403): the note cannot be posted on the pull request`
 - 21:49 the run ended: the agent stopped on an error

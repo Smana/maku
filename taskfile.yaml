@@ -75,15 +75,15 @@ tasks:
 
   crd:gen:
     cmds:
-      - go tool controller-gen object crd paths=./api/... output:crd:dir=./config/crd
+      - go tool controller-gen object crd:allowDangerousTypes=true paths=./api/... paths=./internal/factory/config/... output:crd:dir=./config/crd
       # controller-gen always writes //go:build first, and hack/spdx.sh wants the
       # license line there; Go allows line comments before the constraint.
       - |
-        for f in api/v1alpha1/zz_generated.deepcopy.go api/factory/v1alpha1/zz_generated.deepcopy.go; do
+        for f in api/v1alpha1/zz_generated.deepcopy.go api/factory/v1alpha1/zz_generated.deepcopy.go internal/factory/config/zz_generated.deepcopy.go; do
           { printf '// SPDX-License-Identifier: Apache-2.0\n\n'; cat "$f"; } > "$f.tmp" && mv "$f.tmp" "$f"
         done
       # The factory chart ships the Task CRD: Tasks are runtime objects, never in Git.
-      - cp config/crd/maku.ogenki.io_tasks.yaml charts/maku-factory/crds/
+      - cp config/crd/maku.ogenki.io_tasks.yaml config/crd/maku.ogenki.io_factories.yaml config/crd/maku.ogenki.io_repositories.yaml config/crd/maku.ogenki.io_mergepolicies.yaml charts/maku-factory/crds/
       # The umbrella chart ships the broker's two: Rooms and the AgentRuns it watches.
       - mkdir -p charts/maku/crds
       - cp config/crd/maku.ogenki.io_rooms.yaml config/crd/maku.ogenki.io_agentruns.yaml charts/maku/crds/

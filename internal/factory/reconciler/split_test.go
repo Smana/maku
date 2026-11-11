@@ -28,7 +28,7 @@ type c7 struct {
 	control bool
 }
 
-func (c c7) Triage(_ context.Context, t *v1alpha1.Task) (triage.Decision, error) {
+func (c c7) Triage(_ context.Context, _ *config.Config, t *v1alpha1.Task) (triage.Decision, error) {
 	acting := c.tier
 	if c.control {
 		acting = "frontier"
@@ -50,7 +50,7 @@ func splitRigWith(t *testing.T, tier string, control bool, edit func(*v1alpha1.T
 		edit(tk)
 	}
 	g := newRig(t, append([]client.Object{tk}, objs...)...)
-	c := g.r.Cfg
+	c := g.r.Cfg.Current()
 	c.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20, RunUSD: 0.51, TaskUSD: 1.02}
 	for name, usd := range map[string][2]float64{"standard": {2.55, 5.10}, "frontier": {6.80, 13.60}} {
 		tr := c.Tiers[name]
@@ -108,12 +108,12 @@ func TestSplitAnyTierOffersEveryTier(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := splitRig(t, c.tier, false)
-			g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Split: &config.SplitPolicy{MaxChildren: 3, AnyTier: c.anyTier}}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Split: &config.SplitPolicy{MaxChildren: 3, AnyTier: c.anyTier}}}
 			tk := g.reconcile(t, "3buqdlot", 1)
 			if (tk.Spec.Split != nil) != c.offered {
 				t.Fatalf("split %+v", tk.Spec.Split)
 			}
-			if got := strings.Contains(ScoperBrief(tk, "n0nce234", config.Scoper{}), "hand off split {why, children}"); got != c.offered {
+			if got := strings.Contains(ScoperBrief(tk, "n0nce234", config.Scoper{}, nil), "hand off split {why, children}"); got != c.offered {
 				t.Fatalf("ScoperBrief carries splitHow = %v, want %v", got, c.offered)
 			}
 		})
@@ -123,11 +123,11 @@ func TestSplitAnyTierOffersEveryTier(t *testing.T) {
 // No row, a row without split, a mode other than scoper, or no issue: no split.
 func TestNoSplitOutsideItsRow(t *testing.T) {
 	for name, edit := range map[string]func(*rig){
-		"a scoper row without split": func(g *rig) { g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}} },
+		"a scoper row without split": func(g *rig) { g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}} },
 		"a steering row with split": func(g *rig) {
-			g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeSteering, Split: &config.SplitPolicy{MaxChildren: 3}}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeSteering, Split: &config.SplitPolicy{MaxChildren: 3}}}
 		},
-		"no loops": func(g *rig) { g.r.Cfg.Loops = nil },
+		"no loops": func(g *rig) { g.r.Cfg.Current().Loops = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := splitRig(t, "frontier", false)
@@ -146,12 +146,12 @@ func TestNoSplitOutsideItsRow(t *testing.T) {
 // Offline proof 7, the scoper's half: the split clause is in the scoping brief only when offered.
 func TestTheScoperIsToldItMaySplit(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, parentText)
-	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}); strings.Contains(b, "split") {
+	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); strings.Contains(b, "split") {
 		t.Fatalf("a scoper not offered a split hears of one:\n%s", b)
 	}
 	tk.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: 3, FamilyMicroUSD: 20_400_000, ChildTier: "standard"}
 	for _, want := range []string{"2 to 3 changes", "hand off split {why, children}", "beside scope", "in the order they merge"} {
-		if b := ScoperBrief(tk, "n0nce234", config.Scoper{}); !strings.Contains(b, want) {
+		if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); !strings.Contains(b, want) {
 			t.Errorf("the split clause lacks %q", want)
 		}
 	}
@@ -281,7 +281,7 @@ func TestAMaintainerApprovesTheSplit(t *testing.T) {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Split)
 	}
 	if !slices.Equal(g.f.Removed(7), []string{"factory/split-proposed"}) || !slices.Contains(g.metrics.recorded, "split review approved") ||
-		!slices.Contains(g.metrics.recorded, "intervention split") {
+		!slices.Contains(g.metrics.recorded, "intervention split none none none") {
 		t.Fatalf("removed %v metrics %v", g.f.Removed(7), g.metrics.recorded)
 	}
 }
@@ -289,7 +289,7 @@ func TestAMaintainerApprovesTheSplit(t *testing.T) {
 // SL11, D4: an approver whose day is spent is told once; the split keeps waiting.
 func TestAnApproverPastTheirDayIsRefused(t *testing.T) {
 	g := proposed(t, spentLedger(map[string]int64{"github:smana": 5_000_000}))
-	g.r.Cfg.Budgets = personBudgets(true, true)
+	g.r.Cfg.Current().Budgets = personBudgets(true, true)
 	g.r.Now = func() time.Time { return now.Add(time.Hour) }
 	g.f.SetComments(7, splitBy(81, "Smana"))
 	tk := g.reconcile(t, "3buqdlot", 1)
@@ -308,7 +308,7 @@ func TestAnApproverPastTheirDayIsRefused(t *testing.T) {
 // D4 in shadow: the approver's spent day is logged and refuses nothing.
 func TestASpentApproverInShadowIsApproved(t *testing.T) {
 	g := proposed(t, spentLedger(map[string]int64{"github:smana": 5_000_000}))
-	g.r.Cfg.Budgets = personBudgets(true, false)
+	g.r.Cfg.Current().Budgets = personBudgets(true, false)
 	g.r.Now = func() time.Time { return now.Add(time.Hour) }
 	g.f.SetComments(7, splitBy(81, "Smana"))
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseSplit || slices.Contains(g.metrics.recorded, "admission_refused person_budget_exhausted") {
@@ -319,7 +319,7 @@ func TestASpentApproverInShadowIsApproved(t *testing.T) {
 // A ledger that cannot be read does not consume the command: the next pass sees it again.
 func TestALedgerErrorKeepsTheCommand(t *testing.T) {
 	g := proposed(t)
-	g.r.Cfg.Budgets = personBudgets(true, true)
+	g.r.Cfg.Current().Budgets = personBudgets(true, true)
 	g.r.Ledger = brokenLedger{g.c}
 	g.r.Now = func() time.Time { return now.Add(time.Hour) }
 	g.f.SetComments(7, splitBy(81, "Smana"))
@@ -353,7 +353,7 @@ func TestTwoSplitCommentsApproveOnce(t *testing.T) {
 		}
 		return n
 	}
-	if tk.Status.Split.State != "approved" || count("split review approved") != 1 || count("intervention split") != 1 {
+	if tk.Status.Split.State != "approved" || count("split review approved") != 1 || count("intervention split none none none") != 1 {
 		t.Fatalf("%+v %v", tk.Status.Split, g.metrics.recorded)
 	}
 }
@@ -408,7 +408,7 @@ func TestTheOtherSplitExitsAreCounted(t *testing.T) {
 		t.Fatalf("%s %+v %v", got.Status.Phase, got.Status.Split, g.metrics.recorded)
 	}
 	g = proposed(t)
-	g.r.Cfg.Caps.EscalatedHours = new(168)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(168)
 	g.r.Now = func() time.Time { return now.Add(200 * time.Hour) }
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Reason != "escalation_expired" || got.Status.Split.State != "expired" ||
 		!slices.Contains(g.metrics.recorded, "split review expired") {
@@ -421,11 +421,11 @@ func TestTheOtherSplitExitsAreCounted(t *testing.T) {
 // argument of the same call, only when the task was offered one.
 func TestTheHandoffSentenceNamesSplitOnlyWhenOffered(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, parentText)
-	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}); strings.Contains(b, "split {why, children} in this same room_handoff call") {
+	if b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil); strings.Contains(b, "split {why, children} in this same room_handoff call") {
 		t.Fatalf("a scoper not offered a split is told to pass one:\n%s", b)
 	}
 	tk.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: 3, FamilyMicroUSD: 20_400_000, ChildTier: "standard"}
-	b := ScoperBrief(tk, "n0nce234", config.Scoper{})
+	b := ScoperBrief(tk, "n0nce234", config.Scoper{}, nil)
 	for _, want := range []string{"End with one room_handoff call", "split {why, children} in this same room_handoff call",
 		"A split written only in room_post or in the summary is never proposed"} {
 		if !strings.Contains(b, want) {

@@ -295,7 +295,12 @@ func (m *fakeMetrics) HandoffToMerge(_ context.Context, class, reason, how strin
 func (m *fakeMetrics) TaskTokens(_ context.Context, tokens int64, tier, template, class string) {
 	m.add("task_tokens " + strconv.FormatInt(tokens, 10) + " " + tier + " " + template + " " + class)
 }
-func (m *fakeMetrics) Intervention(_ context.Context, kind string) { m.add("intervention " + kind) }
+func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort, profile, recommended string) {
+	m.add("intervention " + kind + " " + cohort + " " + profile + " " + recommended)
+}
+func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
+	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
+}
 func (m *fakeMetrics) TierFit(_ context.Context, classifier, tier, fit string, control bool) {
 	m.add("tier_fit " + classifier + " " + tier + " " + fit + " " + strconv.FormatBool(control))
 }
@@ -424,7 +429,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	seeingMeter(t, c)
 	g := &rig{c: c, f: forgetest.NewFake(), runs: newRuns(), log: &fakeLog{}, metrics: &fakeMetrics{}}
 	g.r = &Reconciler{Client: c, Ledger: c, Namespace: "agent-system", Cfg: cfg(), Forge: g.f, Merger: g.f, Runs: g.runs, Rooms: g.log,
-		Triage: triage.Static{Cfg: cfg()}, Metrics: g.metrics,
+		Triage: triage.Static{}, Metrics: g.metrics,
 		Now: func() time.Time { return now }, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Owned: func(string) bool { return true }, CanWrite: func(context.Context, string, string) (bool, error) { return true, nil }}
 	g.runs.now = func() time.Time { return g.r.Now() } // the claims carry the rig's clock
@@ -480,7 +485,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 	if err := g.c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &room); err != nil {
 		t.Fatal(err)
 	}
-	if c := g.f.Comments(7); len(c) != 1 || !strings.Contains(c[0], rid(0)) || !strings.Contains(c[0], "/r/3buqdlot") {
+	if c := eventCommentBodies(g.f, 7); len(c) != 1 || !strings.Contains(c[0], rid(0)) || !strings.Contains(c[0], "/r/3buqdlot") {
 		t.Fatalf("started: %q", c)
 	}
 
@@ -492,7 +497,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 	if tk.Status.PullRequest == nil || tk.Status.PullRequest.Number != 12 || g.runs.patches[rid(0)][runs.AnnPullRequest] == "" {
 		t.Fatalf("%+v", tk.Status.PullRequest)
 	}
-	if c := g.f.Comments(7); len(c) != 2 || !strings.Contains(c[1], "#12") {
+	if c := eventCommentBodies(g.f, 7); len(c) != 2 || !strings.Contains(c[1], "#12") {
 		t.Fatalf("pr opened: %q", c)
 	}
 	if got := g.f.Added(12); len(got) != 1 || got[0] != "factory/class:review" {
@@ -508,16 +513,16 @@ func TestLabelToNarratedRun(t *testing.T) {
 	}
 	g.f.SetPR(forge.PR{Number: 12, State: "MERGED", MergedBy: "Smana", MergeCommitSHA: "def"})
 	tk = g.reconcile(t, "3buqdlot", 1)
-	if tk.Status.Phase != v1alpha1.PhaseDone || len(g.f.Comments(7)) != 2 || tk.Status.PullRequest.MergeCommitSHA != "def" {
-		t.Fatalf("the end waits for the settle (#42): %s %q", tk.Status.Phase, g.f.Comments(7))
+	if tk.Status.Phase != v1alpha1.PhaseDone || len(eventCommentBodies(g.f, 7)) != 2 || tk.Status.PullRequest.MergeCommitSHA != "def" {
+		t.Fatalf("the end waits for the settle (#42): %s %q", tk.Status.Phase, eventCommentBodies(g.f, 7))
 	}
 	// The end does not record the tokens (R49); the settle does, once, past its window.
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
-	if tk = g.reconcile(t, "3buqdlot", 1); !tk.Status.UsageSettled || !strings.Contains(g.f.Comments(7)[2], "Merged by @Smana") {
-		t.Fatalf("settled: %+v %q", tk.Status, g.f.Comments(7))
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
+	if tk = g.reconcile(t, "3buqdlot", 1); !tk.Status.UsageSettled || !strings.Contains(eventCommentBodies(g.f, 7)[2], "Merged by @Smana") {
+		t.Fatalf("settled: %+v %q", tk.Status, eventCommentBodies(g.f, 7))
 	}
-	want := []string{"time_to_pr issue standard solo", "pr review human_merged",
-		"tier_fit static standard over false", "task_tokens 0 standard solo review"}
+	want := []string{"time_to_pr issue standard solo", "pr review human_merged", "tier_fit static standard over false",
+		"task_tokens 0 standard solo review"} // no profile: the merge's provenance is not read (R39)
 	if strings.Join(g.metrics.recorded, "|") != strings.Join(want, "|") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
@@ -542,16 +547,16 @@ func TestEndings(t *testing.T) {
 			g.log.end(rid(0), c.phase, c.reason)
 			tk := g.reconcile(t, "3buqdlot", 1)
 			if tk.Status.Phase != c.want {
-				t.Errorf("%s %q", tk.Status.Phase, g.f.Comments(7))
+				t.Errorf("%s %q", tk.Status.Phase, eventCommentBodies(g.f, 7))
 			}
 			// An escalated task may be retried: its tokens are recorded once it ends for good,
 			// by the settle (R49), not by the end. Only the task_tokens lines count here: the
 			// end of a task that scored its tier (outcome) records a tier_fit line too.
 			// A terminal ending is posted with the settled total (#42), so it is read after.
-			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			g.reconcile(t, "3buqdlot", 1)
-			if !strings.Contains(strings.Join(g.f.Comments(7), "\n"), c.says) {
-				t.Errorf("%q", g.f.Comments(7))
+			if !strings.Contains(strings.Join(eventCommentBodies(g.f, 7), "\n"), c.says) {
+				t.Errorf("%q", eventCommentBodies(g.f, 7))
 			}
 			settled := 0
 			for _, s := range g.metrics.recorded {
@@ -586,8 +591,8 @@ func TestDeletedRun(t *testing.T) {
 	g.log.end(rid(0), "Revoked", "deleted")
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "deleted" ||
-		!strings.Contains(strings.Join(g.f.Comments(7), "\n"), "claim was deleted") {
-		t.Fatalf("%s %s %q", tk.Status.Phase, tk.Status.Reason, g.f.Comments(7))
+		!strings.Contains(strings.Join(eventCommentBodies(g.f, 7), "\n"), "claim was deleted") {
+		t.Fatalf("%s %s %q", tk.Status.Phase, tk.Status.Reason, eventCommentBodies(g.f, 7))
 	}
 	g = newRig(t, issueTask("3buqdlot", 7, "x"))
 	g.reconcile(t, "3buqdlot", 3)
@@ -632,10 +637,10 @@ func TestTheFallbackReadsTheRevocation(t *testing.T) {
 func TestAdmissionAndCaps(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, strings.Repeat("x", 14337)))
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseRejected || tk.Status.Reason != "text_too_long" ||
-		!strings.Contains(strings.Join(g.f.Comments(7), ""), "longer than the factory accepts") {
+		!strings.Contains(strings.Join(eventCommentBodies(g.f, 7), ""), "longer than the factory accepts") {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
-	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseRejected || len(g.f.Comments(7)) != 1 {
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseRejected || len(eventCommentBodies(g.f, 7)) != 1 {
 		t.Fatal("a terminal task is left alone")
 	}
 	g = newRig(t, issueTask("3buqdlot", 7, strings.Repeat("x", 14336)))
@@ -682,12 +687,12 @@ func TestDailyTaskCap(t *testing.T) {
 	rejected.Status.Phase = v1alpha1.PhaseRejected
 	today = append(today, rejected, issueTask("dddddddd", 1, "x")) // rejected, and not yet received
 	g := newRig(t, append(today, issueTask("3buqdlot", 7, "x"))...)
-	g.r.Cfg.Caps.TasksPerDay = 1
+	g.r.Cfg.Current().Caps.TasksPerDay = 1
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseRejected || tk.Status.Reason != "daily_task_cap" {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	g = newRig(t, append(today, issueTask("3buqdlot", 7, "x"))...)
-	g.r.Cfg.Caps.TasksPerDay = 2
+	g.r.Cfg.Current().Caps.TasksPerDay = 2
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseTriaged {
 		t.Fatalf("yesterday's task does not count: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
@@ -725,7 +730,7 @@ func TestAHumanHoldIsNarratedOnceAndNeedsTheHolder(t *testing.T) {
 	}
 	holds := func() int {
 		n := 0
-		for _, c := range g.f.Comments(7) {
+		for _, c := range eventCommentBodies(g.f, 7) {
 			if strings.Contains(c, "event=hold-") {
 				n++
 			}
@@ -745,7 +750,7 @@ func TestAHumanHoldIsNarratedOnceAndNeedsTheHolder(t *testing.T) {
 	g.runs.runs["hhhhhhhh"] = runs.Run{ID: "hhhhhhhh", RoomRef: "3buqdlot", Principal: "human:smana", Phase: "Running"}
 	tk := g.reconcile(t, "3buqdlot", 3)
 	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Reason != "waiting_room_busy" || holds() != 1 {
-		t.Fatalf("%s %s, %d hold narrations: %q", tk.Status.Phase, tk.Status.Reason, holds(), g.f.Comments(7))
+		t.Fatalf("%s %s, %d hold narrations: %q", tk.Status.Phase, tk.Status.Reason, holds(), eventCommentBodies(g.f, 7))
 	}
 	if n := needs(); len(n) != 1 || n[0].Kind != "hold" || n[0].ID != "waiting_room_busy" {
 		t.Fatalf("needsYou %+v", n)
@@ -822,9 +827,9 @@ func TestStopAnnotation(t *testing.T) {
 			}
 			// The stop deleted the task's run, so nothing is left to settle from: the settle
 			// still records the total, once, past its window (R49).
-			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			g.reconcile(t, "3buqdlot", 1)
-			if strings.Join(g.metrics.recorded, "|") != "intervention stop|task_tokens 0 standard solo review" {
+			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review" {
 				t.Fatalf("%q", g.metrics.recorded)
 			}
 		})
@@ -886,8 +891,8 @@ func TestAnEndedTaskStaysEnded(t *testing.T) {
 	g := newRig(t, done, issueTask("4buqdlot", 7, "x"),
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: "agent-system"}})
 	res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}})
-	if tk := g.reconcile(t, "3buqdlot", 0); err != nil || res.RequeueAfter != 0 || tk.Status.Phase != v1alpha1.PhaseDone || len(g.f.Comments(7)) != 0 {
-		t.Fatalf("%v %v %s %q", err, res, tk.Status.Phase, g.f.Comments(7))
+	if tk := g.reconcile(t, "3buqdlot", 0); err != nil || res.RequeueAfter != 0 || tk.Status.Phase != v1alpha1.PhaseDone || len(eventCommentBodies(g.f, 7)) != 0 {
+		t.Fatalf("%v %v %s %q", err, res, tk.Status.Phase, eventCommentBodies(g.f, 7))
 	}
 	g = newRig(t, issueTask("4buqdlot", 7, "x"))
 	res, err = g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "agent-system", Name: "4buqdlot"}})
@@ -947,7 +952,7 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 	}
 	// A conflicting settle replays the recording with the mark, so the metric lands once (R49).
 	conflict = true
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the conflicting settle write is returned")
 	}
@@ -956,7 +961,7 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 	}
 	// The revoke is counted with the claim's annotation, not the status write: the replay finds the
 	// run already gone, so a deferred count would be lost (F30).
-	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop|task_tokens 0 standard solo review" {
+	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review" {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 }
@@ -1028,4 +1033,28 @@ func (g *rig) setPhaseSince(t *testing.T, name string, at time.Time) {
 // contains reports whether any comment holds s.
 func contains(comments []string, s string) bool {
 	return slices.ContainsFunc(comments, func(c string) bool { return strings.Contains(c, s) })
+}
+
+func (m *fakeMetrics) ProfileRecommendation(_ context.Context, class, cohort, recommended string, applied bool) {
+	m.add(fmt.Sprintf("profile %s %s %s %v", class, cohort, recommended, applied))
+}
+
+// D5: a triaged task records the generations it was triaged under (recorded, not pinned).
+func TestTriageRecordsConfigGenerations(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	g.r.Cfg.Current().Generations = config.Generations{Factory: 3,
+		Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 5}}}
+	tk := g.reconcile(t, "3buqdlot", 1)
+	want := &v1alpha1.ConfigGenerations{Factory: 3, Repository: 2, MergePolicy: 5}
+	if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Status.ConfigHash != strings.Repeat("a", 64) ||
+		tk.Status.ConfigGenerations == nil || *tk.Status.ConfigGenerations != *want {
+		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status)
+	}
+}
+
+func TestTriageLeavesConfigGenerationsNilForTheFile(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.ConfigGenerations != nil {
+		t.Fatalf("%+v", tk.Status.ConfigGenerations)
+	}
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -23,9 +25,9 @@ import (
 // window passed. It is a decision on live state, not a marker: a restart or a replay reaches the
 // same answer, and a room already closed (or never made) is "not due". capped names the wait
 // roomCloseCap cut short, empty for an ordinary close.
-func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool, capped string, wait time.Duration, err error) {
+func (r *Reconciler) roomState(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (due bool, capped string, wait time.Duration, err error) {
 	if !v1alpha1.TerminalPhase(t.Status.Phase) || t.Status.RoomRef == "" || len(t.Status.Outbox) > 0 ||
-		r.settling(t) || r.revertable(t) || r.revertPending(t) {
+		r.settling(t) || r.revertable(cfg, t) || r.revertPending(t) {
 		return false, "", 0, nil
 	}
 	// CD23: the final spend is a fact the room still has to take, and the close seals the log, so the
@@ -33,7 +35,7 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 	// revert window to keep it open otherwise. Past the instant the pass either posts the fact (and
 	// this decision is read again after the post) or withholds it, for runs the meter could not price:
 	// then the room closes as it always did, so no room is kept for a figure that cannot come.
-	if at, ok := r.spendFinalAt(t); ok && r.Now().Before(at) {
+	if at, ok := r.spendFinalAt(cfg, t); ok && r.Now().Before(at) {
 		return false, "", max(at.Sub(r.Now()), time.Second), nil
 	}
 	var capLeft time.Duration // no end time, no cap: the room waits as before
@@ -41,7 +43,7 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 		capLeft = max(s.Add(roomCloseCap).Sub(r.Now()), 0)
 	}
 	atCap := t.Status.PhaseSince != nil && capLeft == 0
-	if r.factsDue(t) {
+	if r.factsDue(cfg, t) {
 		if !atCap {
 			return false, "", capLeft, nil // a post the broker waits on schedules no retry: the cap must wake the task
 		}
@@ -49,11 +51,11 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 	}
 	if ref := t.Status.PullRequest; t.Status.Phase == v1alpha1.PhaseDone && ref != nil && mergerMerged(ref) &&
 		ref.RevertNumber == 0 && ref.MergedAt != nil {
-		if left := ref.MergedAt.Add(r.repo(t).Merge.RevertWindow.Duration).Sub(r.Now()); left > 0 {
+		if left := ref.MergedAt.Add(r.repo(cfg, t).Merge.RevertWindow.Duration).Sub(r.Now()); left > 0 {
 			return false, "", left, nil // a maintainer may still ask for the revert, which posts facts again
 		}
 	}
-	if r.verdictHolds(t) {
+	if r.verdictHolds(cfg, t) {
 		// room.monitor_verdict rides the facts (K2): a sealed log takes none
 		return false, "", monitorEvery, nil
 	}
@@ -81,8 +83,8 @@ func (r *Reconciler) roomState(ctx context.Context, t *v1alpha1.Task) (due bool,
 
 // verdictHolds: an origin task's room stays open while its monitor is due and has no verdict,
 // since the verdict reaches RunLore through the room's facts. A task without an origin closes as before.
-func (r *Reconciler) verdictHolds(t *v1alpha1.Task) bool {
-	return t.Spec.Origin != "" && r.monitorDue(t) && (t.Status.Monitor == nil || t.Status.Monitor.Verdict == "")
+func (r *Reconciler) verdictHolds(cfg *config.Config, t *v1alpha1.Task) bool {
+	return t.Spec.Origin != "" && r.monitorDue(cfg, t) && (t.Status.Monitor == nil || t.Status.Monitor.Verdict == "")
 }
 
 // humanDriverWait is how long a room a person drives is left before it is looked at again.

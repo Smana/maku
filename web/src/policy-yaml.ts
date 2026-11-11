@@ -16,7 +16,8 @@ const within: Shape = { fields: { within: null } };
 const leaf: Shape = { fields: { allowedFiles: null, modifyOnly: null, maxPatchFiles: null, maxModifiedLines: null, diffShape: null,
   holdoutChecks: null, releaseAgeCheck: null, oracle: { fields: { probe: null, workflow: null, maxFindings: null } }, companionFiles: null, requiredLabel: null } };
 const classShape: Shape = { fields: {
-  mode: null, author: null, adopt: { fields: { logins: null, branches: null } }, harness: null,
+  description: null, mode: null, author: null, adopt: { fields: { logins: null, branches: null } }, harness: null,
+  harnessAllowed: null, escalation: { fields: { outOfBudget: null, notConverged: null } },
   conditions: { fields: { all: { items: leaf }, any: { items: { items: leaf } }, deny: { items: { fields: { protectedFiles: null } } } } },
   requiresApproval: { items: { fields: { changedFiles: null } } },
   limits: { fields: { maxPerDay: null } },

@@ -81,11 +81,11 @@ describe("the room page", () => {
     expect(p.app.querySelector(".now")?.textContent).toBe("No run yet");
     p.last().recv(event(1, "participant", { principal: "agent:ikely2yk", change: "joined", role: "implementer" }));
     p.last().recv(agent(2, "tool_call", { callId: "c1", tool: "terminal", args: { command: "go test ./..." } }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · 5 s ago");
-    vi.advanceTimersByTime(3000);
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · 8 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · just now");
+    vi.advanceTimersByTime(63000);
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · running · 1 min ago");
     p.last().recv(agent(3, "tool_result", { callId: "c1", status: "error", output: "FAIL" }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · error · 8 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ terminal go test ./... · error · 1 min ago");
   });
 
   it("takes the Now line's click to its row and opens it", () => {
@@ -172,11 +172,11 @@ describe("the room page", () => {
     expect(shown()).toBe(false);
     p.last().recv(event(2, "participant", { principal: "agent:ikely2yk", change: "joined", role: "implementer" }));
     p.last().recv(agent(3, "message", { kind: "chat", text: "on it", delivery: "none" }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ on it · message · 5 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("Now ▸ on it · message · just now");
     expect([shown(), steer().disabled]).toEqual([true, false]);
     steer().checked = true;
     p.last().recv(event(4, "participant", { principal: "agent:ikely2yk", change: "left" }));
-    expect(p.app.querySelector(".now")?.textContent).toBe("No run · last: on it · 5 s ago");
+    expect(p.app.querySelector(".now")?.textContent).toBe("No run · last: on it · just now");
     expect(p.app.querySelector(".now-hint")?.textContent).toBe("Start one under Session › Run");
     expect([shown(), steer().disabled]).toEqual([false, true]);
     expect(p.app.querySelector('input[name="delivery"]:checked')).toBeNull(); // a steer with no run: chosen again
@@ -189,7 +189,7 @@ describe("the room page", () => {
     try {
       p.join(live({ approver: true }), 0);
       p.last().recv(agent(1, "approval_requested", { approvalId: "ap1", callId: "c1", class: "forge.other",
-        action: { command: "git push" }, expiresAt: "2026-10-06T11:00:00Z" }));
+        action: { command: "git push" }, expiresAt: "2099-10-06T11:00:00Z" }));
       const panel = p.app.querySelector<HTMLElement>("section.needs")!;
       panel.scrollIntoView = () => {};
       p.app.querySelector<HTMLButtonElement>(".needs-pill")!.click();
@@ -643,12 +643,13 @@ describe("the room page", () => {
       expect(panel.querySelector("#approval-01M4A .approval-command")?.textContent).toBe("git push");
     });
 
-    it("raises a banner in the strip and a four-eyes note on the card of whoever prompted the turn", () => {
+    it("says another approver in the status line and a four-eyes note on the card of whoever prompted the turn", () => {
       const p = page();
       p.join({ ...snapshot({ principal: "human:b", approver: true }), fourEyes: true }, 0,
         event(1, "approval_requested", { approvalId: "01M4A", callId: "c1", class: "forge.pr", action: {}, expiresAt: "2099-01-01T00:00:00Z",
           prompters: ["human:b"] }));
-      expect(p.app.querySelector("a.approvals-banner")?.textContent).toBe("⏳ 1 approval waits for another approver — review");
+      expect(p.app.querySelector(".run-status-words")?.textContent).toBe("Waiting for another approver");
+      expect(p.app.querySelector(".approvals-banner")).toBeNull();
       expect(p.app.querySelector("#approval-01M4A .approval-status")?.textContent).toContain("you prompted this turn (four-eyes)");
       p.app.remove();
     });
@@ -802,6 +803,15 @@ describe("the room page", () => {
       return { p, summaryCalls };
     };
     const flow = { nodes: [node({})], ghosts: ["reviewer"] };
+
+    it("the summary's queued notes reach the rail", async () => {
+      const get = vi.fn(async (url: string) => isNeeds(url) ? noNeeds()
+        : { ok: true, status: 200, json: async () => ({ ...sumWith(flow), queued: { untrusted: true, items: [{ ref: 7, author: "human:a", text: "x" }] } }) }) as unknown as typeof fetch;
+      const q = page(get);
+      q.join(snapshot(), 0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(q.app.querySelector(".rail-queued")!.textContent).toBe("1 queued → next run");
+    });
 
     it("a summary with a flow shows the rail", async () => {
       const { p } = await withFlow(flow);

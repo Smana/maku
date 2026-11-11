@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,5 +171,160 @@ func TestCompareSeesEveryField(t *testing.T) {
 				t.Fatalf("no divergence for %s: %v", name, d)
 			}
 		})
+	}
+}
+
+// A class with a floor exports it and its variants as they are; one without exports as before.
+func TestExportCarriesTheVariants(t *testing.T) {
+	c := central()
+	c.Factory = "aws-0"
+	c.HarnessProfiles["z-floor"] = config.HarnessProfile{}
+	c.HarnessProfiles["richer"] = config.HarnessProfile{Checks: true}
+	esc := &config.Escalation{OutOfBudget: "richer"}
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
+		"varied": {Harness: "z-floor", HarnessAllowed: []string{"richer"}, Escalation: esc},
+		"plain":  {Shadow: true},
+	}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := f.Classes["plain"]; p.Harness != "plain" || p.HarnessAllowed != nil || p.Escalation != nil {
+		t.Fatalf("a class without harness exports as before: %+v", p)
+	}
+	raw, err := Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Resolve("varied", back.Classes["varied"], c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cl := r.Class; cl.Harness != "z-floor" || len(cl.HarnessAllowed) != 1 || cl.HarnessAllowed[0] != "richer" || cl.Escalation == nil || *cl.Escalation != *esc {
+		t.Fatalf("%+v", cl)
+	}
+	if d := Compare(rc, back, c); len(d) != 0 {
+		t.Fatalf("export then compare differs: %v", d)
+	}
+}
+
+// A floor without the class's checks would drop them on resolve (D5): export refuses it.
+func TestExportRefusesAFloorThatDropsChecks(t *testing.T) {
+	c := central()
+	c.HarnessProfiles["tested"] = config.HarnessProfile{Checks: true, TestFirst: true}
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{}}
+	for name, tc := range map[string]struct {
+		class config.Class
+		want  string
+	}{
+		"checks":    {config.Class{Harness: "plain", Checks: true, HarnessAllowed: []string{"checked"}}, `harness "plain" drops checks the class sets; name a harness with checks`},
+		"testFirst": {config.Class{Harness: "checked", Checks: true, TestFirst: true, HarnessAllowed: []string{"tested"}}, `harness "checked" drops testFirst the class sets; name a harness with testFirst`},
+	} {
+		rc.Classes["review-ish"] = tc.class
+		if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), "class review-ish: "+tc.want) {
+			t.Fatalf("%s: got %v", name, err)
+		}
+	}
+	rc.Classes["review-ish"] = config.Class{Harness: "checked", Checks: true, HarnessAllowed: []string{"checked"}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Resolve("review-ish", f.Classes["review-ish"], c)
+	if err != nil || !r.Class.Checks {
+		t.Fatalf("%+v, %v", r.Class, err)
+	}
+}
+
+// R30: a repository-authority review class carries the evaluation keys and nothing else. The
+// central review exports them, the file validates, the comparison sees them, and a repository cut
+// over to the file keeps review's floor, variants and steps while review's merge authority stays
+// implicit: a human merges it, live or shadow never.
+func TestReviewEvaluationSurvivesTheCutover(t *testing.T) {
+	c := central()
+	c.Factory = "aws-0"
+	c.HarnessProfiles["review-floor"] = config.HarnessProfile{Description: "default"}
+	c.HarnessProfiles["review-search"] = config.HarnessProfile{Description: "search first"}
+	review := config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
+		Escalation: &config.Escalation{OutOfBudget: "review-search"}}
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
+		"docs-links": {Live: true}, "revert": {Live: true}, "review": review}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if err := Validate(g, c); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if d := Compare(rc, g, c); len(d) != 0 {
+		t.Fatalf("%v\n%s", d, raw)
+	}
+	if p := g.Classes["review"]; p.Mode != "" || p.Author != "" || p.Harness != "review-floor" || !slices.Equal(p.HarnessAllowed, review.HarnessAllowed) ||
+		p.Escalation == nil || p.Escalation.OutOfBudget != "review-search" || strings.Contains(string(raw), "mode: \"\"") {
+		t.Fatalf("%+v\n%s", p, raw)
+	}
+	// A central review whose keys the comparison would miss diverges.
+	rc.Classes["review"] = config.Class{Harness: "review-floor"}
+	if d := Compare(rc, g, c); len(d) != 1 || !strings.HasPrefix(d[0], "review: central ") {
+		t.Fatalf("%v", d)
+	}
+	w, _, _ := authorityRig()
+	w.Cfg.Current().HarnessProfiles = c.HarnessProfiles
+	w.Observe(t.Context(), "o/r", raw)
+	got := w.Cfg.Current().RepositoryFor("o/r").Classes["review"]
+	if got.Live || got.Shadow || got.Harness != "review-floor" || !slices.Equal(got.HarnessAllowed, review.HarnessAllowed) ||
+		got.Escalation == nil || got.Escalation.OutOfBudget != "review-search" {
+		t.Fatalf("cut over: %+v", got)
+	}
+	// Review without the evaluation stays implicit, as before.
+	rc.Classes["review"] = config.Class{Checks: true}
+	f, err = Export(rc, c)
+	if _, ok := f.Classes["review"]; err != nil || ok {
+		t.Fatalf("%v %+v", err, f.Classes["review"])
+	}
+}
+
+// The description travels: export writes it, resolve reads it, and a difference is one divergence.
+func TestClassDescriptionTravels(t *testing.T) {
+	c := central()
+	c.Factory = "aws-0"
+	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
+		"plain": {Shadow: true, Description: "Keep links working"},
+	}}
+	f, err := Export(rc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Classes["plain"].Description; got != "Keep links working" {
+		t.Fatalf("export description %q", got)
+	}
+	r, err := Resolve("plain", f.Classes["plain"], c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Class.Description != "Keep links working" {
+		t.Fatalf("resolve description %q", r.Class.Description)
+	}
+	if d := Compare(rc, f, c); len(d) != 0 {
+		t.Fatalf("export then compare differs: %v", d)
+	}
+	p := f.Classes["plain"]
+	p.Description = "Something else"
+	f.Classes["plain"] = p
+	d := Compare(rc, f, c)
+	if len(d) != 1 || !strings.Contains(d[0], "description") {
+		t.Fatalf("want one description divergence, got %v", d)
 	}
 }

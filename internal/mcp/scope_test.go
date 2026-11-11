@@ -120,3 +120,40 @@ func TestTheBoundCountsMarkupAsOneByte(t *testing.T) {
 		t.Fatalf("refused (%v)", err)
 	}
 }
+
+// The scope's profile recommendation is listed in the triager's schema and decoded into the stored
+// scope; an unknown scope field is still refused.
+func TestScopeSchemaListsProfile(t *testing.T) {
+	var schema struct {
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+		Properties           map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(envelope.ScopeSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := schema.Properties["profile"]; !ok {
+		t.Error("profile not listed")
+	}
+	if _, ok := schema.Properties["profileWhy"]; !ok {
+		t.Error("profileWhy not listed")
+	}
+	if schema.AdditionalProperties == nil || *schema.AdditionalProperties {
+		t.Error("additionalProperties not false")
+	}
+	s := goodScope()
+	s["profile"], s["profileWhy"] = "test-first", "The task changes behaviour a test can pin down."
+	log := &memLog{}
+	if _, err := tool(tools(log), "room_handoff").Call(t.Context(), triager, handoff(s)); err != nil || len(log.drafts) != 1 {
+		t.Fatalf("refused (%v)", err)
+	}
+	var p envelope.HandoffPayload
+	if err := json.Unmarshal(log.drafts[0].Payload, &p); err != nil || p.Scope == nil || p.Scope.Profile != "test-first" ||
+		p.Scope.ProfileWhy != "The task changes behaviour a test can pin down." {
+		t.Fatalf("payload %s (%v)", log.drafts[0].Payload, err)
+	}
+	s["profiles"] = "x"
+	log = &memLog{}
+	if _, err := tool(tools(log), "room_handoff").Call(t.Context(), triager, handoff(s)); err == nil || len(log.drafts) != 0 {
+		t.Fatalf("an unknown field accepted (%v)", err)
+	}
+}

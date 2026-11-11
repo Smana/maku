@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/config"
+
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,7 +36,7 @@ const LabelPublish = "factory/publish"
 // files the proposal once, sanitised, unlabelled; anything else is answered and consumed. One
 // issue's failure does not keep the others waiting. started holds the issues whose fix this pass
 // started: factory/ready on them waits for the next poll, which answers it task_active (K13).
-func (p *IssuePoller) publishes(ctx context.Context) (started map[int]bool, err error) {
+func (p *IssuePoller) publishes(ctx context.Context, cfg *config.Config) (started map[int]bool, err error) {
 	items, err := p.Forge.Labeled(ctx, LabelPublish)
 	if err != nil || len(items) == 0 {
 		return nil, err
@@ -45,7 +47,7 @@ func (p *IssuePoller) publishes(ctx context.Context) (started map[int]bool, err 
 		if it.PullRequest {
 			continue
 		}
-		if err := p.publishOne(ctx, it.Number, started); err != nil {
+		if err := p.publishOne(ctx, cfg, it.Number, started); err != nil {
 			errs = append(errs, fmt.Errorf("publish #%d: %w", it.Number, err))
 		}
 	}
@@ -53,60 +55,60 @@ func (p *IssuePoller) publishes(ctx context.Context) (started map[int]bool, err 
 }
 
 // refusePublish answers the label once, keyed by its time, then consumes it. Nothing is created.
-func (p *IssuePoller) refusePublish(ctx context.Context, n int, last forge.LabelEvent, reason string) error {
-	return p.refuseWith(ctx, n, narrate.PublishRefused(n, reason, last.At))
+func (p *IssuePoller) refusePublish(ctx context.Context, cfg *config.Config, n int, last forge.LabelEvent, reason string) error {
+	return p.refuseWith(ctx, cfg, n, narrate.PublishRefused(n, reason, last.At))
 }
 
 // refuseWith posts a refusal's event once, then consumes the label.
-func (p *IssuePoller) refuseWith(ctx context.Context, n int, e narrate.Event) error {
-	if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
+func (p *IssuePoller) refuseWith(ctx context.Context, cfg *config.Config, n int, e narrate.Event) error {
+	if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
 		return err
 	}
 	return p.Forge.RemoveLabel(ctx, n, LabelPublish)
 }
 
-func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[int]bool) error {
+func (p *IssuePoller) publishOne(ctx context.Context, cfg *config.Config, n int, startedIssues map[int]bool) error {
 	evs, ok, err := p.labelEvents(ctx, n, LabelPublish)
 	if err != nil || !ok {
 		return err
 	}
 	// Only the last label event's actor counts, as for factory/ready: a maintainer's label an
 	// outsider re-applied is the outsider's.
-	_, last, ok := Generation(evs, p.repo().IsMaintainer)
+	_, last, ok := Generation(evs, p.repo(cfg).IsMaintainer)
 	if !ok {
-		return p.refusePublish(ctx, n, last, "unauthorised_labeller")
+		return p.refusePublish(ctx, cfg, n, last, "unauthorised_labeller")
 	}
 	switch w, err := p.writer(ctx, last.Actor); {
 	case err != nil:
 		return err // no answer is no refusal: the label waits for the next poll
 	case !w:
-		return p.refusePublish(ctx, n, last, "unauthorised_labeller")
+		return p.refusePublish(ctx, cfg, n, last, "unauthorised_labeller")
 	}
-	t, err := p.investigateOf(ctx, n)
+	t, err := p.investigateOf(ctx, cfg, n)
 	if err != nil {
 		return err
 	}
 	switch {
 	case t == nil:
-		return p.refusePublish(ctx, n, last, "no_proposal")
+		return p.refusePublish(ctx, cfg, n, last, "no_proposal")
 	case t.Status.Published != nil: // once per task: the label points at what was filed
 		pub := t.Status.Published
 		e := narrate.Published(n, pub.Issue, pub.By)
-		if name, err := p.startedFix(ctx, t, pub.Issue); err != nil {
+		if name, err := p.startedFix(ctx, cfg, t, pub.Issue); err != nil {
 			return err
 		} else if name != "" { // the start happened and its comment did not: say so, not "label it factory/ready"
 			e = narrate.PublishedStarted(pub.Issue, pub.By, name, pub.Class)
 		}
-		if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
+		if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
 			return err
 		}
 		return p.Forge.RemoveLabel(ctx, n, LabelPublish)
 	case t.Status.Phase == v1alpha1.PhaseRejected: // never admitted, so no run made a proposal: say why (task 2d5ch27g)
-		return p.refuseWith(ctx, n, narrate.PublishRejected(n, t.Name, t.Status.Reason, last.At))
+		return p.refuseWith(ctx, cfg, n, narrate.PublishRejected(n, t.Name, t.Status.Reason, last.At))
 	case !v1alpha1.TerminalPhase(t.Status.Phase):
-		return p.refusePublish(ctx, n, last, "task_not_ended")
+		return p.refusePublish(ctx, cfg, n, last, "task_not_ended")
 	case t.Status.Phase != v1alpha1.PhaseDone: // a stopped, closed or empty task's handoff is no proposal
-		return p.refusePublish(ctx, n, last, "no_proposal")
+		return p.refusePublish(ctx, cfg, n, last, "no_proposal")
 	}
 	// Filing is made idempotent by a marker label on the new issue, which grants nothing: a crash
 	// between CreateIssue and the record, or a record that failed, leaves an issue the retry finds
@@ -119,7 +121,7 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 	filed, class := forge.Issue{}, ""
 	filedNow := false
 	for _, i := range found {
-		if !forge.SameLogin(i.Author, p.Cfg.FactoryLogin) {
+		if !forge.SameLogin(i.Author, cfg.FactoryLogin) {
 			continue // a label anyone can apply is no record: only the factory's own issue counts
 		}
 		if filed.Number == 0 || i.Number < filed.Number {
@@ -132,9 +134,9 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 		case err != nil:
 			return err
 		case reason != "":
-			return p.refusePublish(ctx, n, last, reason)
+			return p.refusePublish(ctx, cfg, n, last, reason)
 		}
-		class = filefence.Infer(p.repo().Classes, ProposalPaths(body))
+		class = filefence.Infer(p.repo(cfg).Classes, ProposalPaths(body))
 		// No factory/ready: the maintainer reads the issue and starts it.
 		filed, err = p.Forge.CreateIssue(ctx, title,
 			body+fmt.Sprintf("\n\n---\nPublished by @%s from agent factory task `%s`.", last.Actor, t.Name), []string{marker, "class:" + class})
@@ -145,7 +147,7 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 	}
 	if !filedNow {
 		// K14: a retry reads the filed body, whose footer ends the file list.
-		class = filefence.Infer(p.repo().Classes, ProposalPaths(filed.Body))
+		class = filefence.Infer(p.repo(cfg).Classes, ProposalPaths(filed.Body))
 		if label := "class:" + class; !slices.Contains(filed.Labels, label) {
 			if err := p.Forge.AddLabels(ctx, filed.Number, label); err != nil {
 				return fmt.Errorf("label the issue: %w", err)
@@ -154,8 +156,8 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 	}
 	iss := filed
 	started := ""
-	if p.Cfg.PublishStarts(t.Spec.Source.Kind, t.Spec.Source.RequestedBy) {
-		if started, err = p.startPublished(ctx, t, iss.Number, last.Actor, class); err != nil {
+	if cfg.PublishStarts(t.Spec.Source.Kind, t.Spec.Source.RequestedBy) {
+		if started, err = p.startPublished(ctx, cfg, t, iss.Number, last.Actor, class); err != nil {
 			return err // the label stays: the retry finds the issue by its marker
 		}
 		if started != "" {
@@ -172,7 +174,7 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 	if started != "" {
 		e = narrate.PublishedStarted(iss.Number, by, started, class)
 	}
-	if err := p.narrator().PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
+	if err := p.narrator(cfg).PostOnce(ctx, n, fmt.Sprintf("issue-%d", n), e); err != nil {
 		return err
 	}
 	return p.Forge.RemoveLabel(ctx, n, LabelPublish)
@@ -181,15 +183,15 @@ func (p *IssuePoller) publishOne(ctx context.Context, n int, startedIssues map[i
 // startPublished starts the fix of the filed issue n as factory/ready would, generation 0, charged
 // to by (K6): the Task's name, "" when nothing starts. Nothing starts while any Task exists on the
 // issue (K13), or when the issue was edited since it was filed or its text is withheld (K7).
-func (p *IssuePoller) startPublished(ctx context.Context, origin *v1alpha1.Task, n int, by, class string) (string, error) {
-	if name, err := p.startedFix(ctx, origin, n); err != nil || name != "" {
+func (p *IssuePoller) startPublished(ctx context.Context, cfg *config.Config, origin *v1alpha1.Task, n int, by, class string) (string, error) {
+	if name, err := p.startedFix(ctx, cfg, origin, n); err != nil || name != "" {
 		return name, err // an earlier attempt's start: announced, not repeated
 	}
 	var l v1alpha1.TaskList
 	if err := p.Client.List(ctx, &l, client.InNamespace(p.Namespace), client.MatchingLabels{v1alpha1.LabelIssue: strconv.Itoa(n)}); err != nil {
 		return "", fmt.Errorf("list tasks: %w", err)
 	}
-	if slices.ContainsFunc(l.Items, func(t v1alpha1.Task) bool { return p.owns(&t) }) {
+	if slices.ContainsFunc(l.Items, func(t v1alpha1.Task) bool { return p.owns(cfg, &t) }) {
 		return "", nil
 	}
 	iss, err := p.Forge.Issue(ctx, n)
@@ -210,8 +212,8 @@ func (p *IssuePoller) startPublished(ctx context.Context, origin *v1alpha1.Task,
 	if rep.Withheld {
 		return "", nil
 	}
-	key := taskid.IssueKey(p.repo().Name, n, 0)
-	t := p.issueTask(n, key, "github:"+by, iss, text, sum)
+	key := taskid.IssueKey(p.repo(cfg).Name, n, 0)
+	t := p.issueTask(cfg, n, key, "github:"+by, iss, text, sum)
 	t.Spec.Origin, t.Spec.PredictedClass = origin.Name, class
 	if err := p.Client.Create(ctx, t); err != nil && !apierrors.IsAlreadyExists(err) {
 		return "", fmt.Errorf("create task %s: %w", t.Name, err) // AlreadyExists is the dedup
@@ -221,16 +223,16 @@ func (p *IssuePoller) startPublished(ctx context.Context, origin *v1alpha1.Task,
 
 // startedFix is the name of issue n's generation-0 Task when origin's own publish started it, ""
 // otherwise: only that Task, never another Task of the issue, is the start a retry announces.
-func (p *IssuePoller) startedFix(ctx context.Context, origin *v1alpha1.Task, n int) (string, error) {
+func (p *IssuePoller) startedFix(ctx context.Context, cfg *config.Config, origin *v1alpha1.Task, n int) (string, error) {
 	var t v1alpha1.Task
-	name := taskid.Name(taskid.IssueKey(p.repo().Name, n, 0))
+	name := taskid.Name(taskid.IssueKey(p.repo(cfg).Name, n, 0))
 	switch err := p.Client.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: name}, &t); {
 	case apierrors.IsNotFound(err):
 		return "", nil
 	case err != nil:
 		return "", fmt.Errorf("get task %s: %w", name, err)
 	}
-	if t.Spec.Origin != origin.Name || !p.owns(&t) {
+	if t.Spec.Origin != origin.Name || !p.owns(cfg, &t) {
 		return "", nil
 	}
 	return name, nil
@@ -240,7 +242,7 @@ func (p *IssuePoller) startedFix(ctx context.Context, origin *v1alpha1.Task, n i
 func PublishedFromLabel(name string) string { return "factory/published-from:" + name }
 
 // investigateOf is the newest investigate task of this repository's issue n, nil when there is none.
-func (p *IssuePoller) investigateOf(ctx context.Context, n int) (*v1alpha1.Task, error) {
+func (p *IssuePoller) investigateOf(ctx context.Context, cfg *config.Config, n int) (*v1alpha1.Task, error) {
 	var l v1alpha1.TaskList
 	if err := p.Client.List(ctx, &l, client.InNamespace(p.Namespace), client.MatchingLabels{v1alpha1.LabelIssue: strconv.Itoa(n)}); err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
@@ -251,7 +253,7 @@ func (p *IssuePoller) investigateOf(ctx context.Context, n int) (*v1alpha1.Task,
 		// A task rejected at admission was never triaged, so it has no template yet: it is still the
 		// issue's task, and its rejection is the refusal's reason.
 		rejected := t.Spec.Template == "" && t.Status.Phase == v1alpha1.PhaseRejected
-		if (t.Spec.Template != "investigate" && !rejected) || t.Spec.Issue != n || !p.owns(t) {
+		if (t.Spec.Template != "investigate" && !rejected) || t.Spec.Issue != n || !p.owns(cfg, t) {
 			continue
 		}
 		if found == nil || t.CreationTimestamp.After(found.CreationTimestamp.Time) {
@@ -275,7 +277,7 @@ func (p *IssuePoller) draftOf(ctx context.Context, t *v1alpha1.Task) (title, bod
 		return "", "", "", err
 	}
 	first, rest, _ := strings.Cut(proposal, "\n")
-	d, err := sanitize.CheckDraft(strings.TrimLeft(first, "# \t"), rest)
+	d, err := sanitize.CheckFinalDraft(strings.TrimLeft(first, "# \t"), rest)
 	if err != nil {
 		return "", "", "invalid_draft", nil
 	}
@@ -351,13 +353,13 @@ func retryConflict(do func() error) error {
 // originOf is the investigate task whose published issue is n (RA9): the task of this repository
 // labelled published-issue n whose own status.published names n. Nothing in the issue's text is
 // read, so no text can forge an origin. nil when no task qualifies.
-func (p *IssuePoller) originOf(ctx context.Context, n int) (*v1alpha1.Task, error) {
+func (p *IssuePoller) originOf(ctx context.Context, cfg *config.Config, n int) (*v1alpha1.Task, error) {
 	var l v1alpha1.TaskList
 	if err := p.Client.List(ctx, &l, client.InNamespace(p.Namespace), client.MatchingLabels{v1alpha1.LabelPublishedIssue: strconv.Itoa(n)}); err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
 	i := slices.IndexFunc(l.Items, func(t v1alpha1.Task) bool {
-		return p.owns(&t) && t.Status.Published != nil && t.Status.Published.Issue == n
+		return p.owns(cfg, &t) && t.Status.Published != nil && t.Status.Published.Issue == n
 	})
 	if i < 0 {
 		return nil, nil

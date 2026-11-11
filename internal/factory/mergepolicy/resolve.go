@@ -65,8 +65,18 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 	if none := profile.Template == config.TemplateNone; none != adopted {
 		return Resolved{}, fmt.Errorf("class %s: %w: harness %q: template none runs nothing, and only an adopted class takes it", name, ErrGuardrail, p.Harness)
 	}
-	cl := config.Class{Live: p.Mode == ModeLive, Shadow: p.Mode == ModeShadow,
+	cl := config.Class{Description: p.Description, Live: p.Mode == ModeLive, Shadow: p.Mode == ModeShadow,
 		Checks: profile.Checks, TestFirst: profile.TestFirst, MaxPerDay: p.Limits.MaxPerDay, Monitor: p.Monitor}
+	// Only a class that declares variants carries its floor into the gate's class: without them,
+	// harness is MP2's checks and testFirst, read above, and the class runs as before. On review
+	// harness has no other role (R30): it is the evaluation's floor whenever declared.
+	if name == "review" || len(p.HarnessAllowed) > 0 || p.Escalation != nil {
+		cl.Harness, cl.HarnessAllowed, cl.Escalation = p.Harness, p.HarnessAllowed, p.Escalation
+	}
+	var errs []error
+	for _, m := range c.VariantProblems(name, cl) {
+		errs = append(errs, fmt.Errorf("class %s: %w: %s", name, ErrGuardrail, m))
+	}
 	if adopted {
 		cl.Author = &config.Author{Adopt: p.Adopt}
 	}
@@ -87,7 +97,6 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 		}
 		r.Branches = append(r.Branches, v)
 	}
-	var errs []error
 	for i := range r.Branches {
 		errs = append(errs, guard(name, &r.Branches[i], c.MergeGuardrails))
 	}
@@ -193,9 +202,10 @@ func OnlyGuardrail(err error) bool {
 }
 
 // Validate is the whole file against the central config: a file with no classes has no policy and
-// passes; one with classes declares docs-links and revert, never review, and each class passes
-// Resolve and the gate's own class check, every variant of it. review stays central: its settings
-// are the repository's merge block (approveToMerge, maintainers), which no class file holds.
+// passes; one with classes declares docs-links and revert, and each class passes Resolve and the
+// gate's own class check, every variant of it. review may be declared for its evaluation keys only
+// (R30, Parse's shape): its merge authority stays implicit, in the repository's merge block
+// (approveToMerge, maintainers), which no class file holds.
 func Validate(f *File, c *config.Config) error {
 	if f.Classes == nil {
 		return nil
@@ -206,9 +216,6 @@ func Validate(f *File, c *config.Config) error {
 			errs = append(errs, fmt.Errorf("class %s is required in a file that declares classes (OD-8): add it, "+
 				"\"%s: {mode: off, author: agents, harness: <a profile>}\" keeps it unarmed", name, name))
 		}
-	}
-	if _, ok := f.Classes["review"]; ok {
-		errs = append(errs, errors.New("class review is implicit: it is never declared"))
 	}
 	for _, name := range slices.Sorted(maps.Keys(f.Classes)) {
 		r, err := Resolve(name, f.Classes[name], c)

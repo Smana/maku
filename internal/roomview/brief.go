@@ -224,7 +224,7 @@ func (c *card) briefChanged(in BriefIn) {
 		return
 	}
 	if !in.Since.IsZero() {
-		c.line("Changed since " + stamp(in.Since, c.o.Now) + " (" + span(c.o.Now.Sub(in.Since)) + "):")
+		c.line("Changed since " + stamp(in.Since, c.o.Now) + " (" + spanText(c.o.Now.Sub(in.Since)) + "):")
 	}
 	for _, m := range in.Changed.Items {
 		c.line("- " + clock(m.At, in.Since) + rangeEnd(m, in.Since) + " " + c.milestone(m))

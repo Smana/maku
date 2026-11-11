@@ -34,6 +34,37 @@ func composeIn() intake.ComposeIn {
 	}
 }
 
+// Ranked model gaps survive composition in their model order, the legacy question maps the first,
+// and the intake round is display metadata carried independently of the plan's material hash.
+func TestComposeRankedGaps(t *testing.T) {
+	body := strings.Replace(validBody, "The install link 404s.",
+		"The install link 404s.\n[NEEDS CLARIFICATION: g1 first…]", 1)
+	body = strings.Replace(body, "The link resolves.",
+		"[NEEDS CLARIFICATION: g2 second]\nThe link resolves.", 1)
+	gaps := []intake.Gap{
+		{ID: "g1", Section: "what-is-wrong", Text: "first…", Recommended: intake.Answer{Answer: "use one", Why: "simplest"}},
+		{ID: "g2", Section: "acceptance-check", Text: "second", Recommended: intake.Answer{Answer: "run it"}},
+	}
+	d := intake.Draft{Repository: "Smana/ai-native-ref", Gaps: gaps,
+		Issues: []intake.DraftIssue{{Title: "docs: x is wrong", Body: body, Class: "docs-links"}}}
+	in := composeIn()
+	in.Round, in.RoundsLeft = 2, 8
+	p, err := intake.Compose(d, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Gaps, gaps) {
+		t.Fatalf("ranked gaps changed: %+v", p.Gaps)
+	}
+	wantQuestion := &intake.Question{Text: "first…", Recommended: intake.Answer{Answer: "use one", Why: "simplest"}}
+	if p.Question == nil || *p.Question != *wantQuestion {
+		t.Fatalf("question = %+v, want %+v", p.Question, wantQuestion)
+	}
+	if p.Round != 2 || p.RoundsLeft != 8 {
+		t.Fatalf("round = %d, roundsLeft = %d", p.Round, p.RoundsLeft)
+	}
+}
+
 // Review Focus 3: the reply cannot name its own roles or budget. A reply that does is dropped and
 // logged, and the config's values are the plan's — and in its hash.
 func TestRolesAndBudgetComeFromConfigOnly(t *testing.T) {
@@ -94,8 +125,11 @@ func TestModelSuppliedEvidenceLinksAreDropped(t *testing.T) {
 			{Kind: "thread", Text: "the CFP thread in #cnd", URL: "javascript:alert(1)"},
 		},
 		Alternatives: []intake.Alternative{{Repository: "smana/cloud-native-ref", Why: "serves the same docs"}},
-		Question:     &intake.DraftQuestion{Text: "which repository?", Recommended: intake.Answer{Answer: "ai-native-ref", Why: "the link is in its docs"}},
-		Issues:       []intake.DraftIssue{{Title: "docs: x is wrong", Body: validBody, Class: "docs-links"}},
+		Gaps: []intake.Gap{{ID: "g1", Section: "what-is-wrong", Text: "which repository?",
+			Recommended: intake.Answer{Answer: "ai-native-ref", Why: "the link is in its docs"}}},
+		Issues: []intake.DraftIssue{{Title: "docs: x is wrong", Class: "docs-links",
+			Body: strings.Replace(validBody, "The install link 404s.",
+				"The install link 404s.\n[NEEDS CLARIFICATION: g1 which repository?]", 1)}},
 	}
 	p, err := intake.Compose(d, composeIn())
 	if err != nil {
@@ -113,7 +147,7 @@ func TestModelSuppliedEvidenceLinksAreDropped(t *testing.T) {
 	if !slices.Equal(p.Alternatives, d.Alternatives) {
 		t.Fatalf("%+v", p.Alternatives)
 	}
-	if p.Question == nil || p.Question.Text != d.Question.Text || p.Question.Recommended.Answer != "ai-native-ref" {
+	if p.Question == nil || p.Question.Text != d.Gaps[0].Text || p.Question.Recommended.Answer != "ai-native-ref" {
 		t.Fatalf("%+v", p.Question)
 	}
 	// The alternative it composed is a candidate, so the plan holds Check as well.

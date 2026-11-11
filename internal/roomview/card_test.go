@@ -784,3 +784,33 @@ func TestTheCardOfACommitTheFactoryCannotVouchForSaysWhyAnAdminMerges(t *testing
 		}
 	}
 }
+
+func TestCardRunsShowSteersAndChat(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	run := envelope.RunFact{ID: "r1", Role: "implementer", StartedAt: now.Add(-time.Minute)}
+	for _, tc := range []struct {
+		name  string
+		nodes []summary.FlowNode
+		want  string
+	}{
+		{"both", []summary.FlowNode{{Run: "r1", Steered: 2, Chat: 3}}, "implementer **running** · 1 min · ↪ steered ×2 · 3 chat\n"},
+		{"zero", []summary.FlowNode{{Run: "r1"}}, "implementer **running** · 1 min\n"},
+		{"other run", []summary.FlowNode{{Run: "r2", Steered: 2, Chat: 3}}, "implementer **running** · 1 min\n"},
+		{"no flow", nil, "implementer **running** · 1 min\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := summary.Summary{Runs: []envelope.RunFact{run}}
+			if tc.nodes != nil {
+				s.Flow = &summary.Flow{Nodes: tc.nodes}
+			}
+			md := card1(t, s, Options{Format: Markdown, Now: now, Rooms: rooms})
+			if !strings.Contains(md, "**Runs** "+tc.want) {
+				t.Errorf("want %q in\n%s", tc.want, md)
+			}
+			txt := card1(t, s, textOpts(now))
+			if tc.name == "both" && !strings.Contains(txt, "↪ steered ×2 · 3 chat") {
+				t.Errorf("text card lacks the marks:\n%s", txt)
+			}
+		})
+	}
+}

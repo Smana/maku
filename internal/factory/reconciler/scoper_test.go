@@ -30,8 +30,8 @@ func scoperRig(t *testing.T) *rig {
 func scoperRigWith(t *testing.T, b config.Scoper) *rig {
 	t.Helper()
 	g := scopeRig(t, config.ScopeScoper)
-	g.r.Cfg.Scoper = b
-	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g.r.Cfg.Current().Scoper = b
+	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
 	g.reconcile(t, "3buqdlot", 3)
 	return g
@@ -91,8 +91,8 @@ func scoperRigOf(t *testing.T, edit func(*v1alpha1.Task)) *rig {
 	tk := issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves")
 	edit(tk)
 	g := newRig(t, tk)
-	g.r.Cfg.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
-	g.r.Cfg.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
+	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	g.reconcile(t, "3buqdlot", 3)
 	return g
 }
@@ -188,6 +188,12 @@ func TestAQuestionBouncesToTheAuthor(t *testing.T) {
 	}
 	if !slices.Equal(g.f.Added(7), []string{"factory/needs-author"}) || !slices.Contains(g.metrics.recorded, "scoper review question") {
 		t.Fatalf("labels %v metrics %v", g.f.Added(7), g.metrics.recorded)
+	}
+	if got := interventions(g.metrics.recorded); !slices.Equal(got, []string{"intervention needs_author none none none"}) {
+		t.Fatalf("a bounce is the author's intervention, not an escalation: %v", got)
+	}
+	if got := interventions(g.reconcile(t, "3buqdlot", 1), g.metrics.recorded); len(got) != 1 {
+		t.Fatalf("counted once: %v", got)
 	}
 }
 
@@ -345,7 +351,7 @@ func TestTheOtherExitsAreCounted(t *testing.T) {
 		t.Fatalf("metrics %v removed %v", g.metrics.recorded, g.f.Removed(7))
 	}
 	g = bounced(t)
-	g.r.Cfg.Caps.EscalatedHours = new(168)
+	g.r.Cfg.Current().Caps.EscalatedHours = new(168)
 	g.r.Now = func() time.Time { return now.Add(200 * time.Hour) }
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Reason != "escalation_expired" || !slices.Contains(g.metrics.recorded, "bounce review expired") ||
 		!slices.Equal(g.f.Removed(7), []string{"factory/needs-author"}) {
@@ -400,7 +406,7 @@ func TestOnlyAMaintainersRetryProceeds(t *testing.T) {
 // Drill 6ysg5vvt (cnref #2666, v0.30.2): the scoper made 72 tool calls, re-read the same files and was
 // revoked budget-run before any room_handoff. The brief orders the hand-off before more exploration.
 func TestTheScoperBriefHandsOffBeforeItExplores(t *testing.T) {
-	b := ScoperBrief(issueTask("3buqdlot", 7, parentText), "n0nce234", config.Scoper{})
+	b := ScoperBrief(issueTask("3buqdlot", 7, parentText), "n0nce234", config.Scoper{}, nil)
 	for _, want := range []string{"Call room_handoff as soon as you have the scope", "at most 25 tool calls",
 		"hand off what you have", "Never re-read a file you already read"} {
 		if !strings.Contains(b, want) {

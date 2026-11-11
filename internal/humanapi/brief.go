@@ -36,13 +36,20 @@ const briefScopePage = int64(pageSize)
 // the same, name both forms, and never read a malformed one as "everything" or as "nothing".
 const briefSinceForms = "since is seq:N (the cursor of the last brief) or an RFC 3339 instant, and never in the future"
 
+// briefQuestion is the scoper's question and its first assumption, for a client that can answer it.
+type briefQuestion struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended"`
+}
+
 // briefEnvelope is the brief's answer: the rendered text, the room it is of, and the cursor the caller
 // passes back as `since`. The route and room_brief serve this one shape.
 type briefEnvelope struct {
-	APIVersion string `json:"apiVersion"`
-	Room       string `json:"room"`
-	Text       string `json:"text"`
-	Cursor     string `json:"cursor"`
+	APIVersion string         `json:"apiVersion"`
+	Room       string         `json:"room"`
+	Text       string         `json:"text"`
+	Cursor     string         `json:"cursor"`
+	Question   *briefQuestion `json:"question,omitempty"`
 }
 
 // briefSince is where the brief's changes start: the cursor a previous brief handed back (seq:N), an RFC
@@ -143,6 +150,13 @@ func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, sinc
 	if err != nil {
 		return briefEnvelope{}, err
 	}
+	var question *briefQuestion
+	if scope != nil && scope.State == envelope.ScopeQuestion {
+		question = &briefQuestion{Text: scope.Question}
+		if len(scope.Assumptions) > 0 {
+			question.Recommended = scope.Assumptions[0]
+		}
+	}
 	changed, cursor, at, err := s.briefChanges(ctx, room, row, since)
 	if err != nil {
 		return briefEnvelope{}, err
@@ -179,7 +193,7 @@ func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, sinc
 	if err := roomview.Brief(&text, in, s.viewOptions(false)); err != nil {
 		return briefEnvelope{}, err
 	}
-	return briefEnvelope{APIVersion: briefVersion, Room: id, Text: text.String(), Cursor: cursor}, nil
+	return briefEnvelope{APIVersion: briefVersion, Room: id, Text: text.String(), Cursor: cursor, Question: question}, nil
 }
 
 // lastScope is the last handoff's scope (SC6): the state the plan line prints and the acceptance checks the

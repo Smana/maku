@@ -72,8 +72,8 @@ func TestCoordinationChildRunsWithinItsOwnBudget(t *testing.T) {
 			contract, roomA, prA := queuedChild(parent, 0, tc.history)
 			consumer, roomB, _ := queuedChild(parent, 1, nil) // the sibling's $5.10 is untouched
 			g, _ := coordinationRig(t, config.CoordinationExecute, parent, contract, roomA, consumer, roomB, spentLedger(map[string]int64{runs.PrincipalFactory: tc.spent}))
-			g.r.Cfg.Budgets = personBudgets(true, true)
-			g.r.Cfg.Budgets.EnforceTask = false // the allocation holds whatever the task cap's mode
+			g.r.Cfg.Current().Budgets = personBudgets(true, true)
+			g.r.Cfg.Current().Budgets.EnforceTask = false // the allocation holds whatever the task cap's mode
 			g.f.SetPR(prA)
 			if contract.Spec.Budget.TaskMicroUSD != 5_100_000 || consumer.Spec.Budget.TaskMicroUSD != 5_100_000 {
 				t.Fatalf("caps %d %d", contract.Spec.Budget.TaskMicroUSD, consumer.Spec.Budget.TaskMicroUSD)
@@ -102,7 +102,7 @@ func TestCoordinationChildRunsWithinItsOwnBudget(t *testing.T) {
 func TestIndependentChildrenRunConcurrently(t *testing.T) {
 	p := coordinationPlan(t, true)
 	g, _ := coordinationRig(t, config.CoordinationExecute, filedParent(p, coordination.ReasonFiled))
-	g.r.Cfg.Budgets = personBudgets(true, true)
+	g.r.Cfg.Current().Budgets = personBudgets(true, true)
 	cs := g.reconcile(t, p.ID, 2).Status.Coordination
 	if cs.Children[0].Task == "" || cs.Children[1].Task == "" {
 		t.Fatalf("children %+v", cs.Children)

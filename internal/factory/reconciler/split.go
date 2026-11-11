@@ -32,12 +32,12 @@ import (
 // status.classification.tier, which the control group never changes (OD-14), unless the row sets
 // split.anyTier (SP1's option (b)): then every task of the class. Recorded at triage, so
 // a config change never moves a task already triaged.
-func (r *Reconciler) splitAtTriage(t *v1alpha1.Task, cl v1alpha1.Classification) {
+func (r *Reconciler) splitAtTriage(cfg *config.Config, t *v1alpha1.Task, cl v1alpha1.Classification) {
 	t.Spec.Split = nil
 	if t.Spec.Issue == 0 || t.Spec.MaxMicroUSD > 0 || t.Spec.ScopeMode != string(config.ScopeScoper) {
 		return
 	}
-	if p := r.Cfg.SplitFor(t.Spec.Repository, t.Spec.PredictedClass); p != nil && (cl.Tier == "frontier" || p.AnyTier) {
+	if p := cfg.SplitFor(t.Spec.Repository, t.Spec.PredictedClass); p != nil && (cl.Tier == "frontier" || p.AnyTier) {
 		t.Spec.Split = &v1alpha1.SplitSpec{MaxChildren: p.MaxChildren, FamilyMicroUSD: config.MicroUSD(p.FamilyUSD), ChildTier: p.ChildTier}
 	}
 }
@@ -69,12 +69,12 @@ const (
 
 // splitHandoff is the scoper's second answer (SL4, SR6): a split the task was offered goes to a
 // maintainer; any other is ignored and counted, and the task runs on its scope.
-func (r *Reconciler) splitHandoff(ctx context.Context, t *v1alpha1.Task, sp *envelope.Split, seq int64) error {
+func (r *Reconciler) splitHandoff(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, seq int64) error {
 	if t.Spec.Split == nil || len(sp.Children) > int(t.Spec.Split.MaxChildren) || sp.Validate() != nil {
 		r.ignoreSplit(ctx, t, seq)
-		return r.scopeEnd(ctx, t, "ready", seq)
+		return r.scopeEnd(ctx, cfg, t, sc, "ready", seq)
 	}
-	return r.proposeSplit(ctx, t, sp, seq)
+	return r.proposeSplit(ctx, cfg, t, sc, sp, seq)
 }
 
 // ignoreSplit records and counts a split the factory will not propose (SL14).
@@ -87,7 +87,10 @@ func (r *Reconciler) ignoreSplit(ctx context.Context, t *v1alpha1.Task, seq int6
 // proposeSplit is SL4 (SR7): Escalated, split_proposed, one comment and the label, no child. Not
 // end(), as bounce is not: the comment is the plan, and a proposal says nothing of the tier. The
 // whole task's scope is recorded ready, so a /factory retry runs it whole with no second scoper run.
-func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sp *envelope.Split, seq int64) error {
+// The scoper's recommendation is noted on the still unresolved profile: an approved family counts
+// on the parent, under its triage profile (R32), and the row keeps the counterfactual.
+func (r *Reconciler) proposeSplit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, seq int64) error {
+	r.recommend(cfg, t, t.Status.Profile, sc)
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: "ready", Seq: seq}
 	t.Status.Split = &v1alpha1.SplitStatus{State: SplitProposed, Seq: seq, Of: int32(len(sp.Children))} //nolint:gosec // Validate bounds it to 2..5
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
@@ -103,8 +106,8 @@ func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sp *env
 	}
 	r.releaseUnheld(ctx, t)
 	r.to(t, v1alpha1.PhaseEscalated, ReasonSplitProposed)
-	narrateLater(t, narrate.SplitProposed(t, sp.Why, tasks, r.repo(t).Maintainers, r.Cfg.RoomsURL))
-	r.outcome(ctx, t)
+	narrateLater(t, narrate.SplitProposed(t, sp.Why, tasks, r.repo(cfg, t).Maintainers, cfg.RoomsURL))
+	r.outcome(ctx, cfg, t)
 	return nil
 }
 
@@ -112,21 +115,21 @@ func (r *Reconciler) proposeSplit(ctx context.Context, t *v1alpha1.Task, sp *env
 // waits for /factory split, read before /factory retry. An approved parent, escalated on its
 // family's budget, never runs an implementer: only its expiry ends it. done is false when escalated
 // goes on as for any task.
-func (r *Reconciler) escalatedSplit(ctx context.Context, t *v1alpha1.Task, pr forge.PR) (bool, error) {
+func (r *Reconciler) escalatedSplit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	sp := t.Status.Split
 	switch {
 	case sp == nil:
 		return false, nil
 	case sp.State == SplitApproved:
-		return true, r.expireEscalation(ctx, t)
+		return true, r.expireEscalation(ctx, cfg, t)
 	case sp.State != SplitProposed || t.Status.Reason != ReasonSplitProposed:
 		return false, nil
 	}
-	c, ok, err := r.command(ctx, t, pr, cmdSplit)
+	c, ok, err := r.command(ctx, cfg, t, pr, cmdSplit)
 	if err != nil || !ok {
 		return false, err
 	}
-	return true, r.approveSplit(ctx, t, c)
+	return true, r.approveSplit(ctx, cfg, t, c)
 }
 
 // approveSplit is SL4 (a) and SL11: the approver pays for every part, so their day is checked first,
@@ -134,15 +137,15 @@ func (r *Reconciler) escalatedSplit(ctx context.Context, t *v1alpha1.Task, pr fo
 // the same status write as the outcome: a ledger read that fails leaves it for the next pass. A
 // spent day is said once and the split keeps waiting; the approver comments `/factory split` again
 // tomorrow. Approved, the parent waits in Split, and its next pass opens part 1.
-func (r *Reconciler) approveSplit(ctx context.Context, t *v1alpha1.Task, c forge.Comment) error {
+func (r *Reconciler) approveSplit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, c forge.Comment) error {
 	person := v1alpha1.Person(c.Author)
-	spent, err := r.daySpent(ctx, t, person)
+	spent, err := r.daySpent(ctx, cfg, t, person)
 	if err != nil {
 		return err
 	}
 	markHandled(t, c.ID)
 	if spent {
-		narrateLater(t, narrate.ApproverOverBudget(t.Spec.Issue, person, r.Cfg.Budgets.DailyMicroUSD(person), c.At))
+		narrateLater(t, narrate.ApproverOverBudget(t.Spec.Issue, person, cfg.Budgets.DailyMicroUSD(person), c.At))
 		record(ctx, func(ctx context.Context) {
 			r.Metrics.AdmissionRefused(fmetrics.WithPrincipal(ctx, person), "person_budget_exhausted") // the approver (SI4)
 		})
@@ -150,15 +153,15 @@ func (r *Reconciler) approveSplit(ctx context.Context, t *v1alpha1.Task, c forge
 	}
 	r.leaveSplit(ctx, t, SplitApproved)
 	t.Status.Split.ApprovedBy = person
-	record(ctx, func(ctx context.Context) { r.Metrics.Intervention(ctx, "split") })
+	r.intervention(ctx, cfg, t, "split")
 	r.to(t, v1alpha1.PhaseSplit, "")
 	return nil
 }
 
 // daySpent is D4 for an approver: with per-person caps on, person's day already spent. Enforced it
 // refuses; in shadow it only logs. Queued's reservation per run stays the exact check (D3).
-func (r *Reconciler) daySpent(ctx context.Context, t *v1alpha1.Task, person string) (bool, error) {
-	b := r.Cfg.Budgets
+func (r *Reconciler) daySpent(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, person string) (bool, error) {
+	b := cfg.Budgets
 	if !b.PerPerson.Enabled || r.Ledger == nil {
 		return false, nil
 	}
@@ -258,8 +261,8 @@ func (r *Reconciler) familyLeft(ctx context.Context, p *v1alpha1.Task) (int64, e
 }
 
 // childBudget is a part's caps (SL9, SL10): its tier's, its task cap no more than the family has left.
-func (r *Reconciler) childBudget(p *v1alpha1.Task, left int64) v1alpha1.Budget {
-	b := triage.BudgetFor(r.Cfg, p.Spec.Split.ChildTier)
+func (r *Reconciler) childBudget(cfg *config.Config, p *v1alpha1.Task, left int64) v1alpha1.Budget {
+	b := triage.BudgetFor(cfg, p.Spec.Split.ChildTier)
 	b.TaskMicroUSD = min(b.TaskMicroUSD, left)
 	// A run the meter cannot price holds the part to TaskTokens (usdCapped), and spend() charges
 	// such a run at the reference rate: bound the tokens by what the family has left at that rate,
@@ -274,9 +277,9 @@ func (r *Reconciler) childBudget(p *v1alpha1.Task, left int64) v1alpha1.Budget {
 // partFits: the part's cap holds one whole run (runFits' rule, owner 2026-10-07). A tier with a USD
 // price is USD-capped, so only dollars decide; one without keeps its token cap, which the family's
 // remaining dollars narrow (childBudget).
-func (r *Reconciler) partFits(p *v1alpha1.Task, left int64) bool {
-	b := r.childBudget(p, left)
-	if r.Cfg.Tiers[p.Spec.Split.ChildTier].TaskUSD > 0 {
+func (r *Reconciler) partFits(cfg *config.Config, p *v1alpha1.Task, left int64) bool {
+	b := r.childBudget(cfg, p, left)
+	if cfg.Tiers[p.Spec.Split.ChildTier].TaskUSD > 0 {
 		return b.TaskMicroUSD > 0 && b.TaskMicroUSD >= b.RunMicroUSD
 	}
 	return b.TaskTokens > 0 && b.TaskTokens >= b.RunTokens
@@ -320,13 +323,13 @@ func envelopeScope(s *v1alpha1.TaskScope) envelope.Scope {
 // openChild opens part k (SL7, SL8, SR10): its issue, found by its marker or created, and its Task,
 // recorded on the parent in this pass. Each step is idempotent, so a replay after a lost status
 // write opens no second issue and creates no second Task.
-func (r *Reconciler) openChild(ctx context.Context, t *v1alpha1.Task, k int32) error {
+func (r *Reconciler) openChild(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, k int32) error {
 	sp := t.Status.Split
 	sc, err := r.childScope(ctx, t, k)
 	if err != nil {
 		return err
 	}
-	iss, err := r.childIssue(ctx, t, k, sc)
+	iss, err := r.childIssue(ctx, cfg, t, k, sc)
 	if err != nil {
 		return err
 	}
@@ -356,14 +359,14 @@ func (r *Reconciler) openChild(ctx context.Context, t *v1alpha1.Task, k int32) e
 // childIssue is part k's issue (SL8): the one the factory opened already, by its marker among the
 // issues labelled child-of the parent, open or closed; else a new one, whose sub-issue link is a
 // view for people and never blocks.
-func (r *Reconciler) childIssue(ctx context.Context, t *v1alpha1.Task, k int32, sc *envelope.Scope) (forge.Issue, error) {
+func (r *Reconciler) childIssue(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, k int32, sc *envelope.Scope) (forge.Issue, error) {
 	label, marker := v1alpha1.ChildOfLabel(t.Spec.Issue), narrate.SplitMarker(t.Name, int(k))
 	found, err := r.gh(ctx).IssuesLabelled(ctx, label)
 	if err != nil {
 		return forge.Issue{}, err
 	}
 	for _, i := range found {
-		if forge.SameLogin(i.Author, r.Cfg.FactoryLogin) && strings.Contains(i.Body, marker) {
+		if forge.SameLogin(i.Author, cfg.FactoryLogin) && strings.Contains(i.Body, marker) {
 			return i, nil // a replay: the issue exists, its record was lost
 		}
 	}
@@ -371,7 +374,7 @@ func (r *Reconciler) childIssue(ctx context.Context, t *v1alpha1.Task, k int32, 
 	if c := t.Spec.PredictedClass; c != "" && c != "review" {
 		labels = append(labels, "class:"+c) // the parent's class (SL6), applied by the factory: never read as a prediction (T3)
 	}
-	title, body := narrate.ChildIssue(t, k, sc, r.Cfg.RoomsURL)
+	title, body := narrate.ChildIssue(t, k, sc, cfg.RoomsURL)
 	iss, err := r.gh(ctx).CreateIssue(ctx, title, body, labels)
 	if err != nil {
 		return forge.Issue{}, err
@@ -385,13 +388,13 @@ func (r *Reconciler) childIssue(ctx context.Context, t *v1alpha1.Task, k int32, 
 // receivedChild is a part's triage (SL5, SL9, SL10, SR11): its parent's spec but for its part, its
 // tier and its cap; C7 is never asked. Every generation passes here, the factory's and a re-labelled
 // one, so they are built alike.
-func (r *Reconciler) receivedChild(ctx context.Context, t *v1alpha1.Task) error {
-	reason, err := r.inherit(ctx, t)
+func (r *Reconciler) receivedChild(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	reason, err := r.inherit(ctx, cfg, t)
 	if err != nil {
 		return err
 	}
 	if reason != "" {
-		return r.end(ctx, t, v1alpha1.PhaseRejected, reason)
+		return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, reason)
 	}
 	status := t.Status // Update returns the server's status into t; keep ours
 	if err := r.Client.Update(ctx, t); err != nil {
@@ -399,13 +402,13 @@ func (r *Reconciler) receivedChild(ctx context.Context, t *v1alpha1.Task) error 
 	}
 	t.Status = status
 	t.Status.Classification = &v1alpha1.Classification{Tier: t.Spec.Budget.Tier, Classifier: "split", Fallback: "static"}
-	t.Status.ConfigHash = r.Cfg.Hash
+	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
 
 // inherit fills a part's spec from its parent; reason is why it cannot run.
-func (r *Reconciler) inherit(ctx context.Context, t *v1alpha1.Task) (string, error) {
+func (r *Reconciler) inherit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (string, error) {
 	var p v1alpha1.Task
 	switch err := r.Client.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: t.Spec.Parent.Task}, &p); {
 	case apierrors.IsNotFound(err):
@@ -420,10 +423,10 @@ func (r *Reconciler) inherit(ctx context.Context, t *v1alpha1.Task) (string, err
 	if err != nil {
 		return "", err
 	}
-	if !r.partFits(&p, left) {
+	if !r.partFits(cfg, &p, left) {
 		return ReasonBudgetFamily, nil
 	}
-	b := r.childBudget(&p, left)
+	b := r.childBudget(cfg, &p, left)
 	if t.Spec.Scope == nil { // a re-labelled generation: the part's scope from the parent's split
 		sc, err := r.childScope(ctx, &p, t.Spec.Parent.Index)
 		if err != nil {
@@ -436,6 +439,9 @@ func (r *Reconciler) inherit(ctx context.Context, t *v1alpha1.Task) (string, err
 	t.Spec.PredictedClass, t.Spec.DataClass = p.Spec.PredictedClass, p.Spec.DataClass // SL6: the parent's class
 	t.Spec.Steering, t.Spec.ScopeMode, t.Spec.Loop, t.Spec.Search = p.Spec.Steering, p.Spec.ScopeMode, p.Spec.Loop, p.Spec.Search
 	t.Spec.Template, t.Spec.Budget = triage.Matrix(p.Spec.PredictedClass, "issue", b.Tier), b
+	// R39: the family's membership in the evaluation is written here, the one place a part reads
+	// its parent; its merge reads the mark and never the parent.
+	t.Status.Evaluated = p.Status.Profile != nil
 	if t.Labels == nil {
 		t.Labels = map[string]string{}
 	}
@@ -446,7 +452,7 @@ func (r *Reconciler) inherit(ctx context.Context, t *v1alpha1.Task) (string, err
 // splitting is the parent's wait in Split (SL7, SL12, SR13): it records each part's outcome from
 // its newest generation, ends the family on a revert or a drop, opens the next part once the one
 // before has landed within the family's cap, and closes the parent when the last part lands.
-func (r *Reconciler) splitting(ctx context.Context, t *v1alpha1.Task) error {
+func (r *Reconciler) splitting(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
 	if _, _, err := r.observe(ctx, t); err != nil { // the scoper's late readings land (R49)
 		return err
 	}
@@ -461,7 +467,7 @@ func (r *Reconciler) splitting(ctx context.Context, t *v1alpha1.Task) error {
 			c.Task = n.Name
 			if n.Status.Phase == v1alpha1.PhaseReverted {
 				c.Outcome = ChildReverted
-				return r.endFamily(ctx, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
+				return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
 			}
 		}
 	}
@@ -470,11 +476,11 @@ func (r *Reconciler) splitting(ctx context.Context, t *v1alpha1.Task) error {
 		n := newest[c.Index]
 		switch {
 		case n == nil: // the part's create was lost with its write: open it again, by its marker
-			return r.openChild(ctx, t, c.Index)
+			return r.openChild(ctx, cfg, t, c.Index)
 		case n.Status.Phase == v1alpha1.PhaseDone:
 			c.Outcome = ChildLanded
 		case n.Status.Phase == v1alpha1.PhaseRejected && n.Status.Reason == ReasonBudgetFamily:
-			return r.end(ctx, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily)
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily)
 		case v1alpha1.TerminalPhase(n.Status.Phase) || n.Status.Phase == v1alpha1.PhaseEscalated:
 			iss, err := r.gh(ctx).Issue(ctx, c.Issue)
 			if err != nil {
@@ -484,7 +490,7 @@ func (r *Reconciler) splitting(ctx context.Context, t *v1alpha1.Task) error {
 				return nil // waits: a maintainer re-labels the part's issue or closes it (SL12)
 			}
 			c.Outcome = ChildDropped
-			return r.endFamily(ctx, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
+			return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseClosed, ReasonChildDropped)
 		default:
 			return nil // the part is running
 		}
@@ -493,21 +499,21 @@ func (r *Reconciler) splitting(ctx context.Context, t *v1alpha1.Task) error {
 		if err := r.gh(ctx).CloseIssue(ctx, t.Spec.Issue); err != nil {
 			return err // closing a closed issue is no error, so a replay closes again harmlessly
 		}
-		return r.endFamily(ctx, t, newest, v1alpha1.PhaseDone, ReasonChildrenMerged)
+		return r.endFamily(ctx, cfg, t, newest, v1alpha1.PhaseDone, ReasonChildrenMerged)
 	}
 	left, err := r.familyLeft(ctx, t)
 	if err != nil {
 		return err
 	}
-	if !r.partFits(t, left) {
-		return r.end(ctx, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily) // SL10
+	if !r.partFits(cfg, t, left) {
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, ReasonBudgetFamily) // SL10
 	}
-	return r.openChild(ctx, t, int32(len(sp.Children))+1) //nolint:gosec // Validate bounds the parts to 2..5
+	return r.openChild(ctx, cfg, t, int32(len(sp.Children))+1) //nolint:gosec // Validate bounds the parts to 2..5
 }
 
 // endFamily ends the parent (SL12, SR14): one comment listing the parts and their pull requests,
 // each part counted once, the tier unscored.
-func (r *Reconciler) endFamily(ctx context.Context, t *v1alpha1.Task, newest map[int32]*v1alpha1.Task, phase, reason string) error {
+func (r *Reconciler) endFamily(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, newest map[int32]*v1alpha1.Task, phase, reason string) error {
 	sp := t.Status.Split
 	if phase == v1alpha1.PhaseClosed { // a part still running must not outlive its family (SL12)
 		if err := r.stopOpenParts(ctx, sp, newest); err != nil {
@@ -522,7 +528,7 @@ func (r *Reconciler) endFamily(ctx context.Context, t *v1alpha1.Task, newest map
 		}
 		parts = append(parts, p)
 	}
-	r.finish(ctx, t, phase, reason, narrate.SplitEnded(t, phase, reason, parts, r.repo(t).Maintainers...))
+	r.finish(ctx, cfg, t, phase, reason, narrate.SplitEnded(t, phase, reason, parts, r.repo(cfg, t).Maintainers...))
 	return nil
 }
 

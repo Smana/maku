@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/factory/resources"
 )
 
 type fakeSource struct {
@@ -355,7 +358,7 @@ func TestRefresherReadsOwnedRepositories(t *testing.T) {
 	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
 	src := &fakeSource{file: policyFile, found: true}
 	s := service(src, func() time.Time { return now })
-	s.Cfg.Repositories = append(s.Cfg.Repositories, config.Repository{Name: "Smana/elsewhere"})
+	s.Cfg.Current().Repositories = append(s.Cfg.Current().Repositories, config.Repository{Name: "Smana/elsewhere"})
 	ages := map[string]time.Duration{}
 	r := &Refresher{Service: s, Owned: func(repo string) bool { return repo == "Smana/cloud-native-ref" },
 		OnAge: func(_ context.Context, repo string, age time.Duration) { ages[repo] = age }}
@@ -371,5 +374,81 @@ func TestRefresherReadsOwnedRepositories(t *testing.T) {
 	r.Tick(t.Context())
 	if src.searches() != n || ages["Smana/cloud-native-ref"] != time.Minute {
 		t.Fatalf("read again inside the TTL, or no age: %v", ages)
+	}
+}
+
+func TestReportCarriesThePolicyStatus(t *testing.T) {
+	cfg := serviceCfg()
+	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 3}}}
+	src := func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true }
+	calls := 0
+	found := true
+	s := &Service{Cfg: cfg, Namespace: "factory", Sources: src, Now: time.Now,
+		PolicyStatus: func(_ context.Context, name string) (PolicyStatus, bool) {
+			calls++
+			if name != "cloud-native-ref" || !found {
+				return PolicyStatus{}, false
+			}
+			return PolicyStatus{Namespace: "factory", Generation: 3, Status: factoryv1.MergePolicyStatus{Authority: "central"}}, true
+		}}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil || r.MergePolicyStatus == nil || r.MergePolicyStatus.Namespace != "factory" ||
+		r.MergePolicyStatus.Generation != 3 || r.MergePolicyStatus.Status.Authority != "central" {
+		t.Fatalf("%+v %v", r.MergePolicyStatus, err)
+	}
+	found = false
+	if r, err = s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.MergePolicyStatus != nil {
+		t.Fatalf("a miss is no status: %+v %v", r.MergePolicyStatus, err)
+	}
+	// A repository the file serves never asks.
+	calls = 0
+	cfg.Generations = config.Generations{}
+	if r, err = s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.MergePolicyStatus != nil || calls != 0 {
+		t.Fatalf("%+v %v calls=%d", r.MergePolicyStatus, err, calls)
+	}
+}
+
+// A repository served from a MergePolicy carries the manifest of its central classes and merge
+// block, which the factory's own decoder accepts; one served from the file carries none.
+func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
+	cfg := serviceCfg()
+	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 3}}}
+	cfg.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}}
+	s := &Service{Cfg: cfg, Namespace: "factory", Sources: func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true }, Now: time.Now}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.MergePolicy != "cloud-native-ref" || r.ManifestPath != "mergepolicy-cloud-native-ref.yaml" {
+		t.Fatalf("%+v", r)
+	}
+	objs, err := resources.Decode([]byte(r.Manifest))
+	if err != nil || len(objs) != 1 || objs[0].Kind != resources.KindMergePolicy || objs[0].Name != "cloud-native-ref" || objs[0].Namespace != "factory" {
+		t.Fatalf("%v %+v\n%s", err, objs, r.Manifest)
+	}
+	if !strings.Contains(r.Manifest, "docs-links") || !strings.Contains(r.Manifest, "repositoryRef: cloud-native-ref") {
+		t.Fatal(r.Manifest)
+	}
+	// The editor edits the served classes in the file's shape, never spec.classes; the preview
+	// builds the edited manifest in the same namespace, for the same Repository.
+	if r.Served == nil || r.Served.Classes["docs-links"].Mode != mergepolicy.ModeShadow || r.Served.Classes["docs-links"].Harness != "plain" ||
+		r.Namespace != "factory" || r.RepositoryRef != "cloud-native-ref" {
+		t.Fatalf("%+v %+v", r.Served, r)
+	}
+
+	// Hand-named objects: the manifest carries their names, never a derived one.
+	cfg.Generations.Repos["smana/cloud-native-ref"] = config.RepoGenerations{Repository: 2, MergePolicy: 3, RepositoryName: "custom-repo", PolicyName: "custom-policy"}
+	r, err = s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil || r.MergePolicy != "custom-policy" || r.ManifestPath != "mergepolicy-custom-policy.yaml" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if objs, err := resources.Decode([]byte(r.Manifest)); err != nil || objs[0].Name != "custom-policy" || !strings.Contains(r.Manifest, "repositoryRef: custom-repo") {
+		t.Fatalf("%v\n%s", err, r.Manifest)
+	}
+
+	file := service(&fakeSource{file: "factory: aws-0\n", found: true}, time.Now)
+	r, err = file.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil || r.Manifest != "" || r.MergePolicy != "" || r.ManifestPath != "" || r.Served != nil {
+		t.Fatalf("%+v %v", r, err)
 	}
 }

@@ -23,6 +23,7 @@ const parts = {
     [dot(-5, 2.5, 1.6), true], [dot(0, 2.5, 1.6), true], [dot(5, 2.5, 1.6), true],
   ],
   shield: [["M0 -10L9 -6Q9 6 0 10Q-9 6 -9 -6Z"], ["M-4 0L-1 3L4 -3"]],
+  chat: [["M-8 -8H8a3 3 0 0 1 3 3V3a3 3 0 0 1-3 3H-1L-6 10V6H-8a3 3 0 0 1-3-3V-5a3 3 0 0 1 3-3z"]],
 } as const satisfies Record<string, readonly Part[]>;
 
 export type GlyphName = keyof typeof parts;

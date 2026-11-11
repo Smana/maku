@@ -15,21 +15,14 @@ function rule(sel: string): string {
 }
 
 describe("Maku typography", () => {
-  it("loads only local Space Grotesk 400, 500 and 700 with swap", () => {
+  it("loads only local Space Grotesk, Inter and JetBrains Mono, variable, with swap", () => {
     const faces = [...css.matchAll(/@font-face\s*{([^}]*)}/g)].map((m) => m[1]);
-    expect(faces).toHaveLength(3);
-    for (const w of [400, 500, 700]) {
-      const f = faces.find((x) => new RegExp(`font-weight:\\s*${w}\\b`).test(x))!;
-      expect(f, `weight ${w}`).toBeDefined();
-      expect(f).toMatch(/font-family:\s*"Space Grotesk"/);
-      expect(f).toMatch(/font-style:\s*normal/);
+    expect(faces).toHaveLength(4);
+    for (const f of faces) {
       expect(f).toMatch(/font-display:\s*swap/);
-      expect(f).toContain(`url("/assets/fonts/space-grotesk-latin-${w}-normal.woff2") format("woff2")`);
-      expect(existsSync(join(fonts, `space-grotesk-latin-${w}-normal.woff2`))).toBe(true);
+      expect(f).toMatch(/url\("\/assets\/fonts\/[A-Za-z-]+\.woff2"\) format\("woff2"\)/);
     }
-    expect(rule("body")).toContain(
-      'font: 500 16px/1.55 "Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-    );
+    expect(rule("body")).toContain("font: 400 var(--text-body)/var(--leading-body) var(--font-sans)");
     for (const src of [css, html]) {
       expect(src).not.toMatch(/@import/);
       expect(src).not.toMatch(/fonts\.(googleapis|gstatic)\.com/);
@@ -37,25 +30,26 @@ describe("Maku typography", () => {
     }
   });
 
-  it("sets message prose at 400, the chrome at 500 and bold at 700", () => {
+  it("sets message prose and the body at 400 and bold at 700", () => {
     expect(rule(".bubble .md, .handoff > .md, .notes")).toMatch(/font-weight:\s*400/);
-    expect(rule("body")).toMatch(/font:\s*500 /);
+    expect(rule("body")).toMatch(/font:\s*400 /);
     expect(rule("strong, b")).toMatch(/font-weight:\s*700/);
-    expect(rule(".md :is(h1, h2, h3, h4, h5, h6)")).toMatch(/font-weight:\s*700/);
+    expect(rule(".md :is(h2, h3, h4, h5, h6)")).toMatch(/font-weight:\s*700/);
+    expect(rule(".md h1")).toMatch(/font-weight:\s*700/);
   });
 
   it("uses the readable Maku type scale", () => {
-    expect(rule("body")).toMatch(/16px\/1\.55/);
-    // Bigger and lighter: size carries the title, not weight (the appearance pass, 2026-11-06).
-    expect(rule(".strip-title")).toMatch(/font-size:\s*26px/);
-    expect(rule(".strip-title")).toMatch(/line-height:\s*1\.2/);
-    expect(rule(".strip-title")).toMatch(/font-weight:\s*500/);
+    expect(rule("body")).toMatch(/var\(--text-body\)\/var\(--leading-body\)/);
+    // The room's h1 at display size; its weight is the headings' 700 (the Ogenki scale, 2026-11-10).
+    expect(rule(".strip-title")).toMatch(/font-size:\s*var\(--text-display\)/);
+    expect(rule(".strip-title")).toMatch(/line-height:\s*var\(--leading-display\)/);
+    expect(rule(".strip-title")).not.toMatch(/font-weight/);
     expect(rule(".strip-title")).toMatch(/letter-spacing:\s*-0\.02em/);
-    expect(rule(".run-status")).toMatch(/font-size:\s*16px/);
+    expect(rule(".run-status")).toMatch(/font-size:\s*var\(--text-body\)/);
     expect(rule(".run-status")).toMatch(/font-weight:\s*700/);
-    expect(rule(".msg-head")).toMatch(/font-size:\s*13px/);
-    expect(rule(".chip, .pol")).toMatch(/font-size:\s*13px/);
-    expect(rule(".t-cmd, .t-command, .approval-command, pre, code")).toMatch(/font:\s*14px\/1\.5\s+ui-monospace/);
+    expect(rule(".msg-head")).toMatch(/font-size:\s*var\(--text-small\)/);
+    expect(rule(".chip, .pol")).toMatch(/font-size:\s*var\(--text-small\)/);
+    expect(rule(".t-cmd, .t-command, .approval-command, pre, code")).toMatch(/font:\s*var\(--text-small\)\/var\(--leading-small\)\s+var\(--font-mono\)/);
     expect(css).not.toMatch(/font-size:\s*12px/);
     expect(css).not.toMatch(/font:\s*12px/);
     expect(css).not.toMatch(/font-size:\s*1[0-1]px/);
@@ -63,8 +57,8 @@ describe("Maku typography", () => {
 
   it("keeps code, IDs, and timestamps monospace without monospacing prose", () => {
     const mono = rule("time, .t-time, .step-dur, .replay-progress, .t-prompt");
-    expect(mono).toMatch(/font-family:\s*ui-monospace/);
-    expect(mono).toMatch(/font-size:\s*13px/);
+    expect(mono).toMatch(/font-family:\s*var\(--font-mono\)/);
+    expect(mono).toMatch(/font-size:\s*var\(--text-small\)/);
     expect(mono).toMatch(/tabular-nums/);
     // The code group names every command, tool I/O and code surface.
     expect(css).toContain(".t-cmd, .t-command, .approval-command, pre, code {");
@@ -100,7 +94,8 @@ describe("Maku brand header", () => {
     const phone = css.match(/@media \(max-width: 640px\)\s*{([\s\S]*?)\n}\n/g)?.join("\n") ?? "";
     expect(phone).toMatch(/\.brand\s*{[^}]*gap:\s*14px/);
     expect(phone).toMatch(/\.brand img\s*{[^}]*width:\s*28px/);
-    expect(phone).toMatch(/\.brand-wordmark\s*{[^}]*font-size:\s*22px/);
+    // The wordmark is one size on every screen: no phone override.
+    expect(phone).not.toMatch(/\.brand-wordmark/);
     expect(phone).toMatch(/\.page-header\s*{[^}]*padding:\s*14px/);
     // The strip wraps under the brand: half the 28 px mark of clearspace below it too.
     expect(phone).toMatch(/\.page-header\s*{[^}]*row-gap:\s*14px/);
@@ -109,7 +104,7 @@ describe("Maku brand header", () => {
 
   it("sets the wordmark as lowercase 700 at -0.03em and keeps a visible focus", () => {
     const w = rule(".brand-wordmark");
-    expect(w).toMatch(/font:\s*700 24px\/1/);
+    expect(w).toMatch(/font:\s*700 var\(--text-heading\)\/var\(--leading-heading\)/);
     expect(w).toMatch(/letter-spacing:\s*-0\.03em/);
     expect(w).not.toMatch(/text-transform/);
     expect(css).toMatch(/\.brand:focus-visible\s*{[^}]*outline/);
@@ -125,8 +120,8 @@ describe("Maku brand header", () => {
     expect(html).toContain('href="/assets/favicon/favicon-16.png"');
     expect(html).toContain('href="/assets/favicon/favicon-32.png"');
     expect(html).toContain('rel="apple-touch-icon" href="/assets/favicon/apple-touch-icon.png"');
-    for (const w of [400, 500, 700]) {
-      expect(html).toMatch(new RegExp(`rel="preload"[^>]*href="/assets/fonts/space-grotesk-latin-${w}-normal\\.woff2"[^>]*as="font"[^>]*type="font/woff2"[^>]*crossorigin`));
+    for (const n of ["SpaceGrotesk-Variable", "Inter-Variable", "JetBrainsMono-Variable"]) {
+      expect(html).toMatch(new RegExp(`rel="preload"[^>]*href="/assets/fonts/${n}\\.woff2"[^>]*as="font"[^>]*type="font/woff2"[^>]*crossorigin`));
     }
   });
 
@@ -136,20 +131,20 @@ describe("Maku brand header", () => {
       const h = read(f);
       expect(h).toMatch(/<title>Maku: /);
       expect(h).toContain('href="/assets/favicon/favicon.svg"');
-      expect(h).toContain('href="/assets/fonts/space-grotesk-latin-700-normal.woff2"');
+      expect(h).toContain('href="/assets/fonts/SpaceGrotesk-Variable.woff2"');
     }
     const d = read("demo.html");
     expect(d).toContain("<title>Maku: live demo</title>");
     expect(d).toContain('href="assets/favicon/favicon.svg"');
-    expect(d).toContain('href="assets/fonts/space-grotesk-latin-500-normal.woff2"');
+    expect(d).toContain('href="assets/fonts/SpaceGrotesk-Variable.woff2"');
     expect(d).not.toMatch(/href="\//);
   });
 });
 
 describe("The room list", () => {
-  it("sets the page title apart from the wordmark: a divider, lighter and smaller, centred", () => {
+  it("sets the page title apart from the wordmark: a divider, muted, a heading, centred", () => {
     const t = rule(".page-header .page-title");
-    expect(t).toMatch(/font:\s*500 18px\/24px/);
+    expect(t).toMatch(/font:\s*700 var\(--text-heading\)\/var\(--leading-heading\)/);
     expect(t).toMatch(/color:\s*var\(--muted-foreground\)/);
     expect(t).toMatch(/border-left:\s*1px solid var\(--border\)/);
     expect(t).toMatch(/padding-left:\s*16px/);
@@ -197,17 +192,18 @@ describe("The room list", () => {
   it("spaces the CLI setup fold and sets its summary like the room page's folds", () => {
     expect(rule(".cli-setup")).toMatch(/margin-top:\s*16px/);
     const s = rule(".cli-setup > summary");
-    expect(s).toMatch(/font-size:\s*13px/);
+    expect(s).toMatch(/font-size:\s*var\(--text-small\)/);
     expect(s).toMatch(/color:\s*var\(--muted-foreground\)/);
   });
 });
 
 describe("Markdown in a message", () => {
   it("keeps headings in the conversation's scale, never the browser's 2em", () => {
-    const all = rule(".md :is(h1, h2, h3, h4, h5, h6)");
-    expect(all).toMatch(/font-size:\s*16px/);
+    const all = rule(".md :is(h2, h3, h4, h5, h6)");
+    expect(all).toMatch(/font-size:\s*var\(--text-body\)/);
     expect(all).toMatch(/font-weight:\s*700/);
-    expect(rule(".md h1")).toMatch(/font-size:\s*18px/);
+    // An h1 in a message is the one step above: the heading size, so the hierarchy reads.
+    expect(rule(".md h1")).toMatch(/font-size:\s*var\(--text-heading\)/);
   });
   it("sets inline code apart from prose", () => {
     expect(rule(".md :not(pre) > code")).toMatch(/background:/);

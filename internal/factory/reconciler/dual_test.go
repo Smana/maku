@@ -75,8 +75,8 @@ func TestDualDecidesUnderTheSnapshot(t *testing.T) {
 // and its record names the policy and the agreement. The central decision is the one acted on.
 func TestTheGateEvaluatesTheRepositoryPolicyBesideTheCentral(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
-	g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true}
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) {
 		live := withShape(config.Class{Live: true}, "docs-links") // the repository would merge it
 		return snapshotOf(map[string]mergepolicy.Resolved{"docs-links": {Class: live}}, "docs-links: central {...}, repository {...}"), true
@@ -96,8 +96,8 @@ func TestTheGateEvaluatesTheRepositoryPolicyBesideTheCentral(t *testing.T) {
 // Off, nothing is read, counted or written beyond what the gate did before.
 func TestDualEvaluationOffReadsNothing(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
-	g.r.Cfg.PolicyManagement = config.PolicyManagement{Read: true}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true}
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) {
 		t.Fatal("read with the switch off")
 		return mergepolicy.Snapshot{}, false

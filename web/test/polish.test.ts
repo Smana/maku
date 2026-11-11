@@ -108,7 +108,6 @@ describe("hit areas", () => {
     expect(decl(outside, ".page-header .chip a::after")).toMatch(/inset:\s*-5px -2px/);
     expect(decl(outside, ".page-header .needs-pill::after")).toMatch(/inset:\s*-3px 0/);
     expect(decl(phone, ".page-header .needs-pill::after")).toMatch(/inset:\s*-8px 0/);
-    expect(decl(phone, ".page-header .strip-chips")).toMatch(/padding-block:\s*8px;[^}]*margin-block:\s*-8px/);
   });
   it("grows the Now line on a phone, where its clamp would clip a pseudo-element", () => {
     expect(decl(phone, ".page-header .now-link")).toMatch(/padding-block:\s*12px;[^}]*margin-block:\s*-12px/);
@@ -140,13 +139,13 @@ describe("text wrapping", () => {
 });
 
 describe("surfaces", () => {
-  it("rounds the approval card concentrically: its 6 px controls plus 8 px of padding", () => {
+  it("shapes the approval card as an Ogenki card", () => {
     const a = decl(outside, ".approval");
-    expect(a).toMatch(/border-radius:\s*calc\(var\(--radius-control\)\s*\+\s*8px\)/);
-    expect(a).toMatch(/padding:\s*8px 12px/);
+    expect(a).toMatch(/border-radius:\s*var\(--radius-md\)/);
+    expect(a).toMatch(/padding:\s*var\(--space-4\)/);
   });
   it("squares an open call's summary at the body's edge", () => {
-    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*var\(--radius-row\) var\(--radius-row\) 0 0/);
+    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*calc\(var\(--radius-md\) - 1px\) calc\(var\(--radius-md\) - 1px\) 0 0/);
   });
 });
 
@@ -173,13 +172,13 @@ describe("fork here on touch screens", () => {
     expect(bar).toMatch(/visibility:\s*visible/);
     expect(bar).toMatch(/pointer-events:\s*auto/);
   });
-  it("is drawn quiet on touch: no border, background or shadow, muted 13 px text", () => {
+  it("is drawn quiet on touch: no border, background or shadow, muted small text", () => {
     const b = decl(touch, ".row-tools .fork-here");
     expect(b).toMatch(/border:\s*(0|none)/);
     expect(b).toMatch(/background:\s*none|background:\s*transparent/);
     expect(b).toMatch(/box-shadow:\s*none/);
     expect(b).toMatch(/color:\s*var\(--muted-foreground\)/);
-    expect(b).toMatch(/font-size:\s*13px/);
+    expect(b).toMatch(/font-size:\s*var\(--text-small\)/);
     expect(b).not.toMatch(/min-height:\s*[1-9]/);
   });
   it("gets its 44 px hit area from ::after, not from visible padding", () => {
@@ -242,7 +241,7 @@ describe("layout", () => {
   it("lets the conversation's column grow with the window on a wide screen, the rail at its right edge", () => {
     expect(decl(outside, ":root")).toMatch(/--log-w:\s*72ch/);
     expect(decl(wide, ".room-body")).toMatch(/--log-w:\s*none/);
-    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
+    expect(decl(wide, ".room-body.has-rail")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*360px/);
     expect(decl(wide, ".bubble .md, .handoff > .md, .notes")).toMatch(/max-width:\s*100ch/);
   });
   it("fills the window's height, the dock at the bottom of a short room", () => {
@@ -267,7 +266,7 @@ describe("layout", () => {
   });
   it("shares the conversation's grid with the composer on a wide screen", () => {
     const d = decl(wide, ".page-dock");
-    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*300px/);
+    expect(d).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s*360px/);
     // 16 px of the main's padding past the measure, plus the room body's 16 px gap: the meta sits under the rail.
     expect(d).toMatch(/column-gap:\s*32px/);
   });
@@ -276,17 +275,17 @@ describe("layout", () => {
 // The appearance pass (2026-11-06): hierarchy from size and opacity, one radius scale, the
 // approval card's accent as a bar, the connection as a dot.
 describe("appearance", () => {
-  it("sets the room title bigger and lighter, smaller again on a phone", () => {
-    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*22px/);
+  it("sets the room title at display size, a heading on a phone", () => {
+    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*var\(--text-heading\)/);
   });
   it("sets a header fact's value at full ink and mutes its name and the run's id, model and effort", () => {
     expect(decl(outside, ".page-header .chip")).toMatch(/color:\s*var\(--brand-header-foreground\)/);
-    expect(decl(outside, ".page-header .fact-label, .page-header .chip-run > :not(.run-role)"))
+    expect(decl(outside, ".page-header .fact-label, .page-header .chip-run > :not(.run-role), .page-header .chip-run-detail"))
       .toMatch(/color:\s*color-mix\(in srgb, var\(--brand-header-foreground\) 68%, var\(--brand-header\)\)/);
     expect(decl(outside, ".page-header .run-role")).toMatch(/font-weight:\s*700/);
   });
   it("groups the header's facts by proximity, never a divider that would lead a wrapped line", () => {
-    expect(decl(outside, ".strip-chips")).toMatch(/gap:\s*6px 32px/);
+    expect(decl(outside, ".strip-tier2")).toMatch(/gap:\s*6px 32px/);
     expect(decl(outside, ".fact-group")).toMatch(/gap:\s*4px 12px/);
     expect(css).not.toMatch(/\.fact-group[^{]*{[^}]*border-left/);
   });
@@ -296,11 +295,15 @@ describe("appearance", () => {
     expect(r).toMatch(/background:\s*color-mix\(in srgb, var\(--tone\) 14%, var\(--brand-header\)\)/);
     expect(r).not.toMatch(/border-left/);
   });
-  it("draws the approval card's accent as a bar on a raised card, not a full outline", () => {
-    const a = decl(outside, ".approval");
-    expect(a).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
-    expect(a).toMatch(/box-shadow:\s*var\(--shadow-border\),\s*inset 3px 0 0 var\(--warning\)/);
-    expect(a).toMatch(/padding:\s*8px 12px 8px 15px/);
+  it("draws the approval card's accent as a straight bar inside the card, not a full outline", () => {
+    expect(decl(outside, ".approval")).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
+    expect(css).not.toMatch(/\.approval, \.needs-other li\.need \{\s*border-color/);
+    const bar = decl(outside, ".approval::before, .needs-other li.need::before");
+    expect(bar).toMatch(/width:\s*3px/);
+    expect(bar).toMatch(/background:\s*var\(--warning-border\)/);
+    // straight: it starts and ends where the card's 16 px corners do, so it never bends round them
+    expect(bar).toMatch(/top:\s*var\(--radius-md\)/);
+    expect(bar).toMatch(/bottom:\s*var\(--radius-md\)/);
   });
   it("draws deny as a ghost: no outline until hovered", () => {
     const d = decl(outside, "button.deny");
@@ -320,7 +323,45 @@ describe("appearance", () => {
     expect(root).toMatch(/--radius-control:\s*6px/);
     expect(root).toMatch(/--radius-row:\s*8px/);
     expect(root).toMatch(/--radius-card:\s*12px/);
-    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-card\)/);
-    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-md\)/);
+    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-md\)/);
+  });
+});
+
+// The rail at full size (UI review Part 3): state reads from the chip, the ✓ and the lane border,
+// never a faded node, so text keeps its contrast.
+describe("the rail at full size", () => {
+  /** Every rule, anywhere in the sheet, whose selector list names `sel`. */
+  const rules = (sel: string) => [...css.matchAll(/([^{}]+){([^{}]*)}/g)]
+    .filter((m) => m[1].split(",").map((x) => x.trim()).includes(sel)).map((m) => m[2]);
+  it.each([
+    '.rail-node[data-state="done"] > .rail-button', '.rail-node[data-state="ghost"] > .rail-button',
+    '.rail-node[data-state="ghost"] .rail-button', '.rail-milestone[data-state="ghost"]',
+    '.rail-dot[data-state="done"]', '.rail-edge[data-state="ghost"] .rail-stroke',
+  ])("%s keeps full opacity", (sel) => {
+    for (const body of rules(sel)) expect(body).not.toMatch(/opacity:\s*0?\.\d/);
+  });
+  it("lifts button:disabled's fade off a ghost's (disabled) button", () => {
+    expect(decl(outside, '.rail-node[data-state="ghost"] .rail-button')).toMatch(/opacity:\s*1;/);
+  });
+  it("keeps the ghost edge dashed", () => {
+    expect(decl(outside, '.rail-edge[data-state="ghost"] .rail-stroke')).toMatch(/stroke-dasharray/);
+  });
+  it("sets the persona and meta on the type scale, the glyph at 22 px", () => {
+    expect(decl(outside, ".rail-persona")).toMatch(/font-size:\s*var\(--text-body\)/);
+    expect(decl(outside, ".rail")).toMatch(/font-size:\s*var\(--text-small\)/);
+    const g = decl(outside, ".rail-line .glyph");
+    expect(g).toMatch(/width:\s*22px/);
+    expect(g).toMatch(/height:\s*22px/);
+  });
+  it("fades a new mark in with opacity and transform only, and moves nothing under reduced motion", () => {
+    const moving = media("(prefers-reduced-motion: no-preference)");
+    const m = moving.match(/\.arrive\s*{[^}]*animation:\s*rail-arrive\s+(\d+)ms/);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeGreaterThanOrEqual(150);
+    expect(Number(m![1])).toBeLessThanOrEqual(200);
+    const kf = moving.match(/@keyframes rail-arrive\s*{([^}]*)}/)![1];
+    for (const prop of kf.matchAll(/([\w-]+):/g)) expect(["opacity", "transform"]).toContain(prop[1]);
+    expect(outside).not.toMatch(/rail-arrive/);
   });
 });

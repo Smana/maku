@@ -61,8 +61,10 @@ type Fence struct {
 	// Name is this factory's name, the one a fence file must give.
 	Name string
 	// Read is the fence file on repository's default branch; found is false when GitHub has none.
-	Read         func(ctx context.Context, repository string) (body []byte, found bool, err error)
-	Repositories []string
+	Read func(ctx context.Context, repository string) (body []byte, found bool, err error)
+	// Repositories are the served repositories, read at each pass: the config is live (factory
+	// resources D12), so a pass reads a repository a publish added and forgets one it removed.
+	Repositories func() []string
 	// Every is the read period (5 minutes in the factory). Stale bounds how long a failed read
 	// keeps the last answer: past it, a repository is not owned until a read succeeds.
 	Every, Stale time.Duration
@@ -75,6 +77,23 @@ type Fence struct {
 
 	mu    sync.RWMutex
 	state map[string]entry
+
+	kickOnce sync.Once
+	kick     chan struct{}
+}
+
+func (f *Fence) kickCh() chan struct{} {
+	f.kickOnce.Do(func() { f.kick = make(chan struct{}, 1) })
+	return f.kick
+}
+
+// Kick asks Start for a refresh now, without blocking and coalesced: a publish that adds a
+// repository has it read at once, not at the next period.
+func (f *Fence) Kick() {
+	select {
+	case f.kickCh() <- struct{}{}:
+	default:
+	}
 }
 
 type entry struct {
@@ -92,10 +111,13 @@ func (f *Fence) Owned(repository string) bool {
 }
 
 // Refresh reads every listed repository's fence file once. A read that fails leaves that
-// repository's last answer in place, to age out at Stale; the errors are returned together.
+// repository's last answer in place, to age out at Stale; the errors are returned together. A
+// repository no longer listed is forgotten: it is not owned.
 func (f *Fence) Refresh(ctx context.Context) error {
+	repos := f.Repositories()
+	f.forget(repos)
 	var errs []error
-	for _, repo := range f.Repositories {
+	for _, repo := range repos {
 		body, found, err := f.Read(ctx, repo)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("fence %s: %w", repo, err))
@@ -123,6 +145,21 @@ func (f *Fence) Refresh(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// forget drops the state of every repository repos does not list.
+func (f *Fence) forget(repos []string) {
+	listed := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		listed[strings.ToLower(r)] = true
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for k := range f.state {
+		if !listed[k] {
+			delete(f.state, k)
+		}
+	}
+}
+
 // NeedLeaderElection is false: every replica's API asks it.
 func (*Fence) NeedLeaderElection() bool { return false }
 
@@ -141,6 +178,7 @@ func (f *Fence) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-t.C:
+		case <-f.kickCh():
 		}
 	}
 }

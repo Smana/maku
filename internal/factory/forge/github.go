@@ -51,6 +51,7 @@ type GitHub struct {
 	owner, name string
 	now         func() time.Time
 	last        atomic.Int64 // unix nanoseconds of the last successful call; 0 before any
+	called      atomic.Bool  // a call was made, whatever it answered
 }
 
 // Connect authenticates as the App, finds its installation on the repository and mints the first
@@ -104,6 +105,7 @@ func (g *GitHub) authed(base *http.Client) *http.Client {
 }
 
 func (g *GitHub) mark(err error) {
+	g.called.Store(true)
 	if err == nil {
 		g.last.Store(g.now().UnixNano())
 	}
@@ -118,6 +120,10 @@ func (g *GitHub) Healthy(now time.Time) bool {
 	d := now.Sub(time.Unix(0, t))
 	return d >= 0 && d < freshFor
 }
+
+// Checked is whether any call was made yet: before the first, Healthy's false says nothing
+// about GitHub.
+func (g *GitHub) Checked() bool { return g.called.Load() }
 
 // Ping runs on every replica every minute; the rate-limit endpoint costs no quota.
 func (g *GitHub) Ping(ctx context.Context) error {
@@ -179,9 +185,25 @@ func (g *GitHub) LabelEvents(ctx context.Context, number int, label string) ([]L
 
 // Comment posts body on an issue or pull request.
 func (g *GitHub) Comment(ctx context.Context, number int, body string) error {
-	_, _, err := g.rest.Issues.CreateComment(ctx, g.owner, g.name, number, github.IssueCommentRequest{Body: body})
+	_, err := g.CommentWithID(ctx, number, body)
+	return err
+}
+
+// CommentWithID posts body on an issue or pull request and returns the created comment's stable id.
+func (g *GitHub) CommentWithID(ctx context.Context, number int, body string) (int64, error) {
+	c, _, err := g.rest.Issues.CreateComment(ctx, g.owner, g.name, number, github.IssueCommentRequest{Body: body})
 	g.mark(err)
-	return permanent("comment", err)
+	if err != nil {
+		return 0, permanent("comment", err)
+	}
+	return c.GetID(), nil
+}
+
+// EditComment replaces the body of the issue or pull request comment with id.
+func (g *GitHub) EditComment(ctx context.Context, id int64, body string) error {
+	_, _, err := g.rest.Issues.UpdateComment(ctx, g.owner, g.name, id, github.IssueCommentRequest{Body: body})
+	g.mark(err)
+	return permanent("edit comment", err)
 }
 
 // recentComments is how many of an issue's newest comments RecentComments returns.
@@ -220,11 +242,39 @@ func (g *GitHub) RecentComments(ctx context.Context, number int) ([]Comment, err
 	cs = cs[max(len(cs)-recentComments, 0):]
 	out := make([]Comment, 0, len(cs))
 	for i := len(cs) - 1; i >= 0; i-- {
-		c := cs[i]
-		out = append(out, Comment{ID: c.GetID(), Author: c.GetUser().GetLogin(), Body: c.GetBody(), At: c.GetCreatedAt().Time,
-			Edited: c.GetUpdatedAt().After(c.GetCreatedAt().Time)})
+		out = append(out, restComment(cs[i]))
 	}
 	return out, nil
+}
+
+// AllComments are every comment on an issue or pull request, newest first, with no recent-items cap.
+func (g *GitHub) AllComments(ctx context.Context, number int) ([]Comment, error) {
+	var out []Comment
+	opt := &github.IssueListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100}}
+	for {
+		cs, resp, err := g.rest.Issues.ListComments(ctx, g.owner, g.name, number, opt)
+		g.mark(err)
+		if err != nil {
+			return nil, permanent("list comments", err)
+		}
+		for _, c := range cs {
+			out = append(out, restComment(c))
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opt.Page = resp.NextPage
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
+// restComment is a REST issue comment as the forge reads one.
+func restComment(c *github.IssueComment) Comment {
+	return Comment{ID: c.GetID(), Author: c.GetUser().GetLogin(), Body: c.GetBody(), At: c.GetCreatedAt().Time,
+		Edited: c.GetUpdatedAt().After(c.GetCreatedAt().Time)}
 }
 
 // AddLabels adds labels to an issue or pull request.

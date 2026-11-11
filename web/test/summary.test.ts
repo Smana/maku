@@ -149,7 +149,7 @@ describe("needsItems", () => {
     const block = needs(s);
     expect(block.querySelector(".need-title")?.textContent).toBe("Approve the pull request");
     expect(block.querySelector("a.need-go")?.textContent).toBe("Approve the head on the pull request ↗");
-    expect(block.textContent).toContain("the merge gate reads the approval of the head");
+    expect(block.textContent).toContain("the merge gate reads the approval there");
     expect(block.textContent).not.toContain("Merge the pull request");
     expect(block.querySelector("a")?.getAttribute("href")).toBe("https://github.com/o/r/pull/7");
   });
@@ -206,6 +206,18 @@ describe("changesSummary", () => {
     ["message", null, false],
   ] as const)("%s %j: %s", (type, payload, want) => {
     expect(changesSummary(ev(type, payload))).toBe(want);
+  });
+  // A human's message moves a node's steered or chat count, or the queued notes; a queued note
+  // removed leaves the queue. The rail draws all three from the summary.
+  it.each([["steering"], ["none"], ["queued"]])("a human's %s message refetches", (delivery) => {
+    expect(changesSummary({ ...ev("message", { kind: "chat", delivery }), actor: { kind: "human", id: "human:a" } })).toBe(true);
+  });
+  it("a removed queued note refetches", () => expect(changesSummary(ev("state_changed", { kind: "queued_removed" }))).toBe(true));
+  it("a queued note from a system actor (a sponsored principal) refetches", () => {
+    expect(changesSummary(ev("message", { kind: "chat", delivery: "queued" }))).toBe(true);
+  });
+  it.each([["steering"], ["none"]])("an agent's %s message in its run does not refetch", (delivery) => {
+    expect(changesSummary({ ...ev("message", { kind: "chat", delivery }), actor: { kind: "agent", id: "agent:r1" }, runId: "r1" })).toBe(false);
   });
 });
 

@@ -1184,8 +1184,10 @@ func TestTheBuiltUI(t *testing.T) {
 		{"/assets/favicon/favicon.svg", []string{"image/svg+xml"}, "<svg"},
 		{"/assets/favicon/favicon-32.png", []string{"image/png"}, "\x89PNG"},
 		// Go's own MIME table lacks WOFF2, and the host's /etc/mime.types varies.
-		{"/assets/fonts/space-grotesk-latin-500-normal.woff2", []string{"font/woff2", "application/octet-stream"}, "wOF2"},
-		{"/assets/fonts/space-grotesk-latin-700-normal.woff2", []string{"font/woff2", "application/octet-stream"}, "wOF2"},
+		{"/assets/fonts/SpaceGrotesk-Variable.woff2", []string{"font/woff2", "application/octet-stream"}, "wOF2"},
+		{"/assets/fonts/Inter-Variable.woff2", []string{"font/woff2", "application/octet-stream"}, "wOF2"},
+		{"/assets/fonts/Inter-Variable-Italic.woff2", []string{"font/woff2", "application/octet-stream"}, "wOF2"},
+		{"/assets/fonts/JetBrainsMono-Variable.woff2", []string{"font/woff2", "application/octet-stream"}, "wOF2"},
 	} {
 		code, h, body := get(tc.path)
 		typed := false

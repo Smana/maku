@@ -12,6 +12,7 @@ import { hasControls, mountComposer, mountControls, rejection, shortPrincipal } 
 import { mountFork } from "./fork";
 import { mountNeeds } from "./needs";
 import { renderPolicy } from "./policy";
+import { renderProfile } from "./profile";
 import { changesSummary, fetchSummary, focusApproval, renderNotes, type Summary } from "./summary";
 import { PendingActs } from "./pending";
 import { RoomState } from "./room-state";
@@ -51,11 +52,12 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // keeps what the page already shows. No aria-live: a rebuild would re-read every block.
   const blocks = document.createElement("div");
   const policyBlock = document.createElement("div");
+  const profileBlock = document.createElement("div");
   const summaryError = document.createElement("p");
   summaryError.className = "summary-error";
   summaryError.setAttribute("role", "status");
   summaryError.hidden = true;
-  lead.append(blocks, policyBlock, summaryError);
+  lead.append(blocks, policyBlock, profileBlock, summaryError);
   // Until the first frame, three grey message shapes stand where the stream will be:
   // an empty page reads as broken (P9).
   const skeleton = document.createElement("div");
@@ -104,10 +106,11 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
     recover: (r) => recoverCoordination(id, r, o.get),
     refresh: () => loadSummary(),
   });
-  const pane = mountRailPane((run) => { void runView.select(run); }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
+  const pane = mountRailPane({ select: (run) => { void runView.select(run); }, you: () => snap?.you.principal }, needsPanel, lead, coordinationRegion, skeleton, main, forkPanel);
   const { rail, body: roomBody } = pane;
   app.replaceChildren(sandbox, header, banner, roomBody, footer);
-  const showRail = (sum: Summary) => pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0);
+  const showRail = (sum: Summary) =>
+    pane.show(sum.flow, sum.status.phase, Date.now(), Number(sum.cursor?.replace("seq:", "")) || 0, sum.queued?.items?.length ?? 0);
   // The pinned block (the unsandboxed banner, then the header) and the dock place the sticky rail between them.
   let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {
@@ -218,7 +221,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
   // mounted page, rewriting them in place every second. It stops with the page, and on
   // its own once the page has left app (a re-mount or the "no such room" page replaced it).
   const ticker = setInterval(() => {
-    if (!app.contains(header)) { clearInterval(ticker); ro?.disconnect(); scrollIndex.disconnect(); rail.dispose(); }
+    if (!app.contains(header)) { clearInterval(ticker); ro?.disconnect(); scrollIndex.disconnect(); rail.dispose(); strip.dispose(); }
     else { needsPanelView.refresh(); refreshStrip(); rail.tick(Date.now()); }
   }, 1000);
   // The summary loads on mount, then at most once a second while events it folds arrive
@@ -246,6 +249,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
         renderPolicy(policyBlock, sum);
+        renderProfile(profileBlock, sum);
         showRail(sum);
         coordination.set(sum.flow?.coordination, sum.coordination);
         runView.set(sum.flow?.nodes ?? []);
@@ -363,6 +367,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       ro?.disconnect();
       scrollIndex.disconnect();
       rail.dispose();
+      strip.dispose();
       const back = document.createElement("a");
       back.href = "/";
       back.textContent = "See the rooms you can read";

@@ -238,6 +238,12 @@ func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult,
 	if err := json.Unmarshal(sc, &out); err != nil {
 		return IntakeResult{}, fmt.Errorf("slackapp: intake_plan result: %w", err)
 	}
+	if len(out.Plan.Gaps) > 0 {
+		// Ranked gaps are newer display data; Slack's existing protocol still asks one question.
+		// Populate both its top-level field and the plan's compatibility view from the first gap.
+		out.Plan = intake.WithGaps(out.Plan, out.Plan.Gaps)
+		out.Question = out.Plan.Question
+	}
 	return IntakeResult(out), nil
 }
 

@@ -718,7 +718,7 @@ func TestIntakePlanConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := cfg.IntakePlan()
-	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.Fallback != "off" {
+	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.MaxRounds != 10 || p.Fallback != "off" {
 		t.Fatalf("%+v", p)
 	}
 	// Disabled, the keys may be absent entirely: `tier-frontier` is required only of a planner that runs.
@@ -737,7 +737,7 @@ func TestIntakePlanIsOffByDefault(t *testing.T) {
 	if p.Enabled || p.URL != "" || p.APIKeyFile != "" || len(p.Repositories) != 0 || len(p.Classes) != 0 {
 		t.Fatalf("a config with no block must serve no planner: %+v", p)
 	}
-	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.Fallback != "off" {
+	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.MaxRounds != 10 || p.Fallback != "off" {
 		t.Fatalf("%+v", p)
 	}
 	// Unset, no effort is defaulted: the request carries no reasoning_effort and the model's own
@@ -768,6 +768,7 @@ func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 		"a route that is not http":       {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
 		"a deadline over the bound":      {intake("      deadline: 21s\n"), "deadline"},
 		"a negative daily cap":           {intake("      dailyPlans: -1\n"), "dailyPlans"},
+		"a negative revision cap":        {intake("      maxRounds: -1\n"), "maxRounds"},
 		"the alias, while switched off":  {intake("      model: glm-5.3\n"), "tier-frontier"},
 		"an unknown reasoning effort":    {intake("      reasoningEffort: max\n"), "reasoningEffort"},
 		"a reasoning effort in capitals": {intake("      reasoningEffort: Low\n"), "reasoningEffort"},
@@ -784,6 +785,7 @@ func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 	}{
 		"the deadline at its bound": {intake("      deadline: 20s\n"), func(p PlanConfig) bool { return p.Deadline.Duration == 20*time.Second }},
 		"one plan a day":            {intake("      dailyPlans: 1\n"), func(p PlanConfig) bool { return p.DailyPlans == 1 }},
+		"one revision round":        {intake("      maxRounds: 1\n"), func(p PlanConfig) bool { return p.MaxRounds == 1 }},
 		"the degraded composer":     {intake("      fallback: composer\n"), func(p PlanConfig) bool { return p.Fallback == "composer" }},
 		"two repositories":          {intake("      repositories: [Smana/a, Smana/b]\n"), func(p PlanConfig) bool { return len(p.Repositories) == 2 }},
 		"a low reasoning effort":    {intake("      reasoningEffort: low\n"), func(p PlanConfig) bool { return p.ReasoningEffort == "low" }},

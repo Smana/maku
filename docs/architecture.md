@@ -77,7 +77,7 @@ flowchart LR
 | Broker → Kubernetes | The API server | Read and delete `AgentRun`s, never create; CRUD on `Room`s; no cluster-admin |
 
 One boundary crosses out to a model, and only one. A broker's planner reaches an LLM: `intake_plan`
-— off unless the broker's config turns it on — makes **one** `chat/completions` call per attempt,
+— off unless the broker's config turns it on — makes **at most one** `chat/completions` call per attempt,
 in-cluster and straight to the AI Gateway's data-plane Service (no vendor egress from the broker, and
 the gateway sees the client `planner`), on the pinned alias `tier-frontier`, with a 20 s deadline
 that stays under `/mcp`'s 25 s bound and a reply capped at 64 KiB. What it sends is public text
@@ -87,6 +87,19 @@ plan only through the strict decode, the roles and the money come from the confi
 the model, and the call is audited by the plan's hash, the model, the token counts and the outcome,
 never by the text. It files nothing and stores nothing: the plan is shown, and the consumer that
 owns the message re-validates it through `plan_check` before anything is filed.
+
+A clarification revision carries the verified base plan, its hash and an edited candidate. The broker
+permits only marker replacements and their Decision/Assumption records, recomputes the remaining
+ranked gaps and returns a new material hash. `plan_check` applies the same revision deterministically
+with no model call. Every initial or revision `intake_plan` spends one `dailyPlans` slot, including the
+cap-reaching revision; `plan_check` spends none. `maxRounds` independently ends one intake by turning
+the remaining recommendations into assumptions without another model call.
+
+Intermediate composition remains marker-tolerant. Final `plan_check`, `issue_draft`/`issue_file`,
+`run_create`, factory task creation, hardening issue output and proposal publishing all fail closed on
+an unresolved marker or malformed Decisions section. Strict decoding also makes mixed versions fail
+closed: an older broker refuses revision fields and `gaps`, while a newer broker preserves legacy
+hashes and maps only the first ranked gap to the old `Question` view for Slack and room rendering.
 
 ## One task's life
 
@@ -191,6 +204,84 @@ PgBouncer, so `LISTEN` holds a plain session.
 | A third pod during a rolling update | 9 |
 | The daily retention job | up to 8, in practice 1 |
 | The Atlas operator's migrations | 1–2 |
+
+## How the factory reads its configuration
+
+Every factory replica builds its configuration from two inputs: the config file the chart renders,
+and the `Factory`, `Repository` and `MergePolicy` resources in `agent-system`. A change to a
+resource applies without a restart.
+
+```mermaid
+flowchart LR
+  file["config.yaml<br/>(chart ConfigMap)"]
+  res["Factory, Repository,<br/>MergePolicy<br/>(agent-system)"]
+  src["configsource.Source<br/>every replica"]
+  asm["resources.Assemble"]
+  live[("config.Live")]
+  rd["Readers<br/>call Current() once per decision"]
+  sub["Subscribers<br/>connections, fence, pollers,<br/>meter, metrics"]
+  res -- "list + watch, 5 min resync" --> src
+  file --> src
+  src --> asm --> live
+  live --> rd
+  live -- "on publish" --> sub
+```
+
+`Source` lists the three kinds through the uncached API reader, so a replica never serves a stale
+cache. When `Assemble` refuses an object, `Source` substitutes the last spec it accepted for that
+object and assembles again; the result goes into `config.Live`. A watch event on any of the three
+kinds, or the five-minute resync, runs it again. A reader calls `Current()` once at the top of a
+decision and drops the result afterwards, so one decision never sees two configurations.
+
+On each publish the subscribers re-derive what depends on the catalogue:
+
+- Repository connections are synced. A repository already served keeps its working connection when
+  a reconnect fails, and the factory retries every minute. A new repository that cannot be wired
+  (a GitHub App not installed, a merger key missing) is not served, and
+  `maku_factory_config_wire_errors_total{repository}` counts it.
+- The fence's repository list, the issue pollers, the meter and the metric labels are rebuilt.
+- A removed repository's `repository_owned` gauge keeps its last value until the next restart.
+- A removed repository's tasks are never decided under another repository's settings. Each one
+  waits, looked at again every five minutes, until a publish serves its repository again. Its
+  issue poller skips its passes until then, and the API refuses its requests with
+  `repository_not_allowed`.
+
+The source runs on every replica, not only the leader, so a follower serves the settings API from
+the same configuration. Only leader-only work stays leader-only.
+
+### Live fields and fields that need a rollout
+
+| Live: applies on the next decision | Startup: needs a rollout |
+|---|---|
+| The catalogue: `control`, `defaults`, `tiers`, `templates`, `caps`, `budgets`, `facts`, `brief`, `resume`, `scoper`, `loops`, `harnessProfiles`, `mergeGuardrails`, `meter.prices`, `triage.controlPercent` | `policyManagement`, `coordination`, `hardening`, `api`, `runs`, `sandbox`, `demo`, `broker`, `github`, `factory` |
+| `repositories`: adding or removing one, and each one's settings, classes and merge rules | `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`, `runlore.listen`, `triage.classifierURL` |
+
+### What happens when a change is refused, and at startup
+
+- A refused object keeps its last accepted version, but only while the process runs. The version
+  lives in memory.
+- Before it starts the manager, the factory runs the first sync. If nothing can be served (the file
+  holds only plumbing and the resources are not applied yet), it waits instead of exiting. `:9090`
+  is already up: `/healthz` and `/startupz` answer 200, and `/readyz` answers 503 with
+  `waiting for a servable config:` and the reason. The sync is retried every 5 seconds, doubling
+  up to 60, with a warning once a minute that carries the error and the refused objects. Once a
+  sync serves, the start goes on, and `/readyz` turns 200 only when the manager's caches have
+  synced. A GitOps rollout therefore neither crash-loops while Flux applies the resources nor
+  deadlocks on a fresh cluster, where the CRDs arrive with the chart. `SIGTERM` during the wait
+  exits cleanly. After a restart, an object that is invalid is not served, because no earlier
+  version remains.
+- Deleting the only `Repository` leaves nothing servable. The factory logs `config not servable,
+  keeping the current one` and keeps serving the last config until it restarts; a restart then
+  waits, not Ready, until a `Repository` is applied again.
+- A file no resource can fix fails the start at once, before any cluster call: empty, not YAML,
+  an unknown key, or a duplicated `coordination` or `hardening` block.
+- Every other error still fails the start at once. A `Forbidden` answer to the list fails it with a hint about the Role that must grant
+  `get`, `list` and `watch` on the three kinds.
+- With none of the CRDs installed, the factory runs from the file alone and logs that once. A CRD
+  installed later is picked up by the resync.
+- A task records `status.configGenerations` (`factory`, `repository`, `mergePolicy`) beside its
+  `configHash`. The record says what the task started under; it does not pin the task, which reads
+  the current configuration like any other.
 
 ## Nothing is lost while the sandbox lives
 

@@ -12,6 +12,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/config"
 )
 
 // maxScope is a valid scope at the 4096-byte bound.
@@ -25,6 +26,33 @@ func maxScope(t *testing.T) envelope.Scope {
 		sc.Task = sc.Task[:len(sc.Task)-10]
 	}
 	return sc
+}
+
+// Settled Decision and Assumption records constrain scoping instead of becoming new questions.
+func TestScoperBriefKeepsDecisionsSettled(t *testing.T) {
+	b := ScoperBrief(issueTask("3buqdlot", 7, "# Fix the link"), "n0nce234", config.Scoper{}, nil)
+	for _, want := range []string{
+		"Every `D<n>:` or `A<n>:` Decision or Assumption line, with or without a `[g<n>]` gap reference, is settled by the author and MUST NOT be reopened.",
+		"Ask questions only about requirements that no settled Decision or Assumption covers.",
+	} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the brief lacks %q", want)
+		}
+	}
+}
+
+// No profile choice keeps the original handoff contract, whether choices are nil or empty.
+func TestScoperBriefWithoutProfileChoicesOmitsProfileSelection(t *testing.T) {
+	for name, choices := range map[string][]ProfileChoice{"nil": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			b := ScoperBrief(issueTask("3buqdlot", 7, "# Fix the link"), "n0nce234", config.Scoper{}, choices)
+			for _, unwanted := range []string{"## Profiles", ", profile, profileWhy"} {
+				if strings.Contains(b, unwanted) {
+					t.Errorf("the brief contains profile selection %q", unwanted)
+				}
+			}
+		})
+	}
 }
 
 // "Briefs per mode", scoper: preamble · steering · scope · snapshot, the scope sanitised and fenced.

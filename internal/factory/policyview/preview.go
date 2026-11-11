@@ -9,12 +9,16 @@ package policyview
 
 import (
 	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/reconciler"
+	"github.com/Smana/maku/internal/factory/resources"
 )
 
 // Change is one class's structural verdict, as the page shows it.
@@ -61,6 +65,11 @@ type Preview struct {
 	Strictness []Strictness `json:"strictness,omitempty"`
 	// Proposal is the file to submit and the GitHub page to submit it from.
 	Proposal *evidence.Proposal `json:"proposal,omitempty"`
+	// For a repository served from a MergePolicy object: the MergePolicy manifest of the proposed
+	// classes, each resolved as the gate decides on it (spec.classes' shape), and the file name to
+	// save it under. Empty for a repository its file serves, and for an invalid proposal.
+	Manifest     string `json:"manifest,omitempty"`
+	ManifestPath string `json:"manifestPath,omitempty"`
 }
 
 // ErrUnchanged is a proposal identical to the file on the default branch.
@@ -105,6 +114,14 @@ func Check(cfg *config.Config, rc *config.Repository, rep evidence.Report, file 
 			pv.Errors = append(pv.Errors, "structural comparison unavailable: "+err.Error())
 		}
 	}
+	if rep.MergePolicy != "" {
+		m, err := manifest(rc, rep, policy, next)
+		if err != nil {
+			pv.Errors = append(pv.Errors, "no MergePolicy manifest: "+err.Error())
+		} else {
+			pv.Manifest, pv.ManifestPath = string(m), rep.ManifestPath
+		}
+	}
 	pv.Simulation = simulate(cfg, rc, policy)
 	for _, c := range rep.Classes {
 		if c.Evidence == nil {
@@ -114,6 +131,31 @@ func Check(cfg *config.Config, rc *config.Repository, rep evidence.Report, file 
 			RefusedMergedUnchanged: c.Evidence.Shadow.RefusedMergedUnchanged})
 	}
 	return pv
+}
+
+// manifest is the MergePolicy manifest of the proposal for rep's MergePolicy object: each class as
+// Resolve makes it (the config.Class the gate decides on), the served review class (the file never
+// declares it) and the served merge block. spec.classes holds one config.Class per class, so a
+// class with any or requiresApproval, which it cannot hold, has no manifest.
+func manifest(rc *config.Repository, rep evidence.Report, policy map[string]mergepolicy.Resolved, next *mergepolicy.File) ([]byte, error) {
+	classes := make(map[string]config.Class, len(policy)+1)
+	var errs []error
+	for _, name := range slices.Sorted(maps.Keys(policy)) {
+		switch {
+		case len(next.Classes[name].Conditions.Any) > 0:
+			errs = append(errs, fmt.Errorf("class %s: any has no MergePolicy shape", name))
+		case len(next.Classes[name].RequiresApproval) > 0:
+			errs = append(errs, fmt.Errorf("class %s: requiresApproval has no MergePolicy shape", name))
+		}
+		classes[name] = policy[name].Class
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	if review, ok := rc.Classes["review"]; ok {
+		classes["review"] = review
+	}
+	return resources.MergePolicyManifest(rep.MergePolicy, rep.Namespace, rep.RepositoryRef, classes, rc.Merge)
 }
 
 // current is the policy the proposal changes: the file's classes when it declares any and is

@@ -89,21 +89,43 @@ func TestFactsOfABareTask(t *testing.T) {
 	}
 }
 
+func TestFactsOfProfile(t *testing.T) {
+	task := issueTask("3buqdlot", 7, "x")
+	task.Status.Phase = v1alpha1.PhaseDone
+	task.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+	f := factsOf(task)
+	want := &envelope.ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+	if !reflect.DeepEqual(f.Profile, want) {
+		t.Fatalf("profile = %+v, want %+v", f.Profile, want)
+	}
+	key := factsKey(f)
+	f.Profile.Name = "review-floor"
+	if factsKey(f) == key {
+		t.Fatal("the terminal facts key drops the profile")
+	}
+	task.Status.Profile = nil
+	if f := factsOf(task); f.Profile != nil {
+		t.Fatalf("profile without a ProfileStatus = %+v", f.Profile)
+	}
+}
+
 func TestFactsArePostedOncePerChange(t *testing.T) {
 	g := newRig(t, awaiting())
 	tk := stored(t, g.c)
 	ctx := t.Context()
-	if err := g.r.postFacts(ctx, tk); err != nil {
+	if err := g.r.postFacts(ctx, g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
-	if g.r.factsDue(tk) {
+	if g.r.factsDue(g.r.Cfg.Current(), tk) {
 		t.Fatal("the same facts are due again")
 	}
 	tk.Status.Phase = v1alpha1.PhaseReviewing
-	if !g.r.factsDue(tk) {
+	if !g.r.factsDue(g.r.Cfg.Current(), tk) {
 		t.Fatal("a phase change is not due")
 	}
-	if err := g.r.postFacts(ctx, tk); err != nil {
+	if err := g.r.postFacts(ctx, g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	if got := g.log.factsSeqs; !slices.Equal(got, []int64{1, 2}) || g.log.facts[2].Phase != "Reviewing" {
@@ -123,7 +145,7 @@ func TestTokenUsageIsPostedInTenPercentSteps(t *testing.T) {
 	g := newRig(t, capped)
 	tk := stored(t, g.c)
 	tk.Status.Usage.Tokens = 100_000
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
@@ -138,22 +160,22 @@ func TestTokenUsageIsPostedInTenPercentSteps(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tk.Status.Usage.Tokens, tk.Status.Phase = c.tokens, c.phase
-			if g.r.factsDue(tk) != c.due {
+			if g.r.factsDue(g.r.Cfg.Current(), tk) != c.due {
 				t.Fatalf("due %v, want %v", !c.due, c.due)
 			}
 		})
 	}
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	if b := g.log.facts[tk.Status.Facts.Seq].Budget; b == nil || b.UsedTokens != 200_000 {
 		t.Fatalf("posted %+v, want the exact 200000", b)
 	}
 	tk.Status.Usage.Tokens = 1_000_000
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
-	if tk.Status.Usage.Tokens = 1_400_000; g.r.factsDue(tk) {
+	if tk.Status.Usage.Tokens = 1_400_000; g.r.factsDue(g.r.Cfg.Current(), tk) {
 		t.Fatal("an overrun is one step")
 	}
 }
@@ -175,11 +197,11 @@ func TestAFailedFactsPostReusesItsSeq(t *testing.T) {
 	g := newRig(t, awaiting())
 	tk := stored(t, g.c)
 	g.log.failFacts = errors.New("broker down")
-	if err := g.r.postFacts(t.Context(), tk); err == nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err == nil {
 		t.Fatal("the failure is swallowed")
 	}
 	g.log.failFacts = nil
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	if got := g.log.factsSeqs; !slices.Equal(got, []int64{1, 1}) || tk.Status.RoomSeq != 1 {
@@ -198,11 +220,11 @@ func TestARefusedFactsPostWaits(t *testing.T) {
 			g := newRig(t, awaiting())
 			tk := stored(t, g.c)
 			refuse(g.log)
-			if err := g.r.postFacts(t.Context(), tk); err != nil {
+			if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 				t.Fatal(err)
 			}
-			if !g.r.factsDue(tk) || tk.Status.Facts.Seq != 1 || stored(t, g.c).Status.RoomSeq != 1 {
-				t.Fatalf("due %v, ledger %+v", g.r.factsDue(tk), tk.Status.Facts)
+			if !g.r.factsDue(g.r.Cfg.Current(), tk) || tk.Status.Facts.Seq != 1 || stored(t, g.c).Status.RoomSeq != 1 {
+				t.Fatalf("due %v, ledger %+v", g.r.factsDue(g.r.Cfg.Current(), tk), tk.Status.Facts)
 			}
 		})
 	}
@@ -217,10 +239,10 @@ func TestAnOlderBrokersMissingRouteWaitsAndSaysSoOnce(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotFound} {
 		tk := stored(t, g.c)
 		g.log.failFacts = &rooms.APIError{Status: status}
-		if err := g.r.postFacts(t.Context(), tk); err != nil {
+		if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 			t.Fatalf("%d: %v", status, err)
 		}
-		if !g.r.factsDue(tk) {
+		if !g.r.factsDue(g.r.Cfg.Current(), tk) {
 			t.Fatalf("%d: the facts are no longer due", status)
 		}
 	}
@@ -449,14 +471,14 @@ func TestFactsRefusedByAnOlderBrokerStayDue(t *testing.T) {
 	g := newRig(t, awaiting())
 	tk := stored(t, g.c)
 	g.log.failFacts = &rooms.APIError{Status: 400, Reason: wire.ReasonBadMessage}
-	if err := g.r.postFacts(t.Context(), tk); err == nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err == nil {
 		t.Fatal("the refusal is swallowed")
 	}
-	if !g.r.factsDue(tk) {
+	if !g.r.factsDue(g.r.Cfg.Current(), tk) {
 		t.Fatal("refused facts are no longer due")
 	}
 	g.log.failFacts = nil
-	if err := g.r.postFacts(t.Context(), tk); err != nil {
+	if err := g.r.postFacts(t.Context(), g.r.Cfg.Current(), tk); err != nil {
 		t.Fatal(err)
 	}
 	if got := g.log.factsSeqs; !slices.Equal(got, []int64{1, 1}) {
@@ -469,7 +491,7 @@ func TestAnAdoptedTaskHasNoFactsDue(t *testing.T) {
 	task := awaiting()
 	task.Spec.Source.Kind, task.Status.RoomRef = "adopt", ""
 	g := newRig(t, task)
-	if g.r.factsDue(stored(t, g.c)) {
+	if g.r.factsDue(g.r.Cfg.Current(), stored(t, g.c)) {
 		t.Fatal("an adopted task has facts due")
 	}
 }
@@ -546,15 +568,15 @@ func TestFactsSayWhetherAnApprovalReturnsTheHandOff(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := mergeRig(t, c.phase)
-			g.r.Cfg.Merge.ApproveToMerge = c.on
+			g.r.Cfg.Current().Merge.ApproveToMerge = c.on
 			task := awaiting()
 			task.Status.Phase, task.Status.Reason = c.phase, c.reason
-			if got := g.r.factsFor(task).MergeByApproval; got != c.want {
+			if got := g.r.factsFor(g.r.Cfg.Current(), task).MergeByApproval; got != c.want {
 				t.Fatalf("mergeByApproval %t, want %t", got, c.want)
 			}
 			// The issue comment says the same: approve exactly when the facts do.
 			if c.phase == v1alpha1.PhaseAwaitingHuman {
-				approve := strings.Contains(g.r.handOff(task, c.reason, false).Body, "approve this pull request")
+				approve := strings.Contains(g.r.handOff(g.r.Cfg.Current(), task, c.reason, false).Body, "approve this pull request")
 				if approve != c.want {
 					t.Fatalf("the hand-off comment says approve=%t, the facts %t", approve, c.want)
 				}
@@ -635,20 +657,20 @@ func TestPlanOf(t *testing.T) {
 			task := issueTask("3buqdlot", 7, "x")
 			task.Status.Phase = v1alpha1.PhaseImplementing
 			g := newRig(t, task)
-			g.r.Cfg.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
+			g.r.Cfg.Current().Templates["investigate"] = config.Template{Roles: []string{"triager"}}
 			task.Spec.Template, task.Spec.PredictedClass = tc.template, "scripts"
 			if tc.scope {
 				task.Spec.ScopeMode = string(config.ScopeScoper)
 			}
-			g.r.Cfg.Classes["scripts"] = config.Class{TestFirst: tc.testRst}
+			g.r.Cfg.Current().Classes["scripts"] = config.Class{TestFirst: tc.testRst}
 			if tc.task != nil {
 				tc.task(task)
 			}
-			got := g.r.planOf(task)
+			got := g.r.planOf(g.r.Cfg.Current(), task)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("plan %v, want %v", got, tc.want)
 			}
-			f := g.r.factsFor(task)
+			f := g.r.factsFor(g.r.Cfg.Current(), task)
 			if err := f.Validate(); err != nil {
 				t.Fatal(err)
 			}

@@ -1,0 +1,21 @@
+factory: "aws-0"
+classes:
+  infra-with-approval:
+    description: "Let agents make small infrastructure changes that pass validation, never on production or security paths. Network changes wait for a maintainer's approval."
+    mode: "shadow"
+    author: "agents"
+    harness: "docs-standard"
+    conditions:
+      all:
+        - allowedFiles: ["^infrastructure/.+\\.(tf|yaml)$"]
+        - maxPatchFiles: 5
+        - maxModifiedLines: 80
+        - holdoutChecks: ["Validate infrastructure"]
+      deny:
+        - protectedFiles: ["^infrastructure/(prod|security)/"]
+    requiresApproval:
+      - changedFiles: ["^infrastructure/network/.+$"]
+    limits:
+      maxPerDay: 1
+    monitor:
+      followUpWindow: "168h"

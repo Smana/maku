@@ -47,14 +47,14 @@ func TestProbeTheEndIsNarratedAfterAnOutage(t *testing.T) {
 	_, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 	t.Logf("reconcile during outage: %v", err)
 	ff.down = false
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) } // the end waits for the usage to settle (#42)
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) } // the end waits for the usage to settle (#42)
 	for range 3 {
 		_, _ = g.r.Reconcile(t.Context(), reqFor("3buqdlot"))
 	}
 	var got v1alpha1.Task
 	_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &got)
-	t.Logf("phase=%s narrated=%v comments=%d", got.Status.Phase, got.Status.Narrated, len(g.f.Comments(7)))
-	if len(g.f.Comments(7)) < 2 {
+	t.Logf("phase=%s narrated=%v comments=%d", got.Status.Phase, got.Status.Narrated, len(eventCommentBodies(g.f, 7)))
+	if len(eventCommentBodies(g.f, 7)) < 2 {
 		t.Errorf("DEFECT: the Stopped end was never narrated after GitHub came back")
 	}
 }
@@ -95,7 +95,7 @@ func TestTheEndIsPostedOnceAfterAnOutage(t *testing.T) {
 	}
 	// Past the settle window the usage settles and TaskTokens is recorded once; after that the
 	// ended task is left alone again.
-	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow()) }
+	g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 	ff.down = true
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("an undrained outbox retries")
@@ -107,11 +107,11 @@ func TestTheEndIsPostedOnceAfterAnOutage(t *testing.T) {
 		}
 	}
 	tk = g.reconcile(t, "3buqdlot", 0)
-	if n := strings.Count(strings.Join(g.f.Comments(7), "\n"), "was stopped"); n != 1 || len(tk.Status.Outbox) != 0 {
+	if n := strings.Count(strings.Join(eventCommentBodies(g.f, 7), "\n"), "was stopped"); n != 1 || len(tk.Status.Outbox) != 0 {
 		t.Fatalf("%d end comments, outbox %+v", n, tk.Status.Outbox)
 	}
 	// The stop revoked the task's one run, counted once through the outage (F30).
-	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop|task_tokens 0 standard solo review" {
+	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review" {
 		t.Fatalf("an ended task is drained, then settled once: %q", g.metrics.recorded)
 	}
 }
@@ -130,7 +130,7 @@ func TestALandedPostIsNotRepeated(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 2); tk.Status.Phase != v1alpha1.PhaseImplementing || len(tk.Status.Outbox) != 0 {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Outbox)
 	}
-	if c := g.f.Comments(7); len(c) != 1 || !strings.Contains(c[0], "started run") {
+	if c := eventCommentBodies(g.f, 7); len(c) != 1 || !strings.Contains(c[0], "started run") {
 		t.Fatalf("%q", c)
 	}
 }
@@ -147,8 +147,8 @@ func TestTheStartIsPostedAfterAnOutage(t *testing.T) {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Outbox)
 	}
 	ff.down = false
-	if tk := g.reconcile(t, "3buqdlot", 1); len(tk.Status.Outbox) != 0 || len(g.f.Comments(7)) != 1 || len(g.runs.specs) != 1 {
-		t.Fatalf("%+v %q", tk.Status.Outbox, g.f.Comments(7))
+	if tk := g.reconcile(t, "3buqdlot", 1); len(tk.Status.Outbox) != 0 || len(eventCommentBodies(g.f, 7)) != 1 || len(g.runs.specs) != 1 {
+		t.Fatalf("%+v %q", tk.Status.Outbox, eventCommentBodies(g.f, 7))
 	}
 }
 
@@ -175,15 +175,15 @@ func TestNothingIsPostedBeforeItsTransitionIsWritten(t *testing.T) {
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the conflict is returned")
 	}
-	if c := g.f.Comments(7); len(c) != 1 {
+	if c := eventCommentBodies(g.f, 7); len(c) != 1 {
 		t.Fatalf("posted before its transition was written: %q", c)
 	}
 	g.f.SetBranch("agent/3buqdlot", 12)
 	g.f.SetPR(forge.PR{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", State: "OPEN"})
 	tk := g.reconcile(t, "3buqdlot", 1)
-	if all := strings.Join(g.f.Comments(7), "\n"); tk.Status.Phase != v1alpha1.PhaseAwaitingCI ||
+	if all := strings.Join(eventCommentBodies(g.f, 7), "\n"); tk.Status.Phase != v1alpha1.PhaseAwaitingCI ||
 		strings.Contains(all, "no pull request") || !strings.Contains(all, "#12") {
-		t.Fatalf("%s %q", tk.Status.Phase, g.f.Comments(7))
+		t.Fatalf("%s %q", tk.Status.Phase, eventCommentBodies(g.f, 7))
 	}
 }
 
@@ -247,8 +247,8 @@ func TestANarrationRefusedForGoodIsDropped(t *testing.T) {
 		t.Fatalf("a permanent refusal is not retried: %v", err)
 	}
 	got := g.reconcile(t, "3buqdlot", 0)
-	if len(got.Status.Outbox) != 0 || !contains(g.f.Comments(7), "kept") || !slices.Contains(got.Status.Narrated, "to-the-deleted-issue") {
-		t.Fatalf("outbox %+v, narrated %v, comments %q", got.Status.Outbox, got.Status.Narrated, g.f.Comments(7))
+	if len(got.Status.Outbox) != 0 || !contains(eventCommentBodies(g.f, 7), "kept") || !slices.Contains(got.Status.Narrated, "to-the-deleted-issue") {
+		t.Fatalf("outbox %+v, narrated %v, comments %q", got.Status.Outbox, got.Status.Narrated, eventCommentBodies(g.f, 7))
 	}
 	if !roomGone(t, g) {
 		t.Fatal("the room waits on a comment GitHub will never take")

@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
 )
@@ -46,7 +47,7 @@ func glmUsage(input int64) Usage {
 
 // usdLedgerMeter meters st from src against c at *now, priced by the served models.
 func usdLedgerMeter(st Store, src Source, c client.Client, now *time.Time) *Meter {
-	return &Meter{Runs: st, Source: src, Prices: served, Ledger: c, Namespace: "agent-system", Costs: &Costs{},
+	return &Meter{Runs: st, Source: src, Cfg: priced(served, nil, config.Budgets{}), Ledger: c, Namespace: "agent-system", Costs: &Costs{},
 		Now: func() time.Time { return *now }}
 }
 

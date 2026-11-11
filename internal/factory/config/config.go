@@ -69,6 +69,10 @@ const (
 )
 
 // Duration is a time.Duration written as a string such as "30s".
+// +kubebuilder:object:generate=true
+// +kubebuilder:validation:Type=string
+// +kubebuilder:validation:MaxLength=32
+// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 type Duration struct{ time.Duration }
 
 // UnmarshalJSON parses a Go duration string; a bare number is refused, since its unit is a guess.
@@ -115,6 +119,7 @@ type Config struct {
 	// The legacy single-repository shape (v2 D1), read as a one-entry Repositories for one minor
 	// release and refused beside it. Parse moves these into Repositories and Control and empties
 	// them, so code reads Repos and Control, never these.
+	// +kubebuilder:validation:MaxLength=253
 	Repository   string           `json:"repository,omitempty"`
 	Maintainers  []string         `json:"maintainers,omitempty"`
 	TriggerLabel string           `json:"triggerLabel,omitempty"`
@@ -162,8 +167,13 @@ type Config struct {
 	HarnessProfiles  map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
 	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
+	// Evaluation is the team evaluation's cohort and mode: observe unless set.
+	Evaluation Evaluation `json:"evaluation,omitzero"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
+	// Generations are the object generations this config was served under (Live.Publish); Parse
+	// leaves them zero.
+	Generations Generations `json:"-"`
 	// Ignored are the keys the file sets that this release accepts and ignores, for the binary
 	// to warn about: Parse has no logger.
 	Ignored []Ignored `json:"-"`
@@ -308,6 +318,7 @@ const MaxRepositories = 8
 
 // Repository is one repository the factory works on, with the settings that are its own (v2 D2).
 type Repository struct {
+	// +kubebuilder:validation:MaxLength=253
 	Name         string           `json:"name"` // owner/name
 	Maintainers  []string         `json:"maintainers"`
 	TriggerLabel string           `json:"triggerLabel"`
@@ -321,7 +332,20 @@ type Repository struct {
 }
 
 // TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
-func (r *Repository) TestFirstFor(class string) bool { return r.Classes[class].TestFirst }
+func (r *Repository) TestFirstFor(class string) bool {
+	cl, _ := r.Class(class)
+	return cl.TestFirst
+}
+
+// Class is the repository's class name, and whether it declares it. A nil repository (one the
+// config does not serve, RepositoryFor) declares none.
+func (r *Repository) Class(name string) (Class, bool) {
+	if r == nil {
+		return Class{}, false
+	}
+	cl, ok := r.Classes[name]
+	return cl, ok
+}
 
 // EgressProfiles are the registry profiles a run may request on top of github: the AgentRun
 // XRD's enum, which the composition turns into FQDNs.
@@ -329,14 +353,17 @@ var EgressProfiles = []string{"pypi", "npm", "golang", "crates"}
 
 // Checks is what a check-enabled run of the repository requests beyond github (v3 feature 3,
 // RC7): the platform names the egress, never the repository's own file.
+// +kubebuilder:object:generate=true
 type Checks struct {
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	Egress []string `json:"egress,omitempty"`
 }
 
 // ChecksFor reports whether a run of class runs the repository's checks in its sandbox (RC8), and
 // the egress profiles it then requests. Absent or false, the run is today's.
 func (r *Repository) ChecksFor(class string) (bool, []string) {
-	if !r.Classes[class].Checks {
+	if cl, _ := r.Class(class); !cl.Checks {
 		return false, nil
 	}
 	return true, slices.Clone(r.Checks.Egress)
@@ -344,7 +371,9 @@ func (r *Repository) ChecksFor(class string) (bool, []string) {
 
 // Control is the pinned issue whose factory/stop label is the global stop (§6.1). Issue 0: none,
 // and only the stop object stops the factory.
+// +kubebuilder:object:generate=true
 type Control struct {
+	// +kubebuilder:validation:MaxLength=253
 	Repository string `json:"repository,omitempty"`
 	Issue      int    `json:"issue,omitempty"`
 }
@@ -352,12 +381,18 @@ type Control struct {
 // IsMaintainer is whether login is one of the repository's maintainers; GitHub logins are
 // case-insensitive.
 func (r *Repository) IsMaintainer(login string) bool {
+	if r == nil {
+		return false // not served: nobody maintains it here
+	}
 	return slices.ContainsFunc(r.Maintainers, func(m string) bool { return strings.EqualFold(m, login) })
 }
 
 // NeedsMerger reports whether a class of the repository is live, in shadow or monitored: a
 // monitor reads main's checks and writes labels through the merger App.
 func (r *Repository) NeedsMerger() bool {
+	if r == nil {
+		return false
+	}
 	if r.ClassAuthority == ClassAuthorityRepository {
 		return true // its classes arrive at run time, from its file
 	}
@@ -372,6 +407,9 @@ func (r *Repository) NeedsMerger() bool {
 // AnyMonitored reports whether a class of the repository declares a monitor, whose outcome
 // labels the merger writes in shadow too (merge gate R30).
 func (r *Repository) AnyMonitored() bool {
+	if r == nil {
+		return false
+	}
 	if r.ClassAuthority == ClassAuthorityRepository {
 		return true
 	}
@@ -385,6 +423,9 @@ func (r *Repository) AnyMonitored() bool {
 
 // AnyLive reports whether a class of the repository is live.
 func (r *Repository) AnyLive() bool {
+	if r == nil {
+		return false
+	}
 	for _, cl := range r.Classes {
 		if cl.Live {
 			return true
@@ -431,18 +472,20 @@ func (c *Config) Primary() string {
 	return ""
 }
 
-// RepositoryFor is name's entry, matched case-insensitively as GitHub matches it. With one entry
-// it is that entry whatever name says, as one set of settings governed every task before the
-// list (v2 D1). With several, an unlisted name gets an entry with no maintainer and no class.
+// RepositoryFor is name's entry, matched case-insensitively as GitHub matches it, nil when the
+// config does not serve name. An empty name with one entry is that entry, as one set of settings
+// governed every task before the list (v2 D1). A name not listed is never given another
+// repository's entry: after a publish removes it (factory resources D12), its tasks would be
+// decided under the remaining repository's classes. Every caller handles nil by standing down.
 func (c *Config) RepositoryFor(name string) *Repository {
 	rs := c.Repos()
 	if i := slices.IndexFunc(rs, func(r Repository) bool { return strings.EqualFold(r.Name, name) }); i >= 0 {
 		return &rs[i]
 	}
-	if len(rs) == 1 {
+	if name == "" && len(rs) == 1 {
 		return &rs[0]
 	}
-	return &Repository{Name: name}
+	return nil
 }
 
 // listed is name's entry, nil when the list does not name it (whatever its length).
@@ -515,10 +558,15 @@ type Poll struct {
 }
 
 // Defaults apply when triage leaves a value open.
+// +kubebuilder:object:generate=true
 type Defaults struct {
-	Template       string `json:"template"`
-	Tier           string `json:"tier"`
-	DataClass      string `json:"dataClass"`
+	// +kubebuilder:validation:MaxLength=253
+	Template string `json:"template"`
+	// +kubebuilder:validation:MaxLength=253
+	Tier string `json:"tier"`
+	// +kubebuilder:validation:MaxLength=253
+	DataClass string `json:"dataClass"`
+	// +kubebuilder:validation:MaxLength=253
 	PredictedClass string `json:"predictedClass"`
 }
 
@@ -532,21 +580,30 @@ type Triage struct {
 }
 
 // Merge is §5.1's merge actor and §6.4's rollback.
+// +kubebuilder:object:generate=true
 type Merge struct {
 	// The 8 contexts classic protection requires, by name (GitHub Actions, app 15368).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	RequiredChecks []string `json:"requiredChecks"`
 	// The checks main's CI runs on push, watched on the merge commit. Not RequiredChecks: a
 	// path-filtered push workflow never reports there, and absent must not mean pending (§6.4).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
 	VerifyChecks []string `json:"verifyChecks"`
 	// ContractCheck is the check run that proves a task's test contract (R21, TF7): required on
 	// a task with a contract (row 2b), only reported on one without.
-	ContractCheck  string `json:"contractCheck,omitempty"`
-	LeakScanCheck  string `json:"leakScanCheck"`  // R42: TruffleHog's check run, "Security scanning 🔒"
+	// +kubebuilder:validation:MaxLength=1024
+	ContractCheck string `json:"contractCheck,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	LeakScanCheck string `json:"leakScanCheck"` // R42: TruffleHog's check run, "Security scanning 🔒"
+	// +kubebuilder:validation:MaxLength=253
 	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
 	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
 	GateStatus bool `json:"gateStatus,omitempty"`
 	// PolicyBot false drops policy-bot from the gate (the demo's); nil means true.
-	PolicyBot        *bool  `json:"policyBot,omitempty"`
+	PolicyBot *bool `json:"policyBot,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
 	MergerLogin      string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
 	AutoMergesPerDay int    `json:"autoMergesPerDay"`
 	FixRuns          int32  `json:"fixRuns"`
@@ -567,6 +624,7 @@ type Merge struct {
 
 // Breaker is the circuit breaker's outcome window (R41, review G5): a class whose last Window
 // merges hold MaxReverts reverts is demoted to human review, whatever the config.
+// +kubebuilder:object:generate=true
 type Breaker struct {
 	Window     int `json:"window"`
 	MaxReverts int `json:"maxReverts"`
@@ -584,7 +642,9 @@ func (m Merge) UsesPolicyBot() bool { return m.PolicyBot == nil || *m.PolicyBot 
 // Tier is a model and its budgets. RunUSD and TaskUSD cap a run and a task in USD, priced by
 // meter.prices, in place of RunTokens and TaskTokens; 0 keeps the token cap. With meter.prices
 // set each defaults to RefUSD of its token cap.
+// +kubebuilder:object:generate=true
 type Tier struct {
+	// +kubebuilder:validation:MaxLength=253
 	Model      string  `json:"model"`
 	RunTokens  int64   `json:"runTokens"`
 	TaskTokens int64   `json:"taskTokens"`
@@ -608,6 +668,7 @@ func RefMicroUSD(tokens int64) int64 { return int64(math.Round(float64(tokens) *
 
 // Price is a model's list price in USD per million tokens of each type the gateway reports.
 // The gateway's input count includes the cache reads and writes, so each is priced once.
+// +kubebuilder:object:generate=true
 type Price struct {
 	Input     float64 `json:"input"`
 	CacheRead float64 `json:"cacheRead"`
@@ -617,20 +678,27 @@ type Price struct {
 	// Source is the provider page the row was read from, an https URL, and CheckedAt the day it
 	// was read, YYYY-MM-DD: provenance for the human who confirms a drift finding (truthful costs
 	// TC1). Validated when present; the meter never reads them.
-	Source    string `json:"source,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	Source string `json:"source,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
 	CheckedAt string `json:"checkedAt,omitempty"`
 }
 
 // Template is a team: the roles run in order on one branch.
+// +kubebuilder:object:generate=true
 type Template struct {
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
 	Roles           []string `json:"roles"`
 	MaxReviewRounds int32    `json:"maxReviewRounds,omitempty"`
 	// ReviewerModel is the reviewer's gateway name whatever the implementer's tier; empty keeps
 	// the other tier's model. The run keeps the other tier's caps.
+	// +kubebuilder:validation:MaxLength=253
 	ReviewerModel string `json:"reviewerModel,omitempty"`
 }
 
 // Caps bound the factory's throughput (§6.2).
+// +kubebuilder:object:generate=true
 type Caps struct {
 	ActiveTasks    int `json:"activeTasks"`
 	ConcurrentRuns int `json:"concurrentRuns"`
@@ -659,6 +727,7 @@ type Caps struct {
 // Facts are what a terminal task tells its room about its dollars (CD23). A switch here lands with
 // the code that reads it: both decoders refuse a key they do not know, so a file written for a
 // later release fails this one's rollout instead of silently changing nothing.
+// +kubebuilder:object:generate=true
 type Facts struct {
 	// FinalSpend is CD23: a terminal task requeues once at its last run's end plus the settle
 	// window plus a margin, prices its runs again, and posts one fact whose dollars it will not
@@ -670,6 +739,7 @@ type Facts struct {
 // Brief is what a revision brief quotes from GitHub beyond the room's own log (CD12). A switch here
 // lands with the code that reads it: both decoders refuse a key they do not know, so a file written
 // for a later release fails this one's rollout instead of silently changing nothing.
+// +kubebuilder:object:generate=true
 type Brief struct {
 	// CIEvidence is CD12: a revision brief carries, fenced as untrusted data, what the open change
 	// requests asked for and what the failing checks annotated — the reviewer's comments and the
@@ -684,6 +754,7 @@ type Brief struct {
 // the principal's starts false, a week of shadow numbers first (OD-10, R3). The run cap is always
 // enforced by the meter. The days are in USD (truthful costs TC5): the day ledger counts each
 // run's priced cost, a cache read at its own rate.
+// +kubebuilder:object:generate=true
 type Budgets struct {
 	EnforceTask      bool    `json:"enforceTask"`
 	EnforcePrincipal bool    `json:"enforcePrincipal"`
@@ -696,12 +767,13 @@ type Budgets struct {
 	IgnoredFactoryDaily *int64 `json:"factoryDaily,omitempty"`
 	IgnoredHumanDaily   *int64 `json:"humanDaily,omitempty"`
 	// sponsoredDays is each sponsored principal's day in micro-USD, set by Parse (R7).
-	sponsoredDays map[string]int64
+	sponsoredDays map[string]int64 `json:"-"`
 }
 
 // PerPerson charges each run to the person who caused it as well as to the fleet, in one ledger
 // write (v2 per-person caps D2, D3). Enabled alone attributes and counts (shadow); a refusal also
 // needs EnforcePrincipal (D8).
+// +kubebuilder:object:generate=true
 type PerPerson struct {
 	Enabled bool `json:"enabled"`
 	// DailyUSD is every person's day (D7: one value, no per-person override). Omitted: humanDailyUSD.
@@ -764,6 +836,7 @@ func (b *Budgets) dropTokenDays() []Ignored {
 }
 
 // Resume bounds the automatic resume of a run lost to its infrastructure (disruption design §4).
+// +kubebuilder:object:generate=true
 type Resume struct {
 	// MaxPerTask is how many runs of one task the factory resumes on its own; past it the task
 	// escalates as before. Defaulted when omitted.
@@ -774,6 +847,7 @@ type Resume struct {
 // hand off at NudgeAt tool calls and ends the run at MaxToolCalls, as budget_calls. The factory
 // writes both into the scoper brief's first line, which the harness reads. Each is defaulted alone
 // when omitted.
+// +kubebuilder:object:generate=true
 type Scoper struct {
 	NudgeAt      int `json:"nudgeAt,omitempty"`
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
@@ -819,14 +893,22 @@ type Tracing struct {
 }
 
 // Schedule starts a task from config (§1). The config is a gate path, so its text is trusted.
+// +kubebuilder:object:generate=true
 type Schedule struct {
-	Name      string `json:"name"`
-	Cron      string `json:"cron"`  // 5 fields, UTC
-	Class     string `json:"class"` // the predicted class (§2)
-	Text      string `json:"text"`
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+	// +kubebuilder:validation:MaxLength=1024
+	Cron string `json:"cron"` // 5 fields, UTC
+	// +kubebuilder:validation:MaxLength=253
+	Class string `json:"class"` // the predicted class (§2)
+	// +kubebuilder:validation:MaxLength=14336
+	Text string `json:"text"`
+	// +kubebuilder:validation:MaxLength=253
 	DataClass string `json:"dataClass,omitempty"`
-	Probe     string `json:"probe,omitempty"` // "" or renovate-red
+	// +kubebuilder:validation:MaxLength=1024
+	Probe string `json:"probe,omitempty"` // "" or renovate-red
 	// ProbeAuthor is the login whose open PRs the probe looks at; omitted: renovate[bot].
+	// +kubebuilder:validation:MaxLength=253
 	ProbeAuthor string `json:"probeAuthor,omitempty"`
 }
 
@@ -891,6 +973,7 @@ type Access struct {
 // in USD, and how many of its tasks may be open at once. Sponsor is the maintainer accountable
 // for it; a link names who may sponsor one request instead (R9).
 type Sponsored struct {
+	// +kubebuilder:validation:MaxLength=253
 	Name         string   `json:"name"`
 	ClientIDFile string   `json:"clientIDFile"`
 	Sponsor      string   `json:"sponsor"`
@@ -1128,6 +1211,7 @@ type RunLore struct {
 	MinConfidence float64 `json:"minConfidence"`
 	DailyCap      int     `json:"dailyCap"`
 	// Repository is where RunLore's issues are filed (v2 D6); omitted, the first listed.
+	// +kubebuilder:validation:MaxLength=253
 	Repository string `json:"repository,omitempty"`
 }
 
@@ -1285,12 +1369,45 @@ func Load(path string) (*Config, error) {
 	return Parse(raw)
 }
 
-// Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
-func Parse(raw []byte) (*Config, error) {
+// CheckBlocks refuses a switch block (coordination, hardening), or a key inside it, written twice
+// in raw. A caller that decodes raw into a map before Parse runs it first: the map has kept the
+// last block silently by then (factory resources: Assemble).
+func CheckBlocks(raw []byte) error {
 	for _, block := range []string{"coordination", "hardening"} {
 		if err := blockOnce(raw, block); err != nil {
-			return nil, fmt.Errorf("config: %w", err)
+			return fmt.Errorf("config: %w", err)
 		}
+	}
+	return nil
+}
+
+// CheckShape refuses a file no resource can make servable: empty, not YAML, a key Config does not
+// know, or a switch block written twice. It decodes strictly and does not validate, as the
+// factory's resources may still supply what the file lacks (factory resources: D14).
+func CheckShape(raw []byte) error {
+	if err := CheckBlocks(raw); err != nil {
+		return err
+	}
+	j, err := yaml.YAMLToJSON(raw)
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if t := bytes.TrimSpace(j); len(t) == 0 || bytes.Equal(t, []byte("null")) {
+		return errors.New("config: the file is empty")
+	}
+	dec := json.NewDecoder(bytes.NewReader(j))
+	dec.DisallowUnknownFields()
+	var c Config
+	if err := dec.Decode(&c); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	return nil
+}
+
+// Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
+func Parse(raw []byte) (*Config, error) {
+	if err := CheckBlocks(raw); err != nil {
+		return nil, err
 	}
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
@@ -1746,6 +1863,7 @@ func (c *Config) Validate() error {
 	}
 	c.validateLoops(bad)
 	c.validateMergePolicy(bad)
+	c.validateEvaluation(bad)
 	return errors.Join(errs...)
 }
 
@@ -1901,15 +2019,18 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 // keys (D4: no row, or a row without them, is today's run); an unset key then takes the
 // design's default. Rows are keyed by class so the scoper's switch (scoper design SC2,
 // loops.<class>.scope) joins them as one more key.
+// +kubebuilder:object:generate=true
 type Loop struct {
 	// StallSteps ends a run with no commit by this many steps (L3): 1 to 500, default 80.
 	StallSteps *int32 `json:"stallSteps,omitempty"`
 	// Continuations is how many not_yet verdicts continue the conversation (L2): 0 to 5, default 2.
 	Continuations *int32 `json:"continuations,omitempty"`
 	// Judge is the completion judge's alias, or none for no judge (L2): default tier-light.
+	// +kubebuilder:validation:MaxLength=253
 	Judge string `json:"judge,omitempty"`
 	// Scope is the class's scope mode (scoper design SC2): off, steering or scoper; unset is off.
 	// It never switches the loop on: On reads the loop's three keys only.
+	// +kubebuilder:validation:MaxLength=253
 	Scope ScopeMode `json:"scope,omitempty"`
 	// Search offers the class's implementer runs the search tool (v3 feature 5, ST9); absent is off.
 	// It never switches the loop on: On reads the loop's three keys only.
@@ -1920,8 +2041,18 @@ type Loop struct {
 	// Models is role → tier → the provider alias that role runs on for a public task of that tier
 	// (v3 F15, F3); a role or tier without an entry, and every internal task, keep today's model.
 	// It never switches the loop on.
-	Models map[string]map[string]string `json:"models,omitempty"`
+	// +kubebuilder:validation:MaxProperties=32
+	Models map[string]ModelAliases `json:"models,omitempty"`
 }
+
+// ModelAliases is tier → provider alias, one role's row of Loop.Models. It is a named type so the
+// CRD can bound the inner map.
+// +kubebuilder:validation:MaxProperties=32
+type ModelAliases map[string]ModelAlias
+
+// ModelAlias is a provider alias, a named type for the same reason.
+// +kubebuilder:validation:MaxLength=253
+type ModelAlias string
 
 // ModelFor is the provider alias class's row names for role on tier, "" for today's model: always
 // "" unless dataClass is public (F4). A row is whole: a class row without models is none, whatever
@@ -1930,11 +2061,8 @@ func (c *Config) ModelFor(class, dataClass, role, tier string) string {
 	if dataClass != "public" {
 		return ""
 	}
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
-	return row.Models[role][tier]
+	row := c.rowOf(class)
+	return string(row.Models[role][tier])
 }
 
 // ScopeMode is a row's scope. The config is YAML 1.1, where a bare off is the boolean false: it
@@ -1965,10 +2093,7 @@ func (m *ScopeMode) UnmarshalJSON(b []byte) error {
 // ScopeFor is class's scope mode: its row's, else default's, off when that row sets none. A row
 // is whole, as for the loop (part 2 R1): a class row without scope is off, whatever default's says.
 func (c *Config) ScopeFor(class string) ScopeMode {
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	if row.Scope == "" {
 		return ScopeOff
 	}
@@ -1978,10 +2103,7 @@ func (c *Config) ScopeFor(class string) ScopeMode {
 // SearchFor reports whether class's implementer runs get the search tool (v3 feature 5, ST9): its
 // row's search, else default's. A row is whole: a class row without search is off.
 func (c *Config) SearchFor(class string) bool {
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	return row.Search
 }
 
@@ -2001,6 +2123,7 @@ func (c *Config) SteeringOn() bool {
 func scopeModes() []ScopeMode { return []ScopeMode{ScopeOff, ScopeSteering, ScopeScoper} }
 
 // SplitPolicy is a row's split (splitter design SL3, SL9, SL10).
+// +kubebuilder:object:generate=true
 type SplitPolicy struct {
 	// MaxChildren is the most parts a split may hold: 2 to 5, required.
 	MaxChildren int32 `json:"maxChildren"`
@@ -2008,6 +2131,7 @@ type SplitPolicy struct {
 	// tier's tasks (SP3: $20.40 on standard's $5.10).
 	FamilyUSD float64 `json:"familyUSD,omitempty"`
 	// ChildTier is every child's tier (SP5): omitted, standard.
+	// +kubebuilder:validation:MaxLength=253
 	ChildTier string `json:"childTier,omitempty"`
 	// AnyTier offers the split to every task of the class, whatever tier C7 rated it (SP1's
 	// option (b), an explicit opt-in); omitted, only a task C7 rated frontier is offered one.
@@ -2031,13 +2155,10 @@ func (c *Config) neverSplit(class string) bool {
 // SplitFor is class's split on repository, every value resolved, nil when none is offered: its row,
 // else default's, read whole as for the loop, and only beside scope: scoper.
 func (c *Config) SplitFor(repository, class string) *SplitPolicy {
-	if c.neverSplit(class) || c.RepositoryFor(repository).Classes[class].Oracle != nil {
+	if cl, _ := c.RepositoryFor(repository).Class(class); c.neverSplit(class) || cl.Oracle != nil {
 		return nil
 	}
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	if row.Split == nil || row.Scope != ScopeScoper {
 		return nil
 	}
@@ -2073,10 +2194,7 @@ type LoopPolicy struct {
 
 // LoopFor is class's loop policy, nil when its loop is off: its row, else default's.
 func (c *Config) LoopFor(class string) *LoopPolicy {
-	row, ok := c.Loops[class]
-	if !ok {
-		row = c.Loops["default"]
-	}
+	row := c.rowOf(class)
 	if !row.On() {
 		return nil
 	}
@@ -2099,14 +2217,14 @@ func (c *Config) LoopFor(class string) *LoopPolicy {
 
 // validateModels: each role is SP1's, each tier is one of the three, and each alias is a provider
 // alias of that very tier (F2), priced while meter.prices is set (F3).
-func (c *Config) validateModels(bad func(string, ...any), name string, byRole map[string]map[string]string) {
+func (c *Config) validateModels(bad func(string, ...any), name string, byRole map[string]ModelAliases) {
 	for _, role := range slices.Sorted(maps.Keys(byRole)) {
 		if !slices.Contains(roles(), role) {
 			bad("loops.%s.models: unknown role %q", name, role)
 			continue
 		}
 		for _, tier := range slices.Sorted(maps.Keys(byRole[role])) {
-			alias, key := byRole[role][tier], "loops."+name+".models."+role+"."+tier
+			alias, key := string(byRole[role][tier]), "loops."+name+".models."+role+"."+tier
 			p, ok := providerModels()[alias]
 			switch {
 			case !slices.Contains(tiers(), tier):
@@ -2122,7 +2240,8 @@ func (c *Config) validateModels(bad func(string, ...any), name string, byRole ma
 	}
 }
 
-// validateLoops: a row's key is default, review or a class some repository declares; its values
+// validateLoops: a row's key is default, review, a class some repository declares or a harness
+// profile's loop (TE6), never off; its values
 // are within the harness's bounds; and only cloud-native-ref's AgentRun carries spec.loop.
 func (c *Config) validateLoops(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
@@ -2130,6 +2249,8 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		if name != "default" && name != "review" && !slices.ContainsFunc(c.Repos(), func(r Repository) bool {
 			_, ok := r.Classes[name]
 			return ok
+		}) && !slices.ContainsFunc(slices.Collect(maps.Values(c.HarnessProfiles)), func(p HarnessProfile) bool {
+			return string(p.Loop) == name && name != string(LoopOff)
 		}) {
 			bad("loops.%s: %q is not default, review or a class a repository declares", name, name)
 		}

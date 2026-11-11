@@ -49,9 +49,9 @@ func adoptRig(t *testing.T) *rig {
 	g := newRig(t, tk)
 	g.r.Rooms = noEmptyRoom{g.r.Rooms} // the broker's behaviour for every adopted test (M12)
 	g.r.Merger = g.f
-	g.r.Cfg.AgentsLogin, g.r.Cfg.FactoryLogin = "ogenki-agents[bot]", "ogenki-agent-factory[bot]"
-	g.r.Cfg.Classes = map[string]config.Class{"deps-patch": depsPatchClass()}
-	g.r.Cfg.Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]",
+	g.r.Cfg.Current().AgentsLogin, g.r.Cfg.Current().FactoryLogin = "ogenki-agents[bot]", "ogenki-agent-factory[bot]"
+	g.r.Cfg.Current().Classes = map[string]config.Class{"deps-patch": depsPatchClass()}
+	g.r.Cfg.Current().Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]",
 		MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 10, FixRuns: 2, CheckReruns: 1,
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}
@@ -245,7 +245,7 @@ func TestAnAdoptedLiveClassMergesThePinnedHead(t *testing.T) {
 	g := adoptRig(t)
 	cl := depsPatchClass()
 	cl.Shadow, cl.Live = false, true
-	g.r.Cfg.Classes["deps-patch"] = cl
+	g.r.Cfg.Current().Classes["deps-patch"] = cl
 	if tk := g.reconcile(t, adoptTask, 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging || len(g.f.Armed()) != 1 {
 		t.Fatalf("%s %s %v", tk.Status.Phase, tk.Status.Reason, g.f.Armed())
 	}
@@ -253,7 +253,7 @@ func TestAnAdoptedLiveClassMergesThePinnedHead(t *testing.T) {
 		t.Fatalf("merged %q, decided on %q", got[0], adoptHead)
 	}
 	g = adoptRig(t)
-	g.r.Cfg.Classes["deps-patch"] = cl
+	g.r.Cfg.Current().Classes["deps-patch"] = cl
 	g.f.RefuseMerge("PR_30", forge.ErrHeadMoved)
 	if tk := g.reconcile(t, adoptTask, 1); tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Reason != "head_moved" ||
 		len(g.f.Armed()) != 0 {
@@ -296,7 +296,7 @@ func TestAnAdoptedRedCheckHandsOff(t *testing.T) {
 func TestTheReleaseAgeIsAWaitedOnCheck(t *testing.T) {
 	g := adoptRig(t)
 	c, _ := g.f.PullRequestChecks(t.Context(), 30)
-	in := ArmInputs{Checks: c, Task: &v1alpha1.Task{}, Cfg: g.r.Cfg}
+	in := ArmInputs{Checks: c, Task: &v1alpha1.Task{}, Cfg: g.r.Cfg.Current()}
 	if got := unreported(in, depsPatchClass()); len(got) != 0 {
 		t.Fatalf("passed: %v", got)
 	}
@@ -312,7 +312,7 @@ func TestAnAdoptedVetoHoldsInALiveClass(t *testing.T) {
 	g := adoptRig(t)
 	cl := depsPatchClass()
 	cl.Shadow, cl.Live = false, true
-	g.r.Cfg.Classes["deps-patch"] = cl
+	g.r.Cfg.Current().Classes["deps-patch"] = cl
 	g.review(30, 7, "Smana", "CHANGES_REQUESTED")
 	if tk := g.reconcile(t, adoptTask, 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "changes_requested" ||
 		len(g.f.Armed()) != 0 {
@@ -337,7 +337,7 @@ func TestAnAdoptedDecisionNeedsItsAdoptionRead(t *testing.T) {
 	c, _ := g.f.PullRequestChecks(t.Context(), 30)
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), keyFor(adoptTask), &tk)
-	in := ArmInputs{PR: pr, Checks: c, Task: &tk, Cfg: g.r.Cfg, DiffRead: true}
+	in := ArmInputs{PR: pr, Checks: c, Task: &tk, Cfg: g.r.Cfg.Current(), DiffRead: true}
 	in.Files.Base, in.Files.Head = map[string]string{depFile: "version: 3.8.3\n"}, map[string]string{depFile: "version: 3.8.4\n"}
 	in.Stats = []forge.FileStat{{Path: depFile, Status: "modified", Additions: 1, Deletions: 1}}
 	if d := DecideArm(in); d.Verdict != "human" || d.Reason != "adoption_unread" {
@@ -467,7 +467,7 @@ func kbClass() config.Class {
 func kbRig(t *testing.T) *rig {
 	t.Helper()
 	g := adoptRig(t)
-	g.r.Cfg.Classes = map[string]config.Class{"deps-patch": kbClass()}
+	g.r.Cfg.Current().Classes = map[string]config.Class{"deps-patch": kbClass()}
 	g.editPR(func(p *forge.PR) {
 		p.Author, p.HeadRef, p.Labels = kbBot, kbBranch, []string{kbLabel}
 	})
@@ -564,7 +564,7 @@ func TestTheCatalogEntryGate(t *testing.T) {
 				if live {
 					cl := kbClass()
 					cl.Shadow, cl.Live = false, true
-					g.r.Cfg.Classes["deps-patch"] = cl
+					g.r.Cfg.Current().Classes["deps-patch"] = cl
 				}
 				c.edit(g)
 				tk := g.reconcile(t, adoptTask, 1)

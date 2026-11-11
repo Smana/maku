@@ -49,7 +49,7 @@ var checkReasons = []error{ErrRepositoryNotAllowed, ErrPrivateRepository, ErrApp
 // given, binds the answer to the fence its maintainer authorized at (ErrPolicyChanged). An actor
 // with no login asks for the repository's policy alone, as plan validation does.
 type RepositoryChecks interface {
-	Check(ctx context.Context, actor Actor, child v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error)
+	Check(ctx context.Context, cfg *config.Config, actor Actor, child v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error)
 }
 
 // Actor is who confirms or drafts: the authenticated principal and the GitHub login its token's
@@ -73,15 +73,14 @@ type CheckForge interface {
 // guardrails, and the actor's collaborator permission. It caches nothing, so a lost App, fence,
 // maintainer, permission or class refuses the very next check.
 type GitHubChecks struct {
-	Cfg *config.Config
 	// Forges is repository's own App connection, nil when it has none.
 	Forges func(repository string) CheckForge
 }
 
 // Check implements RepositoryChecks.
-func (g GitHubChecks) Check(ctx context.Context, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
+func (g GitHubChecks) Check(ctx context.Context, cfg *config.Config, actor Actor, c v1alpha1.CoordinationChild, auth *v1alpha1.ChildAuthorization) (RepositoryPolicy, error) {
 	repo := c.Repository
-	if !slices.ContainsFunc(g.Cfg.Repos(), func(r config.Repository) bool { return strings.EqualFold(r.Name, repo) }) {
+	if !slices.ContainsFunc(cfg.Repos(), func(r config.Repository) bool { return strings.EqualFold(r.Name, repo) }) {
 		return RepositoryPolicy{}, ErrRepositoryNotAllowed
 	}
 	var f CheckForge
@@ -107,13 +106,13 @@ func (g GitHubChecks) Check(ctx context.Context, actor Actor, c v1alpha1.Coordin
 	case !found:
 		return RepositoryPolicy{}, ErrRepositoryNotOwned
 	}
-	if name, err := fence.Parse([]byte(text)); err != nil || name != g.Cfg.Factory {
+	if name, err := fence.Parse([]byte(text)); err != nil || name != cfg.Factory {
 		return RepositoryPolicy{}, ErrRepositoryNotOwned
 	}
 	if auth != nil && (auth.FenceSHA != sha || !strings.EqualFold(auth.Repository, repo)) {
 		return RepositoryPolicy{}, ErrPolicyChanged
 	}
-	pol, err := g.class(text, repo, c.Class, c.Tier)
+	pol, err := g.class(cfg, text, repo, c.Class, c.Tier)
 	if err != nil {
 		return RepositoryPolicy{}, err
 	}
@@ -121,7 +120,7 @@ func (g GitHubChecks) Check(ctx context.Context, actor Actor, c v1alpha1.Coordin
 	if actor.LinkedGitHubLogin == "" {
 		return pol, nil
 	}
-	if !g.Cfg.RepositoryFor(repo).IsMaintainer(actor.LinkedGitHubLogin) {
+	if !cfg.RepositoryFor(repo).IsMaintainer(actor.LinkedGitHubLogin) {
 		return RepositoryPolicy{}, fmt.Errorf("%w: not a configured maintainer", ErrRepositoryPermission)
 	}
 	perm, err := f.Permission(ctx, actor.LinkedGitHubLogin)
@@ -139,25 +138,25 @@ func (g GitHubChecks) Check(ctx context.Context, actor Actor, c v1alpha1.Coordin
 // guardrails (mergepolicy.Resolve), else the central config's; an adopted class authors nothing,
 // so no child runs under one. Roles are the class harness's template, the tier's ceilings its run
 // and task caps.
-func (g GitHubChecks) class(fenceText, repo, class, tier string) (RepositoryPolicy, error) {
-	template := g.Cfg.Defaults.Template
+func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier string) (RepositoryPolicy, error) {
+	template := cfg.Defaults.Template
 	if f, err := mergepolicy.Parse([]byte(fenceText)); err == nil && f.Classes != nil {
 		cp, ok := f.Classes[class]
 		if !ok {
 			return RepositoryPolicy{}, fmt.Errorf("%w: %s is not declared", ErrClassNotAllowed, class)
 		}
-		r, err := mergepolicy.Resolve(class, cp, g.Cfg)
+		r, err := mergepolicy.Resolve(class, cp, cfg)
 		if err != nil || r.Class.Author != nil {
 			return RepositoryPolicy{}, fmt.Errorf("%w: %s", ErrClassNotAllowed, class)
 		}
 		if r.Profile.Template != "" {
 			template = r.Profile.Template
 		}
-	} else if cl, ok := g.Cfg.RepositoryFor(repo).Classes[class]; !ok || cl.Author != nil {
+	} else if cl, ok := cfg.RepositoryFor(repo).Class(class); !ok || cl.Author != nil {
 		return RepositoryPolicy{}, fmt.Errorf("%w: %s", ErrClassNotAllowed, class)
 	}
-	t, ok := g.Cfg.Tiers[tier]
-	roles := slices.DeleteFunc(slices.Clone(g.Cfg.Templates[template].Roles), func(r string) bool { return r == "scoper" })
+	t, ok := cfg.Tiers[tier]
+	roles := slices.DeleteFunc(slices.Clone(cfg.Templates[template].Roles), func(r string) bool { return r == "scoper" })
 	if !ok || len(roles) == 0 {
 		return RepositoryPolicy{}, fmt.Errorf("%w: tier %s or template %s", ErrClassNotAllowed, tier, template)
 	}

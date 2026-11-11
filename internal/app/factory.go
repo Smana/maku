@@ -13,14 +13,18 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -37,7 +41,9 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/fence"
@@ -53,6 +59,7 @@ import (
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/statuswriter"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
@@ -115,22 +122,39 @@ func warnIgnored(log *slog.Logger, cfg *config.Config) {
 	}
 }
 
+// holdoutGauge is agent_factory_class_without_holdout (fmetrics.Set).
+type holdoutGauge interface {
+	ClassWithoutHoldout(ctx context.Context, repository, class string)
+}
+
 // warnConfig logs each sentence the config loaded with (a later release refuses it) and sets the
 // gauge of a live class that declares no holdoutChecks (TO5).
-func warnConfig(log *slog.Logger, cfg *config.Config, m *fmetrics.Set) {
+func warnConfig(log *slog.Logger, cfg *config.Config, m holdoutGauge) {
 	for _, w := range cfg.Warnings {
 		log.Warn("config warning", "warning", w)
 	}
 	if m == nil {
 		return
 	}
+	for _, c := range withoutHoldout(cfg) {
+		m.ClassWithoutHoldout(context.Background(), c.repository, c.class)
+	}
+}
+
+// repoClass is one class of one repository.
+type repoClass struct{ repository, class string }
+
+// withoutHoldout are the live classes that declare no holdoutChecks (TO5), in order.
+func withoutHoldout(cfg *config.Config) []repoClass {
+	var out []repoClass
 	for _, r := range cfg.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {
-				m.ClassWithoutHoldout(context.Background(), r.Name, name)
+				out = append(out, repoClass{r.Name, name})
 			}
 		}
 	}
+	return out
 }
 
 // brokerClient is the HTTP client for the broker: its CA when broker.caFile is set, the system
@@ -172,23 +196,36 @@ func humanVerifier(ctx context.Context, cfg *config.Config) (*authn.Verifier, er
 }
 
 // demoGitToken keeps the runs' shared git Secret filled with a token from the factory App, on
-// the served repositories (demo mode: one App does both the factory's and the runs' work).
-func demoGitToken(cfg *config.Config, c client.Client, log *slog.Logger) (*demo.GitToken, error) {
-	var owner string
-	var names []string
-	for _, r := range cfg.Repos() {
-		o, n, _ := strings.Cut(r.Name, "/")
+// the served repositories (demo mode: one App does both the factory's and the runs' work). served
+// is read at each mint: the set is live (factory resources D12).
+func demoGitToken(cfg *config.Config, served func() []string, c client.Client, log *slog.Logger) (*demo.GitToken, error) {
+	if _, _, err := oneOwner(served()); err != nil {
+		return nil, err
+	}
+	hc := httpx.New(githubTimeout, nil)
+	return &demo.GitToken{Client: c, Namespace: cfg.Runs.Namespace, Every: 30 * time.Minute, Log: log,
+		Mint: func(ctx context.Context) (forge.Token, error) {
+			owner, names, err := oneOwner(served())
+			if err != nil {
+				return forge.Token{}, err
+			}
+			return forge.Mint(ctx, hc, githubAPI, forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
+				Owner: owner, Repositories: names, Permissions: demo.Permissions()})
+		}}, nil
+}
+
+// oneOwner splits the repositories into their one owner and their names: one App installation
+// serves one account.
+func oneOwner(repos []string) (owner string, names []string, err error) {
+	for _, r := range repos {
+		o, n, _ := strings.Cut(r, "/")
 		if owner != "" && !strings.EqualFold(o, owner) {
-			return nil, fmt.Errorf("demo: repositories %q and %q have different owners: one App installation serves one account", owner+"/"+names[0], r.Name)
+			return "", nil, fmt.Errorf("demo: repositories %q and %q have different owners: one App installation serves one account", owner+"/"+names[0], r)
 		}
 		owner = o
 		names = append(names, n)
 	}
-	hc := httpx.New(githubTimeout, nil)
-	opts := forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
-		Owner: owner, Repositories: names, Permissions: demo.Permissions()}
-	return &demo.GitToken{Client: c, Namespace: cfg.Runs.Namespace, Every: 30 * time.Minute, Log: log,
-		Mint: func(ctx context.Context) (forge.Token, error) { return forge.Mint(ctx, hc, githubAPI, opts) }}, nil
+	return owner, names, nil
 }
 
 // requirePublic stops a demo start when a served repository is private or its visibility cannot
@@ -207,21 +244,39 @@ func requirePublic(ctx context.Context, names []string, public func(ctx context.
 	return nil
 }
 
-func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) error {
+func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) string) (err error) {
 	cfgPath, ns, err := factoryEnv(getenv)
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
-	}
-	warnIgnored(log, cfg)
 	exp, err := metrics.NewExporter(metrics.FactoryBuildInfo, version.Version)
 	if err != nil {
 		return err
 	}
 	defer shutdownMetrics(ctx, log, exp)
+	// :9090 answers before the first Sync, so a factory waiting for its resources is alive and
+	// started, and not ready until the manager's caches synced. It stops last, after the manager.
+	gate := &startupGate{}
+	down := newDrainFlag(ctx)
+	ops, err := startOps(ctx, log, gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, ops.stop()) }()
+	// D5, D14: the config is the file and the factory's resources, built before anything reads
+	// it. The first Sync reads through a plain client, as the manager does not exist yet. While
+	// nothing can be served the start waits for the resources; any other error fails it.
+	src, kinds, err := firstSync(ops.ctx, log, cfgPath, ns, gate)
+	if errors.Is(err, errStoppedWaiting) {
+		log.Info("agent-factory stopped while waiting for a servable config")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	live := src.Live
+	cfg := live.Current() // the startup fields (D12): read once, never re-derived
+	warnIgnored(log, cfg)
 	sink, tp, shutdownTrace, err := taskSink(ctx, cfg.Tracing.OTLPEndpoint)
 	if err != nil {
 		return err
@@ -240,27 +295,40 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	conns, err := connectRepositories(ctx, log, cfg)
+	// A repository whose installation is missing fails the start, never a silent skip (v2 D8).
+	conns := newRepoConns(log)
+	if err := conns.sync(ctx, cfg); err != nil {
+		return err
+	}
+	mgr, err := newFactoryManager(log, ns, cfg.Runs, kinds)
 	if err != nil {
 		return err
 	}
-	if cfg.Demo {
-		err := requirePublic(ctx, conns.names(), func(ctx context.Context, name string) (bool, error) {
-			c, _ := conns.get(name)
-			return c.gh.Public(ctx)
-		})
-		if err != nil {
-			return err
-		}
-	}
-	mgr, err := newFactoryManager(log, ns, cfg.Runs)
-	if err != nil {
+	// From here the Source reads through the manager's uncached reader. Nothing else syncs before
+	// the manager starts it, so swapping the reader after the first Sync races with nothing.
+	src.Reader = mgr.GetAPIReader()
+	// The leader publishes the resources' status, on its own ticker and after each Sync. The hook
+	// runs with no lock held (a live.Subscribe subscriber would run under the Source's lock, and
+	// Outcomes would deadlock).
+	var policyWatch *mergepolicy.Watch // nil while policyManagement.read is off
+	recorder := &decision.Recorder{}
+	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns, Log: log,
+		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, log)}
+	src.OnSynced = statusWriter.Kick
+	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {
 		return err
+	}
+	if err := mgr.Add(src); err != nil {
+		return fmt.Errorf("manager: %w", err)
+	}
+	if err := mgr.Add(statusWriter); err != nil {
+		return fmt.Errorf("manager: %w", err)
 	}
 	m, err := fmetrics.New(exp.Meter(), mgr.GetClient(), ns, elected(mgr))
 	if err != nil {
 		return err
 	}
+	conns.failed = m.ConfigWireError
 	m.ListRepositories(conns.names()...)
 	warnConfig(log, cfg, m)
 	m.ChargePeople(cfg.Budgets.PerPerson.Enabled)
@@ -273,7 +341,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	m.Sponsors(sponsors)
 	// v2 D7: a repository is acted on only while its default branch names this factory.
-	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names(), Read: conns.fenceFile,
+	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names, Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
 	// Stages 1, 3 and 5 (merge policy): observed and compared, each merge decision decided again
 	// under it, and its approval subset's grants consulted there. Stage 4: a cut-over repository
@@ -281,29 +349,26 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	var snapshots func(string) (mergepolicy.Snapshot, bool)
 	var authority func(string) (mergepolicy.Snapshot, error)
 	if cfg.PolicyManagement.Read {
-		w := &mergepolicy.Watch{Cfg: cfg, Metrics: m, Log: log, Now: time.Now, Stale: fenceStale}
+		w := &mergepolicy.Watch{Cfg: live, Metrics: m, Log: log, Now: time.Now, Stale: fenceStale}
+		policyWatch = w
 		fenced.OnFile = w.Observe
 		if cfg.PolicyManagement.DualEvaluation || cfg.PolicyManagement.ApprovalMemory {
 			snapshots = w.Snapshot
 		}
 		if cfg.PolicyManagement.RepositoryAuthority {
-			cfg.SetClassSource(w.Classes)
+			live.Prepare(func(c *config.Config) { c.SetClassSource(w.Classes) }) // every published config
 			authority = w.Authority
 		}
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
-	runUSD := map[string]float64{}
-	for name, t := range cfg.Tiers {
-		if t.RunUSD > 0 {
-			runUSD[name] = t.RunUSD
-			m.RunBudgetUSD(ctx, name, t.RunUSD)
-		}
+	for name, usd := range meter.RunUSD(cfg) {
+		m.RunBudgetUSD(ctx, name, usd)
 	}
 	// The day ledgers are invisible to the manager's cache: its ConfigMap informer carries a
 	// metadata.name selector for the stop object (factoryManagerOptions). R50's reservation, the
 	// meter's settle and Queued's daily cap (which reserves its runs there, #78) read and write
 	// date-named ledgers, so through a live client.
-	live, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	ledgers, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
 	if err != nil {
 		return err
 	}
@@ -313,20 +378,19 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if cfg.Triage.ClassifierURL != "" {
 		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
 	}
-	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: live, Namespace: ns, Cfg: cfg, Clients: conns.task, Owned: fenced.Owned,
+	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: ledgers, Namespace: ns, Cfg: live, Clients: conns.task, Owned: fenced.Owned,
 		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
-		Triage: triage.Classify{Cfg: cfg, C: c7,
+		Triage: triage.Classify{C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
-		Trace: sink, Costs: costs}
+		Trace: sink, Costs: costs, Decisions: recorder}
 	if cfg.PolicyManagement.ApprovalMemory { // stage 5: grants read from the broker, never cached
 		rec.Grants = broker
 	}
-	if cfg.AnyFlux() {
-		// Uncached: the reader serves a few reads per monitor pass, and a cache would start an
-		// informer per Flux kind (and need watch, which the ClusterRole does not grant).
-		rec.Flux = fluxwatch.Reader{C: mgr.GetAPIReader()}
-	}
+	// Uncached: the reader serves a few reads per monitor pass, and a cache would start an
+	// informer per Flux kind (and need watch, which the ClusterRole does not grant). Always set: a
+	// publish may add a class that declares monitor.flux, and a pass with no Flux class reads nothing.
+	rec.Flux = fluxwatch.Reader{C: mgr.GetAPIReader()}
 	if err := rec.SetupWithManager(mgr); err != nil {
 		return err
 	}
@@ -386,7 +450,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		logins = ga.Identity
 	}
 	apiSrv := &api.Server{Auth: auth, Log: log,
-		Cfg: cfg, Groups: groups, Runs: rc, Rooms: live, Namespace: ns, Stopped: stopped, SlackLinks: broker, Logins: logins,
+		Cfg: live, Groups: groups, Runs: rc, Rooms: ledgers, Namespace: ns, Stopped: stopped, SlackLinks: broker, Logins: logins,
 		NewRunID: taskid.Random, Now: time.Now, Metrics: m, Access: access, People: people, Owned: fenced.Owned,
 		Forges: func(repo string) api.IssueFiler {
 			c, ok := conns.get(repo)
@@ -401,8 +465,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// confirms only. coordination.Prerequisites composes the two once class authority has a port;
 	// hardening.Evaluator, its second half, answers false through stage H4 (hardening design).
 	// Each repository's checks and filing go through that repository's own App connection.
-	coord := &coordination.Service{Client: live, Namespace: ns, Cfg: cfg, Prerequisites: nil, Now: time.Now, Metrics: m,
-		Checks: coordination.GitHubChecks{Cfg: cfg, Forges: func(repo string) coordination.CheckForge {
+	coord := &coordination.Service{Client: ledgers, Namespace: ns, Cfg: live, Prerequisites: nil, Now: time.Now, Metrics: m,
+		Checks: coordination.GitHubChecks{Forges: func(repo string) coordination.CheckForge {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh
 			}
@@ -418,16 +482,24 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
 	var evidenceRefresh *evidence.Refresher
 	if cfg.PolicyManagement.Promotion {
-		ev := &evidence.Service{Cfg: cfg, Now: time.Now, Log: log, Sources: func(repo string) (evidence.Source, bool) {
-			c, ok := conns.get(repo)
-			if !ok || c.gh == nil {
-				return nil, false
-			}
-			return evidenceSource{c.gh}, true
-		}}
+		ev := &evidence.Service{Cfg: live, Namespace: ns, Now: time.Now, Log: log,
+			// The cached client, on every replica: a miss is no status, never an error page.
+			PolicyStatus: func(ctx context.Context, name string) (evidence.PolicyStatus, bool) {
+				var mp factoryv1.MergePolicy
+				if err := mgr.GetClient().Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &mp); err != nil {
+					return evidence.PolicyStatus{}, false
+				}
+				return evidence.PolicyStatus{Namespace: ns, Generation: mp.Generation, Status: mp.Status}, true
+			}, Sources: func(repo string) (evidence.Source, bool) {
+				c, ok := conns.get(repo)
+				if !ok || c.gh == nil {
+					return nil, false
+				}
+				return evidenceSource{c.gh}, true
+			}}
 		apiSrv.Evidence = ev
 		evidenceRefresh = &evidence.Refresher{Service: ev, Owned: fenced.Owned, OnAge: m.PolicyEvidenceAge}
-		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: cfg, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
+		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: live, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
@@ -453,94 +525,126 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		runnables = append(runnables, evidenceRefresh)
 	}
 	if cfg.Demo {
-		g, err := demoGitToken(cfg, live, log)
+		g, err := demoGitToken(cfg, conns.names, ledgers, log)
 		if err != nil {
 			return err
 		}
 		runnables = append(runnables, g)
 	}
-	for _, rp := range cfg.Repos() {
-		c, _ := conns.get(rp.Name)
-		name := rp.Name
-		poller := &intake.IssuePoller{Forge: c.gh, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
-			Repository: name, Demo: cfg.Demo, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: live,
-			CanWrite: func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
-			Proposal: proposal}
-		poller.Redact = redactor
-		runnables = append(runnables, poller)
-	}
-	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
-		runlore, ok := conns.get(cfg.RunLoreRepository())
+	// One issue poller per served repository, following the set as publishes change it (D12).
+	pollers := &intake.Pollers{Log: log, New: func(name string) (*intake.IssuePoller, bool) {
+		c, ok := conns.get(name)
 		if !ok {
+			return nil, false
+		}
+		return &intake.IssuePoller{Forge: c.gh, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
+			Repository: name, Demo: cfg.Demo, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: ledgers,
+			CanWrite: func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
+			Proposal: proposal, Redact: redactor}, true
+	}}
+	pollers.Sync(conns.names())
+	runnables = append(runnables, pollers)
+	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
+		if _, ok := conns.get(cfg.RunLoreRepository()); !ok {
 			return fmt.Errorf("runlore.repository %s has no GitHub connection", cfg.RunLoreRepository())
 		}
 		// FA-8: RunLore pushes findings over the tailnet; the token file is re-read per request,
-		// so the ExternalSecret's rotations need no restart (AGENTS.md).
-		runnables = append(runnables, &intake.RunLore{Forge: runlore.gh, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
+		// so the ExternalSecret's rotations need no restart (AGENTS.md). Its connection is looked
+		// up per finding: the repository set is live (D12).
+		runnables = append(runnables, &intake.RunLore{Forges: func(repo string) (intake.RunLoreForge, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false // a nil interface, never a typed-nil *forge.GitHub
+			}
+			return c.gh, true
+		}, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Token: func() string {
 				b, _ := os.ReadFile(filepath.Clean(cfg.RunLore.TokenFile))
 				return strings.TrimSpace(string(b))
 			},
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log})
 	}
+	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, kick: fenced.Kick}
 	for _, r := range append(runnables,
-		&intake.Scheduler{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
+		&intake.Scheduler{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
 		// MC10: off unless a class adopts; leader-only, through the Scheduler's connections.
-		&intake.Adopter{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: cfg,
+		&intake.Adopter{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
 		&meter.Meter{Runs: rc, Source: vm, PerReplica: cfg.Meter.ByReplica(), Every: cfg.Poll.Meter.Duration, OnRevoke: m.RunRevoked, Log: log,
 			OnCharge: m.Charged, OnCharges: m.RunCharges,
-			Prices: cfg.Meter.Prices, RunUSD: runUSD, OnCost: m.RunCost, OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
+			Cfg: live, OnCost: runCost(m), OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
-			Throttle: throttle(cfg),
-			Budgets:  cfg.Budgets, B1Ceiling: config.RunTokenCeiling, Now: time.Now,
+			Throttle:  throttle(cfg),
+			B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,
-			Ledger: live, Tasks: mgr.GetClient(), Namespace: ns},
+			Ledger: ledgers, Tasks: mgr.GetClient(), Namespace: ns},
 		&killswitch.Sweeper{Reader: mgr.GetClient(), Namespace: ns, Runs: rc, Every: 15 * time.Second,
 			Release: func(ctx context.Context, r runs.Run) error {
-				return ledger.Release(ctx, live, ns, time.Now(), r.ID) // admission reads today's ledger only
+				return ledger.Release(ctx, ledgers, ns, time.Now(), r.ID) // admission reads today's ledger only
 			},
 			OnSweep: func(revoked []runs.Run) {
 				for _, r := range revoked {
 					m.Revoked(fmetrics.WithPrincipal(ctx, r.Payer()), "manual")
 				}
 			}, Log: log},
-		apiSrv, fenced,
+		apiSrv, fenced, &retrier{every: pingEvery, retry: func(ctx context.Context) { wired.retry(ctx, live.Current) }},
 		&pinger{ping: conns.ping, every: pingEvery, up: func() bool { return conns.healthy(time.Now()) }, record: m.GitHubUp},
 	) {
 		if err := mgr.Add(r); err != nil {
 			return fmt.Errorf("manager: %w", err)
 		}
 	}
-	down := newDrainFlag(ctx)
-	ops := factoryOps(mgr.GetCache().WaitForCacheSync, down.Draining, exp.Handler())
-	return serveFactory(ctx, log, mgr, ops, down, ns)
+	// D12: each publish re-wires the repositories and re-derives what the startup derived. It is
+	// registered once every runnable is built, and a failure in it is logged, never fatal.
+	live.Subscribe(onPublish(ctx, wired))
+	gate.serve(mgr.GetCache().WaitForCacheSync)
+	return serveFactory(ops.ctx, log, mgr, down, ns)
 }
 
-// serveFactory runs the manager until ctx ends or it fails; :9090 stops last, so the drain's
-// final counts are scraped and /readyz answers 503 meanwhile, as the broker's does.
-func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, ops http.Handler, down *drainFlag, ns string) error {
+// opsRun is :9090 serving from the start of runFactory. ctx is the run's: :9090 failing cancels
+// it, as the pod is then unprobeable.
+type opsRun struct {
+	ctx       context.Context
+	cancelRun context.CancelFunc
+	stopOps   context.CancelFunc
+	done      chan error
+}
+
+// startOps serves h on opsAddr until stop.
+func startOps(ctx context.Context, log *slog.Logger, h http.Handler) (*opsRun, error) {
 	var lc net.ListenConfig
-	opsLn, err := lc.Listen(ctx, "tcp", opsAddr)
+	ln, err := lc.Listen(ctx, "tcp", opsAddr)
 	if err != nil {
-		return fmt.Errorf("ops listener: %w", err)
+		return nil, fmt.Errorf("ops listener: %w", err)
 	}
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
+	o := &opsRun{done: make(chan error, 1)}
+	o.ctx, o.cancelRun = context.WithCancel(ctx)
 	opsCtx, stopOps := context.WithCancel(context.WithoutCancel(ctx))
-	defer stopOps()
-	opsDone := make(chan error, 1)
+	o.stopOps = stopOps
 	go func() {
-		err := serveHTTP(opsCtx, opsServer(ops, log), opsLn, opsDrain)
+		err := serveHTTP(opsCtx, opsServer(h, log), ln, opsDrain)
 		if err != nil {
-			cancelRun() // :9090 failing takes the rest down: the pod is unprobeable
+			o.cancelRun()
 		}
-		opsDone <- err
+		o.done <- err
 	}()
-	g, gctx := errgroup.WithContext(runCtx)
+	return o, nil
+}
+
+// stop drains :9090 and returns its error; call it once, after everything else stopped.
+func (o *opsRun) stop() error {
+	o.stopOps()
+	o.cancelRun()
+	return <-o.done
+}
+
+// serveFactory runs the manager until ctx ends or it fails; :9090 (opsRun) stops after it, so the
+// drain's final counts are scraped and /readyz answers 503 meanwhile, as the broker's does.
+func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, down *drainFlag, ns string) error {
+	g, gctx := errgroup.WithContext(ctx)
 	stopWatch := context.AfterFunc(gctx, down.Begin) // the manager dying is a shutdown too
 	defer stopWatch()
 	g.Go(func() error {
@@ -550,24 +654,208 @@ func serveFactory(ctx context.Context, log *slog.Logger, mgr manager.Manager, op
 		return nil
 	})
 	log.Info("agent-factory starting", "version", version.Version, "namespace", ns)
-	err = g.Wait()
-	stopOps()
-	return errors.Join(err, <-opsDone)
+	return g.Wait()
 }
 
+// firstSync builds the config from the file at cfgPath and the factory's resources in ns, through
+// a plain client: the manager, whose reader the Source moves to next, needs the config to be
+// built. The file is read and its shape checked first (config.CheckShape), so a missing, empty or
+// malformed one fails before any cluster call. While nothing can
+// be served it waits for the resources (waitServable); any other error, including an unreachable
+// API server, fails the start (D14). kinds are the resource kinds the API server serves
+// (servedKinds), read once the config serves.
+func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string, gate *startupGate) (src *configsource.Source, kinds []client.Object, err error) {
+	raw, err := os.ReadFile(filepath.Clean(cfgPath))
+	if err != nil {
+		return nil, nil, fmt.Errorf("config: %w", err)
+	}
+	// A file no resource can fix fails at once; only a file waiting for its resources waits.
+	if err := config.CheckShape(raw); err != nil {
+		return nil, nil, err
+	}
+	restCfg, err := ctrl.GetConfig()
+	if err != nil {
+		return nil, nil, fmt.Errorf("kubeconfig: %w", err)
+	}
+	// The plain client reads the factory's own kinds only: the runs kind, which factoryScheme
+	// needs, is a startup field of the config this builds.
+	scheme := runtime.NewScheme()
+	if err := factoryv1.AddToScheme(scheme); err != nil {
+		return nil, nil, err
+	}
+	plain, err := client.New(restCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, nil, fmt.Errorf("config client: %w", err)
+	}
+	src = &configsource.Source{Reader: plain, Namespace: ns, File: raw, Log: log}
+	if err := waitServable(ctx, log, gate, src.Sync, waitStateOf(src), servableFirst, servableMax, servableLogEvery); err != nil {
+		return nil, nil, forbiddenHint(err, ns)
+	}
+	if kinds, err = servedKinds(plain); err != nil {
+		return nil, nil, err
+	}
+	return src, kinds, nil
+}
+
+// forbiddenHint names the Role rule a refused list needs; the start still fails.
+func forbiddenHint(err error, ns string) error {
+	if !apierrors.IsForbidden(err) {
+		return err
+	}
+	return fmt.Errorf("%w: the factory's Role in %s must grant get, list and watch on factories, repositories and mergepolicies (maku.ogenki.io)", err, ns)
+}
+
+// servedKinds are the factory's resource kinds the API server serves: the manager caches only
+// those, as a ByObject entry for a kind with no CRD fails the manager's construction. A CRD
+// installed later is read by the Source's periodic resync, and watched from the next start.
+func servedKinds(c client.Client) ([]client.Object, error) {
+	var out []client.Object
+	for _, obj := range configsource.Kinds() {
+		if _, err := c.IsObjectNamespaced(obj); meta.IsNoMatchError(err) {
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("factory resources: %w", err)
+		}
+		out = append(out, obj)
+	}
+	return out, nil
+}
+
+// publishMetrics are the series a publish re-derives (fmetrics.Set).
+type publishMetrics interface {
+	holdoutGauge
+	ClassWithHoldout(ctx context.Context, repository, class string)
+	ConfigWireError(ctx context.Context, repository string)
+	ListRepositories(names ...string)
+	ChargePeople(on bool)
+	RunBudgetUSD(ctx context.Context, tier string, usd float64)
+}
+
+// wiring is what follows the served repository set (D12): the connections, the issue pollers,
+// the repository list of the metrics and the fence.
+type wiring struct {
+	log     *slog.Logger
+	conns   *repoConns
+	pollers interface{ Sync(repos []string) }
+	m       publishMetrics
+	kick    func() // a fence refresh, not waiting for it; nil kicks nothing
+
+	// servedMu holds a served() from reading the set to applying it, so a retry that read the set
+	// before a publish changed it cannot apply it after the publish's.
+	servedMu sync.Mutex
+}
+
+// served moves the pollers, the metrics' repository list and the fence onto the served set once
+// a sync changed it. A dropped repository's repository_owned keeps its last value: a 0 would
+// fire FactoryRepositoryNotOwned for a repository nobody serves.
+func (w *wiring) served() []string {
+	w.servedMu.Lock()
+	defer w.servedMu.Unlock()
+	names := w.conns.names()
+	w.m.ListRepositories(names...)
+	w.pollers.Sync(names)
+	if w.kick != nil {
+		w.kick()
+	}
+	return names
+}
+
+// guard keeps a panic in the wiring from crashing the process: logged and counted under "*".
+func (w *wiring) guard(ctx context.Context) {
+	if r := recover(); r != nil {
+		w.log.Error("config wiring panicked: the factory keeps serving what it had", "panic", r, "stack", string(debug.Stack()))
+		w.m.ConfigWireError(ctx, "*")
+	}
+}
+
+// onPublish is the config's subscriber (D12): it wires the repositories next lists (a failure is
+// logged, counted and retried, never fatal), moves what follows the served set onto it, and
+// re-derives the startup's gauges: per-person charging, each tier's run budget (0 for a tier no
+// longer capped) and the live classes without holdoutChecks (0 for one no longer so).
+func onPublish(ctx context.Context, w *wiring) func(prev, next *config.Config) {
+	return func(prev, next *config.Config) {
+		defer w.guard(ctx)
+		if err := w.conns.sync(ctx, next); err != nil {
+			w.log.Error("config published: a repository is not wired yet; retried every minute", "err", err)
+		}
+		gaps := withoutHoldout(next)
+		for _, g := range withoutHoldout(prev) {
+			if !slices.Contains(gaps, g) {
+				w.m.ClassWithHoldout(ctx, g.repository, g.class) // while the list still names it
+			}
+		}
+		names := w.served()
+		w.m.ChargePeople(next.Budgets.PerPerson.Enabled)
+		budgets := meter.RunUSD(next)
+		for tier := range meter.RunUSD(prev) {
+			if _, ok := budgets[tier]; !ok {
+				w.m.RunBudgetUSD(ctx, tier, 0)
+			}
+		}
+		for tier, usd := range budgets {
+			w.m.RunBudgetUSD(ctx, tier, usd)
+		}
+		warnConfig(w.log, next, w.m)
+		w.log.Info("config published", "hash", next.Hash, "repositories", names)
+	}
+}
+
+// retry wires cur() again while a repository failed to wire (I1), then follows the served set.
+func (w *wiring) retry(ctx context.Context, cur func() *config.Config) {
+	defer w.guard(ctx)
+	ran, err := w.conns.retry(ctx, cur)
+	if !ran {
+		return
+	}
+	if err != nil {
+		w.log.Warn("config wiring retried: a repository is still not wired", "err", err)
+	} else {
+		w.log.Info("config wiring retried: every repository is wired")
+	}
+	w.served()
+}
+
+// retrier retries a failed wiring every period on every replica: each wires its own connections.
+type retrier struct {
+	every time.Duration
+	retry func(context.Context)
+}
+
+// NeedLeaderElection is false: the API and the fence serve from every replica's connections.
+func (*retrier) NeedLeaderElection() bool { return false }
+
+// Start retries at each period until ctx ends.
+func (r *retrier) Start(ctx context.Context) error {
+	t := time.NewTicker(r.every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-t.C:
+			r.retry(ctx)
+		}
+	}
+}
+
+// errMergerKeyMissing is a merger key a class needs and the pod does not mount: the repository is
+// left out, whether it was served or not.
+var errMergerKeyMissing = errors.New("merger App key missing")
+
 // connectMerger connects the merger App, or answers the fail-closed forge.Absent when its key
-// is not mounted and no class needs it (#57: the chart mounts the Secret optional). A class
-// live or in shadow reads checks through the merger, so for it a missing key stops the start.
+// is not mounted and no class of the repository needs it (#57: the chart mounts the Secret
+// optional). A class live or in shadow reads checks through the merger, so for it a missing key
+// fails the repository: the start, or the publish that made the class need it.
 func connectMerger(ctx context.Context, log *slog.Logger, cfg *config.Config, repository string) (forge.Merger, error) {
 	idFile := cfg.GitHub.MergerAppIDFile
 	if idFile != "" {
 		_, err := os.Stat(filepath.Clean(idFile))
 		switch {
 		case err == nil:
-		case errors.Is(err, os.ErrNotExist) && !cfg.NeedsMerger():
+		case errors.Is(err, os.ErrNotExist) && !cfg.RepositoryFor(repository).NeedsMerger():
 			idFile = ""
 		case errors.Is(err, os.ErrNotExist):
-			return nil, fmt.Errorf("merger App key %s is missing, and a live or shadow class needs it: create the agent-factory-merger Secret or turn the class off", idFile)
+			return nil, fmt.Errorf("%w: %s is not mounted, and a live or shadow class needs it: create the agent-factory-merger Secret or turn the class off", errMergerKeyMissing, idFile)
 		}
 	}
 	if idFile == "" {
@@ -597,8 +885,9 @@ func taskSink(ctx context.Context, endpoint string) (tracing.Sink, trace.TracerP
 	}, nil
 }
 
-// factoryOps is :9090 for the factory: /readyz once the caches synced; /startupz at once, since
-// the server starts only after the config parsed. Readiness does not look at GitHub (#58): an
+// factoryOps is :9090 for the factory: /readyz once the caches synced; /startupz at once, as the
+// server starts before the first Sync and a factory waiting for its resources (waitServable) must
+// not be killed by the startup probe. Readiness does not look at GitHub (#58): an
 // outage would unready every replica at once, and an unready replica serves nothing less than a
 // ready one — the API and the intake need no GitHub call to answer, and the loops that do
 // retry on their own. The outage shows in the loops' error logs and the intake error counter.
@@ -620,32 +909,36 @@ func elected(mgr manager.Manager) func() bool {
 	}
 }
 
-// factoryManagerOptions caches Tasks, Rooms and the stop object in the factory's namespace and
-// kind's AgentRuns in theirs only: the chart's Roles grant exactly that. Unstructured reads stay
+// factoryManagerOptions caches Tasks, Rooms, the stop object and the served factory resources in
+// the factory's namespace and kind's AgentRuns in theirs only: the chart's Roles grant exactly that. Unstructured reads stay
 // uncached, so a stop's run list sees the API server (ruling SN), not the watch.
-func factoryManagerOptions(ns string, kind runwatch.Kind) ctrl.Options {
+func factoryManagerOptions(ns string, kind runwatch.Kind, resources []client.Object) ctrl.Options {
 	runObj := &unstructured.Unstructured{}
 	runObj.SetGroupVersionKind(kind.GVK())
 	drain := managerDrain
 	here := map[string]cache.Config{ns: {}}
+	byObject := map[client.Object]cache.ByObject{
+		&factoryv1.Task{}: {Namespaces: here},
+		&v1alpha1.Room{}:  {Namespaces: here},
+		&corev1.ConfigMap{}: {Namespaces: here,
+			Field: fields.OneTermEqualSelector("metadata.name", killswitch.ConfigMap)},
+		runObj: {Namespaces: map[string]cache.Config{kind.Namespace: {}}},
+	}
+	for _, obj := range resources { // the config's own kinds (D5), watched in the factory's namespace
+		byObject[obj] = cache.ByObject{Namespaces: here}
+	}
 	return ctrl.Options{
 		LeaderElection: true, LeaderElectionID: "agent-factory.agents.ogenki.io", LeaderElectionNamespace: ns,
 		LeaderElectionReleaseOnCancel: true, GracefulShutdownTimeout: &drain,
 		// :9090 serves the agent_factory_* set and the probes itself.
 		Metrics: metricsserver.Options{BindAddress: "0"}, HealthProbeBindAddress: "0",
-		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
-			&factoryv1.Task{}: {Namespaces: here},
-			&v1alpha1.Room{}:  {Namespaces: here},
-			&corev1.ConfigMap{}: {Namespaces: here,
-				Field: fields.OneTermEqualSelector("metadata.name", killswitch.ConfigMap)},
-			runObj: {Namespaces: map[string]cache.Config{kind.Namespace: {}}},
-		}},
+		Cache:  cache.Options{ByObject: byObject},
 		Client: client.Options{Cache: &client.CacheOptions{Unstructured: false}},
 	}
 }
 
 // newFactoryManager builds the manager on factoryManagerOptions, logging through log.
-func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Manager, error) {
+func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind, resources []client.Object) (ctrl.Manager, error) {
 	lr := logr.FromSlogHandler(log.Handler())
 	// controller-runtime and client-go's leader election log through these globals.
 	ctrl.SetLogger(lr)
@@ -658,7 +951,7 @@ func newFactoryManager(log *slog.Logger, ns string, kind runwatch.Kind) (ctrl.Ma
 	if err != nil {
 		return nil, err
 	}
-	opts := factoryManagerOptions(ns, kind)
+	opts := factoryManagerOptions(ns, kind, resources)
 	opts.Scheme, opts.Logger = scheme, lr
 	mgr, err := ctrl.NewManager(restCfg, opts)
 	if err != nil {
@@ -751,4 +1044,11 @@ func (e policyEditor) Preview(ctx context.Context, repository, file string) (any
 
 func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {
 	return e.Service.Timeline(ctx, repository, pr)
+}
+
+// runCost hands the meter's cost report to the metric, key by key.
+func runCost(m *fmetrics.Set) func(context.Context, meter.CostKey, float64, map[string]float64) {
+	return func(ctx context.Context, k meter.CostKey, usd float64, by map[string]float64) {
+		m.RunCost(ctx, k.Tier, k.Role, k.Cohort, k.Profile, usd, by)
+	}
 }

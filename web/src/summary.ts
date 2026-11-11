@@ -9,6 +9,7 @@
 import { api, type NeedItem } from "./api";
 import type { RoomEvent } from "./conn";
 import { approvalAnchor, el } from "./controls";
+import { ago as durationAgo, timeEl } from "./duration";
 
 export interface RunModel { run: string; model?: string; effort?: string }
 
@@ -16,7 +17,7 @@ export interface FlowNode {
   run: string; persona: string; role: string; round: number;
   startedAt?: string; endedAt?: string; fromSeq: number; toSeq: number; outcome?: string;
   verdict?: string; microUSD?: number; model?: string; models?: string[]; effort?: string; judge?: { count: number; last: string };
-  tools: { ok: number; failed: number }; edge?: string; startedBy?: string; reason?: string; handoff?: string;
+  tools: { ok: number; failed: number }; steered?: number; chat?: number; edge?: string; startedBy?: string; reason?: string; handoff?: string;
 }
 export interface Milestone { phase: string; at: string; seq: number }
 export interface SplitPart { index: number; issue: number; room: string; outcome?: string }
@@ -77,6 +78,8 @@ export interface Summary {
     task?: string; // the room's Task, named as the room; absent without one
     run: { id: string; role: string; trigger?: string; startedAt?: string; endedAt?: string } | null;
     budget: { usedTokens: number; limitTokens: number } | null;
+    // The task's active harness profile and evaluation cohort; absent in older/profile-free rooms.
+    profile?: { name: string; source: string; cohort: string; recommended?: string; reason?: string; why?: string };
     // spend is the task's dollars, beside budget's tokens, and spendFinal is CD23: the factory's claim
     // that the figure is the task's last. Both absent while the dollars may still move, and for a task
     // whose runs the meter could not price — spendWords reads them, and no surface prints the figure
@@ -122,6 +125,8 @@ export interface Summary {
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
   actions: { kind: string; what: string; cli?: string }[];
   notes: { untrusted: true; items: { at: string; run: string; text: string }[] };
+  // The notes queued for the next run, oldest first; absent when none waits (omitzero).
+  queued?: { untrusted: true; items: { ref: number; author: string; text: string }[] };
   flow?: Flow;
   coordination?: CoordinationView;
   cursor: string;
@@ -140,13 +145,15 @@ export async function fetchSummary(id: string, get: typeof fetch = fetch): Promi
   return s;
 }
 
-// changesSummary is whether the broker's fold (internal/summary) reads e: only then is the
-// summary refetched, never on a run's chat or tool calls.
+// changesSummary is whether the summary reads e, in the broker's fold (internal/summary) or in the
+// queue it attaches: only then is the summary refetched, never on a run's chat or tool calls. A
+// human's message moves a node's steered or chat count, or the queued notes; a queued note moves
+// the queue whoever posts it (a sponsored principal posts as a system actor).
 export function changesSummary(e: RoomEvent): boolean {
   const kind = e.payload?.kind;
   switch (e.type) {
-    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase";
-    case "message": return kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
+    case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase" || kind === "queued_removed";
+    case "message": return e.actor?.kind === "human" || e.payload?.delivery === "queued" || kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
     case "handoff": case "participant": return true;
     case "approval_requested": case "approval_decided": return true;
   }
@@ -166,14 +173,10 @@ export function when(iso: string): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-// ago reads a timestamp relative to now: "12 s ago", "4 min ago", "2 h ago".
+// ago reads a timestamp relative to now by the one duration rule: "just now", "4 min ago", "37 d ago".
 export function ago(iso: string, now: number): string {
   const t = Date.parse(iso);
-  if (isNaN(t)) return "";
-  const s = Math.max(0, Math.floor((now - t) / 1000));
-  if (s < 60) return `${s} s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  return `${Math.floor(s / 3600)} h ago`;
+  return isNaN(t) ? "" : durationAgo(now - t);
 }
 
 // focusApproval reveals the approval card for id in the needs-you panel and focuses its
@@ -251,8 +254,11 @@ export function renderNotes(root: HTMLElement, s: Summary, now = Date.now()): vo
   const box = el("div", { className: "notes" });
   box.dataset.block = "notes";
   const latest = el("p", { className: "note-latest" });
-  latest.append(el("span", { textContent: [last.run, ago(last.at, now), last.text].filter(Boolean).join(" · ") }),
-    el("span", { className: "hint", textContent: "the agent's claim" }));
+  const lead = el("span", { textContent: last.run ?? "" });
+  const at = Date.parse(last.at);
+  if (!isNaN(at)) lead.append(last.run ? " · " : "", timeEl(now - at, last.at, "ago"));
+  if (last.text) lead.append(lead.textContent ? " · " : "", last.text);
+  latest.append(lead, el("span", { className: "hint", textContent: "the agent's claim" }));
   box.append(latest);
   const rest = items.slice(0, -1).reverse();
   if (rest.length) {

@@ -27,6 +27,20 @@ func view(st summary.State, room, url string, sub policy.Subject, after int64, n
 	return summary.View(st, room, url, sub, summary.GitHubStanding{}, after, now)
 }
 
+func TestSummaryIncludesProfile(t *testing.T) {
+	p := &envelope.ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+	st := summary.State{Facts: &envelope.TaskFacts{Phase: "Done", Profile: p}}
+	s := view(st, "3kq7x2ma", "https://rooms.example/r/3kq7x2ma", owner(), 0, time.Now())
+	if !reflect.DeepEqual(s.Status.Profile, p) {
+		t.Fatalf("profile = %+v, want %+v", s.Status.Profile, p)
+	}
+	st.Facts.Profile = nil
+	if s := view(st, "3kq7x2ma", "https://rooms.example/r/3kq7x2ma", owner(), 0, time.Now()); s.Status.Profile != nil {
+		t.Fatalf("profile without facts = %+v", s.Status.Profile)
+	}
+}
+
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.json want fields from the current fold")
 
 var goldens = []string{"normal", "resumed", "expired_approval", "sealed", "no_facts", "runs_and_spend", "hostile"}
@@ -597,5 +611,22 @@ func TestACloneFoldsApart(t *testing.T) {
 	}
 	if len(c.Pending) != 0 || len(c.Agents) != 0 || len(c.Notes) != 2 || c.LLM.Effort != "high" || c.PrevLLM.Effort != "high" {
 		t.Fatalf("the clone did not fold on: %+v", c)
+	}
+	// The humans' messages too: three in the prefix leave their slice room to grow in place, so two
+	// clones that each add one must not write the same slot.
+	human := envelope.Actor{Kind: envelope.ActorHuman, ID: "human:ana"}
+	say := func(seq int64, d envelope.Delivery) envelope.Event {
+		e := ev(seq, envelope.Message, human, envelope.MessagePayload{Kind: envelope.KindChat, Text: "hi", Delivery: d})
+		e.RunID = "" // a human's message belongs to no run
+		return e
+	}
+	said := append(slices.Clone(prefix), say(6, envelope.DeliverySteering), say(7, envelope.DeliveryNone), say(8, envelope.DeliverySteering))
+	steer, chat := []envelope.Event{say(9, envelope.DeliverySteering)}, []envelope.Event{say(9, envelope.DeliveryNone)}
+	from := summary.Fold(said)
+	a, b := from.Clone(), from.Clone()
+	a.Add(steer)
+	b.Add(chat)
+	if !reflect.DeepEqual(a, summary.Fold(append(slices.Clone(said), steer...))) || !reflect.DeepEqual(b, summary.Fold(append(slices.Clone(said), chat...))) {
+		t.Fatal("two clones folding the humans' messages wrote into each other")
 	}
 }

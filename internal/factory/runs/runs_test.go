@@ -276,7 +276,7 @@ func TestAnnotateRefusesTheCreateOnlyKeys(t *testing.T) {
 	if err := c.Create(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnMaxMicroUSD} {
+	for _, key := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnMaxMicroUSD, AnnCohort, AnnProfile} {
 		if err := c.Annotate(t.Context(), s.RunID, map[string]string{key: "https://github.com/Smana/cloud-native-ref/issues/1"}); err == nil {
 			t.Errorf("%s was patched", key)
 		}
@@ -402,6 +402,21 @@ func TestChargedToRoundTrips(t *testing.T) {
 	}
 	if r, _ := FromUnstructured(runwatch.DefaultKind, Build(runwatch.DefaultKind, spec())); r.ChargedTo != "" || Build(runwatch.DefaultKind, spec()).GetAnnotations()[AnnChargedTo] != "" {
 		t.Fatal("no person, no annotation")
+	}
+}
+
+// R34: the task's cohort and profile ride the claim from CREATE, so the meter labels the run's cost
+// with what the task ran under; a task without a profile writes neither.
+func TestCohortAndProfileRoundTrip(t *testing.T) {
+	s := spec()
+	s.Cohort, s.Profile = "treatment", "review-search"
+	r, ok := FromUnstructured(runwatch.DefaultKind, Build(runwatch.DefaultKind, s))
+	if !ok || r.Cohort != "treatment" || r.Profile != "review-search" {
+		t.Fatalf("%+v", r)
+	}
+	ann := Build(runwatch.DefaultKind, spec()).GetAnnotations()
+	if r, _ := FromUnstructured(runwatch.DefaultKind, Build(runwatch.DefaultKind, spec())); r.Cohort != "" || r.Profile != "" || ann[AnnCohort] != "" || ann[AnnProfile] != "" {
+		t.Fatal("no profile, no annotation")
 	}
 }
 

@@ -59,7 +59,7 @@ func TestRow2bTheContractCheckIsRequiredOnATaskWithAContract(t *testing.T) {
 func contractMergeRig(t *testing.T) *rig {
 	t.Helper()
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Merge.ContractCheck = contractCheck
+	g.r.Cfg.Current().Merge.ContractCheck = contractCheck
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 	tk.Status.Contract = contractOf()

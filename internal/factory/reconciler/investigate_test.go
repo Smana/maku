@@ -17,7 +17,7 @@ func investigateRig(t *testing.T) *rig {
 	tk := issueTask("3buqdlot", 7, "# image-gallery crash-loops")
 	tk.Spec.Source.Kind, tk.Spec.DataClass = "runlore", "internal"
 	g := newRig(t, tk)
-	g.r.Cfg.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
+	g.r.Cfg.Current().Templates["investigate"] = config.Template{Roles: []string{"triager"}}
 	g.r.Triage = staticWith("investigate")
 	return g
 }

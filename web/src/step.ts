@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // A step's summary: what the tool calls an agent ran after one of its messages add up
-// to, as the one line a reader scans (`Ran 3 commands · 1 rejected · 0:15`), and the
+// to, as the one line a reader scans (`Ran 3 commands · 1 rejected · 15 s`), and the
 // state that decides whether the step opens itself. A tally, not a list: chat.ts counts
 // each row in as it lands and out as it leaves, so a step of thousands of calls costs
 // constant time per event (a rescan per event made a 5,000-event replay take a minute).
+
+import { span } from "./duration";
 
 export interface StepCall {
   tool: string;
@@ -59,7 +61,7 @@ export function stepState(t: StepTally): StepState {
 export interface StepLine {
   head: string; // "Running 2 commands", "Ran 1 tool call", "3 changes" for plumbing alone
   exceptions: string; // "1 rejected · 2 failed", or ""
-  duration: string; // "0:15", or "" for one call or none finished
+  duration: string; // "15 s" (duration.ts's span), or "" for one call or none finished
 }
 
 export function stepLine(t: StepTally): StepLine {
@@ -73,10 +75,4 @@ export function stepLine(t: StepTally): StepLine {
     exceptions,
     duration: one || t.end < t.start ? "" : span(t.end - t.start),
   };
-}
-
-// span is a duration in ms as m:ss.
-function span(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }

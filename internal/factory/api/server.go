@@ -75,7 +75,7 @@ type Server struct {
 	// Groups names the two agents groups: policy's StartRun rule is the room UI's rule, so
 	// the CLI grants nothing the UI refuses (SP2 §1).
 	Groups policy.Groups
-	Cfg    *config.Config
+	Cfg    config.Source
 	Runs   RunStore
 	// Rooms is the manager's client: it reads Rooms and Tasks (rights, R35), and R50's
 	// ledger reservation writes ConfigMaps, so a client.Reader would not do.
@@ -157,20 +157,21 @@ func (s *Server) NeedLeaderElection() bool { return false }
 // Handler is the API's mux: POST /v1/runs, admission in §4's order, POST /v1/tasks while a
 // sponsored principal is declared, and the coordination routes while the switch is on.
 func (s *Server) Handler() http.Handler {
+	cfg := s.Cfg.Current()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
-	if len(s.Cfg.API.Sponsored)+len(s.Cfg.API.InternalPrincipals) > 0 { // F4, D4: off until a principal is declared
+	if len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4, D4: off until a principal is declared
 		mux.HandleFunc("POST /v1/tasks", s.createTask)
 	}
-	if s.anyVerifies() { // RA11, D4: a 404 until an internal principal may send verdicts
+	if s.anyVerifies(cfg) { // RA11, D4: a 404 until an internal principal may send verdicts
 		mux.HandleFunc("POST /v1/tasks/{task}/verification", s.recordVerification)
 	}
-	if s.coordinationOn() { // MR16: off lists no coordination route, so each is a 404
+	if s.coordinationOn(cfg) { // MR16: off lists no coordination route, so each is a 404
 		mux.HandleFunc("PUT /v1/coordinations/{task}/draft", s.draftCoordination)
 		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
 		mux.HandleFunc("POST /v1/coordinations/{task}/recovery", s.recoverCoordination)
 	}
-	if s.promotionOn() { // stage 6: off lists no policy route, so each is a 404
+	if s.promotionOn(cfg) { // stage 6: off lists no policy route, so each is a 404
 		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
 		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
 		if s.Editor != nil {
@@ -201,8 +202,9 @@ func (s *Server) Start(ctx context.Context) error {
 // cert-manager renews it (S-1, D6): the broker forwards each human's bearer token here, so it
 // never crosses the cluster network in the clear. A pair that does not load fails the start.
 func (s *Server) listen(ctx context.Context) (net.Listener, error) {
+	cfg := s.Cfg.Current()
 	var tlsCfg *tls.Config
-	if t := s.Cfg.API.TLS; t != nil {
+	if t := cfg.API.TLS; t != nil {
 		c, err := tlsreload.Config(t.CertFile, t.KeyFile, s.Log)
 		if err != nil {
 			return nil, fmt.Errorf("api: api.tls: %w", err)
@@ -210,9 +212,9 @@ func (s *Server) listen(ctx context.Context) (net.Listener, error) {
 		tlsCfg = c
 	}
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", s.Cfg.API.Listen)
+	ln, err := lc.Listen(ctx, "tcp", cfg.API.Listen)
 	if err != nil {
-		return nil, fmt.Errorf("api: listen %s: %w", s.Cfg.API.Listen, err)
+		return nil, fmt.Errorf("api: listen %s: %w", cfg.API.Listen, err)
 	}
 	if tlsCfg != nil {
 		return tls.NewListener(ln, tlsCfg), nil
@@ -250,6 +252,7 @@ func (s *Server) refuseRepository(ctx context.Context, w http.ResponseWriter, co
 // defaults, R35's resume branch, the day's ledger — then creates it with the factory's own
 // id and branch. Refusals name only codes: no claim or principal data echoes back (authn rule).
 func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
 	p, err := s.Auth.Authenticate(r)
 	switch {
 	case errors.Is(err, authn.ErrForbidden):
@@ -278,7 +281,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Exact, not case-insensitive: spec.repository becomes the run's octo-sts audience, so only
 	// the config's spelling is ever written there.
-	if !slices.Contains(s.Cfg.API.Repositories, in.Repository) {
+	if !slices.Contains(cfg.API.Repositories, in.Repository) {
 		refuse(w, http.StatusForbidden, "repository_not_allowed") // OD-6
 		return
 	}
@@ -344,7 +347,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 		branch = "agent/" + in.RoomRef // a room's runs share one branch (C3)
 		// v2 suspend: only an attended room has a human whose approval a run may wait on.
-		suspendable = attended && s.Cfg.Sandbox.Suspend.Enabled
+		suspendable = attended && cfg.Sandbox.Suspend.Enabled
 	}
 	// R37 (owner default): internal data and triagers are the admins'. After the room checks
 	// so a member naming the wrong class for a room they cannot enter learns that first, and
@@ -365,16 +368,16 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// v2 D4/D6, last before the ledger: the one check that asks GitHub, made only for a request
 	// every local rule admitted, so a refused one reserves nothing and costs no call.
-	if !s.mayWrite(r.Context(), p, in.Repository) {
+	if !s.mayWrite(r.Context(), cfg, p, in.Repository) {
 		s.refuseRepository(ctx, w, http.StatusForbidden, "repository_permission")
 		return
 	}
-	person, err := s.person(r.Context(), p, in.Repository)
+	person, err := s.person(r.Context(), cfg, p, in.Repository)
 	if err != nil {
 		refuse(w, http.StatusServiceUnavailable, "identity_unavailable")
 		return
 	}
-	if code, reason := s.reserve(ctx, p, person, id, in); code != 0 {
+	if code, reason := s.reserve(ctx, cfg, p, person, id, in); code != 0 {
 		if reason == reasonPersonOver {
 			s.refuseRepository(fmetrics.WithPrincipal(ctx, person), w, code, reason) // the key over, as the shadow names it
 			return
@@ -594,9 +597,9 @@ func sameRepository(bound, asked string) bool {
 
 // mayWrite is v2 D4 for a human — write or higher on GitHub, admins included — and D6 for a system
 // caller: the repositories api.systemRepositories lists for it. Any doubt refuses.
-func (s *Server) mayWrite(ctx context.Context, p authn.Principal, repository string) bool {
+func (s *Server) mayWrite(ctx context.Context, cfg *config.Config, p authn.Principal, repository string) bool {
 	if p.Kind != envelope.ActorHuman {
-		return slices.ContainsFunc(s.Cfg.API.SystemRepositories[p.ID], func(r string) bool { return strings.EqualFold(r, repository) })
+		return slices.ContainsFunc(cfg.API.SystemRepositories[p.ID], func(r string) bool { return strings.EqualFold(r, repository) })
 	}
 	if s.Access == nil {
 		return false
@@ -610,8 +613,8 @@ const reasonPersonOver = "person_budget_exhausted"
 
 // person is who a human's run is charged to while per-person caps are on (D1): their GitHub
 // login, else their own principal; "" when the caps are off or the caller is a system.
-func (s *Server) person(ctx context.Context, p authn.Principal, repository string) (string, error) {
-	if !s.Cfg.Budgets.PerPerson.Enabled || p.Kind != envelope.ActorHuman {
+func (s *Server) person(ctx context.Context, cfg *config.Config, p authn.Principal, repository string) (string, error) {
+	if !cfg.Budgets.PerPerson.Enabled || p.Kind != envelope.ActorHuman {
 		return "", nil
 	}
 	if s.People == nil {
@@ -630,8 +633,8 @@ func (s *Server) person(ctx context.Context, p authn.Principal, repository strin
 // reserve is R50's admission on the day's ledger (ledger.Reserve), its refusals said in HTTP. A run
 // charged to a person reserves the fleet and the person in one entry (D2, D3). A run request caps
 // in tokens, so it reserves its maxTokens at the reference rate until F4 brings max_cost (TC7).
-func (s *Server) reserve(ctx context.Context, p authn.Principal, person, id string, in RunRequest) (int, string) {
-	b := s.Cfg.Budgets
+func (s *Server) reserve(ctx context.Context, cfg *config.Config, p authn.Principal, person, id string, in RunRequest) (int, string) {
+	b := cfg.Budgets
 	mine := ledger.Reservation{Principal: p.ID, Room: in.RoomRef, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens)}
 	if person != "" {
 		mine.Principal, mine.Person = runs.PrincipalFactory, person
