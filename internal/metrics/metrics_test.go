@@ -631,6 +631,49 @@ func TestProposalCounterName(t *testing.T) {
 	set.ThreadAnswer(ctx, "status")
 }
 
+// Natural-language intents: the classifier's two series are served as maku_intent_classify_*, and the
+// App's reading counter as maku_slack_intents_total, each with its closed labels only.
+func TestIntentInstruments(t *testing.T) {
+	for in, want := range map[string]string{
+		"intent_classify_total":            "maku_intent_classify_total",
+		"intent_classify_duration_seconds": "maku_intent_classify_duration_seconds",
+		"slack_intents_total":              "maku_slack_intents_total",
+	} {
+		if got := MakuName(in); got != want {
+			t.Errorf("MakuName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	set, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.IntentClassify(ctx, "ok")
+	set.IntentClassify(ctx, "capped")
+	set.IntentClassifySeconds(ctx, 250*time.Millisecond)
+	p, err := NewSlackProposals(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SlackIntent(ctx, "1", "stop", "shadowed")
+	got := series(scrape(t, exp.Handler()))
+	for key, want := range map[string]string{
+		`maku_intent_classify_total{outcome="ok"}`:                            "1",
+		`maku_intent_classify_total{outcome="capped"}`:                        "1",
+		`maku_intent_classify_duration_seconds_count`:                         "1",
+		`maku_slack_intents_total{intent="stop",outcome="shadowed",tier="1"}`: "1",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q: %v", key, got[key], want, got)
+		}
+	}
+}
+
 // v4 coordination: what a parent's views and checkout documents became, by a closed outcome only;
 // no repository, viewer, family or plan text is a label.
 func TestCoordinationInstruments(t *testing.T) {

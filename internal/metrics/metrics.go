@@ -84,6 +84,10 @@ func MakuName(name string) string {
 		// an instrument spelled rooms_intake_* could not produce (it would read
 		// maku_rooms_intake_*), and which the dashboard queries byte for byte.
 		return "maku_" + name
+	case strings.HasPrefix(name, "intent_"):
+		// The classifier's family (natural-language intents, SI3) is intent_classify_*, served as
+		// maku_intent_classify_*: the spec's series names, byte for byte.
+		return "maku_" + name
 	case strings.HasPrefix(name, "revision_"):
 		// CD22's counter is maku_revision_deferred_total, as the design's table and its live proof
 		// write it: an agent_factory_* instrument would be served as maku_factory_revision_deferred_*.
@@ -221,6 +225,11 @@ type Set struct {
 	intakePlanTokens  metric.Int64Counter
 	intakeCatalogue   metric.Int64Counter
 
+	// The classifier's two series: intent_classify_total{outcome} and its duration, intent_* in Go,
+	// maku_intent_* on scrape, with the closed outcome list intent.Outcome names.
+	intentClassifies      metric.Int64Counter
+	intentClassifySeconds metric.Float64Histogram
+
 	// slack is the Slack App's two proposal families (CD7, CD25). The broker's Set carries them so their
 	// names, descriptions and label vocabularies have one spelling; only the App records on them, and
 	// it makes its own with NewSlackProposals rather than building a Set, whose room gauges are the
@@ -312,6 +321,15 @@ func New(meter metric.Meter) (*Set, error) {
 	// intake_catalogue_reads_total{outcome}: the broker's reads of the factory's catalogue; hit came
 	// from its cache, miss from the factory, error is a read that failed (never cached).
 	s.intakeCatalogue, err = meter.Int64Counter("intake_catalogue_reads_total", metric.WithDescription("Catalogue reads by the broker, from cache, from the factory or failed."))
+	check(err)
+	// intent_classify_total{outcome} and intent_classify_duration_seconds: whether the classifier
+	// works and how long a reply waits for it. The 5 s deadline is the top bucket's neighbour.
+	s.intentClassifies, err = meter.Int64Counter("intent_classify_total",
+		metric.WithDescription("Classifications the broker made of a Slack reply, by the closed outcome."))
+	check(err)
+	s.intentClassifySeconds, err = meter.Float64Histogram("intent_classify_duration_seconds",
+		metric.WithDescription("One intent_classify, its model call included."),
+		metric.WithExplicitBucketBoundaries(0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10))
 	check(err)
 	// needs_list_total{surface,principal,outcome} -> maku_needs_list_total (MakuName's needs_ case):
 	// needs/v1's adoption, per door and per caller.
@@ -601,6 +619,17 @@ func (s *Set) IntakePlanTokens(ctx context.Context, surface, kind string, n int6
 		metric.WithAttributes(attribute.String("surface", surface), attribute.String("kind", kind)))
 }
 
+// IntentClassify counts one classification: outcome is ok, low_confidence, invalid_output, timeout,
+// capped or error. The reply, the person and the label never label a series.
+func (s *Set) IntentClassify(ctx context.Context, outcome string) {
+	s.intentClassifies.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+}
+
+// IntentClassifySeconds records one classification's duration, the model call included.
+func (s *Set) IntentClassifySeconds(ctx context.Context, d time.Duration) {
+	s.intentClassifySeconds.Record(ctx, d.Seconds())
+}
+
 // SlackProposals is the Slack App's two proposal families (CD7, CD25), on whatever meter the binary
 // serves: what the proposal flows did, slack_proposal_updates_total{action}, and what a filed
 // proposal's thread answered, slack_thread_answers_total{question}. The instrument names carry the
@@ -613,6 +642,7 @@ type SlackProposals struct {
 	updates     metric.Int64Counter
 	answers     metric.Int64Counter
 	projections metric.Int64Counter
+	intents     metric.Int64Counter
 }
 
 // NewSlackProposals makes both proposal families on meter.
@@ -631,6 +661,10 @@ func NewSlackProposals(meter metric.Meter) (*SlackProposals, error) {
 	if p.answers, err = meter.Int64Counter("slack_thread_answers_total",
 		metric.WithDescription("Answers a proposal's thread gave, by the closed question (CD25).")); err != nil {
 		return nil, fmt.Errorf("metrics: slack_thread_answers_total: %w", err)
+	}
+	if p.intents, err = meter.Int64Counter("slack_intents_total",
+		metric.WithDescription("Replies read by tier and intent, by the closed outcome (natural-language intents).")); err != nil {
+		return nil, fmt.Errorf("metrics: slack_intents_total: %w", err)
 	}
 	if p.projections, err = meter.Int64Counter("slack_coordination_projection_total",
 		metric.WithDescription("Coordination deliveries, by what the thread's channel may see: full, coarse or dropped (v4).")); err != nil {
@@ -664,6 +698,14 @@ func (p *SlackProposals) ProposalUpdate(ctx context.Context, action string) {
 // stop or unknown, one word per question asked.
 func (p *SlackProposals) ThreadAnswer(ctx context.Context, question string) {
 	p.answers.Add(ctx, 1, metric.WithAttributes(attribute.String("question", question)))
+}
+
+// SlackIntent counts one reply read by the second tier (natural-language intents): tier is "0" or
+// "1", intent one of the nine, outcome from the closed list (answered, shadowed, proposed, confirmed,
+// cancelled, expired, refused, not_enabled, not_author). No reply text ever labels a series.
+func (p *SlackProposals) SlackIntent(ctx context.Context, tier, intent, outcome string) {
+	p.intents.Add(ctx, 1, metric.WithAttributes(attribute.String("tier", tier),
+		attribute.String("intent", intent), attribute.String("outcome", outcome)))
 }
 
 // ProposalUpdate counts one proposal action on the broker's set, where the families are carried so

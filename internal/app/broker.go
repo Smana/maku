@@ -41,6 +41,7 @@ import (
 	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/humanapi/ui"
 	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/intent"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/redact"
@@ -283,6 +284,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		// Groups stays zero on purpose (D15): standing is the Room CR's alone, never a ZITADEL grant the
 		// broker would have to hold a token for.
 	}
+	if sc, on := cfg.SlackIntents(); on { // intent_classify: the App's read-only classification (natural-language intents)
+		humans.Intents = intentClassifier(sc, st, red)
+	}
 	if v := coordinationViews(cfg, mgr.GetAPIReader(), ns); v != nil {
 		humans.CoordinationViews = v
 		if g := coordinationWrites(cfg); g != nil {
@@ -457,6 +461,19 @@ func catalogueCache(cfg config.Config, m *metrics.Set) *humanapi.CatalogueCache 
 		reads = m
 	}
 	return humanapi.NewCatalogueCache(runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}, reads, nil)
+}
+
+// intentClassifier is human.slackIntents as the human API serves it: the one bounded call through the
+// audited egress client to the gateway's `classifier` client, the link tables the author is resolved
+// through, and the opt-in sample store behind the redactor (SI3, SI12, SI19).
+func intentClassifier(sc config.SlackIntentsConfig, st *store.Store, red humanapi.Redactor) *humanapi.IntentClassifier {
+	return &humanapi.IntentClassifier{
+		Principal: "system:" + sc.Principal, TeamID: sc.TeamID, Alias: sc.Model,
+		Model: intent.Model{URL: sc.URL, Alias: sc.Model, KeyFile: sc.APIKeyFile, Deadline: sc.Deadline.Duration,
+			HC: httpx.New(sc.Deadline.Duration, nil)},
+		Links: st, Samples: st, Redactor: red,
+		MinConfidence: sc.MinConfidence, ConfirmTTL: sc.ConfirmTTL.Duration, MaxInputChars: sc.MaxInputChars,
+		DailyCalls: sc.DailyCalls, PerUserPerHour: sc.PerUserPerHour, RetentionDays: sc.RetentionDays, Now: time.Now}
 }
 
 // intakeServer is human.intake.plan as the human API serves it (v3.x conversational intake): the

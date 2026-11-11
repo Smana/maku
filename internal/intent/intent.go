@@ -178,3 +178,19 @@ func TextHash(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
+
+// Phases is the closed list of words a thread's phase may be sent as (SI3): the kinds of
+// summary.StatusLine, which the App reads from the one room_summary it makes, and "unknown" for a
+// room whose status that summary cannot name. The classifier reads no room; the broker refuses any
+// other word, so a caller cannot smuggle text in through the phase.
+var Phases = []string{"queued", "running", "waiting-you", "waiting-other", "waiting-pr", "waiting", "done", "failed", "stopped", "unknown"}
+
+// ValidPhase reports whether p is one of Phases.
+func ValidPhase(p string) bool {
+	for _, k := range Phases {
+		if p == k {
+			return true
+		}
+	}
+	return false
+}
