@@ -300,6 +300,11 @@ func (r *slackRecorder) ThreadAnswer(ctx context.Context, question string) {
 	r.proposals.ThreadAnswer(ctx, question)
 }
 
+// SlackIntent counts one reply tier 1 read under maku_slack_intents_total{tier, intent, outcome}.
+func (r *slackRecorder) SlackIntent(ctx context.Context, tier, intent, outcome string) {
+	r.proposals.SlackIntent(ctx, tier, intent, outcome)
+}
+
 // CoordinationProjection counts one coordination delivery under
 // maku_slack_coordination_projection_total{outcome}.
 func (r *slackRecorder) CoordinationProjection(ctx context.Context, outcome string) {
