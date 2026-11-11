@@ -42,7 +42,9 @@
   --green: #11795a;
   --amber: #965800;
   --ink-on-accent: #fdfdff;
-  --aurora-bar: linear-gradient(90deg, #ff6fb5 0%, #a78bfa 100%);
+  /* Day's aurora is derived: Ogenki's (Night's, below) is 2:1 on the Day budget track; Day pink
+     to Day violet keeps the hue at 4.09 and 4.47:1. */
+  --aurora-bar: linear-gradient(90deg, #c2306f 0%, #6a4bd8 100%);
 
   --flow-writer: #1d63b0; /* the run rail: a writer's lane */
   --flow-judge: #6a4bd8; /* a judge's lane */
@@ -120,6 +122,7 @@
   --green: #3ddc97;
   --amber: #ffb547;
   --ink-on-accent: #0d1330;
+  --aurora-bar: linear-gradient(90deg, #ff6fb5 0%, #a78bfa 100%);
 
   --flow-writer: #5aa9f0;
   --flow-judge: #a78bfa;
@@ -498,7 +501,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    into its own surface and gets Show more; a short or opened one is never clipped. The 4 px
    padding, taken back by the margin, keeps a focus ring inside the clip box whole. */
 .bubble[data-clip="closed"] > .md {
-  position: relative; max-height: calc(12 * 1.55em); overflow-y: hidden;
+  position: relative; max-height: calc(12 * var(--leading-body)); overflow-y: hidden;
   padding: 4px; margin: -4px;
 }
 .bubble[data-clip="closed"] > .md::after {

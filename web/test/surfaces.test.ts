@@ -16,7 +16,7 @@ describe("the aurora gradient", () => {
     expect(rule(".evidence-fill")).toMatch(/background:\s*var\(--primary\)/);
     // the only other gradients are the two scroll masks and the clip fade, never a fill of colour
     for (const r of rules) {
-      if (/linear-gradient\(90deg, #/.test(r.body)) expect(r.sel).toBe(":root");
+      if (/linear-gradient\(90deg, #/.test(r.body)) expect([":root", ".dark"]).toContain(r.sel);
     }
   });
   it("keeps a blocked evidence bar muted, not gradient", () => {
@@ -84,13 +84,25 @@ describe("the next-step box", () => {
 
 describe("a status", () => {
   // A status is a word plus a colour; the colour sits on the card's own 1 px border or on the
-  // status icon, never on a side stripe curving round a 16 px corner (the approval bar is straight).
-  // The approval and need cards keep the owner's warning bar (#345), drawn straight inside the card.
-  const stateRules = [".approval", ".needs-other li.need", ".tool.st-rejected", ".tool.st-error", ".rooms .row-status"];
-  it.each(stateRules)("%s draws no side stripe", (sel) => {
+  // status icon, never on a side stripe curving round a 16 px corner.
+  const noStripe = [".tool.st-rejected", ".tool.st-error", ".rooms .row-status"];
+  it.each(noStripe)("%s draws no side stripe", (sel) => {
     const b = rule(sel);
     expect(b).not.toMatch(/inset\s+-?\d+px\s+0\s+0/);
     expect(b).not.toMatch(/border-(left|right|inline)/);
+  });
+  // The one allowed status stripe: the approval and need cards keep the owner's warning bar
+  // (#345), a ::before drawn straight between the 16 px corners, not a border or an inset shadow.
+  it.each([".approval", ".needs-other li.need"])("%s carries no border or inset stripe on the card itself", (sel) => {
+    const b = rule(sel);
+    expect(b).not.toMatch(/inset\s+-?\d+px\s+0\s+0/);
+    expect(b).not.toMatch(/border-(left|right|inline)/);
+  });
+  it("draws the approval and need bar as the one allowed stripe, flush with the card's outer edge", () => {
+    const bar = rule(".approval::before, .needs-other li.need::before");
+    expect(bar).toMatch(/left:\s*-1px/);
+    expect(bar).toMatch(/width:\s*3px/);
+    expect(bar).toMatch(/background:\s*var\(--warning-border\)/);
   });
   it.each([
     [".tool.st-rejected", "--warning-border"],
