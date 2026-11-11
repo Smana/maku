@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os/exec"
@@ -119,6 +120,8 @@ var (
 	titleRE = regexp.MustCompile(`^[A-Za-z0-9]`)
 )
 
+const needsConfirmation = "needs_confirmation"
+
 // issueFile is issue_file: the broker's plan_check re-validates the plan and its hash when the call
 // carries them (issue_draft, when it does not), the client asks the developer through an elicitation,
 // and only an accepted draft is filed. A client that cannot ask is refused: nothing else stands for
@@ -141,7 +144,7 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 		draft, draftRefusal = r.draft(ctx, args)
 	}
 	if !elicit || r.File == nil {
-		msg := "needs_confirmation: issue_file asks the developer to confirm, and this client cannot ask (no elicitation); " +
+		msg := needsConfirmation + ": issue_file asks the developer to confirm, and this client cannot ask (no elicitation); " +
 			"show them the draft and let them file it with gh issue create"
 		if draftRefusal == nil {
 			msg += "\n" + fallbackNext(draft)
@@ -174,6 +177,12 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 		"message":         fmt.Sprintf("File this issue on %s%s as you, with gh? %s\n\n%s%s\n\n%s", draft.Repo, ceiling, tail, more, draft.Title, draft.Body),
 		"requestedSchema": map[string]any{"type": "object", "required": []string{"file"}, "properties": props},
 	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		// The client declared elicitation and never answered: it did not show the form. Same result as
+		// a client that cannot ask, so the agent shows the draft and the developer files it with gh.
+		return mcpwire.ToolError(needsConfirmation + "; the client did not show the confirmation form (no answer within " +
+			elicitWait.String() + "), so show them the draft and let them file it with gh issue create\n" + fallbackNext(draft))
+	}
 	if err != nil {
 		return mcpwire.ToolError("not_filed: the developer was not asked: " + err.Error() + "\n" + fallbackNext(draft))
 	}

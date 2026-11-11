@@ -310,3 +310,18 @@ func TestVersionReadsBothKeys(t *testing.T) {
 		})
 	}
 }
+
+// The skill pre-flights the repository, shows the plan, falls back on an unanswered form and
+// checks its own staleness against what the CLI offers.
+func TestSkillPreflight(t *testing.T) {
+	text := flat(SkillText(t))
+	for _, want := range []string{
+		"canStartWhy", "repository_not_allowed", "private_repository_unsupported", "no_write", "repository_not_owned",
+		"this repository is not enrolled in the factory", ".github/agent-factory.yaml", "Do not file and label anyway",
+		"starting the factory from here is off for this repository", "never invent a class", "needs_confirmation", "OpenCode", "maku-version", "maku setup <client>", "maku skill install",
+	} {
+		if !strings.Contains(text, strings.ToLower(want)) {
+			t.Errorf("SKILL.md lost %q", want)
+		}
+	}
+}

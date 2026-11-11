@@ -34,8 +34,21 @@ const (
 	rootsWait   = 5 * time.Second  // how long the relay waits for the client's roots
 )
 
+// defaultElicitWait caps the wait for the developer's answer to issue_file's form. A client may
+// declare elicitation and never render the form (OpenCode, 2026-11-09: two ~5 min hangs on
+// factory_issue_file), so the wait is short and the draft fallback follows.
+const defaultElicitWait = 60 * time.Second
+
 // elicitWait is how long issue_file waits for the developer's answer; a var so a test can shorten it.
-var elicitWait = 10 * time.Minute
+var elicitWait = defaultElicitWait
+
+// defaultTaskResultWait bounds one tasks/result call. The broker already ends a task at its ttl
+// (15 min at most), so this is a backstop for a broker that never reports a terminal status: it
+// sits past that ttl, so a healthy wait is never cut.
+const defaultTaskResultWait = 20 * time.Minute
+
+// taskResultWait is that bound; a var so a test can shorten it.
+var taskResultWait = defaultTaskResultWait
 
 // Relay is maku mcp: an MCP server on stdio for a local coding agent. It relays each message to
 // the broker's /mcp with the developer's token (factory interfaces F2), and serves one tool of its
@@ -355,6 +368,8 @@ func (r *Relay) taskResult(ctx context.Context, m message, raw []byte) (json.Raw
 		TaskID string `json:"taskId"`
 	}
 	_ = json.Unmarshal(m.Params, &p)
+	ctx, cancel := context.WithTimeout(ctx, taskResultWait)
+	defer cancel()
 	get, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": "maku-poll", "method": "tasks/get", "params": map[string]string{"taskId": p.TaskID}})
 	for {
 		res, err := r.relay(ctx, get)
