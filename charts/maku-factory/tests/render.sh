@@ -54,6 +54,16 @@ ykind Deployment "$(vol sponsored).secret.optional == true" "an absent Secret re
 ykind Deployment "$(vol sponsored).secret.defaultMode == \"0440\"" "0440, readable through fsGroup"
 ykind Deployment "$(mnt sponsored).mountPath == \"/etc/agent-factory-sponsored\"" "the files config.api.sponsored[].clientIDFile and api.projectIDFile read"
 ykind ConfigMap '.data."config.yaml" | from_yaml | .repository == "Smana/cloud-native-ref"' "the config is rendered verbatim"
+base="$out"
+# The rollout lives under config passthrough, never a parallel top-level chart value.
+for mode in shadow enforce; do
+  out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+    --set config.intake.overlap.mode="$mode" --set config.intake.overlap.scoperEnforcement=true)"
+  got="$(yq ea 'select(.kind == "ConfigMap") | .data."config.yaml" | from_yaml | .intake.overlap.mode' - <<<"$out")"
+  [ "$got" = "$mode" ] || { echo "FAIL: config.intake.overlap.mode=$mode rendered as '$got'" >&2; fail=1; }
+  ykind ConfigMap '.data."config.yaml" | from_yaml | .intake.overlap.scoperEnforcement == true' "config.intake.overlap.scoperEnforcement passthrough"
+done
+out="$base"
 ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:$digest\"" "the image by digest"
 ykind Deployment "$ctr.securityContext.readOnlyRootFilesystem == true" "restricted securityContext"
 ykind Deployment "$pod.securityContext.seccompProfile.type == \"RuntimeDefault\"" "seccomp RuntimeDefault"
@@ -120,7 +130,6 @@ ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | ((.rules | l
 for crd in factories repositories mergepolicies; do
   [ -f "crds/maku.ogenki.io_${crd}.yaml" ] || { echo "FAIL: the chart ships the ${crd} CRD" >&2; fail=1; }
 done
-base="$out"
 out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
   --set api.tls.secretName=agent-factory-api-tls --set api.tls.issuerRef.name=openbao)"
 ykind Certificate '.spec.secretName == "agent-factory-api-tls"' "the Certificate writes api.tls.secretName"
