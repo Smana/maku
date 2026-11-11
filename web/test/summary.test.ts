@@ -213,6 +213,12 @@ describe("changesSummary", () => {
     expect(changesSummary({ ...ev("message", { kind: "chat", delivery }), actor: { kind: "human", id: "human:a" } })).toBe(true);
   });
   it("a removed queued note refetches", () => expect(changesSummary(ev("state_changed", { kind: "queued_removed" }))).toBe(true));
+  it("a queued note from a system actor (a sponsored principal) refetches", () => {
+    expect(changesSummary(ev("message", { kind: "chat", delivery: "queued" }))).toBe(true);
+  });
+  it.each([["steering"], ["none"]])("an agent's %s message in its run does not refetch", (delivery) => {
+    expect(changesSummary({ ...ev("message", { kind: "chat", delivery }), actor: { kind: "agent", id: "agent:r1" }, runId: "r1" })).toBe(false);
+  });
 });
 
 // One fixture for Go and TS: the broker's own golden summaries, read where internal/summary keeps them.

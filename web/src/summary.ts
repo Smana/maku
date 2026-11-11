@@ -146,12 +146,13 @@ export async function fetchSummary(id: string, get: typeof fetch = fetch): Promi
 
 // changesSummary is whether the summary reads e, in the broker's fold (internal/summary) or in the
 // queue it attaches: only then is the summary refetched, never on a run's chat or tool calls. A
-// human's message moves a node's steered or chat count, or the queued notes.
+// human's message moves a node's steered or chat count, or the queued notes; a queued note moves
+// the queue whoever posts it (a sponsored principal posts as a system actor).
 export function changesSummary(e: RoomEvent): boolean {
   const kind = e.payload?.kind;
   switch (e.type) {
     case "state_changed": return kind === "task" || kind === "room_phase" || kind === "limit" || kind === "run_phase" || kind === "queued_removed";
-    case "message": return e.actor?.kind === "human" || kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
+    case "message": return e.actor?.kind === "human" || e.payload?.delivery === "queued" || kind === "progress" || kind === "review_verdict" || kind === "judge_verdict";
     case "handoff": case "participant": return true;
     case "approval_requested": case "approval_decided": return true;
   }
