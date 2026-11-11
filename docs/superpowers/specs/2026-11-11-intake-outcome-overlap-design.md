@@ -46,7 +46,7 @@ Non-goals:
 | Exact match | SHA-256 of canonical goal scoped by repository |
 | Candidates | Deterministic lexical retrieval, active first, at most 20 |
 | Ambiguous candidates | Existing scoper, read-only, only when needed |
-| Blocking | Only a confirmed active duplicate; stop before AgentRun and execution-budget reservation |
+| Blocking | Only a confirmed active duplicate; stop before any implementation AgentRun or implementation budget reservation. Evaluation spend remains recorded |
 | Other matches | Completed, prior, partial, and unverified matches proceed with evidence and qualified wording |
 | Result | One bounded `overlap` object on Task status, replayed idempotently |
 | Rollout | `off` → `shadow` → exact-active enforcement → scoper-confirmed enforcement after evidence |
@@ -125,7 +125,7 @@ or status service is introduced.
 
 | Classification | Existing evidence mapping | Action |
 |---|---|---|
-| **Active duplicate** | Exact active fingerprint, or scoper confirms an active task/run for the same outcome | Create a `Rejected` Task with evidence; create no AgentRun and reserve no execution budget |
+| **Active duplicate** | Exact active fingerprint, or scoper confirms an active task/run for the same outcome | Create a `Rejected` Task with evidence; start no implementation AgentRun and reserve no implementation budget. Evaluation spend remains recorded |
 | **Completed duplicate** | `Done` or `NoOp`; `Merged` remains active until post-merge verification completes | Do not block; reuse the completed result as evidence |
 | **Prior attempt** | `Rejected`, `Reverted`, `Escalated`, `Closed`, or `Stopped` | Do not block; surface previous outcome and lessons on re-label |
 | **Partial overlap** | Shared behavior/files without the same outcome, including `Split` | Do not block; adjust scope or coordination in the new brief |
@@ -158,13 +158,15 @@ reconciliation without proceeding.
 
 ## Persistence and idempotency
 
-Evaluate once per Task generation. A restart or retry replays the stored result and never repeats
-retrieval or a scoper run. A required scoper uses the existing deterministic AgentRun identity and
-resume rules.
+Persisted results replay idempotently. Pre-persistence reads are side-effect-free and may repeat
+when no result was successfully stored; no scoper run is duplicated. A required scoper uses the
+existing deterministic AgentRun identity and resume rules. While review is pending, `classification`
+and `checkedAt` remain empty; rollback still adopts and finishes an already-started evaluation.
 
 A confirmed active refusal, whether exact or scoper-confirmed, becomes `Rejected` with its overlap
-record but no AgentRun or execution budget reservation. Retrying or re-labeling follows existing
-generation rules, producing new evidence rather than duplicate evaluation or execution.
+record but no implementation AgentRun or implementation budget reservation. Evaluation spend remains
+recorded. Retrying or re-labeling follows existing generation rules, producing new evidence rather
+than duplicate evaluation or execution.
 
 Add `overlap_active_duplicate` as the refusal reason for narration and status reporting. Evidence
 references remain IDs and links, not payloads.
@@ -183,6 +185,10 @@ Add `intake.overlap.mode` with:
 - `enforce`: allow the enforcement stages below, initially exact-active only, then scoper-confirmed
   active after acceptance.
 
+`scoperEnforcement` is a separate boolean selector, defaulting to `false` and effective only in
+`enforce` mode. Exact-active enforcement does not depend on it. Full scoper-confirmed enforcement
+requires both `enforce` and an explicit `scoperEnforcement: true`.
+
 Rollout:
 
 1. **Shadow:** record evidence and gather precision/timing data without blocking.
@@ -198,7 +204,7 @@ Rollout:
 - Fingerprint normalization is stable across Unicode, case, whitespace, and punctuation variants.
 - Candidate ranking is active-first, deterministic, and capped at 20.
 - Every phase maps to the correct classification; `Merged` remains active until `Done`.
-- Exact active matches produce `Rejected` with no AgentRun or budget reservation.
+- Exact active matches produce `Rejected` with no implementation AgentRun or implementation budget reservation.
 - Completed, prior, partial, unverified, and no-match results never auto-block.
 - Cross-source issue/API/schedule matches are detected and replayed idempotently.
 - Restart/retry never repeats evaluation or a scoper run.
@@ -210,7 +216,8 @@ Rollout:
 
 ### Acceptance evidence
 
-- A seeded active cross-source duplicate creates no AgentRun and reserves no execution budget.
+- A seeded active cross-source duplicate creates no implementation AgentRun and reserves no
+  implementation budget; any candidate-evaluation spend remains recorded.
 - A reworded candidate reaches the scoper once and is classified with evidence; retries do not create
   another scoper run.
 - Shadow fixtures show all six outcomes, including `no_match` and `unverified_overlap`.
