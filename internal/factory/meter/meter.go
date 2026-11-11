@@ -1275,15 +1275,15 @@ func daySpent(b config.Budgets, r runs.Run, spent map[string]int64) bool {
 }
 
 // revocation names why a live run must stop, and the limit that fired, in the order the design
-// lists the caps (C5). A run capped in USD is not held to its MaxTokens: pricing cache reads at
-// their own rate is the point (OD-3), and B1 bounds the same money at the gateway.
+// lists the caps (C5). The token cap is a ceiling beside the USD one, never replaced by it (#465):
+// a flat-rate model's nominal prices leave the dollars out of reach while the run goes on.
 func (m *Meter) revocation(b config.Budgets, r runs.Run, tokens, b1, usd, capUSD int64, throttled bool, daySpent bool) (reason, limit string) {
 	switch {
 	case r.MaxMicroUSD <= 0 && b.Sponsored(r.ChargedTo): // F4, N-1: fail closed, never on the tier's cap
 		return ReasonBudgetRun, LimitRunUSD
 	case capUSD > 0 && usd >= capUSD:
 		return ReasonBudgetRun, LimitRunUSD
-	case capUSD <= 0 && r.MaxTokens > 0 && tokens >= r.MaxTokens:
+	case r.MaxTokens > 0 && tokens >= r.MaxTokens:
 		return ReasonBudgetRun, LimitRunTokens
 	case throttled && m.B1Ceiling > 0 && b1 >= m.B1Ceiling:
 		return ReasonBudgetRun, LimitGatewayCeiling

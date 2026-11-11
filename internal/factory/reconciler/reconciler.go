@@ -1233,12 +1233,19 @@ type costReader interface {
 
 // runFits: the task's cap still holds one whole run (owner, 2026-10-07). A run may spend up to
 // its run cap before the meter revokes it, so admitting on "under the cap" let a task end 1.5 M
-// past it; a resume follows the same rule. In USD while usdCapped, else in tokens.
+// past it; a resume follows the same rule. In USD while usdCapped, and always in tokens: a
+// flat-rate model's nominal prices left the dollars far from their cap while the task ran to 4 M
+// of its 3 M tokens (#465).
 func runFits(t *v1alpha1.Task) bool {
 	b := t.Spec.Budget
-	if usdCapped(t) {
-		return b.TaskMicroUSD-t.Status.Usage.CostMicroUSD >= b.RunMicroUSD
+	if usdCapped(t) && b.TaskMicroUSD-t.Status.Usage.CostMicroUSD < b.RunMicroUSD {
+		return false
 	}
+	return tokensFit(t)
+}
+
+func tokensFit(t *v1alpha1.Task) bool {
+	b := t.Spec.Budget
 	return b.TaskTokens <= 0 || b.TaskTokens-t.Status.Usage.Tokens >= b.RunTokens
 }
 
@@ -1251,7 +1258,7 @@ func usdCapped(t *v1alpha1.Task) bool {
 
 // taskLimit names the task cap runFits checks, for the revocations metric.
 func taskLimit(t *v1alpha1.Task) string {
-	if usdCapped(t) {
+	if usdCapped(t) && tokensFit(t) {
 		return "task-usd"
 	}
 	return "task-tokens"

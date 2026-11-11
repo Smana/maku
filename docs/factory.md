@@ -600,8 +600,10 @@ still hold one whole run: if not, the task escalates as `budget-task` when `budg
 is set (the default), and is only counted when it is not. A run lost to its sandbox is resumed
 only within the cap, whatever `enforceTask` says.
 
-With `meter.prices` set, both caps are in USD, so a cache read costs its own rate rather than a
-full input token. A tier that omits `runUSD` or `taskUSD` then caps at its token cap counted at
+With `meter.prices` set, both caps are also in USD, so a cache read costs its own rate rather than
+a full input token. The token caps keep binding beside them: the meter revokes a run at its
+`runTokens` and no run starts without `runTokens` left of the task's `taskTokens`, whatever the
+dollars say, because a flat-rate model's nominal prices leave the USD caps out of reach. A tier that omits `runUSD` or `taskUSD` then caps at its token cap counted at
 $1.70 per million: the `standard` tier's 1.5 M and 3 M tokens become $2.55 and $5.10. Without
 prices both caps stay in tokens.
 
