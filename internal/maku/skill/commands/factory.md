@@ -20,6 +20,7 @@ subcommand; the rest is its argument. Show each tool's text as it is, and never 
   If `intake_plan` is not listed the planner is off: write the issue in the template's three sections
   (`## What is wrong`, `## What it should be`, `## Acceptance check`), have `issue_draft` check it,
   then call `issue_file`, and say the broker planned nothing.
+  Before filing, do the skill's pre-flight (`canStart`, refusals, plan class and roles); on `needs_confirmation` or a form unanswered for about a minute, show the draft and the `gh issue create` fallback.
   When `issue_file` returns `started: true`, start a background `room_wait` on the room at once (see the skill), without being asked.
 - `status [room]`: call `room_summary` for the room. The room may be `#<issue>`, `PR #<n>`, a bare
   number or a room id, passed as typed; with none, use the `rooms_list` row updated most recently.

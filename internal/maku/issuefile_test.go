@@ -504,6 +504,15 @@ func TestIssueFileFallbackCommand(t *testing.T) {
 			}
 		}
 		check(t, res, true)
+		text := fmt.Sprint(res["result"])
+		for _, want := range []string{"needs_confirmation", "did not show the confirmation form"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("no %q in %s", want, text)
+			}
+		}
+		if strings.Contains(text, "not_filed") {
+			t.Fatalf("a form nobody showed is the no-form result, not a failure: %s", text)
+		}
 	})
 }
 

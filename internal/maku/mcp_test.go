@@ -278,6 +278,22 @@ func TestRelayBlocksTasksResult(t *testing.T) {
 	}
 }
 
+// A broker that never reports a terminal status cannot hold a tasks/result call past its bound.
+func TestRelayBoundsTasksResult(t *testing.T) {
+	old := taskResultWait
+	taskResultWait = 100 * time.Millisecond
+	t.Cleanup(func() { taskResultWait = old })
+	b := newMCPBroker(t)
+	b.polls = 1 << 30
+	s := relayTo(t, b, tok, func(r *Relay) {
+		r.After = func(time.Duration) <-chan time.Time { return time.After(10 * time.Millisecond) }
+	})
+	res := s.request(t, 1, "tasks/result", map[string]any{"taskId": "tail.x"})
+	if res["error"] == nil {
+		t.Fatalf("an unbounded wait ended without an error: %v", res)
+	}
+}
+
 func TestRelayExplainsRefusals(t *testing.T) {
 	for name, c := range map[string]struct {
 		status int
