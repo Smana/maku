@@ -139,7 +139,8 @@ function statusCell(st: RowStatus | undefined, phase: string): HTMLElement {
   else icon.textContent = st.icon; // a kind this page predates: the broker's character
   const words = document.createElement("span");
   words.className = "row-status-words";
-  words.textContent = st.text;
+  // The list does not tick between refreshes: a run's age in seconds would stand still, so it is left out.
+  words.textContent = st.kind === "running" ? st.text.replace(/(?:, | — )\d+ s$/, "") : st.text;
   line.append(icon, " ", words);
   td.title = phase;
   td.append(line);

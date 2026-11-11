@@ -222,6 +222,17 @@ describe("the room list's layout", () => {
     expect(links[0].getAttribute("href")).toBe("/r/3kq7x2ma");
     expect(links[0].textContent).toBe("#74 Chat view");
   });
+  it("leaves a running line's seconds out: the list does not tick, and \"20 s\" would stand still", async () => {
+    const words = async (text: string) => {
+      const root = document.createElement("div");
+      const said = [{ ...rows[0], status: { kind: "running", icon: "●", text } }];
+      await listRooms(root, (async () => new Response(JSON.stringify(said), { status: 200 })) as unknown as typeof fetch);
+      return root.querySelector(".row-status-words")?.textContent;
+    };
+    expect(await words("Running — implementer, 20 s")).toBe("Running — implementer");
+    expect(await words("Running — 5 s")).toBe("Running");
+    expect(await words("Running — implementer, 12 min")).toBe("Running — implementer, 12 min");
+  });
   it("says the room page's status line, its icon and words, with the raw phase in the tooltip", async () => {
     const root = document.createElement("div");
     const said = [{ ...rows[0], status: { kind: "waiting-you", icon: "⏳", text: "Waiting for you — approve a pending action" } }];

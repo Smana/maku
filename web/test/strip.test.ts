@@ -25,12 +25,36 @@ describe("the run status line", () => {
     strip.update(input({ summary: state({ run: { id: "r1", role: "implementer", startedAt: new Date(Date.now() - 4 * 60000).toISOString() } }), running: true }));
     const first = h.querySelector(".strip")!.firstElementChild!;
     expect(first.className).toBe("run-status");
-    expect(first.getAttribute("role")).toBe("status");
-    expect(first.getAttribute("aria-live")).toBe("polite");
+    expect(first.getAttribute("aria-live")).toBeNull(); // the ticking age is never announced
     expect(first.textContent).toBe(" Running — implementer, 4 min");
+    const live = h.querySelector(".run-status-live")!;
+    expect(live.getAttribute("role")).toBe("status");
+    expect(live.getAttribute("aria-live")).toBe("polite");
+    expect(live.textContent).toBe("Running — implementer");
     expect(first.querySelector(".run-status-icon svg.icon-dot")).not.toBeNull();
     expect((first as HTMLElement).dataset.kind).toBe("running");
     expect(first.querySelector(".run-status-icon")?.getAttribute("aria-hidden")).toBe("true");
+  });
+  it("announces a change of status, never the age's tick", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-11-11T10:00:20Z"));
+      const h = document.createElement("header");
+      const strip = mountStrip(h, () => Date.now());
+      const sum = state({ run: { id: "r1", role: "implementer", startedAt: "2026-11-11T10:00:00Z" } });
+      strip.update(input({ summary: sum, running: true }));
+      const live = h.querySelector(".run-status-live")!;
+      const node = live.firstChild;
+      expect(live.textContent).toBe("Running — implementer");
+      expect(h.querySelector(".run-status")?.textContent).toBe(" Running — implementer, 20 s");
+      vi.setSystemTime(new Date("2026-11-11T10:00:21Z"));
+      strip.update(input({ summary: sum, running: true }));
+      expect(h.querySelector(".run-status")?.textContent).toBe(" Running — implementer, 21 s");
+      expect(live.textContent).toBe("Running — implementer");
+      expect(live.firstChild).toBe(node); // untouched: nothing for a screen reader to read again
+      strip.update(input({ summary: state({ state: "done", phase: "Done" }) }));
+      expect(live.textContent).toBe("Done — merged");
+    } finally { vi.useRealTimers(); }
   });
   it("links an approval wait to the card, and says another approver when the viewer cannot decide", () => {
     const { h, strip } = mount();
@@ -567,7 +591,7 @@ describe("the title strip", () => {
     const { h, strip } = mount();
     strip.update(input({ now: { seq: 1, text: "hi", status: "message", ts: new Date().toISOString() } }));
     const order = [...h.querySelector(".strip")!.children].map((c) => c.classList[0]);
-    expect(order).toEqual(["run-status", "strip-head", "strip-tail", "strip-now"]);
+    expect(order).toEqual(["run-status", "strip-head", "strip-tail", "strip-now", "run-status-live"]);
   });
   it("keeps the title, the chips and a focused pill in place when only the count moves", () => {
     const { h, strip } = mount();

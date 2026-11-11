@@ -63,6 +63,9 @@ export function detail(n: FlowNode, now: number): string {
 // fillDetail sets a node's age line: the duration as a <time>, then the cost.
 export function fillDetail(e: HTMLElement, n: FlowNode, now: number): void {
   const d = detailParts(n, now);
+  // A tick that leaves the words alone leaves the <time> too: rebuilt, its hover title would close.
+  const t = e.querySelector("time");
+  if (e.textContent === detail(n, now) && (d.ms === undefined || t?.dateTime === new Date(d.at!).toISOString())) return;
   const kids: (Node | string)[] = [];
   if (d.ms !== undefined) kids.push(timeEl(d.ms, d.at!, "span"));
   if (d.cost) kids.push(kids.length ? ` · ${d.cost}` : d.cost);

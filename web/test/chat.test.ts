@@ -430,7 +430,7 @@ describe("ChatView steps (P1, P2)", () => {
     expect(line(el, 1)).toBe("Running 2 commands");
     v.apply(done(4, "a"));
     v.apply(done(5, "b", "rejected"));
-    expect(line(el, 1)).toBe("Ran 2 commands · 1 rejected · 0:03");
+    expect(line(el, 1)).toBe("Ran 2 commands · 1 rejected · 3 s");
     expect(el.querySelector(".step-exc")?.textContent).toBe("1 rejected");
   });
   it("keeps an approval and a driver change naming the viewer inside the step", () => {

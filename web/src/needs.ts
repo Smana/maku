@@ -314,9 +314,10 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
       const all = state.approvals().filter((a) => !expiredAt(a.expiresAt));
       return { total: all.length, mine: all.filter((a) => standing(a).can).length };
     },
-    // focusFirst takes the reader, and the keyboard focus, to the first card.
+    // focusFirst takes the reader, and the keyboard focus, to the first card still open to a
+    // decision (the status line's link names a live one), else the first card.
     focusFirst(): void {
-      const li = approvals.querySelector<HTMLElement>("li.approval");
+      const li = approvals.querySelector<HTMLElement>('li.approval:not([data-state="expired"])') ?? approvals.querySelector<HTMLElement>("li.approval");
       if (!li) return;
       li.tabIndex = -1;
       li.scrollIntoView?.({ block: "start" });

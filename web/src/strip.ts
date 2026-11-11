@@ -142,12 +142,13 @@ function setParts(c: Element, all: Parts, t: number, at = ""): void {
 const setRun = (c: Element, st: Summary["status"], t: number) => setParts(c, runParts(st, t), t, st.run?.startedAt);
 
 // statusOf is the room's run status: the summary's own state, phase and facts, and the viewer's approvals.
-function statusOf(i: StripInput, t: number): RunStatus {
+// timed false leaves the run's age out: the words a screen reader is told, which change with the status only.
+function statusOf(i: StripInput, t: number, timed = true): RunStatus {
   const st = i.summary?.status;
   const run = st?.run;
   return statusLine({
     state: st?.state || (i.sealed || i.sealedBy ? "stopped" : undefined), phase: st?.phase || i.phase, reasonCode: st?.reasonCode,
-    runRole: run?.role, runStartedAt: run?.startedAt, runPresent: !!run && (i.running ?? !run.endedAt),
+    runRole: run?.role, runStartedAt: timed ? run?.startedAt : undefined, runPresent: !!run && (i.running ?? !run.endedAt),
     pr: st?.pr?.number, issue: st?.issue?.number,
     mine: i.approvals?.mine ?? 0, others: Math.max(0, (i.approvals?.total ?? 0) - (i.approvals?.mine ?? 0)),
     step: i.summary?.step, now: t,
@@ -313,10 +314,13 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
   const tail = el("div", { className: "strip-tail" });
   // The status leads: icon, colour and words, the first thing the page says about the room.
   const statusRow = el("div", { className: "run-status" });
-  statusRow.setAttribute("role", "status");
-  statusRow.setAttribute("aria-live", "polite");
   statusRow.hidden = true;
-  root.append(statusRow, head, tail, nowRow);
+  // The status is announced from a hidden twin without the age: the visible row's age moves every
+  // second for a run's first minute, and a live region there would be read out at each tick.
+  const statusLive = el("span", { className: "run-status-live" });
+  statusLive.setAttribute("role", "status");
+  statusLive.setAttribute("aria-live", "polite");
+  root.append(statusRow, head, tail, nowRow, statusLive);
   header.append(root);
   const title = el("h1", { className: "strip-title" });
   // The facts: tier 1 always shows and wraps; tier 2 wraps open on a desktop and folds behind
@@ -379,6 +383,8 @@ export function mountStrip(header: HTMLElement, now: () => number = Date.now) {
       // A line that waits for an approval takes you to its card; one that waits for a PR links it.
       const toCard = status.kind === "waiting-you" || status.kind === "waiting-other";
       const prUrl = status.kind === "waiting-pr" && isGitHubUrl(step?.url) ? step!.url! : "";
+      const said = status.kind ? statusOf(i, t, false).words : "";
+      if (statusLive.textContent !== said) statusLive.textContent = said;
       const statusKey = JSON.stringify([status, prUrl, phaseTitle(i)]);
       if (statusKey !== shown.status) {
         statusRow.hidden = !status.kind;

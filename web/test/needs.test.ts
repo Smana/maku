@@ -504,6 +504,22 @@ describe("an expired approval", () => {
     needs.refresh();
     expect(root.querySelector("h2")?.textContent).toBe("Waiting for an approver");
   });
+  it("takes the status line's link to the live card, past an older expired one", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 31, 0));
+    const state = new RoomState();
+    state.reset({ driver: "human:a", driverEpoch: 1, approvals: [{ ...approval, expiresAt: due.toISOString() },
+      { ...approval, approvalId: "01M4B", callId: "c10", seq: 15, expiresAt: "2099-10-15T15:18:52Z" }] }, 20);
+    const root = document.createElement("section");
+    const needs = mountNeeds(root, { send: () => true }, state, () => you, { rowFor: () => undefined });
+    needs.refresh();
+    document.body.append(root);
+    try {
+      const [first, second] = root.querySelectorAll<HTMLElement>("li.approval");
+      expect(first.dataset.state).toBe("expired");
+      needs.focusFirst();
+      expect(document.activeElement).toBe(second);
+    } finally { root.remove(); }
+  });
   it("hands the focus to the card when the deadline takes the focused button away", () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 10, 11, 16, 29, 59));
     const { root, needs } = mount2();
@@ -576,8 +592,23 @@ describe("where a need's action happens", () => {
 
 describe("the dock never hides a decision", () => {
   const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
-  it("reserves the dock's height under the body and beside the cards", () => {
-    expect(css).toMatch(/\.room-body \{[^}]*padding-bottom: var\(--dock-h/);
+  // The bodies of every `@media (max-width: 640px) {…}` block, braces balanced, and the rest.
+  const split = () => {
+    const head = "@media (max-width: 640px)";
+    let rest = css; const phone: string[] = [];
+    for (let i = rest.indexOf(head); i >= 0; i = rest.indexOf(head)) {
+      const open = rest.indexOf("{", i);
+      let depth = 1, j = open + 1;
+      for (; j < rest.length && depth; j++) depth += rest[j] === "{" ? 1 : rest[j] === "}" ? -1 : 0;
+      phone.push(rest.slice(open + 1, j - 1));
+      rest = rest.slice(0, i) + rest.slice(j);
+    }
+    return { phone: phone.join("\n"), rest };
+  };
+  it("reserves the dock's height under the body on a phone only, and beside the cards at every width", () => {
+    const { phone, rest } = split();
+    expect(phone).toMatch(/\.room-body \{[^}]*padding-bottom: var\(--dock-h/);
+    expect(rest).not.toMatch(/\.room-body \{[^}]*padding-bottom: var\(--dock-h/);
     expect(css).toMatch(/\.approval, \.needs-other li\.need \{ scroll-margin-bottom: calc\(var\(--dock-h/);
     expect(css).toMatch(/\.approval-decide \{ scroll-margin-bottom: calc\(var\(--dock-h/);
     expect(css).toMatch(/\.page-header, \.page-dock \{ position: sticky; \}/);
