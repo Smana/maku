@@ -293,6 +293,43 @@ func (b Broker) NeedsList(ctx context.Context, room string) ([]summary.Need, err
 	return out.Items, nil
 }
 
+// IntentRequest is intent_classify's arguments: the reply alone, its author, the channel and the
+// thread's phase as one closed word. Collect is true only for a channel that opted in to collecting
+// replies; the App never sends thread history.
+type IntentRequest struct {
+	Team, User, Channel string
+	Reply, Phase        string
+	Collect             bool
+}
+
+// IntentResult is intent_classify's answer: a label, never an action. Text is the span of the reply a
+// steer or an amend acts on, TextHash its hash, Expires when a confirm for it lapses and SampleID the
+// stored sample's id when the channel collects.
+type IntentResult struct {
+	Intent     string  `json:"intent"`
+	Text       string  `json:"text"`
+	TextHash   string  `json:"textHash"`
+	Confidence float64 `json:"confidence"`
+	Expires    string  `json:"expires"`
+	SampleID   int64   `json:"sampleId"`
+}
+
+// IntentClassify is that tool's one call. ErrUnknownTool is a broker without human.slackIntents, and a
+// Refused is one of the closed words (not_linked, capped, ...): the caller branches on neither more than
+// to fall back to today's line.
+func (b Broker) IntentClassify(ctx context.Context, in IntentRequest) (IntentResult, error) {
+	sc, err := b.call(ctx, mcpwire.IntentClassify, map[string]any{"team": in.Team, "user": in.User, "channel": in.Channel,
+		"reply": in.Reply, "phase": in.Phase, "collect": in.Collect})
+	if err != nil {
+		return IntentResult{}, err
+	}
+	var out IntentResult
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return IntentResult{}, fmt.Errorf("slackapp: intent_classify result: %w", err)
+	}
+	return out, nil
+}
+
 // linkPath is the page a link code opens on the broker's public URL.
 const linkPath = "/link/slack"
 

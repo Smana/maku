@@ -60,11 +60,34 @@ type Channel struct {
 	// Approvals draws this channel's forge.push approvals as a card with two buttons (v3.x Slack push
 	// approval D14). Off, the thread keeps today's line and a press answers not_enabled.
 	Approvals bool `json:"approvals,omitempty"`
+	// Intents is the second reading of a filed thread's replies (natural-language intents, SI20):
+	// off (the default), shadow or on. Shadow classifies a reply tier 0 does not know, counts and logs
+	// it, and posts today's unknown line; until the read intents ship, on behaves as shadow.
+	Intents string `json:"intents,omitempty"`
+	// CollectReplies is the channel's agreement that its replies are stored with their label for
+	// retentionDays (SI19). Without it nothing a person typed here is kept. It needs intents.
+	CollectReplies bool `json:"collectReplies,omitempty"`
+	// IntentActions is the App's per-action switch for the write intents (SI21): any of stop, retry,
+	// steer, amend, each once. None is served yet; the list is validated and ignored.
+	IntentActions []string `json:"intentActions,omitempty"`
 	// Notify is which webhook transitions post a line in this channel (CD11). Absent means
 	// webhook.Notify() — the nine a person is told about; an explicit empty list means none, which
 	// is a choice, not an omission.
 	Notify []string `json:"notify,omitempty"`
 }
+
+// The values of a channel's intents switch (SI20).
+const (
+	IntentsOff    = "off"
+	IntentsShadow = "shadow"
+	IntentsOn     = "on"
+)
+
+// intentsServed reports whether tier 1 reads this channel's unknown replies: shadow or on.
+func (c Channel) intentsServed() bool { return c.Intents == IntentsShadow || c.Intents == IntentsOn }
+
+// intentActionNames are the write intents a channel may list (SI21).
+var intentActionNames = []string{"stop", "retry", "steer", "amend"}
 
 // notifies reports whether t posts a line in this channel. nil and empty are different answers: nil
 // is a deployment that said nothing (the nine webhook.Notify() names), empty is a channel where
@@ -91,6 +114,17 @@ func LoadConfig(path string) (Config, error) {
 		if *addr == "" {
 			*addr = def
 		}
+	}
+	// YAML 1.1 reads a bare off or on as a boolean, which arrives here as "false" or "true": the
+	// switch means what the operator wrote, so it is read back as off or on before it is checked.
+	for id, ch := range c.Channels {
+		switch ch.Intents {
+		case "false":
+			ch.Intents = IntentsOff
+		case "true":
+			ch.Intents = IntentsOn
+		}
+		c.Channels[id] = ch
 	}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
@@ -137,6 +171,25 @@ func (c Config) validate() error {
 		}
 		if ch.MaxCostUSD < minMaxCost {
 			errs = append(errs, fmt.Errorf("channels.%s: maxCostUSD %v is below %v", id, ch.MaxCostUSD, minMaxCost))
+		}
+		switch ch.Intents {
+		case "", IntentsOff, IntentsShadow, IntentsOn:
+		default:
+			errs = append(errs, fmt.Errorf("channels.%s: intents %q is not off, shadow or on", id, ch.Intents))
+		}
+		if ch.CollectReplies && !ch.intentsServed() {
+			errs = append(errs, fmt.Errorf("channels.%s: collectReplies needs intents shadow or on: nothing is classified, so nothing is collected", id))
+		}
+		listedActions := make(map[string]struct{}, len(ch.IntentActions))
+		for _, act := range ch.IntentActions {
+			if !slices.Contains(intentActionNames, act) {
+				errs = append(errs, fmt.Errorf("channels.%s: intentActions %q is not one of %s", id, act, strings.Join(intentActionNames, ", ")))
+				continue
+			}
+			if _, twice := listedActions[act]; twice {
+				errs = append(errs, fmt.Errorf("channels.%s: intentActions lists %q more than once", id, act))
+			}
+			listedActions[act] = struct{}{}
 		}
 		// CD11: a notify list is a closed vocabulary, and a name given twice is a generated
 		// declaration that disagrees with itself: both are refused here, not at the renderer.

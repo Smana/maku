@@ -617,6 +617,21 @@ type stubBroker struct {
 	coordResult func(CoordinationPlanRequest) CoordinationPlanResult
 	coordErr    error
 	summary     *summary.Summary
+	// intents is every intent_classify the App asked for, oldest first; intentResult is the answer and
+	// intentErr the failure it answers instead.
+	intents      []IntentRequest
+	intentResult IntentResult
+	intentErr    error
+}
+
+func (b *stubBroker) IntentClassify(_ context.Context, in IntentRequest) (IntentResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.intents = append(b.intents, in)
+	if b.intentErr != nil {
+		return IntentResult{}, b.intentErr
+	}
+	return b.intentResult, nil
 }
 
 func (b *stubBroker) SlackLinkCode(_ context.Context, team, user, handle, name string) (string, error) {
@@ -848,6 +863,13 @@ func (m *fakeMetrics) ProposalUpdate(_ context.Context, action string) {
 func (m *fakeMetrics) ThreadAnswer(_ context.Context, question string) {
 	m.mu.Lock()
 	m.n["answer/"+question]++
+	m.mu.Unlock()
+}
+
+// SlackIntent is maku_slack_intents_total{tier, intent, outcome}, recorded as "tier/intent/outcome".
+func (m *fakeMetrics) SlackIntent(_ context.Context, tier, intent, outcome string) {
+	m.mu.Lock()
+	m.n["intent/"+tier+"/"+intent+"/"+outcome]++
 	m.mu.Unlock()
 }
 
