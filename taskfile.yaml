@@ -68,6 +68,11 @@ tasks:
       KUBEBUILDER_ASSETS:
         sh: go tool setup-envtest use -p path 1.36.x
 
+  intent:eval:
+    desc: The synthetic intent set against a live model (INTENT_EVAL_URL, INTENT_EVAL_KEY_FILE); prints the confusion matrix, fails under 95 % write-intent precision.
+    cmds:
+      - go test -count=1 -run TestSyntheticSetLive -v ./internal/intent
+
   migrations:
     desc: atlas.sum matches the migration directory, as the Atlas operator checks it. Offline.
     cmds:
