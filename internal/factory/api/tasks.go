@@ -120,6 +120,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := r.Header.Get("Idempotency-Key")
+	in.Repository = canonicalRepository(sp.Repositories, in.Repository) // audience: only the config's spelling
 	switch {
 	case in.Incident != nil: // an internal principal's field: a sponsored request has no use for it
 		out(http.StatusBadRequest, "bad_json")
@@ -133,7 +134,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	case !sponsored.ValidRef(in.Ref): // the ref is written into the trusted brief: one pattern with the broker
 		out(http.StatusBadRequest, "bad_ref")
 		return
-	case !slices.Contains(sp.Repositories, in.Repository): // exact: the config is spelled as listed (C22)
+	case !slices.Contains(sp.Repositories, in.Repository): // in.Repository was rewritten to the config's spelling above (C22)
 		out(http.StatusForbidden, "repository_not_allowed")
 		return
 	case s.Owned == nil || !s.Owned(in.Repository):

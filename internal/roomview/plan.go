@@ -5,6 +5,7 @@ package roomview
 import (
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,9 @@ func Plan(w io.Writer, p intake.Plan, label string, o Options) error {
 	b.WriteString("\n")
 	if p.Planner.Model != "" {
 		line := "Planner " + brokerLine(p.Planner.Model, md, true)
+		if p.Planner.ServedModel != "" && p.Planner.ServedModel != p.Planner.Model {
+			line += " (served by " + brokerLine(p.Planner.ServedModel, md, true) + ")"
+		}
 		if p.Planner.Surface != "" {
 			line += " on " + brokerLine(p.Planner.Surface, md, true)
 		}
@@ -110,7 +114,12 @@ func Plan(w io.Writer, p intake.Plan, label string, o Options) error {
 		b.WriteString("\n")
 	}
 	if len(p.RepositoryEvidence) > 0 {
-		b.WriteString("\nWhy this repository\n")
+		b.WriteString("\nWhy this repository")
+		if slices.ContainsFunc(p.RepositoryEvidence, func(e intake.Evidence) bool { return e.Kind == intake.ModelClaim }) {
+			// The broker reads no repository on this path: what the model says it read is its claim.
+			b.WriteString(" (unverified: the planner's claims, nothing here was checked)")
+		}
+		b.WriteString("\n")
 		for _, e := range p.RepositoryEvidence {
 			// No URL: Evidence.URL is the broker's alone and this view builds none, so an evidence
 			// item reads as the text it is (CD18, §security).

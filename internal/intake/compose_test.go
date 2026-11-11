@@ -140,7 +140,7 @@ func TestModelSuppliedEvidenceLinksAreDropped(t *testing.T) {
 			t.Fatalf("evidence[%d] carries the model's link: %q", i, e.URL)
 		}
 	}
-	if p.RepositoryEvidence[0].Text != d.Evidence[0].Text || p.RepositoryEvidence[0].Kind != "path" {
+	if p.RepositoryEvidence[0].Text != d.Evidence[0].Text || p.RepositoryEvidence[0].Kind != intake.ModelClaim {
 		t.Fatalf("%+v", p.RepositoryEvidence[0])
 	}
 	// Display fields the model did compose survive: they are the question's context.

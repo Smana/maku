@@ -48,8 +48,9 @@ func usdMeter(st *store, src Source, revoked *[]revocation, fell *[]string) *Met
 }
 
 // J-AC1 under OD-6 (b): the standard tier's default cap is $2.55, and none of the four cohort runs
-// reaches it, though each is past the 1.5 M tokens that revoked it.
-func TestCohortRunsStayUnderTheStandardUSDCap(t *testing.T) {
+// reaches it, though each is past 1.5 M tokens. #465 made the token cap a ceiling beside the
+// dollar one, so each is still revoked at 1.5 M, though its cost stays far under $2.55.
+func TestCohortRunsAreRevokedOnTheTokenCapUnderTheUSDCap(t *testing.T) {
 	if c := config.RefUSD(1_500_000); c != 2.55 {
 		t.Fatalf("the standard tier's default cap is $%v, want $2.55", c)
 	}
@@ -66,11 +67,11 @@ func TestCohortRunsStayUnderTheStandardUSDCap(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := st.patches["aaaaaaaa"]
-			if p[runs.AnnRevoked] != "" || len(revoked) != 0 || len(fell) != 0 {
-				t.Errorf("revoked at $%.4f of $2.55: %v %v %v", usd, p, revoked, fell)
+			if p[runs.AnnRevoked] != ReasonBudgetRun || len(revoked) != 1 || revoked[0] != (revocation{ReasonBudgetRun, LimitRunTokens}) || len(fell) != 0 {
+				t.Errorf("at $%.4f of $2.55: %v %v %v, want one budget-run on the token cap", usd, p, revoked, fell)
 			}
 			if p[runs.AnnUsage] == "" || u.Input+u.Output <= 1_500_000 {
-				t.Errorf("the token count is still written, and past the old cap: %v", p)
+				t.Errorf("the token count is written, and past the cap: %v", p)
 			}
 		})
 	}
@@ -407,4 +408,33 @@ func with(m *Meter, f func(*config.Config)) {
 	}
 	f(c)
 	m.Cfg = c
+}
+
+// #465: a flat-rate model's nominal prices leave the USD cap far out of reach (task ozdjcnhn's
+// implementer made 88 calls, $1.47 of $5.10 across the task), so the run token cap is a ceiling
+// beside the dollar one: the run is revoked at 1.5 M tokens though its cost is a fraction of $2.55.
+func TestARunIsRevokedAtItsTokenCapWhateverItCosts(t *testing.T) {
+	st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{standardRun("7lrzay4x")}}
+	src := typed{}
+	var revoked []revocation
+	var fell []string
+	m := usdMeter(st, src, &revoked, &fell)
+	for _, u := range []Usage{
+		{Input: 1_400_000, CacheRead: 1_350_000, Output: 20_000}, // under the cap
+		{Input: 1_960_000, CacheRead: 1_900_000, Output: 40_000}, // 2.0 M tokens, well under $2.55
+	} {
+		src["7lrzay4x"] = typedUsage(u)
+		if err := m.Tick(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if u.Input < 1_500_000 && len(revoked) != 0 {
+			t.Fatalf("revoked under the cap: %v", revoked)
+		}
+	}
+	if usd := m.last["7lrzay4x"].usd; usd >= 2_550_000 {
+		t.Fatalf("cost $%.2f, the test needs it under the USD cap", float64(usd)/1e6)
+	}
+	if len(revoked) != 1 || revoked[0] != (revocation{ReasonBudgetRun, LimitRunTokens}) {
+		t.Fatalf("revocations %v, want one budget-run on the token cap", revoked)
+	}
 }

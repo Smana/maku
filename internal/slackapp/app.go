@@ -471,9 +471,11 @@ func (a *App) draftMention(ctx context.Context, ev slackEvent, ch Channel, threa
 	if err != nil {
 		return refuse(err.Error())
 	}
-	if !slices.Contains(ch.Repositories, d.Repo) {
+	repo, served := canonicalRepo(ch.Repositories, d.Repo)
+	if !served {
 		return refuse("this channel does not serve that repository")
 	}
+	d.Repo = repo
 	d, err = a.Broker.IssueDraft(ctx, d)
 	if err != nil {
 		if r, ok := err.(Refused); ok { //nolint:errorlint // Refused is returned bare, never wrapped
@@ -734,7 +736,7 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	if !ok {
 		return "ignored"
 	}
-	if p.Author == "" || p.Author != ev.User || !slices.Contains(ch.Repositories, p.Repo) {
+	if p.Author == "" || p.Author != ev.User || !servesRepo(ch.Repositories, p.Repo) {
 		return "ignored"
 	}
 	say := func(text string) string {
@@ -832,7 +834,7 @@ func (a *App) file(ctx context.Context, team, channel, itemTS, user string, viaR
 		return refuse("hash", "Not filed: this draft no longer matches its check; start a new one with a mention.")
 	case !served:
 		return refuse("channel", "Not filed: this channel is no longer served; ask an operator to add it to the Slack App's channels.")
-	case !slices.Contains(ch.Repositories, p.Repo):
+	case !servesRepo(ch.Repositories, p.Repo):
 		return refuse("repository", fmt.Sprintf("Not filed: %s isn't served in this channel; ask an operator to add it to the channel's repositories.",
 			slackText(p.Repo)))
 	}

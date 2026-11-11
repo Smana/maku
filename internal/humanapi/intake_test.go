@@ -36,7 +36,7 @@ func intakeClasses() map[string]intake.Class {
 var intakeReply = func() []byte {
 	draft := `{"repository":"smana/ai-native-ref","evidence":[{"kind":"path","text":"the install link in the README"}],` +
 		`"issues":[{"title":"docs: the install link is dead","body":"## What is wrong\nThe install link 404s.\n` +
-		`## What it should be\nA link that resolves.\n## Acceptance check\nThe link resolves.","class":"docs-links"}]}`
+		`## What it should be\nThe install link MUST resolve.\n## Acceptance check\nOn the link, the page MUST return 200.","class":"docs-links"}]}`
 	content, err := json.Marshal(draft)
 	if err != nil {
 		panic(err)
@@ -386,7 +386,7 @@ func metricsBody(t *testing.T, e env) string {
 // broker's; roles and ceiling are the config's.
 func TestIntakePlanFromASession(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session")) // a fake gateway: one repository, no question
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link in the README is dead"})
+	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link in README.md is dead"})
 	if got.isError {
 		t.Fatalf("%s", got.text)
 	}
@@ -407,6 +407,10 @@ func TestIntakePlanFromASession(t *testing.T) {
 		d.Plan.Round != 1 || d.Plan.RoundsLeft != 9 {
 		t.Fatalf("%+v", d.Plan)
 	}
+	// The model the gateway reported is recorded beside the alias, so a swap behind it is visible.
+	if d.Plan.Planner.ServedModel != "glm-5.3" {
+		t.Fatalf("planner.servedModel: %+v", d.Plan.Planner)
+	}
 	// A session cannot claim a user or widen its ceiling: both are a sponsored principal's alone.
 	for _, bad := range []map[string]any{{"text": "x", "ceiling": 99}, {"text": "x", "on_behalf_of": "slack:T01ABC/U02DEF"}} {
 		if got := call(t, e, viaRoomctl("dev"), "intake_plan", bad); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
@@ -422,7 +426,7 @@ func TestIntakePlanFromASession(t *testing.T) {
 			t.Errorf("the audit line does not carry %s: %s", want, logs)
 		}
 	}
-	if strings.Contains(logs, "the install link in the README") {
+	if strings.Contains(logs, "the install link in README.md") {
 		t.Errorf("the audit line carries the request's text: %s", logs)
 	}
 }
@@ -1111,5 +1115,87 @@ func TestPlanCheckWithoutARedactorRefuses(t *testing.T) {
 	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
 	if !got.isError || !strings.Contains(got.text, "unavailable") {
 		t.Fatalf("%s", got.text)
+	}
+}
+
+// #456, live on gcp-0: a vague request and a model that answers with one invented issue, no gaps and
+// evidence it never checked. The broker adds the gaps itself, ranked, with markers in the issue, and
+// labels the evidence as the model's claim, so the harness has a question to ask and nothing to file.
+func TestIntakePlanVagueRequestGetsTheFloor(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"))
+	draft := `{"repository":"smana/ai-native-ref","evidence":[{"kind":"path","text":"README.md lacks clear status"},` +
+		`{"kind":"path","text":"FACTORY_STATUS.md is missing"}],"gaps":[],` +
+		`"issues":[{"title":"factory: status is unclear","body":"## What is wrong\nPeople cannot tell what is going on.\n` +
+		`## What it should be\nClearer status.\n## Acceptance check\nIt is better.","class":"docs-links"}]}`
+	content, _ := json.Marshal(draft)
+	e.intake.replyWith([]byte(`{"model":"mistral-medium-2604","choices":[{"message":{"content":` + string(content) + `}}],` +
+		`"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+		"text": "the factory should be better at telling people what's going on"})
+	if got.isError {
+		t.Fatalf("%s", got.text)
+	}
+	var d struct{ Plan intake.Plan }
+	_ = json.Unmarshal([]byte(got.structured), &d)
+	if len(d.Plan.Gaps) != 3 || d.Plan.Question == nil || d.Plan.Gaps[0].Section != "scope" {
+		t.Fatalf("gaps: %+v", d.Plan.Gaps)
+	}
+	if d.Plan.Hash != intake.Hash(d.Plan) || strings.Count(d.Plan.Issues[0].Body, "[NEEDS CLARIFICATION: g") != 3 {
+		t.Fatalf("%+v", d.Plan)
+	}
+	for _, ev := range d.Plan.RepositoryEvidence {
+		if ev.Kind != intake.ModelClaim {
+			t.Errorf("evidence kind %q, want model_claim", ev.Kind)
+		}
+	}
+	if d.Plan.Planner.Model != "tier-frontier" || d.Plan.Planner.ServedModel != "mistral-medium-2604" {
+		t.Fatalf("%+v", d.Plan.Planner)
+	}
+}
+
+// #469: a request that names a repository this surface does not serve is refused before any model
+// call, on both surfaces, and never planned for a different repository.
+func TestIntakePlanRefusesANamedRepositoryNotServedHere(t *testing.T) {
+	withAllow := intakeOption(t, func(_ *fakeIntake, in *Intake) {
+		in.Allow = map[string]bool{"Smana/ai-native-ref": true, "Smana/runlore": true, "Smana/runlore-kb": true}
+	})
+	for _, tc := range []struct {
+		name    string
+		sponsor bool
+		args    map[string]any
+		refused bool
+	}{
+		{"session, the live case", false, map[string]any{"text": "let's add mistral support to runlore"}, true},
+		{"session, owner/name", false, map[string]any{"text": "add mistral to Smana/runlore"}, true},
+		{"session, a re-plan reply in the context", false, map[string]any{"text": "the docs are wrong", "context": "Reply 1: you're wrong I specifically asked runlore"}, true},
+		{"slack, the live case", true, map[string]any{"text": "let's add mistral support to runlore", "on_behalf_of": "slack:T01ABC/U02DEF",
+			"candidates": []string{"Smana/cloud-native-ref", "Smana/ai-native-ref"}}, true},
+		{"slack, a named candidate is planned", true, map[string]any{"text": "the ai-native-ref install guide is wrong", "on_behalf_of": "slack:T01ABC/U02DEF",
+			"candidates": []string{"Smana/ai-native-ref"}}, false},
+		{"session, nothing named", false, planArgs(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := []option{mcpOn, withIntake(t, "session"), withAllow}
+			who := viaRoomctl("dev")
+			if tc.sponsor {
+				opts = []option{mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"), withAllow}
+				who = bearer("slack-app")
+			}
+			e := setup(t, opts...)
+			got := call(t, e, who, "intake_plan", tc.args)
+			if tc.refused {
+				if !got.isError || !strings.Contains(got.text, "repository_not_served_here") ||
+					!strings.Contains(got.text, "runlore isn't served here") || !strings.Contains(got.text, "ai-native-ref") {
+					t.Fatalf("%s", got.text)
+				}
+				if e.intake.calls() != 0 {
+					t.Fatalf("a refused request called the model %d times", e.intake.calls())
+				}
+				return
+			}
+			if got.isError {
+				t.Fatalf("%s", got.text)
+			}
+		})
 	}
 }

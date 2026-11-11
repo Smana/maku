@@ -26,7 +26,9 @@ func TestA429IsJudgedInTheUnitB1Charges(t *testing.T) {
 			ReasonBudgetRun, LimitGatewayCeiling},
 	} {
 		t.Run(name, func(t *testing.T) {
-			st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{standardRun("aaaaaaaa")}}
+			r := standardRun("aaaaaaaa")
+			r.MaxTokens = 0 // the run's token cap stays out of the way too
+			st := &store{patches: map[string]map[string]string{}, runs: []runs.Run{r}}
 			var revoked []revocation
 			var fell []string
 			m := usdMeter(st, typed{"aaaaaaaa": typedUsage(tc.u)}, &revoked, &fell)

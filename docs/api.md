@@ -696,9 +696,13 @@ acceptable only when that trusted public comment supplies the question; an inter
 missing question refuses as `needs_room_access`, naming the maintainer/room-reader path rather than
 exposing or inventing one.
 
-The form shows the question, recommendation and exact Decision-section append layout, with `<answer>`
-marking the single substitution the developer's trimmed one-line answer makes. `answer` is required and
-`send` defaults to false. Only an accepted form with send true re-reads the issue and, when body, labels
+The form shows the question, recommendation and the full line diff of the body, with `<answer>`
+marking the single substitution the developer's trimmed one-line answer makes. For the acceptance
+question ("which command or observation proves it is done?") the diff includes the `## Acceptance check`
+section, created after "What it should be" and before `## Decisions` when the issue has none, with a
+marker replaced or the answer appended when it exists, plus the `D<n>: Acceptance check: <answer>`
+record. A blank `answer` accepts the recommendation when there is one. `send`
+defaults to false. Only an accepted form with send true re-reads the issue and, when body, labels
 and `updatedAt` are all unchanged, calls `gh issue edit --body-file=-` once. It never adds or removes a
 label. Success returns `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply
 factory/ready"}`. Decline, cancel, and send false instead return `next:"the question is unanswered and
@@ -796,6 +800,7 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 |---|---|
 | `private_repository_unsupported` | the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route |
 | `repository_not_allowed` | no repository the allowlist serves and you may write in matches this request; name one of the repositories listed |
+| `repository_not_served_here` | the request names a repository outside the candidate set, checked before any model call: `<repo> isn't served here (served: …); an operator adds it to the repositories served here`. Names are `owner/name`, a github.com URL, or a bare name of a repository the broker knows, in the text or the context |
 | `no_write` | you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it |
 | `invalid_draft` | the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order |
 | `unresolved_marker` | a final plan still has a ranked gap or a live/malformed clarification marker; answer it through a revision |

@@ -181,6 +181,16 @@ func TestCreateTaskAdmission(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a repository in another case is written as the config spells it", func(t *testing.T) {
+		s, f := newTaskServer(t, slack, 0)
+		rec := postTask(s, strings.Replace(draft, "Smana/cloud-native-ref", "smana/CLOUD-native-ref", 1), "k")
+		if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		if got := tasks(t, s); len(got) != 1 || got[0].Spec.Repository != "Smana/cloud-native-ref" || len(f.got) != 1 {
+			t.Fatalf("tasks %+v, issues %+v", got, f.got)
+		}
+	})
 	t.Run("the day is spent", func(t *testing.T) {
 		s, f := newTaskServer(t, slack, 9_000_000) // 9 of the principal's 10 USD spent today
 		if rec := postTask(s, draft, "k"); rec.Code != 429 || !strings.Contains(rec.Body.String(), "principal_budget_exhausted") {

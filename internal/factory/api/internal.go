@@ -52,6 +52,7 @@ func (s *Server) createInternalTask(cfg *config.Config, w http.ResponseWriter, r
 	}
 	key := r.Header.Get("Idempotency-Key")
 	inc := in.Incident
+	in.Repository = canonicalRepository(ip.Repositories, in.Repository) // audience: only the config's spelling
 	switch {
 	case key == "" || len(key) > maxKeyLen:
 		out(http.StatusBadRequest, "idempotency_key_required")

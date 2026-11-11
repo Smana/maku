@@ -54,6 +54,7 @@ result, and any refusal, before you offer to file. Say the one line, then the ne
 | Answer | Say | Next |
 |---|---|---|
 | `repository_not_allowed` | this repository is not enrolled in the factory | enrolment is a `Repository` and a `MergePolicy` object in the factory's config repo plus a `.github/agent-factory.yaml` fence file in the repository; a maintainer does it. Do not file and label anyway |
+| `repository_not_served_here` | the repository you named is not served here; the refusal lists the ones that are | an operator adds it to the repositories served here (the Slack channel's list, or the planner's allowlist). Never plan it for another repository |
 | `off` | starting the factory from here is off for this repository (enrolled repositories hit it too) | file the issue; a maintainer adds the trigger label (`factory/ready`) to start it |
 | `private_repository_unsupported` | the factory does not take private repositories | none from here |
 | `repository_not_owned` | another factory owns this repository | ask a maintainer |
@@ -96,7 +97,7 @@ broker built. Do not rewrite it, and do not add a link of your own.
 | turn a side task into a plan | `intake_plan` (the broker's governed planner: plan it nowhere else) |
 | re-check a plan against its hash | `plan_check` |
 | hand a side task over | the `factory_intake` prompt (`handoff` is its alias), ending with `plan_check` and `issue_file` |
-| answer a scoper's post-filing question | `need_answer`, which appends a Decision to the issue body and never changes labels |
+| answer a scoper's post-filing question | `need_answer`, which edits the issue body only and never changes labels: it appends a Decision and, for the acceptance question, writes the answer into `## Acceptance check` (created when the issue has none; a blank answer accepts the scoper's assumption) |
 
 A plan's hash is what `issue_file` checks: `plan_check` recomputes it over the plan it is given, so
 the two travel together. An edit outside a validated revision envelope is refused rather than filed.

@@ -97,10 +97,11 @@ func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Princip
 	if len(plan.Issues) != slackFiles {
 		return argRefusal("Slack files exactly one issue: the plan carries " + strconv.Itoa(len(plan.Issues)))
 	}
-	// The four fields the App still sends are the plan's, byte for byte: the hash covers the
+	// The four fields the App still sends are the plan's, byte for byte but for the repository's case (the App
+	// files into the channel's spelling, the planner lowercases): the hash covers the
 	// repository, the title and the body, so a call that spells any of them differently is a call
 	// about a different task.
-	if issue := plan.Issues[0]; a.Repo != plan.Repository || a.Title != issue.Title || a.Text != issue.Body {
+	if issue := plan.Issues[0]; !strings.EqualFold(a.Repo, plan.Repository) || a.Title != issue.Title || a.Text != issue.Body {
 		return intake.ReasonRefusal(intake.ReasonPlanChanged)
 	}
 	if a.MaxCost > plan.Budget.CeilingUSD {

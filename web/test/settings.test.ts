@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evidenceAge, evidenceLine, explain, isSettings, ladderLine, modeCounts, mountSettings, poll, settingsFrame, type Evidence, type Report, type RepositoryPage } from "../src/settings";
+import { evidenceAge, blockerActions, explain, isSettings, LADDER_LEGEND, modeCounts, mountSettings, poll, settingsFrame, trackRecord, type Evidence, type Report, type RepositoryPage } from "../src/settings";
 import { READING } from "../src/class-card";
 import { type ClassPolicy, classForm, fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
 import { parsePolicy } from "../src/policy-yaml";
@@ -54,10 +54,11 @@ describe("settings routes", () => {
 });
 
 describe("evidence", () => {
-  it("writes MP7's numbers in one line and the widening ladder", () => {
-    expect(evidenceLine(ev())).toBe("20/20 clean · 0 bad · 2 immature · 1 pending · bound 0.139 · drill passed");
-    expect(ladderLine(ev({ ladder: [{ merges: 29, maxBad: 0, reached: true }, { merges: 46, maxBad: 1, reached: false }, { merges: 61, maxBad: 2, reached: false }] })))
-      .toBe("29 ✓ / 46 / 61");
+  it("writes MP7's numbers as a track record in words, and blockers as actions", () => {
+    expect(trackRecord(ev()).textContent).toBe("20 of 20 clean merges · 0 bad · 2 awaiting outcome · 1 awaiting a verdict · worst-case bad rate ≤ 14 % · rollback drill passed");
+    expect(blockerActions(ev({ clean: 19, bad: 2, blockers: ["below_minimum", "bad_outcome", "no_drill"] })))
+      .toEqual(["needs 1 more clean merge", "2 bad merges to explain", "run a rollback drill (factory/drill)"]);
+    expect(blockerActions(ev({ blockers: [] }))).toEqual([]);
   });
   it("explains a refusal by its code, and names an unknown one", () => {
     expect(explain("not_eligible")).toMatch(/minimum/);
@@ -72,7 +73,7 @@ describe("the repository page", () => {
     const get = fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/promotions": { promotion: { id: "aaaaaaaa" }, proposal } }, calls);
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", get);
-    expect(app.textContent).toContain("20/20 clean");
+    expect(app.textContent).toContain("20 of 20 clean merges");
     expect(app.textContent).toContain("glm-5.3 20/21");
     expect(app.textContent).toContain("Live \u00b7 3 clean decisions recorded.");
     expect(app.textContent).not.toContain("not shadow");
@@ -132,7 +133,7 @@ describe("the repository page", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": short, "/api/policy/exceptions/cccccccc": {} }, calls));
-    expect(app.textContent).toContain("Not yet eligible: fewer clean decisions than the minimum.");
+    expect(app.textContent).toContain("Blocks promotion: needs 8 more clean merges.");
     const card = app.querySelector("#class-docs-links")!;
     expect([...card.querySelectorAll("button")].some((b) => b.textContent === "Ask an operator for an exception")).toBe(true);
     const approve = [...card.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
@@ -241,7 +242,10 @@ describe("the index and evidence pages", () => {
     await mountSettings(app, "/settings/evidence", get);
     expect(app.textContent).toContain("docs-links");
     expect(app.textContent).toContain("eligible");
-    expect(app.textContent).toContain("29 / 46 / 61");
+    expect(app.textContent).toContain(LADDER_LEGEND);
+    expect([...app.querySelectorAll("thead th")].map((h) => h.textContent)).toEqual(["Repository", "Class", "Mode", "Track record", "Blocks promotion"]);
+    expect(app.textContent).not.toMatch(/Widening|Eligibility|immature|bound /);
+    expect(app.querySelectorAll(".ladder-legend")).toHaveLength(1);
   });
 });
 
@@ -741,7 +745,7 @@ describe("pending evidence", () => {
     const ready = page();
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
-    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20/20 clean");
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 of 20 clean merges");
     expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toMatch(/^Evidence read .+\.$/);
     expect(app.querySelector(".policy-classes .evidence-age time")?.getAttribute("datetime")).toBe("2026-11-08T00:05:00Z");
     expect(app.querySelector("section.policy-editor")).toBe(editor);
@@ -762,8 +766,9 @@ describe("pending evidence", () => {
     await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
       "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
     expect(app.textContent?.split(READING)).toHaveLength(2); // once for the page
-    const rows = [...app.querySelectorAll("tbody tr")].map((tr) => tr.children[3].textContent);
-    expect(rows).toEqual(["pending", "pending"]);
+    const cells = [...app.querySelectorAll("tbody tr")].flatMap((tr) => [tr.children[3], tr.children[4]]);
+    expect(cells.map((c) => c.textContent)).toEqual(Array(4).fill("reading GitHub\u2026"));
+    expect(cells.every((c) => c.querySelector(".reading"))).toBe(true);
   });
 });
 
@@ -1010,7 +1015,7 @@ describe("the filter", () => {
     const ready = manyClasses();
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
-    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20/20 clean");
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 of 20 clean merges");
     expect(visible()).toEqual(["class-beta"]);
     expect(app.querySelector(".filter-count")?.textContent).toBe("1 of 4 classes");
   });

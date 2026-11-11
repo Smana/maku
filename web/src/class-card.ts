@@ -9,7 +9,7 @@
 
 import { describeClass, modeMeaning, summaryLine } from "./policy-describe";
 import type { PolicyFile } from "./policy-editor";
-import { evidenceLine, explain, policyState, post, timeText } from "./settings-api";
+import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
 import type { ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
@@ -24,14 +24,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: 
   return e;
 }
 
-// The factory's blocker codes (internal/factory/evidence: BlockBelowMinimum, BlockBadOutcome,
-// BlockNoDrill) and its unproposed codes, in words; an unknown code is shown with spaces.
-const blockerWords: Record<string, string> = {
-  below_minimum: "fewer clean decisions than the minimum",
-  bad_outcome: "a bad outcome was recorded",
-  no_drill: "the revert drill has not passed",
-  drill_not_passed: "the revert drill has not passed",
-};
+// The factory's unproposed codes, in words; an unknown code is shown with spaces.
 const unproposedWords: Record<string, string> = {
   not_shadow: "the class is not in shadow",
   not_in_repository_policy: "the class is not declared in the repository's policy file",
@@ -61,9 +54,17 @@ export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
   return box;
 }
 
+// detail is a class's track record as one line of words.
+const detail = (e: Evidence) => {
+  const p = el("p", undefined, "evidence-detail");
+  p.append(trackRecord(e));
+  return p;
+};
+
 const ladder = (e: Evidence) => {
   const ol = el("ol", undefined, "evidence-ladder");
-  ol.setAttribute("aria-label", "widening steps");
+  ol.setAttribute("aria-label", "clean merges in a row, and the bad rate each proves");
+  ol.title = LADDER_LEGEND;
   for (const s of e.ladder) {
     const li = el("li", `${s.merges} merges${s.reached ? ", reached" : ""}`);
     li.dataset.reached = String(s.reached);
@@ -143,18 +144,18 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     if (r.evidenceAt) card.append(el("p", "Evidence for this class is still being read.", "evidence-reading"));
     notPromotable();
   } else if (c.mode === "live") {
-    card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), el("p", evidenceLine(e), "evidence-detail"));
+    card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), detail(e));
   } else if (c.mode === "off") {
-    card.append(el("p", e.clean === 0 ? "Off: no decisions recorded." : evidenceLine(e), "evidence-detail"));
+    card.append(e.clean === 0 ? el("p", "Off: no decisions recorded.", "evidence-detail") : detail(e));
   } else {
     const exc = ctx.page.exceptions.find((x) => x.class === c.class && x.state === "approved" && Date.parse(x.expiresAt ?? "") > Date.now());
     const eligible = e.eligible || (!!exc && e.clean >= exc.minimum && e.bad === 0 && e.drill === "passed");
-    card.append(evidenceBar(e, eligible), ladder(e), el("p", evidenceLine(e), "evidence-detail"));
+    card.append(evidenceBar(e, eligible), ladder(e), detail(e));
     const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
     if (reviewers) card.append(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
     card.append(el("p", eligible
       ? (e.eligible ? "Eligible to promote: enough clean decisions, no bad outcome, drill passed." : `Eligible to promote under exception ${exc!.id} (${exc!.minimum} clean decisions required).`)
-      : `Not yet eligible: ${(e.blockers ?? []).map((k) => blockerWords[k] ?? k.replaceAll("_", " ")).join(", ") || "no reason given"}.`, "evidence-eligibility"));
+      : `Blocks promotion: ${blockerActions(e).join(", ") || "no reason given"}.`, "evidence-eligibility"));
     // The broker refuses a second request while one is open (promotion_open): offer neither then.
     const open = ctx.page.promotions.some((p) => p.class === c.class && (p.state === "requested" || p.state === "pr_opened"));
     if (open) act.textContent = "";

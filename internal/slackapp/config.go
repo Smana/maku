@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 
 	"sigs.k8s.io/yaml"
 
@@ -159,4 +160,23 @@ func (c Config) validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// canonicalRepo is the channel's own spelling of repo and whether the channel serves it. GitHub's
+// owner and repository names are case-insensitive and the planner lowercases the one it names, so a
+// plan's repository is matched with EqualFold; what is filed, drawn and marked is the spelling the
+// operator wrote (the factory's octo-sts audience takes only that one).
+func canonicalRepo(listed []string, repo string) (string, bool) {
+	for _, r := range listed {
+		if strings.EqualFold(r, repo) {
+			return r, true
+		}
+	}
+	return "", false
+}
+
+// servesRepo is whether the list names repo, whatever its case.
+func servesRepo(listed []string, repo string) bool {
+	_, ok := canonicalRepo(listed, repo)
+	return ok
 }

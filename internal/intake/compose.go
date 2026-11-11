@@ -17,13 +17,15 @@ import (
 // its revision, the config's class table, and — when the broker is answering in a Slack channel —
 // that channel's ceiling (CD17).
 type ComposeIn struct {
-	Surface    Surface
-	Model      string
-	Now        time.Time
-	Rev        int
-	Round      int
-	RoundsLeft int
-	Classes    map[string]Class
+	Surface Surface
+	Model   string
+	// ServedModel is the model the gateway reported answering, recorded in `planner.servedModel`.
+	ServedModel string
+	Now         time.Time
+	Rev         int
+	Round       int
+	RoundsLeft  int
+	Classes     map[string]Class
 	// CeilingUSD and CeilingSource are the channel's ceiling, when the channel has one: `maxCostUSD`
 	// and the string that says so (`channel:C1.maxCostUSD`). Zero means no channel ceiling.
 	CeilingUSD    float64
@@ -50,7 +52,8 @@ type ComposeIn struct {
 //
 // What the broker owns, the broker empties: an `Evidence.URL` the reply sent is dropped, because a
 // link a person clicks is one the broker built from a repository it verified (§security). The text
-// stays — it is what the reply says it read.
+// stays — it is what the reply says it read — but its kind becomes `model_claim`: nothing on this
+// path reads the repository, so a `path` the model cites is not a path anyone checked (#456).
 //
 // The repository is the candidate's spelling: lowercased, because the guard hands candidates over
 // lowercased and a plan's hash must not depend on how the model capitalised a name.
@@ -70,7 +73,7 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		Rev:          in.Rev,
 		Round:        in.Round,
 		RoundsLeft:   in.RoundsLeft,
-		Planner:      Planner{Model: in.Model, Surface: string(in.Surface), At: in.Now},
+		Planner:      Planner{Model: in.Model, ServedModel: in.ServedModel, Surface: string(in.Surface), At: in.Now},
 		Repository:   strings.ToLower(strings.TrimSpace(d.Repository)),
 		Alternatives: slices.Clone(d.Alternatives),
 	}
@@ -165,15 +168,21 @@ func earlier(deps []int, index int) []int {
 	return kept
 }
 
-// evidenceWithoutLinks is the reply's evidence with every URL emptied: the model may say what it
-// read, and only the broker says where a link goes.
+// ModelClaim is the kind of every evidence line the model wrote. The broker reads no repository on
+// the planning path, so none of it is verified, and the kind says so instead of the model's own
+// `path`.
+const ModelClaim = "model_claim"
+
+// evidenceWithoutLinks is the reply's evidence with every URL emptied and every kind set to
+// ModelClaim: the model may say what it read, only the broker says where a link goes, and only a
+// check could call a claim a path.
 func evidenceWithoutLinks(in []Evidence) []Evidence {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]Evidence, 0, len(in))
 	for _, e := range in {
-		out = append(out, Evidence{Kind: e.Kind, Text: e.Text})
+		out = append(out, Evidence{Kind: ModelClaim, Text: e.Text})
 	}
 	return out
 }

@@ -46,7 +46,7 @@ func ParseMention(text, botUserID string, repos []string) (Draft, error) {
 		}
 	}
 	if only != "" {
-		if repo == only {
+		if strings.EqualFold(repo, only) {
 			first = title
 		}
 		repo, title = only, first
