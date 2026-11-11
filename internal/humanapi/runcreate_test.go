@@ -393,3 +393,38 @@ func TestRunCreateNamesTheSponsor(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// The live case on gcp-0: the planner lowercases the repository, the Slack App files into the channel's
+// spelling. The call is about the plan's task, so the two compare case-insensitively (the hash still
+// covers the plan's own form), and the factory is asked with the call's spelling.
+func TestRunCreateRepositoryCase(t *testing.T) {
+	for name, tc := range map[string]struct {
+		repo   string
+		filed  bool
+		reason string
+	}{
+		"the channel's spelling":       {"Smana/ai-native-ref", true, ""},
+		"the planner's lowercase form": {"smana/ai-native-ref", true, ""},
+		"another repository":           {"Smana/cloud-native-ref", false, "plan_changed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+			e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+			plan := planFixture(t, "slack-one-issue")
+			plan.Repository = "smana/ai-native-ref"
+			args := map[string]any{"repo": tc.repo, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+				"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF",
+				"plan": plan, "plan_hash": intake.Hash(plan)}
+			got := call(t, e, bearer("slack-app"), "run_create", args)
+			if !tc.filed {
+				if !got.isError || !strings.Contains(got.text, tc.reason) || len(f.got) != 0 {
+					t.Fatalf("want %s, got %s (%d asks)", tc.reason, got.text, len(f.got))
+				}
+				return
+			}
+			if got.isError || len(f.got) != 1 || f.got[0].Repository != tc.repo {
+				t.Fatalf("%s; the factory was asked %+v", got.text, f.got)
+			}
+		})
+	}
+}

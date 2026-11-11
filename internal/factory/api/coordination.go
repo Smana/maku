@@ -78,7 +78,7 @@ func (s *Server) draftCoordination(w http.ResponseWriter, r *http.Request) {
 			refuse(w, http.StatusForbidden, reasonSponsoredOnly)
 			return
 		}
-		if !slices.Contains(sp.Repositories, primary) {
+		if !slices.ContainsFunc(sp.Repositories, func(r string) bool { return sameRepository(r, primary) }) {
 			refuse(w, http.StatusForbidden, "repository_not_allowed")
 			return
 		}

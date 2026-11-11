@@ -279,8 +279,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, reason)
 		return
 	}
-	// Exact, not case-insensitive: spec.repository becomes the run's octo-sts audience, so only
-	// the config's spelling is ever written there.
+	// GitHub's names are case-insensitive, but spec.repository becomes the run's octo-sts audience:
+	// a request is matched case-insensitively and rewritten to the config's spelling, the only one
+	// ever written there.
+	in.Repository = canonicalRepository(cfg.API.Repositories, in.Repository)
 	if !slices.Contains(cfg.API.Repositories, in.Repository) {
 		refuse(w, http.StatusForbidden, "repository_not_allowed") // OD-6
 		return
@@ -676,4 +678,15 @@ func (s *Server) dropReservation(ctx context.Context, id string) {
 	}
 	delete(cm.Data, ledger.Reserved+id)
 	_ = s.Rooms.Update(ctx, cm)
+}
+
+// canonicalRepository is the spelling listed holds for asked, whatever its case, or asked itself when
+// the list does not name it (the caller's exact check then refuses it).
+func canonicalRepository(listed []string, asked string) string {
+	for _, r := range listed {
+		if strings.EqualFold(r, asked) {
+			return r
+		}
+	}
+	return asked
 }

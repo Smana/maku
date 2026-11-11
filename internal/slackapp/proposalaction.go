@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 )
 
 // Confirm and Cancel (CD7's two controls), riding the approval design's one interactivity branch: the
@@ -215,7 +214,7 @@ func (a *App) redrawProposal(ctx context.Context, channel, ts string, p Proposal
 // but only the person who pressed needs to be told what the press did.
 func (a *App) confirmProposal(ctx context.Context, in interaction, thread string, p ProposalPayload) string {
 	ch := a.Channels[in.Channel]
-	if !slices.Contains(ch.Repositories, p.Plan.Repository) {
+	if !servesRepo(ch.Repositories, p.Plan.Repository) {
 		return a.pressAnswer(ctx, in, thread,
 			fmt.Sprintf(proposalRepoGoneLine, slackText(p.Plan.Repository)), "refused")
 	}
