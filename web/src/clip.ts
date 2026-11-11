@@ -10,7 +10,7 @@
 // seq, not on the node: a resend or a resume renders a fresh bubble that opens as they
 // left it, and one that fits again (a wider window) drops its button until it does not.
 
-// The clip (app.css: calc(12 * 1.55em), the body's line height) and the slack past it.
+// The clip (app.css: calc(12 * var(--leading-body)), twelve body lines) and the slack past it.
 const clipLines = 12;
 const slackLines = 2;
 

@@ -140,13 +140,13 @@ describe("text wrapping", () => {
 });
 
 describe("surfaces", () => {
-  it("rounds the approval card concentrically: its 6 px controls plus 8 px of padding", () => {
+  it("shapes the approval card as an Ogenki card", () => {
     const a = decl(outside, ".approval");
-    expect(a).toMatch(/border-radius:\s*calc\(var\(--radius-control\)\s*\+\s*8px\)/);
-    expect(a).toMatch(/padding:\s*8px 12px/);
+    expect(a).toMatch(/border-radius:\s*var\(--radius-md\)/);
+    expect(a).toMatch(/padding:\s*var\(--space-4\)/);
   });
   it("squares an open call's summary at the body's edge", () => {
-    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*var\(--radius-row\) var\(--radius-row\) 0 0/);
+    expect(decl(outside, ".tool[open] > summary")).toMatch(/border-radius:\s*calc\(var\(--radius-md\) - 1px\) calc\(var\(--radius-md\) - 1px\) 0 0/);
   });
 });
 
@@ -173,13 +173,13 @@ describe("fork here on touch screens", () => {
     expect(bar).toMatch(/visibility:\s*visible/);
     expect(bar).toMatch(/pointer-events:\s*auto/);
   });
-  it("is drawn quiet on touch: no border, background or shadow, muted 13 px text", () => {
+  it("is drawn quiet on touch: no border, background or shadow, muted small text", () => {
     const b = decl(touch, ".row-tools .fork-here");
     expect(b).toMatch(/border:\s*(0|none)/);
     expect(b).toMatch(/background:\s*none|background:\s*transparent/);
     expect(b).toMatch(/box-shadow:\s*none/);
     expect(b).toMatch(/color:\s*var\(--muted-foreground\)/);
-    expect(b).toMatch(/font-size:\s*13px/);
+    expect(b).toMatch(/font-size:\s*var\(--text-small\)/);
     expect(b).not.toMatch(/min-height:\s*[1-9]/);
   });
   it("gets its 44 px hit area from ::after, not from visible padding", () => {
@@ -276,8 +276,8 @@ describe("layout", () => {
 // The appearance pass (2026-11-06): hierarchy from size and opacity, one radius scale, the
 // approval card's accent as a bar, the connection as a dot.
 describe("appearance", () => {
-  it("sets the room title bigger and lighter, smaller again on a phone", () => {
-    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*22px/);
+  it("sets the room title at display size, a heading on a phone", () => {
+    expect(decl(phone, ".strip-title")).toMatch(/font-size:\s*var\(--text-heading\)/);
   });
   it("sets a header fact's value at full ink and mutes its name and the run's id, model and effort", () => {
     expect(decl(outside, ".page-header .chip")).toMatch(/color:\s*var\(--brand-header-foreground\)/);
@@ -296,11 +296,15 @@ describe("appearance", () => {
     expect(r).toMatch(/background:\s*color-mix\(in srgb, var\(--tone\) 14%, var\(--brand-header\)\)/);
     expect(r).not.toMatch(/border-left/);
   });
-  it("draws the approval card's accent as a bar on a raised card, not a full outline", () => {
-    const a = decl(outside, ".approval");
-    expect(a).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
-    expect(a).toMatch(/box-shadow:\s*var\(--shadow-border\),\s*inset 3px 0 0 var\(--warning\)/);
-    expect(a).toMatch(/padding:\s*8px 12px 8px 15px/);
+  it("draws the approval card's accent as a straight bar inside the card, not a full outline", () => {
+    expect(decl(outside, ".approval")).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
+    expect(css).not.toMatch(/\.approval, \.needs-other li\.need \{\s*border-color/);
+    const bar = decl(outside, ".approval::before, .needs-other li.need::before");
+    expect(bar).toMatch(/width:\s*3px/);
+    expect(bar).toMatch(/background:\s*var\(--warning-border\)/);
+    // straight: it starts and ends where the card's 16 px corners do, so it never bends round them
+    expect(bar).toMatch(/top:\s*var\(--radius-md\)/);
+    expect(bar).toMatch(/bottom:\s*var\(--radius-md\)/);
   });
   it("draws deny as a ghost: no outline until hovered", () => {
     const d = decl(outside, "button.deny");
@@ -320,7 +324,7 @@ describe("appearance", () => {
     expect(root).toMatch(/--radius-control:\s*6px/);
     expect(root).toMatch(/--radius-row:\s*8px/);
     expect(root).toMatch(/--radius-card:\s*12px/);
-    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-card\)/);
-    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-card\)/);
+    expect(decl(outside, ".cli-card")).toMatch(/border-radius:\s*var\(--radius-md\)/);
+    expect(decl(outside, ".sk-msg")).toMatch(/border-radius:\s*var\(--radius-md\)/);
   });
 });
