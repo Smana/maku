@@ -4,7 +4,7 @@ Asked: #2264, the runbook's rollback step names the old bucket
 Acceptance: `docs/runbooks/rollback.md names the bucket the manifest declares`
 Plan: scope ready · budget $1.50 ceiling
 
-Changed since 2026-11-04 22:40 UTC (10 h):
+Changed since 2026-11-04 22:40 UTC (10 h 30 min):
 - 23:02 the implementer started
 - 23:19 CI `docs` failed
 - 23:20 note `the CI log is not readable from the sandbox: do not try to fetch it; read the check's name and your diff instead`

@@ -9,7 +9,8 @@ import { actorName, idTail } from "./chat";
 import { el } from "./controls";
 import { chip, fillDetail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
-import { ago, type Flow, type FlowNode } from "./summary";
+import { timeEl } from "./duration";
+import type { Flow, FlowNode } from "./summary";
 
 // you, when given, is the viewer's principal, so the steer card names the viewer's own steers "you".
 export interface RailHandlers { select(run: string | undefined): void; you?(): string | undefined }
@@ -41,6 +42,14 @@ const maxSteers = 512;
 
 // A room id is a C2 id; nothing else reaches an href.
 const roomId = /^[a-z2-7]{8}$/;
+
+// steerItem is one "who, how long ago" line of a card's steers, the age as a <time>.
+function steerItem(who: string, ts: string, now: number): HTMLElement {
+  const li = el("li", { textContent: `${who}, ` });
+  const at = Date.parse(ts);
+  if (!isNaN(at)) li.append(timeEl(now - at, ts, "ago"));
+  return li;
+}
 
 function roomLink(room: string | undefined, text: string): HTMLElement {
   if (!room || !roomId.test(room)) return el("span", { textContent: text });
@@ -161,7 +170,7 @@ export function mountRail(h: RailHandlers): Rail {
   function steerLines(n: FlowNode, count: number): HTMLElement[] {
     const held = steers.filter((x) => x.seq >= n.fromSeq && (n.toSeq === 0 || x.seq <= n.toSeq)).reverse();
     const ol = el("ol", { className: "rail-steers" });
-    ol.append(...held.map((x) => el("li", { textContent: `${actorName(x.actor, h.you?.())}, ${ago(x.ts, clock)}` })));
+    ol.append(...held.map((x) => steerItem(actorName(x.actor, h.you?.()), x.ts, clock)));
     if (count > held.length) ol.append(el("li", { className: "rail-earlier", textContent: `${count - held.length} earlier` }));
     return [el("p", { className: "rail-card-head", textContent: "Steered by" }), ol];
   }
