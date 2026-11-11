@@ -177,6 +177,11 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 			all = append(all, s.coordinationTool())
 		}
 	}
+	// intent_classify is the Slack App's alone: a session has no thread reply to classify, so it is listed
+	// for the one sponsored principal that human.slackIntents names and for no one else.
+	if s.Intents != nil && p.Sponsored && p.ID == s.Intents.Principal {
+		all = append(all, s.intentClassifyTool())
+	}
 	// room_brief is the human list's last, needs_list's neighbour: the brief is a developer's resume of
 	// their own work (CD11), and a sponsored principal has no developer whose work it resumes (R13), so it
 	// is in no sponsoredTools entry.
@@ -220,7 +225,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 // room-scoped read, which lists what the room has to act on with a link and no decision (CD28). The two
 // legacy room reads stay need-free.
 var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
-	mcpwire.CoordinationPlan}
+	mcpwire.CoordinationPlan, mcpwire.IntentClassify}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
 // the bearer is one of theirs. Its expiry is checked as a human's is.
