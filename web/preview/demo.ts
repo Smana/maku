@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// The live demo: the room page showing a recorded run in its end state.
+// The live demo: the room page replaying a recorded run at its recorded pace, sped up.
 // Every path is relative, so the site serves from a domain root or under GitHub Pages'
 // /<repo>/ prefix. No broker, no network beyond the site's own files: every act is inert.
 
@@ -9,6 +9,10 @@ import type { Summary } from "../src/summary";
 import { applyTheme, initTheme } from "../src/theme";
 import { summaryAt } from "./demo-summary";
 import { mountPreviewPage } from "./page";
+import { Replay } from "./replay";
+import { mountReplayBar } from "./replay-bar";
+
+const APPROVAL_DWELL_MS = 4000;
 
 const get = async <T>(path: string): Promise<T> => (await fetch(path)).json() as Promise<T>;
 
@@ -35,23 +39,39 @@ async function run() {
 
   const shown: RoomEvent[] = [];
   const page = mountPreviewPage(document.getElementById("app")!, { snap, summary: summaryAt(summary, shown, events.length, false),
-    // The snapshot stands before the first event, so every event applies onto it.
+    // The snapshot stands before the first event, so every event replays onto it.
     count: 0, nothingSent: "Demo: nothing is sent.", sessionOpen: false, sessionLabel: "Session · driver: the factory", assetBase: "assets", homeHref: "./", theme });
 
   const banner = document.createElement("div");
   banner.className = "banner demo-banner";
   const about = Object.assign(document.createElement("a"), { href: "https://github.com/Smana/maku#readme", textContent: "What is this?" });
-  banner.append("Demo: a recorded run. Nothing here reaches a cluster. ", about);
+  banner.append("Demo: a recorded run, replayed. Nothing here reaches a cluster. ", about);
   page.header.after(banner);
 
-  for (const e of events) {
+  const replay = new Replay(events, (e) => {
     const r = rebased(e);
     shown.push(r);
     page.apply(r);
-  }
-  page.setSummary(summaryAt(summary, shown, events.length, true));
+    page.setSummary(summaryAt(summary, shown, events.length, shown.length === events.length));
+    page.settle();
+  }, {
+    // The approval is the demo's point: hold its card on screen, whatever the speed.
+    dwell: (e) => (e.type === "approval_requested" ? APPROVAL_DWELL_MS : 0),
+    onChange: () => {
+      bar.refresh();
+      page.setStatus(`demo · ${replay.applied} / ${events.length} events`);
+    },
+  });
+  // The bar is the dock's first row, so it stays on screen while the run scrolls.
+  const slot = document.createElement("div");
+  const bar = mountReplayBar(slot, replay, events.length);
+  page.footer.prepend(...slot.childNodes);
+  page.setStatus(`demo · 0 / ${events.length} events`);
   page.settle();
-  page.setStatus(`demo · ${events.length} events`);
+  // ?speed=N sets a speed the bar does not offer: the README screencast records at 2.
+  const speed = Number(new URLSearchParams(location.search).get("speed"));
+  if (speed > 0) replay.setSpeed(speed);
+  replay.play();
 }
 
 run().catch((e) => { document.body.textContent = `demo failed: ${e instanceof Error ? e.message : e}`; });
