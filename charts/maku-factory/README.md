@@ -86,7 +86,7 @@ rolls the pods through its `checksum/config` annotation). The factory also reads
 `Repository` and `MergePolicy` resources live: a change to one of them applies the catalogue and
 `repositories` without a rollout. A repository a change adds that fails to wire (its GitHub App
 installation, a merger key) is retried every minute, as is a served one whose merger reconnect
-failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `api`, `runs`,
+failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `intake`, `api`, `runs`,
 `sandbox`, `demo`, `broker`, `github`, `meter.url`, `meter.query`, `meter.logsURL`,
 `meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`,
 `runlore.listen`, `triage.classifierURL`, `factory`) are read once, at the start the rollout
@@ -104,3 +104,27 @@ budgets: {factoryDailyUSD: 42.50, humanDailyUSD: 8.50}
 caps: {escalatedHours: 72}
 meter: {prices: {agent-default: {input: 1.40, cacheRead: 0.26, output: 4.40, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}}}
 ```
+
+### Outcome overlap
+
+The existing `config` passthrough carries `intake.overlap`; there is no parallel top-level chart
+value. The block defaults to off; this example selects shadow:
+
+```yaml
+config:
+  intake:
+    overlap:
+      mode: shadow                 # off (default), shadow, enforce
+      scoperEnforcement: false     # effective only with mode: enforce
+```
+
+`shadow` evaluates and records without refusing. `enforce` with the selector false refuses only
+exact-active matches; setting it true additionally refuses valid scoper-confirmed active matches.
+Exact-active refusal does not depend on the selector. Roll back by clearing the selector or changing
+the mode; Task history is retained and an already-pending evaluation still finishes or adopts its
+deterministic run. The ConfigMap checksum rolls the pods for this file change.
+
+See [outcome-overlap detection](../../docs/factory.md#outcome-overlap-detection) for the canonical
+fingerprint, 20-candidate bound, classifications, pending/replay and budget semantics, and
+[Operations](../../docs/operations.md#outcome-overlap-rollout-and-shadow-evidence) for the required
+shadow evidence and staged rollout. Fixtures alone do not establish production precision.

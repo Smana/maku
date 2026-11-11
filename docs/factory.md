@@ -66,7 +66,7 @@ A task's phase is in `kubectl get tasks` and in its room's summary. Any open pha
 ```mermaid
 stateDiagram-v2
   [*] --> Received
-  Received --> Rejected: text too long, daily task cap
+  Received --> Rejected: text too long, daily task cap, exact active outcome duplicate
   Received --> Triaged: tier, template, class, budget
   Triaged --> Queued: room created
   Queued --> Implementing: tester, implementer or triager run
@@ -99,6 +99,7 @@ stateDiagram-v2
   AwaitingHuman --> Closed: closed, or stale
   Queued --> Escalated: task budget spent
   Implementing --> Escalated: run failed, stuck, lost
+  Implementing --> Rejected: scoper-confirmed active outcome duplicate
   Implementing --> Escalated: the scoper's question (needs_author)
   Implementing --> Escalated: the scoper's split (split_proposed)
   Escalated --> Split: /factory split
@@ -125,6 +126,90 @@ closed by hand ends the task from any phase that watches it. `Merged` is in the 
 transition sets it: an auto-merge goes from `AutoMerging` to `Verifying`. A task counts against
 `caps.activeTasks` while it is `Implementing`, `Reviewing`, `AwaitingCI`, `AutoMerging` or
 `Verifying`.
+
+### Outcome-overlap detection
+
+Deterministic Task names, run ids and idempotency keys prevent replay of one request; they do not
+prevent two different requests from pursuing one outcome. `intake.overlap.mode` adds that check for
+ordinary **issue, sponsored API and scheduled** Tasks. It is `off` by default. Split parents and
+parts, coordination, adopted and RunLore Tasks keep their existing paths and are neither evaluated
+nor candidates.
+
+Initial retrieval and any exact-active refusal run after the daily-task-cap refusal and before
+tracing, triage, room creation or any implementation effect. If candidate classification is needed,
+the ordinary triage and room setup happens first, followed by the read-only evaluation run described
+below. The sanitized `spec.text`, not the raw `source.contentSHA256` or a rendered AgentRun brief,
+supplies the goal. Canonicalization applies Unicode NFKC, lowercase,
+punctuation-to-space and whitespace normalization. The exact fingerprint is lowercase hexadecimal
+SHA-256 of `lowercase(repository) + NUL + canonicalGoal`: repository-scoped, stable across those
+text variants, and deliberately unable to recognize every rewording.
+
+For reworded goals, deterministic lexical terms from the goal and acceptance text rank candidates
+from the same repository, excluding the current Task and its runs. Retrieval reads Tasks, AgentRuns
+and retained room outcomes in that order, then reads GitHub issues/PRs only as evidence for retained
+candidates. Exact-active matches survive truncation; the rest rank active first, then by distinct
+shared terms descending, recency descending and stable Task/run/reference ids. At most **20
+candidates** are retained. There is no unrestricted GitHub history search, semantic preflight on
+every intake, separate overlap database or initial search index. Absence outside the checked sources
+is a blind spot, not evidence of uniqueness.
+
+The result is one bounded `status.overlap` record: fingerprint, classification, cited Task/run/issue/
+PR ids and phases, checked sources, optional deterministic evaluation-run id, `checkedAt` and a note
+of at most 512 characters. Untrusted goals, candidate prose and room evidence are not copied into
+status, logs, traces or metrics. Relevant prior handoffs and review verdicts remain available to the
+read-only evaluation scoper as fenced data, never instructions.
+
+| Classification | Evidence and action |
+|---|---|
+| `active_duplicate` | An exact active fingerprint, or a valid scoper assessment citing an active supplied candidate. Only this classification can refuse, and only under the enforcement selection below |
+| `completed_duplicate` | Existing `Done` or `NoOp` work. Proceed with its result as evidence. `Merged` remains active until post-merge verification reaches `Done` |
+| `prior_attempt` | `Rejected`, `Reverted`, `Escalated`, `Closed` or `Stopped`. Proceed with the earlier outcome and lessons on re-label |
+| `partial_overlap` | Shared behavior or files without the same outcome, including `Split`. Proceed with coordination evidence |
+| `unverified_overlap` | A source failed, evidence is missing, the evaluation failed, or its answer was malformed, inconclusive or cited unsupported ids. Proceed without an automatic refusal and report the uncertainty |
+| `no_match` | No candidate was found in the checked sources, or the scoper ruled out every supplied candidate and cited coverage of each. This never proves that no duplicate exists elsewhere |
+
+For this mapping, active phases are `Received`, `Triaged`, `Queued`, `Implementing`, `Reviewing`,
+`AwaitingCI`, `AutoMerging`, `Verifying`, `Coordinating`, `AwaitingHuman` and `Merged`; this is
+independent of the execution-cap-oriented `ActivePhase` set.
+
+A source outage produces `unverified_overlap` even when an exact-active candidate was also read:
+missing evidence never becomes a refusal. Empty candidate sets and exact matches create no scoper
+run. Any other candidate set is persisted **pending**, with empty `classification` and `checkedAt`,
+before its deterministic triager evaluation starts. That read-only run precedes the ordinary scoper,
+tester and implementer. An active assessment must cite an active supplied candidate; every citation
+must name a supplied id; fabricated citations and unsupported active/no-match conclusions become
+`unverified_overlap`. Failure or missing output also becomes unverified, never proof of absence.
+
+Persisted final results replay without retrieval or another classification. Reads before the first
+successful status write are side-effect-free and may repeat; a write failure retries without
+proceeding. The evaluation AgentRun uses the existing deterministic ordinal, reservation, resume and
+lost-write adoption rules, so a restart does not create a second scoper. Pending work still finishes
+or adopts its run after a rollback to `shadow` or `off`. A re-label or retry that creates a new Task
+generation gets new evidence rather than mutating the final fingerprint, classification, citations,
+sources, note or `checkedAt` of an earlier generation.
+
+| Refusal | Run and budget semantics |
+|---|---|
+| Exact-active, in `enforce` | Ends `Rejected` with reason `overlap_active_duplicate` before triage, room creation or any AgentRun. There is no evaluation scoper and no implementation AgentRun or implementation-budget reservation |
+| Scoper-confirmed active, in `enforce` with `scoperEnforcement: true` | The one read-only evaluation run and its ordinary run reservation have already happened; their spend remains in the existing meter and ledger. The Task ends `Rejected` with the same reason, with no implementation AgentRun or implementation-budget reservation |
+
+| Configuration | Behavior |
+|---|---|
+| `mode: off` (default) | No new retrieval or overlap status evaluation. Existing records remain; an already-pending evaluation still finishes or adopts its deterministic run |
+| `mode: shadow` | Retrieve, classify, persist and measure, including candidate scoper runs, but never refuse for overlap |
+| `mode: enforce`, `scoperEnforcement: false` (default) | **Limited enforcement:** refuse exact-active matches only; scoper-confirmed active matches remain advisory |
+| `mode: enforce`, `scoperEnforcement: true` | **Full enforcement:** refuse both exact-active and valid scoper-confirmed active matches |
+
+`scoperEnforcement` has no effect outside `enforce`; exact-active enforcement never depends on it.
+Roll back full to limited enforcement by clearing that selector, or to `shadow`/`off` by changing
+`mode`, without deleting Task history. The evidence gates and procedure are in
+[Operations](operations.md#outcome-overlap-rollout-and-shadow-evidence).
+
+Every other final result proceeds through the existing lifecycle. In particular, `shadow` records
+the same active classifications without refusing, and limited enforcement treats scoper-active
+results as advisory. This adds no agent role or parallel recovery path: the usual room history,
+resume, test-first contract, independent review and fresh-sandbox revision behavior remains in
+force. Maintainer re-label/retry flows remain the human override.
 
 ### The tester stage
 
@@ -369,7 +454,7 @@ A task ends with one of these:
 |---|---|
 | `Done` | `children_merged` (a split's last part merged), `merged` (by a maintainer), `merged_verified` (auto-merged, main green for `merge.verifyFor`), `merged_unverified` (auto-merged, main's CI gave no result within twice `merge.verifyFor`, a check cancelled or never finished; the comment names the merge commit, and `factory/revert` still reverts it within `merge.revertWindow`), `proposal_ready` (a triager's proposal: label its issue `factory/publish`, read the new issue the factory files, then label that one `factory/ready`) |
 | `NoOp` | `no_pr` (the run opened no pull request), `no_action` (the triager found nothing to change). Add detail and re-apply `factory/ready` |
-| `Rejected` | `text_too_long` (over `caps.maxTextBytes`), `daily_task_cap` (`caps.tasksPerDay`). Fix it and re-apply `factory/ready` |
+| `Rejected` | `text_too_long` (over `caps.maxTextBytes`), `daily_task_cap` (`caps.tasksPerDay`), `overlap_active_duplicate` (an enforced exact or scoper-confirmed active outcome match; see [outcome-overlap detection](#outcome-overlap-detection)). Fix it and re-apply `factory/ready`; an overlap refusal's citations identify the existing work to reuse or coordinate with |
 | `Closed` | `pr_closed`, `stale`, `child_dropped` (a part's issue closed unmerged, or a part reverted) |
 | `Stopped` | `stopped_by_label`, `stopped_by_annotation`, `superseded`, `kill_switch`, `escalation_expired`, `family_dropped` (a part stopped because another part was dropped or reverted) |
 | `Reverted` | `main_red`, `revert_requested` |
@@ -1552,6 +1637,7 @@ creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
 | `status.configHash` | The config that triaged the task |
 | `status.contract` | `runId`, `commit` (40 hex), `files`, `ids` (1 to 50 each): the tester's commit as GitHub recorded it. Set once, when its push is read; every implementer run is held to it |
 | `status.scope` | `state` (`ready`, `question`, `assumed`, `missing`, `failed`) and `seq` (the scope's handoff): the scoper's outcome, kept when the task stops |
+| `status.overlap` | The bounded [outcome-overlap evaluation](#outcome-overlap-detection): repository-scoped `fingerprint` (64 lowercase hex), `classification`, at most 20 `matches` (Task/run C2 ids, positive issue/PR numbers, `exact`/`lexical`, phase), at most four checked `sources` (`tasks`, `runs`, `rooms`, `github`), optional deterministic evaluation-run `scoperRun`, `checkedAt` and a note of at most 512 characters. Pending has neither classification nor `checkedAt`; a final classification and its evidence are immutable |
 | `status.split` | `state` (`proposed`, `approved`, `declined`, `superseded`, `expired`, `ignored`), `seq` (the split's handoff), `of`, `approvedBy` (`github:<login>`, every part's payer) and `children[]` (`index`, `issue`, `task`, `outcome`: `landed`, `dropped`, `reverted`) |
 | `status.lastActivity` | The running run's last room event, for stuck detection |
 | `status.trace` | The task's root span ids |
@@ -1575,6 +1661,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `factory` | This factory's name, a DNS label such as `aws-0`: a repository is acted on only while its `.github/agent-factory.yaml` gives it | Required |
 | `repositories` | At most 8 entries, one per repository, names unique (case-insensitive); see the entry table below | Required |
 | `control` | `{repository, issue}`: the issue whose `factory/stop` is the global stop, on a listed repository | `issue` 0: none |
+| `intake.overlap` | `{mode, scoperEnforcement}`: [outcome-overlap detection](#outcome-overlap-detection) for issue, sponsored API and scheduled Tasks. `mode` is `off`, `shadow` or `enforce` (a bare YAML `off` reads as the string); `scoperEnforcement` independently selects scoper-confirmed refusal in `enforce` only. Unknown or duplicated keys are refused | `mode: off`, `scoperEnforcement: false` |
 | `factoryLogin`, `agentsLogin` | The factory App's login (narration) and the agents App's (pull requests) | Required |
 | `roomsURL` | `https://<host>` of the rooms UI, linked in comments | Required |
 | `broker` | `url` (https only), `caFile`, `tokenFile` | Required |
@@ -1722,7 +1809,8 @@ points at the snapshot in the room instead.
 
 ### The scoper
 
-Under `scope: scoper`, a read-only `triager` run with a scoping brief goes first, at the light
+Under `scope: scoper`, a read-only `triager` run with a scoping brief goes before the implementer
+(after any [outcome-overlap evaluation](#outcome-overlap-detection)), at the light
 tier's run caps (at the task's own tier when it was offered a [split](#splits), since it also plans
 every part), and hands the implementer a bounded task through `room_handoff`'s `scope`: the
 change, the files, the paths to leave alone, a plan, its assumptions and its acceptance checks.
