@@ -4,6 +4,8 @@ Feature level only. What shipped, release by release, is the
 [releases page](https://github.com/Smana/maku/releases); what is proven live, and on which cluster,
 is the platform's [status page](https://airef.ogenki.io/docs/status/).
 
+As of v0.41.2.
+
 ## Landed
 
 | Feature | Docs |
@@ -16,6 +18,9 @@ is the platform's [status page](https://airef.ogenki.io/docs/status/).
 | The room page: a header grouped by topic, an action on every need, folded briefs, settings in tabs | [Web UI](web-ui.md) |
 | The factory from your coding agent: hand off, file, wait (`room_wait`) and check out (`room_checkout`) through the MCP server | [The MCP server](cli.md#the-mcp-server) |
 | Slack: self-serve linking and the proposal message | [Slack App](slack.md) |
+| The factory on a laptop: `task demo`, the `charts/agent-factory` umbrella chart and the quickstart | [Quickstart](quickstart.md) |
+| Factory resources: `Factory`, `Repository` and `MergePolicy` objects the factory reads live, with the last good version kept on a bad edit, and `maku config migrate` and `validate` (v0.41.x) | [Merge policies](merge-policies.md) |
+| Team evaluation profiles with outcome metrics | [Web UI](web-ui.md) |
 
 ## In progress
 
@@ -23,6 +28,10 @@ is the platform's [status page](https://airef.ogenki.io/docs/status/).
 |---|---|
 | Merge policies, from shadow to authority | Stage 3's exit: a week of dual decisions with no unexplained disagreement. Then a repository's cutover with central guardrails, a policy-bot rule generated from a class, `maku policy init`, a hold label, and simulation over real pull requests ([UX review](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-08-merge-policy-ux-review.md#the-proposal-ranked)) |
 | The planner's grounding | It accepted a false premise in a request; a plan must check its claims against the repository |
+| A form that never answers: `issue_file` falls back to the draft, and the handoff skill checks its prerequisites first | [#442](https://github.com/Smana/maku/pull/442) |
+| Slack quick wins: a refused first mention is explained, planner progress shows, the closed phrases are listed | [#444](https://github.com/Smana/maku/pull/444) |
+| Natural-language intents in Slack rooms | Design, open ([#441](https://github.com/Smana/maku/pull/441)) |
+| A suggested workflow and profile override at intake | Design, open ([#443](https://github.com/Smana/maku/pull/443)) |
 
 ## Roadmap
 
@@ -33,4 +42,5 @@ is the platform's [status page](https://airef.ogenki.io/docs/status/).
 | OTel spans across bridge → broker → store, `traceparent` on every hop | `AGENTS.md`, Observability |
 | The platform-agnostic decision after the UX sign-off | 2 of 4 triggers: daily use, AHP 1.0 without identity and audit, a second harness or runtime, outside demand (`AGENTS.md`, Seams) |
 | A two-pane room page: the task panel on the left, the stream and the dock on the right, two tabs on a phone | Usage says people live in the page ([room readability](superpowers/specs/2026-10-15-room-readability-design.md#later-two-panes)) |
+| v4 stage 2, the production path: bring-your-own OIDC, secrets and GitOps; a k3s or kubeadm smoke test; semver on chart values; a nightly upgrade test | Stage 1's go test: the nightly kind job green and an outside person's friction log ([v4 roadmap](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-31-v4-roadmap-design.md#v4-0)) |
 | A migration that drops `rooms.bridge_seen_at` | Every broker runs a release that no longer writes it ([room log](room-log.md#schema)) |
