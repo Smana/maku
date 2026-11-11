@@ -57,9 +57,25 @@ export interface Exception {
   id: string; repository: string; class: string; minimum: number; justification: string;
   requestedBy: string; requestedAt: string; state: string; decidedBy?: string; note?: string; expiresAt?: string;
 }
+// The factory's catalogue of what a repository offers at intake (profile choice at intake): the
+// classes it offers, each with its floor profile, variants and escalation, and the profiles by name.
+// Null on a page when the factory could not be asked: the rest of the page still reads.
+export interface CatalogueClass {
+  name: string; description: string; mode: string; ceilingUSD: number; floor: string; allowed: string[];
+  escalation: { outOfBudget?: string; notConverged?: string } | null;
+}
+export interface CatalogueProfile {
+  template: string; roles: string[] | null; tier: string; checks: boolean; testFirst: boolean; loop: string;
+  description: string; offered: boolean; notOffered?: string;
+}
+export interface Catalogue {
+  repository: string; evaluation: { mode: string; controlPercent: number }; approveToMerge: boolean; maintainer: boolean;
+  classes: CatalogueClass[]; profiles: Record<string, CatalogueProfile>;
+}
 export interface RepositoryPage {
   report: Report; promotions: Promotion[]; exceptions: Exception[];
   you: { login: string; maintainer: boolean; operator: boolean };
+  catalogue?: Catalogue | null;
 }
 
 // The routes this module answers, as the broker serves them.
@@ -196,6 +212,13 @@ function card(href: string, title: string, purpose: string, counts: string): HTM
   return a;
 }
 
+// evaluationWords is " · evaluation: observe · control 20 %" from the first page whose catalogue the
+// factory answered: the team evaluation is the factory's, one for every repository. Empty when none did.
+export function evaluationWords(pages: RepositoryPage[]): string {
+  const e = pages.find((p) => p.catalogue)?.catalogue?.evaluation;
+  return e ? ` · evaluation: ${e.mode} · control ${e.controlPercent} %` : "";
+}
+
 async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Settings", "/settings", theme);
   const box = el("div", undefined, "settings-cards");
@@ -219,7 +242,7 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
   const known = repos !== undefined && (repos.length === 0 || ok.length > 0);
   box.append(
     card("/settings/merge-policies", "Merge policies", "Which agent pull requests may merge on their own, per repository.",
-      !known ? unknown : `${plural(repos!.length, "repository", "repositories")}${repos!.length ? ` · ${countsText(modes)}` : ""}${note}`),
+      !known ? unknown : `${plural(repos!.length, "repository", "repositories")}${repos!.length ? ` · ${countsText(modes)}` : ""}${note}${evaluationWords(ok)}`),
     card("/settings/evidence", "Evidence", "How close each shadow class is to being promoted to live.",
       !known ? unknown : repos!.length === 0 ? "No class to promote yet." : `${plural(eligible, "class", "classes")} eligible to promote${note}`),
     card("/settings/approval-memory", "Approval memory", "Approvals you saved so a later, similar pull request can merge without asking again.",

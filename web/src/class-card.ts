@@ -10,7 +10,7 @@
 import { describeClass, modeMeaning, summaryLine } from "./policy-describe";
 import type { PolicyFile } from "./policy-editor";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
-import type { ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
+import type { Catalogue, CatalogueClass, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
 
@@ -87,6 +87,37 @@ function editClass(main: HTMLElement, name: string) {
   pick.dispatchEvent(new Event("change"));
   pick.scrollIntoView?.({ block: "center" });
   pick.focus();
+}
+
+// profileLine is one profile in words: its roles (or that they are chosen at triage) and its tier.
+// The text is set as text, never as markup: a description is a maintainer's.
+function profileLine(cat: Catalogue, name: string): string {
+  const p = cat.profiles[name];
+  if (!p) return `${name}: not in the factory's list of profiles`;
+  const parts = [p.offered && p.roles?.length ? `roles ${p.roles.join(", ")}` : "roles chosen at triage"];
+  if (p.tier) parts.push(`tier ${p.tier}`);
+  if (p.testFirst) parts.push("tests first");
+  return `${name}: ${parts.join(" \u00b7 ")}`;
+}
+
+// profilesRow is a class's Profiles row: the floor it runs under, the variants a maintainer may pin
+// or the scoper may recommend, and where each failed signal escalates. Read-only (factory resources
+// D9); undefined for a class the catalogue does not offer at intake, or no catalogue.
+export function profilesRow(cat: Catalogue | null | undefined, cls: string): HTMLElement | undefined {
+  const c: CatalogueClass | undefined = cat?.classes.find((x) => x.name === cls);
+  if (!cat || !c) return undefined;
+  const row = el("section", undefined, "class-profiles");
+  row.append(el("h4", "Profiles"));
+  const list = el("ul", undefined, "class-profile-list");
+  list.append(el("li", c.floor ? `Floor ${profileLine(cat, c.floor)}` : "Floor: none declared, the factory runs the class as configured"));
+  for (const v of c.allowed ?? []) list.append(el("li", `Variant ${profileLine(cat, v)}`));
+  row.append(list);
+  const e = c.escalation;
+  if (e && (e.outOfBudget || e.notConverged)) {
+    const to = [e.outOfBudget && `out of budget goes to ${e.outOfBudget}`, e.notConverged && `not converged goes to ${e.notConverged}`].filter(Boolean);
+    row.append(el("p", `Escalation: ${to.join("; ")}.`, "class-escalation"));
+  }
+  return row;
 }
 
 export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
@@ -186,6 +217,8 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     more.append(el("summary", "Conditions"), el("p", s.lead, "class-lead"), when, ...s.also.map((a) => el("p", a, "class-also")));
     card.append(more);
   }
+  const profiles = profilesRow(ctx.page.catalogue, c.class);
+  if (profiles) card.append(profiles);
   card.append(act);
   const ps = promotionsOf(c.class, ctx);
   if (ps) card.append(ps);

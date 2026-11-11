@@ -5,6 +5,8 @@ package humanapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"io"
 	"net/http"
 	"strings"
@@ -444,4 +446,45 @@ func TestPolicyHandlersByRole(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Profile choice at intake, stage 1: the repository page carries what the factory's catalogue says
+// the repository offers, read with the caller's own token, so each class card can show its profiles;
+// a catalogue that cannot be read leaves the page whole, with catalogue null.
+func TestPolicyRepositoryCarriesCatalogue(t *testing.T) {
+	f, m := newPolicy(20)
+	src := &fakeFactoryCatalogue{}
+	e := setup(t, policyOn(f, m), withCatalogue(src))
+	code, body := getPolicy(t, e, "/api/policy/repositories/Smana/maku", header("anyone"))
+	var got struct {
+		Report    evidence.Report      `json:"report"`
+		Catalogue *catalogue.Catalogue `json:"catalogue"`
+	}
+	if code != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil || got.Catalogue == nil ||
+		len(got.Catalogue.Classes) != 2 || got.Catalogue.Evaluation.Mode != "observe" || !got.Catalogue.Profiles["review-frontier"].Offered {
+		t.Fatalf("%d %s", code, body)
+	}
+	if len(src.asked) != 1 || src.asked[0] != "Smana/maku|" {
+		t.Fatalf("asked %q: the catalogue is read for the caller, with no onBehalfOf", src.asked)
+	}
+
+	t.Run("an unreadable catalogue leaves the page whole", func(t *testing.T) {
+		down := &fakeFactoryCatalogue{byRepo: map[string]error{"Smana/maku": errors.New("factory down")}}
+		e := setup(t, policyOn(f, m), withCatalogue(down))
+		code, body := getPolicy(t, e, "/api/policy/repositories/Smana/maku", header("anyone"))
+		var got struct {
+			Report    evidence.Report `json:"report"`
+			Catalogue json.RawMessage `json:"catalogue"`
+		}
+		if code != http.StatusOK || json.Unmarshal([]byte(body), &got) != nil || got.Report.Repository != policyRepo || string(got.Catalogue) != "null" {
+			t.Fatalf("%d %s", code, body)
+		}
+	})
+	t.Run("no reader wired is the same", func(t *testing.T) {
+		e := setup(t, policyOn(f, m))
+		code, body := getPolicy(t, e, "/api/policy/repositories/Smana/maku", header("anyone"))
+		if code != http.StatusOK || !strings.Contains(body, `"catalogue":null`) {
+			t.Fatalf("%d %s", code, body)
+		}
+	})
 }

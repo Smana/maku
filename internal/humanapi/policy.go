@@ -13,6 +13,7 @@ import (
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/policyview"
@@ -167,11 +168,27 @@ func (s *Server) policyRepository(w http.ResponseWriter, r *http.Request) {
 		who = roles{} // the page still reads; every write asks again
 	}
 	writeJSON(w, struct {
-		Report     evidence.Report   `json:"report"`
-		Promotions []store.Promotion `json:"promotions"`
-		Exceptions []store.Exception `json:"exceptions"`
-		You        roles             `json:"you"`
-	}{rep, ps, es, who})
+		Report     evidence.Report      `json:"report"`
+		Promotions []store.Promotion    `json:"promotions"`
+		Exceptions []store.Exception    `json:"exceptions"`
+		You        roles                `json:"you"`
+		Catalogue  *catalogue.Catalogue `json:"catalogue"`
+	}{rep, ps, es, who, s.catalogueFor(r.Context(), p, rep.Repository)})
+}
+
+// catalogueFor is what the repository offers at intake, for the page's Profiles rows (profile
+// choice at intake, stage 1): nil when no reader is wired or the factory does not answer, and the
+// page still reads, as it does when the caller's roles cannot be had.
+func (s *Server) catalogueFor(ctx context.Context, p authn.Principal, repository string) *catalogue.Catalogue {
+	if s.Catalogue == nil {
+		return nil
+	}
+	c, err := s.Catalogue.Get(ctx, p, repository, "")
+	if err != nil {
+		s.log().Warn("settings: catalogue unread", "repository", repository, "err", err)
+		return nil
+	}
+	return &c
 }
 
 func decodePolicy(w http.ResponseWriter, r *http.Request, v any) bool {
