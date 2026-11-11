@@ -199,10 +199,21 @@ func scoperCompletion(t *testing.T, ts *httptest.Server) (string, map[string]any
 	return call.Name, args
 }
 
+func TestModelScoperOpenHandsContentParts(t *testing.T) {
+	_, ts := newStubServer(t)
+	body := `{"model":"tier-light","stream":true,"messages":[` +
+		`{"role":"system","content":[{"type":"text","text":"You are an agent."}]},` +
+		`{"role":"user","content":[{"type":"text","text":` + strconvQuote(scoperPrompt) + `}]}]}`
+	status, raw := postCompletion(t, ts, body)
+	if status != http.StatusOK || !strings.Contains(string(raw), `"name":"room_handoff"`) {
+		t.Fatalf("OpenHands content-parts status = %d, response %s", status, raw)
+	}
+}
+
 func TestModelScoperQuestionThenReady(t *testing.T) {
 	stub, ts := newStubServer(t)
 	name, args := scoperCompletion(t, ts)
-	if name != "room-broker__room_handoff" || args["toRole"] != "implementer" || args["commit"] != "4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3" {
+	if name != "room_handoff" || args["toRole"] != "implementer" || args["commit"] != "4be1c9d0e8a7f6b5c4d3e2f1a0b9c8d7e6f5a4b3" {
 		t.Fatalf("question handoff %s %+v", name, args)
 	}
 	question, ok := args["scope"].(map[string]any)
@@ -212,7 +223,7 @@ func TestModelScoperQuestionThenReady(t *testing.T) {
 
 	name, args = scoperCompletion(t, ts)
 	ready, ok := args["scope"].(map[string]any)
-	if name != "room-broker__room_handoff" || !ok || ready["state"] != "ready" || ready["question"] != nil || len(ready["acceptance"].([]any)) == 0 {
+	if name != "room_handoff" || !ok || ready["state"] != "ready" || ready["question"] != nil || len(ready["acceptance"].([]any)) == 0 {
 		t.Fatalf("ready handoff %s %+v", name, args)
 	}
 	counters := modelCounters(t, stub)
@@ -224,8 +235,8 @@ func TestModelScoperQuestionThenReady(t *testing.T) {
 func TestModelScoperFinishesAfterHandoff(t *testing.T) {
 	_, ts := newStubServer(t)
 	messages := `{"role":"system","content":"You are an agent."},{"role":"user","content":` + strconvQuote(scoperPrompt) + `},` +
-		`{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"room-broker__room_handoff","arguments":"{}"}}]},` +
-		`{"role":"tool","name":"room-broker__room_handoff","content":"ok"}`
+		`{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"room_handoff","arguments":"{}"}}]},` +
+		`{"role":"tool","name":"room_handoff","content":"ok"}`
 	body := `{"stream":true,"messages":[` + messages + `]}`
 	status, raw := postCompletion(t, ts, body)
 	if status != http.StatusOK || !strings.Contains(string(raw), `"name":"finish"`) || !strings.HasSuffix(string(raw), "data: [DONE]\n\n") {

@@ -3,6 +3,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -252,7 +254,9 @@ func (s *IssueStore) EditComment(id int64, body string) (Comment, bool) {
 }
 
 func (s *Stub) registerIssueRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /repos/owner/repo/contents/.github/agent-factory.yaml", s.fenceFile)
 	mux.HandleFunc("POST /repos/owner/repo/issues", s.createIssue)
+	mux.HandleFunc("GET /repos/owner/repo/pulls", s.listPullRequests)
 	mux.HandleFunc("GET /repos/owner/repo/issues", s.listIssues)
 	mux.HandleFunc("GET /repos/owner/repo/issues/{number}", s.getIssue)
 	mux.HandleFunc("PATCH /repos/owner/repo/issues/{number}", s.editIssue)
@@ -294,6 +298,13 @@ func gitHubComment(comment Comment) map[string]any {
 	}
 }
 
+func (s *Stub) fenceFile(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"type": "file", "name": "agent-factory.yaml", "path": ".github/agent-factory.yaml",
+		"sha": fullCommit, "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte("factory: demo\n")),
+	})
+}
+
 func (s *Stub) createIssue(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Title  string   `json:"title"`
@@ -333,6 +344,17 @@ func (s *Stub) listIssues(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+var agentPRHeadRE = regexp.MustCompile(`^owner:agent/[a-z2-7]{8}$`)
+
+func (s *Stub) listPullRequests(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	if !agentPRHeadRE.MatchString(query.Get("head")) || query.Get("state") != "all" || query.Get("per_page") != "10" {
+		http.Error(w, "unsupported pull request query", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, []any{})
+}
+
 func (s *Stub) getIssue(w http.ResponseWriter, r *http.Request) {
 	number, ok := issueNumber(w, r)
 	if !ok {
@@ -365,15 +387,33 @@ func (s *Stub) editIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, gitHubIssue(issue))
 }
 
+type addLabelsRequest struct {
+	Labels []string `json:"labels"`
+	Actor  string   `json:"actor"`
+}
+
+// UnmarshalJSON accepts go-github's top-level label array and fakegh's actor-carrying object.
+func (r *addLabelsRequest) UnmarshalJSON(raw []byte) error {
+	var labels []string
+	if err := json.Unmarshal(raw, &labels); err == nil {
+		r.Labels, r.Actor = labels, ""
+		return nil
+	}
+	type object addLabelsRequest
+	var decoded object
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	*r = addLabelsRequest(decoded)
+	return nil
+}
+
 func (s *Stub) addLabels(w http.ResponseWriter, r *http.Request) {
 	number, ok := issueNumber(w, r)
 	if !ok {
 		return
 	}
-	var body struct {
-		Labels []string `json:"labels"`
-		Actor  string   `json:"actor"`
-	}
+	var body addLabelsRequest
 	if !decodeBody(w, r, &body) {
 		return
 	}
@@ -408,8 +448,18 @@ func (s *Stub) issueEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	if len(query) > 1 || (query.Get("per_page") != "" && query.Get("per_page") != "100") {
+	if len(query) > 2 || (query.Get("per_page") != "" && query.Get("per_page") != "100") {
 		http.Error(w, "unsupported issue events query", http.StatusBadRequest)
+		return
+	}
+	for key := range query {
+		if key != "page" && key != "per_page" {
+			http.Error(w, "unsupported issue events query", http.StatusBadRequest)
+			return
+		}
+	}
+	if page, err := strconv.Atoi(query.Get("page")); query.Get("page") != "" && (err != nil || page < 1) {
+		http.Error(w, "unsupported issue events page", http.StatusBadRequest)
 		return
 	}
 	events := s.issues.LabelEvents(number)
@@ -558,8 +608,10 @@ func scenarioQueryHeader(header string) bool {
 		}
 		seen[declaration] = true
 	}
-	return len(seen) == 3
+	return len(seen) == 2 || len(seen) == 3
 }
+
+const agentPullsSelection = "repository(owner:$owner,name:$name){pullRequests(states:[OPEN],first:100,orderBy:{field:CREATED_AT,direction:DESC}){nodes{number,headRefName,headRepository{owner{login},name},labels(first:30){nodes{name}}}}}}"
 
 func (s *Stub) graphQL(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -577,7 +629,15 @@ func (s *Stub) graphQL(w http.ResponseWriter, r *http.Request) {
 	normalized := normalizeGraphQL(body.Query)
 	selection := normalizeGraphQL(issueSnapshotSelection)
 	open := strings.Index(normalized, "{")
-	if open < 0 || !scenarioQueryHeader(normalized[:open]) || normalized != normalized[:open]+"{"+selection {
+	if open < 0 || !scenarioQueryHeader(normalized[:open]) {
+		http.Error(w, "unsupported GraphQL query: only the scenario issue snapshot, labels and title timeline are served", http.StatusBadRequest)
+		return
+	}
+	if normalized == normalized[:open]+"{"+normalizeGraphQL(agentPullsSelection) {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequests": map[string]any{"nodes": []any{}}}}})
+		return
+	}
+	if normalized != normalized[:open]+"{"+selection {
 		http.Error(w, "unsupported GraphQL query: only the scenario issue snapshot, labels and title timeline are served", http.StatusBadRequest)
 		return
 	}

@@ -86,5 +86,7 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: maku}
           podSelector:
             matchLabels: {app.kubernetes.io/name: agent-factory}
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agents}
       ports:
         - {protocol: TCP, port: https}

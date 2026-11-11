@@ -13,6 +13,8 @@ import (
 
 const maxRequestBody = 1 << 20
 
+var gitProjectRoot = "/srv/git"
+
 // Stub is the in-process external-service emulator. Its state is safe for concurrent requests.
 type Stub struct {
 	key            *rsa.PrivateKey
@@ -48,6 +50,7 @@ func New() *Stub {
 	mux.HandleFunc("GET /repos/owner/repo", gitHubRepository)
 	mux.HandleFunc("GET /user/123", gitHubUser)
 	mux.HandleFunc("GET /repos/owner/repo/collaborators/dev/permission", gitHubPermission)
+	mux.HandleFunc("/owner/repo.git/", gitHTTP)
 	s.registerIssueRoutes(mux)
 	mux.HandleFunc("POST /v1/chat/completions", s.completion)
 	s.handler = boundedBodies(mux)

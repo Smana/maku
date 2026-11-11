@@ -26,6 +26,35 @@ type modelMessage struct {
 	ToolCalls []modelToolCall `json:"tool_calls"`
 }
 
+// UnmarshalJSON accepts OpenAI's string content and OpenHands SDK's list of text parts.
+func (m *modelMessage) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		Role      string          `json:"role"`
+		Content   json.RawMessage `json:"content"`
+		ToolCalls []modelToolCall `json:"tool_calls"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	m.Role, m.ToolCalls, m.Content = wire.Role, wire.ToolCalls, ""
+	if len(wire.Content) == 0 || string(wire.Content) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(wire.Content, &m.Content); err == nil {
+		return nil
+	}
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(wire.Content, &parts); err != nil {
+		return err
+	}
+	for _, part := range parts {
+		m.Content += part.Text
+	}
+	return nil
+}
+
 type modelToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
@@ -109,7 +138,7 @@ func scoperCall(ready bool) modelToolCall {
 	if err != nil {
 		panic("e2e-stub: marshal fixed scope: " + err.Error())
 	}
-	return newToolCall(handoffTool, string(arguments))
+	return newToolCall("room_handoff", string(arguments))
 }
 
 func plannerDraft() string {

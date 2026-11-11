@@ -179,6 +179,14 @@ A scoper may legitimately keep the floor. That yields `reason: none` with no rec
 valid negative result, not proof that apply or observe mode is broken. Recommendations are model
 outputs, so repeat a bounded task whose profile fit is clear rather than changing the expected status.
 
+## Stubbed spec-intake functional test
+
+`task chart:intake:k3d` exercises planner revisions, the scoper question handoff, `need_answer` and
+status-comment generations without a real GitHub repository, model account or credential. It creates
+and always deletes its own k3d cluster and throwaway keys. The opt-in test needs Docker with buildx,
+k3d, Helm, kubectl, Go, OpenSSL, curl and jq; it is not part of `task check` or PR CI because importing
+the release harness makes it slow. See the [chart test documentation](../charts/agent-factory/README.md#spec-intake-k3d-test).
+
 ## What production adds
 
 The demo runs the same chart as production with `profile: demo`. It keeps the loop (label polling, the

@@ -4,12 +4,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -71,6 +75,146 @@ func graphQLIssue(t *testing.T, ts *httptest.Server, number int) (int, []byte) {
 	body := []byte(fmt.Sprintf(`{"query":%s,"variables":{"owner":"owner","name":"repo","number":%d}}`,
 		strconvQuote(issueSnapshotQuery), number))
 	return request(t, ts, http.MethodPost, "/graphql", body)
+}
+
+func TestAddLabelsAcceptsGitHubClientArray(t *testing.T) {
+	_, ts := newStubServer(t)
+	number := createIssue(t, ts, "body")
+	status, raw := request(t, ts, http.MethodPost, fmt.Sprintf("/repos/owner/repo/issues/%d/labels", number),
+		[]byte(`["factory/needs-author"]`))
+	if status != http.StatusOK || !strings.Contains(string(raw), `"name":"factory/needs-author"`) {
+		t.Fatalf("go-github add labels status = %d, body = %s", status, raw)
+	}
+}
+
+func TestIssueEventsAllowForgePagination(t *testing.T) {
+	_, ts := newStubServer(t)
+	number := createIssue(t, ts, "body")
+	status, raw := request(t, ts, http.MethodPost, fmt.Sprintf("/repos/owner/repo/issues/%d/labels", number),
+		[]byte(`{"labels":["factory/ready"],"actor":"dev"}`))
+	if status != http.StatusOK {
+		t.Fatalf("add label status = %d, body = %s", status, raw)
+	}
+	status, raw = request(t, ts, http.MethodGet, fmt.Sprintf("/repos/owner/repo/issues/%d/events?per_page=100&page=1", number), nil)
+	if status != http.StatusOK {
+		t.Fatalf("forge label events pagination status = %d, body = %s", status, raw)
+	}
+	var events []struct {
+		Event string `json:"event"`
+		Label struct {
+			Name string `json:"name"`
+		} `json:"label"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[1].Event != "labeled" || events[1].Label.Name != "factory/ready" {
+		t.Fatalf("label events = %+v", events)
+	}
+}
+
+func TestFenceFileNamesTheDemoFactory(t *testing.T) {
+	_, ts := newStubServer(t)
+	status, raw := request(t, ts, http.MethodGet, "/repos/owner/repo/contents/.github/agent-factory.yaml", nil)
+	if status != http.StatusOK {
+		t.Fatalf("fence file status = %d, body = %s", status, raw)
+	}
+	var file struct {
+		Type    string `json:"type"`
+		SHA     string `json:"sha"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(file.Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Type != "file" || file.SHA != fullCommit || string(decoded) != "factory: demo\n" {
+		t.Fatalf("fence file = %s (%s)", raw, decoded)
+	}
+}
+
+func seedGitRepository(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	bare := filepath.Join(root, "owner", "repo.git")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v: %s", args, err, out)
+		}
+	}
+	run(root, "git", "init", "--bare", bare)
+	work := filepath.Join(root, "work")
+	if err := os.MkdirAll(filepath.Join(work, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(work, "git", "init", "-q")
+	if err := os.WriteFile(filepath.Join(work, ".github", "agent-factory.yaml"), []byte("factory: demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("# e2e-stub repository\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run(work, "git", "add", ".")
+	run(work, "git", "-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "commit", "-q", "-m", "init")
+	run(work, "git", "push", "-q", bare, "HEAD:main")
+	run(root, "git", "--git-dir="+bare, "symbolic-ref", "HEAD", "refs/heads/main")
+	return root
+}
+
+func TestGitRepositoryServesMain(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := seedGitRepository(t)
+	oldRoot := gitProjectRoot
+	gitProjectRoot = root
+	t.Cleanup(func() { gitProjectRoot = oldRoot })
+	_, ts := newStubServer(t)
+	cmd := exec.CommandContext(t.Context(), "git", "ls-remote", ts.URL+"/owner/repo.git")
+	cmd.Env = append(cmd.Env, "GIT_SSL_NO_VERIFY=true", "GIT_PROJECT_ROOT="+root)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git ls-remote: %v: %s", err, out)
+	}
+	if !strings.Contains(string(out), "refs/heads/main") {
+		t.Fatalf("ls-remote did not serve main: %s", out)
+	}
+}
+
+func TestPullRequestLookupIsEmpty(t *testing.T) {
+	_, ts := newStubServer(t)
+	for _, task := range []string{"qf2iszow", "26chvm5q"} {
+		t.Run(task, func(t *testing.T) {
+			status, raw := request(t, ts, http.MethodGet, fmt.Sprintf("/repos/owner/repo/pulls?head=owner%%3Aagent%%2F%s&per_page=10&state=all", task), nil)
+			if status != http.StatusOK || strings.TrimSpace(string(raw)) != "[]" {
+				t.Fatalf("empty pull request lookup status = %d, body = %s", status, raw)
+			}
+		})
+	}
+}
+
+func TestAgentPullsQueryIsEmpty(t *testing.T) {
+	_, ts := newStubServer(t)
+	query := `query($name:String!$owner:String!){repository(owner: $owner, name: $name){pullRequests(states: [OPEN], first: 100, orderBy: {field: CREATED_AT, direction: DESC}){nodes{number,headRefName,headRepository{owner{login},name},labels(first: 30){nodes{name}}}}}}`
+	body := []byte(fmt.Sprintf(`{"query":%s,"variables":{"owner":"owner","name":"repo"}}`, strconvQuote(query)))
+	status, raw := request(t, ts, http.MethodPost, "/graphql", body)
+	if status != http.StatusOK {
+		normalized := normalizeGraphQL(query)
+		open := strings.Index(normalized, "{")
+		t.Fatalf("agent pulls query status = %d, body = %s\nactual:   %q\nexpected: %q", status, raw, normalized, normalized[:open]+"{"+normalizeGraphQL(agentPullsSelection))
+	}
+	if !strings.Contains(string(raw), `"nodes":[]`) {
+		t.Fatalf("agent pulls response = %s", raw)
+	}
 }
 
 func TestIssueStoreRealForgeQuery(t *testing.T) {

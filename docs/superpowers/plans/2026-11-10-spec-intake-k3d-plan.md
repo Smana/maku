@@ -187,6 +187,7 @@ git commit -m "test(e2e): script MCP flows and stub gh writes"
 **Files:**
 - Create: `charts/agent-factory/tests/intake.sh`, `charts/agent-factory/tests/intake-values.yaml`, `charts/agent-factory/tests/e2e-stub.yaml`
 - Modify: `taskfile.yaml`, `charts/agent-factory/README.md`
+- Modify: `hack/e2e-stub/server.go` (test-only `GET /__counts` returning total/planner/scoper model calls)
 
 **Interfaces:**
 - `task chart:intake:k3d` builds/loads images, creates `maku-intake-k3d`, installs the stub and chart, and always deletes it.
@@ -202,7 +203,7 @@ Configure OIDC/access/MCP/planner, API root, throwaway TLS and secrets, `SSL_CER
 
 - [ ] **Step 3: Implement the planner scenario**
 
-Run the client's `plan`, `revise`, and `accept-rest` phases through port-forward. Assert the marker, old/new hashes, no gaps, no extra planner call, and `unresolved_marker` from `issue_draft`.
+Run the client's `plan`, `revise`, and `accept-rest` phases through port-forward. Assert the marker, old/new hashes, no gaps, no extra planner call, and `unresolved_marker` from `issue_draft`. Read `GET /__counts` before and after accept-rest to prove the planner model-call counter did not increase.
 
 - [ ] **Step 4: Run the planner k3d proof**
 
@@ -221,24 +222,26 @@ git commit -m "test(chart): prove intake revisions on k3d"
 **Files:**
 - Modify: `charts/agent-factory/tests/intake.sh`
 - Modify: `charts/agent-factory/README.md`, `docs/quickstart.md`, `.github/workflows/demo-e2e.yaml`
+- Modify: `hack/e2e-stub/server_test.go` (counter route unit coverage)
+- Modify: `hack/names.sh` (allow the intentional legacy OIDC client ID `roomctl`)
 
 **Interfaces:**
 - `TestNeedAnswerConflict`: body/label mutation produces zero writes; success appends D<n> and does not add ready.
 - `TestStatusCommentGeneration`: one stable comment ID across scoper question/ready and generation 2; old generation cannot overwrite.
 
-- [ ] **Step 1: Add failing scoper/status assertions**
+- [x] **Step 1: Add failing scoper/status assertions**
 
 Create maintainer-labelled issues through `fakegh`, wait for needs-author, call room_brief/need_answer, and track status comment IDs. Include success, conflict, and second-generation cases. Run to capture the expected failure before wiring scoper/status responses.
 
-- [ ] **Step 2: Complete the scoper/status flow**
+- [x] **Step 2: Complete the scoper/status flow**
 
 Use the stub's question then ready handoffs. Assert structured room_brief question, body-only Decision append, no tool-applied ready label, conflict refusal, and stable status ID with separate event comments. Assert the old generation's content is not overwritten.
 
-- [ ] **Step 3: Document and optionally schedule the test**
+- [x] **Step 3: Document and optionally schedule the test**
 
 Document `task chart:intake:k3d` prerequisites, no-external-write guarantee, and cleanup. Add it to the PR demo-e2e workflow only if runtime is acceptable; otherwise retain opt-in local coverage and state why.
 
-- [ ] **Step 4: Run the full scenario and repository gate**
+- [x] **Step 4: Run the full scenario and repository gate**
 
 Run: `task chart:intake:k3d && task check`
 Expected: `spec-intake k3d OK`; `task check` exit 0; no cluster or temporary credentials remain.

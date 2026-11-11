@@ -90,6 +90,43 @@ func TestStubRejectsOversizedBodies(t *testing.T) {
 	}
 }
 
+func TestModelCountsRoute(t *testing.T) {
+	_, ts := newStubServer(t)
+	assertCounts := func(want map[string]int) {
+		t.Helper()
+		status, raw := request(t, ts, http.MethodGet, "/__counts", nil)
+		if status != http.StatusOK {
+			t.Fatalf("GET /__counts status = %d, body = %s", status, raw)
+		}
+		got := decodeResponse[map[string]int](t, raw)
+		for name, value := range want {
+			if got[name] != value {
+				t.Errorf("GET /__counts %s = %d, want %d (all counts: %#v)", name, got[name], value, got)
+			}
+		}
+	}
+
+	assertCounts(map[string]int{"total": 0, "planner": 0, "scoper": 0})
+	for name, body := range map[string]string{
+		"planner": `{"response_format":{"type":"json_object"},"messages":[{"role":"system","content":"You plan the issues a repository's maintainers will work from"}]}`,
+		"scoper":  `{"messages":[{"role":"user","content":"agent-factory scoper\nYou are the scoper"}]}`,
+		"other":   `{"messages":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			status, raw := request(t, ts, http.MethodPost, "/v1/chat/completions", []byte(body))
+			if status != http.StatusOK {
+				t.Fatalf("POST /v1/chat/completions status = %d, body = %s", status, raw)
+			}
+		})
+	}
+	assertCounts(map[string]int{"total": 3, "planner": 1, "scoper": 1})
+	status, _ := request(t, ts, http.MethodGet, "/healthz", nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("GET /healthz status = %d, want 204", status)
+	}
+	assertCounts(map[string]int{"total": 3, "planner": 1, "scoper": 1})
+}
+
 func TestStubRejectsWrongMethods(t *testing.T) {
 	_, ts := newStubServer(t)
 	for _, tc := range []struct{ method, path string }{

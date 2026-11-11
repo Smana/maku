@@ -32,16 +32,21 @@ shows the approval (`maintainer_approved`) and a maintainer merges on GitHub. An
 
 ## Spec-intake k3d test
 
-`task chart:intake:k3d` (Docker, k3d, Helm, kubectl, Go, OpenSSL, curl and jq) builds the broker,
-run controller, factory and test-stub images, creates the unique `maku-intake-k3d` cluster with a
-private temporary kubeconfig, and proves the planner's ranked `g1` marker, candidate/new hash,
-accept-the-rest with an unchanged model counter, and final `unresolved_marker` refusal. Scoper and
-status-generation phases are left for the follow-up scenario.
+`task chart:intake:k3d` (Docker with buildx, k3d, Helm, kubectl, Go, OpenSSL, curl and jq) builds the
+broker, run controller, factory and test-stub images, creates the unique `maku-intake-k3d` cluster with
+a private temporary kubeconfig, and proves the planner's ranked `g1` marker, candidate/new hash,
+accept-the-rest with an unchanged model counter, and final `unresolved_marker` refusal. It then drives
+the scoper's question and ready handoffs, structured `room_brief`, body-only `need_answer`, stale
+body/label conflict refusal, and one stable status-comment ID across generations.
 
-The test values use OIDC and the in-cluster stub for every GitHub, ZITADEL and model call. All TLS
-keys, App keys and tokens are throwaway files in the temporary directory; no real credentials or
-external writes are used. Failure prints pod, event and log diagnostics. Success and failure both
-stop port-forwards, delete the cluster and remove the temporary credentials.
+The test values use OIDC and the in-cluster stub for every GitHub, ZITADEL and model call. A bare Git
+repository serves the harness's clone inside the cluster. All TLS keys, App keys and tokens are
+throwaway files in the temporary directory; no real credentials or external writes are used. Failure
+prints pod, event and log diagnostics. Success and failure both stop port-forwards, delete the cluster
+and remove the temporary credentials.
+
+The scenario is intentionally opt-in, not part of `task check` or the PR demo workflow: building the
+images and importing the release harness (about 1.5 GB) makes it too slow for every PR.
 
 Not for production: no backups, no HA, no database TLS.
 `clusterDomain` must equal `maku.clusterDomain` and `maku-factory.clusterDomain`.
