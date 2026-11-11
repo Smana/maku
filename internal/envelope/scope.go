@@ -53,7 +53,7 @@ type Acceptance struct {
 
 // ScopeSchema is the scope property of room_handoff's input schema, listed to the triager only.
 const ScopeSchema = `{"type":"object","additionalProperties":false,"required":["state","task","touches","plan","acceptance"],"properties":{` +
-	`"state":{"enum":["ready","question"]},` +
+	`"state":{"type":"string","enum":["ready","question"]},` +
 	`"task":{"type":"string","minLength":1,"maxLength":1000},` +
 	`"touches":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":200}},` +
 	`"leave":{"type":"array","maxItems":10,"items":{"type":"string","minLength":1,"maxLength":200}},` +
