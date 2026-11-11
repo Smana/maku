@@ -13,6 +13,10 @@ const rgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
 const lum = (h: string) => rgb(h).map((c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; })
   .reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
 export const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+// The aurora's two stops, first and last, from the --aurora-bar its theme's block declares.
+const gradient = (block: string) => css.match(new RegExp(`${block.replace(".", "\\.")}\\s*{([^}]*)}`))![1]
+  .match(/--aurora-bar:\s*linear-gradient\(([^;]*)\);/)![1].match(/#[0-9a-f]{6}/gi)!.map((h) => h.toLowerCase());
+const aurora = (t: Record<string, string>) => gradient(t === light ? ":root" : ".dark");
 const mix = (a: string, b: string, pa: number) => "#" + rgb(a).map((c, i) => Math.round(c * pa + rgb(b)[i] * (1 - pa)).toString(16).padStart(2, "0")).join("");
 
 const light = tokens(":root"), dark = tokens(".dark");
@@ -38,7 +42,9 @@ const pairs = (t: Tokens) => [
   ["--warning as text on a card", t["--warning"], t["--card"], 4.5],
   ["--warning as text on the page", t["--warning"], t["--muted"], 4.5],
   ["the needs-you pill", t["--warning-solid-foreground"], t["--warning"], 4.5],
-  ["the budget meter's fill", t["--primary"], mix(t["--brand-header-foreground"], t["--brand-header"], 0.12), 3],
+  // The budget bar paints the aurora; each stop holds 3:1 on its track (Day's aurora is derived).
+  ["the budget bar's first aurora stop on its track", aurora(t)[0], mix(t["--brand-header-foreground"], t["--brand-header"], 0.12), 3],
+  ["the budget bar's last aurora stop on its track", aurora(t)[1], mix(t["--brand-header-foreground"], t["--brand-header"], 0.12), 3],
   ["the needs-you border", t["--warning-border"], t["--card"], 3],
   ["a failed call's border on a card", t["--destructive"], t["--card"], 3],
   ["the deny button's text on a card", t["--destructive-text"], t["--card"], 4.5],
@@ -150,7 +156,8 @@ const rows = (t: Tokens, i: 0 | 1): Row[] => {
     m("destructive foreground on destructive fill", t["--destructive-foreground"], t["--destructive"], T, [5.24, 7.11]),
     m("accent foreground on accent fill", t["--accent-foreground"], t["--accent"], T, [5.29, 10.31]),
     // Non-text: meaningful boundaries and focus rings.
-    m("primary meter fill on header-foreground 12% mix", t["--primary"], hdr12, U, [4.66, 5.31]),
+    m("aurora first stop on the budget track", aurora(t)[0], hdr12, U, [4.09, 5.20]),
+    m("aurora last stop on the budget track", aurora(t)[1], hdr12, U, [4.47, 4.90]),
     m("warning border on card", t["--warning-border"], t["--card"], U, [5.60, 9.35]),
     m("ring on header", t["--ring"], t["--brand-header"], U, [5.97, 7.26]),
     m("ring on card", t["--ring"], t["--card"], U, [5.97, 6.54]),
@@ -216,6 +223,12 @@ describe("Ogenki tokens", () => {
       expect(dark[name], `Night ${name}`).toBe(d);
     }
     expect(css).not.toMatch(/--brand-navy/);
+  });
+
+  it("keeps Ogenki's aurora in Night and derives Day's from Day pink and violet", () => {
+    // Ogenki's one aurora is 2:1 on Day's budget track; Day's bar keeps the hue at 3:1 or better.
+    expect(gradient(".dark")).toEqual(["#ff6fb5", "#a78bfa"]);
+    expect(gradient(":root")).toEqual([light["--pink"], light["--violet"]]);
   });
 
   it("keeps the on-accent ink off literal white and black", () => {

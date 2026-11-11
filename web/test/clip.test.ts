@@ -213,7 +213,7 @@ describe("a long message, measured by the browser's layout", () => {
 describe("the fold's CSS", () => {
   it("clips a closed bubble at twelve lines, padded so a focus ring inside is not cut", () => {
     const clip = rule('.bubble[data-clip="closed"] > .md');
-    expect(clip).toMatch(/max-height:\s*calc\(12 \* 1\.55em\)/);
+    expect(clip).toMatch(/max-height:\s*calc\(12 \* var\(--leading-body\)\)/); // twelve body lines
     expect(clip).toMatch(/overflow-y:\s*hidden/);
     const pad = clip.match(/padding:\s*(\d+)px/);
     expect(pad, "padding").not.toBeNull();
