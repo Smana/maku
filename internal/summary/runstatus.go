@@ -53,7 +53,6 @@ const (
 	KindWaitingOther = "waiting-other"
 	KindWaitingPR    = "waiting-pr"
 	KindWaiting      = "waiting"
-	KindFinished     = "finished"
 	KindDone         = "done"
 	KindFailed       = "failed"
 	KindStopped      = "stopped"
@@ -143,7 +142,12 @@ func StatusLine(in StatusIn) RunStatus {
 	case in.Step != nil && in.Step.Kind == StepAnswer && in.Issue > 0:
 		return s(KindWaiting, "⏳", fmt.Sprintf("Waiting — answer the question on issue #%d", in.Issue))
 	case in.Phase == "Escalated":
-		return s(KindWaiting, "⏳", "Waiting — a maintainer decides")
+		if w := failureWords()[in.ReasonCode]; w != "" {
+			return s(KindWaiting, "⏳", "Escalated — "+w)
+		}
+		return s(KindWaiting, "⏳", "Escalated — a maintainer decides")
+	case in.Phase == "AwaitingHuman":
+		return s(KindWaiting, "⏳", "Waiting on a maintainer")
 	case in.State == StateWaiting:
 		return s(KindWaiting, "⏳", "Waiting — for the next message or run")
 	case in.State == StateQueued:
@@ -163,10 +167,14 @@ func StatusLine(in StatusIn) RunStatus {
 			return s(KindRunning, "●", "Running")
 		}
 		return s(KindRunning, "●", "Running — "+parts)
+	// The headline is the task's state, never the last run's: a run that ended leaves the task
+	// reviewing or waiting on CI, not finished.
 	case in.State == StateRunning && in.PR > 0 && in.Phase == "Reviewing":
-		return s(KindFinished, "✓", fmt.Sprintf("Finished — PR #%d opened, handed to the reviewer", in.PR))
-	case in.State == StateRunning && in.PR > 0 && in.Phase == "AwaitingCI":
-		return s(KindFinished, "✓", fmt.Sprintf("Finished — PR #%d opened, waiting for CI", in.PR))
+		return s(KindRunning, "●", fmt.Sprintf("Reviewing — PR #%d handed to the reviewer", in.PR))
+	case in.State == StateRunning && in.Phase == "AwaitingCI" && in.PR > 0:
+		return s(KindWaiting, "⏳", fmt.Sprintf("Waiting on CI — PR #%d", in.PR))
+	case in.State == StateRunning && in.Phase == "AwaitingCI":
+		return s(KindWaiting, "⏳", "Waiting on CI")
 	case in.State == StateRunning:
 		return s(KindRunning, "●", "Running — between runs")
 	}

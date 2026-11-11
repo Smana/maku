@@ -111,7 +111,7 @@ describe("a status", () => {
     expect(rule(sel)).toMatch(new RegExp(`border-color:\\s*var\\(${tok}\\)`));
   });
   it.each([
-    ["running", "--primary"], ["waiting-you", "--warning-border"], ["finished", "--success"], ["failed", "--destructive"],
+    ["running", "--primary"], ["waiting-you", "--warning-border"], ["done", "--success"], ["failed", "--destructive"],
   ])("colours a room row's %s icon with %s", (kind, tok) => {
     const sel = rules.filter((r) => r.sel.includes(`.rooms .row-status[data-kind="${kind}"] .row-status-icon`));
     expect(sel.map((r) => r.body).join(";")).toMatch(new RegExp(`color:\\s*var\\(${tok}\\)`));
