@@ -254,11 +254,12 @@ type needAnswerRig struct {
 	broker *needAnswerBroker
 	form   map[string]any
 	forms  int
+	answer string // the form's answer field
 }
 
 func newNeedAnswerRig(t *testing.T, issues *fakeIssueEditor, rooms []map[string]any, brief map[string]any) *needAnswerRig {
 	t.Helper()
-	rig := &needAnswerRig{issues: issues}
+	rig := &needAnswerRig{issues: issues, answer: "Use Linux"}
 	rig.broker = newNeedAnswerBroker(t, rooms, brief)
 	labels := 0
 	rig.relay = &Relay{URL: rig.broker.srv.URL, HC: rig.broker.srv.Client(), Token: tok, Issues: issues, FactoryLogin: "factory-app[bot]",
@@ -275,7 +276,7 @@ func newNeedAnswerRig(t *testing.T, issues *fakeIssueEditor, rooms []map[string]
 		if json.Unmarshal(line, &m) == nil && m.Method == "elicitation/create" {
 			rig.forms++
 			_ = json.Unmarshal(m.Params, &rig.form)
-			answer := map[string]any{"action": "accept", "content": map[string]any{"answer": "Use Linux", "send": true}}
+			answer := map[string]any{"action": "accept", "content": map[string]any{"answer": rig.answer, "send": true}}
 			raw, err := json.Marshal(answer)
 			if err != nil {
 				t.Fatal(err)

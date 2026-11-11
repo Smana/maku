@@ -96,7 +96,7 @@ broker built. Do not rewrite it, and do not add a link of your own.
 | turn a side task into a plan | `intake_plan` (the broker's governed planner: plan it nowhere else) |
 | re-check a plan against its hash | `plan_check` |
 | hand a side task over | the `factory_intake` prompt (`handoff` is its alias), ending with `plan_check` and `issue_file` |
-| answer a scoper's post-filing question | `need_answer`, which appends a Decision to the issue body and never changes labels |
+| answer a scoper's post-filing question | `need_answer`, which edits the issue body only and never changes labels: it appends a Decision and, for the acceptance question, writes the answer into `## Acceptance check` (created when the issue has none; a blank answer accepts the scoper's assumption) |
 
 A plan's hash is what `issue_file` checks: `plan_check` recomputes it over the plan it is given, so
 the two travel together. An edit outside a validated revision envelope is refused rather than filed.

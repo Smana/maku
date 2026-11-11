@@ -172,7 +172,7 @@ const (
 // elicitation, never in tool arguments an agent can supply itself.
 var needAnswerEntry = map[string]any{
 	"name": needAnswerTool,
-	"description": "Answer the scoper's question on an issue waiting with factory/needs-author. " +
+	"description": "Answer the scoper's question on an issue waiting with factory/needs-author. When it asks for the acceptance check, the answer is written into a ## Acceptance check section (created if missing) and recorded as a Decision. " +
 		"The authorized room brief supplies the question, with the newest public comment by the configured factory App login as fallback. " +
 		"The developer confirms the answer and body append in a form; only the issue body is edited, never its labels. " +
 		"A maintainer must re-apply factory/ready afterwards.",
@@ -261,13 +261,22 @@ func (r *Relay) needAnswer(ctx context.Context, args json.RawMessage) any {
 			"ask a maintainer or a reader of the room to answer it; nothing was written")
 	}
 
-	// <answer> is the one substitution the developer makes in the exact record and section layout.
-	// AppendDecision applies the same layout to the returned one-line answer below.
-	previewBody, err := AppendDecision(initial.Body, "<answer>")
+	// <answer> is the one substitution the developer makes in the exact body the tool will write.
+	// AnswerBody applies the same layout to the returned one-line answer below.
+	acceptance := IsAcceptanceQuestion(question.Text)
+	previewBody, err := AnswerBody(initial.Body, "<answer>", acceptance)
 	if err != nil {
 		return mcpwire.ToolError("invalid_decisions: " + OneLine(err.Error()) + "; nothing was written")
 	}
-	preview := strings.TrimPrefix(previewBody, initial.Body)
+	preview := bodyDiff(initial.Body, previewBody)
+	recommended := strings.TrimSpace(question.Recommended)
+	if acceptance {
+		recommended = AcceptanceFromRecommendation(question.Recommended)
+	}
+	blankNote := ""
+	if recommended != "" {
+		blankNote = " Leave the answer blank to accept the recommendation."
+	}
 	r.mu.Lock()
 	elicit := r.forms
 	r.mu.Unlock()
@@ -277,12 +286,12 @@ func (r *Relay) needAnswer(ctx context.Context, args json.RawMessage) any {
 	}
 	message := "Answer the scoper's question on " + issueURL + ".\n\nQuestion:\n" + question.Text +
 		"\n\nScoper's recommendation:\n" + question.Recommended +
-		"\n\nThe exact body append, with <answer> replaced by your trimmed one-line answer:\n" + preview +
-		"\n\nOnly the body is edited, never labels. A maintainer must re-apply factory/ready afterwards."
+		"\n\nThe full body diff, with <answer> replaced by your trimmed one-line answer:\n" + preview +
+		"\n\nOnly the body is edited, never labels." + blankNote + " A maintainer must re-apply factory/ready afterwards."
 	ans, err := r.ask(ctx, "elicitation/create", map[string]any{
 		"message": message,
 		"requestedSchema": map[string]any{"type": "object", "required": []string{"answer", "send"}, "properties": map[string]any{
-			"answer": map[string]any{"type": "string", "title": "Your one-line answer"},
+			"answer": map[string]any{"type": "string", "title": "Your one-line answer (blank accepts the recommendation)"},
 			"send":   map[string]any{"type": "boolean", "title": "Append this answer to the issue", "default": false},
 		}},
 	})
@@ -304,7 +313,10 @@ func (r *Relay) needAnswer(ctx context.Context, args json.RawMessage) any {
 	if json.Unmarshal(form.Content["answer"], &answer) != nil {
 		return mcpwire.ToolError("invalid_answer: answer is one line of text; nothing was written")
 	}
-	newBody, err := AppendDecision(initial.Body, answer)
+	if strings.TrimSpace(answer) == "" && recommended != "" {
+		answer = recommended
+	}
+	newBody, err := AnswerBody(initial.Body, answer, acceptance)
 	if err != nil {
 		return mcpwire.ToolError(OneLine(err.Error()) + "; nothing was written")
 	}
