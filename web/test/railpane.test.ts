@@ -20,15 +20,19 @@ const mount = (f: Flow) => {
 
 describe("the narrow strip", () => {
   it("reads as a labelled path", () => {
-    expect(mount(flow).dots.textContent).toBe("scoper ✓ · tester ✓ · implementer ● · reviewer ○");
+    expect(mount(flow).dots.textContent).toBe("scoper\u00a0✓ · tester\u00a0✓ · implementer\u00a0● · reviewer\u00a0○");
   });
-  it("names every step in words", () => {
+  it("keeps each name with its glyph by a no-break space, so items wrap whole and a long name still wraps", () => {
+    const { dots } = mount({ nodes: [node("implementer")] });
+    expect(dots.querySelector(".rail-dot")!.textContent).toBe("implementer\u00a0●");
+  });
+  it("names every step in words, starting with the visible ones (label in name)", () => {
     expect(mount(flow).dots.getAttribute("aria-label")).toBe(
-      "Show the task path: scoper done, tester done, implementer running, reviewer planned");
+      "scoper done, tester done, implementer running, reviewer planned: show the task path");
   });
   it("gives a failed run the rail's ✗ and its word", () => {
     const { dots } = mount({ nodes: [node("implementer", { endedAt: "x", outcome: "failed" })] });
-    expect(dots.textContent).toBe("implementer ✗");
+    expect(dots.textContent).toBe("implementer\u00a0✗");
     expect(dots.getAttribute("aria-label")).toContain("implementer failed");
   });
   it("opens the drawer and says so", () => {
@@ -47,7 +51,7 @@ describe("the strip's stylesheet", () => {
   const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
   const body = (sel: string) => css.match(new RegExp(`\\n${sel.replace(/[.]/g, "\\.")}\\s*{([^}]*)}`))![1];
   it("wraps within the window, on the type scale", () => {
-    expect(body(".rail-dot")).toMatch(/white-space:\s*nowrap/);
+    expect(css).not.toMatch(/\.rail-dot[^{]*{[^}]*white-space:\s*nowrap/);
     expect(body(".rail-dots")).toMatch(/overflow-wrap:\s*anywhere/);
     expect(body(".rail-dots")).toMatch(/font-size:\s*var\(--text-small\)/);
   });

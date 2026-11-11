@@ -64,7 +64,8 @@ export function mountRailPane(select: (run: string | undefined) => void, ...regi
       dots.hidden = !f;
       if (!f) setOpen(false);
       const items = f ? Array.from({ length: f.nodes.length + (f.ghosts?.length ?? 0) }, (_, i) => stripItem(f, i)) : [];
-      dots.setAttribute("aria-label", items.length ? `Show the task path: ${items.map((x) => `${x.who} ${x.word}`).join(", ")}` : "Show the task path");
+      // The name starts with the strip's own words, so a voice user can say what they see.
+      dots.setAttribute("aria-label", items.length ? `${items.map((x) => `${x.who} ${x.word}`).join(", ")}: show the task path` : "Show the task path");
       dots.replaceChildren(...items.flatMap((x, i) => {
         const d = document.createElement("span");
         d.className = "rail-dot";
@@ -73,7 +74,9 @@ export function mountRailPane(select: (run: string | undefined) => void, ...regi
         const g = document.createElement("span");
         g.className = "rail-dot-glyph";
         g.textContent = x.glyph;
-        d.append(`${x.who} `, g);
+        // A no-break space keeps a name with its glyph; items wrap at the separators, and
+        // .rail-dots' overflow-wrap still breaks a name too long for the line.
+        d.append(`${x.who}\u00a0`, g);
         return i ? [" · ", d] : [d];
       }));
     },

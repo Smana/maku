@@ -1045,7 +1045,6 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   text-align: left; font: inherit; font-size: var(--text-small); line-height: var(--leading-small); overflow-wrap: anywhere;
   color: var(--foreground); background: var(--card); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
 }
-.rail-dot { white-space: nowrap; }
 .rail-dot-glyph { color: var(--flow-writer); }
 .rail-dot[data-tone="judge"] .rail-dot-glyph { color: var(--flow-judge); }
 .rail-dot[data-state="ghost"] .rail-dot-glyph { color: var(--flow-plan); }
