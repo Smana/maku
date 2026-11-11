@@ -296,9 +296,15 @@ describe("appearance", () => {
     expect(r).toMatch(/background:\s*color-mix\(in srgb, var\(--tone\) 14%, var\(--brand-header\)\)/);
     expect(r).not.toMatch(/border-left/);
   });
-  it("draws the approval card's state as its 1 px border in the warning tone, never a side bar", () => {
-    expect(decl(outside, ".approval")).not.toMatch(/box-shadow/);
-    expect(decl(outside, ".approval, .needs-other li.need")).toMatch(/border-color:\s*var\(--warning-border\)/);
+  it("draws the approval card's accent as a straight bar inside the card, not a full outline", () => {
+    expect(decl(outside, ".approval")).not.toMatch(/border:\s*1px solid var\(--warning-border\)/);
+    expect(css).not.toMatch(/\.approval, \.needs-other li\.need \{\s*border-color/);
+    const bar = decl(outside, ".approval::before, .needs-other li.need::before");
+    expect(bar).toMatch(/width:\s*3px/);
+    expect(bar).toMatch(/background:\s*var\(--warning-border\)/);
+    // straight: it starts and ends where the card's 16 px corners do, so it never bends round them
+    expect(bar).toMatch(/top:\s*var\(--radius-md\)/);
+    expect(bar).toMatch(/bottom:\s*var\(--radius-md\)/);
   });
   it("draws deny as a ghost: no outline until hovered", () => {
     const d = decl(outside, "button.deny");

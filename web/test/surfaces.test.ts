@@ -7,10 +7,13 @@ const rules = [...css.matchAll(/([^{}@][^{}]*)\{([^{}]*)\}/g)].map((m) => ({ sel
 const rule = (sel: string) => rules.filter((r) => r.sel === sel).map((r) => r.body).join(";");
 
 describe("the aurora gradient", () => {
-  it("is drawn on the budget bar and the evidence bar only", () => {
+  it("is drawn on the budget bar only", () => {
     expect(css).not.toMatch(/radial-gradient/);
     const users = rules.filter((r) => /var\(--aurora-bar\)/.test(r.body)).map((r) => r.sel).sort();
-    expect(users).toEqual([".evidence-fill", ".meter-bar::after"].sort());
+    // At most one gradient per screen: the repository page draws one evidence bar per class, so
+    // its fill is solid and the aurora stays on the room page's one budget bar.
+    expect(users).toEqual([".meter-bar::after"]);
+    expect(rule(".evidence-fill")).toMatch(/background:\s*var\(--primary\)/);
     // the only other gradients are the two scroll masks and the clip fade, never a fill of colour
     for (const r of rules) {
       if (/linear-gradient\(90deg, #/.test(r.body)) expect(r.sel).toBe(":root");
@@ -81,16 +84,15 @@ describe("the next-step box", () => {
 
 describe("a status", () => {
   // A status is a word plus a colour; the colour sits on the card's own 1 px border or on the
-  // status icon, never on a side stripe curving round a 16 px corner.
-  const stateRules = [".approval", ".needs-other li.need", ".approval, .needs-other li.need", ".tool.st-rejected", ".tool.st-error",
-    ".rooms .row-status"];
+  // status icon, never on a side stripe curving round a 16 px corner (the approval bar is straight).
+  // The approval and need cards keep the owner's warning bar (#345), drawn straight inside the card.
+  const stateRules = [".approval", ".needs-other li.need", ".tool.st-rejected", ".tool.st-error", ".rooms .row-status"];
   it.each(stateRules)("%s draws no side stripe", (sel) => {
     const b = rule(sel);
     expect(b).not.toMatch(/inset\s+-?\d+px\s+0\s+0/);
     expect(b).not.toMatch(/border-(left|right|inline)/);
   });
   it.each([
-    [".approval, .needs-other li.need", "--warning-border"],
     [".tool.st-rejected", "--warning-border"],
     [".tool.st-error", "--destructive"],
   ])("%s tones its border with %s", (sel, tok) => {
