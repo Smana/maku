@@ -67,7 +67,7 @@ func (r *Reconciler) shadowPending(ctx context.Context, cfg *config.Config, t *v
 		if wait := time.Duration(1<<rec.ShadowAttempts-1) * time.Minute; r.Now().Before(rec.Finished.Add(wait)) {
 			continue
 		}
-		if _, open := r.answersPending(ctx, cfg, t, rec); open {
+		if _, open, _ := r.answersPending(ctx, cfg, t, rec); open {
 			continue // H2: the tracer reads the run's writes once the applier has answered (HR19)
 		}
 		err := r.shadowRun(ctx, cfg, t, rec)

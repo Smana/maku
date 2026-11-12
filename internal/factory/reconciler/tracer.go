@@ -52,13 +52,17 @@ type outputLedger struct {
 	order    []string // request ids in seq order
 	applied  map[string]outputEntry
 	answered map[string]bool
+	// waiting are the requests the applier holds for a maintainer's approval (HR27): output_waiting,
+	// not an answer, until applied or refused. refused holds each refused request's reason.
+	waiting  map[string]bool
+	refused  map[string]string
 	ownIssue int
 }
 
 // taskOutputs reads every run's requests and answers from t's room, from its first run's start.
 func (r *Reconciler) taskOutputs(ctx context.Context, t *v1alpha1.Task) (outputLedger, error) {
 	l := outputLedger{requests: map[string]outputEntry{}, applied: map[string]outputEntry{}, answered: map[string]bool{},
-		ownIssue: t.Spec.Issue}
+		waiting: map[string]bool{}, refused: map[string]string{}, ownIssue: t.Spec.Issue}
 	var from int64
 	if len(t.Status.Runs) > 0 {
 		from = t.Status.Runs[0].StartSeq
@@ -85,9 +89,41 @@ func (r *Reconciler) taskOutputs(ctx context.Context, t *v1alpha1.Task) (outputL
 			l.answered[o.ID] = true
 		case envelope.KindOutputRefused:
 			l.answered[o.ID] = true
+			l.refused[o.ID] = o.Reason
+		case envelope.KindOutputWaiting:
+			l.waiting[o.ID] = true
 		}
 	}
 	return l, nil
+}
+
+// held counts run's requests the applier holds for a maintainer's approval and has not answered.
+func (l outputLedger) held(run string) int {
+	n := 0
+	for _, id := range l.order {
+		if l.requests[id].run == run && l.waiting[id] && !l.answered[id] {
+			n++
+		}
+	}
+	return n
+}
+
+// pushRefused reports whether run asked for pushes and the factory applied none of them, the last
+// one refused: the run's work never reached the branch through the factory.
+func (l outputLedger) pushRefused(run string) bool {
+	last := ""
+	for _, id := range l.order {
+		q := l.requests[id]
+		if q.run != run || q.rec.Type != string(hardening.Push) {
+			continue
+		}
+		if _, ok := l.applied[id]; ok {
+			return false
+		}
+		last = id
+	}
+	_, refused := l.refused[last]
+	return last != "" && refused
 }
 
 // unanswered counts run's requests with neither answer yet.
@@ -277,18 +313,39 @@ func (r *Reconciler) untraced(ctx context.Context, t *v1alpha1.Task, runID strin
 		"run.id", runID, "type", string(o.w.Type), "object", o.w.Object)
 }
 
+// reasonPushAwaitingApproval is a task's reason while its ended run's push waits for a maintainer's
+// approval of its digest (HR29); reasonPushRefused ends a run whose pushes the factory all refused.
+const (
+	reasonPushAwaitingApproval = "push_awaiting_approval"
+	reasonPushRefused          = "push_refused"
+)
+
 // awaitOutputs holds an ended writer run (implementer or tester) of an enforced repository while
 // any of its requests is unanswered, for up to hardening.applier.answerWait from its end (HR19): its
 // pull request or comment may still be on its way. true is wait (the task stays where it is and is
 // polled again). Past the wait it goes on and logs outputs_unanswered; the applier still answers
-// late requests. Once nothing is waited on, a pull request the applier opened for an implementer
-// is detected before the run's outcome is read.
+// late requests. A push the applier holds for a maintainer's approval (output_waiting) holds the
+// task with reason push_awaiting_approval for as long as the approval is open, whatever answerWait
+// (HR29): the run's end, and the committed-no-PR path, wait for its answer. Once nothing is waited
+// on, a pull request the applier opened for an implementer is detected before the run's outcome is
+// read.
 func (r *Reconciler) awaitOutputs(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, run runs.Run) (bool, error) {
 	cur := current(t)
 	if !slices.Contains(shadowRoles, cur.Role) {
 		return false, nil
 	}
-	n, open := r.answersPending(ctx, cfg, t, cur)
+	n, open, held := r.answersPending(ctx, cfg, t, cur)
+	if held > 0 {
+		if t.Status.Reason != reasonPushAwaitingApproval {
+			r.log().Info("the run's push waits for a maintainer's approval: the task waits too", "task.id", t.Name, "run.id", cur.ID,
+				"waiting", held, "reason", reasonPushAwaitingApproval)
+		}
+		t.Status.Reason = reasonPushAwaitingApproval
+		return true, nil
+	}
+	if t.Status.Reason == reasonPushAwaitingApproval {
+		t.Status.Reason = ""
+	}
 	switch {
 	case open:
 		r.log().Info("the run's outputs are not all answered yet: waiting", "task.id", t.Name, "run.id", cur.ID, "unanswered", n)
@@ -307,18 +364,19 @@ func (r *Reconciler) awaitOutputs(ctx context.Context, cfg *config.Config, t *v1
 // and whether its answer wait is still open: while it is, neither its end nor its shadow pass (the
 // tracer) reads its writes, so a write still being applied is never reported untraced. A room that
 // cannot be read is waited on the same way, and never past answerWait: the run's end then goes on
-// (n is -1, unknown).
-func (r *Reconciler) answersPending(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, rec *v1alpha1.RunRecord) (int, bool) {
+// (n is -1, unknown). held counts the requests waiting for a maintainer's approval (HR27): the wait
+// stays open while any is, past answerWait.
+func (r *Reconciler) answersPending(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, rec *v1alpha1.RunRecord) (n int, open bool, held int) {
 	if len(cfg.Hardening.EnforcedFor(t.Spec.Repository)) == 0 || rec.Finished == nil {
-		return 0, false
+		return 0, false, 0
 	}
 	within := r.Now().Sub(rec.Finished.Time) < cfg.Hardening.Applier.AnswerWait.Duration
 	l, err := r.taskOutputs(ctx, t)
 	if err != nil {
 		r.log().Warn("the run's outputs cannot be read: waiting up to answerWait", "task.id", t.Name, "run.id", rec.ID,
 			"within", within, "err", err)
-		return -1, within
+		return -1, within, 0
 	}
-	n := l.unanswered(rec.ID)
-	return n, n > 0 && within
+	n, held = l.unanswered(rec.ID), l.held(rec.ID)
+	return n, held > 0 || (n > 0 && within), held
 }

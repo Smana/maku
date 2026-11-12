@@ -175,3 +175,64 @@ func TestTracerPush(t *testing.T) {
 		})
 	}
 }
+
+// HR29: an ended implementer run whose push waits for a maintainer (output_waiting) keeps the task
+// in Implementing with reason push_awaiting_approval, past answerWait, and never takes the
+// committed-no-PR path. Once the push is applied the usual path runs; once it is refused
+// (approval_denied), the run ends as one with no pushed work: push_refused.
+func TestRunEndHoldsForApproval(t *testing.T) {
+	const pushOut = "00000000000000d1"
+	head := "https://github.com/Smana/cloud-native-ref/commit/" + strings.Repeat("e", 40)
+	start := func(t *testing.T) *rig {
+		g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+		g.f.SetIssue(forge.Issue{Number: 7, Author: "smana", Association: "OWNER"})
+		g.enforcing(hardening.Push)
+		g.r.Cfg.Current().AgentsLogin = agents
+		if tk := g.reconcile(t, "3buqdlot", 3); tk.Status.Phase != v1alpha1.PhaseImplementing {
+			t.Fatal(tk.Status.Phase)
+		}
+		g.runs.set(rid(0), "Running")
+		g.reconcile(t, "3buqdlot", 1)
+		g.log.request(rid(0), pushOut, hardening.Push, nil, now)
+		g.log.answer(rid(0), envelope.KindOutputWaiting, envelope.OutputRecord{ID: pushOut, Type: string(hardening.Push),
+			Digest: strings.Repeat("a", 64), Reason: envelope.WaitingReason, ApprovalID: "01JC0000000000000000000000"}, now)
+		g.harnessNote(rid(0), "Harness (implementer): the agent committed.")
+		g.runs.set(rid(0), "Succeeded")
+		g.log.end(rid(0), "Succeeded", "agent_finished")
+		for _, after := range []time.Duration{0, time.Hour, 48 * time.Hour} {
+			at := now.Add(after)
+			g.r.Now = func() time.Time { return at }
+			tk := g.reconcile(t, "3buqdlot", 1)
+			if tk.Status.Phase != v1alpha1.PhaseImplementing || tk.Status.Reason != reasonPushAwaitingApproval || tk.Status.Runs[0].Shadowed {
+				t.Fatalf("%s after the run's end: phase %s, reason %q, shadowed %v", after, tk.Status.Phase, tk.Status.Reason,
+					tk.Status.Runs[0].Shadowed)
+			}
+		}
+		return g
+	}
+
+	t.Run("applied", func(t *testing.T) {
+		g := start(t)
+		g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec(pushOut, hardening.Push, head), now)
+		g.f.SetBranch("agent/3buqdlot", 12)
+		g.f.SetPR(forge.PR{Number: 12, URL: prURL, State: "OPEN", NodeID: "PR_1", HeadSHA: strings.Repeat("e", 40), Author: agents,
+			Title: "docs: fix the link", Body: "Fixes the dead link. Fixes #7"})
+		tk := g.reconcile(t, "3buqdlot", 1)
+		if tk.Status.PullRequest == nil || tk.Status.PullRequest.Number != 12 || tk.Status.Phase != v1alpha1.PhaseAwaitingCI {
+			t.Fatalf("phase %s, reason %q, pull request %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.PullRequest)
+		}
+		if tk.Status.Reason == reasonPushAwaitingApproval {
+			t.Fatalf("the hold's reason outlived it")
+		}
+	})
+
+	t.Run("denied", func(t *testing.T) {
+		g := start(t)
+		g.log.answer(rid(0), envelope.KindOutputRefused, envelope.OutputRecord{ID: pushOut, Type: string(hardening.Push),
+			Digest: strings.Repeat("a", 64), Reason: string(hardening.RefuseApprovalDenied)}, now)
+		tk := g.reconcile(t, "3buqdlot", 1)
+		if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != reasonPushRefused {
+			t.Fatalf("phase %s, reason %q", tk.Status.Phase, tk.Status.Reason)
+		}
+	})
+}
