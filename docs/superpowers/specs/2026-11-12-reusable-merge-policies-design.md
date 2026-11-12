@@ -1,8 +1,8 @@
 # Reusable merge policies: design
 
-**Status:** design for a grill with the owner (2026-11-12). The owner stated the problem and agreed
-the model in principle on 2026-11-11; B1–B19 below refine it, and [Open questions](#open-questions)
-are what the grill decides. **Builds on:** [factory resources](2026-11-09-factory-resources-design.md)
+**Status:** design, agreed with the owner on 2026-11-12 in a grilling (Q1–Q15, recorded under
+[Owner decisions](#owner-decisions)). The owner stated the problem and agreed the model in principle
+on 2026-11-11; B1–B19 below refine it. Built right after v4 rollout step 3, before v4.0 (Q15). **Builds on:** [factory resources](2026-11-09-factory-resources-design.md)
 (D3, D4, D5, D8, D10, D16), [merge policies](../../merge-policies.md), and the profile-choice spec in
 PR #470 (its catalogue). **Scope:** `api/factory/v1alpha1` (`MergePolicy` reshaped, `Repository`
 gains `merge` and `mergePolicies`), `internal/factory/config` (the split types and one resolve
@@ -265,40 +265,24 @@ Every class name repeated across repositories today has identical meaning fields
 - **Changing what a class means today**: no gate row, reason or metric changes; the resolved classes
   are equal before and after (B17).
 
-## Open questions
+## Owner decisions
 
-1. **No alias (B1).** A repository wanting a stricter `docs` gets a policy with another name
-   (`docs-strict`), so another `class:` label, another policy-bot rule and evidence starting at zero.
-   Accept, or add `as:` now? Recommendation: accept; the fill-once and additive fields cover the
-   live variants.
-2. **Kind name.** Keep `MergePolicy` for the definition (the owner's word; needs B8's union release),
-   or name it `MergeClass` and retire `MergePolicy` (no union, but "policy" leaves the vocabulary)?
-   Recommendation: `MergePolicy`.
-3. **Inline definitions in the stage-4 file (B15).** Bindings only means a maintainer who wants a new
-   class asks for a central pull request. No repository is cut over, so nothing breaks today.
-   Recommendation: bindings only.
-4. **A relaxation of a policy with live consumers.** A cut-over file's relaxed live class runs in
-   shadow until a restart. Should a central policy's relaxation demote its live consumers too, or is
-   the B11 CI output enough? Recommendation: CI output only; the policy is reviewed by an operator.
-5. **Evidence across policy generations.** Evidence counts every shadow decision of (repository,
-   class) over 180 days, whatever the policy said then. Should a relaxation segment it ("12 of 20
-   under the current generation")? Recommendation: show the split on the card, block nothing.
-6. **Run-only classes.** `docs`, `tests`, `dashboards`, `scripts` and `review` are `off` everywhere;
-   they exist to shape runs (`checks`) and to be valid `class:` labels. Are they merge policies, or
-   should a later spec give them their own home?
-7. **Merge defaults.** 7 of the 13 `merge` keys are identical across the four repositories. Add
-   `Factory.spec.mergeDefaults` later, or never?
-8. **The grant hash (B13).** Agree to bind grants to the resolved class rather than the file, before
-   `approvalMemory` is turned on anywhere?
-9. **Guardrails on central bindings (B14).** Agree, given that `mergeGuardrails` is unset on aws-0
-   and would then bound central classes the day it is set?
-10. **`AmbiguousAdoption` (B6).** Stricter than today: is refusing the second same-shape adopted
-    binding right, or should the name order stay, documented?
-11. **Per-repository harness.** May a binding pick its `harness` among the policy's `harnessAllowed`?
-    #470's catalogue would then read the floor from the binding. Recommendation: not in this spec.
-12. **Which policies a file may bind.** Any policy of the factory's namespace, or only those an
-    operator lists on the `Repository`? Recommendation: any; the policy is reviewed centrally and the
-    guardrails cap.
-13. **Dropping `any` (B7).** No live file uses it. Agree to refuse it at N+1?
-14. **`fluxSource` on `merge` (B2).** One Flux source per repository is the assumption. A repository
-    delivered by two GitRepositories would need it per binding.
+Settled in the grilling of 2026-11-12. They replace the open questions this draft carried.
+
+| # | Decision |
+|---|---|
+| Q1 | **The kind keeps the name `MergePolicy`**, now one reusable class definition. One release reads both the per-repository shape and the class shape (B8), then the old shape is refused. |
+| Q2 | **No alias (B1).** A stricter variant is a new policy with its own name, `class:` label and evidence. |
+| Q3 | **A binding may name any MergePolicy in the factory's namespace.** Policies are reviewed centrally when added, and the guardrails cap every binding. |
+| Q4 | **The stage-4 repository file holds bindings only (B15).** A new class is a central pull request. |
+| Q5 | **Relaxing a policy keeps its live consumers live.** B11's CI output lists every live consumer a relaxation affects, for the reviewer. |
+| Q6 | **Evidence is split by policy generation on the card, and blocks nothing.** Promotion still counts every shadow decision of the window. |
+| Q7 | **Run-only classes** (`docs`, `tests`, `dashboards`, `scripts`, `review`) **are MergePolicies bound with mode `off`.** |
+| Q8 | **`Factory.spec.mergeDefaults`** holds the repository settings most repositories share. A Repository overrides them key by key, and the resolved values show in `Repository.status`. |
+| Q9 | **A grant binds to the resolved class (B13)**, the policy's definition plus this repository's binding, not the whole file. This lands before `approvalMemory` is turned on anywhere. |
+| Q10 | **`mergeGuardrails` bound every binding (B14)**, central ones included. When guardrails are set, CI reports the bindings that exceed them. |
+| Q11 | **`AmbiguousAdoption` (B6):** a second adopted binding of the same shape is refused at config time, naming both. |
+| Q12 | **No per-binding harness** in this spec. The floor stays the policy's, and per-issue pins choose a stronger profile. |
+| Q13 | **`author: any` is refused from the next minor (B7).** |
+| Q14 | **One `fluxSource` per repository (B2).** A per-binding override can be added when a second source appears. |
+| Q15 | **Timing:** planned now, built right after v4 rollout step 3 (both touch the merge code), merged before v4.0 so the frozen API is the new one. The four live repositories migrate in the next gcp-0 live session. |
