@@ -280,6 +280,9 @@ func proposalView(p ProposalPayload, q *intake.Question, changed []string) roomv
 		} else {
 			issue.RawBody = is.Body
 		}
+		if sg := is.Suggestion; sg != nil { // display: a plan made without the catalogue has none
+			issue.Suggestion = &roomview.ProposalSuggestion{Profile: sg.Profile, Roles: sg.Roles, Outcome: sg.Merge.Outcome, Why: sg.Why}
+		}
 		v.Issue = issue
 	}
 	return v

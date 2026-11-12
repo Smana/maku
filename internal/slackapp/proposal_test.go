@@ -1126,3 +1126,24 @@ func TestPostProposalRefusesWhatSlackCannotFile(t *testing.T) {
 		}
 	})
 }
+
+// O1: the proposal message carries the plan's suggestion, as roomview renders it, and a plan made
+// without the catalogue carries none.
+func TestProposalShowsTheSuggestion(t *testing.T) {
+	p := proposalFixture(t)
+	v := proposalView(p, nil, nil)
+	if v.Issue.Suggestion != nil {
+		t.Fatalf("a fallback plan has a suggestion: %+v", v.Issue.Suggestion)
+	}
+	p.Plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "links-solo", Roles: []string{"implementer"},
+		Merge: intake.MergeShown{Outcome: "auto"}, Why: "one file"}
+	text, raw, err := proposalSections(p, nil, nil, "C03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Suggested: class docs-links · profile links-solo (implementer) · merges on its own", "why (the planner's reading): one file"} {
+		if !strings.Contains(string(raw), want) && !strings.Contains(text, want) {
+			t.Errorf("the message lacks %q: %s", want, raw)
+		}
+	}
+}

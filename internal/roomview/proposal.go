@@ -69,6 +69,19 @@ type ProposalIssue struct {
 	Roles                             []string
 	DependsOn                         []int
 	What, Should, Acceptance, RawBody string
+	// Suggestion is the planner's suggestion and the broker's merge outcome; nil on a plan made
+	// without the factory's catalogue, which shows no suggestion line.
+	Suggestion *ProposalSuggestion
+}
+
+// ProposalSuggestion is what the planner suggests for the issue (display, O1): the profile ("" for
+// the factory's choice) and its roles from the catalogue, the merge outcome the broker computed, and
+// the model's why, untrusted.
+type ProposalSuggestion struct {
+	Profile string
+	Roles   []string
+	Outcome string
+	Why     string
 }
 
 // ProposalBudget is the ceiling this plan's work is charged against and where the number came from:
@@ -78,7 +91,7 @@ type ProposalBudget struct {
 	Source     string
 }
 
-// ProposalView is a plan/v1 as a person reads it before anything is filed. roomview declares it
+// ProposalView is a plan/v2 as a person reads it before anything is filed. roomview declares it
 // rather than taking intake.Plan: the consumer owns the shape, and a plan's struct never enters the
 // package that renders text.
 type ProposalView struct {
@@ -239,7 +252,27 @@ func (c *card) proposalIssue(p ProposalView) string {
 	if len(tail) > 0 {
 		lines = append(lines, strings.Join(tail, " · "))
 	}
+	if sg := p.Issue.Suggestion; sg != nil {
+		lines = append(lines, "Suggested: "+slackInert(SuggestionLine(p.Issue.Class, sg.Profile, sg.Roles, sg.Outcome)))
+		if why := slackInert(sg.Why); why != "" {
+			lines = append(lines, "why (the planner's reading): "+why)
+		}
+	}
 	return strings.Join(lines, "\n")
+}
+
+// SuggestionLine is the suggestion in the broker's words: `class docs-links · profile links-solo
+// (implementer) · merges on its own when the gate's conditions hold`, or `profile: the factory's
+// choice` with none. Plain text: each surface makes it inert its own way.
+func SuggestionLine(class, profile string, roles []string, outcome string) string {
+	p := "profile: the factory's choice"
+	if profile != "" {
+		p = "profile " + profile
+		if len(roles) > 0 {
+			p += " (" + strings.Join(roles, ", ") + ")"
+		}
+	}
+	return "class " + class + " · " + p + " · " + MergeWords(outcome)
 }
 
 // proposalRoles is the roles the broker wrote from config, in their order, and the one bound Slack
