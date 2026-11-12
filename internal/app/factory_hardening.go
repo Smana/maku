@@ -4,7 +4,10 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -39,14 +42,20 @@ type applierDeps struct {
 // hardening ports. Otherwise it answers enforced requests with T1 to T4 at enforce, as the agents
 // App: under HR11 the publisher's octo-sts token is the agents App's, so its login is agentsLogin,
 // the one the applier recognises its own pull requests and comments by. Turning enforcement on from
-// none takes a restart, as audit does.
-func safeOutputApplier(cfg *config.Config, d applierDeps) *applier.Applier {
+// none takes a restart, as audit does. The start is refused while the publisher's projected token
+// cannot be read: every enforced request would otherwise wait unanswered for its run's whole
+// answerWait.
+func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, error) {
 	if cfg.Demo || !cfg.Hardening.Enforcing() || d.Hardened == nil {
-		return nil
+		return nil, nil
 	}
 	tokens := d.Tokens
 	if tokens == nil {
 		p := cfg.Hardening.Publisher.OctoSTS
+		if _, err := os.ReadFile(filepath.Clean(p.TokenFile)); err != nil {
+			return nil, fmt.Errorf("hardening.enforceOutputs is set but the publisher token %s cannot be read: "+
+				"set the chart's hardening.publisher.audience, or empty enforceOutputs: %w", p.TokenFile, err)
+		}
 		tokens = &applier.OctoSTSTokens{URL: p.URL, TokenFile: p.TokenFile, Identity: p.Identity,
 			HTTP: httpx.New(githubTimeout, nil), Now: time.Now, Log: d.Log}
 	}
@@ -67,7 +76,7 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) *applier.Applier {
 		Enforced:    func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) },
 		AgentsLogin: cfg.AgentsLogin, FactoryLogin: cfg.FactoryLogin,
 		Interval: cfg.Hardening.Applier.Interval.Duration, AnswerWait: cfg.Hardening.Applier.AnswerWait.Duration,
-		Now: time.Now, Metrics: d.Metrics, Log: d.Log}
+		Now: time.Now, Metrics: d.Metrics, Log: d.Log}, nil
 }
 
 // policyReader reads a repository's default-branch file; *forge.GitHub implements it.

@@ -433,13 +433,17 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return err
 	}
 	// Hardening H2: the safe-output applier, only while a repository has an enforceOutputs list.
-	if a := safeOutputApplier(cfg, applierDeps{Reader: mgr.GetAPIReader(), Namespace: ns, Rooms: broker, Runs: rc,
+	a, err := safeOutputApplier(cfg, applierDeps{Reader: mgr.GetAPIReader(), Namespace: ns, Rooms: broker, Runs: rc,
 		Factory: func(repo string) applier.Filer {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh
 			}
 			return nil // a nil interface, never a typed-nil *forge.GitHub
-		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log}); a != nil {
+		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log})
+	if err != nil {
+		return err
+	}
+	if a != nil {
 		if err := mgr.Add(a); err != nil {
 			return fmt.Errorf("manager: %w", err)
 		}

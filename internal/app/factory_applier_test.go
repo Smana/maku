@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -40,17 +41,32 @@ func TestFactoryStartsApplier(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
 	off := enforcingConfig(nil)
 	tokens := &fakeTokens{}
-	if a := safeOutputApplier(off, applierDeps{Hardened: hardeningPorts(off, nil), Live: func() *config.Config { return off },
-		Tokens: tokens, Log: log}); a != nil || len(tokens.asked) != 0 {
-		t.Fatalf("an applier with nothing enforced: %+v, tokens %v", a, tokens.asked)
+	if a, err := safeOutputApplier(off, applierDeps{Hardened: hardeningPorts(off, nil), Live: func() *config.Config { return off },
+		Log: log}); a != nil || err != nil {
+		t.Fatalf("an applier with nothing enforced: %+v, %v", a, err)
 	}
 
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.Issue, hardening.PR}}})
-	a := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
+	// #491's review nit 6: no readable publisher token, no start, and the error says what to set.
+	cfg.Hardening.Publisher.OctoSTS.TokenFile = filepath.Join(t.TempDir(), "absent")
+	if _, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
+		Log: log}); err == nil || !strings.Contains(err.Error(), "hardening.publisher.audience") {
+		t.Fatalf("a missing publisher token started: %v", err)
+	}
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("jwt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Hardening.Publisher.OctoSTS.TokenFile = token
+	if a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
+		Log: log}); a == nil || err != nil {
+		t.Fatalf("a readable token: %v", err)
+	}
+	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
 		Tokens: tokens, Log: log})
-	if a == nil {
-		t.Fatal("no applier for an enforced repository")
+	if a == nil || err != nil {
+		t.Fatalf("no applier for an enforced repository: %v", err)
 	}
 	if got := a.Enforced("Smana/ai-native-ref"); !slices.Equal(got, []hardening.OutputType{hardening.Issue, hardening.PR}) {
 		t.Fatalf("enforced %v", got)
@@ -71,8 +87,8 @@ func TestFactoryStartsApplier(t *testing.T) {
 	// The demo is never hardened, whatever its config says.
 	demo := enforcingConfig(cfg.Hardening.Repositories)
 	demo.Demo = true
-	if a := safeOutputApplier(demo, applierDeps{Hardened: hardeningPorts(demo, nil), Live: func() *config.Config { return demo }, Log: log}); a != nil {
-		t.Fatal("an applier in the demo")
+	if a, err := safeOutputApplier(demo, applierDeps{Hardened: hardeningPorts(demo, nil), Live: func() *config.Config { return demo }, Log: log}); a != nil || err != nil {
+		t.Fatalf("an applier in the demo: %v", err)
 	}
 
 	// Readiness: R1 needs enforce, which this release refuses, so an enforced repository is not hardened.
