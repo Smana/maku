@@ -8,7 +8,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 crddir=../../config/crd
 fail=0
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-helm dependency build . >/dev/null
 out="$(helm template af-crds .)"
 
 names="$(yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.name] | sort | join(",")' - <<<"$out")"
@@ -42,6 +41,17 @@ other="$(yq ea '[select(.kind != null and .kind != "CustomResourceDefinition") |
 [[ -z $other ]] || { echo "FAIL: agentgateway-crds.enabled renders more than CRDs: $other" >&2; fail=1; }
 diff <(yq ea -o json -I0 'select(.metadata.name | test("maku[.]ogenki[.]io$"))' - <<<"$out") <(yq ea -o json -I0 'select(.metadata.name | test("maku[.]ogenki[.]io$"))' - <<<"$on") >/dev/null ||
   { echo "FAIL: agentgateway-crds.enabled changes the maku.ogenki.io CRDs" >&2; fail=1; }
+# vendored (hack/agentgateway-vendor.sh), so no install needs the network; kept on uninstall like ours
+for f in files/agentgateway/*.yaml; do
+  name="$(yq '.metadata.name' "$f")"
+  crd="$(yq ea "select(.kind == \"CustomResourceDefinition\" and .metadata.name == \"$name\")" - <<<"$on")"
+  [[ "$(yq '.metadata.annotations."helm.sh/resource-policy"' - <<<"$crd")" == keep ]] || { echo "FAIL: $name lacks helm.sh/resource-policy: keep" >&2; fail=1; }
+  [[ "$(yq '.metadata.labels."app.kubernetes.io/name"' - <<<"$crd")" == agentgateway ]] || { echo "FAIL: $name lost its upstream labels" >&2; fail=1; }
+  cmp -s <(yq -o json '.spec' "$f") <(yq -o json '.spec' - <<<"$crd") || { echo "FAIL: $name's spec differs from $f" >&2; fail=1; }
+done
+kept="$(helm template af-crds . --set agentgateway-crds.enabled=true --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
+[[ -z $kept ]] || { echo "FAIL: keep=false still keeps an agentgateway CRD" >&2; fail=1; }
+yq -e '(.dependencies // []) | length == 0' Chart.yaml >/dev/null || { echo "FAIL: the CRD chart has a dependency: every install would need to build it" >&2; fail=1; }
 
 # the packaged chart ships the six CRDs, never tests/ (.helmignore)
 helm package . -d "$tmp/pkg" >/dev/null

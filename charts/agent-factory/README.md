@@ -82,7 +82,8 @@ helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo
 
 Nothing calls the gateway yet: runs keep `agent-model` and the planner keeps its URL until the
 run-controller's and the broker's gateway modes arrive. `task chart:gateway:k3d` proves the gateway on
-k3d. The upstream archives are pinned by `dependencies.sha256`, which `task chart:deps` checks.
+k3d. agentgateway is vendored (the controller chart under `vendor/`, its CRDs in `agent-factory-crds`) and
+pinned in `charts/agentgateway.sha256`, which `task chart:deps` checks: no install needs the network for it.
 
 ## Spec-intake k3d test
 

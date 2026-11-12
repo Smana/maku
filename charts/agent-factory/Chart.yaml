@@ -19,11 +19,12 @@ dependencies:
     version: 0.0.0
     repository: file://../maku-gateway
     condition: maku-gateway.enabled
-  # The upstream controller, off by default and where the cluster already runs one. Pinned by exact
-  # version; `task chart:deps` checks its archive against dependencies.sha256.
+  # The upstream controller, off by default and where the cluster already runs one. Vendored by
+  # hack/agentgateway-vendor.sh and pinned in charts/agentgateway.sha256 (`task chart:deps`), so
+  # building the umbrella needs no network.
   - name: agentgateway
     version: v1.6.0
-    repository: oci://cr.agentgateway.dev/charts
+    repository: file://vendor/agentgateway
     condition: agentgateway.enabled
 # The support floor (D26): the ValidatingAdmissionPolicies need 1.30.
 kubeVersion: ">=1.30.0-0"
