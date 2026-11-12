@@ -56,10 +56,35 @@ func tracerRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	g, tk, _ := shadowRig(t, "documentation")
 	g.r.Cfg.Current().Hardening.EnforceOutputs = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels}
 	title, body := publishedAs(t, hardening.PR, prAsked, prOut)
-	g.f.SetPR(forge.PR{Number: 12, URL: prURL, State: "OPEN", Author: agents, Title: title, Body: body})
+	g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: title, Body: body})
 	_, comment := publishedAs(t, hardening.Comment, commentAsked, commentOut)
-	g.f.SetComments(12, forge.Comment{ID: 501, Author: agents, Body: comment, At: now.Add(-5 * time.Minute)})
+	g.f.SetComments(12, forge.Comment{ID: 501, NodeID: commentNode, Author: agents, Body: comment, At: now.Add(-5 * time.Minute)})
 	return g, tk
+}
+
+// The GraphQL ids of the tracer rig's pull request and comment, which their last editor is read by.
+const (
+	prNode      = "PR_kwDOtracer12"
+	commentNode = "IC_kwDOtracer501"
+	maintainer  = "smana"
+)
+
+// editedPR is the rig's pull request with its body edited (a ticked checklist), last by editor.
+func editedPR(t *testing.T, g *rig, editor string) {
+	t.Helper()
+	title, body := publishedAs(t, hardening.PR, prAsked, prOut)
+	g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: title,
+		Body: strings.Replace(body, "Fixes the dead link", "- [x] Fixes the dead link", 1)})
+	g.f.SetEditor(prNode, editor)
+}
+
+// editedComment is the rig's comment with its body edited, last by editor.
+func editedComment(t *testing.T, g *rig, editor string) {
+	t.Helper()
+	_, body := publishedAs(t, hardening.Comment, commentAsked, commentOut)
+	g.f.SetComments(12, forge.Comment{ID: 501, NodeID: commentNode, Author: agents, Edited: true,
+		Body: strings.Replace(body, "Done", "Done, and checked", 1), At: now.Add(-5 * time.Minute)})
+	g.f.SetEditor(commentNode, editor)
 }
 
 // apply records run's request and its applied answer, as the broker and the applier post them.
@@ -73,6 +98,14 @@ func appliedAll(g *rig, run string) {
 	g.log.apply(run, prOut, hardening.PR, prAsked, prURL, in, in)
 	g.log.apply(run, commentOut, hardening.Comment, commentAsked, prURL+"#issuecomment-501", in, in)
 	g.log.apply(run, labelsOut, hardening.Labels, hardening.LabelsPayload{Add: []string{"documentation"}}, prURL, in.Add(-time.Second), in.Add(time.Second))
+}
+
+// appliedWith is appliedAll with the pull request output asking for pr.
+func appliedWith(g *rig, pr hardening.PRPayload) {
+	in := now.Add(-5 * time.Minute)
+	g.log.apply(rid(0), prOut, hardening.PR, pr, prURL, in, in)
+	g.log.apply(rid(0), commentOut, hardening.Comment, commentAsked, prURL+"#issuecomment-501", in, in)
+	g.log.apply(rid(0), labelsOut, hardening.Labels, hardening.LabelsPayload{Add: []string{"documentation"}}, prURL, in.Add(-time.Second), in.Add(time.Second))
 }
 
 // shadowRecords is every output_shadowed record posted.
@@ -123,6 +156,58 @@ func TestTracer(t *testing.T) {
 			appliedAll(g, rid(0))
 			_, body := publishedAs(t, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetPR, Body: "Something else."}, commentOut)
 			g.f.SetComments(12, forge.Comment{ID: 501, Author: agents, Body: body, At: now.Add(-5 * time.Minute)})
+		}, []string{"comment " + comment}},
+		// A title compares trimmed: line() accepts blanks around it, and GitHub may hold it either way.
+		"a title GitHub holds with blanks": {func(t *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			title, body := publishedAs(t, hardening.PR, prAsked, prOut)
+			g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: " " + title + " ", Body: body})
+		}, nil},
+		"a title asked with blanks": {func(t *testing.T, g *rig) {
+			asked := hardening.PRPayload{Title: "  " + prAsked.Title + "\t", Body: prAsked.Body}
+			appliedWith(g, asked)
+			title, body := publishedAs(t, hardening.PR, asked, prOut)
+			g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: title, Body: body})
+		}, nil},
+		// A body T2 sanitises to nothing is published as the footer alone, which still names it.
+		"a body that sanitises to empty": {func(t *testing.T, g *rig) {
+			asked := hardening.PRPayload{Title: prAsked.Title, Body: "<!-- nothing but a comment here -->"}
+			appliedWith(g, asked)
+			title, body := publishedAs(t, hardening.PR, asked, prOut)
+			g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: title, Body: body})
+		}, nil},
+		// A maintainer's edit of an applied write is a human edit: neither untraced nor checked as
+		// the agent's. Only GitHub's last editor tells it apart, and only on an applied object.
+		"the applied pull request edited by a maintainer": {func(t *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			editedPR(t, g, maintainer)
+		}, nil},
+		"the applied pull request edited by the agents App": {func(t *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			editedPR(t, g, agents)
+		}, []string{"pr " + prURL}},
+		"the applied pull request edited, its editor unknown": {func(t *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			editedPR(t, g, "")
+		}, []string{"pr " + prURL}},
+		"a pull request opened directly, then edited by a maintainer": {func(_ *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: prAsked.Title, Body: prAsked.Body})
+			g.f.SetEditor(prNode, maintainer)
+		}, []string{"pr " + prURL}},
+		"the applied comment edited by a maintainer": {func(t *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			editedComment(t, g, maintainer)
+		}, nil},
+		"the applied comment edited by the agents App": {func(t *testing.T, g *rig) {
+			appliedAll(g, rid(0))
+			editedComment(t, g, agents)
+		}, []string{"comment " + comment}},
+		"a comment never applied, edited by a maintainer": {func(t *testing.T, g *rig) {
+			in := now.Add(-5 * time.Minute)
+			g.log.apply(rid(0), prOut, hardening.PR, prAsked, prURL, in, in)
+			g.log.apply(rid(0), labelsOut, hardening.Labels, hardening.LabelsPayload{Add: []string{"documentation"}}, prURL, in.Add(-time.Second), in.Add(time.Second))
+			editedComment(t, g, maintainer)
 		}, []string{"comment " + comment}},
 		"a label added outside its request": {func(_ *testing.T, g *rig) {
 			in := now.Add(-5 * time.Minute)

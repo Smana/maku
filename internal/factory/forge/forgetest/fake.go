@@ -102,6 +102,24 @@ type Fake struct {
 	repoInfoErr  error
 	perms        map[string]string // Permission's answer by lower-case login; absent is "none"
 	permErr      error
+	editors      map[string]string // LastEditor's answer by node id; absent is never edited
+}
+
+// SetEditor makes login the last editor of node's body, as LastEditor answers it.
+func (f *Fake) SetEditor(node, login string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editors == nil {
+		f.editors = map[string]string{}
+	}
+	f.editors[node] = login
+}
+
+// LastEditor implements the forge's LastEditor: SetEditor's login, "" for a node never edited.
+func (f *Fake) LastEditor(_ context.Context, node string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.editors[node], nil
 }
 
 // NewFake returns an empty Fake.

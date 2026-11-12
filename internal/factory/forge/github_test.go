@@ -328,6 +328,22 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			return
 		}
 		switch {
+		case strings.Contains(string(b), "... on Comment"):
+			var in struct{ Variables map[string]any }
+			_ = json.Unmarshal(b, &in)
+			switch in.Variables["id"] {
+			case "IC_human":
+				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":"2026-10-16T10:00:00Z","editor":{"__typename":"User","login":"smana"}}}}`)
+			case "PR_bot":
+				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":"2026-10-16T10:00:00Z","editor":{"__typename":"Bot","login":"ogenki-agents"}}}}`)
+			case "IC_ghost": // edited by an account since deleted: GitHub names no editor
+				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":"2026-10-16T10:00:00Z","editor":null}}}`)
+			case "IC_never":
+				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":null,"editor":null}}}`)
+			default:
+				_, _ = io.WriteString(w, `{"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a node"}]}`)
+			}
+			return
 		case g.records != nil && strings.Contains(string(b), "search(type: ISSUE"):
 			var in struct{ Variables map[string]any }
 			_ = json.Unmarshal(b, &in)
@@ -1035,6 +1051,20 @@ func TestPullRequestReadsAFork(t *testing.T) {
 	}
 	if pr, err = r.g.PullRequest(t.Context(), 13); err != nil || !pr.CrossRepository {
 		t.Fatalf("a fork's: %+v %v", pr, err)
+	}
+}
+
+// The tracer tells a maintainer's edit of an applied body from the agents App's by its last editor,
+// which only GraphQL names: a bot's with "[bot]", "" when never edited or the editor is gone.
+func TestLastEditor(t *testing.T) {
+	r := newRig(t)
+	for node, want := range map[string]string{"IC_human": "smana", "PR_bot": "ogenki-agents[bot]", "IC_ghost": "", "IC_never": ""} {
+		if got, err := r.g.LastEditor(t.Context(), node); err != nil || got != want {
+			t.Errorf("%s: %q %v, want %q", node, got, err, want)
+		}
+	}
+	if _, err := r.g.LastEditor(t.Context(), "IC_unknown"); err == nil {
+		t.Error("a node GitHub cannot resolve is an error, never an answer")
 	}
 }
 

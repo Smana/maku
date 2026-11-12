@@ -30,3 +30,37 @@ func TestStripHarnessFooter(t *testing.T) {
 		})
 	}
 }
+
+// SplitFooter reads back what WithFooter wrote, an empty body included: a body T2 sanitises to
+// nothing is the footer alone, at the very start, and still names its output.
+func TestSplitFooter(t *testing.T) {
+	p := Provenance{Room: "r", Run: "x", Role: "implementer", Output: "00000000000000b1"}
+	for name, tc := range map[string]struct{ in, text, id string }{
+		"a body":             {WithFooter("Fixes the link.", p), "Fixes the link.", p.Output},
+		"an empty body":      {WithFooter("", p), "", p.Output},
+		"a blank body":       {WithFooter(" \n\n", p), "", p.Output},
+		"CRLF, alone":        {"---\r\nAgent-Output: " + p.Output + "\r\n", "", p.Output},
+		"no footer":          {"Fixes the link.\n", "Fixes the link.", ""},
+		"a rule, no output":  {"---\nAgent-Room: r\n", "---\nAgent-Room: r", ""},
+		"a rule glued":       {"Body.---\nAgent-Output: " + p.Output + "\n", "Body.---\nAgent-Output: " + p.Output, ""},
+		"an indented footer": {" ---\nAgent-Output: " + p.Output + "\n", " ---\nAgent-Output: " + p.Output, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if text, id := SplitFooter(tc.in); text != tc.text || id != tc.id {
+				t.Fatalf("got (%q, %q), want (%q, %q)", text, id, tc.text, tc.id)
+			}
+		})
+	}
+}
+
+// T2 trims a pull request's title, as GitHub holds it: the applier publishes and the tracer
+// compares the same title.
+func TestPublishedTrimsThePRTitle(t *testing.T) {
+	p, ok := Published(PR, []byte(`{"title":"  docs: fix the link \t","body":"Fixes the dead link in the runbook."}`), 7)
+	if !ok {
+		t.Fatal("does not publish")
+	}
+	if got := p.(PRPayload).Title; got != "docs: fix the link" {
+		t.Fatalf("title %q", got)
+	}
+}

@@ -317,7 +317,7 @@ func (g *GitHub) AllComments(ctx context.Context, number int) ([]Comment, error)
 
 // restComment is a REST issue comment as the forge reads one.
 func restComment(c *github.IssueComment) Comment {
-	return Comment{ID: c.GetID(), Author: c.GetUser().GetLogin(), Association: c.GetAuthorAssociation(), Body: c.GetBody(),
+	return Comment{ID: c.GetID(), NodeID: c.GetNodeID(), Author: c.GetUser().GetLogin(), Association: c.GetAuthorAssociation(), Body: c.GetBody(),
 		At: c.GetCreatedAt().Time, Edited: c.GetUpdatedAt().After(c.GetCreatedAt().Time)}
 }
 
@@ -326,6 +326,29 @@ func (g *GitHub) AddLabels(ctx context.Context, number int, labels ...string) er
 	_, _, err := g.rest.Issues.AddLabelsToIssue(ctx, g.owner, g.name, number, labels)
 	g.mark(err)
 	return wrap("add labels", err)
+}
+
+// LastEditor is the login that last edited the body of node (a pull request, an issue or a
+// comment, by its GraphQL id), "" when it was never edited. REST names no editor; GraphQL's
+// Comment.editor does, a bot's with "[bot]".
+func (g *GitHub) LastEditor(ctx context.Context, node string) (string, error) {
+	var q struct {
+		Node struct {
+			Comment struct {
+				LastEditedAt *githubv4.DateTime
+				Editor       *actor
+			} `graphql:"... on Comment"`
+		} `graphql:"node(id: $id)"`
+	}
+	err := g.v4.Query(ctx, &q, map[string]any{"id": githubv4.ID(node)})
+	g.mark(err)
+	if err != nil {
+		return "", wrap("read a body's last editor", err)
+	}
+	if q.Node.Comment.LastEditedAt == nil {
+		return "", nil
+	}
+	return q.Node.Comment.Editor.login(), nil
 }
 
 // Repository is the owner/name this connection is bound to.

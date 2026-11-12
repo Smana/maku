@@ -108,7 +108,9 @@ type LabelEvent struct {
 // Comment is an issue or pull request comment. Edited: its body changed after it was posted,
 // perhaps by someone other than its author, so a command in it is never acted on.
 type Comment struct {
-	ID     int64
+	ID int64
+	// NodeID is the comment's GraphQL id, which LastEditor reads; "" when read through GraphQL.
+	NodeID string
 	Author string
 	// Association is the author's relation to the repository, as Review.Association (hardening
 	// UH6: author trust reads it).

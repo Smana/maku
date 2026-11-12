@@ -110,6 +110,10 @@ type observed struct {
 	// title and raw are the write as GitHub holds it, footer and marker included: the tracer
 	// compares them with what the applier published.
 	title, raw string
+	// node is the pull request's or comment's GraphQL id, which its last editor is read by, and
+	// edited whether its body may have changed since it was posted (always, for a pull request).
+	node   string
+	edited bool
 }
 
 // shadowRun reads back the writes run made as the agents App inside its window, checks each as the
@@ -152,7 +156,7 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 	var n hardening.Counts
 	for _, o := range ws {
 		if o.w.Type != hardening.Push && slices.Contains(enforced, o.w.Type) {
-			if ledger.traces(o) {
+			if ledger.traces(o) || r.humanEdit(ctx, cfg, t, rec.ID, ledger, o) {
 				continue
 			}
 			if err := r.Rooms.Output(ctx, t.Status.RoomRef, rec.ID, envelope.KindOutputShadowed, untracedRecord(rec.ID, o)); err != nil &&
@@ -287,7 +291,8 @@ func (r *Reconciler) observedWrites(ctx context.Context, cfg *config.Config, t *
 		case agent(p.Author):
 			add(rec.Finished.Time, hardening.ObservedWrite{Type: hardening.PR, Object: fmt.Sprintf("%s/pull/%d", repoURL, pr.Number)},
 				hardening.PRPayload{Title: p.Title, Body: hardening.StripHarnessFooter(p.Body)})
-			out[len(out)-1].title, out[len(out)-1].raw = p.Title, p.Body
+			o := &out[len(out)-1]
+			o.title, o.raw, o.node, o.edited = p.Title, p.Body, p.NodeID, true
 		}
 	}
 	// Comments and labels on the task's issue and pull request.
@@ -300,7 +305,8 @@ func (r *Reconciler) observedWrites(ctx context.Context, cfg *config.Config, t *
 			if agent(c.Author) && in(c.At) {
 				add(c.At, hardening.ObservedWrite{Type: hardening.Comment, Object: fmt.Sprintf("%s#issuecomment-%d", th.url, c.ID)},
 					hardening.CommentPayload{Target: th.target, Body: c.Body})
-				out[len(out)-1].raw = c.Body
+				o := &out[len(out)-1]
+				o.raw, o.node, o.edited = c.Body, c.NodeID, c.Edited
 			}
 		}
 		evs, err := gh.LabelEventsBy(ctx, th.number, login, rec.Started.Time)

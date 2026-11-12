@@ -1856,7 +1856,9 @@ flowchart LR
 
   A write that does not match is recorded `output_shadowed` with reason `untraced_write` and
   counted, then checked as in H1. This includes a direct open, or a direct edit of an applied
-  object. Pushes are shadowed as in H1. What the tracer does not observe is listed in
+  object. An applied pull request or comment whose body GitHub's last editor shows a person
+  edited since (a ticked checklist) is logged `human_edit` instead, neither counted nor checked.
+  Pushes are shadowed as in H1. What the tracer does not observe is listed in
   [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
   sandbox role's and the publisher's octo-sts policy and reports their permissions.

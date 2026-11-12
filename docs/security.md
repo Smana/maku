@@ -437,9 +437,12 @@ A repository listed in `enforceOutputs` goes one stage further
 - **What is checked after.** At a run's end the tracer reads back the task's pull request (its
   title and body), the agents App's comments on the task's issue and pull request, and the labels
   it added there. Each must be exactly what an `output_applied` published. A pull request's
-  footer must name the newest applied `pr` output, and its title and body must be that output's.
-  A comment must end with an applied output's marker and hold that output's text. A direct open,
-  or a direct edit of an applied object, is reported `untraced_write` and checked as in audit.
+  footer must name the newest applied `pr` output, and its title (blanks around it aside) and
+  body must be that output's. A comment must end with an applied output's marker and hold that
+  output's text. A direct open, or a direct edit of an applied object, is reported
+  `untraced_write` and checked as in audit. An applied body that a person edited since, by
+  GitHub's last editor (GraphQL, since REST names none), is logged `human_edit` and not checked
+  as the agent's. An editor that cannot be read stays untraced.
 - **What the applier refuses.** It refuses to edit an open pull request whose footer names none of
   the task's applied outputs (`output_target`), so a direct open is never adopted.
 - **What closes the bypass.** The sandbox role's `pull_requests: write` is removed in the

@@ -23,6 +23,10 @@ import (
 // that no output_applied explains (H2, AC2). Its counter is agent_factory_hardening_untraced_total.
 const reasonUntraced = "untraced_write"
 
+// reasonHumanEdit is the tracer's log reason for an applied write a person edited since: never a
+// record nor a count, since it is not the agent's write.
+const reasonHumanEdit = "human_edit"
+
 // traceSlack is how far a label event's GitHub timestamp, kept to the second, may fall outside its
 // request and answer: GitHub's clock and the broker's are not the same clock.
 const traceSlack = 2 * time.Second
@@ -136,21 +140,13 @@ func normal(s string) string { return strings.TrimRight(strings.ReplaceAll(s, "\
 func (l outputLedger) traces(o observed) bool {
 	switch o.w.Type {
 	case hardening.PR:
-		text, id := hardening.SplitFooter(o.raw)
-		if id == "" || id != l.lastApplied(hardening.PR, o.w.Object) {
-			return false
-		}
-		p, ok := l.published(id, hardening.PR, o.w.Object)
-		pr, isPR := p.(hardening.PRPayload)
-		return ok && isPR && o.title == pr.Title && text == normal(hardening.Neutralise(pr.Body))
+		pr, ok := l.anchor(o).(hardening.PRPayload)
+		text, _ := hardening.SplitFooter(o.raw)
+		return ok && sameTitle(o, pr) && text == normal(hardening.Neutralise(pr.Body))
 	case hardening.Comment:
-		id, ok := hardening.FindMarker(o.raw)
-		if !ok {
-			return false
-		}
-		p, ok := l.published(id, hardening.Comment, o.w.Object)
-		c, isComment := p.(hardening.CommentPayload)
-		return ok && isComment && normal(o.raw) == normal(hardening.WithMarker(c.Body, id))
+		c, ok := l.anchor(o).(hardening.CommentPayload)
+		id, _ := hardening.FindMarker(o.raw)
+		return ok && normal(o.raw) == normal(hardening.WithMarker(c.Body, id))
 	case hardening.Labels:
 		var p hardening.LabelsPayload
 		if json.Unmarshal(o.w.Payload, &p) != nil || len(p.Add) == 0 {
@@ -164,6 +160,66 @@ func (l outputLedger) traces(o observed) bool {
 		return true
 	}
 	return false
+}
+
+// anchor is what the applied output a pull request or comment names published, whatever its text
+// now, nil when it names none: a pull request's footer must name the newest applied pr output on
+// it, a comment's marker an applied comment output on its URL.
+func (l outputLedger) anchor(o observed) any {
+	var id string
+	switch o.w.Type {
+	case hardening.PR:
+		if _, id = hardening.SplitFooter(o.raw); id == "" || id != l.lastApplied(hardening.PR, o.w.Object) {
+			return nil
+		}
+	case hardening.Comment:
+		var ok bool
+		if id, ok = hardening.FindMarker(o.raw); !ok {
+			return nil
+		}
+	default:
+		return nil
+	}
+	p, _ := l.published(id, o.w.Type, o.w.Object)
+	return p
+}
+
+// sameTitle is whether a pull request's title is the one published, blanks around it aside:
+// line() accepts them, and GitHub may hold the title trimmed or not.
+func sameTitle(o observed, pr hardening.PRPayload) bool {
+	return strings.TrimSpace(o.title) == strings.TrimSpace(pr.Title)
+}
+
+// humanEdit reports whether an untraced pull request or comment is an applied write a person edited
+// since (a maintainer ticking a checklist): it still names its applied output, a pull request's
+// title is still that output's (GitHub dates no editor for a title), and GitHub's last editor of
+// its body is not the agents App. It is then neither untraced nor checked as the agent's, and is
+// logged human_edit. An editor that cannot be read, or none, is not a human edit: the write stays
+// untraced.
+func (r *Reconciler) humanEdit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, runID string, l outputLedger, o observed) bool {
+	if !o.edited || o.node == "" {
+		return false
+	}
+	switch p := l.anchor(o).(type) {
+	case nil:
+		return false
+	case hardening.PRPayload:
+		if !sameTitle(o, p) {
+			return false
+		}
+	}
+	editor, err := r.gh(ctx).LastEditor(ctx, o.node)
+	if err != nil {
+		r.log().Warn("tracer: the write's last editor cannot be read: it stays untraced", "task.id", t.Name, "run.id", runID,
+			"type", string(o.w.Type), "object", o.w.Object, "err", err)
+		return false
+	}
+	if editor == "" || strings.EqualFold(editor, cfg.AgentsLogin) {
+		return false
+	}
+	r.log().Info("tracer: an applied write a person edited since, not the agent's", "task.id", t.Name, "run.id", runID,
+		"type", string(o.w.Type), "object", o.w.Object, "editor", editor, "reason", reasonHumanEdit)
+	return true
 }
 
 // labelApplied is whether an applied labels request on object asked for label, and at falls between

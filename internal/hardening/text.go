@@ -42,13 +42,14 @@ func Published(t OutputType, payload json.RawMessage, ownIssue int) (any, bool) 
 	return p, true
 }
 
-// sanitiseOutput is T2 on every text field of p.
+// sanitiseOutput is T2 on every text field of p. A pull request's title is trimmed, as GitHub
+// holds it, so the applier publishes and the tracer compares the same one.
 func sanitiseOutput(p any, ownIssue int) (any, TextReport) {
 	var rep TextReport
 	s := func(t string) string { return sanitiseText(t, ownIssue, &rep) }
 	switch o := p.(type) {
 	case PRPayload:
-		o.Title, o.Body = s(o.Title), s(o.Body)
+		o.Title, o.Body = strings.TrimSpace(s(o.Title)), s(o.Body)
 		return o, rep
 	case CommentPayload:
 		o.Body = s(o.Body)

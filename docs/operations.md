@@ -214,6 +214,7 @@ the harnesses still hold.
 | Sponsored principals and `POST /v1/tasks` (factory interfaces part 2) | **Both CRDs change**: the Task enum and its CEL rules (`source.kind: api`, `sponsor`, `maxMicroUSD`), and the Room member pattern and CEL (`system:` members); the Task CRD arrives through `CreateReplace`, the Room CRD through ai-native-ref's vendored copy. `api.projectIDFile` is required with `api.sponsored`. The host writes `project-id` and `<name>-client-id` into `agent-factory-sponsored` (the chart always mounts it, optional). ai-native-ref adds the broker's mounts, `human.mcp.sponsored` and the network rule for in-cluster clients. **Never roll back below this version once api tasks exist**: an older factory's spec write drops `sponsor` and `maxMicroUSD`, and the CEL refuses it. Three new metric series are registered |
 | Harness roles (scoper bound, reviewer brief) | Three orderings. (1) The reviewer schema first: crossplane-configuration#70 merged and pinned on cloud-native-ref, or `kubectl apply -f charts/maku/crds` on the native runtime (Helm never upgrades `crds/`). Until then each reviewer start costs a refused create, a Warn and one room note per task, and the reviewer runs without its brief, on the pull request alone. (2) The broker before the bridge pin: an older broker refuses `harness_end{budget_calls}` as a bad item, the run reads `PodFailed`, and `maku_factory_scoper_runs_total{outcome="budget_calls"}` stays at 0 while the scopers are in fact stopped. (3) No `scoper:` key in the factory config before the factory runs this release: the parse refuses unknown keys, so an older factory fails at start. The harness image may roll in any order |
 | Judge round triage and cost by role (HR5, HR6) | HR5 (the pending-checks wait and the failing log tail) reaches runs only through the `maku-harness` digest bump in crossplane-configuration's composition, then that package's pin on cloud-native-ref. The log tail also needs `productionresultssa*.blob.core.windows.net:443` on the harness egress; until then every failing check gives the "not readable" note. HR6 needs only the factory: `maku_factory_run_cost_usd` gains `role`, so a query that does not aggregate it splits by role |
+| T2 sanitiser (H2 tracer) | The tracer recomputes what each applied output published with the running release's T2. A release that changes T2 (this one trims a pull request's title) makes pull requests and comments applied before the upgrade show once as `untraced_write`, on their next run end. Say so in the release notes, and confirm such a write predates the upgrade before rolling back |
 | CRD | Vendored with every pin. `task check` fails when the committed CRD differs from what the Go types generate |
 
 ## The factory
@@ -429,7 +430,13 @@ untraced on the XR (its rules still say `gh pr create`).
 1. Restore `pull_requests: write` in the role policy.
 2. Remove the repository from `enforceOutputs`, and restart.
 
-**Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. Never move
+**Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. A
+maintainer's edit of an applied pull request or comment body is not one: the tracer reads GitHub's
+last editor and logs it `human_edit`, uncounted. A retitle has no editor on record, so it stays
+untraced: confirm who retitled the pull request before rolling back on a `pr` untraced write.
+After an upgrade that changes the T2 sanitiser, pull requests and comments applied before it are
+compared with the new T2's text and show as untraced once: confirm those predate the upgrade
+before rolling back. Never move
 an enforced repository to a run path whose sandbox token no role policy scopes (the startup
 warning names HR13). `push` (H3) and raw reads (H4) stay open in this stage.
 
