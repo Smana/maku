@@ -249,9 +249,11 @@ func (s *Server) roomBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-git-bundle")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(b)
+	_, _ = w.Write(b) //nolint:gosec // G705: a git bundle for the factory's git, served nosniff as a bundle, never a page
+
 }
 
 // runOfRoom reports whether runID is a run of room: while the watch holds the run, its roomRef

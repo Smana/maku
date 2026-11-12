@@ -401,7 +401,7 @@ func TestOutputPushHarnessOnly(t *testing.T) {
 	bundle := []byte("# v2 git bundle\nharness\n")
 	args := map[string]string{"bundle": base64.StdEncoding.EncodeToString(bundle)}
 
-	s, log, bundles := harnessServer(t, "pr,push", nil)
+	s, log, _ := harnessServer(t, "pr,push", nil)
 	if l := harnessRPC(t, s, false, listBody()); strings.Contains(string(l.body), "output_push") {
 		t.Fatalf("the model lists output_push: %s", l.body)
 	}
@@ -412,7 +412,7 @@ func TestOutputPushHarnessOnly(t *testing.T) {
 	if res["isError"] != true || len(log.drafts) != 0 {
 		t.Fatalf("the model pushed: %v", res)
 	}
-	s, log, bundles = harnessServer(t, "pr,push", nil) // a fresh limiter
+	s, log, bundles := harnessServer(t, "pr,push", nil) // a fresh limiter
 	res, _ = harnessRPC(t, s, true, toolsCall("output_push", args)).out["result"].(map[string]any)
 	if res == nil || res["isError"] == true {
 		t.Fatalf("the harness was refused: %v", res)
