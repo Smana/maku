@@ -27,6 +27,28 @@ cannot read the run-controller's mode: set both, or an `enforceOutputs` reposito
 admits (HR13) would run on the shared write token. API runs reserved before the upgrade carry no
 repository in their reservation and get no per-run token: let them end before enabling `perRun`.
 
+## The run path (v0.4x, v4 rollout step 2)
+
+New keys in the `maku` chart, each rendered only with `runController.enabled`, so an install without
+the run controller (cloud-native-ref's AgentRun composition) renders as before. Every older key keeps
+its meaning until rollout step 8 deletes it.
+
+| New key | Default | Old key, still honoured |
+|---|---|---|
+| `sandbox.runtimeClassName` | `""`: the old key | `runController.runtimeClassName` (`gvisor`) |
+| `sandbox.unsafeAllowRunc` | `false` | `runController.allowUnsandboxed` |
+| `networkPolicies.mode` (`cilium`, `kubernetes`, `none`) and `networkPolicies.kubernetes` | `""`: the old key | `networkPolicies.enabled` (`true` is `cilium`, `false` is `none`) |
+| `egressProxy` | 2 replicas, rendered only in mode `kubernetes` | None |
+| `broker.database.podLabels` | `{}`: `podLabel`'s key | None |
+| `runController.gitReadSecret`, `runController.unsafeSharedGitToken` | `agent-git-read`, `false` | None: a reviewer or triager run needs one of them |
+| `runsQuota`, `runPodPolicy` | On | None |
+| `agentRunPolicies` | Off until set | None |
+
+Where an old and a new key conflict (`sandbox.unsafeAllowRunc` with `sandbox.runtimeClassName`,
+`networkPolicies.mode: cilium` with `networkPolicies.enabled: false`), the render fails naming both.
+The run controller decodes its config strictly, so its image and the chart move together; the
+egress proxy is the same image.
+
 ## The chart contract (v0.4x, v4 rollout step 1)
 
 This release changes three things in `charts/agent-factory`.

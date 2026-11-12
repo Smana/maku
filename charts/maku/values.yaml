@@ -12,8 +12,46 @@ createRunsNamespace: true
 # Render the CiliumNetworkPolicies (default-deny in the runs namespace, the broker's, the run
 # controller's) and let the run controller create one per run. Turn it off on a cluster without
 # Cilium (plain kind or k3d, no CiliumNetworkPolicy CRD): nothing then confines the network.
+#
+# mode (v4 D6) picks the policies, and wins over enabled when set:
+#   cilium      CiliumNetworkPolicies, as enabled: true always did;
+#   kubernetes  plain networking.k8s.io/v1 NetworkPolicies on any CNI that enforces them: default-deny
+#               in the runs namespace, one per run, the broker's and the run-controller's, and the
+#               egress proxy, which holds each run's HTTPS to its own hosts. The run-controller's
+#               preflight refuses runs until a probe pod proves the CNI denies a denied connection.
+#               DNS stays open to the runs: DNS tunnelling is this mode's residual risk.
+#   none        nothing confines the network (shown on the install banner), as enabled: false.
+# Empty: enabled decides (true: cilium, false: none). mode cilium with enabled false fails.
 networkPolicies:
   enabled: true
+  mode: ""
+  kubernetes:
+    # The cluster DNS pods, opened on 53 to every component.
+    dns:
+      namespace: kube-system
+      labels: {k8s-app: kube-dns}
+    # The kube-apiserver's addresses (after service translation) for the controller, the broker and
+    # the proxy, on apiServerPorts. Empty: any address on those ports.
+    apiServerCIDRs: []
+    # Addresses the egress proxy never dials and its NetworkPolicy never opens. It also refuses every
+    # loopback, link-local and private address a name resolves to, whatever this list holds.
+    privateCIDRs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+    # NetworkPolicy peers allowed to scrape :9090 (the broker, the proxy). Empty: no scraper.
+    metricsFrom: []
+
+# The in-cluster CONNECT proxy of networkPolicies.mode kubernetes: the run-controller's image, run
+# with `egress-proxy` in the release namespace. It allows a run pod (by its pod IP) only the host:port
+# pairs of its maku.ogenki.io/egress annotation, refuses IP literals and non-public addresses, and
+# serves CONNECT only. extraPorts: ports besides 443 it may dial (a model on another port).
+egressProxy:
+  replicas: 2
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 128Mi}
+  extraPorts: []
+  # Open tunnels per proxy replica, in all and from one run pod; a CONNECT over either gets 429.
+  maxTunnels: 1024
+  maxTunnelsPerClient: 64
 
 # Where the kube-apiserver listens AFTER Cilium's service translation: 443 on EKS/GKE, 6443 on
 # kind and kubeadm. Every CiliumNetworkPolicy that reaches the apiserver renders these.
@@ -77,6 +115,9 @@ broker:
     ownerSecret: ""
     # Pod label that selects the PostgreSQL pods in the release namespace (CNPG's by default).
     podLabel: cnpg.io/cluster
+    # networkPolicies.mode kubernetes only: exact labels that select the PostgreSQL pods instead of
+    # podLabel's key (e.g. {app.kubernetes.io/name: rooms-db}, the demo's).
+    podLabels: {}
   tls:
     # The Secret mounted at /etc/room-broker/tls (tls.crt, tls.key). A Certificate is rendered
     # for it only when issuerRef.name is set; otherwise bring the Secret yourself.

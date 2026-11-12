@@ -17,9 +17,24 @@ data:
     runtimeClassName: {{ . | quote }}
     {{- end }}
     allowUnsandboxed: {{ $sb.allowUnsandboxed }}
-    {{- if not .Values.networkPolicies.enabled }}
+    {{- $mode := include "ap.netMode" . }}
+    {{- if eq $mode "none" }}
     # No Cilium: the controller creates no CiliumNetworkPolicy per run.
     networkPolicy: none
+    {{- else if eq $mode "kubernetes" }}
+    # A NetworkPolicy per run; the harness reaches the web only through the egress proxy (v4 D6).
+    networkPolicy: kubernetes
+    {{- $k := .Values.networkPolicies.kubernetes }}
+    egressProxy:
+      url: {{ include "ap.egressProxyURL" . | quote }}
+      namespace: {{ .Release.Namespace | quote }}
+      labels: {app.kubernetes.io/name: egress-proxy}
+      {{- with $k.privateCIDRs }}
+      denyCIDRs: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    dns:
+      namespace: {{ $k.dns.namespace | quote }}
+      labels: {{- toYaml $k.dns.labels | nindent 8 }}
     {{- end }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
     {{- if eq ($c.gitTokens | default "shared") "perRun" }}
@@ -57,6 +72,10 @@ data:
     images:
       harness: {{ include "ap.image" (dict "root" . "image" $c.images.harness) | quote }}
       bridge: {{ include "ap.image" (dict "root" . "image" $c.images.bridge) | quote }}
+      {{- if eq $mode "kubernetes" }}
+      # The preflight's netprobe pod: this controller's own image.
+      probe: {{ include "ap.image" (dict "root" . "image" $c.image) | quote }}
+      {{- end }}
     {{- with $c.egressProfiles }}
     egressProfiles:
       {{- toYaml . | nindent 6 }}

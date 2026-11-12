@@ -370,6 +370,68 @@ uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set r
 [[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
   { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
 
+# networkPolicies.mode kubernetes (v4 D6, plan PR6): plain NetworkPolicies and the egress proxy. No
+# CiliumNetworkPolicy; default-deny in the runs namespace; the controller creates a NetworkPolicy per
+# run and points its harnesses at the proxy. The old key keeps its meaning.
+kn="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes)"
+out="$kn"
+ynone 'select(.kind == "CiliumNetworkPolicy")' 'mode kubernetes renders no CiliumNetworkPolicy'
+ykind NetworkPolicy 'select(.metadata.name=="default-deny") | (.metadata.namespace == "agents" and (.spec.podSelector | length) == 0 and (.spec.policyTypes | join(",")) == "Ingress,Egress" and (.spec | has("egress") | not) and (.spec | has("ingress") | not))' 'mode kubernetes: default-deny in the runs namespace, both directions, no rule'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.networkPolicy == "kubernetes" and .egressProxy.url == "http://egress-proxy.maku.svc.cluster.local:3128" and .egressProxy.namespace == "maku" and .egressProxy.labels."app.kubernetes.io/name" == "egress-proxy" and .dns.namespace == "kube-system" and .dns.labels."k8s-app" == "kube-dns" and (.egressProxy.denyCIDRs | length) == 5)' 'mode kubernetes: the controller config names the proxy and DNS'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="networkpolicies") | (.apiGroups[0] == "networking.k8s.io" and (.verbs | sort | join(",")) == "create,get")' 'mode kubernetes: the controller gets and creates NetworkPolicies'
+# The network preflight (plan Task 14): its probe pod is the controller's own image, which the run-pod
+# policy already allows; the controller lists events to name why a probe did not start.
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .images.probe == "ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000"' 'mode kubernetes: images.probe is the run-controller image'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name=="maku-maku-run-pods") | .spec.variables[] | select(.name == "images") | .expression | test("'"'"'ghcr.io/smana/maku-run-controller'"'"'")' 'the run-pod policy allows the run-controller image, the probe pod'"'"'s'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="events") | (.verbs | sort | join(",")) == "create,list,patch"' 'mode kubernetes: the controller lists events (a probe pod that did not start)'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'mode kubernetes: no ciliumnetworkpolicies verb'
+[[ $(unsafe "$kn") == "shared_git_token" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
+out="$q"
+ynone 'select(.kind == "NetworkPolicy")' 'mode cilium (the default) renders no NetworkPolicy'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="networkpolicies")' 'mode cilium: no networkpolicies verb'
+out="$nonp"
+ynone 'select(.kind == "NetworkPolicy")' 'networkPolicies.enabled=false (none) renders no NetworkPolicy'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=none)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .networkPolicy == "none"' 'mode none: the controller config says none'
+ynone 'select(.kind == "CiliumNetworkPolicy" or .kind == "NetworkPolicy")' 'mode none: no policy at all'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=cilium)"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' 'mode cilium: the default-deny CNP'
+bad 'networkPolicies.mode cilium and networkPolicies.enabled false: choose one' --set networkPolicies.mode=cilium --set networkPolicies.enabled=false
+bad 'networkPolicies.mode kubernetes needs runController.enabled' --set networkPolicies.mode=kubernetes --set runController.enabled=false
+# the proxy trusts the egress annotation because the run-pod policy alone lets the run-controller write it
+bad 'networkPolicies.mode kubernetes needs runPodPolicy.enabled' --set networkPolicies.mode=kubernetes --set runPodPolicy.enabled=false
+bad "at '/networkPolicies/mode'" --set networkPolicies.mode=calico
+
+# The egress proxy and the components' NetworkPolicies, kubernetes mode only (plan Task 13, PR13).
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes \
+  --set broker.roomTools.enabled=true --set broker.roomTools.auth=tokenreview --set broker.factoryURL=https://agent-factory.maku.svc:8082 \
+  --set-json 'networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]' \
+  --set-json 'egressProxy.extraPorts=[8443]')"
+npsel() { echo "select(.kind==\"NetworkPolicy\" and .metadata.name==\"$1\") | .spec"; }
+ykind NetworkPolicy "$(npsel egress-proxy) | (.podSelector.matchLabels.\"app.kubernetes.io/name\" == \"egress-proxy\" and (.policyTypes | join(\",\")) == \"Ingress,Egress\")" 'the proxy NetworkPolicy selects the proxy, both directions'
+ykind NetworkPolicy "$(npsel egress-proxy) | .ingress[] | select(.ports[0].port == 3128) | (((.from | length) == 1) and .from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"agents\" and .from[0].podSelector.matchLabels.\"app.kubernetes.io/managed-by\" == \"run-controller\")" 'the proxy takes 3128 only from the run pods'
+ykind NetworkPolicy "$(npsel egress-proxy) | .ingress[] | select(.ports[0].port == 9090) | .from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"monitoring\"" 'the proxy takes 9090 only from metricsFrom'
+ykind NetworkPolicy "$(npsel egress-proxy) | (.ingress | map(.ports[].port) | sort | join(\",\")) == \"3128,9090\"" 'the proxy takes nothing else'
+ykind NetworkPolicy "$(npsel egress-proxy) | .egress[] | select(.to[0].ipBlock.cidr == \"0.0.0.0/0\") | ((.to[0].ipBlock.except | join(\",\")) == \"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16\" and (.ports | map(.port) | join(\",\")) == \"443,8443\")" 'the proxy dials the public internet on 443 and extraPorts, never privateCIDRs'
+ykind NetworkPolicy "$(npsel egress-proxy) | .egress[] | select(.ports[0].port == 53) | .to[0].podSelector.matchLabels.\"k8s-app\" == \"kube-dns\"" 'the proxy resolves through kube-dns'
+ykind NetworkPolicy "$(npsel egress-proxy) | .egress[] | select(has(\"to\") | not) | (.ports | map(.port) | join(\",\")) == \"443,6443\"" 'the proxy reaches the apiserver on apiServerPorts (any address without apiServerCIDRs)'
+ykind NetworkPolicy "$(npsel room-broker) | .ingress[] | select(.from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"agents\") | (.ports | map(.port) | join(\",\")) == \"8443,8090\"" 'the broker takes 8443 and, under tokenreview, 8090 from the runs'
+ykind NetworkPolicy "$(npsel room-broker) | .ingress[] | select(.from[0].podSelector.matchLabels.\"app.kubernetes.io/name\" == \"agent-factory\") | (.ports[0].port == 8443 and .from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"maku\")" 'the broker takes 8443 from the factory'
+ykind NetworkPolicy "$(npsel room-broker) | .ingress[] | select(.ports[0].port == 9090) | .from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"monitoring\"" 'the broker takes 9090 only from metricsFrom'
+ykind NetworkPolicy "$(npsel room-broker) | .egress[] | select(.ports[0].port == 5432) | .to[0].podSelector.matchExpressions[0].key == \"cnpg.io/cluster\"" 'the broker reaches the database label on 5432'
+ykind NetworkPolicy "$(npsel room-broker) | .egress[] | select(.ports[0].port == 8082) | .to[0].podSelector.matchLabels.\"app.kubernetes.io/name\" == \"agent-factory\"" 'the broker reaches the factory port'
+ykind NetworkPolicy "$(npsel run-controller) | ((.egress | map(.ports[0].port) | sort | join(\",\")) == \"53,443\" and (.ingress | map(.ports[].port) | join(\",\")) == \"9090\")" 'the run-controller reaches DNS and the apiserver only, and takes only metrics'
+ykind Deployment 'select(.metadata.name=="egress-proxy") | .spec.template.spec | (.containers[0].image == "ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000" and (.containers[0].args | join(",")) == "egress-proxy" and .containers[0].securityContext.readOnlyRootFilesystem == true and .securityContext.runAsNonRoot == true and .serviceAccountName == "egress-proxy" and .volumes[0].configMap.name == "run-controller-config")' 'the proxy is the run-controller image by digest, restricted, reading the controller config'
+ykind Deployment 'select(.metadata.name=="egress-proxy") | .spec.replicas == 2' 'two proxy replicas'
+ykind Deployment 'select(.metadata.name=="egress-proxy") | (.spec.template.spec.containers[0].env | map(select(.name | test("^MAX_TUNNELS"))) | map(.name + "=" + .value) | join(",")) == "MAX_TUNNELS=1024,MAX_TUNNELS_PER_CLIENT=64"' 'the proxy caps its tunnels, in all and per client'
+ykind PodDisruptionBudget 'select(.metadata.name=="egress-proxy") | .spec.minAvailable == 1' 'the proxy PDB'
+ykind Service 'select(.metadata.name=="egress-proxy") | (.spec.ports | map(.port) | join(",")) == "3128"' 'the proxy Service on 3128'
+ykind Role 'select(.metadata.name=="egress-proxy") | (.metadata.namespace == "agents" and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "pods" and (.rules[0].verbs | sort | join(",")) == "get,list,watch")' 'the proxy watches pods in the runs namespace, nothing else'
+for r in "$q" "$nonp"; do
+  out="$r"
+  ynone 'select(.metadata.name=="egress-proxy" or .kind=="NetworkPolicy" or .kind=="PodDisruptionBudget")' 'modes cilium and none: no proxy, no NetworkPolicy'
+done
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -390,7 +452,8 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$r
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/rc-roomtools.yaml"
 go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenreview.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
-go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-perrun.yaml" || fail=1
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$kn" >"$tmp/rc-kubernetes.yaml"
+go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" "$tmp/rc-perrun.yaml" || fail=1
 
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then

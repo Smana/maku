@@ -126,6 +126,19 @@ func runPod(t *testing.T, room, sandboxed bool) *corev1.Pod {
 	return runctl.Pod(r, c, m, "abcdefgh")
 }
 
+// probePod is the network preflight's pod in kubernetes mode, from the run-controller's image.
+func probePod(t *testing.T, sandboxed bool) *corev1.Pod {
+	t.Helper()
+	c := runctl.Config{Namespace: runsNS, NamePrefix: "run-", NetworkPolicy: runctl.NetworkPolicyKubernetes,
+		Broker:      runctl.Broker{URL: "https://room-broker." + release + ".svc.cluster.local:8443", Namespace: release},
+		EgressProxy: runctl.EgressProxy{URL: "http://egress-proxy." + release + ".svc.cluster.local:3128"},
+		Images:      runctl.Images{Probe: "ghcr.io/smana/maku-run-controller:" + digest}}
+	if sandboxed {
+		c.RuntimeClassName = "gvisor"
+	}
+	return runctl.ProbePod(c, "abcdefgh")
+}
+
 func TestRunPodPolicy(t *testing.T) {
 	pe := startPodEnv(t)
 	ctx := t.Context()
@@ -136,6 +149,10 @@ func TestRunPodPolicy(t *testing.T) {
 		if err := pe.ctl.Create(ctx, runPod(t, room, true), client.DryRunAll); err != nil {
 			t.Fatalf("the run-controller's own pod (room %v) is refused: %v", room, err)
 		}
+	}
+	// The network preflight's probe pod (kubernetes mode) is a run-controller pod like any other.
+	if err := pe.ctl.Create(ctx, probePod(t, true), client.DryRunAll); err != nil {
+		t.Fatalf("the preflight's probe pod is refused: %v", err)
 	}
 
 	for _, tc := range []struct {
@@ -272,6 +289,9 @@ func TestRunPodPolicyUnderPodSecurity(t *testing.T) {
 				t.Fatalf("the run-controller's pod (room %v, sandboxed %v) fails Pod Security restricted: %v", room, sandboxed, err)
 			}
 		}
+	}
+	if err := pe.ctl.Create(ctx, probePod(t, true), client.DryRunAll); err != nil {
+		t.Fatalf("the preflight's probe pod fails Pod Security restricted: %v", err)
 	}
 	p := runPod(t, true, true)
 	p.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: 8000, HostPort: 8000}}

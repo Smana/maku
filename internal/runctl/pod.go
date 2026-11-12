@@ -258,12 +258,19 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		vols = append(vols, corev1.Volume{Name: "room-tools-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: &mode,
 			Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "room-tools", ExpirationSeconds: &ttl, Path: "token"}}}}}})
 	}
+	om := meta(r, runID, r.Name)
+	// kubernetes mode (plan PR6): the harness alone goes through the egress proxy, which reads the
+	// pod's allow-list from its annotation; the bridge talks in-cluster only.
+	if c.NetworkPolicy == NetworkPolicyKubernetes {
+		harness.Env = append(harness.Env, proxyEnv(c)...)
+		om.Annotations[EgressAnnotation] = egressAnnotation(r, c, m)
+	}
 	var rc *string
 	if c.RuntimeClassName != "" {
 		rc = &c.RuntimeClassName
 	}
 	return &corev1.Pod{
-		ObjectMeta: meta(r, runID, r.Name),
+		ObjectMeta: om,
 		Spec: corev1.PodSpec{
 			ServiceAccountName: r.Name, AutomountServiceAccountToken: &no, RuntimeClassName: rc,
 			RestartPolicy: corev1.RestartPolicyNever, ActiveDeadlineSeconds: &deadline,

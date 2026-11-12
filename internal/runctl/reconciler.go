@@ -303,8 +303,11 @@ func (r *Reconciler) create(ctx context.Context, run *v1alpha1.AgentRun, runID s
 		return "", err
 	}
 	objs := []client.Object{ServiceAccount(run), task, CAConfigMap(run, ca)}
-	if r.Cfg.NetworkPolicy != NetworkPolicyNone {
+	switch r.Cfg.NetworkPolicy {
+	case NetworkPolicyCilium:
 		objs = append(objs, NetworkPolicy(run, r.Cfg, m, runID))
+	case NetworkPolicyKubernetes:
+		objs = append(objs, KubeNetworkPolicy(run, r.Cfg, m, runID))
 	}
 	for _, o := range append(objs, Pod(run, r.Cfg, m, runID)) {
 		if err := controllerutil.SetControllerReference(run, o, r.Client.Scheme()); err != nil {

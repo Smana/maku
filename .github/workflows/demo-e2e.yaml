@@ -1,6 +1,9 @@
 # The laptop demo in CI.
 #   k3d:     on pull requests touching the demo, `task chart:install:k3d` (this checkout's broker,
-#            run-controller and factory images, the latest release's harness and bridge, a dummy App).
+#            run-controller and factory images, the latest release's harness and bridge, a dummy App),
+#            in three network legs (install.sh's NETPOL): none, the demo as shipped; kubernetes, the
+#            NetworkPolicy mode on kube-router, whose preflight passes; unenforced, the same mode on a
+#            k3s with no NetworkPolicy controller, whose preflight refuses runs.
 #   nightly: `task demo` headless on kind with a real, capped model and a test GitHub App, then the
 #            seeded docs-links issue is labelled and the job waits up to 30 minutes for a pull request
 #            by <slug>[bot] bearing a `maku/merge-gate` commit status. `task demo:down` always runs.
@@ -55,12 +58,18 @@ concurrency:
 jobs:
   k3d:
     if: github.event_name == 'pull_request'
+    name: k3d (${{ matrix.netpol }})
+    strategy:
+      fail-fast: false
+      matrix:
+        netpol: [none, kubernetes, unenforced]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }} # install.sh asks the API for the latest release
+      NETPOL: ${{ matrix.netpol }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -73,6 +82,13 @@ jobs:
       # ("No version is set for shim: k3d") until the runner's global config names one.
       - run: mise use -g aqua:k3d-io/k3d@5.9.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # k3s's NetworkPolicy controller (kube-router) loads br_netfilter; the unenforced leg disables it,
+      # and without the module a pod's reply from a same-node Service backend is bridged past conntrack's
+      # reverse NAT, so cluster DNS times out. The runner does not load it by default.
+      - name: br_netfilter
+        run: |
+          lsmod | grep -q '^br_netfilter' && echo "br_netfilter already loaded" || echo "br_netfilter not loaded: loading it"
+          sudo modprobe br_netfilter
       - run: task chart:install:k3d
 
   nightly:
