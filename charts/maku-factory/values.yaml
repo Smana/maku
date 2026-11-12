@@ -49,6 +49,14 @@ extraVolumeMounts: []
 monitor:
   flux:
     enabled: false
+# Untrusted-input hardening H2 (HR11): with publisher.audience set, the factory pod mounts a
+# projected ServiceAccount token of that audience at /var/run/secrets/octo-sts/token, where
+# config.hardening.publisher.octoSTS.tokenFile reads it by default. octo-sts exchanges it for the
+# publisher's token under each enforced repository's .github/chainguard/publisher.sts.yaml. Empty:
+# no token, and config.hardening.enforceOutputs must stay empty.
+hardening:
+  publisher:
+    audience: ""
 # The factory config, passed through `tpl` (so `{{ .Release.Namespace }}` works): README.md#config, docs/factory.md#the-config-file.
 config: {}
 

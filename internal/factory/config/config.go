@@ -1516,6 +1516,9 @@ func Parse(raw []byte) (*Config, error) {
 			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
+	if w, ok := c.unscopedWarning(); ok {
+		c.Warnings = append(c.Warnings, w)
+	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])
 	return &c, nil

@@ -157,6 +157,14 @@ out="$base"
 # demo: no OIDC volume (no human tokens), and in the runs namespace exactly the Secret access the
 # demo token writer needs: create (unscopable by name) and get, update on agent-git only.
 ykind Role 'select(.metadata.namespace == "agents") | [.rules[] | select(.resources[] == "secrets")] | length == 0' "default: no Secret rule in the runs namespace"
+# H2 (HR11): no publisher token by default; with hardening.publisher.audience, a projected token of
+# that audience where config.hardening.publisher.octoSTS.tokenFile reads it.
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "octo-sts-token")' "no publisher token unless hardening.publisher.audience"
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set hardening.publisher.audience=octo-sts.dev)"
+ykind Deployment "$(vol octo-sts-token).projected.sources[0].serviceAccountToken | (.audience == \"octo-sts.dev\" and .path == \"token\")" "the publisher's projected token takes hardening.publisher.audience"
+ykind Deployment "$(mnt octo-sts-token) | (.mountPath == \"/var/run/secrets/octo-sts\" and .readOnly == true)" "the publisher token at /var/run/secrets/octo-sts/token"
+out="$base"
 demo="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref --set demo=true)"
 out="$demo"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' "demo: no oidc volume"
