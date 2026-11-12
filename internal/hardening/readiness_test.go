@@ -141,3 +141,19 @@ func TestPolicyGrantsWrite(t *testing.T) {
 		t.Fatal("a malformed policy read")
 	}
 }
+
+// The gauge's source (Task 20): a policy's permissions, keys and access lower-cased.
+func TestPolicyPermissions(t *testing.T) {
+	got, err := PolicyPermissions([]byte("issuer: x\nsubject: y\npermissions:\n  Contents: Read\n  pull_requests: WRITE\n"))
+	if err != nil || len(got) != 2 || got["contents"] != "read" || got["pull_requests"] != "write" {
+		t.Fatalf("%v %v", got, err)
+	}
+	if got, err := PolicyPermissions([]byte("issuer: x\n")); err != nil || len(got) != 0 {
+		t.Fatalf("no permissions: %v %v", got, err)
+	}
+	for _, bad := range []string{"permissions: 3\n", "permissions: [a]\n", ":\n- ["} {
+		if _, err := PolicyPermissions([]byte(bad)); err == nil {
+			t.Errorf("%q read", bad)
+		}
+	}
+}

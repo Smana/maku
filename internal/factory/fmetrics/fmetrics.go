@@ -155,6 +155,7 @@ type Set struct {
 	hardeningShadow      metric.Int64Counter
 	hardeningOutput      metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
+	sandboxPermission    metric.Int64Gauge
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -234,6 +235,10 @@ type Set struct {
 	sponsors map[string]string
 	// perPerson: a task's payer is its person (budgets.perPerson.enabled), else the fleet.
 	perPerson bool
+
+	// permissions are the sandbox permission gauge's pairs at 1, by repository (SandboxPermissions).
+	permMu      sync.Mutex
+	permissions map[string]map[[3]string]bool
 }
 
 // ChargePeople sets whether tasks pay as their person, per-person caps being on: the tasks
@@ -344,6 +349,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.hardeningUntraced, err = meter.Int64Counter("agent_factory_hardening_untraced_total",
 		metric.WithDescription("Agent writes of an enforced output type that no output_applied explains (hardening H2's tracer, H2-2's gate: stays 0), by repository and output type."))
+	check(err)
+	s.sandboxPermission, err = meter.Int64Gauge("agent_factory_hardening_sandbox_permission",
+		metric.WithDescription("1 for each GitHub permission and access a sandbox role's or the publisher's octo-sts policy grants on an enforced repository, as the last fence pass read it, else 0 (hardening H2, R2 as evidence)."))
 	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
@@ -931,6 +939,53 @@ func (s *Set) HardeningShadow(ctx context.Context, typ, verdict, layer, reason s
 func (s *Set) PrincipalShadow(ctx context.Context, principal string) {
 	s.revocations.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "budget-principal-shadow"),
 		attribute.String("principal", boundPrincipal(principal))))
+}
+
+// The sandbox permission gauge's closed label sets: the roles whose policies are read, the GitHub
+// App permissions a policy may name, and the access levels.
+var (
+	permissionRoles  = []string{"implementer", "tester", "reviewer", "triager", "publisher"}
+	permissionNames  = []string{"actions", "checks", "contents", "deployments", "issues", "metadata", "packages", "pages", "pull_requests", "statuses", "workflows"}
+	permissionAccess = []string{"read", "write", "admin", "none"}
+)
+
+// SandboxPermissions sets the permission gauge for repository from one fence pass: grants maps a
+// role (a sandbox role, or publisher) to its policy's permission → access. Every pair it names is
+// 1; a pair an earlier pass recorded and this one does not is set to 0, so a dropped write reads as
+// dropped. A role missing from grants (its policy unread) keeps its last values.
+func (s *Set) SandboxPermissions(ctx context.Context, repository string, grants map[string]map[string]string) {
+	repo := s.repository(repository)
+	s.permMu.Lock()
+	defer s.permMu.Unlock()
+	if s.permissions == nil {
+		s.permissions = map[string]map[[3]string]bool{}
+	}
+	last := s.permissions[repo]
+	next := map[[3]string]bool{}
+	for k := range last {
+		if _, read := grants[k[0]]; !read {
+			next[k] = true // unread this pass: kept as it was
+		}
+	}
+	for role, perms := range grants {
+		for p, a := range perms {
+			next[[3]string{oneOf(role, permissionRoles), oneOf(p, permissionNames), oneOf(a, permissionAccess)}] = true
+		}
+	}
+	for k := range last {
+		if !next[k] {
+			s.sandboxPermission.Record(ctx, 0, permissionAttrs(repo, k))
+		}
+	}
+	for k := range next {
+		s.sandboxPermission.Record(ctx, 1, permissionAttrs(repo, k))
+	}
+	s.permissions[repo] = next
+}
+
+func permissionAttrs(repo string, k [3]string) metric.MeasurementOption {
+	return metric.WithAttributes(attribute.String("repository", repo), attribute.String("role", k[0]),
+		attribute.String("permission", k[1]), attribute.String("access", k[2]))
 }
 
 // HardeningUntraced counts one agents-App write of an enforced type the tracer matched to no
