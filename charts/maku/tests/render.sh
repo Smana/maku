@@ -361,6 +361,31 @@ uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set r
 [[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
   { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
 
+# networkPolicies.mode kubernetes (v4 D6, plan PR6): plain NetworkPolicies and the egress proxy. No
+# CiliumNetworkPolicy; default-deny in the runs namespace; the controller creates a NetworkPolicy per
+# run and points its harnesses at the proxy. The old key keeps its meaning.
+kn="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes)"
+out="$kn"
+ynone 'select(.kind == "CiliumNetworkPolicy")' 'mode kubernetes renders no CiliumNetworkPolicy'
+ykind NetworkPolicy 'select(.metadata.name=="default-deny") | (.metadata.namespace == "agents" and (.spec.podSelector | length) == 0 and (.spec.policyTypes | join(",")) == "Ingress,Egress" and (.spec | has("egress") | not) and (.spec | has("ingress") | not))' 'mode kubernetes: default-deny in the runs namespace, both directions, no rule'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.networkPolicy == "kubernetes" and .egressProxy.url == "http://egress-proxy.maku.svc.cluster.local:3128" and .egressProxy.namespace == "maku" and .egressProxy.labels."app.kubernetes.io/name" == "egress-proxy" and .dns.namespace == "kube-system" and .dns.labels."k8s-app" == "kube-dns" and (.egressProxy.denyCIDRs | length) == 5)' 'mode kubernetes: the controller config names the proxy and DNS'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="networkpolicies") | (.apiGroups[0] == "networking.k8s.io" and (.verbs | sort | join(",")) == "create,get")' 'mode kubernetes: the controller gets and creates NetworkPolicies'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'mode kubernetes: no ciliumnetworkpolicies verb'
+[[ $(unsafe "$kn") == "shared_git_token" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
+out="$q"
+ynone 'select(.kind == "NetworkPolicy")' 'mode cilium (the default) renders no NetworkPolicy'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="networkpolicies")' 'mode cilium: no networkpolicies verb'
+out="$nonp"
+ynone 'select(.kind == "NetworkPolicy")' 'networkPolicies.enabled=false (none) renders no NetworkPolicy'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=none)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .networkPolicy == "none"' 'mode none: the controller config says none'
+ynone 'select(.kind == "CiliumNetworkPolicy" or .kind == "NetworkPolicy")' 'mode none: no policy at all'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=cilium)"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' 'mode cilium: the default-deny CNP'
+bad 'networkPolicies.mode cilium and networkPolicies.enabled false: choose one' --set networkPolicies.mode=cilium --set networkPolicies.enabled=false
+bad 'networkPolicies.mode kubernetes needs runController.enabled' --set networkPolicies.mode=kubernetes --set runController.enabled=false
+bad "at '/networkPolicies/mode'" --set networkPolicies.mode=calico
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -380,7 +405,8 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$r
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/rc-roomtools.yaml"
 go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenreview.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
-go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" || fail=1
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$kn" >"$tmp/rc-kubernetes.yaml"
+go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" || fail=1
 
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then

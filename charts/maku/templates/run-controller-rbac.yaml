@@ -33,9 +33,13 @@ rules:
   - apiGroups: [""]
     resources: [serviceaccounts, configmaps]
     verbs: [get, create]
-  {{- if .Values.networkPolicies.enabled }}
+  {{- if eq (include "ap.netMode" .) "cilium" }}
   - apiGroups: [cilium.io]
     resources: [ciliumnetworkpolicies]
+    verbs: [get, create]
+  {{- else if eq (include "ap.netMode" .) "kubernetes" }}
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
     verbs: [get, create]
   {{- end }}
   - apiGroups: [""]

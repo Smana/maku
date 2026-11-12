@@ -1,0 +1,57 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  annotations:
+    agents.ogenki.io/principal: human:a
+  labels:
+    agents.ogenki.io/role: implementer
+    agents.ogenki.io/run-id: abcdefgh
+    app.kubernetes.io/managed-by: run-controller
+  name: run-abcdefgh
+  namespace: agents
+spec:
+  egress:
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+  - ports:
+    - port: 3128
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: agent-platform
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: egress-proxy
+  - ports:
+    - port: 8443
+      protocol: TCP
+    - port: 8090
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: agent-platform
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: room-broker
+  ingress:
+  - ports:
+    - port: 8085
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      agents.ogenki.io/run-id: abcdefgh
+  policyTypes:
+  - Ingress
+  - Egress

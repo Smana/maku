@@ -8,6 +8,7 @@ package runctl
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,6 +29,9 @@ import (
 const (
 	NetworkPolicyCilium = "cilium"
 	NetworkPolicyNone   = "none"
+	// NetworkPolicyKubernetes: each run gets a networking.k8s.io/v1 NetworkPolicy, and its harness
+	// reaches the web only through the egress proxy, which holds it to its own hosts (v4 D6).
+	NetworkPolicyKubernetes = "kubernetes"
 )
 
 // Config is the run-controller's file, from the chart.
@@ -38,9 +42,14 @@ type Config struct {
 	// AllowUnsandboxed places pods without a RuntimeClass; each run then carries condition
 	// Unsandboxed, so the room can say so (3a R5).
 	AllowUnsandboxed bool `json:"allowUnsandboxed,omitempty"`
-	// NetworkPolicy is "cilium" (default: each run gets a CiliumNetworkPolicy) or "none", for a
-	// cluster without Cilium: no policy is created, so nothing confines a run's network.
+	// NetworkPolicy is "cilium" (default: each run gets a CiliumNetworkPolicy), "kubernetes" (a
+	// NetworkPolicy, and the harness behind EgressProxy) or "none", for a cluster that enforces
+	// neither: no policy is created, so nothing confines a run's network.
 	NetworkPolicy string `json:"networkPolicy,omitempty"`
+	// EgressProxy is the in-cluster CONNECT proxy, required in kubernetes mode.
+	EgressProxy EgressProxy `json:"egressProxy,omitempty"`
+	// DNS selects the cluster DNS pods a kubernetes-mode run's NetworkPolicy opens on 53.
+	DNS DNS `json:"dns,omitempty"`
 	ModelSecret   string `json:"modelSecret"`
 	GitSecret     string `json:"gitSecret"`
 	// GitReadSecret is the read-only token reviewer and triager runs mount (PR2); gitSecret is the
@@ -63,6 +72,31 @@ type Broker struct {
 	Namespace string            `json:"namespace"`
 	Labels    map[string]string `json:"labels"`
 	CASecret  string            `json:"caSecret"`
+}
+
+// EgressProxy is where a kubernetes-mode harness sends HTTPS, and what its NetworkPolicy lets it
+// reach. DenyCIDRs are the proxy's own: addresses it never dials, beyond the non-public ones.
+type EgressProxy struct {
+	URL       string            `json:"url"`
+	Namespace string            `json:"namespace"`
+	Labels    map[string]string `json:"labels"`
+	DenyCIDRs []string          `json:"denyCIDRs,omitempty"`
+}
+
+// Port is URL's port (validated at load).
+func (p EgressProxy) Port() int {
+	u, err := url.Parse(p.URL)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(u.Port())
+	return n
+}
+
+// DNS is the cluster DNS's namespace and pod labels.
+type DNS struct {
+	Namespace string            `json:"namespace"`
+	Labels    map[string]string `json:"labels"`
 }
 
 // Images are the run pod's two images, pinned by the chart.
@@ -102,6 +136,9 @@ func LoadConfig(path string) (Config, error) {
 	if c.NetworkPolicy == "" {
 		c.NetworkPolicy = NetworkPolicyCilium
 	}
+	if c.DNS.Namespace == "" && len(c.DNS.Labels) == 0 {
+		c.DNS = DNS{Namespace: "kube-system", Labels: map[string]string{"k8s-app": "kube-dns"}}
+	}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -115,8 +152,12 @@ func (c Config) validate() error {
 			errs = append(errs, fmt.Errorf("%s is required", name))
 		}
 	}
-	if c.NetworkPolicy != NetworkPolicyCilium && c.NetworkPolicy != NetworkPolicyNone {
-		errs = append(errs, fmt.Errorf("networkPolicy %q must be %q or %q", c.NetworkPolicy, NetworkPolicyCilium, NetworkPolicyNone))
+	switch c.NetworkPolicy {
+	case NetworkPolicyCilium, NetworkPolicyNone:
+	case NetworkPolicyKubernetes:
+		errs = append(errs, c.egressProxy()...)
+	default:
+		errs = append(errs, fmt.Errorf("networkPolicy %q must be %q, %q or %q", c.NetworkPolicy, NetworkPolicyCilium, NetworkPolicyKubernetes, NetworkPolicyNone))
 	}
 	req("namespace", c.Namespace)
 	req("modelSecret", c.ModelSecret)
@@ -146,6 +187,35 @@ func (c Config) validate() error {
 		errs = append(errs, errors.New("egressProfiles.github is required: every run clones from GitHub"))
 	}
 	return errors.Join(errs...)
+}
+
+// egressProxy checks kubernetes mode's proxy and DNS: an http URL with a port on a fully qualified
+// in-cluster Service name, and the selectors a run's NetworkPolicy needs.
+func (c Config) egressProxy() []error {
+	var errs []error
+	p := c.EgressProxy
+	u, err := url.Parse(p.URL)
+	if err != nil || u.Scheme != "http" || u.Port() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || !brokerHostRE.MatchString(u.Hostname()) {
+		errs = append(errs, fmt.Errorf("egressProxy.url %q must be http://<service>.<namespace>.svc.<cluster-domain>:<port>: networkPolicy kubernetes sends every run's HTTPS through it", p.URL))
+	}
+	if p.Namespace == "" || len(p.Labels) == 0 {
+		errs = append(errs, errors.New("egressProxy.namespace and egressProxy.labels are required: a run's NetworkPolicy selects the proxy by them"))
+	}
+	for _, cidr := range p.DenyCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			errs = append(errs, fmt.Errorf("egressProxy.denyCIDRs: %q is not a CIDR", cidr))
+		}
+	}
+	if c.DNS.Namespace == "" || len(c.DNS.Labels) == 0 {
+		errs = append(errs, errors.New("dns.namespace and dns.labels are required together"))
+	}
+	return errs
+}
+
+// clusterDomain is broker.url's domain, after .svc. (validated at load).
+func (c Config) clusterDomain() string {
+	_, d, _ := strings.Cut(brokerHost(c), ".svc.")
+	return d
 }
 
 // roomToolsURL checks roomToolsURL: the broker's own host, so the run CNP's broker rule and DNS
