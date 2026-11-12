@@ -127,7 +127,7 @@ func TestRolesFollowTheFloorNotTheSuggestion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := p.Issues[0].Roles; !slices.Equal(got, want) && !(len(got) == 0 && len(want) == 0) {
+		if got := p.Issues[0].Roles; !slices.Equal(got, want) && (len(got) != 0 || len(want) != 0) {
 			t.Fatalf("%s: roles %v, want %v", class, got, want)
 		}
 	}
