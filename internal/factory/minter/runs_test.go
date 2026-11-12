@@ -121,7 +121,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	base := fake.NewClientBuilder().WithScheme(s).WithObjects(append([]client.Object{task, done, other}, objs...)...).
 		WithStatusSubresource(&factoryv1.Task{}).Build()
 	r.base = base
-	r.c = interceptor.NewClient(base.(client.WithWatch), interceptor.Funcs{
+	r.c = interceptor.NewClient(base, interceptor.Funcs{
 		Get: func(ctx context.Context, c client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
 			if secretKind(o) {
 				t.Fatalf("the minter read Secret %s", k)

@@ -23,6 +23,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -136,7 +138,11 @@ func TestRunTokenPolicy(t *testing.T) {
 		}
 	}
 	apply := func(s *corev1.Secret) error {
-		return factory.Patch(ctx, s, client.Apply, client.FieldOwner("maku-factory-minter"), client.ForceOwnership)
+		ac := corev1ac.Secret(s.Name, s.Namespace).WithLabels(s.Labels).WithData(s.Data)
+		for _, o := range s.OwnerReferences {
+			ac = ac.WithOwnerReferences(metav1ac.OwnerReference().WithAPIVersion(o.APIVersion).WithKind(o.Kind).WithName(o.Name).WithUID(o.UID))
+		}
+		return factory.Apply(ctx, ac, client.FieldOwner("maku-factory-minter"), client.ForceOwnership)
 	}
 	// The policy loads on its own clock: wait for its first refusal.
 	for deadline := time.Now().Add(30 * time.Second); ; {

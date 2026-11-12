@@ -165,9 +165,11 @@ for v in get list watch; do
   ! kubectl auth can-i "$v" secrets -n agents --as="$sa:agent-factory" >/dev/null || die "the factory may $v Secrets in agents"
 done
 kubectl auth can-i get secret/run-abcdefgh-git -n agents --as="$sa:run-controller" >/dev/null || die "the run-controller cannot read a run's token Secret"
-# The policy bounds the factory's writes: a patch of agent-model is refused, and answers no object.
+# The policy bounds the factory's writes: an apply over agent-model is refused, and answers no object.
+# Server-side apply, as the minter writes: one PATCH, no read first (kubectl patch reads, which RBAC refuses).
 for _ in $(seq 30); do
-  refused=$(kubectl -n agents patch secret agent-model --as="$sa:agent-factory" --dry-run=server --type=merge -p '{"metadata":{"labels":{"x":"y"}}}' 2>&1) && refused=""
+  refused=$(printf '%s\n' 'apiVersion: v1' 'kind: Secret' 'metadata: {name: agent-model, namespace: agents, labels: {x: "y"}}' |
+    kubectl apply --server-side --force-conflicts --field-manager=probe --dry-run=server --as="$sa:agent-factory" -f - 2>&1) && refused=""
   grep -qF 'ValidatingAdmissionPolicy' <<<"$refused" && break
   sleep 2
 done

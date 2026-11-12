@@ -17,6 +17,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -283,27 +285,22 @@ func enforced(claim *unstructured.Unstructured) []hardening.OutputType {
 // apply server-side-applies the run's Secret: the token, the labels, the expiry, and an
 // ownerReference to the run, so garbage collection removes it with the run.
 func (t *RunTokens) apply(ctx context.Context, claim *unstructured.Unstructured, tok forge.Token) error {
-	no := false
 	gvk := claim.GroupVersionKind()
-	s := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: t.Kind.Namespace, Name: runwatch.RunTokenSecret(claim.GetName()),
-			Labels:      map[string]string{runwatch.RunTokenManagedByLabel: runwatch.RunTokenManagedBy, runwatch.RunTokenRunLabel: claim.GetName()},
-			Annotations: map[string]string{runwatch.RunTokenExpiresAnnotation: tok.ExpiresAt.UTC().Format(time.RFC3339)},
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind,
-				Name: claim.GetName(), UID: claim.GetUID(), BlockOwnerDeletion: &no}},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{runwatch.RunTokenKey: []byte(tok.Value)},
-	}
-	if err := t.Client.Patch(ctx, s, client.Apply, client.FieldOwner(FieldManager), client.ForceOwnership); err != nil {
+	name := runwatch.RunTokenSecret(claim.GetName())
+	s := corev1ac.Secret(name, t.Kind.Namespace).
+		WithLabels(map[string]string{runwatch.RunTokenManagedByLabel: runwatch.RunTokenManagedBy, runwatch.RunTokenRunLabel: claim.GetName()}).
+		WithAnnotations(map[string]string{runwatch.RunTokenExpiresAnnotation: tok.ExpiresAt.UTC().Format(time.RFC3339)}).
+		WithOwnerReferences(metav1ac.OwnerReference().WithAPIVersion(gvk.GroupVersion().String()).WithKind(gvk.Kind).
+			WithName(claim.GetName()).WithUID(claim.GetUID()).WithBlockOwnerDeletion(false)).
+		WithType(corev1.SecretTypeOpaque).
+		WithData(map[string][]byte{runwatch.RunTokenKey: []byte(tok.Value)})
+	if err := t.Client.Apply(ctx, s, client.FieldOwner(FieldManager), client.ForceOwnership); err != nil {
 		// The status alone: an apply's error could quote the object it was sent.
 		var st apierrors.APIStatus
 		if errors.As(err, &st) {
-			return fmt.Errorf("apply Secret %s: %s (%d)", s.Name, st.Status().Reason, st.Status().Code)
+			return fmt.Errorf("apply Secret %s: %s (%d)", name, st.Status().Reason, st.Status().Code)
 		}
-		return fmt.Errorf("apply Secret %s failed", s.Name)
+		return fmt.Errorf("apply Secret %s failed", name)
 	}
 	return nil
 }

@@ -10,12 +10,12 @@ const (
 	// RunTokenKey is the Secret key holding the token.
 	RunTokenKey = "token"
 	// RunTokenRunLabel names the run the Secret belongs to.
-	RunTokenRunLabel = "maku.ogenki.io/run"
+	RunTokenRunLabel = "maku.ogenki.io/run" //nolint:gosec // G101: a label name, not a credential
 	// RunTokenManagedByLabel and RunTokenManagedBy mark the factory's Secret.
-	RunTokenManagedByLabel = "app.kubernetes.io/managed-by"
+	RunTokenManagedByLabel = "app.kubernetes.io/managed-by" //nolint:gosec // G101: a label name, not a credential
 	RunTokenManagedBy      = "maku-factory"
 	// RunTokenExpiresAnnotation carries the token's expiry (RFC 3339).
-	RunTokenExpiresAnnotation = "maku.ogenki.io/expires-at"
+	RunTokenExpiresAnnotation = "maku.ogenki.io/expires-at" //nolint:gosec // G101: an annotation name, not a credential
 )
 
 // RunTokenSecret is the name of run's token Secret.
