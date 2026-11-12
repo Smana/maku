@@ -265,6 +265,13 @@ ykind RuntimeClass '(.metadata.name == "kata" and .handler == "runsc")' 'createR
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (has("runtimeClassName") == false and .allowUnsandboxed == true)' 'sandbox.unsafeAllowRunc: no runtimeClassName, allowUnsandboxed'
 ynone 'select(.kind == "RuntimeClass")' 'sandbox.unsafeAllowRunc renders no RuntimeClass'
+ynone 'select(.kind == "ClusterRole" and .metadata.name == "maku-maku-run-controller-runtimeclass")' 'sandbox.unsafeAllowRunc: no RuntimeClass ClusterRole (the preflight checks nothing)'
+# the preflight (task 2) reads the resolved class, uncached, by name: get only, that one name
+out="$q"
+ykind ClusterRole 'select(.metadata.name == "maku-maku-run-controller-runtimeclass") | ((.rules | length) == 1 and .rules[0].apiGroups[0] == "node.k8s.io" and (.rules[0].resources | join(",")) == "runtimeclasses" and (.rules[0].resourceNames | join(",")) == "gvisor" and (.rules[0].verbs | join(",")) == "get")' 'the preflight gets the resolved RuntimeClass by name, nothing else'
+ykind ClusterRoleBinding 'select(.metadata.name == "maku-maku-run-controller-runtimeclass") | (.roleRef.name == "maku-maku-run-controller-runtimeclass" and .subjects[0].name == "run-controller" and .subjects[0].namespace == "maku")' 'the RuntimeClass ClusterRole is bound to the run-controller'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
+ykind ClusterRole 'select(.metadata.name == "maku-maku-run-controller-runtimeclass") | (.rules[0].resourceNames | join(",")) == "kata"' 'the RuntimeClass ClusterRole names sandbox.runtimeClassName'
 bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName=kata
 bad "at '/sandbox/unsafeAllowRunc': got string, want boolean" --set-string sandbox.unsafeAllowRunc=yes
 bad 'additional properties' --set sandbox.runtimeClass=kata

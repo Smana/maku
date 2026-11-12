@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	secretRetry = 30 * time.Second
-	gcRetry     = 5 * time.Second
+	secretRetry    = 30 * time.Second
+	gcRetry        = 5 * time.Second
+	preflightRetry = 10 * time.Second
 )
 
 // Reconciler turns an AgentRun into its owned objects and reports the pod back as status.
@@ -36,6 +37,8 @@ type Reconciler struct {
 	Cfg       Config
 	Now       func() time.Time
 	Log       *slog.Logger
+	// Preflight, when set, is consulted before a run's first pod: Unknown waits, Failed refuses.
+	Preflight interface{ Result() Result }
 }
 
 // SetupWithManager watches runs and the pods they own.
@@ -70,6 +73,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if why := r.Cfg.Invalid(run); why != "" {
 			fail(st, now, "Refused", why)
 			return ctrl.Result{}, r.writeStatus(ctx, run, *st)
+		}
+		// The preflight is the cluster's state, not the run's: a lost pod (gone) ends as PodLost below.
+		if r.Preflight != nil && !gone {
+			switch res := r.Preflight.Result(); res.State {
+			case PreflightPassed:
+			case PreflightFailed:
+				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
+				return ctrl.Result{}, r.writeStatus(ctx, run, *st)
+			default:
+				pending(st, "PreflightPending", "waiting for the run-controller's preflight (sandbox RuntimeClass)")
+				return ctrl.Result{RequeueAfter: preflightRetry}, r.writeStatus(ctx, run, *st)
+			}
 		}
 	}
 	runID := r.Cfg.RunID(run)
