@@ -191,7 +191,33 @@ the harnesses still hold.
 | Duplicate harness events after a bridge restart | The harness skipped an unreadable event file | A known limit, confined to that run; nothing to repair |
 | `RoomStalled` | The run is silent: a stuck harness, or a bridge that lost the broker | Bridge logs; the harness's step log in VictoriaLogs |
 | A migration that builds an index `CONCURRENTLY` failed (`20260929120000_verdicts`, `20261001130000_delivery_indexes`, `20261001140000_brief_index`, `20261005130000_approval_indexes`, `20261008120000_task_facts_index`), or `\d events` in `psql` shows the index `INVALID` | `CREATE INDEX CONCURRENTLY` runs outside a transaction: a failure leaves an `INVALID` index behind, and the re-run refuses with "already exists" | Drop it by hand before the migration is retried: as `rooms_owner`, `DROP INDEX CONCURRENTLY <index>;` (`events_agent_verdicts`, `events_deliveries`, `events_acks`, `events_brief`, `approvals_pending`, `events_decisions`, `events_decision_acks`, `events_tool_results` or `events_task_facts`), then let the Atlas operator re-run it |
+| A run of the `maku.ogenki.io` kind waits Pending, condition `Ready` reason `PreflightPending` | The run controller's [preflight](#the-run-controllers-preflight) has no result yet, or a check holds runs (a git Secret not yet filled, the egress proxy still starting) | The condition's message names the check. It clears by itself once the check passes |
+| A run ends Failed, condition `Invalid` reason `PreflightFailed` | A preflight check refuses runs: the RuntimeClass is missing, or the CNI does not enforce NetworkPolicy | The message names the check and its fix. Runs that already have a pod are untouched; start the refused run again once `maku_run_controller_preflight_passed` is 1 |
+| A run waits Pending, reason `QuotaExceeded` | The runs namespace's ResourceQuota `runs` is full: a safety net behind the factory's slots | Nothing to do: it is retried every 30 s. Raise `runsQuota.hard` if the factory's slots are larger than the quota |
 | Verdicts stay in the room, `maku_rooms_verdict_posts_total{result="error"}` rises | GitHub is failing or refusing the App's key: each verdict backs off from 15 s to 15 min, and a tick stops after two failures in a row | The broker's `verdict not posted yet` logs; the key at `agents/factory-app`. A verdict older than 24 h is recorded as `verdict_not_posted{reason: expired}` |
+
+## The run controller's preflight
+
+The run controller of the `maku` chart proves the cluster can hold a run before it starts one, at
+start and every 10 minutes. A check that cannot decide (the apiserver unreachable) keeps the last
+result; one that may cure itself right after install is retried from 10 s, doubling.
+
+| Check | Passes when | When it does not |
+|---|---|---|
+| `runtimeClass` | The sandbox RuntimeClass exists (skipped under `sandbox.unsafeAllowRunc`) | Failed: new runs are refused, `RuntimeClass "<name>" not found` |
+| `gitSecrets` | `gitSecret`, and `gitReadSecret` when set, exist with a `token` key | Waiting: new runs stay Pending with the message |
+| `network` (`networkPolicies.mode kubernetes`) | A probe pod, `<namePrefix>preflight-<8 characters>` in the runs namespace, held by a run's own NetworkPolicy under the sandbox class, reaches the broker's 8443 and CONNECTs `github.com:443` through the egress proxy, and the broker's 9090 times out or is refused twice, 3 s apart | The denied port answered: Failed, `deny <host>:9090 connected: the CNI does not enforce NetworkPolicy`, checked again in 10 minutes. A positive control failed (the proxy or the broker still starting): Waiting, retried soon. The probe pod did not start in 2 minutes: Failed, `the probe pod did not start under RuntimeClass "<name>": <its last event>` |
+
+- **Before the first result** new runs wait Pending, `PreflightPending`, retried every 10 s.
+- **A refusal** ends a new run Failed, condition `Invalid`, reason `PreflightFailed`, with the
+  check's message. A run that already has a pod is never refused.
+- **The gauge** `maku_run_controller_preflight_passed{check}` is 1 while a check passes and 0 while
+  it refuses; the run controller logs `preflight passed` and `preflight failed: <check>: <message>`
+  once per change.
+- **The probe pod** is deleted after each verdict, and leftovers from an earlier process before the
+  next. The egress proxy logs its CONNECT as `allow run=preflight github.com:443`.
+- **The egress proxy's metrics** on its `:9090`: `maku_egress_proxy_connections_total{decision}`
+  (`allow`, `refuse`, `error`) and `maku_egress_proxy_bytes_total`.
 
 ## Upgrades
 

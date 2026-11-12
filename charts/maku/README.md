@@ -22,6 +22,24 @@ CRDs (`crds/`), and the runs namespace with its default-deny policy. It has no f
 | `broker.factoryURL`, `broker.factoryPodLabels` | The factory's run API, `https://agent-factory.<ns>.svc:8082` once the factory chart sets `api.tls.secretName`; an `http://` URL is refused unless `broker.factoryInsecure`. Set `factoryURL`, and the broker CNP lets the factory's pods (`factoryPodLabels`, default `app.kubernetes.io/name: agent-factory`, in the release namespace unless the labels set `io.kubernetes.pod.namespace`) reach `:8443`, and the broker reach them on `factoryURL`'s port. Cilium matches after service translation, so that port must be the factory pod's: 8082 with the factory chart |
 | `broker.factoryInsecure` | `true` admits an `http://` `factoryURL`: human tokens cross to the factory in the clear. Default `false` |
 | `broker.factoryCA.secretName` | A Secret with `ca.crt`, the CA that signs the factory's certificate; mounted at `/etc/room-broker/factory-ca` and written as `factoryCAFile`. Empty: the system roots |
+| `networkPolicies.mode` | `cilium`, `kubernetes` or `none`; empty (the default) keeps the old key's meaning, `networkPolicies.enabled` `true` for `cilium` and `false` for `none`. `cilium` renders the CiliumNetworkPolicies, as before. `kubernetes` renders plain `networking.k8s.io/v1` NetworkPolicies on any CNI that enforces them: default-deny in the runs namespace, the broker's, the run controller's and the egress proxy's, and the run controller creates one per run and sends each harness's HTTPS through the [egress proxy](../../docs/security.md#the-run-paths-network-modes). Its preflight refuses runs until a probe pod proves the CNI denies a denied connection. `none` confines nothing and shows on the install banner. `cilium` with `enabled: false` fails the render, and `kubernetes` needs `runController.enabled` |
+| `networkPolicies.kubernetes` | `dns` (`{namespace, labels}`, default `kube-system`, `k8s-app: kube-dns`), opened on 53 to every component; `apiServerCIDRs`, the apiserver's addresses on `apiServerPorts` (empty: any address on those ports); `privateCIDRs`, which the egress proxy never dials and its NetworkPolicy never opens (default RFC 1918, CGNAT and link-local); `metricsFrom`, NetworkPolicy peers allowed to scrape `:9090` (empty: none) |
+| `egressProxy` | `replicas` (2, with a PodDisruptionBudget of `minAvailable: 1`), `resources`, and `extraPorts`, ports besides 443 the proxy may dial (a model served on another port). The proxy is `runController.image` run with `egress-proxy`, in the release namespace |
+| `broker.database.podLabels` | In `kubernetes` mode only: exact labels that select the PostgreSQL pods for the broker's 5432 rule, instead of `podLabel`'s key (the demo's `app.kubernetes.io/name: rooms-db`) |
+| `runController.gitSecret` / `gitReadSecret` | Implementer and tester runs mount `gitSecret`; reviewer and triager runs mount `gitReadSecret` (default `agent-git-read`), a read-only token. The controller refuses those roles without it |
+| `runController.unsafeSharedGitToken` | `true`: every role mounts `gitSecret`, so a reviewer or triager could push. For a laptop's one PAT only; shown on the install banner |
+| `sandbox.runtimeClassName`, `sandbox.unsafeAllowRunc` | The run pod's sandbox (D18), mapped onto the run controller's older keys below |
+| `runsQuota` | A ResourceQuota on `runs.namespace` (pods, CPU, memory), on by default. A run over it waits Pending, `QuotaExceeded` |
+| `runPodPolicy` | The run pod's ValidatingAdmissionPolicy, on by default; `extraImages` adds image repositories ([the run pod's admission](../../docs/security.md#the-run-pods-admission)) |
+| `agentRunPolicies` | `creators` and `factoryServiceAccount`: two optional AgentRun policies, each rendered only when set; `namespaces` narrows both |
+
+### The sandbox keys
+
+| Key | Old key, still honoured | Rule |
+|---|---|---|
+| `sandbox.runtimeClassName` (default `""`) | `runController.runtimeClassName` (default `gvisor`) | The new key wins when set; else the old one |
+| `sandbox.unsafeAllowRunc` | `runController.allowUnsandboxed` | `true`: no RuntimeClass, `allowUnsandboxed: true`. With `sandbox.runtimeClassName` it fails the render |
+| (none) | `runController.createRuntimeClass`, `runtimeHandler` | Unchanged; renders the class under the resolved name |
 
 `values-quickstart.yaml` is the laptop profile: local humans, tokenreview, a namespaced `Issuer`.
 

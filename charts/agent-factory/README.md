@@ -36,6 +36,14 @@ the broker's pods, and the factory's pod admits the broker to the API port (8082
 and the model). The install test asserts a run-labelled pod in `agents` cannot reach `rooms-db` on both
 k3d (kube-router) and kind v0.33 (kindnet enforces NetworkPolicy; the test only notes it, not fails, if a kind node does not).
 
+`--set maku.networkPolicies.mode=kubernetes` confines the runs too, on a CNI that enforces
+NetworkPolicy: default-deny in `agents`, one NetworkPolicy per run, and the egress proxy holding each
+run's HTTPS to its own hosts ([the network modes](../../docs/security.md#the-run-paths-network-modes)).
+The run controller's preflight then refuses runs until it proves the CNI enforces them. The demo's
+`maku.broker.database.podLabels` lets the broker's policy reach `rooms-db`. `task chart:install:k3d:netpol`
+proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a k3s started with
+`--disable-network-policy` (it refuses runs).
+
 `values-demo.yaml` (`profile: demo`) makes it the laptop demo: no Cilium (`maku.networkPolicies.enabled: false`), the broker
 in local human mode with the apiserver vouching for runs and for the factory (`system:factory`), runc
 (`allowUnsandboxed`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
