@@ -326,3 +326,33 @@ func TestCohortIsApartFromControl(t *testing.T) {
 		t.Fatal("0 % means none")
 	}
 }
+
+// P8: a maintainer's class: label names the class, never the cohort: the task is hashed into
+// control or treatment like any other.
+func TestClassLabelJoinsCohorts(t *testing.T) {
+	for percent, want := range map[int]string{100: CohortControl, 0: CohortTreatment} {
+		f := forgetest.NewFake()
+		f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs"}})
+		f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "class:docs", At: time.Now()})
+		cf := testCfg()
+		cf.Evaluation.ControlPercent = percent
+		d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, issueTask())
+		if err != nil || d.PredictedClass != "docs" || !d.Declared || d.Pinned || d.Cohort != want {
+			t.Fatalf("%d %%: %+v (%v), want cohort %s", percent, d, err, want)
+		}
+	}
+}
+
+// G8: a schedule's class is declared, and the task still joins the cohorts.
+func TestScheduledClassJoinsCohorts(t *testing.T) {
+	for percent, want := range map[int]string{100: CohortControl, 0: CohortTreatment} {
+		tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"},
+			Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, PredictedClass: "tests", DataClass: "public"}}
+		cf := testCfg()
+		cf.Evaluation.ControlPercent = percent
+		d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}}.Triage(t.Context(), cf, tk)
+		if err != nil || d.PredictedClass != "tests" || !d.Declared || d.Pinned || d.Cohort != want {
+			t.Fatalf("%d %%: %+v (%v), want cohort %s", percent, d, err, want)
+		}
+	}
+}

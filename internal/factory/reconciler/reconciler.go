@@ -1172,7 +1172,8 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class str
 }
 
 // floorProfile is the profile t is frozen under at triage: its class's floor, with the cohort's
-// source; nil for a class without a harness, whose task carries no status.profile.
+// source; nil for a class without a harness, whose task carries no status.profile. Source label is
+// a pinned profile only (P8): a class label alone leaves the task floor or control.
 func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
 	cl := r.class(cfg, t, d.PredictedClass)
 	p, ok := cfg.ProfileFor(cl, cl.Harness)

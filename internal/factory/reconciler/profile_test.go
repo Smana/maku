@@ -91,9 +91,10 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 		percent int
 		want    v1alpha1.ProfileStatus
 	}{
-		"unlabelled":    {"", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Checks: true}},
-		"labelled":      {"class:review", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "label", Cohort: "labeled", Checks: true}},
-		"in the cohort": {"", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
+		"unlabelled":              {"", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Checks: true}},
+		"labelled":                {"class:review", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Checks: true}},
+		"labelled, in the cohort": {"class:review", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
+		"in the cohort":           {"", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := profileCfg(true)
@@ -108,6 +109,24 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 				t.Fatalf("the floor and the review row: %+v", tk.Spec)
 			}
 		})
+	}
+}
+
+// P8: a maintainer's class: label no longer freezes the task as labeled, so a class with a choice
+// still offers it to the scoper.
+func TestClassLabelledTaskIsOfferedProfileChoices(t *testing.T) {
+	cf := profileCfg(true)
+	cf.HarnessProfiles["review-careful"] = config.HarnessProfile{Template: "pair", Description: "Two reviews."}
+	review := cf.Classes["review"]
+	review.HarnessAllowed = []string{"review-careful"}
+	cf.Classes["review"] = review
+	g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it"), "class:review")
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Profile == nil || tk.Status.Profile.Source != "floor" || tk.Status.Profile.Cohort != triage.CohortTreatment {
+		t.Fatalf("%+v", tk.Status.Profile)
+	}
+	if got := g.r.profileChoices(cf, tk); len(got) != 2 || got[1].Name != "review-careful" {
+		t.Fatalf("choices %+v", got)
 	}
 }
 

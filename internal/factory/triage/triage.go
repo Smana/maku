@@ -16,9 +16,11 @@ type Decision struct {
 	Template, PredictedClass, DataClass string
 	Budget                              v1alpha1.Budget
 	Classification                      v1alpha1.Classification
-	// Declared is a class a maintainer or a schedule named; Cohort is the evaluation's group.
-	Declared bool
-	Cohort   string
+	// Declared is a class a maintainer or a schedule named: it feeds the policy fact's conditions,
+	// never the cohort (P8). Pinned is a profile a maintainer pinned, false until pins exist.
+	// Cohort is the evaluation's group.
+	Declared, Pinned bool
+	Cohort           string
 }
 
 // The evaluation cohorts a task is frozen in at triage.
@@ -28,10 +30,11 @@ const (
 	CohortTreatment = "treatment"
 )
 
-// CohortOf is a task's evaluation group: a declared class is labeled, else percent % are control.
-func CohortOf(taskID string, declared bool, percent int) string {
+// CohortOf is a task's evaluation group: a pinned profile is labeled, else percent % are control.
+// A declared class is no pin: a class label or a schedule's class joins the cohorts (P8, G8).
+func CohortOf(taskID string, pinned bool, percent int) string {
 	switch {
-	case declared:
+	case pinned:
 		return CohortLabeled
 	case Cohort(taskID, percent):
 		return CohortControl
