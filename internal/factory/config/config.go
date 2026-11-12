@@ -161,6 +161,9 @@ type Config struct {
 	Hardening Hardening `json:"hardening,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
+	// RunTokens has the factory write the run-controller's two git Secrets (v4 step 2, PR3): off
+	// unless set, and implied by demo.
+	RunTokens RunTokens `json:"runTokens,omitzero"`
 	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
 	// or default. Each row is whole: a class with no row reads default's, and a row is read
 	// alone, never merged with default's (LoopFor).
@@ -313,6 +316,42 @@ type GitHub struct {
 	// or shadow, because deciding that class reads checks and arms through the merger.
 	MergerAppIDFile string `json:"mergerAppIDFile,omitempty"`
 	MergerKeyFile   string `json:"mergerKeyFile,omitempty"`
+}
+
+// RunTokens names the App whose installation tokens fill the run-controller's agent-git (write) and
+// agent-git-read (read) Secrets, for every served repository of one owner. Interim: replaced by the
+// per-run minter, v4 D10 (rollout step 3).
+type RunTokens struct {
+	Enabled        bool   `json:"enabled,omitempty"`
+	AppIDFile      string `json:"appIDFile,omitempty"`
+	PrivateKeyFile string `json:"privateKeyFile,omitempty"`
+}
+
+// RunTokenApp is the App the run token writer mints from: runTokens' when enabled, else the
+// factory's own in the demo. ok is false when the factory writes no run token.
+func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
+	switch {
+	case c.RunTokens.Enabled:
+		return c.RunTokens.AppIDFile, c.RunTokens.PrivateKeyFile, true
+	case c.Demo:
+		return c.GitHub.AppIDFile, c.GitHub.PrivateKeyFile, true
+	}
+	return "", "", false
+}
+
+// validateRunTokens: the writer fills Secrets only the run-controller reads, so it is refused on
+// cloud-native-ref's AgentRun, whose runs get their tokens from octo-sts.
+func (c *Config) validateRunTokens(bad func(string, ...any)) {
+	t := c.RunTokens
+	if !t.Enabled {
+		return
+	}
+	if t.AppIDFile == "" || t.PrivateKeyFile == "" {
+		bad("runTokens.enabled needs runTokens.appIDFile and runTokens.privateKeyFile")
+	}
+	if c.Runs.Group != v1alpha1.GroupVersion.Group {
+		bad("runTokens.enabled writes the run-controller's Secrets: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
+	}
 }
 
 // MaxRepositories bounds repositories (v2 D1): a repository metric label keeps at most this many
@@ -1578,6 +1617,7 @@ func (c *Config) Validate() error {
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	c.Coordination.Validate(bad)
 	c.validateHardening(bad)
+	c.validateRunTokens(bad)
 	c.Intake.Overlap.Validate(bad)
 	rs := c.Repos()
 	switch {

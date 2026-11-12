@@ -564,8 +564,9 @@ rules:
 # Source: agent-factory/charts/maku-factory/templates/rbac.yaml
 # AgentRuns: the factory creates them, meters them (annotations only, Kyverno-limited from
 # phase 5), and deletes them. Never Secrets, never another namespace's objects, with one exception:
-# demo (the laptop demo) lets the factory keep the runs' shared agent-git Secret filled with a token
-# minted from its GitHub App. create cannot be scoped by name in Kubernetes; get and update can.
+# demo or runTokens.enabled lets the factory keep the run-controller's agent-git and agent-git-read
+# Secrets filled with tokens minted from a GitHub App. create cannot be scoped by name in
+# Kubernetes; get and update can.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -583,7 +584,7 @@ rules:
     verbs: [create]
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [agent-git]
+    resourceNames: [agent-git, agent-git-read]
     verbs: [get, update]
 
 ---

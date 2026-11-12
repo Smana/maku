@@ -152,6 +152,19 @@ reasons=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o j
 ! grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' <<<"$reasons" ||
   die "the factory failed before it started (a mount or the image)"
 
+step "the run token writer may fill both run Secrets, and the run-controller may read both"
+# The dummy App never mints, so neither Secret is written: the Roles that let it are what is proved.
+sa=system:serviceaccount:$NS
+for s in agent-git agent-git-read; do
+  kubectl auth can-i update "secret/$s" -n agents --as="$sa:agent-factory" >/dev/null || die "the factory cannot update $s"
+  kubectl auth can-i get "secret/$s" -n agents --as="$sa:run-controller" >/dev/null || die "the run-controller cannot read $s"
+done
+if kubectl -n agents get secret agent-git-read >/dev/null 2>&1; then
+  echo "ok: agent-git-read exists"
+else
+  echo "ok: agent-git-read is not written: the factory logged the dummy App's failure above"
+fi
+
 step "no Cilium, cert-manager or CNPG objects"
 # By API group: a core name such as `certificates` is not cert-manager's.
 res=$(kubectl api-resources -o name) || die "kubectl api-resources failed"

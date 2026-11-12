@@ -26,8 +26,16 @@ api:
     secretName: ""
     issuerRef: {kind: ClusterIssuer, name: ""}
 # The laptop demo: no OIDC volume (the factory takes no human tokens) and, in the runs namespace,
-# the Secret access the demo token writer needs for the one Secret agent-git.
+# the Secret access the run token writer needs for agent-git and agent-git-read, minted from the
+# factory's App.
 demo: false
+# The run token writer outside the demo (v4 step 2): the factory keeps the run-controller's
+# agent-git (write) and agent-git-read (read) Secrets filled with installation tokens of the App in
+# appSecret (keys app_id, private_key), mounted at /etc/agent-factory-run-tokens. The factory's
+# config must name runs.group maku.ogenki.io. Interim: replaced by the per-run minter (v4 D10, step 3).
+runTokens:
+  enabled: false
+  appSecret: ""
 oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake
 # v2 D4: the ZITADEL reader ({"pat", "githubIdpId"}) that resolves an API caller to their GitHub

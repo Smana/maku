@@ -1916,10 +1916,21 @@ for check re-runs), `checks: read`, `contents: write`, `issues: write`, `metadat
 `pull_requests: write`, `statuses: write`. It covers the factory App's own set (contents read,
 issues write, pull_requests write, metadata read), the merger's (checks read, statuses read,
 contents write, pull_requests write, metadata read, plus the optional actions and issues writes
-and `statuses: write` for the gate's verdict) and the run token's (contents write, pull_requests
-write, metadata read). `statuses: write` is the merger's alone: the run token does not ask for it,
-since one App backs every run and a run that could post a status could forge `maku/merge-gate`. A
-token minted for a narrower profile asks for a subset, which an App holding the union grants.
+and `statuses: write` for the gate's verdict) and the run tokens' (the write token: contents write,
+pull_requests write, metadata read; the read token: contents, pull_requests, issues, checks,
+actions and metadata read). `statuses: write` is the merger's alone: the run tokens do not ask for
+it, since one App backs every run and a run that could post a status could forge `maku/merge-gate`.
+A token minted for a narrower profile asks for a subset, which an App holding the union grants.
+
+**The run tokens (interim, until the per-run minter of v4 D10, rollout step 3).** The demo, or
+`runTokens.enabled` outside it, has the factory keep the run-controller's two git Secrets in the
+runs namespace filled with installation tokens, renewed every 30 minutes and ten minutes before
+expiry (a failed mint keeps the old Secret): `agent-git`, the write token implementer and tester
+runs mount, and `agent-git-read`, the read token reviewer and triager runs mount. Each covers every
+served repository of one owner. The demo mints from the factory's App; `runTokens: {enabled,
+appIDFile, privateKeyFile}` names another App (the chart's `runTokens.appSecret`, mounted at
+`/etc/agent-factory-run-tokens`), and is refused without both files and unless `runs.group` is
+`maku.ogenki.io`: cloud-native-ref's AgentRun gets its tokens from octo-sts, unchanged.
 
 The public-only check runs at start-up and on each labelled issue, so a repository made private
 after start-up is caught only when an issue is labelled.

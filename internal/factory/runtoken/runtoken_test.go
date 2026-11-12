@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-package demo
+package runtoken
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type clk struct {
 func (c *clk) now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
 
 type rig struct {
-	g    *GitToken
+	g    *Writer
 	c    client.Client
 	clk  *clk
 	mu   sync.Mutex
@@ -35,7 +35,7 @@ type rig struct {
 
 func newRig() *rig {
 	r := &rig{c: fake.NewClientBuilder().Build(), clk: &clk{t: time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)}, ttl: time.Hour}
-	r.g = &GitToken{Client: r.c, Namespace: "runs", Name: "agent-git", Clock: r.clk.now,
+	r.g = &Writer{Client: r.c, Namespace: "runs", Name: "agent-git", Clock: r.clk.now,
 		Mint: func(context.Context) (forge.Token, error) {
 			r.mu.Lock()
 			defer r.mu.Unlock()
@@ -167,9 +167,10 @@ func TestExistingWaitAfterALeaderChange(t *testing.T) {
 	}
 }
 
-// One App backs the runs and the merger: a run token must not post the gate's commit status.
+// One App backs the runs and the merger in the demo: a run token must not post the gate's commit
+// status.
 func TestRunTokenCannotWriteStatusesOrIssues(t *testing.T) {
-	p := Permissions()
+	p := Write()
 	for _, k := range []string{"statuses", "issues"} {
 		if v, ok := p[k]; ok {
 			t.Errorf("%s: %s in the run token", k, v)
@@ -177,5 +178,41 @@ func TestRunTokenCannotWriteStatusesOrIssues(t *testing.T) {
 	}
 	if p["contents"] != "write" || p["pull_requests"] != "write" {
 		t.Errorf("permissions %v", p)
+	}
+}
+
+// PR3: the read token, which reviewer and triager runs mount, reads what they read and writes
+// nothing.
+func TestTheReadTokenWritesNothing(t *testing.T) {
+	p := Read()
+	want := map[string]string{"contents": "read", "pull_requests": "read", "issues": "read", "checks": "read", "actions": "read", "metadata": "read"}
+	if len(p) != len(want) {
+		t.Fatalf("read permissions %v, want %v", p, want)
+	}
+	for k, v := range want {
+		if p[k] != v {
+			t.Errorf("%s: %q, want %q", k, p[k], v)
+		}
+	}
+	for k, v := range p {
+		if v == "write" {
+			t.Errorf("%s: write in the read token", k)
+		}
+	}
+}
+
+// The two Secrets the run-controller mounts, by role: the writers name them, each with its own scope.
+func TestWritersNameBothSecrets(t *testing.T) {
+	ws := Writers(nil, "runs", func(ctx context.Context, perms map[string]string) (forge.Token, error) {
+		return forge.Token{Value: perms["contents"], ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}, nil)
+	if len(ws) != 2 || ws[0].Name != WriteSecret || ws[1].Name != ReadSecret || WriteSecret != "agent-git" || ReadSecret != "agent-git-read" {
+		t.Fatalf("writers %+v", ws)
+	}
+	for _, w := range ws {
+		tok, _ := w.Mint(t.Context())
+		if want := map[string]string{WriteSecret: "write", ReadSecret: "read"}[w.Name]; tok.Value != want || w.Namespace != "runs" {
+			t.Errorf("%s mints contents %q in %q, want %q", w.Name, tok.Value, w.Namespace, want)
+		}
 	}
 }
