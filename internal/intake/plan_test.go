@@ -43,7 +43,8 @@ func TestPlanHashCoversTheMaterialSetOnly(t *testing.T) {
 	base := planFixture(t, "single")
 	m := intake.Hash(base)
 	for name, change := range map[string]func(*intake.Plan){
-		"apiVersion": func(p *intake.Plan) { p.APIVersion = "plan/v2" },
+		"apiVersion": func(p *intake.Plan) { p.APIVersion = "plan/v3" },
+		"profile":    func(p *intake.Plan) { p.Issues[0].Profile = "links-solo" },
 		"repository": func(p *intake.Plan) { p.Repository = "owner/other" },
 		"ceiling":    func(p *intake.Plan) { p.Budget.CeilingUSD = 2.5 },
 		"budget src": func(p *intake.Plan) { p.Budget.Source = "channel:C1.maxCostUSD" },
@@ -129,7 +130,7 @@ func TestPlanHashIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"apiVersion":"plan/v1","repository":"Smana/ai-native-ref","budget":{"ceilingMicroUSD":2000000,"source":"class:docs-links.taskUSD"},"issues":[{"index":1,`
+	want := `{"apiVersion":"plan/v2","repository":"Smana/ai-native-ref","budget":{"ceilingMicroUSD":2000000,"source":"class:docs-links.taskUSD"},"issues":[{"index":1,`
 	if !strings.HasPrefix(string(m), want) {
 		t.Fatalf("%s", m)
 	}
@@ -171,7 +172,7 @@ func TestCheckRefusesEachRule(t *testing.T) {
 			candidates: []string{"smana/AI-NATIVE-REF"}},
 		{name: "apiVersion",
 			change: func(p *intake.Plan) { p.APIVersion = "plan/v0" },
-			want:   intake.ReasonPlannerInvalid, detail: `apiVersion "plan/v0", the contract's is plan/v1`},
+			want:   intake.ReasonPlannerInvalid, detail: `apiVersion "plan/v0", the contract's is plan/v2`},
 		{name: "no issues",
 			change: func(p *intake.Plan) { p.Issues = nil },
 			want:   intake.ReasonPlannerInvalid, detail: "issues: 0, the contract asks for 1 to 3"},
@@ -384,5 +385,76 @@ func TestNoRefusalSentenceEmitsAPlaceholder(t *testing.T) {
 	}
 	if len(sentences) != len(declared) {
 		t.Fatalf("%d sentences for %d reasons: one is not in the closed list", len(sentences), len(declared))
+	}
+}
+
+// P4, P14: plan/v2's `profile` is material: a pin is another promise, so it is another hash.
+func TestPlanV2HashCoversProfile(t *testing.T) {
+	p := planFixture(t, "single")
+	before := intake.Hash(p)
+	p.Issues = slices.Clone(p.Issues)
+	p.Issues[0].Profile = "links-solo"
+	if intake.Hash(p) == before {
+		t.Fatal("the hash did not move on profile")
+	}
+}
+
+// P3: the suggestion is display: the broker's reading and the model's why, never a promise.
+func TestSuggestionIsDisplay(t *testing.T) {
+	p := planFixture(t, "single")
+	before := intake.Hash(p)
+	p.Issues = slices.Clone(p.Issues)
+	p.Issues[0].Suggestion = &intake.Suggestion{Profile: "links-solo", Roles: []string{"implementer"},
+		Merge: intake.MergeShown{Outcome: "auto"}, Why: "one file of links"}
+	if intake.Hash(p) != before {
+		t.Fatal("the suggestion moved the hash")
+	}
+}
+
+// apiVersion is material: the same issues under plan/v1 and plan/v2 are two plans, and a v1 plan
+// keeps the bytes it was hashed under (it has no profile).
+func TestV1AndV2HashDiffer(t *testing.T) {
+	v1, v2 := planFixture(t, "v1-single"), planFixture(t, "single")
+	if intake.Hash(v1) == intake.Hash(v2) {
+		t.Fatal("v1 and v2 hash alike")
+	}
+	m, err := intake.Material(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(m), `"profile"`) {
+		t.Fatalf("a plan/v1 hashes a profile: %s", m)
+	}
+}
+
+// P14: Check knows plan/v2 only; a plan/v1 is upgraded and shown again, never filed.
+func TestCheckRefusesV1(t *testing.T) {
+	r := intake.Check(planFixture(t, "v1-single"), []string{"Smana/ai-native-ref"}, classes())
+	if r == nil || r.Reason != intake.ReasonPlannerInvalid {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// The suggestion's why is untrusted model text bounded at 200 characters; one more is refused,
+// never truncated.
+func TestWhyBound(t *testing.T) {
+	for n, want := range map[int]string{200: "", 201: intake.ReasonPlanTooLarge} {
+		p := planFixture(t, "single")
+		p.Issues = slices.Clone(p.Issues)
+		p.Issues[0].Suggestion = &intake.Suggestion{Why: strings.Repeat("é", n)}
+		r := intake.Check(p, []string{"Smana/ai-native-ref"}, classes())
+		if (r == nil && want != "") || (r != nil && r.Reason != want) {
+			t.Fatalf("%d runes: %+v, want %q", n, r, want)
+		}
+	}
+}
+
+// Until pins are checked (stage 3), a plan that carries one is not the contract's.
+func TestCheckRefusesAPinBeforePins(t *testing.T) {
+	p := planFixture(t, "single")
+	p.Issues = slices.Clone(p.Issues)
+	p.Issues[0].Profile = "links-solo"
+	if r := intake.Check(p, []string{"Smana/ai-native-ref"}, classes()); r == nil || r.Reason != intake.ReasonPlannerInvalid {
+		t.Fatalf("%+v", r)
 	}
 }

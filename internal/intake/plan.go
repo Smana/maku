@@ -19,7 +19,14 @@ import (
 // APIVersion is the plan contract's one version. A plan whose apiVersion is any other value is
 // refused whole: a consumer re-validates a plan before anything is filed, and a version it does not
 // know is a plan it cannot re-validate.
-const APIVersion = "plan/v1"
+const APIVersion = "plan/v2"
+
+// APIVersionV1 is the version before the profile: recognised only by Upgrade, which shows the same
+// issues again as plan/v2 with a new hash (P14). Check refuses it, so a v1 plan is never filed.
+const APIVersionV1 = "plan/v1"
+
+// MaxWhyRunes bounds a suggestion's why: one line of untrusted model text.
+const MaxWhyRunes = 200
 
 // Surface is where a plan was asked for. It is the metric label and the audit field, so the set is
 // closed: a surface nobody labels is a plan nobody can account for.
@@ -106,12 +113,39 @@ type Issue struct {
 	// Class is the model's one sourced choice, checked against the config's class table: a class
 	// the config does not define is refused (`invalid_class`), never guessed (CD17).
 	Class string `json:"class"`
+	// Profile is the pinned harness profile, "" for the factory's choice. Accepting a suggestion
+	// pins nothing (P4): only a revision a person makes writes it.
+	Profile string `json:"profile"`
 	// Roles are the class's template, written by the broker from config. A role the model named is
 	// dropped and logged (CD17).
 	Roles []string `json:"roles"`
 	// DependsOn is the indices of the earlier issues this one waits for; `Compose` keeps only the
 	// values that name an earlier index, so a plan can be ordered but never circular.
 	DependsOn []int `json:"dependsOn"`
+	// Suggestion is the planner's suggested profile and the merge outcome the broker computed:
+	// display, so a person sees it and confirms nothing by it. Nil when the plan was made without
+	// the factory's catalogue.
+	Suggestion *Suggestion `json:"suggestion,omitempty"`
+}
+
+// Suggestion is what the planner suggests for an issue and what the broker read from the catalogue
+// to show beside it. Display only: the hash never reads it.
+type Suggestion struct {
+	// Profile is an offered profile of the issue's class, "" for the factory's choice.
+	Profile string `json:"profile"`
+	// Roles are the suggested profile's template roles, from the catalogue (G3).
+	Roles []string `json:"roles"`
+	// Merge is the broker's, from the class's mode and approveToMerge, never the model's (P3).
+	Merge MergeShown `json:"merge"`
+	// Why is the model's one line, at most MaxWhyRunes characters; untrusted text.
+	Why string `json:"why"`
+}
+
+// MergeShown is how the issue's pull request would merge: outcome `auto`, `shadow`, `approval` or
+// `maintainer`, and the repository's approveToMerge it was computed with.
+type MergeShown struct {
+	Outcome        string `json:"outcome"`
+	ApproveToMerge bool   `json:"approveToMerge"`
 }
 
 // Budget is the ceiling this plan's work is charged against and where the number came from: the
@@ -174,12 +208,14 @@ type material struct {
 	Issues     []materialIssue `json:"issues"`
 }
 
-// materialIssue is one issue as the hash sees it: the field order below is the contract.
+// materialIssue is one issue as the hash sees it: the field order below is the contract. Profile
+// is plan/v2's; a plan/v1 is hashed without it, so it keeps the hash it was shown with.
 type materialIssue struct {
 	Index     int      `json:"index"`
 	Title     string   `json:"title"`
 	Body      string   `json:"body"`
 	Class     string   `json:"class"`
+	Profile   *string  `json:"profile,omitempty"`
 	Roles     []string `json:"roles"`
 	DependsOn []int    `json:"dependsOn"`
 }
@@ -206,14 +242,18 @@ func Material(p Plan) ([]byte, error) {
 		Issues: make([]materialIssue, 0, len(p.Issues)),
 	}
 	for _, is := range p.Issues {
-		m.Issues = append(m.Issues, materialIssue{
+		mi := materialIssue{
 			Index:     is.Index,
 			Title:     is.Title,
 			Body:      is.Body,
 			Class:     is.Class,
 			Roles:     list(is.Roles),
 			DependsOn: list(is.DependsOn),
-		})
+		}
+		if p.APIVersion != APIVersionV1 {
+			mi.Profile = &is.Profile // "" is hashed too: the factory's choice is a promise
+		}
+		m.Issues = append(m.Issues, mi)
 	}
 	j, err := json.Marshal(m)
 	if err != nil {
@@ -246,6 +286,11 @@ func (p Plan) JSON() ([]byte, error) {
 	for i := range p.Issues {
 		p.Issues[i].Roles = list(p.Issues[i].Roles)
 		p.Issues[i].DependsOn = list(p.Issues[i].DependsOn)
+		if s := p.Issues[i].Suggestion; s != nil {
+			c := *s
+			c.Roles = list(c.Roles)
+			p.Issues[i].Suggestion = &c
+		}
 	}
 	if p.Hash == "" {
 		p.Hash = Hash(p)

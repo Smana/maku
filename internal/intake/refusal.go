@@ -229,6 +229,17 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 		if _, ok := classes[is.Class]; !ok {
 			return invalidClass(is.Index, is.Class)
 		}
+		if is.Profile != "" {
+			// A pin is checked against the catalogue from stage 3; until then a plan that carries one
+			// is not a plan anything here can honour.
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile, pins are not accepted yet", is.Index))
+		}
+		if s := is.Suggestion; s != nil {
+			if n := utf8.RuneCountInString(s.Why); n > MaxWhyRunes {
+				return refuse(ReasonPlanTooLarge,
+					fmt.Sprintf("issues[%d].suggestion.why: %d characters, the bound is %d", is.Index-1, n, MaxWhyRunes))
+			}
+		}
 	}
 	if n := len(p.RepositoryEvidence); n > maxEvidence {
 		return refuse(ReasonPlanTooLarge, fmt.Sprintf("repositoryEvidence: %d items, the bound is %d", n, maxEvidence))
