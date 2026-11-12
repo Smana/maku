@@ -437,9 +437,17 @@ A repository listed in `enforceOutputs` goes one stage further
 - **What is checked after.** At a run's end the tracer reads back the task's pull request (its
   title and body), the agents App's comments on the task's issue and pull request, and the labels
   it added there. Each must be exactly what an `output_applied` published. A pull request's
-  footer must name the newest applied `pr` output, and its title and body must be that output's.
-  A comment must end with an applied output's marker and hold that output's text. A direct open,
-  or a direct edit of an applied object, is reported `untraced_write` and checked as in audit.
+  footer must name the newest applied `pr` output, and its title (blanks around it aside) and
+  body must be that output's. A comment must end with an applied output's marker and hold that
+  output's text. A direct open, or a direct edit of an applied object, is reported
+  `untraced_write` and checked as in audit.
+- **Human edits.** An applied body that only people edited since its answer is logged
+  `human_edit` and not counted untraced, but its text is still checked as in audit. The tracer
+  reads every body edit's editor from GraphQL `userContentEdits`, since REST names none. Every
+  edit in that window must be by a `User` other than the agents App. One agents-App, bot or
+  deleted editor, or an edit list past its page cap, leaves the write untraced. So does any run
+  path but cloud-native-ref's XR: there a run writes with a shared token, and GitHub credits its
+  direct edits to that token's user.
 - **What the applier refuses.** It refuses to edit an open pull request whose footer names none of
   the task's applied outputs (`output_target`), so a direct open is never adopted.
 - **What closes the bypass.** The sandbox role's `pull_requests: write` is removed in the

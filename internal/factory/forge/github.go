@@ -317,7 +317,7 @@ func (g *GitHub) AllComments(ctx context.Context, number int) ([]Comment, error)
 
 // restComment is a REST issue comment as the forge reads one.
 func restComment(c *github.IssueComment) Comment {
-	return Comment{ID: c.GetID(), Author: c.GetUser().GetLogin(), Association: c.GetAuthorAssociation(), Body: c.GetBody(),
+	return Comment{ID: c.GetID(), NodeID: c.GetNodeID(), Author: c.GetUser().GetLogin(), Association: c.GetAuthorAssociation(), Body: c.GetBody(),
 		At: c.GetCreatedAt().Time, Edited: c.GetUpdatedAt().After(c.GetCreatedAt().Time)}
 }
 
@@ -326,6 +326,53 @@ func (g *GitHub) AddLabels(ctx context.Context, number int, labels ...string) er
 	_, _, err := g.rest.Issues.AddLabelsToIssue(ctx, g.owner, g.name, number, labels)
 	g.mark(err)
 	return wrap("add labels", err)
+}
+
+// editPages is how many pages of 100 edits ContentEdits reads before it reports ErrEditsTruncated.
+const editPages = 5
+
+// ContentEdits are every recorded edit of node's body (a pull request, an issue or a comment, by
+// its GraphQL id), in GitHub's order, each with its editor: REST names none, GraphQL's
+// userContentEdits does. Past editPages pages it returns what it read and ErrEditsTruncated.
+func (g *GitHub) ContentEdits(ctx context.Context, node string) ([]ContentEdit, error) {
+	var q struct {
+		Node struct {
+			Comment struct {
+				UserContentEdits struct {
+					PageInfo struct {
+						HasNextPage bool
+						EndCursor   githubv4.String
+					}
+					Nodes []struct {
+						EditedAt githubv4.DateTime
+						Editor   *actor
+					}
+				} `graphql:"userContentEdits(first: 100, after: $after)"`
+			} `graphql:"... on Comment"`
+		} `graphql:"node(id: $id)"`
+	}
+	vars := map[string]any{"id": githubv4.ID(node), "after": (*githubv4.String)(nil)}
+	var out []ContentEdit
+	for range editPages {
+		err := g.v4.Query(ctx, &q, vars)
+		g.mark(err)
+		if err != nil {
+			return nil, wrap("read a body's edits", err)
+		}
+		es := q.Node.Comment.UserContentEdits
+		for _, e := range es.Nodes {
+			c := ContentEdit{Editor: e.Editor.login(), At: e.EditedAt.Time}
+			if e.Editor != nil {
+				c.EditorType = e.Editor.Typename
+			}
+			out = append(out, c)
+		}
+		if !es.PageInfo.HasNextPage {
+			return out, nil
+		}
+		vars["after"] = githubv4.NewString(es.PageInfo.EndCursor)
+	}
+	return out, ErrEditsTruncated
 }
 
 // Repository is the owner/name this connection is bound to.
