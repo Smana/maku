@@ -1864,9 +1864,9 @@ flowchart LR
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
   sandbox role's and the publisher's octo-sts policy and reports their permissions.
 
-With `runs` not cloud-native-ref's XR, the factory logs a startup warning: the sandbox token is
-not scoped by a role policy (HR13). It still starts, since the tracer reports every direct write,
-and reads none as a human edit.
+With `runs` not cloud-native-ref's XR, the factory refuses to start while `enforceOutputs` is set
+(HR13): that path's sandbox token is not scoped by a role policy, so a run could still write
+directly. Per-run tokens (v4 step 3) lift this.
 Readiness stays `false`: `mode: enforce` is still refused. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 

@@ -441,8 +441,8 @@ untraced: confirm who retitled the pull request before rolling back on a `pr` un
 After an upgrade that changes the T2 sanitiser, pull requests and comments applied before it are
 compared with the new T2's text and show as untraced once: confirm those predate the upgrade
 before rolling back. Never move
-an enforced repository to a run path whose sandbox token no role policy scopes (the startup
-warning names HR13). `push` (H3) and raw reads (H4) stay open in this stage.
+an enforced repository to a run path whose sandbox token no role policy scopes (the factory refuses to
+start, naming HR13). `push` (H3) and raw reads (H4) stay open in this stage.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
