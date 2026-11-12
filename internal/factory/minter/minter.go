@@ -134,13 +134,18 @@ func (m *Minter) mint(ctx context.Context, repo, role string, enforced []hardeni
 	}
 	// An App uninstalled and reinstalled has a new installation id, and the cached one answers 404:
 	// evict it and try once more with a fresh lookup.
+	// A 404 from the lookup itself is already fresh: asking again would get the same answer.
 	for attempt := 0; ; attempt++ {
-		var tok forge.Token
 		id, err := m.Client.Installation(ctx, owner, name)
-		if err == nil {
-			if tok, _, _, err = m.Client.AccessToken(ctx, id, owner, []string{name}, perms); err == nil {
-				return tok, nil
+		if err != nil {
+			if errors.Is(err, forge.ErrNotInstalled) {
+				m.Client.Evict(owner, name)
 			}
+			return forge.Token{}, err
+		}
+		tok, _, _, err := m.Client.AccessToken(ctx, id, owner, []string{name}, perms)
+		if err == nil {
+			return tok, nil
 		}
 		if !errors.Is(err, forge.ErrNotInstalled) {
 			return forge.Token{}, err

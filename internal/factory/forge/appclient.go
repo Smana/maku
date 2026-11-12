@@ -247,10 +247,11 @@ func sameRepos(fullNames []string, owner string, names []string) bool {
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // CheckNames refuses an owner or repository name that could change the path it is put in:
-// anything outside [A-Za-z0-9_.-], ".", or a name containing "..".
+// anything outside [A-Za-z0-9_.-], or a whole "." or ".." segment. A name holding two dots
+// ("a..b") is a name: with no "/" allowed, only a whole segment can walk the path.
 func CheckNames(names ...string) error {
 	for _, n := range names {
-		if !nameRE.MatchString(n) || n == "." || strings.Contains(n, "..") {
+		if !nameRE.MatchString(n) || n == "." || n == ".." {
 			return fmt.Errorf("forge: %q is not an owner or repository name", n)
 		}
 	}
