@@ -9,8 +9,8 @@ The umbrella chart: `maku` and `maku-factory` (`file://`), plus what a plain kin
 | Production-safe defaults | `values.yaml` is a skeleton that renders nothing on its own. `profile` is required: `demo`, or `production`, which fails closed until its seams arrive in v4 rollout steps 2 to 6 |
 | The demo | `-f values-demo.yaml` carries every demo default and `profile: demo`. `--set profile=demo` alone fails with `profile demo needs -f values-demo.yaml` |
 | The schema | `values.schema.json` rejects unknown top-level keys (a typo like `postgress:`) and malformed values: an unknown profile, `tls.days` below 1, a Postgres image without a digest, a storage size that is not `<n>Mi`, `Gi` or `Ti` |
-| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first. It upgrades the CRDs with every tool and keeps them on uninstall. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
-| The support floor | `kubeVersion: ">=1.30.0-0"` in this chart and both subcharts |
+| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first. It upgrades the CRDs with every tool and keeps them on uninstall. The subcharts keep their own `crds/` until rollout step 8, so a GitOps tool skips them: Argo CD `skipCrds: true`, Flux `crds: Skip`. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
+| The support floor | `kubeVersion: ">=1.30.0-0"` in this chart and both subcharts. Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version` |
 | Stability | Values may still change in a 0.x minor until v4.0.0, each change with a section in [docs/upgrading.md](../../docs/upgrading.md). From v4.0.0, a breaking value change happens only in a major version |
 
 ```bash

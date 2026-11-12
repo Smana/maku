@@ -15,6 +15,16 @@ and `task crd:check` fails on any drift.
 helm install af-crds oci://ghcr.io/smana/charts/agent-factory-crds --version <version>
 ```
 
+Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
+needs `--kube-version 1.30.0` or later.
+
+## With the umbrella
+
+The `agent-factory` umbrella's subcharts keep their own `crds/` until rollout step 8. Once this
+chart is installed it alone manages the CRDs, so skip the umbrella's copies: Argo CD
+`skipCrds: true`, or Flux `crds: Skip` on install and upgrade. Plain Helm needs nothing, since it
+never upgrades `crds/` and skips a CRD that exists.
+
 ## Adopting CRDs that already exist
 
 On a cluster where the CRDs came from the `maku` and `maku-factory` subcharts' `crds/` (any existing
@@ -28,5 +38,9 @@ kubectl label $crds app.kubernetes.io/managed-by=Helm --overwrite
 kubectl annotate $crds meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace=maku --overwrite
 ```
 
+Under Flux, `meta.helm.sh/release-name` must equal the HelmRelease's computed name:
+`<targetNamespace>-<name>` when `spec.targetNamespace` is set, `<name>` otherwise, unless
+`spec.releaseName` sets it. The release namespace is `spec.targetNamespace`, else the HelmRelease's.
+
 Then install the chart. Existing Rooms and Tasks are untouched. See
-[docs/upgrading.md](../../docs/upgrading.md).
+[docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds).
