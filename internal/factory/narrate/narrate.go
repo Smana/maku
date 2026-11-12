@@ -1178,7 +1178,11 @@ func summary(text string, budget int) string {
 // as the default, with the scoper's why or the reason it was not applied.
 func ProfileChosen(name, source, reason, why string, run int) Event {
 	body := fmt.Sprintf("Agent factory: this task runs under profile `%s`", name)
-	if source != "scoper" && source != "escalation" {
+	switch source {
+	case "scoper", "escalation":
+	case "label":
+		body += " (pinned by a maintainer)"
+	default:
 		body += " (default)"
 	}
 	var because []string
@@ -1192,6 +1196,12 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 		body += " — " + strings.Join(because, "; ")
 	}
 	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
+}
+
+// ProfileRefused says a pinned profile was not applied, in the closed refusal's one sentence (P12):
+// the task runs as if unpinned. One per task: triage decides a pin once.
+func ProfileRefused(name, sentence string) Event {
+	return Event{Key: "profile-refused", Body: fmt.Sprintf("Agent factory: `profile:%s` was not applied: %s", name, sentence)}
 }
 
 // ProfileEscalated says the task runs once more under a richer profile before a maintainer is

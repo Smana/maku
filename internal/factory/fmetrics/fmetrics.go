@@ -176,6 +176,8 @@ type Set struct {
 	overlapScoperRuns    metric.Int64Counter
 	overlapEvaluation    metric.Float64Histogram
 	profileRecs          metric.Int64Counter
+	profilePins          metric.Int64Counter
+	profileAgreement     metric.Int64Counter
 	taskOutcomes         metric.Int64Counter
 	taskUSD              metric.Float64Counter
 	splits               metric.Int64Counter
@@ -403,6 +405,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
 		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied."))
+	check(err)
+	s.profilePins, err = meter.Int64Counter("agent_factory_profile_pins_total",
+		metric.WithDescription("Profile pins seen at triage, by class, profile (other for a name not in config), honoured or refused, and the refusal's code (none when honoured)."))
+	check(err)
+	s.profileAgreement, err = meter.Int64Counter("agent_factory_profile_agreement_total",
+		metric.WithDescription("Resolved tasks of a class that offers a choice, by whether the planner's suggestion and the scoper's recommendation agree (P13)."))
 	check(err)
 	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
 		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
@@ -1135,6 +1143,24 @@ func (s *Set) ProfileRecommendation(ctx context.Context, class, cohort, recommen
 	s.profileRecs.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
 		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment"})),
 		attribute.String("recommended", recommended), attribute.Bool("applied", applied)))
+}
+
+// ProfilePin counts a pin seen at triage (P6): outcome honoured or refused, reason the refusal's
+// closed code or none. profile is a config name or other, bounded by the caller as recommendedLabel
+// bounds a recommendation.
+func (s *Set) ProfilePin(ctx context.Context, class, profile, outcome, reason string) {
+	if reason == "" {
+		reason = "none"
+	}
+	s.profilePins.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("profile", profile),
+		attribute.String("outcome", oneOf(outcome, []string{"honoured", "refused"})), attribute.String("reason", reason)))
+}
+
+// ProfileAgreement counts a resolved task of a class that offers a choice once (P13): agree,
+// differ, no_suggestion (no planner suggestion, the issue path among them) or no_recommendation.
+func (s *Set) ProfileAgreement(ctx context.Context, class, outcome string) {
+	s.profileAgreement.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
+		attribute.String("outcome", oneOf(outcome, []string{"agree", "differ", "no_suggestion", "no_recommendation"}))))
 }
 
 // Split counts a split handoff's outcome once.

@@ -24,6 +24,13 @@ type Pin struct {
 // Honoured is whether the pin stands: a person chose the profile and the factory agreed.
 func (p Pin) Honoured() bool { return p.Name != "" && p.Refused == "" }
 
+// NoTestsPaths is p refused because its repository declares no tests paths: the check that reads
+// the repository, which the reconciler makes on an honoured tests-first pin.
+func (p Pin) NoTestsPaths() Pin {
+	p.Refused = intake.ProfileNoTestsPaths
+	return p
+}
+
 // ResolvePin is the factory's check of a pin (P6), the spec's Triage steps 2 to 4 against config:
 // one profile named, by a maintainer (a label's last applier, or the intake's resolved sponsor
 // login); the profile known, the class with profiles, not live or shadow, the floor or an allowed
