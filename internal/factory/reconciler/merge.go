@@ -25,6 +25,20 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 )
 
+// mergedOutcome is the outcome of a merge the merger App did not make: agent_merged when the
+// agents App made it, else human_merged. Until H3 an implementer or tester token holds
+// contents: write, which can merge a pull request whose required checks are green, in the window
+// between the gate's success and the factory's own merge (PR12). It is logged at error level and
+// otherwise ends as a human merge does.
+func (r *Reconciler) mergedOutcome(cfg *config.Config, t *v1alpha1.Task, pr forge.PR) string {
+	if cfg.AgentsLogin == "" || !forge.SameLogin(pr.MergedBy, cfg.AgentsLogin) {
+		return "human_merged"
+	}
+	r.log().Error("the agents App merged a pull request: an agent token merged past the factory's own merge",
+		"task.id", t.Name, "pr", pr.Number, "merged_by", pr.MergedBy, "merge_commit", pr.MergeCommitSHA)
+	return "agent_merged"
+}
+
 // awaitingCI is §4's merge gate: §5.1's rule decides the pull request, and a decided "arm"
 // merges it now at the head that was decided (R52). A maintainer's Request changes is honoured
 // here as it is in AwaitingHuman (Δ5): the gate's wait must not silence a review.
@@ -45,8 +59,8 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			// R41: a human merge records when, so it counts in the class's breaker window.
 			now := r.mergedAt(pr)
 			t.Status.PullRequest.MergedAt = &now
-			class := t.Spec.PredictedClass
-			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
+			class, outcome := t.Spec.PredictedClass, r.mergedOutcome(cfg, t, pr)
+			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, outcome) })
 			r.handedOffMerged(ctx, t, "human")
 			return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
 		}
@@ -142,8 +156,11 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	evaluated := d // the evaluator's own decision, before the rows read after it, for dual evaluation
 	// A maintainer's approval arms on a human's judgement of the head, never on its diff: reading it
 	// again could only hand the approved head off for the diff the approval already covered (AM1).
+	// Without policy-bot, though, an approved head's diff is read for one row only: a gate path is
+	// never the gate's to merge, approval or not (S9, D11).
 	approved := d.Verdict == "arm" && d.Reason == "maintainer_approved"
-	if !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (policy.readsDiff(r.repo(cfg, t), t.Spec.PredictedClass) ||
+	gatePathRead := approved && !r.repo(cfg, t).Merge.UsesPolicyBot()
+	if gatePathRead || !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (policy.readsDiff(r.repo(cfg, t), t.Spec.PredictedClass) ||
 		cfg.SteeringOn()) {
 		// The diff is read late (steering on: always, to refuse a changed note): only a decision that would arm or shadow a class with a condition
 		// on its diff pays its 2N+1 API calls. The first pass held those conditions vacuously;
@@ -187,8 +204,14 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	if d.Verdict == "arm" && closesParent(t, pr.Body) { // a part closes its own issue only: the parent closes with the last part
 		d = ArmDecision{Verdict: "human", Reason: "closes_parent", Rows: d.Rows}
 	}
-	if r.repo(cfg, t).Merge.GateStatus {
-		r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
+	// D11: an arm's success is posted last, after every check that can still hold it and
+	// immediately before the merge call; every other decision is posted now, on agent pull requests
+	// only (owner ruling). An adopted pull request gets the merger's success alone, just before its
+	// merge, so the status is accurate whether or not the gate's ruleset lets the merger bypass it.
+	armStatus := r.repo(cfg, t).Merge.GateStatus
+	gateStatus := armStatus && !adopted
+	if gateStatus && d.Verdict != "arm" {
+		_ = r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
 	}
 	if reason := policy.loadError(); reason != "" {
 		record(ctx, func(ctx context.Context) { r.Metrics.PolicyLoadError(ctx, t.Spec.Repository, reason) })
@@ -268,11 +291,17 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		return nil
 	}
 	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
+		if gateStatus && err == nil {
+			_ = r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
+		}
 		return err
 	}
 	if !r.grantHolds(ctx, cfg, t, d) { // merge policy stage 5: the grant read again before the call (MP12, MP13)
 		d = ArmDecision{Verdict: "human", Reason: reasonApprovalRequired, Matched: d.Matched, Rows: d.Rows}
 		d.Rows.Grant = ""
+		if gateStatus {
+			_ = r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
+		}
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
 		narrateLater(t, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
@@ -281,16 +310,30 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
 	// read refuses the merge (409) and the new head is decided again — never merged on this
 	// decision (SC-14). A merge GitHub does not allow as it stands (405) is a human's to fix.
+	if armStatus { // D11: a success that cannot be posted is no merge: the next pass tries again
+		if err := r.postGateStatus(ctx, t, pr.HeadSHA, checks, d); err != nil {
+			return err
+		}
+	}
 	if err := r.merger(ctx).Merge(ctx, pr.NodeID, pr.HeadSHA); err != nil {
 		switch {
 		case errors.Is(err, forge.ErrHeadMoved):
+			if armStatus {
+				r.withdrawGateStatus(ctx, t, pr.HeadSHA, ArmDecision{Verdict: "wait", Reason: "head_moved", Matched: d.Matched})
+			}
 			r.to(t, v1alpha1.PhaseAwaitingCI, "head_moved")
 			return nil
 		case errors.Is(err, forge.ErrNotMergeable):
+			if armStatus {
+				r.withdrawGateStatus(ctx, t, pr.HeadSHA, ArmDecision{Verdict: "human", Reason: "not_mergeable", Matched: d.Matched})
+			}
 			r.to(t, v1alpha1.PhaseAwaitingHuman, "not_mergeable")
 			narrateLater(t, r.withRecord(cfg, narrate.WaitingForHuman(t, "not_mergeable"), t, d, pr.HeadSHA))
 			return nil
 		default:
+			if armStatus {
+				r.withdrawGateStatus(ctx, t, pr.HeadSHA, ArmDecision{Verdict: "wait", Reason: "merge_failed", Matched: d.Matched})
+			}
 			return err
 		}
 	}
@@ -984,7 +1027,8 @@ func (r *Reconciler) autoMerging(ctx context.Context, cfg *config.Config, t *v1a
 				return err
 			}
 			ref.MergedHow, ref.ApprovedBy = "", "" // a human's merge, not the merger's: nothing to revert (AM1)
-			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
+			outcome := r.mergedOutcome(cfg, t, pr)
+			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, outcome) })
 			r.handedOffMerged(ctx, t, "human")
 			return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
 		}
@@ -1234,13 +1278,26 @@ func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t
 	if err != nil || CIState(checks, requiredFor(rc, t)) != "SUCCESS" {
 		return false, err
 	}
+	// D11: the merger's own merge carries maku/merge-gate's success, so the status is accurate
+	// whether or not the gate's ruleset lets the merger bypass it. A rollback is never held on it:
+	// a failed post is logged, and the merger's bypass carries the merge.
+	revert := ArmDecision{Verdict: "arm", Matched: "revert"}
+	if rc.Merge.GateStatus {
+		_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", revert)
+	}
 	switch err := r.merger(ctx).Merge(ctx, pr.NodeID, pr.HeadSHA); {
 	case err == nil:
 		t.Status.Narrated = append(t.Status.Narrated, "revert-end-merged")
 		return true, nil
 	case errors.Is(err, forge.ErrHeadMoved), errors.Is(err, forge.ErrNotMergeable):
+		if rc.Merge.GateStatus {
+			_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "human", Reason: "not_mergeable"})
+		}
 		return false, nil // the stall clock still runs: a revert GitHub refuses goes to a maintainer
 	default:
+		if rc.Merge.GateStatus {
+			_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "wait", Reason: "merge_failed"})
+		}
 		return false, err
 	}
 }

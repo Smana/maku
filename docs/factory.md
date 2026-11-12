@@ -1211,6 +1211,137 @@ phases), and every reason narrate has prose for, the gate's refusals (`class_pau
 `patch_too_large`, `file_*`, `oracle_*`, …) and the stops included. Only free text reads `other`,
 such as a hand-written `revoked` annotation.
 
+### The gate's commit status
+
+With `merge.gateStatus: true`, every decision on an agent pull request is posted on its head as
+the commit status `maku/merge-gate`, once per head, state and description. An adopted pull request
+(Renovate's) and a revert pull request get only the merger's `success`, just before it merges them
+([branch protection](#branch-protection-for-the-merge-gate)):
+
+| Decision | State | Description |
+|---|---|---|
+| `arm` | `success` | `<class>: merging`. Posted last, after the integration hold and the grant are read again, immediately before the merge call. A post that fails stops the merge, and the next pass tries again |
+| `shadow` | `pending` | `<class>, shadow: would merge; a maintainer merges` |
+| `wait` | `pending` | `<class>: waiting, <reason>` |
+| `human` | `pending` | `<class>: a human decides, <reason>` |
+| `escalate`, `ci_red`, `ci_cancelled` | `failure` | `<class>: escalated, <reason>` or `<class>: <reason>` |
+
+**Only the factory's own merge is ever `success`.** A shadow decision hands the pull request to a
+human, so its status stays `pending`. Were it `success`, a ruleset requiring `maku/merge-gate`
+would let any writer merge it, an agent token with `contents: write` included. For the same reason,
+a merge call that fails after the `success` puts its state back: `pending` for a moved head
+(`head_moved`), for a merge GitHub refuses as it stands (`not_mergeable`, a 405) and for any other
+error (`merge_failed`), so no `success` is left on a head the factory did not merge.
+
+### Branch protection for the merge gate
+
+`maku/merge-gate` is the gate a production repository's branch protection can require (D11). It is
+posted by the merger App's connection, which asks for `statuses: write` while `merge.gateStatus` is
+on. Once the merger is folded into the factory App, that App is the factory App. The factory posts
+the gate's decisions **on agent pull requests only**: never on a human's pull request. On a pull
+request the merger merges without the gate deciding it as an agent's (an adopted one, Renovate's,
+or a revert pull request), it posts only `success`, just before that merge, so the status is
+accurate either way.
+
+**It is required for agent pull requests, not for humans'.** GitHub cannot scope a required
+status to a pull request's head branch: a branch ruleset's `conditions.ref_name` matches the branch
+being merged into, so a rule on `agent/*` would protect those branches, not merges from them. The
+requirement is therefore a ruleset of its own on the default branch, beside the repository's normal
+one, that the human roles and the merger App bypass when they merge a pull request
+(`bypass_mode: pull_request`). A human's merge skips this ruleset and follows the repository's
+normal rules. The merger's bypass keeps its reverts and adopted merges flowing, which no gate
+decision covers. The agents App holds no repository role and is no bypass actor, so an agent
+token can merge only once the factory has posted `success`, which it does only to merge itself.
+The status is pinned to the App that posts it, so a status of the same name from any other App or
+token does not count:
+
+```bash
+APP_ID=$(cat /path/to/the/merger/app_id)   # the App that posts maku/merge-gate, and merges
+gh api "repos/OWNER/REPO/rulesets" --method POST --input - <<EOF
+{
+  "name": "default branch: the merge gate, for agent pull requests",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+  "bypass_actors": [
+    {"actor_id": 2, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+    {"actor_id": 4, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+    {"actor_id": $APP_ID, "actor_type": "Integration", "bypass_mode": "pull_request"}],
+  "rules": [
+    {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false,
+      "required_status_checks": [{"context": "maku/merge-gate", "integration_id": $APP_ID}]}}
+  ]
+}
+EOF
+```
+
+| Part | What it is for |
+|---|---|
+| `required_status_checks`: `maku/merge-gate` with `integration_id` | An agent pull request merges only when the factory decided `arm` on its head. Without `integration_id`, any App's or token's status of that name would count |
+| Bypass: the maintain (2), write (4) and admin (5) repository roles, on pull requests | People who may merge under the repository's normal rules keep doing so: their own pull requests, and an agent pull request the gate handed to a human (`AwaitingHuman`, shadow decisions). Their merge is judged by the normal ruleset's approvals and checks. Drop a role from the list to keep its holders from merging an agent pull request the gate did not arm |
+| Bypass: the merger App (`Integration`), on pull requests | Its revert pull requests and adopted merges carry no gate decision: without the bypass, a rollback or a deps-patch merge stalls on a 405. The merger's direct merge of a green revert carries the bypass and posts `success` first. GitHub's native auto-merge waits for the status, which that `success` also satisfies. An adopted merge likewise posts `success` just before it |
+| The agents App is no bypass actor | Its tokens, which hold `contents: write` until H3, cannot merge past the gate. Never add it, or any App whose token a run can hold |
+
+The repository's normal ruleset stays as it is: its `pull_request` rule, its CI checks,
+`non_fast_forward` and `deletion`. The factory's own merge must satisfy it as today, with the
+merger App as one of its bypass actors or a `pull_request` rule with 0 approvals.
+
+**Renovate's own automerge is blocked by the gate's ruleset**: its pull requests carry no
+`maku/merge-gate`, and Renovate's App bypasses nothing. Choose one:
+- **Recommended: adopt them.** An [adopted class](#adopted-classes) (`author.adopt`) turns
+  Renovate's pull requests into tasks the merger merges, posting `success` first, under the class's
+  conditions and with Renovate's automerge off.
+- Add Renovate's App as an `Integration` bypass actor of the gate's ruleset. Its merges then follow
+  the normal ruleset alone, as a human's do.
+
+**Direct pushes to the default branch are blocked too.** A `required_status_checks` rule refuses
+any push whose commit lacks the status, for any App, bot or human, and only a bypass actor in
+`always` mode may push. List as `Integration` bypass actors, with `bypass_mode: always`, each App
+that pushes to the default branch directly: Flux's image automation, a release bot, a changelog
+bot. Never list the agents App. A human role's `pull_request` bypass does not cover a push: use the
+normal ruleset's `pull_request` rule to send people through pull requests.
+
+**The demo requires no gate.** The demo and the [quickstart](quickstart.md) run on one GitHub App,
+which is the factory, the merger and every run at once. No ruleset can tell the merger's status from
+an agent's, so a required `maku/merge-gate` would protect nothing there, and they keep the gate
+advisory. A production install, with its two Apps (D12), adds the ruleset above.
+
+**The factory reports whether the rule is in place.** On each fence pass over a repository with
+`merge.gateStatus`, it reads `GET repos/{owner}/{repo}/rules/branches/{default branch}` with the
+factory App's token and sets `maku_factory_merge_gate_required{repository}` to 1 when a ruleset
+requires `maku/merge-gate` from the App that posts it, else 0. Each drop to 0 logs a warning
+([operations](operations.md#factory-metrics)). It never refuses: the factory merges by its own
+decision, and the rule guards the branch against everyone else. A pass that cannot read the rules
+keeps the last value and counts `maku_factory_merge_gate_rules_unread_total{repository}`.
+
+What the observer does not see:
+- **Classic branch protection**, since reading it needs `administration: read`, which no factory
+  App holds: use a ruleset.
+- **Bypass actors.** GitHub's branch-rules read lists the rules, not who may bypass them, so a
+  ruleset that lets an App or the agents' role bypass still reads 1. Review the ruleset's bypass
+  list when you create it.
+- **Enforcement.** The observer reads no enforcement mode. GitHub documents that the read leaves
+  out rulesets in `evaluate` or `disabled` mode, and the observer relies on that. Should an
+  `evaluate` ruleset ever count, 1 would mean "would be required" while nothing blocks. Set the
+  gate's ruleset to `active`, and check it there.
+
+**Retiring policy-bot, in order:**
+1. Set `merge.gateStatus: true`, with the merger App granted `statuses: write`.
+2. Watch `maku/merge-gate` beside `policy-bot: main` for a week
+   (`maku_factory_merge_decisions_total` per verdict).
+3. Move the `.policy.yml` gate list into each class's `deny.protectedFiles`
+   ([merge policies](merge-policies.md)): with policy-bot gone, nothing else keeps a gate path
+   from merging.
+4. Create the gate's ruleset above.
+5. Remove `policy-bot: main` from the normal ruleset.
+6. Set `merge.policyBot: false`. `merge.policyBotLogin` may then be removed.
+
+**policy-bot remains an optional integration.** Keep it when a repository wants rules for pull
+requests the factory does not decide, such as its approval rules for human-authored pull requests:
+the factory posts `maku/merge-gate` only on agent pull requests. With `merge.policyBot` unset or true,
+the gate reads `policy-bot: main` as before.
+
 ### Adopted classes
 
 A class that declares `author.adopt` takes another author's pull requests, Renovate's, instead of
@@ -1988,7 +2119,7 @@ Each `repositories` entry:
 | `triggerLabel` | The start label, `factory/ready` | Required |
 | `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` takes `checks`, `testFirst`, `harness`, `harnessAllowed` and `escalation` only here, and `harness`, `harnessAllowed` and `escalation` only in a [repository's file](merge-policies.md#a-class), where its `harness` is always the floor. `harness` (the floor profile), `harnessAllowed` (the variants the scoper may recommend) and `escalation: {outOfBudget, notConverged}` (a group's step, a profile of `harnessAllowed`) are refused when a name is not in `harnessProfiles`, when a variant has fewer roles, sets a template the floor leaves to triage, has a lower tier (compared when both set one) or drops the `scope` or `judge` of the row the floor runs (a profile without `loop` runs the class's row; an active row's judge defaults to `tier-light`), when a floor or variant has `testFirst` and the repository no `merge.contractCheck`, and on a `live` or `shadow` class with `harnessAllowed` or `escalation`; without `harness` the class runs as before | Required |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin` (required unless `policyBot: false`, which only `demo` allows), `policyBot` (false drops policy-bot from the gate: production refuses it, nil is true), `gateStatus` (true posts the gate's verdict as a commit status on the pull request; `demo` requires it), `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
+| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin` (required unless `policyBot: false`), `policyBot` (false drops policy-bot from the gate and needs `gateStatus: true`, so `maku/merge-gate` is the status branch protection requires; nil is true), `gateStatus` (true posts the gate's verdict as a commit status on the pull request; `demo` requires it), `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `schedules` | `[{name, cron, class, text, dataClass?, probe?, probeAuthor?}]`; `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
 
 `api.repositories`, the run-request API's allowlist, is the entries' names.
@@ -2005,10 +2136,24 @@ changes exactly this:
 | `roomsURL` must be `https://` | `http://localhost[:port]` and `http://127.0.0.1[:port]` also accepted |
 | `api.humanIssuer`, `api.humanJWKS`, `api.clientIDFiles`, `api.groups.*` required | optional, and must all be empty (no group default is applied): `demo: the factory API takes no human tokens` |
 | `api.access` optional | must be unset: `demo: api.access needs an identity provider` |
-| `merge.policyBotLogin` must be a bot login | always required, except under `demo` with `merge.policyBot: false`, where it may be empty (a value that is set must still be a bot login) |
 
-`demo` adds three rules: `merge.policyBot: false` is refused without `demo: true`, and `demo: true`
-requires `merge.gateStatus: true` on every repository. `merge.gateStatus` is allowed without `demo`. With `merge.policyBot: false`, every live class of the repository needs `allowedFiles`: policy-bot's gate-path human row goes with it, and nothing else keeps a gate path from merging.
+`demo: true` also requires `merge.gateStatus: true` on every repository.
+
+`merge.policyBot: false` is not the demo's alone (D11). In any profile it needs
+`merge.gateStatus: true`, since without policy-bot `maku/merge-gate` is the status branch
+protection requires (see [Branch protection for the merge gate](#branch-protection-for-the-merge-gate)),
+and `merge.policyBotLogin` may then be empty (a value that is set must still be a bot login).
+With `merge.policyBot: false`, every live class of the repository needs `allowedFiles`: policy-bot's gate-path human row goes with it, and nothing else keeps a gate path from merging.
+
+**A gate path is never the gate's to merge, approval or not** (policy-bot's S9, kept without it).
+With `merge.policyBot: false`, the gate paths are the `protectedFiles` of every class of the
+repository, where the `.policy.yml` gate list moves: the central config's classes and, for a
+repository whose [merge policy](merge-policies.md) is authoritative, every class and every `any`
+branch of its policy. Under `approveToMerge`, a maintainer's approval arms the merge without the
+class's own conditions, so the gate reads the approved head's diff for this one rule, and checks it
+once over the final decision, so no `any` branch can arm an approval over a gate path. A change to
+a gate path, or a rename from one, is handed off as `gate_path` and stays a human merge on GitHub. `allowedFiles` still bounds what a class arms on its own, not
+what a maintainer approves.
 
 **The demo runs on one GitHub App.** `github.mergerAppIDFile` and `github.mergerKeyFile` may name
 the factory App's own files (`github.appIDFile`, `github.privateKeyFile`): the merger connection

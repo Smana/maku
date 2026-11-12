@@ -43,7 +43,7 @@ const other = "other"
 // (tier, template, source, class, classifier, principal) come from the Task CRD's enums or the
 // factory's config.
 func outcomes() []string {
-	return []string{"auto_merged", "approved_merged", "human_merged", "closed", "reverted", "follow_up"}
+	return []string{"auto_merged", "approved_merged", "human_merged", "agent_merged", "closed", "reverted", "follow_up"}
 }
 func taskOutcomes() []string {
 	return []string{"accepted", "merged_human", "no_op", "closed", "stopped", "rejected", "reverted", "failed"}
@@ -156,6 +156,8 @@ type Set struct {
 	hardeningOutput      metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
+	mergeGateRequired    metric.Int64Gauge
+	mergeGateUnread      metric.Int64Counter
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -355,11 +357,17 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.sandboxPermission, err = meter.Int64Gauge("agent_factory_hardening_sandbox_permission",
 		metric.WithDescription("1 for each GitHub permission and access a sandbox role's or the publisher's octo-sts policy grants on an enforced repository, as the last fence pass read it, else 0 (hardening H2, R2 as evidence)."))
 	check(err)
+	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
+		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
+	check(err)
+	s.mergeGateUnread, err = meter.Int64Counter("agent_factory_merge_gate_rules_unread_total",
+		metric.WithDescription("Fence passes over a repository with merge.gateStatus that could not read whether its default branch requires maku/merge-gate: agent_factory_merge_gate_required keeps its last value meanwhile (D11)."))
+	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
 	check(err)
 	s.prOutcomes, err = meter.Int64Counter("agent_factory_pr_outcomes_total",
-		metric.WithDescription("PR outcomes by class: auto_merged, approved_merged, human_merged, closed, reverted, follow_up (§7, SC-11, AM1)."))
+		metric.WithDescription("PR outcomes by class: auto_merged, approved_merged, human_merged, agent_merged, closed, reverted, follow_up (§7, SC-11, AM1, D11)."))
 	check(err)
 	s.monitorVerdicts, err = meter.Int64Counter("agent_factory_monitor_verdicts_total",
 		metric.WithDescription("Post-merge monitor verdicts (merge gate classes MC7), by class and verdict."))
@@ -956,6 +964,21 @@ var (
 	permissionNames  = []string{"actions", "checks", "contents", "deployments", "issues", "metadata", "packages", "pages", "pull_requests", "statuses", "workflows"}
 	permissionAccess = []string{"read", "write", "admin", "none"}
 )
+
+// MergeGateRequired sets whether repository's default branch requires maku/merge-gate from the App
+// that posts it (D11's branch-rules observer).
+func (s *Set) MergeGateRequired(ctx context.Context, repository string, required bool) {
+	v := int64(0)
+	if required {
+		v = 1
+	}
+	s.mergeGateRequired.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+// MergeGateRulesUnread counts a fence pass that could not read repository's branch rules.
+func (s *Set) MergeGateRulesUnread(ctx context.Context, repository string) {
+	s.mergeGateUnread.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
 
 // SandboxPermissions sets the permission gauge for repository from one fence pass: grants maps a
 // role (a sandbox role, or publisher) to its policy's permission → access. Every pair it names is

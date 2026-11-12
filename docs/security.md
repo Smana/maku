@@ -26,7 +26,7 @@ The design's threats, the controls against each, and the package or mechanism th
 | T12 | Broker compromise | No harness keys (events are pushed); cannot rewrite history; its own CNP; runs only through the factory API, under a live human's token and budget | The database's grants and triggers ([room log](room-log.md#the-guarantees)); the broker's RBAC | Reads every room; can request runs as a connected human; can decide pending approvals, since the triggers bind each approval row to its events, not each `approval_decided` event to a human's act, and a row check would stop nobody holding the broker's credential. The same residual covers a compromised **Slack App** pod, which holds that principal's credentials: it can cast one `forge.push` decision as any linked human without a click — it cannot invent a human, cannot decide another class, cannot escape the two standings or four-eyes, and every such decision is recorded as that person's ([the Slack App](#the-slack-app)). Its room-access reader PAT reads the whole ZITADEL organization, users and their IdP links included (`ORG_OWNER_VIEWER` is org-wide, if read-only), and the factory App's metadata reads answer any login's permission on the App's repositories |
 | T13 | Untrusted issue text reaching a prompt | Every text written outside the platform is defused before an agent reads it: invisible and control characters removed, images and raw HTML defused, fence look-alikes replaced, repeated until nothing changes | `internal/factory/sanitize`: a text whose markup does not settle is replaced whole by `Withheld`, failing closed | It is a filter, not a boundary: egress policy and the merge gate's paths are the controls |
 | T14 | A forged `Agent-Run` trailer | Trailers are provenance hints, never authorisation; the merge gate binds commits to the agents App by push identity: every push to the branch must be the agents App's in GitHub's repository activity | The merge gate; [`images/maku-harness/README.md`](../images/maku-harness/README.md) | The binding is to the App, not the task: any implementer run can push as the bot. Commits are not signed |
-| T15 | Theft or misuse of the merger key | One workload mounts it; the repository's ruleset lets only that App, and a repository admin, bypass a plain merge | The chart's `mergerSecret` (`charts/maku-factory/values.yaml`); the ruleset | Whoever holds the key can merge |
+| T15 | Theft or misuse of the merger key, or of the factory pod's other GitHub keys | One workload mounts it; under policy-bot the repository's ruleset lets only that App, and a repository admin, bypass a plain merge; without it, the ruleset requires `maku/merge-gate` from that App ([the merge gate's Apps](#the-merge-gates-apps)) | The chart's `mergerSecret` (`charts/maku-factory/values.yaml`); the ruleset | Whoever holds the key can merge. The factory pod holds the factory App's key and, with `runTokens`, the agents App's, which octo-sts alone held before: whoever takes the pod can mint any role's token on every repository either App is installed on |
 | T16 | Work started on a repository by someone who may not change it, or through another repository's room or branch | A room's runs act on its `spec.repository`, a resumed branch on its last run's; every human run needs `write` on the repository on GitHub, admins included, failing closed; a label counts only from that repository's maintainers with `write`; each repository has its own GitHub connections | `internal/factory/api` (`admitRoom`, `admitResume`, `mayWrite`), `internal/repoaccess`, `internal/factory/intake`; [factory](factory.md#who-may-start-work-on-a-repository) | A permission revoked inside the 5-minute cache |
 | T17 | Two factories (a rebuilt cluster on a stale pin, a second cloud) acting on one repository | The repository's default branch names its one factory in `.github/agent-factory.yaml`, a gate path; a factory it does not name takes no intake, schedules or API runs and merges nothing; an unread fence ages out to not owned | `internal/factory/fence`; [factory](factory.md#the-ownership-fence) | Up to 15 minutes of a stale answer while GitHub is unreachable |
 
@@ -69,6 +69,48 @@ tokens verify offline and ZITADEL's live 12 h: a user deactivated, locked or del
 (`user_inactive`) within the same 5 minutes, and an open WebSocket is cut on its next ping.
 When the broker asks the factory for a run on a human's behalf, it forwards that human's access
 token, never an asserted `sub`, so the factory proves the principal itself.
+
+## The merge gate's Apps
+
+Two GitHub Apps back the factory (D12). The **factory App** reads and narrates, and the merger is
+beside it or folded into it. The **agents App** is the identity runs push and open pull requests as
+(`agentsLogin`). `maku/merge-gate` is posted by the merger's connection, and the documented
+ruleset requires it from that App's `integration_id`
+([branch protection](factory.md#branch-protection-for-the-merge-gate)) on agent pull requests: the
+human roles and the merger App bypass that ruleset on their merges, and the agents App never
+does. It is `success` only for the factory's own merges: an `arm`, posted after every check that can
+still hold the arm and immediately before the merge call, or the merger's revert and adopted
+merges, just before them. A post that fails stops the merge, and a merge call that fails puts back
+`pending` or `failure`, so no `success` is left standing on a head the factory did not merge. A
+shadow decision stays `pending`, so a status no agent token can post is what opens the branch.
+The demo is the exception: its one App backs every run, so there the status stays advisory and no
+ruleset requires it ([quickstart](quickstart.md)).
+
+**The gate holds only while runs carry App tokens.** Its ruleset's bypass is by repository role.
+Give runs a personal access token of a user with the write, maintain or admin role instead of the
+agents App's tokens, and every run inherits that user's bypass: an agent can then merge an agent
+pull request the gate never armed. Runs get App installation tokens (the minter's, octo-sts's or
+step 2's shared writer), never a person's token.
+
+**D12's invariants, and the tests that hold them.** Every permission a run or the publisher is
+minted with comes from one role table, `minter.Roles` (`internal/factory/minter/roles.go`):
+
+| Invariant | Test |
+|---|---|
+| Keys only from `contents`, `pull_requests`, `issues`, `checks`, `actions`, `metadata`: no role holds `statuses`, `workflows` or `administration` | `TestInvariants`, on both variants and every enforced combination |
+| Access only `read` or `write`; `metadata: read` always; no `checks: write` or `actions: write` | `TestInvariants` |
+| Only the publisher holds `issues: write` | `TestInvariants` |
+| The reviewer's token is read-only (variant HR12) | `TestTableHR12` |
+| No other code builds a run's permission map | `TestOneRoleTable` |
+| A role absent from the table is an error, never read | `TestUnknownRole` |
+
+**Residual: an agent's merge.** Until H3, the implementer's and the tester's tokens keep
+`contents: write`, which can merge a pull request whose required checks are green. Between the
+gate's `success` and the factory's own merge, in the same pass, that window lasts seconds. A
+pull request found merged by `agentsLogin`, at the gate, in `AutoMerging` or handed to a human, is
+counted as `agent_merged` (`maku_factory_pr_outcomes_total`, alert `FactoryAgentMerged`), logged at
+error level, and otherwise ends as a human merge does: it is not reverted. H3 closes it under
+HR12, where those tokens lose `contents: write`.
 
 ## Authorization
 
