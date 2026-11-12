@@ -1340,7 +1340,7 @@ one approval that binds it.
 | `room.task_triaged` | The task enters `Triaged` | `repo` |
 | `room.run_started` | A run enters `Running` | `run` |
 | `room.run_ended` | A run ends: `Succeeded`, `Failed`, `BudgetExhausted` or `Revoked` | `run` |
-| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them; on a protected-path push's approval also `digest`, `protected` (at most 10 paths, each at most 256 bytes) and `protectedMore` (how many more) |
+| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them; on a protected-path push's approval also `digest`, `protected` (at most 10 paths, each at most 256 bytes), `protectedMore` (how many more) and `protectedHidden` (how many were refused as unshowable: a control or format character, or too long; never shown, always counted) |
 | `room.pr_opened` | The first pull request of the task is known | `pr` |
 | `room.verdict_posted` | GitHub accepted the verdict comment | `pr` |
 | `room.merged` | The task enters `Merged`, or its facts carry reason `merged` (a human merge), `merged_verified` or `merged_unverified`, once | `pr` |

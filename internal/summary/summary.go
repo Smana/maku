@@ -419,7 +419,9 @@ var outputDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 const maxDescribedPaths = 3
 
 // describeOutputPush is a protected-path push's line: the row's branch and the digest's first 12
-// hex, then the protected paths it touches, each envelope.ShowablePath.
+// hex, then how many protected paths it refused to show (a control or format character, or too
+// long), before the paths, so the line's length bound never cuts that count, then the paths, each
+// envelope.ShowablePath.
 func describeOutputPush(branch, digest string, protected []string) string {
 	what := "push"
 	if envelope.ValidBranch(branch) {
@@ -427,15 +429,19 @@ func describeOutputPush(branch, digest string, protected []string) string {
 	}
 	what += ", digest " + digest[:12]
 	var shown []string
-	more := 0
+	more, hidden := 0, 0
 	for _, p := range protected {
 		switch {
 		case !envelope.ShowablePath(p):
+			hidden++
 		case len(shown) < maxDescribedPaths:
 			shown = append(shown, p)
 		default:
 			more++
 		}
+	}
+	if hidden > 0 {
+		what += fmt.Sprintf(", %d not shown (hidden characters or too long)", hidden)
 	}
 	if len(shown) > 0 {
 		what += ", protected: " + strings.Join(shown, ", ")

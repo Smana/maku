@@ -53,9 +53,12 @@ type Event struct {
 	// Digest is a protected-path push's bundle digest (64-hex), on a digest-bound approval's wait
 	// (hardening HR28), and Protected the protected paths it touches: at most MaxProtected, then
 	// ProtectedMore counts the rest. Paths are the one text the wait carries, and only these.
-	Digest        string   `json:"digest,omitempty"`
-	Protected     []string `json:"protected,omitempty"`
-	ProtectedMore int      `json:"protectedMore,omitempty"`
+	// ProtectedHidden counts the paths refused as unshowable (envelope.ShowablePath: a control or
+	// format character, or too long): never shown, always counted, so a hidden path is flagged.
+	Digest          string   `json:"digest,omitempty"`
+	Protected       []string `json:"protected,omitempty"`
+	ProtectedMore   int      `json:"protectedMore,omitempty"`
+	ProtectedHidden int      `json:"protectedHidden,omitempty"`
 	// Decision is how the approval closed, on room.approval_closed: approved, denied, expired
 	// or superseded, never free text.
 	Decision string `json:"decision,omitempty"`

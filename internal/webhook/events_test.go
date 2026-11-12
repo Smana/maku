@@ -186,7 +186,8 @@ func TestWaitingCarriesDigest(t *testing.T) {
 		return got[0]
 	}
 	e := wait("forge.push", d)
-	if e.Digest != d || len(e.Protected) != MaxProtected || e.Protected[0] != "go.mod" || e.ProtectedMore != 3 {
+	// A rejected path is never shown, but always counted, so an approver sees that one was hidden.
+	if e.Digest != d || len(e.Protected) != MaxProtected || e.Protected[0] != "go.mod" || e.ProtectedMore != 3 || e.ProtectedHidden != 5 {
 		t.Fatalf("%+v", e)
 	}
 	if b := string(envelope.Must(e)); strings.Contains(b, "secret commit") || strings.Contains(b, "bad") {

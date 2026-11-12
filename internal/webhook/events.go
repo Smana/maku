@@ -73,18 +73,18 @@ const MaxProtected = 10
 
 // protectedPaths reads a digest-bound approval's action for its protected paths: at most
 // MaxProtected, each envelope.ShowablePath (bounded, no control or format character), and how many
-// valid ones it left out. Anything else in the action never leaves the broker.
-func protectedPaths(action json.RawMessage) ([]string, int) {
+// valid ones it left out, and how many it refused to show: a refused path is counted, never
+// dropped, so an approver learns one was hidden. Anything else in the action never leaves the broker.
+func protectedPaths(action json.RawMessage) (out []string, more, hidden int) {
 	var a struct {
 		Protected []string `json:"protected"`
 	}
 	if json.Unmarshal(action, &a) != nil {
-		return nil, 0
+		return nil, 0, 0
 	}
-	var out []string
-	more := 0
 	for _, p := range a.Protected {
 		if !envelope.ShowablePath(p) {
+			hidden++
 			continue
 		}
 		if len(out) == MaxProtected {
@@ -93,7 +93,7 @@ func protectedPaths(action json.RawMessage) ([]string, int) {
 		}
 		out = append(out, p)
 	}
-	return out, more
+	return out, more, hidden
 }
 
 // Clip is v when kind's vocabulary ("reason", "limit", "state", "verdict" or "decision") holds it, ""
@@ -165,7 +165,7 @@ func (t *Tracker) events(room, repo string, ev envelope.Event) []Event {
 		}
 		if digestRE.MatchString(p.Digest) && e.Class == "forge.push" {
 			e.Digest = p.Digest
-			e.Protected, e.ProtectedMore = protectedPaths(p.Action)
+			e.Protected, e.ProtectedMore, e.ProtectedHidden = protectedPaths(p.Action)
 		}
 		if !p.ExpiresAt.IsZero() {
 			e.ExpiresAt = p.ExpiresAt.UTC().Format(time.RFC3339)
