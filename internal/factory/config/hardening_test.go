@@ -377,17 +377,14 @@ func TestHashCoversEnforce(t *testing.T) {
 	}
 }
 
-// HR13: an enforced repository whose runs are not cloud-native-ref's XR runs on a token no role
-// policy scopes. The factory starts, and says so.
-func TestUnscopedTokenWarning(t *testing.T) {
-	hr13 := func(ws []string) bool {
-		return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, "HR13") })
-	}
+// HR13 (the owner's ruling, 2026-11-12): an enforced repository whose runs are not
+// cloud-native-ref's XR would run on a token no role policy scopes. The factory refuses to start.
+func TestUnscopedTokenRefused(t *testing.T) {
 	block := "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher
 	runs := "runs: {group: maku.ogenki.io}\n"
 	for name, tc := range map[string]struct {
-		file string
-		want bool
+		file    string
+		refused bool
 	}{
 		"the XR":                 {good + block, false},
 		"the run controller":     {good + runs + block, true},
@@ -396,12 +393,12 @@ func TestUnscopedTokenWarning(t *testing.T) {
 		"the shared writer":      {good + runs + "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n" + block, true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := Parse([]byte(tc.file))
-			if err != nil {
-				t.Fatal(err)
+			_, err := Parse([]byte(tc.file))
+			if (err != nil) != tc.refused {
+				t.Fatalf("err %v, want refused %v", err, tc.refused)
 			}
-			if hr13(c.Warnings) != tc.want {
-				t.Fatalf("warnings %q, want HR13 %v", c.Warnings, tc.want)
+			if tc.refused && !strings.Contains(err.Error(), "HR13") {
+				t.Fatalf("err %v does not name HR13", err)
 			}
 		})
 	}
