@@ -32,12 +32,10 @@ func TestRunRequesterCarriesTheConfiguredKind(t *testing.T) {
 // the broker's manager, watch, Room controller and suspender, the factory's manager, meter, run
 // client and reconciler. A production file that names runwatch.DefaultKind instead would run a
 // native-runtime deployment against cloud-native-ref's group, namespace and prefix; no file
-// reads it but the two places that define and compare it (the kind itself, and the factory
-// config's runtime checks).
+// reads it but the kind itself.
 func TestProductionCodeNeverWiresTheDefaultKind(t *testing.T) {
 	allowed := map[string]bool{
-		"internal/runwatch/kind.go":         true, // defines it and fills a config's gaps
-		"internal/factory/config/config.go": true, // compares runs.group to it (loop policy needs cloud-native-ref's AgentRun)
+		"internal/runwatch/kind.go": true, // defines it and fills a config's gaps
 	}
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()

@@ -61,6 +61,9 @@ spec:
             - {name: broker-ca, mountPath: /etc/agent-factory/openbao-ca, readOnly: true}
             - {name: github, mountPath: /etc/agent-factory-github, readOnly: true}
             - {name: merger, mountPath: /etc/agent-factory-merger, readOnly: true}
+            {{- if .Values.runTokens.enabled }}
+            - {name: run-tokens, mountPath: /etc/agent-factory-run-tokens, readOnly: true}
+            {{- end }}
             - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
             {{- if not .Values.demo }}
             - {name: oidc, mountPath: /etc/agent-factory-oidc, readOnly: true}
@@ -89,6 +92,11 @@ spec:
           # live or shadow class makes the binary refuse the start when the key is absent: a CrashLoop
           # with a log line, not ContainerCreating (values.yaml: hard prerequisite then).
           secret: {secretName: {{ .Values.mergerSecret }}, defaultMode: 0440, optional: true}
+        {{- if .Values.runTokens.enabled }}
+        - name: run-tokens
+          # The App whose tokens fill agent-git and agent-git-read; 0440 with fsGroup, as the App keys.
+          secret: {secretName: {{ required "runTokens.appSecret is required with runTokens.enabled" .Values.runTokens.appSecret }}, defaultMode: 0440}
+        {{- end }}
         - name: rooms-token
           projected:
             sources:

@@ -68,3 +68,22 @@ func TestEnvtestPreflightNeverRefusesARunWithAPod(t *testing.T) {
 		t.Fatalf("the pod stays: %v", err)
 	}
 }
+
+// PR B: a missing git Secret holds new runs Pending, naming the Secret, and never fails them.
+func TestEnvtestPreflightWaitingHoldsTheRun(t *testing.T) {
+	e := startEnv(t)
+	e.modelSecret(t)
+	const msg = "Secret agents/agent-git-read not found: reviewer and triager runs mount it (runController.gitReadSecret); create it with a token key"
+	e.r.Preflight = &fixedPreflight{Result{State: PreflightWaiting, Check: "gitSecrets", Message: msg}}
+	create(t, e, run("run-wwwwwwww"))
+	res := e.reconcile(t, "run-wwwwwwww")
+	got := e.get(t, "run-wwwwwwww")
+	c := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+	if got.Status.Phase != "Pending" || c == nil || c.Reason != "PreflightPending" || res.RequeueAfter != preflightRetry ||
+		!strings.Contains(c.Message, "gitSecrets: "+msg) || apimeta.IsStatusConditionTrue(got.Status.Conditions, "Invalid") {
+		t.Fatalf("a waiting preflight holds the run Pending: %+v, %+v", got.Status, res)
+	}
+	if err := e.c.Get(e.ctx, key("run-wwwwwwww"), &corev1.Pod{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("no pod while the preflight waits, got %v", err)
+	}
+}

@@ -69,7 +69,8 @@ ykind Deployment 'select(.metadata.name=="run-controller") | (.spec.template.spe
 ykind Deployment 'select(.metadata.name=="run-controller") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "run-controller" and .spec.template.metadata.labels."app.kubernetes.io/name" == "run-controller")' 'controller has its own name label'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | (.rules | map(.resources) | flatten | sort | join(",")) == "agentruns,agentruns/finalizers,agentruns/status,ciliumnetworkpolicies,configmaps,events,leases,pods,secrets,serviceaccounts"' 'controller RBAC in the runs namespace'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="pods") | (.verbs | sort | join(",")) == "create,delete,get,list,watch"' 'controller can revoke (delete pods)'
-ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | ((.resourceNames | join(",")) == "agent-model,agent-git" and (.verbs | join(",")) == "get")' 'get on the model and git Secrets by name'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | ((.resourceNames | join(",")) == "agent-model,agent-git" and (.verbs | join(",")) == "get")' 'get on the model and git Secrets by name; the quickstart shares one PAT, so no read Secret'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.unsafeSharedGitToken == true and (has("gitReadSecret") | not))' 'the quickstart shares its one PAT across roles (unsafeSharedGitToken), with no read Secret'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.metadata.namespace == null and (.rules[0].resourceNames | join(",")) == "room-broker-ca" and (.rules[0].verbs | join(",")) == "get")' 'get on the CA-only Secret by name, in the release namespace'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "room-broker-tls")' 'no Role reads the broker key pair (S-3)'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | select(.resourceNames == null)' 'no Role grants Secrets without resourceNames (S-3)'
@@ -115,6 +116,8 @@ ctl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}")"
 out="$ctl"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-ca" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.caSecretName, clusterDomain'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-ca"' 'the CA Role follows broker.tls.caSecretName'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-model,agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2)'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitReadSecret == "agent-git-read" and (has("unsafeSharedGitToken") | not))' 'the controller config names the read-only Secret by default'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "broker-cert")' 'no Role reads the key pair broker.tls.secretName names'
 ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "maku.ogenki.io"' 'controller RBAC names the group the controller reconciles'
 ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "6443")' 'controller CNP follows apiServerPorts'
@@ -195,6 +198,7 @@ bad 'runs.group "cloud.ogenki.io" with runController.enabled' --set runs.group=c
 bad 'broker.tls.caSecretName must not be broker.tls.secretName' --set broker.tls.caSecretName=room-broker-tls
 bad 'runs.namespace "x" is the release namespace' --set runs.namespace=x
 bad 'broker.tls.secretName is required' --set broker.tls.secretName=
+bad 'runController.gitReadSecret is empty and runController.unsafeSharedGitToken is false' --set runController.gitReadSecret= --set runController.unsafeSharedGitToken=false
 
 # S-1, D6: the factory's CA and the insecure opt-out reach the broker's config; http alone is refused
 fca="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
@@ -256,7 +260,8 @@ out="$si"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
 
 # sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
-# is the old one, byte for byte (runtimeClassName: gvisor).
+# is the old one, byte for byte (runtimeClassName: gvisor), plus PR B's unsafeSharedGitToken (the
+# quickstart's one PAT).
 rcconf() { yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$1"; }
 rcconf "$q" | diff -u tests/golden/rc-quickstart.yaml - >&2 || { echo 'FAIL: with no sandbox key the controller config must be the one before step 2 (tests/golden/rc-quickstart.yaml)' >&2; fail=1; }
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
@@ -337,17 +342,20 @@ bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_
 bad 'does not match pattern' --set-json 'agentRunPolicies.creators=["system:serviceaccount:x:y'"'"' || true || '"'"'"]'
 bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness.repository="ghcr.io/x'"'"']+['"'"'y"'
 
-# install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config; none by
-# default, so the default render keeps its old config
+# install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config. The
+# quickstart shares its one PAT across roles (PR B), so it lists shared_git_token; without that flag
+# it lists none, and the render keeps its old config
 unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .install.unsafe // [] | join(",")' - <<<"$1"; }
-[[ $(unsafe "$q") == "" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists unsafe settings: $(unsafe "$q")" >&2; fail=1; }
+[[ $(unsafe "$q") == "shared_git_token" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token, got '$(unsafe "$q")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "" ]] ||
+  { echo "FAIL: the quickstart with a read Secret lists no unsafe setting" >&2; fail=1; }
 uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
-[[ $(unsafe "$uns") == "unsafe_allow_runc" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc, got '$(unsafe "$uns")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc" ]] ||
+[[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token" ]] ||
   { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "" ]] ||
-  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: nothing listed" >&2; fail=1; }
-[[ $(unsafe "$nonp") == "network_policy_none" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none, got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token" ]] ||
+  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: only the quickstart's shared_git_token listed" >&2; fail=1; }
+[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token" ]] ||
   { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||

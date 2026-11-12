@@ -155,7 +155,7 @@ ykind ConfigMap '.data."config.yaml" | from_yaml | .repository == "Smana/cloud-n
 ykind Service '.spec.ports[] | select(.port == 8082) | .name == "https"' "the API's Service port is named https"
 out="$base"
 # demo: no OIDC volume (no human tokens), and in the runs namespace exactly the Secret access the
-# demo token writer needs: create (unscopable by name) and get, update on agent-git only.
+# run token writer needs: create (unscopable by name) and get, update on agent-git and agent-git-read only.
 ykind Role 'select(.metadata.namespace == "agents") | [.rules[] | select(.resources[] == "secrets")] | length == 0' "default: no Secret rule in the runs namespace"
 # H2 (HR11): no publisher token by default; with hardening.publisher.audience, a projected token of
 # that audience where config.hardening.publisher.octoSTS.tokenFile reads it.
@@ -173,10 +173,20 @@ ykind Deployment "$(vol broker-ca).secret.secretName == \"openbao-ca\"" "demo: t
 runsrole=$(yq eval-all 'select(.kind == "Role" and .metadata.namespace == "agents")' - <<<"$out")
 yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] == "create")] | (length == 1 and ((.[0] | has("resourceNames")) == false) and ((.[0].verbs | join(",")) == "create"))' - <<<"$runsrole" >/dev/null \
   || { echo "FAIL: demo: create on secrets, unscoped, alone" >&2; fail=1; }
-yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] != "create")] | (length == 1 and ((.[0].verbs | sort | join(",")) == "get,update") and ((.[0].resourceNames | join(",")) == "agent-git"))' - <<<"$runsrole" >/dev/null \
-  || { echo "FAIL: demo: get, update on agent-git only" >&2; fail=1; }
+yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] != "create")] | (length == 1 and ((.[0].verbs | sort | join(",")) == "get,update") and ((.[0].resourceNames | join(",")) == "agent-git,agent-git-read"))' - <<<"$runsrole" >/dev/null \
+  || { echo "FAIL: demo: get, update on agent-git and agent-git-read only" >&2; fail=1; }
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "run-tokens")' "demo: the run tokens come from the factory's App: no run-tokens volume"
 ynone 'select(.kind == "ClusterRole") | .rules[] | select(.resources[] == "secrets")' "demo: no cluster-wide Secret access"
 ynone 'select(.kind == "Role" and .metadata.namespace == null) | .rules[] | select(.resources[] == "secrets")' "demo: no Secret access in the factory's own namespace"
+out="$base"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "run-tokens")' "default: no run-tokens volume"
+# runTokens (v4 step 2, PR3): the writer's App mounted, the config pointed at it, both Secrets by name
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set runTokens.enabled=true --set runTokens.appSecret=agents-app)"
+ykind Deployment "$(vol run-tokens).secret | (.secretName == \"agents-app\" and .defaultMode == \"0440\")" "runTokens: the App Secret, 0440"
+ykind Deployment "$(mnt run-tokens) | (.mountPath == \"/etc/agent-factory-run-tokens\" and .readOnly == true)" "runTokens: mounted at /etc/agent-factory-run-tokens"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .runTokens | (.enabled == true and .appIDFile == "/etc/agent-factory-run-tokens/app_id" and .privateKeyFile == "/etc/agent-factory-run-tokens/private_key")' "runTokens: the config reads the mounted App"
+ykind Role 'select(.metadata.namespace == "agents") | .rules[] | select(.resources[] == "secrets" and .verbs[] == "update") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' "runTokens: get, update on both run Secrets"
 out="$base"
 # refuse 'message' --set ...: the render must fail, naming message
 refuse() {
@@ -187,6 +197,8 @@ refuse() {
     echo "FAIL: $* failed, but not with \"$want\": $err" >&2; fail=1
   fi
 }
+refuse 'runTokens.appSecret is required' --set runTokens.enabled=true
+refuse 'config.runTokens and runTokens.enabled' --set runTokens.enabled=true --set runTokens.appSecret=a --set config.runTokens.enabled=true
 refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao
 refuse 'config.api.tls and api.tls.secretName' --set api.tls.secretName=agent-factory-api-tls --set config.api.tls.certFile=/c
 # H-5: config.runs moves the Role and its binding; nothing stays behind in agents.

@@ -105,6 +105,11 @@ The permission matrix, enforced by the broker (`internal/policy`, tested row by 
   (`agents.ogenki.io/operating-mode`, `agents.ogenki.io/remaining-seconds`,
   `agents.ogenki.io/resumed-at`): no spec, label, finalizer, owner or other annotation, the meter's
   included. An install without the chart needs the same policy for the same bound.
+- **The factory may create Secrets in the runs namespace under `runTokens.enabled`**, as in the demo:
+  the run token writer creates `agent-git` and `agent-git-read` when they are absent, and Kubernetes
+  cannot scope `create` by name, so that one verb is unscoped in `agents`; `get` and `update` stay
+  bound to the two names. Without the demo or `runTokens.enabled`, the factory has no Secret access
+  there.
 
 ### A sponsored principal's bounds
 

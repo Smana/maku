@@ -113,6 +113,13 @@ runController:
   # Secrets in runs.namespace the controller reads: model (api_key, model, base_url) and git.
   modelSecret: agent-model
   gitSecret: agent-git
+  # The read-only token reviewer and triager runs mount (contents, pull_requests, issues, checks,
+  # actions: read); implementer and tester runs mount gitSecret. The controller enforces it: a
+  # read-only role never gets the write token.
+  gitReadSecret: agent-git-read
+  # Unsafe: every role shares gitSecret, so a reviewer or triager could push. For a laptop's one
+  # PAT only; it replaces gitReadSecret, which the controller then does not read.
+  unsafeSharedGitToken: false
   # Empty + allowUnsandboxed=false: the controller refuses every run. createRuntimeClass renders
   # the RuntimeClass of that name for the handler. Off by default: it is cluster-scoped, so opt in only
   # where no such RuntimeClass exists.

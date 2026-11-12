@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package demo is what the factory runs only in demo mode, on a laptop cluster with one GitHub App.
-package demo
+// Package runtoken keeps the run-controller's two git Secrets filled with installation tokens: a
+// write token (agent-git) for implementer and tester runs, a read token (agent-git-read) for
+// reviewer and triager runs. The demo mints them from the factory's App; runTokens.enabled mints
+// them from the App it names. Each token covers every served repository of one owner.
+//
+// Interim: replaced by the per-run minter, v4 D10 (rollout step 3).
+package runtoken
 
 import (
 	"context"
@@ -17,8 +22,10 @@ import (
 )
 
 const (
-	// SecretName is the runs' shared git Secret: the run-controller's default gitSecret.
-	SecretName = "agent-git"
+	// WriteSecret is the run-controller's default gitSecret: implementer and tester runs mount it.
+	WriteSecret = "agent-git"
+	// ReadSecret is the run-controller's default gitReadSecret: reviewer and triager runs mount it.
+	ReadSecret = "agent-git-read"
 	// SecretKey is the key the run-controller reads the token from.
 	SecretKey = "token"
 	// ExpiresAnnotation carries the token's expiry (RFC 3339).
@@ -30,50 +37,65 @@ const (
 	retryAfter    = time.Minute
 )
 
-// Permissions is the demo token's scope, in one place: the runs push branches and open pull
-// requests as the factory's own App. It has no statuses: write: one App backs the factory, the
-// merger and every run, and a run that could post a status could forge the gate's maku/merge-gate.
-func Permissions() map[string]string {
+// Write is the write token's scope, in one place: the runs push branches and open pull requests.
+// It has no statuses: write: in the demo one App backs the factory, the merger and every run, and a
+// run that could post a status could forge the gate's maku/merge-gate.
+func Write() map[string]string {
 	return map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read"}
 }
 
-// GitToken keeps the runs' git Secret filled with a fresh installation token minted from the
-// factory's App. A mint failure keeps the old Secret.
-type GitToken struct {
+// Read is the read token's scope: what a reviewer or a triager reads (the code, the pull request,
+// the issue, its checks and workflow runs), and nothing it could write.
+func Read() map[string]string {
+	return map[string]string{"contents": "read", "pull_requests": "read", "issues": "read", "checks": "read", "actions": "read", "metadata": "read"}
+}
+
+// Writers are the two Secrets' writers in namespace: mint is called with each one's scope.
+func Writers(c client.Client, namespace string, mint func(context.Context, map[string]string) (forge.Token, error), log *slog.Logger) []*Writer {
+	w := func(name string, perms func() map[string]string) *Writer {
+		return &Writer{Client: c, Namespace: namespace, Name: name, Log: log,
+			Mint: func(ctx context.Context) (forge.Token, error) { return mint(ctx, perms()) }}
+	}
+	return []*Writer{w(WriteSecret, Write), w(ReadSecret, Read)}
+}
+
+// Writer keeps one git Secret filled with a fresh installation token. A mint failure keeps the old
+// Secret.
+type Writer struct {
 	Client    client.Client
 	Mint      func(context.Context) (forge.Token, error)
 	Namespace string
-	Name      string        // SecretName when empty
+	Name      string        // WriteSecret when empty
 	Every     time.Duration // defaultEvery when zero
 	Clock     func() time.Time
 	Log       *slog.Logger
 }
 
 // NeedLeaderElection is true: only the leader writes the Secret.
-func (g *GitToken) NeedLeaderElection() bool { return true }
+func (g *Writer) NeedLeaderElection() bool { return true }
 
-func (g *GitToken) name() string {
+func (g *Writer) name() string {
 	if g.Name == "" {
-		return SecretName
+		return WriteSecret
 	}
 	return g.Name
 }
 
-func (g *GitToken) every() time.Duration {
+func (g *Writer) every() time.Duration {
 	if g.Every <= 0 {
 		return defaultEvery
 	}
 	return g.Every
 }
 
-func (g *GitToken) now() time.Time {
+func (g *Writer) now() time.Time {
 	if g.Clock != nil {
 		return g.Clock()
 	}
 	return time.Now()
 }
 
-func (g *GitToken) log() *slog.Logger {
+func (g *Writer) log() *slog.Logger {
 	if g.Log != nil {
 		return g.Log
 	}
@@ -83,7 +105,7 @@ func (g *GitToken) log() *slog.Logger {
 // Start writes the Secret, then rewrites it every Every and before its token is within ten
 // minutes of expiry, until ctx ends. A Secret left by a previous leader that is still fresh is
 // kept until it needs renewing.
-func (g *GitToken) Start(ctx context.Context) error {
+func (g *Writer) Start(ctx context.Context) error {
 	wait := g.existingWait(ctx)
 	for {
 		if wait > 0 {
@@ -101,7 +123,7 @@ func (g *GitToken) Start(ctx context.Context) error {
 }
 
 // existingWait is how long the current Secret can stay as it is; zero when absent, unreadable or due.
-func (g *GitToken) existingWait(ctx context.Context) time.Duration {
+func (g *Writer) existingWait(ctx context.Context) time.Duration {
 	var s corev1.Secret
 	if err := g.Client.Get(ctx, client.ObjectKey{Namespace: g.Namespace, Name: g.name()}, &s); err != nil {
 		return 0
@@ -115,20 +137,20 @@ func (g *GitToken) existingWait(ctx context.Context) time.Duration {
 
 // tick mints and writes one token and returns how long to wait for the next: Every, shortened to
 // ten minutes before this token expires; a minute after a failure.
-func (g *GitToken) tick(ctx context.Context) time.Duration {
+func (g *Writer) tick(ctx context.Context) time.Duration {
 	tok, err := g.Mint(ctx)
 	if err != nil {
-		g.log().Error("demo git token: mint failed, keeping the current Secret", "error", err.Error())
+		g.log().Error("run token: mint failed, keeping the current Secret", "secret", g.name(), "error", err.Error())
 		return retryAfter
 	}
 	if err := g.write(ctx, tok); err != nil {
-		g.log().Error("demo git token: write failed", "error", err.Error())
+		g.log().Error("run token: write failed", "secret", g.name(), "error", err.Error())
 		return retryAfter
 	}
 	return min(g.every(), max(retryAfter, tok.ExpiresAt.Add(-refreshWithin).Sub(g.now())))
 }
 
-func (g *GitToken) write(ctx context.Context, tok forge.Token) error {
+func (g *Writer) write(ctx context.Context, tok forge.Token) error {
 	key := client.ObjectKey{Namespace: g.Namespace, Name: g.name()}
 	var s corev1.Secret
 	err := g.Client.Get(ctx, key, &s)

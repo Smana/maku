@@ -13,11 +13,13 @@ demoValues: true
 # The two Secrets the demo needs, rendered by this chart unless an existing Secret is named. Their
 # names are the subcharts' (agent-model, agent-factory-github): existingSecret must equal that name.
 demo:
-  # agent-model in the runs namespace: keys base_url, model, api_key.
+  # agent-model in the runs namespace: keys base_url, model, api_key, and judge_model when
+  # judgeName is set (the completion judge's model on the same endpoint; empty: name).
   model:
     existingSecret: ""
     baseURL: ""
     name: ""
+    judgeName: ""
     apiKey: ""
   # agent-factory-github in the release namespace: keys app_id, private_key. ONE GitHub App backs
   # the factory, the merger and the run token (docs/factory.md#demo).

@@ -9,7 +9,7 @@ import (
 )
 
 // PreflightPassed is the run-controller's preflight gauge (v4 D18): 1 while a check passes, 0 while
-// it refuses runs. check is one of a fixed set (runtimeClass, then network), so the label stays bounded.
+// it refuses runs. check is one of a fixed set (runtimeClass, gitSecrets, then network), so the label stays bounded.
 const PreflightPassed = "maku_run_controller_preflight_passed" //nolint:gosec // a metric name, not a credential
 
 // NewPreflightGauge registers PreflightPassed on reg, the controller-runtime registry the

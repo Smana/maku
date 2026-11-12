@@ -7,6 +7,12 @@
 {{- $_ := set $api "tls" (dict "certFile" "/etc/agent-factory-api-tls/tls.crt" "keyFile" "/etc/agent-factory-api-tls/tls.key") -}}
 {{- $_ := set $cfg "api" $api -}}
 {{- end -}}
+{{- if .Values.runTokens.enabled -}}
+{{- if hasKey $cfg "runTokens" -}}
+{{- fail "config.runTokens and runTokens.enabled: set runTokens.enabled alone; the chart writes config.runTokens to read the mounted App" -}}
+{{- end -}}
+{{- $_ := set $cfg "runTokens" (dict "enabled" true "appIDFile" "/etc/agent-factory-run-tokens/app_id" "privateKeyFile" "/etc/agent-factory-run-tokens/private_key") -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

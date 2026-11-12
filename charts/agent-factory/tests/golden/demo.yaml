@@ -446,6 +446,7 @@ data:
     networkPolicy: none
     modelSecret: "agent-model"
     gitSecret: "agent-git"
+    gitReadSecret: "agent-git-read"
     broker:
       url: "https://room-broker.maku.svc.cluster.local:8443"
       namespace: "maku"
@@ -591,8 +592,9 @@ rules:
 # Source: agent-factory/charts/maku-factory/templates/rbac.yaml
 # AgentRuns: the factory creates them, meters them (annotations only, Kyverno-limited from
 # phase 5), and deletes them. Never Secrets, never another namespace's objects, with one exception:
-# demo (the laptop demo) lets the factory keep the runs' shared agent-git Secret filled with a token
-# minted from its GitHub App. create cannot be scoped by name in Kubernetes; get and update can.
+# demo or runTokens.enabled lets the factory keep the run-controller's agent-git and agent-git-read
+# Secrets filled with tokens minted from a GitHub App. create cannot be scoped by name in
+# Kubernetes; get and update can.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -610,7 +612,7 @@ rules:
     verbs: [create]
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [agent-git]
+    resourceNames: [agent-git, agent-git-read]
     verbs: [get, update]
 
 ---
@@ -702,7 +704,7 @@ rules:
     verbs: [get, create]
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: ["agent-model", "agent-git"]
+    resourceNames: ["agent-model", "agent-git", "agent-git-read"]
     verbs: [get]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
@@ -1098,7 +1100,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: 21e7b427a471f5e3be7ff9d3deee6e78746747cd27a423b9fa4c756138c0d4fe
+        checksum/config: 28357e4403c73b73802e75baebe361bc5ec0a11faa0c06e84a50b847dde7a2c4
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer
