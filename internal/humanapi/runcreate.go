@@ -199,6 +199,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 			return runrequest.TaskResult{}, toolError(err.Error())
 		}
 	}
+	class, suggested := plannedClass(a.Plan)
 	if a.Title != "" {
 		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
@@ -218,7 +219,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	}
 	res, err := s.Tasks.CreateTask(ctx, runrequest.TaskRequest{Repository: a.Repo, Title: a.Title, Text: a.Text,
 		DataClass: a.DataClass, MaxCostUSD: a.MaxCost, OnBehalfOf: a.OnBehalfOf, Ref: a.Ref,
-		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key})
+		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key, Class: class, Suggested: suggested})
 	var refused runrequest.ErrRefused
 	if errors.As(err, &refused) {
 		return runrequest.TaskResult{}, toolError("rejected: " + refused.Reason)
@@ -249,4 +250,18 @@ func (s *Server) runCreated(r runrequest.TaskResult) map[string]any {
 		out["sponsor"] = r.Sponsor
 	}
 	return out
+}
+
+// plannedClass is the class and the suggested profile of the one issue a checked plan files (P7):
+// both bound by the plan's hash, so a call cannot name another class beside it. Empty without a plan.
+func plannedClass(raw json.RawMessage) (class, suggested string) {
+	var plan intake.Plan
+	if !planPresent(raw) || json.Unmarshal(raw, &plan) != nil || len(plan.Issues) != slackFiles {
+		return "", ""
+	}
+	is := plan.Issues[0]
+	if is.Suggestion != nil {
+		suggested = is.Suggestion.Profile
+	}
+	return is.Class, suggested
 }

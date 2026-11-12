@@ -59,6 +59,7 @@ type TaskList struct {
 // +kubebuilder:validation:XValidation:rule="has(self.parent) == has(oldSelf.parent) && (!has(self.parent) || self.parent == oldSelf.parent)",message="spec.parent is fixed at creation"
 // +kubebuilder:validation:XValidation:rule="has(self.origin) == has(oldSelf.origin)",message="spec.origin is fixed at creation"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.scope) || (has(self.scope) && self.scope == oldSelf.scope)",message="spec.scope never changes once set"
+// +kubebuilder:validation:XValidation:rule="has(self.intake) == has(oldSelf.intake) && (!has(self.intake) || self.intake == oldSelf.intake)",message="spec.intake is fixed at creation"
 // +kubebuilder:validation:XValidation:rule="self.source.kind != 'api' || (has(self.maxMicroUSD) && self.maxMicroUSD > 0)",message="an api task carries maxMicroUSD"
 // +kubebuilder:validation:XValidation:rule="self.source.kind != 'api' || !has(self.budget) || (has(self.maxMicroUSD) && (!has(self.budget.runMicroUSD) || self.budget.runMicroUSD <= self.maxMicroUSD) && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <= self.maxMicroUSD))",message="an api task's budget stays under its ceiling"
 // +kubebuilder:validation:XValidation:rule="!has(self.loop) || !has(self.loop.judgeModel) || self.loop.judgeModel != 'mistral-light' || self.dataClass == 'public'",message="a provider judgeModel is a public task's only"
@@ -79,6 +80,10 @@ type TaskList struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.coordinationArtifacts) || (has(self.coordinationParent) && !has(self.kind))",message="only a coordination child consumes landed artifacts (MR7)"
 // +kubebuilder:validation:XValidation:rule="(!has(self.kind) && !has(self.coordinationParent)) || self.dataClass == 'public'",message="a coordination family is public only (MR16)"
 type TaskSpec struct {
+	// Intake is what a planned api task brought from intake (P7): the plan's class and the
+	// planner's suggested profile, and the sponsor's resolved login. Fixed at creation.
+	// +optional
+	Intake *TaskIntake `json:"intake,omitempty"`
 	// Kind is coordination for a parent and integration for an integration attempt (MR2); absent,
 	// the Task is an ordinary work Task, a coordination child included.
 	// +kubebuilder:validation:Enum=coordination;integration
@@ -1025,4 +1030,21 @@ type ConfigGenerations struct {
 	Factory     int64 `json:"factory,omitempty"`
 	Repository  int64 `json:"repository,omitempty"`
 	MergePolicy int64 `json:"mergePolicy,omitempty"`
+}
+
+// TaskIntake is a planned task's intake record (P7, P13). Class is a declared class only when Login
+// maintains the repository at triage; Suggested is read by the agreement metric alone, never by a
+// brief; Login is the sponsor the factory resolved, never a value from the request.
+type TaskIntake struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-]{0,62}$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Class string `json:"class,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-]{0,62}$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Suggested string `json:"suggested,omitempty"`
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Login string `json:"login,omitempty"`
 }

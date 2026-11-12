@@ -257,7 +257,7 @@ func TestRunCreateHoldsTheTaskToItsPlan(t *testing.T) {
 		t.Fatalf("asked the factory %d times", len(f.got))
 	}
 	if got := f.got[0]; got.Repository != plan.Repository || got.Title != plan.Issues[0].Title ||
-		got.Text != plan.Issues[0].Body || got.MaxCostUSD != plan.Budget.CeilingUSD {
+		got.Text != plan.Issues[0].Body || got.MaxCostUSD != plan.Budget.CeilingUSD || got.Class != plan.Issues[0].Class || got.Suggested != "" {
 		t.Fatalf("%+v", got)
 	}
 	for _, c := range []struct {
@@ -426,5 +426,27 @@ func TestRunCreateRepositoryCase(t *testing.T) {
 				t.Fatalf("%s; the factory was asked %+v", got.text, f.got)
 			}
 		})
+	}
+}
+
+// P7: the class and the suggested profile a planned task carries are the plan's own, bound by its
+// hash; a call without a plan carries neither.
+func TestRunCreateClassBoundByPlan(t *testing.T) {
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f))
+	plan := planFixture(t, "slack-one-issue")
+	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "links-solo", Merge: intake.MergeShown{Outcome: "auto"}}
+	args := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+		"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF", "plan": plan, "plan_hash": intake.Hash(plan)}
+	if got := call(t, e, bearer("slack-app"), "run_create", args); got.isError {
+		t.Fatal(got.text)
+	}
+	if len(f.got) != 1 || f.got[0].Class != "docs-links" || f.got[0].Suggested != "links-solo" {
+		t.Fatalf("%+v", f.got)
+	}
+	// A class in the arguments is not run_create's: the schema is closed.
+	args["class"] = "review"
+	if got := call(t, e, bearer("slack-app"), "run_create", args); !got.isError || len(f.got) != 1 {
+		t.Fatalf("a class beside the plan was taken: %s", got.text)
 	}
 }

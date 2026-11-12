@@ -36,6 +36,8 @@ func TestTaskCRDCarriesTheDesignRules(t *testing.T) {
 		"- Split",
 		"spec.parent is fixed at creation",
 		"spec.scope never changes once set",
+		"spec.intake is fixed at creation",
+		"^[a-z0-9][a-z0-9-]{0,62}$",
 		"a part's index is at most its count",
 		"- resume",
 		"resumes:",

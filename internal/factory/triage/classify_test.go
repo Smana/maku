@@ -356,3 +356,37 @@ func TestScheduledClassJoinsCohorts(t *testing.T) {
 		}
 	}
 }
+
+// P7: an intake class a maintainer's plan carried is declared, a maintainer's class: label beats it,
+// and one from a login that no longer maintains the repository is ignored. None sets the cohort (P8).
+func TestIntakeClass(t *testing.T) {
+	for name, c := range map[string]struct {
+		login, label, class, want string
+		declared                  bool
+	}{
+		"from a maintainer":           {"Smana", "", "docs", "docs", true},
+		"from a non-maintainer":       {"someone", "", "docs", "review", false},
+		"a label beats it":            {"Smana", "class:tests", "docs", "tests", true},
+		"a class the config lacks":    {"Smana", "", "nope", "review", false},
+		"revert is the factory's own": {"Smana", "", "revert", "review", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := forgetest.NewFake()
+			var labels []string
+			if c.label != "" {
+				labels = []string{c.label}
+				f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: c.label, At: time.Now()})
+			}
+			f.SetIssue(forge.Issue{Number: 7, Labels: labels})
+			tk := issueTask()
+			tk.Spec.Source.Kind = "api"
+			tk.Spec.Intake = &v1alpha1.TaskIntake{Class: c.class, Login: c.login}
+			cf := testCfg()
+			cf.Evaluation.ControlPercent = 100
+			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, tk)
+			if err != nil || d.PredictedClass != c.want || d.Declared != c.declared || d.Cohort != CohortControl {
+				t.Fatalf("%+v (%v), want %s declared %v", d, err, c.want, c.declared)
+			}
+		})
+	}
+}
