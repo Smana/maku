@@ -43,7 +43,7 @@ const other = "other"
 // (tier, template, source, class, classifier, principal) come from the Task CRD's enums or the
 // factory's config.
 func outcomes() []string {
-	return []string{"auto_merged", "approved_merged", "human_merged", "closed", "reverted", "follow_up"}
+	return []string{"auto_merged", "approved_merged", "human_merged", "agent_merged", "closed", "reverted", "follow_up"}
 }
 func taskOutcomes() []string {
 	return []string{"accepted", "merged_human", "no_op", "closed", "stopped", "rejected", "reverted", "failed"}
@@ -363,7 +363,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
 	check(err)
 	s.prOutcomes, err = meter.Int64Counter("agent_factory_pr_outcomes_total",
-		metric.WithDescription("PR outcomes by class: auto_merged, approved_merged, human_merged, closed, reverted, follow_up (§7, SC-11, AM1)."))
+		metric.WithDescription("PR outcomes by class: auto_merged, approved_merged, human_merged, agent_merged, closed, reverted, follow_up (§7, SC-11, AM1, D11)."))
 	check(err)
 	s.monitorVerdicts, err = meter.Int64Counter("agent_factory_monitor_verdicts_total",
 		metric.WithDescription("Post-merge monitor verdicts (merge gate classes MC7), by class and verdict."))

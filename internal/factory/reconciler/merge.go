@@ -25,6 +25,20 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 )
 
+// mergedOutcome is the outcome of a merge the merger App did not make: agent_merged when the
+// agents App made it, else human_merged. Until H3 an implementer or tester token holds
+// contents: write, which can merge a pull request whose required checks are green, in the window
+// between the gate's success and the factory's own merge (PR12). It is logged at error level and
+// otherwise ends as a human merge does.
+func (r *Reconciler) mergedOutcome(cfg *config.Config, t *v1alpha1.Task, pr forge.PR) string {
+	if cfg.AgentsLogin == "" || !forge.SameLogin(pr.MergedBy, cfg.AgentsLogin) {
+		return "human_merged"
+	}
+	r.log().Error("the agents App merged a pull request: an agent token merged past the factory's own merge",
+		"task.id", t.Name, "pr", pr.Number, "merged_by", pr.MergedBy, "merge_commit", pr.MergeCommitSHA)
+	return "agent_merged"
+}
+
 // awaitingCI is §4's merge gate: §5.1's rule decides the pull request, and a decided "arm"
 // merges it now at the head that was decided (R52). A maintainer's Request changes is honoured
 // here as it is in AwaitingHuman (Δ5): the gate's wait must not silence a review.
@@ -45,8 +59,8 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			// R41: a human merge records when, so it counts in the class's breaker window.
 			now := r.mergedAt(pr)
 			t.Status.PullRequest.MergedAt = &now
-			class := t.Spec.PredictedClass
-			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
+			class, outcome := t.Spec.PredictedClass, r.mergedOutcome(cfg, t, pr)
+			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, outcome) })
 			r.handedOffMerged(ctx, t, "human")
 			return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
 		}
@@ -984,7 +998,8 @@ func (r *Reconciler) autoMerging(ctx context.Context, cfg *config.Config, t *v1a
 				return err
 			}
 			ref.MergedHow, ref.ApprovedBy = "", "" // a human's merge, not the merger's: nothing to revert (AM1)
-			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
+			outcome := r.mergedOutcome(cfg, t, pr)
+			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, outcome) })
 			r.handedOffMerged(ctx, t, "human")
 			return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
 		}

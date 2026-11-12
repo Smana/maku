@@ -30,3 +30,12 @@ func TestMergeGateRequiredGauge(t *testing.T) {
 		t.Errorf("missing %s", want)
 	}
 }
+
+// PR12: a merge by the agents App is its own outcome, not folded into other.
+func TestAgentMergedIsAnOutcome(t *testing.T) {
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.PROutcome(t.Context(), "docs-links", "agent_merged")
+	if want := `maku_factory_pr_outcomes_total{class="docs-links",outcome="agent_merged",principal="other",repository="other"} 1`; !strings.Contains(scrape(), want+"\n") {
+		t.Errorf("missing %s", want)
+	}
+}
