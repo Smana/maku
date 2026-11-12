@@ -768,10 +768,71 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	case run.Phase == "Succeeded" && t.Status.PullRequest != nil:
 		return r.afterWriter(ctx, cfg, t)
 	case run.Phase == "Succeeded":
-		return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, "no_pr")
+		why, err := r.noPRReason(ctx, t)
+		if err != nil {
+			return err
+		}
+		if why == "no_pr" {
+			return r.end(ctx, cfg, t, v1alpha1.PhaseNoOp, why)
+		}
+		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, why) // #476: committed work is never a no-op
 	default:
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 	}
+}
+
+// Reasons of an implementer run that committed and opened no pull request (#476).
+const (
+	reasonCommittedNoPR = "committed_no_pr" // the commit never left the sandbox: the work is lost
+	reasonPushedNoPR    = "pushed_no_pr"    // the branch is on the remote: a maintainer can open the pull request
+)
+
+// committedNotes are the harness's room notes that say the run committed or pushed.
+var committedNotes = []string{"Harness (implementer): the agent committed.", "Harness (implementer): the agent pushed its branch."}
+
+// noPRReason is why a run that finished without a pull request ended: no_pr when the agent
+// changed nothing (a no-op), pushed_no_pr when its branch reached the remote, committed_no_pr when
+// it committed and the commit exists nowhere else. The harness never opens the pull request or
+// pushes on a commit: the agent does both, so a note of a commit with no push is a lost commit.
+func (r *Reconciler) noPRReason(ctx context.Context, t *v1alpha1.Task) (string, error) {
+	cur := current(t)
+	pushed, err := r.branchPushed(ctx, "agent/"+t.Name)
+	if err != nil {
+		return "", err
+	}
+	if pushed {
+		return reasonPushedNoPR, nil
+	}
+	evs, _, err := r.roomTail(ctx, t.Status.RoomRef, cur.StartSeq, func(e envelope.Event) bool {
+		return e.Type == envelope.Message && e.RunID == cur.ID
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, e := range evs {
+		var p envelope.MessagePayload
+		if json.Unmarshal(e.Payload, &p) == nil && p.Kind == envelope.KindProgress && slices.Contains(committedNotes, p.Text) {
+			return reasonCommittedNoPR, nil
+		}
+	}
+	return "no_pr", nil
+}
+
+// branchPushed reports whether the branch exists on the remote: its newest recorded push is not a deletion.
+func (r *Reconciler) branchPushed(ctx context.Context, branch string) (bool, error) {
+	ps, err := r.gh(ctx).BranchActivity(ctx, branch)
+	if err != nil && !errors.Is(err, forge.ErrActivityTruncated) {
+		return false, err
+	}
+	for i := len(ps) - 1; i >= 0; i-- {
+		switch ps[i].Type {
+		case "push", "force_push", "branch_creation":
+			return true, nil
+		case "branch_deletion":
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // handoffTo selects the handoffs to role: the triager's proposal exists only if it made one (R38).

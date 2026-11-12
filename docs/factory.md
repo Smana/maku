@@ -77,6 +77,7 @@ stateDiagram-v2
   Implementing --> AwaitingCI: solo template done
   Implementing --> AwaitingHuman: revision a maintainer asked for
   Implementing --> NoOp: no pull request, nothing to change
+  Implementing --> Escalated: committed or pushed, no pull request (committed_no_pr, pushed_no_pr)
   Implementing --> Done: triager proposal ready
   Reviewing --> Queued: next verifier, changes, no verdict
   Reviewing --> AwaitingCI: approved
@@ -434,6 +435,8 @@ every maintainer.
 | `run_unschedulable` | The cluster did not admit the run within `caps.maxPendingMinutes` |
 | `loop_unsupported` | The class has a `loops` row, `search: true` or `checks: true`, but the cluster refused the run claim's `spec.loop` (its AgentRun schema predates the loop policy, `loop.checks` or `loop.search`). No run started and none is retried: roll out crossplane-configuration with `spec.loop` (and `loop.checks`, `loop.search`) first ([operations](operations.md)) |
 | `run_lost`, `deleted` | The run disappeared, or its claim was deleted |
+| `committed_no_pr` | The run finished after committing, but its branch never reached the remote: the commit existed only in the sandbox and is lost. Comment `/factory retry` |
+| `pushed_no_pr` | The run pushed its branch but opened no pull request. Open one from `agent/<task>`, or comment `/factory retry` |
 | `revoked` | The run was stopped by hand |
 | `budget-run` | The run spent its run cap |
 | `needs_author` | The scoper asked the issue's author one question: the issue gets it (a public task's, quoted) and the label `factory/needs-author`. The author edits the issue and a maintainer re-applies `factory/ready` (a new task, scoped again), or a maintainer comments `/factory retry` (the task proceeds on the scoper's first assumption), or it expires |
@@ -456,7 +459,7 @@ A task ends with one of these:
 | Phase | Reasons |
 |---|---|
 | `Done` | `children_merged` (a split's last part merged), `merged` (by a maintainer), `merged_verified` (auto-merged, main green for `merge.verifyFor`), `merged_unverified` (auto-merged, main's CI gave no result within twice `merge.verifyFor`, a check cancelled or never finished; the comment names the merge commit, and `factory/revert` still reverts it within `merge.revertWindow`), `proposal_ready` (a triager's proposal: label its issue `factory/publish`, read the new issue the factory files, then label that one `factory/ready`) |
-| `NoOp` | `no_pr` (the run opened no pull request), `no_action` (the triager found nothing to change). Add detail and re-apply `factory/ready` |
+| `NoOp` | `no_pr` (the run changed nothing and opened no pull request), `no_action` (the triager found nothing to change). Add detail and re-apply `factory/ready` |
 | `Rejected` | `text_too_long` (over `caps.maxTextBytes`), `daily_task_cap` (`caps.tasksPerDay`), `overlap_active_duplicate` (an enforced exact or scoper-confirmed active outcome match; see [outcome-overlap detection](#outcome-overlap-detection)). Fix it and re-apply `factory/ready`; an overlap refusal's citations identify the existing work to reuse or coordinate with |
 | `Closed` | `pr_closed`, `stale`, `child_dropped` (a part's issue closed unmerged, or a part reverted) |
 | `Stopped` | `stopped_by_label`, `stopped_by_annotation`, `superseded`, `kill_switch`, `escalation_expired`, `family_dropped` (a part stopped because another part was dropped or reverted) |

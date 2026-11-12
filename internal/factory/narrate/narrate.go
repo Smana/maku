@@ -243,6 +243,8 @@ func reasons() map[string]string {
 		"budget-task":                 "the task's token budget has no room left for another full run",
 		"run_lost":                    "the run disappeared",
 		"no_pr":                       "the agent opened no pull request",
+		"committed_no_pr":             "the agent committed but never pushed, so its work was lost with the sandbox and no pull request was opened",
+		"pushed_no_pr":                "the agent pushed its branch but opened no pull request",
 		"scope_changed":               "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
 		"no_action":                   "the triager found nothing to change",
 		"no_proposal":                 "the triager's run made no proposal to publish",
