@@ -28,6 +28,8 @@ type api interface {
 	RemoveLabel(ctx context.Context, number int, label string) error
 	PullRequestForBranch(ctx context.Context, branch string) (int, error)
 	PullRequest(ctx context.Context, number int) (forge.PR, error)
+	CreatePR(ctx context.Context, base, head, title, body string, draft bool) (forge.PR, error)
+	EditPR(ctx context.Context, number int, title, body string) (forge.PR, error)
 }
 
 var _ api = (*Fake)(nil)
@@ -317,5 +319,28 @@ func TestFakeReadsAnAgentsWrites(t *testing.T) {
 	f.FailLists(errors.New("down"))
 	if _, err := f.IssuesByAuthorSince(ctx, "agents[bot]", at); err == nil {
 		t.Fatal("FailLists ignored")
+	}
+}
+
+// The publisher's writes (hardening HR11): a pull request opened as the fake's Author, found by its
+// branch, edited in place, and refused a second time while it is open.
+func TestFakeCreateEditPR(t *testing.T) {
+	f := NewFake()
+	f.Author = "ogenki-agents[bot]"
+	p, err := f.CreatePR(t.Context(), "main", "agent/t1", "docs: x", "body one", true)
+	if err != nil || p.Author != "ogenki-agents[bot]" || p.State != "OPEN" || p.URL == "" {
+		t.Fatalf("created %+v %v", p, err)
+	}
+	if n, _ := f.PullRequestForBranch(t.Context(), "agent/t1"); n != p.Number {
+		t.Errorf("branch's pull request %d, want %d", n, p.Number)
+	}
+	if _, err := f.CreatePR(t.Context(), "main", "agent/t1", "docs: x", "body one", false); !errors.Is(err, forge.ErrPRExists) {
+		t.Errorf("a second open: %v", err)
+	}
+	if _, err := f.EditPR(t.Context(), p.Number, "docs: y", "body two"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.PullRequest(t.Context(), p.Number); got.Title != "docs: y" || got.Body != "body two" {
+		t.Errorf("edited %+v", got)
 	}
 }

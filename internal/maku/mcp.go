@@ -66,8 +66,8 @@ type Relay struct {
 	FactoryLogin string
 	// Label puts a label on the issue just filed, as the developer; nil refuses to start one.
 	Label Labeler
-	// ClassLabel puts a planned issue's class:<c> label on it before Label starts the factory (P7);
-	// nil starts without one, and the factory then predicts the class itself.
+	// ClassLabel puts a planned issue's class:<c> label, then its profile:<p> pin, on it before Label
+	// starts the factory (P5, P7); nil starts without them, and the factory then decides both itself.
 	ClassLabel Labeler
 	// Dir is the directory maku keeps its files in: what the client declares at initialize is
 	// recorded beside config.json there. Empty records nothing, so a relay built as a probe (maku

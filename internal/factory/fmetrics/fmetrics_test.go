@@ -559,6 +559,29 @@ func TestProfileRecommendation(t *testing.T) {
 	}
 }
 
+// P6, P13: pins seen at triage and the planner/scoper agreement, each a closed outcome.
+func TestPinMetric(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ProfilePin(ctx, "review", "review-frontier", "honoured", "")
+	s.ProfilePin(ctx, "docs-links", "other", "refused", "profile_unknown")
+	s.ProfileAgreement(ctx, "review", "agree")
+	s.ProfileAgreement(ctx, "review", "no_suggestion")
+	s.ProfileAgreement(ctx, "review", "invented")
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_profile_pins_total{class="review",outcome="honoured",profile="review-frontier",reason="none"} 1`,
+		`maku_factory_profile_pins_total{class="docs-links",outcome="refused",profile="other",reason="profile_unknown"} 1`,
+		`maku_factory_profile_agreement_total{class="review",outcome="agree"} 1`,
+		`maku_factory_profile_agreement_total{class="review",outcome="no_suggestion"} 1`,
+		`maku_factory_profile_agreement_total{class="review",outcome="other"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
 // The comparison the evaluation makes: tasks the scoper recommended X for, control (the floor ran)
 // against treatment (X ran, or the step past it); no recommendation is none.
 func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {

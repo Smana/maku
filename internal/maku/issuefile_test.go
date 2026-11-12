@@ -964,3 +964,44 @@ func TestIssueFileRefusesAReplannedPlan(t *testing.T) {
 		t.Fatalf("filed=%d asked=%d %s", r.filed, r.asked, got)
 	}
 }
+
+// pinnedCheck is plan_check's answer for the single plan in class review pinned to profile.
+func pinnedCheck(t *testing.T, maintainer *bool, profile string) string {
+	t.Helper()
+	p := planFixture(t, "single")
+	p.Issues[0].Class, p.Issues[0].Profile = "review", profile
+	p.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-frontier", Merge: intake.MergeShown{Outcome: "approval"}}
+	d := map[string]any{"plan": p, "hash": intake.Hash(p), "canStart": true}
+	if maintainer != nil {
+		d["maintainer"] = *maintainer
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return planCheckResult(string(b))
+}
+
+// P7, P5: a pinned plan's start applies class:, then profile:, then factory/ready, so triage reads
+// both; the form says the profile is pinned. A non-maintainer gets neither label.
+func TestStartLabelsThePinInOrder(t *testing.T) {
+	r, calls := startRelay(t, pinnedCheck(t, boolp(true), "review-frontier"))
+	r.issueFile(t.Context(), planArgs(t))
+	want := []string{"class:Smana/ai-native-ref#7+class:review", "class:Smana/ai-native-ref#7+profile:review-frontier",
+		"ready:Smana/ai-native-ref#7+factory/ready"}
+	if fmt.Sprint(*calls) != fmt.Sprint(want) {
+		t.Fatalf("%v, want %v", *calls, want)
+	}
+	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "profile review-frontier, pinned") {
+		t.Fatalf("the form does not show the pin: %s", msg)
+	}
+
+	r, calls = startRelay(t, pinnedCheck(t, boolp(false), "review-frontier"))
+	r.issueFile(t.Context(), planArgs(t))
+	if fmt.Sprint(*calls) != fmt.Sprint([]string{"ready:Smana/ai-native-ref#7+factory/ready"}) {
+		t.Fatalf("non-maintainer: %v", *calls)
+	}
+	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "class:review and profile:review-frontier labels are skipped") {
+		t.Fatalf("the form does not say the pin will not count: %s", msg)
+	}
+}

@@ -327,6 +327,11 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	if ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
+	if revised != nil && intake.IsProfileRevision(*a.Plan, *a.Candidate) {
+		// A pin is a revision with no model call and no daily plan: the plan is final (Revise
+		// admits a pin only once every gap is answered), so it is checked as plan_check checks it.
+		return s.finishPinned(ctx, run, *revised, candidates, a.OnBehalfOf)
+	}
 	// A request that names a repository is planned for that repository or refused, before a daily
 	// slot or a model call is spent: the planner never picks a different one (#469). The reply that
 	// re-plans carries its words in the context, so it is read the same way.
@@ -528,11 +533,20 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	// plan_check is an external filing door in both shapes: intermediate planner output may carry
 	// markers, but a checked plan may not.
 	classes := s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)
+	if a.Candidate != nil && intake.IsProfileRevision(a.Plan, *a.Candidate) {
+		plan = intake.MaterialRoles(plan, classes) // G3: the pinned profile's roles are material
+	}
 	if ref := intake.CheckFinal(plan, candidates, classes); ref != nil {
+		return nil, s.planCheckRefused(ctx, surface, ref)
+	}
+	// A pin is checked against the catalogue the caller reads (P6): the factory checks it again.
+	if ref := s.checkPins(ctx, p, a.OnBehalfOf, plan, surface); ref != nil {
 		return nil, s.planCheckRefused(ctx, surface, ref)
 	}
 	// The suggestion is the client's copy: what is shown and filed is the broker's (review B2).
 	plan = intake.Resuggest(plan, classes)
+	// A kept factory's choice is written down beside the suggestion it differed from (P4).
+	plan = intake.RecordProfiles(plan)
 	// The second half of the one validator: the template and the redactor issue_draft applies, so a
 	// plan whose text a secret sits in is refused here rather than filed.
 	if err := s.checkPlanDrafts(ctx, plan); err != nil {
@@ -550,6 +564,9 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	checked := planChecked{Plan: plan, Hash: plan.Hash, CanStart: canStart, CanStartWhy: why}
 	if c, err := s.Catalogue.Get(ctx, p, plan.Repository, a.OnBehalfOf); err == nil {
 		checked.Maintainer = &c.Maintainer
+	}
+	if s.choices.first(plan.Hash) { // issue_file checks the plan the skill checked: count it once
+		s.countChoices(ctx, plan, surface)
 	}
 	return viewResult{text: b.String(), data: checked}, nil
 }

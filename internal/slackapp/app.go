@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
@@ -67,6 +68,9 @@ type BrokerAPI interface {
 	// IntakePlan is the governed planner (CD18): a mention's words become the plan/v1 the proposal
 	// message carries. It files nothing, and ErrUnknownTool is a broker without the tool.
 	IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error)
+	// ClassesList is classes_list for one class of a repository, read for the Slack user named: its
+	// profiles and whether that user may pin one (P5). It changes nothing.
+	ClassesList(ctx context.Context, repository, class, onBehalfOf string) (catalogue.Catalogue, error)
 	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
 	// thing the App decides, and only for forge.push.
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)

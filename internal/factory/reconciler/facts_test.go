@@ -93,10 +93,12 @@ func TestFactsOfProfile(t *testing.T) {
 	task := issueTask("3buqdlot", 7, "x")
 	task.Status.Phase = v1alpha1.PhaseDone
 	task.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
-		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files.",
+		Requested: "review-pair", Refused: "profile_not_allowed"}
 	f := factsOf(task)
 	want := &envelope.ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
-		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files.",
+		Requested: "review-pair", Refused: "profile_not_allowed"}
 	if !reflect.DeepEqual(f.Profile, want) {
 		t.Fatalf("profile = %+v, want %+v", f.Profile, want)
 	}

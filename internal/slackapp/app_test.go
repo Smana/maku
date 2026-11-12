@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/sponsored"
 	"github.com/Smana/maku/internal/summary"
@@ -606,7 +607,12 @@ type stubBroker struct {
 	// answer and intakeErr the failure it answers instead. intakeAnswer, when set, answers each
 	// request itself, so a test can tell one plan from the next; intakeGate, when set, blocks the
 	// call until the test releases it, which is how two replies are put inside one re-plan.
-	intake       []IntakeRequest
+	intake []IntakeRequest
+	// classes is classes_list's catalogue (nil: an error), classesErr its failure, classesAsked
+	// every call as repository|class|on_behalf_of.
+	classes      *catalogue.Catalogue
+	classesErr   error
+	classesAsked []string
 	intakeResult IntakeResult
 	intakeErr    error
 	intakeAnswer func(IntakeRequest) IntakeResult

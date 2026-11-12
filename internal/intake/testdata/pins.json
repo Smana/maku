@@ -1,0 +1,43 @@
+{
+  "comment": "One pin rule, two readers (P6, P12): intake.CheckPin reads this config through its catalogue and triage.ResolvePin reads it directly; both hold every row, so the two cannot drift. triage is the code triage answers where it differs from intake's.",
+  "repository": "Smana/demo",
+  "config": {
+    "templates": {
+      "solo": {"roles": ["implementer"]},
+      "pair": {"roles": ["implementer", "reviewer"]},
+      "trio": {"roles": ["implementer", "tester", "reviewer"]}
+    },
+    "harnessProfiles": {
+      "links-solo": {"template": "solo", "tier": "light"},
+      "review-floor": {"checks": true},
+      "review-pair": {"template": "pair"},
+      "review-frontier": {"template": "trio", "tier": "frontier", "checks": true, "testFirst": true},
+      "review-loose": {}
+    },
+    "repositories": [{
+      "name": "Smana/demo",
+      "maintainers": ["Smana"],
+      "classes": {
+        "docs-links": {"live": true, "harness": "links-solo"},
+        "shadowed": {"shadow": true, "harness": "links-solo"},
+        "bare": {},
+        "docs": {"harness": "review-pair"},
+        "review": {"harness": "review-floor", "harnessAllowed": ["review-pair", "review-frontier", "review-loose"]}
+      }
+    }]
+  },
+  "pins": [
+    {"name": "unknown profile", "class": "review", "profile": "ghost", "maintainer": true, "public": true, "want": "profile_unknown"},
+    {"name": "class without profiles", "class": "bare", "profile": "review-pair", "maintainer": true, "public": true, "want": "class_no_profiles"},
+    {"name": "live class", "class": "docs-links", "profile": "review-pair", "maintainer": true, "public": true, "want": "class_profile_fixed"},
+    {"name": "live class, its own floor", "class": "docs-links", "profile": "links-solo", "maintainer": true, "public": true, "want": "class_profile_fixed"},
+    {"name": "shadow class", "class": "shadowed", "profile": "review-pair", "maintainer": true, "public": true, "want": "class_profile_fixed"},
+    {"name": "not the floor nor allowed", "class": "docs", "profile": "review-frontier", "maintainer": true, "public": true, "want": "profile_not_allowed"},
+    {"name": "allowed without a template", "class": "review", "profile": "review-loose", "maintainer": true, "public": true, "want": "profile_not_offered", "triage": ""},
+    {"name": "not a maintainer", "class": "review", "profile": "review-frontier", "maintainer": false, "public": true, "want": "not_maintainer"},
+    {"name": "tests first on internal data", "class": "review", "profile": "review-frontier", "maintainer": true, "public": false, "want": "profile_internal"},
+    {"name": "honoured floor", "class": "docs", "profile": "review-pair", "maintainer": true, "public": true, "want": ""},
+    {"name": "honoured allowed", "class": "review", "profile": "review-pair", "maintainer": true, "public": true, "want": ""},
+    {"name": "honoured tests first on public data", "class": "review", "profile": "review-frontier", "maintainer": true, "public": true, "want": ""}
+  ]
+}

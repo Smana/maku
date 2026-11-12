@@ -337,6 +337,10 @@ func TestSkillShowsTheSuggestion(t *testing.T) {
 	for _, want := range []string{
 		"**Show the suggestion first.** Relay each issue's suggestion as the plan returns it",
 		"| what classes and harness profiles a repository offers | `classes_list`",
+		"**A pin is the developer's choice.** If `classes_list` says the developer is a maintainer, offer three answers",
+		"Otherwise show the suggestion only and offer no pin.",
+		"call `plan_check` with only `profile` changed",
+		"never apply `class:` or `profile:` labels yourself",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("SKILL.md lacks %q", want)

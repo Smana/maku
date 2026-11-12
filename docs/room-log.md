@@ -171,7 +171,19 @@ a record's `bytes` is at most 8 MiB.
 A reader trusts the broker's stamp, never the payload (`envelope.ReadOutput`). Every output event
 must come by the client origin. A request counts only from the run's own agent actor
 (`agent:<runId>`), and an answer or a shadow only from the actor `system:factory`, matched
-exactly. Every record is validated on every read.
+exactly. Every record is validated on every read. The factory's two readers both go through it:
+the applier, which answers a request only when it is stamped so, and the drill scorer, for which
+an answer the factory did not stamp neither answers a request nor scores, so the request reads
+`request_unanswered`.
+
+An applied `output_applied` digests the payload as the factory published it, after T2. Its
+GitHub object carries the output id, so a crash between the write and the answer never writes
+twice: `Agent-Output: <id>` in the pull request's footer, and `<!-- maku-output:<id> -->` as the
+last line of a comment or an issue body. The applier reads a room to its last seq before it
+answers anything, and a request whose own write it finds is answered `output_applied` without a
+second check. A refusal GitHub makes for good is `output_unavailable`. A request still
+unanswered when its run's answer wait runs out, under the kill switch for instance, is
+`output_expired`.
 
 The factory writes its three kinds through
 [`POST /v1/rooms/{id}/outputs`](api.md#post-v1roomsidoutputs). The append's idempotency key is

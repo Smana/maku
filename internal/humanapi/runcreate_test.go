@@ -467,3 +467,44 @@ func TestRunCreateClassBoundByPlan(t *testing.T) {
 		})
 	}
 }
+
+// P5, P6: a planned task carries the plan's pin, bound by its hash, to the factory; a pin the
+// catalogue refuses files nothing; the filed choice is counted on the Slack surface.
+func TestRunCreateProfileBoundByPlan(t *testing.T) {
+	for name, c := range map[string]struct {
+		class, profile string
+		want           string
+	}{
+		"honoured":          {"review", "review-frontier", ""},
+		"the factory's":     {"review", "", ""},
+		"refused at intake": {"docs-links", "review-frontier", "class_profile_fixed"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+			e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f),
+				withCatalogue(&fakeFactoryCatalogue{}))
+			plan := planFixture(t, "slack-one-issue")
+			pinIssue(&plan.Issues[0], c.class, c.profile)
+			args := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
+				"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF", "plan": plan, "plan_hash": intake.Hash(plan)}
+			got := call(t, e, bearer("slack-app"), "run_create", args)
+			if c.want != "" {
+				if !got.isError || !strings.Contains(got.text, c.want) || len(f.got) != 0 {
+					t.Fatalf("%s; asked %+v", got.text, f.got)
+				}
+				return
+			}
+			if got.isError || len(f.got) != 1 || f.got[0].Profile != c.profile || f.got[0].Class != c.class {
+				t.Fatalf("%s; asked %+v", got.text, f.got)
+			}
+			choice := "other"
+			if c.profile == "" {
+				choice = "factory"
+			}
+			want := `maku_intake_profile_choices_total{choice="` + choice + `",class="` + c.class + `",surface="slack"} 1`
+			if !strings.Contains(metricsBody(t, e), want) {
+				t.Fatalf("lacks %s", want)
+			}
+		})
+	}
+}

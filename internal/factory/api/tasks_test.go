@@ -196,13 +196,13 @@ func TestCreateTaskAdmission(t *testing.T) {
 	})
 	t.Run("a planned task carries its class, suggestion and the resolved sponsor to spec.intake", func(t *testing.T) {
 		s, _ := newTaskServer(t, slack, 0)
-		rec := postTask(s, strings.Replace(draft, `"ref"`, `"class":"docs-links","suggested":"links-solo","ref"`, 1), "k")
+		rec := postTask(s, strings.Replace(draft, `"ref"`, `"class":"docs-links","suggested":"links-solo","profile":"links-solo","ref"`, 1), "k")
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("%d %s", rec.Code, rec.Body)
 		}
 		got := tasks(t, s)
 		if len(got) != 1 || got[0].Spec.Intake == nil || *got[0].Spec.Intake != (factoryv1.TaskIntake{Class: "docs-links",
-			Suggested: "links-solo", Login: got[0].Spec.IssueAuthor}) || got[0].Spec.IssueAuthor == "" {
+			Suggested: "links-solo", Profile: "links-solo", Login: got[0].Spec.IssueAuthor}) || got[0].Spec.IssueAuthor == "" {
 			t.Fatalf("%+v", got)
 		}
 	})

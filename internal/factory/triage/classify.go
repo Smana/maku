@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"regexp"
 	"strings"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -95,16 +96,21 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if err != nil {
 		return Decision{}, err
 	}
-	// Declared is no pin (P8); stage 3 wires the resolved pin (d.Pinned) here in place of false.
-	cohort := CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)
 	if Investigates(cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}
+	pin, err := c.pin(ctx, cfg, t, class, dataClass == "public")
+	if err != nil {
+		return Decision{}, err
+	}
+	// Declared is no pin (P8): only an honoured profile pin is labeled.
+	cohort := CohortOf(t.Name, pin.Honoured(), cfg.Evaluation.ControlPercent)
 	if oracle(cfg, t, class) {
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
 		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Budget: BudgetFor(cfg, "light"),
-			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared, Cohort: cohort}, nil
+			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared,
+			Pinned: pin.Honoured(), Pin: pin, Cohort: cohort}, nil
 	}
 	res, err := C7Response{}, errors.New("no classifier") // unset URL: no C7 service, no call
 	if cfg.Triage.ClassifierURL != "" && c.C != nil {
@@ -129,7 +135,46 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 		source = "runlore" // Matrix keys on the source kind: both take investigate
 	}
 	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass,
-		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Cohort: cohort}, nil
+		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Pinned: pin.Honoured(), Pin: pin, Cohort: cohort}, nil
+}
+
+// profileName is a harness profile's name as config and the Task's CRD spell it.
+var profileName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// pin is t's pinned profile as ResolvePin judges it (P5, P6): the profile:<name> labels on its issue
+// with each one's last applier, and the intake's profile with the sponsor login the factory resolved.
+// A RunLore or internal task, and a scheduled one, has none: no person pinned it.
+func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, class string, public bool) (Pin, error) {
+	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" {
+		return Pin{}, nil
+	}
+	var labels []LabelPin
+	if gh := c.forge(t); t.Spec.Issue != 0 && gh != nil {
+		iss, err := gh.Issue(ctx, t.Spec.Issue)
+		if err != nil {
+			return Pin{}, err
+		}
+		for _, l := range iss.Labels {
+			name, ok := strings.CutPrefix(l, "profile:")
+			if !ok || !profileName.MatchString(name) {
+				continue // a name no profile can have pins nothing, and is never echoed back
+			}
+			evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
+			if err != nil {
+				return Pin{}, err
+			}
+			actor := ""
+			if len(evs) > 0 {
+				actor = evs[len(evs)-1].Actor
+			}
+			labels = append(labels, LabelPin{Name: name, Actor: actor})
+		}
+	}
+	var field, login string
+	if in := t.Spec.Intake; in != nil {
+		field, login = in.Profile, in.Login
+	}
+	return ResolvePin(cfg, t.Spec.Repository, class, labels, field, login, public), nil
 }
 
 // oracle reports whether class is an oracle class of t's repository; none when it is not served.

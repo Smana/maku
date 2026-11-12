@@ -29,7 +29,8 @@ func view(st summary.State, room, url string, sub policy.Subject, after int64, n
 
 func TestSummaryIncludesProfile(t *testing.T) {
 	p := &envelope.ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
-		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files.",
+		Requested: "review-pair", Refused: "profile_not_allowed"}
 	st := summary.State{Facts: &envelope.TaskFacts{Phase: "Done", Profile: p}}
 	s := view(st, "3kq7x2ma", "https://rooms.example/r/3kq7x2ma", owner(), 0, time.Now())
 	if !reflect.DeepEqual(s.Status.Profile, p) {

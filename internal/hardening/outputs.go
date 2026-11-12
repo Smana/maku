@@ -50,6 +50,15 @@ const (
 	// RefuseDiffUnavailable is T4 on a push whose changed paths cannot be read whole (a compare
 	// past GitHub's file cap, or no merge base): with no file list, no path can be cleared.
 	RefuseDiffUnavailable Refusal = "diff_unavailable"
+	// RefuseTarget is T1 on a comment or labels request whose target the task does not have yet: no
+	// open pull request, or no issue for a text task (HR17).
+	RefuseTarget Refusal = "output_target"
+	// RefuseUnavailable is an output GitHub refused for good, or one with no connection to write it
+	// on (no factory App): a retry gets the same answer, so it is answered instead of retried.
+	RefuseUnavailable Refusal = "output_unavailable"
+	// RefuseExpired is a request still unanswered when its run's answer wait ran out, the kill switch
+	// engaged or GitHub unreachable all along: nothing is written for it.
+	RefuseExpired Refusal = "output_expired"
 )
 
 // Payload bounds (safe outputs table).

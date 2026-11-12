@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -386,6 +387,64 @@ func TestIntakeClass(t *testing.T) {
 			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, tk)
 			if err != nil || d.PredictedClass != c.want || d.Declared != c.declared || d.Cohort != CohortControl {
 				t.Fatalf("%+v (%v), want %s declared %v", d, err, c.want, c.declared)
+			}
+		})
+	}
+}
+
+// P5, P6, P9: a profile pin is read from a profile: label (its last applier) or the intake field
+// (its resolved login), checked by ResolvePin, and only an honoured one is labeled; a refused one
+// leaves the task in the cohorts by hash, the refusal recorded.
+func TestTriageResolvesThePin(t *testing.T) {
+	for name, c := range map[string]struct {
+		labels []forge.LabelEvent
+		intake *v1alpha1.TaskIntake
+		want   Pin
+		cohort string
+	}{
+		"no pin": {cohort: CohortControl},
+		"a maintainer's label": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}},
+			want: Pin{Name: "docs-pair"}, cohort: CohortLabeled},
+		"a stranger's label": {labels: []forge.LabelEvent{{Actor: "someone", Label: "profile:docs-pair"}},
+			want: Pin{Name: "docs-pair", Refused: "not_maintainer"}, cohort: CohortControl},
+		"the last applier counts": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"},
+			{Actor: "someone", Label: "profile:docs-pair"}}, want: Pin{Name: "docs-pair", Refused: "not_maintainer"}, cohort: CohortControl},
+		"two profiles": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}, {Actor: "Smana", Label: "profile:docs-floor"}},
+			want: Pin{Name: "docs-pair", Refused: "profile_conflict"}, cohort: CohortControl},
+		"a maintainer's intake": {intake: &v1alpha1.TaskIntake{Class: "docs", Profile: "docs-pair", Login: "Smana"},
+			want: Pin{Name: "docs-pair"}, cohort: CohortLabeled},
+		"a label and an intake that disagree": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-floor"}},
+			intake: &v1alpha1.TaskIntake{Class: "docs", Profile: "docs-pair", Login: "Smana"},
+			want:   Pin{Name: "docs-floor", Refused: "profile_conflict"}, cohort: CohortControl},
+		"a live class": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}, {Actor: "Smana", Label: "class:docs-links"}},
+			want: Pin{Name: "docs-pair", Refused: "class_profile_fixed"}, cohort: CohortControl},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := forgetest.NewFake()
+			labels := []string{"class:docs"}
+			events := []forge.LabelEvent{{Actor: "Smana", Label: "class:docs", At: time.Now()}}
+			for _, e := range c.labels {
+				if !slices.Contains(labels, e.Label) {
+					labels = append(labels, e.Label)
+				}
+				e.At = time.Now()
+				events = append(events, e)
+			}
+			if slices.Contains(labels, "class:docs-links") {
+				labels = labels[1:] // the class label alone, so docs-links is the class
+			}
+			f.SetEvents(7, events...)
+			f.SetIssue(forge.Issue{Number: 7, Labels: labels})
+			tk := issueTask()
+			tk.Spec.Intake = c.intake
+			cf := testCfg()
+			cf.Evaluation.ControlPercent = 100
+			cf.HarnessProfiles = map[string]config.HarnessProfile{"docs-floor": {}, "docs-pair": {Template: "pair"}, "links": {}}
+			cf.Classes["docs"] = config.Class{Harness: "docs-floor", HarnessAllowed: []string{"docs-pair"}}
+			cf.Classes["docs-links"] = config.Class{Live: true, Harness: "links"}
+			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, tk)
+			if err != nil || d.Pin != c.want || d.Pinned != c.want.Honoured() || d.Cohort != c.cohort {
+				t.Fatalf("%+v (%v), want pin %+v cohort %s", d, err, c.want, c.cohort)
 			}
 		})
 	}

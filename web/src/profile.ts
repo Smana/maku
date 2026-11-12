@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // The room's Harness profile fold: the active profile and cohort from summary/v1, with the
-// scoper's recommendation kept distinct when observe mode leaves the floor active.
+// scoper's recommendation kept distinct when observe mode leaves the floor active, and a pinned
+// profile's request with the refusal's closed code when triage did not apply it.
 
 import { el } from "./controls";
 import type { Summary } from "./summary";
@@ -17,6 +18,8 @@ export function renderProfile(root: HTMLElement, s: Summary): void {
   d.dataset.block = "profile";
   d.append(el("summary", { textContent: `Harness profile · ${p.name} · ${p.cohort}` }),
     el("p", { className: "profile-source", textContent: `Source: ${p.source}` }));
+  if (p.requested) d.append(el("p", { className: "profile-requested", textContent: `Requested: ${p.requested}` }));
+  if (p.refused) d.append(el("p", { className: "profile-refused", textContent: `Refused: ${p.refused}` }));
   if (p.recommended) d.append(el("p", { className: "profile-recommended", textContent: `Recommended: ${p.recommended}` }));
   if (p.reason) d.append(el("p", { className: "profile-reason", textContent: `Reason: ${p.reason}` }));
   if (p.why) d.append(el("p", { className: "profile-why", textContent: `Why: ${p.why}` }));

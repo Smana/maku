@@ -133,6 +133,9 @@ func oneOf(v string, set []string) string {
 
 // Bucket bounds sit on the thresholds that matter: SC-1's 30-minute p50 to a PR, and the tier
 // budgets (0.6, 3 and 8 M tokens per task).
+// outputBuckets sit on AC7's 2 s p95, and the applier's 2 s poll that bounds it from below.
+var outputBuckets = []float64{0.5, 1, 2, 3, 5, 10, 30, 60, 300}
+
 var (
 	timeToPRBuckets   = []float64{60, 300, 600, 900, 1800, 3600, 7200}
 	taskTokensBuckets = []float64{50_000, 100_000, 200_000, 400_000, 600_000, 1_000_000, 2_000_000, 3_000_000, 5_000_000, 8_000_000, 12_000_000}
@@ -150,6 +153,7 @@ var (
 // Set is the factory's instruments. Record through its methods, which fix each label set.
 type Set struct {
 	hardeningShadow      metric.Int64Counter
+	hardeningOutput      metric.Float64Histogram
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -177,6 +181,8 @@ type Set struct {
 	overlapScoperRuns    metric.Int64Counter
 	overlapEvaluation    metric.Float64Histogram
 	profileRecs          metric.Int64Counter
+	profilePins          metric.Int64Counter
+	profileAgreement     metric.Int64Counter
 	taskOutcomes         metric.Int64Counter
 	taskUSD              metric.Float64Counter
 	splits               metric.Int64Counter
@@ -331,6 +337,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.hardeningShadow, err = meter.Int64Counter("agent_factory_hardening_shadow_total",
 		metric.WithDescription("Agent writes the hardening shadow pass checked under audit (H1, HR3), by repository, output type, verdict (would_apply, would_refuse, would_wait), and the deciding layer and reason."))
 	check(err)
+	s.hardeningOutput, err = meter.Float64Histogram("agent_factory_hardening_output_seconds",
+		metric.WithDescription("From a run's output_requested to the factory's answer, by repository and output type (hardening H2, AC7: p95 at most 2 s per non-push output)."),
+		metric.WithExplicitBucketBoundaries(outputBuckets...))
+	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
 	check(err)
@@ -407,6 +417,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.profileRecs, err = meter.Int64Counter("agent_factory_profile_recommendations_total",
 		metric.WithDescription("Scoper profile recommendations on tasks offered a choice, by class, cohort, the profile recommended (none without one) and whether it was applied."))
+	check(err)
+	s.profilePins, err = meter.Int64Counter("agent_factory_profile_pins_total",
+		metric.WithDescription("Profile pins seen at triage, by class, profile (other for a name not in config), honoured or refused, and the refusal's code (none when honoured)."))
+	check(err)
+	s.profileAgreement, err = meter.Int64Counter("agent_factory_profile_agreement_total",
+		metric.WithDescription("Resolved tasks of a class that offers a choice, by whether the planner's suggestion and the scoper's recommendation agree (P13)."))
 	check(err)
 	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
 		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
@@ -886,7 +902,7 @@ var (
 	shadowLayers   = []string{"none", "t1_schema", "t2_sanitise", "t3_secrets", "t4_paths", "t5_classifier"}
 	shadowReasons  = []string{"none", "output_type", "output_schema", "output_cap", "output_text", "secret_found", "canary_leaked",
 		"protected_path_needs_approval", "protected_path_blocked", "diff_unavailable", "injection_suspected",
-		"classifier_unavailable", "shadow_incomplete"}
+		"classifier_unavailable", "output_target", "shadow_incomplete"}
 )
 
 // HardeningShadow counts one output_shadowed record (H1, HR3), or a run given up on, under the
@@ -911,6 +927,13 @@ func (s *Set) HardeningShadow(ctx context.Context, typ, verdict, layer, reason s
 func (s *Set) PrincipalShadow(ctx context.Context, principal string) {
 	s.revocations.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "budget-principal-shadow"),
 		attribute.String("principal", boundPrincipal(principal))))
+}
+
+// HardeningOutput records how long one safe output waited for the factory's answer (H2, HR15,
+// AC7), under the repository ctx names. A type outside the vocabulary reads other.
+func (s *Set) HardeningOutput(ctx context.Context, typ string, d time.Duration) {
+	s.hardeningOutput.Record(ctx, max(d.Seconds(), 0), metric.WithAttributes(
+		attribute.String("type", oneOf(typ, shadowTypes[1:])), s.repoOf(ctx)))
 }
 
 // RunRevoked counts a revocation by the run meter, by reason and the limit that fired.
@@ -1166,6 +1189,24 @@ func (s *Set) ProfileRecommendation(ctx context.Context, class, cohort, recommen
 	s.profileRecs.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
 		attribute.String("cohort", oneOf(cohort, []string{"labeled", "control", "treatment"})),
 		attribute.String("recommended", recommended), attribute.Bool("applied", applied)))
+}
+
+// ProfilePin counts a pin seen at triage (P6): outcome honoured or refused, reason the refusal's
+// closed code or none. profile is a config name or other, bounded by the caller as recommendedLabel
+// bounds a recommendation.
+func (s *Set) ProfilePin(ctx context.Context, class, profile, outcome, reason string) {
+	if reason == "" {
+		reason = "none"
+	}
+	s.profilePins.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("profile", profile),
+		attribute.String("outcome", oneOf(outcome, []string{"honoured", "refused"})), attribute.String("reason", reason)))
+}
+
+// ProfileAgreement counts a resolved task of a class that offers a choice once (P13): agree,
+// differ, no_suggestion (no planner suggestion, the issue path among them) or no_recommendation.
+func (s *Set) ProfileAgreement(ctx context.Context, class, outcome string) {
+	s.profileAgreement.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class),
+		attribute.String("outcome", oneOf(outcome, []string{"agree", "differ", "no_suggestion", "no_recommendation"}))))
 }
 
 // Split counts a split handoff's outcome once.

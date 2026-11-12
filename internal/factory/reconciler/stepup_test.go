@@ -506,3 +506,31 @@ func TestAReplayRecoversThePersistedStep(t *testing.T) {
 		t.Fatalf("%d narrations, tier %s", n, stored.Spec.Budget.Tier)
 	}
 }
+
+// P10: escalation never steps to the profile a task already runs, pinned or scoper-applied alike:
+// a maintainer is asked straight away. A floor task still steps to the target.
+func TestStepUpSkipsActiveProfile(t *testing.T) {
+	for name, c := range map[string]struct {
+		profile, source, cohort string
+		stepped                 bool
+	}{
+		"pinned review-frontier":         {"review-frontier", "label", "labeled", false},
+		"scoper-applied review-frontier": {"review-frontier", "scoper", "treatment", false},
+		"floor review-floor":             {"review-floor", "floor", "treatment", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
+				tk.Status.Profile.Name, tk.Status.Profile.Source, tk.Status.Profile.Cohort = c.profile, c.source, c.cohort
+			})
+			got := g.fail(t, tk, "budget-run")
+			if !c.stepped {
+				wantEscalated(t, got, "budget-run")
+				if got.Status.Profile.Name != c.profile || got.Status.Profile.Source != c.source {
+					t.Fatalf("%+v", got.Status.Profile)
+				}
+				return
+			}
+			wantStepped(t, got, "review-frontier", "out_of_budget")
+		})
+	}
+}

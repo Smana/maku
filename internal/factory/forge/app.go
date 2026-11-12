@@ -80,9 +80,9 @@ type tokens struct {
 	installation int64
 }
 
-// get returns a token with more than refreshBefore to live, minting one when needed. Holding the
+// Token returns a token with more than refreshBefore to live, minting one when needed. Holding the
 // lock across the mint makes concurrent callers wait for one mint instead of racing to many.
-func (s *tokens) get(ctx context.Context) (string, error) {
+func (s *tokens) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.token != "" && s.now().Before(s.expires.Add(-refreshBefore)) {
@@ -270,7 +270,7 @@ type auth struct {
 	base   http.RoundTripper
 	host   string
 	agent  string
-	tokens *tokens
+	tokens TokenSource
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -278,14 +278,18 @@ func (a *auth) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, a.host) {
 		return a.base.RoundTrip(req)
 	}
-	tok, err := a.tokens.get(req.Context())
+	tok, err := a.tokens.Token(req.Context())
 	if err != nil {
 		return nil, err
 	}
 	r := req.Clone(req.Context())
 	r.Header.Set("Authorization", "Bearer "+tok)
 	r.Header.Set("User-Agent", a.agent)
-	return a.base.RoundTrip(r)
+	resp, err := a.base.RoundTrip(r)
+	if inv, ok := a.tokens.(invalidator); ok && err == nil && resp.StatusCode == http.StatusUnauthorized {
+		inv.Invalidate() // GitHub refused the token: the next call mints another
+	}
+	return resp, err
 }
 
 // statusError is a 4xx or 5xx answer, carried by status alone: the body is drained and dropped, so
