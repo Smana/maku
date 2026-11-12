@@ -44,7 +44,7 @@ func TestTheBrokerMayChangeOnlyTheSuspendAnnotations(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
 	}
-	policy := render(t)
+	policy := render(t, "templates/broker-agentrun-policy.yaml", 2)
 	ctrl.SetLogger(logr.Discard())
 	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "crds")}, ErrorIfCRDPathMissing: true}
 	cfg, err := e.Start()
@@ -110,19 +110,24 @@ func TestTheBrokerMayChangeOnlyTheSuspendAnnotations(t *testing.T) {
 	}
 }
 
-// render is the chart's policy, as `helm template` renders it for release "maku".
-func render(t *testing.T) []client.Object {
+// render is one of the chart's templates, as `helm template` renders it for release "maku" from
+// the quickstart values plus sets, and must hold want objects.
+func render(t *testing.T, template string, want int, sets ...string) []client.Object {
 	t.Helper()
 	helm, err := exec.LookPath("helm")
 	if err != nil {
 		t.Fatal("helm is not on PATH: mise install")
 	}
 	chart := filepath.Join("..", "..")
-	out, err := exec.CommandContext(t.Context(), helm, "template", "ap", chart, "-n", release,
+	args := []string{"template", "ap", chart, "-n", release,
 		"-f", filepath.Join(chart, "values-quickstart.yaml"),
-		"--set", "broker.image.tag="+digest, "--set", "runController.image.tag="+digest,
-		"--set", "runController.images.harness.tag="+digest, "--set", "runController.images.bridge.tag="+digest,
-		"--show-only", "templates/broker-agentrun-policy.yaml").Output()
+		"--set", "broker.image.tag=" + digest, "--set", "runController.image.tag=" + digest,
+		"--set", "runController.images.harness.tag=" + digest, "--set", "runController.images.bridge.tag=" + digest,
+		"--show-only", template}
+	for _, s := range sets {
+		args = append(args, "--set", s)
+	}
+	out, err := exec.CommandContext(t.Context(), helm, args...).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -143,8 +148,8 @@ func render(t *testing.T) []client.Object {
 			objs = append(objs, u)
 		}
 	}
-	if len(objs) != 2 {
-		t.Fatalf("want the policy and its binding, rendered %d objects", len(objs))
+	if len(objs) != want {
+		t.Fatalf("%s: want %d objects, rendered %d", template, want, len(objs))
 	}
 	return objs
 }

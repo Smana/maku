@@ -81,6 +81,13 @@ rc=$(yq '.runController.runtimeClassName' "$vals")
 [[ $(yq ea 'select(.kind=="CiliumNetworkPolicy") | .spec.egress[1].toPorts[0].ports[0].port' "$tmp/gvisor-probe.yaml") == 8443 ]] || bad "probe CNP port is not the broker's 8443"
 for c in ok:dmesg ok:dns ok:tcp; do grep -q "$c" "$tmp/gvisor-probe.yaml" || bad "probe does not print $c"; done
 [[ $(yq '.clusterDomain' "$vals") == cluster.local ]] || bad "up.sh's probe assumes clusterDomain cluster.local"
+# the run-pod policy holds the runs namespace: the probe is the run-controller's, non-root, pinned, allow-listed
+# shellcheck disable=SC2016 # literal text of up.sh
+grep -qF 'kubectl create --as "system:serviceaccount:$NS:run-controller"' "$qs/up.sh" || bad "up.sh does not create the probe as the run-controller"
+# shellcheck disable=SC2016 # literal text of up.sh
+grep -qF 'runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}' "$qs/up.sh" || bad "up.sh does not allow-list PROBE_IMAGE in the run-pod policy"
+[[ $(yq ea 'select(.kind=="Pod") | .spec.securityContext.runAsNonRoot' "$tmp/gvisor-probe.yaml") == true ]] || bad "the probe pod is not runAsNonRoot"
+[[ $PROBE_IMAGE == *@sha256:* ]] || bad "PROBE_IMAGE is not pinned by digest: the run-pod policy refuses it"
 grep -qF 'unsandboxed == 0 ]]; then' "$qs/up.sh" || bad "up.sh does not skip the probe under ALLOW_UNSANDBOXED=1"
 for t in sha256sum sha512sum bzip2 tar; do grep -E "^for t in " "$qs/up.sh" | grep -qw "$t" || bad "up.sh does not check for $t (fetch-runsc.sh needs sha512sum, bzip2 and tar; qs_fetch_roomctl needs sha256sum)"; done
 # fetch-runsc.sh installs through qs_install_gvisor, never wipes .quickstart/bin: maku lives there (H-6)

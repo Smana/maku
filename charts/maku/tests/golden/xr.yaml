@@ -1,0 +1,382 @@
+---
+# Source: maku/templates/agents-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  annotations:
+    # Uninstall must not delete the runs and the Secrets in them.
+    helm.sh/resource-policy: keep
+
+---
+# Source: maku/templates/broker-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+
+---
+# Source: maku/templates/broker-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: room-broker-config
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+data:
+  # Strictly decoded by the broker (internal/config): an unknown key fails the rollout. tls is
+  # left to its default, /etc/room-broker/tls/tls.{crt,key}, where the Deployment mounts the pair.
+  config.yaml: |
+    publicURL: "https://rooms.example.com"
+    runs:
+      group: cloud.ogenki.io
+      namePrefix: xplane-run-
+      namespace: agents
+    runIssuers:
+      - subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'
+        issuer: "https://oidc"
+        jwksURL: "https://oidc/keys"
+    human:
+      clientIDFile: /c
+      groups:
+        admin: a
+        member: m
+      issuer: https://idp.example.com
+      jwksURL: https://idp.example.com/keys
+      origin: https://rooms.example.com
+      projectIDFile: /p
+    roomTools:
+      enabled: true
+
+---
+# Source: maku/templates/broker-rbac.yaml
+# Exactly the verbs the broker calls: the Room controller reads Rooms, updates their finalizer and
+# merge-patches their status; the human API creates (new room, fork); leader election takes a Lease and emits Events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms]
+    verbs: [get, list, watch, create, update]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms/status]
+    verbs: [patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms/finalizers]
+    verbs: [update]
+  # Coordination parents (v4 MR13): the human API reads a parent, its lineage and the day ledgers
+  # live, to filter them per viewer. Read-only: never watch, never write.
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+
+---
+# Source: maku/templates/broker-rbac.yaml
+# AgentRuns: watched, deleted when their Room is, and merge-patched by the suspend trigger, whose
+# patch broker-agentrun-policy.yaml bounds to three annotations. NEVER created: only the run
+# requester creates runs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: room-broker
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [cloud.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch, delete, patch]
+
+---
+# Source: maku/templates/broker-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: room-broker}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: agent-system}
+
+---
+# Source: maku/templates/broker-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: room-broker
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: room-broker}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: agent-system}
+
+---
+# Source: maku/templates/broker-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  selector:
+    app.kubernetes.io/name: room-broker
+  ports:
+    - {name: bridge, port: 8443, targetPort: bridge}
+    - {name: metrics, port: 9090, targetPort: ops}
+    - {name: human, port: 8080, targetPort: human}
+
+---
+# Source: maku/templates/broker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: room-broker
+        app.kubernetes.io/part-of: maku
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        # The broker reads its config once at start: a changed config must roll the pods.
+        checksum/config: 013bc39ec0653e9f0618d72039ac1d6a968e3954a025db976ec4faef799aca18
+    spec:
+      # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
+      serviceAccountName: room-broker
+      automountServiceAccountToken: true # the Room and AgentRun watches, the leader lease
+      terminationGracePeriodSeconds: 30 # the broker's shutdown drains fit 23 s of it
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Lets the nonroot broker read a 0400 Secret; also makes the optional oidc files readable.
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: room-broker
+          image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+          
+          env:
+            - name: ROOMS_CONFIG
+              value: /etc/room-broker/config/config.yaml
+            - name: ROOMS_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: dsn, key: uri}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+          ports:
+            - {name: bridge, containerPort: 8443}
+            - {name: human, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          # Probes are on the ops port: the broker answers them there for the kubelet only.
+          startupProbe:
+            httpGet: {path: /startupz, port: 9090}
+            periodSeconds: 5
+            failureThreshold: 120 # a first start waits for PostgreSQL and the migration
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9090}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9090}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            # The config sits beside the TLS pair, not above it: a mount nested in a read-only
+            # ConfigMap mount cannot create its mount point.
+            - {name: config, mountPath: /etc/room-broker/config, readOnly: true}
+            - {name: tls, mountPath: /etc/room-broker/tls, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: room-broker-config}
+        - name: tls
+          secret: {secretName: broker-cert}
+        - name: tmp
+          emptyDir: {}
+
+---
+# Source: maku/templates/agents-namespace.yaml
+# An empty rule selects no peer: enforcement on in both directions, nothing allowed. Each run's own
+# CiliumNetworkPolicy adds its allowances.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: agents
+spec:
+  endpointSelector: {}
+  ingress: [{}]
+  egress: [{}]
+
+---
+# Source: maku/templates/broker-cnp.yaml
+# Default deny; one allow per flow.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  ingress:
+    # Run bridges; a run's own CNP opens the matching egress.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agents
+          matchExpressions:
+            - {key: agents.ogenki.io/run-id, operator: Exists}
+      toPorts:
+        - ports: [{port: "8443", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # The Room and AgentRun watches, the leader lease and token reviews.
+    # Cilium applies L4 policy after service translation: kubernetes.default:443 is the control
+    # plane's own port (6443 on kind) by then, hence apiServerPorts.
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "6443", protocol: TCP}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+          matchExpressions:
+            - {key: cnpg.io/cluster, operator: Exists}
+      toPorts:
+        - ports: [{port: "5432", protocol: TCP}]
+
+---
+# Source: maku/templates/broker-agentrun-policy.yaml
+# The broker writes an AgentRun for one reason: the suspend trigger's merge patch of three
+# annotations (internal/suspend; runwatch's OperatingMode, RemainingSeconds and ResumedAt keys).
+# RBAC cannot bound a patch to fields, so this in-tree policy (Kubernetes 1.30+) does: an UPDATE
+# by the broker's ServiceAccount may set, change or drop those three keys and nothing else. Exact
+# keys, not the agents.ogenki.io/ prefix: the meter's, the factory's and the revoke annotations
+# share it. Every other writer passes untouched.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: room-broker-agent-system-agentruns
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["cloud.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [agentruns]
+  matchConditions:
+    - name: the-broker
+      expression: "request.userInfo.username == 'system:serviceaccount:agent-system:room-broker'"
+  variables:
+    - name: suspendKeys
+      expression: "['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']"
+  validations:
+    - expression: >-
+        has(object.spec) == has(oldObject.spec) && (!has(object.spec) || object.spec == oldObject.spec)
+      message: the broker may not change an AgentRun's spec
+    - expression: >-
+        has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+        (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels)
+      message: the broker may not change an AgentRun's labels
+    - expression: >-
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+      message: the broker may not change an AgentRun's finalizers
+    - expression: >-
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: the broker may not change an AgentRun's owners
+    - expression: >-
+        (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in variables.suspendKeys ||
+        (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations && oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
+        (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k in variables.suspendKeys ||
+        (has(object.metadata.annotations) && k in object.metadata.annotations)))
+      message: the broker may change only the suspend annotations (operating-mode, remaining-seconds, resumed-at)
+
+---
+# Source: maku/templates/broker-agentrun-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: room-broker-agent-system-agentruns
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: room-broker-agent-system-agentruns
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: agents

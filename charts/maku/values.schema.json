@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "maku values",
+  "description": "Strict for the blocks rollout step 2 adds; every older key is free until its own step (step 1's PR4).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "sandbox": {
+      "description": "The run pod's sandbox (D18). The old runController.runtimeClassName and allowUnsandboxed keys stay honoured.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtimeClassName": {
+          "description": "The sandbox RuntimeClass. Empty: runController.runtimeClassName (gvisor).",
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "unsafeAllowRunc": {
+          "description": "Run agents with no RuntimeClass (runc). The demo and kind only; shown on the install banner.",
+          "type": "boolean"
+        }
+      }
+    },
+    "runsQuota": {
+      "description": "The ResourceQuota on runs.namespace (D16): pods, CPU and memory only.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "hard": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pods": {"$ref": "#/definitions/quantity"},
+            "requests.cpu": {"$ref": "#/definitions/quantity"},
+            "requests.memory": {"$ref": "#/definitions/quantity"},
+            "limits.cpu": {"$ref": "#/definitions/quantity"},
+            "limits.memory": {"$ref": "#/definitions/quantity"}
+          }
+        }
+      }
+    },
+    "runPodPolicy": {
+      "description": "The run pod's ValidatingAdmissionPolicy (D17).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "extraImages": {
+          "description": "More image repositories a run pod may use, without tag or digest.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9._/:]*[a-z0-9])?$", "not": {"pattern": "(@|:[^/]*$)"}}
+        }
+      }
+    },
+    "agentRunPolicies": {
+      "description": "Optional AgentRun creator and factory patch-limit policies (D17), each rendered only when set.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "creators": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[^'\\\\\\s]+$"}
+        },
+        "factoryServiceAccount": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"
+        },
+        "namespaces": {
+          "description": "Narrow both bindings to these namespaces. Empty: every namespace, as the Kyverno originals.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"}
+        }
+      }
+    }
+  },
+  "definitions": {
+    "quantity": {
+      "description": "A Kubernetes quantity (resource.Quantity's grammar): an integer (--set passes one) or a string such as 500m, 32Gi, 1.5Pi or 1e3.",
+      "type": ["string", "integer"],
+      "pattern": "^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(Ki|Mi|Gi|Ti|Pi|Ei|m|k|M|G|T|P|E|[eE][+-]?[0-9]+)?$"
+    }
+  }
+}

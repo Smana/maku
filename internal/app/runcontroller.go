@@ -17,9 +17,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/runctl"
 )
 
@@ -65,7 +67,17 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
 		return err
 	}
-	r := &runctl.Reconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Cfg: cfg, Now: time.Now, Log: logger}
+	// The preflight (v4 D18): new runs wait for its first result and are refused while it fails. It
+	// reads the RuntimeClass uncached, so the controller needs get on that one name, never a watch.
+	passed, err := metrics.NewPreflightGauge(crmetrics.Registry)
+	if err != nil {
+		return err
+	}
+	pf := &runctl.Preflight{Client: mgr.GetAPIReader(), Cfg: cfg, Every: runctl.DefaultPreflightEvery, Log: logger, Passed: passed}
+	if err := mgr.Add(pf); err != nil {
+		return err
+	}
+	r := &runctl.Reconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Cfg: cfg, Now: time.Now, Log: logger, Preflight: pf}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return err
 	}
