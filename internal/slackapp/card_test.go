@@ -36,6 +36,19 @@ func TestCardDigestFields(t *testing.T) {
 	if strings.Contains(s, d[:13]) || strings.Contains(s, "<!here>") {
 		t.Fatalf("the full digest or an unescaped path:\n%s", s)
 	}
+	// Paths that grow when escaped still fit Slack's 2,000-character field: what does not fit is
+	// counted with the rest.
+	e.Protected, e.ProtectedMore = nil, 2
+	for range 10 {
+		e.Protected = append(e.Protected, strings.Repeat("&", 256))
+	}
+	field := "*Protected paths*\n" + protectedLine(e.Protected, e.ProtectedMore)
+	if n := len([]rune(field)); n > maxCardField {
+		t.Fatalf("the field is %d characters", n)
+	}
+	if !strings.HasSuffix(field, " more") || strings.HasSuffix(field, ", and 2 more") {
+		t.Fatalf("the paths left out are not counted: %s", field[len(field)-30:])
+	}
 	// A branch-bound approval's card is unchanged.
 	e.Digest, e.Protected, e.ProtectedMore = "", nil, 0
 	_, plain := approvalCard(e, "https://rooms.example", time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC))

@@ -225,21 +225,35 @@ func shortDigest(d string) string {
 	return d
 }
 
-// maxCardPath bounds one protected path as the card shows it, in runes: ten of them stay under a
-// field's 2,000 characters.
+// maxCardPath bounds one protected path as the card shows it, in runes, before it is escaped.
 const maxCardPath = 120
 
-// protectedLine is the card's protected paths: each escaped and bounded, then "and N more" for the
-// ones the wait left out. A path is the one text the card shows that the factory did not write.
+// maxCardField is Slack's limit on a section field's text, in characters.
+const maxCardField = 2000
+
+// protectedBudget is what the paths may take of a field, once escaped: the field's limit less its
+// label and room for ", and N more".
+const protectedBudget = maxCardField - len("*Protected paths*\n") - len(", and 99999 more")
+
+// protectedLine is the card's protected paths: each bounded, then escaped, then kept while the
+// escaped line fits protectedBudget; the ones it leaves out join the wait's own "and N more". A
+// path is the one text the card shows that the factory did not write.
 func protectedLine(paths []string, more int) string {
-	shown := make([]string, 0, len(paths))
-	for _, p := range paths {
+	var line string
+	for i, p := range paths {
 		if r := []rune(p); len(r) > maxCardPath {
 			p = string(r[:maxCardPath]) + "…"
 		}
-		shown = append(shown, "`"+strings.ReplaceAll(slackText(p), "`", "'")+"`")
+		item := "`" + strings.ReplaceAll(slackText(p), "`", "'") + "`"
+		if line != "" {
+			item = ", " + item
+		}
+		if len([]rune(line))+len([]rune(item)) > protectedBudget {
+			more += len(paths) - i
+			break
+		}
+		line += item
 	}
-	line := strings.Join(shown, ", ")
 	if more > 0 {
 		line += fmt.Sprintf(", and %d more", more)
 	}

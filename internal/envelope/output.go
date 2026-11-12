@@ -7,6 +7,8 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The safe-output kinds (hardening UH4): a run's request, then exactly one of the applier's
@@ -108,6 +110,18 @@ func (r OutputRecord) Validate(k MessageKind) error {
 		}
 	}
 	return nil
+}
+
+// MaxProtectedPath bounds one protected path a digest-bound approval shows, in bytes.
+const MaxProtectedPath = 256
+
+// ShowablePath reports whether p, a protected path from a digest-bound approval's action, may be
+// shown to a person: non-empty, at most MaxProtectedPath bytes of valid UTF-8, with no control
+// character (Cc) and no format character (Cf: bidi overrides, zero-width marks), which could make a
+// path read as another. Every surface that names a path filters through it.
+func ShowablePath(p string) bool {
+	return p != "" && len(p) <= MaxProtectedPath && utf8.ValidString(p) &&
+		!strings.ContainsFunc(p, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) })
 }
 
 func (r OutputRecord) validateWaiting() error {

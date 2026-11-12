@@ -370,7 +370,7 @@ func approvalsOf(live []store.Approval) []summary.Approval {
 	}
 	out := make([]summary.Approval, len(live))
 	for i, a := range live {
-		out[i] = summary.Approval{ID: a.ID, What: summary.DescribeApproval(a.Class, a.Action),
+		out[i] = summary.Approval{ID: a.ID, What: summary.DescribeBound(a.Class, a.BindingBranch, a.BindingDigest, a.Action),
 			ExpiresAt: a.ExpiresAt, At: a.RequestedAt, Prompters: a.Prompters}
 	}
 	return out

@@ -168,7 +168,8 @@ func TestWaitingCarriesApproval(t *testing.T) {
 // each bounded, then a count of the rest; nothing else of the action leaves the broker.
 func TestWaitingCarriesDigest(t *testing.T) {
 	d := strings.Repeat("e", 64)
-	paths := []string{"go.mod", "", "bad\x00path", strings.Repeat("p", 257)}
+	// Control and format characters (a bidi override, a zero-width space) drop the path.
+	paths := []string{"go.mod", "", "bad\x00path", strings.Repeat("p", 257), "bad‮evil.go", "bad​go.mod"}
 	for i := range 12 {
 		paths = append(paths, fmt.Sprintf(".github/workflows/w%d.yaml", i))
 	}

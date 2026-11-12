@@ -8,8 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/summary"
@@ -73,12 +71,9 @@ var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // MaxProtected bounds the protected paths a wait carries; ProtectedMore counts the rest.
 const MaxProtected = 10
 
-// maxProtectedPath bounds one path a wait carries, in bytes.
-const maxProtectedPath = 256
-
 // protectedPaths reads a digest-bound approval's action for its protected paths: at most
-// MaxProtected, each a non-empty path of at most maxProtectedPath bytes with no control character,
-// and how many valid ones it left out. Anything else in the action never leaves the broker.
+// MaxProtected, each envelope.ShowablePath (bounded, no control or format character), and how many
+// valid ones it left out. Anything else in the action never leaves the broker.
 func protectedPaths(action json.RawMessage) ([]string, int) {
 	var a struct {
 		Protected []string `json:"protected"`
@@ -89,7 +84,7 @@ func protectedPaths(action json.RawMessage) ([]string, int) {
 	var out []string
 	more := 0
 	for _, p := range a.Protected {
-		if p == "" || len(p) > maxProtectedPath || !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+		if !envelope.ShowablePath(p) {
 			continue
 		}
 		if len(out) == MaxProtected {

@@ -418,18 +418,28 @@ var outputDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // maxDescribedPaths is how many protected paths an approval's line names before "and N more".
 const maxDescribedPaths = 3
 
-// describeOutputPush is a protected-path push's line: the branch, the digest's first 12 hex and the
-// protected paths it touches.
+// describeOutputPush is a protected-path push's line: the row's branch and the digest's first 12
+// hex, then the protected paths it touches, each envelope.ShowablePath.
 func describeOutputPush(branch, digest string, protected []string) string {
 	what := "push"
 	if envelope.ValidBranch(branch) {
 		what += " to " + branch
 	}
 	what += ", digest " + digest[:12]
-	if len(protected) > 0 {
-		shown := protected[:min(len(protected), maxDescribedPaths)]
+	var shown []string
+	more := 0
+	for _, p := range protected {
+		switch {
+		case !envelope.ShowablePath(p):
+		case len(shown) < maxDescribedPaths:
+			shown = append(shown, p)
+		default:
+			more++
+		}
+	}
+	if len(shown) > 0 {
 		what += ", protected: " + strings.Join(shown, ", ")
-		if more := len(protected) - len(shown); more > 0 {
+		if more > 0 {
 			what += fmt.Sprintf(" and %d more", more)
 		}
 	}
@@ -437,25 +447,31 @@ func describeOutputPush(branch, digest string, protected []string) string {
 }
 
 // describe is an approval's one line: the redacted call's command, else its class.
-func describe(a envelope.ApprovalRequestedPayload) string { return DescribeApproval(a.Class, a.Action) }
+func describe(a envelope.ApprovalRequestedPayload) string {
+	return DescribeBound(a.Class, a.Branch, a.Digest, a.Action)
+}
 
 // DescribeApproval is the one line an approval of this class and redacted action shows, so that a
-// room's summary and a room list row say the same.
+// room's summary and a room list row say the same. It is DescribeBound for an approval that binds
+// no digest: an action's own claim to one is never read.
 func DescribeApproval(class string, action json.RawMessage) string {
+	return DescribeBound(class, "", "", action)
+}
+
+// DescribeBound is DescribeApproval for an approval whose row binds branch and digest (hardening
+// HR28): a digest-bound forge.push names the row's branch and digest, never the action's, and only
+// its protected paths come from the action. Any other approval reads its command, else its class.
+func DescribeBound(class, branch, digest string, action json.RawMessage) string {
 	var call struct {
-		Command string `json:"command"`
-		// A protected-path push's action (hardening HR28): the factory's own fields, never the
-		// commits' text.
-		Output    string   `json:"output"`
-		Digest    string   `json:"digest"`
-		Branch    string   `json:"branch"`
+		Command   string   `json:"command"`
 		Protected []string `json:"protected"`
 	}
 	what := class
 	switch {
+	case class == "forge.push" && outputDigest.MatchString(digest):
+		_ = json.Unmarshal(action, &call) // paths only: an unreadable action names none
+		what = describeOutputPush(branch, digest, call.Protected)
 	case json.Unmarshal(action, &call) != nil:
-	case class == "forge.push" && outputDigest.MatchString(call.Digest) && call.Output != "":
-		what = describeOutputPush(call.Branch, call.Digest, call.Protected)
 	case call.Command != "":
 		what = call.Command
 	}
