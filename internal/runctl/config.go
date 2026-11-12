@@ -204,6 +204,9 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 	if scoperRun(r) && c.RoomToolsURL == "" {
 		return "a scoper hands off with room_handoff: set broker.roomTools.auth tokenreview"
 	}
+	if scoperRun(r) && r.Spec.RoomRef == "" { // the harness gets MCP only for a run with a room (Pod)
+		return "a scoper hands off with room_handoff: it needs a room (spec.roomRef)"
+	}
 	if why := invalidManifest(r); why != "" {
 		return why
 	}
@@ -226,13 +229,17 @@ func scoperRun(r *v1alpha1.AgentRun) bool {
 	return r.Spec.Role == "triager" && strings.HasPrefix(r.Spec.Task.Text, runs.ScoperMarkerPrefix)
 }
 
-// GitSecretFor is the git Secret a run of role mounts: gitReadSecret for a read-only role when
-// configured, else gitSecret (Invalid refuses the read-only roles without it, unless unsafe).
+// GitSecretFor is the git Secret a run of role mounts: gitReadSecret for a read-only role, or
+// gitSecret under unsafeSharedGitToken; gitSecret for the others. A read-only role with neither
+// gets "": Invalid refuses it first, and a path that skipped Invalid builds a pod that cannot
+// mount, never one holding the write token.
 func (c Config) GitSecretFor(role string) string {
-	if readOnly(role) && c.GitReadSecret != "" {
+	switch {
+	case !readOnly(role) || c.UnsafeSharedGitToken:
+		return c.GitSecret
+	default:
 		return c.GitReadSecret
 	}
-	return c.GitSecret
 }
 
 // FQDNs are the hosts the run may reach on 443: github, then its profiles, deduplicated.

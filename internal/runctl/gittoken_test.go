@@ -95,6 +95,31 @@ func TestInvalidScoperNeedsRoomTools(t *testing.T) {
 	if got := testConfig(t).Invalid(run("run-abcdefgh", role("triager"))); got != "" {
 		t.Fatalf("a plain triager needs no room tools: %q", got)
 	}
+	// The harness gets MCP only for a run with a room: a roomless scoper could not hand off either.
+	roomless := run("run-abcdefgh", scoper, func(r *v1alpha1.AgentRun) { r.Spec.RoomRef = "" })
+	if got := withRoomTools(t).Invalid(roomless); got != "a scoper hands off with room_handoff: it needs a room (spec.roomRef)" {
+		t.Fatalf("roomless scoper: %q", got)
+	}
+}
+
+// GitSecretFor fails closed on its own: a read-only role with neither a read Secret nor the unsafe
+// flag gets no Secret name, so a path that skipped Invalid would build an unmountable pod, never
+// one holding the write token.
+func TestGitSecretForFailsClosed(t *testing.T) {
+	c := testConfig(t)
+	c.GitReadSecret = ""
+	for _, r := range []string{"reviewer", "triager"} {
+		if got := c.GitSecretFor(r); got != "" {
+			t.Errorf("%s: %q, want none", r, got)
+		}
+	}
+	if got := c.GitSecretFor("implementer"); got != "agent-git" {
+		t.Errorf("implementer: %q", got)
+	}
+	c.UnsafeSharedGitToken = true
+	if got := c.GitSecretFor("reviewer"); got != "agent-git" {
+		t.Errorf("unsafe reviewer: %q", got)
+	}
 }
 
 // A reviewer run waits for its read-only Secret, as for the others.

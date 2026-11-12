@@ -93,12 +93,11 @@ func TestScopesAreRefused(t *testing.T) {
 
 // D5: the run-controller enforces the scoper's read-only token and its room_handoff path itself
 // (runctl's Invalid: gitReadSecret, roomToolsURL), where the token is chosen; the factory no longer
-// refuses the scoper, or its split, on the portable runtime, demo or not.
+// refuses the scoper on the portable runtime, demo or not (its split is refused there: TestSplitIsRefusedOnThePortableRuntime).
 func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 	for _, loops := range []string{
 		"{docs: {scope: scoper}}",
 		"{docs: {scope: steering}}",
-		"{docs: {scope: scoper, split: {maxChildren: 3}}}",
 	} {
 		if _, err := Parse([]byte(priced + "loops: " + loops + "\nruns: {group: maku.ogenki.io}\n")); err != nil {
 			t.Errorf("%s on the portable runtime: %v", loops, err)
@@ -106,5 +105,20 @@ func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 	}
 	if _, err := Parse([]byte(demoGood)); err != nil {
 		t.Errorf("the demo's scoper: %v", err)
+	}
+}
+
+// A split is capped in USD (familyUSD), and portable runs carry no gateway identity, so nothing
+// meters their spend: the family's budget would never decrease. Refused there until the gateway
+// (rollout step 4), as models is; parses on cloud-native-ref's AgentRun.
+func TestSplitIsRefusedOnThePortableRuntime(t *testing.T) {
+	const want = "loops.docs.split needs a model gateway (rollout step 4): this runtime meters no USD, so familyUSD would never be spent"
+	for _, row := range []string{"{docs: {scope: scoper, split: {maxChildren: 3}}}", "{docs: {scope: scoper, split: {maxChildren: 3, familyUSD: 12}}}"} {
+		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s portable: %v, want %q", row, err, want)
+		}
+		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: cloud.ogenki.io}\n")); err != nil {
+			t.Errorf("%s on cloud-native-ref's AgentRun: %v", row, err)
+		}
 	}
 }

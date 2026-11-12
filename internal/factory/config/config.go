@@ -2346,6 +2346,11 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		if len(row.Models) > 0 && c.Runs.Group == v1alpha1.GroupVersion.Group {
 			bad("loops.%s.models needs a model gateway (rollout step 4): this runtime runs every role on modelSecret's model", name)
 		}
+		// Portable runs carry no gateway identity, so nothing meters their spend: a split's familyUSD
+		// would never decrease. Refused there until the gateway, as models is.
+		if row.Split != nil && c.Runs.Group == v1alpha1.GroupVersion.Group {
+			bad("loops.%s.split needs a model gateway (rollout step 4): this runtime meters no USD, so familyUSD would never be spent", name)
+		}
 	}
 }
 
