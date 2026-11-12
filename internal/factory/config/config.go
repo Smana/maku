@@ -347,6 +347,20 @@ func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 // cloud-native-ref's AgentRun, whose runs get their tokens from octo-sts.
 func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	t := c.RunTokens
+	if t.PerRun {
+		// v4 D10: the demo mints from its factory App, as RunTokenApp says; elsewhere the agents App.
+		if !t.Enabled && !c.Demo {
+			bad("runTokens.perRun needs runTokens.enabled: the agents App it names mints each run's token")
+		}
+		if c.Runs.Group != v1alpha1.GroupVersion.Group {
+			bad("runTokens.perRun writes each run's Secret for the run-controller: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
+		}
+		// D12 (plan PR9): an agent token must never be the factory's. Refused only under the new
+		// key, so no existing config breaks; the demo serves one App for both.
+		if !c.Demo && c.AgentsLogin != "" && strings.EqualFold(c.AgentsLogin, c.FactoryLogin) {
+			bad("runTokens.perRun: agentsLogin and factoryLogin name one App; D12 needs two")
+		}
+	}
 	if !t.Enabled {
 		return
 	}
@@ -1563,7 +1577,8 @@ func Parse(raw []byte) (*Config, error) {
 	// HR13: an enforced repository on a run path whose sandbox token no role policy scopes. The
 	// factory still starts: the tracer reports every direct write, and reads none as a human edit
 	// (GitHub credits a shared token's edits to its user).
-	if c.Hardening.Enforcing() && !c.Runs.XR() {
+	// Per-run tokens (v4 D10) scope that path: each run's token comes from the minter's role table.
+	if c.Hardening.Enforcing() && !c.Runs.XR() && !c.RunTokens.PerRun {
 		c.Warnings = append(c.Warnings, "hardening.enforceOutputs is set and runs are not cloud-native-ref's XR: the sandbox token is not scoped by a role policy, "+
 			"so a run can still write directly; the tracer reports each such write, none read as a human edit (HR13)")
 	}

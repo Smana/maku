@@ -194,6 +194,16 @@ done
 # clusterDomain must agree at the three places that carry it
 msg="$(helm template af . -n maku "${args[@]}" --set clusterDomain=a.test --set maku.clusterDomain=a.test 2>&1 >/dev/null || true)"
 grep -qF 'clusterDomain' <<<"$msg" && grep -qF 'must be equal' <<<"$msg" || { echo "FAIL: a clusterDomain that differs from maku-factory's does not fail" >&2; fail=1; }
+# v4 D10: per-run tokens are two halves, and only the factory may create the runs it mints for
+for half in "--set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=shared" \
+            "--set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=perRun"; do
+  # shellcheck disable=SC2086 # two --set pairs, split on purpose
+  msg="$(helm template af . -n maku "${args[@]}" $half 2>&1 >/dev/null || true)"
+  grep -qF 'go together' <<<"$msg" || { echo "FAIL: $half renders: perRun and gitTokens perRun go together" >&2; fail=1; }
+done
+msg="$(helm template af . -n maku "${args[@]}" --set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=perRun \
+  --set maku.agentRunPolicies.creators=null 2>&1 >/dev/null || true)"
+grep -qF 'maku-factory.runTokens.perRun needs maku.agentRunPolicies.creators' <<<"$msg" || { echo "FAIL: perRun without agentRunPolicies.creators renders" >&2; fail=1; }
 # secrets: rendered from values, or not at all when an existing Secret is named
 ykind Secret 'select(.metadata.name == "agent-model") | (.metadata.namespace == "agents" and .stringData.base_url == "http://model.example.test/v1" and .stringData.model == "m1" and .stringData.api_key == "k1")' 'agent-model in the runs namespace from demo.model'
 ykind Secret 'select(.metadata.name == "agent-factory-github") | (.metadata.namespace == "maku" and .stringData.app_id == "123" and .stringData.private_key == "pem1")' 'agent-factory-github from demo.githubApp'
