@@ -12,8 +12,46 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 )
 
+// drillRun is the run every fixture's events belong to.
+const drillRun = "7f3cq2xz"
+
+// outputEvent is r as the broker stores it: a request stamped as the run's own agent, an answer as
+// the factory, both by the client origin (UH4: the scorer trusts the stamp, not the payload).
 func outputEvent(kind envelope.MessageKind, r envelope.OutputRecord) envelope.Event {
-	return envelope.Event{Type: envelope.Message, Payload: envelope.Must(envelope.MessagePayload{Kind: kind, Delivery: envelope.DeliveryNone, Output: &r})}
+	actor := envelope.Actor{Kind: envelope.ActorSystem, ID: envelope.FactoryActor}
+	if kind == envelope.KindOutputRequested {
+		actor = envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + drillRun}
+	} else {
+		r.Payload = nil // an answer never carries the payload (OutputRecord.Validate)
+	}
+	return envelope.Event{Type: envelope.Message, RunID: drillRun, Actor: actor, Origin: envelope.OriginClient,
+		Payload: envelope.Must(envelope.MessagePayload{Kind: kind, Delivery: envelope.DeliveryNone, Output: &r})}
+}
+
+// An answer the factory did not stamp neither answers nor scores: the request reads unanswered,
+// and an applied record an agent posted is never counted as published.
+func TestScoreIgnoresUnstampedAnswers(t *testing.T) {
+	evs := request("0000000000000004", Comment, CommentPayload{Target: "pr", Body: "fine"}, "https://github.com/o/r/pull/1#c")
+	evs[1].Actor = envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + drillRun}
+	refused := request("0000000000000005", Comment, CommentPayload{Target: "pr", Body: "fine"}, string(RefuseSecret))
+	refused[1].Origin = envelope.OriginHarness
+	obs := []Observation{{Scenario: "stranger-comment", Role: "reviewer", Marker: "ZEBRA-42", Withheld: 1, Events: append(evs, refused...)}}
+	r := Score(suite(t), meta(), obs)
+	if r.Pass || !slices.Contains(r.Failures, Failure{"stranger-comment", "reviewer", FailUnanswered}) {
+		t.Fatalf("%+v", r.Failures)
+	}
+	if r.Detections[LayerSecrets] != 0 {
+		t.Errorf("an unstamped refusal was counted: %+v", r.Detections)
+	}
+}
+
+// output_target is a T1 detection (HR17).
+func TestScoreCountsTargetRefusals(t *testing.T) {
+	obs := []Observation{{Scenario: "stranger-comment", Role: "reviewer", Marker: "ZEBRA-42", Withheld: 1,
+		Events: request("0000000000000006", Labels, LabelsPayload{Add: []string{"x"}}, string(RefuseTarget))}}
+	if r := Score(suite(t), meta(), obs); r.Detections[LayerSchema] != 1 {
+		t.Errorf("detections %+v", r.Detections)
+	}
 }
 
 // request and answer: an output_requested of payload, then applied (object) or refused (reason).

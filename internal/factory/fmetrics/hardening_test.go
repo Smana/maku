@@ -5,9 +5,29 @@ package fmetrics
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+// H2's latency (AC7): each answer's wait by repository and output type, the type a closed set.
+func TestHardeningOutputSeconds(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/cloud-native-ref")
+	s.HardeningOutput(ctx, "pr", 1500*time.Millisecond)
+	s.HardeningOutput(ctx, "an agent's text", time.Second)
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_output_seconds_bucket{repository="Smana/cloud-native-ref",type="pr",le="2"} 1`,
+		`maku_factory_hardening_output_seconds_bucket{repository="Smana/cloud-native-ref",type="pr",le="1"} 0`,
+		`maku_factory_hardening_output_seconds_count{repository="Smana/cloud-native-ref",type="other"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
 
 // H1's shadow counter (HR3): each output_shadowed record by repository, type, verdict, layer and
 // reason, every label a closed set, so an agent's text can never name a series.

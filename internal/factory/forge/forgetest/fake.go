@@ -27,6 +27,9 @@ var _ forge.Merger = (*Fake)(nil)
 // method set; Now stamps its comments (time.Now when nil).
 type Fake struct {
 	Now func() time.Time
+	// Author is the login its writes carry: comments, issues and pull requests. "" is the factory
+	// App's, ogenki-agent-factory[bot]; a fake standing for the publisher sets the agents App's.
+	Author string
 
 	mu            sync.Mutex
 	labeled       map[string][]forge.Item
@@ -254,6 +257,51 @@ func (f *Fake) now() time.Time {
 	return time.Now()
 }
 
+// author is Author, the factory App's login when unset.
+func (f *Fake) author() string {
+	if f.Author != "" {
+		return f.Author
+	}
+	return "ogenki-agent-factory[bot]"
+}
+
+// CreatePR implements the forge's CreatePR: the pull request is stored open as Author's, numbered
+// from 101 above every stored one, with a github.com URL, and becomes the head branch's. A head
+// whose pull request is still open answers forge.ErrPRExists, as GitHub's 422 does.
+func (f *Fake) CreatePR(_ context.Context, base, head, title, body string, draft bool) (forge.PR, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return forge.PR{}, f.createErr
+	}
+	if n, ok := f.branches[head]; ok && f.prs[n].State == "OPEN" {
+		return forge.PR{}, forge.ErrPRExists
+	}
+	n := 101
+	for k := range f.prs {
+		n = max(n, k+1)
+	}
+	f.calls = append(f.calls, fmt.Sprintf("create-pr %s %s draft=%t", base, head, draft))
+	p := forge.PR{Number: n, NodeID: fmt.Sprintf("PR_%d", n), URL: fmt.Sprintf("https://github.com/owner/repo/pull/%d", n),
+		Title: title, Body: body, State: "OPEN", Author: f.author(), HeadRef: head}
+	f.prs[n], f.branches[head] = p, n
+	return p, nil
+}
+
+// EditPR implements the forge's EditPR: the stored pull request's title and body change.
+func (f *Fake) EditPR(_ context.Context, n int, title, body string) (forge.PR, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.prs[n]
+	if !ok {
+		return forge.PR{}, fmt.Errorf("pull request %d not found", n)
+	}
+	f.calls = append(f.calls, fmt.Sprintf("edit-pr %d", n))
+	p.Title, p.Body = title, body
+	f.prs[n] = p
+	return p, nil
+}
+
 // Comment implements the forge's Comment, as the factory App.
 func (f *Fake) Comment(ctx context.Context, n int, body string) error {
 	_, err := f.CommentWithID(ctx, n, body)
@@ -266,7 +314,7 @@ func (f *Fake) CommentWithID(_ context.Context, n int, body string) (int64, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextID++
-	f.comments[n] = append(f.comments[n], forge.Comment{ID: f.nextID, Author: "ogenki-agent-factory[bot]", Body: body, At: now})
+	f.comments[n] = append(f.comments[n], forge.Comment{ID: f.nextID, Author: f.author(), Body: body, At: now})
 	return f.nextID, nil
 }
 
@@ -358,7 +406,7 @@ func (f *Fake) ClosePR(_ context.Context, n int) error {
 }
 
 // CreateIssue implements the forge's CreateIssue: it records "title\nbody\nlabels: a,b", stores the
-// issue as the factory App's, open, numbered from 501 with an id 9000 more, and returns it.
+// issue as Author's, open, created at Now, numbered from 501 with an id 9000 more, and returns it.
 func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []string) (forge.Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -370,8 +418,8 @@ func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []strin
 	for k := range f.issues { // above every seeded issue: a number is never reused
 		n = max(n, k+1)
 	}
-	i := forge.Issue{Number: n, ID: int64(9000 + n), Title: title, Body: body, State: "OPEN",
-		Author: "ogenki-agent-factory[bot]", Labels: slices.Clone(labels)}
+	i := forge.Issue{Number: n, ID: int64(9000 + n), Title: title, Body: body, State: "OPEN", CreatedAt: f.now(),
+		Author: f.author(), Labels: slices.Clone(labels)}
 	f.issues[n] = i
 	return i, nil
 }

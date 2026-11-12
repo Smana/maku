@@ -212,6 +212,7 @@ The factory (SP3), by the same stages. Its wiring is `internal/app/factory.go`; 
 | Gate | `internal/factory/fluxwatch` | Flux's objects for the post-merge monitor (MC7): uncached, read-only, `unstructured` |
 | Out | `internal/factory/forge`, `internal/factory/narrate` | GitHub as the factory App (`internal/factory/forge/forgetest`: its test-only fake); narration, at least once |
 | Out | `internal/factory/rooms` | the broker's system API over TLS |
+| Out | `internal/factory/applier` | hardening H2's safe-output applier: checks each `output_requested` and applies it as the publisher (the agents App, its token from `PublisherTokens`, octo-sts today) or the factory App, answered exactly once; not started until `enforceOutputs` exists |
 | Ops | `internal/factory/meter`, `internal/factory/fmetrics`, `internal/factory/tracing` | the run meter; the §7 metrics; one root span per task |
 | API | `internal/factory/api` | the run-request API, `POST /v1/runs` (the chart's `api` port, `:8082`; TLS 1.3 with `api.tls`) |
 
