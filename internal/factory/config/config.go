@@ -1558,7 +1558,7 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	// HR13: an enforced repository on a run path whose sandbox token no role policy scopes. The
 	// factory still starts: the tracer reports every direct write.
-	if c.Hardening.Enforcing() && c.Runs.Group != runwatch.DefaultKind.Group {
+	if c.Hardening.Enforcing() && !c.Runs.XR() {
 		c.Warnings = append(c.Warnings, "hardening.enforceOutputs is set and runs are not cloud-native-ref's XR: the sandbox token is not scoped by a role policy, "+
 			"so a run can still write directly; the tracer reports each such write (HR13)")
 	}
