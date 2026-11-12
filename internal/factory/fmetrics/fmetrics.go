@@ -156,6 +156,7 @@ type Set struct {
 	hardeningOutput      metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
+	mergeGateRequired    metric.Int64Gauge
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -354,6 +355,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.sandboxPermission, err = meter.Int64Gauge("agent_factory_hardening_sandbox_permission",
 		metric.WithDescription("1 for each GitHub permission and access a sandbox role's or the publisher's octo-sts policy grants on an enforced repository, as the last fence pass read it, else 0 (hardening H2, R2 as evidence)."))
+	check(err)
+	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
+		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
 	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
@@ -956,6 +960,16 @@ var (
 	permissionNames  = []string{"actions", "checks", "contents", "deployments", "issues", "metadata", "packages", "pages", "pull_requests", "statuses", "workflows"}
 	permissionAccess = []string{"read", "write", "admin", "none"}
 )
+
+// MergeGateRequired sets whether repository's default branch requires maku/merge-gate from the App
+// that posts it (D11's branch-rules observer).
+func (s *Set) MergeGateRequired(ctx context.Context, repository string, required bool) {
+	v := int64(0)
+	if required {
+		v = 1
+	}
+	s.mergeGateRequired.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
 
 // SandboxPermissions sets the permission gauge for repository from one fence pass: grants maps a
 // role (a sandbox role, or publisher) to its policy's permission → access. Every pair it names is
