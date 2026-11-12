@@ -1,7 +1,8 @@
 # Static binary on Chainguard's Wolfi git image (hardening H3, HR24): the push applier shells out to
 # git to inspect and push a run's bundle, so the final stage carries git and nothing it does not
 # need; nonroot, uid 65532. The factory's pod securityContext (restricted PSS) overrides the uid
-# anyway. The image job checks git --version is at least 2.45.
+# anyway. The image job checks git --version is at least 2.48, the first git that fscks the objects
+# fetched from a bundle (fetch.fsckObjects).
 # The build stage runs on the runner's own arch and cross-compiles: compiling under QEMU
 # arm64 emulation outran the prerelease job's 30 minute timeout.
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS build
