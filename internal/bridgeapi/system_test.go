@@ -86,6 +86,32 @@ func TestRoomOutputs(t *testing.T) {
 	}
 }
 
+// HR27: the factory posts a held push's output_waiting through the same route, keyed apart from
+// its later answer.
+func TestRoomOutputsWaiting(t *testing.T) {
+	s, log, _ := outputServer(t)
+	h := s.Routes()
+	path := "/v1/rooms/" + room + "/outputs"
+	rec := envelope.OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: strings.Repeat("a", 64), Bytes: 4096,
+		Reason: envelope.WaitingReason, ApprovalID: "01JC0000000000000000000000"}
+	if r := call(t, h, http.MethodPost, path, "sys:"+factory,
+		map[string]any{"runId": runA, "kind": envelope.KindOutputWaiting, "record": rec}); r.Code != http.StatusCreated {
+		t.Fatalf("waiting: %d %s", r.Code, r.Body)
+	}
+	refused := envelope.OutputRecord{ID: rec.ID, Type: "push", Digest: rec.Digest, Reason: "approval_denied"}
+	if r := call(t, h, http.MethodPost, path, "sys:"+factory,
+		map[string]any{"runId": runA, "kind": envelope.KindOutputRefused, "record": refused}); r.Code != http.StatusCreated {
+		t.Fatalf("refused after waiting: %d %s", r.Code, r.Body)
+	}
+	evs := log.stored()
+	if len(evs) != 2 {
+		t.Fatalf("%d events", len(evs))
+	}
+	if k, got, ok := envelope.ReadOutput(evs[0], runA); !ok || k != envelope.KindOutputWaiting || got.ApprovalID != rec.ApprovalID {
+		t.Fatalf("ReadOutput %q %+v %v", k, got, ok)
+	}
+}
+
 // A run is the room's while the watch names the room as its roomRef, or, once the watch has let
 // it go, while its bridge's harness events are in the room's log: a bridge only ever appends to
 // its own run's room.

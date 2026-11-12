@@ -124,8 +124,8 @@ func (s *Server) roomTask(w http.ResponseWriter, r *http.Request) {
 
 // roomOutputs: POST /v1/rooms/{id}/outputs, system:* only (hardening HR2). The factory's answer
 // to a run's output request, or its shadow of a write the run made itself: {runId, kind, record}
-// with kind output_applied, output_refused or output_shadowed, never output_requested, which is
-// the run's own. Stored as a message stamped with the caller and the run, Delivery none and no
+// with kind output_applied, output_refused, output_shadowed or a held push's output_waiting
+// (HR27), never output_requested, which is the run's own. Stored as a message stamped with the caller and the run, Delivery none and no
 // text. Replays are keyed on <principal>:output:<kind> and a clientSeq derived from the output
 // id, so a retry never writes a second answer of a kind, whatever its body now says. Only
 // OutputClient may call it, and only for a run of the room (runOfRoom).
@@ -154,7 +154,8 @@ func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 		Record envelope.OutputRecord `json:"record"`
 	}
 	if err := decodeStrict(r.Body, &in); err != nil || !envelope.ValidID(in.RunID) ||
-		(in.Kind != envelope.KindOutputApplied && in.Kind != envelope.KindOutputRefused && in.Kind != envelope.KindOutputShadowed) ||
+		(in.Kind != envelope.KindOutputApplied && in.Kind != envelope.KindOutputRefused && in.Kind != envelope.KindOutputShadowed &&
+			in.Kind != envelope.KindOutputWaiting) ||
 		in.Record.Validate(in.Kind) != nil {
 		fail(w, http.StatusBadRequest, wire.ReasonBadMessage)
 		return

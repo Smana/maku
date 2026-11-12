@@ -275,8 +275,11 @@ For the factory (`system:factory`) alone: its answer to one of a run's output re
   "reason": "output_schema", "audit": [{"layer": "t5_classifier", "reason": "injection_suspected"}]}}
 ```
 
-`kind` is `output_applied`, `output_refused` or `output_shadowed`. `output_requested` is the run's
-own and is refused here. `record` must validate for its kind, and carries no `payload`.
+`kind` is `output_applied`, `output_refused`, `output_shadowed` or `output_waiting`.
+`output_requested` is the run's own and is refused here. `record` must validate for its kind, and
+carries no `payload`. `output_waiting` is not an answer: a `push` held for a maintainer's approval
+of its digest, with `reason: protected_path_needs_approval` and the approval's `approvalId`. Its
+answer follows once the approval closes.
 
 `runId` is a C2 id, and must be a run of the room:
 - while the broker watches the run, its `roomRef` must name the room;

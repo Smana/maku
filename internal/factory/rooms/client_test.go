@@ -691,6 +691,13 @@ func TestClientOutput(t *testing.T) {
 	if len(r.b.auth) != sent {
 		t.Fatalf("%d requests reached the broker", len(r.b.auth)-sent)
 	}
+	// HR27: a held push's output_waiting goes the same way.
+	waiting := envelope.OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: strings.Repeat("a", 64),
+		Reason: envelope.WaitingReason, ApprovalID: "01JC0000000000000000000000"}
+	delete(r.b.fail, "/v1/rooms/3buqdlot/outputs")
+	if err := r.c.Output(t.Context(), "3buqdlot", "cf4ato2x", envelope.KindOutputWaiting, waiting); err != nil {
+		t.Fatalf("waiting: %v", err)
+	}
 }
 
 func TestLastSeqIsTheRoomsCurrentSeq(t *testing.T) {

@@ -267,16 +267,17 @@ func (c *Client) TaskFacts(ctx context.Context, room string, f envelope.TaskFact
 }
 
 // Output posts the factory's answer to, or shadow of, one of run runID's outputs (hardening HR2):
-// kind is output_applied, output_refused or output_shadowed, and rec must pass Validate for it.
-// The broker keys a replay on (room, principal, kind, the record's id), so a retry of the same
-// answer is never stored twice. A body the broker refuses is ErrBadMessage.
+// kind is output_applied, output_refused, output_shadowed or output_waiting (HR27), and rec must
+// pass Validate for it. The broker keys a replay on (room, principal, kind, the record's id), so a
+// retry of the same answer is never stored twice. A body the broker refuses is ErrBadMessage.
 func (c *Client) Output(ctx context.Context, room, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error {
 	switch {
 	case !envelope.ValidID(room):
 		return fmt.Errorf("rooms: %q is not a C2 room id", room)
 	case !envelope.ValidID(runID):
 		return fmt.Errorf("rooms: %q is not a C2 run id", runID)
-	case kind != envelope.KindOutputApplied && kind != envelope.KindOutputRefused && kind != envelope.KindOutputShadowed:
+	case kind != envelope.KindOutputApplied && kind != envelope.KindOutputRefused && kind != envelope.KindOutputShadowed &&
+		kind != envelope.KindOutputWaiting:
 		return fmt.Errorf("rooms: %q is not an output answer", kind)
 	}
 	if err := rec.Validate(kind); err != nil {
