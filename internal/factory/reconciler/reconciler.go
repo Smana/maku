@@ -88,6 +88,10 @@ type TaskForge interface {
 	Issue(ctx context.Context, number int) (forge.Issue, error)
 	// LabelEvents verifies who added factory/drill to a revert PR (AM6), as intake verifies factory/revert.
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
+	// LabelEventsBy and IssuesByAuthorSince read back the labels and issues an agent run wrote
+	// (hardening HR1's shadow pass).
+	LabelEventsBy(ctx context.Context, number int, actor string, since time.Time) ([]forge.LabelEvent, error)
+	IssuesByAuthorSince(ctx context.Context, login string, since time.Time) ([]forge.Issue, error)
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
 	IssuesLabelled(ctx context.Context, label string) ([]forge.Issue, error)
 	IssuesLabelledSince(ctx context.Context, label string, since time.Time) ([]forge.Issue, error)

@@ -46,7 +46,7 @@ const prJSON = `{"data":{"repository":{"pullRequest":{
 
 const issueJSON = `{"data":{"repository":{"issue":{"number":7,"url":"https://github.com/Smana/demo/issues/7",
  "title":"Fix the link","body":"The link in docs/a.md is broken.","state":"OPEN","lastEditedAt":null,
- "author":{"__typename":"User","login":"dev1"},
+ "author":{"__typename":"User","login":"dev1"},"authorAssociation":"CONTRIBUTOR",
  "labels":{"nodes":[{"name":"factory/ready"}]},
  "timelineItems":{"nodes":[{"createdAt":"2026-09-27T09:04:00Z"}]}}}}}`
 
@@ -445,6 +445,10 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 	}))
 	mux.HandleFunc("GET /repos/Smana/demo/issues", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+		if c := q.Get("creator"); c != "" { // HR1: what one login opened, newest first
+			serveCreated(t, g.srv.URL, w, q)
+			return
+		}
 		if q.Get("labels") == "factory/revert" {
 			if q.Get("state") != "all" {
 				t.Errorf("revert labels must list closed pull requests too: %v", q)
@@ -690,8 +694,10 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			if r.PathValue("n") == "13" && id == 2 {
 				updated = "2026-09-27T11:00:00Z"
 			}
-			cs = append(cs, fmt.Sprintf(`{"id":%d,"body":"c%d","user":{"login":"Smana"},"created_at":"2026-09-27T10:00:00Z","updated_at":%q}`,
-				id, id, updated))
+			// UH6: odd ids are a member's, even ids an outsider's.
+			assoc := map[bool]string{true: "MEMBER", false: "NONE"}[id%2 == 1]
+			cs = append(cs, fmt.Sprintf(`{"id":%d,"body":"c%d","user":{"login":"Smana"},"author_association":%q,"created_at":"2026-09-27T10:00:00Z","updated_at":%q}`,
+				id, id, assoc, updated))
 		}
 		_, _ = io.WriteString(w, "["+strings.Join(cs, ",")+"]")
 	}))
@@ -2460,5 +2466,116 @@ func TestFileAtCommitNeverReadable(t *testing.T) {
 				t.Fatalf("found %v err %v, want ErrNotAFile %v", found, err, tc.notAFile)
 			}
 		})
+	}
+}
+
+// serveCreated answers GitHub's issue list filtered by creator, newest created first (HR1).
+// "agents[bot]" opened issues 90 and 88 since 10:00 and a pull request between them, then older
+// issues on page 2; "busy[bot]" opened more since then than two pages hold.
+func serveCreated(t *testing.T, base string, w http.ResponseWriter, q url.Values) {
+	if q.Get("state") != "all" || q.Get("sort") != "created" || q.Get("direction") != "desc" || q.Get("since") != "2026-10-01T10:00:00Z" {
+		t.Errorf("an author's issues are read open or closed, newest created first, bounded by since: %v", q)
+	}
+	page := max(1, atoi(q.Get("page")))
+	w.Header().Set("Link", fmt.Sprintf(`<%s/repos/Smana/demo/issues?page=%d>; rel="next"`, base, page+1))
+	issue := func(n int, at string) string {
+		return fmt.Sprintf(`{"number":%d,"id":%d,"state":"open","title":"t%d","user":{"login":%q},"author_association":"NONE","created_at":%q}`,
+			n, 1000+n, n, q.Get("creator"), at)
+	}
+	switch {
+	case q.Get("creator") == "busy[bot]":
+		_, _ = io.WriteString(w, "["+issue(100+page, "2026-10-01T11:00:00Z")+"]")
+	case page == 1:
+		_, _ = io.WriteString(w, "["+issue(90, "2026-10-01T10:30:00Z")+
+			`,{"number":89,"pull_request":{"url":"x"},"created_at":"2026-10-01T10:20:00Z"},`+issue(88, "2026-10-01T10:00:00Z")+"]")
+	default:
+		_, _ = io.WriteString(w, "["+issue(87, "2026-10-01T09:50:00Z")+","+issue(86, "2026-10-01T09:40:00Z")+"]")
+	}
+}
+
+func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
+
+// UH6: a comment carries its author's association, which author trust reads.
+func TestCommentAssociation(t *testing.T) {
+	r := newRig(t)
+	recent, err := r.g.RecentComments(t.Context(), 9)
+	if err != nil || len(recent) < 2 || recent[0].Association != "NONE" || recent[1].Association != "MEMBER" {
+		t.Fatalf("recent %+v %v", recent[:min(2, len(recent))], err)
+	}
+	all, err := r.g.AllComments(t.Context(), 7)
+	if err != nil || len(all) != 1 || all[0].Association != "MEMBER" {
+		t.Fatalf("all %+v %v", all, err)
+	}
+}
+
+// UH6: an issue read through GraphQL carries its author's association.
+func TestIssueAssociation(t *testing.T) {
+	r := newRig(t)
+	if iss, err := r.g.Issue(t.Context(), 7); err != nil || iss.Association != "CONTRIBUTOR" {
+		t.Fatalf("%+v %v", iss, err)
+	}
+}
+
+// HR1: the shadow pass reads the labels one actor added since a run started, whatever the label.
+func TestLabelEventsBy(t *testing.T) {
+	at := func(hm string) time.Time { tm, _ := time.Parse(time.RFC3339, "2026-09-27T"+hm+":00Z"); return tm }
+	for _, tc := range []struct {
+		name   string
+		number int
+		actor  string
+		since  time.Time
+		want   []string
+		cut    bool
+	}{
+		{"every label the actor added, oldest first", 7, "Smana", at("09:00"), []string{"bug", "factory/ready"}, false},
+		{"since is inclusive", 7, "Smana", at("09:01"), []string{"bug", "factory/ready"}, false},
+		{"before since is left out", 7, "Smana", at("09:02"), []string{"factory/ready"}, false},
+		{"another actor's additions are left out", 7, "nobody", at("09:00"), nil, false},
+		{"a removal is not an addition", 7, "ogenki-agent-factory[bot]", at("09:00"), nil, false},
+		{"past the page cap", 8, "Smana", at("09:00"), nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			evs, err := newRig(t).g.LabelEventsBy(t.Context(), tc.number, tc.actor, tc.since)
+			if tc.cut {
+				if !errors.Is(err, ErrEventsTruncated) || len(evs) != 20 {
+					t.Fatalf("%d %v", len(evs), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, e := range evs {
+				if e.Actor != tc.actor {
+					t.Fatalf("actor %q", e.Actor)
+				}
+				got = append(got, e.Label)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("labels %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// HR1: the issues a login opened since a time, pull requests left out, oldest first; past two
+// pages the caller is told, not handed a silently partial list.
+func TestIssuesByAuthorSince(t *testing.T) {
+	since := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	r := newRig(t)
+	iss, err := r.g.IssuesByAuthorSince(t.Context(), "agents[bot]", since)
+	if err != nil || len(iss) != 2 || iss[0].Number != 88 || iss[1].Number != 90 {
+		t.Fatalf("%+v %v", iss, err)
+	}
+	if i := iss[1]; i.Author != "agents[bot]" || i.Association != "NONE" || !i.CreatedAt.Equal(since.Add(30*time.Minute)) {
+		t.Fatalf("%+v", i)
+	}
+	iss, err = r.g.IssuesByAuthorSince(t.Context(), "busy[bot]", since)
+	if !errors.Is(err, ErrIssuesTruncated) || len(iss) != 2 {
+		t.Fatalf("%d %v", len(iss), err)
+	}
+	if _, err := r.g.IssuesByAuthorSince(t.Context(), "not a login", since); err == nil {
+		t.Fatal("a malformed login reached the query")
 	}
 }
