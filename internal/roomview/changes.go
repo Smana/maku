@@ -178,7 +178,7 @@ func Milestones(in MilestoneInput) ChangeSet {
 				continue
 			}
 			m := Milestone{Seq: e.Seq, At: e.TS, Until: p.ExpiresAt, Kind: kindApprovalRequested, Run: e.RunID,
-				Text: summary.DescribeApproval(p.Class, p.Action)}
+				Text: summary.DescribeBound(p.Class, p.Branch, p.Digest, p.Action)}
 			if in.URL != "" && p.ApprovalID != "" {
 				m.URL = in.URL + "#" + p.ApprovalID
 			}

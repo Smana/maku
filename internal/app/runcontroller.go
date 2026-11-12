@@ -67,13 +67,14 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	if err := mgr.AddReadyzCheck("ping", healthz.Ping); err != nil {
 		return err
 	}
-	// The preflight (v4 D18): new runs wait for its first result and are refused while it fails. It
-	// reads the RuntimeClass uncached, so the controller needs get on that one name, never a watch.
+	// The preflight (v4 D18, D6): new runs wait for its first result and are refused while it fails. It
+	// reads the RuntimeClass uncached, so the controller needs get on that one name, never a watch; in
+	// kubernetes mode it also runs a probe pod (Kube writes it).
 	passed, err := metrics.NewPreflightGauge(crmetrics.Registry)
 	if err != nil {
 		return err
 	}
-	pf := &runctl.Preflight{Client: mgr.GetAPIReader(), Cfg: cfg, Every: runctl.DefaultPreflightEvery, Log: logger, Passed: passed}
+	pf := &runctl.Preflight{Client: mgr.GetAPIReader(), Kube: mgr.GetClient(), Cfg: cfg, Every: runctl.DefaultPreflightEvery, Log: logger, Passed: passed}
 	if err := mgr.Add(pf); err != nil {
 		return err
 	}

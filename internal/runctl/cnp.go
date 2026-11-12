@@ -3,6 +3,7 @@
 package runctl
 
 import (
+	"net"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,11 +18,8 @@ import (
 // github and its profiles on 443, the model host on its port. Nothing dials in except the
 // kubelet's probe of the bridge (C4).
 func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstructured.Unstructured {
-	web := c.FQDNs(r) // reached on 443
+	web := webHosts(r, c, m) // reached on 443
 	modelNS, inCluster := inClusterNamespace(m.Host)
-	if m.Port == 443 && !inCluster {
-		web = addUnique(web, m.Host)
-	}
 	names := addUnique(slices.Clone(web), m.Host)
 	matchNames := func(hs []string) []any {
 		out := make([]any, 0, len(hs))
@@ -83,6 +81,31 @@ func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstr
 	u.SetNamespace(om.Namespace)
 	u.SetLabels(om.Labels)
 	return u
+}
+
+// webHosts are the hosts a run reaches on 443: github and its profiles, then a model outside the
+// cluster served on 443.
+func webHosts(r *v1alpha1.AgentRun, c Config, m Model) []string {
+	web := c.FQDNs(r)
+	if _, inCluster := inClusterNamespace(m.Host); m.Port == 443 && !inCluster {
+		web = addUnique(web, m.Host)
+	}
+	return web
+}
+
+// Egress is a run's allow-list as host:port, the same set its CNP opens on the web: webHosts on 443,
+// then a model outside the cluster on another port. An in-cluster model is not in it: it is reached
+// directly, by NetworkPolicy, never through the egress proxy. It is the pod's EgressAnnotation.
+func Egress(r *v1alpha1.AgentRun, c Config, m Model) []string {
+	web := webHosts(r, c, m)
+	out := make([]string, 0, len(web)+1)
+	for _, h := range web {
+		out = append(out, net.JoinHostPort(h, "443"))
+	}
+	if _, inCluster := inClusterNamespace(m.Host); !inCluster && m.Port != 443 {
+		out = addUnique(out, net.JoinHostPort(m.Host, strconv.Itoa(m.Port)))
+	}
+	return out
 }
 
 // inClusterNamespace is the namespace of a Service host (<svc>.<ns>.svc or <svc>.<ns>.svc.<domain>),

@@ -1,0 +1,61 @@
+metadata:
+  annotations:
+    agents.ogenki.io/principal: system:run-controller
+    maku.ogenki.io/egress: github.com:443
+  labels:
+    agents.ogenki.io/role: preflight
+    agents.ogenki.io/run-id: preflight
+    app.kubernetes.io/managed-by: run-controller
+  name: run-preflight-abcdefgh
+  namespace: agents
+spec:
+  activeDeadlineSeconds: 180
+  automountServiceAccountToken: false
+  containers:
+  - args:
+    - netprobe
+    - --allow
+    - room-broker.agent-platform.svc.cluster.local:8443
+    - --deny
+    - room-broker.agent-platform.svc.cluster.local:9090
+    - --deny
+    - kubernetes.default.svc.cluster.local:443
+    - --deny
+    - github.com:443
+    - --connect
+    - github.com:443
+    - --proxy
+    - http://egress-proxy.agent-platform.svc.cluster.local:3128
+    image: ghcr.io/smana/maku-run-controller:v0.16.0
+    name: netprobe
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 16Mi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    terminationMessagePolicy: File
+  dnsConfig:
+    options:
+    - name: ndots
+      value: "1"
+  enableServiceLinks: false
+  restartPolicy: Never
+  runtimeClassName: gvisor
+  securityContext:
+    runAsGroup: 65532
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+status: {}

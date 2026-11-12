@@ -59,6 +59,20 @@ const (
 	// RefuseExpired is a request still unanswered when its run's answer wait ran out, the kill switch
 	// engaged or GitHub unreachable all along: nothing is written for it.
 	RefuseExpired Refusal = "output_expired"
+	// The push refusals at T1 (HR25): a bundle naming another ref than refs/heads/agent/<task>, or a
+	// tag; a head descending from neither the branch nor the base, or missing prerequisites; a
+	// submodule, an escaping symlink or an object failing fsck; a cumulative change over the
+	// class's caps.
+	RefusePushRef     Refusal = "push_ref"
+	RefusePushHistory Refusal = "push_history"
+	RefusePushTree    Refusal = "push_tree"
+	RefusePushSize    Refusal = "push_size"
+	// RefuseApprovalDenied and RefuseApprovalExpired answer a waiting push (HR27) whose approval a
+	// maintainer denied, or that nobody decided within hardening.applier.approvalTTL.
+	RefuseApprovalDenied  Refusal = "approval_denied"
+	RefuseApprovalExpired Refusal = "approval_expired"
+	// RefuseSuperseded answers a waiting push that a later push of the same run replaced (HR27).
+	RefuseSuperseded Refusal = "output_superseded"
 )
 
 // Payload bounds (safe outputs table).

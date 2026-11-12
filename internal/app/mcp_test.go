@@ -28,6 +28,13 @@ import (
 	"github.com/Smana/maku/internal/runwatch"
 )
 
+// HR22, HR27: the broker's room log is the bundle store and the answers reader roomMCP finds by
+// assertion, so output_push and output_status are served once a claim names push.
+var (
+	_ mcp.BundleStore   = (*meteredLog)(nil)
+	_ mcp.OutputAnswers = (*meteredLog)(nil)
+)
+
 type fakeToolLog struct{ drafts []envelope.Draft }
 
 func (l *fakeToolLog) Append(_ context.Context, d envelope.Draft) (envelope.Event, bool, error) {

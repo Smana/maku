@@ -264,6 +264,72 @@ These policies live in cloud-native-ref. Default deny everywhere; one allow per 
 On gcp-0 the identity-provider rule is `toEntities: [all]` without ports: a port-scoped rule to the
 cluster's own gateway hairpins through the socket load balancer and is dropped.
 
+### The run path's network modes
+
+With the run controller, the `maku` chart's `networkPolicies.mode` decides what confines a run (v4 D6):
+
+| Mode | What holds a run | Residual risk |
+|---|---|---|
+| `cilium` | A CiliumNetworkPolicy per run: DNS for its own names only, GitHub and its egress profiles on 443 by name, the model, the broker | None this table adds |
+| `kubernetes` | A plain NetworkPolicy per run: the cluster DNS on 53, the egress proxy on 3128, the broker on 8443 (and the room tools port) when the run has a room, an in-cluster model's namespace on its port. The proxy holds the run's HTTPS to its own hosts | DNS to the cluster DNS stays open, so DNS tunnelling is possible. `cilium` mode, which filters DNS names, closes it |
+| `none` | Nothing | Everything: a run reaches any address. The install banner says so (`network_policy_none`) |
+
+In `kubernetes` mode the runs namespace is default-deny in both directions, and the broker, the run
+controller and the egress proxy each have their own default-deny NetworkPolicy with one allow per
+flow. The factory's and the Slack App's egress policies come with rollout step 6.
+
+**The egress proxy** is a CONNECT-only forward proxy: `runController.image` run with
+`egress-proxy`, in the release namespace (only the run controller may create pods in the runs
+namespace). Its guarantees:
+
+- **CONNECT only.** Any other method gets 405.
+- **A client is its source pod IP.** The proxy watches the run controller's pods in the runs
+  namespace and maps an IP to exactly one unfinished pod. It refuses an unknown IP, a terminating
+  pod's, and an IP two pods hold.
+- **The allow-list is the pod's `maku.ogenki.io/egress` annotation**, `host:port` pairs the run
+  controller writes at create: GitHub, the run's egress profiles and the model, the set the CNP
+  opens in `cilium` mode. The run-pod policy refuses any change to it after create. The proxy allows
+  a `host:port` only on an exact match.
+- **No private address.** It refuses an IP literal, and a name that resolves to any loopback,
+  private, link-local, CGNAT, NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`), IPv4-compatible (`::/96`)
+  or `privateCIDRs` address. It dials the address it checked, never the name again. Its own
+  NetworkPolicy opens only 443 (and `egressProxy.extraPorts`) outside `privateCIDRs`.
+- **Bounded.** Each replica holds at most `egressProxy.maxTunnels` tunnels (1024) and
+  `maxTunnelsPerClient` (64) from one run pod; a CONNECT over either gets 429. A tunnel that moves no
+  byte for 5 minutes is closed.
+- **Every decision is logged**, `allow run=<id> <host:port>` or `refuse run=<id|-> <host:port>`,
+  and counted in `maku_egress_proxy_connections_total{decision}`.
+- **Its trust root is the run-pod policy**, which alone lets the run controller write the
+  annotation: `networkPolicies.mode kubernetes` with `runPodPolicy.enabled: false` fails the render.
+
+Only the harness gets `HTTPS_PROXY`, with `NO_PROXY=127.0.0.1,localhost,.svc.<cluster domain>`: the
+bridge talks in the cluster only. A run takes no ingress: NetworkPolicy always admits node-local
+traffic, so the kubelet's probe of the bridge needs no rule.
+
+**The preflight refuses runs on a CNI that does not enforce NetworkPolicy.** A plain NetworkPolicy
+on such a CNI is silently ignored. In `kubernetes` mode the run controller proves enforcement
+before any run starts ([the preflight](operations.md#the-run-controllers-preflight)). Two of its
+negative controls (the apiserver, and `github.com:443` dialled past the proxy) are denied only by the
+run's own egress rules, so a CNI that enforces ingress alone fails it too.
+
+Residual risks of `kubernetes` mode:
+
+- **DNS stays open** to the cluster DNS, so DNS tunnelling is possible; `cilium` mode closes it.
+- **An empty `networkPolicies.kubernetes.apiServerCIDRs` opens `apiServerPorts` (443 and 6443) to
+  any address** for the broker, the run controller and the egress proxy: their rule reaching the
+  apiserver cannot name it otherwise. For the proxy that includes private addresses on 443, which its
+  dialer still refuses. Set it to the apiserver's addresses after service translation (`kubectl get
+  endpointslice -n default -l kubernetes.io/service-name=kubernetes`). It then closes every other 443
+  for the broker too, so its other 443 flows (the run issuer's JWKS, the identity provider) need
+  `broker.networkPolicy.extraEgress`. The chart does not look the addresses up: a `lookup` renders
+  nothing under `helm template` and GitOps.
+- **One node.** Where the apiserver runs on the very node a run lands on (a single-node k3s, kind or
+  a laptop), the apiserver control is a dial to that node's own address. kube-router on a one-node
+  k3s denies it (the demo-e2e `kubernetes` leg). A CNI that admits pod-to-own-node traffic whatever
+  the policy would fail the preflight there although nothing else is open; the probe's `github.com`
+  control still tells an ingress-only CNI apart, but the network check cannot be skipped: choose
+  another mode on such a CNI.
+
 ## The run pod's admission
 
 With the run-controller, the `maku` chart holds the runs namespace with in-tree admission (v4 D17),
@@ -286,6 +352,11 @@ and needs no controller:
   those repositories can run code in a run pod; the image signature, not the policy, ties a digest
   to a release.
 - **A ResourceQuota `runs`** caps pods, CPU and memory as a safety net (D16). A run over it waits.
+- **Reviewer and triager runs hold a read-only token.** The run controller picks the git Secret a
+  run mounts: `runController.gitReadSecret` (contents, pull requests, issues, checks and actions:
+  read) for those two roles, `gitSecret` for implementer and tester. Without a read Secret it refuses
+  them, unless `runController.unsafeSharedGitToken` (a laptop's one PAT), which the install banner
+  shows.
 
 ## Internal principals and publishing
 

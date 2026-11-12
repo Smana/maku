@@ -25,12 +25,20 @@ concurrency:
   cancel-in-progress: true
 jobs:
   e2e:
+    # cilium: the default mode. kubernetes: plain NetworkPolicies and the egress proxy (v4 D6) on the
+    # same Cilium, which enforces standard policies, under gVisor.
+    name: e2e (${{ matrix.netpol }})
+    strategy:
+      fail-fast: false
+      matrix:
+        netpol: [cilium, kubernetes]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
     env:
       QUICKSTART_REPO: ${{ secrets.QUICKSTART_REPO }}
+      E2E_NETPOL: ${{ matrix.netpol }}
     steps:
       - if: env.QUICKSTART_REPO == ''
         run: |

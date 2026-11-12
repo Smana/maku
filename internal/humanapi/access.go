@@ -69,6 +69,27 @@ func (s *Server) gate(ctx context.Context, room *v1alpha1.Room, p authn.Principa
 	return admitted, err
 }
 
+// writes reports whether p may write room's repository on GitHub, through the same Identity and
+// Access the Slack route reads (HR28). No admin standing short-cuts it, as on Slack: a room with
+// no repository, an unwired check, a sponsored principal or an unlinked caller writes nothing.
+func (s *Server) writes(ctx context.Context, room *v1alpha1.Room, p authn.Principal) (bool, error) {
+	if p.Sponsored || room.Spec.Repository == "" || s.Access == nil || s.Identity == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, accessWait)
+	defer cancel()
+	login, err := s.Identity.Login(ctx, p.Sub, room.Spec.Repository)
+	switch {
+	case errors.Is(err, repoaccess.ErrNoRepository):
+		return false, nil
+	case err != nil:
+		return false, err
+	case login == "":
+		return false, nil
+	}
+	return s.Access.CanWrite(ctx, room.Spec.Repository, login)
+}
+
 // The X-Rooms-Access header of GET /api/rooms (ruling R21): why a list may be short, about the
 // caller alone, so it tells no room's existence. maku turns it into a hint.
 const (
