@@ -237,6 +237,9 @@ type Reconciler struct {
 	// Coordination is the multi-repository coordination service (v4 MR2): a parent files through
 	// it and a child's authority is re-read through it. nil files nothing and holds every child.
 	Coordination coordinationPort
+	// Hardening is the untrusted-input hardening track's ports (H1): with a repository in audit,
+	// a writer run's brief gets a canary and the task records its input trust. nil is off.
+	Hardening *HardeningPorts
 
 	oldBroker sync.Once // the broker serves no task route: said once per process
 	notServed onceSet   // tasks whose repository is not served, said once each

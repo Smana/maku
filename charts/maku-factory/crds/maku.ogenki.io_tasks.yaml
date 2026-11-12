@@ -1738,6 +1738,70 @@ spec:
                 maxItems: 512
                 type: array
                 x-kubernetes-list-type: set
+              inputTrust:
+                description: |-
+                  What the task's runs read, by source kind and author trust, never by content (hardening
+                  UH7). Recorded only while the repository's hardening mode is audit or enforce.
+                properties:
+                  min:
+                    enum:
+                    - blocked
+                    - none
+                    - unapproved
+                    - approved
+                    - merged
+                    type: string
+                  mode:
+                    description: The hardening mode the record was taken under.
+                    enum:
+                    - audit
+                    - enforce
+                    type: string
+                  sources:
+                    items:
+                      description: 'TrustSource is one input''s kind and level: never
+                        its content.'
+                      properties:
+                        kind:
+                          enum:
+                          - default_branch
+                          - steering
+                          - factory
+                          - issue
+                          - comment
+                          - own_ci
+                          - foreign_ci
+                          - room
+                          - parent
+                          - runlore
+                          - tool_result
+                          type: string
+                        level:
+                          enum:
+                          - blocked
+                          - none
+                          - unapproved
+                          - approved
+                          - merged
+                          type: string
+                      required:
+                      - kind
+                      - level
+                      type: object
+                    maxItems: 16
+                    type: array
+                  withheld:
+                    additionalProperties:
+                      description: InputCount is a number of withheld items.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    maxProperties: 16
+                    type: object
+                required:
+                - min
+                - mode
+                type: object
               lastActivity:
                 description: The last room event seen for the running run (stuck detection,
                   §6.3).
@@ -2424,6 +2488,11 @@ spec:
                     round:
                       format: int32
                       type: integer
+                    shadowed:
+                      description: |-
+                        The hardening shadow pass has recorded this run's GitHub writes (H1): set once, so the pass
+                        never runs twice for one run.
+                      type: boolean
                     startSeq:
                       description: 'The room''s lastSeq when the run was created:
                         verdicts are read after it.'

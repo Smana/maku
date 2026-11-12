@@ -453,6 +453,10 @@ type TaskStatus struct {
 	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness.
 	// +optional
 	Profile *ProfileStatus `json:"profile,omitempty"`
+	// What the task's runs read, by source kind and author trust, never by content (hardening
+	// UH7). Recorded only while the repository's hardening mode is audit or enforce.
+	// +optional
+	InputTrust *InputTrust `json:"inputTrust,omitempty"`
 	// +kubebuilder:validation:MaxItems=256
 	// +optional
 	Runs []RunRecord `json:"runs,omitempty"`
@@ -784,6 +788,40 @@ type RunRecord struct {
 	// What the run ran on (R10), each field filled once as it becomes known.
 	// +optional
 	Provenance RunProvenance `json:"provenance,omitempty"`
+	// The hardening shadow pass has recorded this run's GitHub writes (H1): set once, so the pass
+	// never runs twice for one run.
+	// +optional
+	Shadowed bool `json:"shadowed,omitempty"`
+}
+
+// InputTrust is status.inputTrust (hardening UH7, HR8): the lowest author trust a task's runs read,
+// the items withheld per source kind, and each distinct source kind and level. Under audit nothing
+// is withheld: Withheld counts what enforcement would have kept out, and Min includes that text,
+// since the run could read it.
+type InputTrust struct {
+	// +kubebuilder:validation:Enum=blocked;none;unapproved;approved;merged
+	Min string `json:"min"`
+	// +kubebuilder:validation:MaxProperties=16
+	// +optional
+	Withheld map[string]InputCount `json:"withheld,omitempty"`
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Sources []TrustSource `json:"sources,omitempty"`
+	// The hardening mode the record was taken under.
+	// +kubebuilder:validation:Enum=audit;enforce
+	Mode string `json:"mode"`
+}
+
+// InputCount is a number of withheld items.
+// +kubebuilder:validation:Minimum=0
+type InputCount int32
+
+// TrustSource is one input's kind and level: never its content.
+type TrustSource struct {
+	// +kubebuilder:validation:Enum=default_branch;steering;factory;issue;comment;own_ci;foreign_ci;room;parent;runlore;tool_result
+	Kind string `json:"kind"`
+	// +kubebuilder:validation:Enum=blocked;none;unapproved;approved;merged
+	Level string `json:"level"`
 }
 
 // RunProvenance is what a run ran on (R10). The reconciler fills each field once, from the
