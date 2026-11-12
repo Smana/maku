@@ -52,13 +52,17 @@ var outputDescriptions = map[hardening.OutputType]string{
 
 // OutputTools are the safe-output tools (hardening UH3, UH4): output_<type> records a request as
 // output_requested in the room log and returns its id; the factory applies or refuses it later and
-// answers with output_applied or output_refused. Stage H0 builds them; no server lists them yet.
+// answers with output_applied or output_refused. Each is served only to a run whose claim names its
+// type (runwatch.SafeOutputsAnnotation, HR14), and output_push only with a bundle store (H3).
 func OutputTools(log Log, red Redactor, now func() time.Time, cfg OutputConfig) []Tool {
 	var out []Tool
 	for _, t := range hardening.Types() {
 		out = append(out, Tool{Name: "output_" + string(t), Roles: hardening.Roles(t), Action: policy.Chat,
 			Description: outputDescriptions[t] + " This is a request: the factory checks it, then applies or refuses it, and the room shows which.",
 			InputSchema: json.RawMessage(outputSchemas[t]),
+			Gate: func(r runwatch.Run) bool {
+				return r.ServesOutput(string(t)) && (t != hardening.Push || cfg.Bundles != nil)
+			},
 			Call: func(ctx context.Context, c Caller, args json.RawMessage) (any, error) {
 				return requestOutput(ctx, log, red, now, cfg, c, t, args)
 			}})
@@ -71,7 +75,11 @@ func requestOutput(ctx context.Context, log Log, red Redactor, now func() time.T
 	if red == nil {
 		return nil, errors.New("mcp: no redactor: nothing is stored unredacted")
 	}
-	v, refusal := hardening.DecodeOutput(t, args, cfg.LabelAllowlist)
+	allow := cfg.LabelAllowlist
+	if len(c.Run.SafeOutputs) > 0 {
+		allow = c.Run.LabelAllowlist // the factory's list for this run, written at its creation
+	}
+	v, refusal := hardening.DecodeOutput(t, args, allow)
 	if refusal != "" {
 		return nil, argError(string(refusal) + ": the request does not match output_" + string(t) + "'s schema and bounds")
 	}

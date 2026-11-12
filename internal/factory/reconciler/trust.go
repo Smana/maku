@@ -70,6 +70,21 @@ const maxTaskText = 16 << 10
 // the lost run's brief back from its claim, and plants its own canary, never that one.
 func stripCanary(text string) string { return canaryTail.ReplaceAllString(text, "") }
 
+// markSafeOutputs names, on an audited writer run of a repository with enforceOutputs, the types
+// the run must request through the factory and the labels it may request (HR14). The broker
+// serves output_<type> for exactly those; every other claim stays today's byte for byte.
+func (r *Reconciler) markSafeOutputs(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) {
+	s.SafeOutputs, s.LabelAllowlist = nil, nil
+	types := cfg.Hardening.EnforcedFor(t.Spec.Repository)
+	if len(types) == 0 || !r.auditsRun(cfg, t, s.Role) {
+		return
+	}
+	for _, typ := range types {
+		s.SafeOutputs = append(s.SafeOutputs, string(typ))
+	}
+	s.LabelAllowlist = append([]string{}, cfg.Hardening.LabelAllowlist...)
+}
+
 // plantCanary ends a writer run's brief with a fresh canary and keeps it on the claim (T3, HR7):
 // under audit or enforce, on an implementer or tester run briefed by text. A brief with no room
 // left under AgentRun's cap runs without one, and the log says so. Under off it touches nothing.

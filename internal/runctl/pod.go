@@ -6,14 +6,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/runwatch"
 )
+
+// servedOutputs are the safe-output types the broker serves (hardening H2): push stays in the
+// sandbox until H3, so a claim naming it does not reach the tool.
+var servedOutputs = []string{"comment", "issue", "labels", "pr"}
+
+// safeOutputs is the run's served safe-output types, sorted, from the factory's annotation (HR14).
+func safeOutputs(r *v1alpha1.AgentRun) []string {
+	var out []string
+	for _, t := range strings.Split(r.Annotations[runwatch.SafeOutputsAnnotation], ",") {
+		if t = strings.TrimSpace(t); slices.Contains(servedOutputs, t) && !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
 
 // The composition's constants (crossplane-configuration v0.9.15).
 const (
@@ -114,6 +133,10 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if s.Task.URL != "" {
 		env = append(env, corev1.EnvVar{Name: "TASK_URL", Value: s.Task.URL})
 	}
+	outputs := safeOutputs(r)
+	if len(outputs) > 0 { // the gh wrapper turns these writes away to the output tools (HR14)
+		env = append(env, corev1.EnvVar{Name: "SAFE_OUTPUTS", Value: strings.Join(outputs, ",")})
+	}
 	env = append(env, manifestEnv(r)...)
 	// v3 feature 3: the repository's checks, and the pod's deadline for the final run's margin (RC9).
 	if s.Loop.Checks {
@@ -188,8 +211,13 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		if c.RoomToolsURL != "" {
 			// The harness calls the broker directly, so its room tools reach the bridge bare; the
 			// broker still enforces each tool's roles.
+			// An output tool only appends a request to the room: the factory applies it (HR14).
+			readOnly := roomToolsReadOnly
+			for _, t := range outputs {
+				readOnly += ",room-broker__output_" + t
+			}
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "MCP_BARE_SERVER", Value: "room-broker"},
-				corev1.EnvVar{Name: "MCP_READ_ONLY_TOOLS", Value: roomToolsReadOnly})
+				corev1.EnvVar{Name: "MCP_READ_ONLY_TOOLS", Value: readOnly})
 		}
 		health := corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(BridgeHealthPort)}}
 		inits = []corev1.Container{{

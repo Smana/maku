@@ -48,7 +48,9 @@ func roomMCP(key string, patterns []*regexp.Regexp, roomLog mcp.Log, red mcp.Red
 	m *metrics.Set, log *slog.Logger,
 ) *mcp.Server {
 	return &mcp.Server{Key: func() string { return key }, Runs: runs, SubPatterns: patterns,
-		Tools: mcp.RoomTools(roomLog, red, time.Now),
+		// The safe-output tools are gated per run (HR14): a run whose claim names no enforced type
+		// lists exactly the room tools. No bundle store yet, so output_push is never served (H3).
+		Tools: append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, mcp.OutputConfig{})...),
 		OnReject: func(ctx context.Context, reason string) {
 			m.Rejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 		},

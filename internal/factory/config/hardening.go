@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/hardening"
-	"github.com/Smana/maku/internal/runwatch"
 )
 
 // defaultDrillMaxAge is how recent a passing drill must be for readiness (R6): one weekly cadence.
@@ -388,16 +387,6 @@ func (h Hardening) validateEnforce(bad func(string, ...any)) {
 	if h.Applier.AnswerWait.Duration <= 0 {
 		bad("hardening.applier.answerWait must be positive")
 	}
-}
-
-// unscopedWarning is HR13's: an enforced repository on a run path whose sandbox token no role
-// policy scopes. The factory still starts: the tracer reports every direct write.
-func (c *Config) unscopedWarning() (string, bool) {
-	if !c.Hardening.Enforcing() || c.Runs.Group == runwatch.DefaultKind.Group {
-		return "", false
-	}
-	return "hardening.enforceOutputs is set and runs are not cloud-native-ref's XR: the sandbox token is not scoped by a role policy, " +
-		"so a run can still write directly; the tracer reports each such write (HR13)", true
 }
 
 // validate refuses a classifier URL that is not plain http(s) with a host, or carries credentials,
