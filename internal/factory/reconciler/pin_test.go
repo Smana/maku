@@ -154,3 +154,15 @@ func TestFailedScoperKeepsPin(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+
+// A refused pin on a task with no issue yet waits for its pull request, as profile_chosen does.
+func TestPinRefusalWaitsForATarget(t *testing.T) {
+	tk := issueTask("3buqdlot", 0, "fix it")
+	tk.Spec.Intake = &v1alpha1.TaskIntake{Profile: "review-search", Login: "someone"}
+	g := pinRig(t, resolveCfg("observe", 0), tk, "Smana")
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Profile == nil || got.Status.Profile.Refused != "not_maintainer" ||
+		!slices.ContainsFunc(got.Status.Outbox, func(o v1alpha1.Narration) bool { return o.Key == "profile-refused" && o.Number == 0 }) {
+		t.Fatalf("%+v %+v", got.Status.Profile, got.Status.Outbox)
+	}
+}

@@ -1006,7 +1006,7 @@ func Closing(key string) bool { return strings.HasPrefix(key, closingPrefix) }
 // Pending is a key whose event waits in the outbox for the task's first target instead of being
 // dropped without one (R31): the profile announcements.
 func Pending(key string) bool {
-	return strings.HasPrefix(key, "profile-chosen-") || strings.HasPrefix(key, "profile-escalated-")
+	return strings.HasPrefix(key, "profile-chosen-") || strings.HasPrefix(key, "profile-escalated-") || key == "profile-refused"
 }
 
 // Retotal rewrites an ending's "Tokens used" line with the settled total (#42).
