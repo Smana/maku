@@ -254,20 +254,23 @@ func addUnique(list []string, h string) []string {
 	return append(list, h)
 }
 
-// Model is the provider the harness calls directly (3a R4), from modelSecret.
+// Model is the provider the harness calls directly (3a R4), from modelSecret. Judge is the
+// optional judge_model: the completion judge's model on the same endpoint, "" for the run's own.
 type Model struct {
-	BaseURL, Name, Host string
-	Port                int
+	BaseURL, Name, Host, Judge string
+	Port                       int
 }
 
 const defaultBaseURL = "https://api.anthropic.com/v1"
 
-// ModelFrom reads modelSecret's data: api_key and model required, base_url defaulted.
+// ModelFrom reads modelSecret's data: api_key and model required, base_url defaulted, judge_model
+// optional.
 func ModelFrom(data map[string][]byte) (Model, error) {
 	if len(data["api_key"]) == 0 {
 		return Model{}, errors.New("modelSecret has no api_key")
 	}
-	m := Model{BaseURL: strings.TrimSpace(string(data["base_url"])), Name: strings.TrimSpace(string(data["model"]))}
+	m := Model{BaseURL: strings.TrimSpace(string(data["base_url"])), Name: strings.TrimSpace(string(data["model"])),
+		Judge: strings.TrimSpace(string(data["judge_model"]))}
 	if m.Name == "" {
 		return Model{}, errors.New("modelSecret has no model")
 	}

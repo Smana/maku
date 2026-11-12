@@ -3,6 +3,7 @@
 package runctl
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -129,8 +130,8 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	// The loop policy: AGENT_LOOP holds the fields the run sets (the harness fills the rest), and an
 	// unset judgeModel is "none": the harness's default would switch a judge on. An implementer only
 	// reads it. The portable runtime has no identity proxy and resolves no judge alias, so a judge
-	// calls the pod's own model endpoint directly (JUDGE_BASE_URL) with the run's model (JUDGE_MODEL):
-	// the demo has one model for every role.
+	// calls the pod's own model endpoint directly (JUDGE_BASE_URL) with the model Secret's judge_model,
+	// or the run's model without it (JUDGE_MODEL): the demo has one model for every role.
 	if l := s.Loop; l.StallSteps != nil || l.Continuations != nil || l.JudgeModel != "" {
 		policy := map[string]any{"judgeModel": "none"}
 		if l.StallSteps != nil {
@@ -141,7 +142,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		}
 		if l.JudgeModel != "" {
 			policy["judgeModel"] = l.JudgeModel
-			env = append(env, corev1.EnvVar{Name: "JUDGE_BASE_URL", Value: m.BaseURL}, corev1.EnvVar{Name: "JUDGE_MODEL", Value: m.Name})
+			env = append(env, corev1.EnvVar{Name: "JUDGE_BASE_URL", Value: m.BaseURL}, corev1.EnvVar{Name: "JUDGE_MODEL", Value: cmp.Or(m.Judge, m.Name)})
 		}
 		raw, _ := json.Marshal(policy) // a map of numbers and strings
 		env = append(env, corev1.EnvVar{Name: "AGENT_LOOP", Value: string(raw)})

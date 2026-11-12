@@ -1904,7 +1904,7 @@ changes exactly this:
 | `api.humanIssuer`, `api.humanJWKS`, `api.clientIDFiles`, `api.groups.*` required | optional, and must all be empty (no group default is applied): `demo: the factory API takes no human tokens` |
 | `api.access` optional | must be unset: `demo: api.access needs an identity provider` |
 | `scope: scoper` refused off the default runs group | accepted |
-| a loop policy refused off the default runs group | `stallSteps`, `continuations` and `judge` are accepted: the portable AgentRun carries the loop policy. A judge calls the run's own model (`JUDGE_BASE_URL` and `JUDGE_MODEL` on the harness), not the alias |
+| a loop policy refused off the default runs group | `stallSteps`, `continuations` and `judge` are accepted: the portable AgentRun carries the loop policy. A judge calls the run's model endpoint (`JUDGE_BASE_URL` on the harness) with the model Secret's optional `judge_model` key, or the run's own model without it (`JUDGE_MODEL`), never the alias. The demo's `demo.model.judgeName` writes that key |
 | `merge.policyBotLogin` must be a bot login | always required, except under `demo` with `merge.policyBot: false`, where it may be empty (a value that is set must still be a bot login) |
 
 `demo` adds three rules: `merge.policyBot: false` is refused without `demo: true`, and `demo: true`
