@@ -183,6 +183,30 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 		w.Header().Set("Content-Type", "application/x-git-bundle")
 		_, _ = w.Write(b.bundle)
 	})
+	mux.HandleFunc("POST /v1/rooms/{id}/approvals", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		b.mu.Lock()
+		b.bodies = append(b.bodies, string(raw))
+		b.mu.Unlock()
+		_, _ = io.WriteString(w, `{"approvalId":"01JC0000000000000000000001","state":"pending","expiresAt":"2026-11-14T12:00:00Z"}`)
+	})
+	mux.HandleFunc("POST /v1/approvals/{id}/supersede", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		_, _ = io.WriteString(w, `{"approvalId":"`+r.PathValue("id")+`","state":"superseded"}`)
+	})
+	mux.HandleFunc("GET /v1/approvals/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		_, _ = io.WriteString(w, `{"approvalId":"`+r.PathValue("id")+`","roomId":"3buqdlot","runId":"cf4ato2x","state":"approved",`+
+			`"branch":"agent/t-1","digest":"`+strings.Repeat("e", 64)+`","output":"0123456789abcdef","decidedBy":"human:maint",`+
+			`"expiresAt":"2026-11-14T12:00:00Z"}`)
+	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	return b, srv
@@ -744,6 +768,58 @@ func TestClientBundle(t *testing.T) {
 		"a bad room":   func() error { _, err := r.c.Bundle(t.Context(), "3BUQDLOT", "cf4ato2x", d); return err }(),
 		"a bad run":    func() error { _, err := r.c.Bundle(t.Context(), "3buqdlot", "run-1", d); return err }(),
 		"a bad digest": func() error { _, err := r.c.Bundle(t.Context(), "3buqdlot", "cf4ato2x", "../x"); return err }(),
+	} {
+		if err == nil {
+			t.Errorf("%s: sent", name)
+		}
+	}
+	if len(r.b.auth) != sent {
+		t.Fatalf("%d requests reached the broker", len(r.b.auth)-sent)
+	}
+}
+
+// HR28: the factory requests, supersedes and reads back a digest-bound approval; what the broker
+// would refuse is never sent.
+func TestClientOutputApprovals(t *testing.T) {
+	r := newRig(t, 0)
+	d := strings.Repeat("e", 64)
+	req := ApprovalRequest{RunID: "cf4ato2x", Output: "0123456789abcdef", Digest: d, Branch: "agent/t-1", TTL: 24 * time.Hour,
+		Action: map[string]any{"output": "0123456789abcdef", "digest": d, "protected": []string{"go.mod"}}}
+	a, err := r.c.RequestApproval(t.Context(), "3buqdlot", req)
+	if err != nil || a.ApprovalID != "01JC0000000000000000000001" || a.State != "pending" || a.Digest != d || a.RunID != "cf4ato2x" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	want := `{"runId":"cf4ato2x","output":"0123456789abcdef","digest":"` + d + `","branch":"agent/t-1","ttlSeconds":86400,` +
+		`"action":{"digest":"` + d + `","output":"0123456789abcdef","protected":["go.mod"]}}`
+	if body := r.b.bodies[len(r.b.bodies)-1]; body != want {
+		t.Fatalf("body %s", body)
+	}
+	if st, err := r.c.SupersedeApproval(t.Context(), a.ApprovalID); err != nil || st != "superseded" {
+		t.Fatalf("%q %v", st, err)
+	}
+	got, err := r.c.Approval(t.Context(), a.ApprovalID)
+	if err != nil || got.State != "approved" || got.DecidedBy != "human:maint" || got.Digest != d || got.Branch != "agent/t-1" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	r.b.fail["/v1/approvals/"+a.ApprovalID], r.b.reason = http.StatusNotFound, wire.ReasonNoApproval
+	if _, err := r.c.Approval(t.Context(), a.ApprovalID); !errors.Is(err, ErrNoApproval) {
+		t.Fatalf("a missing approval: %v", err)
+	}
+	sent := len(r.b.auth)
+	bad := func(mut func(*ApprovalRequest)) error {
+		x := req
+		mut(&x)
+		_, err := r.c.RequestApproval(t.Context(), "3buqdlot", x)
+		return err
+	}
+	for name, err := range map[string]error{
+		"a bad digest":    bad(func(x *ApprovalRequest) { x.Digest = "x" }),
+		"a bad output":    bad(func(x *ApprovalRequest) { x.Output = "x" }),
+		"a branch off":    bad(func(x *ApprovalRequest) { x.Branch = "main" }),
+		"a ttl too long":  bad(func(x *ApprovalRequest) { x.TTL = 8 * 24 * time.Hour }),
+		"a bad run":       bad(func(x *ApprovalRequest) { x.RunID = "run-1" }),
+		"a bad id":        func() error { _, err := r.c.Approval(t.Context(), "../x"); return err }(),
+		"a bad supersede": func() error { _, err := r.c.SupersedeApproval(t.Context(), "x"); return err }(),
 	} {
 		if err == nil {
 			t.Errorf("%s: sent", name)

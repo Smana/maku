@@ -206,24 +206,26 @@ type Bundles interface {
 var bundleDigestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // outputCaller admits OutputClient alone (the factory, system:factory) to a hardening route that
-// ready is true for, under its limits. release is called once the request is served.
-func (s *Server) outputCaller(w http.ResponseWriter, r *http.Request, ready bool) (release func(), ok bool) {
-	p, ok := s.systemAuth(w, r)
+// ready is true for, under its limits, and returns it. release is called once the request is
+// served.
+func (s *Server) outputCaller(w http.ResponseWriter, r *http.Request, ready bool) (p authn.Principal, release func(), ok bool) {
+	p, ok = s.systemAuth(w, r)
 	if !ok {
-		return nil, false
+		return p, nil, false
 	}
 	if !ready || s.OutputClient == "" || p.ID != s.OutputClient {
 		fail(w, http.StatusForbidden, wire.ReasonNotPermitted)
-		return nil, false
+		return p, nil, false
 	}
-	return s.admit(w, p.ID)
+	release, ok = s.admit(w, p.ID)
+	return p, release, ok
 }
 
 // roomBundle: GET /v1/rooms/{id}/bundles/{digest}?run=<id>, OutputClient only (hardening HR22).
 // The bundle a run's output_push stored, as application/x-git-bundle, for the factory to inspect
 // and push. Another room's or run's bundle is 404, as a missing one is.
 func (s *Server) roomBundle(w http.ResponseWriter, r *http.Request) {
-	release, ok := s.outputCaller(w, r, s.Bundles != nil)
+	_, release, ok := s.outputCaller(w, r, s.Bundles != nil)
 	if !ok {
 		return
 	}

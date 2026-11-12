@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -335,6 +336,102 @@ func (c *Client) Bundle(ctx context.Context, room, runID, digest string) ([]byte
 		return nil, ErrBundleDigest
 	}
 	return b, nil
+}
+
+// The digest-bound approval routes (hardening HR28).
+const (
+	approvalsRoute = "/v1/rooms/{id}/approvals"
+	approvalRoute  = "/v1/approvals/{approval}"
+	supersedeRoute = "/v1/approvals/{approval}/supersede"
+)
+
+var (
+	outputIDRE     = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	agentBranchRE  = regexp.MustCompile(`^agent/[a-z0-9][a-z0-9._/-]{0,100}$`)
+	approvalULIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+)
+
+// ApprovalRequest is the factory's request for a maintainer's approval of one push bundle: the run
+// and output that carry it, its digest, the branch it pushes, how long it waits, and Action, the
+// JSON object the card and the room page show (the output, the digest, the heads and the protected
+// paths: never commit text).
+type ApprovalRequest struct {
+	RunID, Output, Digest, Branch string
+	TTL                           time.Duration
+	Action                        any
+}
+
+// OutputApproval is a digest-bound approval as the broker reads it back.
+type OutputApproval struct {
+	ApprovalID string    `json:"approvalId"`
+	RoomID     string    `json:"roomId"`
+	RunID      string    `json:"runId"`
+	State      string    `json:"state"`
+	Branch     string    `json:"branch"`
+	Digest     string    `json:"digest"`
+	Output     string    `json:"output"`
+	DecidedBy  string    `json:"decidedBy,omitempty"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+// RequestApproval asks room's approvers to approve one push bundle (hardening HR28). The broker
+// keys it on the output, so a retry answers the first approval: its id, state and deadline.
+func (c *Client) RequestApproval(ctx context.Context, room string, req ApprovalRequest) (OutputApproval, error) {
+	switch {
+	case !envelope.ValidID(room):
+		return OutputApproval{}, fmt.Errorf("rooms: %q is not a C2 room id", room)
+	case !envelope.ValidID(req.RunID):
+		return OutputApproval{}, fmt.Errorf("rooms: %q is not a C2 run id", req.RunID)
+	case !outputIDRE.MatchString(req.Output) || !digestRE.MatchString(req.Digest) || !agentBranchRE.MatchString(req.Branch):
+		return OutputApproval{}, errors.New("rooms: an approval binds a 16-hex output, a 64-hex digest and an agent/ branch")
+	case req.TTL < time.Minute || req.TTL > 7*24*time.Hour:
+		return OutputApproval{}, errors.New("rooms: an approval waits a minute to 7 days")
+	}
+	in := struct {
+		RunID      string `json:"runId"`
+		Output     string `json:"output"`
+		Digest     string `json:"digest"`
+		Branch     string `json:"branch"`
+		TTLSeconds int64  `json:"ttlSeconds"`
+		Action     any    `json:"action"`
+	}{req.RunID, req.Output, req.Digest, req.Branch, int64(req.TTL / time.Second), req.Action}
+	var out OutputApproval
+	if err := c.do(ctx, http.MethodPost, approvalsRoute, room, "", in, maxReplyOverhead, &out); err != nil {
+		return OutputApproval{}, err
+	}
+	out.RoomID, out.RunID, out.Branch, out.Digest, out.Output = room, req.RunID, req.Branch, req.Digest, req.Output
+	return out, nil
+}
+
+// SupersedeApproval closes a pending digest-bound approval as superseded: a later push of its run
+// replaced the one it holds (HR27). It returns the approval's state, which a decision that came
+// first keeps. A missing approval is ErrNoApproval.
+func (c *Client) SupersedeApproval(ctx context.Context, id string) (string, error) {
+	if !approvalULIDRE.MatchString(id) {
+		return "", errors.New("rooms: an approval id is a ULID")
+	}
+	var out struct {
+		State string `json:"state"`
+	}
+	if err := c.call(ctx, http.MethodPost, supersedeRoute, strings.Replace(supersedeRoute, "{approval}", id, 1), "", "",
+		struct{}{}, maxReplyOverhead, &out); err != nil {
+		return "", err
+	}
+	return out.State, nil
+}
+
+// Approval reads a digest-bound approval back (HR27): the factory re-reads it before it applies the
+// push it holds. A missing approval, or one that is not digest-bound, is ErrNoApproval.
+func (c *Client) Approval(ctx context.Context, id string) (OutputApproval, error) {
+	if !approvalULIDRE.MatchString(id) {
+		return OutputApproval{}, errors.New("rooms: an approval id is a ULID")
+	}
+	var out OutputApproval
+	if err := c.call(ctx, http.MethodGet, approvalRoute, strings.Replace(approvalRoute, "{approval}", id, 1), "", "",
+		nil, maxReplyOverhead, &out); err != nil {
+		return OutputApproval{}, err
+	}
+	return out, nil
 }
 
 // Queued is one live message of the room's FIFO queue (SP2 §2); Ref is its seq in the room.

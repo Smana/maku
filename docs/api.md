@@ -320,6 +320,44 @@ bytes hash to the digest before it inspects them.
 | `429` | `rate_limited` | Over the principal's limits |
 | `503` | `log_unavailable` | The database refused it |
 
+### Digest-bound approvals
+
+For the factory (`system:factory`) alone: a `push` that touches a protected path waits for a
+maintainer's approval of its bundle's digest (hardening HR27, HR28).
+
+`POST /v1/rooms/{id}/approvals`, at most 64 KiB:
+
+```json
+{"runId": "7f3cq2xz", "output": "0123456789abcdef", "digest": "<64-hex>", "branch": "agent/t-1",
+ "ttlSeconds": 86400, "action": {"output": "0123456789abcdef", "digest": "<64-hex>", "protected": ["go.mod"]}}
+```
+
+It records a `forge.push` approval bound to the branch, the digest and the output, and appends its
+`approval_requested` with `digest` and `output` beside `branch`. `runId` must be a run of the room,
+and `branch` the run's own while the broker watches it. `ttlSeconds` is 60 to 604,800. The run's
+prompters may not decide it. A retry for the same output answers the first approval. Unlike a
+bridge's approval, it is not closed when the run ends or its call id gets a result: it closes by a
+decision, by its deadline, or by the factory's supersede. Response `200`:
+`{"approvalId": "<ULID>", "state": "pending", "expiresAt": "…"}`.
+
+`POST /v1/approvals/{approvalId}/supersede` closes a pending digest-bound approval as `superseded`
+(a later push of the run replaced the one it held), and answers `{approvalId, state}`. A closed one
+answers its state as it is.
+
+`GET /v1/approvals/{approvalId}` answers `{approvalId, roomId, runId, state, branch, digest, output,
+decidedBy, expiresAt}` for a digest-bound approval. Any other approval is `404 no_approval`.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_room` | A bad room id |
+| `400` | `bad_approval` | A bad body, approval id, branch, digest, output or TTL, or a run that is not the room's |
+| `400` | `bad_action` | An action that is not a JSON object once redacted, or over the cap |
+| `401` | `unauthenticated` | No valid system token |
+| `403` | `not_permitted` | Any system principal but the factory |
+| `404` | `no_room`, `no_approval` | No such room, or no such digest-bound approval |
+| `429` | `rate_limited` | Over the principal's limits |
+| `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
+
 ### The queue routes
 
 For system callers: the factory turns a maintainer's GitHub review into a queued
