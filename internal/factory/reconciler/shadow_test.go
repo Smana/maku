@@ -370,3 +370,59 @@ func TestShadowPassBeforeStop(t *testing.T) {
 		t.Fatalf("the canary was not read before the claim went: %+v", r)
 	}
 }
+
+// stepLog records, in order, the stop path's calls that matter: a run's revoke and delete, and the
+// shadow pass's first GitHub read.
+type stepLog struct{ steps []string }
+
+type orderedRuns struct {
+	*fakeRuns
+	log *stepLog
+}
+
+func (o orderedRuns) Annotate(ctx context.Context, id string, kv map[string]string) error {
+	if kv[runs.AnnRevoked] != "" {
+		o.log.steps = append(o.log.steps, "revoke "+id)
+	}
+	return o.fakeRuns.Annotate(ctx, id, kv)
+}
+
+func (o orderedRuns) Delete(ctx context.Context, id string) error {
+	o.log.steps = append(o.log.steps, "delete "+id)
+	return o.fakeRuns.Delete(ctx, id)
+}
+
+type orderedForge struct {
+	TaskForge
+	log *stepLog
+}
+
+func (o orderedForge) BranchActivity(ctx context.Context, branch string) ([]forge.Push, error) {
+	o.log.steps = append(o.log.steps, "read")
+	return o.TaskForge.BranchActivity(ctx, branch)
+}
+
+// N1: a stop revokes the run before the shadow pass reads anything, so a misbehaving run never keeps
+// its token while GitHub is read; the claims go only after the pass, and writes up to the revoke
+// fall inside the run's window.
+func TestStopRevokesBeforeTheShadowPass(t *testing.T) {
+	g, tk, _ := shadowRig(t, "documentation")
+	tk.Status.Runs[0].Finished = nil
+	g.runs.runs[rid(0)] = runs.Run{ID: rid(0), TaskID: tk.Name, Role: "implementer", Phase: "Running", Canary: "mkc-0123456789abcdef0123"}
+	g.f.SetComments(12, forge.Comment{ID: 501, Author: agents, Body: "token mkc-0123456789abcdef0123", At: now})
+	log := &stepLog{}
+	g.r.Runs = orderedRuns{fakeRuns: g.runs, log: log}
+	g.r.Forge = orderedForge{TaskForge: g.f, log: log}
+	if err := g.c.Create(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.r.stop(t.Context(), g.r.Cfg.Current(), tk, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"revoke " + rid(0), "read", "delete " + rid(0)}; !slices.Equal(log.steps, want) {
+		t.Fatalf("steps %q, want %q", log.steps, want)
+	}
+	if r := shadowed(g)["comment https://github.com/Smana/cloud-native-ref/pull/12#issuecomment-501"]; r.Reason != "canary_leaked" {
+		t.Fatalf("a write at the stop is outside the window: %+v", r)
+	}
+}

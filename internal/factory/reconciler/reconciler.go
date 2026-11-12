@@ -725,21 +725,27 @@ func (r *Reconciler) stop(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 	if len(t.Status.Runs) > 0 {
 		absorb(t, all)
 	}
-	r.shadowBeforeStop(ctx, cfg, t) // H1: while the claims, and their canaries, still exist (audit only)
+	// Every live run is revoked first, so none keeps its token while the shadow pass reads GitHub.
+	for _, run := range all {
+		if run.TaskID != t.Name || runs.Terminal(run.Phase) {
+			continue
+		}
+		if err := r.Runs.Annotate(ctx, run.ID, map[string]string{runs.AnnRevoked: "manual"}); err != nil {
+			return err
+		}
+		// Counted now, not with the status write: a replay finds the claim gone or already
+		// revoked, so a deferred count would be lost. A run that carried a revoke was counted
+		// by whoever wrote it, the kill switch's sweeper included (F30).
+		if run.Revoked == "" {
+			r.Metrics.Revoked(fmetrics.WithPrincipal(ctx, run.Payer()), "manual") // as the ledger charged it
+		}
+	}
+	// H1: shadowed after the revoke and before the deletes, while the claims and their canaries
+	// still exist; the window runs to the revoke plus runEndGrace (audit only).
+	r.shadowBeforeStop(ctx, cfg, t)
 	for _, run := range all {
 		if run.TaskID != t.Name {
 			continue
-		}
-		if !runs.Terminal(run.Phase) {
-			if err := r.Runs.Annotate(ctx, run.ID, map[string]string{runs.AnnRevoked: "manual"}); err != nil {
-				return err
-			}
-			// Counted now, not with the status write: a replay finds the claim gone or already
-			// revoked, so a deferred count would be lost. A run that carried a revoke was counted
-			// by whoever wrote it, the kill switch's sweeper included (F30).
-			if run.Revoked == "" {
-				r.Metrics.Revoked(fmetrics.WithPrincipal(ctx, run.Payer()), "manual") // as the ledger charged it
-			}
 		}
 		if err := r.deleteRun(ctx, run.ID); err != nil {
 			return err
