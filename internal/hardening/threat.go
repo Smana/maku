@@ -86,6 +86,9 @@ type Request struct {
 	Files    []string
 	Added    []string
 	Approved bool
+	// DiffUnavailable: the push's changed paths could not be read whole, so Files is not the
+	// bundle's list and T4 refuses it (diff_unavailable).
+	DiffUnavailable bool
 }
 
 // Finding is a refusal an audit layer recorded without acting on it.
@@ -231,6 +234,9 @@ func (c Checker) secrets(texts []string, canary string) Refusal {
 
 // paths is T4: a blocked path refuses, an approval path waits for the digest's approval.
 func (c Checker) paths(req Request) Refusal {
+	if req.DiffUnavailable {
+		return RefuseDiffUnavailable
+	}
 	switch c.Paths.Worst(req.Files) {
 	case OnBlocked:
 		return RefuseBlockedPath

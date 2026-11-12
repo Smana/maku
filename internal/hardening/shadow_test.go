@@ -61,6 +61,12 @@ func TestShadowVerdict(t *testing.T) {
 		"an unknown type": {ModeAudit, "", nil,
 			ObservedWrite{Type: "merge", Payload: raw(map[string]string{}), Object: obj},
 			WouldRefuse, LayerSchema, RefuseType, nil},
+		"a push whose diff cannot be read": {ModeAudit, "", nil,
+			ObservedWrite{Type: Push, Payload: pushed, Object: obj, DiffUnavailable: true, Added: []string{"docs: x"}},
+			WouldRefuse, LayerPaths, RefuseDiffUnavailable, nil},
+		"an unread diff still meets T3": {ModeAudit, "", nil,
+			ObservedWrite{Type: Push, Payload: pushed, Object: obj, DiffUnavailable: true, Added: []string{canary}},
+			WouldRefuse, LayerSecrets, RefuseCanary, []Finding{{LayerPaths, RefuseDiffUnavailable}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := checker(tc.mode, tc.mode, &fakeClassifier{hit: tc.hit})

@@ -108,3 +108,19 @@ func TestRepositoryPolicies(t *testing.T) {
 		t.Fatalf("a file that does not parse reads closed: %+v %v", p, err)
 	}
 }
+
+// A block that does not read is reported once per fence read, not on every check that reads it.
+func TestRepositoryPoliciesReportOnce(t *testing.T) {
+	var c RepositoryPolicies
+	if c.ReportOnce("o/r") {
+		t.Fatal("a repository never read has nothing to report")
+	}
+	c.Observe(t.Context(), "o/r", []byte("factory: gcp-0\nhardening: 3\n"))
+	if !c.ReportOnce("O/R") || c.ReportOnce("o/r") {
+		t.Fatal("reported other than once")
+	}
+	c.Observe(t.Context(), "o/r", []byte("factory: gcp-0\nhardening: 3\n"))
+	if !c.ReportOnce("o/r") {
+		t.Fatal("a new read is a new report")
+	}
+}

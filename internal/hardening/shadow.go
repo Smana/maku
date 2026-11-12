@@ -33,6 +33,8 @@ type ObservedWrite struct {
 	Object  string
 	Files   []string
 	Added   []string
+	// DiffUnavailable: a push whose diff could not be read whole; T4 records diff_unavailable.
+	DiffUnavailable bool
 }
 
 // ShadowResult is one output_shadowed record's facts. Layer and Reason are the verdict's finding,
@@ -57,12 +59,13 @@ var shadowBundle = json.RawMessage(`{"bundle":"AA=="}`)
 // (T5 at most audit, and off when c has it off), counting it against n. The first T1–T4 finding
 // decides the verdict; T5 never does (HR3).
 func Shadow(ctx context.Context, c Checker, n *Counts, w ObservedWrite, ownIssue int, canary string) ShadowResult {
-	t5 := c.Layers.Classifier
-	if t5 != ModeOff {
+	t5 := ModeOff
+	if c.Layers.Classifier.AtLeast(ModeAudit) {
 		t5 = ModeAudit
 	}
 	c.Layers = Layers{Schema: ModeAudit, Sanitise: ModeAudit, Secrets: ModeAudit, Paths: ModeAudit, Classifier: t5}
-	req := Request{Type: w.Type, Payload: w.Payload, OwnIssue: ownIssue, Canary: canary, Files: w.Files, Added: w.Added}
+	req := Request{Type: w.Type, Payload: w.Payload, OwnIssue: ownIssue, Canary: canary, Files: w.Files, Added: w.Added,
+		DiffUnavailable: w.DiffUnavailable}
 	if w.Type == Push {
 		req.Payload = shadowBundle
 	}

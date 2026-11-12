@@ -92,6 +92,8 @@ type RepositoryPolicies struct {
 type block struct {
 	raw json.RawMessage
 	err error // the fence file itself did not read
+	// reported: ReportOnce has answered true since this read.
+	reported bool
 }
 
 // Observe takes repository's fence file as the fence read it: its signature is fence.Fence.OnFile.
@@ -127,4 +129,20 @@ func (c *RepositoryPolicies) For(repository string, central Level) (RepositoryPo
 		return closed(b.err)
 	}
 	return ParseRepositoryBlock(b.raw, central)
+}
+
+// ReportOnce reports true the first time it is asked about repository since the fence last handed
+// over its file, false after: a caller logs a block that does not read once per fence read, not on
+// every check that reads it. A repository never observed has nothing to report.
+func (c *RepositoryPolicies) ReportOnce(repository string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k := strings.ToLower(repository)
+	b, ok := c.blocks[k]
+	if !ok || b.reported {
+		return false
+	}
+	b.reported = true
+	c.blocks[k] = b
+	return true
 }
