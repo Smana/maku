@@ -82,7 +82,7 @@ type Broker struct {
 // exactly what they were.
 type RunCreate struct {
 	Draft
-	Plan       json.RawMessage // the plan/v1 the proposal bound, as its message carried it
+	Plan       json.RawMessage // the plan the proposal bound, as its message carried it
 	PlanHash   string          // intake.Hash of that plan
 	MaxCostUSD float64
 	OnBehalfOf string // slack:<team>/<user>
@@ -91,12 +91,14 @@ type RunCreate struct {
 }
 
 // RunResult is what run_create answered: Sponsor is the GitHub login the factory filed as, "" when
-// it did not say.
+// it did not say. Replanned is set, and nothing was filed, when the proposal carried a plan/v1: the
+// broker answered the plan/v2 to show and confirm instead (P14).
 type RunResult struct {
 	Room      string
 	Issue     int
 	Duplicate bool
 	Sponsor   string
+	Replanned *intake.Plan
 }
 
 // ErrUnknownTool is the broker without the tool asked: the self-serve link is off there.
@@ -178,15 +180,27 @@ func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 		return RunResult{}, err
 	}
 	var out struct {
-		Room      string `json:"room"`
-		Issue     int    `json:"issue"`
-		Duplicate bool   `json:"duplicate"`
-		Sponsor   string `json:"sponsor"`
+		Room      string      `json:"room"`
+		Issue     int         `json:"issue"`
+		Duplicate bool        `json:"duplicate"`
+		Sponsor   string      `json:"sponsor"`
+		Status    string      `json:"status"`
+		Plan      intake.Plan `json:"plan"`
+		Hash      string      `json:"hash"`
 	}
 	if err := json.Unmarshal(sc, &out); err != nil {
 		return RunResult{}, fmt.Errorf("slackapp: run_create result: %w", err)
 	}
-	return RunResult(out), nil
+	if out.Status == "replanned" {
+		// The App's copy is checked like any proposal's: the hash binds the plan it came with.
+		if out.Hash == "" || intake.Hash(out.Plan) != out.Hash {
+			return RunResult{}, errors.New("slackapp: run_create replanned with a hash that does not bind its plan")
+		}
+		plan := out.Plan
+		plan.Hash = out.Hash
+		return RunResult{Replanned: &plan}, nil
+	}
+	return RunResult{Room: out.Room, Issue: out.Issue, Duplicate: out.Duplicate, Sponsor: out.Sponsor}, nil
 }
 
 // IntakeRequest is intake_plan's arguments, as the App has them: the requester's own words, the

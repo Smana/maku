@@ -80,7 +80,9 @@ const slackFiles = 1
 // not repeated here is the redactor's, and it is not skipped: the path below runs checkDraft — the
 // template and the redactor both — on the title and body this function has just required to be the
 // plan's.
-func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Principal) *intake.Refusal {
+//
+// A plan/v1 is not refused and not filed: it comes back as replanned, the plan/v2 to confirm (P14).
+func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Principal) error {
 	var plan intake.Plan
 	if mcpwire.DecodeArgs(a.Plan, &plan) != nil {
 		return argRefusal("plan is the plan/v1 object intake_plan answered with, with no field outside it taken, " +
@@ -119,12 +121,23 @@ func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Princip
 		// a whole workspace.
 		return argRefusal("on_behalf_of is required with a plan: it is the Slack user the plan was made for")
 	}
+	if plan.APIVersion == intake.APIVersionV1 {
+		// P14: a plan made before profiles is never filed; it is shown again as plan/v2 (replanned).
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, plan)
+		if ref != nil {
+			return ref
+		}
+		return replanned{plan: next}
+	}
 	_, candidates, ref := s.requester(ctx, p, intakeArgs{
 		Repository: plan.Repository, Candidates: alternativeRepos(plan), OnBehalfOf: a.OnBehalfOf})
 	if ref != nil {
 		return ref
 	}
-	return intake.CheckFinal(plan, candidates, s.Intake.Classes)
+	if ref := intake.CheckFinal(plan, candidates, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)); ref != nil {
+		return ref
+	}
+	return nil
 }
 
 // argRefusal is one of run_create's argument refusals, in the shape checkPlan answers with: a call
@@ -178,8 +191,12 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 			"a plan_hash with no plan names nothing to check")
 	}
 	if planPresent(a.Plan) {
-		if ref := s.checkPlan(ctx, a, p); ref != nil {
-			return runrequest.TaskResult{}, toolError(ref.Error())
+		if err := s.checkPlan(ctx, a, p); err != nil {
+			var rp replanned
+			if errors.As(err, &rp) {
+				return runrequest.TaskResult{}, rp
+			}
+			return runrequest.TaskResult{}, toolError(err.Error())
 		}
 	}
 	if a.Title != "" {

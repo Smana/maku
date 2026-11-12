@@ -27,6 +27,9 @@ const (
 	// is no longer the metadata's, or run_create recomposed a different plan. Two reaches — this
 	// family's own check before the broker and its refusal after — and one spelling.
 	planChangedLine = "Not filed: the plan changed after this was drawn; mention me again to re-plan it."
+	// replannedLine is a confirm of a proposal made before profiles (P14): the message now shows the
+	// same issue as plan/v2, with its suggestion and new hash, and that is the one to confirm.
+	replannedLine = "Not filed yet: this proposal was made before profiles, so it now shows the current plan; check it and confirm again."
 	// proposalOffLine is a press in a channel whose proposals switch is off (the switch flipped under a
 	// live message). The buttons no longer file anything here; the message's ✅ fallback does not
 	// depend on the switch, so the one line teaches it.
@@ -73,7 +76,7 @@ const (
 // are this family's shape, so a card's value on one of these buttons is this family's refusal.
 //
 // The outcome is the door's word — "not_enabled", "duplicate", "busy" or "queued", whose work counts
-// its own ("filed", "duplicate", "unrewritten", "cancelled", "refused", "error", "ignored").
+// its own ("filed", "duplicate", "unrewritten", "cancelled", "refused", "replanned", "error", "ignored").
 func (a *App) proposalAction(ctx context.Context, in interaction) string {
 	if !a.Proposals.Enabled {
 		// Answered locally, with no broker call: the switch was flipped under a live message, and the

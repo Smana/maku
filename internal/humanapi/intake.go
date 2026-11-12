@@ -456,12 +456,27 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	var a planCheckArgs
 	if mcpwire.DecodeArgs(args, &a) != nil || !hashRE.MatchString(a.Hash) ||
 		(a.Candidate != nil && a.Plan.APIVersion == "") {
-		return nil, toolError("invalid_arguments: plan is a plan/v1 object and hash is the sha256: value intake_plan answered with, " +
+		return nil, toolError("invalid_arguments: plan is a plan/v2 object and hash is the sha256: value intake_plan answered with, " +
 			"and no field outside the schema is taken")
 	}
 	surface := intake.SurfaceSession
 	if p.Sponsored {
 		surface = intake.SurfaceSlack
+	}
+	if a.Plan.APIVersion == intake.APIVersionV1 {
+		// P14: a plan made before profiles is shown again as plan/v2, with its new hash, and never
+		// checked as final: the person confirms the upgraded one. A candidate on it is not read.
+		if intake.Hash(a.Plan) != a.Hash {
+			return nil, s.planCheckRefused(ctx, surface, intake.ReasonRefusal(intake.ReasonPlanChanged))
+		}
+		if err := claims(p, a.OnBehalfOf, 0); err != nil {
+			return nil, err
+		}
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, a.Plan)
+		if ref != nil {
+			return nil, s.planCheckRefused(ctx, surface, ref)
+		}
+		return replanned{plan: next}.result(s)
 	}
 	plan := a.Plan
 	if a.Candidate == nil {

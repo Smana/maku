@@ -1463,6 +1463,16 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		a.log().Warn("run_create failed", "err", err)
 		return retry("unreachable", "Not filed: the factory could not be reached; "+again+".")
 	}
+	if res.Replanned != nil {
+		// P14: the proposal was made before profiles. Nothing was filed: the message is redrawn with the
+		// plan/v2 the broker answered, under its new hash, and that is the one to confirm.
+		next := ProposalPayload{Plan: *res.Replanned, Hash: res.Replanned.Hash, Author: p.Author, Rev: p.Rev, Degraded: p.Degraded}
+		if code := a.updateProposal(ctx, channel, itemTS, p, next, nil); code == "error" {
+			return retry("replanned", "Not filed: this proposal was made before profiles and could not be redrawn; "+again+".")
+		}
+		say(replannedLine, nil)
+		return "replanned", answer
+	}
 	if !roomRE.MatchString(res.Room) {
 		a.log().Warn("run_create answered an unusable room id")
 		say(fmt.Sprintf("The task is filed (#%d, for <@%s>), but its room cannot be followed here.", res.Issue, user), mark(""))

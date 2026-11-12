@@ -587,9 +587,10 @@ type stubBroker struct {
 	deny      map[string]string
 	keys      map[string]bool
 	draftErr  error
-	room      string // run_create's room, "aaaaaaaa" when empty
-	sponsor   string // run_create's sponsor
-	runErr    error  // run_create's error, before deny
+	room      string       // run_create's room, "aaaaaaaa" when empty
+	sponsor   string       // run_create's sponsor
+	runErr    error        // run_create's error, before deny
+	replanned *intake.Plan // run_create's plan/v2 for a plan/v1, before deny
 	linkErr   error
 	links     []string // team/user/name of each slack_link_code
 	unlinked  map[string]bool
@@ -678,6 +679,9 @@ func (b *stubBroker) RunCreate(_ context.Context, c RunCreate) (RunResult, error
 	b.calls = append(b.calls, c)
 	if b.runErr != nil {
 		return RunResult{}, b.runErr
+	}
+	if b.replanned != nil {
+		return RunResult{Replanned: b.replanned}, nil
 	}
 	if text, ok := b.deny[c.OnBehalfOf]; ok {
 		b.refused = append(b.refused, c)
