@@ -108,16 +108,22 @@ func FindMarker(body string) (string, bool) {
 // SplitFooter is a published pull request body split at the factory's footer: the text above it,
 // line breaks as \n and trailing blanks trimmed, and the Agent-Output it names. A body whose last
 // "---" paragraph names no output comes back whole, with an empty id: WithFooter marks any such
-// line the model wrote above the footer, so only the last paragraph is read.
+// line the model wrote above the footer, so only the last paragraph is read. A footer at the very
+// start is the whole body: WithFooter publishes a body T2 sanitised to nothing as the footer alone.
 func SplitFooter(body string) (text, output string) {
 	text = strings.TrimRight(strings.ReplaceAll(body, "\r\n", "\n"), " \t\n")
-	i := strings.LastIndex(text, "\n---\n")
-	if i < 0 {
+	var above, footer string
+	switch i := strings.LastIndex(text, "\n---\n"); {
+	case i >= 0:
+		above, footer = text[:i], text[i+len("\n---\n"):]
+	case strings.HasPrefix(text, "---\n"):
+		footer = text[len("---\n"):]
+	default:
 		return text, ""
 	}
-	for _, l := range strings.Split(text[i+len("\n---\n"):], "\n") {
+	for _, l := range strings.Split(footer, "\n") {
 		if id, ok := strings.CutPrefix(l, "Agent-Output: "); ok {
-			return strings.TrimRight(text[:i], " \t\n"), id
+			return strings.TrimRight(above, " \t\n"), id
 		}
 	}
 	return text, ""

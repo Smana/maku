@@ -1856,13 +1856,17 @@ flowchart LR
 
   A write that does not match is recorded `output_shadowed` with reason `untraced_write` and
   counted, then checked as in H1. This includes a direct open, or a direct edit of an applied
-  object. Pushes are shadowed as in H1. What the tracer does not observe is listed in
+  object. On cloud-native-ref's XR, an applied pull request or comment whose every body edit since
+  its answer is a person's (a ticked checklist) is logged `human_edit` instead: not counted, still
+  checked as in H1.
+  Pushes are shadowed as in H1. What the tracer does not observe is listed in
   [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
   sandbox role's and the publisher's octo-sts policy and reports their permissions.
 
 With `runs` not cloud-native-ref's XR, the factory logs a startup warning: the sandbox token is
-not scoped by a role policy (HR13). It still starts, since the tracer reports every direct write.
+not scoped by a role policy (HR13). It still starts, since the tracer reports every direct write,
+and reads none as a human edit.
 Readiness stays `false`: `mode: enforce` is still refused. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 
@@ -2029,6 +2033,28 @@ served repository of one owner. The demo mints from the factory's App; `runToken
 appIDFile, privateKeyFile}` names another App (the chart's `runTokens.appSecret`, mounted at
 `/etc/agent-factory-run-tokens`), and is refused without both files and unless `runs.group` is
 `maku.ogenki.io`: cloud-native-ref's AgentRun gets its tokens from octo-sts, unchanged.
+
+#### Run tokens: the role table
+
+The per-run minter of v4 D10 gives each run a token scoped to the run's one repository, with the
+permissions its role gets from one table, `minter.Roles` (`internal/factory/minter/roles.go`). The
+scoper and integration runs mint as the triager. "Once enforced" reads the run's own
+`agents.ogenki.io/safe-outputs` annotation, written when the run is created: a type the factory
+publishes for the run takes the matching write away from the sandbox role. The table below is
+generated from the code (`go test ./internal/factory/minter -run TestDocsTable -update`). No role
+holds `statuses`, `workflows`, `administration`, `checks: write` or `actions: write`, and only the
+publisher holds `issues: write`. The factory does not use the minter yet: the shared run tokens
+above stay what runs mount.
+
+<!-- roles:begin -->
+| Role | Permissions | Once enforced |
+|---|---|---|
+| implementer | `actions: read`, `checks: read`, `contents: write`, `issues: read`, `metadata: read`, `pull_requests: write` | `pr`, `comment`, `labels`: `pull_requests: read`; `push`: `contents: read` |
+| tester | `actions: read`, `checks: read`, `contents: write`, `issues: read`, `metadata: read`, `pull_requests: read` | `push`: `contents: read` |
+| reviewer | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `metadata: read`, `pull_requests: read` | none |
+| triager | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `metadata: read`, `pull_requests: read` | none |
+| publisher | `contents: read`, `issues: write`, `metadata: read`, `pull_requests: write` | `push`: `contents: write` |
+<!-- roles:end -->
 
 The public-only check runs at start-up and on each labelled issue, so a repository made private
 after start-up is caught only when an issue is labelled.

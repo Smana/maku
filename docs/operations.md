@@ -240,6 +240,7 @@ result; one that may cure itself right after install is retried from 10 s, doubl
 | Sponsored principals and `POST /v1/tasks` (factory interfaces part 2) | **Both CRDs change**: the Task enum and its CEL rules (`source.kind: api`, `sponsor`, `maxMicroUSD`), and the Room member pattern and CEL (`system:` members); the Task CRD arrives through `CreateReplace`, the Room CRD through ai-native-ref's vendored copy. `api.projectIDFile` is required with `api.sponsored`. The host writes `project-id` and `<name>-client-id` into `agent-factory-sponsored` (the chart always mounts it, optional). ai-native-ref adds the broker's mounts, `human.mcp.sponsored` and the network rule for in-cluster clients. **Never roll back below this version once api tasks exist**: an older factory's spec write drops `sponsor` and `maxMicroUSD`, and the CEL refuses it. Three new metric series are registered |
 | Harness roles (scoper bound, reviewer brief) | Three orderings. (1) The reviewer schema first: crossplane-configuration#70 merged and pinned on cloud-native-ref, or `kubectl apply -f charts/maku/crds` on the native runtime (Helm never upgrades `crds/`). Until then each reviewer start costs a refused create, a Warn and one room note per task, and the reviewer runs without its brief, on the pull request alone. (2) The broker before the bridge pin: an older broker refuses `harness_end{budget_calls}` as a bad item, the run reads `PodFailed`, and `maku_factory_scoper_runs_total{outcome="budget_calls"}` stays at 0 while the scopers are in fact stopped. (3) No `scoper:` key in the factory config before the factory runs this release: the parse refuses unknown keys, so an older factory fails at start. The harness image may roll in any order |
 | Judge round triage and cost by role (HR5, HR6) | HR5 (the pending-checks wait and the failing log tail) reaches runs only through the `maku-harness` digest bump in crossplane-configuration's composition, then that package's pin on cloud-native-ref. The log tail also needs `productionresultssa*.blob.core.windows.net:443` on the harness egress; until then every failing check gives the "not readable" note. HR6 needs only the factory: `maku_factory_run_cost_usd` gains `role`, so a query that does not aggregate it splits by role |
+| T2 sanitiser (H2 tracer) | The tracer recomputes what each applied output published with the running release's T2. A release that changes T2 (this one trims a pull request's title) makes pull requests and comments applied before the upgrade show once as `untraced_write`, on their next run end. Say so in the release notes, and confirm such a write predates the upgrade before rolling back |
 | CRD | Vendored with every pin. `task check` fails when the committed CRD differs from what the Go types generate |
 
 ## The factory
@@ -293,6 +294,8 @@ absent rather than 0.
 | `maku_factory_meter_last_success_timestamp_seconds` | gauge | — | When the meter last read usage and settled it in the day's ledger; set by the leader only, so alert on its max across pods. A tick whose ledger write fails sets nothing: it still revokes runs at their own caps, but the daily budgets wait and the increase is retried whole on the next tick |
 | `maku_factory_model_refused_total` | counter | `cause`, `role` | Runs the model provider refused (`billing`, `auth`, `quota`), once per refusal: the task is held and retried, not escalated. Alert on its increase ([model provider refusals](factory.md#model-provider-refusals)) |
 | `maku_factory_resumes_total` | counter | `reason` | Runs resumed after their pod was `Disrupted` or `PodLost` |
+| `maku_factory_run_token_mints_total` | counter | `role`, `result` | Installation tokens the per-run minter (v4 D10) asked, by role and result: `ok`, `not_installed`, `permission_not_granted` (a 422: the App's installation lacks a permission the [role table](factory.md#run-tokens-the-role-table) asks, or the repository), `scope_mismatch` (GitHub granted a wider or different scope, or another repository; the minter revokes that token, counted below) or `error`. A 404 from a reinstalled App is retried once with a fresh lookup. Nothing mints through it yet |
+| `maku_factory_run_token_revokes_total` | counter | `result` | Installation tokens the per-run minter revoked, `ok` or `error`, the revoke of a `scope_mismatch` token included. An `error` leaves the token live until it expires, within the hour |
 | `maku_factory_loop_runs_total` | counter | `class`, `end`, `repository` | Implementer runs under the loop policy as they end: `judge_impossible`, `stalled`, `not_met`, `finished`, `other`. The wandering share is `stalled` over all |
 | `maku_factory_contracts_total` | counter | `class`, `end`, `repository` | Tester runs as their end is read: `ready`, `not_testable`, `contract_not_red`, `contract_outside_tests`, `contract_invalid`, `unreported` |
 | `maku_factory_class_without_holdout` | gauge | `repository`, `class` | 1 for a live class that declares no `holdoutChecks`, set at start and at each config publish, which sets it back to 0 for a class that gained them, left live or was removed; the config is refused from the next minor |
@@ -455,7 +458,15 @@ untraced on the XR (its rules still say `gh pr create`).
 1. Restore `pull_requests: write` in the role policy.
 2. Remove the repository from `enforceOutputs`, and restart.
 
-**Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. Never move
+**Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. A
+maintainer's edit of an applied pull request or comment body is not one, on cloud-native-ref's XR:
+when every edit since the answer is a person's, the tracer logs `human_edit`, uncounted, and
+still checks the text. Off the XR every mismatch is untraced, since a shared token's edits read
+as its user's. A retitle has no editor on record, so it stays
+untraced: confirm who retitled the pull request before rolling back on a `pr` untraced write.
+After an upgrade that changes the T2 sanitiser, pull requests and comments applied before it are
+compared with the new T2's text and show as untraced once: confirm those predate the upgrade
+before rolling back. Never move
 an enforced repository to a run path whose sandbox token no role policy scopes (the startup
 warning names HR13). `push` (H3) and raw reads (H4) stay open in this stage.
 

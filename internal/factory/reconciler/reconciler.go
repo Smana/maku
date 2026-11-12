@@ -72,6 +72,9 @@ type RoomLog interface {
 type TaskForge interface {
 	RecentComments(ctx context.Context, number int) ([]forge.Comment, error)
 	AllComments(ctx context.Context, number int) ([]forge.Comment, error)
+	// ContentEdits are a pull request's or comment's body edits, with their editors (the tracer's
+	// human edit).
+	ContentEdits(ctx context.Context, node string) ([]forge.ContentEdit, error)
 	Comment(ctx context.Context, number int, body string) error
 	CommentWithID(ctx context.Context, number int, body string) (int64, error)
 	EditComment(ctx context.Context, id int64, body string) error

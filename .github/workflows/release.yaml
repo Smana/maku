@@ -118,7 +118,13 @@ jobs:
             helm package "$1" --version "$v" --app-version "$app"
             # Print the output whether or not the push fails: under bash -e a bare assignment
             # exits first and the error is lost.
-            rc=0; out="$(helm push "$2-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)" || rc=$?
+            # ghcr intermittently answers a fresh push with "failed to perform Tag ... not found":
+            # retry the push (it is idempotent: same content, same digest) before failing.
+            for attempt in 1 2 3; do
+              rc=0; out="$(helm push "$2-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)" || rc=$?
+              [ "$rc" -eq 0 ] && break
+              echo "$out"; echo "helm push attempt $attempt failed (exit $rc), retrying" >&2; sleep $((attempt * 15))
+            done
             echo "$out"
             [ "$rc" -eq 0 ] || { echo "helm push failed (exit $rc)" >&2; exit "$rc"; }
             digest="$(sed -n 's/^Digest: //p' <<<"$out")"

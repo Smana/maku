@@ -439,6 +439,7 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 | Gate | `internal/factory/decision` | the per-decision record: the values each declared row read, so the tally can replay a cap |
 | Gate | `internal/factory/fluxwatch` | Flux's objects for the post-merge monitor (MC7): uncached, read-only, `unstructured` |
 | Out | `internal/factory/forge`, `internal/factory/narrate` | GitHub as the factory App (`internal/factory/forge/forgetest`: its test-only fake); narration, at least once |
+| Out | `internal/factory/minter` | v4 D10's per-run tokens: `Roles`, the one role table every run and publisher token is minted from, and `Minter`, a token for one repository and role from the agents App; nothing uses it until rollout step 3's PR B |
 | Out | `internal/factory/rooms` | The broker's system API over TLS |
 | Ops | `internal/factory/meter`, `internal/factory/fmetrics`, `internal/factory/tracing` | The run meter; the metrics; one root span per task |
 | API | `internal/factory/api` | `POST /v1/runs` |

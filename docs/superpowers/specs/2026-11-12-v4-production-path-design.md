@@ -61,7 +61,7 @@ Read from the code on 2026-11-12, before the questions:
 | D7 (Q7) | **agentgateway only, shipped in the umbrella.** It serves the agents, the planner and the classifier. Model keys are Secrets referenced by its values. The Envoy AI gateway leaves the product path. |
 | D8 (Q8) | **Any OIDC provider, plus a one-time GitHub account link.** <ul><li>The broker accepts any OIDC issuer; the roles claim name and its values are configurable.</li><li>Each person links their GitHub account once in the broker, which is how the factory maps a human to a GitHub login.</li><li>ZITADEL becomes an optional preset; the `readerFile` PAT goes.</li></ul> |
 | D9 (Q9) | **Bring-your-own Postgres ≥16.** The broker and the factory read DSN Secrets. Maku runs its schema migrations at start-up. Backups and high availability are the operator's job. The bundled Postgres StatefulSet stays demo-only. |
-| D10 (Q10) | **The factory mints short-lived installation tokens per run**, scoped to one repository with the role's permissions (an implementer gets `contents:write` and `pull_requests:write`; a reviewer gets read plus review). octo-sts becomes optional. |
+| D10 (Q10) | **The factory mints short-lived installation tokens per run**, scoped to one repository with the role's permissions (the role table follows what the repository enforces, as amended by the owner on 2026-11-12, HR12: an implementer gets `contents:write` and `pull_requests:write` only while the factory does not publish those outputs for it, and loses them as `pr`, `comment`, `labels` and then `push` are enforced; a reviewer is read-only, its verdict goes through the room). octo-sts becomes optional. |
 | D11 (Q11) | **The merge gate is Maku's own commit status** (`maku/merge-gate`). It is computed from the MergePolicy and posted by the factory App; branch protection requires it. policy-bot becomes an optional integration. |
 | D12 (Q12) | **Two GitHub Apps.** The agents App writes code and opens PRs. The factory App handles issues, labels, statuses and merges. An agent token can never approve or merge its own PR. |
 | D13 (Q13) | **The chart contract:** <ul><li>Defaults are production-safe and fail closed when a required seam is missing.</li><li>The demo moves to `values-demo.yaml`, and the `profile` switch is deleted at the end of the rollout.</li><li>A `values.schema.json` makes the values contract enforceable.</li><li>The CRDs move to a separate `agent-factory-crds` chart, as templates, so Helm, Flux and Argo CD all upgrade them. It is installed first.</li><li>Once v4.0.0 is cut, breaking value changes happen only in a major version, each with a migration note.</li></ul> |
@@ -145,6 +145,20 @@ recorded in the session ledger.
 8. **Clean-up:** once cnref runs only the product path, Maku deletes the old paths and the
    `profile` switch. The chart is then ready for v4.0.0. Cutting it waits for the owner's go,
    after the manual GKE and kubeadm installs (D23).
+
+## Owner rulings, 2026-11-12
+
+Decided after the plans for steps 2 and 3 and hardening H1–H5 were written:
+
+| Ruling | Decision |
+|---|---|
+| HR12 | The minter's role table is the enforce-aware one (D10 above is amended). `minter.Roles = TableHR12` |
+| HR13 | A repository with `enforceOutputs` whose runs hold a shared or unscoped token (a PAT, the demo's shared token, step 2's interim writer) is a configuration error: the factory refuses to start and names the fix (per-run tokens, or the XR and octo-sts) |
+| HR42 | Readiness R2 on the run-controller path reads the minter's role table (option A): H5 reports ready only once step 3's per-run tokens are configured |
+| HR28 | Protected-path push approvals are bound to the bundle's digest: they outlive the run and approve exactly that content. The Slack push approval accepts an approval with no live run |
+| PR9 | The install's unsafe settings stay a banner every signed-in human sees |
+| Pins | A pinned issue shows the pinned profile's roles (profile choice G3) |
+| Release | The next Maku minor is cut once step 3 (PRs A to E) has merged, not before |
 
 ## Not here
 
