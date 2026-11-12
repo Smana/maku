@@ -760,7 +760,7 @@ the factory in `maku_intake_catalogue_reads_total{outcome="hit"|"miss"|"error"}`
 ### The planner on `/mcp`
 
 `intake_plan` and `plan_check` are the governed planner (CD5, CD17, CD18, CD27): a sentence becomes
-`plan/v1` through one bounded call to the AI Gateway, and the plan's hash is the value every later
+`plan/v2` through one bounded call to the AI Gateway, and the plan's hash is the value every later
 door re-validates before anything is filed. They are **off** unless the broker's config sets
 `human.intake.plan.enabled`; off, both are unknown tools (`unknown tool: intake_plan`), as
 `run_create` is to a human token. `config.Load` refuses the switch unless it also has
@@ -774,12 +774,28 @@ visibility can be read, so the guard would refuse every plan) or without an `Act
 | Tool | Arguments | Result |
 |---|---|---|
 | `intake_plan` | `text` (one sentence about what is wrong, required, at most 16 KiB); `repository?` and `candidates?` (owner/name, at most 20 candidates); `context?` (at most 4 KiB) and `evidence?` (at most 5 items of at most 280 characters, counted against the same 4 KiB); `on_behalf_of?` (`slack:<team>/<user>`) and `ceiling?` (USD, 0 or absent means the class's), both a sponsored principal's alone. A revision adds the previous `plan`, its `hash` and the edited `candidate`, all three together | `{plan, hash, question, canStart, canStartWhy?, degraded}`: the plan, the hash the broker computed over it, the first ranked gap as `question`, whether this caller may start the factory on it, and whether a template rather than the planner wrote it (`degraded`, `human.intake.plan.fallback: composer`) |
-| `plan_check` | `plan` (the base `plan/v1` object as it was shown), `hash` (`sha256:<64 hex>`), optional `candidate` (the deterministic final revision), `on_behalf_of?` (a sponsored principal's, as above) | `{plan, hash, canStart, canStartWhy?}`: the final plan re-validated with the hash recomputed over it or its candidate. It files nothing, calls no model, spends no daily plan and writes no record |
+| `plan_check` | `plan` (the base `plan/v2` object as it was shown), `hash` (`sha256:<64 hex>`), optional `candidate` (the deterministic final revision), `on_behalf_of?` (a sponsored principal's, as above) | `{plan, hash, canStart, canStartWhy?, maintainer?}`: the final plan re-validated with the hash recomputed over it or its candidate; `maintainer` is the caller's flag from the repository's catalogue, absent without one. A `plan/v1` is answered `{status: "replanned", plan, hash, canStart: false}` with the same issues as `plan/v2` (see below). It files nothing, calls no model, spends no daily plan and writes no record |
 
-`plan/v1` is `{apiVersion: "plan/v1", rev, round, roundsLeft, planner: {model, surface, at}, repository,
+`plan/v2` is `{apiVersion: "plan/v2", rev, round, roundsLeft, planner: {model, surface, at}, repository,
 repositoryEvidence, alternatives, issues, budget: {ceilingUSD, source}, gaps, question, hash}`; each issue
-is `{index, title, body, class, roles, dependsOn}`, numbered 1..n in order, one to three per plan,
-with `sanitize`'s draft bounds. Each ranked gap is `{id, section, text, recommended: {answer, why}}`;
+is `{index, title, body, class, profile, roles, dependsOn, suggestion?}`, numbered 1..n in order, one to
+three per plan, with `sanitize`'s draft bounds. `profile` is material: `""` is the factory's choice, and
+a pin is refused until pins ship. `suggestion` is display: `{profile, roles, merge: {outcome,
+approveToMerge}, why}`, where `profile` is one the class offers (or `""`), `roles` are its template's,
+`merge.outcome` is `auto`, `shadow`, `approval` or `maintainer` (computed by the broker from the class's
+mode and `approveToMerge`, never the model's), and `why` is the model's line of at most 200 characters,
+untrusted. The classes, their ceilings, the material `roles` (the floor profile's template, `[]` when the
+floor sets none: triage chooses them) and the suggestion come from the plan repository's
+[catalogue](#get-v1catalogueownername), read per caller and cached 60 s; a repository whose catalogue does not
+answer plans from `human.intake.plan.classes`, with no suggestion.
+
+**The upgrade.** `apiVersion` is material, so every hash changed at `plan/v2`. A `plan/v1` sent to
+`plan_check` or `run_create` (a Slack proposal posted before, a harness mid-loop) is checked against its
+own hash and the requester's guard, then upgraded with no model call: the same issues, `profile: ""`,
+the roles and ceiling of the plan repository's current classes, and the factory's-choice suggestion with
+an empty `why`, under a new hash. The answer is `{status: "replanned", plan, hash}`; nothing is filed,
+and the Slack App redraws the proposal with it. A class the repository no longer offers is
+`invalid_class`. Each ranked gap is `{id, section, text, recommended: {answer, why}}`;
 `question` is only its first gap for Slack, room views and older clients. `repositoryEvidence` (at most
 5 items of at most 280 characters), `alternatives`, `planner`, `gaps`, `question`, `round` and
 `roundsLeft` are display and untrusted; the hashed set is `{apiVersion, repository, budget, issues}`
@@ -901,7 +917,7 @@ takes `since`, `room` and `repo` only, and refuses anything else. The two legacy
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `run_create` | `repo`, `text`, `dataClass` (`public`), `max_cost` (USD, above 0), all required; `title?` (files the issue, with the `issue_draft` rules), `on_behalf_of?` (`slack:<team>/<user>`), `ref?`, `idempotency_key?` (at most 128 characters; default a hash of the arguments, so a retried call makes one task); `plan?` (the `plan/v1` the task was confirmed from) with `plan_hash?` (the `sha256:` value the broker answered beside it) — both, or neither | `{task, room, issue, duplicate, url, sponsor?}`: the factory's answer, the room's page, and the GitHub login that sponsors a new task |
+| `run_create` | `repo`, `text`, `dataClass` (`public`), `max_cost` (USD, above 0), all required; `title?` (files the issue, with the `issue_draft` rules), `on_behalf_of?` (`slack:<team>/<user>`), `ref?`, `idempotency_key?` (at most 128 characters; default a hash of the arguments, so a retried call makes one task); `plan?` (the `plan/v2` the task was confirmed from) with `plan_hash?` (the `sha256:` value the broker answered beside it) — both, or neither. A planned task carries the plan issue's `class` and suggested profile to the factory (`POST /v1/tasks` `class`, `suggested`); the call names neither | `{task, room, issue, duplicate, url, sponsor?}`: the factory's answer, the room's page, and the GitHub login that sponsors a new task. A `plan/v1` is answered `{status: "replanned", plan, hash, canStart: false}` and files nothing |
 | `slack_link_code` | `team`, `user` (Slack ids), `handle?`, `name?` (display only). Listed only to `human.slackLink.principal`; `team` must be `human.slackLink.teamID` (`wrong_team`) | `{url, expiresAt}`: `<publicURL>/link/slack?code=<code>`, single use, 10 minutes; it replaces the user's earlier code. `too_many_codes` past 1000 waiting ([Slack self-serve link](slack.md#self-serve-link)) |
 | `slack_unlink` | `team`, `user`. Listed only to `human.slackLink.principal` | `{unlinked}`: whether the Slack user had a self-serve link |
 
@@ -1082,7 +1098,7 @@ limits: [sponsored principals](factory.md#sponsored-principals).
 |---|---|
 | Auth | `Authorization: Bearer`: a token from `api.humanIssuer` whose client is a sponsored principal's `clientIDFile` and whose audience holds `api.projectIDFile` |
 | `Idempotency-Key` | Required, at most 255 bytes. The Task's name derives from `api:<name>:<key>`: a replay answers `200 {duplicate: true}` and creates nothing, two requests under one key make one task. A name another request owns is `409 idempotency_conflict` |
-| Body | `repository`, `text` (at most 16 KiB), `dataClass` (`public`), `maxCostUSD` (at least 0.01), all required; `title?` (files the issue; `<area>: <what is wrong>`, the three template sections, valid optional Decisions and no unresolved clarification marker), `onBehalfOf?`, `ref?` (at most 256 characters, a git ref: letters, digits, `.`, `_`, `/`, `-`, no leading `-`, no `..`, no whitespace; the same pattern as `run_create`'s, since it is written into the agent's brief). At most 64 KiB; unknown fields refused |
+| Body | `repository`, `text` (at most 16 KiB), `dataClass` (`public`), `maxCostUSD` (at least 0.01), all required; `title?` (files the issue; `<area>: <what is wrong>`, the three template sections, valid optional Decisions and no unresolved clarification marker), `onBehalfOf?`, `ref?` (at most 256 characters, a git ref: letters, digits, `.`, `_`, `/`, `-`, no leading `-`, no `..`, no whitespace; the same pattern as `run_create`'s, since it is written into the agent's brief). At most 64 KiB; unknown fields refused; `class?` and `suggested?` (a planned task's class and suggested profile, each a name `^[a-z0-9][a-z0-9-]{0,62}$`, else `bad_json`), copied with the resolved sponsor login to `spec.intake` (no `login` field is taken) |
 | `201` | `{task, room, issue?, sponsor}`: the room is named as the task; `sponsor` is the GitHub login it is charged to |
 | `200` | `{task, room, issue, duplicate: true}` |
 | `400` | `bad_json`, `idempotency_key_required`, `bad_data_class`, `bad_ref`, `max_cost_required`, `max_cost_over_principal`, `max_cost_over_class`, `invalid_draft`, `bad_text` |
