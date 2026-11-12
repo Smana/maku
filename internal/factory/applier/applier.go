@@ -130,6 +130,9 @@ type roomState struct {
 	// prs are the room's applied pr outputs, every run's: the ids a pull request the applier may
 	// edit names in its footer.
 	prs map[string]bool
+	// pushed are the room's applied push objects, every run's, lower-cased: the heads the factory
+	// itself put on the branch (HR26).
+	pushed map[string]bool
 }
 
 type runState struct {
@@ -141,6 +144,7 @@ type runState struct {
 	// and heldUntil when the last wait ended: the run's answer window counts from there.
 	waiting, lastHeld *held
 	heldUntil         time.Time
+	room              *roomState
 }
 
 type request struct {
@@ -266,7 +270,7 @@ func (a *Applier) stopped(ctx context.Context) bool {
 func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]window) error {
 	st := a.rooms[t.Status.RoomRef]
 	if st == nil {
-		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}}
+		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}, pushed: map[string]bool{}}
 		a.rooms[t.Status.RoomRef] = st
 	}
 	last, err := a.Rooms.LastSeq(ctx, t.Status.RoomRef)
@@ -354,6 +358,9 @@ func (st *roomState) read(evs []envelope.Event) {
 			if kind == envelope.KindOutputApplied && rec.Type == string(hardening.PR) {
 				st.prs[rec.ID] = true
 			}
+			if kind == envelope.KindOutputApplied && rec.Type == string(hardening.Push) {
+				st.pushed[strings.ToLower(rec.Object)] = true
+			}
 		}
 	}
 }
@@ -375,7 +382,7 @@ func (st *roomState) decided(e envelope.Event) {
 func (st *roomState) run(id string) *runState {
 	rs := st.runs[id]
 	if rs == nil {
-		rs = &runState{answered: map[string]bool{}}
+		rs = &runState{answered: map[string]bool{}, room: st}
 		st.runs[id] = rs
 	}
 	return rs

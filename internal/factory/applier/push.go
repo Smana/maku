@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
@@ -244,7 +245,15 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 	case err != nil:
 		return fmt.Errorf("inspect the push's bundle: %w", err)
 	}
-	if in.OldHead != "" && in.OldHead == in.Head { // HR26: already pushed, its answer lost
+	if in.OldHead != "" && in.OldHead == in.Head {
+		// HR26: the branch is at the bundle's head already. Answered applied with no push only when
+		// an applied push of the task put that head there; otherwise another hand pushed it, and an
+		// answer would launder that write for the tracer.
+		if !rs.room.pushed[strings.ToLower(commitURL(t, in.Head))] {
+			a.Log.Warn("output applier: the branch is at the push's head already, and no applied push put it there",
+				"task.id", t.Name, "run.id", rec.ID, "output.id", req.rec.ID)
+			return refuse(hardening.RefusePushRef)
+		}
 		if !n.Take(hardening.Push) {
 			return refuse(hardening.RefuseCap)
 		}
@@ -286,6 +295,8 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 	err = p.Push(ctx, in)
 	switch {
 	case errors.Is(err, gitbundle.ErrLeaseLost):
+		// The next tick inspects again: a branch moved to this very head by another hand is then
+		// refused, never answered applied (HR26).
 		a.Log.Info("output applier: the branch moved since it was read: the push is retried", "task.id", t.Name,
 			"run.id", rec.ID, "output.id", req.rec.ID)
 		return errLater
@@ -319,6 +330,7 @@ func (a *Applier) pushApplied(ctx context.Context, t *v1alpha1.Task, runID strin
 	if err := a.applied(ctx, t, runID, rs, req, n, nil, out); err != nil {
 		return err
 	}
+	rs.room.pushed[strings.ToLower(out.Object)] = true
 	rs.unhold(req.rec.ID, a.Now())
 	return nil
 }

@@ -446,15 +446,30 @@ func TestPushRefusals(t *testing.T) {
 	})
 }
 
-// HR26: a branch already at the bundle's head is answered applied with no push (a lost answer). A
-// lost lease leaves the request pending for the next tick, which pushes it.
+// HR26: a branch already at the bundle's head is answered applied with no push only when an applied
+// push of the task put that head there (a retried request). A head another hand pushed is refused
+// push_ref, never answered applied: the tracer would read that answer as tracing the direct push.
+// A lost lease leaves the request pending for the next tick, which pushes it.
 func TestPushIdempotent(t *testing.T) {
 	r, p, pr, _ := pushRig(t)
+	first := r.pushRequest(t, pr, "bundle-1")
+	r.tick(t)
 	p.in.OldHead = newHead
 	id := r.pushRequest(t, pr, "bundle-1")
 	r.tick(t)
-	if a := r.only(t, id); a.kind != envelope.KindOutputApplied || len(p.pushed) != 0 {
+	if a := r.only(t, first); a.kind != envelope.KindOutputApplied {
+		t.Fatalf("first %+v", a)
+	}
+	if a := r.only(t, id); a.kind != envelope.KindOutputApplied || len(p.pushed) != 1 {
 		t.Fatalf("answer %+v, pushed %d", a, len(p.pushed))
+	}
+
+	r, p, pr, _ = pushRig(t)
+	p.in.OldHead = newHead
+	id = r.pushRequest(t, pr, "bundle-1")
+	r.tick(t)
+	if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefusePushRef) || len(p.pushed) != 0 {
+		t.Fatalf("a head another hand pushed: answer %+v, pushed %d", a, len(p.pushed))
 	}
 
 	r, p, pr, _ = pushRig(t)
