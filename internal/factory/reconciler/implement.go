@@ -693,6 +693,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	if reason == "" {
 		return nil
 	}
+	if run.Role == "implementer" {
+		r.shadowPending(ctx, cfg, t) // H1: the run's writes, before its outcome (audit only)
+	}
 	if reason == "pod_lost" {
 		switch run.Reason {
 		case runs.ReasonDisrupted, runs.ReasonPodLost, runs.ReasonPodFailed:

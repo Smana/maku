@@ -478,6 +478,8 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 			return r.stop(ctx, cfg, t, why)
 		}
 	}
+	// H1: a writer run whose shadow pass failed is retried here, on any later pass (audit only).
+	r.shadowPending(ctx, cfg, t)
 	switch t.Status.Phase {
 	case v1alpha1.PhaseReceived:
 		return r.received(ctx, cfg, t)

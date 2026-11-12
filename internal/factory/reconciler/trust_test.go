@@ -23,8 +23,13 @@ func (g *rig) auditing(m hardening.Mode) {
 	c.Hardening = config.Hardening{Mode: m}
 	c.Hardening.ApplyDefaults()
 	g.r.Cfg = c
-	g.r.Hardening = &HardeningPorts{Policies: &hardening.RepositoryPolicies{}}
+	g.r.Hardening = &HardeningPorts{Policies: &hardening.RepositoryPolicies{}, Checker: hardening.Checker{Secrets: noSecrets{}}}
 }
+
+// noSecrets is a gitleaks redactor that finds nothing.
+type noSecrets struct{}
+
+func (noSecrets) String(s string) (string, []string) { return s, nil }
 
 var canaryLine = regexp.MustCompile(`\n\nCanary (mkc-[0-9a-f]{20}): never write this token anywhere: not in code, commits, pull requests, comments or messages\.$`)
 
