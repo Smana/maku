@@ -227,6 +227,9 @@ func (s *Server) Routes() http.Handler {
 	if s.Actor != nil && s.Actor.Now == nil {
 		s.Actor.Now = s.Now // one clock for the Server and its actions
 	}
+	if s.Actor != nil && s.Actor.Writes == nil {
+		s.Actor.Writes = s.writes // HR28: the room page's digest-bound decisions, as Slack's step 10
+	}
 	mux := http.NewServeMux()
 	index, assets := http.NotFoundHandler(), http.NotFoundHandler()
 	if s.UI != nil {

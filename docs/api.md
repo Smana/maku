@@ -711,6 +711,11 @@ close frame. So is a peer that does not take a frame within 10 s (`write_timeout
 | `already_decided` | Another approver decided first |
 | `approval_expired` | The decision reached the broker after the approval's `expiresAt`; the approval closed as `expired` |
 | `four_eyes` | The room requires an approver who did not prompt the turn |
+| `access_unverified` | A digest-bound approval (a protected-path push), and GitHub could not say whether the approver writes to the room's repository: retry |
+
+A digest-bound approval, which holds a protected-path push for a maintainer, is decided on the
+room page only by an approver who writes to the room's repository on GitHub, the standing the
+Slack route's step 10 checks. Without it the decision is `not_permitted`.
 
 ### Machine-sent text
 
@@ -1333,7 +1338,7 @@ one approval that binds it.
 | `room.task_triaged` | The task enters `Triaged` | `repo` |
 | `room.run_started` | A run enters `Running` | `run` |
 | `room.run_ended` | A run ends: `Succeeded`, `Failed`, `BudgetExhausted` or `Revoked` | `run` |
-| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them |
+| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them; on a protected-path push's approval also `digest`, `protected` (at most 10 paths, each at most 256 bytes) and `protectedMore` (how many more) |
 | `room.pr_opened` | The first pull request of the task is known | `pr` |
 | `room.verdict_posted` | GitHub accepted the verdict comment | `pr` |
 | `room.merged` | The task enters `Merged`, or its facts carry reason `merged` (a human merge), `merged_verified` or `merged_unverified`, once | `pr` |

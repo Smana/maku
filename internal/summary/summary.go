@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -411,6 +412,30 @@ func runModels(st State) (current, last *RunModel) {
 	return nil, cp(st.LLM)
 }
 
+// outputDigest is a push bundle's sha256.
+var outputDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// maxDescribedPaths is how many protected paths an approval's line names before "and N more".
+const maxDescribedPaths = 3
+
+// describeOutputPush is a protected-path push's line: the branch, the digest's first 12 hex and the
+// protected paths it touches.
+func describeOutputPush(branch, digest string, protected []string) string {
+	what := "push"
+	if envelope.ValidBranch(branch) {
+		what += " to " + branch
+	}
+	what += ", digest " + digest[:12]
+	if len(protected) > 0 {
+		shown := protected[:min(len(protected), maxDescribedPaths)]
+		what += ", protected: " + strings.Join(shown, ", ")
+		if more := len(protected) - len(shown); more > 0 {
+			what += fmt.Sprintf(" and %d more", more)
+		}
+	}
+	return what
+}
+
 // describe is an approval's one line: the redacted call's command, else its class.
 func describe(a envelope.ApprovalRequestedPayload) string { return DescribeApproval(a.Class, a.Action) }
 
@@ -419,9 +444,19 @@ func describe(a envelope.ApprovalRequestedPayload) string { return DescribeAppro
 func DescribeApproval(class string, action json.RawMessage) string {
 	var call struct {
 		Command string `json:"command"`
+		// A protected-path push's action (hardening HR28): the factory's own fields, never the
+		// commits' text.
+		Output    string   `json:"output"`
+		Digest    string   `json:"digest"`
+		Branch    string   `json:"branch"`
+		Protected []string `json:"protected"`
 	}
 	what := class
-	if json.Unmarshal(action, &call) == nil && call.Command != "" {
+	switch {
+	case json.Unmarshal(action, &call) != nil:
+	case class == "forge.push" && outputDigest.MatchString(call.Digest) && call.Output != "":
+		what = describeOutputPush(call.Branch, call.Digest, call.Protected)
+	case call.Command != "":
 		what = call.Command
 	}
 	if r := []rune(what); len(r) > maxWhat {

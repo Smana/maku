@@ -651,6 +651,42 @@ func TestSlackDecideBinding(t *testing.T) {
 	}
 }
 
+// HR28: a digest-bound row decides with its run ended, when the press's branch is the row's
+// binding; while the watch still holds the run, the run's branch must agree. A branch-bound row
+// with no live run is refused as today.
+func TestSlackDecideDigestBound(t *testing.T) {
+	const ended, moved = "01ARZ3NDEKTSV4RRFFQ69G5FC1", "01ARZ3NDEKTSV4RRFFQ69G5FC2"
+	digestRow := func(id, run, branch string) store.Approval {
+		a := slackRow(id, roomID, run, branch)
+		a.BindingDigest, a.BindingOutput, a.CallID = strings.Repeat("e", 64), "0123456789abcdef", "output:0123456789abcdef"
+		return a
+	}
+	for name, c := range map[string]struct {
+		body   SlackDecision
+		result string
+	}{
+		"the binding, the run ended":         {press(slackTeam, "U02", ended, slackBranch, "approved"), "approved"},
+		"another branch, the run ended":      {press(slackTeam, "U02", ended, "agent/other", "approved"), "binding_mismatch"},
+		"the binding, the live run moved":    {press(slackTeam, "U02", moved, "agent/old", "approved"), "binding_mismatch"},
+		"a branch-bound row, no live run":    {press(slackTeam, "U02", ap4, slackBranch, "approved"), "binding_mismatch"},
+		"the binding, the run ended, denied": {press(slackTeam, "U02", ended, slackBranch, "denied"), "denied"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var decisions []decided
+			aps := slackApprovals()
+			aps[ended] = digestRow(ended, "9zzzzzzz", slackBranch)
+			aps[moved] = digestRow(moved, slackRun, "agent/old") // the watch holds slackRun on slackBranch
+			e := setup(t, withSponsored(sponsoredP), slackDecideOn(t, slackLinks(), aps, &decisions))
+			if got, result := decide(t, e, c.body); got != http.StatusOK || result != c.result {
+				t.Fatalf("%d %s, want 200 %s", got, result, c.result)
+			}
+			if decidedOne := c.result == "approved" || c.result == "denied"; decidedOne != (len(decisions) == 1) {
+				t.Fatalf("the store got %+v", decisions)
+			}
+		})
+	}
+}
+
 // D8: the log names the person, never the App. One actor is stamped, and the surface lives in the
 // idempotency scope.
 func TestSlackDecideActorIsHuman(t *testing.T) {

@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/summary"
@@ -64,6 +66,40 @@ func Reasons() []string {
 // ulidRE is an approval id's shape: the bridgeapi mints it, as a ULID, and nothing else produces
 // one, so an id that does not match is dropped rather than carried into a card.
 var ulidRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+
+// digestRE is a push bundle's sha256, the one binding a digest-bound approval adds (HR28).
+var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// MaxProtected bounds the protected paths a wait carries; ProtectedMore counts the rest.
+const MaxProtected = 10
+
+// maxProtectedPath bounds one path a wait carries, in bytes.
+const maxProtectedPath = 256
+
+// protectedPaths reads a digest-bound approval's action for its protected paths: at most
+// MaxProtected, each a non-empty path of at most maxProtectedPath bytes with no control character,
+// and how many valid ones it left out. Anything else in the action never leaves the broker.
+func protectedPaths(action json.RawMessage) ([]string, int) {
+	var a struct {
+		Protected []string `json:"protected"`
+	}
+	if json.Unmarshal(action, &a) != nil {
+		return nil, 0
+	}
+	var out []string
+	more := 0
+	for _, p := range a.Protected {
+		if p == "" || len(p) > maxProtectedPath || !utf8.ValidString(p) || strings.ContainsFunc(p, unicode.IsControl) {
+			continue
+		}
+		if len(out) == MaxProtected {
+			more++
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, more
+}
 
 // Clip is v when kind's vocabulary ("reason", "limit", "state", "verdict" or "decision") holds it, ""
 // for "", else "other": no value outside a closed list leaves the broker or reaches a Slack thread.
@@ -131,6 +167,10 @@ func (t *Tracker) events(room, repo string, ev envelope.Event) []Event {
 		}
 		if envelope.ValidBranch(p.Branch) {
 			e.Branch = p.Branch
+		}
+		if digestRE.MatchString(p.Digest) && e.Class == "forge.push" {
+			e.Digest = p.Digest
+			e.Protected, e.ProtectedMore = protectedPaths(p.Action)
 		}
 		if !p.ExpiresAt.IsZero() {
 			e.ExpiresAt = p.ExpiresAt.UTC().Format(time.RFC3339)

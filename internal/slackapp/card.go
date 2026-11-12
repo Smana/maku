@@ -182,6 +182,10 @@ func approvalCard(e webhook.Event, roomsURL string, now time.Time) (string, json
 		{Type: cardMrkdwn, Text: "*Branch*\n" + slackText(e.Branch)},
 		{Type: cardMrkdwn, Text: "*Approval*\n" + e.ApprovalID},
 	}
+	if e.Digest != "" { // HR28: a protected-path push is approved by its bundle's digest
+		fields = append(fields, cardText{Type: cardMrkdwn, Text: "*Digest*\n" + slackText(shortDigest(e.Digest))},
+			cardText{Type: cardMrkdwn, Text: "*Protected paths*\n" + protectedLine(e.Protected, e.ProtectedMore)})
+	}
 	// The deadline comes from the event's own RFC 3339 field: no clock and no timezone of the App's
 	// reach the message. An event without one (the broker always sets it) is drawn without the row
 	// rather than with an invented value, and is live, since nothing says it is past.
@@ -211,6 +215,38 @@ func approvalCard(e webhook.Event, roomsURL string, now time.Time) (string, json
 		return "", nil // nothing the App builds can fail to encode; the caller keeps today's line
 	}
 	return cardTitle, raw
+}
+
+// shortDigest is a digest as the card shows it: its first 12 hex, as git abbreviates a commit.
+func shortDigest(d string) string {
+	if len(d) > 12 {
+		return d[:12]
+	}
+	return d
+}
+
+// maxCardPath bounds one protected path as the card shows it, in runes: ten of them stay under a
+// field's 2,000 characters.
+const maxCardPath = 120
+
+// protectedLine is the card's protected paths: each escaped and bounded, then "and N more" for the
+// ones the wait left out. A path is the one text the card shows that the factory did not write.
+func protectedLine(paths []string, more int) string {
+	shown := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if r := []rune(p); len(r) > maxCardPath {
+			p = string(r[:maxCardPath]) + "…"
+		}
+		shown = append(shown, "`"+strings.ReplaceAll(slackText(p), "`", "'")+"`")
+	}
+	line := strings.Join(shown, ", ")
+	if more > 0 {
+		line += fmt.Sprintf(", and %d more", more)
+	}
+	if line == "" {
+		line = "none named"
+	}
+	return line
 }
 
 // The four lines a closed card carries (§5's teardown, and the design's lifecycle). They are fixed
