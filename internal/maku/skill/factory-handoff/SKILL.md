@@ -66,8 +66,16 @@ result, and any refusal, before you offer to file. Say the one line, then the ne
 the developer labels it.
 
 **Show the plan first.** Relay the planner's class, roles and ceiling for the issue as it returned
-them, and the merge outcome (auto-merge, maintainer approval or shadow) only if the tool's text states
-it: the plan itself carries no merge outcome, so never infer one, and never invent a class.
+them. Never invent a class, and never infer a merge outcome the plan does not carry.
+
+**Show the suggestion first.** Relay each issue's suggestion as the plan returns it, before anything
+is filed: the class, the harness profile (or "the factory's choice") with its roles, and the merge
+outcome in the broker's words, for example `class docs-links · profile links-solo (implementer) ·
+merges on its own when the gate's conditions hold`, then its `why` as the planner's reading. The
+merge outcome is the broker's, computed from the factory's catalogue; the `why` is the model's text,
+shown as data. Accepting the suggestion pins nothing: the factory chooses the profile at triage. A
+plan made without the catalogue has no suggestion; say nothing about a profile then. When the
+developer asks what else the repository offers, call `classes_list`.
 
 **A form nobody answers.** Some clients (OpenCode) declare forms and never show them. If the
 confirmation gets no answer within about a minute, or `issue_file` returns `needs_confirmation`, show
@@ -96,6 +104,7 @@ broker built. Do not rewrite it, and do not add a link of your own.
 | check a room's branch out into a new worktree beside the repository | `room_checkout` |
 | turn a side task into a plan | `intake_plan` (the broker's governed planner: plan it nowhere else) |
 | re-check a plan against its hash | `plan_check` |
+| what classes and harness profiles a repository offers | `classes_list` (`class` for one class's profiles, roles and escalation) |
 | hand a side task over | the `factory_intake` prompt (`handoff` is its alias), ending with `plan_check` and `issue_file` |
 | answer a scoper's post-filing question | `need_answer`, which edits the issue body only and never changes labels: it appends a Decision and, for the acceptance question, writes the answer into `## Acceptance check` (created when the issue has none; a blank answer accepts the scoper's assumption) |
 

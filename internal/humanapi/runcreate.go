@@ -52,7 +52,7 @@ type runCreateArgs struct {
 	OnBehalfOf     string  `json:"on_behalf_of"`
 	Ref            string  `json:"ref"`
 	IdempotencyKey string  `json:"idempotency_key"`
-	// Plan is the plan/v1 the task was confirmed from, and PlanHash the sha256: value the broker
+	// Plan is the plan/v2 the task was confirmed from, and PlanHash the sha256: value the broker
 	// answered beside it: the App's own copy of what intake_plan said, carried from the proposal
 	// message's metadata (CD20). Neither is trusted — checkPlan recomputes the hash over the plan and
 	// re-validates it — and a call carrying neither is the tool it always was.
@@ -76,14 +76,16 @@ const slackFiles = 1
 // cheapest and the whole of what plan_changed means — no GitHub read is spent on a plan that is not
 // the one anyone confirmed; then the shape and the money, which cost nothing; then the guard, which
 // asks GitHub; then the contract. The plan is decoded as strictly as plan_check decodes it, so a field
-// outside plan/v1 is refused here for the same reason it is refused there. The one half of plan_check
+// outside plan/v2 is refused here for the same reason it is refused there. The one half of plan_check
 // not repeated here is the redactor's, and it is not skipped: the path below runs checkDraft — the
 // template and the redactor both — on the title and body this function has just required to be the
 // plan's.
-func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Principal) *intake.Refusal {
+//
+// A plan/v1 is not refused and not filed: it comes back as replanned, the plan/v2 to confirm (P14).
+func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Principal) error {
 	var plan intake.Plan
 	if mcpwire.DecodeArgs(a.Plan, &plan) != nil {
-		return argRefusal("plan is the plan/v1 object intake_plan answered with, with no field outside it taken, " +
+		return argRefusal("plan is the plan/v2 object intake_plan answered with, with no field outside it taken, " +
 			"and plan_hash the value it answered beside it")
 	}
 	if !hashRE.MatchString(a.PlanHash) {
@@ -119,12 +121,23 @@ func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Princip
 		// a whole workspace.
 		return argRefusal("on_behalf_of is required with a plan: it is the Slack user the plan was made for")
 	}
+	if plan.APIVersion == intake.APIVersionV1 {
+		// P14: a plan made before profiles is never filed; it is shown again as plan/v2 (replanned).
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, plan)
+		if ref != nil {
+			return ref
+		}
+		return replanned{plan: next}
+	}
 	_, candidates, ref := s.requester(ctx, p, intakeArgs{
 		Repository: plan.Repository, Candidates: alternativeRepos(plan), OnBehalfOf: a.OnBehalfOf})
 	if ref != nil {
 		return ref
 	}
-	return intake.CheckFinal(plan, candidates, s.Intake.Classes)
+	if ref := intake.CheckFinal(plan, candidates, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)); ref != nil {
+		return ref
+	}
+	return nil
 }
 
 // argRefusal is one of run_create's argument refusals, in the shape checkPlan answers with: a call
@@ -178,10 +191,15 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 			"a plan_hash with no plan names nothing to check")
 	}
 	if planPresent(a.Plan) {
-		if ref := s.checkPlan(ctx, a, p); ref != nil {
-			return runrequest.TaskResult{}, toolError(ref.Error())
+		if err := s.checkPlan(ctx, a, p); err != nil {
+			var rp replanned
+			if errors.As(err, &rp) {
+				return runrequest.TaskResult{}, rp
+			}
+			return runrequest.TaskResult{}, toolError(err.Error())
 		}
 	}
+	class, suggested := s.plannedClass(ctx, p, a)
 	if a.Title != "" {
 		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
@@ -201,7 +219,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	}
 	res, err := s.Tasks.CreateTask(ctx, runrequest.TaskRequest{Repository: a.Repo, Title: a.Title, Text: a.Text,
 		DataClass: a.DataClass, MaxCostUSD: a.MaxCost, OnBehalfOf: a.OnBehalfOf, Ref: a.Ref,
-		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key})
+		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key, Class: class, Suggested: suggested})
 	var refused runrequest.ErrRefused
 	if errors.As(err, &refused) {
 		return runrequest.TaskResult{}, toolError("rejected: " + refused.Reason)
@@ -232,4 +250,21 @@ func (s *Server) runCreated(r runrequest.TaskResult) map[string]any {
 		out["sponsor"] = r.Sponsor
 	}
 	return out
+}
+
+// plannedClass is the class and the suggested profile of the one issue a checked plan files (P7).
+// The class is bound by the plan's hash; the suggestion is display and the client's copy, so it is
+// rebuilt from the plan repository's catalogue first (review B2): a profile the class does not offer,
+// or any on the config fallback, is never stored. Empty without a plan.
+func (s *Server) plannedClass(ctx context.Context, p authn.Principal, a runCreateArgs) (class, suggested string) {
+	var plan intake.Plan
+	if !planPresent(a.Plan) || json.Unmarshal(a.Plan, &plan) != nil || len(plan.Issues) != slackFiles {
+		return "", ""
+	}
+	plan = intake.Resuggest(plan, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository))
+	is := plan.Issues[0]
+	if is.Suggestion != nil {
+		suggested = is.Suggestion.Profile
+	}
+	return is.Class, suggested
 }

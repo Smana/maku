@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +49,11 @@ type TaskRequest struct {
 	MaxCostUSD float64 `json:"maxCostUSD"`
 	OnBehalfOf string  `json:"onBehalfOf,omitempty"`
 	Ref        string  `json:"ref,omitempty"`
+	// Class and Suggested are a planned task's: the plan's class and the planner's suggested profile
+	// (P7, P13), copied to spec.intake with the sponsor's resolved login. Neither is authority: triage
+	// declares the class only when that login maintains the repository.
+	Class     string `json:"class,omitempty"`
+	Suggested string `json:"suggested,omitempty"`
 	// Incident is an internal principal's finding (RA3); a sponsored principal's request refuses it.
 	Incident *Incident `json:"incident,omitempty"`
 }
@@ -123,6 +129,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	in.Repository = canonicalRepository(sp.Repositories, in.Repository) // audience: only the config's spelling
 	switch {
 	case in.Incident != nil: // an internal principal's field: a sponsored request has no use for it
+		out(http.StatusBadRequest, "bad_json")
+		return
+	case !intakeName(in.Class) || !intakeName(in.Suggested):
 		out(http.StatusBadRequest, "bad_json")
 		return
 	case key == "" || len(key) > maxKeyLen:
@@ -404,6 +413,9 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 			Source: factoryv1.Source{Kind: "api", Ref: ref, Key: "api:" + sp.Name + ":" + key, RequestedBy: sp.Principal(),
 				Sponsor: factoryv1.Person(login), OnBehalfOf: in.OnBehalfOf, Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
 			Repository: in.Repository, Text: clean, DataClass: in.DataClass, MaxMicroUSD: maxUSD, IssueAuthor: login}}
+	if in.Class != "" || in.Suggested != "" {
+		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Login: login}
+	}
 	if err := s.Rooms.Create(ctx, t); apierrors.IsAlreadyExists(err) {
 		got, _, err := s.existing(ctx, name)
 		if err != nil {
@@ -462,3 +474,9 @@ func (s *Server) linkIssue(ctx context.Context, name string, issue int, labelIss
 		}
 	}
 }
+
+// intakeNameRE is a class or profile name as spec.intake admits it.
+var intakeNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// intakeName is whether v is empty or a class or profile name.
+func intakeName(v string) bool { return v == "" || intakeNameRE.MatchString(v) }

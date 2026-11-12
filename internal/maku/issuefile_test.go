@@ -845,3 +845,122 @@ func TestIssueFileOffersNoStartOnAPlanItCannotStart(t *testing.T) {
 		t.Fatalf("%v filed=%d", got, r.filed)
 	}
 }
+
+// suggestedCheck is plan_check's answer for the single fixture with a catalogue suggestion and the
+// caller's maintainer flag (nil: the broker read no catalogue).
+func suggestedCheck(t *testing.T, maintainer *bool, why string) string {
+	t.Helper()
+	p := planFixture(t, "single")
+	p.Issues[0].Suggestion = &intake.Suggestion{Profile: "links-solo", Roles: []string{"implementer"},
+		Merge: intake.MergeShown{Outcome: "auto"}, Why: why}
+	d := map[string]any{"plan": p, "hash": intake.Hash(p), "canStart": true}
+	if maintainer != nil {
+		d["maintainer"] = *maintainer
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return planCheckResult(string(b))
+}
+
+// startRelay is a relay on that answer whose form answer files and starts, recording both labelers
+// in one list, in the order gh was run.
+func startRelay(t *testing.T, check string) (*recording, *[]string) {
+	r := relay(t, fakeBroker(t, check))
+	r.answer = map[string]any{"action": "accept", "content": map[string]any{"file": true, "start": true}}
+	var calls []string
+	r.Label = func(_ context.Context, repo string, n int, l string) error {
+		calls = append(calls, fmt.Sprintf("ready:%s#%d+%s", repo, n, l))
+		return nil
+	}
+	r.ClassLabel = func(_ context.Context, repo string, n int, l string) error {
+		calls = append(calls, fmt.Sprintf("class:%s#%d+%s", repo, n, l))
+		return nil
+	}
+	return r, &calls
+}
+
+// P7, G5: start applies class:<c> with gh api (which creates a missing label) before factory/ready.
+func TestStartLabelsInOrder(t *testing.T) {
+	for name, m := range map[string]*bool{"a maintainer": boolp(true), "no catalogue": nil} {
+		r, calls := startRelay(t, suggestedCheck(t, m, "one file"))
+		r.issueFile(t.Context(), planArgs(t))
+		want := []string{"class:Smana/ai-native-ref#7+class:docs-links", "ready:Smana/ai-native-ref#7+factory/ready"}
+		if fmt.Sprint(*calls) != fmt.Sprint(want) {
+			t.Fatalf("%s: %v, want %v", name, *calls, want)
+		}
+	}
+}
+
+// P5: a developer who does not maintain the repository gets no class label (the factory would not
+// count it), and the form says so before anything is filed.
+func TestStartNonMaintainerSkipsClass(t *testing.T) {
+	r, calls := startRelay(t, suggestedCheck(t, boolp(false), "one file"))
+	r.issueFile(t.Context(), planArgs(t))
+	if fmt.Sprint(*calls) != fmt.Sprint([]string{"ready:Smana/ai-native-ref#7+factory/ready"}) {
+		t.Fatalf("%v", *calls)
+	}
+	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "you do not maintain") {
+		t.Fatalf("the form does not say the class will not count: %s", msg)
+	}
+}
+
+// A failed class label starts nothing: a task without its class would run under another one.
+func TestStartClassLabelFailure(t *testing.T) {
+	r, calls := startRelay(t, suggestedCheck(t, boolp(true), "one file"))
+	r.ClassLabel = func(context.Context, string, int, string) error { return errors.New("gh: boom") }
+	got := fmt.Sprint(r.issueFile(t.Context(), planArgs(t)))
+	if len(*calls) != 0 || !strings.Contains(got, "class:docs-links") || !strings.Contains(got, "not started") {
+		t.Fatalf("%v %s", *calls, got)
+	}
+}
+
+func TestLabelArgsNeverAShell(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + filepath.Join(dir, "args") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := GHAddLabel(t.Context(), "Smana/a", 7, "class:docs-links; rm -rf /"); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := os.ReadFile(filepath.Join(dir, "args"))
+	if string(args) != "api\n-X\nPOST\nrepos/Smana/a/issues/7/labels\n-f\nlabels[]=class:docs-links; rm -rf /\n" {
+		t.Fatalf("%q", args)
+	}
+}
+
+// O1: the form shows the class, the factory's choice of profile and the merge words, then the
+// suggestion with its why on one inert line.
+func TestFormShowsSuggestion(t *testing.T) {
+	r, _ := startRelay(t, suggestedCheck(t, boolp(true), "one file\n\n# not a heading"))
+	r.issueFile(t.Context(), planArgs(t))
+	msg := fmt.Sprint(r.lastForm())
+	for _, want := range []string{
+		"Class docs-links · profile: the factory's choice · merges on its own when the gate's conditions hold",
+		"Suggested profile links-solo (implementer); the planner's reading: one file # not a heading",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the form lacks %q: %s", want, msg)
+		}
+	}
+}
+
+// Review B1, P14: a plan/v1 is never filed. plan_check answers it replanned with the plan/v2 to
+// confirm; issue_file files nothing, shows no form, and hands the new plan and hash back.
+func TestIssueFileRefusesAReplannedPlan(t *testing.T) {
+	v2 := planFixture(t, "single")
+	b, err := json.Marshal(map[string]any{"status": "replanned", "plan": v2, "hash": intake.Hash(v2),
+		"canStart": false, "canStartWhy": "replanned: confirm the plan/v2 answered"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := relay(t, fakeBroker(t, planCheckResult(string(b))))
+	v1 := planFixture(t, "v1-single")
+	got := fmt.Sprint(r.issueFile(t.Context(), planCall(t, v1, intake.Hash(v1), nil)))
+	if r.filed != 0 || r.asked != 0 || !strings.Contains(got, "replanned") || !strings.Contains(got, intake.Hash(v2)) {
+		t.Fatalf("filed=%d asked=%d %s", r.filed, r.asked, got)
+	}
+}

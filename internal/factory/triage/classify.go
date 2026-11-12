@@ -95,7 +95,8 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if err != nil {
 		return Decision{}, err
 	}
-	cohort := CohortOf(t.Name, false, cfg.Evaluation.ControlPercent) // declared is no pin (P8)
+	// Declared is no pin (P8); stage 3 wires the resolved pin (d.Pinned) here in place of false.
+	cohort := CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)
 	if Investigates(cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}
@@ -137,7 +138,8 @@ func oracle(cfg *config.Config, t *v1alpha1.Task, class string) bool {
 	return cl.Oracle != nil
 }
 
-// predictClass: the schedule's class; else a maintainer-applied class:<name> label; else review.
+// predictClass: the schedule's class; else a maintainer-applied class:<name> label; else a
+// maintainer's intake class (P7); else review.
 // RunLore tasks are always review. Labels are intent, never authority (§2, §8 T3).
 // declared is a class the schedule or a maintainer named, never one inferred.
 func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (class string, declared bool, err error) {
@@ -152,6 +154,9 @@ func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alp
 	}
 	gh := c.forge(t)
 	if t.Spec.Issue == 0 || gh == nil {
+		if class, ok := intakeClass(cfg, t); ok {
+			return class, true, nil
+		}
 		return c.inferred(cfg, t), false, nil
 	}
 	iss, err := gh.Issue(ctx, t.Spec.Issue)
@@ -171,7 +176,25 @@ func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alp
 			return name, true, nil
 		}
 	}
+	if class, ok := intakeClass(cfg, t); ok {
+		return class, true, nil
+	}
 	return c.inferred(cfg, t), false, nil
+}
+
+// intakeClass is the class a planned task's intake carried (P7), when the sponsor login the factory
+// resolved still maintains the repository and the repository declares the class; revert is never
+// one. A maintainer's class: label comes first: a label is the later, explicit choice.
+func intakeClass(cfg *config.Config, t *v1alpha1.Task) (string, bool) {
+	in := t.Spec.Intake
+	if in == nil || in.Class == "" || in.Class == "revert" {
+		return "", false
+	}
+	rc := cfg.RepositoryFor(t.Spec.Repository)
+	if _, ok := rc.Class(in.Class); !ok || !rc.IsMaintainer(in.Login) {
+		return "", false
+	}
+	return in.Class, true
 }
 
 // inferred: K5, the factory's own record, never a label it applied. An origin task keeps the class

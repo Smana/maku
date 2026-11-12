@@ -310,6 +310,12 @@ func (s *Server) startRun(ctx context.Context, w http.ResponseWriter, id json.Ra
 		return
 	}
 	res, err := s.createTask(ctx, p, args)
+	if rp := (replanned{}); errors.As(err, &rp) {
+		// P14: no task was made, so the answer is the plan to confirm, not a task to follow.
+		view, verr := rp.result(s)
+		s.writeTool(ctx, w, id, "run_create", view, verr)
+		return
+	}
 	if err != nil {
 		s.writeTool(ctx, w, id, "run_create", nil, err)
 		return

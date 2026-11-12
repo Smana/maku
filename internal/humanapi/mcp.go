@@ -203,6 +203,9 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 	out = append(out, mcpTool{name: "run_create", tasks: true, schema: runCreateSchema,
 		call: func(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
 			res, err := s.createTask(ctx, p, args)
+			if rp := (replanned{}); errors.As(err, &rp) {
+				return rp.result(s)
+			}
 			return s.runCreated(res), err
 		},
 		description: "Start factory work as a sponsored principal: a task under your sponsor and ceiling (max_cost, USD). " +

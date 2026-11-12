@@ -1,5 +1,5 @@
 {
-  "apiVersion": "plan/v1",
+  "apiVersion": "plan/v2",
   "rev": 1,
   "planner": {"model": "tier-frontier", "surface": "session", "at": "2026-11-05T09:41:07Z"},
   "repository": "Smana/ai-native-ref",
@@ -14,7 +14,7 @@
       "index": 1,
       "title": "docs: the install link points at a moved page",
       "body": "## What is wrong\nThe install link on the docs landing page points at a page that moved.\n\n## What it should be\nIt points at the page that page moved to.\n\n## Acceptance check\nThe landing page's install link reaches the install page in one click.",
-      "class": "docs-links",
+      "class": "docs-links", "profile": "",
       "roles": ["scoper", "implementer", "reviewer"],
       "dependsOn": []
     },
@@ -22,7 +22,7 @@
       "index": 2,
       "title": "docs: the quickstart names a removed flag",
       "body": "## What is wrong\nThe quickstart passes a flag the current release removed.\n\n## What it should be\nIt passes the flag the current release reads.\n\n## Acceptance check\nA reader following the quickstart gets a working install.",
-      "class": "docs-links",
+      "class": "docs-links", "profile": "",
       "roles": ["scoper", "implementer", "reviewer"],
       "dependsOn": [1]
     },
@@ -30,7 +30,7 @@
       "index": 3,
       "title": "docs: the upgrade page omits the migration step",
       "body": "## What is wrong\nThe upgrade page does not mention the migration the new release needs.\n\n## What it should be\nIt names the migration and when to run it.\n\n## Acceptance check\nAn operator upgrading from the previous release runs the migration first.",
-      "class": "docs-links",
+      "class": "docs-links", "profile": "",
       "roles": ["scoper", "implementer", "reviewer"],
       "dependsOn": [1, 2]
     }

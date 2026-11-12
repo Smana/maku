@@ -153,6 +153,40 @@ func TestProposalConfirm(t *testing.T) {
 			t.Fatalf("interactions/refused counted %d times, want 1", n)
 		}
 	})
+
+	// P14: a proposal made before profiles is never filed. The broker answers the plan/v2 to show, and
+	// the message is redrawn with it under its new hash; the presser is told to confirm again.
+	t.Run("a Confirm the broker answers replanned redraws the message and files nothing", func(t *testing.T) {
+		rig, plan, ts := proposalAt(t, 1)
+		next := plan
+		next.Issues = []intake.Issue{plan.Issues[0]}
+		next.Issues[0].Suggestion = &intake.Suggestion{Merge: intake.MergeShown{Outcome: "auto"}}
+		next.Issues[0].Roles = []string{"implementer"}
+		next.Hash = intake.Hash(next)
+		rig.broker.replanned = &next
+		if st := rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
+			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
+			t.Fatalf("%d, want 200", st)
+		}
+		if n := len(rig.broker.accepted); n != 0 {
+			t.Fatalf("filed %d", n)
+		}
+		pressSaid(t, rig, proposalPresser, proposalThreadTS, replannedLine)
+		edits := rig.slack.proposalEdits()
+		if len(edits) != 1 || edits[0].ts != ts {
+			t.Fatalf("the message was not redrawn once: %+v", edits)
+		}
+		p, ok := edits[0].meta.proposalPayload()
+		if !ok || p.Hash != next.Hash || p.Hash == intake.Hash(plan) {
+			t.Fatalf("the redrawn message's payload: %+v (%v)", p, ok)
+		}
+		if !strings.Contains(string(edits[0].blocks), proposalValue(next.Hash, 1)) {
+			t.Fatalf("the redrawn buttons do not bind the new hash: %s", edits[0].blocks)
+		}
+		if n := rig.metrics.count("interactions", "replanned"); n != 1 {
+			t.Fatalf("interactions/replanned counted %d times, want 1", n)
+		}
+	})
 }
 
 // One line per refusal, no oracle about people or repositories, and every one of them an ephemeral

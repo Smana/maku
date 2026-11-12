@@ -12,7 +12,7 @@ import (
 	"github.com/Smana/maku/internal/intake"
 )
 
-// Plan writes plan/v1 as the view a person reads before anything is filed: the repository the plan
+// Plan writes plan/v2 as the view a person reads before anything is filed: the repository the plan
 // files into, the ceiling its work is charged against and where that number came from, one line per
 // issue, each issue's draft in a block of its own, and the question the broker must ask first.
 //
@@ -84,6 +84,13 @@ func Plan(w io.Writer, p intake.Plan, label string, o Options) error {
 			line += " · waits for " + strings.Join(deps, ", ")
 		}
 		b.WriteString(line + "\n")
+		if sg := is.Suggestion; sg != nil {
+			b.WriteString("   suggested: " + brokerLine(SuggestionLine(is.Class, sg.Profile, sg.Roles, sg.Merge.Outcome), md, true) + "\n")
+			if strings.TrimSpace(sg.Why) != "" {
+				// The model's words, like a model_claim: shown as its reading, never as a fact (#460).
+				b.WriteString("   why (the planner's reading, unverified): " + untrusted(sg.Why, md) + "\n")
+			}
+		}
 	}
 
 	for _, is := range p.Issues {

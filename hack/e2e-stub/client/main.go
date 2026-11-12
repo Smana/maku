@@ -123,7 +123,7 @@ func decodePlan(raw json.RawMessage) (planResult, error) {
 		return result, fmt.Errorf("decode plan structuredContent: %w", err)
 	}
 	if result.Plan.APIVersion != intake.APIVersion || result.Hash == "" {
-		return result, errors.New("plan result lacks plan/v1 or its hash")
+		return result, errors.New("plan result lacks plan/v2 or its hash")
 	}
 	return result, nil
 }

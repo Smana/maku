@@ -16,8 +16,8 @@ type Decision struct {
 	Template, PredictedClass, DataClass string
 	Budget                              v1alpha1.Budget
 	Classification                      v1alpha1.Classification
-	// Declared is a class a maintainer or a schedule named: it feeds the policy fact's conditions,
-	// never the cohort (P8). Pinned is a profile a maintainer pinned, false until pins exist.
+	// Declared is a class a maintainer, a schedule or a maintainer's intake named: informational
+	// (the policy fact computes its own), and never the cohort (P8). Pinned is a profile a maintainer pinned, false until pins exist.
 	// Cohort is the evaluation's group.
 	Declared, Pinned bool
 	Cohort           string

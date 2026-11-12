@@ -22,7 +22,7 @@ import (
 )
 
 // intake_plan is the broker's one governed planner on /mcp (v3.x conversational intake, CD18): a
-// sentence becomes plan/v1 through one bounded model call, with the repository bounded by the
+// sentence becomes plan/v2 through one bounded model call, with the repository bounded by the
 // allowlist and by what the caller may write, the roles and the money written by config, and the
 // plan's hash the value every later door re-validates. It files nothing and stores nothing.
 //
@@ -297,6 +297,18 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 
 	// The revision is verified before any GitHub or model work. In particular, base drift and an
 	// above-cap round cannot spend a lookup, a daily slot or a model call.
+	if a.Plan != nil && a.Plan.APIVersion == intake.APIVersionV1 {
+		// P14: a revision of a plan made before profiles is upgraded, not re-planned: no daily plan
+		// and no model call are spent on it (review nit 1). Its hash binds it first.
+		if intake.Hash(*a.Plan) != a.Hash {
+			return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonPlanChanged))
+		}
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, *a.Plan)
+		if ref != nil {
+			return s.finishPlan(ctx, run, nil, false, ref)
+		}
+		return replanned{plan: next}.result(s)
+	}
 	var revised *intake.Plan
 	if a.Candidate != nil {
 		next, err := intake.Revise(*a.Plan, a.Hash, *a.Candidate, s.Intake.MaxRounds)
@@ -325,6 +337,12 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	if !s.Intake.take(req.Key) {
 		return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonDailyPlansReached))
 	}
+	// Each candidate's classes from the factory's catalogue (P2, G4); a candidate the broker could not
+	// read one for plans from the config table, with no suggestion (until stage 5).
+	offers := s.planOffers(ctx, p, a.OnBehalfOf, candidates)
+	classesOf := func(pl intake.Plan) map[string]intake.Class {
+		return intake.ClassesFor(offers, s.Intake.Classes, pl.Repository)
+	}
 
 	if revised != nil {
 		// The verified candidate is both a plan a person may see and, below the cap, the model's
@@ -332,9 +350,9 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		// there are no markers left, so the final validator is the one that applies.
 		var ref *intake.Refusal
 		if revised.RoundsLeft == 0 {
-			ref = intake.CheckFinal(*revised, candidates, s.Intake.Classes)
+			ref = intake.CheckFinal(*revised, candidates, classesOf(*revised))
 		} else {
-			ref = intake.Check(*revised, candidates, s.Intake.Classes)
+			ref = intake.Check(*revised, candidates, classesOf(*revised))
 		}
 		if ref != nil {
 			return s.finishPlan(ctx, run, nil, false, ref)
@@ -347,13 +365,14 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 			return s.finishPlan(ctx, run, nil, false, ref)
 		}
 		if revised.RoundsLeft == 0 {
-			return s.finishPlan(ctx, run, revised, false, nil)
+			final := intake.Resuggest(*revised, classesOf(*revised)) // the candidate's suggestion is the client's
+			return s.finishPlan(ctx, run, &final, false, nil)
 		}
 	}
 
 	draft, usage, err := s.Intake.Model.Draft(ctx, intake.DraftRequest{
 		Text: a.Text, Context: a.modelContext(), Candidates: candidates, Classes: classNames(s.Intake.Classes),
-		Candidate: revised})
+		Offers: offers, Candidate: revised})
 	run.usage = usage
 	if err != nil {
 		ref, ok := intake.RefusalOf(err)
@@ -373,7 +392,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 
 	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), ServedModel: usage.Model, Now: s.Intake.now(),
 		Rev: planRev, Round: 1, RoundsLeft: s.Intake.MaxRounds - 1,
-		Classes: s.Intake.Classes, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
+		Classes: s.Intake.Classes, Offers: offers, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
 	if revised != nil {
 		compose.Rev, compose.Round, compose.RoundsLeft = revised.Rev, revised.Round, revised.RoundsLeft
 	}
@@ -390,7 +409,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	plan = intake.ApplyFloor(plan, a.Text+"\n"+a.modelContext())
 	// The plan is checked before it is shown: a reply that names a repository, an alternative or a
 	// class outside what this request may use is refused whole, and the outsider is never echoed.
-	if ref := intake.Check(plan, candidates, s.Intake.Classes); ref != nil {
+	if ref := intake.Check(plan, candidates, classesOf(plan)); ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
 	if revised != nil {
@@ -441,6 +460,9 @@ type planChecked struct {
 	Hash        string      `json:"hash"`
 	CanStart    bool        `json:"canStart"`
 	CanStartWhy string      `json:"canStartWhy,omitempty"`
+	// Maintainer is the caller's flag from the plan repository's catalogue (P5): issue_file skips a
+	// class: label the factory would not count. Absent when the broker read no catalogue.
+	Maintainer *bool `json:"maintainer,omitempty"`
 }
 
 // planCheckTool is plan_check, the re-validation door (CD3, CD27): the plan a person was shown, with
@@ -456,12 +478,27 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	var a planCheckArgs
 	if mcpwire.DecodeArgs(args, &a) != nil || !hashRE.MatchString(a.Hash) ||
 		(a.Candidate != nil && a.Plan.APIVersion == "") {
-		return nil, toolError("invalid_arguments: plan is a plan/v1 object and hash is the sha256: value intake_plan answered with, " +
+		return nil, toolError("invalid_arguments: plan is a plan/v2 object and hash is the sha256: value intake_plan answered with, " +
 			"and no field outside the schema is taken")
 	}
 	surface := intake.SurfaceSession
 	if p.Sponsored {
 		surface = intake.SurfaceSlack
+	}
+	if a.Plan.APIVersion == intake.APIVersionV1 {
+		// P14: a plan made before profiles is shown again as plan/v2, with its new hash, and never
+		// checked as final: the person confirms the upgraded one. A candidate on it is not read.
+		if intake.Hash(a.Plan) != a.Hash {
+			return nil, s.planCheckRefused(ctx, surface, intake.ReasonRefusal(intake.ReasonPlanChanged))
+		}
+		if err := claims(p, a.OnBehalfOf, 0); err != nil {
+			return nil, err
+		}
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, a.Plan)
+		if ref != nil {
+			return nil, s.planCheckRefused(ctx, surface, ref)
+		}
+		return replanned{plan: next}.result(s)
 	}
 	plan := a.Plan
 	if a.Candidate == nil {
@@ -490,9 +527,12 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	}
 	// plan_check is an external filing door in both shapes: intermediate planner output may carry
 	// markers, but a checked plan may not.
-	if ref := intake.CheckFinal(plan, candidates, s.Intake.Classes); ref != nil {
+	classes := s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)
+	if ref := intake.CheckFinal(plan, candidates, classes); ref != nil {
 		return nil, s.planCheckRefused(ctx, surface, ref)
 	}
+	// The suggestion is the client's copy: what is shown and filed is the broker's (review B2).
+	plan = intake.Resuggest(plan, classes)
 	// The second half of the one validator: the template and the redactor issue_draft applies, so a
 	// plan whose text a secret sits in is refused here rather than filed.
 	if err := s.checkPlanDrafts(ctx, plan); err != nil {
@@ -507,8 +547,11 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	if err := roomview.Plan(&b, plan, "", roomview.Options{Format: roomview.Markdown, Now: s.Intake.now()}); err != nil {
 		return nil, err
 	}
-	return viewResult{text: b.String(), data: planChecked{Plan: plan, Hash: plan.Hash,
-		CanStart: canStart, CanStartWhy: why}}, nil
+	checked := planChecked{Plan: plan, Hash: plan.Hash, CanStart: canStart, CanStartWhy: why}
+	if c, err := s.Catalogue.Get(ctx, p, plan.Repository, a.OnBehalfOf); err == nil {
+		checked.Maintainer = &c.Maintainer
+	}
+	return viewResult{text: b.String(), data: checked}, nil
 }
 
 // planCheckRefused is a plan_check that did not answer with a plan: a closed refusal is counted under
@@ -821,7 +864,7 @@ var intakePlanSchema = json.RawMessage(`{"type":"object","additionalProperties":
 	`"description":"the person's own evidence, one item each, counted against the same 4096 bytes as context"},` +
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"},` +
 	`"ceiling":{"type":"number","minimum":0,"description":"the channel's ceiling in dollars; zero or absent means the class ceiling"},` +
-	`"plan":{"type":"object","description":"revision envelope: the base plan/v1 the broker previously answered; requires hash and candidate"},` +
+	`"plan":{"type":"object","description":"revision envelope: the base plan/v2 the broker previously answered; requires hash and candidate"},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `","description":"revision envelope: the base plan's hash"},` +
 	`"candidate":{"type":"object","description":"revision envelope: the base edited only by resolving markers and appending their D/A records; requires plan and hash"}}}`)
 
@@ -831,10 +874,10 @@ var hashRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // planCheckSchema is plan_check's arguments, closed: the plan a person was shown, the hash the broker
 // answered with, and — a sponsored principal's alone — the linked Slack user the plan was made for.
-// `plan` is typed but not closed here: plan/v1 is intake's contract, and a client that round-trips the
+// `plan` is typed but not closed here: plan/v2 is intake's contract, and a client that round-trips the
 // object intake_plan answered cannot be given a second, staler copy of its fields.
 var planCheckSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","hash"],` +
-	`"properties":{"plan":{"type":"object","description":"the base plan/v1 the broker previously answered"},` +
+	`"properties":{"plan":{"type":"object","description":"the base plan/v2 the broker previously answered"},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
 	`"candidate":{"type":"object","description":"optional revision envelope: the base edited only by resolving every remaining marker and appending each D/A record"},` +
 	`"on_behalf_of":{"type":"string","pattern":"` + onBehalfRE.String() + `"}}}`)
@@ -842,17 +885,20 @@ var planCheckSchema = json.RawMessage(`{"type":"object","additionalProperties":f
 // planCheckOutput is plan_check's structuredContent, closed: the four fields a caller files from, and
 // nothing else. `plan` names the fields it always carries rather than closing a contract it does not
 // own.
+// A plan/v1 is answered with `status: replanned`, the plan/v2 to confirm and canStart false (P14).
 var planCheckOutput = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","hash","canStart"],` +
 	`"properties":{"plan":{"type":"object","required":["apiVersion","rev","planner","repository","issues","budget","hash"]},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
-	`"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"}}}`)
+	`"status":{"type":"string","enum":["replanned"],"description":"set when the plan was a plan/v1: nothing was checked as final or filed; confirm the plan/v2 answered"},` +
+	`"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"},` +
+	`"maintainer":{"type":"boolean","description":"the caller maintains the repository, from its catalogue; absent without one"}}}`)
 
 // intakeTools are the planner's tools, listed only when the switch is on and on both lists: the
 // coding agent's session and the Slack App plan through the same boundary.
 func (s *Server) intakeTools() []mcpTool {
 	return []mcpTool{
 		{name: mcpwire.IntakePlan, call: s.intakePlanTool,
-			description: "Plan the factory work a sentence asks for: one bounded planner call returns plan/v1 — the repository it files into, " +
+			description: "Plan the factory work a sentence asks for: one bounded planner call returns plan/v2 — the repository it files into, " +
 				"one to three issues whose class, roles and ceiling the broker's config sets, and ranked clarification gaps — with its hash. " +
 				"Show the text as it is and ask only the first gap. To revise, keep the original text and arguments and pass the exact envelope " +
 				"{plan: <the base plan>, hash: <the base hash>, candidate: <the base with markers resolved and matching D/A records appended>}; " +

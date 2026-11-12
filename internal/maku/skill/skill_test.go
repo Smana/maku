@@ -325,3 +325,24 @@ func TestSkillPreflight(t *testing.T) {
 		}
 	}
 }
+
+// O1, O3, P1: the skill shows the suggestion before filing, names classes_list for the options, and
+// says profile, never workflow.
+func TestSkillShowsTheSuggestion(t *testing.T) {
+	b, err := files.ReadFile("factory-handoff/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	for _, want := range []string{
+		"**Show the suggestion first.** Relay each issue's suggestion as the plan returns it",
+		"| what classes and harness profiles a repository offers | `classes_list`",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("SKILL.md lacks %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(body), "workflow") {
+		t.Error("SKILL.md says workflow: the word is profile (P1)")
+	}
+}

@@ -141,7 +141,8 @@ func TestReviseRejects(t *testing.T) {
 		name   string
 		mutate func(*intake.Plan)
 	}{
-		{name: "api version", mutate: func(p *intake.Plan) { p.APIVersion = "plan/v2" }},
+		{name: "api version", mutate: func(p *intake.Plan) { p.APIVersion = "plan/v3" }},
+		{name: "profile", mutate: func(p *intake.Plan) { p.Issues[0].Profile = "links-solo" }},
 		{name: "repository", mutate: func(p *intake.Plan) { p.Repository = "owner/other" }},
 		{name: "budget", mutate: func(p *intake.Plan) { p.Budget.CeilingUSD++ }},
 		{name: "issue index", mutate: func(p *intake.Plan) { p.Issues[0].Index = 2 }},

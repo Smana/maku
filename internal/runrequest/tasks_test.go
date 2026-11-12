@@ -36,6 +36,14 @@ func TestCreateTask(t *testing.T) {
 	if strings.Contains(rawBody, "tok") || strings.Contains(rawBody, "k1") {
 		t.Fatalf("the token and key are never in the body: %s", rawBody)
 	}
+	if _, ok := body["class"]; ok {
+		t.Fatalf("an unplanned request sends no class: %s", rawBody)
+	}
+	planned := req
+	planned.Class, planned.Suggested = "docs-links", "links-solo"
+	if _, err := f.CreateTask(t.Context(), planned); err != nil || body["class"] != "docs-links" || body["suggested"] != "links-solo" {
+		t.Fatalf("a planned request carries its class and suggestion: %v %s", err, rawBody)
+	}
 	status, answer = http.StatusOK, `{"task":"abcd2345","room":"abcd2345","issue":42,"duplicate":true,"sponsor":"<@U1> x"}`
 	if res, err = f.CreateTask(t.Context(), req); err != nil || !res.Duplicate || res.Sponsor != "" {
 		t.Fatal("a sponsor that is not a login is dropped:", res, err)

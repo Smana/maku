@@ -21,6 +21,8 @@ type TaskRequest struct {
 	Repository, Title, Text, DataClass, OnBehalfOf, Ref string
 	MaxCostUSD                                          float64
 	AccessToken, IdempotencyKey                         string
+	// Class and Suggested are a planned task's class and suggested profile (P7), empty otherwise.
+	Class, Suggested string
 }
 
 // TaskResult is the factory's answer: the task and its room (the same id), the issue filed (0
@@ -70,7 +72,9 @@ func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, err
 		MaxCostUSD float64 `json:"maxCostUSD"`
 		OnBehalfOf string  `json:"onBehalfOf,omitempty"`
 		Ref        string  `json:"ref,omitempty"`
-	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref})
+		Class      string  `json:"class,omitempty"`
+		Suggested  string  `json:"suggested,omitempty"`
+	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("runrequest: %w", err)
 	}

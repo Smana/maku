@@ -1,5 +1,5 @@
 {
-  "apiVersion": "plan/v1",
+  "apiVersion": "plan/v2",
   "rev": 1,
   "planner": {"model": "tier-frontier", "surface": "slack", "at": "2026-11-05T09:41:07Z"},
   "repository": "Smana/ai-native-ref",
@@ -13,7 +13,7 @@
       "index": 1,
       "title": "docs: the install link points at a moved page",
       "body": "## What is wrong\nThe install link on the docs landing page points at a page that moved.\n\n## What it should be\nIt points at the page that page moved to.\n\n## Acceptance check\nThe landing page's install link reaches the install page in one click.",
-      "class": "docs-links",
+      "class": "docs-links", "profile": "",
       "roles": ["scoper", "implementer", "reviewer"],
       "dependsOn": []
     }

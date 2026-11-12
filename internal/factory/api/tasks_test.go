@@ -166,6 +166,9 @@ func TestCreateTaskAdmission(t *testing.T) {
 		"sponsor_demoted":         {slack, draft, "k", func(c *config.Config) { c.Repositories[0].Maintainers = []string{"someone"} }, 403, "not_a_maintainer"},
 		"a bad draft":             {slack, strings.Replace(draft, `\n## Acceptance check\nz`, ``, 1), "k", nil, 400, "invalid_draft"},
 		"internal from a machine": {slack, strings.Replace(draft, `"public"`, `"internal"`, 1), "k", nil, 400, "bad_data_class"},
+		// P7: the login is the factory's to resolve, never the request's; a class is a name.
+		"a login in the body": {slack, strings.Replace(draft, `"ref"`, `"login":"Smana","ref"`, 1), "k", nil, 400, "bad_json"},
+		"a class not a name":  {slack, strings.Replace(draft, `"ref"`, `"class":"Docs Links","ref"`, 1), "k", nil, 400, "bad_json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, f := newTaskServer(t, c.p, 0)
@@ -189,6 +192,27 @@ func TestCreateTaskAdmission(t *testing.T) {
 		}
 		if got := tasks(t, s); len(got) != 1 || got[0].Spec.Repository != "Smana/cloud-native-ref" || len(f.got) != 1 {
 			t.Fatalf("tasks %+v, issues %+v", got, f.got)
+		}
+	})
+	t.Run("a planned task carries its class, suggestion and the resolved sponsor to spec.intake", func(t *testing.T) {
+		s, _ := newTaskServer(t, slack, 0)
+		rec := postTask(s, strings.Replace(draft, `"ref"`, `"class":"docs-links","suggested":"links-solo","ref"`, 1), "k")
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		got := tasks(t, s)
+		if len(got) != 1 || got[0].Spec.Intake == nil || *got[0].Spec.Intake != (factoryv1.TaskIntake{Class: "docs-links",
+			Suggested: "links-solo", Login: got[0].Spec.IssueAuthor}) || got[0].Spec.IssueAuthor == "" {
+			t.Fatalf("%+v", got)
+		}
+	})
+	t.Run("an unplanned task has no spec.intake", func(t *testing.T) {
+		s, _ := newTaskServer(t, slack, 0)
+		if rec := postTask(s, draft, "k"); rec.Code != http.StatusCreated {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		if got := tasks(t, s); len(got) != 1 || got[0].Spec.Intake != nil {
+			t.Fatalf("%+v", got[0].Spec.Intake)
 		}
 	})
 	t.Run("the day is spent", func(t *testing.T) {

@@ -29,7 +29,7 @@ without case.
 | Label `factory/stop` on the issue or its pull request | The running task stops within a poll: its runs are revoked and deleted, the task ends `Stopped`. The label is removed once it hit a task; with no task running it stays, so a task started later stops at once. Anyone else's is removed and answered | A maintainer |
 | Label `factory/revert` on an auto-merged pull request, within `merge.revertWindow` | The factory opens a revert pull request through the merger App and the task ends `Reverted`; the class counts the revert towards its [breaker](#the-merge-gate). A human merge is never reverted | A maintainer |
 | Label `factory/drill` on an auto-merged pull request, **before** `factory/revert` | Marks the revert a [drill](#the-merge-gate): the merger copies the label to the revert pull request and the breaker does not count it (AM6). Read only when `factory/revert` is, so a label added after it changes nothing while the merge's Task exists (see [drills](#the-merge-gate)) | A maintainer |
-| Label `class:<name>` on the issue, before triage | Predicts the task's merge class, when `<name>` is a class in the config other than `revert` | A maintainer |
+| Label `class:<name>` on the issue, before triage | Predicts the task's merge class, when `<name>` is a class in the config other than `revert`. `issue_file` applies the plan's class this way before `factory/ready` | A maintainer |
 | Comment `/factory split` alone on a line, on the issue of a task escalated `split_proposed` | Approves the proposed [split](#splits); the commenter pays for every part. Read before `/factory retry` | A maintainer with `write` on the repository |
 | Comment `/factory retry` alone on a line, on an escalated task's issue or pull request | A fresh run; see [Escalation](#escalation-reminders-and-stale-tasks) | A maintainer with `write` on the repository |
 | A **Request changes** review on the task's pull request | Queued in the room; the next implementer run revises on the same branch with the review in its brief, then the pull request goes straight back to the maintainer | A maintainer |
@@ -592,7 +592,11 @@ the reviewer runs without its brief and the schema needs the update. A URL-only 
 takes the usual path.
 
 A class is the kind of change a task is predicted to make, from the issue's `class:<name>` label,
-a schedule's `class`, or else `review`. `classes` must declare `docs-links` and `revert`; `review`
+a schedule's `class`, a planned task's `spec.intake.class` (`run_create` carries the plan's class, and
+`issue_file` applies the plan's `class:<name>` label before `factory/ready`), or else `review`. A
+label comes before the intake class; the intake class counts only while `spec.intake.login`, the
+sponsor the factory resolved, maintains the repository, and only for a class the repository declares
+other than `revert`. `classes` must declare `docs-links` and `revert`; `review`
 is implicit, and declared only to give every other task `checks` and `testFirst` (it takes nothing else). Each class is `live` (auto-merges), `shadow` (decided, never
 merged), or neither (a label only).
 
