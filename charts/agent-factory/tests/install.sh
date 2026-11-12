@@ -101,6 +101,13 @@ kubectl get nodes
 
 step "the cluster's own DNS resolves, before the chart"
 # A fault here is the cluster's or the runner's, never the chart's: say so rather than time out later.
+if [[ $NETPOL == unenforced ]]; then
+  # k3s's NetworkPolicy controller is what loads br_netfilter; with it disabled, a host that has not
+  # loaded the module bridges a same-node Service backend's reply past the reverse NAT: DNS times out.
+  bnf=$(docker exec "k3d-$NAME-server-0" cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null) || bnf=absent
+  [[ $bnf == 1 ]] || die "net.bridge.bridge-nf-call-iptables is '$bnf' in the k3d node: load br_netfilter on the host (sudo modprobe br_netfilter); without k3s's NetworkPolicy controller nothing loads it, and pod DNS times out"
+  echo "ok: br_netfilter is active in the node (bridge-nf-call-iptables=1)"
+fi
 kubectl -n kube-system rollout status deploy/coredns --timeout=120s
 dnsok=0
 for _ in $(seq 20); do

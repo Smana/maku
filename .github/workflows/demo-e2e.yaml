@@ -82,6 +82,13 @@ jobs:
       # ("No version is set for shim: k3d") until the runner's global config names one.
       - run: mise use -g aqua:k3d-io/k3d@5.9.0
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # k3s's NetworkPolicy controller (kube-router) loads br_netfilter; the unenforced leg disables it,
+      # and without the module a pod's reply from a same-node Service backend is bridged past conntrack's
+      # reverse NAT, so cluster DNS times out. The runner does not load it by default.
+      - name: br_netfilter
+        run: |
+          lsmod | grep -q '^br_netfilter' && echo "br_netfilter already loaded" || echo "br_netfilter not loaded: loading it"
+          sudo modprobe br_netfilter
       - run: task chart:install:k3d
 
   nightly:
