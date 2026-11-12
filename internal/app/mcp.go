@@ -47,10 +47,19 @@ func subPatterns(issuers []config.IssuerConfig) []*regexp.Regexp {
 func roomMCP(key string, patterns []*regexp.Regexp, roomLog mcp.Log, red mcp.Redactor, runs mcp.Runs,
 	m *metrics.Set, log *slog.Logger,
 ) *mcp.Server {
+	// The store keeps push bundles and reads output answers (HR22, HR27). output_push is still
+	// served to no run: a claim names push only once config lets push into enforceOutputs.
+	var out mcp.OutputConfig
+	if b, ok := roomLog.(mcp.BundleStore); ok {
+		out.Bundles = b
+	}
+	if a, ok := roomLog.(mcp.OutputAnswers); ok {
+		out.Answers = a
+	}
 	return &mcp.Server{Key: func() string { return key }, Runs: runs, SubPatterns: patterns,
 		// The safe-output tools are gated per run (HR14): a run whose claim names no enforced type
-		// lists exactly the room tools. No bundle store yet, so output_push is never served (H3).
-		Tools: append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, mcp.OutputConfig{})...),
+		// lists exactly the room tools.
+		Tools: append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, out)...),
 		OnReject: func(ctx context.Context, reason string) {
 			m.Rejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 		},

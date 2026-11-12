@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/Smana/maku/internal/envelope"
 )
 
 // MaxBundle is a push bundle's cap, the design's 8 MiB (hardening.MaxBundle).
@@ -71,6 +73,30 @@ func (s *Store) Bundle(ctx context.Context, room, run, digest string) ([]byte, e
 		return nil, fmt.Errorf("store: read bundle: %w", err)
 	}
 	return b, nil
+}
+
+// maxOutputEvents bounds OutputEvents: a request, a wait and an answer, with room for replays.
+const maxOutputEvents = 16
+
+// OutputEvents returns run's message events in room whose output record names outputID, oldest
+// first, at most maxOutputEvents: what output_status reads. The caller still reads each through
+// envelope.ReadOutput, which trusts the stamp, never the payload.
+func (s *Store) OutputEvents(ctx context.Context, room, run, outputID string) ([]envelope.Event, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+cols+` FROM events WHERE room_id = $1 AND run_id = $2
+		AND type = 'message' AND payload->'output'->>'id' = $3 ORDER BY seq LIMIT $4`, room, run, outputID, maxOutputEvents)
+	if err != nil {
+		return nil, fmt.Errorf("store: output events of room %s: %w", room, err)
+	}
+	defer rows.Close()
+	var out []envelope.Event
+	for rows.Next() {
+		ev, err := scan(rows, room)
+		if err != nil {
+			return nil, fmt.Errorf("store: output events of room %s: %w", room, err)
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
 }
 
 // SweepBundles deletes the bundles stored more than BundleRetention before now, unless a pending

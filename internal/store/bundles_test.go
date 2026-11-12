@@ -7,13 +7,45 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/Smana/maku/internal/envelope"
 )
 
 const bundleRun = "7f3cq2xz"
 
 func digestOf(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
+
+// output_status reads one output's events of one run: nothing of another run or another id.
+func TestOutputEvents(t *testing.T) {
+	ctx := t.Context()
+	s, _, _, _ := open(t)
+	rec := func(id string) *envelope.OutputRecord {
+		return &envelope.OutputRecord{ID: id, Type: "push", Digest: strings.Repeat("a", 64)}
+	}
+	for i, d := range []struct {
+		run, id string
+	}{{bundleRun, "0123456789abcdef"}, {bundleRun, "1111111111111111"}, {"aaaaaaaa", "0123456789abcdef"}} {
+		if _, _, err := s.Append(ctx, envelope.Draft{RoomID: room, RunID: d.run, Type: envelope.Message,
+			Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + d.run}, Origin: envelope.OriginClient,
+			OriginClient: "agent:" + d.run + ":tools", OriginSeq: int64(i + 1),
+			Payload: envelope.Must(envelope.MessagePayload{Kind: envelope.KindOutputRequested, Delivery: envelope.DeliveryNone, Output: rec(d.id)})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evs, err := s.OutputEvents(ctx, room, bundleRun, "0123456789abcdef")
+	if err != nil || len(evs) != 1 || evs[0].RunID != bundleRun {
+		t.Fatalf("%d events, %v", len(evs), err)
+	}
+	if k, r, ok := envelope.ReadOutput(evs[0], bundleRun); !ok || k != envelope.KindOutputRequested || r.ID != "0123456789abcdef" {
+		t.Fatalf("ReadOutput %q %+v %v", k, r, ok)
+	}
+	if evs, err := s.OutputEvents(ctx, "abcdefgh", bundleRun, "0123456789abcdef"); err != nil || len(evs) != 0 {
+		t.Fatalf("another room: %d %v", len(evs), err)
+	}
+}
 
 // HR22: a push's bundle is stored once per run and digest, beside the room log.
 func TestPutBundle(t *testing.T) {
