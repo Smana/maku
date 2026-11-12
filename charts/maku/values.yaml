@@ -170,6 +170,15 @@ runPodPolicy:
   enabled: true
   extraImages: []
 
+# Two optional AgentRun policies (D17), Maku's copy of cloud-native-ref's Kyverno rules, each rendered
+# only when set, with or without the run-controller. creators: the only usernames that may create an
+# AgentRun in runs.namespace (e.g. system:serviceaccount:<ns>:agent-factory). factoryServiceAccount:
+# the factory's ServiceAccount in the release namespace, whose AgentRun updates may change only the
+# usage-tokens, pull-request and revoked annotations.
+agentRunPolicies:
+  creators: []
+  factoryServiceAccount: ""
+
 # CI only: images `kind load`ed have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false

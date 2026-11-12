@@ -52,6 +52,21 @@
           "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9._/:]*[a-z0-9])?$", "not": {"pattern": "(@|:[^/]*$)"}}
         }
       }
+    },
+    "agentRunPolicies": {
+      "description": "Optional AgentRun creator and factory patch-limit policies (D17), each rendered only when set.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "creators": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[^'\\\\\\s]+$"}
+        },
+        "factoryServiceAccount": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"
+        }
+      }
     }
   },
   "definitions": {

@@ -310,6 +310,17 @@ out="$p"
 ynone 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-agent-system-run-pods")' 'runController.enabled=false renders no run-pod policy'
 bad "at '/runPodPolicy/extraImages/0': 'not' failed" --set 'runPodPolicy.extraImages={busybox:1.37}'
 
+# agentRunPolicies (D17, task 5): opt-in, each only when its value is set, with or without the run
+# controller; their CEL is proven in charts/maku/tests/admission (envtest)
+out="$q"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" and (.metadata.name | test("agentrun-(creators|factory-patch-limit)$")))' 'no AgentRun creator or patch-limit policy unless set'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false \
+       --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory)"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-creators") | (.spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "CREATE" and .spec.validations[0].expression == "request.userInfo.username in ['"'"'system:serviceaccount:agent-system:agent-factory'"'"']")' 'the creator policy names the listed users, on runs.group, for the XR install too'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-factory-patch-limit") | (.spec.matchConditions[0].expression == "request.userInfo.username == '"'"'system:serviceaccount:agent-system:agent-factory'"'"'" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "UPDATE")' 'the patch-limit policy holds the factory ServiceAccount of the release namespace'
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.policyName == .metadata.name and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'both AgentRun bindings deny, in the runs namespace'
+bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_Factory
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
