@@ -346,6 +346,17 @@ install_chart() {
   export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
   demo_render_values "$DEMO_DIR/values.yaml"
   hl dependency build charts/agent-factory >/dev/null
+  # The CRD chart first. A demo cluster from before it holds the CRDs from the subcharts' crds/:
+  # hand them to the af-crds release (docs/upgrading.md), which is a no-op once they are its own.
+  local crds
+  crds=$(kc get crd -o name | grep '\.maku\.ogenki\.io$' || true)
+  if [[ -n $crds ]]; then
+    # shellcheck disable=SC2086 # one CRD name per word
+    kc label $crds app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+    # shellcheck disable=SC2086
+    kc annotate $crds meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
+  fi
+  hl upgrade --install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --wait --timeout 2m >/dev/null
   hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f charts/agent-factory/values-demo.yaml -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
   echo "    waiting for the workloads"
   rollout sts/rooms-db

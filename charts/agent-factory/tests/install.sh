@@ -3,6 +3,8 @@
 #
 # Installs charts/agent-factory with values-demo.yaml on a throwaway cluster and asserts it.
 #   usage: install.sh k3d|kind        (task chart:install:k3d | chart:install:kind)
+# The CRD chart (release af-crds) installs first. ADOPT=1 instead installs the umbrella alone, creates
+# a Room, adopts the CRDs into af-crds with docs/upgrading.md's commands, and asserts the Room survives.
 # Images: broker, run-controller and factory are built from this checkout and loaded; harness and
 # bridge are the latest release's, by digest (no run starts here). A dummy GitHub App means the
 # factory cannot pass start-up: the assertion is that it parses its config, mounts everything and
@@ -83,8 +85,44 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set maku.broker.image.tag=$TAG --set maku.runController.image.tag=$TAG --set maku-factory.image.tag=$TAG
   --set maku.runController.images.harness.tag="$harness" --set maku.runController.images.bridge.tag="$bridge"
   --set maku-factory.replicas=1)
+install_crds() { helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --wait --timeout 2m; }
 # No --wait: the factory cannot become Ready with a dummy App; each part is awaited below.
-helm install af charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m
+install_umbrella() { helm install af charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m; }
+crds=(agentruns factories mergepolicies repositories rooms tasks)
+if [[ ${ADOPT:-} == 1 ]]; then
+  # PR2: an install from before the CRD chart. The subcharts' crds/ create the CRDs, a Room is
+  # created, the CRDs are handed to the af-crds release (docs/upgrading.md), and the CRD chart installs.
+  step "ADOPT: the umbrella alone, its subcharts' crds/ create the CRDs"
+  install_umbrella
+  for c in "${crds[@]}"; do kubectl wait --for=condition=Established "crd/$c.maku.ogenki.io" --timeout=60s; done
+  # a Room is named with a C2 id: 8 characters of [a-z2-7]
+  kubectl apply -f - <<EOF
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Room
+metadata: {name: adoptab2, namespace: $NS}
+spec: {owner: "human:local", driver: "human:local", dataClass: public, repository: e2e/unused}
+EOF
+  uid=$(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}')
+  msg=$(install_crds 2>&1) && die "agent-factory-crds installed over unowned CRDs; Helm must refuse them"
+  grep -qF 'cannot be imported into the current release' <<<"$msg" || die "the refusal is not the import error: $msg"
+  echo "ok: Helm refuses the CRDs before adoption"
+  step "ADOPT: hand the CRDs to the af-crds release, then install the CRD chart"
+  mapfile -t owned < <(kubectl get crd -o name | grep '\.maku\.ogenki\.io$')
+  [[ ${#owned[@]} == "${#crds[@]}" ]] || die "expected ${#crds[@]} maku.ogenki.io CRDs, found ${#owned[@]}"
+  kubectl label "${owned[@]}" app.kubernetes.io/managed-by=Helm --overwrite
+  kubectl annotate "${owned[@]}" meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" --overwrite
+  install_crds
+  [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the Room created before adoption is gone or replaced"
+  for c in "${crds[@]}"; do
+    [[ $(kubectl get "crd/$c.maku.ogenki.io" -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}') == keep ]] || die "$c.maku.ogenki.io lacks the keep annotation after adoption"
+  done
+  helm -n "$NS" get manifest af-crds | grep -c '^kind: CustomResourceDefinition$' | grep -qx 6 || die "the af-crds release does not own six CRDs"
+  echo "ok: the CRDs are adopted by af-crds, kept, and the Room survived (uid $uid)"
+else
+  step "the CRD chart first, then the umbrella"
+  install_crds
+  install_umbrella
+fi
 
 step "readiness"
 kubectl -n "$NS" rollout status sts/rooms-db --timeout=180s
@@ -178,4 +216,8 @@ helm upgrade af charts/agent-factory -n "$NS" "${values[@]}" --timeout 5m >/dev/
 after="$(snap)" || exit 1
 [[ "$before" == "$after" ]] || { echo "before:" >&2; echo "$before" >&2; echo "after:" >&2; echo "$after" >&2; die "a Secret changed across helm upgrade"; }
 echo "$after"
-echo "install OK on $CLUSTER_KIND"
+if [[ ${ADOPT:-} == 1 ]]; then
+  [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the adopted Room did not survive the umbrella's upgrade"
+  echo "ok: the adopted Room survived the umbrella's upgrade"
+fi
+echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}"

@@ -7,9 +7,9 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 helm dependency build . >/dev/null
 digest='v0.0.0@sha256:0000'
-img=(--set maku.broker.image.tag=$digest --set maku.runController.image.tag=$digest
-     --set maku.runController.images.harness.tag=$digest --set maku.runController.images.bridge.tag=$digest
-     --set maku-factory.image.tag=$digest)
+img=(--set maku.broker.image.tag="$digest" --set maku.runController.image.tag="$digest"
+     --set maku.runController.images.harness.tag="$digest" --set maku.runController.images.bridge.tag="$digest"
+     --set maku-factory.image.tag="$digest")
 secrets=(--set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m1 --set demo.model.apiKey=k1
          --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1)
 demo=("${img[@]}" -f values-demo.yaml "${secrets[@]}")
