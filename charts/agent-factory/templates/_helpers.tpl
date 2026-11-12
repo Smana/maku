@@ -12,8 +12,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/* The profile gate, included first by every umbrella template (the skeleton values hold no tls:, postgres: or networkPolicies:). The demo is the only profile until stage 2 adds production's values, and it needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo` alone would render half a demo. */}}
 {{- define "afumbrella.profile" -}}
-{{- if ne (.Values.profile | default "") "demo" -}}
-{{- fail (printf "profile is required: demo, or production values (stage 2); got %q" (.Values.profile | default "")) -}}
+{{- $profile := .Values.profile | default "" -}}
+{{- if eq $profile "production" -}}
+{{- fail "profile production: its seams arrive in rollout steps 2 to 6 (docs/superpowers/specs/2026-11-12-v4-production-path-design.md); use -f values-demo.yaml for the demo" -}}
+{{- end -}}
+{{- if ne $profile "demo" -}}
+{{- fail (printf "profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6); got %q" $profile) -}}
 {{- end -}}
 {{- if not .Values.demoValues -}}
 {{- fail "profile demo needs -f values-demo.yaml (the demo's defaults moved there in v0.4x)" -}}

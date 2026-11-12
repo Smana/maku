@@ -112,9 +112,9 @@ np="$(helm template af . -n maku "${args[@]}" --set networkPolicies.plain=false 
 # profile: demo
 # an unset profile fails, naming what production must supply
 msg="$(helm template af . -n maku "${img[@]}" 2>&1 >/dev/null || true)"
-grep -qF 'profile is required: demo, or production values (stage 2)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
+grep -qF 'profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
 msg="$(helm template af . -n maku "${img[@]}" --set profile=production 2>&1 >/dev/null || true)"
-grep -qF 'profile is required: demo, or production values (stage 2)' <<<"$msg" || { echo "FAIL: profile=production does not fail until stage 2" >&2; fail=1; }
+grep -qF 'profile production: its seams arrive in rollout steps 2 to 6' <<<"$msg" || { echo "FAIL: profile=production does not fail closed until rollout steps 2 to 6" >&2; fail=1; }
 # maku: no Cilium, local human, the portable runs group, runc
 ynone 'select(.kind == "CiliumNetworkPolicy") | .metadata.name' 'the demo renders a CiliumNetworkPolicy'
 ynone 'select(.kind == "ClusterRole" or .kind == "Role") | .rules[] | select(.apiGroups[] == "cilium.io")' 'the demo grants cilium.io'
