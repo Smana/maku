@@ -83,7 +83,7 @@ type HardeningApplier struct {
 
 // Publisher defaults: the chart mounts the projected token here, and the policy is publisher.sts.yaml.
 const (
-	defaultPublisherTokenFile = "/var/run/secrets/octo-sts/token"
+	defaultPublisherTokenFile = "/var/run/secrets/octo-sts/token" //nolint:gosec // G101: a mount path, not a credential
 	defaultPublisherIdentity  = "publisher"
 	defaultApplierInterval    = 2 * time.Second
 	defaultApplierAnswerWait  = 5 * time.Minute
