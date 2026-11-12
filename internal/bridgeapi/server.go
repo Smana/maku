@@ -128,6 +128,9 @@ type Server struct {
 	// system:factory); either unset refuses them.
 	Grants      Grants
 	GrantClient string
+	// OutputClient is the one system principal the outputs route serves (the factory,
+	// system:factory, hardening HR2); unset refuses it.
+	OutputClient string
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.

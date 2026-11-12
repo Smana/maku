@@ -253,6 +253,8 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		return fmt.Errorf("room-broker: %w", err)
 	}
 	api.Queue = logStore // the system queue routes (SP3 R9)
+	// The outputs route (hardening HR2): the factory's answers and shadows, from the factory alone.
+	api.OutputClient = fconfig.PrincipalFactory
 	rw.watch.OnGone(api.Drop)
 	countLiveRuns(rw.watch, m)
 	hub, err := fanoutHub(st, st, m, log)

@@ -264,7 +264,7 @@ warns once, and keeps the facts due until the broker serves the route: upgrade t
 
 ### `POST /v1/rooms/{id}/outputs`
 
-For system callers: the factory's answer to one of a run's output requests, or, under
+For the factory (`system:factory`) alone: its answer to one of a run's output requests, or, under
 `hardening.mode: audit`, its shadow of a write the run made with its own token
 ([output events](room-log.md#output-events)). Request, at most 32 KiB:
 
@@ -276,14 +276,30 @@ For system callers: the factory's answer to one of a run's output requests, or, 
 ```
 
 `kind` is `output_applied`, `output_refused` or `output_shadowed`. `output_requested` is the run's
-own and is refused here. `runId` is a C2 id, and `record` must validate for its kind. The payload
-is redacted and stored as `message{kind, output, delivery: none}` with no text, the caller its
-actor and `runId` its run. Response `201`: `{"seq": 1846}`.
+own and is refused here. `record` must validate for its kind, and carries no `payload`.
+
+`runId` is a C2 id, and must be a run of the room:
+- while the broker watches the run, its `roomRef` must name the room;
+- once the watch has let it go, the room's log must hold that run's harness events (its bridge
+  appends only to its own run's room).
+
+The record is redacted and stored as `message{kind, output, delivery: none}` with no text, the
+caller its actor and `runId` its run. Response `201`: `{"seq": 1846}`.
 
 Replays are keyed on the origin `<principal>:output:<kind>` and the output id's 8 bytes as a
 positive `clientSeq`. The same id and kind again answer `200` with the original `seq`, even when
-the body differs. Refusals as for `/messages`: a bad body, kind, `runId` or record is
-`400 bad_message`.
+the body differs.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_room` | A bad room id |
+| `400` | `bad_message` | A bad body, kind, `runId` or record, or a run that is not the room's |
+| `401` | `unauthenticated` | No valid system token |
+| `403` | `not_permitted` | Any system principal but the factory |
+| `404` | `no_room` | No such room |
+| `410` | `sealed` | The room is sealed |
+| `429` | `rate_limited` | Over the principal's limits |
+| `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
 
 ### The queue routes
 

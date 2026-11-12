@@ -165,9 +165,13 @@ text, with `delivery: none`, so no run is ever handed one:
 | `output_refused` | The factory | The request's `id`, `type`, `digest`, and one snake_case `reason` |
 | `output_shadowed` | The factory, under `hardening.mode: audit` | A write the run made with its own token: `id`, `type`, `digest`, the GitHub `object`, the would-refuse `reason` (or `would_wait`) if any, and up to 5 `audit` findings, each a layer (`t1_schema` to `t5_classifier`) and a reason |
 
-A reader trusts the broker's stamp, never the payload (`envelope.ReadOutput`): a request counts
-only from the run's own agent actor (`agent:<runId>`, client origin), and an answer or a shadow
-only from a `system:factory` actor. Every record is validated on every read.
+Only a request carries the payload; an answer or a shadow never repeats the written text, and
+a record's `bytes` is at most 8 MiB.
+
+A reader trusts the broker's stamp, never the payload (`envelope.ReadOutput`). Every output event
+must come by the client origin. A request counts only from the run's own agent actor
+(`agent:<runId>`), and an answer or a shadow only from the actor `system:factory`, matched
+exactly. Every record is validated on every read.
 
 The factory writes its three kinds through
 [`POST /v1/rooms/{id}/outputs`](api.md#post-v1roomsidoutputs). The append's idempotency key is

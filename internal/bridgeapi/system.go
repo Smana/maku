@@ -127,10 +127,15 @@ func (s *Server) roomTask(w http.ResponseWriter, r *http.Request) {
 // with kind output_applied, output_refused or output_shadowed, never output_requested, which is
 // the run's own. Stored as a message stamped with the caller and the run, Delivery none and no
 // text. Replays are keyed on <principal>:output:<kind> and a clientSeq derived from the output
-// id, so a retry never writes a second answer of a kind, whatever its body now says.
+// id, so a retry never writes a second answer of a kind, whatever its body now says. Only
+// OutputClient may call it, and only for a run of the room (runOfRoom).
 func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.systemAuth(w, r)
 	if !ok {
+		return
+	}
+	if s.OutputClient == "" || p.ID != s.OutputClient {
+		fail(w, http.StatusForbidden, wire.ReasonNotPermitted)
 		return
 	}
 	release, ok := s.admit(w, p.ID)
@@ -154,6 +159,18 @@ func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, wire.ReasonBadMessage)
 		return
 	}
+	if _, err := s.Log.Room(r.Context(), id); err != nil {
+		s.logFailure(w, err, "read a room", "room", id)
+		return
+	}
+	switch mine, err := s.runOfRoom(r, id, in.RunID); {
+	case err != nil:
+		s.logFailure(w, err, "read a run's events", "room", id)
+		return
+	case !mine:
+		fail(w, http.StatusBadRequest, wire.ReasonBadMessage)
+		return
+	}
 	payload, rules, err := s.Redactor.Payload(r.Context(), envelope.Must(envelope.MessagePayload{
 		Kind: in.Kind, Delivery: envelope.DeliveryNone, Output: &in.Record}))
 	if err != nil {
@@ -174,6 +191,27 @@ func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusCreated
 	}
 	reply(w, code, map[string]int64{"seq": ev.Seq})
+}
+
+// runOfRoom reports whether runID is a run of room: while the watch holds the run, its roomRef
+// decides; once the watch has let it go, the room's log does, through the run's harness events,
+// which its bridge appends only to the room of its own run (hello checks the roomRef). A run that
+// never reached its bridge has no events, and no writes to answer for.
+func (s *Server) runOfRoom(r *http.Request, room, runID string) (bool, error) {
+	if s.Watch != nil {
+		if run, _, _ := s.Watch.Live(runID); run.ID != "" { // watched, terminal or not
+			return run.Room == room, nil
+		}
+	}
+	for _, st := range []wire.Stream{wire.StreamEvents, wire.StreamStatus} {
+		switch n, err := s.Log.Cursor(r.Context(), room, originClient(runID, st)); {
+		case err != nil:
+			return false, err
+		case n > 0:
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // outputSeq is an output id's replay key: its 8 bytes as a positive int64, 1 for the all-zero id.
