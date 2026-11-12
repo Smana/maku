@@ -50,8 +50,8 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 		return false, nil
 	}
 	target := map[string]string{"out_of_budget": cl.Escalation.OutOfBudget, "not_converged": cl.Escalation.NotConverged}[g]
-	if target == "" || p.Source == "escalation" || p.Cohort == "control" {
-		return false, nil
+	if target == "" || target == p.Name || p.Source == "escalation" || p.Cohort == "control" {
+		return false, nil // the same profile again rarely converges: a maintainer decides (P10)
 	}
 	v, ok := cfg.ProfileFor(cl, target)
 	if !ok {
