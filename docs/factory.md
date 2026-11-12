@@ -636,6 +636,14 @@ label can be added by hand. Triage checks it in this order:
 
 A `profile:` label whose name is not a profile name (`^[a-z0-9][a-z0-9-]{0,62}$`) pins nothing.
 
+Known residuals:
+
+- A second `profile:` label from anyone, a non-maintainer included, makes the pin `profile_conflict`:
+  the spec checks the conflict before the applier, so a stranger's label can unpin a maintainer's.
+  Triage reads the labels once: remove an extra label before `factory/ready`.
+- Pins are read from the issue's label events, as `class:` labels are: an issue whose event list is
+  cut (more than 1000 events) blocks triage the same way.
+
 An honoured pin runs its profile (its template, its loop row, its tier only upward and within the
 task's ceiling), in `evaluation.mode` `observe` and `apply` alike: the task is `labeled`,
 `source: label`, and the scoper is offered no choice. A refused pin is never a task failure: the task

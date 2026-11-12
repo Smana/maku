@@ -231,8 +231,10 @@ candidate's new hash. To accept every remaining recommendation, the agent record
 
 A maintainer may pin a harness profile once every gap is answered: the agent calls `plan_check` (or
 `intake_plan`) with a candidate where only an issue's `profile` changed. The broker appends
-`D<n>: profile: <p>, pinned by the developer` to that issue's Decisions, checks the pin against the
-repository's catalogue and answers the new hash, with no model call and no daily plan. A pin the
+`D<n>: profile: <p>, pinned by the developer` to that issue's Decisions (replacing a
+`profile: factory's choice` Assumption), sets the issue's roles to the pinned profile's template,
+checks the pin against the repository's catalogue and answers the new hash, with no model call and
+no daily plan. A final plan whose issue names a profile without that Decision is refused. A pin the
 catalogue refuses comes back as one closed reason and sentence (`profile_not_allowed`,
 `class_profile_fixed`, `not_maintainer`, …; the list is in [the factory's docs](factory.md#pinning-a-harness-profile));
 the plan is not finalised and you pick again or keep the factory's choice. Keeping the factory's
