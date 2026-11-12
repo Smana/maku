@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -38,6 +39,15 @@ type OutputConfig struct {
 	LabelAllowlist []string
 	Bundles        BundleStore   // nil: output_push is not served
 	Answers        OutputAnswers // nil: output_status is not served
+	// PushRepositories are the repositories the broker's own config serves output_push to
+	// (roomTools.pushRepositories): a second gate beside the run's annotation, so a claim alone
+	// never opens push. Config refuses every entry until push is enforced (stage H3, PR 6).
+	PushRepositories []string
+}
+
+// servesPush reports whether the broker's config serves output_push to repo.
+func (c OutputConfig) servesPush(repo string) bool {
+	return repo != "" && slices.ContainsFunc(c.PushRepositories, func(r string) bool { return strings.EqualFold(r, repo) })
 }
 
 // outputSchemas are the output tools' input schemas, the JSON form of hardening.DecodeOutput's
@@ -72,7 +82,7 @@ func OutputTools(log Log, red Redactor, now func() time.Time, cfg OutputConfig) 
 			InputSchema: json.RawMessage(outputSchemas[t]),
 			HarnessOnly: t == hardening.Push,
 			Gate: func(r runwatch.Run) bool {
-				return r.ServesOutput(string(t)) && (t != hardening.Push || cfg.Bundles != nil)
+				return r.ServesOutput(string(t)) && (t != hardening.Push || (cfg.Bundles != nil && cfg.servesPush(r.Repository)))
 			},
 			Call: func(ctx context.Context, c Caller, args json.RawMessage) (any, error) {
 				return requestOutput(ctx, log, red, now, cfg, c, t, args)

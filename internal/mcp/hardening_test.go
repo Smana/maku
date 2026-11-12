@@ -355,19 +355,27 @@ func (m *memAnswers) OutputEvents(_ context.Context, room, run, id string) ([]en
 }
 
 // harnessServer is the broker's :8090 with a bundle store and the answers reader, for one
-// implementer run annotated with outputs.
+// implementer run of Smana/demo annotated with outputs, on a broker whose config lets push serve
+// Smana/demo.
 func harnessServer(t *testing.T, outputs string, answers OutputAnswers) (*Server, *memLog, *memBundles) {
+	return harnessServerFor(t, outputs, answers, []string{"Smana/demo"})
+}
+
+// harnessServerFor is harnessServer with the repositories the broker's config serves push to.
+func harnessServerFor(t *testing.T, outputs string, answers OutputAnswers, push []string) (*Server, *memLog, *memBundles) {
 	t.Helper()
 	w := runwatch.New(runwatch.DefaultKind)
 	ann := map[string]any{}
 	if outputs != "" {
 		ann[runwatch.SafeOutputsAnnotation] = outputs
 	}
-	w.Upsert(t.Context(), claim("7f3cq2xz", "implementer", "3kq7x2ma", "Running", ann))
+	c := claim("7f3cq2xz", "implementer", "3kq7x2ma", "Running", ann)
+	c.Object["spec"].(map[string]any)["repository"] = "Smana/demo"
+	w.Upsert(t.Context(), c)
 	log, bundles := &memLog{}, &memBundles{}
 	s, _ := testServer(w, newClock())
 	s.Tools = append(RoomTools(log, fakeRedactor{}, time.Now),
-		OutputTools(log, fakeRedactor{}, time.Now, OutputConfig{Bundles: bundles, Answers: answers})...)
+		OutputTools(log, fakeRedactor{}, time.Now, OutputConfig{Bundles: bundles, Answers: answers, PushRepositories: push})...)
 	return s, log, bundles
 }
 
@@ -430,6 +438,18 @@ func TestOutputPushHarnessOnly(t *testing.T) {
 	}
 	if res, _ := harnessRPC(t, s, true, toolsCall("output_push", args)).out["result"].(map[string]any); res["isError"] != true || len(log.drafts) != 0 {
 		t.Fatalf("called without push: %v", res)
+	}
+	// The annotation alone serves nothing: the broker's config must name the run's repository too.
+	for name, push := range map[string][]string{"no repository": nil, "another repository": {"Smana/other"}} {
+		t.Run(name, func(t *testing.T) {
+			s, log, _ := harnessServerFor(t, "pr,push", nil, push)
+			if l := harnessRPC(t, s, true, listBody()); strings.Contains(string(l.body), "output_push") {
+				t.Fatalf("listed without the config: %s", l.body)
+			}
+			if res, _ := harnessRPC(t, s, true, toolsCall("output_push", args)).out["result"].(map[string]any); res["isError"] != true || len(log.drafts) != 0 {
+				t.Fatalf("called without the config: %v", res)
+			}
+		})
 	}
 }
 
