@@ -27,6 +27,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Security](security.md) | Threat model, identities, TLS, redaction, database roles, network, supply chain |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
+| [Upgrading](upgrading.md) | What changes in the install steps, release by release: the CRD chart and its adoption, `values-demo.yaml` |
 | [The group move](maku-group-migration.md) | v0.31.0's quiet window: `Room` and `Task` to `maku.ogenki.io`, and its rollback |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
 | [Roadmap](roadmap.md) | What shipped, what is open |

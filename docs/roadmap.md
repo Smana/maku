@@ -23,6 +23,7 @@ As of v0.42.0.
 | Team evaluation profiles with outcome metrics | [Web UI](web-ui.md) |
 | A form that never answers: `issue_file` falls back to the draft after 60 s, and the handoff skill checks the repository first (v0.42.0) | [The MCP server](cli.md#the-mcp-server) |
 | Slack quick wins: a refused first mention is explained, planner progress shows, the closed phrases are listed (v0.42.0) | [Slack App](slack.md) |
+| The chart contract, v4 rollout step 1: the `agent-factory-crds` chart, the demo in `values-demo.yaml`, a values schema, `kubeVersion` 1.30 or later, the umbrella published and signed | [Upgrading](upgrading.md#the-chart-contract-v04x-v4-rollout-step-1) |
 
 ## In progress
 
@@ -42,5 +43,5 @@ As of v0.42.0.
 | OTel spans across bridge → broker → store, `traceparent` on every hop | `AGENTS.md`, Observability |
 | The platform-agnostic decision after the UX sign-off | 2 of 4 triggers: daily use, AHP 1.0 without identity and audit, a second harness or runtime, outside demand (`AGENTS.md`, Seams) |
 | A two-pane room page: the task panel on the left, the stream and the dock on the right, two tabs on a phone | Usage says people live in the page ([room readability](superpowers/specs/2026-10-15-room-readability-design.md#later-two-panes)) |
-| v4 stage 2, the production path: bring-your-own OIDC, secrets and GitOps; a k3s or kubeadm smoke test; semver on chart values; a nightly upgrade test | Stage 1's go test: the nightly kind job green and an outside person's friction log ([v4 roadmap](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-31-v4-roadmap-design.md#v4-0)) |
+| v4 stage 2, the production path: bring-your-own OIDC, secrets and GitOps; a k3s or kubeadm smoke test; semver on chart values; a nightly upgrade test | Rollout steps 2 to 8, each a v0.4x minor; step 2, the run path, is next ([production path design](https://github.com/Smana/maku/blob/main/docs/superpowers/specs/2026-11-12-v4-production-path-design.md#rollout)) |
 | A migration that drops `rooms.bridge_seen_at` | Every broker runs a release that no longer writes it ([room log](room-log.md#schema)) |
