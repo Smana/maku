@@ -65,6 +65,37 @@ func Reasons() []string {
 // one, so an id that does not match is dropped rather than carried into a card.
 var ulidRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 
+// digestRE is a push bundle's sha256, the one binding a digest-bound approval adds (HR28).
+var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// MaxProtected bounds the protected paths a wait carries; ProtectedMore counts the rest.
+const MaxProtected = 10
+
+// protectedPaths reads a digest-bound approval's action for its protected paths: at most
+// MaxProtected, each envelope.ShowablePath (bounded, no control or format character), and how many
+// valid ones it left out, and how many it refused to show: a refused path is counted, never
+// dropped, so an approver learns one was hidden. Anything else in the action never leaves the broker.
+func protectedPaths(action json.RawMessage) (out []string, more, hidden int) {
+	var a struct {
+		Protected []string `json:"protected"`
+	}
+	if json.Unmarshal(action, &a) != nil {
+		return nil, 0, 0
+	}
+	for _, p := range a.Protected {
+		if !envelope.ShowablePath(p) {
+			hidden++
+			continue
+		}
+		if len(out) == MaxProtected {
+			more++
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, more, hidden
+}
+
 // Clip is v when kind's vocabulary ("reason", "limit", "state", "verdict" or "decision") holds it, ""
 // for "", else "other": no value outside a closed list leaves the broker or reaches a Slack thread.
 func Clip(kind, v string) string {
@@ -131,6 +162,10 @@ func (t *Tracker) events(room, repo string, ev envelope.Event) []Event {
 		}
 		if envelope.ValidBranch(p.Branch) {
 			e.Branch = p.Branch
+		}
+		if digestRE.MatchString(p.Digest) && e.Class == "forge.push" {
+			e.Digest = p.Digest
+			e.Protected, e.ProtectedMore, e.ProtectedHidden = protectedPaths(p.Action)
 		}
 		if !p.ExpiresAt.IsZero() {
 			e.ExpiresAt = p.ExpiresAt.UTC().Format(time.RFC3339)

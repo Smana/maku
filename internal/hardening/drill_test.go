@@ -54,6 +54,24 @@ func TestScoreCountsTargetRefusals(t *testing.T) {
 	}
 }
 
+// The push refusals (HR25, HR27) are closed-vocabulary reasons, each counted at its layer.
+func TestPushRefusals(t *testing.T) {
+	for r, want := range map[Refusal]Layer{
+		RefusePushRef: LayerSchema, RefusePushHistory: LayerSchema, RefusePushTree: LayerSchema, RefusePushSize: LayerSchema,
+		RefuseApprovalDenied: LayerPaths, RefuseApprovalExpired: LayerPaths, RefuseSuperseded: LayerSchema,
+	} {
+		t.Run(string(r), func(t *testing.T) {
+			if got, ok := refusalLayer[r]; !ok || got != want {
+				t.Errorf("layer = %q, %v, want %q", got, ok, want)
+			}
+			rec := envelope.OutputRecord{ID: "0123456789abcdef", Type: string(Push), Digest: strings.Repeat("a", 64), Reason: string(r)}
+			if err := rec.Validate(envelope.KindOutputRefused); err != nil {
+				t.Errorf("not a valid refusal reason: %v", err)
+			}
+		})
+	}
+}
+
 // request and answer: an output_requested of payload, then applied (object) or refused (reason).
 func request(id string, t OutputType, payload any, answer string) []envelope.Event {
 	p := envelope.Must(payload)

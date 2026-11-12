@@ -182,6 +182,10 @@ func approvalCard(e webhook.Event, roomsURL string, now time.Time) (string, json
 		{Type: cardMrkdwn, Text: "*Branch*\n" + slackText(e.Branch)},
 		{Type: cardMrkdwn, Text: "*Approval*\n" + e.ApprovalID},
 	}
+	if e.Digest != "" { // HR28: a protected-path push is approved by its bundle's digest
+		fields = append(fields, cardText{Type: cardMrkdwn, Text: "*Digest*\n" + slackText(shortDigest(e.Digest))},
+			cardText{Type: cardMrkdwn, Text: "*Protected paths*\n" + protectedLine(e.Protected, e.ProtectedMore, e.ProtectedHidden)})
+	}
 	// The deadline comes from the event's own RFC 3339 field: no clock and no timezone of the App's
 	// reach the message. An event without one (the broker always sets it) is drawn without the row
 	// rather than with an invented value, and is live, since nothing says it is past.
@@ -211,6 +215,60 @@ func approvalCard(e webhook.Event, roomsURL string, now time.Time) (string, json
 		return "", nil // nothing the App builds can fail to encode; the caller keeps today's line
 	}
 	return cardTitle, raw
+}
+
+// shortDigest is a digest as the card shows it: its first 12 hex, as git abbreviates a commit.
+func shortDigest(d string) string {
+	if len(d) > 12 {
+		return d[:12]
+	}
+	return d
+}
+
+// maxCardPath bounds one protected path as the card shows it, in runes, before it is escaped.
+const maxCardPath = 120
+
+// maxCardField is Slack's limit on a section field's text, in characters.
+const maxCardField = 2000
+
+// protectedBudget is what the paths may take of a field, once escaped: the field's limit less its
+// label and room for ", and N more" and the hidden paths' note.
+const protectedBudget = maxCardField - len("*Protected paths*\n") - len(", and 99999 more") - len(hiddenNote) - 5
+
+// hiddenNote flags the paths the broker refused to show (a control or format character, or too
+// long): the approver must learn that one exists, since it may be the one that matters.
+const hiddenNote = "; %d not shown (hidden characters or too long)"
+
+// protectedLine is the card's protected paths: each bounded, then escaped, then kept while the
+// escaped line fits protectedBudget; the ones it leaves out join the wait's own "and N more", and
+// the ones the broker refused to show are counted apart. A path is the one text the card shows that
+// the factory did not write.
+func protectedLine(paths []string, more, hidden int) string {
+	var line string
+	for i, p := range paths {
+		if r := []rune(p); len(r) > maxCardPath {
+			p = string(r[:maxCardPath]) + "…"
+		}
+		item := "`" + strings.ReplaceAll(slackText(p), "`", "'") + "`"
+		if line != "" {
+			item = ", " + item
+		}
+		if len([]rune(line))+len([]rune(item)) > protectedBudget {
+			more += len(paths) - i
+			break
+		}
+		line += item
+	}
+	if more > 0 {
+		line += fmt.Sprintf(", and %d more", more)
+	}
+	if line == "" {
+		line = "none named"
+	}
+	if hidden > 0 {
+		line += fmt.Sprintf(hiddenNote, hidden)
+	}
+	return line
 }
 
 // The four lines a closed card carries (§5's teardown, and the design's lifecycle). They are fixed

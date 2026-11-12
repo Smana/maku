@@ -133,7 +133,12 @@ type ApprovalRequestedPayload struct {
 	Class      string `json:"class"`
 	// Branch is the run's branch, set by the bridge for the classes it forwards (D5): the one
 	// thing a forge.push approval binds. Empty for every other class and for older requests.
-	Branch    string          `json:"branch,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	// Digest and Output bind a factory-requested forge.push approval to one push bundle's sha256
+	// and the output id that carries it (hardening HR28, amending D5): the bundle exists before the
+	// push, so its digest is what a maintainer approves. Empty on every other approval.
+	Digest    string          `json:"digest,omitempty"`
+	Output    string          `json:"output,omitempty"`
 	Action    json.RawMessage `json:"action"` // the raw, redacted call (T3)
 	ExpiresAt time.Time       `json:"expiresAt"`
 	// Prompters are the principals who prompted the turn: with four-eyes on, none of

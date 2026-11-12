@@ -275,8 +275,11 @@ For the factory (`system:factory`) alone: its answer to one of a run's output re
   "reason": "output_schema", "audit": [{"layer": "t5_classifier", "reason": "injection_suspected"}]}}
 ```
 
-`kind` is `output_applied`, `output_refused` or `output_shadowed`. `output_requested` is the run's
-own and is refused here. `record` must validate for its kind, and carries no `payload`.
+`kind` is `output_applied`, `output_refused`, `output_shadowed` or `output_waiting`.
+`output_requested` is the run's own and is refused here. `record` must validate for its kind, and
+carries no `payload`. `output_waiting` is not an answer: a `push` held for a maintainer's approval
+of its digest, with `reason: protected_path_needs_approval` and the approval's `approvalId`. Its
+answer follows once the approval closes.
 
 `runId` is a C2 id, and must be a run of the room:
 - while the broker watches the run, its `roomRef` must name the room;
@@ -298,6 +301,62 @@ the body differs.
 | `403` | `not_permitted` | Any system principal but the factory |
 | `404` | `no_room` | No such room |
 | `410` | `sealed` | The room is sealed |
+| `429` | `rate_limited` | Over the principal's limits |
+| `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
+
+### `GET /v1/rooms/{id}/bundles/{digest}?run=<runId>`
+
+For the factory (`system:factory`) alone: the git bundle a run's `output_push` stored, by its
+64-hex sha256 `digest`, as `application/x-git-bundle`, at most 8 MiB. The factory checks that the
+bytes hash to the digest before it inspects them.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_room` | A bad room id |
+| `400` | `bad_bundle` | A digest that is not 64-hex, or a missing or bad `run` |
+| `401` | `unauthenticated` | No valid system token |
+| `403` | `not_permitted` | Any system principal but the factory, or a broker with no bundle store |
+| `404` | `no_bundle` | No bundle for that room, run and digest |
+| `429` | `rate_limited` | Over the principal's limits |
+| `503` | `log_unavailable` | The database refused it |
+
+### Digest-bound approvals
+
+For the factory (`system:factory`) alone: a `push` that touches a protected path waits for a
+maintainer's approval of its bundle's digest (hardening HR27, HR28).
+
+`POST /v1/rooms/{id}/approvals`, at most 64 KiB:
+
+```json
+{"runId": "7f3cq2xz", "output": "0123456789abcdef", "digest": "<64-hex>", "branch": "agent/t-1",
+ "ttlSeconds": 86400, "action": {"output": "0123456789abcdef", "digest": "<64-hex>", "protected": ["go.mod"]}}
+```
+
+It records a `forge.push` approval bound to the branch, the digest and the output, and appends its
+`approval_requested` with `digest` and `output` beside `branch`. `runId` must be a run of the room,
+and `branch` the run's own while the broker watches it. `ttlSeconds` is 60 to 604,800. The run's
+prompters may not decide it. A retry for the same output answers the first approval, and one
+naming another digest or branch for that output is `409 binding_conflict`. Unlike a
+bridge's approval, it is not closed when the run ends or its call id gets a result: it closes by a
+decision, by its deadline, or by the factory's supersede. Response `200`:
+`{"approvalId": "<ULID>", "state": "pending", "expiresAt": "…"}`.
+
+`POST /v1/approvals/{approvalId}/supersede` closes a pending digest-bound approval as `superseded`
+(a later push of the run replaced the one it held), and answers `{approvalId, state}`. A closed one
+answers its state as it is.
+
+`GET /v1/approvals/{approvalId}` answers `{approvalId, roomId, runId, state, branch, digest, output,
+decidedBy, expiresAt}` for a digest-bound approval. Any other approval is `404 no_approval`.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_room` | A bad room id |
+| `400` | `bad_approval` | A bad body, approval id, branch, digest, output or TTL, or a run that is not the room's |
+| `400` | `bad_action` | An action that is not a JSON object once redacted, or over the cap |
+| `401` | `unauthenticated` | No valid system token |
+| `403` | `not_permitted` | Any system principal but the factory |
+| `404` | `no_room`, `no_approval` | No such room, or no such digest-bound approval |
+| `409` | `binding_conflict` | The output's approval already binds another digest or branch |
 | `429` | `rate_limited` | Over the principal's limits |
 | `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
 
@@ -654,6 +713,11 @@ close frame. So is a peer that does not take a frame within 10 s (`write_timeout
 | `already_decided` | Another approver decided first |
 | `approval_expired` | The decision reached the broker after the approval's `expiresAt`; the approval closed as `expired` |
 | `four_eyes` | The room requires an approver who did not prompt the turn |
+| `access_unverified` | A digest-bound approval (a protected-path push), and GitHub could not say whether the approver writes to the room's repository: retry |
+
+A digest-bound approval, which holds a protected-path push for a maintainer, is decided on the
+room page only by an approver who writes to the room's repository on GitHub, the standing the
+Slack route's step 10 checks. Without it the decision is `not_permitted`.
 
 ### Machine-sent text
 
@@ -1276,7 +1340,7 @@ one approval that binds it.
 | `room.task_triaged` | The task enters `Triaged` | `repo` |
 | `room.run_started` | A run enters `Running` | `run` |
 | `room.run_ended` | A run ends: `Succeeded`, `Failed`, `BudgetExhausted` or `Revoked` | `run` |
-| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them |
+| `room.waiting_for_human` | The task enters `AwaitingHuman` or `Escalated`, or an approval is requested | `reason`; on an approval also `repo`, and `approvalId`, `class`, `branch`, `expiresAt` when the request carries them; on a protected-path push's approval also `digest`, `protected` (at most 10 paths, each at most 256 bytes), `protectedMore` (how many more) and `protectedHidden` (how many were refused as unshowable: a control or format character, or too long; never shown, always counted) |
 | `room.pr_opened` | The first pull request of the task is known | `pr` |
 | `room.verdict_posted` | GitHub accepted the verdict comment | `pr` |
 | `room.merged` | The task enters `Merged`, or its facts carry reason `merged` (a human merge), `merged_verified` or `merged_unverified`, once | `pr` |
@@ -1428,6 +1492,10 @@ The listener is the config's top-level `roomTools` block, apart from `human.mcp`
 no `:8090` at all and starts no server, so `ROOMS_MCP_KEY` is not even read. On, `ROOMS_MCP_KEY`
 alone decides whether a call is accepted, and without it every call is refused (`401`).
 
+`roomTools.pushRepositories` lists the repositories `output_push` is served to: the broker's own
+gate, beside the run's safe-outputs annotation, so a claim alone never opens a push. It stays empty
+until `push` is enforced (hardening stage H3); a broker refuses to start with any entry before then.
+
 The broker derives the run from `X-Ar-Agent`, the gateway's verified `sub`, matched whole against each
 run issuer's `subPattern` in turn, and reads the run's room and role from its `AgentRun`, never from a
 header or an argument. It exposes `initialize`, `ping`, `tools/list` and `tools/call` only: no
@@ -1439,7 +1507,7 @@ never opens a stream or sends a request of its own (agent-router#2715).
 | `401` | `X-Room-Mcp-Key` wrong, missing or sent twice, or `ROOMS_MCP_KEY` unset: every call is refused |
 | `403` | `X-Ar-Agent` missing, sent twice or naming no run, or the run is not live or in no room |
 | `405` | Anything but `POST` |
-| `413` | A body over 128 KiB |
+| `413` | A body over 128 KiB, except the harness's `output_push`: a request with `X-Agent-Harness: 1` may be up to 12 MiB, and past 128 KiB only a `tools/call` of `output_push` is accepted |
 | `503` | A call over 15 s |
 
 `tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](web-ui.md#what-each-standing-may-do))
@@ -1458,6 +1526,8 @@ appended, attributed to `agent:<runId>` with the run's role, origin `client`.
 | `room_verdict` | reviewer, tester | `verdict: approve \| changes`, `summary`, `commit` (as `room_handoff`) | `{seq}` | `message{kind: review_verdict, verdict, commit, pullRequest}`: `pullRequest` is the run's `spec.task.url` when it is a pull request of `spec.repository`, else absent. The leader then posts it on the PR |
 | `room_judge` | implementer | `verdict: met \| not_yet \| impossible`, `reason` (1–1000 bytes), `evidence` (1–20 ids, one line each) | `{seq}` | `message{kind: judge_verdict, verdict, text, evidence}`. The harness calls it (O15) after each completion-judge round, once its own override is applied (a failing check is never `met`); the summary's `status.lastJudge` and `room_changes`' `judge` milestone show it, the reason as untrusted text. It is the judge's reading, not a decision. It is the harness's alone: the tool is listed and callable only on a request carrying the harness client's `X-Agent-Harness: 1` marker, which the model's own MCP client is configured without, so it is not on the model's tool list and its call is refused `not_permitted`. The marker is not a secret: a command the model runs could send it if it can reach the route with the run's credentials |
 | `room_integration` | triager | `state: passed \| failed`, `reason` (snake_case, 1–64 bytes), `manifestHash` (64-hex) | `{seq}` | `message{kind: integration_result, integration: {state, reason, manifestHash}}`, no text. The harness calls it once at the end of a coordination integration run (v4 MR10, [harness README](../images/maku-harness/README.md#coordination-integration)); the factory takes it only from the integration Task's current run, under the manifest hash it holds. Harness-only, as `room_judge` |
+| `output_<type>` | implementer, tester, for each type the run's `agents.ogenki.io/safe-outputs` annotation names | the type's payload ([output events](room-log.md#output-events)) | `{outputId, status: requested, seq}` | `message{kind: output_requested, output}`. The factory answers later. `output_push` takes `{bundle}`, a base64 git bundle of at most 8 MiB: the bundle is stored beside the log, and the record keeps its digest and size. `output_push` is harness-only, as `room_judge`: the harness turns the agent's `git push` into it. It is served only when `roomTools.pushRepositories` also names the run's repository |
+| `output_status` | implementer, tester, when the run has safe outputs | `outputId` (16-hex) | `{outputId, status}`: `requested`, `waiting` with the `approvalId` a protected-path push waits for, `applied` with the GitHub `object`, `refused` with its `reason`, or `unknown` for an id the run never requested. Read from the run's own events, trusting the factory's stamp only | nothing |
 
 A refused call is a tool result with `isError: true`, whose text starts with its reason:
 

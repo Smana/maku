@@ -4,7 +4,9 @@ package webhook
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +161,43 @@ func TestWaitingCarriesApproval(t *testing.T) {
 	if e := wait(envelope.ApprovalRequestedPayload{ApprovalID: "ap1", CallID: "c1", Class: "forge.push",
 		Branch: "agent/26zfnuxm"}); e.ApprovalID != "" || e.Class != "forge.push" {
 		t.Fatalf("an id that is not a ULID: %+v", e)
+	}
+}
+
+// HR28: a digest-bound approval's wait carries its digest and at most MaxProtected protected paths,
+// each bounded, then a count of the rest; nothing else of the action leaves the broker.
+func TestWaitingCarriesDigest(t *testing.T) {
+	d := strings.Repeat("e", 64)
+	// Control and format characters (a bidi override, a zero-width space) drop the path.
+	paths := []string{"go.mod", "", "bad\x00path", strings.Repeat("p", 257), "bad\u202eevil.go", "bad\u200bgo.mod"}
+	for i := range 12 {
+		paths = append(paths, fmt.Sprintf(".github/workflows/w%d.yaml", i))
+	}
+	wait := func(class, digest string) Event {
+		t.Helper()
+		var tr Tracker
+		got := tr.Events("aaaaaaaa", "Smana/ai-native-ref", envelope.Event{RoomID: "aaaaaaaa", Seq: 1, Type: envelope.ApprovalRequested,
+			Payload: envelope.Must(envelope.ApprovalRequestedPayload{ApprovalID: "01M4A1B2C3D4E5F6G7H8J9K0MN", CallID: "output:0123456789abcdef",
+				Class: class, Branch: "agent/26zfnuxm", Digest: digest, Output: "0123456789abcdef",
+				Action: envelope.Must(map[string]any{"protected": paths, "head": "secret commit text"})})})
+		if len(got) != 1 {
+			t.Fatalf("%v", got)
+		}
+		return got[0]
+	}
+	e := wait("forge.push", d)
+	// A rejected path is never shown, but always counted, so an approver sees that one was hidden.
+	if e.Digest != d || len(e.Protected) != MaxProtected || e.Protected[0] != "go.mod" || e.ProtectedMore != 3 || e.ProtectedHidden != 5 {
+		t.Fatalf("%+v", e)
+	}
+	if b := string(envelope.Must(e)); strings.Contains(b, "secret commit") || strings.Contains(b, "bad") {
+		t.Fatalf("the action leaked: %s", b)
+	}
+	if e := wait("forge.push", "nothex"); e.Digest != "" || e.Protected != nil {
+		t.Fatalf("a bad digest: %+v", e)
+	}
+	if e := wait("forge.pr", d); e.Digest != "" || e.Protected != nil {
+		t.Fatalf("another class: %+v", e)
 	}
 }
 

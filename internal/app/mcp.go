@@ -48,13 +48,26 @@ func roomMCP(key string, patterns []*regexp.Regexp, roomLog mcp.Log, red mcp.Red
 	m *metrics.Set, log *slog.Logger,
 ) *mcp.Server {
 	return &mcp.Server{Key: func() string { return key }, Runs: runs, SubPatterns: patterns,
-		// The safe-output tools are gated per run (HR14): a run whose claim names no enforced type
-		// lists exactly the room tools. No bundle store yet, so output_push is never served (H3).
-		Tools: append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, mcp.OutputConfig{})...),
+		Tools: roomTools(roomLog, red, nil),
 		OnReject: func(ctx context.Context, reason string) {
 			m.Rejected.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 		},
 		Logger: log, Now: time.Now}
+}
+
+// roomTools are :8090's tools: the room tools, then the safe-output tools, gated per run (HR14),
+// so a run whose claim names no enforced type lists exactly the room tools. The store keeps push
+// bundles and reads output answers (HR22, HR27); output_push is served only to a repository push
+// names, which config refuses until push is enforced.
+func roomTools(roomLog mcp.Log, red mcp.Redactor, push []string) []mcp.Tool {
+	out := mcp.OutputConfig{PushRepositories: push}
+	if b, ok := roomLog.(mcp.BundleStore); ok {
+		out.Bundles = b
+	}
+	if a, ok := roomLog.(mcp.OutputAnswers); ok {
+		out.Answers = a
+	}
+	return append(mcp.RoomTools(roomLog, red, time.Now), mcp.OutputTools(roomLog, red, time.Now, out)...)
 }
 
 // roomToolsServer is :8090's handler under roomTools.auth. key (the default) is the router's injected
@@ -64,17 +77,22 @@ func roomMCP(key string, patterns []*regexp.Regexp, roomLog mcp.Log, red mcp.Red
 func roomToolsServer(cfg config.Config, a auth, getenv func(string) string, roomLog mcp.Log, red mcp.Redactor, runs mcp.Runs,
 	m *metrics.Set, log *slog.Logger,
 ) *mcp.Server {
+	var s *mcp.Server
 	if cfg.RoomToolsAuth() == config.RoomToolsAuthTokenReview {
 		log.Info(":8090 verifies each run's own token (roomTools.auth tokenreview): ROOMS_MCP_KEY is not read")
-		s := roomMCP("", a.roomPatterns, roomLog, red, runs, m, log)
+		s = roomMCP("", a.roomPatterns, roomLog, red, runs, m, log)
 		s.Tokens = a.roomTokens
-		return s
+	} else {
+		key := mcpKey(getenv)
+		if key == "" {
+			log.Warn("ROOMS_MCP_KEY is not set: :8090 refuses every room tool call")
+		}
+		s = roomMCP(key, subPatterns(cfg.RunIssuers), roomLog, red, runs, m, log)
 	}
-	key := mcpKey(getenv)
-	if key == "" {
-		log.Warn("ROOMS_MCP_KEY is not set: :8090 refuses every room tool call")
+	if push := cfg.PushRepositories(); len(push) > 0 { // the broker's own gate on output_push
+		s.Tools = roomTools(roomLog, red, push)
 	}
-	return roomMCP(key, subPatterns(cfg.RunIssuers), roomLog, red, runs, m, log)
+	return s
 }
 
 // mcpServer bounds :8090. Nothing on it streams, so WriteTimeout is set, and

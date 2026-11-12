@@ -529,6 +529,20 @@ type RoomToolsConfig struct {
 	// injects ROOMS_MCP_KEY and the subject (production); "tokenreview", the broker itself asks the
 	// apiserver about the run's own bearer token, where no gateway stands in front (the demo).
 	Auth string `json:"auth,omitempty"`
+	// PushRepositories are the repositories :8090 serves output_push to (hardening H3): the
+	// broker's own gate beside the run's safe-outputs annotation, so a claim alone never opens push.
+	// It mirrors the factory's enforceOutputs naming push, which config refuses until stage H3's
+	// PR 6, so every entry is refused here too.
+	PushRepositories []string `json:"pushRepositories,omitempty"`
+}
+
+// PushRepositories are the repositories :8090 serves output_push to: none unless roomTools names
+// them, and config refuses any until push is enforced.
+func (c Config) PushRepositories() []string {
+	if c.RoomTools == nil {
+		return nil
+	}
+	return c.RoomTools.PushRepositories
 }
 
 // How :8090 authenticates a run. An empty auth is key: the bytes a deployed broker carries need no edit.
@@ -864,6 +878,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.roomToolsAuth()...)
+	if len(c.PushRepositories()) > 0 {
+		errs = append(errs, errors.New("roomTools.pushRepositories: push arrives with stage H3, as the factory's enforceOutputs refuses it until then"))
+	}
 	if err := c.Runs.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("runs: %w", err))
 	} else {
