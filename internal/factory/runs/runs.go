@@ -69,7 +69,14 @@ const (
 	// The run's canary (hardening T3, HR7), planted in its brief under hardening audit or
 	// enforce: the shadow pass and the applier check the run's outputs against it. CREATE only.
 	AnnCanary = "agents.ogenki.io/canary"
+	// The run's enforced output types and label allowlist (hardening H2, HR14): the broker
+	// serves output_<type> for each, and the harness turns gh's writes away. CREATE only.
+	AnnSafeOutputs    = runwatch.SafeOutputsAnnotation
+	AnnLabelAllowlist = runwatch.LabelAllowlistAnnotation
 )
+
+// safeOutputTypes are the types a claim may name as safe outputs: push stays in the sandbox (H3).
+var safeOutputTypes = []string{"comment", "issue", "labels", "pr"}
 
 // canaryRE is hardening.NewCanary's shape.
 var canaryRE = regexp.MustCompile(`^mkc-[0-9a-f]{20}$`)
@@ -134,6 +141,10 @@ type Spec struct {
 	CoordinationManifest, CoordinationManifestHash string
 	// Canary is the run's canary, written as AnnCanary at CREATE only; "" plants none.
 	Canary string
+	// SafeOutputs are the run's enforced output types, written sorted as AnnSafeOutputs, and
+	// LabelAllowlist as AnnLabelAllowlist beside it; neither is written when SafeOutputs is empty.
+	SafeOutputs    []string
+	LabelAllowlist []string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -188,6 +199,11 @@ func (s Spec) Validate() error {
 	}
 	if s.Canary != "" && !canaryRE.MatchString(s.Canary) {
 		errs = append(errs, errors.New("the canary is not mkc- and 20 hex digits"))
+	}
+	for _, t := range s.SafeOutputs {
+		if !slices.Contains(safeOutputTypes, t) {
+			errs = append(errs, fmt.Errorf("safe output %q is none of %s", t, strings.Join(safeOutputTypes, ", ")))
+		}
 	}
 	if err := s.validArtifacts(); err != nil {
 		errs = append(errs, err)
@@ -291,6 +307,17 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Canary != "" {
 		ann[AnnCanary] = s.Canary
+	}
+	if len(s.SafeOutputs) > 0 {
+		types := slices.Clone(s.SafeOutputs)
+		slices.Sort(types)
+		ann[AnnSafeOutputs] = strings.Join(slices.Compact(types), ",")
+		labels := s.LabelAllowlist
+		if labels == nil {
+			labels = []string{}
+		}
+		b, _ := json.Marshal(labels) // a slice of strings: Marshal cannot fail
+		ann[AnnLabelAllowlist] = string(b)
 	}
 	if b, h := artifactsJSON(s.CoordinationArtifacts); h != "" {
 		ann[AnnCoordinationArtifacts], ann[AnnCoordinationArtifactsHash] = string(b), h
@@ -494,7 +521,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCanary, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

@@ -273,7 +273,8 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	// keys only when its loop is on.
 	s.Search = t.Spec.Search && s.Role == "implementer"
 	source := r.pinModel(cfg, t, &s)
-	r.plantCanary(cfg, t, &s) // hardening audit or enforce only (HR7)
+	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
+	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
 	err = r.Runs.Create(ctx, s)
 	unbriefed := false
 	if refusedSchema(err) && s.Role == "reviewer" && s.TaskText != "" && s.TaskURL != "" {
@@ -693,6 +694,11 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	reason := r.finished(ctx, t, run)
 	if reason == "" {
 		return nil
+	}
+	// H2: a writer run's end waits for the applier's answers first (HR19); the tester's shadow pass
+	// runs in testerEnded.
+	if wait, err := r.awaitOutputs(ctx, cfg, t, run); err != nil || wait {
+		return err
 	}
 	if run.Role == "implementer" {
 		r.shadowPending(ctx, cfg, t) // H1: the run's writes, before its outcome (audit only)

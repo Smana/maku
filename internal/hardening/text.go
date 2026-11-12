@@ -3,6 +3,7 @@
 package hardening
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -28,6 +29,18 @@ var (
 	link        = regexp.MustCompile(`(?i)\bhttps?://`)
 	closing     = regexp.MustCompile(`(?i)\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)(:?\s+)((?:[\w.-]+/[\w.-]+)?#(\d+)|https://github\.com/[\w.-]+/[\w.-]+/issues/(\d+))`)
 )
+
+// Published is the payload an applied request of type t published, before the factory's footer or
+// marker: T1's decode, then T2, as Check runs them. The tracer compares an observed write with it.
+// false when the payload does not decode.
+func Published(t OutputType, payload json.RawMessage, ownIssue int) (any, bool) {
+	p, r := DecodeOutput(t, payload, nil)
+	if r != "" || p == nil {
+		return nil, false
+	}
+	p, _ = sanitiseOutput(p, ownIssue)
+	return p, true
+}
 
 // sanitiseOutput is T2 on every text field of p.
 func sanitiseOutput(p any, ownIssue int) (any, TextReport) {

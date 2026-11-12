@@ -1556,6 +1556,12 @@ func Parse(raw []byte) (*Config, error) {
 			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
+	// HR13: an enforced repository on a run path whose sandbox token no role policy scopes. The
+	// factory still starts: the tracer reports every direct write.
+	if c.Hardening.Enforcing() && !c.Runs.XR() {
+		c.Warnings = append(c.Warnings, "hardening.enforceOutputs is set and runs are not cloud-native-ref's XR: the sandbox token is not scoped by a role policy, "+
+			"so a run can still write directly; the tracer reports each such write (HR13)")
+	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])
 	return &c, nil

@@ -626,6 +626,32 @@ func TestFromUnstructuredUnsandboxed(t *testing.T) {
 	}
 }
 
+// HR14: the factory's two hardening annotations, read; a malformed allowlist reads as none.
+func TestFromUnstructuredSafeOutputs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ann           map[string]string
+		types, labels []string
+	}{
+		"none":                  {nil, nil, nil},
+		"two types, two labels": {map[string]string{SafeOutputsAnnotation: "comment,pr", LabelAllowlistAnnotation: `["documentation","a, b"]`}, []string{"comment", "pr"}, []string{"documentation", "a, b"}},
+		"a malformed allowlist": {map[string]string{SafeOutputsAnnotation: "pr, pr,", LabelAllowlistAnnotation: "documentation"}, []string{"pr"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")
+			if tc.ann != nil {
+				u.SetAnnotations(tc.ann)
+			}
+			r, ok := DefaultKind.FromUnstructured(u)
+			if !ok || !slices.Equal(r.SafeOutputs, tc.types) || !slices.Equal(r.LabelAllowlist, tc.labels) {
+				t.Fatalf("ok %v, types %q, labels %q", ok, r.SafeOutputs, r.LabelAllowlist)
+			}
+			if r.ServesOutput("pr") != slices.Contains(tc.types, "pr") || r.ServesOutput("push") {
+				t.Fatal("ServesOutput")
+			}
+		})
+	}
+}
+
 func TestObserveRecordsAnUnsandboxedRun(t *testing.T) {
 	for _, tc := range []struct {
 		unsandboxed bool

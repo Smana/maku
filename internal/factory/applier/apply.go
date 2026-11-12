@@ -93,7 +93,7 @@ func (a *Applier) filer(t *v1alpha1.Task) Filer {
 // apply writes one checked payload that find did not find. It answers the object written, or a
 // refusal decided here (output_cap, output_target), or an error: forge.Unappliable ones are
 // answered output_unavailable, the rest leave the request for the next tick.
-func (a *Applier) apply(ctx context.Context, t *v1alpha1.Task, payload any, p hardening.Provenance) (string, hardening.Refusal, error) {
+func (a *Applier) apply(ctx context.Context, t *v1alpha1.Task, payload any, p hardening.Provenance, prs map[string]bool) (string, hardening.Refusal, error) {
 	if is, ok := payload.(hardening.IssuePayload); ok {
 		obj, err := a.applyIssue(ctx, t, is, p)
 		return obj, "", err
@@ -104,7 +104,7 @@ func (a *Applier) apply(ctx context.Context, t *v1alpha1.Task, payload any, p ha
 	}
 	switch o := payload.(type) {
 	case hardening.PRPayload:
-		return a.applyPR(ctx, t, pub, o, p)
+		return a.applyPR(ctx, t, pub, o, p, prs)
 	case hardening.CommentPayload:
 		return applyComment(ctx, t, pub, o, p.Output)
 	case hardening.LabelsPayload:
@@ -137,17 +137,25 @@ func openPR(ctx context.Context, t *v1alpha1.Task, pub Publisher) (forge.PR, err
 }
 
 // applyPR opens the task's one pull request from agent/<task> into main, or edits it (one open and
-// five edits per run; HR18: draft on open only). A closed or merged one is never replaced: that is
-// the cap. One the agents App did not open is not the task's to edit. The body is the factory's:
-// neutralised, with the provenance footer naming the output.
-func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, o hardening.PRPayload, p hardening.Provenance) (string, hardening.Refusal, error) {
+// five edits per run; HR18: draft on open only). A closed or merged one is never replaced, and one
+// the agents App did not open is not the task's to edit. Nor is an open one whose footer names none
+// of the task's applied pr outputs: a run holding pull_requests: write opened it directly, and
+// editing it would launder that write. Each is output_target, a refusal that spent its cap, so the
+// counts rebuilt from the log (runState.answer) match the ones spent here. The body is the
+// factory's: neutralised, with the provenance footer naming the output.
+func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, o hardening.PRPayload, p hardening.Provenance,
+	ours map[string]bool) (string, hardening.Refusal, error) {
 	pr, err := branchPR(ctx, t, pub)
 	switch {
 	case err != nil:
 		return "", "", err
 	case pr.Number > 0 && pr.State != "OPEN":
-		return "", hardening.RefuseCap, nil
+		return "", hardening.RefuseTarget, nil
 	case pr.Number > 0 && !sameLogin(pr.Author, a.AgentsLogin):
+		return "", hardening.RefuseTarget, nil
+	case pr.Number > 0 && !ours[footerOutput(pr.Body)]:
+		a.Log.Warn("output applier: the branch's pull request was not opened by an applied output", "task.id", t.Name,
+			"run.id", p.Run, "output.id", p.Output, "pr", pr.Number)
 		return "", hardening.RefuseTarget, nil
 	}
 	body := hardening.WithFooter(o.Body, p)
@@ -170,17 +178,8 @@ func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, 
 // footerOutput is the Agent-Output a factory footer names, read from the body's last paragraph
 // only: WithFooter marks any such line the model wrote above it.
 func footerOutput(body string) string {
-	text := strings.TrimRight(strings.ReplaceAll(body, "\r\n", "\n"), " \t\n")
-	i := strings.LastIndex(text, "\n---\n")
-	if i < 0 {
-		return ""
-	}
-	for _, l := range strings.Split(text[i+len("\n---\n"):], "\n") {
-		if id, ok := strings.CutPrefix(l, "Agent-Output: "); ok {
-			return id
-		}
-	}
-	return ""
+	_, id := hardening.SplitFooter(body)
+	return id
 }
 
 func commentURL(t *v1alpha1.Task, kind string, n int, id int64) string {

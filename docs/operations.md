@@ -427,6 +427,44 @@ It adds `agent.coordination.plan_version` and `agent.coordination.plan_hash_pref
 hex of the plan hash) and links to each child's and integration Task's root span; no plan text,
 acceptance or artifact bytes. The parent's reason is the span's `agent.task.reason`.
 
+### Hardening, non-code outputs
+
+[Stage H2](factory.md#hardening-non-code-outputs-enforced) for one repository. Each step lands
+and is checked before the next. Steps 1 to 4 are inert, because nothing reads them until a run
+carries the `safe-outputs` annotation, and only step 5 writes it. Listing the repository earlier
+leaves the first enforced tasks either waiting unanswered (no publisher token) or writing
+untraced on the XR (its rules still say `gh pr create`).
+
+1. **The Maku release** runs on the cluster. With `enforceOutputs` empty it changes nothing.
+2. **The publisher.** Set the chart's `hardening.publisher.audience`, an egress policy from the
+   factory to the octo-sts host, and `hardening.publisher.octoSTS`. A maintainer merges
+   `.github/chainguard/publisher.sts.yaml` in the repository: the factory's ServiceAccount
+   subject, `contents: read`, `pull_requests: write`, `issues: write`.
+3. **The gateway profile.** `output_pr`, `output_comment`, `output_labels` and `output_issue` are
+   added to the implementer and tester capability profiles.
+4. **The XR rendering.** The composition renders `MCP_READ_ONLY_TOOLS`, `SAFE_OUTPUTS` and the
+   rules from the claim's annotations.
+5. **The list, last.** Add `repositories: {<repo>: {mode: audit, enforceOutputs: [pr, comment, labels, issue]}}`
+   and restart. The factory refuses to start while the publisher token is unreadable, and the
+   error names `hardening.publisher.audience`. The log says `the safe-output applier is on`.
+6. **The role policy.** Only after a canary task's pull request arrived through `output_applied`,
+   a maintainer changes `agent-implementer.sts.yaml` to `pull_requests: read`.
+
+**Rollback**, in this order:
+
+1. Restore `pull_requests: write` in the role policy.
+2. Remove the repository from `enforceOutputs`, and restart.
+
+**Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. Never move
+an enforced repository to a run path whose sandbox token no role policy scopes (the startup
+warning names HR13). `push` (H3) and raw reads (H4) stay open in this stage.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `maku_factory_hardening_output_seconds` | histogram | `repository`, `type` | From a run's `output_requested` to the factory's answer (AC7: p95 at most 2 s per non-push output) |
+| `maku_factory_hardening_untraced_total` | counter | `repository`, `type` | Agents-App writes of an enforced type no `output_applied` explains. The H2 gate holds it at 0 |
+| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role's or the publisher's (`role="publisher"`) octo-sts policy grants, as the last fence pass read it; a pair a later pass no longer reads is 0 |
+
 ### Factory alerts
 
 | Alert | Fires when | For | First step |

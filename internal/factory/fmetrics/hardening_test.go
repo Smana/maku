@@ -29,6 +29,67 @@ func TestHardeningOutputSeconds(t *testing.T) {
 	}
 }
 
+// H2 (R2 as evidence): each granted pair of each sandbox role and the publisher is 1; a pair a
+// later pass no longer reads is 0, and a role whose policy was not read keeps its pairs.
+func TestSandboxPermissionGauge(t *testing.T) {
+	ctx := t.Context()
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/ai-native-ref")
+	s.SandboxPermissions(ctx, "Smana/ai-native-ref", map[string]map[string]string{
+		"implementer": {"contents": "write", "pull_requests": "write"},
+		"reviewer":    {"contents": "read"},
+		"publisher":   {"pull_requests": "write", "issues": "write", "contents": "read"},
+		"tester":      {"an agent's text": "WRITE"},
+	})
+	series := func(role, perm, access string, v int) string {
+		return `maku_factory_hardening_sandbox_permission{access="` + access + `",permission="` + perm +
+			`",repository="Smana/ai-native-ref",role="` + role + `"} ` + string(rune('0'+v))
+	}
+	body := scrape()
+	for _, want := range []string{
+		series("implementer", "pull_requests", "write", 1), series("implementer", "contents", "write", 1),
+		series("reviewer", "contents", "read", 1), series("publisher", "pull_requests", "write", 1),
+		series("publisher", "issues", "write", 1), series("tester", "other", "other", 1),
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+	// The implementer drops pull_requests: write; the reviewer's policy is not read this pass.
+	s.SandboxPermissions(ctx, "Smana/ai-native-ref", map[string]map[string]string{
+		"implementer": {"contents": "write", "pull_requests": "read"},
+		"publisher":   {"pull_requests": "write", "issues": "write", "contents": "read"},
+		"tester":      {},
+	})
+	body = scrape()
+	for _, want := range []string{
+		series("implementer", "pull_requests", "write", 0), series("implementer", "pull_requests", "read", 1),
+		series("reviewer", "contents", "read", 1), series("tester", "other", "other", 0),
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
+// H2's tracer: each untraced agent write by repository and output type, the type a closed set.
+func TestHardeningUntracedIsCounted(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/cloud-native-ref")
+	s.HardeningUntraced(ctx, "comment")
+	s.HardeningUntraced(ctx, "an agent's text")
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_untraced_total{repository="Smana/cloud-native-ref",type="comment"} 1`,
+		`maku_factory_hardening_untraced_total{repository="Smana/cloud-native-ref",type="other"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
 // H1's shadow counter (HR3): each output_shadowed record by repository, type, verdict, layer and
 // reason, every label a closed set, so an agent's text can never name a series.
 func TestHardeningShadowIsCounted(t *testing.T) {

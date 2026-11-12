@@ -66,6 +66,10 @@ func ValidatePrefix(p string) error {
 	return nil
 }
 
+// XR reports whether k's runs are cloud-native-ref's Crossplane XR, whose sandbox tokens octo-sts
+// scopes by role policy (hardening HR13).
+func (k Kind) XR() bool { return k.Group == DefaultKind.Group }
+
 // GVK is k's AgentRun kind (C3).
 func (k Kind) GVK() schema.GroupVersionKind {
 	return schema.GroupVersionKind{Group: k.Group, Version: "v1alpha1", Kind: "AgentRun"}

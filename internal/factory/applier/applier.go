@@ -117,6 +117,9 @@ type Applier struct {
 type roomState struct {
 	cursor int64
 	runs   map[string]*runState
+	// prs are the room's applied pr outputs, every run's: the ids a pull request the applier may
+	// edit names in its footer.
+	prs map[string]bool
 }
 
 type runState struct {
@@ -234,7 +237,7 @@ func (a *Applier) stopped(ctx context.Context) bool {
 func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]window) error {
 	st := a.rooms[t.Status.RoomRef]
 	if st == nil {
-		st = &roomState{runs: map[string]*runState{}}
+		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}}
 		a.rooms[t.Status.RoomRef] = st
 	}
 	last, err := a.Rooms.LastSeq(ctx, t.Status.RoomRef)
@@ -275,7 +278,7 @@ func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]wi
 			case stopped:
 				err = errStopped
 			default:
-				err = a.answer(ctx, t, w.rec, rs, rs.pending[0])
+				err = a.answer(ctx, t, w.rec, rs, rs.pending[0], st.prs)
 			}
 			if errors.Is(err, errStopped) {
 				break
@@ -305,6 +308,9 @@ func (st *roomState) read(evs []envelope.Event) {
 			}
 		case envelope.KindOutputApplied, envelope.KindOutputRefused:
 			rs.answer(kind, rec)
+			if kind == envelope.KindOutputApplied && rec.Type == string(hardening.PR) {
+				st.prs[rec.ID] = true
+			}
 		}
 	}
 }
@@ -357,7 +363,7 @@ func (a *Applier) refuse(ctx context.Context, t *v1alpha1.Task, runID string, rs
 // and applied or refused; the kill switch is read again just before the write. A refusal GitHub
 // makes for good is answered output_unavailable; any other error leaves it pending for the next
 // tick, where the lookup finds a write whose answer was lost (HR16).
-func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunRecord, rs *runState, req request) error {
+func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunRecord, rs *runState, req request, prs map[string]bool) error {
 	if rs.claim == nil {
 		x, found, err := a.Runs.Get(ctx, rec.ID)
 		if err != nil {
@@ -379,7 +385,7 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	}
 	if found {
 		n.Take(typ)
-		return a.applied(ctx, t, rec.ID, rs, req, n, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
+		return a.applied(ctx, t, rec.ID, rs, req, n, prs, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
 			Digest: req.rec.Digest, Bytes: req.rec.Bytes, Object: obj})
 	}
 	c := a.Checker(t.Spec.Repository)
@@ -405,7 +411,7 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	}
 	prov := hardening.Provenance{Room: t.Status.RoomRef, Run: rec.ID, Role: rec.Role, Task: t.Name, TaskURL: taskURL(t),
 		Model: rs.claim.Model, Output: req.rec.ID}
-	obj, refusal, err := a.apply(ctx, t, v.Payload, prov)
+	obj, refusal, err := a.apply(ctx, t, v.Payload, prov, prs)
 	switch {
 	case forge.Unappliable(err):
 		a.Log.Warn("output applier: GitHub refused an output for good", "task.id", t.Name, "run.id", rec.ID,
@@ -428,14 +434,18 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		}
 		out.Audit = append(out.Audit, envelope.OutputFinding{Layer: string(f.Layer), Reason: string(f.Refusal)})
 	}
-	return a.applied(ctx, t, rec.ID, rs, req, n, out)
+	return a.applied(ctx, t, rec.ID, rs, req, n, prs, out)
 }
 
-func (a *Applier) applied(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, n hardening.Counts, out envelope.OutputRecord) error {
+func (a *Applier) applied(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, n hardening.Counts,
+	prs map[string]bool, out envelope.OutputRecord) error {
 	if err := a.post(ctx, t, runID, envelope.KindOutputApplied, out, req); err != nil {
 		return err
 	}
 	rs.done(req, n)
+	if out.Type == string(hardening.PR) {
+		prs[out.ID] = true
+	}
 	return nil
 }
 

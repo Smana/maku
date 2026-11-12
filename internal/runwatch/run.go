@@ -5,6 +5,8 @@
 package runwatch
 
 import (
+	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +18,13 @@ import (
 const (
 	// RevokedAnnotation carries why a run was revoked; any value makes it not live.
 	RevokedAnnotation = "agents.ogenki.io/revoked"
+	// SafeOutputsAnnotation is the run's enforced output types (hardening H2, HR14), sorted and
+	// comma-separated, written by the factory at CREATE: the broker serves output_<type> for each,
+	// and nothing for a run without it.
+	SafeOutputsAnnotation = "agents.ogenki.io/safe-outputs"
+	// LabelAllowlistAnnotation is the labels the run may request with output_labels, a JSON array
+	// (a label may hold a comma), written beside SafeOutputsAnnotation.
+	LabelAllowlistAnnotation = "agents.ogenki.io/label-allowlist"
 	// OperatingModeAnnotation asks a suspendable run's Sandbox to be Suspended or Running
 	// (v2 warm-sandboxes design §6). The room-broker writes it and the next two; the
 	// composition reads them only when spec.suspendable is true.
@@ -60,7 +69,13 @@ type Run struct {
 	// sandbox's, so the room and rooms_run_info may name it. Empty when unset or outside
 	// envelope.ValidModel.
 	Model string
+	// SafeOutputs and LabelAllowlist are SafeOutputsAnnotation and LabelAllowlistAnnotation, read:
+	// empty on every run the factory does not enforce.
+	SafeOutputs, LabelAllowlist []string
 }
+
+// ServesOutput reports whether the run requests typ through the broker's output tool.
+func (r Run) ServesOutput(typ string) bool { return slices.Contains(r.SafeOutputs, typ) }
 
 // Terminal reports whether an AgentRun phase is final.
 func Terminal(phase string) bool {
@@ -110,7 +125,25 @@ func (k Kind) FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
 	if m := str("spec", "model"); envelope.ValidModel(m) {
 		r.Model = m
 	}
+	r.SafeOutputs, r.LabelAllowlist = readSafeOutputs(ann)
 	return r, true
+}
+
+// readSafeOutputs reads the two hardening annotations. An allowlist that is not a JSON array of
+// strings reads as empty: output_labels then refuses every label, and the applier's T1 stays the
+// authority either way.
+func readSafeOutputs(ann map[string]string) (types, labels []string) {
+	for _, t := range strings.Split(ann[SafeOutputsAnnotation], ",") {
+		if t = strings.TrimSpace(t); t != "" && !slices.Contains(types, t) {
+			types = append(types, t)
+		}
+	}
+	if raw := ann[LabelAllowlistAnnotation]; raw != "" {
+		if json.Unmarshal([]byte(raw), &labels) != nil {
+			labels = nil
+		}
+	}
+	return types, labels
 }
 
 // conditionTrue reports whether the claim's status carries condition typ with status True.

@@ -4,6 +4,9 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -265,5 +268,139 @@ func TestReadinessStaysFalseUnderAudit(t *testing.T) {
 	}
 	if r.Hardened || !slices.Contains(r.Missing, hardening.MissingEnforce) {
 		t.Fatalf("%+v", r)
+	}
+}
+
+// enforcePublisher is the octo-sts publisher an enforceOutputs list needs (HR11).
+const enforcePublisher = "  publisher: {octoSTS: {url: \"https://octo-sts.dev\"}}\n"
+
+// H2 enforces the non-code outputs per repository (HR10): a repository's list is a superset of the
+// central one, push waits for H3, and a list needs audit at least and a publisher.
+func TestEnforceOutputs(t *testing.T) {
+	for name, tc := range map[string]struct {
+		block, want string
+	}{
+		"central pr, a repository all four": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [pr, comment, labels, issue]}}\n", ""},
+		"a repository alone, in audit": {"hardening:\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [comment]}}\n", ""},
+		"a repository's list missing pr": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [comment]}}\n", "superset"},
+		"push": {"hardening:\n  mode: audit\n  enforceOutputs: [push]\n" + enforcePublisher, "push arrives with stage H3"},
+		"a repository's push": {"hardening:\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr, push]}}\n", "push arrives with stage H3"},
+		"an unknown type":   {"hardening:\n  mode: audit\n  enforceOutputs: [review]\n" + enforcePublisher, "hardening.enforceOutputs"},
+		"central, mode off": {"hardening:\n  enforceOutputs: [pr]\n" + enforcePublisher, "audit"},
+		"a repository, mode off": {"hardening:\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [pr]}}\n", "audit"},
+		"no publisher":            {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n", "hardening.publisher.octoSTS"},
+		"a plain-http publisher":  {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {octoSTS: {url: \"http://octo-sts.dev\"}}\n", "hardening.publisher.octoSTS.url"},
+		"a zero applier interval": {"hardening:\n  mode: audit\n  applier: {interval: 0s}\n", "hardening.applier.interval"},
+		"a zero answer wait":      {"hardening:\n  mode: audit\n  applier: {answerWait: 0s}\n", "hardening.applier.answerWait"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(good + tc.block))
+			switch {
+			case tc.want == "" && err != nil:
+				t.Fatal(err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Fatalf("got %v, want an error naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// EnforcedFor is the repository's effective list, sorted: its own when it writes one, else the
+// central one. Nothing is enforced by default, and the publisher and applier have their defaults.
+func TestEnforcedFor(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Hardening.EnforcedFor("Smana/cloud-native-ref"); len(got) != 0 || c.Hardening.Enforcing() {
+		t.Fatalf("enforced by default: %v", got)
+	}
+	if a := c.Hardening.Applier; a.Interval.Duration != 2*time.Second || a.AnswerWait.Duration != 5*time.Minute {
+		t.Fatalf("applier defaults %+v", a)
+	}
+	c, err = Parse([]byte(good + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+		"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [labels, pr, issue, comment, pr]}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := c.Hardening
+	if got := h.EnforcedFor("Smana/cloud-native-ref"); !slices.Equal(got, []hardening.OutputType{hardening.Comment, hardening.Issue, hardening.Labels, hardening.PR}) {
+		t.Fatalf("repository list %v", got)
+	}
+	if got := h.EnforcedFor("Smana/other"); !slices.Equal(got, []hardening.OutputType{hardening.PR}) {
+		t.Fatalf("an unlisted repository reads the central list: %v", got)
+	}
+	if p := h.Publisher.OctoSTS; p.URL != "https://octo-sts.dev" || p.TokenFile != "/var/run/secrets/octo-sts/token" || p.Identity != "publisher" {
+		t.Fatalf("publisher defaults %+v", p)
+	}
+	if !h.Enforcing() {
+		t.Fatal("Enforcing with a list")
+	}
+}
+
+// A drill binds the enforced lists: adding a type moves the hash, and a file without any list keeps
+// the hash it had before enforceOutputs existed.
+func TestHashCoversEnforce(t *testing.T) {
+	parse := func(block string) Hardening {
+		t.Helper()
+		c, err := Parse([]byte(good + block))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Hardening
+	}
+	none := parse("hardening: {mode: audit}\n")
+	pr := parse("hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher)
+	two := parse("hardening:\n  mode: audit\n  enforceOutputs: [pr, comment]\n" + enforcePublisher)
+	repo := parse("hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+		"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [pr, labels]}}\n")
+	if none.Hash() == pr.Hash() || pr.Hash() == two.Hash() || pr.Hash() == repo.Hash() {
+		t.Fatal("an enforced type does not move the hash")
+	}
+	if withPublisher := parse("hardening:\n  mode: audit\n" + enforcePublisher); withPublisher.Hash() != none.Hash() {
+		t.Fatal("the publisher alone moves the hash")
+	}
+	// The pre-H2 encoding, written out: an unchanged file keeps its drill.
+	b, _ := json.Marshal(struct {
+		Mode, MinAuthorTrust, Classifier, MaxAge string
+		BlockedUsers, LabelAllowlist             []string
+		Repositories                             map[string]hardening.Mode
+	}{string(none.Mode), none.MinAuthorTrust, string(none.EffectiveClassifier()), none.Drills.MaxAge.String(),
+		none.BlockedUsers, none.LabelAllowlist, none.repositoryModes()})
+	if s := sha256.Sum256(b); hex.EncodeToString(s[:]) != none.Hash() {
+		t.Fatal("a file with no enforceOutputs changed its hash")
+	}
+}
+
+// HR13: an enforced repository whose runs are not cloud-native-ref's XR runs on a token no role
+// policy scopes. The factory starts, and says so.
+func TestUnscopedTokenWarning(t *testing.T) {
+	hr13 := func(ws []string) bool {
+		return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, "HR13") })
+	}
+	block := "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher
+	runs := "runs: {group: maku.ogenki.io}\n"
+	for name, tc := range map[string]struct {
+		file string
+		want bool
+	}{
+		"the XR":                 {good + block, false},
+		"the run controller":     {good + runs + block, true},
+		"nothing enforced there": {good + runs + "hardening: {mode: audit}\n", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if hr13(c.Warnings) != tc.want {
+				t.Fatalf("warnings %q, want HR13 %v", c.Warnings, tc.want)
+			}
+		})
 	}
 }

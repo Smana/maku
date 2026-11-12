@@ -141,6 +141,36 @@ func bridgeEnvOf(p *corev1.Pod) map[string]string {
 
 // Task 7: the harness calls the broker directly, so its room tools reach the bridge bare. With
 // roomToolsURL the bridge is told the server and the read-only set; without, neither.
+// HR14: a run whose claim names safe outputs reaches the output tools through the bridge as
+// room-only appends, and the harness's gh wrapper reads SAFE_OUTPUTS; any other run is today's.
+func TestRunctlReadOnlyTools(t *testing.T) {
+	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict"
+	enforced := run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,pr"}
+	})
+	p := Pod(enforced, withRoomTools(t), testModel, "abcdefgh")
+	if got := bridgeEnvOf(p)["MCP_READ_ONLY_TOOLS"]; got != tools+",room-broker__output_comment,room-broker__output_pr" {
+		t.Fatalf("MCP_READ_ONLY_TOOLS %q", got)
+	}
+	if got := harnessEnv(p)["SAFE_OUTPUTS"]; got != "comment,pr" {
+		t.Fatalf("SAFE_OUTPUTS %q", got)
+	}
+	p = Pod(run("run-abcdefgh"), withRoomTools(t), testModel, "abcdefgh")
+	if got := bridgeEnvOf(p)["MCP_READ_ONLY_TOOLS"]; got != tools {
+		t.Fatalf("not enforced: MCP_READ_ONLY_TOOLS %q", got)
+	}
+	if v, ok := harnessEnv(p)["SAFE_OUTPUTS"]; ok {
+		t.Fatalf("not enforced: SAFE_OUTPUTS=%q", v)
+	}
+	// A type the factory never writes is not served: push stays in the sandbox (H3).
+	pushed := run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "push,pr"}
+	})
+	if got := harnessEnv(Pod(pushed, withRoomTools(t), testModel, "abcdefgh"))["SAFE_OUTPUTS"]; got != "pr" {
+		t.Fatalf("SAFE_OUTPUTS %q", got)
+	}
+}
+
 func TestRoomToolsPassTheBridgesPolicy(t *testing.T) {
 	env := bridgeEnvOf(Pod(run("run-abcdefgh"), withRoomTools(t), testModel, "abcdefgh"))
 	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict"
