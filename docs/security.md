@@ -129,7 +129,13 @@ Residuals of per-run tokens:
 - **A replaced token is not revoked:** a pod may still read it until the kubelet syncs the volume,
   so it lives at most 10 more minutes.
 - **A run that ends while the factory restarts:** its token is not revoked (the new leader holds
-  none in memory) and expires within the hour. Its Secret is deleted.
+  none in memory) and expires within the hour. Its Secret is deleted. Only the leader mints, so a
+  follower never holds a token the leader's could overwrite unrevoked.
+- **The pairing is enforced by the umbrella chart only.** HR13 lets a repository with
+  `enforceOutputs` leave the XR once the factory has `runTokens.perRun`. The factory cannot see the
+  run-controller's `gitTokens`: installed from the standalone `maku` and `maku-factory` charts, a
+  run-controller left on `shared` would mount the shared write token while the factory believes
+  runs are scoped. The umbrella refuses that render; with the standalone charts, set both.
 - **An agent merge (until H3):** the implementer and tester keep `contents: write`, which can merge
   a pull request whose required checks are green, between the gate's `success` and the factory's
   own merge. Closed at H3 under HR12.

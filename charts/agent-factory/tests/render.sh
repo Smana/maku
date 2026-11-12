@@ -201,8 +201,8 @@ done
 msg="$(helm template af . -n maku "${args[@]}" --set clusterDomain=a.test --set maku.clusterDomain=a.test 2>&1 >/dev/null || true)"
 grep -qF 'clusterDomain' <<<"$msg" && grep -qF 'must be equal' <<<"$msg" || { echo "FAIL: a clusterDomain that differs from maku-factory's does not fail" >&2; fail=1; }
 # v4 D10: per-run tokens are two halves, and only the factory may create the runs it mints for
-for half in "--set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=shared" \
-            "--set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=perRun"; do
+for half in "--set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read" \
+            "--set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=perRun --set maku.runController.gitReadSecret="; do
   # shellcheck disable=SC2086 # two --set pairs, split on purpose
   msg="$(helm template af . -n maku "${args[@]}" $half 2>&1 >/dev/null || true)"
   grep -qF 'go together' <<<"$msg" || { echo "FAIL: $half renders: perRun and gitTokens perRun go together" >&2; fail=1; }

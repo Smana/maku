@@ -76,11 +76,25 @@ def _exchange() -> str:
     return new_token
 
 
+def _read(path: str) -> str:
+    with open(path) as f:
+        return f.read().strip()
+
+
 def token() -> str:
     path = _token_file()
+    if path and os.environ.get("GIT_TOKEN_REVOCABLE") != "1":
+        return _read(path)  # a PAT: never revoked, nothing to serialize with
     if path:
-        with open(path) as f:
-            return f.read().strip()
+        # The run's minted token (perRun): read under revoke()'s lock, so a read never
+        # interleaves with the revoke on the way out.
+        lock_fd = os.open(CACHE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            return _read(path)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
     # Serialize concurrent `get`s on the cache file itself: two credential
     # helper invocations racing here must not both exchange and stomp on
     # each other's cache write.

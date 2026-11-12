@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,8 @@ const (
 	RefusedUnboundAPI         = "unbound_api"
 	RefusedRepositoryMismatch = "repository_mismatch"
 	RefusedRoleUnknown        = "role_unknown"
+	// RefusedRoleMismatch is an API run whose claim names another role than admission granted.
+	RefusedRoleMismatch = "role_mismatch"
 )
 
 const (
@@ -75,12 +78,20 @@ type RunTokens struct {
 	Kind  runwatch.Kind
 	// TaskNamespace is the factory's namespace, where its Tasks live.
 	TaskNamespace string
-	// Reserved reports whether the day ledgers hold a reservation under run id (ledger.Holds).
-	Reserved func(ctx context.Context, id string) (bool, error)
+	// Reserved is run id's reservation in the day ledgers (ledger.Held): ok, and the repository and
+	// role admission granted the run. An API run is minted from these, never from its claim alone.
+	Reserved func(ctx context.Context, id string) (repository, role string, ok bool, err error)
+	// Enforced is a repository's live enforced output types: a run created without the
+	// safe-outputs annotation is minted under these, never under the widest token.
+	Enforced func(repository string) []hardening.OutputType
 	Metrics  RefusalMetrics // nil counts nothing
 	Log      *slog.Logger   // nil logs nothing
 	Now      func() time.Time
 	Every    time.Duration // the loop's tick, 30 s when zero
+
+	// leading is set once Start runs, on the elected leader only: a follower never mints (review
+	// M1), so no follower's token is overwritten unrevoked by the leader's.
+	leading atomic.Bool
 
 	mu    sync.Mutex
 	state map[types.UID]*runToken
@@ -94,6 +105,8 @@ type runToken struct {
 	suspended bool
 	refused   string // the refusal logged for this run, so it is logged once
 	deleted   bool   // the terminal run's Secret is gone
+	listed    bool   // a tick listed the claim: absent from a later list, it is gone
+	since     time.Time
 }
 
 // NeedLeaderElection is true: the loop runs on the leader only. Ensure runs anywhere.
@@ -120,6 +133,8 @@ func (t *RunTokens) Start(ctx context.Context) error {
 	if every <= 0 {
 		every = defaultTick
 	}
+	t.leading.Store(true)
+	defer t.leading.Store(false)
 	tk := time.NewTicker(every)
 	defer tk.Stop()
 	for {
@@ -147,10 +162,20 @@ func (t *RunTokens) Tick(ctx context.Context) error {
 		t.Ensure(ctx, &l.Items[i])
 	}
 	// A claim gone altogether took its Secret with it (garbage collection): revoke what we hold.
+	// Only a claim a tick listed before, or one Ensure saw over two ticks ago: Created's claim may
+	// not be in the cache yet (review M2).
+	every := t.Every
+	if every <= 0 {
+		every = defaultTick
+	}
 	t.mu.Lock()
 	var gone []string
 	for uid, s := range t.state {
-		if !seen[uid] {
+		if seen[uid] {
+			s.listed = true
+			continue
+		}
+		if s.listed || t.now().Sub(s.since) > 2*every {
 			if s.value != "" {
 				gone = append(gone, s.value)
 			}
@@ -166,8 +191,12 @@ func (t *RunTokens) Tick(ctx context.Context) error {
 
 // Ensure brings one claim's token Secret to where its run is: minted and fresh while it lives,
 // left alone while Suspended, revoked and deleted once it has ended. A failure leaves the Secret
-// as it was; the next tick tries again.
+// as it was; the next tick tries again. On a follower it does nothing: the leader mints at its
+// next tick (review M1).
 func (t *RunTokens) Ensure(ctx context.Context, claim *unstructured.Unstructured) {
+	if !t.leading.Load() {
+		return
+	}
 	run, ok := runs.FromUnstructured(t.Kind, claim)
 	if !ok {
 		return
@@ -179,7 +208,7 @@ func (t *RunTokens) Ensure(ctx context.Context, claim *unstructured.Unstructured
 	}
 	s := t.state[claim.GetUID()]
 	if s == nil {
-		s = &runToken{}
+		s = &runToken{since: t.now()}
 		t.state[claim.GetUID()] = s
 	}
 	switch {
@@ -206,7 +235,7 @@ func (t *RunTokens) Ensure(ctx context.Context, claim *unstructured.Unstructured
 		return
 	}
 	s.refused = ""
-	tok, err := t.Minter.Mint(ctx, run.Repository, run.Role, enforced(claim))
+	tok, err := t.Minter.Mint(ctx, run.Repository, run.Role, t.enforced(claim, run.Repository))
 	if err != nil {
 		t.log().Warn("run token: mint failed", "run", claim.GetName(), "role", run.Role, "result", Result(err))
 		return
@@ -257,8 +286,15 @@ func (t *RunTokens) bound(ctx context.Context, run runs.Run) string {
 	if run.RequestHash == "" || t.Reserved == nil {
 		return RefusedUnboundAPI
 	}
-	if ok, err := t.Reserved(ctx, run.ID); err != nil || !ok {
+	// The repository and role come from what admission recorded, not from the claim alone.
+	repo, role, ok, err := t.Reserved(ctx, run.ID)
+	switch {
+	case err != nil || !ok || repo == "" || role == "":
 		return RefusedUnboundAPI
+	case !strings.EqualFold(repo, run.Repository):
+		return RefusedRepositoryMismatch
+	case role != run.Role:
+		return RefusedRoleMismatch
 	}
 	return ""
 }
@@ -270,11 +306,16 @@ func (t *RunTokens) table() Table {
 	return Roles
 }
 
-// enforced is the run's own safe-outputs annotation, written at CREATE (HR14): never the live
-// config, so a mid-run publish never widens a token.
-func enforced(claim *unstructured.Unstructured) []hardening.OutputType {
+// enforced is the run's own safe-outputs annotation, written at CREATE (HR14): a mid-run publish
+// never widens a token. A run created without it (nothing was enforced then) mints under the
+// repository's live enforced set, which can only narrow the token (review L4).
+func (t *RunTokens) enforced(claim *unstructured.Unstructured, repo string) []hardening.OutputType {
+	ann, ok := claim.GetAnnotations()[runwatch.SafeOutputsAnnotation]
+	if !ok && t.Enforced != nil {
+		return t.Enforced(repo)
+	}
 	var out []hardening.OutputType
-	for _, v := range strings.Split(claim.GetAnnotations()[runwatch.SafeOutputsAnnotation], ",") {
+	for _, v := range strings.Split(ann, ",") {
 		if v = strings.TrimSpace(v); v != "" {
 			out = append(out, hardening.OutputType(v))
 		}

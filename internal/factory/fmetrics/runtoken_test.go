@@ -21,7 +21,7 @@ func TestRunTokenMintsAndRevokes(t *testing.T) {
 	s.RunTokenRevoke(ctx, "ok")
 	s.RunTokenRevoke(ctx, "error")
 	s.RunTokenRevoke(ctx, "a token's text")
-	for _, r := range []string{"unbound_task", "unbound_api", "repository_mismatch", "role_unknown", "an agent's text"} {
+	for _, r := range []string{"unbound_task", "unbound_api", "repository_mismatch", "role_unknown", "role_mismatch", "an agent's text"} {
 		s.RunTokenRefusal(ctx, r)
 	}
 	body := scrape()
@@ -40,6 +40,7 @@ func TestRunTokenMintsAndRevokes(t *testing.T) {
 		`maku_factory_run_token_refusals_total{reason="unbound_api"} 1`,
 		`maku_factory_run_token_refusals_total{reason="repository_mismatch"} 1`,
 		`maku_factory_run_token_refusals_total{reason="role_unknown"} 1`,
+		`maku_factory_run_token_refusals_total{reason="role_mismatch"} 1`,
 		`maku_factory_run_token_refusals_total{reason="other"} 1`,
 	} {
 		if !strings.Contains(body, want+"\n") {

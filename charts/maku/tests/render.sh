@@ -201,9 +201,10 @@ bad 'broker.tls.secretName is required' --set broker.tls.secretName=
 bad 'runController.gitReadSecret is empty and runController.unsafeSharedGitToken is false' --set runController.gitReadSecret= --set runController.unsafeSharedGitToken=false
 bad 'runController.gitTokens perRun and runController.unsafeSharedGitToken: choose one' --set runController.gitTokens=perRun --set runController.unsafeSharedGitToken=true
 bad 'gitTokens' --set runController.gitTokens=mine
+bad 'runController.gitTokens perRun and runController.gitReadSecret: choose one' --set runController.gitTokens=perRun --set runController.unsafeSharedGitToken=false
 
 # v4 step 3 (D10): gitTokens perRun mounts each run's own Secret; the Role reads Secrets by get alone
-pr="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.gitTokens=perRun)"
+pr="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.gitTokens=perRun --set runController.gitReadSecret=)"
 out="$pr"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitTokens == "perRun" and (has("gitSecret") | not) and (has("gitReadSecret") | not))' 'perRun: the controller config says gitTokens perRun and names no shared Secret'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | (.rules | map(select(.resources | contains(["secrets"])))) | ((length == 1) and ((.[0].verbs | join(",")) == "get") and (.[0] | has("resourceNames") | not))' 'perRun: the run-controller Role gets Secrets with no resourceNames, and nothing else'

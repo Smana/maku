@@ -65,6 +65,7 @@ import (
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
@@ -244,7 +245,7 @@ func runTokens(cfg *config.Config, served func() []string, c client.Client, log 
 // repository and role, from the App cfg.RunTokenApp names, written as the run's own Secret. nil
 // when runTokens.perRun is off: the shared writer, if any, stays (D25). Installations are looked up
 // per repository, so the shared writer's one-owner limit does not apply.
-func perRunTokens(cfg *config.Config, c client.Client, runsCache, ledgers client.Reader, ns string, met *fmetrics.Set, log *slog.Logger) *minter.RunTokens {
+func perRunTokens(cfg *config.Config, current func() *config.Config, c client.Client, runsCache, ledgers client.Reader, ns string, met *fmetrics.Set, log *slog.Logger) *minter.RunTokens {
 	appIDFile, keyFile, ok := cfg.RunTokenApp()
 	if !ok || !cfg.RunTokens.PerRun {
 		return nil
@@ -257,10 +258,12 @@ func perRunTokens(cfg *config.Config, c client.Client, runsCache, ledgers client
 		mt.Metrics, rm = met, met
 	}
 	return &minter.RunTokens{Minter: mt, Client: c, Runs: runsCache, Tasks: c, Kind: cfg.Runs, TaskNamespace: ns,
-		Reserved: func(ctx context.Context, id string) (bool, error) {
-			return ledger.Holds(ctx, ledgers, ns, time.Now(), id)
+		Reserved: func(ctx context.Context, id string) (string, string, bool, error) {
+			r, ok, err := ledger.Held(ctx, ledgers, ns, time.Now(), id)
+			return r.Repository, r.Role, ok, err
 		},
-		Metrics: rm, Log: log, Now: time.Now}
+		Enforced: func(repo string) []hardening.OutputType { return current().Hardening.EnforcedFor(repo) },
+		Metrics:  rm, Log: log, Now: time.Now}
 }
 
 // oneOwner splits the repositories into their one owner and their names: one App installation
@@ -443,7 +446,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return err
 	}
 	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs}
-	perRun := perRunTokens(cfg, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
+	perRun := perRunTokens(cfg, live.Current, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
 	if perRun != nil {
 		rc.Created = perRun.Ensure // the first token, right after the claim exists (plan PR5)
 	}

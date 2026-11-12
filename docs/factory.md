@@ -2046,7 +2046,7 @@ sequenceDiagram
   participant K as runs namespace
   participant C as run-controller
   participant H as harness
-  F->>K: create the AgentRun
+  F->>K: create the AgentRun (the leader mints at once, a follower leaves it to the leader)
   F->>G: installation of owner/repo; a token on repo alone, the role's permissions
   F->>K: apply <run>-git (token, expires-at, owned by the run)
   C->>K: get <run>-git: the factory's? 5 minutes left?
@@ -2060,14 +2060,23 @@ sequenceDiagram
   F->>K: delete <run>-git
 ```
 
+- **Only the leader mints.** The replica that creates a run mints its first token at once when it
+  is the leader; on a follower the leader mints at its next 30-second pass. So no two replicas
+  ever hold a token for one run.
 - **The token** is minted from the App the config names for the run's one repository (its
   installation is looked up per repository, so runs may span owners), with exactly the
-  permissions the role table below gives the run's role under its `safe-outputs` annotation. A
-  reply granting anything else is revoked and refused (`scope_mismatch`).
-- **Only runs the factory accounts for get one:** a run naming a live Task on the same repository,
-  or an API run holding a reservation in today's or yesterday's ledger. Anything else is refused
-  once (`maku_factory_run_token_refusals_total{reason}`: `unbound_task`, `unbound_api`,
-  `repository_mismatch`, `role_unknown`) and its run waits Pending.
+  permissions the role table below gives the run's role under its `safe-outputs` annotation. A run
+  created without that annotation mints under the repository's live enforced set, which can only
+  narrow the token. A reply granting anything else is revoked and refused (`scope_mismatch`).
+- **Only runs the factory accounts for get one:**
+  - a run naming a live Task on the same repository (its role is checked against the table only:
+    a Task drives several roles);
+  - an API run holding a reservation in today's or yesterday's ledger, whose recorded repository
+    and role the claim must match: the minter trusts what admission recorded, not the claim.
+
+  Anything else is refused once (`maku_factory_run_token_refusals_total{reason}`: `unbound_task`,
+  `unbound_api`, `repository_mismatch`, `role_unknown`, `role_mismatch`) and its run waits Pending.
+  A reservation from before this release names no repository: its run is refused `unbound_api`.
 - **The run-controller** starts a pod only on a Secret that is the factory's (its labels and an
   ownerReference to that very run), holds a token, and has over 5 minutes left. Otherwise the run
   waits Pending with reason `SecretMissing` or `SecretExpiring`. A running pod is never stopped for

@@ -63,6 +63,11 @@ type Reservation struct {
 	Person      string `json:"person,omitempty"`
 	Room        string `json:"room,omitempty"`
 	MaxMicroUSD int64  `json:"maxMicroUSD"`
+	// Repository and Role are what the run-request API admitted the run for: the run-token minter
+	// mints an API run's token from these, never from its claim (v4 D10). A Task's runs leave them
+	// empty: their Task binds them.
+	Repository string `json:"repository,omitempty"`
+	Role       string `json:"role,omitempty"`
 }
 
 // Reserve's refusals. Any other error is the ledger unread or unwritten.

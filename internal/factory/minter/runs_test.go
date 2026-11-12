@@ -141,8 +141,18 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	})
 	r.mint = &fakeMint{now: func() time.Time { return r.clock }}
 	r.rt = &RunTokens{Minter: r.mint, Client: r.c, Runs: r.c, Tasks: r.c, Kind: portable, TaskNamespace: "agent-factory",
-		Reserved: func(_ context.Context, id string) (bool, error) { return id == "apiapi22", nil },
+		Reserved: func(_ context.Context, id string) (string, string, bool, error) {
+			switch id {
+			case "apiapi22":
+				return "Smana/demo", "implementer", true, nil
+			case "apiapi44": // a reservation from before the repository and role were recorded
+				return "", "", true, nil
+			}
+			return "", "", false, nil
+		},
+		Enforced: func(string) []hardening.OutputType { return []hardening.OutputType{"comment"} },
 		Metrics:  r.refused, Now: func() time.Time { return r.clock }}
+	r.rt.leading.Store(true)
 	return r
 }
 
@@ -222,6 +232,13 @@ func TestRunTokensBinding(t *testing.T) {
 	}{
 		{"an API run with a reservation", claim("apiapi22", api), ""},
 		{"an API run without one", claim("apiapi33", api), RefusedUnboundAPI},
+		{"an API run on another repository than admitted", claim("apiapi22", api, func(u *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(u.Object, "Smana/other", "spec", "repository")
+		}), RefusedRepositoryMismatch},
+		{"an API run in another role than admitted", claim("apiapi22", api, func(u *unstructured.Unstructured) {
+			_ = unstructured.SetNestedField(u.Object, "tester", "spec", "role")
+		}), RefusedRoleMismatch},
+		{"an API run whose reservation names no repository", claim("apiapi44", api), RefusedUnboundAPI},
 		{"an API run without its request hash", claim("apiapi22", api, func(u *unstructured.Unstructured) { u.SetAnnotations(nil) }), RefusedUnboundAPI},
 		{"a Task on another repository", claim("abcdefgh", task("task-other")), RefusedRepositoryMismatch},
 		{"a terminal Task", claim("abcdefgh", task("task-done")), RefusedUnboundTask},
@@ -328,6 +345,51 @@ func TestRunTokensMintFailure(t *testing.T) {
 	r.tick()
 	if _, ok := r.secret("abcdefgh"); !ok || len(r.mint.mints) != 1 {
 		t.Fatalf("not retried: %q", r.mint.mints)
+	}
+}
+
+// Review M1: only the leader mints. A follower's Created hook does nothing; the leader mints at its
+// next tick, so no follower's token is left unrevoked when the leader overwrites the Secret.
+func TestRunTokensFollowerNeverMints(t *testing.T) {
+	c := claim("abcdefgh")
+	r := newRig(t, c)
+	r.rt.leading.Store(false)
+	r.rt.Ensure(t.Context(), c)
+	if len(r.mint.mints) != 0 || len(r.rt.state) != 0 {
+		t.Fatalf("a follower minted %q, kept %d entries", r.mint.mints, len(r.rt.state))
+	}
+	if _, ok := r.secret("abcdefgh"); ok {
+		t.Fatal("a follower wrote a Secret")
+	}
+}
+
+// Review M2: a token Ensure minted for a claim the cache does not hold yet is not revoked by the
+// next tick; it is once the claim stays absent for two ticks.
+func TestRunTokensPruneWaitsForTheCache(t *testing.T) {
+	c := claim("abcdefgh")
+	r := newRig(t, c)
+	r.rt.Ensure(t.Context(), c)
+	s := runtime.NewScheme()
+	runs.Scheme(s, portable)
+	r.rt.Runs = fake.NewClientBuilder().WithScheme(s).Build() // a cache that has not seen the claim yet
+	r.tick()
+	if len(r.mint.revoked) != 0 {
+		t.Fatalf("a token minted before the cache held its claim was revoked: %q", r.mint.revoked)
+	}
+	r.clock = r.clock.Add(2*defaultTick + time.Second)
+	r.tick()
+	if !slices.Equal(r.mint.revoked, []string{"ghs_b"}) || len(r.rt.state) != 0 {
+		t.Fatalf("a claim absent for two ticks: revoked %q, %d entries", r.mint.revoked, len(r.rt.state))
+	}
+}
+
+// Review L4: a run created without the safe-outputs annotation mints with the repository's live
+// enforced set, never the widest token.
+func TestRunTokensNoAnnotationReadsTheLiveSet(t *testing.T) {
+	r := newRig(t, claim("abcdefgh", func(u *unstructured.Unstructured) { u.SetAnnotations(nil) }))
+	r.tick()
+	if !slices.Equal(r.mint.mints, []string{"Smana/demo implementer comment"}) {
+		t.Fatalf("mints %q", r.mint.mints)
 	}
 }
 

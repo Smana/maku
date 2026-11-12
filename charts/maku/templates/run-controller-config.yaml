@@ -26,6 +26,9 @@ data:
     {{- if $c.unsafeSharedGitToken }}
     {{- fail "runController.gitTokens perRun and runController.unsafeSharedGitToken: choose one" }}
     {{- end }}
+    {{- if $c.gitReadSecret }}
+    {{- fail "runController.gitTokens perRun and runController.gitReadSecret: choose one (set gitReadSecret to \"\"): each run mounts its own Secret, minted for its role" }}
+    {{- end }}
     # Each run mounts its own Secret, <run name>-git, minted by the factory (D10).
     gitTokens: perRun
     {{- else }}

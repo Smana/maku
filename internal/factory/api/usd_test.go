@@ -21,7 +21,7 @@ func TestARunRequestReservesItsMaxTokensAtTheReferenceRate(t *testing.T) {
 	if w := post(s.Handler(), "alice", body); w.Code != http.StatusCreated {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	if r := entry(t, s, "7f3cq2xz"); r != (ledger.Reservation{Principal: "human:291", MaxMicroUSD: 1_700_000}) {
+	if r := entry(t, s, "7f3cq2xz"); r != (ledger.Reservation{Principal: "human:291", MaxMicroUSD: 1_700_000, Repository: "Smana/cloud-native-ref", Role: "implementer"}) {
 		t.Fatalf("%+v, want 1.7 micro-USD a token", r)
 	}
 }
