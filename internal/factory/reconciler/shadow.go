@@ -67,6 +67,9 @@ func (r *Reconciler) shadowPending(ctx context.Context, cfg *config.Config, t *v
 		if wait := time.Duration(1<<rec.ShadowAttempts-1) * time.Minute; r.Now().Before(rec.Finished.Add(wait)) {
 			continue
 		}
+		if _, open, err := r.answersPending(ctx, cfg, t, rec); err != nil || open {
+			continue // H2: the tracer reads the run's writes once the applier has answered (HR19)
+		}
 		err := r.shadowRun(ctx, cfg, t, rec)
 		if err == nil {
 			rec.Shadowed = true
@@ -131,8 +134,31 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 		c.Classifier = &passClassifier{c: c.Classifier, ctx: t5}
 	}
 	slices.SortStableFunc(ws, func(a, b observed) int { return a.at.Compare(b.at) })
+	// H2's tracer: on an enforced repository, a write of an enforced type is the applier's, or it is
+	// untraced. Pushes, and the types not enforced, are shadowed as in H1.
+	enforced := cfg.Hardening.EnforcedFor(t.Spec.Repository)
+	var ledger outputLedger
+	if len(enforced) > 0 {
+		l, err := r.runOutputs(ctx, t, rec)
+		if err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		ledger = l
+	}
 	var n hardening.Counts
 	for _, o := range ws {
+		if o.w.Type != hardening.Push && slices.Contains(enforced, o.w.Type) {
+			if ledger.traces(o) {
+				continue
+			}
+			if err := r.Rooms.Output(ctx, t.Status.RoomRef, rec.ID, envelope.KindOutputShadowed, untracedRecord(rec.ID, o)); err != nil &&
+				!errors.Is(err, rooms.ErrBadMessage) {
+				errs = append(errs, fmt.Errorf("post an untraced %s: %w", o.w.Type, err))
+				continue
+			}
+			r.untraced(ctx, t, rec.ID, o)
+			continue
+		}
 		res := hardening.Shadow(ctx, c, &n, o.w, t.Spec.Issue, canary)
 		out := shadowRecord(rec.ID, res, len(o.w.Payload))
 		err := r.Rooms.Output(ctx, t.Status.RoomRef, rec.ID, envelope.KindOutputShadowed, out)

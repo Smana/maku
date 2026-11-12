@@ -29,6 +29,24 @@ func TestHardeningOutputSeconds(t *testing.T) {
 	}
 }
 
+// H2's tracer: each untraced agent write by repository and output type, the type a closed set.
+func TestHardeningUntracedIsCounted(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/cloud-native-ref")
+	s.HardeningUntraced(ctx, "comment")
+	s.HardeningUntraced(ctx, "an agent's text")
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_untraced_total{repository="Smana/cloud-native-ref",type="comment"} 1`,
+		`maku_factory_hardening_untraced_total{repository="Smana/cloud-native-ref",type="other"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
 // H1's shadow counter (HR3): each output_shadowed record by repository, type, verdict, layer and
 // reason, every label a closed set, so an agent's text can never name a series.
 func TestHardeningShadowIsCounted(t *testing.T) {

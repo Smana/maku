@@ -154,6 +154,7 @@ var (
 type Set struct {
 	hardeningShadow      metric.Int64Counter
 	hardeningOutput      metric.Float64Histogram
+	hardeningUntraced    metric.Int64Counter
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -340,6 +341,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.hardeningOutput, err = meter.Float64Histogram("agent_factory_hardening_output_seconds",
 		metric.WithDescription("From a run's output_requested to the factory's answer, by repository and output type (hardening H2, AC7: p95 at most 2 s per non-push output)."),
 		metric.WithExplicitBucketBoundaries(outputBuckets...))
+	check(err)
+	s.hardeningUntraced, err = meter.Int64Counter("agent_factory_hardening_untraced_total",
+		metric.WithDescription("Agent writes of an enforced output type that no output_applied explains (hardening H2's tracer, H2-2's gate: stays 0), by repository and output type."))
 	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
@@ -927,6 +931,12 @@ func (s *Set) HardeningShadow(ctx context.Context, typ, verdict, layer, reason s
 func (s *Set) PrincipalShadow(ctx context.Context, principal string) {
 	s.revocations.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", "budget-principal-shadow"),
 		attribute.String("principal", boundPrincipal(principal))))
+}
+
+// HardeningUntraced counts one agents-App write of an enforced type the tracer matched to no
+// output_applied (H2), under the repository ctx names. A type outside the vocabulary reads other.
+func (s *Set) HardeningUntraced(ctx context.Context, typ string) {
+	s.hardeningUntraced.Add(ctx, 1, metric.WithAttributes(attribute.String("type", oneOf(typ, shadowTypes[1:])), s.repoOf(ctx)))
 }
 
 // HardeningOutput records how long one safe output waited for the factory's answer (H2, HR15,

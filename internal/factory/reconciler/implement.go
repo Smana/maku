@@ -696,6 +696,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		return nil
 	}
 	if run.Role == "implementer" {
+		if wait, err := r.awaitOutputs(ctx, cfg, t, run); err != nil || wait { // H2: the applier's answers first (HR19)
+			return err
+		}
 		r.shadowPending(ctx, cfg, t) // H1: the run's writes, before its outcome (audit only)
 	}
 	if reason == "pod_lost" {
