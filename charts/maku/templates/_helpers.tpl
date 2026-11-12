@@ -38,9 +38,26 @@ readOnlyRootFilesystem: true
 capabilities: {drop: [ALL]}
 {{- end -}}
 
+{{/* The run pod's sandbox, resolved from sandbox.* and the run-controller's older keys (plan PR8), as
+JSON: {"class": <RuntimeClass name, "" for none>, "allowUnsandboxed": <bool>}. Read it with
+`include "ap.sandbox" . | fromJson`. */}}
+{{- define "ap.sandbox" -}}
+{{- $s := .Values.sandbox | default dict -}}
+{{- $c := .Values.runController -}}
+{{- if and $s.unsafeAllowRunc $s.runtimeClassName -}}
+{{- fail "sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one" -}}
+{{- end -}}
+{{- $class := "" -}}
+{{- if not $s.unsafeAllowRunc -}}
+{{- $class = $s.runtimeClassName | default $c.runtimeClassName | default "" -}}
+{{- end -}}
+{{- dict "class" $class "allowUnsandboxed" (or ($s.unsafeAllowRunc | default false) ($c.allowUnsandboxed | default false)) | toJson -}}
+{{- end -}}
+
 {{/* A misconfiguration is a helm error, not a crashloop. */}}
 {{- define "ap.validate" -}}
 {{- $b := .Values.broker -}}
+{{- $_ := include "ap.sandbox" . -}}
 {{- if hasKey .Values "factory" -}}
 {{- fail "factory: this chart has no factory: install charts/maku-factory on its own" -}}
 {{- end -}}

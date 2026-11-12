@@ -123,6 +123,24 @@ runController:
   # Replaces the built-in profiles (github, pypi, npm, golang, crates) when set.
   egressProfiles: {}
 
+# The run pod's sandbox (D18). These keys are the spec's; the run-controller's older keys stay
+# honoured until rollout step 8 deletes them:
+#
+#   | key                       | old key, still honoured           | rule                                   |
+#   |---------------------------|-----------------------------------|----------------------------------------|
+#   | sandbox.runtimeClassName  | runController.runtimeClassName    | the new key wins when set; else the old |
+#   |   (default "")            |   (default gvisor)                |                                        |
+#   | sandbox.unsafeAllowRunc   | runController.allowUnsandboxed    | true: no RuntimeClass, allowUnsandboxed;|
+#   |                           |                                   | with sandbox.runtimeClassName it fails |
+#   | (none)                    | runController.createRuntimeClass, | unchanged; renders the class under the |
+#   |                           |   runtimeHandler                  | resolved name                          |
+#
+# unsafeAllowRunc runs agents on the node's own runtime (runc): for the demo and kind only. Every
+# signed-in human sees it on the install banner (GET /api/install).
+sandbox:
+  runtimeClassName: ""
+  unsafeAllowRunc: false
+
 # CI only: images `kind load`ed have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false

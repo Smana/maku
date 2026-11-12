@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "maku values",
+  "description": "Strict for the blocks rollout step 2 adds; every older key is free until its own step (step 1's PR4).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "sandbox": {
+      "description": "The run pod's sandbox (D18). The old runController.runtimeClassName and allowUnsandboxed keys stay honoured.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtimeClassName": {
+          "description": "The sandbox RuntimeClass. Empty: runController.runtimeClassName (gvisor).",
+          "type": "string",
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "unsafeAllowRunc": {
+          "description": "Run agents with no RuntimeClass (runc). The demo and kind only; shown on the install banner.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

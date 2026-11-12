@@ -93,6 +93,11 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set 'apiServerPorts={6443}' --set clusterDomain=corp.local)
 p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
+# D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
+# step 2: no new object, no new key. Regenerate only for a change meant to reach that install:
+# UPDATE_GOLDEN=1 bash charts/maku/tests/render.sh, then review the diff.
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then printf '%s\n' "$p" >tests/golden/xr.yaml; fi
+printf '%s\n' "$p" | diff -u tests/golden/xr.yaml - >&2 || { echo "FAIL: the XR render (runController.enabled=false) differs from tests/golden/xr.yaml" >&2; fail=1; }
 ynone 'select(.kind=="ClusterRoleBinding")' 'jwks mode binds no auth-delegator'
 ynone 'select(.kind=="RuntimeClass")' 'production renders no RuntimeClass: the cluster-scoped gvisor may already exist'
 ynone 'select(.kind=="Deployment") | .spec.template.spec.initContainers | select(. != null)' 'no owner Secret, no migrate'
@@ -249,6 +254,20 @@ si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCont
   --set broker.human.slackIntents.url=http://gw.ai.svc:8080/v1 --set broker.human.slackIntents.apiKeyFile=/etc/classifier/key)"
 out="$si"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
+
+# sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
+# is the old one, byte for byte (runtimeClassName: gvisor).
+rcconf() { yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$1"; }
+rcconf "$q" | diff -u tests/golden/rc-quickstart.yaml - >&2 || { echo 'FAIL: with no sandbox key the controller config must be the one before step 2 (tests/golden/rc-quickstart.yaml)' >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.runtimeClassName == "kata" and .allowUnsandboxed == false)' 'sandbox.runtimeClassName wins over runController.runtimeClassName'
+ykind RuntimeClass '(.metadata.name == "kata" and .handler == "runsc")' 'createRuntimeClass renders the class under sandbox.runtimeClassName'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (has("runtimeClassName") == false and .allowUnsandboxed == true)' 'sandbox.unsafeAllowRunc: no runtimeClassName, allowUnsandboxed'
+ynone 'select(.kind == "RuntimeClass")' 'sandbox.unsafeAllowRunc renders no RuntimeClass'
+bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName=kata
+bad "at '/sandbox/unsafeAllowRunc': got string, want boolean" --set-string sandbox.unsafeAllowRunc=yes
+bad 'additional properties' --set sandbox.runtimeClass=kata
 
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
