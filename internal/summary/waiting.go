@@ -214,6 +214,8 @@ func reasons() map[string]string {
 		"parent_not_split":          "its parent task is no longer waiting on its parts",
 		"parent_missing":            "its parent task no longer exists",
 		"no_pr":                     "the agent opened no pull request",
+		"committed_no_pr":           "the agent committed but never pushed, so its work was lost with the sandbox and no pull request was opened",
+		"pushed_no_pr":              "the agent pushed its branch but opened no pull request",
 		"scope_changed":             "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
 		"loop_unsupported":          "the cluster does not support the loop policy or repository checks yet, so no run started",
 	}
