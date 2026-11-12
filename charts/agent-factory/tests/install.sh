@@ -84,7 +84,9 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true
   --set maku.broker.image.tag=$TAG --set maku.runController.image.tag=$TAG --set maku-factory.image.tag=$TAG
   --set maku.runController.images.harness.tag="$harness" --set maku.runController.images.bridge.tag="$bridge"
-  --set maku-factory.replicas=1)
+  --set maku-factory.replicas=1
+  # the NetworkPolicy probe below runs PROBE_IMAGE in agents: the run-pod policy must allow it
+  --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
   helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m &&
@@ -168,10 +170,26 @@ kubectl -n "$NS" get networkpolicy rooms-db agent-factory-api
 # probe NAMESPACE LABELS: a short-lived pod connects to rooms-db:5432. Returns 0 when nc connected and
 # 1 when nc itself failed (refused or timed out); a kubectl or image-pull failure, where the pod never
 # printed its marker, dies instead of passing as "cannot reach".
+# The pod passes the run-pod policy (charts/maku/templates/run-pod-policy.yaml): restricted, with
+# limits (the runs quota needs them too), its image allow-listed through runPodPolicy.extraImages, and
+# created in agents as the run-controller (impersonated): only it creates pods there.
+probe_pod() { # probe_pod NAME LABELS
+  local labels
+  labels=$(tr ',' '\n' <<<"$2" | sed -E 's/^([^=]+)=(.*)$/"\1": "\2"/' | paste -sd, -)
+  cat <<JSON
+{"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "$1", "labels": {$labels}},
+ "spec": {"restartPolicy": "Never", "automountServiceAccountToken": false,
+  "securityContext": {"runAsNonRoot": true, "runAsUser": 65534, "seccompProfile": {"type": "RuntimeDefault"}},
+  "containers": [{"name": "probe", "image": "$PROBE_IMAGE",
+   "command": ["sh", "-c", "echo np-probe-started; nc -z -w 5 rooms-db.$NS.svc 5432"],
+   "resources": {"requests": {"cpu": "10m", "memory": "16Mi"}, "limits": {"cpu": "100m", "memory": "32Mi"}},
+   "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}}}]}}
+JSON
+}
 probe() {
-  local pod="np-probe-$RANDOM" out phase="" rc=0 _
-  kubectl -n "$1" run "$pod" --image="$PROBE_IMAGE" --restart=Never --labels="$2" \
-    --command -- sh -c "echo np-probe-started; nc -z -w 5 rooms-db.$NS.svc 5432" >/dev/null || die "kubectl could not create the probe pod in $1"
+  local pod="np-probe-$RANDOM" out phase="" rc=0 _ as=()
+  [[ $1 != agents ]] || as=(--as "system:serviceaccount:$NS:run-controller")
+  probe_pod "$pod" "$2" | kubectl -n "$1" create "${as[@]}" -f - >/dev/null || die "kubectl could not create the probe pod in $1"
   for _ in $(seq 60); do
     phase=$(kubectl -n "$1" get pod "$pod" -o jsonpath='{.status.phase}') || phase=""
     [[ $phase == Succeeded || $phase == Failed ]] && break
@@ -204,6 +222,14 @@ else
   echo "ok: a run-labelled pod in agents cannot reach rooms-db:5432 ($CLUSTER_KIND enforces NetworkPolicy)"
 fi
 kubectl get pods -A -o name | grep -F np-probe- && die "a probe pod was left behind"
+
+step "the runs namespace: its ResourceQuota, and the run-pod policy refuses a pod nobody but the run-controller made"
+kubectl -n agents get resourcequota runs >/dev/null || die "the ResourceQuota runs is missing from agents"
+kubectl get validatingadmissionpolicy "maku-$NS-run-pods" >/dev/null || die "the run-pod policy is missing"
+refused=$(probe_pod np-refused app.kubernetes.io/name=np-refused | kubectl -n agents create -f - 2>&1) &&
+  die "an admin's pod in agents was admitted: $refused"
+grep -qF "only the run-controller" <<<"$refused" || die "an admin's pod in agents was refused, but not by the run-pod policy: $refused"
+echo "ok: the quota is present and the run-pod policy refuses an admin's pod in agents"
 # Not asserted here: the factory's ops port (9090, probes) stays open. The factory crash-loops on the
 # dummy GitHub App, so nothing serves 9090 and a live check could not pass; render.sh asserts the rule.
 

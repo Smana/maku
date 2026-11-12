@@ -159,6 +159,17 @@ runsQuota:
     limits.cpu: "32"
     limits.memory: 64Gi
 
+# A ValidatingAdmissionPolicy holds the run pod's shape in runs.namespace (D17), Kubernetes 1.30+:
+# only the run-controller creates pods there; each runs under the sandbox RuntimeClass (unless
+# sandbox.unsafeAllowRunc), with a restricted securityContext, emptyDir/configMap/secret/projected
+# volumes only (no hostPath), CPU and memory limits on every container, and images from
+# runController.images, runController.image and extraImages (repositories, without tag or digest),
+# by digest unless e2e.unpinnedImages. No ephemeral container (kubectl debug) is accepted. Rendered
+# only with runController.enabled.
+runPodPolicy:
+  enabled: true
+  extraImages: []
+
 # CI only: images `kind load`ed have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false

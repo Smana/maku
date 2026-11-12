@@ -163,11 +163,11 @@ ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[
 # the AgentRun admission policy (S-2, D4): the broker's updates may touch the suspend annotations only.
 # CEL is proven in charts/maku/tests/admission (envtest); here, its shape and binding.
 out="$q"
-ykind ValidatingAdmissionPolicy '(.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules[0] | (.apiGroups[0] == "maku.ogenki.io" and (.operations | join(",")) == "UPDATE" and (.resources | join(",")) == "agentruns")))' 'the policy holds every AgentRun update, failing closed'
-ykind ValidatingAdmissionPolicy '.spec.matchConditions[0].expression | test("^request.userInfo.username == .system:serviceaccount:maku:room-broker.$")' "the policy applies to the broker's ServiceAccount only"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | (.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules[0] | (.apiGroups[0] == "maku.ogenki.io" and (.operations | join(",")) == "UPDATE" and (.resources | join(",")) == "agentruns")))' 'the policy holds every AgentRun update, failing closed'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | .spec.matchConditions[0].expression | test("^request.userInfo.username == .system:serviceaccount:maku:room-broker.$")' "the policy applies to the broker's ServiceAccount only"
 KEYS="['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']" \
-  ykind ValidatingAdmissionPolicy '.spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
-ykind ValidatingAdmissionPolicyBinding '(.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
+  ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | .spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name == "room-broker-maku-agentruns") | (.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
 out="$p"
 ykind ValidatingAdmissionPolicy '(.metadata.name == "room-broker-agent-system-agentruns" and .spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io")' "the policy follows runs.group and the release namespace"
 
@@ -289,6 +289,26 @@ out="$p"
 ynone 'select(.kind == "ResourceQuota")' 'runController.enabled=false renders no ResourceQuota'
 bad "at '/runsQuota/enabled': got string, want boolean" --set-string runsQuota.enabled=yes
 bad 'additional properties' --set runsQuota.hard.services=1
+
+# runPodPolicy (D17): its CEL is proven in charts/maku/tests/admission (envtest); here, its shape,
+# its binding, and what the values put in it.
+vap() { yq 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-maku-run-pods")' - <<<"$1"; }
+out="$q"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules | map(.resources | join(",")) | join(";")) == "pods;pods/ephemeralcontainers")' 'the run-pod policy matches pods and pods/ephemeralcontainers, failing closed'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression) == "['"'"'ghcr.io/smana/maku-harness'"'"', '"'"'ghcr.io/smana/maku-bridge'"'"', '"'"'ghcr.io/smana/maku-run-controller'"'"']"' 'the image allow-list is the run-controller'"'"'s three repositories'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "pinned") | .expression) == "true"' 'images are pinned by default'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.message == "a run pod runs under RuntimeClass \"gvisor\" (sandbox.runtimeClassName)")) | length) == 1' 'the policy holds the resolved RuntimeClass'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.expression | test("system:serviceaccount:maku:run-controller"))) | length) == 1' 'only the run-controller of this release creates run pods'
+ykind ValidatingAdmissionPolicyBinding 'select(.spec.policyName == "maku-maku-run-pods") | (.metadata.name == "maku-maku-run-pods" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the run-pod binding denies, in the runs namespace'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false --set 'runPodPolicy.extraImages={docker.io/library/busybox}' --set e2e.unpinnedImages=true)"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.message | test("RuntimeClass"))) | length) == 0' 'unsafeAllowRunc: the policy holds no RuntimeClass rule'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression | test("'"'"'docker.io/library/busybox'"'"'\]$"))' 'runPodPolicy.extraImages joins the allow-list'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "pinned") | .expression) == "false"' 'e2e.unpinnedImages lifts the digest rule'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runPodPolicy.enabled=false)"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-maku-run-pods")' 'runPodPolicy.enabled=false renders no run-pod policy'
+out="$p"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-agent-system-run-pods")' 'runController.enabled=false renders no run-pod policy'
+bad "at '/runPodPolicy/extraImages/0': 'not' failed" --set 'runPodPolicy.extraImages={busybox:1.37}'
 
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT

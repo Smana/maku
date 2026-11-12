@@ -39,6 +39,19 @@
           }
         }
       }
+    },
+    "runPodPolicy": {
+      "description": "The run pod's ValidatingAdmissionPolicy (D17).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "extraImages": {
+          "description": "More image repositories a run pod may use, without tag or digest.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9._/:]*[a-z0-9])?$", "not": {"pattern": "(@|:[^/]*$)"}}
+        }
+      }
     }
   },
   "definitions": {
