@@ -1,0 +1,36 @@
+{{- if and .Values.enabled (eq .Values.identity.jwks.source "apiserver") }}
+# identity.jwks.source apiserver (GW4): the issuer's keys from the in-cluster apiserver, for clusters
+# whose issuer is not reachable from outside (kind, k3d, kubeadm). The controller fetches them (the
+# proxies receive the keyset over xDS) and verifies the apiserver with kube-root-ca.crt, which every
+# namespace holds.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: {{ .Values.name }}-jwks
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+spec:
+  static:
+    host: kubernetes.default.svc.{{ .Values.clusterDomain }}
+    port: 443
+  policies:
+    tls:
+      caCertificateRefs:
+        - name: kube-root-ca.crt
+---
+# The controller's JWKS fetch carries no credential (probe P1: 403 without this binding), so OIDC
+# discovery must be open to anonymous requests: Kubernetes' documented setting, which exposes the
+# issuer's public keys only. The apiserver must also admit anonymous requests (k3s: anonymous-auth=true).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.name }}-{{ .Release.Namespace }}-oidc-discovery
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:service-account-issuer-discovery
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:unauthenticated
+{{- end }}

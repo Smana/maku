@@ -22,7 +22,7 @@ rejects() {
 }
 # ykind KIND 'expr' 'message': every KIND document's expr is true, and there is at least one.
 ykind() {
-  yq ea -e "[select(.kind == \"$1\") | $2] | (length > 0 and all)" - <<<"$out" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
+  yq ea -e "[select(.kind == \"$1\") | ($2)] | (length > 0 and all)" - <<<"$out" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
 }
 # yone 'expr' 'message': the query over every document yields exactly one true.
 yeq() {
@@ -69,6 +69,51 @@ diff -u tests/golden/minimal.yaml - <<<"$out" >&2 || { echo "FAIL: the minimal r
 yeq '[select(.kind == "Secret")] | length' 0 'the chart renders no Secret'
 out="$(render "${cnref[@]}")"
 yeq '[select(.kind == "Secret")] | length' 0 'the cnref-like values render no Secret'
+
+# ---- Task 3: the Gateway, its parameters and the identity policies (GW3, GW4, GW8)
+out="$(render "${minimal[@]}" --set runs.namespace=runs-x --set runs.namePrefix=r.n-)"
+pol() { echo "select(.kind == \"AgentgatewayPolicy\" and .metadata.name == \"model-gateway-$1\")"; }
+ykind Gateway '(.metadata.name == "model-gateway") and (.spec.gatewayClassName == "agentgateway")' 'the Gateway model-gateway on class agentgateway'
+yeq 'select(.kind == "Gateway") | [.spec.listeners[] | .name + ":" + (.port | tostring)] | join(",")' 'public:8080,internal:8081,clients:8082' 'three listeners'
+yeq 'select(.kind == "Gateway") | [.spec.listeners[] | .allowedRoutes.namespaces.from] | unique | join(",")' 'Same' 'routes from the release namespace only'
+yeq 'select(.kind == "Gateway") | .spec.infrastructure.parametersRef.name' 'model-gateway' 'the Gateway names its parameters'
+ykind AgentgatewayParameters '(.spec.image.digest == "sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c") and (.spec.image.tag == "v1.6.0")' 'the proxy image by digest'
+ykind AgentgatewayParameters '(.spec.deployment.spec.template.spec.securityContext.seccompProfile.type == "RuntimeDefault") and (.spec.deployment.spec.template.spec.containers[0].livenessProbe.httpGet.port == 15021)' 'seccomp and the liveness probe'
+ykind AgentgatewayParameters '(.spec.shutdown.min == 10) and (.spec.shutdown.max == 660) and (.spec.service.spec.type == "ClusterIP") and (.spec.podDisruptionBudget.spec.minAvailable == 1)' 'shutdown window, ClusterIP, PDB'
+ykind AgentgatewayParameters '(.spec.resources.limits.memory == "1Gi") and (.spec.deployment.spec.replicas == 2)' 'limits and two replicas'
+ykind AgentgatewayParameters '(.spec.deployment.spec.template.spec.topologySpreadConstraints | map(.topologyKey) | join(",")) == "topology.kubernetes.io/zone,kubernetes.io/hostname"' 'zone and host spread'
+ykind AgentgatewayParameters '.spec.modelCatalog.sources[0].configMap.name == "model-gateway-model-catalog"' 'the catalog source'
+for l in public internal; do
+  yeq "$(pol "listener-$l") | .spec.traffic.authorization.policy.matchExpressions | join(\" && \")" \
+    "jwt.sub.matches(\"^system:serviceaccount:runs-x:r\\\\.n-[a-z2-7]{8}\$\") && jwt.aud.exists(a, a.startsWith(\"maku-gateway.$l.\"))" \
+    "listener-$l requires the run sub (QuoteMeta'd) and its audience prefix"
+  yeq "$(pol "listener-$l") | .spec.targetRefs[0].sectionName" "$l" "listener-$l targets its listener"
+  yeq "$(pol "listener-$l") | .spec.traffic.timeouts.request" 600s "listener-$l: the runs' 600s timeout"
+done
+yeq "$(pol listener-clients) | .spec.traffic.authorization.policy.matchExpressions | join(\" && \")" \
+  'jwt.sub == "system:serviceaccount:maku:room-broker" && jwt.aud.exists(a, a.startsWith("maku-gateway.client."))' 'the clients listener requires the broker sub'
+yeq "$(pol listener-clients) | .spec.traffic.timeouts.request" 60s 'the clients 60s timeout'
+yeq "[select(.kind == \"AgentgatewayPolicy\") | .spec.traffic.jwtAuthentication | select(. != null)] | length" 3 'three listeners verify a token'
+yeq "[select(.kind == \"AgentgatewayPolicy\") | .spec.traffic.jwtAuthentication | select(. != null) | select(.preserveToken == true)] | length" 0 'no listener preserves the token'
+yeq "[select(.kind == \"AgentgatewayPolicy\") | .spec.traffic.jwtAuthentication | select(. != null) | .mode + \" \" + (.providers[0].validation.requiredClaims | join(\",\")) + \" \" + .providers[0].jwks.remote.url] | unique | join(\";\")" \
+  'Strict exp,sub https://issuer.example.test/openid/v1/jwks' 'strict, exp and sub required, the JWKS URL'
+yeq "[select(.kind == \"AgentgatewayPolicy\") | .spec.traffic.transformation.request.set[]? | select(.name == \"x-ar-agent\") | .value] | unique | join(\",\")" 'jwt.sub' 'x-ar-agent is the verified sub'
+yeq "$(pol frontend) | [.spec.frontend.metrics.attributes.add[] | .name + \"=\" + .expression] | join(\",\")" 'ar_agent=jwt.sub' 'metrics labelled ar_agent'
+yeq "$(pol frontend) | [.spec.frontend.accessLog.attributes.add[] | .name + \"=\" + .expression] | join(\",\")" 'x_ar_agent=jwt.sub,cost=flatten(llm.cost)' 'the access log carries x_ar_agent and cost'
+yeq "$(pol frontend) | .spec.frontend.http.maxBufferSize" 8Mi 'the 8Mi buffer'
+yeq "$(pol strip-identity-headers) | .spec.traffic.phase + \" \" + (.spec.traffic.transformation.request.remove | join(\",\"))" \
+  'PreRouting x-ar-agent,x-ar-human,x-ai-gateway-client-id,agent-session-id' 'the identity headers are stripped before routing'
+yeq '[select(.kind == "ClusterRoleBinding")] | length' 0 'source url renders no discovery binding'
+out="$(render "${minimal[@]}" --set identity.jwks.source=apiserver --set identity.jwks.allowAnonymousDiscovery=true --set clusterDomain=k.test)"
+yeq "$(pol listener-public) | .spec.traffic.jwtAuthentication.providers[0].jwks.remote | .backendRef.kind + \"/\" + .backendRef.name + \" \" + .jwksPath" \
+  'AgentgatewayBackend/model-gateway-jwks openid/v1/jwks' 'source apiserver reads the JWKS through a backend'
+ykind AgentgatewayBackend 'select(.metadata.name == "model-gateway-jwks") | ((.spec.static.host == "kubernetes.default.svc.k.test") and (.spec.static.port == 443) and (.spec.policies.tls.caCertificateRefs[0].name == "kube-root-ca.crt"))' 'the apiserver backend, verified with kube-root-ca.crt'
+ykind ClusterRoleBinding '(.roleRef.name == "system:service-account-issuer-discovery") and (.subjects[0].name == "system:unauthenticated")' 'the anonymous discovery binding'
+rejects 'source apiserver without the binding' 'identity.jwks.source apiserver needs identity.jwks.allowAnonymousDiscovery: true' "${minimal[@]}" --set identity.jwks.source=apiserver
+rejects 'source url without a url' 'identity.jwks.url is required' "${minimal[@]}" --set identity.jwks.url=
+rejects 'an image without a digest' 'image.digest is required' "${minimal[@]}" --set image.digest=
+out="$(render "${minimal[@]}" --set replicas=1)"
+yeq '[select(.kind == "AgentgatewayParameters") | .spec.podDisruptionBudget] | map(select(. != null)) | length' 0 'one replica: no PDB (it would block every drain)'
 
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"
