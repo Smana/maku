@@ -7,3 +7,11 @@ version: 0.0.0
 appVersion: "0.0.0"
 # The support floor (D26): the ValidatingAdmissionPolicies need 1.30.
 kubeVersion: ">=1.30.0-0"
+dependencies:
+  # agentgateway's CRDs (AgentgatewayBackend, AgentgatewayPolicy, AgentgatewayParameters,
+  # AgentgatewayModel), for the umbrella's model gateway: off by default, installed first because
+  # CRDs are. Pinned by exact version; `task chart:deps` checks its archive against dependencies.sha256.
+  - name: agentgateway-crds
+    version: v1.6.0
+    repository: oci://cr.agentgateway.dev/charts
+    condition: agentgateway-crds.enabled

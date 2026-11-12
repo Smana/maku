@@ -176,5 +176,27 @@ yeq "$(be stub-tier-light) | ([.spec.policies.ai.transformations[] | .field + \"
 rejects 'one provider, one alias, two models across listeners' 'one provider serves one model per alias' \
   "${minimal[@]}" --set 'providers.stub.dataClasses={public,internal}' --set aliases.internal.tier-light.provider=stub --set aliases.internal.tier-light.model=other
 
+# ---- Task 5: the proxy's network (GW13)
+out="$(render "${cnref[@]}")"
+np='select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway")'
+yeq "$np | .spec.podSelector.matchLabels.\"gateway.networking.k8s.io/gateway-name\" + \" \" + (.spec.policyTypes | join(\",\"))" 'model-gateway Ingress,Egress' 'default deny on the proxy pods'
+yeq "$np | .spec.ingress[0] | .from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" + \" \" + .from[0].podSelector.matchExpressions[0].key + \" \" + ([.ports[].port] | join(\",\"))" \
+  'agents agents.ogenki.io/run-id 8080,8081' 'run pods reach public and internal'
+yeq "$np | .spec.ingress[1] | .from[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" + \" \" + .from[0].podSelector.matchLabels.\"app.kubernetes.io/name\" + \" \" + ([.ports[].port] | join(\",\"))" \
+  'maku room-broker 8082' 'the broker reaches clients'
+yeq "$np | .spec.ingress | length" 2 'no metrics scraper unless metrics.allowFrom'
+yeq "$np | [.spec.egress[] | select(.to[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"kube-system\") | .ports[].port] | join(\",\")" '53,53' 'DNS'
+yeq "$np | [.spec.egress[] | select(.to[0].podSelector.matchLabels.\"app.kubernetes.io/name\" == \"agentgateway\") | .to[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" + \":\" + (.ports[0].port | tostring)] | join(\",\")" 'maku:9978' "the controller's xDS"
+yeq "$np | [.spec.egress[] | select(.to[0].ipBlock.cidr == \"0.0.0.0/0\") | (.to[0].ipBlock.except | join(\",\")) + \" \" + (.ports[0].port | tostring)] | unique | join(\";\")" \
+  '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,169.254.0.0/16 443' "providers on 443, never the cluster's own ranges"
+out="$(render "${minimal[@]}" --set 'metrics.allowFrom[0].namespaceSelector.matchLabels.team=obs')"
+yeq "$np | .spec.ingress[2].from[0].namespaceSelector.matchLabels.team + \" \" + (.spec.ingress[2].ports[0].port | tostring)" 'obs 15020' 'metrics.allowFrom on 15020'
+yeq "$np | [.spec.egress[] | select(.to[0].namespaceSelector.matchLabels.\"kubernetes.io/metadata.name\" == \"models\") | .ports[0].port] | join(\",\")" '8080' "an in-cluster provider's peers, on its port"
+out="$(render "${minimal[@]}" --set networkPolicy.mode=none)"
+yeq '[select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy")] | length' 0 'mode none: no policy'
+out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium)"
+yeq '[select(.kind == "NetworkPolicy")] | length' 0 'mode cilium: no NetworkPolicy'
+yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | .toFQDNs[]?.matchName] | sort | join(\",\")" 'api.anthropic.com,api.kimi.ai,api.mistral.ai,api.z.ai' "mode cilium: every provider's host by FQDN"
+
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"

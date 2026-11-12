@@ -60,6 +60,30 @@ on: the factory merges nothing on its own, and a maintainer's approval of the cu
 merge (the merger merges that head, as a human merge with no automatic revert). With it off, the room
 shows the approval (`maintainer_approved`) and a maintainer merges on GitHub.
 
+## The model gateway
+
+Two optional subcharts, both off by default, put agentgateway in front of the models
+([docs/gateway.md](../../docs/gateway.md)):
+
+- `maku-gateway.enabled: true` renders the Gateway `model-gateway`, its identity policies, one backend
+  and one route per model alias, the price catalog and the proxy's NetworkPolicy. Its `runs` must equal
+  `maku.runs`, and its `broker.serviceAccount` must be `room-broker`: the render fails otherwise.
+- `agentgateway.enabled: true` installs the upstream controller, v1.6.0 by digest, restricted, with
+  limits. Leave it off where the cluster already runs one.
+
+Their CRDs come first, with the CRD chart, and Gateway API's standard CRDs (v1.2 or later) are a
+cluster prerequisite:
+
+```bash
+helm install af-crds charts/agent-factory-crds -n maku --create-namespace --set agentgateway-crds.enabled=true
+helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml -f values-mine.yaml \
+  --set agentgateway.enabled=true -f my-gateway-values.yaml
+```
+
+Nothing calls the gateway yet: runs keep `agent-model` and the planner keeps its URL until the
+run-controller's and the broker's gateway modes arrive. `task chart:gateway:k3d` proves the gateway on
+k3d. The upstream archives are pinned by `dependencies.sha256`, which `task chart:deps` checks.
+
 ## Spec-intake k3d test
 
 `task chart:intake:k3d` (Docker with buildx, k3d, Helm, kubectl, Go, OpenSSL, curl and jq) builds the

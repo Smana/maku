@@ -63,7 +63,8 @@
       "additionalProperties": false,
       "properties": {
         "serviceAccount": {"$ref": "#/definitions/dnsLabel"},
-        "namespace": {"type": "string"}
+        "namespace": {"type": "string"},
+        "podLabels": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}
       }
     },
     "providers": {

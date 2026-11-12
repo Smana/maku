@@ -18,6 +18,10 @@ helm install af-crds oci://ghcr.io/smana/charts/agent-factory-crds --version <ve
 Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
 needs `--kube-version 1.30.0` or later.
 
+`agentgateway-crds.enabled: true` (default false) adds agentgateway v1.6.0's four CRDs, from its
+upstream chart, for the umbrella's model gateway ([docs/gateway.md](../../docs/gateway.md)). Leave it off
+where the cluster already runs agentgateway. Gateway API's standard CRDs stay a cluster prerequisite.
+
 ## With the umbrella
 
 The `agent-factory` umbrella's subcharts keep their own `crds/` until rollout step 8. Once this

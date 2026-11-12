@@ -14,5 +14,16 @@ dependencies:
     version: 0.0.0
     repository: file://../maku-factory
     condition: maku-factory.enabled
+  # The model gateway (D7): Maku's objects on an agentgateway controller, off by default.
+  - name: maku-gateway
+    version: 0.0.0
+    repository: file://../maku-gateway
+    condition: maku-gateway.enabled
+  # The upstream controller, off by default and where the cluster already runs one. Pinned by exact
+  # version; `task chart:deps` checks its archive against dependencies.sha256.
+  - name: agentgateway
+    version: v1.6.0
+    repository: oci://cr.agentgateway.dev/charts
+    condition: agentgateway.enabled
 # The support floor (D26): the ValidatingAdmissionPolicies need 1.30.
 kubeVersion: ">=1.30.0-0"

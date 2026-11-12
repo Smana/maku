@@ -30,6 +30,7 @@ rejects 'tls.days 0' "minimum: got 0, want 1" "${demo[@]}" --set tls.days=0
 rejects 'a storage that is not a quantity' "does not match pattern" "${demo[@]}" --set postgres.storage=lots
 rejects 'a postgres image without a digest' "does not match pattern" "${demo[@]}" --set postgres.image=postgres:17
 rejects 'networkPolicies.plain as a string' "got string, want boolean" "${demo[@]}" --set-string networkPolicies.plain=yes
+rejects 'an unknown maku-gateway key (its own strict schema)' "additional properties 'providerz' not allowed" "${demo[@]}" --set maku-gateway.enabled=true --set maku-gateway.providerz.x=1
 rejects 'profile production' 'profile production: its seams arrive in rollout steps 2 to 6 (docs/superpowers/specs/2026-11-12-v4-production-path-design.md); use -f values-demo.yaml for the demo' "${img[@]}" --set profile=production
 rejects 'an unset profile' 'profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6)' "${img[@]}"
 rejects '--set profile=demo alone' 'profile demo needs -f values-demo.yaml' "${img[@]}" --set profile=demo "${secrets[@]}"
@@ -42,7 +43,7 @@ helm template af . -n maku "${demo[@]}" --set tls.days=30 --set postgres.storage
 # the support floor (D26): kubeVersion >=1.30 in the umbrella and both subcharts
 rejects 'Kubernetes 1.29' 'kubeVersion' "${demo[@]}" --kube-version 1.29.0
 helm template af . -n maku "${demo[@]}" --kube-version 1.30.0 >/dev/null || { echo "FAIL: Kubernetes 1.30 does not render" >&2; fail=1; }
-for c in maku maku-factory agent-factory-crds; do
+for c in maku maku-factory maku-gateway agent-factory-crds; do
   msg="$(helm template x "../$c" --kube-version 1.29.0 2>&1 >/dev/null || true)"
   grep -qF 'kubeVersion' <<<"$msg" || { echo "FAIL: the $c chart does not refuse Kubernetes 1.29 (got: $msg)" >&2; fail=1; }
 done

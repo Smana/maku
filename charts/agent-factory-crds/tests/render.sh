@@ -8,6 +8,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 crddir=../../config/crd
 fail=0
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+helm dependency build . >/dev/null
 out="$(helm template af-crds .)"
 
 names="$(yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.name] | sort | join(",")' - <<<"$out")"
@@ -30,6 +31,17 @@ done
 # keep: false drops the annotation (uninstalling then deletes every Room and Task)
 kept="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
 [[ -z $kept ]] || { echo "FAIL: keep=false still renders the keep annotation" >&2; fail=1; }
+
+# agentgateway-crds (plan v4 step 4, Task 5): off by default; on, it adds agentgateway's four CRDs
+# and changes nothing else.
+on="$(helm template af-crds . --set agentgateway-crds.enabled=true)"
+names="$(yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.name] | sort | join(",")' - <<<"$on")"
+want="agentgatewaybackends.agentgateway.dev,agentgatewaymodels.agentgateway.dev,agentgatewayparameters.agentgateway.dev,agentgatewaypolicies.agentgateway.dev,$want"
+[[ $names == "$want" ]] || { echo "FAIL: agentgateway-crds.enabled renders CRDs '$names', want '$want'" >&2; fail=1; }
+other="$(yq ea '[select(.kind != null and .kind != "CustomResourceDefinition") | .kind] | join(",")' - <<<"$on")"
+[[ -z $other ]] || { echo "FAIL: agentgateway-crds.enabled renders more than CRDs: $other" >&2; fail=1; }
+diff <(yq ea -o json -I0 'select(.metadata.name | test("maku[.]ogenki[.]io$"))' - <<<"$out") <(yq ea -o json -I0 'select(.metadata.name | test("maku[.]ogenki[.]io$"))' - <<<"$on") >/dev/null ||
+  { echo "FAIL: agentgateway-crds.enabled changes the maku.ogenki.io CRDs" >&2; fail=1; }
 
 # the packaged chart ships the six CRDs, never tests/ (.helmignore)
 helm package . -d "$tmp/pkg" >/dev/null

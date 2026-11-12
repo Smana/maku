@@ -10,11 +10,16 @@ Probe P4 (charts/maku-gateway/tests/probe) checks the mistral and moonshot trans
 {{- define "mgw.presets" -}}
 openai:
   provider: openai
+  # Native: the controller knows the endpoint; the host is for the network policy only.
+  host: api.openai.com
+  port: 443
   fields: {}
   alwaysReasons: []
 anthropic:
   # Native: Chat Completions in, Messages out; the key moves to x-api-key and anthropic-version is set.
   provider: anthropic
+  host: api.anthropic.com
+  port: 443
   fields: {}
   alwaysReasons: []
 zai:

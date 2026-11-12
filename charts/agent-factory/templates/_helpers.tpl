@@ -26,4 +26,23 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if or (ne $d (.Values.maku.clusterDomain | default "cluster.local")) (ne $d (index .Values "maku-factory" "clusterDomain" | default "cluster.local")) -}}
 {{- fail (printf "clusterDomain, maku.clusterDomain and maku-factory.clusterDomain must be equal (got %q, %q, %q): the broker certificate's names and the factory's broker URL are built from them" $d .Values.maku.clusterDomain (index .Values "maku-factory" "clusterDomain")) -}}
 {{- end -}}
+{{- include "afumbrella.gateway" . -}}
+{{- end }}
+
+{{/* The model gateway's agreement with maku (plan v4 step 4, Task 5): the gateway admits the runs and
+the broker maku runs, so both must name the same ones. */}}
+{{- define "afumbrella.gateway" -}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- if $gw.enabled -}}
+{{- $mr := .Values.maku.runs -}}
+{{- if or (ne $gw.runs.namespace $mr.namespace) (ne $gw.runs.namePrefix $mr.namePrefix) -}}
+{{- fail (printf "maku-gateway.runs (namespace %q, namePrefix %q) must equal maku.runs (namespace %q, namePrefix %q): the gateway admits only the runs maku starts" $gw.runs.namespace $gw.runs.namePrefix $mr.namespace $mr.namePrefix) -}}
+{{- end -}}
+{{- if ne $gw.broker.serviceAccount "room-broker" -}}
+{{- fail (printf "maku-gateway.broker.serviceAccount %q must be the broker's ServiceAccount, room-broker (maku's broker-deployment)" $gw.broker.serviceAccount) -}}
+{{- end -}}
+{{- if ne ($gw.broker.namespace | default .Release.Namespace) .Release.Namespace -}}
+{{- fail (printf "maku-gateway.broker.namespace %q must be the release namespace %q, where the umbrella runs the broker" $gw.broker.namespace .Release.Namespace) -}}
+{{- end -}}
+{{- end -}}
 {{- end }}

@@ -1,4 +1,104 @@
 ---
+# Source: maku-gateway/templates/networkpolicy.yaml
+# Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
+# scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
+# here: the controller fetches it, and the proxies receive the keyset over xDS. Probes are node
+# traffic, which NetworkPolicy always allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: model-gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agents}
+          podSelector:
+            matchExpressions:
+              # The run-controller's label on every run pod.
+              - {key: agents.ogenki.io/run-id, operator: Exists}
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 8081, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {port: 8082, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentgateway
+      ports: [{port: 9978, protocol: TCP}]
+    # provider zai (api.z.ai)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+    # provider moonshot (api.kimi.ai)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+    # provider mistral (api.mistral.ai)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+    # provider anthropic (api.anthropic.com)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+
+---
 # Source: maku-gateway/templates/catalog.yaml
 # The prices agentgateway merges over its built-in catalog to price each response (the access log's
 # `cost`), from the factory's meter.prices rows: edit a price there.

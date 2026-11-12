@@ -2,3 +2,8 @@
 # and with them every Room and Task, in place.
 # false drops the keep annotation, so uninstalling deletes every Room and Task.
 keep: true
+
+# agentgateway v1.6.0's CRDs, for the umbrella's model gateway (`maku-gateway`). Leave off where the
+# cluster already runs agentgateway; Gateway API's standard CRDs are a separate prerequisite.
+agentgateway-crds:
+  enabled: false

@@ -11,8 +11,12 @@ __pycache__/
 .worktrees/
 # Claude Code's local state and its agent worktrees: full copies of the tree the gates would read.
 .claude/
+# Built by `helm dependency build` (task chart:deps): the release rewrites the file:// versions, so the
+# lock is never committed; the upstream archives are pinned by dependencies.sha256 instead.
 charts/agent-factory/charts/
 charts/agent-factory/Chart.lock
+charts/agent-factory-crds/charts/
+charts/agent-factory-crds/Chart.lock
 # task demo: its state, kubeconfig and values file (secrets), and a local .env
 .demo/
 .env

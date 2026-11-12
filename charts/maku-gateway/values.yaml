@@ -58,6 +58,8 @@ runs:
 broker:
   serviceAccount: room-broker
   namespace: ""
+  # Its pods' labels, which the NetworkPolicy admits on the clients listener.
+  podLabels: {app.kubernetes.io/name: room-broker}
 
 # The model providers, by name. Each one's key is a Secret in the release namespace, named here and
 # never rendered by this chart (D14):

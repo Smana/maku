@@ -1,2 +1,4 @@
 # The render test stays in the repository; files/ (the generated CRDs) ships.
 tests/
+# Checked by hack/chart-deps.sh, not shipped.
+dependencies.sha256

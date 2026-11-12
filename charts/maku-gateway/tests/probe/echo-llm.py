@@ -2,8 +2,8 @@
 """A fake model provider for the gateway probe and the k3d proof.
 
 It answers every POST with a Chat Completion whose content is a JSON report of what the gateway
-forwarded: the path, the body's model and the sampling fields a preset rewrites, and whether an
-Authorization or an x-ar-* header arrived (never a credential's value). A message containing
+forwarded: the path, the body's model and the sampling fields a preset rewrites, the length of the
+Authorization it received, and the x-ar-* headers (never a credential's value). A message containing
 THROTTLE is answered 429, so the gateway's request counter shows a throttled call. The usage
 carries cached tokens, so the token-usage histogram shows every token type it knows.
 """
@@ -49,7 +49,8 @@ class Handler(BaseHTTPRequestHandler):
             "temperature": req.get("temperature", ABSENT),
             "top_p": req.get("top_p", ABSENT),
             "reasoning_effort": req.get("reasoning_effort", ABSENT),
-            "authorization": "present" if self.headers.get("Authorization") else ABSENT,
+            # The length tells the provider key from a caller's token without printing either.
+            "authorization": f"len={len(self.headers['Authorization'])}" if self.headers.get("Authorization") else ABSENT,
             "x-api-key": "present" if self.headers.get("x-api-key") else ABSENT,
             "x-ar-agent": self.headers.get("x-ar-agent", ABSENT),
             "x-ar-human": self.headers.get("x-ar-human", ABSENT),

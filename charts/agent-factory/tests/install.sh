@@ -15,6 +15,11 @@
 #               preflight passes within 3 minutes, its probe went through the egress proxy;
 #   unenforced  mode kubernetes on a k3s started with --disable-network-policy: the preflight refuses
 #               runs (`preflight failed: network:`, gauge network 0).
+# GATEWAY=1 (k3d only; task chart:gateway:k3d) turns the model gateway on (plan v4 step 4, Task 5):
+# Gateway API's standard CRDs, agentgateway's CRDs (agent-factory-crds) and controller (the umbrella),
+# maku-gateway with source apiserver, and the probe's echo provider as a `custom` provider over http.
+# A run-like pod's token for maku-gateway.public.tier-light gets 200 on its alias, 403 on
+# tier-frontier's, and no token gets 401; the proxy's NetworkPolicy is enforced by k3s.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -26,8 +31,14 @@ case "$NETPOL" in
   kubernetes | unenforced) [[ $CLUSTER_KIND == k3d ]] || { echo "FAIL: NETPOL=$NETPOL runs on k3d only" >&2; exit 2; } ;;
   *) echo "FAIL: NETPOL=$NETPOL is not none, kubernetes or unenforced" >&2; exit 2 ;;
 esac
+GATEWAY="${GATEWAY:-}"
+[[ -z $GATEWAY || $CLUSTER_KIND == k3d ]] || { echo "FAIL: GATEWAY=1 runs on k3d only" >&2; exit 2; }
+# The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
+GATEWAY_API=v1.2.1
+ECHO_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
 NAME="maku-chart-$CLUSTER_KIND"
 [[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
+[[ -z $GATEWAY ]] || NAME="$NAME-gateway"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 TAG=e2e
 NS=maku
@@ -47,7 +58,7 @@ dump() {
   kubectl -n kube-system get endpointslice -l kubernetes.io/service-name=kube-dns -o wide >&2 || true
   [[ $CLUSTER_KIND != k3d ]] || docker exec "k3d-$NAME-server-0" sh -c 'iptables-save -t filter; iptables-save -t nat | grep -c KUBE-SVC' >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp >&2 || true
-  for d in room-broker run-controller agent-factory egress-proxy; do kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 || true; done
+  for d in room-broker run-controller agent-factory egress-proxy model-gateway af-agentgateway; do kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 || true; done
   kubectl get networkpolicy -A >&2 || true
   kubectl -n "$NS" logs sts/rooms-db --tail=40 >&2 || true
 }
@@ -85,6 +96,9 @@ case "$CLUSTER_KIND" in
     k3s_args=(--k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0')
     # the unenforced leg: k3s without its NetworkPolicy controller, a CNI that does not enforce
     [[ $NETPOL != unenforced ]] || k3s_args+=(--k3s-arg '--disable-network-policy@server:0')
+    # the gateway leg: agentgateway's controller fetches the apiserver's JWKS anonymously (probe P1),
+    # and k3s turns anonymous requests off, where kubeadm and kind leave them on
+    [[ -z $GATEWAY ]] || k3s_args+=(--k3s-arg '--kube-apiserver-arg=anonymous-auth=true@server:0')
     # K3S_EXTRA_ARGS: more k3s flags, space-separated (e.g. a laptop's relaxed kubelet eviction
     # thresholds: --kubelet-arg=eviction-hard=nodefs.available<1%,imagefs.available<1%)
     for a in ${K3S_EXTRA_ARGS:-}; do k3s_args+=(--k3s-arg "$a@server:0"); done
@@ -135,9 +149,43 @@ values=(-f charts/agent-factory/values-demo.yaml
   # the NetworkPolicy probe below runs PROBE_IMAGE in agents: the run-pod policy must allow it
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
+crd_values=()
+if [[ -n $GATEWAY ]]; then
+  crd_values=(--set agentgateway-crds.enabled=true)
+  issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
+  cat >"$work/gateway.yaml" <<EOF
+agentgateway:
+  enabled: true
+maku-gateway:
+  enabled: true
+  replicas: 1
+  identity:
+    issuer: $issuer
+    jwks: {source: apiserver, allowAnonymousDiscovery: true}
+  providers:
+    echo:
+      preset: custom
+      existingSecret: echo-api-key
+      host: echo-llm.models.svc.cluster.local
+      port: 8080
+      path: /provider/v1/chat/completions
+      tls: false
+      egress:
+        peers: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: models}}}]
+  aliases:
+    public:
+      tier-light: {provider: echo, model: echo-light}
+      tier-frontier: {provider: echo, model: echo-frontier}
+  modelCatalog:
+    prices:
+      echo-light: {input: 1.00, cacheRead: 0.10, output: 2.00}
+EOF
+  # the gateway's caller below runs the echo image in agents: the run-pod policy must allow it
+  values+=(-f "$work/gateway.yaml" --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
+fi
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
-  helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m &&
+  helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m "${crd_values[@]}" &&
     kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
 }
 # No --wait: the factory cannot become Ready with a dummy App; each part is awaited below.
@@ -175,6 +223,46 @@ EOF
 else
   step "the CRD chart first, then the umbrella"
   install_crds
+  if [[ -n $GATEWAY ]]; then
+    step "the gateway's prerequisites: Gateway API $GATEWAY_API, the echo provider, its key Secret"
+    curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
+      kubectl apply --server-side -f - >/dev/null
+    kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
+    kubectl create namespace models >/dev/null
+    kubectl -n models create configmap echo-llm --from-file=charts/maku-gateway/tests/probe/echo-llm.py >/dev/null
+    kubectl -n models apply -f - >/dev/null <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: echo-llm}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: echo-llm}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: echo-llm}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: echo
+          image: $ECHO_IMAGE
+          command: [python3, -u, /app/echo-llm.py, "8080"]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: app, mountPath: /app, readOnly: true}]
+      volumes: [{name: app, configMap: {name: echo-llm}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: echo-llm}
+spec:
+  selector: {app.kubernetes.io/name: echo-llm}
+  ports: [{name: http, port: 8080, targetPort: http}]
+EOF
+    # the provider's key, by name (D14): the echo ignores it, the gateway must find it
+    kubectl -n "$NS" create secret generic echo-api-key --from-literal=apiKey=not-a-key >/dev/null
+  fi
   install_umbrella
 fi
 
@@ -348,6 +436,84 @@ echo "ok: the quota is present and the run-pod policy refuses an admin's pod in 
 # Not asserted here: the factory's ops port (9090, probes) stays open. The factory crash-loops on the
 # dummy GitHub App, so nothing serves 9090 and a live check could not pass; render.sh asserts the rule.
 
+if [[ -n $GATEWAY ]]; then
+  step "the model gateway: a run-like token reaches its alias, and only its alias"
+  kubectl -n "$NS" rollout status deploy/af-agentgateway --timeout=180s
+  kubectl -n "$NS" wait --for=condition=Programmed gateway/model-gateway --timeout=180s
+  kubectl -n "$NS" rollout status deploy/model-gateway --timeout=180s
+  kubectl -n "$NS" get networkpolicy model-gateway >/dev/null || die "no NetworkPolicy model-gateway"
+  kubectl -n agents create serviceaccount run-gwprobe2 >/dev/null
+  # A run-like pod (the run-controller's label, created as the run-controller: only it creates pods in
+  # agents), holding a projected token for maku-gateway.public.tier-light. It calls three times: its
+  # alias with its token, another alias with the same token, its alias with no token. The JWKS is
+  # fetched and pushed asynchronously, so the first call is retried for up to 2 minutes.
+  kubectl -n agents create --as "system:serviceaccount:$NS:run-controller" -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata: {name: gw-caller, labels: {agents.ogenki.io/run-id: gwprobe2}}
+spec:
+  serviceAccountName: run-gwprobe2
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65534, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: caller
+      image: $ECHO_IMAGE
+      command:
+        - python3
+        - -c
+        - |
+          import json, time, urllib.error, urllib.request
+          base = "http://model-gateway.$NS.svc.cluster.local:8080/m/%s/v1/chat/completions"
+          def call(alias, token):
+              req = urllib.request.Request(base % alias, method="POST",
+                  data=json.dumps({"model": alias, "messages": [{"role": "user", "content": "hi"}]}).encode(),
+                  headers={"Content-Type": "application/json"})
+              if token:
+                  req.add_header("Authorization", "Bearer " + open("/tokens/model").read().strip())
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      return r.status, r.read().decode()
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read().decode()
+              except OSError as e:
+                  return 0, str(e)
+          for _ in range(40):
+              code, body = call("tier-light", True)
+              if code == 200:
+                  break
+              time.sleep(3)
+          print("own", code, body, flush=True)
+          print("other", *call("tier-frontier", True), flush=True)
+          print("none", *call("tier-light", False), flush=True)
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts: [{name: tokens, mountPath: /tokens, readOnly: true}]
+  volumes:
+    - name: tokens
+      projected:
+        sources: [{serviceAccountToken: {audience: maku-gateway.public.tier-light, expirationSeconds: 3600, path: model}}]
+EOF
+  phase=""
+  for _ in $(seq 90); do
+    phase=$(kubectl -n agents get pod gw-caller -o jsonpath='{.status.phase}') || phase=""
+    [[ $phase == Succeeded || $phase == Failed ]] && break
+    sleep 2
+  done
+  out=$(kubectl -n agents logs gw-caller 2>&1) || out=""
+  echo "$out"
+  own=$(grep '^own ' <<<"$out") || die "the gateway caller printed nothing (phase '$phase')"
+  [[ $own == "own 200 "* ]] || { kubectl -n "$NS" logs deploy/model-gateway --tail=40 >&2 || true; kubectl -n "$NS" logs deploy/af-agentgateway --tail=40 >&2 || true; die "the run-like token was not served on its alias: $own"; }
+  report=$(sed -E 's/^own 200 //' <<<"$own" | jq -r '.choices[0].message.content')
+  # the provider sees the gateway's key from echo-api-key ("Bearer not-a-key", 16 characters), never the run's token
+  jq -e '.model == "echo-light" and .path == "/provider/v1/chat/completions" and .authorization == "len=16" and .["x-ar-agent"] == "system:serviceaccount:agents:run-gwprobe2"' <<<"$report" >/dev/null ||
+    die "the provider saw the wrong request: $report"
+  grep -q '^other 403 ' <<<"$out" || die "the tier-light token was not refused 403 on tier-frontier: $(grep '^other' <<<"$out")"
+  grep -q '^none 401 ' <<<"$out" || die "a call without a token was not refused 401: $(grep '^none' <<<"$out")"
+  kubectl -n agents delete pod gw-caller --now --wait=false >/dev/null 2>&1 || true
+  echo "ok: 200 on its alias (model echo-light, sub run-gwprobe2, the provider key from its Secret, never the token), 403 on another alias, 401 without a token"
+fi
+
 step "a second helm upgrade with the same values keeps the CA, the certificate and both DSNs"
 snap() {
   for s in room-broker-ca room-broker-tls rooms-broker-dsn rooms-owner-dsn; do
@@ -365,4 +531,4 @@ if [[ ${ADOPT:-} == 1 ]]; then
   [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the adopted Room did not survive the umbrella's upgrade"
   echo "ok: the adopted Room survived the umbrella's upgrade"
 fi
-echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}"
+echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}${GATEWAY:+ (gateway)}"
