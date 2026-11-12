@@ -95,7 +95,7 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if err != nil {
 		return Decision{}, err
 	}
-	cohort := CohortOf(t.Name, declared, cfg.Evaluation.ControlPercent)
+	cohort := CohortOf(t.Name, false, cfg.Evaluation.ControlPercent) // declared is no pin (P8)
 	if Investigates(cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}

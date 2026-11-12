@@ -442,8 +442,8 @@ func TestAReviewEndedStepBriefCarriesTheImplementersJudge(t *testing.T) {
 	}
 }
 
-// R37: a maintainer's class label puts a task in the labeled cohort, not the control one, so its
-// class's escalation steps it as any treatment task.
+// R37: a labeled task (since P8, a pinned profile) is not in the control cohort, so its class's
+// escalation steps it as any treatment task.
 func TestALabelledTaskSteps(t *testing.T) {
 	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
 		tk.Status.Profile.Source, tk.Status.Profile.Cohort = "label", "labeled"

@@ -65,19 +65,21 @@ func TestResolutionTable(t *testing.T) {
 		internal, failed           bool
 		want                       want
 	}{
-		"applied":         {mode: "apply", profile: "review-search", want: want{"review-search", "scoper", "", "review-search", 7, false}},
-		"applied tests":   {mode: "apply", profile: "review-tested", decl: testsDecl, want: want{"review-tested", "scoper", "", "review-tested", 40, true}},
-		"absent":          {mode: "apply", want: floor("floor", "none", "")},
-		"the floor":       {mode: "apply", profile: "review-floor", want: floor("floor", "none", "review-floor")},
-		"unknown":         {mode: "apply", profile: "zzz", want: floor("floor", "unknown", "zzz")},
-		"not allowed":     {mode: "apply", profile: "review-other", want: floor("floor", "not_allowed", "review-other")},
-		"internal":        {mode: "apply", profile: "review-tested", decl: testsDecl, internal: true, want: floor("floor", "internal", "review-tested")},
-		"no tests paths":  {mode: "apply", profile: "review-tested", want: floor("floor", "no_tests_paths", "review-tested")},
-		"observe":         {mode: "observe", profile: "review-search", want: floor("floor", "observe", "review-search")},
-		"control":         {mode: "apply", percent: 100, profile: "review-search", want: floor("control", "", "review-search")},
-		"labelled":        {mode: "apply", label: "class:review", profile: "review-search", want: floor("label", "", "")},
-		"scoper failed":   {mode: "apply", failed: true, want: floor("floor", "scoper_failed", "")},
-		"control, failed": {mode: "apply", percent: 100, failed: true, want: floor("control", "scoper_failed", "")},
+		"applied":        {mode: "apply", profile: "review-search", want: want{"review-search", "scoper", "", "review-search", 7, false}},
+		"applied tests":  {mode: "apply", profile: "review-tested", decl: testsDecl, want: want{"review-tested", "scoper", "", "review-tested", 40, true}},
+		"absent":         {mode: "apply", want: floor("floor", "none", "")},
+		"the floor":      {mode: "apply", profile: "review-floor", want: floor("floor", "none", "review-floor")},
+		"unknown":        {mode: "apply", profile: "zzz", want: floor("floor", "unknown", "zzz")},
+		"not allowed":    {mode: "apply", profile: "review-other", want: floor("floor", "not_allowed", "review-other")},
+		"internal":       {mode: "apply", profile: "review-tested", decl: testsDecl, internal: true, want: floor("floor", "internal", "review-tested")},
+		"no tests paths": {mode: "apply", profile: "review-tested", want: floor("floor", "no_tests_paths", "review-tested")},
+		"observe":        {mode: "observe", profile: "review-search", want: floor("floor", "observe", "review-search")},
+		"control":        {mode: "apply", percent: 100, profile: "review-search", want: floor("control", "", "review-search")},
+		// P8: a class label is no pin: the scoper's pick applies as for any task.
+		"labelled":          {mode: "apply", label: "class:review", profile: "review-search", want: want{"review-search", "scoper", "", "review-search", 7, false}},
+		"labelled, control": {mode: "apply", label: "class:review", percent: 100, profile: "review-search", want: floor("control", "", "review-search")},
+		"scoper failed":     {mode: "apply", failed: true, want: floor("floor", "scoper_failed", "")},
+		"control, failed":   {mode: "apply", percent: 100, failed: true, want: floor("control", "scoper_failed", "")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g, tk := triagedRig(t, resolveCfg(c.mode, c.percent), c.label, c.decl)
@@ -113,21 +115,18 @@ func TestResolutionTable(t *testing.T) {
 			}) {
 				t.Fatalf("outbox %+v", tk.Status.Outbox)
 			}
-			var want []string
-			if c.label == "" {
-				rec := c.want.recommended
-				switch rec {
-				case "":
-					rec = "none"
-				case "zzz", "review-other":
-					rec = "other"
-				}
-				cohort := "treatment"
-				if c.percent == 100 {
-					cohort = "control"
-				}
-				want = []string{fmt.Sprintf("profile review %s %s %v", cohort, rec, c.want.source == "scoper")}
+			rec := c.want.recommended
+			switch rec {
+			case "":
+				rec = "none"
+			case "zzz", "review-other":
+				rec = "other"
 			}
+			cohort := "treatment"
+			if c.percent == 100 {
+				cohort = "control"
+			}
+			want := []string{fmt.Sprintf("profile review %s %s %v", cohort, rec, c.want.source == "scoper")}
 			got := slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(m string) bool { return !strings.HasPrefix(m, "profile ") })
 			if !slices.Equal(got, want) {
 				t.Fatalf("metrics %q, want %q", got, want)

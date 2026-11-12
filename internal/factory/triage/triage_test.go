@@ -34,3 +34,21 @@ func TestStaticKeepsTheTasksDataClass(t *testing.T) {
 		t.Fatal(d.DataClass)
 	}
 }
+
+// P8: only a pinned profile is the labeled cohort; otherwise percent % are control.
+func TestPinnedIsLabeled(t *testing.T) {
+	for name, c := range map[string]struct {
+		pinned  bool
+		percent int
+		want    string
+	}{
+		"pinned":              {true, 0, CohortLabeled},
+		"pinned, all control": {true, 100, CohortLabeled},
+		"unpinned, control":   {false, 100, CohortControl},
+		"unpinned":            {false, 0, CohortTreatment},
+	} {
+		if got := CohortOf("3buqdlot", c.pinned, c.percent); got != c.want {
+			t.Errorf("%s: %s, want %s", name, got, c.want)
+		}
+	}
+}
