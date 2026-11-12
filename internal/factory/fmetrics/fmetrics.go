@@ -880,22 +880,26 @@ func (s *Set) Revoked(ctx context.Context, reason string) {
 
 // The hardening shadow counter's closed label sets: hardening's vocabulary, as the record writes it.
 var (
-	shadowTypes    = []string{"push", "pr", "comment", "labels", "issue"}
-	shadowVerdicts = []string{"would_apply", "would_refuse", "would_wait"}
+	shadowTypes = []string{"none", "push", "pr", "comment", "labels", "issue"}
+	// incomplete: a run whose pass failed maxShadowAttempts times, given up on (type none).
+	shadowVerdicts = []string{"would_apply", "would_refuse", "would_wait", "incomplete"}
 	shadowLayers   = []string{"none", "t1_schema", "t2_sanitise", "t3_secrets", "t4_paths", "t5_classifier"}
 	shadowReasons  = []string{"none", "output_type", "output_schema", "output_cap", "output_text", "secret_found", "canary_leaked",
-		"protected_path_needs_approval", "protected_path_blocked", "injection_suspected", "classifier_unavailable"}
+		"protected_path_needs_approval", "protected_path_blocked", "diff_unavailable", "injection_suspected",
+		"classifier_unavailable", "shadow_incomplete"}
 )
 
-// HardeningShadow counts one output_shadowed record (H1, HR3) under the repository ctx names. An
-// empty layer or reason, a would_apply's, reads none; any value outside the vocabulary reads other.
+// HardeningShadow counts one output_shadowed record (H1, HR3), or a run given up on, under the
+// repository ctx names. An empty type, layer or reason reads none; any value outside the
+// vocabulary reads other.
 func (s *Set) HardeningShadow(ctx context.Context, typ, verdict, layer, reason string) {
-	if layer == "" {
-		layer = "none"
+	none := func(v string) string {
+		if v == "" {
+			return "none"
+		}
+		return v
 	}
-	if reason == "" {
-		reason = "none"
-	}
+	typ, layer, reason = none(typ), none(layer), none(reason)
 	s.hardeningShadow.Add(ctx, 1, metric.WithAttributes(attribute.String("type", oneOf(typ, shadowTypes)),
 		attribute.String("verdict", oneOf(verdict, shadowVerdicts)), attribute.String("layer", oneOf(layer, shadowLayers)),
 		attribute.String("reason", oneOf(reason, shadowReasons)), s.repoOf(ctx)))

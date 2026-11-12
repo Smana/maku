@@ -792,6 +792,16 @@ type RunRecord struct {
 	// never runs twice for one run.
 	// +optional
 	Shadowed bool `json:"shadowed,omitempty"`
+	// The run started under hardening audit (H1): only such a run is shadowed, so turning audit on
+	// never backfills runs that started before it.
+	// +optional
+	Audited bool `json:"audited,omitempty"`
+	// The shadow pass's failed attempts on this run, each retried after a doubling wait; at the cap
+	// the run is marked shadowed and reported incomplete.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=16
+	// +optional
+	ShadowAttempts int32 `json:"shadowAttempts,omitempty"`
 }
 
 // InputTrust is status.inputTrust (hardening UH7, HR8): the lowest author trust a task's runs read,

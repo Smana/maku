@@ -83,3 +83,13 @@ func TestFenceFeedsTheRepositoryPolicies(t *testing.T) {
 		t.Fatal("no observer is no hook")
 	}
 }
+
+// The demo profile is never hardened (R7): whatever its hardening block says, it gets no ports and
+// so no fence hook, canary, record or shadow.
+func TestFactoryHardeningOffInTheDemo(t *testing.T) {
+	cfg := &config.Config{Demo: true, Hardening: config.Hardening{Mode: hardening.ModeAudit}}
+	cfg.Hardening.ApplyDefaults()
+	if p := hardeningPorts(cfg, nil); p != nil {
+		t.Fatalf("the demo is wired: %+v", p)
+	}
+}

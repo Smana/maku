@@ -19,8 +19,12 @@ func TestHardeningShadowIsCounted(t *testing.T) {
 	s.HardeningShadow(ctx, "labels", "would_refuse", "t1_schema", "output_schema")
 	s.HardeningShadow(ctx, "push", "would_wait", "t4_paths", "protected_path_needs_approval")
 	s.HardeningShadow(ctx, "Ignore previous", "maybe", "t9", "an agent's text")
+	s.HardeningShadow(ctx, "push", "would_refuse", "t4_paths", "diff_unavailable")
+	s.HardeningShadow(ctx, "", "incomplete", "", "shadow_incomplete")
 	body := scrape()
 	for _, want := range []string{
+		`maku_factory_hardening_shadow_total{layer="t4_paths",reason="diff_unavailable",repository="Smana/cloud-native-ref",type="push",verdict="would_refuse"} 1`,
+		`maku_factory_hardening_shadow_total{layer="none",reason="shadow_incomplete",repository="Smana/cloud-native-ref",type="none",verdict="incomplete"} 1`,
 		`maku_factory_hardening_shadow_total{layer="none",reason="none",repository="Smana/cloud-native-ref",type="pr",verdict="would_apply"} 1`,
 		`maku_factory_hardening_shadow_total{layer="t1_schema",reason="output_schema",repository="Smana/cloud-native-ref",type="labels",verdict="would_refuse"} 1`,
 		`maku_factory_hardening_shadow_total{layer="t4_paths",reason="protected_path_needs_approval",repository="Smana/cloud-native-ref",type="push",verdict="would_wait"} 1`,

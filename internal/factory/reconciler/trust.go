@@ -36,6 +36,13 @@ func (r *Reconciler) auditing(cfg *config.Config, t *v1alpha1.Task) bool {
 	return r.Hardening != nil && !cfg.Demo && cfg.Hardening.ModeFor(t.Spec.Repository).AtLeast(hardening.ModeAudit)
 }
 
+// auditsRun reports whether a run of role starting now is audited: a writer run (implementer or
+// tester) of a repository in audit or enforce. Such a run gets a canary, and only such a run's
+// writes are shadowed at its end, so turning audit on never backfills an older run.
+func (r *Reconciler) auditsRun(cfg *config.Config, t *v1alpha1.Task, role string) bool {
+	return r.auditing(cfg, t) && slices.Contains(shadowRoles, role)
+}
+
 // repositoryPolicy is t's repository's protected paths and trust floor. A block that does not
 // parse reads as the floor and merged, and says so in the log.
 func (r *Reconciler) repositoryPolicy(cfg *config.Config, t *v1alpha1.Task) hardening.RepositoryPolicy {
@@ -45,8 +52,8 @@ func (r *Reconciler) repositoryPolicy(cfg *config.Config, t *v1alpha1.Task) hard
 		return p
 	}
 	p, err := r.Hardening.Policies.For(t.Spec.Repository, central)
-	if err != nil {
-		r.log().Warn("the repository's hardening block is unreadable: the floor and merged apply", "task.id", t.Name, "err", err)
+	if err != nil && r.Hardening.Policies.ReportOnce(t.Spec.Repository) { // once per fence read, not per check
+		r.log().Warn("the repository's hardening block is unreadable: the floor and merged apply", "repository", t.Spec.Repository, "err", err)
 	}
 	return p
 }
@@ -65,10 +72,13 @@ func stripCanary(text string) string { return canaryTail.ReplaceAllString(text, 
 
 // plantCanary ends a writer run's brief with a fresh canary and keeps it on the claim (T3, HR7):
 // under audit or enforce, on an implementer or tester run briefed by text. A brief with no room
-// left under AgentRun's cap runs without one, and the log says so.
+// left under AgentRun's cap runs without one, and the log says so. Under off it touches nothing.
 func (r *Reconciler) plantCanary(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) {
+	if !r.auditsRun(cfg, t, s.Role) {
+		return
+	}
 	s.TaskText, s.Canary = stripCanary(s.TaskText), ""
-	if !r.auditing(cfg, t) || (s.Role != "implementer" && s.Role != "tester") || s.TaskURL != "" || s.TaskText == "" {
+	if s.TaskURL != "" || s.TaskText == "" {
 		return
 	}
 	c := hardening.NewCanary()
@@ -118,6 +128,18 @@ func (r *Reconciler) inputTrust(ctx context.Context, cfg *config.Config, t *v1al
 	case "adopt":
 		author := strings.TrimPrefix(t.Spec.Source.RequestedBy, "github:")
 		it.Record(hardening.SourceIssue, pol.LevelOf(hardening.Author{Login: author}, false))
+	case "api":
+		if t.Spec.Issue == 0 { // the request's own text, at its accountable sponsor's level
+			sponsor := t.Spec.Source.Sponsor
+			if sponsor == "" {
+				sponsor = t.Spec.Source.RequestedBy
+			}
+			login, ok := strings.CutPrefix(sponsor, "github:")
+			if !ok {
+				login = "" // not a GitHub person: none
+			}
+			it.Record(hardening.SourceIssue, pol.LevelOf(hardening.Author{Login: login}, false))
+		}
 	}
 	if t.Spec.Issue > 0 && (t.Spec.Source.Kind == "issue" || t.Spec.Source.Kind == "api") {
 		iss, err := gh.Issue(ctx, t.Spec.Issue)

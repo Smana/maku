@@ -725,6 +725,7 @@ func (r *Reconciler) stop(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 	if len(t.Status.Runs) > 0 {
 		absorb(t, all)
 	}
+	r.shadowBeforeStop(ctx, cfg, t) // H1: while the claims, and their canaries, still exist (audit only)
 	for _, run := range all {
 		if run.TaskID != t.Name {
 			continue

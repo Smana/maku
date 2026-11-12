@@ -16,10 +16,11 @@ import (
 // off centrally and for every repository, so nothing is planted, recorded or shadowed. Otherwise a
 // Checker with every layer at audit (T5 at its effective mode: off without an agent-guard URL),
 // secrets as T3's scanner, and an empty RepositoryPolicies the fence's OnFile feeds. The ports are
-// built once at startup: turning audit on from off takes a restart.
+// built once at startup: turning audit on from off takes a restart. The demo profile is never
+// hardened (R7), so it gets none either, whatever its hardening block says.
 func hardeningPorts(cfg *config.Config, secrets hardening.SecretScanner) *reconciler.HardeningPorts {
 	h := cfg.Hardening
-	if !hardeningOn(h) {
+	if cfg.Demo || !hardeningOn(h) {
 		return nil
 	}
 	c := hardening.Checker{Layers: hardening.LayersFor(hardening.ModeAudit, h.EffectiveClassifier()), Secrets: secrets,

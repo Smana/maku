@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/hardening"
 )
@@ -39,7 +41,7 @@ func shadowRig(t *testing.T, label string) (*rig, *v1alpha1.Task, *bytes.Buffer)
 	tk := issueTask("3buqdlot", 7, "# Fix the link")
 	tk.Status = v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing, RoomRef: "3buqdlot",
 		PullRequest: &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"},
-		Runs:        []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial", Started: &started, Finished: &finished}}}
+		Runs:        []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial", Started: &started, Finished: &finished, Audited: true}}}
 	g.runs.runs[rid(0)] = runs.Run{ID: rid(0), Role: "implementer", Canary: "mkc-0123456789abcdef0123"}
 	in := now.Add(-5 * time.Minute)
 	g.f.SetActivity("agent/3buqdlot",
@@ -154,6 +156,10 @@ func TestShadowPassNeverMovesTheTask(t *testing.T) {
 			if !strings.Contains(buf.String(), "shadow pass failed") {
 				t.Fatalf("log %s", buf)
 			}
+			// B1: a write or a source that cannot be read skips itself, never the rest of the run.
+			if name != "a refused post" && len(shadowed(g)) != 3 {
+				t.Fatalf("%d records posted beside the failing pushes, want the 3 other writes", len(shadowed(g)))
+			}
 			g.f.SetActivityErr("agent/3buqdlot", nil)
 			g.log.failOutput = nil
 			g.f.SetDiffError(nil)
@@ -250,5 +256,117 @@ func TestShadowPassAtRunEnd(t *testing.T) {
 	}
 	if _, ok := shadowed(g)["pr https://github.com/Smana/cloud-native-ref/pull/12"]; !ok {
 		t.Fatalf("records %v", shadowed(g))
+	}
+}
+
+// B1: a push of more files than a compare lists is its own T4 finding, and the canary leaked in a
+// comment beside it is still recorded: the run is shadowed in one pass.
+func TestShadowPassUndiffablePush(t *testing.T) {
+	g, tk, _ := shadowRig(t, "documentation")
+	g.f.SetDiffError(fmt.Errorf("compare: %w", forge.ErrDiffTooLarge))
+	g.f.SetComments(12, forge.Comment{ID: 501, Author: agents, Body: "token mkc-0123456789abcdef0123", At: now.Add(-5 * time.Minute)})
+	g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+	got := shadowed(g)
+	if r := got["push https://github.com/Smana/cloud-native-ref/commit/"+strings.Repeat("1", 40)]; r.Reason != "diff_unavailable" {
+		t.Fatalf("the undiffable push: %+v", r)
+	}
+	if r := got["comment https://github.com/Smana/cloud-native-ref/pull/12#issuecomment-501"]; r.Reason != "canary_leaked" {
+		t.Fatalf("the canary comment: %+v", r)
+	}
+	if !tk.Status.Runs[0].Shadowed || tk.Status.Runs[0].ShadowAttempts != 0 {
+		t.Fatalf("%+v", tk.Status.Runs[0])
+	}
+}
+
+// B1: a pass that keeps failing waits a doubling time between attempts, and at the cap the run is
+// marked shadowed and reported incomplete, so it never loops on GitHub reads.
+func TestShadowPassGivesUp(t *testing.T) {
+	g, tk, buf := shadowRig(t, "documentation")
+	m := &shadowCounter{fakeMetrics: g.metrics}
+	g.r.Metrics = m
+	g.log.failOutput = errors.New("broker down")
+	finished := tk.Status.Runs[0].Finished.Time
+	for attempt, wait := range []time.Duration{0, time.Minute, 3 * time.Minute, 7 * time.Minute, 15 * time.Minute} {
+		g.r.Now = func() time.Time { return finished.Add(wait - time.Second) }
+		calls := g.log.outputCalls
+		g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+		if attempt > 0 && g.log.outputCalls != calls {
+			t.Fatalf("attempt %d ran before its wait", attempt+1)
+		}
+		g.r.Now = func() time.Time { return finished.Add(wait) }
+		g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+		if g.log.outputCalls == calls || int(tk.Status.Runs[0].ShadowAttempts) != attempt+1 {
+			t.Fatalf("attempt %d: %d calls, %d attempts", attempt+1, g.log.outputCalls-calls, tk.Status.Runs[0].ShadowAttempts)
+		}
+	}
+	if !tk.Status.Runs[0].Shadowed || !strings.Contains(buf.String(), "shadow pass incomplete") ||
+		!slices.Contains(m.got, " incomplete  shadow_incomplete") {
+		t.Fatalf("shadowed %v, metrics %q", tk.Status.Runs[0].Shadowed, m.got)
+	}
+}
+
+// The broker refusing a record as bad (a run it does not know in this room) is permanent for that
+// record: it is skipped, never retried.
+func TestShadowPassBadMessageIsPermanent(t *testing.T) {
+	g, tk, buf := shadowRig(t, "documentation")
+	g.log.failOutput = fmt.Errorf("output: %w", rooms.ErrBadMessage)
+	g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+	if !tk.Status.Runs[0].Shadowed || tk.Status.Runs[0].ShadowAttempts != 0 || !strings.Contains(buf.String(), "refused by the broker") {
+		t.Fatalf("%+v\n%s", tk.Status.Runs[0], buf)
+	}
+}
+
+// Nit 4: a run that started before audit was turned on is never backfilled.
+func TestShadowPassSkipsRunsStartedBeforeAudit(t *testing.T) {
+	g, tk, _ := shadowRig(t, "documentation")
+	tk.Status.Runs[0].Audited = false
+	g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+	if g.log.outputCalls != 0 || tk.Status.Runs[0].Shadowed {
+		t.Fatalf("%d posts", g.log.outputCalls)
+	}
+}
+
+// failingGuard is an agent-guard that is down, counting its calls.
+type failingGuard struct{ calls int }
+
+func (f *failingGuard) Injection(context.Context, []string) (bool, error) {
+	f.calls++
+	return false, errors.New("agent-guard: 503")
+}
+
+// Nit 1: after T5's first failure in a pass, the rest of the pass skips it.
+func TestShadowPassBoundsT5(t *testing.T) {
+	g, tk, _ := shadowRig(t, "documentation")
+	g.r.Cfg.Current().Hardening.AgentGuard.URL = "http://agent-guard:8080"
+	guard := &failingGuard{}
+	g.r.Hardening.Checker.Classifier = guard
+	g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+	if guard.calls != 1 {
+		t.Fatalf("%d calls to a classifier that is down, want 1", guard.calls)
+	}
+	for k, r := range shadowed(g) {
+		if len(r.Audit) != 1 || r.Audit[0].Reason != "classifier_unavailable" {
+			t.Errorf("%s: %+v", k, r.Audit)
+		}
+	}
+}
+
+// Nit 3: a stop shadows the task's runs while their claims, and canaries, still exist.
+func TestShadowPassBeforeStop(t *testing.T) {
+	g, tk, _ := shadowRig(t, "documentation")
+	tk.Status.Runs[0].Finished = nil
+	g.runs.runs[rid(0)] = runs.Run{ID: rid(0), TaskID: tk.Name, Role: "implementer", Phase: "Running", Canary: "mkc-0123456789abcdef0123"}
+	g.f.SetComments(12, forge.Comment{ID: 501, Author: agents, Body: "token mkc-0123456789abcdef0123", At: now.Add(-5 * time.Minute)})
+	if err := g.c.Create(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.r.stop(t.Context(), g.r.Cfg.Current(), tk, "manual"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := g.runs.Get(t.Context(), rid(0)); found {
+		t.Fatal("the claim survived the stop")
+	}
+	if r := shadowed(g)["comment https://github.com/Smana/cloud-native-ref/pull/12#issuecomment-501"]; r.Reason != "canary_leaked" {
+		t.Fatalf("the canary was not read before the claim went: %+v", r)
 	}
 }

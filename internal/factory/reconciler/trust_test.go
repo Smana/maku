@@ -3,7 +3,9 @@
 package reconciler
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/hardening"
 )
 
@@ -141,6 +144,12 @@ func TestInputTrustRecorded(t *testing.T) {
 			tk.Spec.Parent = &v1alpha1.Parent{Task: "parentaa", Issue: 6, Index: 1, Of: 2}
 		}, trigger: "initial", min: hardening.Unapproved,
 			sources: []string{"default_branch=merged", "issue=approved", "parent=unapproved"}},
+		"an api task's own text": {edit: func(tk *v1alpha1.Task) {
+			tk.Spec.Source.Kind, tk.Spec.Source.Sponsor, tk.Spec.Issue = "api", "github:smana", 0
+		}, trigger: "initial", min: hardening.Approved, sources: []string{"default_branch=merged", "issue=approved"}},
+		"an api task sponsored by a stranger": {edit: func(tk *v1alpha1.Task) {
+			tk.Spec.Source.Kind, tk.Spec.Source.Sponsor, tk.Spec.Issue = "api", "github:stranger", 0
+		}, trigger: "initial", min: hardening.None, sources: []string{"default_branch=merged", "issue=none"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "# Fix the link")
@@ -195,5 +204,40 @@ func TestInputTrustAccumulates(t *testing.T) {
 	g.r.recordInputTrust(t.Context(), g.r.Cfg.Current(), tk, "ci")
 	if fmt.Sprint(*tk.Status.InputTrust) != fmt.Sprint(before) {
 		t.Fatal("an unread issue changed the record")
+	}
+}
+
+// Nit 5: off is perfectly off: a brief that ends in an old canary line is left as it is.
+func TestPlantCanaryOffTouchesNothing(t *testing.T) {
+	g := newRig(t)
+	g.auditing(hardening.ModeOff)
+	text := "brief\n\nCanary mkc-0123456789abcdef0123" + canaryNotice
+	s := runs.Spec{Role: "implementer", TaskText: text}
+	g.r.plantCanary(g.r.Cfg.Current(), issueTask("3buqdlot", 7, "x"), &s)
+	if s.TaskText != text || s.Canary != "" {
+		t.Fatalf("%q %q", s.TaskText, s.Canary)
+	}
+}
+
+// Nit 9: a hardening block that does not read is logged once per fence read, not on every check.
+func TestBrokenBlockLoggedOncePerRead(t *testing.T) {
+	g := newRig(t)
+	g.auditing(hardening.ModeAudit)
+	var buf bytes.Buffer
+	g.r.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	g.r.Hardening.Policies.Observe(t.Context(), "Smana/cloud-native-ref", []byte("factory: gcp-0\nhardening: 3\n"))
+	tk := issueTask("3buqdlot", 7, "x")
+	for range 3 {
+		if p := g.r.repositoryPolicy(g.r.Cfg.Current(), tk); p.MinTrust != hardening.Merged {
+			t.Fatal("a broken block reads closed")
+		}
+	}
+	if n := strings.Count(buf.String(), "hardening block is unreadable"); n != 1 {
+		t.Fatalf("%d warnings, want 1", n)
+	}
+	g.r.Hardening.Policies.Observe(t.Context(), "Smana/cloud-native-ref", []byte("factory: gcp-0\nhardening: 3\n"))
+	g.r.repositoryPolicy(g.r.Cfg.Current(), tk)
+	if n := strings.Count(buf.String(), "hardening block is unreadable"); n != 2 {
+		t.Fatalf("%d warnings after a new read, want 2", n)
 	}
 }

@@ -62,4 +62,10 @@ func TestInputTrustCRD(t *testing.T) {
 	if s := run.Properties["shadowed"]; s.Type != "boolean" {
 		t.Errorf("runs.shadowed = %+v", s)
 	}
+	if s := run.Properties["audited"]; s.Type != "boolean" {
+		t.Errorf("runs.audited = %+v", s)
+	}
+	if s := run.Properties["shadowAttempts"]; s.Maximum == nil || *s.Maximum != 16 || s.Minimum == nil || *s.Minimum != 0 {
+		t.Errorf("runs.shadowAttempts = %+v", s)
+	}
 }

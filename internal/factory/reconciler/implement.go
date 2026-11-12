@@ -137,7 +137,8 @@ func (r *Reconciler) recordExisting(cfg *config.Config, t *v1alpha1.Task, x runs
 	}
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
-		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)}})
+		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)},
+		Audited: x.Canary != "" && r.auditsRun(cfg, t, x.Role)}) // the claim says whether it started under audit
 	if overlapPending(t) && x.Role == "triager" {
 		t.Status.Overlap.ScoperRun = x.ID
 	}
@@ -307,7 +308,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	now := metav1.NewTime(r.Now())
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, StartSeq: last, HeadSHA: s.Head, Started: &now, ChargedTo: s.ChargedTo,
-		Provenance: v1alpha1.RunProvenance{ModelSource: source}})
+		Provenance: v1alpha1.RunProvenance{ModelSource: source}, Audited: r.auditsRun(cfg, t, s.Role)})
 	t.Status.NextTrigger = ""
 	r.recordInputTrust(ctx, cfg, t, trigger) // hardening audit or enforce only (UH7)
 	r.to(t, phaseFor(s.Role), "")

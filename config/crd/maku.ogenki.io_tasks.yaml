@@ -2408,6 +2408,11 @@ spec:
                 items:
                   description: RunRecord is one AgentRun the task started.
                   properties:
+                    audited:
+                      description: |-
+                        The run started under hardening audit (H1): only such a run is shadowed, so turning audit on
+                        never backfills runs that started before it.
+                      type: boolean
                     chargedTo:
                       description: |-
                         The person the run was charged to beside the fleet (v2 per-person caps D2), github:<login>;
@@ -2487,6 +2492,14 @@ spec:
                       type: string
                     round:
                       format: int32
+                      type: integer
+                    shadowAttempts:
+                      description: |-
+                        The shadow pass's failed attempts on this run, each retried after a doubling wait; at the cap
+                        the run is marked shadowed and reported incomplete.
+                      format: int32
+                      maximum: 16
+                      minimum: 0
                       type: integer
                     shadowed:
                       description: |-
