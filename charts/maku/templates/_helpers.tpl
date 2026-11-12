@@ -175,3 +175,42 @@ tokenreview): the Service, the broker CNP and the run controller then open it to
 {{- $rt := .Values.broker.roomTools | default dict -}}
 {{- if and (ne (toString $rt.enabled) "false") (eq ($rt.auth | default "key") "tokenreview") -}}true{{- end -}}
 {{- end -}}
+
+{{/*
+broker.modelGateway (plan v4 step 4, GW8), as JSON: {} when service is unset, else {service,
+namespace, port, audiencePrefix, base, tokens}. base is the clients listener's URL, to which
+/clients/<client>/v1 is appended; tokens the directory of the projected tokens, one file per client.
+*/}}
+{{- define "ap.modelGateway" -}}
+{{- $g := .Values.broker.modelGateway | default dict -}}
+{{- if $g.service -}}
+{{- $ns := $g.namespace | default .Release.Namespace -}}
+{{- dict "service" $g.service "namespace" $ns "port" (int $g.port) "audiencePrefix" $g.audiencePrefix
+      "base" (printf "http://%s.%s.svc.%s:%d" $g.service $ns .Values.clusterDomain (int $g.port))
+      "tokens" "/var/run/secrets/maku/model-gateway" | toJson -}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The human block as the broker reads it (oidc mode): the values' block, with the model gateway's
+routes filled in where the block leaves url or apiKeyFile unset (D25: a value you set wins). The
+planner's only when it is enabled; the classifier's only when human.slackIntents exists.
+*/}}
+{{- define "ap.human" -}}
+{{- $h := omit (deepCopy .Values.broker.human) "mode" -}}
+{{- $g := include "ap.modelGateway" . | fromJson -}}
+{{- if $g.service -}}
+{{- $plan := dig "intake" "plan" dict $h -}}
+{{- if $plan.enabled -}}
+{{- if not $plan.url }}{{ $_ := set $plan "url" (printf "%s/clients/planner/v1" $g.base) }}{{ end -}}
+{{- if not $plan.apiKeyFile }}{{ $_ := set $plan "apiKeyFile" (printf "%s/planner" $g.tokens) }}{{ end -}}
+{{- end -}}
+{{- with $h.slackIntents -}}
+{{- if not .url }}{{ $_ := set . "url" (printf "%s/clients/classifier/v1" $g.base) }}{{ end -}}
+{{- if not .apiKeyFile }}{{ $_ := set . "apiKeyFile" (printf "%s/classifier" $g.tokens) }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $h -}}
+{{- end -}}

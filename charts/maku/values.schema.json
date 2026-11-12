@@ -5,6 +5,23 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "broker": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "modelGateway": {
+          "description": "The model gateway's clients listener (plan v4 step 4, GW8): one projected token per client, the planner's and the classifier's routes filled where human leaves them unset.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "service": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)?$"},
+            "namespace": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)?$"},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "audiencePrefix": {"type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9.-]*$"}
+          }
+        }
+      }
+    },
     "networkPolicies": {
       "description": "The network mode (D6). enabled is the old key; mode wins when set.",
       "type": "object",
