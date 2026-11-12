@@ -161,6 +161,35 @@ class HelperTest(unittest.TestCase):
         self.assertFalse(os.path.exists(helper.CACHE), "cache should be deleted")
         self.assertEqual(Stub.calls[-1], ("DELETE", "/installation/token", "Bearer ghs_stub1"))
 
+    def _file_token(self):
+        path = os.path.join(self.tmp, "github-token")
+        with open(path, "w") as f:
+            f.write("ghs_minted\n")
+        return path
+
+    def test_revoke_revokes_a_minted_file_token(self):
+        """perRun (D10): the factory minted the file's token for this run alone."""
+        path = self._file_token()
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}):
+            helper.main(["git-credential-agent", "revoke"])
+        self.assertEqual(Stub.calls, [("DELETE", "/installation/token", "Bearer ghs_minted")])
+
+    def test_revoke_of_a_minted_file_token_logs_a_401(self):
+        path = self._file_token()
+        Stub.revoke_status = 401
+        self.addCleanup(setattr, Stub, "revoke_status", 204)
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}), \
+                self.assertLogs("git-credential-agent", level="WARNING") as logs:
+            helper.main(["git-credential-agent", "revoke"])  # must not traceback
+        self.assertEqual(len(Stub.calls), 1)
+        self.assertNotIn("ghs_minted", "".join(logs.output))
+
+    def test_revoke_of_a_file_token_without_the_flag_makes_no_call(self):
+        path = self._file_token()
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path}):
+            helper.main(["git-credential-agent", "revoke"])
+        self.assertEqual(Stub.calls, [])
+
 
 class TokenFileMode(unittest.TestCase):
     def setUp(self):
