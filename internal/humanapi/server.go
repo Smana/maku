@@ -181,6 +181,9 @@ type Server struct {
 	// Catalogue reads what a repository offers at intake from the factory (classes_list and the
 	// settings pages' Profiles row). Nil lists no classes_list and leaves the pages without it.
 	Catalogue *CatalogueCache
+	// Unsafe is the install's unsafe settings (config install.unsafe, v4 D18), which GET /api/install
+	// shows every signed-in human and the web UI turns into a banner on every page.
+	Unsafe []string
 	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
 	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
 	Policy *Policy
@@ -253,6 +256,7 @@ func (s *Server) Routes() http.Handler {
 	}
 	mux.HandleFunc("GET /api/rooms/{id}/events", s.roomEvents)
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
+	mux.HandleFunc("GET /api/install", s.install)
 	mux.HandleFunc("GET /.well-known/roomctl", s.publicSetup)
 	mux.HandleFunc("GET /v1/ws", s.ws)
 	if s.Policy != nil {

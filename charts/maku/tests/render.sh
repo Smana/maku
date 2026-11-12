@@ -321,6 +321,22 @@ ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-age
 ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.policyName == .metadata.name and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'both AgentRun bindings deny, in the runs namespace'
 bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_Factory
 
+# install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config; none by
+# default, so the default render keeps its old config
+unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .install.unsafe // [] | join(",")' - <<<"$1"; }
+[[ $(unsafe "$q") == "" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists unsafe settings: $(unsafe "$q")" >&2; fail=1; }
+uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
+[[ $(unsafe "$uns") == "unsafe_allow_runc" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc, got '$(unsafe "$uns")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc" ]] ||
+  { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "" ]] ||
+  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: nothing listed" >&2; fail=1; }
+[[ $(unsafe "$nonp") == "network_policy_none" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none, got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token" ]] ||
+  { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
+  { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -330,7 +346,8 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$f
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fins" >"$tmp/factory-insecure.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
-go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$uns" >"$tmp/unsafe.yaml"
+go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" "$tmp/unsafe.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
 go run ./tests/loadconfig broker-slackintents "$tmp/slackintents.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1

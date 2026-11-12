@@ -416,6 +416,9 @@ data:
     roomTools:
       auth: tokenreview
       enabled: true
+    # The chart's unsafe settings: GET /api/install lists them, and every page shows a banner.
+    install:
+      unsafe: ["unsafe_allow_runc","network_policy_none"]
 
 ---
 # Source: agent-factory/charts/maku/templates/run-controller-config.yaml
@@ -985,7 +988,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The broker reads its config once at start: a changed config must roll the pods.
-        checksum/config: a335130776564e23f717b9c3b660491aeb1b16d4e6641fdb36cc5a5e0d0fce1a
+        checksum/config: 5de02d3e04d81b610b7b0efd133bededccd3aae8355556a27b7dc8c0d965fff7
     spec:
       # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
       serviceAccountName: room-broker

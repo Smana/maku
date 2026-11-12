@@ -54,6 +54,20 @@ JSON: {"class": <RuntimeClass name, "" for none>, "allowUnsandboxed": <bool>}. R
 {{- dict "class" $class "allowUnsandboxed" (or ($s.unsafeAllowRunc | default false) ($c.allowUnsandboxed | default false)) | toJson -}}
 {{- end -}}
 
+{{/* The install's unsafe settings (v4 D18, plan PR9), as a JSON list of the broker's bounded codes
+(config.Unsafe*): read it with `include "ap.unsafe" . | fromJsonArray`. Only the run-controller's
+settings count, so an install without it (the XR) lists none and renders as before. */}}
+{{- define "ap.unsafe" -}}
+{{- $codes := list -}}
+{{- if .Values.runController.enabled -}}
+{{- $sb := include "ap.sandbox" . | fromJson -}}
+{{- if and (not $sb.class) $sb.allowUnsandboxed -}}{{- $codes = append $codes "unsafe_allow_runc" -}}{{- end -}}
+{{- if not .Values.networkPolicies.enabled -}}{{- $codes = append $codes "network_policy_none" -}}{{- end -}}
+{{- if .Values.runController.unsafeSharedGitToken -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
+{{- end -}}
+{{- $codes | toJson -}}
+{{- end -}}
+
 {{/* A misconfiguration is a helm error, not a crashloop. */}}
 {{- define "ap.validate" -}}
 {{- $b := .Values.broker -}}
