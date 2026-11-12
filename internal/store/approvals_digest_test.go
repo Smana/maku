@@ -191,6 +191,92 @@ func TestSweepKeepsABoundBundle(t *testing.T) {
 	}
 }
 
+// An approved push is applied from its bundle after the decision: the sweep keeps the bundle of an
+// approved approval until the factory answers its output, then lets it go.
+func TestSweepKeepsAnApprovedUnappliedBundle(t *testing.T) {
+	ctx := t.Context()
+	s, _, retention, super := open(t)
+	b := []byte("approved bundle")
+	if err := s.PutBundle(ctx, room, approvalRun, digestOf(b), b); err != nil {
+		t.Fatal(err)
+	}
+	x := outputApproval("01JC0000000000000000000008", pushOutput)
+	x.BindingDigest = digestOf(b)
+	a, _, err := s.RequestOutputApproval(ctx, x, factoryDraft(pushOutput))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Decide(ctx, a.ID, ApprovalApproved, "human:maint", "", deciderDraft("human:maint", 1)); err != nil {
+		t.Fatal(err)
+	}
+	forge(t, super, `UPDATE output_bundles SET created_at = now() - interval '30 days'`)
+	r, err := Open(ctx, retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if n, err := r.SweepBundles(ctx, time.Now()); err != nil || n != 0 {
+		t.Fatalf("swept %d (%v), want the approved bundle kept", n, err)
+	}
+	// The factory's answer: an output_applied for the output, stamped as the factory.
+	if _, _, err := s.Append(ctx, envelope.Draft{RoomID: room, RunID: approvalRun, Type: envelope.Message,
+		Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"}, Origin: envelope.OriginClient,
+		OriginClient: "system:factory:output:output_applied", OriginSeq: 1,
+		Payload: envelope.Must(envelope.MessagePayload{Kind: envelope.KindOutputApplied, Delivery: envelope.DeliveryNone,
+			Output: &envelope.OutputRecord{ID: pushOutput, Type: "push", Digest: digestOf(b), Object: "https://github.com/o/r/commit/a"}})}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := r.SweepBundles(ctx, time.Now()); err != nil || n != 1 {
+		t.Fatalf("swept %d (%v), want the applied bundle", n, err)
+	}
+}
+
+// The sweep is a definer function: a caller's cutoff never reaches past the retention floor.
+func TestSweepFloorsTheCutoff(t *testing.T) {
+	ctx := t.Context()
+	s, _, retention, _ := open(t)
+	b := []byte("fresh bundle")
+	if err := s.PutBundle(ctx, room, approvalRun, digestOf(b), b); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Open(ctx, retention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if n, err := r.SweepBundles(ctx, time.Now().Add(365*24*time.Hour)); err != nil || n != 0 {
+		t.Fatalf("a future cutoff swept %d (%v)", n, err)
+	}
+	if err := run(ctx, retention, `SELECT sweep_output_bundles(now() + interval '1 year')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Bundle(ctx, room, approvalRun, digestOf(b)); err != nil {
+		t.Fatalf("the fresh bundle: %v", err)
+	}
+}
+
+// A retried request for an output must name the binding the first recorded: another digest or
+// branch for the same output is a conflict, never the stored row.
+func TestRequestOutputApprovalBindingConflict(t *testing.T) {
+	ctx := t.Context()
+	s, _, _, _ := open(t)
+	if _, _, err := s.RequestOutputApproval(ctx, outputApproval("01JC0000000000000000000009", pushOutput), factoryDraft(pushOutput)); err != nil {
+		t.Fatal(err)
+	}
+	for name, mut := range map[string]func(*Approval){
+		"another digest": func(a *Approval) { a.BindingDigest = strings.Repeat("f", 64) },
+		"another branch": func(a *Approval) { a.BindingBranch = "agent/t-2" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			x := outputApproval("01JC000000000000000000000A", pushOutput)
+			mut(&x)
+			if _, _, err := s.RequestOutputApproval(ctx, x, factoryDraft(pushOutput)); !errors.Is(err, ErrBindingConflict) {
+				t.Fatalf("err = %v, want ErrBindingConflict", err)
+			}
+		})
+	}
+}
+
 // The upgrade from the schema before 20261113130000 keeps every row: an older approval reads with
 // no digest, and is decided as before.
 func TestApprovalDigestUpgrade(t *testing.T) {

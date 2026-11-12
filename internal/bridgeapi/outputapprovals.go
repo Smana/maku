@@ -137,7 +137,11 @@ func (s *Server) requestOutputApproval(w http.ResponseWriter, r *http.Request) {
 		Prompters: prompters, ExpiresAt: s.now().Add(ttl())},
 		envelope.Draft{Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: p.ID}, Origin: envelope.OriginClient,
 			OriginClient: p.ID + ":approvals", OriginSeq: outputSeq(in.Output), Redactions: rules})
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrBindingConflict):
+		fail(w, http.StatusConflict, wire.ReasonBindingConflict)
+		return
+	case err != nil:
 		s.logFailure(w, err, "request an output approval", "room", id, "run", in.RunID)
 		return
 	}

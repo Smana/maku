@@ -29,6 +29,9 @@ var (
 	// ErrTooLarge is an approval whose request event would exceed the payload cap:
 	// stored as an oversize stub, it would not be the request the row records.
 	ErrTooLarge = errors.New("the approval request exceeds the payload cap")
+	// ErrBindingConflict is a retried output approval naming another digest or branch than the one
+	// its output's approval already binds.
+	ErrBindingConflict = errors.New("the output's approval binds another digest or branch")
 )
 
 // An approval's states: pending, then closed once (SP2 §6).
@@ -222,6 +225,11 @@ func (s *Store) requestOutputApproval(ctx context.Context, a Approval, d envelop
 	existing, err := scanApproval(tx.QueryRow(ctx, `SELECT `+approvalCols+` FROM approvals
 		WHERE room_id = $1 AND run_id = $2 AND binding_output = $3`, a.RoomID, a.RunID, a.BindingOutput))
 	if err == nil {
+		// A retry names the same binding; another digest or branch for the output is a conflict,
+		// never an answer with the row the first request recorded.
+		if existing.BindingDigest != a.BindingDigest || existing.BindingBranch != a.BindingBranch {
+			return Approval{}, envelope.Event{}, ErrBindingConflict
+		}
 		return existing, envelope.Event{}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {

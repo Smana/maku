@@ -29,12 +29,13 @@ CREATE TRIGGER output_bundles_open_room BEFORE INSERT ON output_bundles
 
 -- The sweep (SweepBundles): bundles older than the cutoff go, unless a pending approval still binds
 -- one (20261113130000_approval_digest.sql replaces this function with that join). A function, so
--- retention deletes bundles without reading their bytes.
+-- retention deletes bundles without reading their bytes. It runs as its owner, so the caller's
+-- cutoff is floored at the 14-day retention: no caller sweeps a younger bundle.
 CREATE FUNCTION sweep_output_bundles(p_before timestamptz) RETURNS bigint
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE swept bigint;
 BEGIN
-  DELETE FROM public.output_bundles WHERE created_at < p_before;
+  DELETE FROM public.output_bundles WHERE created_at < least(p_before, now() - interval '14 days');
   GET DIAGNOSTICS swept = ROW_COUNT;
   RETURN swept;
 END $$;

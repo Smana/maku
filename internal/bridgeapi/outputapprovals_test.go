@@ -29,6 +29,9 @@ func (m *memOutputApprovals) RequestOutputApproval(_ context.Context, a store.Ap
 	defer m.mu.Unlock()
 	for _, r := range m.rows {
 		if r.RunID == a.RunID && r.BindingOutput == a.BindingOutput {
+			if r.BindingDigest != a.BindingDigest || r.BindingBranch != a.BindingBranch {
+				return store.Approval{}, envelope.Event{}, store.ErrBindingConflict
+			}
 			return r, envelope.Event{}, nil
 		}
 	}
@@ -164,6 +167,8 @@ func TestOutputApprovalRoutes(t *testing.T) {
 			outputApprovalBody(func(b map[string]any) { b["action"] = []string{"x"} }), http.StatusBadRequest, wire.ReasonBadApproval},
 		"an unknown field": {http.MethodPost, "/v1/rooms/" + room + "/approvals", "sys:" + factory,
 			outputApprovalBody(func(b map[string]any) { b["class"] = "forge.pr" }), http.StatusBadRequest, wire.ReasonBadApproval},
+		"a retry with another digest": {http.MethodPost, "/v1/rooms/" + room + "/approvals", "sys:" + factory,
+			outputApprovalBody(func(b map[string]any) { b["digest"] = strings.Repeat("f", 64) }), http.StatusConflict, wire.ReasonBindingConflict},
 		"a run of another room": {http.MethodPost, "/v1/rooms/" + room + "/approvals", "sys:" + factory,
 			outputApprovalBody(func(b map[string]any) { b["runId"] = "cccccccc" }), http.StatusBadRequest, wire.ReasonBadApproval},
 		"a branch that is not the run's": {http.MethodPost, "/v1/rooms/" + room + "/approvals", "sys:" + factory,

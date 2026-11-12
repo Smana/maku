@@ -97,6 +97,7 @@ const (
 	ReasonBadBundle       = "bad_bundle"        // 400: a bundle read without a 64-hex digest and a C2 run id
 	ReasonNoBundle        = "no_bundle"         // 404: the room holds no bundle for that run and digest
 	ReasonNoApproval      = "no_approval"       // 404: no approval has that id
+	ReasonBindingConflict = "binding_conflict"  // 409: the output's approval already binds another digest or branch
 )
 
 // SSE event names, broker → bridge.

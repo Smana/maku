@@ -95,18 +95,23 @@ var (
 	ErrNoBundle = errors.New("rooms: the broker holds no such bundle")
 	// ErrNoApproval is 404 no_approval: no approval has that id.
 	ErrNoApproval = errors.New("rooms: the broker holds no such approval")
+	// ErrBindingConflict is 409 binding_conflict: the output's approval already binds another
+	// digest or branch. The same request is refused again: a bug, not a retry.
+	ErrBindingConflict = errors.New("rooms: the output's approval binds another digest or branch")
 	// ErrBundleDigest is a bundle whose bytes do not hash to the digest it was read by.
 	ErrBundleDigest = errors.New("rooms: the bundle's sha256 is not its digest")
 )
 
 // Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute, ErrGrantState, ErrBadMessage,
-// ErrNoBundle and ErrNoApproval.
+// ErrNoBundle, ErrNoApproval and ErrBindingConflict.
 func (e *APIError) Is(target error) bool {
 	switch target {
 	case ErrNoBundle:
 		return e.Reason == wire.ReasonNoBundle
 	case ErrNoApproval:
 		return e.Reason == wire.ReasonNoApproval
+	case ErrBindingConflict:
+		return e.Reason == wire.ReasonBindingConflict
 	case ErrBadMessage:
 		return e.Reason == wire.ReasonBadMessage
 	case ErrNoRoute:

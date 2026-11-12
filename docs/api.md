@@ -335,7 +335,8 @@ maintainer's approval of its bundle's digest (hardening HR27, HR28).
 It records a `forge.push` approval bound to the branch, the digest and the output, and appends its
 `approval_requested` with `digest` and `output` beside `branch`. `runId` must be a run of the room,
 and `branch` the run's own while the broker watches it. `ttlSeconds` is 60 to 604,800. The run's
-prompters may not decide it. A retry for the same output answers the first approval. Unlike a
+prompters may not decide it. A retry for the same output answers the first approval, and one
+naming another digest or branch for that output is `409 binding_conflict`. Unlike a
 bridge's approval, it is not closed when the run ends or its call id gets a result: it closes by a
 decision, by its deadline, or by the factory's supersede. Response `200`:
 `{"approvalId": "<ULID>", "state": "pending", "expiresAt": "…"}`.
@@ -355,6 +356,7 @@ decidedBy, expiresAt}` for a digest-bound approval. Any other approval is `404 n
 | `401` | `unauthenticated` | No valid system token |
 | `403` | `not_permitted` | Any system principal but the factory |
 | `404` | `no_room`, `no_approval` | No such room, or no such digest-bound approval |
+| `409` | `binding_conflict` | The output's approval already binds another digest or branch |
 | `429` | `rate_limited` | Over the principal's limits |
 | `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
 

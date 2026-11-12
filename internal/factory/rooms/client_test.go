@@ -805,6 +805,10 @@ func TestClientOutputApprovals(t *testing.T) {
 	if _, err := r.c.Approval(t.Context(), a.ApprovalID); !errors.Is(err, ErrNoApproval) {
 		t.Fatalf("a missing approval: %v", err)
 	}
+	r.b.fail["/v1/rooms/3buqdlot/approvals"], r.b.reason = http.StatusConflict, wire.ReasonBindingConflict
+	if _, err := r.c.RequestApproval(t.Context(), "3buqdlot", req); !errors.Is(err, ErrBindingConflict) {
+		t.Fatalf("a binding conflict: %v", err)
+	}
 	sent := len(r.b.auth)
 	bad := func(mut func(*ApprovalRequest)) error {
 		x := req

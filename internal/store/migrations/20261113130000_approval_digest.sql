@@ -46,15 +46,21 @@ BEGIN
   RETURN NEW;
 END $$;
 
--- The bundle sweep keeps a bundle a pending approval still binds, whatever its age: the push it
--- holds is applied from it once a maintainer approves.
+-- The bundle sweep keeps a bundle an approval still needs, whatever its age: a pending approval's,
+-- which a maintainer may yet approve, and an approved one's until the factory has answered its
+-- output, since the push is applied from the bundle after the decision. The cutoff stays floored at
+-- the 14-day retention, as 20261113120000_output_bundles.sql has it.
 CREATE OR REPLACE FUNCTION sweep_output_bundles(p_before timestamptz) RETURNS bigint
   LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE swept bigint;
 BEGIN
-  DELETE FROM public.output_bundles b WHERE b.created_at < p_before
-    AND NOT EXISTS (SELECT 1 FROM public.approvals a WHERE a.state = 'pending' AND a.run_id = b.run_id
-      AND a.binding_digest = b.digest);
+  DELETE FROM public.output_bundles b WHERE b.created_at < least(p_before, now() - interval '14 days')
+    AND NOT EXISTS (SELECT 1 FROM public.approvals a WHERE a.run_id = b.run_id AND a.binding_digest = b.digest
+      AND (a.state = 'pending' OR (a.state = 'approved' AND NOT EXISTS (SELECT 1 FROM public.events e
+        WHERE e.room_id = a.room_id AND e.run_id = a.run_id AND e.type = 'message'
+          AND e.actor_kind = 'system' AND e.actor_id = 'system:factory'
+          AND e.payload->>'kind' IN ('output_applied', 'output_refused')
+          AND e.payload->'output'->>'id' = a.binding_output))));
   GET DIAGNOSTICS swept = ROW_COUNT;
   RETURN swept;
 END $$;
