@@ -809,7 +809,7 @@ func (r *Reconciler) resumeBlock(cfg *config.Config, t *v1alpha1.Task) string {
 	if int(t.Status.Resumes) >= cfg.Resume.MaxPerTask {
 		return "resumes_exhausted"
 	}
-	if !runFits(t) {
+	if !runFitsFor(t, current(t).Role) {
 		return "resume_budget"
 	}
 	return ""

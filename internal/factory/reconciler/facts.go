@@ -80,7 +80,7 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 		f.Spend = &envelope.SpendFact{UsedMicroUSD: dollars(u), LimitMicroUSD: dollars(limit)}
 	}
 	if t.Spec.Budget.TaskTokens > 0 {
-		f.Budget = &envelope.BudgetFact{UsedTokens: t.Status.Usage.Tokens, LimitTokens: t.Spec.Budget.TaskTokens}
+		f.Budget = &envelope.BudgetFact{UsedTokens: chargedTokens(t), LimitTokens: t.Spec.Budget.TaskTokens}
 	}
 	if t.Spec.Issue > 0 {
 		f.Issue = &envelope.IssueFact{Number: t.Spec.Issue,

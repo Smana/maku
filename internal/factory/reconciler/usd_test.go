@@ -132,3 +132,72 @@ func TestTaskTokenCapHoldsWhileUnderTheUSDCap(t *testing.T) {
 		t.Errorf("the limit named is not the token cap: %q", g.metrics.recorded)
 	}
 }
+
+// reviewBudgetTask is #475's task l5ufw4fz: standard tier (run 1.5 M, task 3.0 M tokens), queued
+// for a reviewer after an implementer that took `used` tokens.
+func reviewBudgetTask(used int64) *v1alpha1.Task {
+	tk := awaiting()
+	tk.Spec.Template = "pair"
+	tk.Spec.Budget = v1alpha1.Budget{Tier: "standard", Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45}
+	tk.Status.Phase, tk.Status.NextTrigger, tk.Status.NextRole = v1alpha1.PhaseQueued, "review", "reviewer"
+	tk.Status.Runs = []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial", Phase: "Succeeded",
+		Tokens: used, Started: awaiting().Status.Runs[0].Started}}
+	tk.Status.Usage.Tokens = used
+	return tk
+}
+
+// #475: the reviewer never ran because runFits wanted a whole run (1.5 M) for it. With 1.14 M left
+// it starts, capped at what is left so the task cannot pass taskTokens.
+func TestReviewerStartsWhenTheRemainderFitsAReview(t *testing.T) {
+	g := newRig(t, reviewBudgetTask(1_858_756+1), roomOf("3buqdlot"))
+	g.f.SetPR(pr12())
+	g.r.Cfg.Current().Budgets.EnforceTask = true
+	got := g.reconcile(t, "3buqdlot", 1)
+	s, started := g.runs.specs[rid(1)]
+	if !started {
+		t.Fatalf("the reviewer did not start: %s %s", got.Status.Phase, got.Status.Reason)
+	}
+	if s.Role != "reviewer" || s.MaxTokens != 1_141_243 {
+		t.Errorf("role %s cap %d, want reviewer capped at the 1,141,243 left", s.Role, s.MaxTokens)
+	}
+}
+
+// #475: with 100 k left no review fits (a quarter of a run is 375 k): the task escalates as before.
+func TestReviewerRefusedWhenLessThanAReviewIsLeft(t *testing.T) {
+	g := newRig(t, reviewBudgetTask(2_900_000), roomOf("3buqdlot"))
+	g.f.SetPR(pr12())
+	g.r.Cfg.Current().Budgets.EnforceTask = true
+	got := g.reconcile(t, "3buqdlot", 1)
+	if _, started := g.runs.specs[rid(1)]; started {
+		t.Fatal("a reviewer started with 100 k left")
+	}
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Reason != "budget-task" {
+		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)
+	}
+}
+
+// An implementer still needs a whole run left.
+func TestImplementerStillNeedsAWholeRun(t *testing.T) {
+	tk := reviewBudgetTask(1_858_756)
+	if runFitsFor(tk, "implementer") || !runFitsFor(tk, "reviewer") {
+		t.Fatal("implementer must need a whole run, a reviewer a quarter of one")
+	}
+}
+
+// #475: the overlap evaluation's scoper run is recorded but not charged to the task's caps.
+func TestOverlapScoperIsNotChargedToTheTask(t *testing.T) {
+	tk := reviewBudgetTask(1_000_000)
+	tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "triager", Phase: "Succeeded", Tokens: 400_000, CostMicroUSD: 1})
+	tk.Status.Usage.Tokens = 1_400_000
+	tk.Status.Overlap = &v1alpha1.OverlapStatus{ScoperRun: rid(1)}
+	if got := chargedTokens(tk); got != 1_000_000 {
+		t.Fatalf("charged %d, want the implementer's 1,000,000 only", got)
+	}
+	if tk.Status.Usage.Tokens != 1_400_000 {
+		t.Fatal("the evaluation's spend must stay in status.usage")
+	}
+	tk.Status.Overlap = nil // an ordinary scoper stays charged
+	if got := chargedTokens(tk); got != 1_400_000 {
+		t.Fatalf("an ordinary run was exempted: %d", got)
+	}
+}

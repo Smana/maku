@@ -1231,22 +1231,76 @@ type costReader interface {
 	Get(id string) (meter.Cost, bool)
 }
 
-// runFits: the task's cap still holds one whole run (owner, 2026-10-07). A run may spend up to
-// its run cap before the meter revokes it, so admitting on "under the cap" let a task end 1.5 M
-// past it; a resume follows the same rule. In USD while usdCapped, and always in tokens: a
-// flat-rate model's nominal prices left the dollars far from their cap while the task ran to 4 M
-// of its 3 M tokens (#465).
-func runFits(t *v1alpha1.Task) bool {
+// runFits: the task's cap still holds one whole implementer run (owner, 2026-10-07). A run may
+// spend up to its run cap before the meter revokes it, so admitting on "under the cap" let a task
+// end 1.5 M past it; a resume follows the same rule. In USD while usdCapped, and always in tokens:
+// a flat-rate model's nominal prices left the dollars far from their cap while the task ran to
+// 4 M of its 3 M tokens (#465).
+func runFits(t *v1alpha1.Task) bool { return runFitsFor(t, "implementer") }
+
+// runFitsFor sizes the fit check by the role about to run (#475). Every role but the reviewer
+// needs a whole run's tokens left. A reviewer reads a diff and needs a quarter of one
+// (reviewFloorDiv), and starts at whatever remains up to a whole run (runCapTokens), so a
+// token-heavy implementer no longer leaves the pull request unreviewed. Both caps still bind: the
+// run is capped at what is left, so the task never passes taskTokens.
+func runFitsFor(t *v1alpha1.Task, role string) bool {
 	b := t.Spec.Budget
-	if usdCapped(t) && b.TaskMicroUSD-t.Status.Usage.CostMicroUSD < b.RunMicroUSD {
+	if usdCapped(t) && b.TaskMicroUSD-chargedMicroUSD(t) < b.RunMicroUSD {
 		return false
 	}
-	return tokensFit(t)
+	return tokensFit(t, role)
 }
 
-func tokensFit(t *v1alpha1.Task) bool {
+// reviewFloorDiv: a reviewer run needs 1/reviewFloorDiv of a whole run's tokens left to start.
+const reviewFloorDiv = 4
+
+func tokensFit(t *v1alpha1.Task, role string) bool {
 	b := t.Spec.Budget
-	return b.TaskTokens <= 0 || b.TaskTokens-t.Status.Usage.Tokens >= b.RunTokens
+	need := b.RunTokens
+	if role == "reviewer" {
+		need = b.RunTokens / reviewFloorDiv
+	}
+	return b.TaskTokens <= 0 || b.TaskTokens-chargedTokens(t) >= need
+}
+
+// runCapTokens is the token cap a run of role starts with: the tier's run cap, and for a reviewer
+// no more than the task has left, so a review admitted on a partial remainder cannot take the
+// task past taskTokens (the meter revokes it at this cap).
+func runCapTokens(t *v1alpha1.Task, role string) int64 {
+	b := t.Spec.Budget
+	if role != "reviewer" || b.TaskTokens <= 0 || b.RunTokens <= 0 {
+		return b.RunTokens
+	}
+	return max(1, min(b.RunTokens, b.TaskTokens-chargedTokens(t)))
+}
+
+// chargedTokens is the usage held against the task's caps: every run's tokens but the overlap
+// evaluation's scoper, whose spend is recorded in the run's record and status.usage but belongs
+// to the evaluation, not the implementation budget (#475; overlap design: "implementation budget").
+func chargedTokens(t *v1alpha1.Task) int64 {
+	n := t.Status.Usage.Tokens
+	for _, rec := range t.Status.Runs {
+		if evaluationRun(t, rec.ID) {
+			n -= rec.Tokens
+		}
+	}
+	return max(n, 0)
+}
+
+// chargedMicroUSD is chargedTokens' counterpart in dollars.
+func chargedMicroUSD(t *v1alpha1.Task) int64 {
+	n := t.Status.Usage.CostMicroUSD
+	for _, rec := range t.Status.Runs {
+		if evaluationRun(t, rec.ID) {
+			n -= rec.CostMicroUSD
+		}
+	}
+	return max(n, 0)
+}
+
+// evaluationRun: the run is the task's overlap evaluation scoper.
+func evaluationRun(t *v1alpha1.Task, id string) bool {
+	return t.Status.Overlap != nil && t.Status.Overlap.ScoperRun != "" && t.Status.Overlap.ScoperRun == id
 }
 
 // usdCapped: the task is held to TaskMicroUSD rather than TaskTokens (OD-6 (b)), while every run
@@ -1257,8 +1311,8 @@ func usdCapped(t *v1alpha1.Task) bool {
 }
 
 // taskLimit names the task cap runFits checks, for the revocations metric.
-func taskLimit(t *v1alpha1.Task) string {
-	if usdCapped(t) && tokensFit(t) {
+func taskLimit(t *v1alpha1.Task, role string) string {
+	if usdCapped(t) && tokensFit(t, role) {
 		return "task-usd"
 	}
 	return "task-tokens"
@@ -1362,8 +1416,8 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if t.Spec.CoordinationParent != nil && coordination.AllocationLeft(t) < 0 {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonAllocationExhausted)
 	}
-	if !runFits(t) {
-		limit := taskLimit(t)
+	if !runFitsFor(t, t.Status.NextRole) {
+		limit := taskLimit(t, t.Status.NextRole)
 		if cfg.Budgets.EnforceTask || t.Sponsored() != "" { // F4: an api task's ceiling is never a shadow
 			record(ctx, func(ctx context.Context) { r.Metrics.RunRevoked(ctx, "budget-task", limit) })
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "budget-task") // no new run past the task cap (C5)
