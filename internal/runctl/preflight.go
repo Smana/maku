@@ -114,6 +114,9 @@ func (p *Preflight) checks() []check {
 	if p.Cfg.RuntimeClassName != "" {
 		cs = append(cs, check{name: "runtimeClass", run: p.runtimeClass})
 	}
+	if p.Cfg.PerRun() { // no shared Secret: each run's own is checked before its pod (Reconciler.inputs)
+		return cs
+	}
 	return append(cs, check{name: "gitSecrets", run: p.gitSecrets, waits: true})
 }
 

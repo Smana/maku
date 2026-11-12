@@ -109,15 +109,15 @@ func TestGitSecretForFailsClosed(t *testing.T) {
 	c := testConfig(t)
 	c.GitReadSecret = ""
 	for _, r := range []string{"reviewer", "triager"} {
-		if got := c.GitSecretFor(r); got != "" {
+		if got := c.GitSecretFor(run("run-abcdefgh", role(r))); got != "" {
 			t.Errorf("%s: %q, want none", r, got)
 		}
 	}
-	if got := c.GitSecretFor("implementer"); got != "agent-git" {
+	if got := c.GitSecretFor(run("run-abcdefgh")); got != "agent-git" {
 		t.Errorf("implementer: %q", got)
 	}
 	c.UnsafeSharedGitToken = true
-	if got := c.GitSecretFor("reviewer"); got != "agent-git" {
+	if got := c.GitSecretFor(run("run-abcdefgh", role("reviewer"))); got != "agent-git" {
 		t.Errorf("unsafe reviewer: %q", got)
 	}
 }

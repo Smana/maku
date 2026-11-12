@@ -5,6 +5,17 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "runController": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "gitTokens": {
+          "description": "Where a run's git token comes from (D10): shared (gitSecret and gitReadSecret) or perRun (each run's own Secret, minted by the factory).",
+          "type": "string",
+          "enum": ["shared", "perRun"]
+        }
+      }
+    },
     "sandbox": {
       "description": "The run pod's sandbox (D18). The old runController.runtimeClassName and allowUnsandboxed keys stay honoured.",
       "type": "object",

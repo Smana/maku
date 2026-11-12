@@ -124,6 +124,9 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		{Name: "TASK_FILE", Value: "/run/agent/task/task.md"}, {Name: "RULES_FILE", Value: "/run/agent/task/rules.md"},
 		{Name: "HOME", Value: "/home/openhands"},
 	}
+	if c.PerRun() { // the harness revokes the run's minted token on exit (plan PR5)
+		env = append(env, corev1.EnvVar{Name: "GIT_TOKEN_REVOCABLE", Value: "1"})
+	}
 	if s.RoomRef != "" {
 		env = append(env, corev1.EnvVar{Name: "ROOM_ID", Value: s.RoomRef},
 			corev1.EnvVar{Name: "BRIDGE_URL", Value: fmt.Sprintf("http://127.0.0.1:%d", BridgeHealthPort)})
@@ -189,7 +192,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		{Name: "task", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: r.Name + "-task"}}}},
 		{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.ModelSecret, DefaultMode: &mode,
 			Items: []corev1.KeyToPath{{Key: "api_key", Path: "api_key"}}}}},
-		{Name: "github", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.GitSecretFor(s.Role), DefaultMode: &mode,
+		{Name: "github", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.GitSecretFor(r), DefaultMode: &mode,
 			Items: []corev1.KeyToPath{{Key: "token", Path: "token"}}}}},
 		emptyDir("workspace", size.scratch, false), emptyDir("home", "2Gi", false), emptyDir("tmp", "2Gi", false),
 		emptyDir("git-cache", "1Mi", true),
