@@ -155,6 +155,9 @@ func (c *AppClient) Installation(ctx context.Context, owner, name string) (int64
 	return id, nil
 }
 
+// Evict drops owner/name from the installation cache, if there is one.
+func (c *AppClient) Evict(owner, name string) { c.Installations.Evict(owner, name) }
+
 // AccessToken mints a token of installation id on exactly repos (names, no owner) with exactly
 // perms, and checks GitHub's reply: permissions that differ from perms, or repositories that differ
 // from repos, revoke the token and fail with ErrScopeMismatch. It returns the token with what the

@@ -177,6 +177,8 @@ type Set struct {
 	traceAbandoned       metric.Int64Counter
 	resumes              metric.Int64Counter
 	modelRefused         metric.Int64Counter
+	runTokenMints        metric.Int64Counter
+	runTokenRevokes      metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
 	overlapEvaluations   metric.Int64Counter
@@ -458,6 +460,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.resumes, err = meter.Int64Counter("agent_factory_resumes_total",
 		metric.WithDescription("Runs the factory resumed on its own after their pod was disrupted or lost, by the AgentRun's reason."))
+	check(err)
+	s.runTokenMints, err = meter.Int64Counter("agent_factory_run_token_mints_total",
+		metric.WithDescription("Installation tokens the minter asked for runs and the publisher, by role and result: ok, not_installed, permission_not_granted, scope_mismatch or error (v4 D10)."))
+	check(err)
+	s.runTokenRevokes, err = meter.Int64Counter("agent_factory_run_token_revokes_total",
+		metric.WithDescription("Installation tokens the minter revoked, by result: ok or error (v4 D10)."))
 	check(err)
 	s.modelRefused, err = meter.Int64Counter("agent_factory_model_refused_total",
 		metric.WithDescription("Runs the model provider refused, by cause (billing, auth, quota) and role: a platform condition the task is held for, never the agent's error (#450). Alert on its increase."))
@@ -1176,6 +1184,18 @@ func (s *Set) Resumed(ctx context.Context, reason string) {
 func (s *Set) ModelRefused(ctx context.Context, cause, role string) {
 	s.modelRefused.Add(ctx, 1, metric.WithAttributes(attribute.String("cause", oneOf(cause, []string{"billing", "auth", "quota"})),
 		attribute.String("role", oneOf(role, []string{"implementer", "reviewer", "tester", "triager"}))))
+}
+
+// RunTokenMint counts one mint of the minter by role and result (v4 D10, plan PR6).
+func (s *Set) RunTokenMint(ctx context.Context, role, result string) {
+	s.runTokenMints.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("role", oneOf(role, []string{"implementer", "tester", "reviewer", "triager", "publisher"})),
+		attribute.String("result", oneOf(result, []string{"ok", "not_installed", "permission_not_granted", "scope_mismatch", "error"}))))
+}
+
+// RunTokenRevoke counts one revoke of the minter by result.
+func (s *Set) RunTokenRevoke(ctx context.Context, result string) {
+	s.runTokenRevokes.Add(ctx, 1, metric.WithAttributes(attribute.String("result", oneOf(result, []string{"ok", "error"}))))
 }
 
 // LoopRun counts an implementer run under the loop policy once it ends, by its task's class and end.

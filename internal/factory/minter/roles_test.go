@@ -23,7 +23,7 @@ type ot = hardening.OutputType
 func enf(ts ...ot) []ot { return ts }
 
 func TestTableHR12(t *testing.T) {
-	R := func(p Permissions) Permissions { return shared(p) }
+	R := shared
 	cases := []struct {
 		name     string
 		role     string
