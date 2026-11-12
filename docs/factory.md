@@ -1228,6 +1228,73 @@ status `maku/merge-gate`, once per head, state and description:
 human, so its status stays `pending`. Were it `success`, a ruleset requiring `maku/merge-gate`
 would let any writer merge it, an agent token with `contents: write` included.
 
+### Branch protection for the merge gate
+
+`maku/merge-gate` is the gate a repository's branch protection can require (D11). It is posted by
+the merger App's connection, which asks for `statuses: write` while `merge.gateStatus` is on. Once
+the merger is folded into the factory App, that App is the factory App. The ruleset below applies
+to the default branch and pins the status to that App, so a status of the same name from any other
+App or token does not count:
+
+```bash
+APP_ID=$(cat /path/to/the/merger/app_id)   # the App that posts maku/merge-gate
+gh api "repos/OWNER/REPO/rulesets" --method POST --input - <<EOF
+{
+  "name": "default branch: the merge gate",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+  "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}],
+  "rules": [
+    {"type": "pull_request", "parameters": {"required_approving_review_count": 0,
+      "dismiss_stale_reviews_on_push": false, "require_code_owner_review": false,
+      "require_last_push_approval": false, "required_review_thread_resolution": false}},
+    {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false,
+      "required_status_checks": [
+        {"context": "ci", "integration_id": 15368},
+        {"context": "maku/merge-gate", "integration_id": $APP_ID}]}},
+    {"type": "non_fast_forward"},
+    {"type": "deletion"}
+  ]
+}
+EOF
+```
+
+| Rule | What it is for |
+|---|---|
+| `pull_request`, 0 approvals | Every change to the default branch goes through a pull request. Approval is not the gate: the factory's decision is, and a maintainer's approval is read by `approveToMerge` |
+| `required_status_checks` | The repository's own CI checks (replace `ci` and its `integration_id`, 15368 for GitHub Actions, with yours), and `maku/merge-gate` from the App that posts it. A pull request merges only when the factory has decided `arm` on its head. Without `integration_id`, any App's or token's status of that name would count |
+| `non_fast_forward`, `deletion` | The default branch is neither rewritten nor deleted |
+| Bypass: repository admins (`RepositoryRole` 5) | Maintainers merge what the gate hands to a human (`AwaitingHuman`, shadow decisions) and pull requests that are not tasks, which carry no `maku/merge-gate` |
+
+The factory's own merge needs no bypass: it is a plain squash merge of a head whose checks and
+`maku/merge-gate` are green. **Pull requests that are not tasks** get no status, so a maintainer
+bypasses to merge them, as today's ruleset already requires.
+
+**The factory reports whether the rule is in place.** On each fence pass over a repository with
+`merge.gateStatus`, it reads `GET repos/{owner}/{repo}/rules/branches/{default branch}` with the
+factory App's token and sets `maku_factory_merge_gate_required{repository}` to 1 when a ruleset
+requires `maku/merge-gate` from the App that posts it, else 0. Each drop to 0 logs a warning
+([operations](operations.md#factory-metrics)). It never refuses: the factory merges by its own
+decision, and the rule guards the branch against everyone else. **Classic branch protection is not
+read**, since reading it needs `administration: read`, which no factory App holds: use a ruleset.
+
+**Retiring policy-bot, in order:**
+1. Set `merge.gateStatus: true`, with the merger App granted `statuses: write`.
+2. Watch `maku/merge-gate` beside `policy-bot: main` for a week
+   (`maku_factory_merge_decisions_total` per verdict).
+3. Move the `.policy.yml` gate list into each class's `deny.protectedFiles`
+   ([merge policies](merge-policies.md)): with policy-bot gone, nothing else keeps a gate path
+   from merging.
+4. Add `maku/merge-gate`, with its `integration_id`, to the ruleset.
+5. Remove `policy-bot: main` from the ruleset.
+6. Set `merge.policyBot: false`. `merge.policyBotLogin` may then be removed.
+
+**policy-bot remains an optional integration.** Keep it when a repository wants rules for pull
+requests the factory does not decide, such as its approval rules for human-authored pull requests:
+the factory posts `maku/merge-gate` only on its own tasks. With `merge.policyBot` unset or true,
+the gate reads `policy-bot: main` as before.
+
 ### Adopted classes
 
 A class that declares `author.adopt` takes another author's pull requests, Renovate's, instead of

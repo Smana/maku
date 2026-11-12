@@ -26,6 +26,7 @@ As of v0.42.0.
 | A form that never answers: `issue_file` falls back to the draft after 60 s, and the handoff skill checks the repository first (v0.42.0) | [The MCP server](cli.md#the-mcp-server) |
 | Slack quick wins: a refused first mention is explained, planner progress shows, the closed phrases are listed (v0.42.0) | [Slack App](slack.md) |
 | The chart contract, v4 rollout step 1: the `agent-factory-crds` chart, the demo in `values-demo.yaml`, a values schema, `kubeVersion` 1.30 or later, the umbrella published and signed | [Upgrading](upgrading.md#the-chart-contract-v04x-v4-rollout-step-1) |
+| The merge gate as a required status, v4 rollout step 3 (D11): `merge.policyBot: false` outside the demo, `maku/merge-gate` `success` only when the factory merges, a documented ruleset and its observer, and `agent_merged` | [Branch protection for the merge gate](factory.md#branch-protection-for-the-merge-gate) |
 
 ## In progress
 
