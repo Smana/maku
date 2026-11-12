@@ -44,6 +44,7 @@ const (
 	eventsRoute   = "/v1/rooms/{id}/events"
 	messagesRoute = "/v1/rooms/{id}/messages"
 	taskRoute     = "/v1/rooms/{id}/task"
+	outputsRoute  = "/v1/rooms/{id}/outputs"
 	queueRoute    = "/v1/rooms/{id}/queue"
 	consumeRoute  = "/v1/rooms/{id}/queue/consume"
 
@@ -84,11 +85,16 @@ var (
 	// ErrGrantState is 409 grant_state: the grant's status or version does not allow the move,
 	// such as disabling a grant already revoked.
 	ErrGrantState = errors.New("rooms: the grant does not move that way")
+	// ErrBadMessage is 400 bad_message: the broker refused the body as malformed, such as an output
+	// record its Validate rejects. The same body is refused again: a bug, not a retry.
+	ErrBadMessage = errors.New("rooms: the broker refused the message as malformed")
 )
 
-// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute and ErrGrantState.
+// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute, ErrGrantState and ErrBadMessage.
 func (e *APIError) Is(target error) bool {
 	switch target {
+	case ErrBadMessage:
+		return e.Reason == wire.ReasonBadMessage
 	case ErrNoRoute:
 		return e.Reason == "" && (e.Status == http.StatusNotFound || e.Status == http.StatusMethodNotAllowed)
 	case ErrNoRoom:
@@ -258,6 +264,33 @@ func (c *Client) TaskFacts(ctx context.Context, room string, f envelope.TaskFact
 		Seq int64 `json:"seq"`
 	}
 	return c.do(ctx, http.MethodPost, taskRoute, room, "", in, maxReplyOverhead, &out)
+}
+
+// Output posts the factory's answer to, or shadow of, one of run runID's outputs (hardening HR2):
+// kind is output_applied, output_refused or output_shadowed, and rec must pass Validate for it.
+// The broker keys a replay on (room, principal, kind, the record's id), so a retry of the same
+// answer is never stored twice. A body the broker refuses is ErrBadMessage.
+func (c *Client) Output(ctx context.Context, room, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error {
+	switch {
+	case !envelope.ValidID(room):
+		return fmt.Errorf("rooms: %q is not a C2 room id", room)
+	case !envelope.ValidID(runID):
+		return fmt.Errorf("rooms: %q is not a C2 run id", runID)
+	case kind != envelope.KindOutputApplied && kind != envelope.KindOutputRefused && kind != envelope.KindOutputShadowed:
+		return fmt.Errorf("rooms: %q is not an output answer", kind)
+	}
+	if err := rec.Validate(kind); err != nil {
+		return err
+	}
+	in := struct {
+		RunID  string                `json:"runId"`
+		Kind   envelope.MessageKind  `json:"kind"`
+		Record envelope.OutputRecord `json:"record"`
+	}{runID, kind, rec}
+	var out struct {
+		Seq int64 `json:"seq"`
+	}
+	return c.do(ctx, http.MethodPost, outputsRoute, room, "", in, maxReplyOverhead, &out)
 }
 
 // Queued is one live message of the room's FIFO queue (SP2 §2); Ref is its seq in the room.

@@ -4,6 +4,7 @@ package bridgeapi
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,6 +120,70 @@ func (s *Server) roomTask(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusCreated
 	}
 	reply(w, code, map[string]int64{"seq": ev.Seq})
+}
+
+// roomOutputs: POST /v1/rooms/{id}/outputs, system:* only (hardening HR2). The factory's answer
+// to a run's output request, or its shadow of a write the run made itself: {runId, kind, record}
+// with kind output_applied, output_refused or output_shadowed, never output_requested, which is
+// the run's own. Stored as a message stamped with the caller and the run, Delivery none and no
+// text. Replays are keyed on <principal>:output:<kind> and a clientSeq derived from the output
+// id, so a retry never writes a second answer of a kind, whatever its body now says.
+func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.systemAuth(w, r)
+	if !ok {
+		return
+	}
+	release, ok := s.admit(w, p.ID)
+	if !ok {
+		return
+	}
+	defer release()
+	id := r.PathValue("id")
+	if !envelope.ValidID(id) {
+		fail(w, http.StatusBadRequest, wire.ReasonBadRoom)
+		return
+	}
+	var in struct {
+		RunID  string                `json:"runId"`
+		Kind   envelope.MessageKind  `json:"kind"`
+		Record envelope.OutputRecord `json:"record"`
+	}
+	if err := decodeStrict(r.Body, &in); err != nil || !envelope.ValidID(in.RunID) ||
+		(in.Kind != envelope.KindOutputApplied && in.Kind != envelope.KindOutputRefused && in.Kind != envelope.KindOutputShadowed) ||
+		in.Record.Validate(in.Kind) != nil {
+		fail(w, http.StatusBadRequest, wire.ReasonBadMessage)
+		return
+	}
+	payload, rules, err := s.Redactor.Payload(r.Context(), envelope.Must(envelope.MessagePayload{
+		Kind: in.Kind, Delivery: envelope.DeliveryNone, Output: &in.Record}))
+	if err != nil {
+		s.log().Warn("output answer not redacted in time", "room", id, "principal", p.ID, "err", err)
+		fail(w, http.StatusServiceUnavailable, wire.ReasonTimedOut)
+		return
+	}
+	ev, dup, err := s.Log.Append(r.Context(), envelope.Draft{RoomID: id, RunID: in.RunID,
+		Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: p.ID}, Type: envelope.Message,
+		Origin: envelope.OriginClient, OriginClient: p.ID + ":output:" + string(in.Kind), OriginSeq: outputSeq(in.Record.ID),
+		Redactions: rules, Payload: payload})
+	if err != nil {
+		s.logFailure(w, err, "append an output answer", "room", id, "principal", p.ID, "kind", string(in.Kind))
+		return
+	}
+	code := http.StatusOK
+	if !dup {
+		code = http.StatusCreated
+	}
+	reply(w, code, map[string]int64{"seq": ev.Seq})
+}
+
+// outputSeq is an output id's replay key: its 8 bytes as a positive int64, 1 for the all-zero id.
+// The id is 16-hex (OutputRecord.Validate), so the parse cannot fail.
+func outputSeq(id string) int64 {
+	u, _ := strconv.ParseUint(id, 16, 64)
+	if n := int64(u & math.MaxInt64); n != 0 {
+		return n
+	}
+	return 1
 }
 
 // roomMessage: POST /v1/rooms/{id}/messages, system:* only, reserved kind task_state

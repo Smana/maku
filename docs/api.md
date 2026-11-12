@@ -54,6 +54,7 @@ that ends, is revoked or is deleted has its streams cut on the watch event.
 | `GET /v1/rooms/{id}/events` | System | Reads a room's log |
 | `POST /v1/rooms/{id}/messages` | System | Appends `message{kind: task_state}` |
 | `POST /v1/rooms/{id}/task` | System | Appends the task's facts, `state_changed{kind: task}` |
+| `POST /v1/rooms/{id}/outputs` | System | Appends the factory's answer to, or shadow of, a run's output |
 | `POST /v1/rooms/{id}/queue` | System | Queues a chat message for the room's next run |
 | `GET /v1/rooms/{id}/queue` | System | Lists the messages still queued |
 | `POST /v1/rooms/{id}/queue/consume` | System | Marks queued messages consumed by a run |
@@ -260,6 +261,29 @@ that do not validate are `400 bad_message`.
 
 A broker older than the route (v0.7) answers a plain-text `404`. The factory takes that as a wait,
 warns once, and keeps the facts due until the broker serves the route: upgrade the broker first.
+
+### `POST /v1/rooms/{id}/outputs`
+
+For system callers: the factory's answer to one of a run's output requests, or, under
+`hardening.mode: audit`, its shadow of a write the run made with its own token
+([output events](room-log.md#output-events)). Request, at most 32 KiB:
+
+```json
+{"runId": "7f3cq2xz", "kind": "output_shadowed",
+ "record": {"id": "0123456789abcdef", "type": "comment", "digest": "<64-hex>",
+  "object": "https://github.com/Smana/cloud-native-ref/issues/42#issuecomment-1",
+  "reason": "output_schema", "audit": [{"layer": "t5_classifier", "reason": "injection_suspected"}]}}
+```
+
+`kind` is `output_applied`, `output_refused` or `output_shadowed`. `output_requested` is the run's
+own and is refused here. `runId` is a C2 id, and `record` must validate for its kind. The payload
+is redacted and stored as `message{kind, output, delivery: none}` with no text, the caller its
+actor and `runId` its run. Response `201`: `{"seq": 1846}`.
+
+Replays are keyed on the origin `<principal>:output:<kind>` and the output id's 8 bytes as a
+positive `clientSeq`. The same id and kind again answer `200` with the original `seq`, even when
+the body differs. Refusals as for `/messages`: a bad body, kind, `runId` or record is
+`400 bad_message`.
 
 ### The queue routes
 

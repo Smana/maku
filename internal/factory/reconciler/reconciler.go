@@ -64,6 +64,8 @@ type RoomLog interface {
 	Consume(ctx context.Context, room string, refs []int64, runID string) error
 	TaskState(ctx context.Context, room, text string, clientSeq int64) error
 	TaskFacts(ctx context.Context, room string, f envelope.TaskFacts, clientSeq int64) error
+	// Output posts the factory's answer to, or shadow of, one of a run's outputs (hardening HR2).
+	Output(ctx context.Context, room, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error
 }
 
 // TaskForge is the part of the forge the reconciler uses, as the factory App.
