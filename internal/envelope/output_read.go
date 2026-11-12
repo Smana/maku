@@ -2,21 +2,19 @@
 
 package envelope
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "encoding/json"
 
-// factoryActorPrefix is the id every factory principal's system actor starts with.
-const factoryActorPrefix = "system:factory"
+// FactoryActor is the factory's system principal, the one actor whose output answers and shadows
+// count (the factory config's PrincipalFactory).
+const FactoryActor = "system:factory"
 
 // ReadOutput is the one reader of safe-output events for run runID: it answers e's kind and
 // record only when the broker's stamp vouches for it, and the record passes Validate. A request
 // counts only from the run's own agent actor ("agent:"+runID) by the client origin, as
-// integration_result reads; an answer or a shadow only from a factory system actor. Anything
-// else in the room, however its payload is shaped, is not an output.
+// integration_result reads; an answer or a shadow only from FactoryActor, exactly, by the client
+// origin. Anything else in the room, however its payload is shaped, is not an output.
 func ReadOutput(e Event, runID string) (MessageKind, OutputRecord, bool) {
-	if e.Type != Message || runID == "" || e.RunID != runID {
+	if e.Type != Message || runID == "" || e.RunID != runID || e.Origin != OriginClient {
 		return "", OutputRecord{}, false
 	}
 	var p MessagePayload
@@ -25,11 +23,11 @@ func ReadOutput(e Event, runID string) (MessageKind, OutputRecord, bool) {
 	}
 	switch p.Kind {
 	case KindOutputRequested:
-		if e.Origin != OriginClient || e.Actor.Kind != ActorAgent || e.Actor.ID != "agent:"+runID {
+		if e.Actor.Kind != ActorAgent || e.Actor.ID != "agent:"+runID {
 			return "", OutputRecord{}, false
 		}
 	case KindOutputApplied, KindOutputRefused, KindOutputShadowed:
-		if e.Actor.Kind != ActorSystem || !strings.HasPrefix(e.Actor.ID, factoryActorPrefix) {
+		if e.Actor.Kind != ActorSystem || e.Actor.ID != FactoryActor {
 			return "", OutputRecord{}, false
 		}
 	default:

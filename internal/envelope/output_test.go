@@ -85,6 +85,14 @@ func TestOutputShadowedValidate(t *testing.T) {
 		{"a finding's reason is prose", KindOutputShadowed, base(func(r *OutputRecord) { r.Audit = []OutputFinding{{Layer: "t1_schema", Reason: "Too long"}} }), false},
 		{"findings on a request", KindOutputRequested, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Audit: five[:1]}, false},
 		{"findings on a refusal", KindOutputRefused, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Reason: "output_schema", Audit: five[:1]}, false},
+		// An answer or a shadow carries no payload: the text stays in the request alone.
+		{"shadowed with its size", KindOutputShadowed, base(func(r *OutputRecord) { r.Bytes = 40 }), true},
+		{"a payload on a shadow", KindOutputShadowed, base(func(r *OutputRecord) { r.Payload = json.RawMessage(`{"body":"x"}`) }), false},
+		{"a payload on an answer", KindOutputApplied, base(func(r *OutputRecord) { r.Payload = json.RawMessage(`{}`) }), false},
+		{"a payload on a refusal", KindOutputRefused, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Reason: "output_schema", Payload: json.RawMessage(`{}`)}, false},
+		{"a request at the bundle cap", KindOutputRequested, OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d, Bytes: MaxOutputBytes}, true},
+		{"a negative size", KindOutputShadowed, base(func(r *OutputRecord) { r.Bytes = -1 }), false},
+		{"a size past the bundle cap", KindOutputRequested, OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d, Bytes: MaxOutputBytes + 1}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.r.Validate(tc.k); (err == nil) != tc.valid {

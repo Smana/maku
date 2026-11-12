@@ -22,6 +22,9 @@ const (
 // MaxOutputFindings caps OutputRecord.Audit.
 const MaxOutputFindings = 5
 
+// MaxOutputBytes caps OutputRecord.Bytes: the largest output, a push bundle (hardening.MaxBundle).
+const MaxOutputBytes = 8 << 20
+
 // OutputFinding is one threat-check finding recorded without deciding the record (HR2): its
 // layer, such as t5_classifier, and its bounded reason.
 type OutputFinding struct {
@@ -56,7 +59,8 @@ var (
 // Validate holds r to its kind: an id, type and digest always; an object on github.com only, and
 // always, when applied or shadowed; a snake_case reason always when refused, optionally when
 // shadowed (a would-refuse or would_wait), never otherwise; audit findings only when applied or
-// shadowed.
+// shadowed; a payload on a request only, so an answer or a shadow never carries the written text;
+// a size from 0 to MaxOutputBytes.
 func (r OutputRecord) Validate(k MessageKind) error {
 	written := k == KindOutputApplied || k == KindOutputShadowed
 	switch {
@@ -64,6 +68,10 @@ func (r OutputRecord) Validate(k MessageKind) error {
 		return errors.New("output: not an output kind")
 	case !outputID.MatchString(r.ID) || !outputType.MatchString(r.Type) || !outputDigest.MatchString(r.Digest):
 		return errors.New("output: id is 16-hex, type lowercase, digest 64-hex")
+	case len(r.Payload) > 0 && k != KindOutputRequested:
+		return errors.New("output: a payload only on a request")
+	case r.Bytes < 0 || r.Bytes > MaxOutputBytes:
+		return errors.New("output: bytes is from 0 to 8 MiB")
 	case written != (r.Object != ""):
 		return errors.New("output: an object only, and always, when applied or shadowed")
 	case r.Object != "" && !strings.HasPrefix(r.Object, "https://github.com/"):
