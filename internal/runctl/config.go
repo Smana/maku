@@ -384,10 +384,17 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return fmt.Sprintf("runs live in namespace %q", c.Namespace)
 	case r.Spec.Suspendable:
 		return "spec.suspendable runs need cloud-native-ref's runtime"
-	case r.Spec.DataClass == "internal":
+	case r.Spec.DataClass == "internal" && !c.Gateway():
 		return "spec.dataClass internal needs the model gateway, which this runtime does not have"
+	case r.Spec.DataClass == "internal" && len(c.Model.Gateway.Aliases.Internal) == 0:
+		return "spec.dataClass internal needs the model gateway's internal listener, which this runtime does not serve: set model.gateway.aliases.internal"
 	case c.RuntimeClassName == "" && !c.AllowUnsandboxed:
 		return "runtimeClassName is empty and allowUnsandboxed is false: refusing to run unsandboxed"
+	}
+	if c.Gateway() {
+		if why := c.gatewayInvalid(r); why != "" {
+			return why
+		}
 	}
 	if readOnly(r.Spec.Role) && c.GitReadSecret == "" && !c.UnsafeSharedGitToken {
 		return fmt.Sprintf("role %s needs a read-only token: set runController.gitReadSecret (or unsafeSharedGitToken on a laptop)", r.Spec.Role)
@@ -454,9 +461,63 @@ func addUnique(list []string, h string) []string {
 
 // Model is the provider the harness calls directly (3a R4), from modelSecret. Judge is the
 // optional judge_model: the completion judge's model on the same endpoint, "" for the run's own.
+// In gateway mode (GatewayModel), Name and Judge are the run's aliases, and JudgeBaseURL the judge
+// alias's path on the same listener.
 type Model struct {
 	BaseURL, Name, Host, Judge string
+	JudgeBaseURL               string
 	Port                       int
+}
+
+// defaultAlias is spec.model's CRD default.
+const defaultAlias = "agent-default"
+
+// class is the run's data class, public unless internal: the gateway listener and the audience's middle label.
+func class(r *v1alpha1.AgentRun) string {
+	if r.Spec.DataClass == "internal" {
+		return "internal"
+	}
+	return "public"
+}
+
+// alias is the run's model alias, its CRD default when unset.
+func alias(r *v1alpha1.AgentRun) string { return cmp.Or(r.Spec.Model, defaultAlias) }
+
+// GatewayModel is a gateway-mode run's model: the gateway's listener for the run's data class, under
+// /m/<alias>/v1 for the run's alias and its judge's (GW5). Host and Port are the listener's, so the
+// run's policies admit the gateway's namespace on it as for any in-cluster model.
+func (c Config) GatewayModel(r *v1alpha1.AgentRun) Model {
+	g := c.Model.Gateway
+	u, _ := url.Parse(g.URL) // validated at load
+	port := g.Ports.Public
+	if class(r) == "internal" {
+		port = g.Ports.Internal
+	}
+	base := fmt.Sprintf("http://%s:%d/m/", u.Hostname(), port)
+	m := Model{BaseURL: base + alias(r) + "/v1", Name: alias(r), Host: u.Hostname(), Port: port}
+	if j := r.Spec.Loop.JudgeModel; j != "" {
+		m.Judge, m.JudgeBaseURL = j, base+j+"/v1"
+	}
+	return m
+}
+
+// audience is a gateway token's audience for alias on the run's listener: <prefix>.<class>.<alias> (GW3).
+func (c Config) audience(r *v1alpha1.AgentRun, alias string) string {
+	return c.Model.Gateway.AudiencePrefix + "." + class(r) + "." + alias
+}
+
+// gatewayInvalid refuses a gateway-mode run whose alias, or judge alias, its listener does not serve (GW6).
+func (c Config) gatewayInvalid(r *v1alpha1.AgentRun) string {
+	served := c.Model.Gateway.Aliases.Public
+	if class(r) == "internal" {
+		served = c.Model.Gateway.Aliases.Internal
+	}
+	for _, a := range []struct{ field, alias string }{{"spec.model", alias(r)}, {"spec.loop.judgeModel", r.Spec.Loop.JudgeModel}} {
+		if a.alias != "" && !slices.Contains(served, a.alias) {
+			return fmt.Sprintf("%s %s is not served on the %s listener (maku-gateway aliases.%s)", a.field, a.alias, class(r), class(r))
+		}
+	}
+	return ""
 }
 
 const defaultBaseURL = "https://api.anthropic.com/v1"

@@ -119,7 +119,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		{Name: "RUN_ID", Value: runID}, {Name: "ROLE", Value: s.Role}, {Name: "REPOSITORY", Value: s.Repository},
 		{Name: "BASE_REF", Value: s.BaseRef}, {Name: "BRANCH", Value: branch}, {Name: "MODEL", Value: m.Name},
 		{Name: "DATA_CLASS", Value: s.DataClass}, {Name: "CONVERSATION_ID", Value: string(r.UID)},
-		{Name: "LLM_BASE_URL", Value: m.BaseURL}, {Name: "LLM_API_KEY_FILE", Value: "/run/agent/model/api_key"},
+		{Name: "LLM_BASE_URL", Value: m.BaseURL}, {Name: "LLM_API_KEY_FILE", Value: modelDir + "/" + modelKey(c)},
 		{Name: "GIT_TOKEN_FILE", Value: "/run/agent/github/token"},
 		{Name: "TASK_FILE", Value: "/run/agent/task/task.md"}, {Name: "RULES_FILE", Value: "/run/agent/task/rules.md"},
 		{Name: "HOME", Value: "/home/openhands"},
@@ -165,7 +165,10 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		}
 		if l.JudgeModel != "" {
 			policy["judgeModel"] = l.JudgeModel
-			env = append(env, corev1.EnvVar{Name: "JUDGE_BASE_URL", Value: m.BaseURL}, corev1.EnvVar{Name: "JUDGE_MODEL", Value: cmp.Or(m.Judge, m.Name)})
+			env = append(env, corev1.EnvVar{Name: "JUDGE_BASE_URL", Value: cmp.Or(m.JudgeBaseURL, m.BaseURL)}, corev1.EnvVar{Name: "JUDGE_MODEL", Value: cmp.Or(m.Judge, m.Name)})
+			if c.Gateway() { // the judge's alias has its own audience, so its own token (GW5)
+				env = append(env, corev1.EnvVar{Name: "JUDGE_API_KEY_FILE", Value: modelDir + "/judge-token"})
+			}
 		}
 		raw, _ := json.Marshal(policy) // a map of numbers and strings
 		env = append(env, corev1.EnvVar{Name: "AGENT_LOOP", Value: string(raw)})
@@ -181,14 +184,13 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			{Name: "workspace", MountPath: "/workspace"}, {Name: "home", MountPath: "/home/openhands"},
 			{Name: "tmp", MountPath: "/tmp"}, {Name: "git-cache", MountPath: "/run/agent/git"},
 			{Name: "task", MountPath: "/run/agent/task", ReadOnly: true},
-			{Name: "model", MountPath: "/run/agent/model", ReadOnly: true},
+			{Name: modelVolume(c), MountPath: modelDir, ReadOnly: true},
 			{Name: "github", MountPath: "/run/agent/github", ReadOnly: true},
 		},
 	}
 	vols := []corev1.Volume{
 		{Name: "task", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: r.Name + "-task"}}}},
-		{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.ModelSecret, DefaultMode: &mode,
-			Items: []corev1.KeyToPath{{Key: "api_key", Path: "api_key"}}}}},
+		modelVolumeSource(r, c, deadline, &mode),
 		{Name: "github", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.GitSecretFor(s.Role), DefaultMode: &mode,
 			Items: []corev1.KeyToPath{{Key: "token", Path: "token"}}}}},
 		emptyDir("workspace", size.scratch, false), emptyDir("home", "2Gi", false), emptyDir("tmp", "2Gi", false),
@@ -278,6 +280,49 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			InitContainers: inits, Containers: []corev1.Container{harness}, Volumes: vols,
 		},
 	}
+}
+
+// modelDir is where the harness reads its model credential: the model Secret's api_key, or in gateway
+// mode the run's own gateway tokens.
+const modelDir = "/run/agent/model"
+
+// gatewayTokenSlack is how long a gateway token outlives the pod's deadline (GW9, the XR's R2): the
+// harness reads it once, and gVisor raises no inotify event for a rotated token.
+const gatewayTokenSlack = 600
+
+// modelKey is the file under modelDir that the run's own calls send as their bearer.
+func modelKey(c Config) string {
+	if c.Gateway() {
+		return "token"
+	}
+	return "api_key"
+}
+
+// modelVolume names the model credential's volume.
+func modelVolume(c Config) string {
+	if c.Gateway() {
+		return "model-token"
+	}
+	return "model"
+}
+
+// modelVolumeSource is the model Secret's api_key, or in gateway mode a projected volume of the run's
+// ServiceAccount tokens (GW3): token, audience <prefix>.<class>.<spec.model>, and with a judge
+// judge-token, audience <prefix>.<class>.<judgeModel>, each living the deadline plus gatewayTokenSlack.
+func modelVolumeSource(r *v1alpha1.AgentRun, c Config, deadline int64, mode *int32) corev1.Volume {
+	if !c.Gateway() {
+		return corev1.Volume{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.ModelSecret, DefaultMode: mode,
+			Items: []corev1.KeyToPath{{Key: "api_key", Path: "api_key"}}}}}
+	}
+	ttl := deadline + gatewayTokenSlack
+	token := func(alias, path string) corev1.VolumeProjection {
+		return corev1.VolumeProjection{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: c.audience(r, alias), ExpirationSeconds: &ttl, Path: path}}
+	}
+	srcs := []corev1.VolumeProjection{token(alias(r), "token")}
+	if j := r.Spec.Loop.JudgeModel; j != "" {
+		srcs = append(srcs, token(j, "judge-token"))
+	}
+	return corev1.Volume{Name: "model-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: mode, Sources: srcs}}}
 }
 
 // egressProfiles is the bridge's EGRESS_PROFILES: github first, as the composition joins them.

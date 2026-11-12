@@ -146,8 +146,9 @@ spec:
                     type: integer
                   judgeModel:
                     description: |-
-                      JudgeModel switches the completion judge on; empty: no judge. This runtime resolves no alias:
-                      the judge calls the run's own model (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
+                      JudgeModel switches the completion judge on; empty: no judge. In the run-controller's model.mode
+                      gateway it is the judge's alias, called with a token of its own; in model.mode secret the judge
+                      calls the run's own model endpoint (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
                     enum:
                     - agent-default
                     - tier-light
@@ -171,8 +172,9 @@ spec:
               model:
                 default: agent-default
                 description: |-
-                  A gateway alias on cloud-native-ref: a C5 tier name, or a provider alias (v3 F15), which the
-                  gateway serves public runs only; the run-controller ignores it (3a R7).
+                  A gateway alias: a C5 tier name, or a provider alias (v3 F15), which the gateway serves public
+                  runs only. The run-controller calls it in model.mode gateway, on the run's data class's listener
+                  with a token for this alias; in model.mode secret it ignores it (3a R7).
                 enum:
                 - agent-default
                 - tier-light

@@ -64,8 +64,9 @@ type AgentRunSpec struct {
 	// +kubebuilder:validation:Pattern=`^(human:[A-Za-z0-9@._-]+|system:[a-z0-9-]+)$`
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="principal is immutable"
 	Principal string `json:"principal"`
-	// A gateway alias on cloud-native-ref: a C5 tier name, or a provider alias (v3 F15), which the
-	// gateway serves public runs only; the run-controller ignores it (3a R7).
+	// A gateway alias: a C5 tier name, or a provider alias (v3 F15), which the gateway serves public
+	// runs only. The run-controller calls it in model.mode gateway, on the run's data class's listener
+	// with a token for this alias; in model.mode secret it ignores it (3a R7).
 	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;kimi-frontier;mistral-standard;mistral-light
 	// +kubebuilder:default=agent-default
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model is immutable"
@@ -128,8 +129,9 @@ type AgentRunLoop struct {
 	// +kubebuilder:validation:Maximum=5
 	// +optional
 	Continuations *int32 `json:"continuations,omitempty"`
-	// JudgeModel switches the completion judge on; empty: no judge. This runtime resolves no alias:
-	// the judge calls the run's own model (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
+	// JudgeModel switches the completion judge on; empty: no judge. In the run-controller's model.mode
+	// gateway it is the judge's alias, called with a token of its own; in model.mode secret the judge
+	// calls the run's own model endpoint (JUDGE_BASE_URL and JUDGE_MODEL on the harness).
 	// +kubebuilder:validation:Enum=agent-default;tier-light;tier-standard;tier-frontier;mistral-light
 	// +optional
 	JudgeModel string `json:"judgeModel,omitempty"`

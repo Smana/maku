@@ -223,16 +223,9 @@ func (r *Reconciler) secretKey(ctx context.Context, ns, name, key string) (val [
 // CA. missing names the first absent one: the chart may create them after the controller starts.
 func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun) (Model, []byte, string, error) {
 	c := r.Cfg
-	ms := &corev1.Secret{}
-	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: c.Namespace, Name: c.ModelSecret}, ms)
-	if apierrors.IsNotFound(err) {
-		return Model{}, nil, fmt.Sprintf("Secret %s/%s not found", c.Namespace, c.ModelSecret), nil
-	} else if err != nil {
-		return Model{}, nil, "", err
-	}
-	m, err := ModelFrom(ms.Data)
-	if err != nil {
-		return Model{}, nil, err.Error(), nil
+	m, why, err := r.model(ctx, run)
+	if why != "" || err != nil {
+		return Model{}, nil, why, err
 	}
 	git := c.GitSecretFor(run.Spec.Role)
 	if _, missing, err := r.secretKey(ctx, c.Namespace, git, "token"); err != nil {
@@ -247,6 +240,26 @@ func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun) (Model,
 		return Model{}, nil, fmt.Sprintf("Secret %s/%s has no ca.crt", c.Broker.Namespace, c.Broker.CASecret), nil
 	}
 	return m, ca, "", nil
+}
+
+// model is the run's model: in gateway mode from config alone (no Secret), else from modelSecret.
+func (r *Reconciler) model(ctx context.Context, run *v1alpha1.AgentRun) (Model, string, error) {
+	c := r.Cfg
+	if c.Gateway() {
+		return c.GatewayModel(run), "", nil
+	}
+	ms := &corev1.Secret{}
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: c.Namespace, Name: c.ModelSecret}, ms)
+	if apierrors.IsNotFound(err) {
+		return Model{}, fmt.Sprintf("Secret %s/%s not found", c.Namespace, c.ModelSecret), nil
+	} else if err != nil {
+		return Model{}, "", err
+	}
+	m, err := ModelFrom(ms.Data)
+	if err != nil {
+		return Model{}, err.Error(), nil
+	}
+	return m, "", nil
 }
 
 // create makes every owned object, the pod last so its volumes and ServiceAccount exist.
