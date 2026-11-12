@@ -179,6 +179,7 @@ type Set struct {
 	modelRefused         metric.Int64Counter
 	runTokenMints        metric.Int64Counter
 	runTokenRevokes      metric.Int64Counter
+	runTokenRefusals     metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
 	overlapEvaluations   metric.Int64Counter
@@ -466,6 +467,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.runTokenRevokes, err = meter.Int64Counter("agent_factory_run_token_revokes_total",
 		metric.WithDescription("Installation tokens the minter revoked, by result: ok or error (v4 D10)."))
+	check(err)
+	s.runTokenRefusals, err = meter.Int64Counter("agent_factory_run_token_refusals_total",
+		metric.WithDescription("Runs the minter refused a token, once per run, by reason: unbound_task, unbound_api, repository_mismatch or role_unknown (v4 D10, plan PR4). The run waits Pending."))
 	check(err)
 	s.modelRefused, err = meter.Int64Counter("agent_factory_model_refused_total",
 		metric.WithDescription("Runs the model provider refused, by cause (billing, auth, quota) and role: a platform condition the task is held for, never the agent's error (#450). Alert on its increase."))
@@ -1196,6 +1200,12 @@ func (s *Set) RunTokenMint(ctx context.Context, role, result string) {
 // RunTokenRevoke counts one revoke of the minter by result.
 func (s *Set) RunTokenRevoke(ctx context.Context, result string) {
 	s.runTokenRevokes.Add(ctx, 1, metric.WithAttributes(attribute.String("result", oneOf(result, []string{"ok", "error"}))))
+}
+
+// RunTokenRefusal counts one run the minter refused a token, by reason (plan PR4).
+func (s *Set) RunTokenRefusal(ctx context.Context, reason string) {
+	s.runTokenRefusals.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("reason", oneOf(reason, []string{"unbound_task", "unbound_api", "repository_mismatch", "role_unknown"}))))
 }
 
 // LoopRun counts an implementer run under the loop policy once it ends, by its task's class and end.

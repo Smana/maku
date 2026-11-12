@@ -325,6 +325,10 @@ type RunTokens struct {
 	Enabled        bool   `json:"enabled,omitempty"`
 	AppIDFile      string `json:"appIDFile,omitempty"`
 	PrivateKeyFile string `json:"privateKeyFile,omitempty"`
+	// PerRun mints one token per run instead of the two shared Secrets (v4 D10): each run's own
+	// <run name>-git, for its repository and role from the minter's role table. The run-controller
+	// must mount it (runController.gitTokens perRun).
+	PerRun bool `json:"perRun,omitempty"`
 }
 
 // RunTokenApp is the App the run token writer mints from: runTokens' when enabled, else the
