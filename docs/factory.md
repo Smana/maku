@@ -1818,11 +1818,18 @@ flowchart LR
 - **Its tools.** The claim carries `agents.ogenki.io/safe-outputs` (the enforced types) and
   `agents.ogenki.io/label-allowlist`. The broker lists and serves `output_<type>` to that run
   only. A run without the annotation lists the room tools it always had.
-- **Its rules.** Rule 3 reads "Request the pull request with the output_pr tool". The brief asks
-  for the pull request's body through `output_pr`. The rules name the other enforced types.
-- **Its `gh`.** With `SAFE_OUTPUTS` set, `gh pr create|new|edit|ready`, `gh pr comment`,
-  `gh issue comment|create|edit` and `gh label` exit 3 and name the tool to use. `gh api` is not
-  parsed: the role policy's `pull_requests: read` is the boundary.
+- **Its rules.** With `pr` enforced, rule 3 reads "Request the pull request with the output_pr
+  tool", and the brief asks for the pull request's body through `output_pr`. One more rule names
+  each other enforced type, and only those. A tester's rules name the tools it is served.
+- **Its `gh`.** With `SAFE_OUTPUTS` set, these commands exit 3 and name the tool to use, for an
+  enforced type:
+  - `gh pr create|new|edit|ready|close|reopen`;
+  - `gh pr comment`, `gh pr review` and `gh issue comment`;
+  - `gh issue create|edit|close|reopen`;
+  - `gh label`, except `list` and `view`.
+
+  The wrapper is advisory: `gh api`, curl or gh with a token from the credential helper go round
+  it. The role policy's `pull_requests: read` is the boundary, and the tracer is the backstop.
 
 ### What the factory does
 
@@ -1831,16 +1838,26 @@ flowchart LR
   `output_refused`. It goes on answering for `answerWait` after the run ends.
 - **The publisher** writes `pr`, `comment` and `labels` as the agents App, with a token octo-sts
   mints under the repository's `publisher.sts.yaml`. `arm` therefore still sees an agent-authored
-  pull request. The factory writes the PR footer, with `Agent-Output: <id>`.
+  pull request. The factory writes the PR footer, with `Agent-Output: <id>`. The applier edits
+  only a pull request whose footer names one of the task's applied outputs. It refuses any other
+  open one `output_target`.
 - **`issue`** is filed by the factory App, labelled `factory/proposed` only.
-- **The run's end waits.** An ended implementer run with an unanswered request keeps its task in
-  `Implementing` for up to `answerWait`. Past it, the end goes on and the log says
-  `outputs_unanswered`.
-- **The tracer** replaces the shadow pass for enforced types. At a run's end, each agents-App pull
-  request, comment and label must match an `output_applied`. A pull request matches by URL, a
-  comment by URL and its marker, and labels by name and time. A write that does not match is
-  recorded `output_shadowed` with reason `untraced_write` and counted. Pushes are shadowed as in
-  H1.
+- **The run's end waits.** An ended implementer or tester run with an unanswered request keeps its
+  task where it is for up to `answerWait`, as does a room that cannot be read. Past it, the end
+  goes on and the log says `outputs_unanswered`.
+- **The tracer** replaces the shadow pass for enforced types. At a run's end it reads back the
+  task's pull request and the agents App's comments and added labels on the task's issue and pull
+  request. An answer counts for its request's run, wherever its write's time falls. Each write
+  must be exactly what an `output_applied` published:
+  - **a pull request:** its footer names the newest applied `pr` output, and its title and body
+    are that output's;
+  - **a comment:** it ends with an applied output's marker and holds that output's text;
+  - **labels:** each label was asked for by an applied request, between the request and its answer.
+
+  A write that does not match is recorded `output_shadowed` with reason `untraced_write` and
+  counted, then checked as in H1. This includes a direct open, or a direct edit of an applied
+  object. Pushes are shadowed as in H1. What the tracer does not observe is listed in
+  [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
   sandbox role's and the publisher's octo-sts policy and reports their permissions.
 
