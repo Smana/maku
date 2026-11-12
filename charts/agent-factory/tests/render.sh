@@ -39,6 +39,12 @@ if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then
   bash tests/normalize.sh <<<"$out" >tests/golden/demo.yaml
 fi
 bash tests/normalize.sh <<<"$out" | diff -u tests/golden/demo.yaml - >&2 || { echo "FAIL: the demo render differs from tests/golden/demo.yaml" >&2; fail=1; }
+# PR6: the skeleton disables both subcharts, so nothing but the umbrella's own templates renders
+# and the gate's message is the error whatever order Helm renders in; values-demo.yaml enables them.
+yq -e '.maku.enabled == false and .maku-factory.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku and maku-factory" >&2; fail=1; }
+yq -e '.maku.enabled == true and .maku-factory.enabled == true' values-demo.yaml >/dev/null 2>&1 || { echo "FAIL: values-demo.yaml does not enable maku and maku-factory" >&2; fail=1; }
+deep="$(find templates -mindepth 2 -type f)"
+[[ -z $deep ]] || { echo "FAIL: a template below templates/ ($deep): the gate must not rely on Helm's render order" >&2; fail=1; }
 # --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
 msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
 grep -qF 'profile demo needs -f values-demo.yaml' <<<"$msg" || { echo "FAIL: --set profile=demo alone does not fail naming values-demo.yaml (got: $msg)" >&2; fail=1; }

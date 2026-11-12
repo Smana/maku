@@ -9,7 +9,10 @@ profile: ""
 # are built from it.
 clusterDomain: cluster.local
 
+# Off in the skeleton: only the umbrella's own templates render, each behind the profile gate, so an
+# unset or unready profile fails with the gate's message rather than a subchart's. values-demo.yaml
+# turns both on.
 maku:
-  enabled: true
+  enabled: false
 maku-factory:
-  enabled: true
+  enabled: false

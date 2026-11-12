@@ -1,7 +1,0 @@
-{{- /*
-The profile gate, ahead of every subchart. Helm renders the deepest template path first and stops at
-the first error, and the subcharts' templates sit at agent-factory/charts/<name>/templates/: this
-path is one level deeper, so an unset, unknown or production profile fails with the gate's message,
-not with whatever the subchart misses first (the skeleton values give it no database).
-*/ -}}
-{{- include "afumbrella.profile" . -}}
