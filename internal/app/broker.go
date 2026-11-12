@@ -4,11 +4,15 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -37,6 +41,7 @@ import (
 	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/humanapi/ui"
 	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/intent"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/redact"
@@ -98,10 +103,12 @@ func RunBroker(ctx context.Context, log *slog.Logger, args []string, getenv func
 		}
 		log.Info("schema up to date", "applied", n)
 		return nil
+	case "intent-samples":
+		return runIntentSamples(ctx, os.Stdout, args[1:], getenv)
 	case "migrate-group":
 		return runMigrateGroup(ctx, log, args[1:], getenv, kubeClient(log))
 	}
-	return fmt.Errorf("room-broker: unknown subcommand %q (serve, retention, migrate, migrate-group)", cmd)
+	return fmt.Errorf("room-broker: unknown subcommand %q (serve, retention, migrate, migrate-group, intent-samples)", cmd)
 }
 
 // runRetention is the daily DELETE-only job (§4, OD-17), connected as
@@ -120,6 +127,51 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	log.Info("purged expired rooms", "rooms", rooms, "events", events)
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
+	}
+	// Opted-in intent samples carry their own expiry (SI19): deleted here, with no configuration.
+	samples, err := st.PurgeIntentSamples(ctx)
+	log.Info("purged expired intent samples", "samples", samples)
+	if err != nil {
+		return fmt.Errorf("room-broker retention: %w", err)
+	}
+	return nil
+}
+
+// runIntentSamples is `maku-broker intent-samples [--days N]`: the last N days (default 7) of an
+// opted-in channel's replies and their labels, one JSON object per line on w, for the shadow stage's
+// labelling. It logs nothing on success, so w holds the samples and nothing else; it connects as the
+// broker's role, which can read them.
+func runIntentSamples(ctx context.Context, w io.Writer, args []string, getenv func(string) string) error {
+	fs := flag.NewFlagSet("intent-samples", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	days := fs.Int("days", 7, "how many days back to export")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("room-broker intent-samples: %w", err)
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("room-broker intent-samples: unexpected argument %q", fs.Arg(0))
+	}
+	if *days < 1 {
+		return errors.New("room-broker intent-samples: --days is at least 1")
+	}
+	dsn := getenv("ROOMS_DATABASE_URL")
+	if dsn == "" {
+		return errors.New("room-broker intent-samples: ROOMS_DATABASE_URL is not set")
+	}
+	st, err := store.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("room-broker intent-samples: %w", err)
+	}
+	defer st.Close()
+	samples, err := st.IntentSamplesSince(ctx, *days)
+	if err != nil {
+		return fmt.Errorf("room-broker intent-samples: %w", err)
+	}
+	enc := json.NewEncoder(w)
+	for _, x := range samples {
+		if err := enc.Encode(x); err != nil {
+			return fmt.Errorf("room-broker intent-samples: %w", err)
+		}
 	}
 	return nil
 }
@@ -231,6 +283,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 			OnDecided: func(d time.Duration) { m.DecisionSeconds.Record(context.Background(), d.Seconds()) }}
 		// Groups stays zero on purpose (D15): standing is the Room CR's alone, never a ZITADEL grant the
 		// broker would have to hold a token for.
+	}
+	if sc, on := cfg.SlackIntents(); on { // intent_classify: the App's read-only classification (natural-language intents)
+		humans.Intents = intentClassifier(sc, st, red)
 	}
 	if v := coordinationViews(cfg, mgr.GetAPIReader(), ns); v != nil {
 		humans.CoordinationViews = v
@@ -406,6 +461,19 @@ func catalogueCache(cfg config.Config, m *metrics.Set) *humanapi.CatalogueCache 
 		reads = m
 	}
 	return humanapi.NewCatalogueCache(runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}, reads, nil)
+}
+
+// intentClassifier is human.slackIntents as the human API serves it: the one bounded call through the
+// audited egress client to the gateway's `classifier` client, the link tables the author is resolved
+// through, and the opt-in sample store behind the redactor (SI3, SI12, SI19).
+func intentClassifier(sc config.SlackIntentsConfig, st *store.Store, red humanapi.Redactor) *humanapi.IntentClassifier {
+	return &humanapi.IntentClassifier{
+		Principal: "system:" + sc.Principal, TeamID: sc.TeamID, Alias: sc.Model,
+		Model: intent.Model{URL: sc.URL, Alias: sc.Model, KeyFile: sc.APIKeyFile, Deadline: sc.Deadline.Duration,
+			HC: httpx.New(sc.Deadline.Duration, nil)},
+		Links: st, Samples: st, Redactor: red,
+		MinConfidence: sc.MinConfidence, ConfirmTTL: sc.ConfirmTTL.Duration, MaxInputChars: sc.MaxInputChars,
+		DailyCalls: sc.DailyCalls, PerUserPerHour: sc.PerUserPerHour, RetentionDays: sc.RetentionDays, Now: time.Now}
 }
 
 // intakeServer is human.intake.plan as the human API serves it (v3.x conversational intake): the

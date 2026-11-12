@@ -212,3 +212,52 @@ func TestConfig(t *testing.T) {
 		}
 	}
 }
+
+// Natural-language intents: a channel's intents switch is off, shadow or on (SI20), collectReplies is its
+// agreement to storing replies and needs a switch that classifies (SI19), and intentActions lists only
+// the four write intents, each once (SI21).
+func TestLoadIntents(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		line    string
+		intent  string
+		collect bool
+		errHas  []string
+	}{
+		{name: "absent is off", line: "", intent: ""},
+		{name: "off", line: "    intents: off\n", intent: "off"},
+		{name: "shadow", line: "    intents: shadow\n", intent: "shadow"},
+		{name: "on", line: "    intents: \"on\"\n", intent: "on"},
+		{name: "bare off, which YAML 1.1 reads as false", line: "    intents: off\n", intent: "off"},
+		{name: "bare on, which YAML 1.1 reads as true", line: "    intents: on\n", intent: "on"},
+		{name: "a number is not a state", line: "    intents: 1\n", errHas: []string{"intents"}},
+		{name: "another word", line: "    intents: live\n", errHas: []string{`intents "live"`, "C03"}},
+		{name: "collecting under shadow", line: "    intents: shadow\n    collectReplies: true\n", intent: "shadow", collect: true},
+		{name: "collecting with no switch", line: "    collectReplies: true\n", errHas: []string{"collectReplies needs intents"}},
+		{name: "collecting under off", line: "    intents: off\n    collectReplies: true\n", errHas: []string{"collectReplies needs intents"}},
+		{name: "the four actions", line: "    intents: \"on\"\n    intentActions: [stop, retry, steer, amend]\n", intent: "on"},
+		{name: "a read intent is no action", line: "    intentActions: [status]\n", errHas: []string{`intentActions "status"`}},
+		{name: "an action twice", line: "    intentActions: [stop, stop]\n", errHas: []string{"more than once"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadConfigText(t, withChannelKey(tc.line))
+			if len(tc.errHas) > 0 {
+				if err == nil {
+					t.Fatalf("loaded %q", tc.line)
+				}
+				for _, h := range tc.errHas {
+					if !strings.Contains(err.Error(), h) {
+						t.Fatalf("%v does not name %q", err, h)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Channels["C03"]; got.Intents != tc.intent || got.CollectReplies != tc.collect {
+				t.Fatalf("channel = %+v", got)
+			}
+		})
+	}
+}

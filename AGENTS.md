@@ -165,6 +165,7 @@ flowchart LR
 | Ingress | `internal/authn` | offline JWT verification for runs, system callers and humans; principal mapping |
 | Ingress | `internal/sponsored` | what the broker and the factory must agree on for a sponsored principal: the names neither may give one, the shape of the git ref it may send |
 | Log | `internal/envelope` | C4 v1 event types, payload builders, validation, limits |
+| Log | `internal/intent` | the Slack reply's closed intents: the schema check, the span rule, the one gateway call (pure, no room reads) |
 | Log | `internal/redact` | gitleaks detection over every JSON string of a payload |
 | Log | `internal/store` + `migrations/` | append, range, cursors, seal; the only package that speaks SQL |
 | Rooms | `api/v1alpha1` | `Room` types and deepcopy; CRD generated into `config/crd/` |

@@ -663,6 +663,7 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 | `needs_list` | any member; a sponsored principal, the rooms it watches | `since?`, `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. Listed only while `human.needs.enabled` serves the route. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page |
 | `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, an optional revision envelope (`plan`, `hash`, `candidate`), and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, ranked gaps and the first as the compatibility question, `canStart`. One public-text-only model call below the round cap; it files nothing ([the planner](#the-planner-on-mcp)) |
 | `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, optional `candidate`, `on_behalf_of?` | The final plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
+| `intent_classify` | the Slack App's sponsored principal alone, when `human.slackIntents` is set | `team`, `user`, `channel` (Slack ids), `reply`, `phase` (one closed word), `collect?` | `{intent, text, textHash, confidence, expires, sampleId?}`, or one of the refusal words `invalid_arguments`, `not_permitted`, `not_linked`, `link_unverified`, `capped`, `unavailable`. One read-only model call; it reads no room and decides nothing ([`intent_classify`](#intent_classify-on-mcp)) |
 | `coordination_plan` | any caller, when `human.intake.plan.enabled` and `coordination.mode` is not `off` | `text`, `candidates` (2 to 20), `primary`, `context?`, `id?`, `version?`, and a sponsored principal's `on_behalf_of` | A validated two-repository `CoordinationPlan`, its hash, diagnostics and the attempt's planning record. One call on the planner's route; it files nothing ([coordination](#coordination-on-mcp)) |
 | `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor, question?}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
 
@@ -887,7 +888,7 @@ A sponsored principal (a ZITADEL machine user declared in the broker's `human.mc
 factory's `api.sponsored`, [factory](factory.md#sponsored-principals)) reaches `/mcp` with its own
 client-credentials token, whose audience must hold the project (`human.projectIDFile`). Nothing
 else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees six tools, plus
-the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`, `room_summary`,
+`intent_classify` when `human.slackIntents` names it, and the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`, `room_summary`,
 `room_tail`, `room_changes`, `needs_list`, `intake_plan` and `plan_check`; `room_queue`, `room_fork` and
 `rooms_list` are unknown tools to it, as is `needs_list` while `human.needs.enabled` is off. It reads a
 room only as one of its `watcher` members, which the factory adds when it creates its task's room, with no
@@ -939,6 +940,36 @@ Triage makes the room, so a task whose room does not exist yet is `working` for 
 from its creation, then `failed` (`no such room`). A slow triage can flip a `failed` task back to
 `working` once the room appears: poll `tasks/get` until `completed` or `cancelled`, and treat
 `failed` as provisional until the grace is well past.
+
+### `intent_classify` on `/mcp`
+
+`intent_classify` is the second reading of a reply in a filed Slack thread ([Slack](slack.md#understanding-a-reply)):
+the App sends the reply alone, with the thread's phase, and gets back one of nine labels. It is listed to
+the one sponsored principal that `human.slackIntents.principal` names and to nobody else, and only while
+`human.slackIntents` is set; off, it is `unknown tool: intent_classify`. It reads no room, holds no tool,
+stores nothing unless the caller says the channel opted in, and decides nothing: a label is never an action.
+
+| Argument | Meaning |
+|---|---|
+| `team`, `user` | The Slack ids of the reply's author. `team` must be `human.slackIntents.teamID` and the user must be linked (`not_linked` otherwise, with no model call) |
+| `channel` | The channel's id, for the opt-in sample and the log line |
+| `reply` | The reply as Slack decoded it, at most 64 KiB. The model is shown at most `maxInputChars` of it |
+| `phase` | One of `queued`, `running`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `done`, `failed`, `stopped`, `unknown`: the kind of the one `room_summary` status line the App already read. Any other word is `invalid_arguments` |
+| `collect` | `true` only for a channel with `collectReplies`: the reply is stored, redacted, for `retentionDays` |
+
+The checks run in one order, and nothing reaches the model before all of them pass: the arguments, the
+caller (`not_permitted`), the link (`not_linked`, or `link_unverified` when the link table cannot be read),
+then the App's own caps (`capped`: `dailyCalls` a UTC day for the whole App, `perUserPerHour` for the author;
+neither is the author's own budget). The answer's `intent` is one of `status`, `needs`, `changes`, `pr`,
+`steer`, `amend`, `stop`, `retry` or `unknown`. A model answer that is not the closed shape, names another
+intent or carries a `confidence` under `minConfidence` is `unknown`. For `steer` and `amend`, `text` is a
+contiguous span of the reply (case and whitespace folded), or the whole reply; every other intent carries no
+text. `textHash` is the SHA-256 of `text`, and `expires` is now plus `confirmTTL`, set here so the App holds no
+copy of the lifetime. A model that times out or cannot be reached is `unavailable`.
+
+Every call leaves one log line with the channel, the label, the confidence, the latency, the alias, and the
+reply's SHA-256 and length, never the reply, and counts `maku_intent_classify_total{outcome}` and
+`maku_intent_classify_duration_seconds`.
 
 ### `POST /api/slack/decisions`
 

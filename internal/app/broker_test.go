@@ -63,6 +63,9 @@ func TestRunBrokerRefuses(t *testing.T) {
 			env("ROOMS_CONFIG", filepath.Join(dir, "absent.yaml"), "ROOMS_DATABASE_URL", "postgres://x", "POD_NAMESPACE", "agent-system"),
 			"config"},
 		{"retention without a database", []string{"retention"}, env(), "ROOMS_DATABASE_URL is not set"},
+		{"intent-samples without a database", []string{"intent-samples"}, env(), "ROOMS_DATABASE_URL is not set"},
+		{"intent-samples with no days", []string{"intent-samples", "--days", "0"}, env(), "--days is at least 1"},
+		{"intent-samples with an argument", []string{"intent-samples", "extra"}, env(), `unexpected argument "extra"`},
 		{"retention with a database that does not answer", []string{"retention"},
 			env("ROOMS_DATABASE_URL", "postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1"), "list expired rooms"},
 	} {

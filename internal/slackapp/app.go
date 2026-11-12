@@ -77,6 +77,9 @@ type BrokerAPI interface {
 	NeedsList(ctx context.Context, room string) ([]summary.Need, error)
 	// CoordinationPlan and CoordinationDraft are a two-repository mention's planner and its parent's
 	// draft (v4): neither confirms, files nor runs anything.
+	// IntentClassify is tier 1's one read-only classification of a reply tier 0 does not know
+	// (natural-language intents): a label, never an action. ErrUnknownTool is a broker without it.
+	IntentClassify(ctx context.Context, in IntentRequest) (IntentResult, error)
 	CoordinationPlan(ctx context.Context, in CoordinationPlanRequest) (CoordinationPlanResult, error)
 	CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
 }
@@ -89,6 +92,9 @@ type Recorder interface {
 	Request(ctx context.Context, route, outcome string)
 	ProposalUpdate(ctx context.Context, action string)
 	ThreadAnswer(ctx context.Context, question string)
+	// SlackIntent counts one reply tier 1 read: tier, intent and outcome from the closed lists
+	// (maku_slack_intents_total).
+	SlackIntent(ctx context.Context, tier, intent, outcome string)
 }
 
 // The six actions maku_slack_proposal_updates_total{action} is labelled with (CD7): a closed set, one
@@ -713,10 +719,16 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			// CD25: a thread whose task is filed answers the five questions, and nothing else — the
 			// room is the one its own Filed line names, never a guess from the issue number. Still a
 			// reply and still no command: the answer says where approving, steering and stopping happen.
-			line := a.answer(ctx, ev, a.threadRoom(msgs))
+			room := a.threadRoom(msgs)
+			line := a.answer(ctx, ev, room)
 			if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); err != nil {
 				a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
 				return "error"
+			}
+			// Tier 1, in shadow: the thread already has today's line; the classification is read, counted
+			// and logged after it, so the person never waits on a model (SI20).
+			if questionOf(ev.Text) == QuestionUnknown {
+				a.tierOne(ctx, ev, ch, room)
 			}
 			return "answered"
 		}
