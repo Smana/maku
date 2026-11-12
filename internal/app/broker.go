@@ -134,6 +134,12 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
+	// Push bundles are kept 14 days, longer while a pending approval binds one (HR22).
+	bundles, err := st.SweepBundles(ctx, time.Now())
+	log.Info("swept old push bundles", "bundles", bundles)
+	if err != nil {
+		return fmt.Errorf("room-broker retention: %w", err)
+	}
 	return nil
 }
 
