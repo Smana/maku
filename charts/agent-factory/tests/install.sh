@@ -80,6 +80,9 @@ case "$CLUSTER_KIND" in
     k3s_args=(--k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0')
     # the unenforced leg: k3s without its NetworkPolicy controller, a CNI that does not enforce
     [[ $NETPOL != unenforced ]] || k3s_args+=(--k3s-arg '--disable-network-policy@server:0')
+    # K3S_EXTRA_ARGS: more k3s flags, space-separated (e.g. a laptop's relaxed kubelet eviction
+    # thresholds: --kubelet-arg=eviction-hard=nodefs.available<1%,imagefs.available<1%)
+    for a in ${K3S_EXTRA_ARGS:-}; do k3s_args+=(--k3s-arg "$a@server:0"); done
     k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait "${k3s_args[@]}" \
       --kubeconfig-update-default=false --kubeconfig-switch-context=false
     k3d kubeconfig get "$NAME" >"$KUBECONFIG"
