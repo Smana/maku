@@ -40,7 +40,7 @@ rules:
   {{- end }}
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [{{ $c.modelSecret | quote }}, {{ $c.gitSecret | quote }}]
+    resourceNames: [{{ $c.modelSecret | quote }}, {{ $c.gitSecret | quote }}{{ if not $c.unsafeSharedGitToken }}, {{ $c.gitReadSecret | quote }}{{ end }}]
     verbs: [get]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]

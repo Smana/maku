@@ -14,3 +14,6 @@ broker:
     issuerRef: {kind: Issuer, name: quickstart-ca}
 runController:
   createRuntimeClass: true
+  # A laptop has one PAT (agent-git): every role shares it, so a reviewer could push. Unsafe
+  # anywhere else; set runController.gitReadSecret to a read-only token instead.
+  unsafeSharedGitToken: true

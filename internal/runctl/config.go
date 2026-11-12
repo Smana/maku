@@ -20,6 +20,7 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/runwatch"
 )
 
@@ -39,12 +40,17 @@ type Config struct {
 	AllowUnsandboxed bool `json:"allowUnsandboxed,omitempty"`
 	// NetworkPolicy is "cilium" (default: each run gets a CiliumNetworkPolicy) or "none", for a
 	// cluster without Cilium: no policy is created, so nothing confines a run's network.
-	NetworkPolicy  string              `json:"networkPolicy,omitempty"`
-	ModelSecret    string              `json:"modelSecret"`
-	GitSecret      string              `json:"gitSecret"`
-	Broker         Broker              `json:"broker"`
-	Images         Images              `json:"images"`
-	EgressProfiles map[string][]string `json:"egressProfiles,omitempty"`
+	NetworkPolicy string `json:"networkPolicy,omitempty"`
+	ModelSecret   string `json:"modelSecret"`
+	GitSecret     string `json:"gitSecret"`
+	// GitReadSecret is the read-only token reviewer and triager runs mount (PR2); gitSecret is the
+	// write token implementer and tester runs mount. Unset, those roles are refused unless
+	// UnsafeSharedGitToken lets them share gitSecret, as a laptop's one PAT does.
+	GitReadSecret        string              `json:"gitReadSecret,omitempty"`
+	UnsafeSharedGitToken bool                `json:"unsafeSharedGitToken,omitempty"`
+	Broker               Broker              `json:"broker"`
+	Images               Images              `json:"images"`
+	EgressProfiles       map[string][]string `json:"egressProfiles,omitempty"`
 	// RoomToolsURL is the broker's :8090 room tools, by broker.url's host, for a broker serving
 	// roomTools.auth tokenreview. Set, a run with a room gets MCP_URL and a projected token of audience
 	// room-tools for the harness alone. Unset, the harness wires no MCP server.
@@ -115,6 +121,9 @@ func (c Config) validate() error {
 	req("namespace", c.Namespace)
 	req("modelSecret", c.ModelSecret)
 	req("gitSecret", c.GitSecret)
+	if c.GitReadSecret != "" && c.UnsafeSharedGitToken {
+		errs = append(errs, errors.New("gitReadSecret and unsafeSharedGitToken: choose one"))
+	}
 	req("broker.namespace", c.Broker.Namespace)
 	req("broker.caSecret", c.Broker.CASecret)
 	req("images.harness", c.Images.Harness)
@@ -189,6 +198,12 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 	case c.RuntimeClassName == "" && !c.AllowUnsandboxed:
 		return "runtimeClassName is empty and allowUnsandboxed is false: refusing to run unsandboxed"
 	}
+	if readOnly(r.Spec.Role) && c.GitReadSecret == "" && !c.UnsafeSharedGitToken {
+		return fmt.Sprintf("role %s needs a read-only token: set runController.gitReadSecret (or unsafeSharedGitToken on a laptop)", r.Spec.Role)
+	}
+	if scoperRun(r) && c.RoomToolsURL == "" {
+		return "a scoper hands off with room_handoff: set broker.roomTools.auth tokenreview"
+	}
 	if why := invalidManifest(r); why != "" {
 		return why
 	}
@@ -198,6 +213,26 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		}
 	}
 	return ""
+}
+
+// readOnlyRoles mount gitReadSecret: they read the repository and never push, as cloud-native-ref's
+// octo-sts policies for them grant contents: read.
+var readOnlyRoles = []string{"reviewer", "triager"}
+
+func readOnly(role string) bool { return slices.Contains(readOnlyRoles, role) }
+
+// scoperRun is a triager whose brief opens with the factory's scoper marker (harness roles HR2).
+func scoperRun(r *v1alpha1.AgentRun) bool {
+	return r.Spec.Role == "triager" && strings.HasPrefix(r.Spec.Task.Text, runs.ScoperMarkerPrefix)
+}
+
+// GitSecretFor is the git Secret a run of role mounts: gitReadSecret for a read-only role when
+// configured, else gitSecret (Invalid refuses the read-only roles without it, unless unsafe).
+func (c Config) GitSecretFor(role string) string {
+	if readOnly(role) && c.GitReadSecret != "" {
+		return c.GitReadSecret
+	}
+	return c.GitSecret
 }
 
 // FQDNs are the hosts the run may reach on 443: github, then its profiles, deduplicated.

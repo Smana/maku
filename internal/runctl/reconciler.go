@@ -83,7 +83,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, r.writeStatus(ctx, run, merge(*st, Observe(run.Status, revoked, pod, gone, now)))
 	}
 	if pod == nil && !gone {
-		m, ca, missing, err := r.inputs(ctx)
+		m, ca, missing, err := r.inputs(ctx, run)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -191,9 +191,9 @@ func (r *Reconciler) secretKey(ctx context.Context, ns, name, key string) (val [
 	return s.Data[key], len(s.Data[key]) == 0, nil
 }
 
-// inputs reads the model Secret, the git Secret's presence and the broker CA. missing names
-// the first absent one: the chart may create them after the controller starts.
-func (r *Reconciler) inputs(ctx context.Context) (Model, []byte, string, error) {
+// inputs reads the model Secret, the presence of the git Secret run's role mounts, and the broker
+// CA. missing names the first absent one: the chart may create them after the controller starts.
+func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun) (Model, []byte, string, error) {
 	c := r.Cfg
 	ms := &corev1.Secret{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: c.Namespace, Name: c.ModelSecret}, ms)
@@ -206,10 +206,11 @@ func (r *Reconciler) inputs(ctx context.Context) (Model, []byte, string, error) 
 	if err != nil {
 		return Model{}, nil, err.Error(), nil
 	}
-	if _, missing, err := r.secretKey(ctx, c.Namespace, c.GitSecret, "token"); err != nil {
+	git := c.GitSecretFor(run.Spec.Role)
+	if _, missing, err := r.secretKey(ctx, c.Namespace, git, "token"); err != nil {
 		return Model{}, nil, "", err
 	} else if missing {
-		return Model{}, nil, fmt.Sprintf("Secret %s/%s has no token", c.Namespace, c.GitSecret), nil
+		return Model{}, nil, fmt.Sprintf("Secret %s/%s has no token", c.Namespace, git), nil
 	}
 	ca, missing, err := r.secretKey(ctx, c.Broker.Namespace, c.Broker.CASecret, "ca.crt")
 	if err != nil {

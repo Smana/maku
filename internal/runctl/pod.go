@@ -165,7 +165,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		{Name: "task", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: r.Name + "-task"}}}},
 		{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.ModelSecret, DefaultMode: &mode,
 			Items: []corev1.KeyToPath{{Key: "api_key", Path: "api_key"}}}}},
-		{Name: "github", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.GitSecret, DefaultMode: &mode,
+		{Name: "github", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.GitSecretFor(s.Role), DefaultMode: &mode,
 			Items: []corev1.KeyToPath{{Key: "token", Path: "token"}}}}},
 		emptyDir("workspace", size.scratch, false), emptyDir("home", "2Gi", false), emptyDir("tmp", "2Gi", false),
 		emptyDir("git-cache", "1Mi", true),
