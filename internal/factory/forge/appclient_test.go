@@ -57,12 +57,14 @@ func (r *appRig) client(base string) *AppClient {
 // leaked is a token the fake quotes in every body it can: no error may carry it.
 const leaked = "ghs_SECRETVALUE"
 
-// tokenReply answers a mint with the given permissions and repositories, quoting the token.
-func tokenReply(perms map[string]string, repos ...string) http.HandlerFunc {
+// tokenReply answers a mint with the given permissions and repositories (full names), quoting the
+// token.
+func tokenReply(perms map[string]string, fullNames ...string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		rs := make([]map[string]string, 0, len(repos))
-		for _, n := range repos {
-			rs = append(rs, map[string]string{"name": n, "full_name": "o/" + n})
+		rs := make([]map[string]string, 0, len(fullNames))
+		for _, fn := range fullNames {
+			_, n, _ := strings.Cut(fn, "/")
+			rs = append(rs, map[string]string{"name": n, "full_name": fn})
 		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"token": leaked,
@@ -72,27 +74,40 @@ func tokenReply(perms map[string]string, repos ...string) http.HandlerFunc {
 
 func TestAppClientAccessToken(t *testing.T) {
 	asked := map[string]string{"contents": "write", "metadata": "read"}
+	noMeta := map[string]string{"contents": "write"}
 	cases := []struct {
-		name    string
-		reply   http.HandlerFunc
-		want    error
-		revokes int
+		name         string
+		asked        map[string]string // asked when nil
+		reply        http.HandlerFunc
+		revokeStatus int // 204 when zero
+		want         []error
+		revokes      int
 	}{
-		{"the reply matches the request", tokenReply(asked, "r"), nil, 0},
-		{"a narrower grant is a scope mismatch, revoked", tokenReply(map[string]string{"contents": "read", "metadata": "read"}, "r"), ErrScopeMismatch, 1},
-		{"a wider grant is a scope mismatch, revoked", tokenReply(map[string]string{"contents": "write", "metadata": "read", "issues": "write"}, "r"), ErrScopeMismatch, 1},
-		{"two repositories are a scope mismatch, revoked", tokenReply(asked, "r", "s"), ErrScopeMismatch, 1},
-		{"another repository is a scope mismatch, revoked", tokenReply(asked, "s"), ErrScopeMismatch, 1},
-		{"no repositories are a scope mismatch, revoked", tokenReply(asked), ErrScopeMismatch, 1},
-		{"a 422 is a permission the installation lacks", func(w http.ResponseWriter, _ *http.Request) {
+		{"the reply matches the request", nil, tokenReply(asked, "o/r"), 0, nil, 0},
+		{"GitHub's added metadata: read is accepted", noMeta, tokenReply(asked, "o/r"), 0, nil, 0},
+		{"the full name matches in any case", nil, tokenReply(asked, "O/R"), 0, nil, 0},
+		{"a narrower grant is a scope mismatch, revoked", nil, tokenReply(map[string]string{"contents": "read", "metadata": "read"}, "o/r"), 0, []error{ErrScopeMismatch}, 1},
+		{"a wider grant is a scope mismatch, revoked", nil, tokenReply(map[string]string{"contents": "write", "metadata": "read", "issues": "write"}, "o/r"), 0, []error{ErrScopeMismatch}, 1},
+		{"metadata wider than read is a scope mismatch", noMeta, tokenReply(map[string]string{"contents": "write", "metadata": "write"}, "o/r"), 0, []error{ErrScopeMismatch}, 1},
+		{"a requested key missing from the reply is a scope mismatch", nil, tokenReply(map[string]string{"metadata": "read"}, "o/r"), 0, []error{ErrScopeMismatch}, 1},
+		{"two repositories are a scope mismatch, revoked", nil, tokenReply(asked, "o/r", "o/s"), 0, []error{ErrScopeMismatch}, 1},
+		{"another repository is a scope mismatch, revoked", nil, tokenReply(asked, "o/s"), 0, []error{ErrScopeMismatch}, 1},
+		{"the same name under another owner (a transfer) is a scope mismatch", nil, tokenReply(asked, "x/r"), 0, []error{ErrScopeMismatch}, 1},
+		{"no repositories are a scope mismatch, revoked", nil, tokenReply(asked), 0, []error{ErrScopeMismatch}, 1},
+		{"a mismatch whose revoke fails says so", nil, tokenReply(asked, "o/s"), http.StatusInternalServerError, []error{ErrScopeMismatch, ErrRevokeFailed}, 1},
+		{"a 422 is a permission or repository not granted", nil, func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, `{"message":"`+leaked+`"}`, http.StatusUnprocessableEntity)
-		}, ErrPermissionNotGranted, 0},
-		{"a 404 is an App not installed", func(w http.ResponseWriter, _ *http.Request) {
+		}, 0, []error{ErrPermissionNotGranted}, 0},
+		{"a 404 is an App not installed", nil, func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, leaked, http.StatusNotFound)
-		}, ErrNotInstalled, 0},
+		}, 0, []error{ErrNotInstalled}, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			want := c.asked
+			if want == nil {
+				want = asked
+			}
 			r := newAppRig(t)
 			var mu sync.Mutex
 			var body []byte
@@ -111,13 +126,22 @@ func TestAppClientAccessToken(t *testing.T) {
 					revoked++
 				}
 				mu.Unlock()
-				w.WriteHeader(http.StatusNoContent)
+				status := c.revokeStatus
+				if status == 0 {
+					status = http.StatusNoContent
+				}
+				w.WriteHeader(status)
 			})
-			tok, granted, repos, err := r.client("/").AccessToken(t.Context(), 9, []string{"r"}, asked)
+			tok, granted, repos, err := r.client("/").AccessToken(t.Context(), 9, "o", []string{"r"}, want)
 			mu.Lock()
 			defer mu.Unlock()
-			if !errors.Is(err, c.want) {
-				t.Fatalf("err = %v, want %v", err, c.want)
+			for _, w := range c.want {
+				if !errors.Is(err, w) {
+					t.Fatalf("err = %v, want %v", err, w)
+				}
+			}
+			if c.want == nil && err != nil {
+				t.Fatalf("err = %v", err)
 			}
 			if revoked != c.revokes {
 				t.Fatalf("revokes = %d, want %d", revoked, c.revokes)
@@ -131,16 +155,45 @@ func TestAppClientAccessToken(t *testing.T) {
 				}
 				return
 			}
-			if got := string(bytes.TrimSpace(body)); got != `{"permissions":{"contents":"write","metadata":"read"},"repositories":["r"]}` {
-				t.Fatalf("body %s", got)
+			raw, _ := json.Marshal(map[string]any{"permissions": want, "repositories": []string{"r"}})
+			if got := string(bytes.TrimSpace(body)); got != string(raw) {
+				t.Fatalf("body %s, want %s", got, raw)
 			}
 			if !strings.HasPrefix(auth, "Bearer ey") {
 				t.Fatalf("auth %q: want the App JWT", auth)
 			}
-			if tok.Value != leaked || tok.ExpiresAt.IsZero() || !maps.Equal(granted, asked) || !slices.Equal(repos, []string{"r"}) {
+			if tok.Value != leaked || tok.ExpiresAt.IsZero() || granted["contents"] != "write" || len(repos) != 1 || !strings.EqualFold(repos[0], "o/r") {
 				t.Fatalf("token %v granted %v repos %v", tok.ExpiresAt, granted, repos)
 			}
 		})
+	}
+}
+
+func TestAppClientMessages(t *testing.T) {
+	if got := ErrPermissionNotGranted.Error(); !strings.Contains(got, "permission or repository not granted") {
+		t.Fatalf("ErrPermissionNotGranted = %q: a 422 covers both", got)
+	}
+}
+
+// Names are checked before any path is built from them.
+func TestAppClientRefusesBadNames(t *testing.T) {
+	r := newAppRig(t)
+	calls := 0
+	r.mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { calls++; http.Error(w, "no", http.StatusTeapot) })
+	c := r.client("/")
+	for _, n := range [][2]string{{"o", "../x"}, {"o", "a..b"}, {"..", "r"}, {"o", "r/s"}, {"", "r"}, {"o", ""}, {"o", "r?x"}, {"o w", "r"}, {"o", "."}} {
+		if _, err := c.Installation(t.Context(), n[0], n[1]); err == nil {
+			t.Fatalf("Installation(%q, %q) is refused", n[0], n[1])
+		}
+		if _, _, _, err := c.AccessToken(t.Context(), 9, n[0], []string{n[1]}, map[string]string{"metadata": "read"}); err == nil {
+			t.Fatalf("AccessToken(%q, %q) is refused", n[0], n[1])
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("%d requests were made", calls)
+	}
+	if _, err := c.Installation(t.Context(), "Smana-x", "my_repo.v2"); err == nil || calls != 1 {
+		t.Fatalf("a valid name reaches GitHub: calls %d err %v", calls, err)
 	}
 }
 
@@ -214,6 +267,10 @@ func TestAppClientRevoke(t *testing.T) {
 			if (err == nil) != c.ok {
 				t.Fatalf("err = %v", err)
 			}
+			var re *RevokeError
+			if err != nil && (!errors.Is(err, ErrRevokeFailed) || !errors.As(err, &re) || re.Status != c.status) {
+				t.Fatalf("a failed revoke is a *RevokeError carrying its status: %v", err)
+			}
 			if err != nil && (strings.Contains(err.Error(), leaked) || !strings.Contains(err.Error(), "500")) {
 				t.Fatalf("the error names the status only: %v", err)
 			}
@@ -249,7 +306,7 @@ func TestAppClientGHES(t *testing.T) {
 		case strings.HasSuffix(req.URL.Path, "/installation"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9})
 		case strings.HasSuffix(req.URL.Path, "/access_tokens"):
-			tokenReply(map[string]string{"metadata": "read"}, "r")(w, req)
+			tokenReply(map[string]string{"metadata": "read"}, "o/r")(w, req)
 		case req.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -260,7 +317,7 @@ func TestAppClientGHES(t *testing.T) {
 	if _, err := c.Installation(t.Context(), "o", "r"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := c.AccessToken(t.Context(), 9, []string{"r"}, map[string]string{"metadata": "read"}); err != nil {
+	if _, _, _, err := c.AccessToken(t.Context(), 9, "o", []string{"r"}, map[string]string{"metadata": "read"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Revoke(t.Context(), "x"); err != nil {

@@ -216,7 +216,7 @@ type minted struct {
 	token   string
 	expires time.Time
 	granted map[string]string
-	repos   []string // names only
+	repos   []string // full names, owner/name
 }
 
 // mint is a new installation token, scoped to the repositories and permissions. A 422 is
@@ -227,7 +227,7 @@ func (s appCaller) mint(ctx context.Context, appJWT string, installation int64, 
 		ExpiresAt    time.Time         `json:"expires_at"`
 		Permissions  map[string]string `json:"permissions"`
 		Repositories []struct {
-			Name string `json:"name"`
+			FullName string `json:"full_name"`
 		} `json:"repositories"`
 	}
 	in := map[string]any{"repositories": repos, "permissions": perms}
@@ -245,7 +245,7 @@ func (s appCaller) mint(ctx context.Context, appJWT string, installation int64, 
 	}
 	m := minted{token: out.Token, expires: out.ExpiresAt, granted: out.Permissions}
 	for _, r := range out.Repositories {
-		m.repos = append(m.repos, r.Name)
+		m.repos = append(m.repos, r.FullName)
 	}
 	return m, nil
 }

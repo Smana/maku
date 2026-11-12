@@ -182,37 +182,49 @@ func TestDocsTable(t *testing.T) {
 	t.Fatalf("docs/factory.md's role table differs from Render(Roles); rerun with -update:\n%s", want)
 }
 
-// No code outside this package builds a run's permission map: the pull_requests: write literals
-// left are the factory's and the merger's own sets, step 2's shared writer, the demo App's
-// manifest and the verdict poster's scope.
+// No code outside this package builds a run's permission map: the pull_requests: write and
+// contents: write literals left are the factory's and the merger's own sets, step 2's shared
+// writer, the demo App's manifest and the verdict poster's scope, each pinned to its count so a
+// new literal in an exempt file fails too.
 func TestOneRoleTable(t *testing.T) {
-	allowed := map[string]bool{
-		"factory/forge/app.go":         true, // the factory and merger Apps' own scopes
-		"factory/runtoken/runtoken.go": true, // step 2's shared writer, deleted at step 8
-		"app/maku_demo_app.go":         true, // the demo App's manifest
-		"github/app.go":                true, // the verdict poster's scope
+	exempt := map[string]int{
+		"factory/forge/app.go":         4, // the factory App's pull_requests; the merger's contents and pull_requests; MintOptions' doc example
+		"factory/runtoken/runtoken.go": 2, // step 2's shared writer, deleted at step 8
+		"app/maku_demo_app.go":         2, // the demo App's manifest
+		"github/app.go":                1, // the verdict poster's scope
 	}
-	re := regexp.MustCompile(`"pull_requests":\s*"write"`)
+	re := regexp.MustCompile(`"(pull_requests|contents)":\s*"write"`)
 	root := "../.."
+	seen := map[string]int{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "factory/minter/") || allowed[rel] {
+		if strings.HasPrefix(rel, "factory/minter/") {
 			return nil
 		}
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if re.Match(raw) {
-			t.Errorf("%s builds a pull_requests: write map: take it from minter.Roles", rel)
+		if n := len(re.FindAll(raw, -1)); n > 0 {
+			seen[rel] = n
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for rel, n := range seen {
+		if want, ok := exempt[rel]; !ok || n != want {
+			t.Errorf("%s holds %d pull_requests or contents: write literals, %d exempt: take a run's permissions from minter.Roles", rel, n, want)
+		}
+	}
+	for rel, want := range exempt {
+		if seen[rel] == 0 {
+			t.Errorf("%s no longer holds its %d exempt literals: drop it from the list", rel, want)
+		}
 	}
 }

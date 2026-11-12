@@ -6,9 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,8 +21,9 @@ var (
 	// ErrNotInstalled is a 404 from the installation lookup or the mint: the App is not installed
 	// on the repository, or the installation is gone.
 	ErrNotInstalled = errors.New("the App is not installed on the repository")
-	// ErrPermissionNotGranted is a 422 from the mint: the installation lacks a permission asked.
-	ErrPermissionNotGranted = errors.New("the App's installation does not grant a permission asked")
+	// ErrPermissionNotGranted is a 422 from the mint: the installation lacks a permission asked, or
+	// the repository is not among the installation's.
+	ErrPermissionNotGranted = errors.New("permission or repository not granted")
 	// ErrScopeMismatch is a minted token whose permissions or repositories differ from the request.
 	// The token is revoked before the error returns.
 	ErrScopeMismatch = errors.New("the minted token's scope differs from the request")
@@ -133,6 +134,9 @@ func (c *AppClient) caller() (appCaller, error) {
 // Installation is the App's installation on owner/name, from the cache while it is fresh. A 404 is
 // ErrNotInstalled and evicts the repository.
 func (c *AppClient) Installation(ctx context.Context, owner, name string) (int64, error) {
+	if err := CheckNames(owner, name); err != nil {
+		return 0, err
+	}
 	if id, ok := c.Installations.get(owner, name); ok {
 		return id, nil
 	}
@@ -158,11 +162,29 @@ func (c *AppClient) Installation(ctx context.Context, owner, name string) (int64
 // Evict drops owner/name from the installation cache, if there is one.
 func (c *AppClient) Evict(owner, name string) { c.Installations.Evict(owner, name) }
 
-// AccessToken mints a token of installation id on exactly repos (names, no owner) with exactly
-// perms, and checks GitHub's reply: permissions that differ from perms, or repositories that differ
-// from repos, revoke the token and fail with ErrScopeMismatch. It returns the token with what the
-// reply granted. A 422 is ErrPermissionNotGranted, a 404 ErrNotInstalled.
-func (c *AppClient) AccessToken(ctx context.Context, id int64, repos []string, perms map[string]string) (Token, map[string]string, []string, error) {
+// revokeTimeout bounds the revoke of a token minted with the wrong scope: it runs even when the
+// caller's context is done, so it needs its own bound.
+const revokeTimeout = 10 * time.Second
+
+// AccessToken mints a token of installation id on exactly owner's repos (names, no owner) with
+// perms, and checks GitHub's reply against the request:
+//   - every granted permission was asked at the same level, except the metadata: read GitHub adds;
+//   - every asked permission was granted;
+//   - the reply's repositories are exactly owner/<repo> by full name, case-insensitive, so a
+//     repository transferred to another owner under the same name never matches.
+//
+// A reply that fails the check is revoked and the call fails with ErrScopeMismatch, joined with
+// ErrRevokeFailed when the revoke failed too. It returns the token with what the reply granted and
+// the repositories' full names. A 422 is ErrPermissionNotGranted, a 404 ErrNotInstalled.
+func (c *AppClient) AccessToken(ctx context.Context, id int64, owner string, repos []string, perms map[string]string) (Token, map[string]string, []string, error) {
+	if len(repos) == 0 {
+		return Token{}, nil, nil, errors.New("forge: a mint needs at least one repository")
+	}
+	for _, r := range repos {
+		if err := CheckNames(owner, r); err != nil {
+			return Token{}, nil, nil, err
+		}
+	}
 	ac, err := c.caller()
 	if err != nil {
 		return Token{}, nil, nil, err
@@ -175,35 +197,92 @@ func (c *AppClient) AccessToken(ctx context.Context, id int64, repos []string, p
 	if err != nil {
 		return Token{}, nil, nil, err
 	}
-	if !maps.Equal(r.granted, perms) || !sameNames(r.repos, repos) {
-		_ = c.revoke(ctx, ac, r.token) // best effort: the error that matters is the mismatch
-		return Token{}, nil, nil, fmt.Errorf("mint an installation token: %w", ErrScopeMismatch)
+	if !scopeMatches(r.granted, perms) || !sameRepos(r.repos, owner, repos) {
+		// The token exists until revoked: the revoke outlives the caller's context, bounded.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
+		defer cancel()
+		if rerr := c.revoke(rctx, ac, r.token); rerr != nil {
+			return Token{}, nil, nil, fmt.Errorf("mint an installation token: %w; revoking it: %w", ErrScopeMismatch, rerr)
+		}
+		return Token{}, nil, nil, fmt.Errorf("mint an installation token: %w; the token was revoked", ErrScopeMismatch)
 	}
 	return Token{Value: r.token, ExpiresAt: r.expires}, r.granted, r.repos, nil
 }
 
-// sameNames is whether a and b hold the same repository names, ignoring order and case.
-func sameNames(a, b []string) bool {
-	norm := func(s []string) []string {
-		out := make([]string, len(s))
-		for i, n := range s {
-			out[i] = strings.ToLower(n)
+// scopeMatches is AccessToken's permission check of the reply against the request.
+func scopeMatches(granted, asked map[string]string) bool {
+	for k, v := range granted {
+		a, ok := asked[k]
+		switch {
+		case ok && a != v:
+			return false
+		case !ok && (k != "metadata" || v != "read"):
+			return false
 		}
-		slices.Sort(out)
-		return out
 	}
-	return len(a) == len(b) && slices.Equal(norm(a), norm(b))
+	for k := range asked {
+		if _, ok := granted[k]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// sameRepos is whether fullNames are exactly owner's names, ignoring order and case.
+func sameRepos(fullNames []string, owner string, names []string) bool {
+	want := make([]string, len(names))
+	for i, n := range names {
+		want[i] = strings.ToLower(owner + "/" + n)
+	}
+	got := make([]string, len(fullNames))
+	for i, n := range fullNames {
+		got[i] = strings.ToLower(n)
+	}
+	slices.Sort(want)
+	slices.Sort(got)
+	return slices.Equal(got, want)
+}
+
+// nameRE is an owner or repository name as a path segment may carry it.
+var nameRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// CheckNames refuses an owner or repository name that could change the path it is put in:
+// anything outside [A-Za-z0-9_.-], ".", or a name containing "..".
+func CheckNames(names ...string) error {
+	for _, n := range names {
+		if !nameRE.MatchString(n) || n == "." || strings.Contains(n, "..") {
+			return fmt.Errorf("forge: %q is not an owner or repository name", n)
+		}
+	}
+	return nil
 }
 
 // Revoke revokes an installation token (DELETE /installation/token, as the token itself). A token
-// GitHub no longer knows (401) is already revoked: nil.
+// GitHub no longer knows (401) is already revoked: nil. A failure is a *RevokeError.
 func (c *AppClient) Revoke(ctx context.Context, token string) error {
 	ac, err := c.caller()
 	if err != nil {
-		return err
+		return &RevokeError{}
 	}
 	return c.revoke(ctx, ac, token)
 }
+
+// ErrRevokeFailed is a revoke that did not happen: the token lives until it expires.
+var ErrRevokeFailed = errors.New("revoke an installation token failed")
+
+// RevokeError is a failed revoke, carried by its HTTP status alone (0: no answer), so it can be
+// passed on and logged whole: it never holds the token or a reply body.
+type RevokeError struct{ Status int }
+
+func (e *RevokeError) Error() string {
+	if e.Status == 0 {
+		return ErrRevokeFailed.Error()
+	}
+	return fmt.Sprintf("%s: status %d", ErrRevokeFailed, e.Status)
+}
+
+// Is makes errors.Is(err, ErrRevokeFailed) true.
+func (e *RevokeError) Is(target error) bool { return target == ErrRevokeFailed }
 
 func (c *AppClient) revoke(ctx context.Context, ac appCaller, token string) error {
 	status, err := ac.call(ctx, http.MethodDelete, "installation/token", token, nil, nil)
@@ -211,7 +290,7 @@ func (c *AppClient) revoke(ctx context.Context, ac appCaller, token string) erro
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("revoke an installation token: %w", err)
+		return &RevokeError{Status: status}
 	}
 	return nil
 }
