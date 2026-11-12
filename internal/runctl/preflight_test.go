@@ -130,13 +130,44 @@ func TestPreflightForbiddenIsAFailureNamingTheGrant(t *testing.T) {
 			return apierrors.NewForbidden(schema.GroupResource{Group: "node.k8s.io", Resource: "runtimeclasses"}, "gvisor", errors.New("RBAC: access denied"))
 		}}).Build()
 	p := newPreflight(t, c, testConfig(t))
-	if p.Tick(t.Context()) {
-		t.Fatal("Forbidden is decided: retrying cannot grant the verb")
+	// Decided (the run is refused, with the grant named), yet checked again soon: right after install
+	// the ClusterRole binding may not have reached the authorizer yet.
+	if !p.Tick(t.Context()) {
+		t.Fatal("a Forbidden failure must be retried on the short backoff (RBAC propagation lag)")
 	}
 	got := p.Result()
 	if got.State != PreflightFailed || got.Check != "runtimeClass" || !strings.Contains(got.Message, "get on node.k8s.io runtimeclasses") ||
 		!strings.Contains(got.Message, `"gvisor"`) {
 		t.Fatalf("Forbidden: %+v", got)
+	}
+}
+
+func TestPreflightAMissingClassWaitsTheFullInterval(t *testing.T) {
+	p := newPreflight(t, fakeReader(t), testConfig(t))
+	if p.Tick(t.Context()) {
+		t.Fatal("a missing RuntimeClass is decided and needs a human: no short retry")
+	}
+	if got := p.Result(); got.State != PreflightFailed {
+		t.Fatalf("missing class: %+v", got)
+	}
+}
+
+func TestPreflightRBACLagRecoversOnTheNextShortRetry(t *testing.T) {
+	granted := false
+	c := fake.NewClientBuilder().WithObjects(gvisor()).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, w client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+			if !granted {
+				return apierrors.NewForbidden(schema.GroupResource{Group: "node.k8s.io", Resource: "runtimeclasses"}, k.Name, errors.New("RBAC: access denied"))
+			}
+			return w.Get(ctx, k, o, opts...)
+		}}).Build()
+	p := newPreflight(t, c, testConfig(t))
+	if !p.Tick(t.Context()) || p.Result().State != PreflightFailed {
+		t.Fatalf("before the grant: %+v", p.Result())
+	}
+	granted = true
+	if p.Tick(t.Context()) || p.Result().State != PreflightPassed {
+		t.Fatalf("once the grant lands, the next tick passes and the interval is the long one again: %+v", p.Result())
 	}
 }
 
