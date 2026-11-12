@@ -51,7 +51,8 @@ rules:
     verbs: [get, create, update]
   - apiGroups: [""]
     resources: [events]
-    verbs: [create, patch]
+    {{- /* list: in kubernetes mode, the preflight names the last event of a probe pod that did not start. */}}
+    verbs: [create, patch{{ if eq (include "ap.netMode" .) "kubernetes" }}, list{{ end }}]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

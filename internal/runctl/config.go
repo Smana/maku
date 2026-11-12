@@ -103,6 +103,9 @@ type DNS struct {
 type Images struct {
 	Harness string `json:"harness"`
 	Bridge  string `json:"bridge"`
+	// Probe runs the preflight's netprobe pod: the run-controller's own image, required in
+	// kubernetes mode.
+	Probe string `json:"probe,omitempty"`
 }
 
 // defaultProfiles are the composition's _EGRESS_PROFILES (crossplane-configuration v0.9.17) plus
@@ -208,6 +211,9 @@ func (c Config) egressProxy() []error {
 	}
 	if c.DNS.Namespace == "" || len(c.DNS.Labels) == 0 {
 		errs = append(errs, errors.New("dns.namespace and dns.labels are required together"))
+	}
+	if c.Images.Probe == "" {
+		errs = append(errs, errors.New("images.probe is required with egressProxy: the preflight's probe pod proves the CNI enforces NetworkPolicy"))
 	}
 	return errs
 }

@@ -61,6 +61,10 @@ data:
     images:
       harness: {{ include "ap.image" (dict "root" . "image" $c.images.harness) | quote }}
       bridge: {{ include "ap.image" (dict "root" . "image" $c.images.bridge) | quote }}
+      {{- if eq $mode "kubernetes" }}
+      # The preflight's netprobe pod: this controller's own image.
+      probe: {{ include "ap.image" (dict "root" . "image" $c.image) | quote }}
+      {{- end }}
     {{- with $c.egressProfiles }}
     egressProfiles:
       {{- toYaml . | nindent 6 }}

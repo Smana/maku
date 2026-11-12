@@ -31,8 +31,10 @@ func run() int {
 		switch os.Args[1] {
 		case "egress-proxy":
 			cmd, name = app.EgressProxy, "egress-proxy"
+		case "netprobe": // the preflight's probe pod: no logger, its result goes to the termination log
+			return app.Netprobe(ctx, os.Args[2:], os.Stderr)
 		default:
-			_, _ = fmt.Fprintf(os.Stderr, "maku-run-controller: unknown subcommand %q (egress-proxy)\n", os.Args[1])
+			_, _ = fmt.Fprintf(os.Stderr, "maku-run-controller: unknown subcommand %q (egress-proxy, netprobe)\n", os.Args[1])
 			return 2
 		}
 	}

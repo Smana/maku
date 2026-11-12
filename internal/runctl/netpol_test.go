@@ -22,13 +22,26 @@ egressProxy:
   labels: {app.kubernetes.io/name: egress-proxy}
 `
 
+// kubeImages replaces goodConfig's images block in kubernetes mode: the probe's image is required.
+const kubeImages = `images:
+  harness: ghcr.io/smana/maku-harness:v0.16.0
+  bridge: ghcr.io/smana/maku-bridge:v0.16.0
+  probe: ghcr.io/smana/maku-run-controller:v0.16.0
+`
+
 func kubeConfig(t *testing.T, extra ...string) Config {
 	t.Helper()
-	c, err := cfgFrom(t, goodConfig+kubeModeConfig+strings.Join(extra, ""))
+	c, err := cfgFrom(t, kubeGood()+kubeModeConfig+strings.Join(extra, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// kubeGood is goodConfig with the probe's image.
+func kubeGood() string {
+	i := strings.Index(goodConfig, "images:")
+	return goodConfig[:i] + kubeImages
 }
 
 func TestLoadConfigKubernetesMode(t *testing.T) {
@@ -40,12 +53,12 @@ func TestLoadConfigKubernetesMode(t *testing.T) {
 		t.Fatalf("proxy port %d", c.EgressProxy.Port())
 	}
 	for name, body := range map[string]string{
-		"no proxy url":    goodConfig + "networkPolicy: kubernetes\n",
-		"https proxy url": goodConfig + strings.Replace(kubeModeConfig, "url: http://", "url: https://", 1),
-		"no proxy port":   goodConfig + strings.Replace(kubeModeConfig, ":3128", "", 1),
-		"no proxy labels": goodConfig + strings.Replace(kubeModeConfig, "  labels: {app.kubernetes.io/name: egress-proxy}\n", "", 1),
-		"no proxy ns":     goodConfig + strings.Replace(kubeModeConfig, "  namespace: agent-platform\n", "", 1),
-		"bad deny cidr":   goodConfig + kubeModeConfig + "  denyCIDRs: [10.0.0.0]\n",
+		"no proxy url":    kubeGood() + "networkPolicy: kubernetes\n",
+		"https proxy url": kubeGood() + strings.Replace(kubeModeConfig, "url: http://", "url: https://", 1),
+		"no proxy port":   kubeGood() + strings.Replace(kubeModeConfig, ":3128", "", 1),
+		"no proxy labels": kubeGood() + strings.Replace(kubeModeConfig, "  labels: {app.kubernetes.io/name: egress-proxy}\n", "", 1),
+		"no proxy ns":     kubeGood() + strings.Replace(kubeModeConfig, "  namespace: agent-platform\n", "", 1),
+		"bad deny cidr":   kubeGood() + kubeModeConfig + "  denyCIDRs: [10.0.0.0]\n",
 	} {
 		if _, err := cfgFrom(t, body); err == nil || !strings.Contains(err.Error(), "egressProxy") {
 			t.Errorf("%s: want an egressProxy error, got %v", name, err)
