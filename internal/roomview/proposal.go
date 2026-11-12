@@ -72,6 +72,8 @@ type ProposalIssue struct {
 	// Suggestion is the planner's suggestion and the broker's merge outcome; nil on a plan made
 	// without the factory's catalogue, which shows no suggestion line.
 	Suggestion *ProposalSuggestion
+	// Profile is the profile a maintainer pinned (P5), "" for the factory's choice.
+	Profile string
 }
 
 // ProposalSuggestion is what the planner suggests for the issue (display, O1): the profile ("" for
@@ -257,6 +259,9 @@ func (c *card) proposalIssue(p ProposalView) string {
 		if why := slackInert(sg.Why); why != "" {
 			lines = append(lines, "why (the planner's reading): "+why)
 		}
+	}
+	if pin := slackInert(p.Issue.Profile); pin != "" {
+		lines = append(lines, "Pinned: profile "+pin+", a maintainer's choice; the factory checks it at triage")
 	}
 	return strings.Join(lines, "\n")
 }

@@ -33,6 +33,10 @@ const (
 	// common checks know them, and each family decodes its own value.
 	actionProposalConfirm = "factory_proposal_confirm"
 	actionProposalCancel  = "factory_proposal_cancel"
+	// actionProposalProfile is the profile select (P5) and actionProposalOptions the button that
+	// shows the class's profiles (O3): both bind the hash and revision the message shows.
+	actionProposalProfile = "factory_proposal_profile"
+	actionProposalOptions = "factory_proposal_options"
 )
 
 // Slack's own bounds on one message. They are checked here rather than discovered in Slack's
@@ -89,6 +93,10 @@ type ProposalPayload struct {
 	// message says it, and says it again after a restart that only has the message. It is display, not
 	// material: the hash binds the plan, and the label is in no section's material set.
 	Degraded bool `json:"degraded,omitempty"`
+	// Pins are the profiles the select offers beside the factory's choice: the class's offered floor
+	// and allowed profiles, set only when the author maintains the repository and the class is not
+	// live or shadow (P5, spec "Slack proposal"). Display, like Degraded: the broker checks every pin.
+	Pins []string `json:"pins,omitempty"`
 }
 
 // errProposalHash and errProposalRev are a caller's mistake, not a refusal the thread shows: a
@@ -283,6 +291,7 @@ func proposalView(p ProposalPayload, q *intake.Question, changed []string) roomv
 		if sg := is.Suggestion; sg != nil { // display: a plan made without the catalogue has none
 			issue.Suggestion = &roomview.ProposalSuggestion{Profile: sg.Profile, Roles: sg.Roles, Outcome: sg.Merge.Outcome, Why: sg.Why}
 		}
+		issue.Profile = is.Profile
 		v.Issue = issue
 	}
 	return v
@@ -319,7 +328,7 @@ func proposalSections(p ProposalPayload, q *intake.Question, changed []string, c
 	if utf8.RuneCountInString(text) > maxSlackText {
 		return "", nil, errProposalTooLarge
 	}
-	blocks, err = proposalBlocks(sections, p.Hash, p.Rev, firstChannel(channel))
+	blocks, err = proposalBlocks(sections, p.Hash, p.Rev, firstChannel(channel), pinsShown(p))
 	if err != nil {
 		return "", nil, err
 	}
@@ -387,7 +396,7 @@ type slackContextText struct {
 // channel. A section longer than Slack's limit is carried whole across several blocks — the plan is
 // bounded at 7 KiB, so a message cannot exceed the block count — because cutting what a Confirm
 // binds would confirm something else.
-func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, channel string) (json.RawMessage, error) {
+func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, channel string, pins *pinSelect) (json.RawMessage, error) {
 	blocks := make([]slackBlock, 0, len(sections)+2)
 	for _, s := range sections {
 		if s.Key == proposalKeyHeader {
@@ -403,6 +412,9 @@ func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, c
 		for _, chunk := range splitSlackText(slackSectionText(s.Heading, s.Body), slackSectionLimit) {
 			blocks = append(blocks, sectionBlock(chunk))
 		}
+	}
+	if pins != nil {
+		blocks = append(blocks, pinBlock(hash, rev, *pins))
 	}
 	blocks = append(blocks, actionsBlock(proposalValue(hash, rev)), contextBlock(channel))
 	if len(blocks) > maxSlackBlocks {
@@ -694,6 +706,7 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		return a.notShown(ctx, ev.Channel, thread, err), false
 	}
 	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
+	prop.Pins = a.pinOptions(ctx, prop.Plan, prop.Author)
 	if prev != nil {
 		// One proposal per thread: the live message becomes this revision in place, or is reposted and
 		// made inert when Slack refuses the edit. Nothing is posted beside it, so the thread never has
@@ -942,6 +955,7 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 		return a.notShown(ctx, ev.Channel, thread, err)
 	}
 	next.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
+	next.Pins = a.pinOptions(ctx, next.Plan, next.Author)
 	// Slack files one issue and a re-plan is never a trimmed plan (CD19): the reply path meets the
 	// same refusal the mention's post does, in the same words.
 	if n := len(next.Plan.Issues); n > 1 {
@@ -1169,6 +1183,7 @@ func (a *App) postProposalIn(ctx context.Context, channel, thread string, st *pl
 		return "error"
 	}
 	prop.Degraded = p.Degraded // display, and the one field newProposal does not take (CD18)
+	prop.Pins = p.Pins
 	if n := len(prop.Plan.Issues); n > 1 {
 		if !say(notPostedIssueLine(n)) {
 			return "error"
@@ -1223,7 +1238,7 @@ func (a *App) updateProposal(ctx context.Context, channel, ts string, prev, next
 		a.log().Warn("proposal not built", "channel", channel, "ts", ts, "err", err)
 		return "error"
 	}
-	prop.Degraded = next.Degraded
+	prop.Degraded, prop.Pins = next.Degraded, next.Pins
 	text, blocks, err := proposalSections(prop, q, proposalChanged(prev, prop), channel)
 	if err != nil {
 		a.log().Warn("proposal render failed", "channel", channel, "ts", ts, "err", err)

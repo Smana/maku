@@ -75,3 +75,30 @@ func TestPlanShowsTheSuggestion(t *testing.T) {
 		t.Fatalf("one suggestion, one line:\n%s", out)
 	}
 }
+
+// P5: a pinned profile is shown as the maintainer's choice; the factory's choice shows no such line.
+func TestProposalPinnedLine(t *testing.T) {
+	v := proposalView()
+	v.Issue.Class = "review"
+	v.Issue.Profile = "review-frontier"
+	sections, err := Proposal(v, Options{Format: Slack, Rooms: rooms})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var issue string
+	for _, s := range sections {
+		if s.Key == sectionIssue {
+			issue = s.Body
+		}
+	}
+	if !strings.Contains(issue, "Pinned: profile review-frontier, a maintainer's choice") {
+		t.Fatalf("lacks the pin:\n%s", issue)
+	}
+	v.Issue.Profile = ""
+	sections, _ = Proposal(v, Options{Format: Slack, Rooms: rooms})
+	for _, s := range sections {
+		if strings.Contains(s.Body, "Pinned:") {
+			t.Fatalf("an unpinned plan shows a pin: %s", s.Body)
+		}
+	}
+}

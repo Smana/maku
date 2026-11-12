@@ -148,7 +148,14 @@ func (a *App) proposalPress(ctx context.Context, in interaction) string {
 	}
 	// The value is this family's, read here rather than by the dispatcher: the version, the family,
 	// the hash's shape and the revision.
-	hash, _, ok := parseProposalValue(in.Value)
+	value, profile := in.Value, ""
+	if in.ActionID == actionProposalProfile {
+		var cut bool
+		if value, profile, cut = cutProfileValue(in.Value); !cut {
+			return a.pressAnswer(ctx, in, thread, proposalButtonLine, "refused")
+		}
+	}
+	hash, _, ok := parseProposalValue(value)
 	if !ok {
 		return a.pressAnswer(ctx, in, thread, proposalButtonLine, "refused")
 	}
@@ -168,6 +175,10 @@ func (a *App) proposalPress(ctx context.Context, in interaction) string {
 	case actionProposalCancel:
 		a.proposalUpdate(ctx, countCancel)
 		return a.cancelProposal(ctx, in, thread, p)
+	case actionProposalProfile:
+		return a.pinProposal(ctx, in, thread, p, profile)
+	case actionProposalOptions:
+		return a.proposalOptions(ctx, in, thread, p)
 	}
 	return "ignored"
 }

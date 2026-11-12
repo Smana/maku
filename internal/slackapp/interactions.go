@@ -73,6 +73,10 @@ type interactionPayload struct {
 		ActionID string `json:"action_id"`
 		Value    string `json:"value"`
 		ActionTS string `json:"action_ts"`
+		// SelectedOption is a static select's choice: its value stands where a button's is.
+		SelectedOption struct {
+			Value string `json:"value"`
+		} `json:"selected_option"`
 	} `json:"actions"`
 	Container struct {
 		MessageTS string `json:"message_ts"`
@@ -135,7 +139,7 @@ func (a *App) interaction(ctx context.Context, body []byte) string {
 	switch in.ActionID {
 	case actionApprove, actionDeny:
 		return a.approvalAction(ctx, in)
-	case actionProposalConfirm, actionProposalCancel:
+	case actionProposalConfirm, actionProposalCancel, actionProposalProfile, actionProposalOptions:
 		return a.proposalAction(ctx, in) // CD7's controls: a different family, the same door
 	}
 	return "ignored"
@@ -299,6 +303,9 @@ func parseInteraction(body []byte) (interaction, bool) {
 		return interaction{}, false
 	}
 	act := p.Actions[0]
+	if act.Value == "" {
+		act.Value = act.SelectedOption.Value
+	}
 	if !userRE.MatchString(p.User.ID) || !channelRE.MatchString(p.Channel.ID) || !tsRE.MatchString(act.ActionTS) {
 		return interaction{}, false
 	}
@@ -317,7 +324,7 @@ func parseInteraction(body []byte) (interaction, bool) {
 // controls (CD7). Any other id is §6 step 3's ignored, as it always was.
 func knownAction(actionID string) bool {
 	switch actionID {
-	case actionApprove, actionDeny, actionProposalConfirm, actionProposalCancel:
+	case actionApprove, actionDeny, actionProposalConfirm, actionProposalCancel, actionProposalProfile, actionProposalOptions:
 		return true
 	}
 	return false
