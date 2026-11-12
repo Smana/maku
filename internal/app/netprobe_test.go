@@ -107,6 +107,30 @@ func TestNetprobeFailsWhenTheDenyConnects(t *testing.T) {
 	}
 }
 
+// The deny targets are checked side by side: three of them take one target's time (two attempts, a
+// gap apart), not three, so the probe stays short however many negative controls it has.
+func TestNetprobeChecksTheDeniesInParallel(t *testing.T) {
+	term := filepath.Join(t.TempDir(), "termination-log")
+	args := []string{"--termination-log", term, "--allow-wait", "1s", "--deny-timeout", "300ms", "--deny-gap", "400ms",
+		"--deny", closed(t), "--deny", closed(t), "--deny", closed(t)}
+	start := time.Now()
+	if code := Netprobe(t.Context(), args, io.Discard); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if d := time.Since(start); d > 900*time.Millisecond {
+		t.Fatalf("three deny targets took %s: sequential (3 x 400 ms gaps), not parallel", d)
+	}
+}
+
+// With several denies, the one reported is the first in argument order that connected.
+func TestNetprobeReportsTheFirstDenyThatConnected(t *testing.T) {
+	open := listen(t)
+	code, res := runProbe(t, "--deny", closed(t), "--deny", open, "--deny", listen(t))
+	if code != 1 || res.Message != "deny "+open+" connected: the CNI does not enforce NetworkPolicy" {
+		t.Fatalf("exit %d %+v", code, res)
+	}
+}
+
 func TestNetprobeFailsWhenTheProxyRefuses(t *testing.T) {
 	code, res := runProbe(t, "--allow", listen(t), "--deny", closed(t), "--connect", "github.com:443", "--proxy", connectProxy(t, http.StatusForbidden))
 	if code != 1 || res.OK || !strings.Contains(res.Message, "the egress proxy refused github.com:443") || res.Kind != netprobeUnreachable {

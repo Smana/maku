@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# up.sh's gVisor probe in networkPolicies.mode kubernetes: the same pod as gvisor-probe.yaml.tmpl,
+# held by a plain NetworkPolicy instead of its CiliumNetworkPolicy (the run-controller it is created as
+# may create NetworkPolicies, and no CNP, in that mode). DNS to kube-dns, the broker on 8443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ap-probe
+  namespace: ${RUNS_NS}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: ap-probe}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: "${NS}"}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: room-broker}
+      ports: [{port: 8443, protocol: TCP}]

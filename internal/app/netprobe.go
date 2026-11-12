@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -115,14 +116,27 @@ func netprobe(ctx context.Context, allow, deny []string, connect, proxy string, 
 			return netprobeResult{Kind: netprobeUnreachable, Message: err.Error()}
 		}
 	}
-	for _, a := range deny {
-		for i := range 2 {
-			if i > 0 {
-				sleep(ctx, denyGap)
+	// Every deny target side by side, each tried twice a gap apart: the probe takes one target's time
+	// however many there are. The first target in argument order that connected is reported.
+	connected := make([]bool, len(deny))
+	var wg sync.WaitGroup
+	for i, a := range deny {
+		wg.Go(func() {
+			for n := range 2 {
+				if n > 0 {
+					sleep(ctx, denyGap)
+				}
+				if err := tryDial(a, denyTimeout); err == nil {
+					connected[i] = true
+					return
+				}
 			}
-			if err := tryDial(a, denyTimeout); err == nil {
-				return netprobeResult{Kind: netprobeUnenforced, Message: "deny " + a + " connected: the CNI does not enforce NetworkPolicy"}
-			}
+		})
+	}
+	wg.Wait()
+	for i, a := range deny {
+		if connected[i] {
+			return netprobeResult{Kind: netprobeUnenforced, Message: "deny " + a + " connected: the CNI does not enforce NetworkPolicy"}
 		}
 	}
 	return netprobeResult{OK: true}

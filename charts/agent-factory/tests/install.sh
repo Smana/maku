@@ -41,6 +41,11 @@ dump() {
   echo "--- install failed: diagnostics ---" >&2
   kubectl get pods,pvc,svc -A -o wide >&2 || true
   kubectl -n "$NS" describe pods >&2 || true
+  kubectl -n "$NS" logs deploy/room-broker -c migrate --tail=40 >&2 || true
+  # the cluster's own DNS and forwarding, apart from the chart: CoreDNS, its endpoints, the node's filter table
+  kubectl -n kube-system logs deploy/coredns --tail=40 >&2 || true
+  kubectl -n kube-system get endpointslice -l kubernetes.io/service-name=kube-dns -o wide >&2 || true
+  [[ $CLUSTER_KIND != k3d ]] || docker exec "k3d-$NAME-server-0" sh -c 'iptables-save -t filter; iptables-save -t nat | grep -c KUBE-SVC' >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp >&2 || true
   for d in room-broker run-controller agent-factory egress-proxy; do kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 || true; done
   kubectl get networkpolicy -A >&2 || true
@@ -93,6 +98,22 @@ case "$CLUSTER_KIND" in
     for i in maku-broker maku-run-controller maku-factory; do kind load docker-image --name "$NAME" "ghcr.io/smana/$i:$TAG"; done ;;
 esac
 kubectl get nodes
+
+step "the cluster's own DNS resolves, before the chart"
+# A fault here is the cluster's or the runner's, never the chart's: say so rather than time out later.
+kubectl -n kube-system rollout status deploy/coredns --timeout=120s
+dnsok=0
+for _ in $(seq 20); do
+  kubectl -n default delete pod dns-smoke --ignore-not-found --now >/dev/null 2>&1 || true
+  kubectl -n default run dns-smoke --image="$PROBE_IMAGE" --restart=Never --command -- \
+    nslookup kubernetes.default.svc.cluster.local >/dev/null 2>&1 || true
+  kubectl -n default wait --for=jsonpath='{.status.phase}'=Succeeded pod/dns-smoke --timeout=20s >/dev/null 2>&1 && { dnsok=1; break; }
+  sleep 3
+done
+kubectl -n default logs dns-smoke 2>&1 | tail -4 || true
+kubectl -n default delete pod dns-smoke --ignore-not-found --now >/dev/null 2>&1 || true
+((dnsok)) || die "the $CLUSTER_KIND cluster's DNS does not resolve kubernetes.default from a pod, before any chart object exists: an environment fault"
+echo "ok: the cluster's DNS resolves"
 
 step "install"
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
