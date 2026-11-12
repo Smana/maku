@@ -154,4 +154,3 @@ func TestFailedScoperKeepsPin(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
-
