@@ -62,16 +62,66 @@ settings count, so an install without it (the XR) lists none and renders as befo
 {{- if .Values.runController.enabled -}}
 {{- $sb := include "ap.sandbox" . | fromJson -}}
 {{- if and (not $sb.class) $sb.allowUnsandboxed -}}{{- $codes = append $codes "unsafe_allow_runc" -}}{{- end -}}
-{{- if not .Values.networkPolicies.enabled -}}{{- $codes = append $codes "network_policy_none" -}}{{- end -}}
+{{- if eq (include "ap.netMode" .) "none" -}}{{- $codes = append $codes "network_policy_none" -}}{{- end -}}
 {{- if .Values.runController.unsafeSharedGitToken -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
 {{- end -}}
 {{- $codes | toJson -}}
+{{- end -}}
+
+{{/* The network mode (v4 D6): networkPolicies.mode when set, else the old key's meaning
+(networkPolicies.enabled: cilium when true, none when false). Mode cilium with enabled false names both
+keys and fails; kubernetes needs the run-controller, whose proxy and per-run policies it is. */}}
+{{- define "ap.netMode" -}}
+{{- $np := .Values.networkPolicies | default dict -}}
+{{- $enabled := ne (toString $np.enabled) "false" -}}
+{{- $mode := $np.mode | default "" -}}
+{{- if not $mode -}}
+{{- $mode = ternary "cilium" "none" $enabled -}}
+{{- else if not (has $mode (list "cilium" "kubernetes" "none")) -}}
+{{- fail (printf "networkPolicies.mode %q is not cilium, kubernetes or none" $mode) -}}
+{{- else if and (eq $mode "cilium") (not $enabled) -}}
+{{- fail "networkPolicies.mode cilium and networkPolicies.enabled false: choose one (unset networkPolicies.enabled, the old key)" -}}
+{{- else if and (eq $mode "kubernetes") (not .Values.runController.enabled) -}}
+{{- fail "networkPolicies.mode kubernetes needs runController.enabled: the egress proxy and the per-run NetworkPolicies are the run-controller's" -}}
+{{- else if and (eq $mode "kubernetes") (not .Values.runPodPolicy.enabled) -}}
+{{- fail "networkPolicies.mode kubernetes needs runPodPolicy.enabled: the egress proxy trusts a run pod's maku.ogenki.io/egress annotation because the run-pod policy alone lets the run-controller write it" -}}
+{{- end -}}
+{{- $mode -}}
+{{- end -}}
+
+{{/* The egress rules every kubernetes-mode component shares: DNS on 53, and the apiserver on
+apiServerPorts, at apiServerCIDRs or any address. */}}
+{{- define "ap.npDNSAndAPIServer" -}}
+{{- $k := .Values.networkPolicies.kubernetes -}}
+- to:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: {{ $k.dns.namespace }}}
+      podSelector:
+        matchLabels: {{- toYaml $k.dns.labels | nindent 10 }}
+  ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+# The apiserver, after service translation (see apiServerPorts).
+- {{- with $k.apiServerCIDRs }}
+  to:
+    {{- range . }}
+    - ipBlock: {cidr: {{ . }}}
+    {{- end }}
+  {{- end }}
+  ports:
+    {{- range .Values.apiServerPorts }}
+    - {port: {{ . }}, protocol: TCP}
+    {{- end }}
+{{- end -}}
+
+{{/* The egress proxy's in-cluster URL, in kubernetes mode. */}}
+{{- define "ap.egressProxyURL" -}}
+{{- printf "http://egress-proxy.%s.svc.%s:3128" .Release.Namespace .Values.clusterDomain -}}
 {{- end -}}
 
 {{/* A misconfiguration is a helm error, not a crashloop. */}}
 {{- define "ap.validate" -}}
 {{- $b := .Values.broker -}}
 {{- $_ := include "ap.sandbox" . -}}
+{{- $_ = include "ap.netMode" . -}}
 {{- if hasKey .Values "factory" -}}
 {{- fail "factory: this chart has no factory: install charts/maku-factory on its own" -}}
 {{- end -}}

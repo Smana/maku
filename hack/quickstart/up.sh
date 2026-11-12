@@ -129,8 +129,20 @@ if [[ $unsandboxed == 0 ]]; then
   step "gVisor probe"
   # A run-shaped pod: proves runsc runs, DNS resolves the broker, and the ClusterIP answers from inside the sandbox.
   export RUNS_NS=agents NS PROBE_IMAGE CLUSTER_DOMAIN=cluster.local
+  # In networkPolicies.mode kubernetes the run-controller creates NetworkPolicies, not CNPs: the probe
+  # is held by a plain NetworkPolicy then (the installed controller config says which mode).
+  netmode=$(kubectl -n "$NS" get configmap run-controller-config -o jsonpath='{.data.config\.yaml}' | yq '.networkPolicy // "cilium"')
   # shellcheck disable=SC2016 # envsubst takes a literal variable list
-  probe() { envsubst '${RUNS_NS} ${NS} ${PROBE_IMAGE} ${CLUSTER_DOMAIN}' <hack/quickstart/manifests/gvisor-probe.yaml.tmpl; }
+  subst() { envsubst '${RUNS_NS} ${NS} ${PROBE_IMAGE} ${CLUSTER_DOMAIN}' <"hack/quickstart/manifests/$1"; }
+  probe() {
+    if [[ $netmode == kubernetes ]]; then
+      subst gvisor-probe.yaml.tmpl | yq 'select(.kind != "CiliumNetworkPolicy")'
+      echo ---
+      subst gvisor-probe-netpol.yaml.tmpl
+    else
+      subst gvisor-probe.yaml.tmpl
+    fi
+  }
   cleanup_probe() { probe | kubectl delete --ignore-not-found --wait=false -f - >/dev/null 2>&1 || true; }
   cleanup_probe
   # As the run-controller: the run-pod policy lets no one else create a pod in the runs namespace.

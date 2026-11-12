@@ -1,0 +1,21 @@
+{{- if and .Values.runController.enabled (eq (include "ap.netMode" .) "kubernetes") }}
+# Default deny; the controller talks to the apiserver and DNS only, as its CNP in cilium mode. The
+# kubelet's probes are node traffic, which NetworkPolicy always allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: run-controller
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "run-controller") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: run-controller
+  policyTypes: [Ingress, Egress]
+  {{- with .Values.networkPolicies.kubernetes.metricsFrom }}
+  ingress:
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 9090, protocol: TCP}]
+  {{- end }}
+  egress:
+    {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}
+{{- end }}

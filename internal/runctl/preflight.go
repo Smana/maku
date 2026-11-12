@@ -34,14 +34,19 @@ type Result struct {
 	At                    time.Time
 }
 
-// check is one preflight check: a refusal message when it fails, or an error when the check could
-// not decide (the API server unreachable), which keeps the last result. soon asks for the short
-// retry on a refusal that may cure itself (RBAC propagating right after install). waits makes its
-// refusal hold new runs Pending (Waiting) instead of failing them.
+// check is one preflight check: a verdict, or an error when the check could not decide (the API
+// server unreachable), which keeps the last result.
 type check struct {
-	name  string
-	run   func(ctx context.Context) (refusal string, soon bool, err error)
-	waits bool
+	name string
+	run  func(ctx context.Context) (verdict, error)
+}
+
+// verdict is a decided check: refusal is empty when it passed. soon asks for the short retry on a
+// refusal that may cure itself (RBAC propagating right after install). waits makes the refusal hold
+// new runs Pending (Waiting) instead of failing them.
+type verdict struct {
+	refusal     string
+	soon, waits bool
 }
 
 // Preflight proves, at start and every Every, that the cluster can run a sandboxed run (v4 D18):
@@ -55,6 +60,13 @@ type Preflight struct {
 	// Passed reports each check's outcome, for the maku_run_controller_preflight_passed gauge.
 	Passed func(check string, ok bool)
 	Now    func() time.Time
+	// Kube creates and deletes the network check's probe pod and its NetworkPolicy (kubernetes mode).
+	Kube client.Client
+	// ProbeStart is how long the probe pod may stay Pending (default 2 minutes); ProbePoll how often
+	// its phase is read (default 2 s).
+	ProbeStart, ProbePoll time.Duration
+	// ProbeSuffix names the probe pod (default 8 random characters of [a-z2-7]).
+	ProbeSuffix func() string
 
 	mu  sync.Mutex
 	res Result
@@ -114,13 +126,22 @@ func (p *Preflight) checks() []check {
 	if p.Cfg.RuntimeClassName != "" {
 		cs = append(cs, check{name: "runtimeClass", run: p.runtimeClass})
 	}
-	return append(cs, check{name: "gitSecrets", run: p.gitSecrets, waits: true})
+	cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
+	if p.Cfg.NetworkPolicy == NetworkPolicyKubernetes {
+		cs = append(cs, check{name: "network", run: p.network})
+	}
+	return cs
 }
 
 // gitSecrets: each git Secret a run may mount exists with a token key (PR B): gitSecret, and
 // gitReadSecret when configured. Its refusal holds new runs Pending, never fails them, and is
 // retried soon: the factory's run token writer, or an ExternalSecret, may fill it right after install.
-func (p *Preflight) gitSecrets(ctx context.Context) (string, bool, error) {
+func (p *Preflight) gitSecrets(ctx context.Context) (verdict, error) {
+	refusal, soon, err := p.gitSecretsRefusal(ctx)
+	return verdict{refusal: refusal, soon: soon, waits: true}, err
+}
+
+func (p *Preflight) gitSecretsRefusal(ctx context.Context) (string, bool, error) {
 	type secret struct{ name, key, roles string }
 	ss := []secret{{p.Cfg.GitSecret, "runController.gitSecret", "implementer and tester"}}
 	if p.Cfg.GitReadSecret != "" {
@@ -146,7 +167,12 @@ func (p *Preflight) gitSecrets(ctx context.Context) (string, bool, error) {
 
 // runtimeClass: the configured RuntimeClass exists. With none configured (allowUnsandboxed) there is
 // nothing to check, and Invalid already refuses a run with neither.
-func (p *Preflight) runtimeClass(ctx context.Context) (string, bool, error) {
+func (p *Preflight) runtimeClass(ctx context.Context) (verdict, error) {
+	refusal, soon, err := p.runtimeClassRefusal(ctx)
+	return verdict{refusal: refusal, soon: soon}, err
+}
+
+func (p *Preflight) runtimeClassRefusal(ctx context.Context) (string, bool, error) {
 	name := p.Cfg.RuntimeClassName
 	err := p.Client.Get(ctx, client.ObjectKey{Name: name}, &nodev1.RuntimeClass{})
 	switch {
@@ -173,7 +199,7 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 	}
 	next := Result{State: PreflightPassed, At: now()}
 	for _, c := range p.checks() {
-		refusal, soon, err := c.run(ctx)
+		v, err := c.run(ctx)
 		if err != nil {
 			p.log().Warn("preflight check undecided", "check", c.name, "err", err)
 			p.mu.Lock()
@@ -184,15 +210,15 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 			return true
 		}
 		if p.Passed != nil {
-			p.Passed(c.name, refusal == "")
+			p.Passed(c.name, v.refusal == "")
 		}
-		if refusal != "" {
+		if v.refusal != "" {
 			state := PreflightFailed
-			if c.waits {
+			if v.waits {
 				state = PreflightWaiting
 			}
-			next = Result{State: state, Check: c.name, Message: refusal, At: next.At}
-			retrySoon = soon
+			next = Result{State: state, Check: c.name, Message: v.refusal, At: next.At}
+			retrySoon = v.soon
 			break
 		}
 	}

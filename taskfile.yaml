@@ -122,6 +122,12 @@ tasks:
     cmds:
       - bash charts/agent-factory/tests/install.sh k3d
 
+  chart:install:k3d:netpol:
+    desc: The demo on k3d in networkPolicies.mode kubernetes, enforced (the preflight passes) and unenforced (it refuses runs)
+    cmds:
+      - NETPOL=kubernetes bash charts/agent-factory/tests/install.sh k3d
+      - NETPOL=unenforced bash charts/agent-factory/tests/install.sh k3d
+
   chart:install:kind:
     desc: Install the demo profile on a throwaway kind cluster and assert it (docker, kind; not part of check)
     cmds:
