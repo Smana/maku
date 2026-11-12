@@ -77,6 +77,14 @@ shown as data. Accepting the suggestion pins nothing: the factory chooses the pr
 plan made without the catalogue has no suggestion; say nothing about a profile then. When the
 developer asks what else the repository offers, call `classes_list`.
 
+**A pin is the developer's choice.** If `classes_list` says the developer is a maintainer, offer three answers
+for each issue whose class is `off`: keep the factory's choice (the default), take the suggested
+profile, or name another offered profile (`classes_list` shows them). Otherwise show the suggestion only and offer no pin.
+A profile the developer picks is a revision: once every gap is answered, call `plan_check` with only `profile` changed
+in the candidate, and show the plan it returns. A refused pin comes back with one sentence; show it and
+let the developer pick again or keep the factory's choice. Never pin a profile the developer did not
+choose, and never apply `class:` or `profile:` labels yourself: `issue_file`'s start does, with their `gh`.
+
 **A form nobody answers.** Some clients (OpenCode) declare forms and never show them. If the
 confirmation gets no answer within about a minute, or `issue_file` returns `needs_confirmation`, show
 the draft and its `gh issue create` fallback, and let the developer file it.

@@ -73,6 +73,7 @@ type planView struct {
 		Title      string `json:"title"`
 		Body       string `json:"body"`
 		Class      string `json:"class"`
+		Profile    string `json:"profile"`
 		Suggestion *struct {
 			Profile string   `json:"profile"`
 			Roles   []string `json:"roles"`
@@ -102,14 +103,19 @@ func (g *governed) draft() draftShape {
 		CanStart: g.CanStart, CanStartWhy: g.CanStartWhy}
 }
 
-// classLabel is the class:<c> label start applies before factory/ready: the plan's class, unless
-// the catalogue says this developer does not maintain the repository (the factory would not count
-// it). Empty without one.
-func (g *governed) classLabel() string {
-	if g.view.Issues[0].Class == "" || (g.Maintainer != nil && !*g.Maintainer) {
-		return ""
+// planLabels are the labels start applies before factory/ready, in order: class:<c>, then
+// profile:<p> when the plan pins one (P5, P7), unless the catalogue says this developer does not
+// maintain the repository (the factory would count neither). None without a class.
+func (g *governed) planLabels() []string {
+	is := g.view.Issues[0]
+	if is.Class == "" || (g.Maintainer != nil && !*g.Maintainer) {
+		return nil
 	}
-	return "class:" + g.view.Issues[0].Class
+	labels := []string{"class:" + is.Class}
+	if is.Profile != "" {
+		labels = append(labels, "profile:"+is.Profile)
+	}
+	return labels
 }
 
 // suggestion is the form's lines about the class and the profile (O1): the class, the factory's
@@ -121,8 +127,12 @@ func (g *governed) suggestion() string {
 		return ""
 	}
 	line := "Class " + OneLine(is.Class)
+	profile := "profile: the factory's choice"
+	if is.Profile != "" {
+		profile = "profile " + OneLine(is.Profile) + ", pinned"
+	}
 	if s := is.Suggestion; s != nil {
-		line += " · profile: the factory's choice · " + roomview.MergeWords(s.Merge.Outcome)
+		line += " · " + profile + " · " + roomview.MergeWords(s.Merge.Outcome)
 		if s.Profile != "" {
 			line += "\nSuggested profile " + OneLine(s.Profile)
 			if len(s.Roles) > 0 {
@@ -134,7 +144,12 @@ func (g *governed) suggestion() string {
 		}
 	}
 	if g.Maintainer != nil && !*g.Maintainer {
-		line += "\nThe class:" + OneLine(is.Class) + " label is skipped: you do not maintain this repository, so the factory would not count it."
+		if is.Profile != "" {
+			line += "\nThe class:" + OneLine(is.Class) + " and profile:" + OneLine(is.Profile) +
+				" labels are skipped: you do not maintain this repository, so the factory would count neither."
+		} else {
+			line += "\nThe class:" + OneLine(is.Class) + " label is skipped: you do not maintain this repository, so the factory would not count it."
+		}
 	}
 	return line + "\n\n"
 }
@@ -220,9 +235,10 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 	} else if why := OneLine(draft.CanStartWhy); why != "" {
 		tail = "The factory cannot be started from here (" + why + "). It gets no label: label it " + readyLabel + " yourself to start the factory."
 	}
-	ceiling, more, class := "", "", ""
+	ceiling, more := "", ""
+	var labels []string
 	if plan != nil {
-		ceiling, class = plan.ceiling(), plan.classLabel()
+		ceiling, labels = plan.ceiling(), plan.planLabels()
 		more = plan.suggestion()
 		if n := len(plan.view.Issues); n > 1 { // one call files one issue; the form says which (CD19)
 			more += fmt.Sprintf("The plan holds %d issues: this files the first. ", n)
@@ -269,7 +285,7 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 		out, _ := mcpwire.ToolResult(map[string]any{"filed": true, "url": url, "started": false, "next": next})
 		return out
 	}
-	return r.start(ctx, draft.Repo, url, class)
+	return r.start(ctx, draft.Repo, url, labels)
 }
 
 // fallbackNext is the hint for a form that could not be shown or answered (OpenCode cuts a tool at
@@ -318,14 +334,18 @@ func formBool(raw json.RawMessage) (v, ok bool) {
 
 // start labels the issue just filed and waits for its room. A failure files without the label and
 // says so: it is never retried, since the developer can label the issue themselves.
-func (r *Relay) start(ctx context.Context, repo, url, class string) any {
+func (r *Relay) start(ctx context.Context, repo, url string, labels []string) any {
 	result := map[string]any{"filed": true, "url": url, "started": false}
 	n, err := issueNumber(url, repo)
-	if err == nil && class != "" && r.ClassLabel != nil {
-		// The class first (P7): factory/ready starts triage, which reads the labels it finds then.
-		if cerr := r.ClassLabel(ctx, repo, n, class); cerr != nil {
-			result["why"] = "filed without labels, so not started: " + class + ": " + OneLine(cerr.Error()) +
-				"; label it " + class + ", then " + readyLabel + ", yourself"
+	for _, label := range labels {
+		if err != nil || r.ClassLabel == nil {
+			break
+		}
+		// The class and the pin first (P7): factory/ready starts triage, which reads the labels it
+		// finds then. A failed one starts nothing: the task would run without what was chosen.
+		if cerr := r.ClassLabel(ctx, repo, n, label); cerr != nil {
+			result["why"] = "filed without labels, so not started: " + label + ": " + OneLine(cerr.Error()) +
+				"; label it " + strings.Join(labels, ", ") + ", then " + readyLabel + ", yourself"
 			out, _ := mcpwire.ToolResult(result)
 			return out
 		}
