@@ -705,14 +705,15 @@ func TestApplierFoundWriteIsApplied(t *testing.T) {
 }
 
 // One open and five edits per run: a closed pull request on the branch is not replaced, and a
-// pull request someone else opened on it is not edited.
+// pull request someone else opened on it is not edited. Both are output_target, not output_cap:
+// the request spent its cap, and a cap refusal rebuilt from the log would not (#488's review).
 func TestApplierPRCapAndAuthor(t *testing.T) {
 	for name, tc := range map[string]struct {
 		pr   forge.PR
 		want hardening.Refusal
 	}{
-		"the branch's pull request was closed": {forge.PR{Number: 40, State: "CLOSED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseCap},
-		"the branch's pull request was merged": {forge.PR{Number: 40, State: "MERGED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseCap},
+		"the branch's pull request was closed": {forge.PR{Number: 40, State: "CLOSED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
+		"the branch's pull request was merged": {forge.PR{Number: 40, State: "MERGED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
 		"someone else's pull request is open":  {forge.PR{Number: 40, State: "OPEN", Author: "mallory", HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
 	} {
 		t.Run(name, func(t *testing.T) {

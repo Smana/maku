@@ -137,16 +137,17 @@ func openPR(ctx context.Context, t *v1alpha1.Task, pub Publisher) (forge.PR, err
 }
 
 // applyPR opens the task's one pull request from agent/<task> into main, or edits it (one open and
-// five edits per run; HR18: draft on open only). A closed or merged one is never replaced: that is
-// the cap. One the agents App did not open is not the task's to edit. The body is the factory's:
-// neutralised, with the provenance footer naming the output.
+// five edits per run; HR18: draft on open only). A closed or merged one is never replaced, and one
+// the agents App did not open is not the task's to edit: both are output_target, a refusal that
+// spent its cap, so the counts rebuilt from the log (runState.answer) match the ones spent here.
+// The body is the factory's: neutralised, with the provenance footer naming the output.
 func (a *Applier) applyPR(ctx context.Context, t *v1alpha1.Task, pub Publisher, o hardening.PRPayload, p hardening.Provenance) (string, hardening.Refusal, error) {
 	pr, err := branchPR(ctx, t, pub)
 	switch {
 	case err != nil:
 		return "", "", err
 	case pr.Number > 0 && pr.State != "OPEN":
-		return "", hardening.RefuseCap, nil
+		return "", hardening.RefuseTarget, nil
 	case pr.Number > 0 && !sameLogin(pr.Author, a.AgentsLogin):
 		return "", hardening.RefuseTarget, nil
 	}
