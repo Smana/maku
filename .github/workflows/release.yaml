@@ -110,26 +110,36 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           v="${GITHUB_REF_NAME#v}"
+          app="$GITHUB_REF_NAME"
+          export v app
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io -u "$GH_ACTOR" --password-stdin
-          helm package charts/maku-factory --version "$v" --app-version "$GITHUB_REF_NAME"
-          # Print the output whether or not the push fails: under bash -e a bare assignment
-          # exits first and the error is lost.
-          rc=0; out="$(helm push "maku-factory-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)" || rc=$?
-          echo "$out"
-          [ "$rc" -eq 0 ] || { echo "helm push failed (exit $rc)" >&2; exit "$rc"; }
-          digest="$(sed -n 's/^Digest: //p' <<<"$out")"
-          [ -n "$digest" ] || { echo "helm push printed no digest" >&2; exit 1; }
-          cosign sign --yes "ghcr.io/smana/charts/maku-factory@${digest}"
-          # The umbrella chart, same version: broker and run controller, no dependency.
-          helm package charts/maku --version "$v" --app-version "$GITHUB_REF_NAME"
-          # Print the output whether or not the push fails: under bash -e a bare assignment
-          # exits first and the error is lost.
-          rc=0; out="$(helm push "maku-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)" || rc=$?
-          echo "$out"
-          [ "$rc" -eq 0 ] || { echo "helm push failed (exit $rc)" >&2; exit "$rc"; }
-          digest="$(sed -n 's/^Digest: //p' <<<"$out")"
-          [ -n "$digest" ] || { echo "helm push printed no digest" >&2; exit 1; }
-          cosign sign --yes "ghcr.io/smana/charts/maku@${digest}"
+          # publish DIR NAME: package DIR at $v, push it, sign the digest, print it in the summary.
+          publish() {
+            helm package "$1" --version "$v" --app-version "$app"
+            # Print the output whether or not the push fails: under bash -e a bare assignment
+            # exits first and the error is lost.
+            rc=0; out="$(helm push "$2-${v}.tgz" oci://ghcr.io/smana/charts 2>&1)" || rc=$?
+            echo "$out"
+            [ "$rc" -eq 0 ] || { echo "helm push failed (exit $rc)" >&2; exit "$rc"; }
+            digest="$(sed -n 's/^Digest: //p' <<<"$out")"
+            [ -n "$digest" ] || { echo "helm push printed no digest" >&2; exit 1; }
+            cosign sign --yes "ghcr.io/smana/charts/$2@${digest}"
+            echo "### chart $2" >> "$GITHUB_STEP_SUMMARY"
+            echo "oci://ghcr.io/smana/charts/$2:${v}@${digest}" >> "$GITHUB_STEP_SUMMARY"
+          }
+          publish charts/maku-factory maku-factory
+          # broker and run controller, same version, no dependency.
+          publish charts/maku maku
+          # the CRDs, installed before agent-factory.
+          publish charts/agent-factory-crds agent-factory-crds
+          # The umbrella carries both subcharts at $v: on a copy (never committed), the subcharts and
+          # the file:// dependency constraints take $v, then the dependencies are built into it.
+          work="$RUNNER_TEMP/charts"
+          cp -r charts "$work"
+          for c in maku maku-factory; do yq -i '.version = env(v) | .appVersion = env(app)' "$work/$c/Chart.yaml"; done
+          yq -i '.dependencies[].version = env(v)' "$work/agent-factory/Chart.yaml"
+          helm dependency build "$work/agent-factory"
+          publish "$work/agent-factory" agent-factory
 
   # maku's binaries and their checksums, on the tag's GitHub release (P33), and the Room CRD:
   # cloud-native-ref vendors it from the release asset, not from a branch (ruling P16).

@@ -35,7 +35,7 @@ Without a terminal it never asks: it stops and names the variable.
 | GitHub App | Serves a page on `127.0.0.1`; your browser should open by itself (if not, open the address it prints). **Click Create** on GitHub's page, and the key comes back to the script on localhost. It then prints "Now install the App on your repository: ..." Skipped when you give an existing App |
 | repository | Creates `DEMO_REPO` from the template [`Smana/maku-demo`](https://github.com/Smana/maku-demo) (public), seeds its issues and labels, and adds a ruleset (below). Then asks you to **Install** the App on that repository and press Enter |
 | cluster | Creates the cluster `maku-demo` with its own kubeconfig in `.demo/`, or uses your current context (`CLUSTER=current`) |
-| install | Installs `charts/agent-factory` with `profile: demo`, with the `MAKU_VERSION` images pinned by digest, and waits for the rooms database, the broker, the run controller and the factory |
+| install | Installs `charts/agent-factory-crds`, then `charts/agent-factory` with `-f values-demo.yaml`, with the `MAKU_VERSION` images pinned by digest, and waits for the rooms database, the broker, the run controller and the factory |
 | room page | Forwards the broker to `http://localhost:8080`, in the background |
 
 With `gh` logged in and admin rights on the repository, the script creates the repository, the labels
@@ -138,13 +138,13 @@ maku-factory:
           breaker: {window: 10, maxReverts: 1}
 ```
 
-Apply both files and update the Task CRD explicitly: Helm does not upgrade resources under `crds/`.
+Upgrade the CRD chart, which carries the Task CRD, then apply both files on top of `values-demo.yaml`.
 
 ```bash
+helm --kubeconfig .demo/kubeconfig upgrade af-crds charts/agent-factory-crds -n maku
 helm --kubeconfig .demo/kubeconfig upgrade af charts/agent-factory -n maku \
-  -f .demo/values.yaml -f .demo/evaluation.yaml --timeout 5m
+  -f charts/agent-factory/values-demo.yaml -f .demo/values.yaml -f .demo/evaluation.yaml --timeout 5m
 kubectl --kubeconfig .demo/kubeconfig rollout status -n maku deploy/agent-factory --timeout=240s
-kubectl --kubeconfig .demo/kubeconfig apply -f charts/maku-factory/crds/maku.ogenki.io_tasks.yaml
 ```
 
 Create a bounded issue that touches two documentation files, label it `documentation` and
@@ -189,7 +189,7 @@ the release harness makes it slow. See the [chart test documentation](../charts/
 
 ## What production adds
 
-The demo runs the same chart as production with `profile: demo`. It keeps the loop (label polling, the
+The demo runs the same chart as production with `-f values-demo.yaml` (`profile: demo`). It keeps the loop (label polling, the
 roles, rooms, the gate's decision and its switch to live) and leaves out what costs infrastructure. The
 table names what you have not proven by running it.
 
@@ -244,8 +244,15 @@ Delete the repository on GitHub yourself (Settings, Danger Zone); the script nev
 
 To install on a cluster you bring, copy
 [`charts/agent-factory/values-mine.example.yaml`](../charts/agent-factory/values-mine.example.yaml), change
-the lines marked `CHANGE` (the model, the App, your repository and your CI's check names), then
-`helm install af charts/agent-factory -n maku --create-namespace -f values-mine.yaml`. Helm replaces a list
+the lines marked `CHANGE` (the model, the App, your repository and your CI's check names), then install
+the CRD chart first and the umbrella on top of `values-demo.yaml`:
+
+```bash
+helm install af-crds charts/agent-factory-crds -n maku --create-namespace
+helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml -f values-mine.yaml
+```
+
+The cluster must run Kubernetes 1.30 or later. Helm replaces a list
 whole, so the values file restates the whole repository entry. Your repository needs `.github/agent-factory.yaml` on its default branch, containing exactly `factory: demo`: without it the factory ignores the repository. The same holds for a repository you did not create from the template. The chart's
 [README](../charts/agent-factory/README.md) lists what it adds and its limits. Create the repository from
 [`examples/demo-repo`](../examples/demo-repo/) (published as `Smana/maku-demo`).

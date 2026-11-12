@@ -1,0 +1,2 @@
+# The render test stays in the repository; files/ (the generated CRDs) ships.
+tests/
