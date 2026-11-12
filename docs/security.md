@@ -77,13 +77,20 @@ beside it or folded into it. The **agents App** is the identity runs push and op
 (`agentsLogin`). `maku/merge-gate` is posted by the merger's connection, and the documented
 ruleset requires it from that App's `integration_id`
 ([branch protection](factory.md#branch-protection-for-the-merge-gate)) on agent pull requests: the
-human roles bypass that ruleset on their own merges, and no App does. It is `success` only for
-the factory's own `arm`, posted after every check that can still hold the arm and immediately
-before the merge call. A post that fails stops the merge, and a merge call that fails puts back
+human roles and the merger App bypass that ruleset on their merges, and the agents App never
+does. It is `success` only for the factory's own merges: an `arm`, posted after every check that can
+still hold the arm and immediately before the merge call, or the merger's revert and adopted
+merges, just before them. A post that fails stops the merge, and a merge call that fails puts back
 `pending` or `failure`, so no `success` is left standing on a head the factory did not merge. A
 shadow decision stays `pending`, so a status no agent token can post is what opens the branch.
 The demo is the exception: its one App backs every run, so there the status stays advisory and no
 ruleset requires it ([quickstart](quickstart.md)).
+
+**The gate holds only while runs carry App tokens.** Its ruleset's bypass is by repository role.
+Give runs a personal access token of a user with the write, maintain or admin role instead of the
+agents App's tokens, and every run inherits that user's bypass: an agent can then merge an agent
+pull request the gate never armed. Runs get App installation tokens (the minter's, octo-sts's or
+step 2's shared writer), never a person's token.
 
 **D12's invariants, and the tests that hold them.** Every permission a run or the publisher is
 minted with comes from one role table, `minter.Roles` (`internal/factory/minter/roles.go`):

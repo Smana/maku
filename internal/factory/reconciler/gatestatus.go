@@ -69,3 +69,14 @@ func (r *Reconciler) postGateStatus(ctx context.Context, t *v1alpha1.Task, head 
 func (r *Reconciler) withdrawGateStatus(ctx context.Context, t *v1alpha1.Task, head string, d ArmDecision) {
 	_ = r.postGateStatus(ctx, t, head, forge.Checks{}, d)
 }
+
+// postStatusAs posts d as maku/merge-gate on head under class's name, unconditionally: the
+// merger's own merges that the gate does not decide, such as a revert pull request's.
+func (r *Reconciler) postStatusAs(ctx context.Context, t *v1alpha1.Task, head, class string, d ArmDecision) error {
+	state, description := statusFor(d, class)
+	if err := r.merger(ctx).SetStatus(ctx, head, state, GateStatusContext, description); err != nil {
+		r.log().Warn("could not post the gate's status", "task.id", t.Name, "head", head, "state", state, "error", err)
+		return fmt.Errorf("gate status: %w", err)
+	}
+	return nil
+}

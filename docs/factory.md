@@ -1215,7 +1215,8 @@ such as a hand-written `revoked` annotation.
 
 With `merge.gateStatus: true`, every decision on an agent pull request is posted on its head as
 the commit status `maku/merge-gate`, once per head, state and description. An adopted pull request
-(Renovate's) gets none:
+(Renovate's) and a revert pull request get only the merger's `success`, just before it merges them
+([branch protection](#branch-protection-for-the-merge-gate)):
 
 | Decision | State | Description |
 |---|---|---|
@@ -1237,21 +1238,25 @@ error (`merge_failed`), so no `success` is left on a head the factory did not me
 `maku/merge-gate` is the gate a production repository's branch protection can require (D11). It is
 posted by the merger App's connection, which asks for `statuses: write` while `merge.gateStatus` is
 on. Once the merger is folded into the factory App, that App is the factory App. The factory posts
-it **on agent pull requests only**: never on a human's pull request, and never on an adopted one
-(Renovate's).
+the gate's decisions **on agent pull requests only**: never on a human's pull request. On a pull
+request the merger merges without the gate deciding it as an agent's (an adopted one, Renovate's,
+or a revert pull request), it posts only `success`, just before that merge, so the status is
+accurate either way.
 
 **It is required for agent pull requests, not for humans'.** GitHub cannot scope a required
 status to a pull request's head branch: a branch ruleset's `conditions.ref_name` matches the branch
 being merged into, so a rule on `agent/*` would protect those branches, not merges from them. The
 requirement is therefore a ruleset of its own on the default branch, beside the repository's normal
-one, that the human roles bypass when they merge a pull request (`bypass_mode: pull_request`). A
-human's merge skips this ruleset and follows the repository's normal rules. The agents App holds
-no repository role and is no bypass actor, so an agent token can merge only once the factory has
-posted `success`, which it does only to merge itself. The status is pinned to the App that posts
-it, so a status of the same name from any other App or token does not count:
+one, that the human roles and the merger App bypass when they merge a pull request
+(`bypass_mode: pull_request`). A human's merge skips this ruleset and follows the repository's
+normal rules. The merger's bypass keeps its reverts and adopted merges flowing, which no gate
+decision covers. The agents App holds no repository role and is no bypass actor, so an agent
+token can merge only once the factory has posted `success`, which it does only to merge itself.
+The status is pinned to the App that posts it, so a status of the same name from any other App or
+token does not count:
 
 ```bash
-APP_ID=$(cat /path/to/the/merger/app_id)   # the App that posts maku/merge-gate
+APP_ID=$(cat /path/to/the/merger/app_id)   # the App that posts maku/merge-gate, and merges
 gh api "repos/OWNER/REPO/rulesets" --method POST --input - <<EOF
 {
   "name": "default branch: the merge gate, for agent pull requests",
@@ -1261,7 +1266,8 @@ gh api "repos/OWNER/REPO/rulesets" --method POST --input - <<EOF
   "bypass_actors": [
     {"actor_id": 2, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
     {"actor_id": 4, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
-    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}],
+    {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"},
+    {"actor_id": $APP_ID, "actor_type": "Integration", "bypass_mode": "pull_request"}],
   "rules": [
     {"type": "required_status_checks", "parameters": {"strict_required_status_checks_policy": false,
       "required_status_checks": [{"context": "maku/merge-gate", "integration_id": $APP_ID}]}}
@@ -1274,13 +1280,27 @@ EOF
 |---|---|
 | `required_status_checks`: `maku/merge-gate` with `integration_id` | An agent pull request merges only when the factory decided `arm` on its head. Without `integration_id`, any App's or token's status of that name would count |
 | Bypass: the maintain (2), write (4) and admin (5) repository roles, on pull requests | People who may merge under the repository's normal rules keep doing so: their own pull requests, and an agent pull request the gate handed to a human (`AwaitingHuman`, shadow decisions). Their merge is judged by the normal ruleset's approvals and checks. Drop a role from the list to keep its holders from merging an agent pull request the gate did not arm |
-| No App as a bypass actor | The agents App's tokens, which hold `contents: write` until H3, cannot merge past it |
+| Bypass: the merger App (`Integration`), on pull requests | Its revert pull requests and adopted merges carry no gate decision, and a revert's native auto-merge never sees a status: without the bypass, a rollback or a deps-patch merge stalls on a 405. It also posts `success` just before each such merge |
+| The agents App is no bypass actor | Its tokens, which hold `contents: write` until H3, cannot merge past the gate. Never add it, or any App whose token a run can hold |
 
 The repository's normal ruleset stays as it is: its `pull_request` rule, its CI checks,
 `non_fast_forward` and `deletion`. The factory's own merge must satisfy it as today, with the
-merger App as one of its bypass actors or a `pull_request` rule with 0 approvals. That merge needs
-no bypass of the gate's ruleset: it is a plain squash merge of a head whose `maku/merge-gate` is
-green.
+merger App as one of its bypass actors or a `pull_request` rule with 0 approvals.
+
+**Renovate's own automerge is blocked by the gate's ruleset**: its pull requests carry no
+`maku/merge-gate`, and Renovate's App bypasses nothing. Choose one:
+- **Recommended: adopt them.** An [adopted class](#adopted-classes) (`author.adopt`) turns
+  Renovate's pull requests into tasks the merger merges, posting `success` first, under the class's
+  conditions and with Renovate's automerge off.
+- Add Renovate's App as an `Integration` bypass actor of the gate's ruleset. Its merges then follow
+  the normal ruleset alone, as a human's do.
+
+**Direct pushes to the default branch are blocked too.** A `required_status_checks` rule refuses
+any push whose commit lacks the status, for any App, bot or human, and only a bypass actor in
+`always` mode may push. List as `Integration` bypass actors, with `bypass_mode: always`, each App
+that pushes to the default branch directly: Flux's image automation, a release bot, a changelog
+bot. Never list the agents App. A human role's `pull_request` bypass does not cover a push: use the
+normal ruleset's `pull_request` rule to send people through pull requests.
 
 **The demo requires no gate.** The demo and the [quickstart](quickstart.md) run on one GitHub App,
 which is the factory, the merger and every run at once. No ruleset can tell the merger's status from
@@ -2127,10 +2147,12 @@ With `merge.policyBot: false`, every live class of the repository needs `allowed
 
 **A gate path is never the gate's to merge, approval or not** (policy-bot's S9, kept without it).
 With `merge.policyBot: false`, the gate paths are the `protectedFiles` of every class of the
-repository, where the `.policy.yml` gate list moves. Under `approveToMerge`, a maintainer's
-approval arms the merge without the class's own conditions, so the gate reads the approved head's
-diff for this one rule. A change to a gate path, or a rename from one, is handed off as `gate_path`
-and stays a human merge on GitHub. `allowedFiles` still bounds what a class arms on its own, not
+repository, where the `.policy.yml` gate list moves: the central config's classes and, for a
+repository whose [merge policy](merge-policies.md) is authoritative, every class and every `any`
+branch of its policy. Under `approveToMerge`, a maintainer's approval arms the merge without the
+class's own conditions, so the gate reads the approved head's diff for this one rule, and checks it
+once over the final decision, so no `any` branch can arm an approval over a gate path. A change to
+a gate path, or a rename from one, is handed off as `gate_path` and stays a human merge on GitHub. `allowedFiles` still bounds what a class arms on its own, not
 what a maintainer approves.
 
 **The demo runs on one GitHub App.** `github.mergerAppIDFile` and `github.mergerKeyFile` may name

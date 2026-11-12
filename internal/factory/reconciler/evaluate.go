@@ -28,16 +28,19 @@ func DecideArmUnder(in ArmInputs, variants []config.Class, approval []string) Ar
 	}
 	class := in.Task.Spec.PredictedClass
 	if len(variants) == 0 {
-		return decide(in, cfg, rc, config.Class{})
+		return withGatePath(decide(in, cfg, rc, config.Class{}), in, rc, nil)
 	}
 	var best ArmDecision
+	var gatePaths []string
 	for i, v := range variants {
 		d := decide(in, cfg, rc, withShape(v, class))
 		if i == 0 || rank(d) > rank(best) {
 			best = d
 		}
+		gatePaths = append(gatePaths, v.ProtectedFiles...)
 	}
-	return withApproval(best, in, approval)
+	// Once, over the decision every variant ranked: no branch arms an approval over a gate path.
+	return withGatePath(withApproval(best, in, approval), in, rc, gatePaths)
 }
 
 // rank orders a variant's decisions for any: what holds first, a wait before a refusal.
