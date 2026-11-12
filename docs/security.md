@@ -397,6 +397,29 @@ Residuals while in audit:
 - A run's outputs are checked against that run's canary only: an older run's canary quoted from
   the room is not an alert.
 
+A repository listed in `enforceOutputs` goes one stage further
+([Hardening, non-code outputs enforced](factory.md#hardening-non-code-outputs-enforced)):
+
+- **What is enforced.** Its writer runs request `pr`, `comment`, `labels` and `issue` through
+  `output_*` tools. The factory applies each one after T1 to T4 at enforce, or refuses it with a
+  bounded reason.
+- **Whose voice.** Agent text is published as the agents App, through the octo-sts `publisher`
+  identity, never as the factory App. Only `issue` is filed by the factory App, as
+  `factory/proposed`.
+- **What is checked after.** The tracer reports every agents-App write of an enforced type that no
+  `output_applied` explains.
+- **What closes the bypass.** The sandbox role's `pull_requests: write` is removed in the
+  repository's role policy. The permission gauge shows it.
+
+Residuals with non-code outputs enforced:
+
+- `push` still writes from the sandbox (H3), and the run still reads raw text with `gh` (H4).
+- Until the role policy drops `pull_requests: write`, the run's token can still write directly;
+  the tracer reports it, but does not stop it.
+- The publisher and the sandbox roles share the agents App's login, so GitHub's author alone
+  cannot tell an applied pull request from a direct one; the tracer's match on the factory's
+  record does.
+
 ## Reporting a vulnerability
 
 Privately, through [GitHub security advisories](https://github.com/Smana/maku/security/advisories/new),

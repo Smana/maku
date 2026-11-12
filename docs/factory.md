@@ -1743,7 +1743,8 @@ The factory reads the block at startup: switching from `off` to `audit` takes a 
 - No write is refused, held or rewritten. The run's own token still writes, as before.
 - Nothing is withheld from a brief or a tool result: `withheld` counts only what enforcement
   would have kept out.
-- No `output_*` tool is served to a run, and the sandbox roles keep their GitHub scopes.
+- No `output_*` tool is served to a run, and the sandbox roles keep their GitHub scopes, unless
+  the repository is also listed in [`enforceOutputs`](#hardening-non-code-outputs-enforced).
 - The demo profile is never audited.
 
 ### The repository's hardening block
@@ -1767,6 +1768,86 @@ hardening:
 **Stop rule:** no repository adds a `hardening:` block before this release runs on the cluster
 that owns it. An older factory parses the fence file strictly and reads the unknown key as **not
 owned**.
+
+## Hardening, non-code outputs enforced
+
+Stage H2. For a repository that opts in, a writer run no longer opens, edits, comments on or
+labels pull requests and issues itself. It requests each write with an `output_*` tool, and the
+factory checks it with T1 to T4 at enforce (T5 at most audit) and applies it, or refuses it.
+`push` stays in the sandbox until H3. Nothing is enforced unless a repository is listed.
+
+```yaml
+hardening:
+  mode: off
+  labelAllowlist: [documentation, needs-human]
+  publisher:
+    octoSTS:
+      url: https://octo-sts.example        # https only
+      tokenFile: /var/run/secrets/octo-sts/token   # default; the chart mounts it
+      identity: publisher                  # default: .github/chainguard/publisher.sts.yaml
+  applier: {interval: 2s, answerWait: 5m}  # defaults
+  enforceOutputs: []                       # central list, empty by default
+  repositories:
+    Smana/ai-native-ref: {mode: audit, enforceOutputs: [pr, comment, labels, issue]}
+```
+
+The rules for `enforceOutputs`, each checked at startup:
+
+- **Types.** The list takes `pr`, `comment`, `labels` and `issue`. `push` is refused until H3.
+- **Inheritance.** A repository's list replaces the central one, and must hold every central type.
+- **Mode.** A listed repository needs a mode of at least `audit`.
+- **Publisher.** Any list needs `publisher.octoSTS.url`. Set the chart's
+  `hardening.publisher.audience` so the factory pod has the token to exchange.
+- **Hash.** The lists join the configuration hash a drill binds. A file without them keeps its hash.
+
+The factory reads the block at startup: enforcing a first repository takes a restart.
+
+```mermaid
+flowchart LR
+  A["implementer run"] -->|"output_pr / comment / labels / issue"| B["broker :8090<br/>served per run"]
+  B -->|"output_requested"| L[("room log")]
+  L --> P["applier (factory leader)<br/>T1–T4 enforce"]
+  P -->|"agents App, octo-sts publisher token"| G[("GitHub")]
+  P -->|"issue: factory App, factory/proposed"| G
+  P -->|"output_applied / output_refused"| L
+  G -->|"run end: tracer"| T["untraced_write"]
+```
+
+### What a run on an enforced repository sees
+
+- **Its tools.** The claim carries `agents.ogenki.io/safe-outputs` (the enforced types) and
+  `agents.ogenki.io/label-allowlist`. The broker lists and serves `output_<type>` to that run
+  only. A run without the annotation lists the room tools it always had.
+- **Its rules.** Rule 3 reads "Request the pull request with the output_pr tool". The brief asks
+  for the pull request's body through `output_pr`. The rules name the other enforced types.
+- **Its `gh`.** With `SAFE_OUTPUTS` set, `gh pr create|new|edit|ready`, `gh pr comment`,
+  `gh issue comment|create|edit` and `gh label` exit 3 and name the tool to use. `gh api` is not
+  parsed: the role policy's `pull_requests: read` is the boundary.
+
+### What the factory does
+
+- **The applier** runs on the leader. Every `applier.interval` it reads the rooms of tasks with
+  a live implementer or tester run, and answers each request once with `output_applied` or
+  `output_refused`. It goes on answering for `answerWait` after the run ends.
+- **The publisher** writes `pr`, `comment` and `labels` as the agents App, with a token octo-sts
+  mints under the repository's `publisher.sts.yaml`. `arm` therefore still sees an agent-authored
+  pull request. The factory writes the PR footer, with `Agent-Output: <id>`.
+- **`issue`** is filed by the factory App, labelled `factory/proposed` only.
+- **The run's end waits.** An ended implementer run with an unanswered request keeps its task in
+  `Implementing` for up to `answerWait`. Past it, the end goes on and the log says
+  `outputs_unanswered`.
+- **The tracer** replaces the shadow pass for enforced types. At a run's end, each agents-App pull
+  request, comment and label must match an `output_applied`. A pull request matches by URL, a
+  comment by URL and its marker, and labels by name and time. A write that does not match is
+  recorded `output_shadowed` with reason `untraced_write` and counted. Pushes are shadowed as in
+  H1.
+- **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
+  sandbox role's and the publisher's octo-sts policy and reports their permissions.
+
+With `runs` not cloud-native-ref's XR, the factory logs a startup warning: the sandbox token is
+not scoped by a role policy (HR13). It still starts, since the tracer reports every direct write.
+Readiness stays `false`: `mode: enforce` is still refused. Enabling, rolling back and the stop
+rules are in [Operations](operations.md#hardening-non-code-outputs).
 
 ## Reference
 

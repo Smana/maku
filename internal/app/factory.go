@@ -40,6 +40,7 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/api"
+	"github.com/Smana/maku/internal/factory/applier"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/coordination"
@@ -387,6 +388,16 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if hardened != nil {
 		fenced.OnFile = chainOnFile(fenced.OnFile, hardened.Policies.Observe)
 	}
+	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
+	// publisher's GitHub permissions, read from their octo-sts policies (R2 as evidence).
+	if cfg.Hardening.Enforcing() {
+		fenced.OnFile = chainOnFile(fenced.OnFile, sandboxPermissionObserver(live.Current, func(repo string) policyReader {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil // a nil interface, never a typed-nil *forge.GitHub
+		}, m.SandboxPermissions, log))
+	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	for name, usd := range meter.RunUSD(cfg) {
 		m.RunBudgetUSD(ctx, name, usd)
@@ -420,6 +431,19 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	rec.Flux = fluxwatch.Reader{C: mgr.GetAPIReader()}
 	if err := rec.SetupWithManager(mgr); err != nil {
 		return err
+	}
+	// Hardening H2: the safe-output applier, only while a repository has an enforceOutputs list.
+	if a := safeOutputApplier(cfg, applierDeps{Reader: mgr.GetAPIReader(), Namespace: ns, Rooms: broker, Runs: rc,
+		Factory: func(repo string) applier.Filer {
+			if c, ok := conns.get(repo); ok && c.gh != nil {
+				return c.gh
+			}
+			return nil // a nil interface, never a typed-nil *forge.GitHub
+		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log}); a != nil {
+		if err := mgr.Add(a); err != nil {
+			return fmt.Errorf("manager: %w", err)
+		}
+		log.Info("hardening: the safe-output applier is on", "interval", a.Interval, "answerWait", a.AnswerWait)
 	}
 	// stopped is §6.1's pause: the stop object stops intake, and from phase 5 the API is intake
 	// too — it refuses 503 kill_switch exactly when the poller stands down.

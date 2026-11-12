@@ -4,13 +4,116 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"slices"
+	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/Smana/maku/internal/factory/applier"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/version"
 )
+
+// applierDeps are the factory's parts the safe-output applier is built from.
+type applierDeps struct {
+	Reader    client.Reader // Tasks and the kill switch
+	Namespace string
+	Rooms     applier.Rooms
+	Runs      applier.Runs
+	Factory   func(repo string) applier.Filer // the factory App's connection, nil when it has none
+	Hardened  *reconciler.HardeningPorts      // the checker and each repository's protected paths
+	Live      func() *config.Config           // the published config: enforceOutputs and the allowlist per call
+	Metrics   applier.Metrics
+	Log       *slog.Logger
+	// Tokens is the publisher's token source; nil is octo-sts from hardening.publisher.octoSTS.
+	Tokens applier.PublisherTokens
+}
+
+// safeOutputApplier is the applier for cfg (hardening H2, HR15): nil, and no publisher built, while
+// no repository has an enforceOutputs list, in the demo profile (never hardened, R7), or without the
+// hardening ports. Otherwise it answers enforced requests with T1 to T4 at enforce, as the agents
+// App: under HR11 the publisher's octo-sts token is the agents App's, so its login is agentsLogin,
+// the one the applier recognises its own pull requests and comments by. Turning enforcement on from
+// none takes a restart, as audit does.
+func safeOutputApplier(cfg *config.Config, d applierDeps) *applier.Applier {
+	if cfg.Demo || !cfg.Hardening.Enforcing() || d.Hardened == nil {
+		return nil
+	}
+	tokens := d.Tokens
+	if tokens == nil {
+		p := cfg.Hardening.Publisher.OctoSTS
+		tokens = &applier.OctoSTSTokens{URL: p.URL, TokenFile: p.TokenFile, Identity: p.Identity,
+			HTTP: httpx.New(githubTimeout, nil), Now: time.Now, Log: d.Log}
+	}
+	base := forge.Options{APIURL: githubAPIURL(), UserAgent: "agent-factory-publisher/" + version.Version,
+		HTTP: httpx.New(githubTimeout, nil), Now: time.Now}
+	ports := d.Hardened
+	return &applier.Applier{Reader: d.Reader, Namespace: d.Namespace, Rooms: d.Rooms, Runs: d.Runs,
+		Publisher: applier.ConnectPublishers(tokens, base), Factory: d.Factory,
+		Checker: func(repo string) hardening.Checker {
+			c, h := ports.Checker, d.Live().Hardening
+			p, err := ports.Policies.For(repo, h.MinTrust())
+			if err != nil {
+				d.Log.Warn("hardening block unreadable: the applier checks the floor's protected paths", "repository", repo, "err", err)
+			}
+			c.Paths, c.LabelAllowlist = p.Paths, slices.Clone(h.LabelAllowlist)
+			return c
+		},
+		Enforced:    func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) },
+		AgentsLogin: cfg.AgentsLogin, FactoryLogin: cfg.FactoryLogin,
+		Interval: cfg.Hardening.Applier.Interval.Duration, AnswerWait: cfg.Hardening.Applier.AnswerWait.Duration,
+		Now: time.Now, Metrics: d.Metrics, Log: d.Log}
+}
+
+// policyReader reads a repository's default-branch file; *forge.GitHub implements it.
+type policyReader interface {
+	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
+}
+
+// sandboxPermissionObserver is a fence observer that, on each pass over a repository with an
+// enforceOutputs list, reads each sandbox role's and the publisher's octo-sts policy and sets the
+// permission gauge from them (H2, R2 as evidence): the role policy losing pull_requests: write shows
+// there. A policy that cannot be read or does not parse is logged and keeps its last values.
+func sandboxPermissionObserver(live func() *config.Config, files func(repo string) policyReader,
+	record func(ctx context.Context, repo string, grants map[string]map[string]string), log *slog.Logger) fenceObserver {
+	return func(ctx context.Context, repo string, _ []byte) {
+		if len(live().Hardening.EnforcedFor(repo)) == 0 {
+			return
+		}
+		f := files(repo)
+		if f == nil {
+			return
+		}
+		grants := map[string]map[string]string{}
+		paths := map[string]string{applier.PublisherIdentity: hardening.PublisherPolicyPath}
+		for _, role := range hardening.SandboxRoles() {
+			paths[role] = hardening.RolePolicyPath(role)
+		}
+		for role, path := range paths {
+			text, _, found, err := f.DefaultBranchFile(ctx, path)
+			switch {
+			case err != nil:
+				log.Warn("octo-sts policy unreadable: its permissions keep their last values", "repository", repo, "role", role, "err", err)
+				continue
+			case !found:
+				grants[role] = map[string]string{} // no policy, no token
+				continue
+			}
+			perms, err := hardening.PolicyPermissions([]byte(text))
+			if err != nil {
+				log.Warn("octo-sts policy does not parse: its permissions keep their last values", "repository", repo, "role", role, "err", err)
+				continue
+			}
+			grants[role] = perms
+		}
+		record(ctx, repo, grants)
+	}
+}
 
 // hardeningPorts are the reconciler's hardening ports for cfg (stage H1): nil while hardening is
 // off centrally and for every repository, so nothing is planted, recorded or shadowed. Otherwise a
