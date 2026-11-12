@@ -226,3 +226,37 @@ func TestPromptListsProfiles(t *testing.T) {
 		t.Fatalf("a profile that is not offered reached the prompt: %s", body)
 	}
 }
+
+// Review B2: a suggestion read back is the client's; Resuggest rebuilds it from the plan
+// repository's classes: an offered profile is kept with its catalogue roles, the merge outcome is
+// recomputed, anything else is the factory's choice, and a config-table class has none.
+func TestResuggest(t *testing.T) {
+	table := intake.ClassesFromCatalogue(docsCatalogue("Smana/ai-native-ref", false))
+	p := planFixture(t, "single")
+	p.Issues[0].Class = "review"
+	p.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-frontier", Roles: []string{"admin"},
+		Merge: intake.MergeShown{Outcome: "auto"}, Why: "w"}
+	before := intake.Hash(p)
+	got := intake.Resuggest(p, table)
+	s := got.Issues[0].Suggestion
+	if s == nil || s.Profile != "review-frontier" || !slices.Equal(s.Roles, []string{"implementer", "tester", "reviewer"}) ||
+		s.Merge.Outcome != catalogue.OutcomeMaintainer || s.Why != "w" || intake.Hash(got) != before {
+		t.Fatalf("%+v", s)
+	}
+	if p.Issues[0].Suggestion.Merge.Outcome != "auto" {
+		t.Fatal("Resuggest changed its input")
+	}
+	p.Issues[0].Suggestion.Profile = "review-floor" // not offered
+	if s := intake.Resuggest(p, table).Issues[0].Suggestion; s == nil || s.Profile != "" || s.Roles != nil || s.Why != "" {
+		t.Fatalf("%+v", s)
+	}
+	p.Issues[0].Suggestion = nil // a suggestion the client dropped is the broker's again
+	if s := intake.Resuggest(p, table).Issues[0].Suggestion; s == nil || s.Merge.Outcome != catalogue.OutcomeMaintainer {
+		t.Fatalf("%+v", s)
+	}
+	f := planFixture(t, "single")
+	f.Issues[0].Suggestion = &intake.Suggestion{Profile: "links-solo", Merge: intake.MergeShown{Outcome: "auto"}}
+	if s := intake.Resuggest(f, classes()).Issues[0].Suggestion; s != nil {
+		t.Fatalf("a config-table class kept a suggestion: %+v", s)
+	}
+}

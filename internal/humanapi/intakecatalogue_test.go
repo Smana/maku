@@ -84,3 +84,27 @@ func TestIntakePlanCatalogueDown(t *testing.T) {
 		t.Fatal("the failed read was not counted")
 	}
 }
+
+// Review B2: plan_check answers the broker's suggestion, never the client's: a merge outcome or a
+// profile the catalogue does not give is replaced, and the hash still holds.
+func TestPlanCheckRederivesTheSuggestion(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(&fakeFactoryCatalogue{}))
+	plan := planFixture(t, "single") // docs-links: live, floor links-solo
+	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-frontier", Roles: []string{"admin"},
+		Merge: intake.MergeShown{Outcome: "approval"}, Why: "trust me"}
+	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": intake.Hash(plan)})
+	if got.isError {
+		t.Fatal(got.text)
+	}
+	var out planChecked
+	if err := json.Unmarshal(got.structured, &out); err != nil {
+		t.Fatal(err)
+	}
+	s := out.Plan.Issues[0].Suggestion
+	if s == nil || s.Profile != "" || s.Roles != nil || s.Why != "" || s.Merge.Outcome != "auto" || out.Hash != intake.Hash(plan) {
+		t.Fatalf("%+v %s", s, out.Hash)
+	}
+	if strings.Contains(got.text, "trust me") || strings.Contains(got.text, "approval merges") {
+		t.Fatalf("the client's suggestion reached the text: %s", got.text)
+	}
+}

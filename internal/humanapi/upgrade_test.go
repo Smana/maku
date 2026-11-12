@@ -75,3 +75,25 @@ func TestUpgradeIsShownNeverFiled(t *testing.T) {
 		})
 	}
 }
+
+// Review nit 1: a plan/v1 revision through intake_plan is answered replanned before a daily plan
+// or a model call is spent.
+func TestIntakePlanUpgradesAV1Revision(t *testing.T) {
+	e := setup(t, mcpOn, actorOn(&actLog{}), withIntakeDaily(t, 1))
+	v1 := planFixture(t, "v1-single")
+	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link is dead",
+		"plan": v1, "hash": intake.Hash(v1), "candidate": v1})
+	if got.isError {
+		t.Fatal(got.text)
+	}
+	var out planReplanned
+	if err := json.Unmarshal(got.structured, &out); err != nil || out.Status != "replanned" || out.Plan.APIVersion != intake.APIVersion {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if e.intake.calls() != 0 {
+		t.Fatalf("%d model calls", e.intake.calls())
+	}
+	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+		t.Fatalf("the day's one plan was spent: %s", got.text)
+	}
+}

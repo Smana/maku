@@ -77,3 +77,27 @@ func suggest(class Class, ds *DraftSuggestion, index int, dropped *[]string) *Su
 	}
 	return s
 }
+
+// Resuggest is p with every issue's suggestion rebuilt from classes, the plan repository's table
+// (ClassesFor): a suggestion read back from a client is the client's, so a consumer never shows,
+// stores or files one the broker did not derive. An offered profile and its why are kept, the roles
+// and the merge outcome recomputed; anything else is the factory's choice, and a class from the
+// config table carries none. The suggestion is display: the hash is unchanged.
+func Resuggest(p Plan, classes map[string]Class) Plan {
+	issues := make([]Issue, len(p.Issues))
+	var dropped []string
+	for i, is := range p.Issues {
+		var ds *DraftSuggestion
+		if s := is.Suggestion; s != nil {
+			ds = &DraftSuggestion{Profile: s.Profile, Why: s.Why}
+		}
+		class, ok := classes[is.Class]
+		is.Suggestion = nil
+		if ok {
+			is.Suggestion = suggest(class, ds, is.Index, &dropped)
+		}
+		issues[i] = is
+	}
+	p.Issues = issues
+	return p
+}

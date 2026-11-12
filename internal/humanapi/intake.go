@@ -297,6 +297,18 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 
 	// The revision is verified before any GitHub or model work. In particular, base drift and an
 	// above-cap round cannot spend a lookup, a daily slot or a model call.
+	if a.Plan != nil && a.Plan.APIVersion == intake.APIVersionV1 {
+		// P14: a revision of a plan made before profiles is upgraded, not re-planned: no daily plan
+		// and no model call are spent on it (review nit 1). Its hash binds it first.
+		if intake.Hash(*a.Plan) != a.Hash {
+			return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonPlanChanged))
+		}
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, *a.Plan)
+		if ref != nil {
+			return s.finishPlan(ctx, run, nil, false, ref)
+		}
+		return replanned{plan: next}.result(s)
+	}
 	var revised *intake.Plan
 	if a.Candidate != nil {
 		next, err := intake.Revise(*a.Plan, a.Hash, *a.Candidate, s.Intake.MaxRounds)
@@ -353,7 +365,8 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 			return s.finishPlan(ctx, run, nil, false, ref)
 		}
 		if revised.RoundsLeft == 0 {
-			return s.finishPlan(ctx, run, revised, false, nil)
+			final := intake.Resuggest(*revised, classesOf(*revised)) // the candidate's suggestion is the client's
+			return s.finishPlan(ctx, run, &final, false, nil)
 		}
 	}
 
@@ -514,9 +527,12 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	}
 	// plan_check is an external filing door in both shapes: intermediate planner output may carry
 	// markers, but a checked plan may not.
-	if ref := intake.CheckFinal(plan, candidates, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)); ref != nil {
+	classes := s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)
+	if ref := intake.CheckFinal(plan, candidates, classes); ref != nil {
 		return nil, s.planCheckRefused(ctx, surface, ref)
 	}
+	// The suggestion is the client's copy: what is shown and filed is the broker's (review B2).
+	plan = intake.Resuggest(plan, classes)
 	// The second half of the one validator: the template and the redactor issue_draft applies, so a
 	// plan whose text a secret sits in is refused here rather than filed.
 	if err := s.checkPlanDrafts(ctx, plan); err != nil {

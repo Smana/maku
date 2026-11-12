@@ -199,7 +199,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 			return runrequest.TaskResult{}, toolError(err.Error())
 		}
 	}
-	class, suggested := plannedClass(a.Plan)
+	class, suggested := s.plannedClass(ctx, p, a)
 	if a.Title != "" {
 		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
@@ -252,13 +252,16 @@ func (s *Server) runCreated(r runrequest.TaskResult) map[string]any {
 	return out
 }
 
-// plannedClass is the class and the suggested profile of the one issue a checked plan files (P7):
-// both bound by the plan's hash, so a call cannot name another class beside it. Empty without a plan.
-func plannedClass(raw json.RawMessage) (class, suggested string) {
+// plannedClass is the class and the suggested profile of the one issue a checked plan files (P7).
+// The class is bound by the plan's hash; the suggestion is display and the client's copy, so it is
+// rebuilt from the plan repository's catalogue first (review B2): a profile the class does not offer,
+// or any on the config fallback, is never stored. Empty without a plan.
+func (s *Server) plannedClass(ctx context.Context, p authn.Principal, a runCreateArgs) (class, suggested string) {
 	var plan intake.Plan
-	if !planPresent(raw) || json.Unmarshal(raw, &plan) != nil || len(plan.Issues) != slackFiles {
+	if !planPresent(a.Plan) || json.Unmarshal(a.Plan, &plan) != nil || len(plan.Issues) != slackFiles {
 		return "", ""
 	}
+	plan = intake.Resuggest(plan, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository))
 	is := plan.Issues[0]
 	if is.Suggestion != nil {
 		suggested = is.Suggestion.Profile
