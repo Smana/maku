@@ -1,0 +1,152 @@
+{{- if and .Values.runController.enabled (eq (include "ap.netMode" .) "kubernetes") }}
+{{- $c := .Values.runController -}}
+{{- $p := .Values.egressProxy -}}
+{{- $k := .Values.networkPolicies.kubernetes -}}
+{{- $l := include "ap.labelsFor" (dict "root" . "name" "egress-proxy") -}}
+# The egress proxy (v4 D6, plan PR5): the run-controller's image, run with `egress-proxy`. A run pod's
+# harness reaches the web only through it, and only the host:port pairs of its own
+# maku.ogenki.io/egress annotation. It runs in the release namespace: the run-pod policy lets only the
+# run-controller create pods in the runs namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: egress-proxy
+  labels: {{- $l | nindent 4 }}
+---
+# It watches the run pods (by the run-controller's label) to map a client's pod IP to its run.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: egress-proxy
+  namespace: {{ .Values.runs.namespace }}
+  labels: {{- $l | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: egress-proxy
+  namespace: {{ .Values.runs.namespace }}
+  labels: {{- $l | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: egress-proxy}
+subjects:
+  - {kind: ServiceAccount, name: egress-proxy, namespace: {{ .Release.Namespace }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: egress-proxy
+  labels: {{- $l | nindent 4 }}
+spec:
+  replicas: {{ $p.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: egress-proxy
+  template:
+    metadata:
+      labels: {{- $l | nindent 8 }}
+      annotations:
+        # It reads the run-controller's config once at start, as the controller does.
+        checksum/config: {{ include (print $.Template.BasePath "/run-controller-config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: egress-proxy
+      automountServiceAccountToken: true # the pod watch
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: egress-proxy
+      containers:
+        - name: egress-proxy
+          image: {{ include "ap.image" (dict "root" . "image" $c.image) }}
+          {{- include "ap.pullPolicy" . | nindent 10 }}
+          args: [egress-proxy]
+          env:
+            - name: RUN_CONTROLLER_CONFIG
+              value: /etc/run-controller/config.yaml
+          ports:
+            - {name: proxy, containerPort: 3128}
+            - {name: metrics, containerPort: 9090}
+            - {name: probes, containerPort: 9091}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9091}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9091}
+          securityContext: {{- include "ap.containerSecurityContext" . | nindent 12 }}
+          resources: {{- toYaml $p.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/run-controller, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: run-controller-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: egress-proxy
+  labels: {{- $l | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: egress-proxy
+  ports:
+    - {name: proxy, port: 3128, targetPort: 3128}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: egress-proxy
+  labels: {{- $l | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: egress-proxy
+---
+# Default deny; the runs reach 3128, the proxy reaches DNS, the apiserver (its pod watch) and the
+# public internet on 443 (and extraPorts), never privateCIDRs.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-proxy
+  labels: {{- $l | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: egress-proxy
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ .Values.runs.namespace }}}
+          podSelector:
+            matchLabels: {app.kubernetes.io/managed-by: run-controller}
+      ports: [{port: 3128, protocol: TCP}]
+    {{- with $k.metricsFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
+  egress:
+    {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            {{- with $k.privateCIDRs }}
+            except: {{- toYaml . | nindent 14 }}
+            {{- end }}
+      ports:
+        - {port: 443, protocol: TCP}
+        {{- range $p.extraPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+{{- end }}

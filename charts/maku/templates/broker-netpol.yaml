@@ -1,0 +1,77 @@
+{{- if eq (include "ap.netMode" .) "kubernetes" }}
+{{- $k := .Values.networkPolicies.kubernetes -}}
+{{- /* The factory's flows, keyed on factoryURL, as broker-cnp.yaml's. factoryPodLabels may name the
+factory's namespace with io.kubernetes.pod.namespace (Cilium's label); here it becomes the
+namespaceSelector, and the other labels the podSelector. */ -}}
+{{- $factory := dict -}}
+{{- with .Values.broker.factoryURL -}}
+{{- $u := urlParse . -}}
+{{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- $labels := deepCopy $.Values.broker.factoryPodLabels -}}
+{{- $ns := get $labels "io.kubernetes.pod.namespace" | default $.Release.Namespace -}}
+{{- $_ := unset $labels "io.kubernetes.pod.namespace" -}}
+{{- $factory = dict "port" $port "labels" $labels "namespace" $ns -}}
+{{- end -}}
+# The broker's NetworkPolicy in networkPolicies.mode kubernetes, mirroring broker-cnp.yaml: default
+# deny, one allow per flow. broker.networkPolicy.extraIngress and extraEgress are rendered verbatim
+# here, so in this mode they are NetworkPolicy rules (from/to, ports), not Cilium's.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: room-broker
+  labels: {{- include "ap.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Run bridges (and, under roomTools.auth tokenreview, the harnesses' room tools).
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ .Values.runs.namespace }}}
+          podSelector:
+            matchExpressions:
+              - {key: agents.ogenki.io/run-id, operator: Exists}
+      ports:
+        - {port: 8443, protocol: TCP}
+        {{- if include "ap.roomToolsTokenReview" . }}
+        - {port: 8090, protocol: TCP}
+        {{- end }}
+    {{- with $factory }}
+    # The factory's system API calls (its rooms-system token).
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ .namespace }}}
+          podSelector:
+            matchLabels: {{- toYaml .labels | nindent 14 }}
+      ports: [{port: 8443, protocol: TCP}]
+    {{- end }}
+    {{- with $k.metricsFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
+    {{- with .Values.broker.networkPolicy.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}
+    - to:
+        - podSelector:
+            matchExpressions:
+              - {key: {{ .Values.broker.database.podLabel }}, operator: Exists}
+      ports: [{port: 5432, protocol: TCP}]
+    {{- with $factory }}
+    # start_run: POST /v1/runs to factoryURL.
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ .namespace }}}
+          podSelector:
+            matchLabels: {{- toYaml .labels | nindent 14 }}
+      ports: [{port: {{ .port }}, protocol: TCP}]
+    {{- end }}
+    {{- with .Values.broker.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

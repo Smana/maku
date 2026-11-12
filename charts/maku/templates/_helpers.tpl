@@ -87,6 +87,29 @@ keys and fails; kubernetes needs the run-controller, whose proxy and per-run pol
 {{- $mode -}}
 {{- end -}}
 
+{{/* The egress rules every kubernetes-mode component shares: DNS on 53, and the apiserver on
+apiServerPorts, at apiServerCIDRs or any address. */}}
+{{- define "ap.npDNSAndAPIServer" -}}
+{{- $k := .Values.networkPolicies.kubernetes -}}
+- to:
+    - namespaceSelector:
+        matchLabels: {kubernetes.io/metadata.name: {{ $k.dns.namespace }}}
+      podSelector:
+        matchLabels: {{- toYaml $k.dns.labels | nindent 10 }}
+  ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+# The apiserver, after service translation (see apiServerPorts).
+- {{- with $k.apiServerCIDRs }}
+  to:
+    {{- range . }}
+    - ipBlock: {cidr: {{ . }}}
+    {{- end }}
+  {{- end }}
+  ports:
+    {{- range .Values.apiServerPorts }}
+    - {port: {{ . }}, protocol: TCP}
+    {{- end }}
+{{- end -}}
+
 {{/* The egress proxy's in-cluster URL, in kubernetes mode. */}}
 {{- define "ap.egressProxyURL" -}}
 {{- printf "http://egress-proxy.%s.svc.%s:3128" .Release.Namespace .Values.clusterDomain -}}
