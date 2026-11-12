@@ -260,7 +260,8 @@ out="$si"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
 
 # sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
-# is the old one, byte for byte (runtimeClassName: gvisor).
+# is the old one, byte for byte (runtimeClassName: gvisor), plus PR B's unsafeSharedGitToken (the
+# quickstart's one PAT).
 rcconf() { yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$1"; }
 rcconf "$q" | diff -u tests/golden/rc-quickstart.yaml - >&2 || { echo 'FAIL: with no sandbox key the controller config must be the one before step 2 (tests/golden/rc-quickstart.yaml)' >&2; fail=1; }
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
@@ -341,17 +342,20 @@ bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_
 bad 'does not match pattern' --set-json 'agentRunPolicies.creators=["system:serviceaccount:x:y'"'"' || true || '"'"'"]'
 bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness.repository="ghcr.io/x'"'"']+['"'"'y"'
 
-# install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config; none by
-# default, so the default render keeps its old config
+# install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config. The
+# quickstart shares its one PAT across roles (PR B), so it lists shared_git_token; without that flag
+# it lists none, and the render keeps its old config
 unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .install.unsafe // [] | join(",")' - <<<"$1"; }
-[[ $(unsafe "$q") == "" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists unsafe settings: $(unsafe "$q")" >&2; fail=1; }
+[[ $(unsafe "$q") == "shared_git_token" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token, got '$(unsafe "$q")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "" ]] ||
+  { echo "FAIL: the quickstart with a read Secret lists no unsafe setting" >&2; fail=1; }
 uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
-[[ $(unsafe "$uns") == "unsafe_allow_runc" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc, got '$(unsafe "$uns")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc" ]] ||
+[[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token" ]] ||
   { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "" ]] ||
-  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: nothing listed" >&2; fail=1; }
-[[ $(unsafe "$nonp") == "network_policy_none" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none, got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token" ]] ||
+  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: only the quickstart's shared_git_token listed" >&2; fail=1; }
+[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token" ]] ||
   { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||

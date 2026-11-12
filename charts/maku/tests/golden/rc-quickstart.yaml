@@ -4,6 +4,8 @@ runtimeClassName: "gvisor"
 allowUnsandboxed: false
 modelSecret: "agent-model"
 gitSecret: "agent-git"
+# Every role mounts gitSecret: a reviewer or triager could push (a laptop's one PAT).
+unsafeSharedGitToken: true
 broker:
   url: "https://room-broker.maku.svc.cluster.local:8443"
   namespace: "maku"

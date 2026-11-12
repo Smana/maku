@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,7 +40,7 @@ type check struct {
 }
 
 // Preflight proves, at start and every Every, that the cluster can run a sandboxed run (v4 D18):
-// the RuntimeClass exists. The reconciler consults Result before it creates a run's first pod; a run
+// the RuntimeClass exists, and so do the git Secrets runs mount, each with a token key. The reconciler consults Result before it creates a run's first pod; a run
 // that already has a pod is never refused by it (plan PR7). It is a manager.Runnable.
 type Preflight struct {
 	Client client.Reader // uncached: one get by name, never a cluster-wide list or watch
@@ -108,7 +109,34 @@ func (p *Preflight) checks() []check {
 	if p.Cfg.RuntimeClassName != "" {
 		cs = append(cs, check{"runtimeClass", p.runtimeClass})
 	}
-	return cs
+	return append(cs, check{"gitSecrets", p.gitSecrets})
+}
+
+// gitSecrets: each git Secret a run may mount exists with a token key (PR B): gitSecret, and
+// gitReadSecret when configured. A refusal is retried soon: the factory's run token writer, or an
+// ExternalSecret, may fill it right after install.
+func (p *Preflight) gitSecrets(ctx context.Context) (string, bool, error) {
+	type secret struct{ name, key, roles string }
+	ss := []secret{{p.Cfg.GitSecret, "runController.gitSecret", "implementer and tester"}}
+	if p.Cfg.GitReadSecret != "" {
+		ss = append(ss, secret{p.Cfg.GitReadSecret, "runController.gitReadSecret", "reviewer and triager"})
+	}
+	for _, s := range ss {
+		var sec corev1.Secret
+		err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Cfg.Namespace, Name: s.name}, &sec)
+		ref := p.Cfg.Namespace + "/" + s.name
+		switch {
+		case apierrors.IsNotFound(err):
+			return fmt.Sprintf("Secret %s not found: %s runs mount it (%s); create it with a token key", ref, s.roles, s.key), true, nil
+		case apierrors.IsForbidden(err):
+			return fmt.Sprintf("the run-controller may not read Secret %s: it needs get on that name (the chart's run-controller Role): %v", ref, err), true, nil
+		case err != nil:
+			return "", false, err
+		case len(sec.Data["token"]) == 0:
+			return fmt.Sprintf("Secret %s has no token key: %s runs mount it (%s)", ref, s.roles, s.key), true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // runtimeClass: the configured RuntimeClass exists. With none configured (allowUnsandboxed) there is
