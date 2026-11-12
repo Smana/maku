@@ -63,7 +63,7 @@ func (s *Stub) Handler() http.Handler { return s.handler }
 // ModelCalls reports model requests received so far; non-model routes never change it.
 func (s *Stub) ModelCalls() int { return int(s.modelCalls.Load()) }
 
-// PlannerCalls reports governed plan/v1 model requests.
+// PlannerCalls reports governed plan/v2 model requests.
 func (s *Stub) PlannerCalls() int { return int(s.plannerCalls.Load()) }
 
 // ScoperCalls reports scoper model requests, including the finish after a handoff.

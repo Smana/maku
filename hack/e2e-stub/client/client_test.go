@@ -303,7 +303,7 @@ func TestStdioCallHonorsDeadlineAndLineBound(t *testing.T) {
 }
 
 func TestAcceptRestCandidateReplacesMarkersAndAppendsAssumptions(t *testing.T) {
-	plan := intake.Plan{APIVersion: "plan/v1", Repository: "owner/repo", Issues: []intake.Issue{{
+	plan := intake.Plan{APIVersion: intake.APIVersion, Repository: "owner/repo", Issues: []intake.Issue{{
 		Index: 1, Title: "docs: verification", Class: "docs",
 		Body: "## What is wrong\n[NEEDS CLARIFICATION: g1 which check?]\n## What it should be\nDocument it.\n## Acceptance check\nDone.",
 	}}, Gaps: []intake.Gap{{ID: "g1", Text: "which check?", Recommended: intake.Answer{Answer: "task check", Why: "complete verification"}}}}
@@ -318,7 +318,7 @@ func TestAcceptRestCandidateReplacesMarkersAndAppendsAssumptions(t *testing.T) {
 }
 
 func TestRunPlanWritesMachineReadableState(t *testing.T) {
-	plan := intake.Plan{APIVersion: "plan/v1", Repository: "owner/repo", Issues: []intake.Issue{{Index: 1, Title: "docs: verification", Body: "body", Class: "docs"}}}
+	plan := intake.Plan{APIVersion: intake.APIVersion, Repository: "owner/repo", Issues: []intake.Issue{{Index: 1, Title: "docs: verification", Body: "body", Class: "docs"}}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var m testWireMessage
 		_ = json.NewDecoder(r.Body).Decode(&m)
