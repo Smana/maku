@@ -44,6 +44,26 @@ describe("the Harness profile fold", () => {
     expect(root.textContent).toContain('<img src="x" onerror="alert(1)">');
   });
 
+  it("shows a pin's request and its refusal when present, and neither otherwise", () => {
+    const refused = render(summary({ ...frontier(), name: "review-floor", source: "floor",
+      requested: "review-frontier", refused: "profile_not_allowed" }));
+    expect(refused.querySelector(".profile-requested")!.textContent).toBe("Requested: review-frontier");
+    expect(refused.querySelector(".profile-refused")!.textContent).toBe("Refused: profile_not_allowed");
+    const honoured = render(summary({ ...frontier(), source: "label", cohort: "labeled", requested: "review-frontier" }));
+    expect(honoured.querySelector(".profile-requested")!.textContent).toBe("Requested: review-frontier");
+    expect(honoured.querySelector(".profile-refused")).toBeNull();
+    const none = render(summary(frontier()));
+    expect(none.querySelector(".profile-requested")).toBeNull();
+    expect(none.querySelector(".profile-refused")).toBeNull();
+  });
+
+  it("renders the request as text", () => {
+    const root = render(summary({ ...frontier(), requested: '<b onclick="x">p</b>', refused: "<i>c</i>" }));
+    expect(root.querySelector("b")).toBeNull();
+    expect(root.querySelector("i")).toBeNull();
+    expect(root.textContent).toContain('<b onclick="x">p</b>');
+  });
+
   it("stays open across a refresh once opened", () => {
     const root = render(summary(frontier()));
     root.querySelector("details")!.open = true;
