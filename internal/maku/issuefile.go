@@ -41,7 +41,7 @@ var issueFileEntry = map[string]any{
 		"Without a plan the draft is checked by issue_draft. It labels nothing itself: the form offers to start the factory only when plan_check (or, with no plan, issue_draft) says canStart, and the label is the developer's, applied with their gh.",
 	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","title","body"],` +
 		`"properties":{"repo":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"},` +
-		`"plan":{"type":"object","description":"the plan/v1 intake_plan answered with"},` +
+		`"plan":{"type":"object","description":"the plan/v2 intake_plan answered with"},` +
 		`"hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$","description":"the hash intake_plan answered with; plan_check recomputes it over the plan"}}}`),
 }
 

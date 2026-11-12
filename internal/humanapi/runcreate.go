@@ -52,7 +52,7 @@ type runCreateArgs struct {
 	OnBehalfOf     string  `json:"on_behalf_of"`
 	Ref            string  `json:"ref"`
 	IdempotencyKey string  `json:"idempotency_key"`
-	// Plan is the plan/v1 the task was confirmed from, and PlanHash the sha256: value the broker
+	// Plan is the plan/v2 the task was confirmed from, and PlanHash the sha256: value the broker
 	// answered beside it: the App's own copy of what intake_plan said, carried from the proposal
 	// message's metadata (CD20). Neither is trusted — checkPlan recomputes the hash over the plan and
 	// re-validates it — and a call carrying neither is the tool it always was.
@@ -76,7 +76,7 @@ const slackFiles = 1
 // cheapest and the whole of what plan_changed means — no GitHub read is spent on a plan that is not
 // the one anyone confirmed; then the shape and the money, which cost nothing; then the guard, which
 // asks GitHub; then the contract. The plan is decoded as strictly as plan_check decodes it, so a field
-// outside plan/v1 is refused here for the same reason it is refused there. The one half of plan_check
+// outside plan/v2 is refused here for the same reason it is refused there. The one half of plan_check
 // not repeated here is the redactor's, and it is not skipped: the path below runs checkDraft — the
 // template and the redactor both — on the title and body this function has just required to be the
 // plan's.
@@ -85,7 +85,7 @@ const slackFiles = 1
 func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Principal) error {
 	var plan intake.Plan
 	if mcpwire.DecodeArgs(a.Plan, &plan) != nil {
-		return argRefusal("plan is the plan/v1 object intake_plan answered with, with no field outside it taken, " +
+		return argRefusal("plan is the plan/v2 object intake_plan answered with, with no field outside it taken, " +
 			"and plan_hash the value it answered beside it")
 	}
 	if !hashRE.MatchString(a.PlanHash) {

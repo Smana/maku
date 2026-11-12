@@ -22,7 +22,7 @@ import (
 )
 
 // intake_plan is the broker's one governed planner on /mcp (v3.x conversational intake, CD18): a
-// sentence becomes plan/v1 through one bounded model call, with the repository bounded by the
+// sentence becomes plan/v2 through one bounded model call, with the repository bounded by the
 // allowlist and by what the caller may write, the roles and the money written by config, and the
 // plan's hash the value every later door re-validates. It files nothing and stores nothing.
 //
@@ -325,6 +325,12 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	if !s.Intake.take(req.Key) {
 		return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonDailyPlansReached))
 	}
+	// Each candidate's classes from the factory's catalogue (P2, G4); a candidate the broker could not
+	// read one for plans from the config table, with no suggestion (until stage 5).
+	offers := s.planOffers(ctx, p, a.OnBehalfOf, candidates)
+	classesOf := func(pl intake.Plan) map[string]intake.Class {
+		return intake.ClassesFor(offers, s.Intake.Classes, pl.Repository)
+	}
 
 	if revised != nil {
 		// The verified candidate is both a plan a person may see and, below the cap, the model's
@@ -332,9 +338,9 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		// there are no markers left, so the final validator is the one that applies.
 		var ref *intake.Refusal
 		if revised.RoundsLeft == 0 {
-			ref = intake.CheckFinal(*revised, candidates, s.Intake.Classes)
+			ref = intake.CheckFinal(*revised, candidates, classesOf(*revised))
 		} else {
-			ref = intake.Check(*revised, candidates, s.Intake.Classes)
+			ref = intake.Check(*revised, candidates, classesOf(*revised))
 		}
 		if ref != nil {
 			return s.finishPlan(ctx, run, nil, false, ref)
@@ -353,7 +359,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 
 	draft, usage, err := s.Intake.Model.Draft(ctx, intake.DraftRequest{
 		Text: a.Text, Context: a.modelContext(), Candidates: candidates, Classes: classNames(s.Intake.Classes),
-		Candidate: revised})
+		Offers: offers, Candidate: revised})
 	run.usage = usage
 	if err != nil {
 		ref, ok := intake.RefusalOf(err)
@@ -373,7 +379,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 
 	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), ServedModel: usage.Model, Now: s.Intake.now(),
 		Rev: planRev, Round: 1, RoundsLeft: s.Intake.MaxRounds - 1,
-		Classes: s.Intake.Classes, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
+		Classes: s.Intake.Classes, Offers: offers, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
 	if revised != nil {
 		compose.Rev, compose.Round, compose.RoundsLeft = revised.Rev, revised.Round, revised.RoundsLeft
 	}
@@ -390,7 +396,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	plan = intake.ApplyFloor(plan, a.Text+"\n"+a.modelContext())
 	// The plan is checked before it is shown: a reply that names a repository, an alternative or a
 	// class outside what this request may use is refused whole, and the outsider is never echoed.
-	if ref := intake.Check(plan, candidates, s.Intake.Classes); ref != nil {
+	if ref := intake.Check(plan, candidates, classesOf(plan)); ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
 	if revised != nil {
@@ -505,7 +511,7 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	}
 	// plan_check is an external filing door in both shapes: intermediate planner output may carry
 	// markers, but a checked plan may not.
-	if ref := intake.CheckFinal(plan, candidates, s.Intake.Classes); ref != nil {
+	if ref := intake.CheckFinal(plan, candidates, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)); ref != nil {
 		return nil, s.planCheckRefused(ctx, surface, ref)
 	}
 	// The second half of the one validator: the template and the redactor issue_draft applies, so a
@@ -836,7 +842,7 @@ var intakePlanSchema = json.RawMessage(`{"type":"object","additionalProperties":
 	`"description":"the person's own evidence, one item each, counted against the same 4096 bytes as context"},` +
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"},` +
 	`"ceiling":{"type":"number","minimum":0,"description":"the channel's ceiling in dollars; zero or absent means the class ceiling"},` +
-	`"plan":{"type":"object","description":"revision envelope: the base plan/v1 the broker previously answered; requires hash and candidate"},` +
+	`"plan":{"type":"object","description":"revision envelope: the base plan/v2 the broker previously answered; requires hash and candidate"},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `","description":"revision envelope: the base plan's hash"},` +
 	`"candidate":{"type":"object","description":"revision envelope: the base edited only by resolving markers and appending their D/A records; requires plan and hash"}}}`)
 
@@ -846,10 +852,10 @@ var hashRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // planCheckSchema is plan_check's arguments, closed: the plan a person was shown, the hash the broker
 // answered with, and — a sponsored principal's alone — the linked Slack user the plan was made for.
-// `plan` is typed but not closed here: plan/v1 is intake's contract, and a client that round-trips the
+// `plan` is typed but not closed here: plan/v2 is intake's contract, and a client that round-trips the
 // object intake_plan answered cannot be given a second, staler copy of its fields.
 var planCheckSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","hash"],` +
-	`"properties":{"plan":{"type":"object","description":"the base plan/v1 the broker previously answered"},` +
+	`"properties":{"plan":{"type":"object","description":"the base plan/v2 the broker previously answered"},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
 	`"candidate":{"type":"object","description":"optional revision envelope: the base edited only by resolving every remaining marker and appending each D/A record"},` +
 	`"on_behalf_of":{"type":"string","pattern":"` + onBehalfRE.String() + `"}}}`)
@@ -857,9 +863,11 @@ var planCheckSchema = json.RawMessage(`{"type":"object","additionalProperties":f
 // planCheckOutput is plan_check's structuredContent, closed: the four fields a caller files from, and
 // nothing else. `plan` names the fields it always carries rather than closing a contract it does not
 // own.
+// A plan/v1 is answered with `status: replanned`, the plan/v2 to confirm and canStart false (P14).
 var planCheckOutput = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["plan","hash","canStart"],` +
 	`"properties":{"plan":{"type":"object","required":["apiVersion","rev","planner","repository","issues","budget","hash"]},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
+	`"status":{"type":"string","enum":["replanned"],"description":"set when the plan was a plan/v1: nothing was checked as final or filed; confirm the plan/v2 answered"},` +
 	`"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"}}}`)
 
 // intakeTools are the planner's tools, listed only when the switch is on and on both lists: the
@@ -867,7 +875,7 @@ var planCheckOutput = json.RawMessage(`{"type":"object","additionalProperties":f
 func (s *Server) intakeTools() []mcpTool {
 	return []mcpTool{
 		{name: mcpwire.IntakePlan, call: s.intakePlanTool,
-			description: "Plan the factory work a sentence asks for: one bounded planner call returns plan/v1 — the repository it files into, " +
+			description: "Plan the factory work a sentence asks for: one bounded planner call returns plan/v2 — the repository it files into, " +
 				"one to three issues whose class, roles and ceiling the broker's config sets, and ranked clarification gaps — with its hash. " +
 				"Show the text as it is and ask only the first gap. To revise, keep the original text and arguments and pass the exact envelope " +
 				"{plan: <the base plan>, hash: <the base hash>, candidate: <the base with markers resolved and matching D/A records appended>}; " +
