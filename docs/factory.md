@@ -2066,7 +2066,7 @@ sequenceDiagram
   reply granting anything else is revoked and refused (`scope_mismatch`).
 - **Only runs the factory accounts for get one:** a run naming a live Task on the same repository,
   or an API run holding a reservation in today's or yesterday's ledger. Anything else is refused
-  once (`agent_factory_run_token_refusals_total{reason}`: `unbound_task`, `unbound_api`,
+  once (`maku_factory_run_token_refusals_total{reason}`: `unbound_task`, `unbound_api`,
   `repository_mismatch`, `role_unknown`) and its run waits Pending.
 - **The run-controller** starts a pod only on a Secret that is the factory's (its labels and an
   ownerReference to that very run), holds a token, and has over 5 minutes left. Otherwise the run
