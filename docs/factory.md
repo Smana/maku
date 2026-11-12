@@ -2024,8 +2024,8 @@ actions and metadata read). `statuses: write` is the merger's alone: the run tok
 it, since one App backs every run and a run that could post a status could forge `maku/merge-gate`.
 A token minted for a narrower profile asks for a subset, which an App holding the union grants.
 
-**The run tokens (interim, until the per-run minter of v4 D10, rollout step 3).** The demo, or
-`runTokens.enabled` outside it, has the factory keep the run-controller's two git Secrets in the
+**The shared run tokens (`runController.gitTokens: shared`, the default).** The demo before v4 step
+3, or `runTokens.enabled` without `perRun`, has the factory keep the run-controller's two git Secrets in the
 runs namespace filled with installation tokens, renewed every 30 minutes and ten minutes before
 expiry (a failed mint keeps the old Secret): `agent-git`, the write token implementer and tester
 runs mount, and `agent-git-read`, the read token reviewer and triager runs mount. Each covers every
@@ -2033,6 +2033,49 @@ served repository of one owner. The demo mints from the factory's App; `runToken
 appIDFile, privateKeyFile}` names another App (the chart's `runTokens.appSecret`, mounted at
 `/etc/agent-factory-run-tokens`), and is refused without both files and unless `runs.group` is
 `maku.ogenki.io`: cloud-native-ref's AgentRun gets its tokens from octo-sts, unchanged.
+
+**Per-run tokens (v4 D10; the demo's since step 3).** `runTokens.perRun` (with `runTokens.enabled`,
+or the demo's factory App) and `runController.gitTokens: perRun` give every run its own token
+instead:
+
+```mermaid
+sequenceDiagram
+  participant F as factory (minter)
+  participant G as GitHub
+  participant K as runs namespace
+  participant C as run-controller
+  participant H as harness
+  F->>K: create the AgentRun
+  F->>G: installation of owner/repo; a token on repo alone, the role's permissions
+  F->>K: apply <run>-git (token, expires-at, owned by the run)
+  C->>K: get <run>-git: the factory's? 5 minutes left?
+  C->>K: create the pod, mounting <run>-git
+  loop every 30 s, under 10 minutes left
+    F->>G: a fresh token
+    F->>K: apply <run>-git (the kubelet updates the volume in place)
+  end
+  H->>G: revoke the token on exit
+  F->>G: revoke at the run's end
+  F->>K: delete <run>-git
+```
+
+- **The token** is minted from the App the config names for the run's one repository (its
+  installation is looked up per repository, so runs may span owners), with exactly the
+  permissions the role table below gives the run's role under its `safe-outputs` annotation. A
+  reply granting anything else is revoked and refused (`scope_mismatch`).
+- **Only runs the factory accounts for get one:** a run naming a live Task on the same repository,
+  or an API run holding a reservation in today's or yesterday's ledger. Anything else is refused
+  once (`agent_factory_run_token_refusals_total{reason}`: `unbound_task`, `unbound_api`,
+  `repository_mismatch`, `role_unknown`) and its run waits Pending.
+- **The run-controller** starts a pod only on a Secret that is the factory's (its labels and an
+  ownerReference to that very run), holds a token, and has over 5 minutes left. Otherwise the run
+  waits Pending with reason `SecretMissing` or `SecretExpiring`. A running pod is never stopped for
+  a later expiry.
+- **Suspended runs** are not refreshed; they are re-minted when they leave `Suspended`.
+- **At the run's end** the harness revokes its token after the checkpoint push
+  (`GIT_TOKEN_REVOCABLE=1`), and the factory revokes the token it holds and deletes the Secret.
+- **The factory never reads a Secret** in the runs namespace: see
+  [security](security.md#the-factory-writes-run-token-secrets-it-cannot-read).
 
 #### Run tokens: the role table
 
@@ -2043,8 +2086,8 @@ scoper and integration runs mint as the triager. "Once enforced" reads the run's
 publishes for the run takes the matching write away from the sandbox role. The table below is
 generated from the code (`go test ./internal/factory/minter -run TestDocsTable -update`). No role
 holds `statuses`, `workflows`, `administration`, `checks: write` or `actions: write`, and only the
-publisher holds `issues: write`. The factory does not use the minter yet: the shared run tokens
-above stay what runs mount.
+publisher holds `issues: write`. Runs mint from it under `runTokens.perRun` (above); the shared
+run tokens ignore it.
 
 <!-- roles:begin -->
 | Role | Permissions | Once enforced |

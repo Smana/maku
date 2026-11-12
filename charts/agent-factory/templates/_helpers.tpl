@@ -32,7 +32,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if ne (toString $perRun) (toString (eq $gitTokens "perRun")) -}}
 {{- fail (printf "maku-factory.runTokens.perRun (%v) and maku.runController.gitTokens (%q) go together: the factory writes each run's token Secret, the run-controller mounts it; set both (perRun) or neither" $perRun $gitTokens) -}}
 {{- end -}}
-{{- if and $perRun (not (dig "agentRunPolicies" "creators" list .Values.maku)) -}}
+{{- if $perRun -}}
+{{- $creators := dig "agentRunPolicies" "creators" list .Values.maku -}}
+{{- if not $creators -}}
 {{- fail "maku-factory.runTokens.perRun needs maku.agentRunPolicies.creators: the factory mints a token for every run it can account for, so only the factory may create AgentRuns (plan PR4)" -}}
+{{- end -}}
+{{- $factory := printf "system:serviceaccount:%s:agent-factory" .Release.Namespace -}}
+{{- if not (has $factory $creators) -}}
+{{- fail (printf "maku.agentRunPolicies.creators %v does not name this release's factory, %s: it could not create a run" $creators $factory) -}}
+{{- end -}}
 {{- end -}}
 {{- end }}

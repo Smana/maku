@@ -105,11 +105,37 @@ The permission matrix, enforced by the broker (`internal/policy`, tested row by 
   (`agents.ogenki.io/operating-mode`, `agents.ogenki.io/remaining-seconds`,
   `agents.ogenki.io/resumed-at`): no spec, label, finalizer, owner or other annotation, the meter's
   included. An install without the chart needs the same policy for the same bound.
-- **The factory may create Secrets in the runs namespace under `runTokens.enabled`**, as in the demo:
-  the run token writer creates `agent-git` and `agent-git-read` when they are absent, and Kubernetes
-  cannot scope `create` by name, so that one verb is unscoped in `agents`; `get` and `update` stay
-  bound to the two names. Without the demo or `runTokens.enabled`, the factory has no Secret access
-  there.
+- **The factory may create Secrets in the runs namespace under `runTokens.enabled`** without
+  `perRun`: the shared run token writer creates `agent-git` and `agent-git-read` when they are
+  absent, and Kubernetes cannot scope `create` by name, so that one verb is unscoped in `agents`;
+  `get` and `update` stay bound to the two names. Without the demo or `runTokens.enabled`, the
+  factory has no Secret access there.
+
+### The factory writes run token Secrets it cannot read
+
+Under `runTokens.perRun` (v4 D10) the factory writes each run's `<run>-git` by server-side apply and
+deletes it at the run's end. Its Role in the runs namespace holds `create`, `patch` and `delete` on
+Secrets, with no `get`, `list` or `watch`, so the minter never reads a Secret back. A `patch` or a
+`delete` answers with the object, so those verbs alone would let the factory read `agent-model`.
+The chart therefore always renders, with that Role, the ValidatingAdmissionPolicy
+`maku-<namespace>-run-token-secrets`: for the factory's ServiceAccount, a Secret create, update or
+delete in the runs namespace is allowed only on a name `<namePrefix><8 characters>-git`, carrying
+the factory's labels, and owned by the AgentRun of that name. A denied request answers with no
+object (proved on envtest, `charts/maku-factory/tests/admission`). The run-controller gets `get` on
+Secrets there without `resourceNames`: it already creates pods that mount any of them.
+
+Residuals of per-run tokens:
+
+- **A replaced token is not revoked:** a pod may still read it until the kubelet syncs the volume,
+  so it lives at most 10 more minutes.
+- **A run that ends while the factory restarts:** its token is not revoked (the new leader holds
+  none in memory) and expires within the hour. Its Secret is deleted.
+- **An agent merge (until H3):** the implementer and tester keep `contents: write`, which can merge
+  a pull request whose required checks are green, between the gate's `success` and the factory's
+  own merge. Closed at H3 under HR12.
+- **The factory pod holds the agents App key** (T15's row extends to it): where octo-sts alone held
+  it, whoever controls the factory can mint any role's token on any repository the App is
+  installed on.
 
 ### A sponsored principal's bounds
 

@@ -347,6 +347,8 @@ data:
       name: owner/repo
       triggerLabel: factory/ready
     roomsURL: http://localhost:8080
+    runTokens:
+      perRun: true
     runs:
       group: maku.ogenki.io
       namePrefix: run-
@@ -445,8 +447,8 @@ data:
     # No Cilium: the controller creates no CiliumNetworkPolicy per run.
     networkPolicy: none
     modelSecret: "agent-model"
-    gitSecret: "agent-git"
-    gitReadSecret: "agent-git-read"
+    # Each run mounts its own Secret, <run name>-git, minted by the factory (D10).
+    gitTokens: perRun
     broker:
       url: "https://room-broker.maku.svc.cluster.local:8443"
       namespace: "maku"
@@ -607,13 +609,13 @@ rules:
   - apiGroups: [maku.ogenki.io]
     resources: [agentruns]
     verbs: [get, list, watch, create, patch, delete]
+  # runTokens.perRun (v4 D10, plan PR3): each run's <run name>-git, written by server-side apply
+  # and deleted at the run's end. No get, list or watch: the factory never reads a Secret back. A
+  # patch or delete answers with the object, so the admission policy rendered beside this Role
+  # (run-token-policy.yaml) bounds these verbs to the run token Secrets.
   - apiGroups: [""]
     resources: [secrets]
-    verbs: [create]
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [agent-git, agent-git-read]
-    verbs: [get, update]
+    verbs: [create, patch, delete]
 
 ---
 # Source: agent-factory/charts/maku/templates/broker-rbac.yaml
@@ -702,9 +704,10 @@ rules:
   - apiGroups: [""]
     resources: [serviceaccounts, configmaps]
     verbs: [get, create]
+  # gitTokens perRun: each run's own <run name>-git, a name not known in advance. get alone, never
+  # list or watch; the controller already creates pods that mount any Secret here (plan PR3).
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: ["agent-model", "agent-git", "agent-git-read"]
     verbs: [get]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
@@ -1100,7 +1103,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: 28357e4403c73b73802e75baebe361bc5ec0a11faa0c06e84a50b847dde7a2c4
+        checksum/config: 3ef23a8fabe877872c763f1cdb806a91cae5b603352c51a84f97ef05d1554714
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer
@@ -1236,6 +1239,105 @@ spec:
         resources:
           requests:
             storage: 1Gi
+
+---
+# Source: agent-factory/charts/maku-factory/templates/run-token-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: maku-maku-run-token-secrets
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [secrets]
+  matchConditions:
+    - name: the-factory
+      expression: "request.userInfo.username == 'system:serviceaccount:maku:agent-factory'"
+  variables:
+    # On DELETE only the old object exists.
+    - name: s
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+    - name: run
+      expression: "variables.s.metadata.name.endsWith('-git') ? variables.s.metadata.name.substring(0, size(variables.s.metadata.name) - 4) : ''"
+    - name: labels
+      expression: "has(variables.s.metadata.labels) ? variables.s.metadata.labels : {}"
+  validations:
+    - expression: "variables.s.metadata.name.matches('^run-[a-z2-7]{8}-git$')"
+      message: "the factory writes only run token Secrets, <run name>-git (v4 D10)"
+    - expression: "variables.labels.exists(k, k == 'app.kubernetes.io/managed-by' && variables.labels[k] == 'maku-factory') && variables.labels.exists(k, k == 'maku.ogenki.io/run' && variables.labels[k] == variables.run)"
+      message: "a run token Secret carries the factory's labels"
+    - expression: "has(variables.s.metadata.ownerReferences) && variables.s.metadata.ownerReferences.exists(r, r.kind == 'AgentRun' && r.apiVersion.startsWith('maku.ogenki.io/') && r.name == variables.run)"
+      message: "a run token Secret is owned by its AgentRun"
+
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+# Only the listed users (the factory) create AgentRuns (C3).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: maku-maku-agentrun-creators
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["maku.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [CREATE]
+        resources: [agentruns]
+  validations:
+    - expression: "request.userInfo.username in ['system:serviceaccount:maku:agent-factory']"
+      message: "only the factory creates AgentRuns (C3): POST /v1/runs, or the room's hand-to-role"
+
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+# The factory's updates of an AgentRun touch three annotations only: the meter's usage-tokens, the
+# pull request and the revoke. Never the spec, never the labels.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: maku-maku-agentrun-factory-patch-limit
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["maku.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [agentruns]
+  matchConditions:
+    - name: the-factory
+      expression: "request.userInfo.username == 'system:serviceaccount:maku:agent-factory'"
+  variables:
+    - name: allowed
+      expression: "['agents.ogenki.io/usage-tokens', 'agents.ogenki.io/pull-request', 'agents.ogenki.io/revoked']"
+    - name: new
+      expression: "has(object.metadata.annotations) ? object.metadata.annotations : {}"
+    - name: old
+      expression: "has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {}"
+  validations:
+    - expression: "object.spec == oldObject.spec"
+      message: "the factory never changes an AgentRun's spec"
+    - expression: "(has(object.metadata.labels) ? object.metadata.labels : {}) == (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {})"
+      message: "the factory never changes an AgentRun's labels"
+    - expression: >-
+        variables.new.all(k, k in variables.allowed || (k in variables.old && variables.old[k] == variables.new[k])) &&
+        variables.old.all(k, k in variables.allowed || k in variables.new)
+      message: "the factory changes only the usage-tokens, pull-request and revoked annotations"
 
 ---
 # Source: agent-factory/charts/maku/templates/broker-agentrun-policy.yaml
@@ -1384,6 +1486,51 @@ spec:
       message: "a run pod's images come from ghcr.io/smana/maku-harness, ghcr.io/smana/maku-bridge, ghcr.io/smana/maku-run-controller (runController.images, runController.image, runPodPolicy.extraImages)"
     - expression: "!variables.pinned || variables.containers.all(c, c.image.contains('@sha256:'))"
       message: "a run pod's images are pinned by digest (@sha256:)"
+
+---
+# Source: agent-factory/charts/maku-factory/templates/run-token-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: maku-maku-run-token-secrets
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: maku-maku-run-token-secrets
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: kubernetes.io/metadata.name, operator: In, values: ["agents"]}
+
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: maku-maku-agentrun-creators
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: maku-maku-agentrun-creators
+  validationActions: [Deny]
+
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: maku-maku-agentrun-factory-patch-limit
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: maku-maku-agentrun-factory-patch-limit
+  validationActions: [Deny]
 
 ---
 # Source: agent-factory/charts/maku/templates/broker-agentrun-policy.yaml

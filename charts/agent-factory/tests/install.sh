@@ -79,7 +79,7 @@ step "install"
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
 helm dependency build charts/agent-factory >/dev/null
 values=(-f charts/agent-factory/values-demo.yaml
-  --set demo.model.baseURL=http://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy
+  --set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy
   --set demo.githubApp.id=123456 --set-file demo.githubApp.privateKey="$work/app.pem"
   --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true
   --set maku.broker.image.tag=$TAG --set maku.runController.image.tag=$TAG --set maku-factory.image.tag=$TAG
@@ -154,18 +154,49 @@ reasons=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o j
 ! grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' <<<"$reasons" ||
   die "the factory failed before it started (a mount or the image)"
 
-step "the run token writer may fill both run Secrets, and the run-controller may read both"
-# The dummy App never mints, so neither Secret is written: the Roles that let it are what is proved.
+step "per-run tokens (v4 D10): the factory writes run token Secrets and reads none; a run waits for its own"
+# The dummy App never mints, and the factory never passes start-up: the Roles, the admission policy
+# and the run-controller's wait are what is proved. The nightly proves a real mint.
 sa=system:serviceaccount:$NS
-for s in agent-git agent-git-read; do
-  kubectl auth can-i update "secret/$s" -n agents --as="$sa:agent-factory" >/dev/null || die "the factory cannot update $s"
-  kubectl auth can-i get "secret/$s" -n agents --as="$sa:run-controller" >/dev/null || die "the run-controller cannot read $s"
+for v in create patch delete; do
+  kubectl auth can-i "$v" secrets -n agents --as="$sa:agent-factory" >/dev/null || die "the factory cannot $v Secrets in agents"
 done
-if kubectl -n agents get secret agent-git-read >/dev/null 2>&1; then
-  echo "ok: agent-git-read exists"
-else
-  echo "ok: agent-git-read is not written: the factory logged the dummy App's failure above"
-fi
+for v in get list watch; do
+  ! kubectl auth can-i "$v" secrets -n agents --as="$sa:agent-factory" >/dev/null || die "the factory may $v Secrets in agents"
+done
+kubectl auth can-i get secret/run-abcdefgh-git -n agents --as="$sa:run-controller" >/dev/null || die "the run-controller cannot read a run's token Secret"
+# The policy bounds the factory's writes: a patch of agent-model is refused, and answers no object.
+for _ in $(seq 30); do
+  refused=$(kubectl -n agents patch secret agent-model --as="$sa:agent-factory" --dry-run=server --type=merge -p '{"metadata":{"labels":{"x":"y"}}}' 2>&1) && refused=""
+  grep -qF 'ValidatingAdmissionPolicy' <<<"$refused" && break
+  sleep 2
+done
+grep -qF 'run token Secrets' <<<"$refused" || die "the factory's patch of agent-model was not refused by the run token policy: $refused"
+echo "ok: the factory's patch of agent-model is refused (run token policy)"
+# A run the factory creates waits Pending for its own Secret.
+kubectl apply --as="$sa:agent-factory" -f - <<EOF
+apiVersion: maku.ogenki.io/v1alpha1
+kind: AgentRun
+metadata: {name: run-abcdefgh, namespace: agents}
+spec:
+  role: implementer
+  repository: Smana/demo
+  baseRef: main
+  principal: system:factory
+  dataClass: public
+  task: {text: "a run that never starts"}
+  budget: {maxMinutes: 5}
+EOF
+reason=""
+for _ in $(seq 40); do
+  reason=$(kubectl -n agents get agentruns.maku.ogenki.io run-abcdefgh -o jsonpath='{.status.phase}/{.status.conditions[?(@.type=="Ready")].reason}/{.status.conditions[?(@.type=="Ready")].message}') || reason=""
+  [[ $reason == Pending/SecretMissing/*run-abcdefgh-git* ]] && break
+  sleep 3
+done
+[[ $reason == Pending/SecretMissing/*run-abcdefgh-git* ]] || die "the run is '$reason', want Pending/SecretMissing: it must wait for its own token Secret"
+! kubectl -n agents get pod run-abcdefgh >/dev/null 2>&1 || die "a pod started without the run's token Secret"
+echo "ok: a run without its token Secret waits Pending (SecretMissing), with no pod"
+kubectl -n agents delete agentruns.maku.ogenki.io run-abcdefgh --wait=false >/dev/null
 
 step "no Cilium, cert-manager or CNPG objects"
 # By API group: a core name such as `certificates` is not cert-manager's.
