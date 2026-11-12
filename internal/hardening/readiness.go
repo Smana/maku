@@ -173,16 +173,30 @@ func (e Evaluator) drill(ctx context.Context, s Settings) (string, error) {
 
 // PolicyGrantsWrite reports whether an octo-sts trust policy grants any write or admin permission.
 func PolicyGrantsWrite(policy []byte) (bool, error) {
-	var p struct {
-		Permissions map[string]string `json:"permissions"`
+	perms, err := PolicyPermissions(policy)
+	if err != nil {
+		return false, err
 	}
-	if err := yaml.Unmarshal(policy, &p); err != nil {
-		return false, fmt.Errorf("octo-sts policy: %w", err)
-	}
-	for _, v := range p.Permissions {
-		if v := strings.ToLower(v); v == "write" || v == "admin" {
+	for _, v := range perms {
+		if v == "write" || v == "admin" {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// PolicyPermissions is an octo-sts trust policy's permissions map, each permission and access
+// lower-cased. A policy that does not parse is an error.
+func PolicyPermissions(policy []byte) (map[string]string, error) {
+	var p struct {
+		Permissions map[string]string `json:"permissions"`
+	}
+	if err := yaml.Unmarshal(policy, &p); err != nil {
+		return nil, fmt.Errorf("octo-sts policy: %w", err)
+	}
+	out := make(map[string]string, len(p.Permissions))
+	for k, v := range p.Permissions {
+		out[strings.ToLower(k)] = strings.ToLower(v)
+	}
+	return out, nil
 }

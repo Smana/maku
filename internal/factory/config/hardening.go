@@ -55,7 +55,39 @@ type Hardening struct {
 	Drills         HardeningDrills                `json:"-"`
 	AgentGuard     AgentGuard                     `json:"-"`
 	Repositories   map[string]HardeningRepository `json:"-"`
+	// EnforceOutputs are the non-code safe outputs every repository requests through the factory
+	// (stage H2, HR10); a repository may add to them. Empty by default: nothing is enforced.
+	EnforceOutputs []hardening.OutputType `json:"-"`
+	// Publisher is the agents App's identity the applier writes enforced outputs as (HR11).
+	Publisher Publisher `json:"-"`
+	// Applier times the safe-output applier (HR15, HR19).
+	Applier HardeningApplier `json:"-"`
 }
+
+// Publisher is where the publisher's token comes from: octo-sts, under each enforced repository's
+// .github/chainguard/publisher.sts.yaml (O5, HR11).
+type Publisher struct {
+	OctoSTS PublisherOctoSTS
+}
+
+// PublisherOctoSTS is the exchange: octo-sts's base URL, the factory's projected ServiceAccount
+// token (the chart's hardening.publisher.audience), and the trust policy's name.
+type PublisherOctoSTS struct {
+	URL, TokenFile, Identity string
+}
+
+// HardeningApplier is the applier's poll and how long a run's end waits for its answers.
+type HardeningApplier struct {
+	Interval, AnswerWait Duration
+}
+
+// Publisher defaults: the chart mounts the projected token here, and the policy is publisher.sts.yaml.
+const (
+	defaultPublisherTokenFile = "/var/run/secrets/octo-sts/token" //nolint:gosec // G101: a mount path, not a credential
+	defaultPublisherIdentity  = "publisher"
+	defaultApplierInterval    = 2 * time.Second
+	defaultApplierAnswerWait  = 5 * time.Minute
+)
 
 // HardeningLayers sets the layers that may differ from the mode: T5 alone, since T1 to T4 run at
 // the mode and cannot be set below it.
@@ -78,6 +110,8 @@ type AgentGuard struct {
 // HardeningRepository is one repository's stricter setting.
 type HardeningRepository struct {
 	Mode hardening.Mode
+	// EnforceOutputs is the repository's list, the central one when it writes none.
+	EnforceOutputs []hardening.OutputType
 }
 
 // hardeningFile is the block as written: decoded strictly, every key once.
@@ -96,9 +130,31 @@ type hardeningFile struct {
 		URL     string    `json:"url,omitempty"`
 		Timeout *Duration `json:"timeout,omitempty"`
 	} `json:"agentGuard,omitzero"`
+	EnforceOutputs []hardening.OutputType `json:"enforceOutputs,omitempty"`
+	Publisher      struct {
+		OctoSTS struct {
+			URL       string `json:"url,omitempty"`
+			TokenFile string `json:"tokenFile,omitempty"`
+			Identity  string `json:"identity,omitempty"`
+		} `json:"octoSTS,omitzero"`
+	} `json:"publisher,omitzero"`
+	Applier struct {
+		Interval   *Duration `json:"interval,omitempty"`
+		AnswerWait *Duration `json:"answerWait,omitempty"`
+	} `json:"applier,omitzero"`
 	Repositories map[string]struct {
-		Mode *modeField `json:"mode,omitempty"`
+		Mode           *modeField              `json:"mode,omitempty"`
+		EnforceOutputs *[]hardening.OutputType `json:"enforceOutputs,omitempty"`
 	} `json:"repositories,omitempty"`
+}
+
+// explicitZero keeps a duration written as zero from being replaced by its default, so Validate
+// refuses it.
+func explicitZero(d *Duration) Duration {
+	if d.Duration == 0 {
+		return Duration{Duration: -1}
+	}
+	return *d
 }
 
 // UnmarshalJSON decodes the block strictly and applies its defaults: off, approved, the classifier
@@ -109,12 +165,16 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("hardening: %w", err)
 	}
 	*h = Hardening{Mode: hardening.ModeOff, MinAuthorTrust: f.MinAuthorTrust, BlockedUsers: f.BlockedUsers,
-		LabelAllowlist: f.LabelAllowlist, AgentGuard: AgentGuard{URL: f.AgentGuard.URL}}
+		LabelAllowlist: f.LabelAllowlist, AgentGuard: AgentGuard{URL: f.AgentGuard.URL}, EnforceOutputs: f.EnforceOutputs,
+		Publisher: Publisher{OctoSTS: PublisherOctoSTS(f.Publisher.OctoSTS)}}
 	if f.AgentGuard.Timeout != nil {
-		h.AgentGuard.Timeout = *f.AgentGuard.Timeout
-		if h.AgentGuard.Timeout.Duration == 0 {
-			h.AgentGuard.Timeout.Duration = -1 // written as zero: Validate refuses it, the default does not replace it
-		}
+		h.AgentGuard.Timeout = explicitZero(f.AgentGuard.Timeout)
+	}
+	if f.Applier.Interval != nil {
+		h.Applier.Interval = explicitZero(f.Applier.Interval)
+	}
+	if f.Applier.AnswerWait != nil {
+		h.Applier.AnswerWait = explicitZero(f.Applier.AnswerWait)
 	}
 	h.ApplyDefaults()
 	if f.Mode != nil {
@@ -134,7 +194,11 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 		if r.Mode != nil {
 			m = hardening.Mode(*r.Mode)
 		}
-		h.Repositories[name] = HardeningRepository{Mode: m}
+		list := h.EnforceOutputs
+		if r.EnforceOutputs != nil {
+			list = *r.EnforceOutputs
+		}
+		h.Repositories[name] = HardeningRepository{Mode: m, EnforceOutputs: list}
 	}
 	return nil
 }
@@ -156,6 +220,37 @@ func (h *Hardening) ApplyDefaults() {
 	if h.AgentGuard.Timeout.Duration == 0 {
 		h.AgentGuard.Timeout.Duration = defaultAgentGuardTimeout
 	}
+	if h.Publisher.OctoSTS.TokenFile == "" {
+		h.Publisher.OctoSTS.TokenFile = defaultPublisherTokenFile
+	}
+	if h.Publisher.OctoSTS.Identity == "" {
+		h.Publisher.OctoSTS.Identity = defaultPublisherIdentity
+	}
+	if h.Applier.Interval.Duration == 0 {
+		h.Applier.Interval.Duration = defaultApplierInterval
+	}
+	if h.Applier.AnswerWait.Duration == 0 {
+		h.Applier.AnswerWait.Duration = defaultApplierAnswerWait
+	}
+}
+
+// EnforcedFor is repository's effective enforced output types, sorted and once each: its own list
+// when it writes one, else the central one (HR10). Empty means the run writes as today.
+func (h Hardening) EnforcedFor(repository string) []hardening.OutputType {
+	list := h.EnforceOutputs
+	if r, ok := h.Repositories[repository]; ok {
+		list = r.EnforceOutputs
+	}
+	out := slices.Clone(list)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// Enforcing reports whether any repository has an enforced output type: only then does the
+// factory build a publisher and start the applier.
+func (h Hardening) Enforcing() bool {
+	return len(h.EnforceOutputs) > 0 || slices.ContainsFunc(slices.Collect(maps.Values(h.Repositories)),
+		func(r HardeningRepository) bool { return len(r.EnforceOutputs) > 0 })
 }
 
 // ModeFor is repository's effective mode: its own when listed, else the central one.
@@ -238,6 +333,60 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 		}
 	}
 	h.validateStricter(bad)
+	h.validateEnforce(bad)
+}
+
+// enforceable are the output types stage H2 enforces; push stays in the sandbox until H3.
+var enforceable = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels, hardening.Issue}
+
+// validateEnforce refuses an enforceOutputs list with push or an unknown type, a repository list
+// that drops a central type, a list on a repository in mode off, a list with no octo-sts publisher,
+// and an applier timing that is not positive (HR10, HR11, HR15, HR19).
+func (h Hardening) validateEnforce(bad func(string, ...any)) {
+	types := func(key string, list []hardening.OutputType) {
+		for _, t := range list {
+			switch {
+			case t == hardening.Push:
+				bad("%s: push arrives with stage H3; this release enforces pr, comment, labels and issue", key)
+			case !slices.Contains(enforceable, t):
+				bad("%s: %q is none of pr, comment, labels, issue", key, t)
+			}
+		}
+	}
+	types("hardening.enforceOutputs", h.EnforceOutputs)
+	if len(h.EnforceOutputs) > 0 && !h.Mode.AtLeast(hardening.ModeAudit) {
+		bad("hardening.enforceOutputs needs hardening.mode audit at least")
+	}
+	for _, name := range slices.Sorted(maps.Keys(h.Repositories)) {
+		r := h.Repositories[name]
+		key := "hardening.repositories." + name + ".enforceOutputs"
+		types(key, r.EnforceOutputs)
+		for _, t := range h.EnforceOutputs {
+			if !slices.Contains(r.EnforceOutputs, t) {
+				bad("%s must be a superset of hardening.enforceOutputs: it drops %q", key, t)
+			}
+		}
+		if len(r.EnforceOutputs) > 0 && !h.ModeFor(name).AtLeast(hardening.ModeAudit) {
+			bad("%s needs the repository's mode audit at least", key)
+		}
+	}
+	if h.Enforcing() {
+		p := h.Publisher.OctoSTS
+		if p.URL == "" {
+			bad("hardening.publisher.octoSTS.url is required with enforceOutputs: the applier writes as the publisher (HR11)")
+		} else if u, err := url.Parse(p.URL); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+			bad("hardening.publisher.octoSTS.url must be an https URL with a host and no credentials")
+		}
+		if !strings.HasPrefix(p.TokenFile, "/") {
+			bad("hardening.publisher.octoSTS.tokenFile must be an absolute path")
+		}
+	}
+	if h.Applier.Interval.Duration <= 0 {
+		bad("hardening.applier.interval must be positive")
+	}
+	if h.Applier.AnswerWait.Duration <= 0 {
+		bad("hardening.applier.answerWait must be positive")
+	}
 }
 
 // validate refuses a classifier URL that is not plain http(s) with a host, or carries credentials,
@@ -274,14 +423,28 @@ func strictJSON(b []byte, v any) error {
 // (R6), so any change to the block needs a new passing drill. T5 enters as its effective mode, so
 // adding or removing the classifier moves the hash and moving it to another host does not.
 func (h Hardening) Hash() string {
+	// The enforced lists are omitted when empty, so a file without them keeps its pre-H2 hash.
 	b, _ := json.Marshal(struct { // a struct of strings, slices and maps: Marshal cannot fail
 		Mode, MinAuthorTrust, Classifier, MaxAge string
 		BlockedUsers, LabelAllowlist             []string
 		Repositories                             map[string]hardening.Mode
+		Enforce                                  []hardening.OutputType            `json:",omitempty"`
+		RepositoryEnforce                        map[string][]hardening.OutputType `json:",omitempty"`
 	}{string(h.Mode), h.MinAuthorTrust, string(h.EffectiveClassifier()), h.Drills.MaxAge.String(),
-		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes()})
+		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes(), h.EnforcedFor(""), h.repositoryEnforce()})
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
+}
+
+// repositoryEnforce is each listed repository's non-empty effective list.
+func (h Hardening) repositoryEnforce() map[string][]hardening.OutputType {
+	m := map[string][]hardening.OutputType{}
+	for name := range h.Repositories {
+		if l := h.EnforcedFor(name); len(l) > 0 {
+			m[name] = l
+		}
+	}
+	return m
 }
 
 func (h Hardening) repositoryModes() map[string]hardening.Mode {

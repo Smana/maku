@@ -155,6 +155,91 @@ func TestRoomToolsUnchanged(t *testing.T) {
 	}
 }
 
+// gatedServer is the broker's :8090 as app builds it: the room tools and the output tools, with
+// one implementer run annotated with ann (nil: no annotation).
+func gatedServer(t *testing.T, ann map[string]any) (*Server, *memLog) {
+	t.Helper()
+	w := runwatch.New(runwatch.DefaultKind)
+	w.Upsert(t.Context(), claim("7f3cq2xz", "implementer", "3kq7x2ma", "Running", ann))
+	log := &memLog{}
+	s, _ := testServer(w, newClock())
+	s.Tools = append(RoomTools(log, fakeRedactor{}, time.Now), OutputTools(log, fakeRedactor{}, time.Now, OutputConfig{})...)
+	return s, log
+}
+
+func listed(t *testing.T, s *Server) []string {
+	t.Helper()
+	var res struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	b, _ := json.Marshal(rpc(t, s, "k", sub, "tools/list", nil).out["result"])
+	if err := json.Unmarshal(b, &res); err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, tl := range res.Tools {
+		out = append(out, tl.Name)
+	}
+	return out
+}
+
+// HR14: a run lists and may call exactly the output tools its claim names; a run with none lists
+// exactly the room tools it lists today. output_push is never served without a bundle store.
+func TestToolGate(t *testing.T) {
+	plain, _ := gatedServer(t, nil)
+	want := listed(t, plain)
+	for _, n := range want {
+		if strings.HasPrefix(n, "output_") {
+			t.Fatalf("an unannotated run lists %s", n)
+		}
+	}
+	today, _ := testServer(watcher(t, "implementer"), newClock())
+	today.Tools = RoomTools(&memLog{}, fakeRedactor{}, time.Now)
+	if got := listed(t, today); !slices.Equal(got, want) {
+		t.Fatalf("an unannotated run's list changed: %v, today %v", want, got)
+	}
+
+	s, log := gatedServer(t, map[string]any{runwatch.SafeOutputsAnnotation: "comment,pr,push",
+		runwatch.LabelAllowlistAnnotation: `["documentation"]`})
+	got := listed(t, s)
+	for _, n := range []string{"output_pr", "output_comment"} {
+		if !slices.Contains(got, n) {
+			t.Errorf("%s not listed: %v", n, got)
+		}
+	}
+	for _, n := range []string{"output_labels", "output_issue", "output_push"} {
+		if slices.Contains(got, n) {
+			t.Errorf("%s listed: %v", n, got)
+		}
+		if _, text := call(t, s, sub, n); !strings.HasPrefix(text, "not_permitted") {
+			t.Errorf("%s callable: %q", n, text)
+		}
+	}
+	if len(log.drafts) != 0 {
+		t.Fatalf("an ungated call recorded %d drafts", len(log.drafts))
+	}
+	res, _ := rpc(t, s, "k", sub, "tools/call", map[string]any{"name": "output_comment",
+		"arguments": map[string]any{"target": "pr", "body": "Done."}}).out["result"].(map[string]any)
+	if res == nil || res["isError"] == true || len(log.drafts) != 1 {
+		t.Fatalf("output_comment: %+v, %d drafts", res, len(log.drafts))
+	}
+}
+
+// The allowlist a gated run's output_labels checks is the one on its claim, not the broker's.
+func TestOutputLabelsReadTheRunsAllowlist(t *testing.T) {
+	labels := tool(OutputTools(&memLog{}, fakeRedactor{}, time.Now, OutputConfig{LabelAllowlist: []string{"broker-side"}}), "output_labels")
+	run := impl
+	run.Run.SafeOutputs, run.Run.LabelAllowlist = []string{"labels"}, []string{"documentation"}
+	if _, err := labels.Call(t.Context(), run, json.RawMessage(`{"add":["documentation"]}`)); err != nil {
+		t.Fatalf("the run's label: %v", err)
+	}
+	if _, err := labels.Call(t.Context(), run, json.RawMessage(`{"add":["broker-side"]}`)); err == nil {
+		t.Fatal("the broker's list served a gated run")
+	}
+}
+
 type fakeForge struct {
 	items  []ForgeText
 	checks []CheckText

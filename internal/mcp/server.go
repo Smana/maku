@@ -78,7 +78,15 @@ type Tool struct {
 	// RoleSchemas replaces InputSchema in tools/list for the roles it names: a property one role
 	// alone may pass is shown to that role alone.
 	RoleSchemas map[string]json.RawMessage
-	Call        func(ctx context.Context, c Caller, args json.RawMessage) (any, error)
+	// Gate, when set, must also accept the run for the tool to be listed or called: a safe-output
+	// tool is served only to a run whose claim names its type (hardening HR14).
+	Gate func(runwatch.Run) bool
+	Call func(ctx context.Context, c Caller, args json.RawMessage) (any, error)
+}
+
+// servedTo reports whether run lists and may call t.
+func (t Tool) servedTo(run runwatch.Run, harness bool) bool {
+	return slices.Contains(t.Roles, run.Role) && (!t.HarnessOnly || harness) && (t.Gate == nil || t.Gate(run))
 }
 
 // Runs is the liveness check on every request; *runwatch.Watcher implements it.
@@ -271,7 +279,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		tools := []map[string]any{}
 		for _, t := range s.Tools {
-			if slices.Contains(t.Roles, run.Role) && (!t.HarnessOnly || harness) {
+			if t.servedTo(run, harness) {
 				schema := t.InputSchema
 				if rs, ok := t.RoleSchemas[run.Role]; ok {
 					schema = rs
@@ -299,7 +307,7 @@ func (s *Server) call(ctx context.Context, w http.ResponseWriter, req mcpwire.Re
 	// An unknown tool and one the role lacks answer alike.
 	i := slices.IndexFunc(s.Tools, func(t Tool) bool { return t.Name == p.Name })
 	agent := policy.Subject{Kind: envelope.ActorAgent, ID: "agent:" + run.ID}
-	if i < 0 || !slices.Contains(s.Tools[i].Roles, run.Role) || (s.Tools[i].HarnessOnly && !harness) || !policy.Allowed(agent, s.Tools[i].Action) {
+	if i < 0 || !s.Tools[i].servedTo(run, harness) || !policy.Allowed(agent, s.Tools[i].Action) {
 		s.reject(ctx, "tool_not_permitted")
 		mcpwire.Write(w, req.ID, mcpwire.ToolError("not_permitted: this tool is not one of the "+run.Role+" role's"), nil)
 		return

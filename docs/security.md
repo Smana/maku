@@ -425,6 +425,48 @@ Residuals while in audit:
 - A run's outputs are checked against that run's canary only: an older run's canary quoted from
   the room is not an alert.
 
+A repository listed in `enforceOutputs` goes one stage further
+([Hardening, non-code outputs enforced](factory.md#hardening-non-code-outputs-enforced)):
+
+- **What is enforced.** Its writer runs request `pr`, `comment`, `labels` and `issue` through
+  `output_*` tools. The factory applies each one after T1 to T4 at enforce, or refuses it with a
+  bounded reason.
+- **Whose voice.** Agent text is published as the agents App, through the octo-sts `publisher`
+  identity, never as the factory App. Only `issue` is filed by the factory App, as
+  `factory/proposed`.
+- **What is checked after.** At a run's end the tracer reads back the task's pull request (its
+  title and body), the agents App's comments on the task's issue and pull request, and the labels
+  it added there. Each must be exactly what an `output_applied` published. A pull request's
+  footer must name the newest applied `pr` output, and its title and body must be that output's.
+  A comment must end with an applied output's marker and hold that output's text. A direct open,
+  or a direct edit of an applied object, is reported `untraced_write` and checked as in audit.
+- **What the applier refuses.** It refuses to edit an open pull request whose footer names none of
+  the task's applied outputs (`output_target`), so a direct open is never adopted.
+- **What closes the bypass.** The sandbox role's `pull_requests: write` is removed in the
+  repository's role policy. The permission gauge shows it.
+
+Residuals with non-code outputs enforced:
+
+- `push` still writes from the sandbox (H3), and the run still reads raw text with `gh` (H4).
+- Until the role policy drops `pull_requests: write`, the run's token can still write directly,
+  with `gh api`, curl, or gh with a token from the credential helper. The harness's `gh` wrapper
+  turns the obvious commands away, but it is advisory. The tracer reports what it observes, and
+  does not stop it.
+- The tracer does not observe:
+  - reviews and review comments;
+  - comments and labels on any thread but the task's issue and pull request;
+  - label removals;
+  - a closed or reopened pull request or issue;
+  - an edit made and reverted between two reads.
+
+  Only the role policy covers these.
+- The publisher and the sandbox roles share the agents App's login, so GitHub's author alone
+  cannot tell an applied write from a direct one. The tracer's comparison with the factory's
+  record does, for what it observes.
+- Agents-App issues are read by author since the run started, so two concurrent runs of the
+  agents App each count the other's issues. On a repository that enforces `issue`, the tracer can
+  over-count them as untraced.
+
 ## Reporting a vulnerability
 
 Privately, through [GitHub security advisories](https://github.com/Smana/maku/security/advisories/new),
