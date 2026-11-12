@@ -202,9 +202,9 @@ func TestPreflightNeedsLeaderElection(t *testing.T) {
 	}
 }
 
-// PR B: a missing git Secret fails visibly, before any run waits on it: the preflight names the
-// Secret, and checks again soon (the factory's run token writer, or an ExternalSecret, may fill it
-// right after install).
+// PR B: a missing git Secret shows, before any run waits on it: the preflight names the Secret and
+// holds new runs Pending (Waiting, never Failed: the factory's run token writer, or an
+// ExternalSecret, may fill it right after install), and checks again soon. The gauge reads 0.
 func TestPreflightGitSecrets(t *testing.T) {
 	noRead := fakeReader(t, gvisor())
 	if err := noRead.Delete(t.Context(), gitSecrets()[1]); err != nil {
@@ -222,17 +222,33 @@ func TestPreflightGitSecrets(t *testing.T) {
 		"no token key":   {empty, `Secret agents/agent-git has no token key: implementer and tester runs mount it (runController.gitSecret)`},
 	} {
 		p := newPreflight(t, tc.c, testConfig(t))
+		gauge := map[string]bool{}
+		p.Passed = func(check string, ok bool) { gauge[check] = ok }
 		if !p.Tick(t.Context()) {
 			t.Errorf("%s: a missing Secret may be filled soon: want the short retry", name)
 		}
-		if got := p.Result(); got.State != PreflightFailed || got.Check != "gitSecrets" || got.Message != tc.want {
-			t.Errorf("%s: %+v, want %q", name, got, tc.want)
+		if got := p.Result(); got.State != PreflightWaiting || got.Check != "gitSecrets" || got.Message != tc.want {
+			t.Errorf("%s: %+v, want Waiting with %q", name, got, tc.want)
 		}
+		if ok, seen := gauge["gitSecrets"]; !seen || ok {
+			t.Errorf("%s: the gauge must read gitSecrets=0 while waiting: %v", name, gauge)
+		}
+	}
+	// A failed RuntimeClass still fails, even with a Secret missing too: it is checked first.
+	p := newPreflight(t, noRead, testConfig(t))
+	if err := noRead.Delete(t.Context(), gvisor()); err != nil {
+		t.Fatal(err)
+	}
+	if p.Tick(t.Context()); p.Result().State != PreflightFailed || p.Result().Check != "runtimeClass" {
+		t.Fatalf("missing class and Secret: %+v", p.Result())
 	}
 	// unsafeSharedGitToken: one Secret, and no read Secret is looked for.
 	cfg := testConfig(t)
 	cfg.GitReadSecret, cfg.UnsafeSharedGitToken = "", true
-	p := newPreflight(t, noRead, cfg)
+	if err := noRead.Create(t.Context(), gvisor()); err != nil {
+		t.Fatal(err)
+	}
+	p = newPreflight(t, noRead, cfg)
 	if p.Tick(t.Context()); p.Result().State != PreflightPassed {
 		t.Fatalf("shared token: %+v", p.Result())
 	}

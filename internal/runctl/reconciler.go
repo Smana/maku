@@ -39,7 +39,7 @@ type Reconciler struct {
 	Cfg       Config
 	Now       func() time.Time
 	Log       *slog.Logger
-	// Preflight, when set, is consulted before a run's first pod: Unknown waits, Failed refuses.
+	// Preflight, when set, is consulted before a run's first pod: Unknown and Waiting wait, Failed refuses.
 	Preflight interface{ Result() Result }
 }
 
@@ -84,7 +84,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
 				return ctrl.Result{}, r.writeStatus(ctx, run, *st)
 			default:
-				why := "waiting for the run-controller's preflight (sandbox RuntimeClass)"
+				why := "waiting for the run-controller's preflight"
 				if res.Message != "" {
 					why += ": " + res.Check + ": " + res.Message
 				}
