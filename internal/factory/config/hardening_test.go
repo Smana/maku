@@ -380,7 +380,9 @@ func TestHashCoversEnforce(t *testing.T) {
 // HR13: an enforced repository whose runs are not cloud-native-ref's XR runs on a token no role
 // policy scopes. The factory starts, and says so.
 func TestUnscopedTokenWarning(t *testing.T) {
-	hr13 := func(ws []string) bool { return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, "HR13") }) }
+	hr13 := func(ws []string) bool {
+		return slices.ContainsFunc(ws, func(w string) bool { return strings.Contains(w, "HR13") })
+	}
 	block := "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher
 	runs := "runs: {group: maku.ogenki.io}\n"
 	for name, tc := range map[string]struct {
