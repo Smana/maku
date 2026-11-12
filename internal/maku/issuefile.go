@@ -58,6 +58,9 @@ type planShape struct {
 	// Maintainer is the caller's flag from the repository's catalogue; absent when the broker read
 	// none. A false one means a class: label of theirs would not count (P5).
 	Maintainer *bool `json:"maintainer"`
+	// Status is "replanned" when the plan was a plan/v1 (P14): the plan here is the plan/v2 to
+	// confirm, and nothing may be filed from this answer.
+	Status string `json:"status"`
 }
 
 // planView is what the form shows of a validated plan: the repository it files into, the issue it
@@ -467,6 +470,13 @@ func (r *Relay) planned(ctx context.Context, args json.RawMessage) (*governed, a
 	var p planShape
 	if json.Unmarshal(sc, &p) != nil || !present(p.Plan) || p.Hash == "" {
 		return nil, mcpwire.ToolError("unavailable: the broker's plan_check answer is unreadable")
+	}
+	if p.Status == "replanned" {
+		// P14, review B1: the plan was never checked as final, so nothing is filed from it. The
+		// developer is shown the plan/v2 and confirms that one, through issue_file again.
+		out, _ := mcpwire.ToolResult(map[string]any{"filed": false, "status": "replanned", "plan": p.Plan, "hash": p.Hash,
+			"next": "the plan was made before profiles, so nothing was filed: show the developer this plan/v2 and, on their yes, call issue_file again with it and this hash"})
+		return nil, out
 	}
 	var v planView
 	// The plan_check answer is what gh's arguments come from: a plan that does not read as a

@@ -947,3 +947,20 @@ func TestFormShowsSuggestion(t *testing.T) {
 		}
 	}
 }
+
+// Review B1, P14: a plan/v1 is never filed. plan_check answers it replanned with the plan/v2 to
+// confirm; issue_file files nothing, shows no form, and hands the new plan and hash back.
+func TestIssueFileRefusesAReplannedPlan(t *testing.T) {
+	v2 := planFixture(t, "single")
+	b, err := json.Marshal(map[string]any{"status": "replanned", "plan": v2, "hash": intake.Hash(v2),
+		"canStart": false, "canStartWhy": "replanned: confirm the plan/v2 answered"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := relay(t, fakeBroker(t, planCheckResult(string(b))))
+	v1 := planFixture(t, "v1-single")
+	got := fmt.Sprint(r.issueFile(t.Context(), planCall(t, v1, intake.Hash(v1), nil)))
+	if r.filed != 0 || r.asked != 0 || !strings.Contains(got, "replanned") || !strings.Contains(got, intake.Hash(v2)) {
+		t.Fatalf("filed=%d asked=%d %s", r.filed, r.asked, got)
+	}
+}
