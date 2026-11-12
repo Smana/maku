@@ -647,7 +647,7 @@ func TestDescribeOutputPush(t *testing.T) {
 			"push to agent/t-1, digest eeeeeeeeeeee, protected: go.mod, go.sum, .github/x and 2 more"},
 		"the binding over the action's claims": {"agent/t-1", d, map[string]any{"branch": "agent/evil", "digest": other},
 			"push to agent/t-1, digest eeeeeeeeeeee"},
-		"paths with format characters": {"agent/t-1", d, map[string]any{"protected": []string{"go.mod‮", "a​b", "x\x01", "go.sum"}},
+		"paths with format characters": {"agent/t-1", d, map[string]any{"protected": []string{"go.mod\u202e", "a\u200bb", "x\x01", "go.sum"}},
 			"push to agent/t-1, digest eeeeeeeeeeee, protected: go.sum"},
 		"an action claiming a digest, no binding": {"", "", map[string]any{"output": "0123456789abcdef", "digest": d, "branch": "agent/t-1"},
 			"forge.push"},
