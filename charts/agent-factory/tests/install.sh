@@ -284,7 +284,8 @@ if [[ $NETPOL != none ]]; then
   ((found)) || { tail -40 "$work/rc.log" >&2; die "the run-controller did not log '$want' within 3 minutes"; }
   grep -F "$want" "$work/rc.log" | head -1
   if [[ $NETPOL == kubernetes ]]; then
-    kubectl -n "$NS" logs deploy/egress-proxy --all-containers --prefix >"$work/proxy.log" 2>&1 || true
+    # every replica: deploy/egress-proxy would read one of the two, and the probe's CONNECT may be on the other
+    kubectl -n "$NS" logs -l app.kubernetes.io/name=egress-proxy --all-containers --prefix --tail=-1 >"$work/proxy.log" 2>&1 || true
     grep -qF "allow run=preflight github.com:443" "$work/proxy.log" ||
       { cat "$work/proxy.log" >&2; die "the egress proxy did not log the probe's CONNECT (allow run=preflight github.com:443)"; }
     echo "ok: the preflight passed, and its probe went through the egress proxy"
