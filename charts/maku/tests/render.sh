@@ -276,6 +276,20 @@ bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set san
 bad "at '/sandbox/unsafeAllowRunc': got string, want boolean" --set-string sandbox.unsafeAllowRunc=yes
 bad 'additional properties' --set sandbox.runtimeClass=kata
 
+# runsQuota (D16, plan PR10): one ResourceQuota on the runs namespace, pods, CPU and memory only
+out="$q"
+ykind ResourceQuota '(.metadata.name == "runs" and .metadata.namespace == "agents" and (.spec.hard | keys | sort | join(",")) == "limits.cpu,limits.memory,pods,requests.cpu,requests.memory")' 'one ResourceQuota runs in the runs namespace, pods, CPU and memory only'
+ykind ResourceQuota '(.spec.hard.pods == "25" and .spec.hard."requests.cpu" == "16" and .spec.hard."requests.memory" == "32Gi" and .spec.hard."limits.cpu" == "32" and .spec.hard."limits.memory" == "64Gi")' 'the quota defaults: ten small runs with headroom'
+[[ $(yq ea '[select(.kind == "ResourceQuota")] | length' - <<<"$q") == 1 ]] || { echo 'FAIL: exactly one ResourceQuota' >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runsQuota.enabled=false)"
+ynone 'select(.kind == "ResourceQuota")' 'runsQuota.enabled=false renders no ResourceQuota'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runsQuota.hard.pods=5)"
+ykind ResourceQuota '(.spec.hard.pods == "5" and .spec.hard."limits.memory" == "64Gi")' 'one quota key overrides alone'
+out="$p"
+ynone 'select(.kind == "ResourceQuota")' 'runController.enabled=false renders no ResourceQuota'
+bad "at '/runsQuota/enabled': got string, want boolean" --set-string runsQuota.enabled=yes
+bad 'additional properties' --set runsQuota.hard.services=1
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"

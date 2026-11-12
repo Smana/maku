@@ -60,6 +60,27 @@ spec:
     # Port 8080 (intake) is deliberately admitted by no rule: the demo configures no intake.
 
 ---
+# Source: agent-factory/charts/maku/templates/runs-quota.yaml
+# The runs namespace's safety net (v4 D16): admission stays in the factory's slots and budgets. A run
+# over it waits Pending (QuotaExceeded); the run-controller never fails it for this.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: runs
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  hard:
+    limits.cpu: "32"
+    limits.memory: "64Gi"
+    pods: "25"
+    requests.cpu: "16"
+    requests.memory: "32Gi"
+
+---
 # Source: agent-factory/charts/maku-factory/templates/pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget

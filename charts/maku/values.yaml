@@ -141,6 +141,24 @@ sandbox:
   runtimeClassName: ""
   unsafeAllowRunc: false
 
+# A ResourceQuota on runs.namespace (D16): a cluster-level safety net behind the factory's slots and
+# budgets, not its admission. A run whose pod the quota refuses waits Pending (QuotaExceeded, retried
+# every 30 s); it never fails. Pods, CPU and memory only: a quota on ephemeral-storage would require
+# it on every container. Sized for ten small runs with headroom. A small run is the harness (1-2 CPU,
+# 2-4Gi) plus the bridge (20m-100m, 32-64Mi) and the gate (10m-50m, 16-32Mi):
+#   requests: 10 x 1.03 CPU = 10.3 -> 16;  10 x 2.05Gi = 20.5Gi -> 32Gi
+#   limits:   10 x 2.15 CPU = 21.5 -> 32;  10 x 4.1Gi  = 41Gi   -> 64Gi
+#   pods:     10 runs, the preflight's probe and room for medium runs' retries -> 25
+# Rendered only with runController.enabled.
+runsQuota:
+  enabled: true
+  hard:
+    pods: "25"
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi
+
 # CI only: images `kind load`ed have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false

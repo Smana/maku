@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,7 @@ const (
 	secretRetry    = 30 * time.Second
 	gcRetry        = 5 * time.Second
 	preflightRetry = 10 * time.Second
+	quotaRetry     = 30 * time.Second
 )
 
 // Reconciler turns an AgentRun into its owned objects and reports the pod back as status.
@@ -109,6 +111,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		stale, err := r.create(ctx, run, runID, m, ca)
 		if stale != "" {
 			return r.waitForGC(ctx, run, st, stale)
+		}
+		// The runs namespace's ResourceQuota (v4 D16) is a safety net behind the factory's slots, not
+		// an error: a run over it waits for room (plan PR10).
+		if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
+			pending(st, "QuotaExceeded", err.Error())
+			return ctrl.Result{RequeueAfter: quotaRetry}, r.writeStatus(ctx, run, *st)
 		}
 		if err != nil {
 			// A refusal that retrying cannot cure (a bad object, a forbidden verb, a missing
