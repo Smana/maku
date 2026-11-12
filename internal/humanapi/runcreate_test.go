@@ -484,7 +484,7 @@ func TestRunCreateProfileBoundByPlan(t *testing.T) {
 			e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withIntake(t, "slack"), withTaskFactory(f),
 				withCatalogue(&fakeFactoryCatalogue{}))
 			plan := planFixture(t, "slack-one-issue")
-			plan.Issues[0].Class, plan.Issues[0].Profile = c.class, c.profile
+			pinIssue(&plan.Issues[0], c.class, c.profile)
 			args := map[string]any{"repo": plan.Repository, "title": plan.Issues[0].Title, "text": plan.Issues[0].Body,
 				"dataClass": "public", "max_cost": 1.5, "on_behalf_of": "slack:T01ABC/U02DEF", "plan": plan, "plan_hash": intake.Hash(plan)}
 			got := call(t, e, bearer("slack-app"), "run_create", args)

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,9 +25,20 @@ func (notMaintainerCatalogue) Catalogue(context.Context, string, string, string)
 func pinned(t *testing.T, class, profile string) intake.Plan {
 	t.Helper()
 	p := planFixture(t, "single")
-	p.Issues[0].Class, p.Issues[0].Profile = class, profile
+	pinIssue(&p.Issues[0], class, profile)
 	p.Hash = intake.Hash(p)
 	return p
+}
+
+// pinIssue is is in class, pinned to profile as a revision leaves it: the Decision record, and the
+// roles the catalogue gives the profile (G3).
+func pinIssue(is *intake.Issue, class, profile string) {
+	is.Class, is.Profile, is.Roles = class, profile, nil
+	if profile == "" {
+		return
+	}
+	is.Body += "\n\n## Decisions\nD1: profile: " + profile + ", pinned by the developer"
+	is.Roles = aiNativeRef(true).Profiles[profile].Roles
 }
 
 // P6: plan_check refuses a pin the catalogue refuses, with the closed list's code and sentence, and
@@ -87,6 +99,7 @@ func TestPlanCheckPinRevision(t *testing.T) {
 	}
 	is := out.Plan.Issues[0]
 	if is.Profile != "review-frontier" || !strings.HasSuffix(is.Body, "D1: profile: review-frontier, pinned by the developer") ||
+		!slices.Equal(is.Roles, []string{"implementer", "tester", "reviewer"}) ||
 		out.Hash == base.Hash || out.Hash != intake.Hash(out.Plan) {
 		t.Fatalf("%+v %s", is, out.Hash)
 	}
@@ -95,6 +108,18 @@ func TestPlanCheckPinRevision(t *testing.T) {
 	}
 	if !strings.Contains(metricsBody(t, e), `maku_intake_profile_choices_total{choice="suggested",class="review",surface="session"} 1`) {
 		t.Fatal(metricsBody(t, e))
+	}
+}
+
+// G3: a pinned plan whose roles are not the pinned profile's is not the plan a revision made.
+func TestPlanCheckRefusesPinnedRolesOtherThanTheProfiles(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(&fakeFactoryCatalogue{}))
+	plan := pinned(t, "review", "review-frontier")
+	plan.Issues[0].Roles = []string{"implementer"}
+	plan.Hash = intake.Hash(plan)
+	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
+	if !got.isError || !strings.Contains(got.text, "planner_invalid") {
+		t.Fatal(got.text)
 	}
 }
 
@@ -120,7 +145,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 	if again.isError || json.Unmarshal(again.structured, &second) != nil || second.Hash != out.Hash {
 		t.Fatalf("not idempotent: %s", again.text)
 	}
-	if !strings.Contains(metricsBody(t, e), `maku_intake_profile_choices_total{choice="factory",class="review",surface="session"} 2`) {
+	if !strings.Contains(metricsBody(t, e), `maku_intake_profile_choices_total{choice="factory",class="review",surface="session"} 1`) {
 		t.Fatal(metricsBody(t, e))
 	}
 }

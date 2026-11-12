@@ -533,6 +533,9 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	// plan_check is an external filing door in both shapes: intermediate planner output may carry
 	// markers, but a checked plan may not.
 	classes := s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)
+	if a.Candidate != nil && intake.IsProfileRevision(a.Plan, *a.Candidate) {
+		plan = intake.MaterialRoles(plan, classes) // G3: the pinned profile's roles are material
+	}
 	if ref := intake.CheckFinal(plan, candidates, classes); ref != nil {
 		return nil, s.planCheckRefused(ctx, surface, ref)
 	}
@@ -562,7 +565,9 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	if c, err := s.Catalogue.Get(ctx, p, plan.Repository, a.OnBehalfOf); err == nil {
 		checked.Maintainer = &c.Maintainer
 	}
-	s.countChoices(ctx, plan, surface)
+	if s.choices.first(plan.Hash) { // issue_file checks the plan the skill checked: count it once
+		s.countChoices(ctx, plan, surface)
+	}
 	return viewResult{text: b.String(), data: checked}, nil
 }
 

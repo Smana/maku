@@ -145,3 +145,58 @@ func TestProfileRecord(t *testing.T) {
 		t.Fatal("IsProfileRevision")
 	}
 }
+
+// A pin replaces the factory's-choice Assumption: the body never says both.
+func TestReviseProfileReplacesTheAssumption(t *testing.T) {
+	base := intake.RecordProfiles(finalBase())
+	candidate := cloneRevisionPlan(base)
+	candidate.Issues[0].Profile = "review-frontier"
+	got, err := intake.Revise(base, base.Hash, candidate, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := got.Issues[0].Body
+	if strings.Contains(body, "factory's choice; suggested") || !strings.HasSuffix(body, "\nD4: profile: review-frontier, pinned by the developer") {
+		t.Fatalf("body = %q", body)
+	}
+	if !strings.Contains(body, "D2 [g1]: docs team") {
+		t.Fatalf("a settled record was removed: %q", body)
+	}
+	if r := intake.CheckFinal(got, []string{"owner/repository"}, map[string]intake.Class{"review": {}}); r != nil {
+		t.Fatal(r)
+	}
+}
+
+// A pinned issue carries the Decision record that pinned it: one without is refused.
+func TestCheckFinalNeedsThePinRecord(t *testing.T) {
+	p := finalBase()
+	p.Issues[0].Profile = "review-frontier"
+	if r := intake.CheckFinal(p, []string{"owner/repository"}, map[string]intake.Class{"review": {}}); r == nil || r.Reason != intake.ReasonPlannerInvalid {
+		t.Fatalf("a pin without its record: %+v", r)
+	}
+	other := finalBase()
+	other.Issues[0].Body += "\nD3: profile: review-pair, pinned by the developer"
+	other.Issues[0].Profile = "review-frontier"
+	if r := intake.CheckFinal(other, []string{"owner/repository"}, map[string]intake.Class{"review": {}}); r == nil {
+		t.Fatal("a record for another profile was taken")
+	}
+}
+
+// G3: the material roles follow the pin: the pinned profile's template, else the floor's.
+func TestMaterialRoles(t *testing.T) {
+	classes := map[string]intake.Class{"review": {Mode: "off", Floor: "review-floor", Roles: nil,
+		Offered: []string{"review-frontier"}, ProfileRoles: map[string][]string{"review-frontier": {"implementer", "tester", "reviewer"}}}}
+	p := finalBase()
+	p.Issues[0].Profile = "review-frontier"
+	got := intake.MaterialRoles(p, classes)
+	if !slices.Equal(got.Issues[0].Roles, []string{"implementer", "tester", "reviewer"}) || len(got.Issues[1].Roles) != 0 {
+		t.Fatalf("%+v", got.Issues)
+	}
+	if got.Hash != intake.Hash(got) || got.Hash == intake.Hash(p) {
+		t.Fatal("the roles are material: the hash covers them")
+	}
+	got.Issues[0].Profile = ""
+	if back := intake.MaterialRoles(got, classes); len(back.Issues[0].Roles) != 0 {
+		t.Fatalf("unpinned roles %v, want the floor's", back.Issues[0].Roles)
+	}
+}

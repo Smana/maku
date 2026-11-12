@@ -270,6 +270,12 @@ func CheckFinal(p Plan, candidates []string, classes map[string]Class) *Refusal 
 		return refuse(ReasonUnresolvedMarker, "")
 	}
 	for _, is := range p.Issues {
+		if is.Profile != "" && !PinRecorded(is.Body, is.Profile) {
+			// A pin is made by a revision, which writes its Decision: one without it was not.
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile without the Decision record that pinned it", is.Index))
+		}
+	}
+	for _, is := range p.Issues {
 		if _, err := sanitize.CheckFinalDraft(is.Title, is.Body); err != nil {
 			switch {
 			case strings.HasPrefix(err.Error(), "unresolved_marker:"):

@@ -97,6 +97,8 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-sr
 // Server is the :8080 API. Humans, Groups, WebClient, Rooms, Namespace, Log, Hub
 // and Runs are required; the rest is optional.
 type Server struct {
+	// choices is the plan hashes plan_check already counted a profile choice for (nit 7).
+	choices choiceLedger
 	// Sponsored authenticates a sponsored principal's bearer on /mcp (factory interfaces F4, R13);
 	// nil while human.mcp.sponsored is empty, and then every sponsored token is refused.
 	Sponsored SponsoredAuthenticator

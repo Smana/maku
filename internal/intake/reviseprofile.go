@@ -58,7 +58,11 @@ func reviseProfile(base, candidate Plan) (Plan, error) {
 		}
 		next++
 		out.Issues[i].Profile = is.Profile
-		out.Issues[i].Body = appendRevisionRecord(out.Issues[i].Body, fmt.Sprintf("D%d: %s", next, text))
+		body := out.Issues[i].Body
+		if is.Profile != "" {
+			body = dropFactorysChoice(body) // the pin replaces it: the body never says both
+		}
+		out.Issues[i].Body = appendRevisionRecord(body, fmt.Sprintf("D%d: %s", next, text))
 	}
 	out.Hash = Hash(out)
 	return out, nil
@@ -82,6 +86,59 @@ func RecordProfiles(p Plan) Plan {
 		added = true
 	}
 	if !added {
+		return p
+	}
+	out.Hash = Hash(out)
+	return out
+}
+
+// factorysChoiceRE is the Assumption RecordProfiles writes, one whole line.
+var factorysChoiceRE = regexp.MustCompile(`(?m)^A[0-9]+: profile: factory's choice; suggested [a-z0-9-]+\n?`)
+
+// dropFactorysChoice removes the factory's-choice Assumption a pin replaces. Records keep their
+// numbers: the grammar asks for ascending numbers, not contiguous ones.
+func dropFactorysChoice(body string) string {
+	return factorysChoiceRE.ReplaceAllString(body, "")
+}
+
+// PinRecorded is whether body's last profile record is the Decision that pinned profile: a pinned
+// issue says so in the issue filed (CheckFinal).
+func PinRecorded(body, profile string) bool {
+	records, _ := sanitize.DecisionRecords(body)
+	for i := len(records) - 1; i >= 0; i-- {
+		r := records[i]
+		if r.Gap == "" && strings.HasPrefix(r.Text, "profile: ") {
+			return r.Kind == "D" && r.Text == "profile: "+profile+", pinned by the developer"
+		}
+	}
+	return false
+}
+
+// MaterialRoles writes each issue's material roles from the plan repository's catalogue classes
+// (G3): the pinned profile's template roles, else the floor's (none for a floor without a template).
+// A class from the config table is left as Compose wrote it. The hash is renewed when a role changed.
+func MaterialRoles(p Plan, classes map[string]Class) Plan {
+	out := cloneRevision(p)
+	changed := false
+	for i, is := range p.Issues {
+		class, ok := classes[is.Class]
+		if !ok || !class.fromCatalogue() {
+			continue
+		}
+		roles := class.Roles
+		if is.Profile != "" {
+			pinned, offered := class.ProfileRoles[is.Profile]
+			if !offered {
+				continue // CheckPin refuses it; nothing to derive
+			}
+			roles = pinned
+		}
+		if !slices.Equal(roles, is.Roles) {
+			out.Issues[i].Roles = slices.Clone(roles)
+			changed = true
+		}
+	}
+	if !changed {
 		return p
 	}
 	out.Hash = Hash(out)
