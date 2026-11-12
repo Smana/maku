@@ -137,6 +137,10 @@ type metrics interface {
 	SteeringRead(ctx context.Context, class, read string)
 	ScoperRun(ctx context.Context, class, outcome string)
 	ProfileRecommendation(ctx context.Context, class, cohort, recommended string, applied bool)
+	// ProfilePin counts a pin seen at triage, honoured or refused with its code (P6).
+	ProfilePin(ctx context.Context, class, profile, outcome, reason string)
+	// ProfileAgreement counts the planner's suggestion against the scoper's recommendation (P13).
+	ProfileAgreement(ctx context.Context, class, outcome string)
 	ScopeBounce(ctx context.Context, class, exit string)
 	Split(ctx context.Context, class, outcome string)
 	SplitChild(ctx context.Context, class, outcome string)
@@ -1135,6 +1139,9 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	if err != nil {
 		return err
 	}
+	if d, err = r.pinTestsPaths(ctx, cfg, t, d); err != nil {
+		return err
+	}
 	t.Spec.Template, t.Spec.PredictedClass, t.Spec.DataClass = d.Template, d.PredictedClass, d.DataClass
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
 	var profile *v1alpha1.ProfileStatus
@@ -1157,6 +1164,7 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status = status
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
+	r.notePin(ctx, cfg, t, d)
 	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
@@ -1189,12 +1197,17 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class str
 	}
 }
 
-// floorProfile is the profile t is frozen under at triage: its class's floor, with the cohort's
-// source; nil for a class without a harness, whose task carries no status.profile. Source label is
-// a pinned profile only (P8): a class label alone leaves the task floor or control.
+// floorProfile is the profile t is frozen under at triage: an honoured pin (source label, cohort
+// labeled, P9), else its class's floor with the cohort's source; nil for a class without a harness,
+// whose task carries no status.profile. A pin, honoured or refused, is recorded as requested, and a
+// refused one with its code: the task runs as if unpinned (P6). A class label alone is no pin (P8).
 func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
 	cl := r.class(cfg, t, d.PredictedClass)
-	p, ok := cfg.ProfileFor(cl, cl.Harness)
+	name := cl.Harness
+	if d.Pin.Honoured() {
+		name = d.Pin.Name
+	}
+	p, ok := cfg.ProfileFor(cl, name)
 	if !ok {
 		return nil
 	}
@@ -1206,8 +1219,42 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 	if cohort == "" {
 		cohort = triage.CohortTreatment
 	}
-	return &v1alpha1.ProfileStatus{Name: cl.Harness, Source: source, Cohort: cohort,
-		Checks: cl.Checks || p.Checks, TestFirst: cl.TestFirst || p.TestFirst}
+	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
+		Checks: cl.Checks || p.Checks, TestFirst: cl.TestFirst || p.TestFirst, Requested: d.Pin.Name, Refused: d.Pin.Refused}
+}
+
+// pinTestsPaths is the one pin check triage leaves to the reconciler, since it reads the repository:
+// an honoured tests-first pin on a repository that declares no tests paths is refused
+// profile_no_tests_paths, and the task joins the cohorts by hash, as for any refused pin.
+func (r *Reconciler) pinTestsPaths(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d triage.Decision) (triage.Decision, error) {
+	if !d.Pin.Honoured() || !cfg.HarnessProfiles[d.Pin.Name].TestFirst {
+		return d, nil
+	}
+	paths, err := r.testPaths(ctx, t)
+	if err != nil || len(paths) > 0 {
+		return d, err
+	}
+	d.Pin = d.Pin.NoTestsPaths()
+	d.Pinned = false
+	d.Cohort = triage.CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)
+	return d, nil
+}
+
+// notePin counts the pin triage saw and narrates a refused one in the spec's one sentence. The count
+// is deferred like every effect of the pass, so a replayed triage counts once.
+func (r *Reconciler) notePin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d triage.Decision) {
+	if d.Pin.Name == "" {
+		return
+	}
+	class, profile, outcome, reason := d.PredictedClass, d.Pin.Name, "honoured", d.Pin.Refused
+	if _, ok := cfg.HarnessProfiles[profile]; !ok {
+		profile = "other"
+	}
+	if reason != "" {
+		outcome = "refused"
+		narrateLater(t, narrate.ProfileRefused(d.Pin.Name, triage.PinRefusal(cfg, t.Spec.Repository, class, d.Pin).Sentence()))
+	}
+	record(ctx, func(ctx context.Context) { r.Metrics.ProfilePin(ctx, class, profile, outcome, reason) })
 }
 
 // triaged gives the task its room (R2). A room of that name the factory did not make escalates:

@@ -229,10 +229,10 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 		if _, ok := classes[is.Class]; !ok {
 			return invalidClass(is.Index, is.Class)
 		}
-		if is.Profile != "" {
-			// A pin is checked against the catalogue from stage 3; until then a plan that carries one
-			// is not a plan anything here can honour.
-			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile, pins are not accepted yet", is.Index))
+		if is.Profile != "" && !profileNameRE.MatchString(is.Profile) {
+			// Whether a pin holds is the catalogue's to say (CheckPin, at the door that reads one);
+			// here it is only held to the shape a profile's name has, since it lands in a body and a label.
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a profile's name", is.Index))
 		}
 		if s := is.Suggestion; s != nil {
 			if n := utf8.RuneCountInString(s.Why); n > MaxWhyRunes {
@@ -270,6 +270,12 @@ func CheckFinal(p Plan, candidates []string, classes map[string]Class) *Refusal 
 		return refuse(ReasonUnresolvedMarker, "")
 	}
 	for _, is := range p.Issues {
+		if is.Profile != "" && !PinRecorded(is.Body, is.Profile) {
+			// A pin is made by a revision, which writes its Decision: one without it was not.
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile without the Decision record that pinned it", is.Index))
+		}
+	}
+	for _, is := range p.Issues {
 		if _, err := sanitize.CheckFinalDraft(is.Title, is.Body); err != nil {
 			switch {
 			case strings.HasPrefix(err.Error(), "unresolved_marker:"):
@@ -291,3 +297,66 @@ func CheckFinal(p Plan, candidates []string, classes map[string]Class) *Refusal 
 func isCandidate(candidates []string, repository string) bool {
 	return slices.ContainsFunc(candidates, func(c string) bool { return strings.EqualFold(c, repository) })
 }
+
+// The closed list of profile refusals (P12): why a pinned harness profile was not applied, shared by
+// intake (CheckPin) and triage (ResolvePin), so a metric labels one spelling and a reader gets one
+// sentence. A pin refused at triage is never a task failure: the task runs as if unpinned.
+const (
+	ProfileUnknown       = "profile_unknown"
+	ProfileNotAllowed    = "profile_not_allowed"
+	ProfileNotOffered    = "profile_not_offered" // intake only
+	ClassProfileFixed    = "class_profile_fixed"
+	ClassNoProfiles      = "class_no_profiles"
+	NotMaintainer        = "not_maintainer"
+	ProfileConflict      = "profile_conflict" // triage only
+	ProfileInternal      = "profile_internal"
+	ProfileNoTestsPaths  = "profile_no_tests_paths" // triage only
+	CatalogueUnavailable = "catalogue_unavailable"  // intake only
+)
+
+// ProfileRefusals is the closed list, in the spec's order.
+var ProfileRefusals = []string{ProfileUnknown, ProfileNotAllowed, ProfileNotOffered, ClassProfileFixed, ClassNoProfiles,
+	NotMaintainer, ProfileConflict, ProfileInternal, ProfileNoTestsPaths, CatalogueUnavailable}
+
+// ProfileRefusal is one refused pin with the fields its sentence names. It is kept apart from
+// refuse()'s single-diagnostic rule because these sentences take several fields. Every field is a
+// config name the reader may see in the catalogue: none is a repository.
+type ProfileRefusal struct {
+	Code, Class, Profile, Floor, Mode string
+	Allowed                           []string
+}
+
+// Sentence is the code's one sentence. The switch is closed: a code outside the list panics, the
+// same programming error refuse() panics on.
+func (r ProfileRefusal) Sentence() string {
+	switch r.Code {
+	case ProfileUnknown:
+		return fmt.Sprintf("`%s` is not a profile of this factory. `classes_list` shows the profiles.", r.Profile)
+	case ProfileNotAllowed:
+		runs := "`" + r.Floor + "`"
+		if len(r.Allowed) > 0 {
+			runs += " or `" + strings.Join(r.Allowed, "`, `") + "`"
+		}
+		return fmt.Sprintf("Class `%s` runs under %s; `%s` is not one of them.", r.Class, runs, r.Profile)
+	case ProfileNotOffered:
+		return fmt.Sprintf("`%s` sets no template, so its roles are chosen at triage; it runs only as the factory's choice.", r.Profile)
+	case ClassProfileFixed:
+		return fmt.Sprintf("Class `%s` is %s: its merge policy runs it under `%s` only.", r.Class, r.Mode, r.Floor)
+	case ClassNoProfiles:
+		return fmt.Sprintf("Class `%s` declares no profiles: the factory runs it as configured.", r.Class)
+	case NotMaintainer:
+		return "Only a maintainer of this repository can choose the profile; the factory will choose it."
+	case ProfileConflict:
+		return "The issue names more than one profile; none was applied."
+	case ProfileInternal:
+		return fmt.Sprintf("`%s` writes tests first, which runs on public tasks only.", r.Profile)
+	case ProfileNoTestsPaths:
+		return fmt.Sprintf("`%s` writes tests first, and this repository declares no tests paths.", r.Profile)
+	case CatalogueUnavailable:
+		return "The factory's list of classes could not be read; try again in a minute."
+	}
+	panic("intake: profile refusal outside the closed list: " + r.Code)
+}
+
+// Refusal is r as a plan_check refusal: its code and its one sentence.
+func (r ProfileRefusal) Refusal() *Refusal { return &Refusal{Reason: r.Code, Sentence: r.Sentence()} }

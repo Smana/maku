@@ -153,7 +153,7 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
   either way the prompt shows exactly what is filed. An agent that cannot prompt you is refused: file the draft yourself
   with `gh issue create`. The form's "file" toggle defaults to no (so Claude Code shows it set, not "required"), and a second field, "start", defaults to no too and appears
   only when `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`: yes labels the issue `factory/ready` with
-  your `gh`, which starts the factory. With a plan, start first applies the plan's `class:<name>` label (`gh api -X POST repos/{r}/issues/{n}/labels`, which creates a missing label), then `factory/ready`; a failed class label starts nothing. When the repository's catalogue says you do not maintain it, the class label is skipped (the factory would not count it) and the prompt says so. The prompt also shows the class, the factory's choice of profile, the merge outcome and the planner's suggestion. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
+  your `gh`, which starts the factory. With a plan, start first applies the plan's `class:<name>` label (`gh api -X POST repos/{r}/issues/{n}/labels`, which creates a missing label), then the plan's `profile:<name>` when it pins one, then `factory/ready`; a failed class or profile label starts nothing. When the repository's catalogue says you do not maintain it, both labels are skipped (the factory would count neither) and the prompt says so. The prompt also shows the class, the factory's choice of profile, the merge outcome and the planner's suggestion. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
   call `issue_file` but cannot answer the form.
 - `need_answer {repo, issue, room?}` answers a scoper's post-filing question on the issue. It acts only
   while `factory/needs-author` is present and `factory/ready` is absent. With no `room`, it resolves the
@@ -228,6 +228,19 @@ To answer a gap, your agent passes `intake_plan` the original request fields plu
 and their new Decision/Assumption records may change. The broker verifies the base and returns the
 candidate's new hash. To accept every remaining recommendation, the agent records each as an
 `A<n> [g<n>]` assumption and calls `plan_check` with the same envelope; no model call is needed.
+
+A maintainer may pin a harness profile once every gap is answered: the agent calls `plan_check` (or
+`intake_plan`) with a candidate where only an issue's `profile` changed. The broker appends
+`D<n>: profile: <p>, pinned by the developer` to that issue's Decisions (replacing a
+`profile: factory's choice` Assumption), sets the issue's roles to the pinned profile's template,
+checks the pin against the repository's catalogue and answers the new hash, with no model call and
+no daily plan. A final plan whose issue names a profile without that Decision is refused. A pin the
+catalogue refuses comes back as one closed reason and sentence (`profile_not_allowed`,
+`class_profile_fixed`, `not_maintainer`, …; the list is in [the factory's docs](factory.md#pinning-a-harness-profile));
+the plan is not finalised and you pick again or keep the factory's choice. Keeping the factory's
+choice pins nothing: when the plan suggested a profile, `plan_check` records
+`A<n>: profile: factory's choice; suggested <s>` so the issue says what was chosen. Only a
+maintainer may pin; the skill offers no pin to anyone else.
 
 What a plan shows, as `intake_plan` answers and your agent shows it back:
 

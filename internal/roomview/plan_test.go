@@ -90,6 +90,26 @@ func TestPlanTextForATerminal(t *testing.T) {
 	}
 }
 
+// P5: a pinned issue says so in the plan view; an unpinned one says nothing about a pin.
+func TestPlanShowsThePin(t *testing.T) {
+	p := hostilePlan()
+	var b bytes.Buffer
+	if err := Plan(&b, p, "", Options{Format: Text, Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "pinned: profile") {
+		t.Fatalf("an unpinned plan shows a pin:\n%s", b.String())
+	}
+	p.Issues[0].Profile = "review-frontier"
+	b.Reset()
+	if err := Plan(&b, p, "", Options{Format: Text, Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "pinned: profile review-frontier, a maintainer's choice") {
+		t.Fatalf("the pin is not shown:\n%s", b.String())
+	}
+}
+
 // Legacy plans keep their own Question and hash; ranked plans expose only the first gap through
 // that same compatibility view rather than making older renderers understand a second question list.
 func TestLegacyPlanCompatibility(t *testing.T) {

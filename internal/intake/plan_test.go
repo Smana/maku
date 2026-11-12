@@ -449,12 +449,16 @@ func TestWhyBound(t *testing.T) {
 	}
 }
 
-// Until pins are checked (stage 3), a plan that carries one is not the contract's.
-func TestCheckRefusesAPinBeforePins(t *testing.T) {
-	p := planFixture(t, "single")
-	p.Issues = slices.Clone(p.Issues)
-	p.Issues[0].Profile = "links-solo"
-	if r := intake.Check(p, []string{"Smana/ai-native-ref"}, classes()); r == nil || r.Reason != intake.ReasonPlannerInvalid {
-		t.Fatalf("%+v", r)
+// A pin passes Check when it is a profile's name: whether it holds is CheckPin's, against the
+// catalogue. Anything else, which would land in a body and a label, is refused.
+func TestCheckTakesAPinShapedLikeAName(t *testing.T) {
+	for profile, want := range map[string]string{"links-solo": "", "Links Solo": intake.ReasonPlannerInvalid, "x\n## Decisions": intake.ReasonPlannerInvalid} {
+		p := planFixture(t, "single")
+		p.Issues = slices.Clone(p.Issues)
+		p.Issues[0].Profile = profile
+		r := intake.Check(p, []string{"Smana/ai-native-ref"}, classes())
+		if (r == nil && want != "") || (r != nil && r.Reason != want) {
+			t.Fatalf("%q: %+v, want %q", profile, r, want)
+		}
 	}
 }

@@ -79,7 +79,9 @@ export interface Summary {
     run: { id: string; role: string; trigger?: string; startedAt?: string; endedAt?: string } | null;
     budget: { usedTokens: number; limitTokens: number } | null;
     // The task's active harness profile and evaluation cohort; absent in older/profile-free rooms.
-    profile?: { name: string; source: string; cohort: string; recommended?: string; reason?: string; why?: string };
+    // requested is the profile a maintainer pinned, refused the closed code when the pin was not applied.
+    profile?: { name: string; source: string; cohort: string; recommended?: string; reason?: string; why?: string;
+      requested?: string; refused?: string };
     // spend is the task's dollars, beside budget's tokens, and spendFinal is CD23: the factory's claim
     // that the figure is the task's last. Both absent while the dollars may still move, and for a task
     // whose runs the meter could not price — spendWords reads them, and no surface prints the figure

@@ -55,8 +55,30 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 	if offered {
 		class, cohort, rec, applied := t.Spec.PredictedClass, q.Cohort, r.recommendedLabel(cfg, t), q.Source == "scoper"
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
+		agreed := agreement(t, q.Recommended)
+		record(ctx, func(ctx context.Context) { r.Metrics.ProfileAgreement(ctx, class, agreed) })
 	}
 	return nil
+}
+
+// agreement compares the planner's suggestion (spec.intake.suggested, read here and by nothing
+// that briefs an agent, P13) with the scoper's recommendation: no_suggestion when the plan named
+// none (the issue path among them), no_recommendation when the scoper named none, else agree or
+// differ.
+func agreement(t *v1alpha1.Task, recommended string) string {
+	suggested := ""
+	if in := t.Spec.Intake; in != nil {
+		suggested = in.Suggested
+	}
+	switch {
+	case suggested == "":
+		return "no_suggestion"
+	case recommended == "":
+		return "no_recommendation"
+	case suggested == recommended:
+		return "agree"
+	}
+	return "differ"
 }
 
 // recommend notes scope s's recommendation on p, t's profile or a copy of it, when the class offers

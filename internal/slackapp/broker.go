@@ -18,6 +18,7 @@ import (
 	"golang.org/x/oauth2"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/intake"
@@ -213,6 +214,12 @@ type IntakeRequest struct {
 	OnBehalfOf string
 	Candidates []string
 	CeilingUSD float64
+	// Plan, Hash and Candidate are a revision: the plan shown, the hash it was shown with and the
+	// candidate the App edited. The App sends one kind alone, a profile pin (P5): the broker answers it
+	// with no model call. All three or none.
+	Plan      *intake.Plan
+	Hash      string
+	Candidate *intake.Plan
 }
 
 // IntakeResult is intake_plan's data: the plan the planner drew, the hash the broker computed over it,
@@ -237,6 +244,9 @@ func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult,
 	if in.Context != "" { // a mention has none; a reply's context is PR 6's second flow
 		args["context"] = in.Context
 	}
+	if in.Candidate != nil {
+		args["plan"], args["hash"], args["candidate"] = in.Plan, in.Hash, in.Candidate
+	}
 	sc, err := b.call(ctx, "intake_plan", args)
 	if err != nil {
 		return IntakeResult{}, err
@@ -259,6 +269,20 @@ func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult,
 		out.Question = out.Plan.Question
 	}
 	return IntakeResult(out), nil
+}
+
+// ClassesList is classes_list for one class, read for onBehalfOf: the catalogue cut to that class
+// and the profiles it names, with the user's maintainer flag.
+func (b Broker) ClassesList(ctx context.Context, repository, class, onBehalfOf string) (catalogue.Catalogue, error) {
+	sc, err := b.call(ctx, "classes_list", map[string]any{"repository": repository, "class": class, "on_behalf_of": onBehalfOf})
+	if err != nil {
+		return catalogue.Catalogue{}, err
+	}
+	var out catalogue.Catalogue
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return catalogue.Catalogue{}, fmt.Errorf("slackapp: classes_list result: %w", err)
+	}
+	return out, nil
 }
 
 // RoomSummary is room_summary: the room's summary/v1 object, the one object the room page and maku

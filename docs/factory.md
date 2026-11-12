@@ -485,7 +485,7 @@ The factory App comments on the task's issue, or on its pull request when it has
 start (id, branch, budget, the room link, how to stop it), the pull request, CI fix and resume,
 each hand-off with its reason and the merge command, and the end with the tokens used.
 A class with `harness` adds `profile_chosen` (`profile-chosen-<runs>`) once its scoper ends: the
-profile the task runs under, `(default)` for the floor, and the scoper's why or the reason the floor
+profile the task runs under, `(default)` for the floor or `(pinned by a maintainer)` for a pin, and the scoper's why or the reason the floor
 was kept (`none`, `unknown`, `not_allowed`, `observe`, `internal`, `no_tests_paths`, `scoper_failed`).
 On a task with no issue, it and `profile_escalated` wait for the pull request, and are dropped if
 the task ends without one.
@@ -502,7 +502,9 @@ review rounds reset:
 
 `budget-run`, `stalled` and `not_met` step only when the implementer's run ended so (the in-run judge's `not_met` included); a tester's or reviewer's own end goes to the maintainer. `review_rounds_exhausted`, the review loop's verdict on the implementer's work after a verifier's run, steps too. There is no step for a task with an unresolved profile, a control-cohort task, a group the class
 does not map, a task that has already stepped (`/factory retry` keeps it stepped), or a target
-whose tier leaves less than one run in the task cap (a sponsor's ceiling still caps it). The step
+whose tier leaves less than one run in the task cap (a sponsor's ceiling still caps it), or a target
+that is the profile the task already runs, pinned or scoper-applied alike: the same profile again
+rarely converges, so a maintainer is asked straight away. The step
 reads the class's `escalation` alone, not `evaluation.mode`: a class that declares it steps under
 `observe` too. A step
 raises the tier, never lowers it; it never turns on `testFirst`, since the tester branches from
@@ -610,10 +612,75 @@ the scoper is still offered the class's profiles.
 | `source=label` on a task triaged | Means |
 |---|---|
 | Before the release that made a pin the only `labeled` cohort | A maintainer's `class:<name>` label (or a schedule's class) named the class |
-| From that release | A maintainer pinned the profile. Until pins ship, no task is `labeled` |
+| From that release | A maintainer pinned the profile |
 
 A dashboard that reads `maku_factory_task_outcomes_total{source="label"}` across that release reads
 two populations; annotate the release date.
+
+### Pinning a harness profile
+
+A maintainer may pin the harness profile a task runs under: a `profile:<name>` label on the issue
+(`issue_file` applies it after `class:<c>` and before `factory/ready`), or the plan's `profile`,
+which `run_create` carries as `spec.intake.profile`. A pin is checked twice: by the broker at intake
+(`plan_check`, `run_create`, against the repository's catalogue), and again by triage, because a
+label can be added by hand. Triage checks it in this order:
+
+1. More than one `profile:` label, or a label and the intake's profile that disagree: `profile_conflict`.
+   The pin's applier is the label's last applier, or the sponsor login the factory resolved for the
+   intake (`spec.intake.login`); one who does not maintain the repository: `not_maintainer`.
+2. The profile is not in `harnessProfiles`: `profile_unknown`. The class has no `harness`:
+   `class_no_profiles`. The class is `live` or `shadow` (one profile, TE2): `class_profile_fixed`.
+   The profile is neither the floor nor in `harnessAllowed`: `profile_not_allowed`.
+3. A `testFirst` profile on a task whose data is not public: `profile_internal`; on a repository
+   whose checks declaration names no tests paths: `profile_no_tests_paths`.
+
+A `profile:` label whose name is not a profile name (`^[a-z0-9][a-z0-9-]{0,62}$`) pins nothing.
+
+Known residuals:
+
+- A second `profile:` label from anyone, a non-maintainer included, makes the pin `profile_conflict`:
+  the spec checks the conflict before the applier, so a stranger's label can unpin a maintainer's.
+  Triage reads the labels once: remove an extra label before `factory/ready`.
+- Pins are read from the issue's label events, as `class:` labels are: an issue whose event list is
+  cut (more than 1000 events) blocks triage the same way.
+
+An honoured pin runs its profile (its template, its loop row, its tier only upward and within the
+task's ceiling), in `evaluation.mode` `observe` and `apply` alike: the task is `labeled`,
+`source: label`, and the scoper is offered no choice. A refused pin is never a task failure: the task
+runs as if unpinned (its cohort by hash, the floor, the scoper as the mode allows), and the factory
+narrates one line, `profile_refused`, in the refusal's sentence, for example "Agent factory:
+`profile:review-frontier` was not applied: Class `docs-links` is live: its merge policy runs it under
+`links-solo` only." `status.profile.requested` holds the pinned name and `status.profile.refused` the
+code; both reach the `profile` task fact and `summary/v1`, and the room's *Harness profile* block shows
+them.
+
+| Code | Where | Sentence |
+|---|---|---|
+| `profile_unknown` | intake, triage | `<p>` is not a profile of this factory. `classes_list` shows the profiles. |
+| `profile_not_allowed` | intake, triage | Class `<c>` runs under `<floor>` or `<allowed…>`; `<p>` is not one of them. |
+| `profile_not_offered` | intake | `<p>` sets no template, so its roles are chosen at triage; it runs only as the factory's choice. |
+| `class_profile_fixed` | intake, triage | Class `<c>` is `<live\|shadow>`: its merge policy runs it under `<floor>` only. |
+| `class_no_profiles` | intake, triage | Class `<c>` declares no profiles: the factory runs it as configured. |
+| `not_maintainer` | intake, triage | Only a maintainer of this repository can choose the profile; the factory will choose it. |
+| `profile_conflict` | triage | The issue names more than one profile; none was applied. |
+| `profile_internal` | intake, triage | `<p>` writes tests first, which runs on public tasks only. |
+| `profile_no_tests_paths` | triage | `<p>` writes tests first, and this repository declares no tests paths. |
+| `catalogue_unavailable` | intake | The factory's list of classes could not be read; try again in a minute. |
+
+| Task | Cohort | `source` | Scoper consulted? |
+|---|---|---|---|
+| pinned, honoured | `labeled` | `label` | no |
+| pinned, refused | by hash (`control` / `treatment`) | `control` / `floor` / `scoper` | as today |
+| class label or intake class, no pin | by hash | `control` / `floor` / `scoper` | as today |
+| no class, no pin | by hash | as today | as today |
+
+`maku_factory_profile_pins_total{class,profile,outcome,reason}` counts the pins triage saw
+(`honoured` or `refused`, `reason` the code or `none`; a profile no longer in config is `other`).
+`maku_factory_profile_agreement_total{class,outcome}` counts each resolved task of a class that
+offers a choice by how the planner's suggestion (`spec.intake.suggested`) and the scoper's
+recommendation compare: `agree`, `differ`, `no_suggestion` (the issue path carries none) or
+`no_recommendation`. The suggestion is read by that count alone: no brief carries it, so the scoper
+never echoes the planner.
 
 ## Budgets
 

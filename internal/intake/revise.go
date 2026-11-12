@@ -22,6 +22,9 @@ import (
 // material hash. When the derived round reaches or passes the cap it also replaces every remaining
 // marker with its recommendation and appends an A record, without making a model call. A base round
 // above the cap is planner_invalid; base drift is plan_changed.
+//
+// The other edit kind is a profile revision (IsProfileRevision): only issues' profiles changed, on a
+// plan with no gap left. It appends one Decision record per changed issue and keeps the rounds.
 func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, error) {
 	if Hash(base) != baseHash {
 		return Plan{}, refuse(ReasonPlanChanged, "")
@@ -35,6 +38,10 @@ func Revise(base Plan, baseHash string, candidate Plan, maxRounds int) (Plan, er
 		if len(issue.Body) > maxBodyBytes {
 			return Plan{}, refuse(ReasonPlannerInvalid, fmt.Sprintf("candidate issue %d body: %d bytes, the bound is %d KiB", i+1, len(issue.Body), maxBodyBytes>>10))
 		}
+	}
+	if IsProfileRevision(base, candidate) {
+		// A pin is its own edit kind: no marker is answered and no round is spent (P5).
+		return reviseProfile(base, candidate)
 	}
 	if maxRounds < 1 || base.Round < 0 {
 		return Plan{}, refuse(ReasonPlannerInvalid, "revision round and maxRounds must be positive")

@@ -84,6 +84,9 @@ func Plan(w io.Writer, p intake.Plan, label string, o Options) error {
 			line += " · waits for " + strings.Join(deps, ", ")
 		}
 		b.WriteString(line + "\n")
+		if is.Profile != "" {
+			b.WriteString("   pinned: profile " + brokerLine(is.Profile, md, true) + ", a maintainer's choice; the factory checks it at triage\n")
+		}
 		if sg := is.Suggestion; sg != nil {
 			b.WriteString("   suggested: " + brokerLine(SuggestionLine(is.Class, sg.Profile, sg.Roles, sg.Merge.Outcome), md, true) + "\n")
 			if strings.TrimSpace(sg.Why) != "" {

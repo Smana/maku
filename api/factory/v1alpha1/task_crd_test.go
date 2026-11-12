@@ -108,6 +108,30 @@ func bounded(t *testing.T, path string, s *apiextensionsv1.JSONSchemaProps) {
 	}
 }
 
+// Stage 3: a pin's fields carry the spec's bounds: the intake's profile is a profile's name, the
+// status's requested at most 63 and refused at most 32.
+func TestTaskCRDPinFields(t *testing.T) {
+	raw, err := os.ReadFile("../../../config/crd/maku.ogenki.io_tasks.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var crd apiextensionsv1.CustomResourceDefinition
+	if err := yaml.UnmarshalStrict(raw, &crd); err != nil {
+		t.Fatal(err)
+	}
+	root := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+	in := root.Properties["spec"].Properties["intake"].Properties["profile"]
+	if in.MaxLength == nil || *in.MaxLength != 63 || in.Pattern != "^[a-z0-9][a-z0-9-]{0,62}$" {
+		t.Errorf("spec.intake.profile = %+v", in)
+	}
+	profile := root.Properties["status"].Properties["profile"].Properties
+	for field, want := range map[string]int64{"requested": 63, "refused": 32} {
+		if got := profile[field].MaxLength; got == nil || *got != want {
+			t.Errorf("status.profile.%s maxLength = %v, want %d", field, got, want)
+		}
+	}
+}
+
 func TestPhaseSets(t *testing.T) {
 	for _, p := range []string{PhaseRejected, PhaseNoOp, PhaseDone, PhaseReverted, PhaseClosed, PhaseStopped} {
 		if !TerminalPhase(p) || ActivePhase(p) {
