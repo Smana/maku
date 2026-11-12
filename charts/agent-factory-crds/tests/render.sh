@@ -31,5 +31,11 @@ done
 kept="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
 [[ -z $kept ]] || { echo "FAIL: keep=false still renders the keep annotation" >&2; fail=1; }
 
+# the packaged chart ships the six CRDs, never tests/ (.helmignore)
+helm package . -d "$tmp/pkg" >/dev/null
+shipped="$(tar -tzf "$tmp"/pkg/agent-factory-crds-*.tgz)"
+[[ $(grep -c '^agent-factory-crds/files/maku\.ogenki\.io_.*\.yaml$' <<<"$shipped") == 6 ]] || { echo "FAIL: the package does not ship the six CRDs" >&2; fail=1; }
+! grep -q '^agent-factory-crds/tests/' <<<"$shipped" || { echo "FAIL: the package ships tests/" >&2; fail=1; }
+
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory-crds render checks passed"

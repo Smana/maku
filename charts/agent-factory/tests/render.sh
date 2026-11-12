@@ -45,6 +45,12 @@ yq -e '.maku.enabled == false and .maku-factory.enabled == false' values.yaml >/
 yq -e '.maku.enabled == true and .maku-factory.enabled == true' values-demo.yaml >/dev/null 2>&1 || { echo "FAIL: values-demo.yaml does not enable maku and maku-factory" >&2; fail=1; }
 deep="$(find templates -mindepth 2 -type f)"
 [[ -z $deep ]] || { echo "FAIL: a template below templates/ ($deep): the gate must not rely on Helm's render order" >&2; fail=1; }
+# the packaged chart ships values-demo.yaml and the example, never tests/ (.helmignore)
+pkg="$(mktemp -d)"; helm package . -d "$pkg" >/dev/null
+shipped="$(tar -tzf "$pkg"/agent-factory-*.tgz)"; rm -rf "$pkg"
+grep -qx 'agent-factory/values-demo.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-demo.yaml" >&2; fail=1; }
+grep -qx 'agent-factory/values-mine.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-mine.example.yaml" >&2; fail=1; }
+! grep -q '^agent-factory/tests/' <<<"$shipped" || { echo "FAIL: the package ships tests/" >&2; fail=1; }
 # --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
 msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
 grep -qF 'profile demo needs -f values-demo.yaml' <<<"$msg" || { echo "FAIL: --set profile=demo alone does not fail naming values-demo.yaml (got: $msg)" >&2; fail=1; }
