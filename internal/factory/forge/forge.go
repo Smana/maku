@@ -23,6 +23,17 @@ import (
 // unread.
 var ErrEventsTruncated = errors.New("forge: label events past the page cap are unread")
 
+// ErrEditsTruncated is ContentEdits reaching its page cap: some edits are unread.
+var ErrEditsTruncated = errors.New("forge: content edits past the page cap are unread")
+
+// ContentEdit is one recorded edit of a body. Editor is its login (a bot's with "[bot]") and
+// EditorType GraphQL's __typename (User, Bot...); both are "" for an account since deleted.
+type ContentEdit struct {
+	Editor     string
+	EditorType string
+	At         time.Time
+}
+
 // ErrIssuesTruncated is IssuesByAuthorSince reaching its page cap with every issue read still
 // inside the window: the oldest ones are unread.
 var ErrIssuesTruncated = errors.New("forge: issues past the page cap are unread")
@@ -109,7 +120,7 @@ type LabelEvent struct {
 // perhaps by someone other than its author, so a command in it is never acted on.
 type Comment struct {
 	ID int64
-	// NodeID is the comment's GraphQL id, which LastEditor reads; "" when read through GraphQL.
+	// NodeID is the comment's GraphQL id, which ContentEdits reads; "" when read through GraphQL.
 	NodeID string
 	Author string
 	// Association is the author's relation to the repository, as Review.Association (hardening

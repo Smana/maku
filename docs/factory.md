@@ -1856,15 +1856,17 @@ flowchart LR
 
   A write that does not match is recorded `output_shadowed` with reason `untraced_write` and
   counted, then checked as in H1. This includes a direct open, or a direct edit of an applied
-  object. An applied pull request or comment whose body GitHub's last editor shows a person
-  edited since (a ticked checklist) is logged `human_edit` instead, neither counted nor checked.
+  object. On cloud-native-ref's XR, an applied pull request or comment whose every body edit since
+  its answer is a person's (a ticked checklist) is logged `human_edit` instead: not counted, still
+  checked as in H1.
   Pushes are shadowed as in H1. What the tracer does not observe is listed in
   [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
   sandbox role's and the publisher's octo-sts policy and reports their permissions.
 
 With `runs` not cloud-native-ref's XR, the factory logs a startup warning: the sandbox token is
-not scoped by a role policy (HR13). It still starts, since the tracer reports every direct write.
+not scoped by a role policy (HR13). It still starts, since the tracer reports every direct write,
+and reads none as a human edit.
 Readiness stays `false`: `mode: enforce` is still refused. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 

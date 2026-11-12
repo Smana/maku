@@ -102,24 +102,38 @@ type Fake struct {
 	repoInfoErr  error
 	perms        map[string]string // Permission's answer by lower-case login; absent is "none"
 	permErr      error
-	editors      map[string]string // LastEditor's answer by node id; absent is never edited
+	edits        map[string][]forge.ContentEdit // ContentEdits' answer by node id; absent is never edited
+	editsCut     map[string]bool                // ContentEdits on the node reports its page cap
 }
 
-// SetEditor makes login the last editor of node's body, as LastEditor answers it.
-func (f *Fake) SetEditor(node, login string) {
+// SetEdits sets the recorded edits of node's body, newest first, as ContentEdits returns them.
+func (f *Fake) SetEdits(node string, es ...forge.ContentEdit) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.editors == nil {
-		f.editors = map[string]string{}
+	if f.edits == nil {
+		f.edits = map[string][]forge.ContentEdit{}
 	}
-	f.editors[node] = login
+	f.edits[node] = slices.Clone(es)
 }
 
-// LastEditor implements the forge's LastEditor: SetEditor's login, "" for a node never edited.
-func (f *Fake) LastEditor(_ context.Context, node string) (string, error) {
+// SetEditsTruncated makes ContentEdits on node return its edits with ErrEditsTruncated.
+func (f *Fake) SetEditsTruncated(node string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.editors[node], nil
+	if f.editsCut == nil {
+		f.editsCut = map[string]bool{}
+	}
+	f.editsCut[node] = true
+}
+
+// ContentEdits implements the forge's ContentEdits.
+func (f *Fake) ContentEdits(_ context.Context, node string) ([]forge.ContentEdit, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.editsCut[node] {
+		return slices.Clone(f.edits[node]), forge.ErrEditsTruncated
+	}
+	return slices.Clone(f.edits[node]), nil
 }
 
 // NewFake returns an empty Fake.

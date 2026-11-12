@@ -23,8 +23,8 @@ import (
 // that no output_applied explains (H2, AC2). Its counter is agent_factory_hardening_untraced_total.
 const reasonUntraced = "untraced_write"
 
-// reasonHumanEdit is the tracer's log reason for an applied write a person edited since: never a
-// record nor a count, since it is not the agent's write.
+// reasonHumanEdit is the tracer's log reason for an applied write only people edited since: no
+// untraced record nor count; the write is still checked as in H1.
 const reasonHumanEdit = "human_edit"
 
 // traceSlack is how far a label event's GitHub timestamp, kept to the second, may fall outside its
@@ -140,12 +140,13 @@ func normal(s string) string { return strings.TrimRight(strings.ReplaceAll(s, "\
 func (l outputLedger) traces(o observed) bool {
 	switch o.w.Type {
 	case hardening.PR:
-		pr, ok := l.anchor(o).(hardening.PRPayload)
+		_, p := l.anchor(o)
+		pr, ok := p.(hardening.PRPayload)
 		text, _ := hardening.SplitFooter(o.raw)
 		return ok && sameTitle(o, pr) && text == normal(hardening.Neutralise(pr.Body))
 	case hardening.Comment:
-		c, ok := l.anchor(o).(hardening.CommentPayload)
-		id, _ := hardening.FindMarker(o.raw)
+		id, p := l.anchor(o)
+		c, ok := p.(hardening.CommentPayload)
 		return ok && normal(o.raw) == normal(hardening.WithMarker(c.Body, id))
 	case hardening.Labels:
 		var p hardening.LabelsPayload
@@ -164,24 +165,23 @@ func (l outputLedger) traces(o observed) bool {
 
 // anchor is what the applied output a pull request or comment names published, whatever its text
 // now, nil when it names none: a pull request's footer must name the newest applied pr output on
-// it, a comment's marker an applied comment output on its URL.
-func (l outputLedger) anchor(o observed) any {
-	var id string
+// it, a comment's marker an applied comment output on its URL. id is that output's.
+func (l outputLedger) anchor(o observed) (id string, published any) {
 	switch o.w.Type {
 	case hardening.PR:
 		if _, id = hardening.SplitFooter(o.raw); id == "" || id != l.lastApplied(hardening.PR, o.w.Object) {
-			return nil
+			return "", nil
 		}
 	case hardening.Comment:
 		var ok bool
 		if id, ok = hardening.FindMarker(o.raw); !ok {
-			return nil
+			return "", nil
 		}
 	default:
-		return nil
+		return "", nil
 	}
 	p, _ := l.published(id, o.w.Type, o.w.Object)
-	return p
+	return id, p
 }
 
 // sameTitle is whether a pull request's title is the one published, blanks around it aside:
@@ -190,17 +190,20 @@ func sameTitle(o observed, pr hardening.PRPayload) bool {
 	return strings.TrimSpace(o.title) == strings.TrimSpace(pr.Title)
 }
 
-// humanEdit reports whether an untraced pull request or comment is an applied write a person edited
-// since (a maintainer ticking a checklist): it still names its applied output, a pull request's
-// title is still that output's (GitHub dates no editor for a title), and GitHub's last editor of
-// its body is not the agents App. It is then neither untraced nor checked as the agent's, and is
-// logged human_edit. An editor that cannot be read, or none, is not a human edit: the write stays
-// untraced.
+// humanEdit reports whether an untraced pull request or comment is an applied write only people
+// edited since (a maintainer ticking a checklist). It still names its applied output, a pull
+// request's title is still that output's (GitHub keeps no editor for a title), and every body edit
+// GitHub records after that output's answer is by a User other than the agents App, with at least
+// one. The write is then not counted untraced; its text is still checked as in H1. Only on
+// cloud-native-ref's XR: elsewhere a run writes with a shared token (GIT_TOKEN_FILE), whose
+// direct edits GitHub credits to that token's user (HR13). An agents-App, bot or deleted editor
+// in the window, or edits that cannot all be read, leave it untraced.
 func (r *Reconciler) humanEdit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, runID string, l outputLedger, o observed) bool {
-	if !o.edited || o.node == "" {
+	if !cfg.Runs.XR() || !o.edited || o.node == "" {
 		return false
 	}
-	switch p := l.anchor(o).(type) {
+	id, p := l.anchor(o)
+	switch p := p.(type) {
 	case nil:
 		return false
 	case hardening.PRPayload:
@@ -208,17 +211,27 @@ func (r *Reconciler) humanEdit(ctx context.Context, cfg *config.Config, t *v1alp
 			return false
 		}
 	}
-	editor, err := r.gh(ctx).LastEditor(ctx, o.node)
+	edits, err := r.gh(ctx).ContentEdits(ctx, o.node)
 	if err != nil {
-		r.log().Warn("tracer: the write's last editor cannot be read: it stays untraced", "task.id", t.Name, "run.id", runID,
+		r.log().Warn("tracer: the write's edits cannot all be read: it stays untraced", "task.id", t.Name, "run.id", runID,
 			"type", string(o.w.Type), "object", o.w.Object, "err", err)
 		return false
 	}
-	if editor == "" || strings.EqualFold(editor, cfg.AgentsLogin) {
+	since, people := l.applied[id].at, 0
+	for _, e := range edits {
+		if !e.At.After(since) {
+			continue // the applier's own write, or an edit before its answer
+		}
+		if e.EditorType != "User" || strings.EqualFold(e.Editor, cfg.AgentsLogin) {
+			return false
+		}
+		people++
+	}
+	if people == 0 {
 		return false
 	}
-	r.log().Info("tracer: an applied write a person edited since, not the agent's", "task.id", t.Name, "run.id", runID,
-		"type", string(o.w.Type), "object", o.w.Object, "editor", editor, "reason", reasonHumanEdit)
+	r.log().Info("tracer: an applied write only people edited since: not counted untraced", "task.id", t.Name, "run.id", runID,
+		"type", string(o.w.Type), "object", o.w.Object, "edits", people, "reason", reasonHumanEdit)
 	return true
 }
 

@@ -431,8 +431,10 @@ untraced on the XR (its rules still say `gh pr create`).
 2. Remove the repository from `enforceOutputs`, and restart.
 
 **Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. A
-maintainer's edit of an applied pull request or comment body is not one: the tracer reads GitHub's
-last editor and logs it `human_edit`, uncounted. A retitle has no editor on record, so it stays
+maintainer's edit of an applied pull request or comment body is not one, on cloud-native-ref's XR:
+when every edit since the answer is a person's, the tracer logs `human_edit`, uncounted, and
+still checks the text. Off the XR every mismatch is untraced, since a shared token's edits read
+as its user's. A retitle has no editor on record, so it stays
 untraced: confirm who retitled the pull request before rolling back on a `pr` untraced write.
 After an upgrade that changes the T2 sanitiser, pull requests and comments applied before it are
 compared with the new T2's text and show as untraced once: confirm those predate the upgrade

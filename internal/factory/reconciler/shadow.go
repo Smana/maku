@@ -143,7 +143,8 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 	slices.SortStableFunc(ws, func(a, b observed) int { return a.at.Compare(b.at) })
 	// H2's tracer: on an enforced repository, a write of an enforced type is exactly what the applier
 	// published, and is not checked again, or it is untraced: recorded untraced_write, then checked as
-	// in H1 like every push and every type not enforced.
+	// in H1 like every push and every type not enforced. An applied write only people edited since
+	// (humanEdit) is not recorded untraced, but its text is still checked.
 	enforced := cfg.Hardening.EnforcedFor(t.Spec.Repository)
 	var ledger outputLedger
 	if len(enforced) > 0 {
@@ -156,15 +157,17 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 	var n hardening.Counts
 	for _, o := range ws {
 		if o.w.Type != hardening.Push && slices.Contains(enforced, o.w.Type) {
-			if ledger.traces(o) || r.humanEdit(ctx, cfg, t, rec.ID, ledger, o) {
+			if ledger.traces(o) {
 				continue
 			}
-			if err := r.Rooms.Output(ctx, t.Status.RoomRef, rec.ID, envelope.KindOutputShadowed, untracedRecord(rec.ID, o)); err != nil &&
-				!errors.Is(err, rooms.ErrBadMessage) {
-				errs = append(errs, fmt.Errorf("post an untraced %s: %w", o.w.Type, err))
-				continue
+			if !r.humanEdit(ctx, cfg, t, rec.ID, ledger, o) {
+				if err := r.Rooms.Output(ctx, t.Status.RoomRef, rec.ID, envelope.KindOutputShadowed, untracedRecord(rec.ID, o)); err != nil &&
+					!errors.Is(err, rooms.ErrBadMessage) {
+					errs = append(errs, fmt.Errorf("post an untraced %s: %w", o.w.Type, err))
+					continue
+				}
+				r.untraced(ctx, t, rec.ID, o)
 			}
-			r.untraced(ctx, t, rec.ID, o)
 		}
 		res := hardening.Shadow(ctx, c, &n, o.w, t.Spec.Issue, canary)
 		out := shadowRecord(rec.ID, res, len(o.w.Payload))

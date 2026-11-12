@@ -331,15 +331,28 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		case strings.Contains(string(b), "... on Comment"):
 			var in struct{ Variables map[string]any }
 			_ = json.Unmarshal(b, &in)
-			switch in.Variables["id"] {
-			case "IC_human":
-				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":"2026-10-16T10:00:00Z","editor":{"__typename":"User","login":"smana"}}}}`)
-			case "PR_bot":
-				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":"2026-10-16T10:00:00Z","editor":{"__typename":"Bot","login":"ogenki-agents"}}}}`)
-			case "IC_ghost": // edited by an account since deleted: GitHub names no editor
-				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":"2026-10-16T10:00:00Z","editor":null}}}`)
+			page := func(next bool, cursor string, edits ...string) string {
+				return fmt.Sprintf(`{"data":{"node":{"userContentEdits":{"pageInfo":{"hasNextPage":%t,"endCursor":%q},"nodes":[%s]}}}}`,
+					next, cursor, strings.Join(edits, ","))
+			}
+			edit := func(at, typ, login string) string {
+				if typ == "" { // an account since deleted: GitHub names no editor
+					return fmt.Sprintf(`{"editedAt":%q,"editor":null}`, at)
+				}
+				return fmt.Sprintf(`{"editedAt":%q,"editor":{"__typename":%q,"login":%q}}`, at, typ, login)
+			}
+			switch after, _ := in.Variables["after"].(string); in.Variables["id"] {
+			case "PR_paged": // two pages, newest first
+				if after == "" {
+					_, _ = io.WriteString(w, page(true, "c1", edit("2026-10-16T10:02:00Z", "User", "smana")))
+				} else {
+					_, _ = io.WriteString(w, page(false, "c2", edit("2026-10-16T10:01:00Z", "Bot", "ogenki-agents"),
+						edit("2026-10-16T10:00:00Z", "", "")))
+				}
+			case "IC_endless": // more pages than the cap
+				_, _ = io.WriteString(w, page(true, after+"x", edit("2026-10-16T10:00:00Z", "User", "smana")))
 			case "IC_never":
-				_, _ = io.WriteString(w, `{"data":{"node":{"lastEditedAt":null,"editor":null}}}`)
+				_, _ = io.WriteString(w, page(false, ""))
 			default:
 				_, _ = io.WriteString(w, `{"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a node"}]}`)
 			}
@@ -1054,17 +1067,28 @@ func TestPullRequestReadsAFork(t *testing.T) {
 	}
 }
 
-// The tracer tells a maintainer's edit of an applied body from the agents App's by its last editor,
-// which only GraphQL names: a bot's with "[bot]", "" when never edited or the editor is gone.
-func TestLastEditor(t *testing.T) {
+// The tracer tells a maintainer's edit of an applied body from the agents App's by every edit's
+// editor, which only GraphQL names: every page, a bot's login with "[bot]" and its type, a deleted
+// account's as none, and a list past the page cap as truncated.
+func TestContentEdits(t *testing.T) {
 	r := newRig(t)
-	for node, want := range map[string]string{"IC_human": "smana", "PR_bot": "ogenki-agents[bot]", "IC_ghost": "", "IC_never": ""} {
-		if got, err := r.g.LastEditor(t.Context(), node); err != nil || got != want {
-			t.Errorf("%s: %q %v, want %q", node, got, err, want)
-		}
+	at := func(m int) time.Time { return time.Date(2026, 10, 16, 10, m, 0, 0, time.UTC) }
+	got, err := r.g.ContentEdits(t.Context(), "PR_paged")
+	want := []ContentEdit{{Editor: "smana", EditorType: "User", At: at(2)}, {Editor: "ogenki-agents[bot]", EditorType: "Bot", At: at(1)},
+		{At: at(0)}}
+	if err != nil || !slices.EqualFunc(got, want, func(a, b ContentEdit) bool {
+		return a.Editor == b.Editor && a.EditorType == b.EditorType && a.At.Equal(b.At)
+	}) {
+		t.Fatalf("paged: %+v %v, want %+v", got, err, want)
 	}
-	if _, err := r.g.LastEditor(t.Context(), "IC_unknown"); err == nil {
-		t.Error("a node GitHub cannot resolve is an error, never an answer")
+	if got, err := r.g.ContentEdits(t.Context(), "IC_never"); err != nil || len(got) != 0 {
+		t.Fatalf("never edited: %+v %v", got, err)
+	}
+	if got, err := r.g.ContentEdits(t.Context(), "IC_endless"); !errors.Is(err, ErrEditsTruncated) || len(got) != editPages {
+		t.Fatalf("past the cap: %d edits, %v", len(got), err)
+	}
+	if _, err := r.g.ContentEdits(t.Context(), "IC_unknown"); err == nil || errors.Is(err, ErrEditsTruncated) {
+		t.Errorf("a node GitHub cannot resolve is an error, never an answer: %v", err)
 	}
 }
 

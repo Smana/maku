@@ -328,27 +328,51 @@ func (g *GitHub) AddLabels(ctx context.Context, number int, labels ...string) er
 	return wrap("add labels", err)
 }
 
-// LastEditor is the login that last edited the body of node (a pull request, an issue or a
-// comment, by its GraphQL id), "" when it was never edited. REST names no editor; GraphQL's
-// Comment.editor does, a bot's with "[bot]".
-func (g *GitHub) LastEditor(ctx context.Context, node string) (string, error) {
+// editPages is how many pages of 100 edits ContentEdits reads before it reports ErrEditsTruncated.
+const editPages = 5
+
+// ContentEdits are every recorded edit of node's body (a pull request, an issue or a comment, by
+// its GraphQL id), in GitHub's order, each with its editor: REST names none, GraphQL's
+// userContentEdits does. Past editPages pages it returns what it read and ErrEditsTruncated.
+func (g *GitHub) ContentEdits(ctx context.Context, node string) ([]ContentEdit, error) {
 	var q struct {
 		Node struct {
 			Comment struct {
-				LastEditedAt *githubv4.DateTime
-				Editor       *actor
+				UserContentEdits struct {
+					PageInfo struct {
+						HasNextPage bool
+						EndCursor   githubv4.String
+					}
+					Nodes []struct {
+						EditedAt githubv4.DateTime
+						Editor   *actor
+					}
+				} `graphql:"userContentEdits(first: 100, after: $after)"`
 			} `graphql:"... on Comment"`
 		} `graphql:"node(id: $id)"`
 	}
-	err := g.v4.Query(ctx, &q, map[string]any{"id": githubv4.ID(node)})
-	g.mark(err)
-	if err != nil {
-		return "", wrap("read a body's last editor", err)
+	vars := map[string]any{"id": githubv4.ID(node), "after": (*githubv4.String)(nil)}
+	var out []ContentEdit
+	for range editPages {
+		err := g.v4.Query(ctx, &q, vars)
+		g.mark(err)
+		if err != nil {
+			return nil, wrap("read a body's edits", err)
+		}
+		es := q.Node.Comment.UserContentEdits
+		for _, e := range es.Nodes {
+			c := ContentEdit{Editor: e.Editor.login(), At: e.EditedAt.Time}
+			if e.Editor != nil {
+				c.EditorType = e.Editor.Typename
+			}
+			out = append(out, c)
+		}
+		if !es.PageInfo.HasNextPage {
+			return out, nil
+		}
+		vars["after"] = githubv4.NewString(es.PageInfo.EndCursor)
 	}
-	if q.Node.Comment.LastEditedAt == nil {
-		return "", nil
-	}
-	return q.Node.Comment.Editor.login(), nil
+	return out, ErrEditsTruncated
 }
 
 // Repository is the owner/name this connection is bound to.

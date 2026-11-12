@@ -1557,10 +1557,11 @@ func Parse(raw []byte) (*Config, error) {
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
 	// HR13: an enforced repository on a run path whose sandbox token no role policy scopes. The
-	// factory still starts: the tracer reports every direct write.
+	// factory still starts: the tracer reports every direct write, and reads none as a human edit
+	// (GitHub credits a shared token's edits to its user).
 	if c.Hardening.Enforcing() && !c.Runs.XR() {
 		c.Warnings = append(c.Warnings, "hardening.enforceOutputs is set and runs are not cloud-native-ref's XR: the sandbox token is not scoped by a role policy, "+
-			"so a run can still write directly; the tracer reports each such write (HR13)")
+			"so a run can still write directly; the tracer reports each such write, none read as a human edit (HR13)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])
