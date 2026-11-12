@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -19,6 +20,9 @@ const (
 	PreflightUnknown = "Unknown" // no check has finished yet: new runs wait
 	PreflightPassed  = "Passed"
 	PreflightFailed  = "Failed" // new runs are refused with the check's message
+	// PreflightWaiting: a check that waits, rather than refuses, did not pass (a git Secret not yet
+	// filled): new runs stay Pending with its message.
+	PreflightWaiting = "Waiting"
 )
 
 // DefaultPreflightEvery is how often the preflight checks again after its first run.
@@ -32,14 +36,16 @@ type Result struct {
 
 // check is one preflight check: a refusal message when it fails, or an error when the check could
 // not decide (the API server unreachable), which keeps the last result. soon asks for the short
-// retry on a refusal that may cure itself (RBAC propagating right after install).
+// retry on a refusal that may cure itself (RBAC propagating right after install). waits makes its
+// refusal hold new runs Pending (Waiting) instead of failing them.
 type check struct {
-	name string
-	run  func(ctx context.Context) (refusal string, soon bool, err error)
+	name  string
+	run   func(ctx context.Context) (refusal string, soon bool, err error)
+	waits bool
 }
 
 // Preflight proves, at start and every Every, that the cluster can run a sandboxed run (v4 D18):
-// the RuntimeClass exists. The reconciler consults Result before it creates a run's first pod; a run
+// the RuntimeClass exists, and so do the git Secrets runs mount, each with a token key. The reconciler consults Result before it creates a run's first pod; a run
 // that already has a pod is never refused by it (plan PR7). It is a manager.Runnable.
 type Preflight struct {
 	Client client.Reader // uncached: one get by name, never a cluster-wide list or watch
@@ -106,9 +112,36 @@ func undecidedRetry(n int, every time.Duration) time.Duration {
 func (p *Preflight) checks() []check {
 	var cs []check
 	if p.Cfg.RuntimeClassName != "" {
-		cs = append(cs, check{"runtimeClass", p.runtimeClass})
+		cs = append(cs, check{name: "runtimeClass", run: p.runtimeClass})
 	}
-	return cs
+	return append(cs, check{name: "gitSecrets", run: p.gitSecrets, waits: true})
+}
+
+// gitSecrets: each git Secret a run may mount exists with a token key (PR B): gitSecret, and
+// gitReadSecret when configured. Its refusal holds new runs Pending, never fails them, and is
+// retried soon: the factory's run token writer, or an ExternalSecret, may fill it right after install.
+func (p *Preflight) gitSecrets(ctx context.Context) (string, bool, error) {
+	type secret struct{ name, key, roles string }
+	ss := []secret{{p.Cfg.GitSecret, "runController.gitSecret", "implementer and tester"}}
+	if p.Cfg.GitReadSecret != "" {
+		ss = append(ss, secret{p.Cfg.GitReadSecret, "runController.gitReadSecret", "reviewer and triager"})
+	}
+	for _, s := range ss {
+		var sec corev1.Secret
+		err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Cfg.Namespace, Name: s.name}, &sec)
+		ref := p.Cfg.Namespace + "/" + s.name
+		switch {
+		case apierrors.IsNotFound(err):
+			return fmt.Sprintf("Secret %s not found: %s runs mount it (%s); create it with a token key", ref, s.roles, s.key), true, nil
+		case apierrors.IsForbidden(err):
+			return fmt.Sprintf("the run-controller may not read Secret %s: it needs get on that name (the chart's run-controller Role): %v", ref, err), true, nil
+		case err != nil:
+			return "", false, err
+		case len(sec.Data["token"]) == 0:
+			return fmt.Sprintf("Secret %s has no token key: %s runs mount it (%s)", ref, s.roles, s.key), true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // runtimeClass: the configured RuntimeClass exists. With none configured (allowUnsandboxed) there is
@@ -154,7 +187,11 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 			p.Passed(c.name, refusal == "")
 		}
 		if refusal != "" {
-			next = Result{State: PreflightFailed, Check: c.name, Message: refusal, At: next.At}
+			state := PreflightFailed
+			if c.waits {
+				state = PreflightWaiting
+			}
+			next = Result{State: state, Check: c.name, Message: refusal, At: next.At}
 			retrySoon = soon
 			break
 		}
@@ -166,9 +203,12 @@ func (p *Preflight) Tick(ctx context.Context) (retrySoon bool) {
 	if prev.State == next.State && prev.Check == next.Check && prev.Message == next.Message {
 		return retrySoon
 	}
-	if next.State == PreflightPassed {
+	switch next.State {
+	case PreflightPassed:
 		p.log().Info("preflight passed")
-	} else {
+	case PreflightWaiting:
+		p.log().Warn("preflight waiting: "+next.Check+": "+next.Message, "check", next.Check)
+	default:
 		p.log().Error("preflight failed: "+next.Check+": "+next.Message, "check", next.Check)
 	}
 	return retrySoon

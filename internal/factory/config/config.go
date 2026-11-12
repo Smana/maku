@@ -29,6 +29,7 @@ import (
 	yamlv3 "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/yaml"
 
+	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
 )
@@ -160,6 +161,9 @@ type Config struct {
 	Hardening Hardening `json:"hardening,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
+	// RunTokens has the factory write the run-controller's two git Secrets (v4 step 2, PR3): off
+	// unless set, and implied by demo.
+	RunTokens RunTokens `json:"runTokens,omitzero"`
 	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
 	// or default. Each row is whole: a class with no row reads default's, and a row is read
 	// alone, never merged with default's (LoopFor).
@@ -312,6 +316,42 @@ type GitHub struct {
 	// or shadow, because deciding that class reads checks and arms through the merger.
 	MergerAppIDFile string `json:"mergerAppIDFile,omitempty"`
 	MergerKeyFile   string `json:"mergerKeyFile,omitempty"`
+}
+
+// RunTokens names the App whose installation tokens fill the run-controller's agent-git (write) and
+// agent-git-read (read) Secrets, for every served repository of one owner. Interim: replaced by the
+// per-run minter, v4 D10 (rollout step 3).
+type RunTokens struct {
+	Enabled        bool   `json:"enabled,omitempty"`
+	AppIDFile      string `json:"appIDFile,omitempty"`
+	PrivateKeyFile string `json:"privateKeyFile,omitempty"`
+}
+
+// RunTokenApp is the App the run token writer mints from: runTokens' when enabled, else the
+// factory's own in the demo. ok is false when the factory writes no run token.
+func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
+	switch {
+	case c.RunTokens.Enabled:
+		return c.RunTokens.AppIDFile, c.RunTokens.PrivateKeyFile, true
+	case c.Demo:
+		return c.GitHub.AppIDFile, c.GitHub.PrivateKeyFile, true
+	}
+	return "", "", false
+}
+
+// validateRunTokens: the writer fills Secrets only the run-controller reads, so it is refused on
+// cloud-native-ref's AgentRun, whose runs get their tokens from octo-sts.
+func (c *Config) validateRunTokens(bad func(string, ...any)) {
+	t := c.RunTokens
+	if !t.Enabled {
+		return
+	}
+	if t.AppIDFile == "" || t.PrivateKeyFile == "" {
+		bad("runTokens.enabled needs runTokens.appIDFile and runTokens.privateKeyFile")
+	}
+	if c.Runs.Group != v1alpha1.GroupVersion.Group {
+		bad("runTokens.enabled writes the run-controller's Secrets: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
+	}
 }
 
 // MaxRepositories bounds repositories (v2 D1): a repository metric label keeps at most this many
@@ -1577,6 +1617,7 @@ func (c *Config) Validate() error {
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 	c.Coordination.Validate(bad)
 	c.validateHardening(bad)
+	c.validateRunTokens(bad)
 	c.Intake.Overlap.Validate(bad)
 	rs := c.Repos()
 	switch {
@@ -2280,11 +2321,6 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		default:
 			bad("loops.%s.scope %q is off, steering or scoper", name, m)
 		}
-		if m := row.Scope; m == ScopeScoper && c.Runs.Group != runwatch.DefaultKind.Group && !c.Demo { // demo: the read-only claim is waived
-			// The scoper is read-only because cloud-native-ref maps the triager role to an octo-sts
-			// token with contents: read; this runtime gives every role the same token.
-			bad("loops.%s: scope: scoper needs cloud-native-ref's AgentRun (runs.group %s): this runtime gives every role one token, so a scoper would not be read-only", name, runwatch.DefaultKind.Group)
-		}
 		if s := row.Split; s != nil {
 			tier := cmp.Or(s.ChildTier, DefaultChildTier)
 			switch {
@@ -2304,13 +2340,16 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 				bad("loops.%s.split.familyUSD %.2f is below the %s tier's taskUSD %.2f: no part would fit", name, s.FamilyUSD, tier, c.Tiers[tier].TaskUSD)
 			}
 		}
-		if row.On() && c.Runs.Group != runwatch.DefaultKind.Group {
-			if c.Demo {
-				// demo: the portable AgentRun's spec.loop carries the whole loop policy (the run-controller
-				// passes AGENT_LOOP, and the judge calls the run's own model).
-				continue
-			}
-			bad("loops.%s: the loop policy needs cloud-native-ref's AgentRun (runs.group %s): this runtime's has no spec.loop", name, runwatch.DefaultKind.Group)
+		// D5: the scoper and the loop policy run on the run-controller too, which enforces the
+		// scoper's read-only token and its room_handoff path where the token is chosen. Its runs carry
+		// no model alias: every role runs on modelSecret's model until agentgateway (rollout step 4).
+		if len(row.Models) > 0 && c.Runs.Group == v1alpha1.GroupVersion.Group {
+			bad("loops.%s.models needs a model gateway (rollout step 4): this runtime runs every role on modelSecret's model", name)
+		}
+		// Portable runs carry no gateway identity, so nothing meters their spend: a split's familyUSD
+		// would never decrease. Refused there until the gateway, as models is.
+		if row.Split != nil && c.Runs.Group == v1alpha1.GroupVersion.Group {
+			bad("loops.%s.split needs a model gateway (rollout step 4): this runtime meters no USD, so familyUSD would never be spent", name)
 		}
 	}
 }

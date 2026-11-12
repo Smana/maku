@@ -53,7 +53,6 @@ func TestLoopsAreRefused(t *testing.T) {
 		"continuations 6":       {"{docs: {continuations: 6}}", "loops.docs.continuations must be 0..5"},
 		"a model, not an alias": {"{docs: {judge: claude-haiku-5-5}}", `loops.docs.judge "claude-haiku-5-5" is none or one of`},
 		"an unknown key":        {"{docs: {owner: me}}", `unknown field "owner"`},
-		"the native runtime":    {"{docs: {judge: none}}\nruns: {group: maku.ogenki.io}", "this runtime's has no spec.loop"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(good + "loops: " + c.loops + "\n"))
@@ -61,5 +60,32 @@ func TestLoopsAreRefused(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, c.want)
 			}
 		})
+	}
+}
+
+// D5: the portable AgentRun carries spec.loop and the run-controller passes it as AGENT_LOOP, so
+// the loop policy parses on the portable runtime.
+func TestLoopParsesOnThePortableRuntime(t *testing.T) {
+	c, err := Parse([]byte(good + "loops: {docs: {stallSteps: 40, judge: tier-light}}\nruns: {group: maku.ogenki.io}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.LoopFor("docs"); p == nil || p.StallSteps != 40 {
+		t.Fatalf("docs' loop %+v", p)
+	}
+}
+
+// PR4: loops.<class>.models picks a provider alias the gateway resolves; the portable runtime runs
+// every role on modelSecret's model, so a models row is refused there until agentgateway (rollout
+// step 4), never silently ignored.
+func TestLoopModelsAreRefusedOnThePortableRuntime(t *testing.T) {
+	const row = "loops: {docs: {models: {implementer: {frontier: kimi-frontier}}}}\n"
+	_, err := Parse([]byte(byModel + row + "runs: {group: maku.ogenki.io}\n"))
+	const want = "loops.docs.models needs a model gateway (rollout step 4): this runtime runs every role on modelSecret's model"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("portable: %v, want %q", err, want)
+	}
+	if _, err := Parse([]byte(byModel + row + "runs: {group: cloud.ogenki.io}\n")); err != nil {
+		t.Fatalf("cloud-native-ref's AgentRun: %v", err)
 	}
 }

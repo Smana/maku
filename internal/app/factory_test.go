@@ -250,18 +250,33 @@ func TestNonDemoStartupStillFailsFast(t *testing.T) {
 	}
 }
 
-// Demo mode's git token is for the served repositories of one account, written in the runs'
-// namespace; two accounts cannot share one installation.
-func TestDemoGitTokenServesTheListedRepositories(t *testing.T) {
+// Demo mode's run tokens are for the served repositories of one account, written in the runs'
+// namespace as the two Secrets the run-controller mounts; two accounts cannot share one installation.
+func TestRunTokensServeTheListedRepositories(t *testing.T) {
 	cfg := &config.Config{Demo: true, Runs: runwatch.Kind{Namespace: "runs"},
 		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}}
-	g, err := demoGitToken(cfg, served(cfg), nil, slog.New(slog.DiscardHandler))
-	if err != nil || g.Namespace != "runs" || g.NeedLeaderElection() != true {
-		t.Fatalf("%+v %v", g, err)
+	ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler))
+	if err != nil || len(ws) != 2 {
+		t.Fatalf("%+v %v", ws, err)
+	}
+	for i, name := range []string{"agent-git", "agent-git-read"} {
+		if w := ws[i]; w.Name != name || w.Namespace != "runs" || !w.NeedLeaderElection() || w.Every != 30*time.Minute {
+			t.Errorf("writer %d: %+v", i, w)
+		}
 	}
 	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Other/c"})
-	if _, err := demoGitToken(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
+	if _, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
 		t.Fatalf("err = %v", err)
+	}
+	// Neither demo nor runTokens: the factory writes no Secret (octo-sts, or the operator, fills them).
+	cfg.Demo = false
+	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || ws != nil {
+		t.Fatalf("off: %+v %v", ws, err)
+	}
+	cfg.RunTokens = config.RunTokens{Enabled: true, AppIDFile: "/x/app_id", PrivateKeyFile: "/x/private_key"}
+	cfg.Repositories = cfg.Repositories[:2]
+	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || len(ws) != 2 {
+		t.Fatalf("runTokens.enabled: %+v %v", ws, err)
 	}
 }
 

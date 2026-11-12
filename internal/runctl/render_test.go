@@ -39,8 +39,10 @@ func golden(t *testing.T, name string, v any) {
 	}
 }
 
-func goRun() *v1alpha1.AgentRun {
-	return run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Egress.Profiles = []v1alpha1.AgentRunEgressProfile{"golang"} })
+func goRun(mut ...func(*v1alpha1.AgentRun)) *v1alpha1.AgentRun {
+	return run("run-abcdefgh", append([]func(*v1alpha1.AgentRun){func(r *v1alpha1.AgentRun) {
+		r.Spec.Egress.Profiles = []v1alpha1.AgentRunEgressProfile{"golang"}
+	}}, mut...)...)
 }
 
 func TestPodGolden(t *testing.T) {

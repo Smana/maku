@@ -35,6 +35,7 @@
             "existingSecret": {"type": "string"},
             "baseURL": {"type": "string"},
             "name": {"type": "string"},
+            "judgeName": {"description": "Optional: the completion judge's model on the same endpoint (the Secret's judge_model). Empty: the judge runs on name.", "type": "string"},
             "apiKey": {"type": "string"}
           }
         },

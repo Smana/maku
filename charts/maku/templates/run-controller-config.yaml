@@ -23,6 +23,14 @@ data:
     {{- end }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
     gitSecret: {{ required "runController.gitSecret is required" $c.gitSecret | quote }}
+    {{- if $c.unsafeSharedGitToken }}
+    # Every role mounts gitSecret: a reviewer or triager could push (a laptop's one PAT).
+    unsafeSharedGitToken: true
+    {{- else if $c.gitReadSecret }}
+    gitReadSecret: {{ $c.gitReadSecret | quote }}
+    {{- else }}
+    {{- fail "runController.gitReadSecret is empty and runController.unsafeSharedGitToken is false: reviewer and triager runs need a read-only token; name its Secret, or share gitSecret on a laptop" }}
+    {{- end }}
     broker:
       url: {{ printf "https://room-broker.%s.svc.%s:8443" .Release.Namespace .Values.clusterDomain | quote }}
       namespace: {{ .Release.Namespace | quote }}

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,7 +28,16 @@ func fakeReader(t *testing.T, objs ...client.Object) client.WithWatch {
 	if err := clientgoscheme.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	return fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
+	return fake.NewClientBuilder().WithScheme(s).WithObjects(append(gitSecrets(), objs...)...).Build()
+}
+
+// gitSecrets are testConfig's two git Secrets, filled: the preflight's gitSecrets check passes.
+func gitSecrets() []client.Object {
+	var out []client.Object
+	for _, n := range []string{"agent-git", "agent-git-read"} {
+		out = append(out, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: n, Namespace: "agents"}, Data: map[string][]byte{"token": []byte("t")}})
+	}
+	return out
 }
 
 func gvisor() *nodev1.RuntimeClass {
@@ -66,8 +76,11 @@ func TestPreflightPassesWhenTheRuntimeClassExists(t *testing.T) {
 
 func TestPreflightUnsandboxedMakesNoAPICall(t *testing.T) {
 	calls := 0
-	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
-		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+	c := fake.NewClientBuilder().WithObjects(gitSecrets()...).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, w client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+			if _, ok := o.(*nodev1.RuntimeClass); !ok {
+				return w.Get(ctx, k, o, opts...)
+			}
 			calls++
 			return errors.New("no call expected")
 		}}).Build()
@@ -98,7 +111,7 @@ func TestPreflightALaterTickFlipsFailedToPassed(t *testing.T) {
 
 func TestPreflightATransientErrorKeepsTheLastResult(t *testing.T) {
 	broken := false
-	c := fake.NewClientBuilder().WithObjects(gvisor()).WithInterceptorFuncs(interceptor.Funcs{
+	c := fake.NewClientBuilder().WithObjects(append(gitSecrets(), gvisor())...).WithInterceptorFuncs(interceptor.Funcs{
 		Get: func(ctx context.Context, w client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
 			if broken {
 				return errors.New("connection refused")
@@ -154,7 +167,7 @@ func TestPreflightAMissingClassWaitsTheFullInterval(t *testing.T) {
 
 func TestPreflightRBACLagRecoversOnTheNextShortRetry(t *testing.T) {
 	granted := false
-	c := fake.NewClientBuilder().WithObjects(gvisor()).WithInterceptorFuncs(interceptor.Funcs{
+	c := fake.NewClientBuilder().WithObjects(append(gitSecrets(), gvisor())...).WithInterceptorFuncs(interceptor.Funcs{
 		Get: func(ctx context.Context, w client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
 			if !granted {
 				return apierrors.NewForbidden(schema.GroupResource{Group: "node.k8s.io", Resource: "runtimeclasses"}, k.Name, errors.New("RBAC: access denied"))
@@ -186,5 +199,57 @@ func TestPreflightRetriesUndecidedChecksWithBackoff(t *testing.T) {
 func TestPreflightNeedsLeaderElection(t *testing.T) {
 	if !(&Preflight{}).NeedLeaderElection() {
 		t.Fatal("the preflight runs on the leader only")
+	}
+}
+
+// PR B: a missing git Secret shows, before any run waits on it: the preflight names the Secret and
+// holds new runs Pending (Waiting, never Failed: the factory's run token writer, or an
+// ExternalSecret, may fill it right after install), and checks again soon. The gauge reads 0.
+func TestPreflightGitSecrets(t *testing.T) {
+	noRead := fakeReader(t, gvisor())
+	if err := noRead.Delete(t.Context(), gitSecrets()[1]); err != nil {
+		t.Fatal(err)
+	}
+	empty := fakeReader(t, gvisor())
+	if err := empty.Update(t.Context(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agent-git", Namespace: "agents"}, Data: map[string][]byte{"other": []byte("x")}}); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		c    client.Reader
+		want string
+	}{
+		"no read Secret": {noRead, `Secret agents/agent-git-read not found: reviewer and triager runs mount it (runController.gitReadSecret); create it with a token key`},
+		"no token key":   {empty, `Secret agents/agent-git has no token key: implementer and tester runs mount it (runController.gitSecret)`},
+	} {
+		p := newPreflight(t, tc.c, testConfig(t))
+		gauge := map[string]bool{}
+		p.Passed = func(check string, ok bool) { gauge[check] = ok }
+		if !p.Tick(t.Context()) {
+			t.Errorf("%s: a missing Secret may be filled soon: want the short retry", name)
+		}
+		if got := p.Result(); got.State != PreflightWaiting || got.Check != "gitSecrets" || got.Message != tc.want {
+			t.Errorf("%s: %+v, want Waiting with %q", name, got, tc.want)
+		}
+		if ok, seen := gauge["gitSecrets"]; !seen || ok {
+			t.Errorf("%s: the gauge must read gitSecrets=0 while waiting: %v", name, gauge)
+		}
+	}
+	// A failed RuntimeClass still fails, even with a Secret missing too: it is checked first.
+	p := newPreflight(t, noRead, testConfig(t))
+	if err := noRead.Delete(t.Context(), gvisor()); err != nil {
+		t.Fatal(err)
+	}
+	if p.Tick(t.Context()); p.Result().State != PreflightFailed || p.Result().Check != "runtimeClass" {
+		t.Fatalf("missing class and Secret: %+v", p.Result())
+	}
+	// unsafeSharedGitToken: one Secret, and no read Secret is looked for.
+	cfg := testConfig(t)
+	cfg.GitReadSecret, cfg.UnsafeSharedGitToken = "", true
+	if err := noRead.Create(t.Context(), gvisor()); err != nil {
+		t.Fatal(err)
+	}
+	p = newPreflight(t, noRead, cfg)
+	if p.Tick(t.Context()); p.Result().State != PreflightPassed {
+		t.Fatalf("shared token: %+v", p.Result())
 	}
 }

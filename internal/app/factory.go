@@ -44,7 +44,6 @@ import (
 	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/decision"
-	"github.com/Smana/maku/internal/factory/demo"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/fence"
 	"github.com/Smana/maku/internal/factory/fluxwatch"
@@ -59,6 +58,7 @@ import (
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/runtoken"
 	"github.com/Smana/maku/internal/factory/statuswriter"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
@@ -211,23 +211,31 @@ func humanVerifier(ctx context.Context, cfg *config.Config) (*authn.Verifier, er
 	return authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
 }
 
-// demoGitToken keeps the runs' shared git Secret filled with a token from the factory App, on
-// the served repositories (demo mode: one App does both the factory's and the runs' work). served
-// is read at each mint: the set is live (factory resources D12).
-func demoGitToken(cfg *config.Config, served func() []string, c client.Client, log *slog.Logger) (*demo.GitToken, error) {
+// runTokens keeps the run-controller's two git Secrets filled with tokens from the App
+// cfg.RunTokenApp names (the factory's own in the demo), on the served repositories: nil when the
+// factory writes no run token. served is read at each mint: the set is live (factory resources D12).
+// Interim: replaced by the per-run minter, v4 D10 (rollout step 3).
+func runTokens(cfg *config.Config, served func() []string, c client.Client, log *slog.Logger) ([]*runtoken.Writer, error) {
+	appIDFile, keyFile, ok := cfg.RunTokenApp()
+	if !ok {
+		return nil, nil
+	}
 	if _, _, err := oneOwner(served()); err != nil {
 		return nil, err
 	}
 	hc := httpx.New(githubTimeout, nil)
-	return &demo.GitToken{Client: c, Namespace: cfg.Runs.Namespace, Every: 30 * time.Minute, Log: log,
-		Mint: func(ctx context.Context) (forge.Token, error) {
-			owner, names, err := oneOwner(served())
-			if err != nil {
-				return forge.Token{}, err
-			}
-			return forge.Mint(ctx, hc, githubAPIURL(), forge.MintOptions{AppIDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile,
-				Owner: owner, Repositories: names, Permissions: demo.Permissions()})
-		}}, nil
+	ws := runtoken.Writers(c, cfg.Runs.Namespace, func(ctx context.Context, perms map[string]string) (forge.Token, error) {
+		owner, names, err := oneOwner(served())
+		if err != nil {
+			return forge.Token{}, err
+		}
+		return forge.Mint(ctx, hc, githubAPIURL(), forge.MintOptions{AppIDFile: appIDFile, KeyFile: keyFile,
+			Owner: owner, Repositories: names, Permissions: perms})
+	}, log)
+	for _, w := range ws {
+		w.Every = 30 * time.Minute
+	}
+	return ws, nil
 }
 
 // oneOwner splits the repositories into their one owner and their names: one App installation
@@ -236,7 +244,7 @@ func oneOwner(repos []string) (owner string, names []string, err error) {
 	for _, r := range repos {
 		o, n, _ := strings.Cut(r, "/")
 		if owner != "" && !strings.EqualFold(o, owner) {
-			return "", nil, fmt.Errorf("demo: repositories %q and %q have different owners: one App installation serves one account", owner+"/"+names[0], r)
+			return "", nil, fmt.Errorf("run tokens: repositories %q and %q have different owners: one App installation serves one account", owner+"/"+names[0], r)
 		}
 		owner = o
 		names = append(names, n)
@@ -546,12 +554,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if evidenceRefresh != nil {
 		runnables = append(runnables, evidenceRefresh)
 	}
-	if cfg.Demo {
-		g, err := demoGitToken(cfg, conns.names, ledgers, log)
-		if err != nil {
-			return err
-		}
-		runnables = append(runnables, g)
+	tokens, err := runTokens(cfg, conns.names, ledgers, log)
+	if err != nil {
+		return err
+	}
+	for _, w := range tokens {
+		runnables = append(runnables, w)
 	}
 	// One issue poller per served repository, following the set as publishes change it (D12).
 	pollers := &intake.Pollers{Log: log, New: func(name string) (*intake.IssuePoller, bool) {
