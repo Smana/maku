@@ -116,9 +116,10 @@ func TestInspectRebase(t *testing.T) {
 
 func TestInspectRefusals(t *testing.T) {
 	tests := []struct {
-		name  string
-		build func(t *testing.T, f *fixture) []byte
-		want  hardening.Refusal
+		name   string
+		build  func(t *testing.T, f *fixture) []byte
+		branch string // agent/t-1 when empty
+		want   hardening.Refusal
 	}{{
 		name: "two refs",
 		build: func(t *testing.T, f *fixture) []byte {
@@ -246,12 +247,87 @@ func TestInspectRefusals(t *testing.T) {
 			return b
 		},
 		want: hardening.RefusePushSize,
+	}, {
+		name: "a binary file",
+		build: func(_ *testing.T, f *fixture) []byte {
+			f.commit(map[string]string{"x.bin": "head\x00" + canaryLike + "\x00tail\n"}, "binary")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a binary file the incremental diff does not show",
+		build: func(_ *testing.T, f *fixture) []byte {
+			f.commit(map[string]string{"x.bin": "\x00\x01\x02"}, "binary")
+			f.commit(map[string]string{"c.txt": "c\n"}, "text on top")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a highly compressible blob in a small bundle",
+		build: func(t *testing.T, f *fixture) []byte {
+			f.commit(map[string]string{"bomb.txt": strings.Repeat("a", 64<<20)}, "bomb")
+			b := f.bundle("^main", "agent/t-1")
+			if len(b) > 1<<20 {
+				t.Fatalf("the fixture bundle is %d bytes, want a small one", len(b))
+			}
+			return b
+		},
+		want: hardening.RefusePushSize,
+	}, {
+		name: "a symlink through .. that stays inside",
+		build: func(t *testing.T, f *fixture) []byte {
+			if err := os.MkdirAll(filepath.Join(f.work, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("../b.txt", filepath.Join(f.work, "d", "l")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "link")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a symlink to a symlink",
+		build: func(t *testing.T, f *fixture) []byte {
+			if err := os.Symlink("b.txt", filepath.Join(f.work, "l1")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("l1", filepath.Join(f.work, "l2")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "links")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "the one ref at a tree",
+		build: func(t *testing.T, f *fixture) []byte {
+			f.commit(map[string]string{"c.txt": "c\n"}, "two")
+			tree := git(t, f.work, "", "rev-parse", "HEAD^{tree}")
+			if err := os.WriteFile(filepath.Join(f.work, ".git", "refs", "heads", "agent", "t-9"), []byte(tree+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			p := filepath.Join(t.TempDir(), "tree.bundle")
+			git(t, f.work, "", "bundle", "create", "--quiet", p, "agent/t-9")
+			b, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		},
+		branch: "agent/t-9",
+		want:   hardening.RefusePushRef,
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
 			bundle := tt.build(t, f)
-			_, err := f.cache.Mirror("owner/repo").Inspect(context.Background(), bundle, "agent/t-1", "main")
+			branch := tt.branch
+			if branch == "" {
+				branch = "agent/t-1"
+			}
+			m := f.cache.Mirror("owner/repo")
+			_, err := m.Inspect(context.Background(), bundle, branch, "main")
 			t.Logf("Inspect: %v", err)
 			if got := reason(err); got != tt.want {
 				t.Fatalf("Inspect err = %v, want refusal %s", err, tt.want)
@@ -259,6 +335,9 @@ func TestInspectRefusals(t *testing.T) {
 			var r *Refused
 			if errors.As(err, &r) && len(r.Detail) > maxDetail+2*maxDetail {
 				t.Errorf("Detail is unbounded: %d bytes", len(r.Detail))
+			}
+			if refs := outRefs(t, m); refs != "" {
+				t.Errorf("a refusal left its objects' ref: %q", refs)
 			}
 		})
 	}
@@ -415,6 +494,9 @@ func TestPushLease(t *testing.T) {
 		if got := f.remoteHead(in.Ref); got != in.Head {
 			t.Fatalf("remote = %s, want %s", got, in.Head)
 		}
+		if refs := outRefs(t, m); refs != "" {
+			t.Errorf("a push left its objects' ref: %q", refs)
+		}
 	})
 
 	t.Run("creates an absent branch", func(t *testing.T) {
@@ -468,13 +550,17 @@ func TestPushLease(t *testing.T) {
 		}
 	})
 
-	t.Run("a remote already at head pushes nothing", func(t *testing.T) {
+	t.Run("a remote someone else moved to head pushes nothing", func(t *testing.T) {
 		f, m, in := setup(t)
 		git(t, f.work, "", "push", "--quiet", f.remote, "agent/t-1")
 		bin, log := fakeGit(t)
 		f.cache.Git = bin
+		if err := m.Push(ctx, in); !errors.Is(err, ErrLeaseLost) {
+			t.Fatalf("Push = %v, want ErrLeaseLost: the head is there, but not by this push", err)
+		}
+		in.OldHead = in.Head
 		if err := m.Push(ctx, in); err != nil {
-			t.Fatalf("Push = %v, want nil", err)
+			t.Fatalf("Push of an inspection that read the head there = %v, want nil", err)
 		}
 		data, err := os.ReadFile(log)
 		if err != nil {
@@ -583,5 +669,42 @@ func TestMirrorConcurrency(t *testing.T) {
 				t.Fatalf("Inspect = %+v", in)
 			}
 		})
+	}
+}
+
+// canaryLike is text a scan would catch, hidden in a binary file.
+const canaryLike = "mkc-0123456789abcdef0123"
+
+// outRefs lists the mirror's refs/maku/out refs.
+func outRefs(t *testing.T, m *Mirror) string {
+	t.Helper()
+	if _, err := os.Stat(m.dir); os.IsNotExist(err) {
+		return "" // never created: a refusal before any git call
+	}
+	out, err := m.run(t.Context(), "", nil, "for-each-ref", "--format=%(refname)", "refs/maku/out/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// A mirror past the cache's MaxBytes is re-created before the next inspection.
+func TestMirrorSizeLimit(t *testing.T) {
+	f := newFixture(t)
+	f.commit(map[string]string{"c.txt": "c\n"}, "two")
+	m := f.cache.Mirror("owner/repo")
+	if _, err := m.Inspect(t.Context(), f.bundle("^main", "agent/t-1"), "agent/t-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(m.dir, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.cache.MaxBytes = 1
+	if _, err := m.Inspect(t.Context(), f.bundle("^main", "agent/t-1"), "agent/t-1", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Fatalf("the mirror over its size limit was kept: %v", err)
 	}
 }

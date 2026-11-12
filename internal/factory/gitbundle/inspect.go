@@ -39,6 +39,8 @@ type Stats struct{ Files, Lines int }
 
 // Inspection is what a bundle would change on the remote.
 type Inspection struct {
+	// outRef holds the bundle's objects in the mirror until Push, or a refusal, deletes it.
+	outRef   string
 	Ref      string // the one ref, refs/heads/<branch>
 	Head     string // the bundle's head SHA (40 or 64 hex)
 	OldHead  string // the branch's head on the remote when read, "" when absent: the lease
@@ -158,7 +160,29 @@ func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch,
 		}
 		return Inspection{}, refuse(hardening.RefusePushTree, "objects failed fsck")
 	}
+	in, err := m.inspectFetched(ctx, tok, ref, outRef, head, oldHead, baseHead, branch, base)
+	var refused *Refused
+	if errors.As(err, &refused) {
+		m.dropOut(ctx, outRef)
+	}
+	return in, err
+}
+
+// dropOut deletes the ref a refused or pushed bundle's objects were fetched into; its objects go
+// with the mirror's size limit.
+func (m *Mirror) dropOut(ctx context.Context, outRef string) {
+	if outRef != "" {
+		_, _ = m.run(ctx, "", nil, "update-ref", "-d", outRef)
+	}
+}
+
+// inspectFetched is the inspection of a bundle fetched into outRef.
+func (m *Mirror) inspectFetched(ctx context.Context, tok, ref, outRef, head, oldHead, baseHead, branch, base string) (Inspection, error) {
 	got, err := m.revParse(ctx, outRef)
+	var ge *gitError
+	if errors.As(err, &ge) {
+		return Inspection{}, refuse(hardening.RefusePushRef, "bundle head is not a commit")
+	}
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -166,7 +190,7 @@ func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch,
 		return Inspection{}, refuse(hardening.RefusePushRef, "bundle head is not a commit")
 	}
 
-	in := Inspection{Ref: ref, Head: head, OldHead: oldHead, BaseHead: baseHead}
+	in := Inspection{Ref: ref, Head: head, OldHead: oldHead, BaseHead: baseHead, outRef: outRef}
 	from := ""
 	switch {
 	case oldHead != "" && oldHead == head:
@@ -198,7 +222,18 @@ func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch,
 		from = mergeBase
 	}
 
-	if in.Files, err = m.files(ctx, tok, from, head); err != nil {
+	// Every blob either range changes is sized by its header before any diff reads one (a highly
+	// compressible blob never inflates), and no range may change a binary file: T3 and the caps read
+	// text only.
+	for _, r := range [][2]string{{from, head}, {mergeBase, head}} {
+		if err := m.checkBlobs(ctx, tok, r[0], r[1]); err != nil {
+			return Inspection{}, err
+		}
+	}
+	if in.Files, err = m.files(ctx, tok, from, head, head); err != nil {
+		return Inspection{}, err
+	}
+	if _, err := m.stats(ctx, tok, from, head); err != nil { // the incremental range's binaries
 		return Inspection{}, err
 	}
 	if in.Added, err = m.added(ctx, tok, from, head); err != nil {
@@ -323,8 +358,54 @@ func (m *Mirror) readChange(ctx context.Context, tok string, args ...string) ([]
 	return out, err
 }
 
-// files is the raw diff from..to, refusing a submodule, an escaping symlink or a .git path.
-func (m *Mirror) files(ctx context.Context, tok, from, to string) ([]File, error) {
+// checkBlobs refuses a change from..to with a blob, old or new, over MaxBlob (push_size), sized by
+// cat-file --batch-check from its header: never inflated.
+func (m *Mirror) checkBlobs(ctx context.Context, tok, from, to string) error {
+	out, err := m.readChange(ctx, tok, "diff", "--raw", "-z", "--no-renames", "--no-abbrev", from, to, "--")
+	if err != nil {
+		return err
+	}
+	var shas []string
+	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		parts := strings.Fields(strings.TrimPrefix(fields[i], ":"))
+		if len(parts) != 5 {
+			return fmt.Errorf("gitbundle: diff --raw: unexpected entry")
+		}
+		for j, sha := range parts[2:4] {
+			mode := parts[j]
+			if isSHA(sha) && strings.Trim(sha, "0") != "" && mode != "160000" && mode != "040000" {
+				shas = append(shas, sha)
+			}
+		}
+	}
+	if len(shas) == 0 {
+		return nil
+	}
+	sizes, err := m.runIn(ctx, tok, nil, nil, []byte(strings.Join(shas, "\n")+"\n"),
+		"cat-file", "--batch-check=%(objecttype) %(objectsize)")
+	if errors.Is(err, errOutputCap) {
+		return refuse(hardening.RefusePushSize, "change too large to read")
+	}
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(sizes)), "\n") {
+		typ, size, _ := strings.Cut(line, " ")
+		n, err := strconv.ParseInt(size, 10, 64)
+		if typ != "blob" || err != nil {
+			return fmt.Errorf("gitbundle: cat-file --batch-check: unexpected entry")
+		}
+		if n > MaxBlob {
+			return refuse(hardening.RefusePushSize, "a blob of "+size+" bytes")
+		}
+	}
+	return nil
+}
+
+// files is the raw diff from..to, refusing a submodule, an escaping symlink or a .git path. tree is
+// the commit whose tree a symlink's target is resolved in.
+func (m *Mirror) files(ctx context.Context, tok, from, to, tree string) ([]File, error) {
 	out, err := m.readChange(ctx, tok, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
 		"--no-ext-diff", "--no-textconv", from, to, "--")
 	if err != nil {
@@ -349,7 +430,7 @@ func (m *Mirror) files(ctx context.Context, tok, from, to string) ([]File, error
 		if status == "D" {
 			mode = oldMode
 		} else if newMode == "120000" {
-			if err := m.checkSymlink(ctx, tok, p, newSHA); err != nil {
+			if err := m.checkSymlink(ctx, tok, tree, p, newSHA); err != nil {
 				return nil, err
 			}
 		}
@@ -358,8 +439,9 @@ func (m *Mirror) files(ctx context.Context, tok, from, to string) ([]File, error
 	return files, nil
 }
 
-// checkSymlink refuses a symlink at p whose target is absolute or resolves outside the root.
-func (m *Mirror) checkSymlink(ctx context.Context, tok, p, sha string) error {
+// checkSymlink refuses a symlink at p whose target is absolute, has a ".." component, resolves
+// outside the root or into .git, or names another symlink in tree: no chain can lead out.
+func (m *Mirror) checkSymlink(ctx context.Context, tok, tree, p, sha string) error {
 	if !isSHA(sha) {
 		return fmt.Errorf("gitbundle: diff --raw: not a sha")
 	}
@@ -374,9 +456,21 @@ func (m *Mirror) checkSymlink(ctx context.Context, tok, p, sha string) error {
 	if target == "" || strings.HasPrefix(target, "/") || strings.ContainsRune(target, 0) {
 		return refuse(hardening.RefusePushTree, "symlink "+p)
 	}
+	for _, seg := range strings.Split(target, "/") {
+		if seg == ".." {
+			return refuse(hardening.RefusePushTree, "symlink "+p)
+		}
+	}
 	resolved := path.Clean(path.Join(path.Dir(p), target))
 	if resolved == ".." || strings.HasPrefix(resolved, "../") || hasDotGit(resolved) {
 		return refuse(hardening.RefusePushTree, "symlink "+p)
+	}
+	entry, err := m.run(ctx, "", nil, "ls-tree", "--full-tree", "-z", tree, "--", resolved)
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(string(entry), "120000 ") {
+		return refuse(hardening.RefusePushTree, "symlink "+p+" to a symlink")
 	}
 	return nil
 }
@@ -441,8 +535,8 @@ func (m *Mirror) stats(ctx context.Context, tok, from, to string) (Stats, error)
 		}
 		st.Files++
 		for _, n := range parts[:2] {
-			if n == "-" {
-				continue
+			if n == "-" { // a binary file: T3 and the line caps read text only
+				return Stats{}, refuse(hardening.RefusePushTree, "binary file "+parts[2])
 			}
 			v, err := strconv.Atoi(n)
 			if err != nil {

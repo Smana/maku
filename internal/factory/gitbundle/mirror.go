@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,9 @@ type Cache struct {
 	Protocols []string
 	// Timeout bounds each git call, 60s when zero.
 	Timeout time.Duration
+	// MaxBytes bounds one mirror on disk, DefaultMaxBytes when zero: a mirror past it is re-created
+	// before the next inspection, so pushed objects never accumulate past the cache's emptyDir.
+	MaxBytes int64
 
 	mu      sync.Mutex
 	mirrors map[string]*Mirror
@@ -174,6 +178,11 @@ func (m *Mirror) run(ctx context.Context, tok string, extraEnv []string, args ..
 
 // runCfg is run with extra -c options, after the hardened ones.
 func (m *Mirror) runCfg(ctx context.Context, tok string, extraEnv, cfg []string, args ...string) ([]byte, error) {
+	return m.runIn(ctx, tok, extraEnv, cfg, nil, args...)
+}
+
+// runIn is runCfg with stdin.
+func (m *Mirror) runIn(ctx context.Context, tok string, extraEnv, cfg []string, stdin []byte, args ...string) ([]byte, error) {
 	c := m.cache
 	ctx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
@@ -187,6 +196,9 @@ func (m *Mirror) runCfg(ctx context.Context, tok string, extraEnv, cfg []string,
 		"-c", "fetch.fsck.hasDotdot=error",
 		"-c", "fetch.fsck.fullPathname=error",
 		"-c", "core.hooksPath=/dev/null",
+		// A blob past it is never loaded whole into memory, nor delta-compressed: a bundle's
+		// highly compressible blob cannot balloon a call (sizes are refused before any read too).
+		"-c", "core.bigFileThreshold=1m",
 		"-c", "core.fsmonitor=false",
 		"-c", "gc.auto=0",
 		"-c", "maintenance.auto=false",
@@ -229,6 +241,9 @@ func (m *Mirror) runCfg(ctx context.Context, tok string, extraEnv, cfg []string,
 	cmd := exec.CommandContext(ctx, c.gitBin(), argv...)
 	cmd.Env = env
 	cmd.Dir = os.TempDir()
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	cmd.WaitDelay = 5 * time.Second
 	stdout := &capWriter{max: maxStdout, cancel: cancel}
 	stderr := &tailWriter{max: maxStderr}
@@ -371,9 +386,43 @@ func (m *Mirror) create(ctx context.Context) error {
 	return nil
 }
 
+// DefaultMaxBytes is a mirror's size limit on disk when Cache.MaxBytes is zero.
+const DefaultMaxBytes = 1 << 30
+
+// MaxBlob is the largest blob a push may change, compressed or not: larger is push_size, read by
+// its header alone, never inflated (core.bigFileThreshold matches it).
+const MaxBlob = 1 << 20
+
+// overSize reports whether the mirror's directory holds more than the cache's MaxBytes.
+func (m *Mirror) overSize() bool {
+	limit := m.cache.MaxBytes
+	if limit <= 0 {
+		limit = DefaultMaxBytes
+	}
+	var total int64
+	_ = filepath.WalkDir(m.dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil //nolint:nilerr // an unreadable entry counts nothing; ensure probes the mirror
+		}
+		if info, err := d.Info(); err == nil {
+			total += info.Size()
+		}
+		if total > limit {
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return total > limit
+}
+
 // withMirror runs op on a ready mirror; a repository-level failure removes the mirror, re-creates it
 // and runs op once more.
 func (m *Mirror) withMirror(ctx context.Context, op func() error) error {
+	if m.overSize() {
+		if err := os.RemoveAll(m.dir); err != nil {
+			return fmt.Errorf("gitbundle: remove a mirror over its size limit: %w", err)
+		}
+	}
 	if err := m.ensure(ctx); err != nil {
 		return err
 	}

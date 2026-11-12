@@ -10,8 +10,9 @@ import (
 )
 
 // Push pushes in.Head to in.Ref with --force-with-lease=<ref>:<in.OldHead> (an empty OldHead: the
-// ref must be absent). A remote already at in.Head is success with nothing pushed (HR26). A lease the
-// remote refuses is ErrLeaseLost. It holds the mirror's lock. The head's objects are the mirror's,
+// ref must be absent). A remote already at in.Head is success with nothing pushed only when the
+// inspection read it there (HR26); one that moved there since, by another hand, is ErrLeaseLost, as
+// is any other move. It holds the mirror's lock. The head's objects are the mirror's,
 // from the Inspect that returned in.
 func (m *Mirror) Push(ctx context.Context, in Inspection) error {
 	branch, ok := strings.CutPrefix(in.Ref, "refs/heads/")
@@ -32,8 +33,9 @@ func (m *Mirror) push(ctx context.Context, tok string, in Inspection) error {
 	if err != nil {
 		return err
 	}
-	if current == in.Head {
-		return nil // HR26: already applied
+	if current == in.Head && in.OldHead == in.Head {
+		m.dropOut(ctx, in.outRef)
+		return nil // HR26: the inspection read the head there already
 	}
 	if current != in.OldHead {
 		return ErrLeaseLost
@@ -44,6 +46,7 @@ func (m *Mirror) push(ctx context.Context, tok string, in Inspection) error {
 	out, err := m.run(ctx, tok, nil, "push", "--porcelain", "--no-verify", "--no-recurse-submodules",
 		"--force-with-lease="+in.Ref+":"+in.OldHead, "origin", in.Head+":"+in.Ref)
 	if err == nil {
+		m.dropOut(ctx, in.outRef)
 		return nil
 	}
 	var ge *gitError
