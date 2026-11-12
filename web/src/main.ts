@@ -2,6 +2,7 @@
 
 import { mountApprovalMemory } from "./approval-memory";
 import { fetchDashboards } from "./dashboards";
+import { mountInstallBanner } from "./install-banner";
 import { mountRoom } from "./room";
 import { isSettings, mountSettings, settingsFrame } from "./settings";
 import { initTheme } from "./theme";
@@ -14,6 +15,9 @@ const app = document.getElementById("app")!;
 const theme = initTheme();
 
 const m = location.pathname.match(/^\/r\/([a-z2-7]{8})$/);
+// The install's unsafe settings, on the rooms list and every settings page (the room has its own
+// per-run "Not sandboxed" banner).
+if (!m) void mountInstallBanner(app, fetch);
 if (m) mountRoom(app, m[1], theme, { dashboards: () => fetchDashboards(fetch) });
 // Approval memory is a settings section: the same header and tabs, its own page in main.
 else if (location.pathname === "/settings/approval-memory") mountApprovalMemory(settingsFrame(app, "Approval memory", "/settings/approval-memory", theme), fetch);

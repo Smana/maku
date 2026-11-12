@@ -448,7 +448,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		ProjectID:        projectID,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards}, nil
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe}, nil
 }
 
 // catalogueCache is the broker's reader of the factory's catalogue (profile choice at intake,

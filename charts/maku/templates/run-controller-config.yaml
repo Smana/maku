@@ -12,10 +12,11 @@ data:
   config.yaml: |
     namespace: {{ .Values.runs.namespace | quote }}
     namePrefix: {{ .Values.runs.namePrefix | quote }}
-    {{- with $c.runtimeClassName }}
+    {{- $sb := include "ap.sandbox" . | fromJson }}
+    {{- with $sb.class }}
     runtimeClassName: {{ . | quote }}
     {{- end }}
-    allowUnsandboxed: {{ $c.allowUnsandboxed }}
+    allowUnsandboxed: {{ $sb.allowUnsandboxed }}
     {{- if not .Values.networkPolicies.enabled }}
     # No Cilium: the controller creates no CiliumNetworkPolicy per run.
     networkPolicy: none

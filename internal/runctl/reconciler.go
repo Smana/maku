@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,8 +25,10 @@ import (
 )
 
 const (
-	secretRetry = 30 * time.Second
-	gcRetry     = 5 * time.Second
+	secretRetry    = 30 * time.Second
+	gcRetry        = 5 * time.Second
+	preflightRetry = 10 * time.Second
+	quotaRetry     = 30 * time.Second
 )
 
 // Reconciler turns an AgentRun into its owned objects and reports the pod back as status.
@@ -36,6 +39,8 @@ type Reconciler struct {
 	Cfg       Config
 	Now       func() time.Time
 	Log       *slog.Logger
+	// Preflight, when set, is consulted before a run's first pod: Unknown waits, Failed refuses.
+	Preflight interface{ Result() Result }
 }
 
 // SetupWithManager watches runs and the pods they own.
@@ -71,6 +76,22 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			fail(st, now, "Refused", why)
 			return ctrl.Result{}, r.writeStatus(ctx, run, *st)
 		}
+		// The preflight is the cluster's state, not the run's: a lost pod (gone) ends as PodLost below.
+		if r.Preflight != nil && !gone {
+			switch res := r.Preflight.Result(); res.State {
+			case PreflightPassed:
+			case PreflightFailed:
+				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
+				return ctrl.Result{}, r.writeStatus(ctx, run, *st)
+			default:
+				why := "waiting for the run-controller's preflight (sandbox RuntimeClass)"
+				if res.Message != "" {
+					why += ": " + res.Check + ": " + res.Message
+				}
+				pending(st, "PreflightPending", why)
+				return ctrl.Result{RequeueAfter: preflightRetry}, r.writeStatus(ctx, run, *st)
+			}
+		}
 	}
 	runID := r.Cfg.RunID(run)
 	st.RunID, st.Branch, st.ConversationID = runID, Branch(run, runID), string(run.UID)
@@ -94,6 +115,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		stale, err := r.create(ctx, run, runID, m, ca)
 		if stale != "" {
 			return r.waitForGC(ctx, run, st, stale)
+		}
+		// The runs namespace's ResourceQuota (v4 D16) is a safety net behind the factory's slots, not
+		// an error: a run over it waits for room (plan PR10), as does one created before the quota's
+		// status is populated (right after install, or after a key is added).
+		if apierrors.IsForbidden(err) && (strings.Contains(err.Error(), "exceeded quota") || strings.Contains(err.Error(), "status unknown for quota")) {
+			pending(st, "QuotaExceeded", err.Error())
+			return ctrl.Result{RequeueAfter: quotaRetry}, r.writeStatus(ctx, run, *st)
 		}
 		if err != nil {
 			// A refusal that retrying cannot cure (a bad object, a forbidden verb, a missing

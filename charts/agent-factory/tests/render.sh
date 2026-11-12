@@ -39,6 +39,14 @@ if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then
   bash tests/normalize.sh <<<"$out" >tests/golden/demo.yaml
 fi
 bash tests/normalize.sh <<<"$out" | diff -u tests/golden/demo.yaml - >&2 || { echo "FAIL: the demo render differs from tests/golden/demo.yaml" >&2; fail=1; }
+# Rollout step 2, PR A (D16, D17, D18): the demo gains exactly the runs quota, the run-pod policy and
+# its binding, the runs namespace's Pod Security restricted label, and its two unsafe settings on the
+# install banner; no RuntimeClass ClusterRole (no class).
+ykind Namespace 'select(.metadata.name == "agents") | .metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"' 'the demo runs namespace enforces Pod Security restricted'
+got=$(yq ea '[select(.kind == "ResourceQuota" or .kind == "ValidatingAdmissionPolicy" or .kind == "ValidatingAdmissionPolicyBinding" or (.kind == "ClusterRole" and (.metadata.name | test("runtimeclass$")))) | .kind + "/" + .metadata.name] | sort | join(" ")' - <<<"$out")
+want="ResourceQuota/runs ValidatingAdmissionPolicy/maku-maku-run-pods ValidatingAdmissionPolicy/room-broker-maku-agentruns ValidatingAdmissionPolicyBinding/maku-maku-run-pods ValidatingAdmissionPolicyBinding/room-broker-maku-agentruns"
+[[ $got == "$want" ]] || { echo "FAIL: the demo's step-2 objects are '$got', want '$want'" >&2; fail=1; }
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "unsafe_allow_runc,network_policy_none"' 'the demo shows its two unsafe settings: runc and no network policy'
 # PR6: the skeleton disables both subcharts, so nothing but the umbrella's own templates renders
 # and the gate's message is the error whatever order Helm renders in; values-demo.yaml enables them.
 yq -e '.maku.enabled == false and .maku-factory.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku and maku-factory" >&2; fail=1; }

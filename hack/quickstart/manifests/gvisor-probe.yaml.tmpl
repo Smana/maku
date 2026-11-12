@@ -34,6 +34,12 @@ spec:
   runtimeClassName: gvisor
   restartPolicy: Never
   automountServiceAccountToken: false
+  # The run-pod policy (charts/maku/templates/run-pod-policy.yaml) holds every pod in the runs
+  # namespace: up.sh creates this one as the run-controller, non-root, with its image allow-listed.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    seccompProfile: {type: RuntimeDefault}
   containers:
     - name: probe
       image: ${PROBE_IMAGE}

@@ -80,4 +80,29 @@ metadata:
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-ca}
 subjects:
   - {kind: ServiceAccount, name: run-controller, namespace: {{ .Release.Namespace }}}
+{{- with (include "ap.sandbox" . | fromJson).class }}
+{{- $crName := printf "maku-%s-run-controller-runtimeclass" $.Release.Namespace }}
+---
+# The preflight (v4 D18) proves the sandbox RuntimeClass exists before any run starts. It reads it
+# uncached, by name: get on that one cluster-scoped object, never a list or watch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $crName }}
+  labels: {{- $l | nindent 4 }}
+rules:
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    resourceNames: [{{ . | quote }}]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $crName }}
+  labels: {{- $l | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $crName }}}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: {{ $.Release.Namespace }}}
+{{- end }}
 {{- end }}

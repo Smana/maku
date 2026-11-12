@@ -123,6 +123,64 @@ runController:
   # Replaces the built-in profiles (github, pypi, npm, golang, crates) when set.
   egressProfiles: {}
 
+# The run pod's sandbox (D18). These keys are the spec's; the run-controller's older keys stay
+# honoured until rollout step 8 deletes them:
+#
+#   | key                       | old key, still honoured           | rule                                   |
+#   |---------------------------|-----------------------------------|----------------------------------------|
+#   | sandbox.runtimeClassName  | runController.runtimeClassName    | the new key wins when set; else the old |
+#   |   (default "")            |   (default gvisor)                |                                        |
+#   | sandbox.unsafeAllowRunc   | runController.allowUnsandboxed    | true: no RuntimeClass, allowUnsandboxed;|
+#   |                           |                                   | with sandbox.runtimeClassName it fails |
+#   | (none)                    | runController.createRuntimeClass, | unchanged; renders the class under the |
+#   |                           |   runtimeHandler                  | resolved name                          |
+#
+# unsafeAllowRunc runs agents on the node's own runtime (runc): for the demo and kind only. Every
+# signed-in human sees it on the install banner (GET /api/install).
+sandbox:
+  runtimeClassName: ""
+  unsafeAllowRunc: false
+
+# A ResourceQuota on runs.namespace (D16): a cluster-level safety net behind the factory's slots and
+# budgets, not its admission. A run whose pod the quota refuses waits Pending (QuotaExceeded, retried
+# every 30 s); it never fails. Pods, CPU and memory only: a quota on ephemeral-storage would require
+# it on every container. Sized for ten small runs with headroom. A small run is the harness (1-2 CPU,
+# 2-4Gi) plus the bridge (20m-100m, 32-64Mi) and the gate (10m-50m, 16-32Mi):
+#   requests: 10 x 1.03 CPU = 10.3 -> 16;  10 x 2.05Gi = 20.5Gi -> 32Gi
+#   limits:   10 x 2.15 CPU = 21.5 -> 32;  10 x 4.1Gi  = 41Gi   -> 64Gi
+#   pods:     10 runs, the preflight's probe and room for medium runs' retries -> 25
+# Rendered only with runController.enabled.
+runsQuota:
+  enabled: true
+  hard:
+    pods: "25"
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi
+
+# A ValidatingAdmissionPolicy holds the run pod's shape in runs.namespace (D17), Kubernetes 1.30+:
+# only the run-controller creates pods there; each runs under the sandbox RuntimeClass (unless
+# sandbox.unsafeAllowRunc), with a restricted securityContext, emptyDir/configMap/secret/projected
+# volumes only (no hostPath), CPU and memory limits on every container, and images from
+# runController.images, runController.image and extraImages (repositories, without tag or digest),
+# by digest unless e2e.unpinnedImages. No ephemeral container (kubectl debug) is accepted. Rendered
+# only with runController.enabled.
+runPodPolicy:
+  enabled: true
+  extraImages: []
+
+# Two optional AgentRun policies (D17), Maku's copy of cloud-native-ref's Kyverno rules, each rendered
+# only when set, with or without the run-controller. creators: the only usernames that may create an
+# AgentRun (e.g. system:serviceaccount:<ns>:agent-factory). factoryServiceAccount:
+# the factory's ServiceAccount in the release namespace, whose AgentRun updates may change only the
+# usage-tokens, pull-request and revoked annotations. Like cloud-native-ref's Kyverno originals,
+# both hold AgentRuns in every namespace; namespaces narrows their bindings to the listed ones.
+agentRunPolicies:
+  creators: []
+  factoryServiceAccount: ""
+  namespaces: []
+
 # CI only: images `kind load`ed have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false
