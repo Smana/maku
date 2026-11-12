@@ -231,7 +231,8 @@ for _ in $(seq 30); do
 done
 grep -qF 'run token Secrets' <<<"$refused" || die "the factory's patch of agent-model was not refused by the run token policy: $refused"
 echo "ok: the factory's patch of agent-model is refused (run token policy)"
-# A run the factory creates waits Pending for its own Secret.
+# A run the factory creates waits Pending for its own Secret. In the unenforced leg the network
+# preflight refuses every run first (by design): the run must end Failed, PreflightFailed, with no pod.
 kubectl apply --as="$sa:agent-factory" -f - <<EOF
 apiVersion: maku.ogenki.io/v1alpha1
 kind: AgentRun
@@ -245,15 +246,19 @@ spec:
   task: {text: "a run that never starts"}
   budget: {maxMinutes: 5}
 EOF
+want='Pending/SecretMissing/*run-abcdefgh-git*' what="waits Pending (SecretMissing) for its own token Secret"
+[[ $NETPOL != unenforced ]] || { want='Failed/PreflightFailed/network:*' what="is refused by the network preflight (PreflightFailed)"; }
 reason=""
-for _ in $(seq 40); do
+for _ in $(seq 60); do
   reason=$(kubectl -n agents get agentruns.maku.ogenki.io run-abcdefgh -o jsonpath='{.status.phase}/{.status.conditions[?(@.type=="Ready")].reason}/{.status.conditions[?(@.type=="Ready")].message}') || reason=""
-  [[ $reason == Pending/SecretMissing/*run-abcdefgh-git* ]] && break
+  # shellcheck disable=SC2053 # $want is a glob on purpose
+  [[ $reason == $want ]] && break
   sleep 3
 done
-[[ $reason == Pending/SecretMissing/*run-abcdefgh-git* ]] || die "the run is '$reason', want Pending/SecretMissing: it must wait for its own token Secret"
+# shellcheck disable=SC2053
+[[ $reason == $want ]] || die "the run is '$reason', want $want: a run without its token Secret $what"
 ! kubectl -n agents get pod run-abcdefgh >/dev/null 2>&1 || die "a pod started without the run's token Secret"
-echo "ok: a run without its token Secret waits Pending (SecretMissing), with no pod"
+echo "ok: a run without its token Secret $what, with no pod"
 kubectl -n agents delete agentruns.maku.ogenki.io run-abcdefgh --wait=false >/dev/null
 
 step "no Cilium, cert-manager or CNPG objects"

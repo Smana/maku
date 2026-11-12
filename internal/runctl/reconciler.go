@@ -83,6 +83,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			case PreflightPassed:
 			case PreflightFailed:
 				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
+				// A run held by a waiting preflight before keeps no stale PreflightPending beside phase Failed.
+				setCond(st, "Ready", metav1.ConditionFalse, "PreflightFailed", res.Check+": "+res.Message)
 				return ctrl.Result{}, r.writeStatus(ctx, run, *st)
 			default:
 				why := "waiting for the run-controller's preflight"
