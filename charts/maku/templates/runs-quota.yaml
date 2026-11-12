@@ -1,0 +1,15 @@
+{{- if and .Values.runController.enabled .Values.runsQuota.enabled }}
+# The runs namespace's safety net (v4 D16): admission stays in the factory's slots and budgets. A run
+# over it waits Pending (QuotaExceeded); the run-controller never fails it for this.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: runs
+  namespace: {{ .Values.runs.namespace }}
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "run-controller") | nindent 4 }}
+spec:
+  hard:
+    {{- range $k, $v := .Values.runsQuota.hard }}
+    {{ $k }}: {{ $v | toString | quote }}
+    {{- end }}
+{{- end }}

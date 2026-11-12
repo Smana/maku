@@ -21,6 +21,19 @@ Sources: `docs/api.md` (the `:8080` checks), `internal/policy/policy.go` (`Group
 
 ## The room list
 
+When the install runs with an unsafe setting, a banner (`role="alert"`) sits above the room list
+and every Settings page for as long as the setting stays. It names each one and ends with "Use this
+install for demos only.":
+
+| Code (`GET /api/install`) | Chart setting | The banner says |
+|---|---|---|
+| `unsafe_allow_runc` | `sandbox.unsafeAllowRunc`, or `runController.allowUnsandboxed` with no RuntimeClass | Runs are not sandboxed |
+| `network_policy_none` | `networkPolicies.enabled: false` | Nothing confines a run's network |
+| `shared_git_token` | `runController.unsafeSharedGitToken` | Every role shares one write token |
+
+The chart computes the list into the broker's `install.unsafe`; the demo shows the first two. A
+room page keeps its own per-run `Not sandboxed` banner.
+
 A table, one row per room you can read. Rooms that need you come first, then the most recently
 active, then by id. The whole row opens the room page: the task cell's link covers the row, so it
 stays one link for the keyboard and a screen reader. The status says where each room stands in the

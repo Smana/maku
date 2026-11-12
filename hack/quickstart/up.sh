@@ -36,6 +36,9 @@ chart_args=(-f charts/maku/values-quickstart.yaml --set createRunsNamespace=fals
 if [[ $unsandboxed == 1 ]]; then
   # runctl uses runtimeClassName whenever it is non-empty; allowUnsandboxed only counts when it is empty.
   chart_args+=(--set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)
+else
+  # The gVisor probe below runs PROBE_IMAGE in the runs namespace, which the run-pod policy holds.
+  chart_args+=(--set "runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 fi
 if [[ ${UP_HELM_ARGS:-} != *image*tag* ]]; then
   step "release images"
@@ -130,7 +133,8 @@ if [[ $unsandboxed == 0 ]]; then
   probe() { envsubst '${RUNS_NS} ${NS} ${PROBE_IMAGE} ${CLUSTER_DOMAIN}' <hack/quickstart/manifests/gvisor-probe.yaml.tmpl; }
   cleanup_probe() { probe | kubectl delete --ignore-not-found --wait=false -f - >/dev/null 2>&1 || true; }
   cleanup_probe
-  probe | kubectl apply -f -
+  # As the run-controller: the run-pod policy lets no one else create a pod in the runs namespace.
+  probe | kubectl create --as "system:serviceaccount:$NS:run-controller" -f -
   phase=
   for _ in $(seq 90); do # 180 s; stop at the first verdict, a failed check should not wait out the clock
     phase=$(kubectl -n agents get pod ap-probe -o jsonpath='{.status.phase}')

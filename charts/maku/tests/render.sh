@@ -94,6 +94,11 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set 'apiServerPorts={6443}' --set clusterDomain=corp.local)
 p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
+# D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
+# step 2: no new object, no new key. Regenerate only for a change meant to reach that install:
+# UPDATE_GOLDEN=1 bash charts/maku/tests/render.sh, then review the diff.
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then printf '%s\n' "$p" >tests/golden/xr.yaml; fi
+printf '%s\n' "$p" | diff -u tests/golden/xr.yaml - >&2 || { echo "FAIL: the XR render (runController.enabled=false) differs from tests/golden/xr.yaml" >&2; fail=1; }
 ynone 'select(.kind=="ClusterRoleBinding")' 'jwks mode binds no auth-delegator'
 ynone 'select(.kind=="RuntimeClass")' 'production renders no RuntimeClass: the cluster-scoped gvisor may already exist'
 ynone 'select(.kind=="Deployment") | .spec.template.spec.initContainers | select(. != null)' 'no owner Secret, no migrate'
@@ -161,11 +166,11 @@ ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[
 # the AgentRun admission policy (S-2, D4): the broker's updates may touch the suspend annotations only.
 # CEL is proven in charts/maku/tests/admission (envtest); here, its shape and binding.
 out="$q"
-ykind ValidatingAdmissionPolicy '(.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules[0] | (.apiGroups[0] == "maku.ogenki.io" and (.operations | join(",")) == "UPDATE" and (.resources | join(",")) == "agentruns")))' 'the policy holds every AgentRun update, failing closed'
-ykind ValidatingAdmissionPolicy '.spec.matchConditions[0].expression | test("^request.userInfo.username == .system:serviceaccount:maku:room-broker.$")' "the policy applies to the broker's ServiceAccount only"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | (.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules[0] | (.apiGroups[0] == "maku.ogenki.io" and (.operations | join(",")) == "UPDATE" and (.resources | join(",")) == "agentruns")))' 'the policy holds every AgentRun update, failing closed'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | .spec.matchConditions[0].expression | test("^request.userInfo.username == .system:serviceaccount:maku:room-broker.$")' "the policy applies to the broker's ServiceAccount only"
 KEYS="['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']" \
-  ykind ValidatingAdmissionPolicy '.spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
-ykind ValidatingAdmissionPolicyBinding '(.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
+  ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | .spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name == "room-broker-maku-agentruns") | (.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
 out="$p"
 ykind ValidatingAdmissionPolicy '(.metadata.name == "room-broker-agent-system-agentruns" and .spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io")' "the policy follows runs.group and the release namespace"
 
@@ -254,6 +259,104 @@ si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCont
 out="$si"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
 
+# sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
+# is the old one, byte for byte (runtimeClassName: gvisor).
+rcconf() { yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$1"; }
+rcconf "$q" | diff -u tests/golden/rc-quickstart.yaml - >&2 || { echo 'FAIL: with no sandbox key the controller config must be the one before step 2 (tests/golden/rc-quickstart.yaml)' >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.runtimeClassName == "kata" and .allowUnsandboxed == false)' 'sandbox.runtimeClassName wins over runController.runtimeClassName'
+ykind RuntimeClass '(.metadata.name == "kata" and .handler == "runsc")' 'createRuntimeClass renders the class under sandbox.runtimeClassName'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (has("runtimeClassName") == false and .allowUnsandboxed == true)' 'sandbox.unsafeAllowRunc: no runtimeClassName, allowUnsandboxed'
+ynone 'select(.kind == "RuntimeClass")' 'sandbox.unsafeAllowRunc renders no RuntimeClass'
+ynone 'select(.kind == "ClusterRole" and .metadata.name == "maku-maku-run-controller-runtimeclass")' 'sandbox.unsafeAllowRunc: no RuntimeClass ClusterRole (the preflight checks nothing)'
+# the preflight (task 2) reads the resolved class, uncached, by name: get only, that one name
+out="$q"
+ykind ClusterRole 'select(.metadata.name == "maku-maku-run-controller-runtimeclass") | ((.rules | length) == 1 and .rules[0].apiGroups[0] == "node.k8s.io" and (.rules[0].resources | join(",")) == "runtimeclasses" and (.rules[0].resourceNames | join(",")) == "gvisor" and (.rules[0].verbs | join(",")) == "get")' 'the preflight gets the resolved RuntimeClass by name, nothing else'
+ykind ClusterRoleBinding 'select(.metadata.name == "maku-maku-run-controller-runtimeclass") | (.roleRef.name == "maku-maku-run-controller-runtimeclass" and .subjects[0].name == "run-controller" and .subjects[0].namespace == "maku")' 'the RuntimeClass ClusterRole is bound to the run-controller'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
+ykind ClusterRole 'select(.metadata.name == "maku-maku-run-controller-runtimeclass") | (.rules[0].resourceNames | join(",")) == "kata"' 'the RuntimeClass ClusterRole names sandbox.runtimeClassName'
+bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName=kata
+bad "at '/sandbox/unsafeAllowRunc': got string, want boolean" --set-string sandbox.unsafeAllowRunc=yes
+bad 'additional properties' --set sandbox.runtimeClass=kata
+
+# the chart's runs namespace enforces Pod Security restricted under the run-pod policy (the XR
+# install's namespace is unchanged: tests/golden/xr.yaml)
+out="$q"
+ykind Namespace 'select(.metadata.name == "agents") | .metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"' 'the runs namespace enforces Pod Security restricted'
+
+# runsQuota (D16, plan PR10): one ResourceQuota on the runs namespace, pods, CPU and memory only
+out="$q"
+ykind ResourceQuota '(.metadata.name == "runs" and .metadata.namespace == "agents" and (.spec.hard | keys | sort | join(",")) == "limits.cpu,limits.memory,pods,requests.cpu,requests.memory")' 'one ResourceQuota runs in the runs namespace, pods, CPU and memory only'
+ykind ResourceQuota '(.spec.hard.pods == "25" and .spec.hard."requests.cpu" == "16" and .spec.hard."requests.memory" == "32Gi" and .spec.hard."limits.cpu" == "32" and .spec.hard."limits.memory" == "64Gi")' 'the quota defaults: ten small runs with headroom'
+[[ $(yq ea '[select(.kind == "ResourceQuota")] | length' - <<<"$q") == 1 ]] || { echo 'FAIL: exactly one ResourceQuota' >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runsQuota.enabled=false)"
+ynone 'select(.kind == "ResourceQuota")' 'runsQuota.enabled=false renders no ResourceQuota'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runsQuota.hard.pods=5)"
+ykind ResourceQuota '(.spec.hard.pods == "5" and .spec.hard."limits.memory" == "64Gi")' 'one quota key overrides alone'
+out="$p"
+ynone 'select(.kind == "ResourceQuota")' 'runController.enabled=false renders no ResourceQuota'
+bad "at '/runsQuota/enabled': got string, want boolean" --set-string runsQuota.enabled=yes
+bad 'additional properties' --set runsQuota.hard.services=1
+bad 'does not match pattern' --set runsQuota.hard.pods=lots
+# the schema takes resource.Quantity's grammar: binary and decimal suffixes up to E, and exponents
+helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runsQuota.hard.limits\\.memory=1.5Pi --set runsQuota.hard.requests\\.memory=1Ei \
+  --set runsQuota.hard.requests\\.cpu=2e3 --set runsQuota.hard.limits\\.cpu=1P --set runsQuota.hard.pods=.5k >/dev/null ||
+  { echo 'FAIL: the quota schema refuses valid Kubernetes quantities (Pi, Ei, P, exponents)' >&2; fail=1; }
+
+# runPodPolicy (D17): its CEL is proven in charts/maku/tests/admission (envtest); here, its shape,
+# its binding, and what the values put in it.
+vap() { yq 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-maku-run-pods")' - <<<"$1"; }
+out="$q"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.failurePolicy == "Fail" and (.spec.matchConstraints.resourceRules | map(.resources | join(",")) | join(";")) == "pods;pods/ephemeralcontainers")' 'the run-pod policy matches pods and pods/ephemeralcontainers, failing closed'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression) == "['"'"'ghcr.io/smana/maku-harness'"'"', '"'"'ghcr.io/smana/maku-bridge'"'"', '"'"'ghcr.io/smana/maku-run-controller'"'"']"' 'the image allow-list is the run-controller'"'"'s three repositories'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "pinned") | .expression) == "true"' 'images are pinned by default'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.message == "a run pod runs under RuntimeClass \"gvisor\" (sandbox.runtimeClassName)")) | length) == 1' 'the policy holds the resolved RuntimeClass'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.expression | test("system:serviceaccount:maku:run-controller"))) | length) == 1' 'only the run-controller of this release creates run pods'
+ykind ValidatingAdmissionPolicyBinding 'select(.spec.policyName == "maku-maku-run-pods") | (.metadata.name == "maku-maku-run-pods" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the run-pod binding denies, in the runs namespace'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false --set 'runPodPolicy.extraImages={docker.io/library/busybox}' --set e2e.unpinnedImages=true)"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.message | test("RuntimeClass"))) | length) == 0' 'unsafeAllowRunc: the policy holds no RuntimeClass rule'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression | test("'"'"'docker.io/library/busybox'"'"'\]$"))' 'runPodPolicy.extraImages joins the allow-list'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "pinned") | .expression) == "false"' 'e2e.unpinnedImages lifts the digest rule'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runPodPolicy.enabled=false)"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-maku-run-pods")' 'runPodPolicy.enabled=false renders no run-pod policy'
+out="$p"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" and .metadata.name == "maku-agent-system-run-pods")' 'runController.enabled=false renders no run-pod policy'
+bad "at '/runPodPolicy/extraImages/0': 'not' failed" --set 'runPodPolicy.extraImages={busybox:1.37}'
+
+# agentRunPolicies (D17, task 5): opt-in, each only when its value is set, with or without the run
+# controller; their CEL is proven in charts/maku/tests/admission (envtest)
+out="$q"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" and (.metadata.name | test("agentrun-(creators|factory-patch-limit)$")))' 'no AgentRun creator or patch-limit policy unless set'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false \
+       --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory)"
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-creators") | (.spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "CREATE" and .spec.validations[0].expression == "request.userInfo.username in ['"'"'system:serviceaccount:agent-system:agent-factory'"'"']")' 'the creator policy names the listed users, on runs.group, for the XR install too'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-factory-patch-limit") | (.spec.matchConditions[0].expression == "request.userInfo.username == '"'"'system:serviceaccount:agent-system:agent-factory'"'"'" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "UPDATE")' 'the patch-limit policy holds the factory ServiceAccount of the release namespace'
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.policyName == .metadata.name and (.spec.validationActions | join(",")) == "Deny" and has("spec") and (.spec | has("matchResources")) == false)' 'both AgentRun bindings deny in every namespace, as the Kyverno originals'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false \
+       --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory \
+       --set 'agentRunPolicies.namespaces={agents,agents-2}')"
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.matchResources.namespaceSelector.matchExpressions[0] | (.key == "kubernetes.io/metadata.name" and .operator == "In" and (.values | join(",")) == "agents,agents-2"))' 'agentRunPolicies.namespaces narrows both bindings'
+bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_Factory
+bad 'does not match pattern' --set-json 'agentRunPolicies.creators=["system:serviceaccount:x:y'"'"' || true || '"'"'"]'
+bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness.repository="ghcr.io/x'"'"']+['"'"'y"'
+
+# install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config; none by
+# default, so the default render keeps its old config
+unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .install.unsafe // [] | join(",")' - <<<"$1"; }
+[[ $(unsafe "$q") == "" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists unsafe settings: $(unsafe "$q")" >&2; fail=1; }
+uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
+[[ $(unsafe "$uns") == "unsafe_allow_runc" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc, got '$(unsafe "$uns")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc" ]] ||
+  { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "" ]] ||
+  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: nothing listed" >&2; fail=1; }
+[[ $(unsafe "$nonp") == "network_policy_none" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none, got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token" ]] ||
+  { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
+  { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -263,7 +366,8 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$f
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fins" >"$tmp/factory-insecure.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
-go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" || fail=1
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$uns" >"$tmp/unsafe.yaml"
+go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" "$tmp/unsafe.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
 go run ./tests/loadconfig broker-slackintents "$tmp/slackintents.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1

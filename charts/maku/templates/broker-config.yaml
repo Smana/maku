@@ -53,3 +53,8 @@ data:
     roomTools:
       {{- toYaml . | nindent 6 }}
     {{- end }}
+    {{- with include "ap.unsafe" . | fromJsonArray }}
+    # The chart's unsafe settings: GET /api/install lists them, and every page shows a banner.
+    install:
+      unsafe: {{ toJson . }}
+    {{- end }}

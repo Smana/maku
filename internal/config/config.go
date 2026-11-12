@@ -658,6 +658,35 @@ type Config struct {
 	// (merge policy stage 6): promotion serves the settings pages and the promotion records, and
 	// operators approve exceptions. The broker reads nothing else of it.
 	PolicyManagement fconfig.PolicyManagement `json:"policyManagement,omitzero"`
+	// Install is the install's own state, which GET /api/install shows every signed-in human.
+	Install Install `json:"install,omitzero"`
+}
+
+// The codes of Install.Unsafe: the chart's unsafe settings (v4 D18, plan PR9), a bounded set.
+const (
+	UnsafeAllowRunc         = "unsafe_allow_runc"   // runs have no sandbox RuntimeClass
+	UnsafeNetworkPolicyNone = "network_policy_none" // nothing confines a run's network
+	UnsafeSharedGitToken    = "shared_git_token"    // every role shares one write token
+)
+
+// Install is what the chart says about the install. Unsafe lists the settings that weaken a run's
+// isolation; the web UI shows a banner on every page while it is non-empty.
+type Install struct {
+	Unsafe []string `json:"unsafe,omitempty"`
+}
+
+func (i Install) validate() []error {
+	var errs []error
+	known := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken}
+	for n, code := range i.Unsafe {
+		switch {
+		case !slices.Contains(known, code):
+			errs = append(errs, fmt.Errorf("install.unsafe[%d]: %q is not one of %s", n, code, strings.Join(known, ", ")))
+		case slices.Index(i.Unsafe, code) != n:
+			errs = append(errs, fmt.Errorf("install.unsafe[%d]: %q is listed twice", n, code))
+		}
+	}
+	return errs
 }
 
 // WebhookConfig is one subscriber (factory interfaces F6, O7): declared here because subscribers
@@ -856,6 +885,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, errors.New("human.mcp.sponsored needs factoryURL: run_create posts to the factory's POST /v1/tasks"))
 	}
 	errs = append(errs, checkFactoryURL(c.FactoryURL, c.FactoryInsecure)...)
+	errs = append(errs, c.Install.validate()...)
 	if c.Human.EffectiveMode() == HumanModeLocal {
 		// The one place publicURL may be http: a port-forward carries no TLS. It is exactly what a
 		// browser sends as Origin, which the Origin check compares verbatim.
