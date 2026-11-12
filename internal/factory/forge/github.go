@@ -45,7 +45,7 @@ type Options struct {
 type GitHub struct {
 	rest        *github.Client
 	v4          *githubv4.Client
-	tokens      *tokens
+	tokens      TokenSource
 	api         *url.URL
 	plain       *http.Client // o.HTTP, never carrying the token: artifact downloads off the API host
 	agent       string
@@ -59,7 +59,31 @@ type GitHub struct {
 // installation token, so a key GitHub refuses or an App not installed fails startup. Every later
 // call goes through o.HTTP, as that installation. It refuses anything but an https API URL.
 func Connect(ctx context.Context, o Options) (*GitHub, error) {
+	api, err := checkOptions(o)
+	if err != nil {
+		return nil, err
+	}
 	owner, name, _ := strings.Cut(o.Repository, "/")
+	return connect(ctx, o, api, &tokens{api: api, hc: o.HTTP, owner: owner, name: name, agent: o.UserAgent,
+		idFile: o.AppIDFile, keyFile: o.PrivateKeyFile, now: o.Now, perms: o.Permissions})
+}
+
+// ConnectTokens is Connect with every call's token from src instead of the App key: the
+// publisher's connection, whose token octo-sts mints (hardening HR11), or any later TokenSource
+// (v4 D10's minter). o's App files and Permissions are unused. The first token is asked at once,
+// so a source that cannot mint fails the connect.
+func ConnectTokens(ctx context.Context, o Options, src TokenSource) (*GitHub, error) {
+	if src == nil {
+		return nil, errors.New("forge: a token source is required")
+	}
+	api, err := checkOptions(o)
+	if err != nil {
+		return nil, err
+	}
+	return connect(ctx, o, api, src)
+}
+
+func checkOptions(o Options) (*url.URL, error) {
 	api, err := url.Parse(o.APIURL)
 	switch {
 	case !repoRE.MatchString(o.Repository):
@@ -76,11 +100,15 @@ func Connect(ctx context.Context, o Options) (*GitHub, error) {
 	if !strings.HasSuffix(api.Path, "/") {
 		api.Path += "/"
 	}
-	g := &GitHub{api: api, plain: o.HTTP, agent: o.UserAgent, owner: owner, name: name, now: o.Now,
-		tokens: &tokens{api: api, hc: o.HTTP, owner: owner, name: name, agent: o.UserAgent,
-			idFile: o.AppIDFile, keyFile: o.PrivateKeyFile, now: o.Now, perms: o.Permissions}}
+	return api, nil
+}
+
+func connect(ctx context.Context, o Options, api *url.URL, src TokenSource) (*GitHub, error) {
+	owner, name, _ := strings.Cut(o.Repository, "/")
+	g := &GitHub{api: api, plain: o.HTTP, agent: o.UserAgent, owner: owner, name: name, now: o.Now, tokens: src}
 	hc := g.authed(o.HTTP)
 	base := api.String()
+	var err error
 	if g.rest, err = github.NewClient(github.WithHTTPClient(hc), github.WithURLs(&base, &base),
 		github.WithUserAgent(o.UserAgent)); err != nil {
 		return nil, fmt.Errorf("forge: %w", err)
@@ -88,7 +116,7 @@ func Connect(ctx context.Context, o Options) (*GitHub, error) {
 	v4hc := *hc
 	v4hc.Transport = statusRT{base: hc.Transport}
 	g.v4 = githubv4.NewEnterpriseClient(api.JoinPath("graphql").String(), &v4hc)
-	if _, err := g.tokens.get(ctx); err != nil {
+	if _, err := g.tokens.Token(ctx); err != nil {
 		return nil, fmt.Errorf("forge: %w", err)
 	}
 	g.mark(nil)
@@ -508,6 +536,62 @@ func (g *GitHub) ClosePR(ctx context.Context, number int) error {
 	_, _, err := g.rest.PullRequests.Edit(ctx, g.owner, g.name, number, &github.PullRequest{State: new("closed")})
 	g.mark(err)
 	return wrap("close a pull request", err)
+}
+
+// ErrPRExists is GitHub's 422 "A pull request already exists" for the head: the task's pull
+// request was opened by an earlier call whose answer was lost, or by someone else.
+var ErrPRExists = errors.New("forge: a pull request already exists for the head")
+
+// CreatePR opens a pull request from head into base. draft is honoured here only: GitHub's REST
+// edit does not toggle it (hardening HR18).
+func (g *GitHub) CreatePR(ctx context.Context, base, head, title, body string, draft bool) (PR, error) {
+	if base == "" || head == "" {
+		return PR{}, errors.New("forge: a pull request needs a base and a head")
+	}
+	p, _, err := g.rest.PullRequests.Create(ctx, g.owner, g.name, github.CreatePullRequest{
+		Base: base, Head: head, Title: new(title), Body: new(body), Draft: new(draft)})
+	g.mark(err)
+	if prExists(err) {
+		return PR{}, ErrPRExists
+	}
+	if err != nil {
+		return PR{}, wrap("open a pull request", err)
+	}
+	return restPR(p), nil
+}
+
+// EditPR sets a pull request's title and body, and nothing else.
+func (g *GitHub) EditPR(ctx context.Context, number int, title, body string) (PR, error) {
+	p, _, err := g.rest.PullRequests.Edit(ctx, g.owner, g.name, number, &github.PullRequest{Title: new(title), Body: new(body)})
+	g.mark(err)
+	if err != nil {
+		return PR{}, wrap("edit a pull request", err)
+	}
+	return restPR(p), nil
+}
+
+// prExists reads GitHub's one 422 that means the head already has an open pull request.
+func prExists(err error) bool {
+	var e *github.ErrorResponse
+	if !errors.As(err, &e) || e.Response == nil || e.Response.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	for _, x := range e.Errors {
+		if strings.HasPrefix(x.Message, "A pull request already exists") {
+			return true
+		}
+	}
+	return false
+}
+
+// restPR is the fields of a REST pull request that a write answers with.
+func restPR(p *github.PullRequest) PR {
+	state := strings.ToUpper(p.GetState())
+	if p.GetMerged() {
+		state = "MERGED"
+	}
+	return PR{Number: p.GetNumber(), NodeID: p.GetNodeID(), URL: p.GetHTMLURL(), Title: p.GetTitle(), Body: p.GetBody(),
+		State: state, Author: p.GetUser().GetLogin(), HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA()}
 }
 
 // PullRequestForBranch is the newest pull request from branch in the repository, 0 when none.

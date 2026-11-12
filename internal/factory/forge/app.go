@@ -80,9 +80,9 @@ type tokens struct {
 	installation int64
 }
 
-// get returns a token with more than refreshBefore to live, minting one when needed. Holding the
+// Token returns a token with more than refreshBefore to live, minting one when needed. Holding the
 // lock across the mint makes concurrent callers wait for one mint instead of racing to many.
-func (s *tokens) get(ctx context.Context) (string, error) {
+func (s *tokens) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.token != "" && s.now().Before(s.expires.Add(-refreshBefore)) {
@@ -270,7 +270,7 @@ type auth struct {
 	base   http.RoundTripper
 	host   string
 	agent  string
-	tokens *tokens
+	tokens TokenSource
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -278,7 +278,7 @@ func (a *auth) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, a.host) {
 		return a.base.RoundTrip(req)
 	}
-	tok, err := a.tokens.get(req.Context())
+	tok, err := a.tokens.Token(req.Context())
 	if err != nil {
 		return nil, err
 	}
