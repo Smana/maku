@@ -331,8 +331,9 @@ spec:
                     maxLength: 253
                     type: string
                   policyBot:
-                    description: PolicyBot false drops policy-bot from the gate (the
-                      demo's); nil means true.
+                    description: |-
+                      PolicyBot false drops policy-bot from the gate and needs gateStatus: maku/merge-gate is then
+                      the status branch protection requires (D11); nil means true.
                     type: boolean
                   policyBotLogin:
                     maxLength: 253

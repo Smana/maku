@@ -27,6 +27,7 @@ As of v0.42.0.
 | Slack quick wins: a refused first mention is explained, planner progress shows, the closed phrases are listed (v0.42.0) | [Slack App](slack.md) |
 | The chart contract, v4 rollout step 1: the `agent-factory-crds` chart, the demo in `values-demo.yaml`, a values schema, `kubeVersion` 1.30 or later, the umbrella published and signed | [Upgrading](upgrading.md#the-chart-contract-v04x-v4-rollout-step-1) |
 | The run path, v4 rollout step 2: the scoper and the loop policies on the run controller, read-only tokens for reviewers and triagers, the sandbox value and the preflight, the runs quota, the run-pod admission policy, and the `kubernetes` network mode with its egress proxy | [Upgrading](upgrading.md#the-run-path-v04x-v4-rollout-step-2), [Security](security.md#the-run-paths-network-modes) |
+| The merge gate as a required status, v4 rollout step 3 (D11): `merge.policyBot: false` outside the demo, `maku/merge-gate` `success` only when the factory merges, a documented ruleset and its observer, and `agent_merged` | [Branch protection for the merge gate](factory.md#branch-protection-for-the-merge-gate) |
 
 ## In progress
 

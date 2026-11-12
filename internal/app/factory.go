@@ -396,6 +396,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if hardened != nil {
 		fenced.OnFile = chainOnFile(fenced.OnFile, hardened.Policies.Observe)
 	}
+	// D11: on each fence pass over a repository with merge.gateStatus (read live, so a publish that
+	// turns it on is heard), whether its default branch requires maku/merge-gate from the App that
+	// posts it. Read with the factory App's token; it warns and never refuses.
+	fenced.OnFile = chainOnFile(fenced.OnFile, gateGuardObserver(live.Current, func(repo string) rulesReader {
+		if c, ok := conns.get(repo); ok && c.gh != nil {
+			return c.gh
+		}
+		return nil // a nil interface, never a typed-nil *forge.GitHub
+	}, m.MergeGateRequired, m.MergeGateRulesUnread, log))
 	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
 	// publisher's GitHub permissions, read from their octo-sts policies (R2 as evidence).
 	if cfg.Hardening.Enforcing() {

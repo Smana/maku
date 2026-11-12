@@ -1115,7 +1115,8 @@ func (r *Reconciler) prEnded(ctx context.Context, cfg *config.Config, t *v1alpha
 		// class's breaker window — without it a demoted class' human merges never refill it.
 		now := r.mergedAt(pr)
 		t.Status.PullRequest.MergedAt = &now
-		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "human_merged") })
+		outcome := r.mergedOutcome(cfg, t, pr) // an agents token's merge is agent_merged here too (PR12)
+		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, outcome) })
 		r.handedOffMerged(ctx, t, "human")
 		return true, r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
 	case "CLOSED":
