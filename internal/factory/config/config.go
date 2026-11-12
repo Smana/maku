@@ -643,7 +643,8 @@ type Merge struct {
 	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
 	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
 	GateStatus bool `json:"gateStatus,omitempty"`
-	// PolicyBot false drops policy-bot from the gate (the demo's); nil means true.
+	// PolicyBot false drops policy-bot from the gate and needs gateStatus: maku/merge-gate is then
+	// the status branch protection requires (D11); nil means true.
 	PolicyBot *bool `json:"policyBot,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
 	MergerLogin      string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
@@ -2020,8 +2021,8 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if c.Demo && !r.Merge.GateStatus {
 		bad("demo: merge.gateStatus must be true, or no gate verdict reaches the pull request")
 	}
-	if r.Merge.PolicyBot != nil && !*r.Merge.PolicyBot && !c.Demo {
-		bad("merge.policyBot: false is the demo's: production gates through policy-bot")
+	if !r.Merge.UsesPolicyBot() && !r.Merge.GateStatus && !c.Demo { // the demo's own rule above names it
+		bad("merge.policyBot: false needs merge.gateStatus: true: without policy-bot, maku/merge-gate is the status branch protection requires")
 	}
 	if !r.Merge.UsesPolicyBot() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
@@ -2033,8 +2034,8 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	for _, f := range []struct{ key, value string }{
 		{"merge.policyBotLogin", r.Merge.PolicyBotLogin}, {"merge.mergerLogin", r.Merge.MergerLogin},
 	} {
-		if f.key == "merge.policyBotLogin" && !r.Merge.UsesPolicyBot() && c.Demo && f.value == "" {
-			continue // demo: no policy-bot, so no status creator to expect
+		if f.key == "merge.policyBotLogin" && !r.Merge.UsesPolicyBot() && f.value == "" {
+			continue // no policy-bot, so no status creator to expect
 		}
 		if !strings.HasSuffix(strings.ToLower(f.value), "[bot]") {
 			bad("%s %q must be a bot login", f.key, f.value)
