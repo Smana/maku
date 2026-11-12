@@ -31,8 +31,8 @@ var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // ValidName reports whether name can be a factory's name in the fence file.
 func ValidName(name string) bool { return nameRE.MatchString(name) }
 
-// Parse reads a fence file's ownership: factory, and a classes key it does not read. Any other key
-// is an error, and the caller treats the repository as not owned.
+// Parse reads a fence file's ownership: factory, and the classes and hardening keys it does not
+// read. Any other key is an error, and the caller treats the repository as not owned.
 func Parse(raw []byte) (string, error) {
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
@@ -45,6 +45,10 @@ func Parse(raw []byte) (string, error) {
 		// Classes is the repository's merge policy (mergepolicy), which never decides ownership: a
 		// class this factory cannot read pauses that class's automation, not the repository's intake.
 		Classes json.RawMessage `json:"classes"`
+		// Hardening extends the repository's protected paths and trust floor (hardening.
+		// ParseRepositoryBlock), which never decides ownership either: a block that does not parse
+		// reads as the strictest policy, never as a repository this factory does not own.
+		Hardening json.RawMessage `json:"hardening"`
 	}
 	if err := dec.Decode(&f); err != nil {
 		return "", errors.New("fence: not {factory: <name>}")

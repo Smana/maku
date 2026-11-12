@@ -134,6 +134,28 @@ func TestRefreshHandsTheOwnedFileToOnFile(t *testing.T) {
 	}
 }
 
+// A hardening block extends a repository's protected paths (hardening design, Protected paths) and
+// never decides ownership: one that does not parse is hardening's to read closed, not the fence's.
+func TestParseAcceptsHardening(t *testing.T) {
+	for name, in := range map[string]string{
+		"a hardening map":    "factory: gcp-0\nhardening:\n  protectedPaths: [{path: scripts/ci/**, on: blocked}]\n  minAuthorTrust: merged\n",
+		"a hardening scalar": "factory: gcp-0\nhardening: 3\n",
+		"beside classes":     "factory: gcp-0\nclasses: {}\nhardening: {}\n",
+		"an unknown sub-key": "factory: gcp-0\nhardening: {slack: true}\n",
+		"an empty hardening": "factory: gcp-0\nhardening:\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := Parse([]byte(in))
+			if err != nil || got != "gcp-0" {
+				t.Fatalf("%q %v, want gcp-0", got, err)
+			}
+		})
+	}
+	if _, err := Parse([]byte("hardening: {}\n")); err == nil {
+		t.Fatal("a hardening block without factory is not owned")
+	}
+}
+
 func listed(names ...string) func() []string { return func() []string { return names } }
 
 // Factory resources D12: the list is read per pass, so a repository a publish adds is read on the
