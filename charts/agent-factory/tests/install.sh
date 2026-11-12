@@ -85,7 +85,11 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set maku.broker.image.tag=$TAG --set maku.runController.image.tag=$TAG --set maku-factory.image.tag=$TAG
   --set maku.runController.images.harness.tag="$harness" --set maku.runController.images.bridge.tag="$bridge"
   --set maku-factory.replicas=1)
-install_crds() { helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --wait --timeout 2m; }
+# Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
+install_crds() {
+  helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m &&
+    kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
+}
 # No --wait: the factory cannot become Ready with a dummy App; each part is awaited below.
 install_umbrella() { helm install af charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m; }
 crds=(agentruns factories mergepolicies repositories rooms tasks)

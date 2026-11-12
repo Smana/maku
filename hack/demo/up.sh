@@ -356,7 +356,8 @@ install_chart() {
     # shellcheck disable=SC2086
     kc annotate $crds meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
   fi
-  hl upgrade --install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --wait --timeout 2m >/dev/null
+  hl upgrade --install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m >/dev/null
+  kc wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s >/dev/null
   hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f charts/agent-factory/values-demo.yaml -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
   echo "    waiting for the workloads"
   rollout sts/rooms-db

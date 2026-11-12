@@ -278,7 +278,8 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set maku-factory.replicas=1
   --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem")
 values+=(-f "$VALUES")
-helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --wait --timeout 2m
+helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m
+kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
 helm install intake charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m
 
 step "wait for the database and controllers"
