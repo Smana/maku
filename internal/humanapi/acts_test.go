@@ -877,6 +877,55 @@ func TestDecide(t *testing.T) {
 	}
 }
 
+// HR28: a digest-bound approval needs repository write on the room page, the standing Slack's step
+// 10 asks for; a branch-bound row decides as today.
+func TestDecideDigestNeedsWrite(t *testing.T) {
+	a, log, room := fixture("system:factory")
+	room.Spec.Members = append(room.Spec.Members,
+		v1alpha1.Member{Principal: "human:apr", Role: "collaborator", Approver: true},
+		v1alpha1.Member{Principal: "human:ro", Role: "collaborator", Approver: true})
+	bound := pendingApproval("01JC0000000000000000000001", room.Name)
+	bound.Class, bound.BindingBranch, bound.BindingDigest, bound.BindingOutput = "forge.push", "agent/t-1", strings.Repeat("e", 64), "0123456789abcdef"
+	branched := pendingApproval("ap-branch", room.Name)
+	branched.Class, branched.BindingBranch = "forge.push", "agent/t-1"
+	log.approvals = map[string]store.Approval{bound.ID: bound, branched.ID: branched}
+	var asked []string
+	d := func(id string) Action { return Action{Kind: "decide", ApprovalID: id, Decision: "approved"} }
+
+	if f := act(a, room, "human:apr", 1, nil, d(bound.ID)); f.Rejected != "not_permitted" {
+		t.Fatalf("no write check wired: %+v", f)
+	}
+	a.Writes = func(_ context.Context, r *v1alpha1.Room, p authn.Principal) (bool, error) {
+		asked = append(asked, r.Spec.Repository+" "+p.ID)
+		switch p.ID {
+		case "human:apr":
+			return true, nil
+		case "human:ro":
+			return false, nil
+		}
+		return false, errors.New("github down")
+	}
+	if f := act(a, room, "human:ro", 2, nil, d(bound.ID)); f.Rejected != "not_permitted" {
+		t.Fatalf("an approver without write: %+v", f)
+	}
+	if f := act(a, room, "human:ro", 3, nil, d(branched.ID)); f.Rejected != "" {
+		t.Fatalf("a branch-bound row decides as today: %+v", f)
+	}
+	if f := act(a, room, "human:apr", 4, nil, d(bound.ID)); f.Rejected != "" {
+		t.Fatalf("an approver with write: %+v", f)
+	}
+	if !slices.Equal(asked, []string{"Smana/cloud-native-ref human:ro", "Smana/cloud-native-ref human:apr"}) {
+		t.Fatalf("asked %v", asked)
+	}
+	room.Spec.Members = append(room.Spec.Members, v1alpha1.Member{Principal: "human:err", Role: "collaborator", Approver: true})
+	other := bound
+	other.ID = "01JC0000000000000000000002"
+	log.approvals[other.ID] = other
+	if f := act(a, room, "human:err", 5, nil, d(other.ID)); f.Rejected != reasonAccessUnverified {
+		t.Fatalf("an unverifiable write: %+v", f)
+	}
+}
+
 // logged runs fn with the actor's logger captured and returns the JSON lines.
 func logged(a *Actor, fn func()) []map[string]any {
 	var buf bytes.Buffer

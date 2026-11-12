@@ -162,15 +162,16 @@ text, with `delivery: none`, so no run is ever handed one:
 |---|---|---|
 | `output_requested` | The run, through the broker's MCP tools | `id` (16-hex), `type`, `digest` (64-hex), the payload |
 | `output_applied` | The factory | The request's `id`, `type`, `digest`, the GitHub `object` it wrote, and optional `audit` findings |
-| `output_refused` | The factory | The request's `id`, `type`, `digest`, and one snake_case `reason` |
+| `output_refused` | The factory | The request's `id`, `type`, `digest`, one snake_case `reason`, and optional `audit` findings (T5 runs in audit after a refusal too) |
 | `output_shadowed` | The factory, under `hardening.mode: audit` | A write the run made with its own token: `id`, `type`, `digest`, the GitHub `object`, the would-refuse `reason` (or `would_wait`) if any, and up to 5 `audit` findings, each a layer (`t1_schema` to `t5_classifier`) and a reason |
+| `output_waiting` | The factory | Not an answer: a `push` held for a maintainer's approval of its digest. `id`, `type: push`, `digest`, `reason: protected_path_needs_approval`, and the approval's `approvalId` (a ULID). The answer follows once the approval closes: `output_applied`, or `output_refused` with `approval_denied`, `approval_expired` or `output_superseded` |
 
 Only a request carries the payload; an answer or a shadow never repeats the written text, and
 a record's `bytes` is at most 8 MiB.
 
 A reader trusts the broker's stamp, never the payload (`envelope.ReadOutput`). Every output event
 must come by the client origin. A request counts only from the run's own agent actor
-(`agent:<runId>`), and an answer or a shadow only from the actor `system:factory`, matched
+(`agent:<runId>`), and an answer, a shadow or a wait only from the actor `system:factory`, matched
 exactly. Every record is validated on every read. The factory's two readers both go through it:
 the applier, which answers a request only when it is stamped so, and the drill scorer, for which
 an answer the factory did not stamp neither answers a request nor scores, so the request reads
@@ -185,7 +186,7 @@ second check. A refusal GitHub makes for good is `output_unavailable`. A request
 unanswered when its run's answer wait runs out, under the kill switch for instance, is
 `output_expired`.
 
-The factory writes its three kinds through
+The factory writes its four kinds through
 [`POST /v1/rooms/{id}/outputs`](api.md#post-v1roomsidoutputs). The append's idempotency key is
 `origin_client = <principal>:output:<kind>` and `origin_seq` = the output id's 8 bytes as a
 positive integer. A retry of an answer therefore returns the stored event and never writes a

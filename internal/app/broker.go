@@ -134,6 +134,12 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
+	// Push bundles are kept 14 days, longer while a pending approval binds one (HR22).
+	bundles, err := st.SweepBundles(ctx, time.Now())
+	log.Info("swept old push bundles", "bundles", bundles)
+	if err != nil {
+		return fmt.Errorf("room-broker retention: %w", err)
+	}
 	return nil
 }
 
@@ -255,6 +261,8 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	api.Queue = logStore // the system queue routes (SP3 R9)
 	// The outputs route (hardening HR2): the factory's answers and shadows, from the factory alone.
 	api.OutputClient = fconfig.PrincipalFactory
+	api.Bundles = st         // a push request's bundle, read by the factory alone (HR22)
+	api.OutputApprovals = st // digest-bound approvals, requested by the factory alone (HR28)
 	rw.watch.OnGone(api.Drop)
 	countLiveRuns(rw.watch, m)
 	hub, err := fanoutHub(st, st, m, log)

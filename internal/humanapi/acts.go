@@ -103,6 +103,11 @@ type Actor struct {
 	Now func() time.Time
 	// Logger records one line per act, accepted or refused (nil: none).
 	Logger *slog.Logger
+	// Writes reports whether p may write room's repository on GitHub: a digest-bound approval
+	// (hardening HR28) is decided only with that standing, as Slack's step 10 asks. Server.Routes
+	// hands it the Server's Identity and Access when this one is unset; nil refuses every
+	// digest-bound decision.
+	Writes func(ctx context.Context, room *v1alpha1.Room, p authn.Principal) (bool, error)
 
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
@@ -489,6 +494,17 @@ func (a *Actor) decide(ctx context.Context, p authn.Principal, room *v1alpha1.Ro
 	}
 	if room.Spec.Approvals.FourEyes && slices.Contains(ap.Prompters, p.ID) {
 		return envelope.Event{}, rejectFourEyes
+	}
+	if ap.DigestBound() { // HR28: a protected-path push is a maintainer's, as on Slack
+		if a.Writes == nil {
+			return envelope.Event{}, rejectNotPermitted
+		}
+		switch writes, err := a.Writes(ctx, room, p); {
+		case err != nil:
+			return envelope.Event{}, reasonAccessUnverified
+		case !writes:
+			return envelope.Event{}, rejectNotPermitted
+		}
 	}
 	if why != "" { // the agent reads it: redacted like every human payload (§4)
 		if why, d.Redactions, err = a.redactText(ctx, why); err != nil {

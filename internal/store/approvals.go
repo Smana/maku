@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,6 +29,9 @@ var (
 	// ErrTooLarge is an approval whose request event would exceed the payload cap:
 	// stored as an oversize stub, it would not be the request the row records.
 	ErrTooLarge = errors.New("the approval request exceeds the payload cap")
+	// ErrBindingConflict is a retried output approval naming another digest or branch than the one
+	// its output's approval already binds.
+	ErrBindingConflict = errors.New("the output's approval binds another digest or branch")
 )
 
 // An approval's states: pending, then closed once (SP2 §6).
@@ -44,6 +48,8 @@ const (
 	reasonExpired    = "no decision before the deadline"
 	reasonSuperseded = "the call already has a result"
 	reasonRunEnded   = "the run ended"
+	// reasonPushSuperseded closes a waiting push's approval that a later push of its run replaced.
+	reasonPushSuperseded = "a later push of the run replaced it"
 )
 
 // Approval is one row of the approvals projection.
@@ -51,21 +57,29 @@ type Approval struct {
 	ID, RoomID, RunID, EventID, CallID, Class, State string
 	// BindingBranch is the branch a forge.push approval binds, from the run's AgentRun (D5): the
 	// boundary the repository ruleset already enforces on that run's token. Empty otherwise.
-	BindingBranch          string
-	Action                 json.RawMessage
-	Prompters              []string
-	RequestedSeq           int64
-	RequestedAt, ExpiresAt time.Time
+	BindingBranch string
+	// BindingDigest and BindingOutput bind a factory-requested forge.push approval to one push
+	// bundle's digest and the output id that carries it (hardening HR28). Empty on every other row.
+	BindingDigest, BindingOutput string
+	Action                       json.RawMessage
+	Prompters                    []string
+	RequestedSeq                 int64
+	RequestedAt, ExpiresAt       time.Time
+	// DecidedBy is who closed the row, a human or the broker; empty while pending.
+	DecidedBy string
 }
 
+// DigestBound reports whether a is a factory-requested approval of one push bundle (HR28).
+func (a Approval) DigestBound() bool { return a.BindingDigest != "" }
+
 const approvalCols = `approval_id, room_id, run_id, event_id, call_id, class, state, action, prompters, requested_seq,
-	requested_at, expires_at, binding_branch`
+	requested_at, expires_at, binding_branch, binding_digest, binding_output, coalesce(decided_by, '')`
 
 func scanApproval(row pgx.Row) (Approval, error) {
 	var a Approval
 	var action []byte
 	err := row.Scan(&a.ID, &a.RoomID, &a.RunID, &a.EventID, &a.CallID, &a.Class, &a.State, &action, &a.Prompters,
-		&a.RequestedSeq, &a.RequestedAt, &a.ExpiresAt, &a.BindingBranch)
+		&a.RequestedSeq, &a.RequestedAt, &a.ExpiresAt, &a.BindingBranch, &a.BindingDigest, &a.BindingOutput, &a.DecidedBy)
 	a.Action = action
 	return a, err
 }
@@ -73,15 +87,20 @@ func scanApproval(row pgx.Row) (Approval, error) {
 // answeredSQL is an approval a's call with a tool_result after its request: the
 // harness ran or rejected it, so nobody decides it any more (5.2 contract 5).
 // After the request only: a reused call id's earlier result answers nothing.
-// It reads through events_tool_results.
+// It reads through events_tool_results. Every use is guarded by bridgeBoundSQL.
 const answeredSQL = `EXISTS (SELECT 1 FROM events e WHERE e.room_id = a.room_id AND e.run_id = a.run_id
 	AND e.type = 'tool_result' AND e.payload->>'callId' = a.call_id AND e.seq > a.requested_seq)`
+
+// bridgeBoundSQL is an approval a that a bridge call asked for, which answeredSQL and endedSQL may
+// close. A digest-bound row has no bridge call behind it and outlives its run (HR28): the factory
+// applies the push it holds, and it closes by decision, expiry or the factory's supersede.
+const bridgeBoundSQL = `a.binding_digest = ''`
 
 // endedSQL is an approval a whose run has left the room: the broker's own
 // participant{left} (runwatch.Events), appended once the run is terminal. Nothing
 // will apply a decision, so nobody is asked any more. Before or after the request
 // alike: a request that raced the run's end is just as dead. It reads through
-// events_broker_scopes.
+// events_broker_scopes. Every use is guarded by bridgeBoundSQL.
 const endedSQL = `EXISTS (SELECT 1 FROM events e WHERE e.room_id = a.room_id AND e.origin = 'broker'
 	AND e.origin_client = 'broker:run:' || a.run_id AND e.type = 'participant' AND e.payload->>'change' = 'left')`
 
@@ -148,6 +167,124 @@ func (s *Store) requestApproval(ctx context.Context, a Approval, d envelope.Draf
 	}
 	a.State, a.RequestedSeq = ApprovalPending, ev.Seq
 	return a, ev, tx.Commit(ctx)
+}
+
+var (
+	outputApprovalDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	outputApprovalOutput = regexp.MustCompile(`^[0-9a-f]{16}$`)
+)
+
+// RequestOutputApproval records a pending forge.push approval bound to one push bundle (hardening
+// HR27, HR28) and appends its approval_requested, in one transaction. The factory asks for it, so
+// no bridge lease fences it: a's run may have ended. a names its id, room, run, branch, digest,
+// output, action, prompters and deadline; its event and call ids are "output:<output>". It is
+// idempotent per (run, output): a retried request gets the stored approval back and no event.
+func (s *Store) RequestOutputApproval(ctx context.Context, a Approval, d envelope.Draft) (Approval, envelope.Event, error) {
+	switch {
+	case a.Class != "forge.push" || a.BindingBranch == "" || !outputApprovalDigest.MatchString(a.BindingDigest) ||
+		!outputApprovalOutput.MatchString(a.BindingOutput):
+		return Approval{}, envelope.Event{}, errors.New("store: an output approval is a forge.push of a branch, a digest and an output")
+	case !isJSONObject(a.Action):
+		return Approval{}, envelope.Event{}, errors.New("store: an output approval's action is a JSON object")
+	}
+	a.EventID, a.CallID = "output:"+a.BindingOutput, "output:"+a.BindingOutput
+	got, ev, err := s.requestOutputApproval(ctx, a, d)
+	if err != nil {
+		return Approval{}, envelope.Event{}, fmt.Errorf("store: request output approval in room %s: %w", a.RoomID, err)
+	}
+	return got, ev, nil
+}
+
+func (s *Store) requestOutputApproval(ctx context.Context, a Approval, d envelope.Draft) (Approval, envelope.Event, error) {
+	if a.ID == "" || !envelope.ValidID(a.RunID) {
+		return Approval{}, envelope.Event{}, errors.New("an approval names its id and run")
+	}
+	if a.Prompters == nil {
+		a.Prompters = []string{}
+	}
+	a.ExpiresAt = a.ExpiresAt.UTC().Truncate(time.Microsecond)
+	d.RoomID, d.RunID, d.Type = a.RoomID, a.RunID, envelope.ApprovalRequested
+	d.Payload = envelope.Must(envelope.ApprovalRequestedPayload{ApprovalID: a.ID, CallID: a.CallID, Class: a.Class,
+		Branch: a.BindingBranch, Digest: a.BindingDigest, Output: a.BindingOutput, Action: a.Action,
+		ExpiresAt: a.ExpiresAt, Prompters: a.Prompters})
+	if err := d.Validate(); err != nil {
+		return Approval{}, envelope.Event{}, err
+	}
+	if len(d.Payload) > envelope.MaxPayload {
+		return Approval{}, envelope.Event{}, ErrTooLarge
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Approval{}, envelope.Event{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// The room's row lock serialises a request and its retry: the second finds the first's row.
+	if _, _, err := lockRoom(ctx, tx, a.RoomID); err != nil {
+		return Approval{}, envelope.Event{}, err
+	}
+	existing, err := scanApproval(tx.QueryRow(ctx, `SELECT `+approvalCols+` FROM approvals
+		WHERE room_id = $1 AND run_id = $2 AND binding_output = $3`, a.RoomID, a.RunID, a.BindingOutput))
+	if err == nil {
+		// A retry names the same binding; another digest or branch for the output is a conflict,
+		// never an answer with the row the first request recorded.
+		if existing.BindingDigest != a.BindingDigest || existing.BindingBranch != a.BindingBranch {
+			return Approval{}, envelope.Event{}, ErrBindingConflict
+		}
+		return existing, envelope.Event{}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Approval{}, envelope.Event{}, err
+	}
+	ev, dup, err := s.appendTx(ctx, tx, d, fence{}, false)
+	if err != nil {
+		return Approval{}, envelope.Event{}, err
+	}
+	if dup { // the key holds another event: this request was never recorded
+		return Approval{}, envelope.Event{}, ErrKeyConflict
+	}
+	if err := tx.QueryRow(ctx, `INSERT INTO approvals (approval_id, room_id, run_id, event_id, call_id, class, action,
+		binding_branch, binding_digest, binding_output, prompters, state, requested_seq, expires_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,$13) RETURNING requested_at`,
+		a.ID, a.RoomID, a.RunID, a.EventID, a.CallID, a.Class, []byte(a.Action), a.BindingBranch, a.BindingDigest,
+		a.BindingOutput, a.Prompters, ev.Seq, a.ExpiresAt,
+	).Scan(&a.RequestedAt); err != nil {
+		return Approval{}, envelope.Event{}, err
+	}
+	a.State, a.RequestedSeq = ApprovalPending, ev.Seq
+	return a, ev, tx.Commit(ctx)
+}
+
+// CloseOutputApproval closes a pending digest-bound approval as state, which is superseded only:
+// the factory's close when a later push of the run replaces the one it held (HR27). A row already
+// closed is returned as it is, with no event. A row that is not digest-bound is ErrNoApproval:
+// the bridge's approvals are not the factory's to close.
+func (s *Store) CloseOutputApproval(ctx context.Context, id, state string) (Approval, error) {
+	if state != ApprovalSuperseded {
+		return Approval{}, fmt.Errorf("store: close output approval %s: %w", id, ErrBadDecision)
+	}
+	a, err := s.Approval(ctx, id)
+	switch {
+	case err != nil:
+		return Approval{}, err
+	case !a.DigestBound():
+		return Approval{}, fmt.Errorf("store: close output approval %s: %w", id, ErrNoApproval)
+	case a.State != ApprovalPending:
+		return a, nil
+	}
+	_, closed, _, err := s.closeApproval(ctx, id, state, brokerActor, reasonPushSuperseded, brokerClose(id))
+	switch {
+	case errors.Is(err, ErrAlreadyDecided): // decided since the read
+		return s.Approval(ctx, id)
+	case err != nil:
+		return Approval{}, fmt.Errorf("store: close output approval %s: %w", id, err)
+	}
+	return closed, nil
+}
+
+// isJSONObject reports whether raw is a JSON object.
+func isJSONObject(raw json.RawMessage) bool {
+	var obj map[string]json.RawMessage
+	return json.Unmarshal(raw, &obj) == nil && obj != nil
 }
 
 // Decide records a human's decision, approved or denied, and appends
@@ -217,7 +354,8 @@ func (s *Store) closeApproval(ctx context.Context, id, state, by, reason string,
 		// the sweep has run, so the sweep is cleanup and never the fence.
 		var st string
 		var answered, ended, late bool
-		if err := tx.QueryRow(ctx, `SELECT a.state, `+answeredSQL+`, `+endedSQL+`, a.expires_at <= now() FROM approvals a
+		if err := tx.QueryRow(ctx, `SELECT a.state, `+bridgeBoundSQL+` AND `+answeredSQL+`, `+bridgeBoundSQL+` AND `+endedSQL+`,
+			a.expires_at <= now() FROM approvals a
 			WHERE a.approval_id = $1`, id).Scan(&st, &answered, &ended, &late); err != nil {
 			return envelope.Event{}, Approval{}, false, err
 		}
@@ -301,13 +439,13 @@ func (s *Store) ExpireDue(ctx context.Context) ([]envelope.Event, error) {
 // holds its room AwaitingHuman.
 func (s *Store) SupersedeAnswered(ctx context.Context) ([]envelope.Event, error) {
 	answered, err := s.closeAll(ctx, `SELECT a.approval_id FROM approvals a JOIN rooms r USING (room_id)
-		WHERE a.state = 'pending' AND NOT r.sealed AND `+answeredSQL+` ORDER BY a.requested_at`,
+		WHERE a.state = 'pending' AND NOT r.sealed AND `+bridgeBoundSQL+` AND `+answeredSQL+` ORDER BY a.requested_at`,
 		ApprovalSuperseded, reasonSuperseded)
 	if err != nil {
 		return answered, err
 	}
 	ended, err := s.closeAll(ctx, `SELECT a.approval_id FROM approvals a JOIN rooms r USING (room_id)
-		WHERE a.state = 'pending' AND NOT r.sealed AND `+endedSQL+` ORDER BY a.requested_at`,
+		WHERE a.state = 'pending' AND NOT r.sealed AND `+bridgeBoundSQL+` AND `+endedSQL+` ORDER BY a.requested_at`,
 		ApprovalSuperseded, reasonRunEnded)
 	return append(answered, ended...), err
 }

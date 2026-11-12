@@ -276,6 +276,8 @@ A refused action shows its reason in the dock. Source: `web/src/controls.ts`.
 | `already_decided` | Another approver decided first | Nothing |
 | `approval_expired` | The decision reached the broker after the deadline; the request was denied as expired | Nothing: the agent may ask again |
 | `four_eyes` | The room needs an approver who did not prompt the turn | Ask another approver |
+| `not_permitted` on a protected-path push | Its approval needs an approver who writes to the repository on GitHub | Ask a maintainer |
+| `access_unverified` | GitHub could not confirm you write to the repository, for a protected-path push | Retry |
 | `too_large` | The fork would copy over 5,000 events or 32 MiB | Fork from an earlier message |
 
 Other rooms-side outcomes: a `404` on the page means no such room or no access (the same

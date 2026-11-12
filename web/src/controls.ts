@@ -23,6 +23,7 @@ const rejections: Record<string, string> = {
   already_decided: "Another approver decided first.",
   approval_expired: "The request expired before your decision reached the broker. The agent was told no.",
   four_eyes: "This room needs an approver who did not prompt the turn.",
+  access_unverified: "GitHub could not confirm you write to this room's repository, which a protected-path push needs. Retry.",
   too_large: "Forking here copies over 5,000 events or 32 MiB. Fork from an earlier message.",
 };
 
