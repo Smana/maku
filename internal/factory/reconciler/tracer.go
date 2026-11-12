@@ -133,12 +133,16 @@ func normal(s string) string { return strings.TrimRight(strings.ReplaceAll(s, "\
 //   - a comment: it ends with an applied comment output's marker, on its URL, and its body is that
 //     output's, as published;
 //   - labels: each label one of an applied request's on the same pull request, added between that
-//     request and its answer.
+//     request and its answer;
+//   - a push (H3, HR32): an applied push output names its head, …/commit/<after>. The applier
+//     inspected that bundle before it pushed it, so the head is the whole proof.
 //
 // An issue never is: the factory App files the issue output, so an agents-App issue is always a
 // direct write.
 func (l outputLedger) traces(o observed) bool {
 	switch o.w.Type {
+	case hardening.Push:
+		return l.lastApplied(hardening.Push, o.w.Object) != ""
 	case hardening.PR:
 		_, p := l.anchor(o)
 		pr, ok := p.(hardening.PRPayload)

@@ -143,8 +143,8 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 	slices.SortStableFunc(ws, func(a, b observed) int { return a.at.Compare(b.at) })
 	// H2's tracer: on an enforced repository, a write of an enforced type is exactly what the applier
 	// published, and is not checked again, or it is untraced: recorded untraced_write, then checked as
-	// in H1 like every push and every type not enforced. An applied write only people edited since
-	// (humanEdit) is not recorded untraced, but its text is still checked.
+	// in H1 like every type not enforced. An applied write only people edited since (humanEdit) is not
+	// recorded untraced, but its text is still checked. H3 (HR32): a push is traced by its head alone.
 	enforced := cfg.Hardening.EnforcedFor(t.Spec.Repository)
 	var ledger outputLedger
 	if len(enforced) > 0 {
@@ -156,7 +156,7 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 	}
 	var n hardening.Counts
 	for _, o := range ws {
-		if o.w.Type != hardening.Push && slices.Contains(enforced, o.w.Type) {
+		if slices.Contains(enforced, o.w.Type) {
 			if ledger.traces(o) {
 				continue
 			}

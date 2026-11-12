@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -115,4 +116,62 @@ func sameSorted(a, b []string) bool {
 	slices.Sort(a)
 	slices.Sort(b)
 	return slices.Equal(a, b)
+}
+
+// HR32 (AC2): on a repository that enforces push, an agents-App push is traced only when an
+// output_applied push's object names its head; any other is posted untraced_write, counted, and
+// then checked as in H1. A repository that does not enforce push shadows its pushes as in H1.
+func TestTracerPush(t *testing.T) {
+	commit := func(tk *v1alpha1.Task, c string) string {
+		return "https://github.com/" + tk.Spec.Repository + "/commit/" + strings.Repeat(c, 40)
+	}
+	for name, tc := range map[string]struct {
+		enforce  []hardening.OutputType
+		applied  []string // the heads applied pushes name
+		untraced []string // the untraced pushes' heads
+		checked  []string // the pushes checked as in H1
+	}{
+		"both pushes applied":   {[]hardening.OutputType{hardening.Push}, []string{"1", "2"}, nil, nil},
+		"one push applied":      {[]hardening.OutputType{hardening.Push}, []string{"2"}, []string{"1"}, []string{"1"}},
+		"nothing applied":       {[]hardening.OutputType{hardening.Push}, nil, []string{"1", "2"}, []string{"1", "2"}},
+		"push not enforced":     {[]hardening.OutputType{hardening.PR}, []string{"2"}, nil, []string{"1", "2"}},
+		"another commit traced": {[]hardening.OutputType{hardening.Push}, []string{"9"}, []string{"1", "2"}, []string{"1", "2"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g, tk, _ := shadowRig(t, "documentation")
+			g.r.Cfg.Current().Hardening.EnforceOutputs = tc.enforce
+			m := &untracedCounter{}
+			g.r.Metrics = m
+			in := now.Add(-5 * time.Minute)
+			for i, c := range tc.applied {
+				id := fmt.Sprintf("00000000000000c%d", i)
+				g.log.request(rid(0), id, hardening.Push, nil, in)
+				g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec(id, hardening.Push, commit(tk, c)), in)
+			}
+			g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
+			var untraced, checked, wantU, wantC []string
+			for _, r := range shadowRecords(g) {
+				switch {
+				case r.Type != string(hardening.Push):
+				case r.Reason == reasonUntraced:
+					untraced = append(untraced, r.Object)
+				default:
+					checked = append(checked, r.Object)
+				}
+			}
+			for _, c := range tc.untraced {
+				wantU = append(wantU, commit(tk, c))
+			}
+			for _, c := range tc.checked {
+				wantC = append(wantC, commit(tk, c))
+			}
+			pushesCounted := slices.DeleteFunc(slices.Clone(m.types), func(s string) bool { return s != string(hardening.Push) })
+			if !sameSorted(untraced, wantU) || len(pushesCounted) != len(wantU) {
+				t.Fatalf("untraced %q (counted %q), want %q", untraced, m.types, wantU)
+			}
+			if !sameSorted(checked, wantC) {
+				t.Fatalf("checked as in H1 %q, want %q", checked, wantC)
+			}
+		})
+	}
 }
