@@ -5,6 +5,7 @@ package forge
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -148,6 +149,93 @@ func TestOctoSTSTokens(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "ghs_") || strings.Contains(logs.String(), "sa-token") {
 		t.Errorf("a token reached the log:\n%s", logs.String())
+	}
+}
+
+// An expires_at past an installation token's hour is held to the hour, and a token GitHub answers
+// 401 to is dropped, so the next call exchanges again.
+func TestOctoSTSClampAndInvalidate(t *testing.T) {
+	sts := newFakeSTS(t)
+	clk := &clock{t: time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)}
+	file := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(file, []byte("sa"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sts.reply = func(n int) string {
+		return fmt.Sprintf(`{"token":"ghs_%d","expires_at":"2026-11-13T10:00:00Z"}`, n)
+	}
+	o := &OctoSTS{URL: sts.srv.URL, TokenFile: file, Scope: "owner/repo", Identity: "publisher", HTTP: sts.client(), Now: clk.now}
+	if tok, _ := o.Token(t.Context()); tok != "ghs_1" {
+		t.Fatalf("token %q", tok)
+	}
+	clk.add(51 * time.Minute) // a day's expires_at is held to the hour: renewed past 50 minutes
+	if tok, _ := o.Token(t.Context()); tok != "ghs_2" {
+		t.Fatalf("a day-long expiry was not clamped: %q", tok)
+	}
+
+	// A connection whose API answers 401 drops the source's token.
+	var mu sync.Mutex
+	var seen []string
+	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Authorization"))
+		mu.Unlock()
+		if r.Header.Get("Authorization") == "Bearer ghs_2" {
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"resources":{}}`)
+	}))
+	t.Cleanup(api.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(api.Certificate())
+	conn, err := connectWithout(t, api.URL, roots, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Ping(t.Context()); err == nil {
+		t.Fatal("a 401 answered")
+	}
+	if err := conn.Ping(t.Context()); err != nil {
+		t.Fatalf("the next call did not exchange again: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) < 2 || seen[len(seen)-1] != "Bearer ghs_3" {
+		t.Errorf("bearers %q", seen)
+	}
+}
+
+// connectWithout connects over the source without the connect-time mint's ping: the token it
+// mints is the cached one.
+func connectWithout(t *testing.T, url string, roots *x509.CertPool, src TokenSource) (*GitHub, error) {
+	t.Helper()
+	return ConnectTokens(t.Context(), Options{Repository: "owner/repo", APIURL: url + "/", UserAgent: "agent-factory/test",
+		HTTP: httpx.New(5*time.Second, roots), Now: time.Now}, src)
+}
+
+// Unappliable is a refusal that a retry cannot change: gone, locked, or a validation failure.
+func TestUnappliable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"nil":        {nil, false},
+		"permanent":  {&PermanentError{Status: 404, Err: errors.New("gone")}, true},
+		"a 422":      {fmt.Errorf("forge: x: %w", &statusError{code: 422}), true},
+		"a 404":      {&statusError{code: 404}, true},
+		"a 500":      {&statusError{code: 500}, false},
+		"a 429":      {&statusError{code: 429}, false},
+		"a 401":      {&statusError{code: 401}, false},
+		"a network":  {errors.New("dial tcp: refused"), false},
+		"pr exists":  {ErrPRExists, false},
+		"no factory": {ErrNoConnection, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := Unappliable(tc.err); got != tc.want {
+				t.Fatalf("Unappliable = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

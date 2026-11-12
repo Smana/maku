@@ -285,7 +285,11 @@ func (a *auth) RoundTrip(req *http.Request) (*http.Response, error) {
 	r := req.Clone(req.Context())
 	r.Header.Set("Authorization", "Bearer "+tok)
 	r.Header.Set("User-Agent", a.agent)
-	return a.base.RoundTrip(r)
+	resp, err := a.base.RoundTrip(r)
+	if inv, ok := a.tokens.(invalidator); ok && err == nil && resp.StatusCode == http.StatusUnauthorized {
+		inv.Invalidate() // GitHub refused the token: the next call mints another
+	}
+	return resp, err
 }
 
 // statusError is a 4xx or 5xx answer, carried by status alone: the body is drained and dropped, so

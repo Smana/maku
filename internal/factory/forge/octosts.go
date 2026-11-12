@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/go-github/v92/github"
+
 	"github.com/Smana/maku/internal/httpx"
 )
 
@@ -82,6 +84,41 @@ func (o *OctoSTS) Token(ctx context.Context) (string, error) {
 	return tok, nil
 }
 
+// Invalidate drops the cached token: GitHub answered 401 to it, so the next call exchanges again.
+func (o *OctoSTS) Invalidate() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.token, o.expires = "", time.Time{}
+}
+
+// invalidator is a TokenSource that can drop a token GitHub refused.
+type invalidator interface{ Invalidate() }
+
+// ErrNoConnection is a write with no connection to make it on: the repository has no factory App
+// or publisher configured. A retry cannot change it.
+var ErrNoConnection = errors.New("forge: no connection for the repository")
+
+// Unappliable reports whether err is a refusal a retry cannot change: ErrNoConnection, a
+// PermanentError, or GitHub answering 404, 410 or 422 (a validation failure). A 401, 403, 429, a
+// 5xx and a network error are worth retrying.
+func Unappliable(err error) bool {
+	var p *PermanentError
+	var rest *github.ErrorResponse
+	var gql *statusError
+	code := 0
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, ErrNoConnection), errors.As(err, &p):
+		return true
+	case errors.As(err, &rest) && rest.Response != nil:
+		code = rest.Response.StatusCode
+	case errors.As(err, &gql):
+		code = gql.code
+	}
+	return code == http.StatusNotFound || code == http.StatusGone || code == http.StatusUnprocessableEntity
+}
+
 func (o *OctoSTS) exchange(ctx context.Context, base *url.URL) (string, time.Time, error) {
 	raw, err := os.ReadFile(filepath.Clean(o.TokenFile))
 	if err != nil {
@@ -120,8 +157,8 @@ func (o *OctoSTS) exchange(ctx context.Context, base *url.URL) (string, time.Tim
 		return "", time.Time{}, errors.New("octo-sts: the reply has no token")
 	}
 	exp := out.ExpiresAt
-	if exp.IsZero() {
-		exp = at.Add(stsLifetime)
+	if exp.IsZero() || exp.After(at.Add(stsLifetime)) {
+		exp = at.Add(stsLifetime) // never longer than an installation token lives
 	}
 	if !exp.After(o.Now()) {
 		return "", time.Time{}, errors.New("octo-sts: the reply's token has expired")
