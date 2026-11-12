@@ -191,12 +191,21 @@ type Answer struct {
 }
 
 // Class is one row of the broker's class table: the roles a plan of that class carries and the
-// ceiling its work is charged against, both from config. It has no methods by design — `Compose`
-// reads it and `Check` refuses a class that is not in the table, and neither asks it anything.
+// ceiling its work is charged against, from config or, per repository, from the factory's
+// catalogue. `Compose` reads it and `Check` refuses a class that is not in the table.
 type Class struct {
 	Roles      []string
 	CeilingUSD float64
 	Source     string
+	// The catalogue's reading of the class (ClassesFromCatalogue), all zero for a config row: its
+	// description, mode (live, shadow, off or unarmed), floor profile, the offered profiles (floor
+	// first) with their template roles, and the repository's approveToMerge.
+	Description    string
+	Mode           string
+	Floor          string
+	Offered        []string
+	ProfileRoles   map[string][]string
+	ApproveToMerge bool
 }
 
 // material is CD27's hashed set, in its fixed order: the displayed set and the hashed set are the

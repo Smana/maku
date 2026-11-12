@@ -26,6 +26,11 @@ type ComposeIn struct {
 	Round       int
 	RoundsLeft  int
 	Classes     map[string]Class
+	// Offers are the classes each candidate's catalogue offers, keyed by lowercase repository
+	// (ClassesFromCatalogue). A plan for a repository in Offers is held to its classes and carries a
+	// suggestion; one for a repository the broker read no catalogue for falls back to Classes with
+	// none (until stage 5).
+	Offers map[string]map[string]Class
 	// CeilingUSD and CeilingSource are the channel's ceiling, when the channel has one: `maxCostUSD`
 	// and the string that says so (`channel:C1.maxCostUSD`). Zero means no channel ceiling.
 	CeilingUSD    float64
@@ -85,8 +90,9 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 	// issues spends two classes' taskUSD, not the larger of them (controller ruling, fix round 1) —
 	// then the channel's when that is lower. Issues in array order, so two processes agree.
 	chosen := make([]Class, 0, len(d.Issues))
+	table := ClassesFor(in.Offers, in.Classes, p.Repository)
 	for i, is := range d.Issues {
-		class, ok := in.Classes[is.Class]
+		class, ok := table[is.Class]
 		if !ok {
 			return Plan{}, invalidClass(i+1, is.Class)
 		}
@@ -105,12 +111,13 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		// this path and for the composer's (CD17).
 		chosen = append(chosen, class)
 		p.Issues = append(p.Issues, Issue{
-			Index:     i + 1,
-			Title:     checked.Title,
-			Body:      checked.Body,
-			Class:     is.Class,
-			Roles:     slices.Clone(class.Roles),
-			DependsOn: earlier(is.DependsOn, i+1),
+			Index:      i + 1,
+			Title:      checked.Title,
+			Body:       checked.Body,
+			Class:      is.Class,
+			Roles:      slices.Clone(class.Roles),
+			DependsOn:  earlier(is.DependsOn, i+1),
+			Suggestion: suggest(class, is.Suggestion, i+1, &dropped),
 		})
 	}
 	ceiling, source := sumCeilings(chosen)

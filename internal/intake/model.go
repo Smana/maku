@@ -107,6 +107,9 @@ type DraftRequest struct {
 	Context    string
 	Candidates []string
 	Classes    []string
+	// Offers are the classes each candidate's catalogue offers, keyed by lowercase repository: the
+	// prompt lists them per candidate with their profiles, in place of Classes for that candidate.
+	Offers map[string]map[string]Class
 	// Candidate is the broker-verified revision to re-plan. It is serialized as its own JSON
 	// envelope, separately from Context's 4 KiB bound; settled text and Decisions are data to preserve.
 	Candidate *Plan
@@ -132,6 +135,17 @@ type DraftIssue struct {
 	DependsOn []int    `json:"dependsOn"`
 	Roles     []string `json:"roles"`
 	BudgetUSD float64  `json:"budgetUSD"`
+	// Suggestion is the model's profile and why; Compose keeps them only when the class offers the
+	// profile (O1, P15).
+	Suggestion *DraftSuggestion `json:"suggestion"`
+}
+
+// DraftSuggestion is the model's suggested profile, "" for the factory's choice, and one line of
+// why. Merge exists only so that a reply naming a merge outcome is dropped and logged (P3).
+type DraftSuggestion struct {
+	Profile string          `json:"profile"`
+	Why     string          `json:"why"`
+	Merge   json.RawMessage `json:"merge"`
 }
 
 // Usage is what the call cost, from the reply's own `usage`: the broker attributes a spend it can
@@ -159,7 +173,8 @@ type GovernedRequest struct {
 	Context      string
 	Candidates   []string
 	Classes      []string
-	candidate    *Plan // plan/v1 revisions only; coordination's typed outputs have no candidate
+	candidate    *Plan                       // plan revisions only; coordination's typed outputs have no candidate
+	offers       map[string]map[string]Class // the plan's catalogue classes; coordination's have none
 	SystemPrompt string
 }
 
@@ -174,7 +189,7 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 		prompt += revisionSystemPrompt
 	}
 	usage, err := m.Generate(ctx, GovernedRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, candidate: req.Candidate, SystemPrompt: prompt}, &d)
+		Classes: req.Classes, candidate: req.Candidate, offers: req.Offers, SystemPrompt: prompt}, &d)
 	if err != nil {
 		return Draft{}, Usage{}, err
 	}
@@ -193,7 +208,7 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 // each caller's own type is its contract; the bounds of its fields are the caller's to hold.
 func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usage, error) {
 	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, Candidate: req.candidate})
+		Classes: req.Classes, Candidate: req.candidate, Offers: req.offers})
 	if err != nil {
 		return Usage{}, err
 	}
@@ -369,6 +384,9 @@ func (d Draft) invalid() string {
 		}
 		if strings.TrimSpace(is.Class) == "" {
 			return fmt.Sprintf("issues[%d].class: empty, the reply names the class it belongs to", i)
+		}
+		if s := is.Suggestion; s != nil && utf8.RuneCountInString(s.Why) > MaxWhyRunes {
+			return fmt.Sprintf("issues[%d].suggestion.why: %d characters, the bound is %d", i, utf8.RuneCountInString(s.Why), MaxWhyRunes)
 		}
 	}
 	if n := len(d.Evidence); n > maxEvidence {
