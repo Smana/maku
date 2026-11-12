@@ -34,6 +34,33 @@ func TestRulesImplementer(t *testing.T) {
 	}
 }
 
+// HR14: a run whose claim names output_pr requests its pull request, and never writes to GitHub
+// with gh; without safe outputs the rules are today's byte for byte.
+func TestRulesSafeOutputs(t *testing.T) {
+	today := Rules(run("run-abcdefgh"), "abcdefgh")
+	if got := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Annotations = map[string]string{} }), "abcdefgh"); got != today {
+		t.Fatalf("no safe outputs changed the rules:\n%s", got)
+	}
+	got := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,labels,pr"}
+	}), "abcdefgh")
+	const rule3 = "3. Request the pull request with the output_pr tool: the factory opens it from agent/abcdefgh into main, or updates it, " +
+		"and writes the footer. Never open, edit, comment on or label pull requests or issues with gh.\n"
+	if !strings.Contains(got, rule3) || strings.Contains(got, "gh pr create") || strings.Contains(got, "Open at most one pull request") {
+		t.Fatalf("rules:\n%s", got)
+	}
+	if !strings.Contains(got, "6. Comment with the output_comment tool and label with the output_labels tool, never with gh") {
+		t.Fatalf("the other outputs are not named:\n%s", got)
+	}
+	// Without pr, rule 3 stays and the enforced types are still named.
+	got = Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "issue"}
+	}), "abcdefgh")
+	if !strings.Contains(got, "3. Open at most one pull request") || !strings.Contains(got, "6. File follow-up issues with the output_issue tool") {
+		t.Fatalf("rules:\n%s", got)
+	}
+}
+
 func TestRulesReviewerIsReadOnly(t *testing.T) {
 	got := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Role = "reviewer" }), "abcdefgh")
 	if !strings.Contains(got, "2. Your repository access is read-only. Do not push.") || strings.Contains(got, "Push only to") {

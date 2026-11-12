@@ -83,6 +83,29 @@ func (r *Reconciler) markSafeOutputs(cfg *config.Config, t *v1alpha1.Task, s *ru
 		s.SafeOutputs = append(s.SafeOutputs, string(typ))
 	}
 	s.LabelAllowlist = append([]string{}, cfg.Hardening.LabelAllowlist...)
+	if slices.Contains(types, hardening.PR) {
+		s.TaskText = requestedPRBrief(s.TaskText)
+	}
+}
+
+// The implementer brief's pull request line, as firstBrief writes it and as a run with output_pr
+// reads it: the factory opens the pull request, so the run requests it.
+const (
+	openPRLine      = "When you open the pull request, its body"
+	requestedPRLine = "When you request the pull request with the output_pr tool, its body"
+)
+
+// requestedPRBrief rewrites the factory's own pull request line, in the preamble only: text after
+// the first data fence is the task's, and is never touched.
+func requestedPRBrief(text string) string {
+	i := strings.Index(text, openPRLine)
+	if i < 0 {
+		return text
+	}
+	if fence := strings.Index(text, "TASK-DATA-"); fence >= 0 && fence < i {
+		return text
+	}
+	return text[:i] + requestedPRLine + text[i+len(openPRLine):]
 }
 
 // plantCanary ends a writer run's brief with a fresh canary and keeps it on the claim (T3, HR7):

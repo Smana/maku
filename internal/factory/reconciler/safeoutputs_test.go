@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
@@ -37,6 +38,10 @@ func TestStartRunSafeOutputs(t *testing.T) {
 	if err := s.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(s.TaskText, "When you request the pull request with the output_pr tool, its body must contain \"Fixes #7\".") ||
+		strings.Contains(s.TaskText, "When you open the pull request") {
+		t.Fatalf("brief %q", s.TaskText[:min(len(s.TaskText), 400)])
+	}
 	u := runs.Build(runwatch.DefaultKind, s)
 	if ann := u.GetAnnotations(); ann[runs.AnnSafeOutputs] != "comment,pr" || ann[runs.AnnLabelAllowlist] != `["documentation","needs-human"]` {
 		t.Fatalf("annotations %v", ann)
@@ -64,6 +69,24 @@ func TestStartRunSafeOutputs(t *testing.T) {
 				if _, ok := u.GetAnnotations()[runs.AnnSafeOutputs]; ok {
 					t.Fatal("annotated")
 				}
+			}
+		})
+	}
+}
+
+// The implementer brief asks a run with output_pr to request its pull request; a brief without the
+// factory's line, or a task text that quotes it inside the data fence, is left as written.
+func TestImplementerBriefSafeOutputs(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"the preamble": {"You are the implementer.\nWhen you open the pull request, its body must contain \"Fixes #7\".\nTASK-DATA-x\nbody\nTASK-DATA-x\n",
+			"You are the implementer.\nWhen you request the pull request with the output_pr tool, its body must contain \"Fixes #7\".\nTASK-DATA-x\nbody\nTASK-DATA-x\n"},
+		"quoted in the data": {"Source: schedule s.\nTASK-DATA-x\nWhen you open the pull request, its body\nTASK-DATA-x\n",
+			"Source: schedule s.\nTASK-DATA-x\nWhen you open the pull request, its body\nTASK-DATA-x\n"},
+		"no line": {"brief", "brief"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := requestedPRBrief(tc.in); got != tc.want {
+				t.Fatalf("got %q", got)
 			}
 		})
 	}
