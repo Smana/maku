@@ -500,7 +500,7 @@ func (r Maku) mcp(ctx context.Context, cfg maku.Config, tokPath string, args []s
 		hints = os.Stderr
 	}
 	relay := &maku.Relay{URL: cfg.URL, HC: r.HC, Token: maku.SharedToken(r.HC, cfg, tokPath), File: maku.GH, Issues: maku.GHIssues{}, FactoryLogin: cfg.FactoryLogin,
-		Label: maku.GHLabel, Dir: r.Dir, Log: slog.New(slog.NewTextHandler(hints, nil))}
+		Label: maku.GHLabel, ClassLabel: maku.GHAddLabel, Dir: r.Dir, Log: slog.New(slog.NewTextHandler(hints, nil))}
 	return relay.Serve(ctx, in, r.Out)
 }
 

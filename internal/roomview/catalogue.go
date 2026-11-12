@@ -65,8 +65,8 @@ func CatalogueText(c catalogue.Catalogue, class string) string {
 	return b.String()
 }
 
-// mergeWords is how a task of the class merges, in the broker's words.
-func mergeWords(outcome string) string {
+// MergeWords is how a task of the class merges, in the broker's words.
+func MergeWords(outcome string) string {
 	switch outcome {
 	case catalogue.OutcomeAuto:
 		return "merges on its own when the gate's conditions hold"
@@ -80,7 +80,7 @@ func mergeWords(outcome string) string {
 
 // classLine is `docs-links · live · merges on its own when the gate's conditions hold · profile links-solo`.
 func classLine(c catalogue.Catalogue, cl catalogue.Class) string {
-	line := name(cl.Name) + " · " + name(cl.Mode) + " · " + mergeWords(catalogue.Outcome(cl.Mode, c.ApproveToMerge))
+	line := name(cl.Name) + " · " + name(cl.Mode) + " · " + MergeWords(catalogue.Outcome(cl.Mode, c.ApproveToMerge))
 	if p, ok := c.Profiles[cl.Floor]; ok && p.Offered {
 		line += " · profile " + name(cl.Floor)
 	} else {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os/exec"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/mcpwire"
+	"github.com/Smana/maku/internal/roomview"
 )
 
 // issueFileTool is maku mcp's own tool: the broker never files an issue (F3).
@@ -53,6 +55,9 @@ type planShape struct {
 	Hash        string          `json:"hash"`
 	CanStart    bool            `json:"canStart"`    // whether this developer may start the factory
 	CanStartWhy string          `json:"canStartWhy"` // why not, when it is false
+	// Maintainer is the caller's flag from the repository's catalogue; absent when the broker read
+	// none. A false one means a class: label of theirs would not count (P5).
+	Maintainer *bool `json:"maintainer"`
 }
 
 // planView is what the form shows of a validated plan: the repository it files into, the issue it
@@ -61,9 +66,18 @@ type planShape struct {
 type planView struct {
 	Repository string `json:"repository"`
 	Issues     []struct {
-		Index int    `json:"index"`
-		Title string `json:"title"`
-		Body  string `json:"body"`
+		Index      int    `json:"index"`
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		Class      string `json:"class"`
+		Suggestion *struct {
+			Profile string   `json:"profile"`
+			Roles   []string `json:"roles"`
+			Merge   struct {
+				Outcome string `json:"outcome"`
+			} `json:"merge"`
+			Why string `json:"why"`
+		} `json:"suggestion"`
 	} `json:"issues"`
 	Budget struct {
 		CeilingUSD float64 `json:"ceilingUSD"`
@@ -83,6 +97,43 @@ type governed struct {
 func (g *governed) draft() draftShape {
 	return draftShape{Repo: g.view.Repository, Title: g.view.Issues[0].Title, Body: g.view.Issues[0].Body,
 		CanStart: g.CanStart, CanStartWhy: g.CanStartWhy}
+}
+
+// classLabel is the class:<c> label start applies before factory/ready: the plan's class, unless
+// the catalogue says this developer does not maintain the repository (the factory would not count
+// it). Empty without one.
+func (g *governed) classLabel() string {
+	if g.view.Issues[0].Class == "" || (g.Maintainer != nil && !*g.Maintainer) {
+		return ""
+	}
+	return "class:" + g.view.Issues[0].Class
+}
+
+// suggestion is the form's lines about the class and the profile (O1): the class, the factory's
+// choice of profile and the merge outcome in the broker's words, then the planner's suggested profile
+// with its why, folded to one inert line. Empty for a plan without a class.
+func (g *governed) suggestion() string {
+	is := g.view.Issues[0]
+	if is.Class == "" {
+		return ""
+	}
+	line := "Class " + OneLine(is.Class)
+	if s := is.Suggestion; s != nil {
+		line += " · profile: the factory's choice · " + roomview.MergeWords(s.Merge.Outcome)
+		if s.Profile != "" {
+			line += "\nSuggested profile " + OneLine(s.Profile)
+			if len(s.Roles) > 0 {
+				line += " (" + OneLine(strings.Join(s.Roles, ", ")) + ")"
+			}
+			if why := OneLine(s.Why); why != "" {
+				line += "; the planner's reading: " + why
+			}
+		}
+	}
+	if g.Maintainer != nil && !*g.Maintainer {
+		line += "\nThe class:" + OneLine(is.Class) + " label is skipped: you do not maintain this repository, so the factory would not count it."
+	}
+	return line + "\n\n"
 }
 
 // ceiling is the money this plan's work is charged against, as the form says it: the number and
@@ -166,11 +217,12 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 	} else if why := OneLine(draft.CanStartWhy); why != "" {
 		tail = "The factory cannot be started from here (" + why + "). It gets no label: label it " + readyLabel + " yourself to start the factory."
 	}
-	ceiling, more := "", ""
+	ceiling, more, class := "", "", ""
 	if plan != nil {
-		ceiling = plan.ceiling()
+		ceiling, class = plan.ceiling(), plan.classLabel()
+		more = plan.suggestion()
 		if n := len(plan.view.Issues); n > 1 { // one call files one issue; the form says which (CD19)
-			more = fmt.Sprintf("The plan holds %d issues: this files the first. ", n)
+			more += fmt.Sprintf("The plan holds %d issues: this files the first. ", n)
 		}
 	}
 	ans, err := r.ask(ctx, "elicitation/create", map[string]any{
@@ -214,7 +266,7 @@ func (r *Relay) issueFile(ctx context.Context, args json.RawMessage) any {
 		out, _ := mcpwire.ToolResult(map[string]any{"filed": true, "url": url, "started": false, "next": next})
 		return out
 	}
-	return r.start(ctx, draft.Repo, url)
+	return r.start(ctx, draft.Repo, url, class)
 }
 
 // fallbackNext is the hint for a form that could not be shown or answered (OpenCode cuts a tool at
@@ -263,9 +315,18 @@ func formBool(raw json.RawMessage) (v, ok bool) {
 
 // start labels the issue just filed and waits for its room. A failure files without the label and
 // says so: it is never retried, since the developer can label the issue themselves.
-func (r *Relay) start(ctx context.Context, repo, url string) any {
+func (r *Relay) start(ctx context.Context, repo, url, class string) any {
 	result := map[string]any{"filed": true, "url": url, "started": false}
 	n, err := issueNumber(url, repo)
+	if err == nil && class != "" && r.ClassLabel != nil {
+		// The class first (P7): factory/ready starts triage, which reads the labels it finds then.
+		if cerr := r.ClassLabel(ctx, repo, n, class); cerr != nil {
+			result["why"] = "filed without labels, so not started: " + class + ": " + OneLine(cerr.Error()) +
+				"; label it " + class + ", then " + readyLabel + ", yourself"
+			out, _ := mcpwire.ToolResult(result)
+			return out
+		}
+	}
 	if err == nil {
 		err = r.Label(ctx, repo, n, readyLabel)
 	}
@@ -363,6 +424,22 @@ func GHLabel(ctx context.Context, repo string, issue int, label string) error {
 	cmd.Stderr = &capped{b: &errOut}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("gh issue edit: %w: %s", err, OneLine(errOut.String()))
+	}
+	return nil
+}
+
+// GHAddLabel adds a label with the developer's gh through the REST route, which creates a label the
+// repository does not have yet (G5; gh issue edit --add-label refuses one): each value its own
+// argument, never a shell.
+func GHAddLabel(ctx context.Context, repo string, issue int, label string) error {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "api", "-X", "POST", "repos/"+repo+"/issues/"+strconv.Itoa(issue)+"/labels", "-f", "labels[]="+label) //nolint:gosec // gh, with a checked repository, a number and the plan's class, never through a shell
+	var errOut bytes.Buffer
+	cmd.Stderr = &capped{b: &errOut}
+	cmd.Stdout = io.Discard
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh api labels: %w: %s", err, OneLine(errOut.String()))
 	}
 	return nil
 }

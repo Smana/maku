@@ -447,6 +447,9 @@ type planChecked struct {
 	Hash        string      `json:"hash"`
 	CanStart    bool        `json:"canStart"`
 	CanStartWhy string      `json:"canStartWhy,omitempty"`
+	// Maintainer is the caller's flag from the plan repository's catalogue (P5): issue_file skips a
+	// class: label the factory would not count. Absent when the broker read no catalogue.
+	Maintainer *bool `json:"maintainer,omitempty"`
 }
 
 // planCheckTool is plan_check, the re-validation door (CD3, CD27): the plan a person was shown, with
@@ -528,8 +531,11 @@ func (s *Server) planCheckTool(ctx context.Context, p authn.Principal, args json
 	if err := roomview.Plan(&b, plan, "", roomview.Options{Format: roomview.Markdown, Now: s.Intake.now()}); err != nil {
 		return nil, err
 	}
-	return viewResult{text: b.String(), data: planChecked{Plan: plan, Hash: plan.Hash,
-		CanStart: canStart, CanStartWhy: why}}, nil
+	checked := planChecked{Plan: plan, Hash: plan.Hash, CanStart: canStart, CanStartWhy: why}
+	if c, err := s.Catalogue.Get(ctx, p, plan.Repository, a.OnBehalfOf); err == nil {
+		checked.Maintainer = &c.Maintainer
+	}
+	return viewResult{text: b.String(), data: checked}, nil
 }
 
 // planCheckRefused is a plan_check that did not answer with a plan: a closed refusal is counted under
@@ -868,7 +874,8 @@ var planCheckOutput = json.RawMessage(`{"type":"object","additionalProperties":f
 	`"properties":{"plan":{"type":"object","required":["apiVersion","rev","planner","repository","issues","budget","hash"]},` +
 	`"hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
 	`"status":{"type":"string","enum":["replanned"],"description":"set when the plan was a plan/v1: nothing was checked as final or filed; confirm the plan/v2 answered"},` +
-	`"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"}}}`)
+	`"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"},` +
+	`"maintainer":{"type":"boolean","description":"the caller maintains the repository, from its catalogue; absent without one"}}}`)
 
 // intakeTools are the planner's tools, listed only when the switch is on and on both lists: the
 // coding agent's session and the Slack App plan through the same boundary.
