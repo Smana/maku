@@ -229,10 +229,10 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 		if _, ok := classes[is.Class]; !ok {
 			return invalidClass(is.Index, is.Class)
 		}
-		if is.Profile != "" {
-			// A pin is checked against the catalogue from stage 3; until then a plan that carries one
-			// is not a plan anything here can honour.
-			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile, pins are not accepted yet", is.Index))
+		if is.Profile != "" && !profileNameRE.MatchString(is.Profile) {
+			// Whether a pin holds is the catalogue's to say (CheckPin, at the door that reads one);
+			// here it is only held to the shape a profile's name has, since it lands in a body and a label.
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a profile's name", is.Index))
 		}
 		if s := is.Suggestion; s != nil {
 			if n := utf8.RuneCountInString(s.Why); n > MaxWhyRunes {

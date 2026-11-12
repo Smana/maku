@@ -224,6 +224,8 @@ type Set struct {
 	intakePlanSeconds metric.Float64Histogram
 	intakePlanTokens  metric.Int64Counter
 	intakeCatalogue   metric.Int64Counter
+	intakePinRefusals metric.Int64Counter
+	intakeChoices     metric.Int64Counter
 
 	// The classifier's two series: intent_classify_total{outcome} and its duration, intent_* in Go,
 	// maku_intent_* on scrape, with the closed outcome list intent.Outcome names.
@@ -321,6 +323,13 @@ func New(meter metric.Meter) (*Set, error) {
 	// intake_catalogue_reads_total{outcome}: the broker's reads of the factory's catalogue; hit came
 	// from its cache, miss from the factory, error is a read that failed (never cached).
 	s.intakeCatalogue, err = meter.Int64Counter("intake_catalogue_reads_total", metric.WithDescription("Catalogue reads by the broker, from cache, from the factory or failed."))
+	check(err)
+	// intake_profile_refusals_total{surface,reason}: pins refused at intake, by the closed reason.
+	s.intakePinRefusals, err = meter.Int64Counter("intake_profile_refusals_total", metric.WithDescription("Profile pins refused at intake, by reason."))
+	check(err)
+	// intake_profile_choices_total{surface,class,choice}: confirmed plans by what the person did
+	// with the profile: kept the factory's choice, took the suggestion, or pinned another.
+	s.intakeChoices, err = meter.Int64Counter("intake_profile_choices_total", metric.WithDescription("Confirmed plans by the profile chosen: factory, suggested or other."))
 	check(err)
 	// intent_classify_total{outcome} and intent_classify_duration_seconds: whether the classifier
 	// works and how long a reply waits for it. The 5 s deadline is the top bucket's neighbour.
@@ -600,6 +609,33 @@ func (s *Set) IntakeCatalogueRead(ctx context.Context, outcome string) {
 		outcome = CatalogueError
 	}
 	s.intakeCatalogue.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+}
+
+// The choices a confirmed plan made with an issue's profile: the closed vocabulary of
+// intake_profile_choices_total.
+const (
+	ChoiceFactory   = "factory"
+	ChoiceSuggested = "suggested"
+	ChoiceOther     = "other"
+)
+
+// IntakeProfileRefusal counts one pin refused at intake: surface is the plan's, reason a code of
+// intake's closed profile list, bounded by the caller as IntakePlan's reason is.
+func (s *Set) IntakeProfileRefusal(ctx context.Context, surface, reason string) {
+	s.intakePinRefusals.Add(ctx, 1, metric.WithAttributes(attribute.String("surface", surface), attribute.String("reason", reason)))
+}
+
+// IntakeProfileChoice counts one confirmed issue by what its profile is: ChoiceFactory (no pin),
+// ChoiceSuggested (the suggested profile pinned) or ChoiceOther; class is a config name the
+// catalogue checked. Any other choice spelling is counted as other, so the label stays closed.
+func (s *Set) IntakeProfileChoice(ctx context.Context, surface, class, choice string) {
+	switch choice {
+	case ChoiceFactory, ChoiceSuggested, ChoiceOther:
+	default:
+		choice = ChoiceOther
+	}
+	s.intakeChoices.Add(ctx, 1, metric.WithAttributes(attribute.String("surface", surface),
+		attribute.String("class", class), attribute.String("choice", choice)))
 }
 
 // IntakePlanSeconds records one plan attempt's duration, the model call included.

@@ -556,6 +556,36 @@ func TestIntakeCatalogueReadsMetric(t *testing.T) {
 	}
 }
 
+// Pins at intake: maku_intake_profile_refusals_total{surface,reason} and
+// maku_intake_profile_choices_total{surface,class,choice}, the choice a closed vocabulary.
+func TestIntakeProfileMetrics(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "v0.34.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.IntakeProfileRefusal(ctx, "session", "class_profile_fixed")
+	s.IntakeProfileChoice(ctx, "session", "review", ChoiceFactory)
+	s.IntakeProfileChoice(ctx, "slack", "review", ChoiceSuggested)
+	s.IntakeProfileChoice(ctx, "slack", "review", "review-frontier") // a profile never labels a series
+	got := series(scrape(t, exp.Handler()))
+	for key, want := range map[string]string{
+		`maku_intake_profile_refusals_total{reason="class_profile_fixed",surface="session"}`:   "1",
+		`maku_intake_profile_choices_total{choice="factory",class="review",surface="session"}`: "1",
+		`maku_intake_profile_choices_total{choice="suggested",class="review",surface="slack"}`: "1",
+		`maku_intake_profile_choices_total{choice="other",class="review",surface="slack"}`:     "1",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q: %v", key, got[key], want, got)
+		}
+	}
+}
+
 // CD7 and CD25's evidence: the App's two families are served under maku_slack_*, so the names the
 // dashboard and the acceptance queries hold are the ones a scrape carries — the plural
 // maku_slack_thread_answers_total, since the label is a set of questions, and the proposal counter's
