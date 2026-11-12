@@ -1,4 +1,65 @@
 ---
+# Source: maku-gateway/templates/catalog.yaml
+# The prices agentgateway merges over its built-in catalog to price each response (the access log's
+# `cost`), from the factory's meter.prices rows: edit a price there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-gateway-model-catalog
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+data:
+  catalog.json: |
+    {
+      "providers": {}
+    }
+
+---
+# Source: maku-gateway/templates/backends.yaml
+# tier-light on stub (custom): the model is forced to the alias whatever the
+# body says, then mapped to stub-light (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret stub-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: stub-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: stub
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+      host: stub.models.svc.cluster.local
+      port: 8080
+  policies:
+    auth:
+      secretRef:
+        name: stub-api-key
+        key: apiKey
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-light: "stub-light"
+      transformations:
+        - field: model
+          expression: '"tier-light"'
+
+---
 # Source: maku-gateway/templates/parameters.yaml
 # The generated proxy has no pod seccomp profile, no liveness probe, no limits and a LoadBalancer
 # Service by default; these fields are strategic-merge overlays on what the controller renders (its
@@ -342,6 +403,54 @@ spec:
             expression: jwt.sub
 
 ---
+# Source: maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-tier-light
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.tier-light" in jwt.aud'
+
+---
+# Source: maku-gateway/templates/routes.yaml
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-list
+  traffic:
+    directResponse:
+      status: 404
+      body: '{"error":"model listing is not served on the model gateway"}'
+
+---
 # Source: maku-gateway/templates/gateway.yaml
 # The model gateway (D7). One listener per data class, as on cnref's agent-router: an internal run's
 # token never reaches a public-only provider, because that provider's routes attach to `public` only.
@@ -382,3 +491,70 @@ spec:
       group: agentgateway.dev
       kind: AgentgatewayParameters
       name: model-gateway
+
+---
+# Source: maku-gateway/templates/routes.yaml
+# /m/tier-light/ on public: the prefix is rewritten to /, so a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /m/tier-light/
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: stub-tier-light
+
+---
+# Source: maku-gateway/templates/routes.yaml
+# A model listing is answered 404 after the listener's token check, as cnref's agent-router answers
+# it: every harness works with that. The Exact match outranks each alias's prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/models
+      # Never reached: the policy below answers first.
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: stub-tier-light

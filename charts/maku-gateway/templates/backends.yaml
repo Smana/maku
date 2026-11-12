@@ -1,0 +1,63 @@
+{{- if .Values.enabled }}
+{{- $presets := include "mgw.presets" . | fromYaml }}
+{{- range $b := include "mgw.backends" . | fromYamlArray }}
+{{- $p := index $.Values.providers $b.provider }}
+{{- $preset := index $presets $p.preset }}
+{{- $host := $p.host | default $preset.host }}
+{{- $tls := ternary (ne (toString $p.tls) "false") true (eq $p.preset "custom") }}
+---
+# {{ $b.alias }} on {{ $b.provider }} ({{ $p.preset }}): the model is forced to the alias whatever the
+# body says, then mapped to {{ $b.model }} (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret {{ $p.existingSecret }} by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: {{ $b.name }}
+  labels: {{- include "mgw.labels" $ | nindent 4 }}
+spec:
+  ai:
+    provider:
+      {{- if eq $preset.provider "custom" }}
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: {{ include "mgw.catalogKey" (dict "root" $ "name" $b.provider) }}
+        formats:
+          - type: Completions
+            path: {{ $p.path | default $preset.path }}
+      host: {{ $host }}
+      port: {{ $p.port | default $preset.port }}
+      {{- else }}
+      {{ $preset.provider }}: {}
+      {{- end }}
+  policies:
+    auth:
+      secretRef:
+        name: {{ $p.existingSecret }}
+        key: {{ $p.key | default "apiKey" }}
+    {{- if and (eq $preset.provider "custom") $tls }}
+    tls:
+      sni: {{ $host }}
+    {{- end }}
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+        {{- if eq $preset.provider "anthropic" }}
+        /v1/messages: Messages
+        {{- end }}
+      modelAliases:
+        {{ $b.alias }}: {{ $b.model | quote }}
+      transformations:
+        - field: model
+          expression: {{ printf "\"%s\"" $b.alias | squote }}
+        {{- range $field, $f := $preset.fields }}
+        # The {{ $p.preset }} preset: {{ $f.why }}.
+        - field: {{ $field }}
+          expression: {{ $f.expression | squote }}
+        {{- end }}
+        {{- range $p.transformations }}
+        - field: {{ .field }}
+          expression: {{ .expression | toJson }}
+        {{- end }}
+{{- end }}
+{{- end }}

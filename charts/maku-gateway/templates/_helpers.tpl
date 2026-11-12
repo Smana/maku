@@ -72,6 +72,47 @@ for the planner and tier-light for the classifier).
 {{- toYaml $out -}}
 {{- end -}}
 
+{{/* A USD rate as the catalog writes it: plain decimal, at least two places (1.4 -> "1.40", 0.075 -> "0.075"). */}}
+{{- define "mgw.usd" -}}
+{{- $s := printf "%v" . -}}
+{{- if not (contains "." $s) -}}{{- $s = printf "%s.00" $s -}}
+{{- else if eq (len (last (splitList "." $s))) 1 -}}{{- $s = printf "%s0" $s -}}
+{{- end -}}
+{{- $s -}}
+{{- end -}}
+
+{{/*
+The model catalog ConfigMap (GW12): (dict "root" <a context with .Values, .Release, .Chart> "prices"
+<meter.prices rows>). Each row goes under the catalog key of every provider serving that model, its
+rates as strings, an absent cacheWrite absent: what ANR's gen-prices.py renders.
+*/}}
+{{- define "mgw.catalog" -}}
+{{- $root := .root -}}
+{{- $providers := dict -}}
+{{- range $b := include "mgw.backends" $root | fromYamlArray -}}
+{{- with index $.prices $b.model -}}
+{{- $row := . -}}
+{{- $key := include "mgw.catalogKey" (dict "root" $root "name" $b.provider) -}}
+{{- if not (hasKey $providers $key) -}}{{- $_ := set $providers $key (dict "models" dict) -}}{{- end -}}
+{{- $rates := dict -}}
+{{- range $f := list "input" "output" "cacheRead" "cacheWrite" -}}
+{{- if hasKey $row $f -}}{{- $_ := set $rates $f (include "mgw.usd" (index $row $f)) -}}{{- end -}}
+{{- end -}}
+{{- $_ := set (index $providers $key).models $b.model (dict "rates" $rates) -}}
+{{- end -}}
+{{- end -}}
+# The prices agentgateway merges over its built-in catalog to price each response (the access log's
+# `cost`), from the factory's meter.prices rows: edit a price there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $root.Values.name }}-model-catalog
+  labels: {{- include "mgw.labels" $root | nindent 4 }}
+data:
+  catalog.json: |
+    {{- dict "providers" $providers | toPrettyJson | nindent 4 }}
+{{- end -}}
+
 {{/* A misconfiguration is a render error naming the key, never a gateway that answers wrong. */}}
 {{- define "mgw.validate" -}}
 {{- $v := .Values -}}
