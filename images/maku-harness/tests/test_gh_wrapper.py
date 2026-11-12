@@ -45,7 +45,11 @@ class SafeOutputsGhTest(unittest.TestCase):
             (["pr", "edit", "1", "--add-label", "documentation"], "output_labels"),
             (["pr", "edit", "1", "--remove-label=bug"], "output_labels"),
             (["issue", "edit", "7", "--add-label", "x"], "output_labels"),
-            (["label", "create", "x"], "output_labels"), (["label", "list"], "output_labels"),
+            (["label", "create", "x"], "output_labels"), (["label", "delete", "x"], "output_labels"),
+            # #491's review: the writes the tracer does not observe are turned away too.
+            (["pr", "review", "1", "--approve"], "output_comment"), (["pr", "close", "1"], "output_pr"),
+            (["pr", "reopen", "1"], "output_pr"), (["issue", "close", "7"], "output_issue"),
+            (["issue", "reopen", "7"], "output_issue"),
         ):
             p = self.run_gh(argv, self.ALL)
             self.assertEqual(p.returncode, 3, argv)
@@ -59,7 +63,8 @@ class SafeOutputsGhTest(unittest.TestCase):
         self.assertEqual((p.returncode, p.stdout.split()[0]), (0, "footer"))
 
     def test_reads_and_the_api_pass_through(self):
-        for argv in (["pr", "view", "1"], ["pr", "checks", "1"], ["issue", "view", "7"], ["api", "-X", "POST", "repos/o/r/pulls"]):
+        for argv in (["pr", "view", "1"], ["pr", "checks", "1"], ["issue", "view", "7"], ["label", "list"],
+                     ["api", "-X", "POST", "repos/o/r/pulls"]):
             p = self.run_gh(argv, self.ALL)
             self.assertEqual((p.returncode, p.stdout.split()[0]), (0, "real"), argv)
 

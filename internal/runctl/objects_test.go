@@ -45,12 +45,19 @@ func TestRulesSafeOutputs(t *testing.T) {
 		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,labels,pr"}
 	}), "abcdefgh")
 	const rule3 = "3. Request the pull request with the output_pr tool: the factory opens it from agent/abcdefgh into main, or updates it, " +
-		"and writes the footer. Never open, edit, comment on or label pull requests or issues with gh.\n"
+		"and writes the footer. Never open, edit, close or reopen it with gh.\n"
 	if !strings.Contains(got, rule3) || strings.Contains(got, "gh pr create") || strings.Contains(got, "Open at most one pull request") {
 		t.Fatalf("rules:\n%s", got)
 	}
 	if !strings.Contains(got, "6. Comment with the output_comment tool and label with the output_labels tool, never with gh") {
 		t.Fatalf("the other outputs are not named:\n%s", got)
+	}
+	// Rule 3 names only the pull request; a type not enforced is never named (#491's review).
+	got = Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "pr"}
+	}), "abcdefgh")
+	if strings.Contains(got, "output_comment") || strings.Contains(got, "output_labels") || strings.Contains(got, "6. ") {
+		t.Fatalf("a type not enforced is named:\n%s", got)
 	}
 	// Without pr, rule 3 stays and the enforced types are still named.
 	got = Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
@@ -58,6 +65,17 @@ func TestRulesSafeOutputs(t *testing.T) {
 	}), "abcdefgh")
 	if !strings.Contains(got, "3. Open at most one pull request") || !strings.Contains(got, "6. File follow-up issues with the output_issue tool") {
 		t.Fatalf("rules:\n%s", got)
+	}
+	// The tester is served the output tools too, and its rules say so.
+	got = Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Spec.Role = "tester"
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,labels"}
+	}), "abcdefgh")
+	if !strings.Contains(got, "4. Comment with the output_comment tool and label with the output_labels tool") {
+		t.Fatalf("tester rules:\n%s", got)
+	}
+	if today := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Role = "tester" }), "abcdefgh"); strings.Contains(today, "4. ") {
+		t.Fatalf("an unenforced tester's rules changed:\n%s", today)
 	}
 }
 

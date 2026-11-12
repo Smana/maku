@@ -33,7 +33,7 @@ func Rules(r *v1alpha1.AgentRun, runID string) string {
 		rule3 := fmt.Sprintf("3. Open at most one pull request, from %s into %s. If it already exists, update it.\n", branch, s.BaseRef)
 		if viaPR {
 			rule3 = fmt.Sprintf("3. Request the pull request with the output_pr tool: the factory opens it from %s into %s, or updates it, "+
-				"and writes the footer. Never open, edit, comment on or label pull requests or issues with gh.\n", branch, s.BaseRef)
+				"and writes the footer. Never open, edit, close or reopen it with gh.\n", branch, s.BaseRef)
 		}
 		out += fmt.Sprintf("2. Push only to %s. Never push to any other branch, and never merge.\n", branch) + rule3 +
 			fmt.Sprintf("4. Every commit carries the trailer \"Agent-Run: %s\". The commit hook adds it.\n"+
@@ -44,6 +44,9 @@ func Rules(r *v1alpha1.AgentRun, runID string) string {
 	} else {
 		out += "2. Your repository access is read-only. Do not push. Your final message is your report.\n" +
 			"3. Never modify .github/workflows/, .github/chainguard/ or .github/agent-factory.yaml.\n"
+		if rule4 := outputsRule(outputs); rule4 != "" && s.Role == "tester" { // the tester is served the output tools too
+			out += "4. " + rule4 + "\n"
+		}
 	}
 	if s.RoomRef == "" {
 		return out

@@ -4,8 +4,10 @@
 #
 # Under hardening H2 the factory applies a run's pull request, comments, labels and issues
 # (SAFE_OUTPUTS, set from the claim, HR14): gh's writes of an enforced type are turned away to the
-# matching output tool, exit 3, before any token is minted. `gh api` is not parsed: the token's
-# pull_requests: read is the boundary. Without SAFE_OUTPUTS nothing here applies.
+# matching output tool, exit 3, before any token is minted. This is advisory: `gh api`, curl or
+# gh-real with a token from git-credential-agent go round it. The role policy's
+# pull_requests: read is the boundary, and the factory's tracer reports any direct write. Without
+# SAFE_OUTPUTS nothing here applies.
 if [ -n "$SAFE_OUTPUTS" ]; then
   refuse() {
     case ",$SAFE_OUTPUTS," in
@@ -25,7 +27,9 @@ if [ -n "$SAFE_OUTPUTS" ]; then
     case "$a" in --add-label* | --remove-label*) labelled=1 ;; esac
   done
   case "$1 $sub" in
-    "pr create" | "pr new" | "pr ready") refuse pr "pr $sub" ;;
+    "pr create" | "pr new" | "pr ready" | "pr close" | "pr reopen") refuse pr "pr $sub" ;;
+    "pr review") refuse comment "pr review" ;;
+    "issue close" | "issue reopen") refuse issue "issue $sub" ;;
     "pr edit")
       [ -n "$labelled" ] && refuse labels "pr edit --add-label"
       refuse pr "pr edit"
@@ -37,7 +41,10 @@ if [ -n "$SAFE_OUTPUTS" ]; then
       refuse issue "issue edit"
       ;;
   esac
-  [ "$1" = label ] && refuse labels "label"
+  case "$1 $2" in
+    "label list" | "label view") ;; # reads
+    label\ *) refuse labels "label $2" ;;
+  esac
 fi
 GH_TOKEN="$(/usr/local/bin/git-credential-agent token)" || exit 1
 export GH_TOKEN
