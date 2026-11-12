@@ -1290,6 +1290,18 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 	}
 }
 
+// D11: the arm row's success is posted before the factory merges, in the same pass, so the gate's
+// own merge satisfies a ruleset that requires maku/merge-gate.
+func TestTheGateStatusIsPostedBeforeTheMerge(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().Merge.GateStatus = true
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.reconcile(t, "3buqdlot", 1)
+	if got, want := g.f.GateSequence(), []string{"status abc success", "merge PR_12 abc"}; !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 // Demo: with merge.gateStatus the gate posts its verdict as maku/merge-gate on the head, once per
 // (head, state, description); without it SetStatus is never called.
 func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {

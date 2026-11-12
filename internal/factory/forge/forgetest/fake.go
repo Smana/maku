@@ -68,6 +68,7 @@ type Fake struct {
 	reruns        []int64
 	statuses      map[string][]forge.Status
 	statusErr     error
+	gateSeq       []string // "status <sha> <state>" and "merge <nodeID> <sha>", in call order
 	rerunFail     map[int64]error
 	disarmed      []string
 	reverts       []string
@@ -948,7 +949,16 @@ func (f *Fake) Merge(_ context.Context, nodeID, head string) error {
 		break
 	}
 	f.armed = append(f.armed, nodeID+" "+head)
+	f.gateSeq = append(f.gateSeq, "merge "+nodeID+" "+head)
 	return nil
+}
+
+// GateSequence is the successful SetStatus and Merge calls, in order: "status <sha> <state>" and
+// "merge <nodeID> <sha>", for tests of what the gate posts before it merges.
+func (f *Fake) GateSequence() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.gateSeq)
 }
 
 // PullRequestChecks implements the Merger's PullRequestChecks.
@@ -989,6 +999,7 @@ func (f *Fake) SetStatus(_ context.Context, sha, state, statusContext, descripti
 		f.statuses = map[string][]forge.Status{}
 	}
 	f.statuses[sha] = append(f.statuses[sha], forge.Status{Context: statusContext, State: state, Description: description})
+	f.gateSeq = append(f.gateSeq, "status "+sha+" "+state)
 	return nil
 }
 

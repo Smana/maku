@@ -1211,6 +1211,23 @@ phases), and every reason narrate has prose for, the gate's refusals (`class_pau
 `patch_too_large`, `file_*`, `oracle_*`, …) and the stops included. Only free text reads `other`,
 such as a hand-written `revoked` annotation.
 
+### The gate's commit status
+
+With `merge.gateStatus: true`, every decision is posted on the pull request's head as the commit
+status `maku/merge-gate`, once per head, state and description:
+
+| Decision | State | Description |
+|---|---|---|
+| `arm` | `success` | `<class>: merging`. Posted before the factory merges, in the same pass |
+| `shadow` | `pending` | `<class>, shadow: would merge; a maintainer merges` |
+| `wait` | `pending` | `<class>: waiting, <reason>` |
+| `human` | `pending` | `<class>: a human decides, <reason>` |
+| `escalate`, `ci_red`, `ci_cancelled` | `failure` | `<class>: escalated, <reason>` or `<class>: <reason>` |
+
+**Only the factory's own merge is ever `success`.** A shadow decision hands the pull request to a
+human, so its status stays `pending`. Were it `success`, a ruleset requiring `maku/merge-gate`
+would let any writer merge it, an agent token with `contents: write` included.
+
 ### Adopted classes
 
 A class that declares `author.adopt` takes another author's pull requests, Renovate's, instead of

@@ -78,8 +78,9 @@ merger and every run.
    sandboxed** banner: the demo has no sandbox, and you are told.
 3. The pull request appears on your repository, opened by `<slug>[bot]`. Its `ci` check runs.
 4. The gate posts the commit status **`maku/merge-gate`** on the pull request, naming the class and the
-   reason. In the demo's first run the class is in *shadow*: the status says what the gate would do,
-   and merges nothing. You can merge the pull request yourself.
+   reason. In the demo's first run the class is in *shadow*: the status stays `pending` and says what
+   the gate would do ("shadow: would merge; a maintainer merges"), and the gate merges nothing. Only a
+   merge by the factory itself posts `success`. You can merge the pull request yourself.
 5. The second seeded issue is labelled `documentation`, not `class:docs-links`, so the gate classes it
    `review` and hands it to a human: it posts that a human decides, and you merge the pull request by hand
    on GitHub (the demo does not configure approve-to-merge). If a task escalates, a maintainer's comment

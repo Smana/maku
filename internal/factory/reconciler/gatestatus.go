@@ -18,7 +18,8 @@ const GateStatusContext = "maku/merge-gate"
 // statusDescriptionMax is GitHub's limit on a commit status's description, in characters.
 const statusDescriptionMax = 140
 
-// statusFor is the state and description the gate's decision posts as maku/merge-gate.
+// statusFor is the state and description the gate's decision posts as maku/merge-gate. Only arm,
+// posted before the merge in the same pass, is success.
 func statusFor(d ArmDecision, class string) (state, description string) {
 	if class == "" {
 		class = "no class"
@@ -27,7 +28,9 @@ func statusFor(d ArmDecision, class string) (state, description string) {
 	case "arm":
 		state, description = "success", class+": merging"
 	case "shadow":
-		state, description = "success", class+", shadow: would merge"
+		// Not success: with branch protection requiring this status, a success here would let any
+		// writer, an agent token included, merge what the gate handed to a human (D11).
+		state, description = "pending", class+", shadow: would merge; a maintainer merges"
 	case "wait":
 		state, description = "pending", fmt.Sprintf("%s: waiting, %s", class, d.Reason)
 	case "human":
