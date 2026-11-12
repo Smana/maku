@@ -226,6 +226,23 @@ spec:
                   type: object
                 maxItems: 16
                 type: array
+              intake:
+                description: |-
+                  Intake is what a planned api task brought from intake (P7): the plan's class and the
+                  planner's suggested profile, and the sponsor's resolved login. Fixed at creation.
+                properties:
+                  class:
+                    maxLength: 63
+                    pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+                    type: string
+                  login:
+                    maxLength: 64
+                    type: string
+                  suggested:
+                    maxLength: 63
+                    pattern: ^[a-z0-9][a-z0-9-]{0,62}$
+                    type: string
+                type: object
               integration:
                 description: Integration is an integration Task's exact subjects (MR10),
                   fixed at creation.
@@ -614,6 +631,9 @@ spec:
               rule: has(self.origin) == has(oldSelf.origin)
             - message: spec.scope never changes once set
               rule: '!has(oldSelf.scope) || (has(self.scope) && self.scope == oldSelf.scope)'
+            - message: spec.intake is fixed at creation
+              rule: has(self.intake) == has(oldSelf.intake) && (!has(self.intake)
+                || self.intake == oldSelf.intake)
             - message: an api task carries maxMicroUSD
               rule: self.source.kind != 'api' || (has(self.maxMicroUSD) && self.maxMicroUSD
                 > 0)
