@@ -58,6 +58,7 @@ func otherTier(tier string) string {
 func (r *Reconciler) verifierSpec(cfg *config.Config, t *v1alpha1.Task, role string) runs.Spec {
 	s := r.implementerSpec(cfg, t, "")
 	s.Role, s.TaskText, s.TaskURL, s.BaseRef = role, "", t.Status.PullRequest.URL, "agent/"+t.Name
+	s.MaxTokens = runCapTokens(t, role) // #475: a reviewer admitted on a partial remainder is capped at it
 	r.withChecks(cfg, &s, t)
 	if role == "reviewer" { // "on a different tier from the implementer where possible" (§3); R47
 		s.Tier = otherTier(t.Spec.Budget.Tier)
@@ -159,7 +160,7 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 		case r.resumable(cfg, t, run):
 			r.resume(ctx, cfg, t, run)
 			return nil
-		case infraLost(run) && !runFits(t) && cfg.Budgets.EnforceTask:
+		case infraLost(run) && !runFitsFor(t, run.Role) && cfg.Budgets.EnforceTask:
 			// As a lost implementer: noVerdict would narrate a review run that queued() then refuses.
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "resume_budget")
 		}
@@ -240,7 +241,7 @@ func (r *Reconciler) noVerdict(ctx context.Context, cfg *config.Config, t *v1alp
 	t.Status.ReviewRounds++
 	// Past an enforced cap queued() escalates budget-task, after lateReviews (#30): never narrate a
 	// review run it refuses.
-	if runFits(t) || !cfg.Budgets.EnforceTask {
+	if runFitsFor(t, cur.Role) || !cfg.Budgets.EnforceTask {
 		narrateLater(t, narrate.NoVerdict(t, cur.ID, why))
 	}
 	r.requestVerifier(t, cur.Role)

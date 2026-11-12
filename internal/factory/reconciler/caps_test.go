@@ -62,6 +62,9 @@ func TestWIPHoldsReviewClassWork(t *testing.T) {
 // whole RunTokens still fits under TaskTokens (owner, 2026-10-07), the rule a resume follows too.
 // Standard tier: 1.5 M per run, 3 M per task. Two paths into a run: a maintainer's revision and the
 // pair's reviewer, the run a 3.35 M task kept starting while the cap was shadow (aws-0, 2026-10-06).
+// reviewerSlack is what a reviewer's fit adds to a whole run's: it needs RunTokens/4 left, not RunTokens (#475).
+const reviewerSlack = 1_125_000
+
 func TestTaskTokenCapLeavesRoomForAWholeRun(t *testing.T) {
 	paths := map[string]func(t *testing.T, used int64, enforce bool) (*rig, *v1alpha1.Task){
 		"revision": func(t *testing.T, used int64, enforce bool) (*rig, *v1alpha1.Task) {
@@ -84,7 +87,7 @@ func TestTaskTokenCapLeavesRoomForAWholeRun(t *testing.T) {
 			g.f.SetBranch("agent/3buqdlot", 12)
 			g.f.SetPR(pr12At(head1))
 			r := g.runs.runs[rid(0)]
-			r.Tokens = used
+			r.Tokens = used + reviewerSlack // #475: a reviewer needs a quarter of a run, not a whole one
 			g.runs.runs[rid(0)] = r
 			g.finish(rid(0), "Succeeded", "agent_finished")
 			return g, g.reconcile(t, "3buqdlot", 2) // → Queued for the reviewer → admitted or not
@@ -117,7 +120,7 @@ func TestTaskTokenCapLeavesRoomForAWholeRun(t *testing.T) {
 					t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 				}
 				if say := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(say, "no room left for another full run") ||
-					!strings.Contains(say, "Tokens used so far: 1.5 M") {
+					!strings.Contains(say, "Tokens used so far: "+map[string]string{"revision": "1.5 M", "reviewer": "2.6 M"}[path]) {
 					t.Fatalf("the escalation says why, honestly: %q", say)
 				}
 			})

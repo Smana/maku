@@ -381,7 +381,7 @@ func TestAReviewerWithoutAVerdictAtTheTaskCap(t *testing.T) {
 			g := pairRig(t)
 			g.r.Cfg.Current().Budgets.EnforceTask = c.enforce
 			r := g.runs.runs[rid(1)]
-			r.Tokens = c.used // standard tier: 1.5 M of 3 M leaves exactly a run's worth
+			r.Tokens = c.used + reviewerSlack // standard tier: 1.5 M of 3 M leaves exactly a run's worth; a review needs a quarter of it (#475)
 			g.runs.runs[rid(1)] = r
 			if c.lost {
 				g.lose(rid(1), runs.ReasonDisrupted)
