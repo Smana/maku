@@ -76,8 +76,8 @@ func TestHardeningRefusals(t *testing.T) {
 	}
 }
 
-// A repository may only be stricter than the central mode. Tested on the rule itself: H0 refuses
-// every mode but off, so no file can reach it yet.
+// A repository may only be stricter than the central mode. Tested on the rule itself: H1 refuses
+// enforce, so a file reaches it only with a central audit (TestHardeningRefusals).
 func TestHardeningRepositoryStricterOnly(t *testing.T) {
 	h := Hardening{Mode: hardening.ModeEnforce, Repositories: map[string]HardeningRepository{"a/b": {Mode: hardening.ModeAudit}, "c/d": {Mode: hardening.ModeEnforce}}}
 	var errs []string

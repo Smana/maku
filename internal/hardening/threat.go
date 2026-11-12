@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Smana/maku/internal/factory/sanitize"
@@ -117,18 +118,7 @@ type Checker struct {
 // enforced refusal stops it; an audit layer records its finding and the request goes on.
 func (c Checker) Check(ctx context.Context, n *Counts, req Request) Verdict {
 	var v Verdict
-	// refuse reports whether the layer's finding stops the request.
-	refuse := func(l Layer, m Mode, r Refusal) bool {
-		switch {
-		case r == "" || m == ModeOff:
-			return false
-		case m == ModeAudit:
-			v.Audit = append(v.Audit, Finding{l, r})
-			return false
-		}
-		v.Refusal, v.Layer = r, l
-		return true
-	}
+	refuse := v.refuse
 	if c.Layers.Schema == ModeOff {
 		return v
 	}
@@ -155,6 +145,44 @@ func (c Checker) Check(ctx context.Context, n *Counts, req Request) Verdict {
 	}
 	if c.Layers.Classifier != ModeOff {
 		refuse(LayerClassifier, c.Layers.Classifier, c.classify(ctx, texts))
+	}
+	return v
+}
+
+// refuse records layer l's finding r under mode m and reports whether it stops the request: off
+// ignores it, audit records it in Audit, enforce makes it the refusal.
+func (v *Verdict) refuse(l Layer, m Mode, r Refusal) bool {
+	switch {
+	case r == "" || m == ModeOff:
+		return false
+	case m == ModeAudit:
+		v.Audit = append(v.Audit, Finding{l, r})
+		return false
+	}
+	v.Refusal, v.Layer = r, l
+	return true
+}
+
+// CheckText is the check on free text with no output type (HR21, RunLore RK16): T2, T3 against
+// canary, and T5, each at its layer's mode. T1 and T4 do not apply: there is no schema, cap or
+// path. The verdict's Payload is the sanitised texts, a []string in order.
+func (c Checker) CheckText(ctx context.Context, texts []string, canary string) Verdict {
+	var v Verdict
+	out := slices.Clone(texts)
+	if c.Layers.Sanitise != ModeOff {
+		for i, t := range out {
+			out[i] = sanitiseText(t, 0, &v.Report)
+		}
+		if v.refuse(LayerSanitise, c.Layers.Sanitise, refuseIf(v.Report.Withheld, RefuseText)) {
+			return v
+		}
+	}
+	v.Payload = out
+	if c.Layers.Secrets != ModeOff && v.refuse(LayerSecrets, c.Layers.Secrets, c.secrets(out, canary)) {
+		return v
+	}
+	if c.Layers.Classifier != ModeOff && len(out) > 0 {
+		v.refuse(LayerClassifier, c.Layers.Classifier, c.classify(ctx, out))
 	}
 	return v
 }
