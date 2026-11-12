@@ -217,6 +217,29 @@ These policies live in cloud-native-ref. Default deny everywhere; one allow per 
 On gcp-0 the identity-provider rule is `toEntities: [all]` without ports: a port-scoped rule to the
 cluster's own gateway hairpins through the socket load balancer and is dropped.
 
+## The run pod's admission
+
+With the run-controller, the `maku` chart holds the runs namespace with in-tree admission (v4 D17),
+and needs no controller:
+
+- **The run-pod policy** (`maku-<namespace>-run-pods`, a ValidatingAdmissionPolicy) admits a pod there only when:
+  - the run-controller created it;
+  - it runs under the sandbox RuntimeClass (unless `sandbox.unsafeAllowRunc`);
+  - it has a restricted securityContext, emptyDir, configMap, secret or projected volumes (no hostPath), and CPU and memory limits;
+  - its images come from the allow-list.
+
+  The policy refuses ephemeral containers (`kubectl debug`), and a change to the
+  `maku.ogenki.io/egress` annotation.
+- **Pod Security `restricted`**, set on the namespace when the chart creates it, holds what the
+  policy does not: hostPort, the SELinux type, AppArmor, sysctls and procMount.
+- **The image allow-list is per repository, not per digest.** It is `runController.images`,
+  `runController.image` and `runPodPolicy.extraImages`, matched on the repository without tag or
+  registry normalisation. The policy also requires an `@sha256:` reference (unless
+  `e2e.unpinnedImages`), but any digest of an allow-listed repository passes. Whoever can push to
+  those repositories can run code in a run pod; the image signature, not the policy, ties a digest
+  to a release.
+- **A ResourceQuota `runs`** caps pods, CPU and memory as a safety net (D16). A run over it waits.
+
 ## Internal principals and publishing
 
 An internal principal is an authentication surface: a token whose client is declared in

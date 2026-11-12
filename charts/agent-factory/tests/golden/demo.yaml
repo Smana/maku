@@ -4,6 +4,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: agents
+  labels:
+    # Pod Security's restricted profile, under the run-pod policy: it also holds what the policy
+    # does not (hostPort, SELinux type, AppArmor, sysctls, procMount). Run pods pass both.
+    pod-security.kubernetes.io/enforce: restricted
   annotations:
     # Uninstall must not delete the runs and the Secrets in them.
     helm.sh/resource-policy: keep

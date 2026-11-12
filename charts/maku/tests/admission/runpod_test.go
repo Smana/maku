@@ -66,6 +66,8 @@ func startPodEnv(t *testing.T, sets ...string) podEnv {
 	}
 	ctx := t.Context()
 	for _, o := range []client.Object{
+		// Pod Security comes before the policy in the admission chain: TestRunPodPolicyUnderPodSecurity
+		// labels the namespace once the policy's own refusals are proven.
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: runsNS}},
 		&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "gvisor"}, Handler: "runsc"},
 		&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "runc"}, Handler: "runc"},
@@ -249,6 +251,33 @@ func TestRunPodPolicy(t *testing.T) {
 			t.Fatalf("want the policy's refusal, got %v", err)
 		}
 	})
+}
+
+// The chart labels the runs namespace Pod Security restricted (templates/agents-namespace.yaml): the
+// run-controller's pods pass it, and it refuses what the policy does not hold, such as a hostPort.
+func TestRunPodPolicyUnderPodSecurity(t *testing.T) {
+	pe := startPodEnv(t)
+	ctx := t.Context()
+	ns := &corev1.Namespace{}
+	if err := pe.admin.Get(ctx, client.ObjectKey{Name: runsNS}, ns); err != nil {
+		t.Fatal(err)
+	}
+	ns.Labels["pod-security.kubernetes.io/enforce"] = "restricted"
+	if err := pe.admin.Update(ctx, ns); err != nil {
+		t.Fatal(err)
+	}
+	for _, room := range []bool{true, false} {
+		for _, sandboxed := range []bool{true, false} {
+			if err := pe.ctl.Create(ctx, runPod(t, room, sandboxed), client.DryRunAll); err != nil && !strings.Contains(err.Error(), "RuntimeClass") {
+				t.Fatalf("the run-controller's pod (room %v, sandboxed %v) fails Pod Security restricted: %v", room, sandboxed, err)
+			}
+		}
+	}
+	p := runPod(t, true, true)
+	p.Spec.Containers[0].Ports = []corev1.ContainerPort{{ContainerPort: 8000, HostPort: 8000}}
+	if err := pe.ctl.Create(ctx, p, client.DryRunAll); err == nil || !strings.Contains(err.Error(), "violates PodSecurity") || !strings.Contains(err.Error(), "hostPort") {
+		t.Fatalf("a hostPort must be refused by Pod Security restricted, got %v", err)
+	}
 }
 
 // With sandbox.unsafeAllowRunc the policy renders no RuntimeClass rule: the demo's pod passes.

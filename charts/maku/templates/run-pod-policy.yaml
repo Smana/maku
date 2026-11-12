@@ -5,6 +5,12 @@
 {{- $images := list $c.images.harness.repository $c.images.bridge.repository $c.image.repository -}}
 {{- range .Values.runPodPolicy.extraImages }}{{ $images = append $images . }}{{ end -}}
 {{- $quoted := list -}}
+{{- /* Each value below is pasted into a CEL string: one that could close the quote is refused. */ -}}
+{{- range (append $images $class) -}}
+{{- if not (regexMatch "^[A-Za-z0-9._:/-]*$" .) -}}
+{{- fail (printf "%q cannot go into the run-pod policy: an image repository or RuntimeClass name holds only letters, digits and . _ : / -" .) -}}
+{{- end -}}
+{{- end -}}
 {{- range $images }}{{ $quoted = append $quoted (printf "'%s'" .) }}{{ end -}}
 # The run pod's shape (v4 D17), held by the API server itself (Kubernetes 1.30+): no controller, no
 # Kyverno. In runs.namespace only the run-controller creates pods, and every pod there runs in the

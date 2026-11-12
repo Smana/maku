@@ -40,7 +40,9 @@ if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then
 fi
 bash tests/normalize.sh <<<"$out" | diff -u tests/golden/demo.yaml - >&2 || { echo "FAIL: the demo render differs from tests/golden/demo.yaml" >&2; fail=1; }
 # Rollout step 2, PR A (D16, D17, D18): the demo gains exactly the runs quota, the run-pod policy and
-# its binding, and its two unsafe settings on the install banner; no RuntimeClass ClusterRole (no class).
+# its binding, the runs namespace's Pod Security restricted label, and its two unsafe settings on the
+# install banner; no RuntimeClass ClusterRole (no class).
+ykind Namespace 'select(.metadata.name == "agents") | .metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"' 'the demo runs namespace enforces Pod Security restricted'
 got=$(yq ea '[select(.kind == "ResourceQuota" or .kind == "ValidatingAdmissionPolicy" or .kind == "ValidatingAdmissionPolicyBinding" or (.kind == "ClusterRole" and (.metadata.name | test("runtimeclass$")))) | .kind + "/" + .metadata.name] | sort | join(" ")' - <<<"$out")
 want="ResourceQuota/runs ValidatingAdmissionPolicy/maku-maku-run-pods ValidatingAdmissionPolicy/room-broker-maku-agentruns ValidatingAdmissionPolicyBinding/maku-maku-run-pods ValidatingAdmissionPolicyBinding/room-broker-maku-agentruns"
 [[ $got == "$want" ]] || { echo "FAIL: the demo's step-2 objects are '$got', want '$want'" >&2; fail=1; }

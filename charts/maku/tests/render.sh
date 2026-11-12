@@ -276,6 +276,11 @@ bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set san
 bad "at '/sandbox/unsafeAllowRunc': got string, want boolean" --set-string sandbox.unsafeAllowRunc=yes
 bad 'additional properties' --set sandbox.runtimeClass=kata
 
+# the chart's runs namespace enforces Pod Security restricted under the run-pod policy (the XR
+# install's namespace is unchanged: tests/golden/xr.yaml)
+out="$q"
+ykind Namespace 'select(.metadata.name == "agents") | .metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"' 'the runs namespace enforces Pod Security restricted'
+
 # runsQuota (D16, plan PR10): one ResourceQuota on the runs namespace, pods, CPU and memory only
 out="$q"
 ykind ResourceQuota '(.metadata.name == "runs" and .metadata.namespace == "agents" and (.spec.hard | keys | sort | join(",")) == "limits.cpu,limits.memory,pods,requests.cpu,requests.memory")' 'one ResourceQuota runs in the runs namespace, pods, CPU and memory only'
@@ -289,6 +294,11 @@ out="$p"
 ynone 'select(.kind == "ResourceQuota")' 'runController.enabled=false renders no ResourceQuota'
 bad "at '/runsQuota/enabled': got string, want boolean" --set-string runsQuota.enabled=yes
 bad 'additional properties' --set runsQuota.hard.services=1
+bad 'does not match pattern' --set runsQuota.hard.pods=lots
+# the schema takes resource.Quantity's grammar: binary and decimal suffixes up to E, and exponents
+helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runsQuota.hard.limits\\.memory=1.5Pi --set runsQuota.hard.requests\\.memory=1Ei \
+  --set runsQuota.hard.requests\\.cpu=2e3 --set runsQuota.hard.limits\\.cpu=1P --set runsQuota.hard.pods=.5k >/dev/null ||
+  { echo 'FAIL: the quota schema refuses valid Kubernetes quantities (Pi, Ei, P, exponents)' >&2; fail=1; }
 
 # runPodPolicy (D17): its CEL is proven in charts/maku/tests/admission (envtest); here, its shape,
 # its binding, and what the values put in it.
@@ -318,8 +328,14 @@ out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.g
        --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory)"
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-creators") | (.spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "CREATE" and .spec.validations[0].expression == "request.userInfo.username in ['"'"'system:serviceaccount:agent-system:agent-factory'"'"']")' 'the creator policy names the listed users, on runs.group, for the XR install too'
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-factory-patch-limit") | (.spec.matchConditions[0].expression == "request.userInfo.username == '"'"'system:serviceaccount:agent-system:agent-factory'"'"'" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "UPDATE")' 'the patch-limit policy holds the factory ServiceAccount of the release namespace'
-ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.policyName == .metadata.name and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'both AgentRun bindings deny, in the runs namespace'
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.policyName == .metadata.name and (.spec.validationActions | join(",")) == "Deny" and has("spec") and (.spec | has("matchResources")) == false)' 'both AgentRun bindings deny in every namespace, as the Kyverno originals'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false \
+       --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory \
+       --set 'agentRunPolicies.namespaces={agents,agents-2}')"
+ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.matchResources.namespaceSelector.matchExpressions[0] | (.key == "kubernetes.io/metadata.name" and .operator == "In" and (.values | join(",")) == "agents,agents-2"))' 'agentRunPolicies.namespaces narrows both bindings'
 bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_Factory
+bad 'does not match pattern' --set-json 'agentRunPolicies.creators=["system:serviceaccount:x:y'"'"' || true || '"'"'"]'
+bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness.repository="ghcr.io/x'"'"']+['"'"'y"'
 
 # install.unsafe (D18, plan PR9): the chart lists its unsafe settings in the broker's config; none by
 # default, so the default render keeps its old config
