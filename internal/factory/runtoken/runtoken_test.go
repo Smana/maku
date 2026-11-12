@@ -203,7 +203,7 @@ func TestTheReadTokenWritesNothing(t *testing.T) {
 
 // The two Secrets the run-controller mounts, by role: the writers name them, each with its own scope.
 func TestWritersNameBothSecrets(t *testing.T) {
-	ws := Writers(nil, "runs", func(ctx context.Context, perms map[string]string) (forge.Token, error) {
+	ws := Writers(nil, "runs", func(_ context.Context, perms map[string]string) (forge.Token, error) {
 		return forge.Token{Value: perms["contents"], ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}, nil)
 	if len(ws) != 2 || ws[0].Name != WriteSecret || ws[1].Name != ReadSecret || WriteSecret != "agent-git" || ReadSecret != "agent-git-read" {

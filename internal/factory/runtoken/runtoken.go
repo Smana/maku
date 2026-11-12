@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	// WriteSecret is the run-controller's default gitSecret, ReadSecret its default gitReadSecret.
+	// WriteSecret is the run-controller's default gitSecret: implementer and tester runs mount it.
 	WriteSecret = "agent-git"
-	ReadSecret  = "agent-git-read"
+	// ReadSecret is the run-controller's default gitReadSecret: reviewer and triager runs mount it.
+	ReadSecret = "agent-git-read"
 	// SecretKey is the key the run-controller reads the token from.
 	SecretKey = "token"
 	// ExpiresAnnotation carries the token's expiry (RFC 3339).
