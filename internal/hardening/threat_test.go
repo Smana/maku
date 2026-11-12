@@ -136,6 +136,20 @@ func TestCheckSanitises(t *testing.T) {
 	}
 }
 
+// Published is what Check's T1 and T2 make of a request, so the tracer can compare a write with
+// the output that should have written it.
+func TestPublished(t *testing.T) {
+	req := pr("cc @octocat <!-- hidden --> Fixes #8, done.")
+	v := checker(ModeEnforce, ModeOff, nil).Check(t.Context(), &Counts{}, req)
+	got, ok := Published(PR, req.Payload, req.OwnIssue)
+	if !ok || got != v.Payload {
+		t.Fatalf("published %+v, check %+v", got, v.Payload)
+	}
+	if _, ok := Published(PR, []byte(`{"title":""}`), 0); ok {
+		t.Fatal("a payload that does not decode published")
+	}
+}
+
 // In audit a layer records what it would have refused and the request goes on (shadow mode).
 func TestCheckAudit(t *testing.T) {
 	cl := &fakeClassifier{hit: "ignore previous"}

@@ -105,6 +105,24 @@ func FindMarker(body string) (string, bool) {
 	return m[1], true
 }
 
+// SplitFooter is a published pull request body split at the factory's footer: the text above it,
+// line breaks as \n and trailing blanks trimmed, and the Agent-Output it names. A body whose last
+// "---" paragraph names no output comes back whole, with an empty id: WithFooter marks any such
+// line the model wrote above the footer, so only the last paragraph is read.
+func SplitFooter(body string) (text, output string) {
+	text = strings.TrimRight(strings.ReplaceAll(body, "\r\n", "\n"), " \t\n")
+	i := strings.LastIndex(text, "\n---\n")
+	if i < 0 {
+		return text, ""
+	}
+	for _, l := range strings.Split(text[i+len("\n---\n"):], "\n") {
+		if id, ok := strings.CutPrefix(l, "Agent-Output: "); ok {
+			return strings.TrimRight(text[:i], " \t\n"), id
+		}
+	}
+	return text, ""
+}
+
 // StripHarnessFooter removes the harness's provenance footer from a PR body, so the shadow pass
 // measures the body as the model wrote it (HR4). The footer is the body's last paragraph: a "---"
 // line, then only harness `Key: value` lines. A body without one, or whose last paragraph holds

@@ -67,7 +67,7 @@ func (r *Reconciler) shadowPending(ctx context.Context, cfg *config.Config, t *v
 		if wait := time.Duration(1<<rec.ShadowAttempts-1) * time.Minute; r.Now().Before(rec.Finished.Add(wait)) {
 			continue
 		}
-		if _, open, err := r.answersPending(ctx, cfg, t, rec); err != nil || open {
+		if _, open := r.answersPending(ctx, cfg, t, rec); open {
 			continue // H2: the tracer reads the run's writes once the applier has answered (HR19)
 		}
 		err := r.shadowRun(ctx, cfg, t, rec)
@@ -107,6 +107,9 @@ func (r *Reconciler) shadowBeforeStop(ctx context.Context, cfg *config.Config, t
 type observed struct {
 	at time.Time
 	w  hardening.ObservedWrite
+	// title and raw are the write as GitHub holds it, footer and marker included: the tracer
+	// compares them with what the applier published.
+	title, raw string
 }
 
 // shadowRun reads back the writes run made as the agents App inside its window, checks each as the
@@ -134,12 +137,13 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 		c.Classifier = &passClassifier{c: c.Classifier, ctx: t5}
 	}
 	slices.SortStableFunc(ws, func(a, b observed) int { return a.at.Compare(b.at) })
-	// H2's tracer: on an enforced repository, a write of an enforced type is the applier's, or it is
-	// untraced. Pushes, and the types not enforced, are shadowed as in H1.
+	// H2's tracer: on an enforced repository, a write of an enforced type is exactly what the applier
+	// published, and is not checked again, or it is untraced: recorded untraced_write, then checked as
+	// in H1 like every push and every type not enforced.
 	enforced := cfg.Hardening.EnforcedFor(t.Spec.Repository)
 	var ledger outputLedger
 	if len(enforced) > 0 {
-		l, err := r.runOutputs(ctx, t, rec)
+		l, err := r.taskOutputs(ctx, t)
 		if err != nil {
 			return errors.Join(append(errs, err)...)
 		}
@@ -157,7 +161,6 @@ func (r *Reconciler) shadowRun(ctx context.Context, cfg *config.Config, t *v1alp
 				continue
 			}
 			r.untraced(ctx, t, rec.ID, o)
-			continue
 		}
 		res := hardening.Shadow(ctx, c, &n, o.w, t.Spec.Issue, canary)
 		out := shadowRecord(rec.ID, res, len(o.w.Payload))
@@ -284,6 +287,7 @@ func (r *Reconciler) observedWrites(ctx context.Context, cfg *config.Config, t *
 		case agent(p.Author):
 			add(rec.Finished.Time, hardening.ObservedWrite{Type: hardening.PR, Object: fmt.Sprintf("%s/pull/%d", repoURL, pr.Number)},
 				hardening.PRPayload{Title: p.Title, Body: hardening.StripHarnessFooter(p.Body)})
+			out[len(out)-1].title, out[len(out)-1].raw = p.Title, p.Body
 		}
 	}
 	// Comments and labels on the task's issue and pull request.
@@ -296,6 +300,7 @@ func (r *Reconciler) observedWrites(ctx context.Context, cfg *config.Config, t *
 			if agent(c.Author) && in(c.At) {
 				add(c.At, hardening.ObservedWrite{Type: hardening.Comment, Object: fmt.Sprintf("%s#issuecomment-%d", th.url, c.ID)},
 					hardening.CommentPayload{Target: th.target, Body: c.Body})
+				out[len(out)-1].raw = c.Body
 			}
 		}
 		evs, err := gh.LabelEventsBy(ctx, th.number, login, rec.Started.Time)

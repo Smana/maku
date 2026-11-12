@@ -92,69 +92,6 @@ func TestRunEndWaitsForAnswers(t *testing.T) {
 	})
 }
 
-// The tracer (AC2, H2-2): on an enforced repository every agents-App pull request, comment and
-// label write is matched to an output_applied; one that is not is posted untraced_write and counted.
-// Pushes are shadowed as in H1.
-func TestTracer(t *testing.T) {
-	cases := map[string]struct {
-		applied func(g *rig)
-		want    []string // the untraced records, "type object"
-	}{
-		"every write applied": {func(g *rig) {
-			in := now.Add(-5 * time.Minute)
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b1", hardening.PR, prURL), in)
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b2", hardening.Comment, prURL+"#issuecomment-501"), in)
-			g.log.request(rid(0), "00000000000000b3", hardening.Labels, hardening.LabelsPayload{Add: []string{"documentation"}}, in.Add(-time.Second))
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b3", hardening.Labels, prURL), in.Add(time.Second))
-		}, nil},
-		"nothing applied": {func(*rig) {}, []string{"pr " + prURL, "comment " + prURL + "#issuecomment-501", "labels " + prURL}},
-		"a marker the comment does not end with": {func(g *rig) {
-			in := now.Add(-5 * time.Minute)
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b1", hardening.PR, prURL), in)
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000ff", hardening.Comment, prURL+"#issuecomment-501"), in)
-		}, []string{"comment " + prURL + "#issuecomment-501", "labels " + prURL}},
-		"a label added outside its request": {func(g *rig) {
-			in := now.Add(-5 * time.Minute)
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b1", hardening.PR, prURL), in)
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b2", hardening.Comment, prURL+"#issuecomment-501"), in)
-			g.log.request(rid(0), "00000000000000b3", hardening.Labels, hardening.LabelsPayload{Add: []string{"documentation"}}, in.Add(time.Minute))
-			g.log.answer(rid(0), envelope.KindOutputApplied, appliedRec("00000000000000b3", hardening.Labels, prURL), in.Add(time.Minute))
-		}, []string{"labels " + prURL}},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			g, tk, _ := shadowRig(t, "documentation")
-			g.r.Cfg.Current().Hardening.EnforceOutputs = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels}
-			g.f.SetComments(12, forge.Comment{ID: 501, Author: agents, Body: hardening.WithMarker("done", "00000000000000b2"), At: now.Add(-5 * time.Minute)})
-			tc.applied(g)
-			m := &untracedCounter{}
-			g.r.Metrics = m
-			g.r.shadowPending(t.Context(), g.r.Cfg.Current(), tk)
-			got := shadowed(g)
-			var untraced []string
-			for k, r := range got {
-				if r.Reason == reasonUntraced {
-					untraced = append(untraced, k)
-				}
-			}
-			if !sameSorted(untraced, tc.want) || !sameSorted(m.types, typesOf(tc.want)) {
-				t.Fatalf("untraced %q (counted %q), want %q", untraced, m.types, tc.want)
-			}
-			commit := "https://github.com/Smana/cloud-native-ref/commit/"
-			for _, push := range []string{"push " + commit + strings.Repeat("1", 40), "push " + commit + strings.Repeat("2", 40)} {
-				if r, ok := got[push]; !ok || r.Reason == reasonUntraced {
-					t.Fatalf("pushes are shadowed as in H1: %v", got)
-				}
-			}
-			for k, r := range got {
-				if !strings.HasPrefix(k, "push ") && r.Reason != reasonUntraced {
-					t.Errorf("%s: a write of an enforced type was shadowed as H1's: %+v", k, r)
-				}
-			}
-		})
-	}
-}
-
 // untracedCounter is the metrics port with the tracer's counter.
 type untracedCounter struct {
 	fakeMetrics

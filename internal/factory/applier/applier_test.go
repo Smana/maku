@@ -715,6 +715,12 @@ func TestApplierPRCapAndAuthor(t *testing.T) {
 		"the branch's pull request was closed": {forge.PR{Number: 40, State: "CLOSED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
 		"the branch's pull request was merged": {forge.PR{Number: 40, State: "MERGED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
 		"someone else's pull request is open":  {forge.PR{Number: 40, State: "OPEN", Author: "mallory", HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
+		// #491's review B-1: a run that still holds pull_requests: write opened it directly; editing
+		// it would launder that write into an applied one.
+		"an agents-App pull request no applied output opened": {forge.PR{Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+			Body: "Fixes #7\n\n---\nAgent-Run: " + runID}, hardening.RefuseTarget},
+		"one whose footer names another task's output": {forge.PR{Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+			Body: "Fixes #7\n\n---\nAgent-Output: 00000000000000ff"}, hardening.RefuseTarget},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t, 7)
@@ -731,4 +737,32 @@ func TestApplierPRCapAndAuthor(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A pull request an earlier run's applied output opened is the task's: a later run's output_pr
+// edits it.
+func TestApplierEditsAnEarlierRunsPR(t *testing.T) {
+	r := newRig(t, 7)
+	const earlier = "00000000000000e1"
+	r.rooms.add(appliedEvent(t, "zzzzzzz2", envelope.OutputRecord{ID: earlier, Type: string(hardening.PR),
+		Digest: strings.Repeat("a", 64), Object: "https://github.com/owner/repo/pull/40"}))
+	r.pub.SetPR(forge.PR{Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+		URL: "https://github.com/owner/repo/pull/40", Body: "Fixes #7\n\n---\nAgent-Output: " + earlier})
+	r.pub.SetBranch("agent/"+taskID, 40)
+	id := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+	r.tick(t)
+	if a := r.only(t, id); a.kind != envelope.KindOutputApplied {
+		t.Fatalf("answer %+v", a)
+	}
+}
+
+// appliedEvent is an output_applied as the factory posts it, for run.
+func appliedEvent(t *testing.T, run string, rec envelope.OutputRecord) envelope.Event {
+	t.Helper()
+	raw, err := json.Marshal(envelope.MessagePayload{Kind: envelope.KindOutputApplied, Output: &rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return envelope.Event{RunID: run, Type: envelope.Message, Origin: envelope.OriginClient,
+		Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: envelope.FactoryActor}, Payload: raw}
 }
