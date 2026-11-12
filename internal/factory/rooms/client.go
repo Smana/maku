@@ -5,7 +5,9 @@ package rooms
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -88,11 +90,22 @@ var (
 	// ErrBadMessage is 400 bad_message: the broker refused the body as malformed, such as an output
 	// record its Validate rejects. The same body is refused again: a bug, not a retry.
 	ErrBadMessage = errors.New("rooms: the broker refused the message as malformed")
+	// ErrNoBundle is 404 no_bundle: the room holds no bundle for that run and digest.
+	ErrNoBundle = errors.New("rooms: the broker holds no such bundle")
+	// ErrNoApproval is 404 no_approval: no approval has that id.
+	ErrNoApproval = errors.New("rooms: the broker holds no such approval")
+	// ErrBundleDigest is a bundle whose bytes do not hash to the digest it was read by.
+	ErrBundleDigest = errors.New("rooms: the bundle's sha256 is not its digest")
 )
 
-// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute, ErrGrantState and ErrBadMessage.
+// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute, ErrGrantState, ErrBadMessage,
+// ErrNoBundle and ErrNoApproval.
 func (e *APIError) Is(target error) bool {
 	switch target {
+	case ErrNoBundle:
+		return e.Reason == wire.ReasonNoBundle
+	case ErrNoApproval:
+		return e.Reason == wire.ReasonNoApproval
 	case ErrBadMessage:
 		return e.Reason == wire.ReasonBadMessage
 	case ErrNoRoute:
@@ -294,6 +307,36 @@ func (c *Client) Output(ctx context.Context, room, runID string, kind envelope.M
 	return c.do(ctx, http.MethodPost, outputsRoute, room, "", in, maxReplyOverhead, &out)
 }
 
+// MaxBundle is a push bundle's cap, the design's 8 MiB (hardening.MaxBundle).
+const MaxBundle = 8 << 20
+
+const bundleRoute = "/v1/rooms/{id}/bundles/{digest}"
+
+var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// Bundle reads the bundle run runID's output_push stored in room under digest (hardening HR22).
+// It reads at most MaxBundle, and the bytes must hash to digest: ErrBundleDigest otherwise. A
+// bundle the broker does not hold is ErrNoBundle.
+func (c *Client) Bundle(ctx context.Context, room, runID, digest string) ([]byte, error) {
+	switch {
+	case !envelope.ValidID(room):
+		return nil, fmt.Errorf("rooms: %q is not a C2 room id", room)
+	case !envelope.ValidID(runID):
+		return nil, fmt.Errorf("rooms: %q is not a C2 run id", runID)
+	case !digestRE.MatchString(digest):
+		return nil, errors.New("rooms: a bundle's digest is 64-hex")
+	}
+	path := strings.Replace(strings.Replace(bundleRoute, "{id}", room, 1), "{digest}", digest, 1)
+	var b []byte
+	if err := c.call(ctx, http.MethodGet, bundleRoute, path, room, "?run="+runID, nil, MaxBundle, &b); err != nil {
+		return nil, err
+	}
+	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != digest {
+		return nil, ErrBundleDigest
+	}
+	return b, nil
+}
+
 // Queued is one live message of the room's FIFO queue (SP2 §2); Ref is its seq in the room.
 type Queued struct {
 	Ref    int64  `json:"ref"`
@@ -480,6 +523,10 @@ func (c *Client) call(ctx context.Context, method, route, path, room, query stri
 		var e wire.Error
 		_ = json.Unmarshal(raw, &e)
 		return &APIError{Status: status, Reason: e.Reason}
+	}
+	if b, ok := out.(*[]byte); ok { // a raw reply, such as a bundle
+		*b = raw
+		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("rooms: %s %s: the reply is not JSON", method, route)

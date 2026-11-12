@@ -131,6 +131,9 @@ type Server struct {
 	// OutputClient is the one system principal the outputs route serves (the factory,
 	// system:factory, hardening HR2); unset refuses it.
 	OutputClient string
+	// Bundles serves a push request's bundle to OutputClient alone (hardening HR22); unset refuses
+	// the route.
+	Bundles Bundles
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.
@@ -155,6 +158,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/rooms/{id}/messages", s.bounded(maxMessageBytes, s.roomMessage))
 	mux.HandleFunc("POST /v1/rooms/{id}/task", s.bounded(maxMessageBytes, s.roomTask))
 	mux.HandleFunc("POST /v1/rooms/{id}/outputs", s.bounded(maxMessageBytes, s.roomOutputs))
+	mux.HandleFunc("GET /v1/rooms/{id}/bundles/{digest}", s.bounded(0, s.roomBundle))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue", s.bounded(maxMessageBytes, s.queueRoute(s.enqueue)))
 	mux.HandleFunc("GET /v1/rooms/{id}/queue", s.bounded(0, s.queueRoute(s.listQueue)))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue/consume", s.bounded(maxConsumeBytes, s.queueRoute(s.consume)))

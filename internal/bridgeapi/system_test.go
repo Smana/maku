@@ -3,13 +3,17 @@
 package bridgeapi
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/runwatch"
+	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
 )
 
@@ -84,6 +88,61 @@ func TestRoomOutputs(t *testing.T) {
 	if n := len(log.stored()); n != 3 {
 		t.Fatalf("%d events, want 3", n)
 	}
+}
+
+// memBundles is the store's bundle read, keyed room/run/digest.
+type memBundles map[string][]byte
+
+func (m memBundles) Bundle(_ context.Context, room, run, digest string) ([]byte, error) {
+	if b, ok := m[room+"/"+run+"/"+digest]; ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("store: read bundle: %w", store.ErrNoBundle)
+}
+
+// HR22: the factory, and only the factory, reads a push request's bundle by room, run and digest.
+func TestRoomBundle(t *testing.T) {
+	b := []byte("# v2 git bundle\nbytes\n")
+	d := strings.Repeat("b", 64)
+	s, _, _ := outputServer(t)
+	s.Bundles = memBundles{room + "/" + runA + "/" + d: b}
+	h := s.Routes()
+	path := func(room, digest, run string) string {
+		return "/v1/rooms/" + room + "/bundles/" + digest + "?run=" + run
+	}
+	rec := call(t, h, http.MethodGet, path(room, d, runA), "sys:"+factory, nil)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/x-git-bundle" || !bytes.Equal(rec.Body.Bytes(), b) {
+		t.Fatalf("%d %q %q", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Bytes())
+	}
+	for name, c := range map[string]struct {
+		path, token string
+		code        int
+		reason      string
+	}{
+		"another listed system": {path(room, d, runA), "sys:system:triage", http.StatusForbidden, wire.ReasonNotPermitted},
+		"an unlisted system":    {path(room, d, runA), "sys:forbidden", http.StatusForbidden, wire.ReasonNotPermitted},
+		"a run token":           {path(room, d, runA), "run:" + runA, http.StatusUnauthorized, wire.ReasonUnauthenticated},
+		"a bad digest":          {path(room, "XYZ", runA), "sys:" + factory, http.StatusBadRequest, wire.ReasonBadBundle},
+		"a bad run":             {path(room, d, "Run_A"), "sys:" + factory, http.StatusBadRequest, wire.ReasonBadBundle},
+		"no run":                {"/v1/rooms/" + room + "/bundles/" + d, "sys:" + factory, http.StatusBadRequest, wire.ReasonBadBundle},
+		"a bad room":            {path("NOPE", d, runA), "sys:" + factory, http.StatusBadRequest, wire.ReasonBadRoom},
+		"a missing bundle":      {path(room, strings.Repeat("c", 64), runA), "sys:" + factory, http.StatusNotFound, wire.ReasonNoBundle},
+		"another room's bundle": {path("abcdefgh", d, runA), "sys:" + factory, http.StatusNotFound, wire.ReasonNoBundle},
+		"another run's bundle":  {path(room, d, runB), "sys:" + factory, http.StatusNotFound, wire.ReasonNoBundle},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := call(t, h, http.MethodGet, c.path, c.token, nil)
+			if rec.Code != c.code || reason(t, rec) != c.reason {
+				t.Fatalf("%d %s, want %d %s", rec.Code, rec.Body, c.code, c.reason)
+			}
+		})
+	}
+	t.Run("a broker with no bundle store", func(t *testing.T) {
+		s.Bundles = nil
+		if rec := call(t, s.Routes(), http.MethodGet, path(room, d, runA), "sys:"+factory, nil); rec.Code != http.StatusForbidden {
+			t.Fatalf("%d", rec.Code)
+		}
+	})
 }
 
 // HR27: the factory posts a held push's output_waiting through the same route, keyed apart from

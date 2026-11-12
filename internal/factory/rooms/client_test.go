@@ -3,7 +3,9 @@
 package rooms
 
 import (
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -46,6 +48,9 @@ type broker struct {
 	// The queue routes: what the broker lists, and every consume's refs.
 	queued   []Queued
 	consumes [][]int64
+	// bundle is what GET …/bundles/{digest} answers, and bundleQuery the last read's query.
+	bundle      []byte
+	bundleQuery string
 }
 
 func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
@@ -167,6 +172,16 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 			return
 		}
 		_, _ = io.WriteString(w, `{"sub":"zsub1"}`)
+	})
+	mux.HandleFunc("GET /v1/rooms/{id}/bundles/{digest}", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.bundleQuery = r.PathValue("digest") + "?" + r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/x-git-bundle")
+		_, _ = w.Write(b.bundle)
 	})
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
@@ -699,6 +714,47 @@ func TestClientOutput(t *testing.T) {
 		t.Fatalf("waiting: %v", err)
 	}
 }
+
+// HR22: the factory reads a push request's bundle by room, run and digest; the bytes must hash to
+// the digest and fit 8 MiB, and what the broker would refuse is never sent.
+func TestClientBundle(t *testing.T) {
+	r := newRig(t, 0)
+	b := []byte("# v2 git bundle\nbytes\n")
+	d := digestHex(b)
+	r.b.bundle = b
+	got, err := r.c.Bundle(t.Context(), "3buqdlot", "cf4ato2x", d)
+	if err != nil || string(got) != string(b) || r.b.bundleQuery != d+"?run=cf4ato2x" {
+		t.Fatalf("%q %v (query %q)", got, err, r.b.bundleQuery)
+	}
+	r.b.bundle = []byte("tampered")
+	if _, err := r.c.Bundle(t.Context(), "3buqdlot", "cf4ato2x", d); !errors.Is(err, ErrBundleDigest) {
+		t.Fatalf("a tampered bundle: %v", err)
+	}
+	big := make([]byte, MaxBundle+1)
+	r.b.bundle = big
+	if _, err := r.c.Bundle(t.Context(), "3buqdlot", "cf4ato2x", digestHex(big)); err == nil {
+		t.Fatal("a bundle over 8 MiB was read")
+	}
+	r.b.fail["/v1/rooms/3buqdlot/bundles/"+d], r.b.reason = http.StatusNotFound, wire.ReasonNoBundle
+	if _, err := r.c.Bundle(t.Context(), "3buqdlot", "cf4ato2x", d); !errors.Is(err, ErrNoBundle) {
+		t.Fatalf("a missing bundle: %v", err)
+	}
+	sent := len(r.b.auth)
+	for name, err := range map[string]error{
+		"a bad room":   func() error { _, err := r.c.Bundle(t.Context(), "3BUQDLOT", "cf4ato2x", d); return err }(),
+		"a bad run":    func() error { _, err := r.c.Bundle(t.Context(), "3buqdlot", "run-1", d); return err }(),
+		"a bad digest": func() error { _, err := r.c.Bundle(t.Context(), "3buqdlot", "cf4ato2x", "../x"); return err }(),
+	} {
+		if err == nil {
+			t.Errorf("%s: sent", name)
+		}
+	}
+	if len(r.b.auth) != sent {
+		t.Fatalf("%d requests reached the broker", len(r.b.auth)-sent)
+	}
+}
+
+func digestHex(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 func TestLastSeqIsTheRoomsCurrentSeq(t *testing.T) {
 	r := newRig(t, 7)

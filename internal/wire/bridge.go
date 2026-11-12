@@ -94,6 +94,9 @@ const (
 	ReasonBadGrant        = "bad_grant"         // 400: a grant lookup or move that is not one: a bad id, repository, class, hash or version
 	ReasonNoGrant         = "no_grant"          // 404: no approval grant has that id
 	ReasonGrantState      = "grant_state"       // 409: the grant's status or version does not allow the move
+	ReasonBadBundle       = "bad_bundle"        // 400: a bundle read without a 64-hex digest and a C2 run id
+	ReasonNoBundle        = "no_bundle"         // 404: the room holds no bundle for that run and digest
+	ReasonNoApproval      = "no_approval"       // 404: no approval has that id
 )
 
 // SSE event names, broker → bridge.

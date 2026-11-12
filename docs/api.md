@@ -304,6 +304,22 @@ the body differs.
 | `429` | `rate_limited` | Over the principal's limits |
 | `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
 
+### `GET /v1/rooms/{id}/bundles/{digest}?run=<runId>`
+
+For the factory (`system:factory`) alone: the git bundle a run's `output_push` stored, by its
+64-hex sha256 `digest`, as `application/x-git-bundle`, at most 8 MiB. The factory checks that the
+bytes hash to the digest before it inspects them.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_room` | A bad room id |
+| `400` | `bad_bundle` | A digest that is not 64-hex, or a missing or bad `run` |
+| `401` | `unauthenticated` | No valid system token |
+| `403` | `not_permitted` | Any system principal but the factory, or a broker with no bundle store |
+| `404` | `no_bundle` | No bundle for that room, run and digest |
+| `429` | `rate_limited` | Over the principal's limits |
+| `503` | `log_unavailable` | The database refused it |
+
 ### The queue routes
 
 For system callers: the factory turns a maintainer's GitHub review into a queued

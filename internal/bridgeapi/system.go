@@ -3,14 +3,17 @@
 package bridgeapi
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
 )
 
@@ -192,6 +195,61 @@ func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusCreated
 	}
 	reply(w, code, map[string]int64{"seq": ev.Seq})
+}
+
+// Bundles is the store's push bundles, as the factory reads them (hardening HR22); *store.Store
+// implements it.
+type Bundles interface {
+	Bundle(ctx context.Context, room, run, digest string) ([]byte, error)
+}
+
+var bundleDigestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// outputCaller admits OutputClient alone (the factory, system:factory) to a hardening route that
+// ready is true for, under its limits. release is called once the request is served.
+func (s *Server) outputCaller(w http.ResponseWriter, r *http.Request, ready bool) (release func(), ok bool) {
+	p, ok := s.systemAuth(w, r)
+	if !ok {
+		return nil, false
+	}
+	if !ready || s.OutputClient == "" || p.ID != s.OutputClient {
+		fail(w, http.StatusForbidden, wire.ReasonNotPermitted)
+		return nil, false
+	}
+	return s.admit(w, p.ID)
+}
+
+// roomBundle: GET /v1/rooms/{id}/bundles/{digest}?run=<id>, OutputClient only (hardening HR22).
+// The bundle a run's output_push stored, as application/x-git-bundle, for the factory to inspect
+// and push. Another room's or run's bundle is 404, as a missing one is.
+func (s *Server) roomBundle(w http.ResponseWriter, r *http.Request) {
+	release, ok := s.outputCaller(w, r, s.Bundles != nil)
+	if !ok {
+		return
+	}
+	defer release()
+	id, digest, run := r.PathValue("id"), r.PathValue("digest"), r.URL.Query().Get("run")
+	switch {
+	case !envelope.ValidID(id):
+		fail(w, http.StatusBadRequest, wire.ReasonBadRoom)
+		return
+	case !bundleDigestRE.MatchString(digest) || !envelope.ValidID(run):
+		fail(w, http.StatusBadRequest, wire.ReasonBadBundle)
+		return
+	}
+	b, err := s.Bundles.Bundle(r.Context(), id, run, digest)
+	switch {
+	case errors.Is(err, store.ErrNoBundle):
+		fail(w, http.StatusNotFound, wire.ReasonNoBundle)
+		return
+	case err != nil:
+		s.logFailure(w, err, "read a bundle", "room", id, "run", run)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-git-bundle")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
 }
 
 // runOfRoom reports whether runID is a run of room: while the watch holds the run, its roomRef
