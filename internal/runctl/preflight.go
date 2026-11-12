@@ -66,23 +66,39 @@ func (p *Preflight) Result() Result {
 // NeedLeaderElection is true: only the leader creates pods, so only it needs the result.
 func (p *Preflight) NeedLeaderElection() bool { return true }
 
-// Start checks at once, then every Every, until ctx ends.
+// Start checks at once, then every Every, until ctx ends. An undecided tick (the API server
+// unreachable right after install) is retried sooner, from 10 s with backoff, up to Every.
 func (p *Preflight) Start(ctx context.Context) error {
 	every := p.Every
 	if every <= 0 {
 		every = DefaultPreflightEvery
 	}
-	p.Tick(ctx)
-	t := time.NewTicker(every)
-	defer t.Stop()
+	undecided := 0
 	for {
+		wait := every
+		if p.Tick(ctx) {
+			undecided++
+			wait = undecidedRetry(undecided, every)
+		} else {
+			undecided = 0
+		}
+		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			t.Stop()
 			return nil
 		case <-t.C:
-			p.Tick(ctx)
 		}
 	}
+}
+
+// undecidedRetry is the wait after the n-th undecided tick in a row: 10 s, doubling, capped at every.
+func undecidedRetry(n int, every time.Duration) time.Duration {
+	d := 10 * time.Second
+	for i := 1; i < n && d < every; i++ {
+		d *= 2
+	}
+	return min(d, every)
 }
 
 func (p *Preflight) checks() []check {
@@ -101,6 +117,10 @@ func (p *Preflight) runtimeClass(ctx context.Context) (string, error) {
 	switch {
 	case apierrors.IsNotFound(err):
 		return fmt.Sprintf("RuntimeClass %q not found: install the sandbox runtime on your nodes, or set sandbox.runtimeClassName", name), nil
+	case apierrors.IsForbidden(err):
+		// Retrying cannot grant the verb: a decided failure, which names the missing grant.
+		return fmt.Sprintf("the run-controller may not read RuntimeClass %q: it needs get on node.k8s.io runtimeclasses for that name "+
+			"(the chart's maku-<release namespace>-run-controller-runtimeclass ClusterRole): %v", name, err), nil
 	case err != nil:
 		return "", err
 	}
@@ -108,8 +128,9 @@ func (p *Preflight) runtimeClass(ctx context.Context) (string, error) {
 }
 
 // Tick runs every check once. The first refusal fails the preflight; a check that cannot decide
-// keeps the last result (Unknown before any), so an API server blip refuses no run.
-func (p *Preflight) Tick(ctx context.Context) {
+// keeps the last result (Unknown before any, carrying the error), so an API server blip refuses no
+// run. It reports whether a check was undecided, for Start's sooner retry.
+func (p *Preflight) Tick(ctx context.Context) (undecided bool) {
 	now := time.Now
 	if p.Now != nil {
 		now = p.Now
@@ -119,7 +140,12 @@ func (p *Preflight) Tick(ctx context.Context) {
 		refusal, err := c.run(ctx)
 		if err != nil {
 			p.log().Warn("preflight check undecided", "check", c.name, "err", err)
-			return
+			p.mu.Lock()
+			if p.res.State == "" || p.res.State == PreflightUnknown {
+				p.res = Result{State: PreflightUnknown, Check: c.name, Message: err.Error(), At: next.At}
+			}
+			p.mu.Unlock()
+			return true
 		}
 		if p.Passed != nil {
 			p.Passed(c.name, refusal == "")
@@ -134,13 +160,14 @@ func (p *Preflight) Tick(ctx context.Context) {
 	p.res = next
 	p.mu.Unlock()
 	if prev.State == next.State && prev.Check == next.Check && prev.Message == next.Message {
-		return
+		return false
 	}
 	if next.State == PreflightPassed {
 		p.log().Info("preflight passed")
 	} else {
 		p.log().Error("preflight failed: "+next.Check+": "+next.Message, "check", next.Check)
 	}
+	return false
 }
 
 func (p *Preflight) log() *slog.Logger {

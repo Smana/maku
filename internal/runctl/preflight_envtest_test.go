@@ -20,12 +20,13 @@ func (f *fixedPreflight) Result() Result { return f.res }
 func TestEnvtestPreflightPendingHoldsTheRun(t *testing.T) {
 	e := startEnv(t)
 	e.modelSecret(t)
-	e.r.Preflight = &fixedPreflight{Result{State: PreflightUnknown}}
+	e.r.Preflight = &fixedPreflight{Result{State: PreflightUnknown, Check: "runtimeClass", Message: "connection refused"}}
 	create(t, e, run("run-pppppppp"))
 	res := e.reconcile(t, "run-pppppppp")
 	got := e.get(t, "run-pppppppp")
 	c := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
-	if got.Status.Phase != "Pending" || c == nil || c.Reason != "PreflightPending" || res.RequeueAfter != preflightRetry {
+	if got.Status.Phase != "Pending" || c == nil || c.Reason != "PreflightPending" || res.RequeueAfter != preflightRetry ||
+		!strings.Contains(c.Message, "runtimeClass: connection refused") {
 		t.Fatalf("an unknown preflight holds the run Pending: %+v, %+v", got.Status, res)
 	}
 	if err := e.c.Get(e.ctx, key("run-pppppppp"), &corev1.Pod{}); !apierrors.IsNotFound(err) {

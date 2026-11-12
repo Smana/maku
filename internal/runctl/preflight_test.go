@@ -6,11 +6,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
+	"time"
 
 	nodev1 "k8s.io/api/node/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -103,16 +107,48 @@ func TestPreflightATransientErrorKeepsTheLastResult(t *testing.T) {
 		}}).Build()
 	p := newPreflight(t, c, testConfig(t))
 	broken = true
-	p.Tick(t.Context())
-	if got := p.Result(); got.State != PreflightUnknown {
-		t.Fatalf("an API error before any result keeps Unknown: %+v", got)
+	if !p.Tick(t.Context()) {
+		t.Fatal("an API error is undecided: Tick must say so, for the fast retry")
+	}
+	if got := p.Result(); got.State != PreflightUnknown || got.Check != "runtimeClass" || !strings.Contains(got.Message, "connection refused") {
+		t.Fatalf("an API error before any result keeps Unknown, and says why: %+v", got)
 	}
 	broken = false
-	p.Tick(t.Context())
+	if p.Tick(t.Context()) {
+		t.Fatal("a decided tick is not undecided")
+	}
 	broken = true
 	p.Tick(t.Context())
 	if got := p.Result(); got.State != PreflightPassed {
 		t.Fatalf("an API error keeps the last result: %+v", got)
+	}
+}
+
+func TestPreflightForbiddenIsAFailureNamingTheGrant(t *testing.T) {
+	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return apierrors.NewForbidden(schema.GroupResource{Group: "node.k8s.io", Resource: "runtimeclasses"}, "gvisor", errors.New("RBAC: access denied"))
+		}}).Build()
+	p := newPreflight(t, c, testConfig(t))
+	if p.Tick(t.Context()) {
+		t.Fatal("Forbidden is decided: retrying cannot grant the verb")
+	}
+	got := p.Result()
+	if got.State != PreflightFailed || got.Check != "runtimeClass" || !strings.Contains(got.Message, "get on node.k8s.io runtimeclasses") ||
+		!strings.Contains(got.Message, `"gvisor"`) {
+		t.Fatalf("Forbidden: %+v", got)
+	}
+}
+
+func TestPreflightRetriesUndecidedChecksWithBackoff(t *testing.T) {
+	every := 10 * time.Minute
+	for _, c := range []struct {
+		n    int
+		want time.Duration
+	}{{1, 10 * time.Second}, {2, 20 * time.Second}, {3, 40 * time.Second}, {6, 320 * time.Second}, {7, every}, {40, every}} {
+		if got := undecidedRetry(c.n, every); got != c.want {
+			t.Errorf("retry %d: %s, want %s", c.n, got, c.want)
+		}
 	}
 }
 

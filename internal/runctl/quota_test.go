@@ -27,19 +27,27 @@ func (c podFails) Create(ctx context.Context, o client.Object, opts ...client.Cr
 }
 
 func TestEnvtestQuotaExceededWaits(t *testing.T) {
-	e := startEnv(t)
-	e.modelSecret(t)
-	e.r.Client = podFails{e.c, apierrors.NewForbidden(corev1.Resource("pods"), "run-aaaaqqqq",
-		errors.New("exceeded quota: runs, requested: pods=1, used: pods=25, limited: pods=25"))}
-	create(t, e, run("run-aaaaqqqq"))
-	res := e.reconcile(t, "run-aaaaqqqq")
-	got := e.get(t, "run-aaaaqqqq")
-	c := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
-	if got.Status.Phase != "Pending" || c == nil || c.Reason != "QuotaExceeded" || res.RequeueAfter != quotaRetry {
-		t.Fatalf("a run over quota waits: %+v, %+v", got.Status, res)
-	}
-	if apimeta.IsStatusConditionTrue(got.Status.Conditions, "Invalid") {
-		t.Fatalf("a run over quota is never Invalid: %+v", got.Status)
+	// The quota admission plugin's two refusals a retry cures: the quota is full, or it is not yet
+	// populated (status unknown for quota: right after install, or after a key is added).
+	for name, msg := range map[string]string{
+		"run-aaaaqqqq": "exceeded quota: runs, requested: pods=1, used: pods=25, limited: pods=25",
+		"run-ccccqqqq": "status unknown for quota: runs, resources: limits.cpu",
+	} {
+		t.Run(msg, func(t *testing.T) {
+			e := startEnv(t)
+			e.modelSecret(t)
+			e.r.Client = podFails{e.c, apierrors.NewForbidden(corev1.Resource("pods"), name, errors.New(msg))}
+			create(t, e, run(name))
+			res := e.reconcile(t, name)
+			got := e.get(t, name)
+			c := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+			if got.Status.Phase != "Pending" || c == nil || c.Reason != "QuotaExceeded" || res.RequeueAfter != quotaRetry {
+				t.Fatalf("a run the quota refuses waits: %+v, %+v", got.Status, res)
+			}
+			if apimeta.IsStatusConditionTrue(got.Status.Conditions, "Invalid") {
+				t.Fatalf("a run the quota refuses is never Invalid: %+v", got.Status)
+			}
+		})
 	}
 }
 

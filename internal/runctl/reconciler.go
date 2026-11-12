@@ -84,7 +84,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
 				return ctrl.Result{}, r.writeStatus(ctx, run, *st)
 			default:
-				pending(st, "PreflightPending", "waiting for the run-controller's preflight (sandbox RuntimeClass)")
+				why := "waiting for the run-controller's preflight (sandbox RuntimeClass)"
+				if res.Message != "" {
+					why += ": " + res.Check + ": " + res.Message
+				}
+				pending(st, "PreflightPending", why)
 				return ctrl.Result{RequeueAfter: preflightRetry}, r.writeStatus(ctx, run, *st)
 			}
 		}
@@ -113,8 +117,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return r.waitForGC(ctx, run, st, stale)
 		}
 		// The runs namespace's ResourceQuota (v4 D16) is a safety net behind the factory's slots, not
-		// an error: a run over it waits for room (plan PR10).
-		if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
+		// an error: a run over it waits for room (plan PR10), as does one created before the quota's
+		// status is populated (right after install, or after a key is added).
+		if apierrors.IsForbidden(err) && (strings.Contains(err.Error(), "exceeded quota") || strings.Contains(err.Error(), "status unknown for quota")) {
 			pending(st, "QuotaExceeded", err.Error())
 			return ctrl.Result{RequeueAfter: quotaRetry}, r.writeStatus(ctx, run, *st)
 		}
