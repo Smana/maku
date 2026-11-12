@@ -270,7 +270,7 @@ k3d image import -c "$NAME" "ghcr.io/smana/maku-harness:$TAG"
 step "install the chart with images loaded into this cluster"
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
 helm dependency build charts/agent-factory >/dev/null
-values=(--set profile=demo
+values=(-f charts/agent-factory/values-demo.yaml
   --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true
   --set "maku.broker.image.tag=$TAG" --set "maku.runController.image.tag=$TAG" --set "maku-factory.image.tag=$TAG"
   --set "maku.runController.images.harness.tag=$harness"

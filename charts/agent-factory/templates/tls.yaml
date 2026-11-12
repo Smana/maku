@@ -1,3 +1,4 @@
+{{- include "afumbrella.profile" . -}}
 {{- /*
 The broker's TLS without cert-manager. A re-render reuses what the cluster already holds
 (`lookup`), and every Secret is `keep`, so an upgrade never rotates the CA under running run pods.

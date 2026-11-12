@@ -1,3 +1,4 @@
+{{- include "afumbrella.profile" . -}}
 {{- if .Values.networkPolicies.plain }}
 {{- /* The demo has no Cilium: plain NetworkPolicies restore a little of the platform's default-deny.
 Only ingress is restricted; runs keep their egress (GitHub and the model). */}}

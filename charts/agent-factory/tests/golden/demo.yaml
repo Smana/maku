@@ -1,0 +1,1279 @@
+---
+# Source: agent-factory/charts/maku/templates/agents-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  annotations:
+    # Uninstall must not delete the runs and the Secrets in them.
+    helm.sh/resource-policy: keep
+
+---
+# Source: agent-factory/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rooms-db
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {protocol: TCP, port: 5432}
+
+---
+# Source: agent-factory/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-factory-api
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-factory
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {protocol: TCP, port: 8082}
+    # The probes (startup, liveness, readiness) and the metrics are on the named port `ops` (9090):
+    # the kubelet and any scraper reach it, so no `from`.
+    - ports:
+        - {protocol: TCP, port: ops}
+    # Port 8080 (intake) is deliberately admitted by no rule: the demo configures no intake.
+
+---
+# Source: agent-factory/charts/maku-factory/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  minAvailable: 1
+  # Readiness ignores GitHub, but a replica can still be unready (caches, a crash loop): a drain
+  # must evict it rather than wait for a health that cannot return (#58). Kubernetes 1.27+.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels: {app.kubernetes.io/name: agent-factory}
+
+---
+# Source: agent-factory/charts/maku-factory/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: run-controller
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+
+---
+# Source: agent-factory/templates/db-secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rooms-db-passwords
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  postgres: "<generated>"
+  rooms_broker: "<generated>"
+  rooms_owner: "<generated>"
+  rooms_retention: "<generated>"
+
+---
+# Source: agent-factory/templates/db-secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rooms-broker-dsn
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  # In-cluster only, no TLS on the database hop: this chart is for a throwaway kind or k3d cluster.
+  uri: "postgresql://rooms_broker:<generated>@rooms-db.maku.svc:5432/rooms?sslmode=disable"
+
+---
+# Source: agent-factory/templates/db-secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rooms-owner-dsn
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  # In-cluster only, no TLS on the database hop: this chart is for a throwaway kind or k3d cluster.
+  uri: "postgresql://rooms_owner:<generated>@rooms-db.maku.svc:5432/rooms?sslmode=disable"
+
+---
+# Source: agent-factory/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-model
+  namespace: agents
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+stringData:
+  base_url: "http://model.example.test/v1"
+  model: "m1"
+  api_key: "k1"
+
+---
+# Source: agent-factory/templates/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-factory-github
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+stringData:
+  app_id: "123"
+  private_key: "pem1"
+
+---
+# Source: agent-factory/templates/tls.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: room-broker-tls
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  tls.crt: <generated>
+  tls.key: <generated>
+
+---
+# Source: agent-factory/templates/tls.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: room-broker-ca
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  ca.crt: <generated>
+
+---
+# Source: agent-factory/templates/tls.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openbao-ca
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  ca.crt: <generated>
+
+---
+# Source: agent-factory/charts/maku-factory/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-factory-config
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+data:
+  config.yaml: |
+    agentsLogin: maku-demo[bot]
+    api:
+      listen: :8082
+    broker:
+      caFile: /etc/agent-factory/openbao-ca/ca.crt
+      tokenFile: /var/run/secrets/agents/rooms/token
+      url: https://room-broker.maku.svc.cluster.local:8443
+    caps:
+      activeTasks: 3
+      awaitingHumanWIP: 5
+      concurrentRuns: 2
+      maxTextBytes: 14336
+      tasksPerDay: 20
+    defaults:
+      dataClass: public
+      predictedClass: review
+      template: solo
+      tier: standard
+    demo: true
+    factory: demo
+    factoryLogin: maku-demo[bot]
+    github:
+      appIDFile: /etc/agent-factory-github/app_id
+      mergerAppIDFile: /etc/agent-factory-github/app_id
+      mergerKeyFile: /etc/agent-factory-github/private_key
+      privateKeyFile: /etc/agent-factory-github/private_key
+    loops:
+      docs-links:
+        judge: tier-light
+        scope: scoper
+      review:
+        judge: tier-light
+        scope: scoper
+    poll:
+      issues: 60s
+      meter: 30s
+      tasks: 30s
+    repositories:
+    - classes:
+        docs-links:
+          allowedFiles:
+          - ^.+\.(md|mdx|adoc|rst)$
+          shadow: true
+        revert:
+          allowedFiles:
+          - ^.+$
+          shadow: true
+      maintainers:
+      - owner
+      merge:
+        approveToMerge: true
+        autoMergesPerDay: 5
+        breaker:
+          maxReverts: 1
+          window: 10
+        checkReruns: 1
+        fixRuns: 2
+        gateStatus: true
+        leakScanCheck: ci
+        mergerLogin: maku-demo[bot]
+        policyBot: false
+        requiredChecks:
+        - ci
+        revertWindow: 168h
+        verifyChecks:
+        - ci
+        verifyFor: 30m
+      name: owner/repo
+      triggerLabel: factory/ready
+    roomsURL: http://localhost:8080
+    runs:
+      group: maku.ogenki.io
+      namePrefix: run-
+      namespace: agents
+    templates:
+      investigate:
+        roles:
+        - triager
+      pair:
+        maxReviewRounds: 2
+        roles:
+        - implementer
+        - reviewer
+      solo:
+        maxReviewRounds: 2
+        roles:
+        - implementer
+        - reviewer
+      trio:
+        maxReviewRounds: 2
+        roles:
+        - implementer
+        - reviewer
+    tiers:
+      frontier:
+        model: agent-default
+        runMinutes: 90
+        runTokens: 4000000
+        taskTokens: 8000000
+      light:
+        model: agent-default
+        runMinutes: 20
+        runTokens: 300000
+        taskTokens: 600000
+      standard:
+        model: agent-default
+        runMinutes: 45
+        runTokens: 1500000
+        taskTokens: 3000000
+
+---
+# Source: agent-factory/charts/maku/templates/broker-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: room-broker-config
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+data:
+  # Strictly decoded by the broker (internal/config): an unknown key fails the rollout. tls is
+  # left to its default, /etc/room-broker/tls/tls.{crt,key}, where the Deployment mounts the pair.
+  config.yaml: |
+    publicURL: "http://localhost:8080"
+    runs:
+      group: maku.ogenki.io
+      namePrefix: run-
+      namespace: agents
+    runIssuers:
+      - subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'
+        mode: tokenreview
+    systemIssuer:
+      mode: tokenreview
+    systemPrincipals:
+      system:serviceaccount:maku:agent-factory: system:factory
+    factoryURL: "http://agent-factory:8082"
+    factoryInsecure: true
+    human:
+      mode: local
+    roomTools:
+      auth: tokenreview
+      enabled: true
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: run-controller-config
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+data:
+  # Strictly decoded by the controller (runctl.LoadConfig). namespace and namePrefix come from
+  # `runs` alone, as the broker's do. The broker URL must be the FQDN: the run pod's resolver
+  # would otherwise try search-path names its CNP refuses.
+  config.yaml: |
+    namespace: "agents"
+    namePrefix: "run-"
+    allowUnsandboxed: true
+    # No Cilium: the controller creates no CiliumNetworkPolicy per run.
+    networkPolicy: none
+    modelSecret: "agent-model"
+    gitSecret: "agent-git"
+    broker:
+      url: "https://room-broker.maku.svc.cluster.local:8443"
+      namespace: "maku"
+      # Only the stable selector label: runctl copies every label into each run CNP once, so a
+      # version label would cut in-flight runs off from the broker on upgrade.
+      labels: {app.kubernetes.io/name: room-broker}
+      caSecret: "room-broker-ca"
+    # The broker verifies each run's own token on :8090 (roomTools.auth tokenreview). Plain HTTP:
+    # in-cluster, broker to run pod, with no TLS on that listener.
+    roomToolsURL: "http://room-broker.maku.svc.cluster.local:8090/mcp"
+    images:
+      harness: "ghcr.io/smana/maku-harness:v0.0.0@sha256:0000"
+      bridge: "ghcr.io/smana/maku-bridge:v0.0.0@sha256:0000"
+
+---
+# Source: agent-factory/templates/postgres.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rooms-db-init
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+data:
+  # Runs once, on an empty data directory. The migration GRANTs to rooms_broker and rooms_retention,
+  # so both must exist first; rooms_owner owns the database and has no CREATEROLE.
+  # PG 15+ no longer lets a plain role CREATE in `public`.
+  init.sh: |
+    #!/bin/sh
+    set -eu
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
+    CREATE ROLE rooms_owner LOGIN PASSWORD '${ROOMS_OWNER_PASSWORD}';
+    CREATE ROLE rooms_broker LOGIN PASSWORD '${ROOMS_BROKER_PASSWORD}';
+    CREATE ROLE rooms_retention LOGIN PASSWORD '${ROOMS_RETENTION_PASSWORD}';
+    CREATE DATABASE rooms OWNER rooms_owner;
+    SQL
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname rooms <<SQL
+    GRANT CREATE, USAGE ON SCHEMA public TO rooms_owner;
+    SQL
+
+---
+# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-factory-admin
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+
+---
+# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-mergepolicy-editor
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [mergepolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+
+---
+# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-viewer
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch]
+
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+# tokenreview mode asks the apiserver who a run token belongs to.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: room-broker-maku-token-review
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+# Tasks, their rooms, the stop object, the day ledgers (R50), leader election (§6.5).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks/status]
+    verbs: [get, update, patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories/status, repositories/status, mergepolicies/status]
+    verbs: [get, update, patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms]
+    verbs: [get, list, watch, create, delete]
+  # ConfigMaps: the stop object, the meter heartbeat (agent-factory-meter), R50's day ledgers
+  # (names carry the date, so resourceNames cannot bound them) and nothing else. The Role's namespace is the bound: the factory can read and
+  # write every ConfigMap in it, its own config included, so the namespace holds no ConfigMap it
+  # must not touch. watch is for the stop object's cache.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+# AgentRuns: the factory creates them, meters them (annotations only, Kyverno-limited from
+# phase 5), and deletes them. Never Secrets, never another namespace's objects, with one exception:
+# demo (the laptop demo) lets the factory keep the runs' shared agent-git Secret filled with a token
+# minted from its GitHub App. create cannot be scoped by name in Kubernetes; get and update can.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-factory
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [agent-git]
+    verbs: [get, update]
+
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+# Exactly the verbs the broker calls: the Room controller reads Rooms, updates their finalizer and
+# merge-patches their status; the human API creates (new room, fork); leader election takes a Lease and emits Events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms]
+    verbs: [get, list, watch, create, update]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms/status]
+    verbs: [patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms/finalizers]
+    verbs: [update]
+  # Coordination parents (v4 MR13): the human API reads a parent, its lineage and the day ledgers
+  # live, to filter them per viewer. Read-only: never watch, never write.
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+# AgentRuns: watched, deleted when their Room is, and merge-patched by the suspend trigger, whose
+# patch broker-agentrun-policy.yaml bounds to three annotations. NEVER created: only the run
+# requester creates runs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: room-broker
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch, delete, patch]
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# Everything in the runs namespace. A run's pod, ServiceAccount, ConfigMaps and CNP are created
+# and read back (the ownership check); the pod is also deleted (revoke); Secrets are read by name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch]
+  # The pod's ownerReference sets blockOwnerDeletion, which OwnerReferencesPermissionEnforcement
+  # authorizes as update on the owner's finalizers.
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns/finalizers]
+    verbs: [update]
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [serviceaccounts, configmaps]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: ["agent-model", "agent-git"]
+    verbs: [get]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# The broker's CA, copied into each run: the one Secret it reads outside the runs namespace, and
+# ca.crt only: never broker.tls.secretName, whose tls.key would let the controller impersonate the broker.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller-ca
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: ["room-broker-ca"]
+    verbs: [get]
+
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: agent-factory}
+subjects:
+  - {kind: ServiceAccount, name: agent-factory, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-factory
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: agent-factory}
+subjects:
+  - {kind: ServiceAccount, name: agent-factory, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: room-broker}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: room-broker
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: room-broker}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller-ca
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-ca}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: maku}
+
+---
+# Source: agent-factory/charts/maku-factory/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  selector: {app.kubernetes.io/name: agent-factory}
+  ports:
+    - {name: metrics, port: 9090, targetPort: ops, protocol: TCP}
+    - {name: api, port: 8082, targetPort: api, protocol: TCP}
+    - {name: intake, port: 8080, targetPort: intake, protocol: TCP}
+
+---
+# Source: agent-factory/charts/maku/templates/broker-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  selector:
+    app.kubernetes.io/name: room-broker
+  ports:
+    - {name: bridge, port: 8443, targetPort: bridge}
+    - {name: metrics, port: 9090, targetPort: ops}
+    - {name: room-tools, port: 8090, targetPort: 8090}
+
+---
+# Source: agent-factory/templates/postgres.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rooms-db
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    app.kubernetes.io/name: rooms-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+
+---
+# Source: agent-factory/charts/maku-factory/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: agent-factory}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-factory
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        checksum/config: b8b93d392e8c1a0bfc45278ae3a161e46a8698bf73828772b7deb1c5f3221140
+    spec:
+      serviceAccountName: agent-factory
+      automountServiceAccountToken: true  # a controller: it watches Tasks and AgentRuns
+      # The factory's drains (manager 20 s, then :9090) fit inside it.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # The kubelet gives mounted Secrets this group: with defaultMode 0440 the App key is
+        # readable by uid 65532 and nobody else (review C1).
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: {matchLabels: {app.kubernetes.io/name: agent-factory}}
+      containers:
+        - name: agent-factory
+          image: "ghcr.io/smana/maku-factory:v0.0.0@sha256:0000"
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - {name: FACTORY_CONFIG, value: /etc/agent-factory/config/config.yaml}
+          ports:
+            - {name: ops, containerPort: 9090, protocol: TCP}
+            - {name: api, containerPort: 8082, protocol: TCP}
+            - {name: intake, containerPort: 8080, protocol: TCP}
+          startupProbe: {httpGet: {path: /startupz, port: ops}, periodSeconds: 2, failureThreshold: 30}
+          livenessProbe: {httpGet: {path: /healthz, port: ops}, periodSeconds: 10}
+          readinessProbe: {httpGet: {path: /readyz, port: ops}, periodSeconds: 10}
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          # Sibling mounts, never one inside another's read-only volume.
+          volumeMounts:
+            - {name: config, mountPath: /etc/agent-factory/config, readOnly: true}
+            - {name: broker-ca, mountPath: /etc/agent-factory/openbao-ca, readOnly: true}
+            - {name: github, mountPath: /etc/agent-factory-github, readOnly: true}
+            - {name: merger, mountPath: /etc/agent-factory-merger, readOnly: true}
+            - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
+            - {name: intake, mountPath: /etc/agent-factory-intake, readOnly: true}
+            - {name: zitadel-reader, mountPath: /etc/agent-factory-zitadel-reader, readOnly: true}
+            - {name: sponsored, mountPath: /etc/agent-factory-sponsored, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: agent-factory-config}
+        - name: broker-ca
+          secret: {secretName: openbao-ca, items: [{key: ca.crt, path: ca.crt}]}
+        - name: github
+          secret: {secretName: agent-factory-github, defaultMode: 0440}
+        - name: merger
+          # optional: a factory with every class off starts without the merger App (it fails closed); a
+          # live or shadow class makes the binary refuse the start when the key is absent: a CrashLoop
+          # with a log line, not ContainerCreating (values.yaml: hard prerequisite then).
+          secret: {secretName: agent-factory-merger, defaultMode: 0440, optional: true}
+        - name: rooms-token
+          projected:
+            sources:
+              - serviceAccountToken: {audience: rooms-system, expirationSeconds: 3600, path: token}
+        - name: intake
+          # 0440, not the plan's 0400: a 0400 Secret is root-only for uid 65532 — the chart's own
+          # render test refuses it (review C1). Group bit plus fsGroup, as the App keys.
+          # optional: without the token the intake refuses every request (503), never runs open (#57).
+          secret: {secretName: agent-factory-intake, defaultMode: 0440, optional: true}
+        - name: zitadel-reader
+          # optional: without it the run-request API cannot resolve a caller's GitHub login, and
+          # refuses every human run (v2 D4); 0440 with fsGroup, as the other secrets.
+          secret: {secretName: agent-factory-zitadel-reader, defaultMode: 0440, optional: true}
+        - name: sponsored
+          # optional: without it no sponsored client id or project id reads, and every sponsored
+          # token is refused; 0440 with fsGroup, as the other secrets.
+          secret: {secretName: agent-factory-sponsored, defaultMode: 0440, optional: true}
+
+---
+# Source: agent-factory/charts/maku/templates/broker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: room-broker
+        app.kubernetes.io/part-of: maku
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        # The broker reads its config once at start: a changed config must roll the pods.
+        checksum/config: a335130776564e23f717b9c3b660491aeb1b16d4e6641fdb36cc5a5e0d0fce1a
+    spec:
+      # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
+      serviceAccountName: room-broker
+      automountServiceAccountToken: true # the Room and AgentRun watches, the leader lease
+      terminationGracePeriodSeconds: 30 # the broker's shutdown drains fit 23 s of it
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Lets the nonroot broker read a 0400 Secret; also makes the optional oidc files readable.
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The schema, applied as the owner role before the broker starts; the broker's own role
+        # cannot alter it, so this container takes the owner's Secret and nothing else. Its
+        # variable is deliberately not ROOMS_DATABASE_URL: the two DSNs never share a name.
+        - name: migrate
+          image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+          
+          args: [migrate]
+          env:
+            - name: ROOMS_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: rooms-owner-dsn, key: uri}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+      containers:
+        - name: room-broker
+          image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+          
+          env:
+            - name: ROOMS_CONFIG
+              value: /etc/room-broker/config/config.yaml
+            - name: ROOMS_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: rooms-broker-dsn, key: uri}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+          ports:
+            - {name: bridge, containerPort: 8443}
+            - {name: human, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          # Probes are on the ops port: the broker answers them there for the kubelet only.
+          startupProbe:
+            httpGet: {path: /startupz, port: 9090}
+            periodSeconds: 5
+            failureThreshold: 120 # a first start waits for PostgreSQL and the migration
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9090}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9090}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            # The config sits beside the TLS pair, not above it: a mount nested in a read-only
+            # ConfigMap mount cannot create its mount point.
+            - {name: config, mountPath: /etc/room-broker/config, readOnly: true}
+            - {name: tls, mountPath: /etc/room-broker/tls, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: room-broker-config}
+        - name: tls
+          secret: {secretName: room-broker-tls}
+        - name: tmp
+          emptyDir: {}
+
+---
+# Source: agent-factory/charts/maku/templates/run-controller-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: run-controller
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 1 # leader-elected; a second replica would only wait
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: run-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: run-controller
+        app.kubernetes.io/part-of: maku
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        # The controller reads its config once at start: a changed config must roll the pod.
+        checksum/config: 21e7b427a471f5e3be7ff9d3deee6e78746747cd27a423b9fa4c756138c0d4fe
+    spec:
+      serviceAccountName: run-controller
+      automountServiceAccountToken: true # the apiserver is its only peer
+      terminationGracePeriodSeconds: 40 # the manager drains for 30 s
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: run-controller
+          image: ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000
+          
+          env:
+            - name: RUN_CONTROLLER_CONFIG
+              value: /etc/run-controller/config.yaml
+          ports:
+            - {name: metrics, containerPort: 9090}
+            - {name: probes, containerPort: 9091}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9091}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9091}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            limits:
+              cpu: 250m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - {name: config, mountPath: /etc/run-controller, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: run-controller-config}
+        - name: tmp
+          emptyDir: {}
+
+---
+# Source: agent-factory/templates/postgres.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rooms-db
+  namespace: maku
+  labels:
+    app.kubernetes.io/name: rooms-db
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  serviceName: rooms-db
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rooms-db
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:17@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: postgres}}
+            - name: ROOMS_OWNER_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_owner}}
+            - name: ROOMS_BROKER_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_broker}}
+            - name: ROOMS_RETENTION_PASSWORD
+              valueFrom: {secretKeyRef: {name: rooms-db-passwords, key: rooms_retention}}
+          readinessProbe:
+            exec:
+              # -h 127.0.0.1: the TCP port, which only the real server opens. Over the socket the
+              # entrypoint's init-only server would answer too, and the pod would turn ready early.
+              command: [pg_isready, -h, 127.0.0.1, -U, postgres, -d, postgres]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, postgres, -d, postgres]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: init
+          configMap:
+            name: rooms-db-init
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+
+---
+# Source: agent-factory/charts/maku/templates/broker-agentrun-policy.yaml
+# The broker writes an AgentRun for one reason: the suspend trigger's merge patch of three
+# annotations (internal/suspend; runwatch's OperatingMode, RemainingSeconds and ResumedAt keys).
+# RBAC cannot bound a patch to fields, so this in-tree policy (Kubernetes 1.30+) does: an UPDATE
+# by the broker's ServiceAccount may set, change or drop those three keys and nothing else. Exact
+# keys, not the agents.ogenki.io/ prefix: the meter's, the factory's and the revoke annotations
+# share it. Every other writer passes untouched.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: room-broker-maku-agentruns
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["maku.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [agentruns]
+  matchConditions:
+    - name: the-broker
+      expression: "request.userInfo.username == 'system:serviceaccount:maku:room-broker'"
+  variables:
+    - name: suspendKeys
+      expression: "['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']"
+  validations:
+    - expression: >-
+        has(object.spec) == has(oldObject.spec) && (!has(object.spec) || object.spec == oldObject.spec)
+      message: the broker may not change an AgentRun's spec
+    - expression: >-
+        has(object.metadata.labels) == has(oldObject.metadata.labels) &&
+        (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels)
+      message: the broker may not change an AgentRun's labels
+    - expression: >-
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+      message: the broker may not change an AgentRun's finalizers
+    - expression: >-
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: the broker may not change an AgentRun's owners
+    - expression: >-
+        (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in variables.suspendKeys ||
+        (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations && oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) &&
+        (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k in variables.suspendKeys ||
+        (has(object.metadata.annotations) && k in object.metadata.annotations)))
+      message: the broker may change only the suspend annotations (operating-mode, remaining-seconds, resumed-at)
+
+---
+# Source: agent-factory/charts/maku/templates/broker-agentrun-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: room-broker-maku-agentruns
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: room-broker-maku-agentruns
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: agents

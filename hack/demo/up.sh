@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # task demo: the Agent Factory on a laptop, in one command. A kind or k3d cluster, a GitHub App, your
-# repository from the template, the umbrella chart with profile=demo, and the room page.
+# repository from the template, the umbrella chart with values-demo.yaml, and the room page.
 # Resumes where it stopped (.demo/state), prints the time per step, never prints a key.
 #
 # Environment, then .env, for every variable below; the six asked ones (MODEL_BASE_URL, MODEL_NAME,
@@ -346,7 +346,7 @@ install_chart() {
   export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
   demo_render_values "$DEMO_DIR/values.yaml"
   hl dependency build charts/agent-factory >/dev/null
-  hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
+  hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f charts/agent-factory/values-demo.yaml -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null
   echo "    waiting for the workloads"
   rollout sts/rooms-db
   rollout deploy/room-broker

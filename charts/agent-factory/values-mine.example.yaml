@@ -1,7 +1,7 @@
 # A values file for a real install of the demo: copy it to values-mine.yaml, change every line
 # marked CHANGE, then
-#   helm install af charts/agent-factory -n maku --create-namespace -f values-mine.yaml ...
-# Helm replaces a list whole, so `repositories` restates the entire entry from values.yaml.
+#   helm install af charts/agent-factory -n maku --create-namespace -f charts/agent-factory/values-demo.yaml -f values-mine.yaml ...
+# Helm replaces a list whole, so `repositories` restates the entire entry from values-demo.yaml.
 profile: demo
 
 demo:

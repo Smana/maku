@@ -9,13 +9,13 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 helm dependency build . >/dev/null
 digest='v0.0.0@sha256:0000'
-# the subcharts' image digests; the demo profile carries everything else
+# the subcharts' image digests; values-demo.yaml carries everything else
 img=(--set maku.broker.image.tag=$digest --set maku.runController.image.tag=$digest
      --set maku.runController.images.harness.tag=$digest --set maku.runController.images.bridge.tag=$digest
      --set maku-factory.image.tag=$digest)
 secrets=(--set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m1 --set demo.model.apiKey=k1
          --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1)
-args=("${img[@]}" --set profile=demo "${secrets[@]}")
+args=("${img[@]}" -f values-demo.yaml "${secrets[@]}")
 fail=0
 out=''
 check() { grep -qF -- "$1" <<<"$out" || { echo "FAIL: $2" >&2; fail=1; }; }
@@ -31,6 +31,17 @@ ynone() {
 secret_field() { yq ea "select(.kind == \"Secret\" and .metadata.name == \"$1\") | .data.\"$2\"" - <<<"$out" | base64 -d; }
 
 out="$(helm template af . -n maku "${args[@]}")"
+
+# The golden: -f values-demo.yaml renders exactly what `--set profile=demo` rendered before the demo's
+# defaults moved there (v0.4x), generated secrets masked. A deliberate change to the demo's render
+# updates it: UPDATE_GOLDEN=1 bash charts/agent-factory/tests/render.sh, then review the diff.
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then
+  bash tests/normalize.sh <<<"$out" >tests/golden/demo.yaml
+fi
+bash tests/normalize.sh <<<"$out" | diff -u tests/golden/demo.yaml - >&2 || { echo "FAIL: the demo render differs from tests/golden/demo.yaml" >&2; fail=1; }
+# --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
+msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
+grep -qF 'profile demo needs -f values-demo.yaml' <<<"$msg" || { echo "FAIL: --set profile=demo alone does not fail naming values-demo.yaml (got: $msg)" >&2; fail=1; }
 
 # TLS: three Secrets, the same CA, kept on upgrade
 ykind Secret 'select(.metadata.name == "room-broker-tls") | (.type == "kubernetes.io/tls" and (.data | has("tls.crt")) and (.data | has("tls.key")) and .metadata.annotations."helm.sh/resource-policy" == "keep")' 'room-broker-tls is a kept kubernetes.io/tls Secret with tls.crt and tls.key'
@@ -167,18 +178,18 @@ grep -qF 'clusterDomain' <<<"$msg" && grep -qF 'must be equal' <<<"$msg" || { ec
 ykind Secret 'select(.metadata.name == "agent-model") | (.metadata.namespace == "agents" and .stringData.base_url == "http://model.example.test/v1" and .stringData.model == "m1" and .stringData.api_key == "k1")' 'agent-model in the runs namespace from demo.model'
 ykind Secret 'select(.metadata.name == "agent-factory-github") | (.metadata.namespace == "maku" and .stringData.app_id == "123" and .stringData.private_key == "pem1")' 'agent-factory-github from demo.githubApp'
 ynone 'select(.kind == "Secret" and .metadata.name == "agent-git") | .metadata.name' 'agent-git is rendered: the factory writes it'
-exist="$(helm template af . -n maku "${img[@]}" --set profile=demo --set demo.model.existingSecret=agent-model --set demo.githubApp.existingSecret=agent-factory-github)"
+exist="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.model.existingSecret=agent-model --set demo.githubApp.existingSecret=agent-factory-github)"
 for n in agent-model agent-factory-github; do
   [[ -z "$(yq ea "select(.kind == \"Secret\" and .metadata.name == \"$n\") | .metadata.name" - <<<"$exist")" ]] || { echo "FAIL: $n is rendered although its existingSecret is set" >&2; fail=1; }
 done
-msg="$(helm template af . -n maku "${img[@]}" --set profile=demo 2>&1 >/dev/null || true)"
+msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml 2>&1 >/dev/null || true)"
 grep -qF 'demo.model.baseURL' <<<"$msg" || { echo "FAIL: no model values and no existingSecret does not fail" >&2; fail=1; }
-msg="$(helm template af . -n maku "${img[@]}" --set profile=demo --set demo.model.existingSecret=other --set demo.githubApp.existingSecret=agent-factory-github 2>&1 >/dev/null || true)"
+msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.model.existingSecret=other --set demo.githubApp.existingSecret=agent-factory-github 2>&1 >/dev/null || true)"
 grep -qF 'must have that name' <<<"$msg" || { echo "FAIL: an existingSecret the controller does not read does not fail" >&2; fail=1; }
 
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"
-mine="$(helm template af . -n maku "${img[@]}" -f "$tmp/mine.yaml")" || { echo "FAIL: values-mine.example.yaml does not render" >&2; fail=1; mine=''; }
+mine="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f "$tmp/mine.yaml")" || { echo "FAIL: values-mine.example.yaml does not render" >&2; fail=1; mine=''; }
 if [[ -n $mine ]]; then
   yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$mine" >"$tmp/mine-config.yaml"
   yq -e '.repositories | length == 1' "$tmp/mine-config.yaml" >/dev/null 2>&1 || { echo "FAIL: the example's config lacks its repository" >&2; fail=1; }

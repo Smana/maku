@@ -10,10 +10,13 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "afumbrella.caSecret" -}}{{ .Values.maku.broker.tls.caSecretName | default "room-broker-ca" }}{{- end }}
 {{- define "afumbrella.factoryCASecret" -}}{{ index .Values "maku-factory" "brokerCASecret" | default "openbao-ca" }}{{- end }}
 
-{{/* The profile gate: the demo is the only profile until stage 2 adds production's values. */}}
+{{/* The profile gate, included first by every umbrella template (the skeleton values hold no tls:, postgres: or networkPolicies:). The demo is the only profile until stage 2 adds production's values, and it needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo` alone would render half a demo. */}}
 {{- define "afumbrella.profile" -}}
 {{- if ne (.Values.profile | default "") "demo" -}}
 {{- fail (printf "profile is required: demo, or production values (stage 2); got %q" (.Values.profile | default "")) -}}
+{{- end -}}
+{{- if not .Values.demoValues -}}
+{{- fail "profile demo needs -f values-demo.yaml (the demo's defaults moved there in v0.4x)" -}}
 {{- end -}}
 {{- $d := .Values.clusterDomain -}}
 {{- if or (ne $d (.Values.maku.clusterDomain | default "cluster.local")) (ne $d (index .Values "maku-factory" "clusterDomain" | default "cluster.local")) -}}

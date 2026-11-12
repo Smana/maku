@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Installs charts/agent-factory with profile=demo on a throwaway cluster and asserts it.
+# Installs charts/agent-factory with values-demo.yaml on a throwaway cluster and asserts it.
 #   usage: install.sh k3d|kind        (task chart:install:k3d | chart:install:kind)
 # Images: broker, run-controller and factory are built from this checkout and loaded; harness and
 # bridge are the latest release's, by digest (no run starts here). A dummy GitHub App means the
@@ -76,7 +76,7 @@ kubectl get nodes
 step "install"
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
 helm dependency build charts/agent-factory >/dev/null
-values=(--set profile=demo
+values=(-f charts/agent-factory/values-demo.yaml
   --set demo.model.baseURL=http://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy
   --set demo.githubApp.id=123456 --set-file demo.githubApp.privateKey="$work/app.pem"
   --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true
