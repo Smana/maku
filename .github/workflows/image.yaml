@@ -56,6 +56,14 @@ jobs:
           sbom: true
           # By digest only: the tag goes on the joined index, never on one platform's image.
           outputs: type=image,name=ghcr.io/smana/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+      # Hardening H3 (HR24): the factory's push applier needs git 2.45 or later in its image.
+      - name: The factory image carries git 2.45 or later
+        if: inputs.image == 'maku-factory'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          v=$(docker run --rm --entrypoint /usr/bin/git "ghcr.io/smana/maku-factory@${DIGEST}" --version | awk '{print $3}')
+          printf '2.45.0\n%s\n' "$v" | sort -C -V || { echo "git $v in the factory image, 2.45 or later wanted" >&2; exit 1; }
       - name: Keep the digest for the merge
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

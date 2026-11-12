@@ -165,6 +165,16 @@ out="$(helm template agent-factory . --namespace agent-system --set image.tag="$
 ykind Deployment "$(vol octo-sts-token).projected.sources[0].serviceAccountToken | (.audience == \"octo-sts.dev\" and .path == \"token\")" "the publisher's projected token takes hardening.publisher.audience"
 ykind Deployment "$(mnt octo-sts-token) | (.mountPath == \"/var/run/secrets/octo-sts\" and .readOnly == true)" "the publisher token at /var/run/secrets/octo-sts/token"
 out="$base"
+# H3 (HR24): no git mirror cache by default; with hardening.gitCache.sizeLimit, an emptyDir of that
+# limit at /var/cache/maku/git, named to the factory by MAKU_GIT_CACHE.
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "git-cache")' "no git cache unless hardening.gitCache.sizeLimit"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "MAKU_GIT_CACHE")' "no MAKU_GIT_CACHE unless hardening.gitCache.sizeLimit"
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set hardening.gitCache.sizeLimit=2Gi)"
+ykind Deployment "$(vol git-cache).emptyDir.sizeLimit == \"2Gi\"" "the git mirror cache is an emptyDir of hardening.gitCache.sizeLimit"
+ykind Deployment "$(mnt git-cache) | (.mountPath == \"/var/cache/maku/git\" and (.readOnly // false) == false)" "the git cache at /var/cache/maku/git, writable"
+ykind Deployment "$ctr.env[] | select(.name == \"MAKU_GIT_CACHE\") | .value == \"/var/cache/maku/git\"" "MAKU_GIT_CACHE names the git cache"
+out="$base"
 demo="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref --set demo=true)"
 out="$demo"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' "demo: no oidc volume"
