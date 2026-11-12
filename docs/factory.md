@@ -1280,7 +1280,7 @@ EOF
 |---|---|
 | `required_status_checks`: `maku/merge-gate` with `integration_id` | An agent pull request merges only when the factory decided `arm` on its head. Without `integration_id`, any App's or token's status of that name would count |
 | Bypass: the maintain (2), write (4) and admin (5) repository roles, on pull requests | People who may merge under the repository's normal rules keep doing so: their own pull requests, and an agent pull request the gate handed to a human (`AwaitingHuman`, shadow decisions). Their merge is judged by the normal ruleset's approvals and checks. Drop a role from the list to keep its holders from merging an agent pull request the gate did not arm |
-| Bypass: the merger App (`Integration`), on pull requests | Its revert pull requests and adopted merges carry no gate decision, and a revert's native auto-merge never sees a status: without the bypass, a rollback or a deps-patch merge stalls on a 405. It also posts `success` just before each such merge |
+| Bypass: the merger App (`Integration`), on pull requests | Its revert pull requests and adopted merges carry no gate decision: without the bypass, a rollback or a deps-patch merge stalls on a 405. The merger's direct merge of a green revert carries the bypass and posts `success` first. GitHub's native auto-merge waits for the status, which that `success` also satisfies. An adopted merge likewise posts `success` just before it |
 | The agents App is no bypass actor | Its tokens, which hold `contents: write` until H3, cannot merge past the gate. Never add it, or any App whose token a run can hold |
 
 The repository's normal ruleset stays as it is: its `pull_request` rule, its CI checks,
