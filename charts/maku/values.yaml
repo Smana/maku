@@ -49,6 +49,9 @@ egressProxy:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 500m, memory: 128Mi}
   extraPorts: []
+  # Open tunnels per proxy replica, in all and from one run pod; a CONNECT over either gets 429.
+  maxTunnels: 1024
+  maxTunnelsPerClient: 64
 
 # Where the kube-apiserver listens AFTER Cilium's service translation: 443 on EKS/GKE, 6443 on
 # kind and kubeadm. Every CiliumNetworkPolicy that reaches the apiserver renders these.

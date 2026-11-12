@@ -41,7 +41,11 @@ func TestProbePodIsHeldLikeARun(t *testing.T) {
 		t.Fatalf("container %+v", ct)
 	}
 	args := strings.Join(ct.Args, " ")
+	// Three negative controls: the broker's 9090, which its own ingress policy also denies; the
+	// apiserver and github.com dialled directly, which only the run's egress policy denies, so a CNI
+	// that enforces ingress alone fails the probe.
 	for _, want := range []string{"--allow room-broker.agent-platform.svc.cluster.local:8443", "--deny room-broker.agent-platform.svc.cluster.local:9090",
+		"--deny kubernetes.default.svc.cluster.local:443", "--deny github.com:443",
 		"--connect github.com:443", "--proxy http://egress-proxy.agent-platform.svc.cluster.local:3128"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args %q lack %q", args, want)

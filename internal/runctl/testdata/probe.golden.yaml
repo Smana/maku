@@ -18,6 +18,10 @@ spec:
     - room-broker.agent-platform.svc.cluster.local:8443
     - --deny
     - room-broker.agent-platform.svc.cluster.local:9090
+    - --deny
+    - kubernetes.default.svc.cluster.local:443
+    - --deny
+    - github.com:443
     - --connect
     - github.com:443
     - --proxy

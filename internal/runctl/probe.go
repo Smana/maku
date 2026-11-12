@@ -35,7 +35,10 @@ func ProbeName(c Config, suffix string) string { return c.NamePrefix + "prefligh
 // ProbePod is the network preflight's pod (plan PR7): it runs `netprobe` from the run-controller's
 // image, under the sandbox class, with run labels and the egress annotation github.com:443, and passes
 // the run-pod policy. Its positive controls are the broker's 8443 and CONNECT github.com:443 through the
-// proxy; its negative control is the broker's 9090, which both its own policy and the broker's deny.
+// proxy. Its negative controls, each always listening:
+//   - the broker's 9090, which both its own policy and the broker's deny;
+//   - the apiserver (kubernetes.default.svc) on 443 and github.com:443 dialled directly, past the
+//     proxy, which only the run's egress policy denies: a CNI that enforces ingress alone fails here.
 func ProbePod(c Config, suffix string) *corev1.Pod {
 	r := probeRun(c, ProbeName(c, suffix))
 	broker := brokerHost(c)
@@ -59,6 +62,8 @@ func ProbePod(c Config, suffix string) *corev1.Pod {
 				Args: []string{"netprobe",
 					"--allow", net.JoinHostPort(broker, "8443"),
 					"--deny", net.JoinHostPort(broker, "9090"),
+					"--deny", net.JoinHostPort("kubernetes.default.svc."+c.clusterDomain(), "443"),
+					"--deny", probeHost,
 					"--connect", probeHost, "--proxy", c.EgressProxy.URL},
 				Resources:                res("10m", "16Mi", "100m", "64Mi"),
 				SecurityContext:          containerSecurity(),

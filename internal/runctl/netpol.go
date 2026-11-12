@@ -3,6 +3,7 @@
 package runctl
 
 import (
+	"math"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -23,10 +24,15 @@ func nsSelector(ns string) *metav1.LabelSelector {
 	return &metav1.LabelSelector{MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns}}
 }
 
+// tcp is TCP rules for ports. Every port is checked at load (validPort); one outside 1-65535 is
+// dropped here too, so the int32 conversion is bounded where it happens.
 func tcp(ports ...int) []networkingv1.NetworkPolicyPort {
 	out := make([]networkingv1.NetworkPolicyPort, 0, len(ports))
 	for _, p := range ports {
-		proto, port := corev1.ProtocolTCP, intstr.FromInt32(int32(p)) //nolint:gosec // a port, validated or a constant
+		if p < 1 || p > math.MaxUint16 {
+			continue
+		}
+		proto, port := corev1.ProtocolTCP, intstr.FromInt32(int32(p))
 		out = append(out, networkingv1.NetworkPolicyPort{Protocol: &proto, Port: &port})
 	}
 	return out
@@ -43,8 +49,7 @@ func dnsRule(c Config) networkingv1.NetworkPolicyEgressRule {
 
 // KubeNetworkPolicy is a kubernetes-mode run's policy (plan PR6): DNS to the cluster DNS, the egress
 // proxy on its port, the broker on 8443 (and roomToolsURL's port) when the run has a room, the model's
-// namespace on its port when the model is in-cluster. Ingress: the bridge's health port only, for the
-// kubelet's probe, and nothing without a room. The web is reached only through the proxy, which holds
+// namespace on its port when the model is in-cluster. No ingress at all. The web is reached only through the proxy, which holds
 // the run to Egress; DNS stays open, so DNS tunnelling is this mode's residual risk (docs/security.md).
 func KubeNetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *networkingv1.NetworkPolicy {
 	egress := []networkingv1.NetworkPolicyEgressRule{dnsRule(c), {
@@ -55,7 +60,6 @@ func KubeNetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *n
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: nsSelector(ns)}}, Ports: tcp(m.Port)})
 	}
-	var ingress []networkingv1.NetworkPolicyIngressRule
 	if r.Spec.RoomRef != "" {
 		ports := []int{8443}
 		if c.RoomToolsURL != "" {
@@ -64,15 +68,16 @@ func KubeNetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *n
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To:    []networkingv1.NetworkPolicyPeer{{NamespaceSelector: nsSelector(c.Broker.Namespace), PodSelector: &metav1.LabelSelector{MatchLabels: c.Broker.Labels}}},
 			Ports: tcp(ports...)})
-		ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: tcp(BridgeHealthPort)}}
 	}
+	// No ingress rule (review of #492): NetworkPolicy always admits node-local traffic, so the
+	// kubelet's probe of the bridge needs none, and nothing else may reach a run.
 	return &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
 		ObjectMeta: meta(r, runID, r.Name),
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{LabelRunID: runID}},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
-			Ingress:     ingress, Egress: egress,
+			Egress:      egress,
 		},
 	}
 }

@@ -30,6 +30,9 @@ func TestDialerRefusesNonPublicAddresses(t *testing.T) {
 		"v6loop.example": {"::1"}, "cgnat.example": {"100.64.1.1"}, "corp.example": {"203.0.113.9"},
 		"mixed.example": {"140.82.112.3", "10.1.2.3"}, "public.example": {"140.82.112.3"},
 		"ula.example": {"fd00::1"}, "zero.example": {"0.0.0.0"},
+		// IPv6 forms that carry an IPv4 address: NAT64, 6to4 and IPv4-compatible
+		"nat64.example": {"64:ff9b::a00:1"}, "sixtofour.example": {"2002:a00:1::1"}, "compat.example": {"::10.0.0.1"},
+		"compatpub.example": {"::140.82.112.3"},
 	}
 	var dialled []string
 	d := &Dialer{Resolver: res, Deny: MustCIDRs("203.0.113.0/24"),
@@ -39,7 +42,8 @@ func TestDialerRefusesNonPublicAddresses(t *testing.T) {
 			_ = s.Close()
 			return c, nil
 		}}
-	for _, h := range []string{"loop.example", "ten.example", "meta.example", "v6loop.example", "cgnat.example", "corp.example", "mixed.example", "ula.example", "zero.example"} {
+	for _, h := range []string{"loop.example", "ten.example", "meta.example", "v6loop.example", "cgnat.example", "corp.example", "mixed.example", "ula.example", "zero.example",
+		"nat64.example", "sixtofour.example", "compat.example", "compatpub.example"} {
 		if _, err := d.DialContext(t.Context(), h+":443"); !errors.Is(err, ErrRefused) {
 			t.Errorf("%s: want ErrRefused, got %v", h, err)
 		}

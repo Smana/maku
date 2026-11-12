@@ -8,6 +8,7 @@ package runctl
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -198,7 +199,7 @@ func (c Config) egressProxy() []error {
 	var errs []error
 	p := c.EgressProxy
 	u, err := url.Parse(p.URL)
-	if err != nil || u.Scheme != "http" || u.Port() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || !brokerHostRE.MatchString(u.Hostname()) {
+	if err != nil || u.Scheme != "http" || !validPort(u.Port()) || u.User != nil || (u.Path != "" && u.Path != "/") || !brokerHostRE.MatchString(u.Hostname()) {
 		errs = append(errs, fmt.Errorf("egressProxy.url %q must be http://<service>.<namespace>.svc.<cluster-domain>:<port>: networkPolicy kubernetes sends every run's HTTPS through it", p.URL))
 	}
 	if p.Namespace == "" || len(p.Labels) == 0 {
@@ -232,7 +233,7 @@ func (c Config) roomToolsURL() []error {
 	}
 	b, _ := url.Parse(c.Broker.URL)
 	u, err := url.Parse(c.RoomToolsURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Path == "" || u.Path == "/" ||
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || (u.Port() != "" && !validPort(u.Port())) || u.User != nil || u.Path == "" || u.Path == "/" ||
 		b == nil || u.Hostname() != b.Hostname() || !brokerHostRE.MatchString(u.Hostname()) {
 		return []error{fmt.Errorf("roomToolsURL %q must be an http(s) URL with a path on broker.url's host", c.RoomToolsURL)}
 	}
@@ -375,7 +376,16 @@ func ModelFrom(data map[string][]byte) (Model, error) {
 		m.Port = 80
 	}
 	if p := u.Port(); p != "" {
+		if !validPort(p) {
+			return Model{}, fmt.Errorf("modelSecret base_url %q: port %s is not 1-65535", m.BaseURL, p)
+		}
 		m.Port, _ = strconv.Atoi(p)
 	}
 	return m, nil
+}
+
+// validPort is a TCP port, 1-65535: every port that reaches a NetworkPolicy is checked once, here.
+func validPort(p string) bool {
+	n, err := strconv.Atoi(p)
+	return err == nil && n >= 1 && n <= math.MaxUint16
 }

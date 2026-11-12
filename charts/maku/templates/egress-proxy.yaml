@@ -75,6 +75,10 @@ spec:
           env:
             - name: RUN_CONTROLLER_CONFIG
               value: /etc/run-controller/config.yaml
+            - name: MAX_TUNNELS
+              value: {{ $p.maxTunnels | int | quote }}
+            - name: MAX_TUNNELS_PER_CLIENT
+              value: {{ $p.maxTunnelsPerClient | int | quote }}
           ports:
             - {name: proxy, containerPort: 3128}
             - {name: metrics, containerPort: 9090}

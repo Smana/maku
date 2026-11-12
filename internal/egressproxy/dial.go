@@ -28,9 +28,12 @@ type Dialer struct {
 	Timeout  time.Duration
 }
 
-// alwaysDenied are ranges net.IP's predicates miss: CGNAT, "this network", and IPv4-mapped forms
-// are covered by To4 below.
-var alwaysDenied = MustCIDRs("100.64.0.0/10", "0.0.0.0/8", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4")
+// alwaysDenied are ranges net.IP's predicates miss: CGNAT, "this network", benchmarking and reserved
+// IPv4, and the IPv6 forms that carry an IPv4 address a gateway may translate to anything: NAT64
+// (64:ff9b::/96 and the local-use 64:ff9b:1::/48), 6to4 (2002::/16) and IPv4-compatible (::/96).
+// IPv4-mapped addresses (::ffff:a.b.c.d) are folded to IPv4 by To4 below.
+var alwaysDenied = MustCIDRs("100.64.0.0/10", "0.0.0.0/8", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4",
+	"64:ff9b::/96", "64:ff9b:1::/48", "2002::/16", "::/96")
 
 // MustCIDRs parses CIDRs, panicking on a bad one (for constants and validated config).
 func MustCIDRs(cidrs ...string) []*net.IPNet {

@@ -389,6 +389,8 @@ out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set n
 ykind CiliumNetworkPolicy 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' 'mode cilium: the default-deny CNP'
 bad 'networkPolicies.mode cilium and networkPolicies.enabled false: choose one' --set networkPolicies.mode=cilium --set networkPolicies.enabled=false
 bad 'networkPolicies.mode kubernetes needs runController.enabled' --set networkPolicies.mode=kubernetes --set runController.enabled=false
+# the proxy trusts the egress annotation because the run-pod policy alone lets the run-controller write it
+bad 'networkPolicies.mode kubernetes needs runPodPolicy.enabled' --set networkPolicies.mode=kubernetes --set runPodPolicy.enabled=false
 bad "at '/networkPolicies/mode'" --set networkPolicies.mode=calico
 
 # The egress proxy and the components' NetworkPolicies, kubernetes mode only (plan Task 13, PR13).
@@ -412,6 +414,7 @@ ykind NetworkPolicy "$(npsel room-broker) | .egress[] | select(.ports[0].port ==
 ykind NetworkPolicy "$(npsel run-controller) | ((.egress | map(.ports[0].port) | sort | join(\",\")) == \"53,443\" and (.ingress | map(.ports[].port) | join(\",\")) == \"9090\")" 'the run-controller reaches DNS and the apiserver only, and takes only metrics'
 ykind Deployment 'select(.metadata.name=="egress-proxy") | .spec.template.spec | (.containers[0].image == "ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000" and (.containers[0].args | join(",")) == "egress-proxy" and .containers[0].securityContext.readOnlyRootFilesystem == true and .securityContext.runAsNonRoot == true and .serviceAccountName == "egress-proxy" and .volumes[0].configMap.name == "run-controller-config")' 'the proxy is the run-controller image by digest, restricted, reading the controller config'
 ykind Deployment 'select(.metadata.name=="egress-proxy") | .spec.replicas == 2' 'two proxy replicas'
+ykind Deployment 'select(.metadata.name=="egress-proxy") | (.spec.template.spec.containers[0].env | map(select(.name | test("^MAX_TUNNELS"))) | map(.name + "=" + .value) | join(",")) == "MAX_TUNNELS=1024,MAX_TUNNELS_PER_CLIENT=64"' 'the proxy caps its tunnels, in all and per client'
 ykind PodDisruptionBudget 'select(.metadata.name=="egress-proxy") | .spec.minAvailable == 1' 'the proxy PDB'
 ykind Service 'select(.metadata.name=="egress-proxy") | (.spec.ports | map(.port) | join(",")) == "3128"' 'the proxy Service on 3128'
 ykind Role 'select(.metadata.name=="egress-proxy") | (.metadata.namespace == "agents" and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "pods" and (.rules[0].verbs | sort | join(",")) == "get,list,watch")' 'the proxy watches pods in the runs namespace, nothing else'

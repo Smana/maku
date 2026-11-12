@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -70,7 +71,12 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	d := &egressproxy.Dialer{Resolver: net.DefaultResolver, Deny: egressproxy.MustCIDRs(cfg.EgressProxy.DenyCIDRs...),
 		Dial: (&net.Dialer{}).DialContext}
-	p := &egressproxy.Proxy{Index: x, Dial: d.DialContext, Log: log, Count: count, Bytes: bytes}
+	maxAll, maxClient, err := tunnelCaps(getenv)
+	if err != nil {
+		return err
+	}
+	p := &egressproxy.Proxy{Index: x, Dial: d.DialContext, Log: log, Count: count, Bytes: bytes,
+		MaxTunnels: maxAll, MaxTunnelsPerClient: maxClient}
 	var synced atomic.Bool
 	probes := http.NewServeMux()
 	probes.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
@@ -82,10 +88,11 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	errLog := slog.NewLogLogger(log.Handler(), slog.LevelWarn)
-	// The proxy's server: a tunnel is long-lived, so only the request headers are timed; the tunnel's
-	// own idle timeout ends it.
+	// The proxy's server: a tunnel is long-lived, so only the request headers and an idle keep-alive
+	// connection are timed; the proxy clears a hijacked tunnel's deadlines, and its own idle timeout
+	// ends it.
 	servers := map[string]*http.Server{
-		":3128": {Handler: p, ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 8 << 10, ErrorLog: errLog},
+		":3128": {Handler: p, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 8 << 10, ErrorLog: errLog},
 		":9090": opsServer(promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), log),
 		":9091": opsServer(probes, log),
 	}
@@ -119,6 +126,34 @@ func EgressProxy(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	})
 	log.Info("egress-proxy starting", "namespace", cfg.Namespace)
 	return g.Wait()
+}
+
+// The tunnel caps' defaults, when the chart sets none (egressProxy.maxTunnels, maxTunnelsPerClient).
+const (
+	defaultMaxTunnels          = 1024
+	defaultMaxTunnelsPerClient = 64
+)
+
+// tunnelCaps reads MAX_TUNNELS and MAX_TUNNELS_PER_CLIENT: positive integers, defaulted when unset.
+func tunnelCaps(getenv func(string) string) (all, perClient int, err error) {
+	read := func(key string, def int) (int, error) {
+		v := getenv(key)
+		if v == "" {
+			return def, nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return 0, fmt.Errorf("egress-proxy: %s %q is not a positive integer", key, v)
+		}
+		return n, nil
+	}
+	if all, err = read("MAX_TUNNELS", defaultMaxTunnels); err != nil {
+		return 0, 0, err
+	}
+	if perClient, err = read("MAX_TUNNELS_PER_CLIENT", defaultMaxTunnelsPerClient); err != nil {
+		return 0, 0, err
+	}
+	return all, perClient, nil
 }
 
 // podIndexHandler feeds the index from the pod informer; a delete may arrive as a tombstone.

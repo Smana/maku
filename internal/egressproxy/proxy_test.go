@@ -53,7 +53,7 @@ type fixture struct {
 	mu   sync.Mutex
 }
 
-func newProxy(t *testing.T, x *Index, idle time.Duration) *fixture {
+func newProxy(t *testing.T, x *Index, idle time.Duration, mut ...func(*Proxy)) *fixture {
 	t.Helper()
 	up := echo(t)
 	f := &fixture{log: &syncBuf{}}
@@ -64,6 +64,9 @@ func newProxy(t *testing.T, x *Index, idle time.Duration) *fixture {
 			f.mu.Unlock()
 			return (&net.Dialer{}).DialContext(ctx, "tcp", up)
 		}}
+	for _, m := range mut {
+		m(p)
+	}
 	s := httptest.NewServer(p)
 	t.Cleanup(s.Close)
 	f.url = strings.TrimPrefix(s.URL, "http://")
@@ -185,6 +188,45 @@ func TestProxyClosesAnIdleTunnel(t *testing.T) {
 	if d := time.Since(start); d > 3*time.Second {
 		t.Fatalf("closed after %s, not after the idle timeout", d)
 	}
+}
+
+// capped checks that one more tunnel than the cap is refused 429 while the others stay open, and
+// that closing one frees its slot.
+func capped(t *testing.T, mut func(*Proxy), reason string) {
+	t.Helper()
+	f := newProxy(t, mapped(), time.Minute, mut)
+	r1, c1, _ := connect(t, f.url, http.MethodConnect, "github.com:443")
+	r2, _, _ := connect(t, f.url, http.MethodConnect, "api.github.com:443")
+	if r1.StatusCode != http.StatusOK || r2.StatusCode != http.StatusOK {
+		t.Fatalf("under the cap: %d %d", r1.StatusCode, r2.StatusCode)
+	}
+	r3, _, _ := connect(t, f.url, http.MethodConnect, "github.com:443")
+	if r3.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("over the cap: status %d", r3.StatusCode)
+	}
+	if !strings.Contains(f.log.String(), "refuse run=abcdefgh github.com:443") || !strings.Contains(f.log.String(), reason) {
+		t.Fatalf("log %q lacks the refusal and %q", f.log.String(), reason)
+	}
+	_ = c1.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r4, _, _ := connect(t, f.url, http.MethodConnect, "github.com:443")
+		if r4.StatusCode == http.StatusOK {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a closed tunnel frees its slot: still %d", r4.StatusCode)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestProxyCapsTunnelsPerClient(t *testing.T) {
+	capped(t, func(p *Proxy) { p.MaxTunnelsPerClient = 2 }, "tunnels from this client")
+}
+
+func TestProxyCapsTunnelsGlobally(t *testing.T) {
+	capped(t, func(p *Proxy) { p.MaxTunnels = 2 }, "tunnels in all")
 }
 
 func TestProxyKeepsABusyTunnel(t *testing.T) {

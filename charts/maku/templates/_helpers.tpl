@@ -83,6 +83,8 @@ keys and fails; kubernetes needs the run-controller, whose proxy and per-run pol
 {{- fail "networkPolicies.mode cilium and networkPolicies.enabled false: choose one (unset networkPolicies.enabled, the old key)" -}}
 {{- else if and (eq $mode "kubernetes") (not .Values.runController.enabled) -}}
 {{- fail "networkPolicies.mode kubernetes needs runController.enabled: the egress proxy and the per-run NetworkPolicies are the run-controller's" -}}
+{{- else if and (eq $mode "kubernetes") (not .Values.runPodPolicy.enabled) -}}
+{{- fail "networkPolicies.mode kubernetes needs runPodPolicy.enabled: the egress proxy trusts a run pod's maku.ogenki.io/egress annotation because the run-pod policy alone lets the run-controller write it" -}}
 {{- end -}}
 {{- $mode -}}
 {{- end -}}

@@ -59,9 +59,39 @@ func TestLoadConfigKubernetesMode(t *testing.T) {
 		"no proxy labels": kubeGood() + strings.Replace(kubeModeConfig, "  labels: {app.kubernetes.io/name: egress-proxy}\n", "", 1),
 		"no proxy ns":     kubeGood() + strings.Replace(kubeModeConfig, "  namespace: agent-platform\n", "", 1),
 		"bad deny cidr":   kubeGood() + kubeModeConfig + "  denyCIDRs: [10.0.0.0]\n",
+		"port 0":          kubeGood() + strings.Replace(kubeModeConfig, ":3128", ":0", 1),
+		"port 70000":      kubeGood() + strings.Replace(kubeModeConfig, ":3128", ":70000", 1),
 	} {
 		if _, err := cfgFrom(t, body); err == nil || !strings.Contains(err.Error(), "egressProxy") {
 			t.Errorf("%s: want an egressProxy error, got %v", name, err)
+		}
+	}
+}
+
+// Every port that reaches a NetworkPolicy is 1-65535, checked at load (CodeQL
+// go/incorrect-integer-conversion: no unchecked int to int32).
+func TestPortsAreRangeChecked(t *testing.T) {
+	for _, p := range []string{"0", "70000"} {
+		if _, err := cfgFrom(t, goodConfig+"roomToolsURL: http://room-broker.agent-platform.svc.cluster.local:"+p+"/mcp\n"); err == nil {
+			t.Errorf("roomToolsURL port %s: want an error", p)
+		}
+		if _, err := ModelFrom(map[string][]byte{"api_key": []byte("k"), "model": []byte("m"),
+			"base_url": []byte("https://llm.example.com:" + p + "/v1")}); err == nil {
+			t.Errorf("model port %s: want an error", p)
+		}
+	}
+	if got := tcp(0, 70000, 443); len(got) != 1 || got[0].Port.IntValue() != 443 {
+		t.Fatalf("tcp drops an out-of-range port: %v", got)
+	}
+}
+
+// A run takes no ingress: NetworkPolicy always admits the kubelet's probes (node-local traffic), so
+// the bridge's health port needs no rule, and nothing else may reach a run.
+func TestKubeNetworkPolicyTakesNoIngress(t *testing.T) {
+	for _, room := range []string{"", "roomroom"} {
+		np := KubeNetworkPolicy(goRun(func(r *v1alpha1.AgentRun) { r.Spec.RoomRef = room }), kubeConfig(t), testModel, "abcdefgh")
+		if len(np.Spec.Ingress) != 0 || len(np.Spec.PolicyTypes) != 2 {
+			t.Fatalf("room %q: ingress %v, policyTypes %v", room, np.Spec.Ingress, np.Spec.PolicyTypes)
 		}
 	}
 }
@@ -166,13 +196,10 @@ func TestEnvtestKubernetesModeCreatesANetworkPolicy(t *testing.T) {
 	}
 }
 
-func TestKubeNetworkPolicySelectsTheRunAndOpensOnlyTheBridgeProbe(t *testing.T) {
+func TestKubeNetworkPolicySelectsTheRunAndReachesTheProxy(t *testing.T) {
 	np := KubeNetworkPolicy(goRun(), kubeConfig(t), testModel, "abcdefgh")
 	if np.Spec.PodSelector.MatchLabels[LabelRunID] != "abcdefgh" || np.Name != "run-abcdefgh" || np.Namespace != "agents" {
 		t.Fatalf("selector %v name %s/%s", np.Spec.PodSelector, np.Namespace, np.Name)
-	}
-	if len(np.Spec.Ingress) != 1 || len(np.Spec.Ingress[0].Ports) != 1 || np.Spec.Ingress[0].Ports[0].Port.IntValue() != BridgeHealthPort {
-		t.Fatalf("ingress %v", np.Spec.Ingress)
 	}
 	var proxy bool
 	for _, e := range np.Spec.Egress {

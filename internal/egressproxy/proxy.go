@@ -5,6 +5,7 @@ package egressproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -41,6 +42,40 @@ type Proxy struct {
 	Log         *slog.Logger
 	Count       func(decision string) // optional
 	Bytes       func(n int64)         // optional
+	// MaxTunnels caps the open tunnels in all, MaxTunnelsPerClient those of one source IP; 0 is no
+	// cap. A CONNECT over either is refused 429 before anything is dialled.
+	MaxTunnels, MaxTunnelsPerClient int
+
+	mu     sync.Mutex
+	open   map[string]int // by client IP
+	nTotal int
+}
+
+// acquire takes a tunnel slot for ip, or says which cap is full.
+func (p *Proxy) acquire(ip string) (full string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch {
+	case p.MaxTunnels > 0 && p.nTotal >= p.MaxTunnels:
+		return fmt.Sprintf("too many tunnels in all (%d)", p.MaxTunnels)
+	case p.MaxTunnelsPerClient > 0 && p.open[ip] >= p.MaxTunnelsPerClient:
+		return fmt.Sprintf("too many tunnels from this client (%d)", p.MaxTunnelsPerClient)
+	}
+	if p.open == nil {
+		p.open = map[string]int{}
+	}
+	p.open[ip]++
+	p.nTotal++
+	return ""
+}
+
+func (p *Proxy) release(ip string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.nTotal--
+	if p.open[ip]--; p.open[ip] <= 0 {
+		delete(p.open, ip)
+	}
 }
 
 func (p *Proxy) count(decision string) {
@@ -83,6 +118,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.refuse(w, run, target, "not on the run's allow-list", http.StatusForbidden)
 		return
 	}
+	if full := p.acquire(ip); full != "" {
+		p.refuse(w, run, target, full, http.StatusTooManyRequests)
+		return
+	}
+	defer p.release(ip)
 	up, err := p.Dial(r.Context(), target)
 	if errors.Is(err, ErrRefused) {
 		p.refuse(w, run, target, err.Error(), http.StatusForbidden)
@@ -107,6 +147,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.count(DecisionError)
 		return
 	}
+	// The server's header and idle deadlines must not end the tunnel: its own idle timeout does.
+	_ = client.SetDeadline(time.Time{})
 	p.Log.Info("allow run=" + run + " " + target)
 	p.count(DecisionAllow)
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {

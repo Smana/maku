@@ -13,6 +13,23 @@ import (
 	"github.com/Smana/maku/internal/runctl"
 )
 
+func TestTunnelCaps(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	all, per, err := tunnelCaps(env(nil))
+	if err != nil || all != 1024 || per != 64 {
+		t.Fatalf("defaults: %d %d %v", all, per, err)
+	}
+	all, per, err = tunnelCaps(env(map[string]string{"MAX_TUNNELS": "10", "MAX_TUNNELS_PER_CLIENT": "2"}))
+	if err != nil || all != 10 || per != 2 {
+		t.Fatalf("set: %d %d %v", all, per, err)
+	}
+	for _, bad := range []string{"0", "-1", "x"} {
+		if _, _, err := tunnelCaps(env(map[string]string{"MAX_TUNNELS_PER_CLIENT": bad})); err == nil {
+			t.Errorf("%q: want an error", bad)
+		}
+	}
+}
+
 func TestPodIndexHandlerForgetsATombstonedPod(t *testing.T) {
 	x := egressproxy.NewIndex()
 	h := podIndexHandler(x)

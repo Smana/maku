@@ -45,10 +45,6 @@ spec:
       podSelector:
         matchLabels:
           app.kubernetes.io/name: room-broker
-  ingress:
-  - ports:
-    - port: 8085
-      protocol: TCP
   podSelector:
     matchLabels:
       agents.ogenki.io/run-id: abcdefgh
