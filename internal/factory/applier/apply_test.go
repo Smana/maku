@@ -72,12 +72,27 @@ func TestApplyIssue(t *testing.T) {
 func TestApplyIssueIgnoresAForeignMarker(t *testing.T) {
 	r := newRig(t, 0)
 	id := r.request(t, runID, hardening.Issue, hardening.IssuePayload{Title: "docs: a follow-up", Body: issueMD})
-	r.fac.SetIssue(forge.Issue{Number: 40, Author: "mallory", Labels: []string{proposedLabel}, Body: "x\n\n" + hardening.Marker(id)})
+	r.fac.SetIssue(forge.Issue{Number: 40, Author: "mallory", CreatedAt: r.now, Labels: []string{proposedLabel}, Body: "x\n\n" + hardening.Marker(id)})
 	r.tick(t)
 	if a := r.only(t, id); a.kind != envelope.KindOutputApplied || strings.HasSuffix(a.rec.Object, "/issues/40") {
 		t.Fatalf("answer %+v", a)
 	}
 	if len(r.fac.Created()) != 1 {
 		t.Errorf("filed %q", r.fac.Created())
+	}
+}
+
+// The replay lookup reads the factory App's issues by author: one a maintainer relabelled away
+// from factory/proposed is still found, and nothing is filed twice.
+func TestApplyIssueFoundAfterARelabel(t *testing.T) {
+	r := newRig(t, 7)
+	id := r.request(t, runID, hardening.Issue, hardening.IssuePayload{Title: "docs: a follow-up", Body: issueMD})
+	r.fac.SetIssue(forge.Issue{Number: 41, Author: factory, CreatedAt: r.now, Labels: []string{"triaged"}, Body: "x\n\n" + hardening.Marker(id)})
+	r.tick(t)
+	if a := r.only(t, id); a.kind != envelope.KindOutputApplied || !strings.HasSuffix(a.rec.Object, "/issues/41") {
+		t.Fatalf("answer %+v", a)
+	}
+	if len(r.fac.Created()) != 0 {
+		t.Errorf("filed again: %q", r.fac.Created())
 	}
 }

@@ -5,10 +5,10 @@ package forge
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"

@@ -406,7 +406,7 @@ func (f *Fake) ClosePR(_ context.Context, n int) error {
 }
 
 // CreateIssue implements the forge's CreateIssue: it records "title\nbody\nlabels: a,b", stores the
-// issue as the factory App's, open, numbered from 501 with an id 9000 more, and returns it.
+// issue as Author's, open, created at Now, numbered from 501 with an id 9000 more, and returns it.
 func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []string) (forge.Issue, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -418,7 +418,7 @@ func (f *Fake) CreateIssue(_ context.Context, title, body string, labels []strin
 	for k := range f.issues { // above every seeded issue: a number is never reused
 		n = max(n, k+1)
 	}
-	i := forge.Issue{Number: n, ID: int64(9000 + n), Title: title, Body: body, State: "OPEN",
+	i := forge.Issue{Number: n, ID: int64(9000 + n), Title: title, Body: body, State: "OPEN", CreatedAt: f.now(),
 		Author: f.author(), Labels: slices.Clone(labels)}
 	f.issues[n] = i
 	return i, nil

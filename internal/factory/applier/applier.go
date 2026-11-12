@@ -35,8 +35,16 @@ const (
 	DefaultAnswerWait = 5 * time.Minute
 )
 
+// maxCatchUp bounds one tick's read of a room: rooms.Client reads at most 10,000 events a call, so
+// a room is read in calls until its last seq. A room not caught up within these calls answers
+// nothing this tick and goes on from its cursor on the next.
+const maxCatchUp = 10
+
 // writerRoles are the run roles whose outputs the applier answers (hardening.Roles).
 var writerRoles = []string{"implementer", "tester"}
+
+// errStopped leaves a request pending: the kill switch engaged before its write.
+var errStopped = errors.New("applier: the kill switch is engaged")
 
 // Publisher is the agents App's connection to one repository, its token from PublisherTokens
 // (HR11): it opens and edits the task's pull request, comments, and labels. *forge.GitHub
@@ -55,12 +63,13 @@ type Publisher interface {
 // factory/proposed (HR11, v4 D12). The reconciler's TaskForge implements it.
 type Filer interface {
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
-	IssuesLabelledSince(ctx context.Context, label string, since time.Time) ([]forge.Issue, error)
+	IssuesByAuthorSince(ctx context.Context, login string, since time.Time) ([]forge.Issue, error)
 }
 
 // Rooms is the broker's system API as the applier uses it; rooms.Client implements it.
 type Rooms interface {
 	EventsSince(ctx context.Context, room string, afterSeq int64, keep func(envelope.Event) bool) ([]envelope.Event, int64, error)
+	LastSeq(ctx context.Context, room string) (int64, error)
 	Output(ctx context.Context, room, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error
 }
 
@@ -92,8 +101,9 @@ type Applier struct {
 	// AgentsLogin and FactoryLogin are the publisher's and the factory App's logins: the
 	// applier recognises its own writes only by them.
 	AgentsLogin, FactoryLogin string
-	// Interval is the poll (DefaultInterval); AnswerWait how long after a run ends its requests
-	// are still answered (DefaultAnswerWait).
+	// Interval is the poll (DefaultInterval). AnswerWait is how long after a run ends its requests
+	// are still applied (DefaultAnswerWait); for as long again, what is still unanswered is
+	// refused output_expired, and then the run is no longer read.
 	Interval, AnswerWait time.Duration
 	Now                  func() time.Time
 	Metrics              Metrics
@@ -122,6 +132,12 @@ type request struct {
 	redacted bool
 }
 
+// window is one writer run the applier still reads, and whether its answer wait ran out.
+type window struct {
+	rec     *v1alpha1.RunRecord
+	expired bool
+}
+
 // NeedLeaderElection is true: two replicas would apply the same request twice.
 func (a *Applier) NeedLeaderElection() bool { return true }
 
@@ -146,12 +162,10 @@ func (a *Applier) Start(ctx context.Context) error {
 	}
 }
 
-// Tick reads every live task's room once and answers what is unanswered. Nothing is applied while
-// the kill switch is engaged, or when it cannot be read.
+// Tick reads every live task's room up to its last seq, then answers what is unanswered. While the
+// kill switch is engaged, or cannot be read, nothing is written; a run past its answer wait still
+// gets output_expired, which writes nothing.
 func (a *Applier) Tick(ctx context.Context) error {
-	if on, err := killswitch.Engaged(ctx, a.Reader, a.Namespace); err != nil || on {
-		return err
-	}
 	var l v1alpha1.TaskList
 	if err := a.Reader.List(ctx, &l, client.InNamespace(a.Namespace)); err != nil {
 		return fmt.Errorf("list tasks: %w", err)
@@ -180,39 +194,104 @@ func (a *Applier) Tick(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// liveRuns are t's writer runs still running, or ended at most AnswerWait ago.
-func (a *Applier) liveRuns(t *v1alpha1.Task) map[string]*v1alpha1.RunRecord {
+// liveRuns are t's writer runs still running or ended at most twice AnswerWait ago, those past
+// AnswerWait marked expired.
+func (a *Applier) liveRuns(t *v1alpha1.Task) map[string]window {
 	wait := a.AnswerWait
 	if wait <= 0 {
 		wait = DefaultAnswerWait
 	}
-	out := map[string]*v1alpha1.RunRecord{}
+	out := map[string]window{}
 	for i := range t.Status.Runs {
 		rec := &t.Status.Runs[i]
 		if rec.Started == nil || !slices.Contains(writerRoles, rec.Role) {
 			continue
 		}
-		if rec.Finished == nil || a.Now().Sub(rec.Finished.Time) <= wait {
-			out[rec.ID] = rec
+		if rec.Finished == nil {
+			out[rec.ID] = window{rec: rec}
+			continue
+		}
+		switch ago := a.Now().Sub(rec.Finished.Time); {
+		case ago <= wait:
+			out[rec.ID] = window{rec: rec}
+		case ago <= 2*wait:
+			out[rec.ID] = window{rec: rec, expired: true}
 		}
 	}
 	return out
 }
 
-// room reads the room past its cursor, then answers each live run's requests in seq order. A run
-// whose request cannot be answered now stops there for this tick, so its caps still count in
-// order.
-func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]*v1alpha1.RunRecord) error {
+// stopped is the kill switch, read now: an unreadable one is engaged.
+func (a *Applier) stopped(ctx context.Context) bool {
+	on, err := killswitch.Engaged(ctx, a.Reader, a.Namespace)
+	return err != nil || on
+}
+
+// room reads the room to its last seq, then answers each live run's requests in seq order. Nothing
+// is answered before the read has caught up: a request's answer may lie anywhere after it, and a
+// request answered before its answer is read would be applied again (HR16). A run whose request
+// cannot be answered now stops there for this tick, so its caps still count in order.
+func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]window) error {
 	st := a.rooms[t.Status.RoomRef]
 	if st == nil {
 		st = &roomState{runs: map[string]*runState{}}
 		a.rooms[t.Status.RoomRef] = st
 	}
-	evs, cursor, err := a.Rooms.EventsSince(ctx, t.Status.RoomRef, st.cursor,
-		func(e envelope.Event) bool { return e.Type == envelope.Message && e.RunID != "" })
+	last, err := a.Rooms.LastSeq(ctx, t.Status.RoomRef)
 	if err != nil {
-		return fmt.Errorf("read the room: %w", err)
+		return fmt.Errorf("read the room's last seq: %w", err)
 	}
+	for range maxCatchUp {
+		if st.cursor >= last {
+			break
+		}
+		evs, cursor, err := a.Rooms.EventsSince(ctx, t.Status.RoomRef, st.cursor,
+			func(e envelope.Event) bool { return e.Type == envelope.Message && e.RunID != "" })
+		if err != nil {
+			return fmt.Errorf("read the room: %w", err)
+		}
+		st.read(evs)
+		if cursor <= st.cursor {
+			break // nothing past the cursor, whatever lastSeq said
+		}
+		st.cursor = cursor
+	}
+	if st.cursor < last {
+		a.Log.Info("output applier: a room is still being read, nothing answered yet", "task.id", t.Name, "cursor", st.cursor, "last", last)
+		return nil
+	}
+	stopped := a.stopped(ctx)
+	var errs []error
+	for id, rs := range st.runs {
+		w, ok := live[id]
+		if !ok {
+			continue
+		}
+		for len(rs.pending) > 0 {
+			var err error
+			switch {
+			case w.expired:
+				err = a.refuse(ctx, t, id, rs, rs.pending[0], hardening.RefuseExpired, rs.counts)
+			case stopped:
+				err = errStopped
+			default:
+				err = a.answer(ctx, t, w.rec, rs, rs.pending[0])
+			}
+			if errors.Is(err, errStopped) {
+				break
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("run %s: %w", id, err))
+				break
+			}
+			rs.pending = rs.pending[1:]
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// read takes a page of events in: requests join their run's queue, answers close them.
+func (st *roomState) read(evs []envelope.Event) {
 	for _, e := range evs {
 		kind, rec, ok := envelope.ReadOutput(e, e.RunID)
 		if !ok {
@@ -228,22 +307,6 @@ func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]*v
 			rs.answer(kind, rec)
 		}
 	}
-	st.cursor = cursor
-	var errs []error
-	for id, rs := range st.runs {
-		rec, ok := live[id]
-		if !ok {
-			continue
-		}
-		for len(rs.pending) > 0 {
-			if err := a.answer(ctx, t, rec, rs, rs.pending[0]); err != nil {
-				errs = append(errs, fmt.Errorf("run %s: %w", id, err))
-				break
-			}
-			rs.pending = rs.pending[1:]
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func (st *roomState) run(id string) *runState {
@@ -279,8 +342,21 @@ func (rs *runState) done(req request, n hardening.Counts) {
 	rs.answered[req.rec.ID] = true
 }
 
-// answer checks one request and applies or refuses it, then posts the answer. An error leaves it
-// pending: the next tick finds its own write by its marker, so nothing is written twice (HR16).
+// refuse answers req refused with r and spends n.
+func (a *Applier) refuse(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, r hardening.Refusal, n hardening.Counts) error {
+	if err := a.post(ctx, t, runID, envelope.KindOutputRefused, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
+		Digest: req.rec.Digest, Bytes: req.rec.Bytes, Reason: string(r)}, req); err != nil {
+		return err
+	}
+	rs.done(req, n)
+	return nil
+}
+
+// answer answers one request. Its own earlier write, found by the output id it carries, is answered
+// applied without a second check, so a request never gets both answers. Otherwise it is checked,
+// and applied or refused; the kill switch is read again just before the write. A refusal GitHub
+// makes for good is answered output_unavailable; any other error leaves it pending for the next
+// tick, where the lookup finds a write whose answer was lost (HR16).
 func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunRecord, rs *runState, req request) error {
 	if rs.claim == nil {
 		x, found, err := a.Runs.Get(ctx, rec.ID)
@@ -293,16 +369,18 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		rs.claim = &x
 	}
 	typ := hardening.OutputType(req.rec.Type)
-	refuse := func(r hardening.Refusal) error {
-		return a.post(ctx, t, rec.ID, envelope.KindOutputRefused, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
-			Digest: req.rec.Digest, Bytes: req.rec.Bytes, Reason: string(r)}, req)
-	}
 	if !slices.Contains(a.Enforced(t.Spec.Repository), typ) || typ == hardening.Push {
-		if err := refuse(hardening.RefuseType); err != nil { // the gate serves only enforced types: this guards it
-			return err
-		}
-		rs.done(req, rs.counts)
-		return nil
+		return a.refuse(ctx, t, rec.ID, rs, req, hardening.RefuseType, rs.counts) // the gate serves only enforced types: this guards it
+	}
+	n := maps.Clone(rs.counts) // spent only once the answer is posted
+	obj, found, err := a.find(ctx, t, rec, typ, req.rec.ID)
+	if err != nil {
+		return err
+	}
+	if found {
+		n.Take(typ)
+		return a.applied(ctx, t, rec.ID, rs, req, n, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
+			Digest: req.rec.Digest, Bytes: req.rec.Bytes, Object: obj})
 	}
 	c := a.Checker(t.Spec.Repository)
 	t5 := hardening.ModeOff
@@ -310,7 +388,6 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		t5 = hardening.ModeAudit
 	}
 	c.Layers = hardening.LayersFor(hardening.ModeEnforce, t5)
-	n := maps.Clone(rs.counts) // spent only once the answer is posted
 	v := c.Check(ctx, &n, hardening.Request{Type: typ, Payload: req.rec.Payload, OwnIssue: t.Spec.Issue, Canary: rs.claim.Canary})
 	switch {
 	case v.Refusal == hardening.RefuseCanary:
@@ -321,24 +398,23 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		v.Refusal = hardening.RefuseSecret
 	}
 	if v.Refusal != "" {
-		if err := refuse(v.Refusal); err != nil {
-			return err
-		}
-		rs.done(req, n)
-		return nil
+		return a.refuse(ctx, t, rec.ID, rs, req, v.Refusal, n)
+	}
+	if a.stopped(ctx) {
+		return errStopped
 	}
 	prov := hardening.Provenance{Room: t.Status.RoomRef, Run: rec.ID, Role: rec.Role, Task: t.Name, TaskURL: taskURL(t),
 		Model: rs.claim.Model, Output: req.rec.ID}
-	obj, refusal, err := a.apply(ctx, t, rec, v.Payload, prov)
-	if err != nil {
+	obj, refusal, err := a.apply(ctx, t, v.Payload, prov)
+	switch {
+	case forge.Unappliable(err):
+		a.Log.Warn("output applier: GitHub refused an output for good", "task.id", t.Name, "run.id", rec.ID,
+			"output.id", req.rec.ID, "type", req.rec.Type, "err", err)
+		return a.refuse(ctx, t, rec.ID, rs, req, hardening.RefuseUnavailable, n)
+	case err != nil:
 		return err
-	}
-	if refusal != "" {
-		if err := refuse(refusal); err != nil {
-			return err
-		}
-		rs.done(req, n)
-		return nil
+	case refusal != "":
+		return a.refuse(ctx, t, rec.ID, rs, req, refusal, n)
 	}
 	sanitised, err := json.Marshal(v.Payload)
 	if err != nil {
@@ -352,15 +428,20 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		}
 		out.Audit = append(out.Audit, envelope.OutputFinding{Layer: string(f.Layer), Reason: string(f.Refusal)})
 	}
-	if err := a.post(ctx, t, rec.ID, envelope.KindOutputApplied, out, req); err != nil {
+	return a.applied(ctx, t, rec.ID, rs, req, n, out)
+}
+
+func (a *Applier) applied(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, n hardening.Counts, out envelope.OutputRecord) error {
+	if err := a.post(ctx, t, runID, envelope.KindOutputApplied, out, req); err != nil {
 		return err
 	}
 	rs.done(req, n)
 	return nil
 }
 
-// post answers in the room and records the wait. The broker keeps one answer per output id, so a
-// retried post never writes a second.
+// post answers in the room and records the wait. The broker keys an answer's replay on its kind
+// and output id, so a retried post of the same answer is stored once; one id never gets two kinds
+// because a found write is answered applied before any check.
 func (a *Applier) post(ctx context.Context, t *v1alpha1.Task, runID string, kind envelope.MessageKind, out envelope.OutputRecord, req request) error {
 	if err := a.Rooms.Output(ctx, t.Status.RoomRef, runID, kind, out); err != nil {
 		return fmt.Errorf("post the %s answer: %w", kind, err)

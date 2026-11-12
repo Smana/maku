@@ -179,7 +179,11 @@ an answer the factory did not stamp neither answers a request nor scores, so the
 An applied `output_applied` digests the payload as the factory published it, after T2. Its
 GitHub object carries the output id, so a crash between the write and the answer never writes
 twice: `Agent-Output: <id>` in the pull request's footer, and `<!-- maku-output:<id> -->` as the
-last line of a comment or an issue body.
+last line of a comment or an issue body. The applier reads a room to its last seq before it
+answers anything, and a request whose own write it finds is answered `output_applied` without a
+second check. A refusal GitHub makes for good is `output_unavailable`. A request still
+unanswered when its run's answer wait runs out, under the kill switch for instance, is
+`output_expired`.
 
 The factory writes its three kinds through
 [`POST /v1/rooms/{id}/outputs`](api.md#post-v1roomsidoutputs). The append's idempotency key is

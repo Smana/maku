@@ -24,6 +24,7 @@ import (
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
 	"github.com/Smana/maku/internal/factory/killswitch"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -50,7 +51,14 @@ type fakeRooms struct {
 	events  []envelope.Event
 	answers []answer
 	failOut int // the next failOut Output calls fail
+	page    int // EventsSince's cap per call, as rooms.Client's 10,000; 0 is none
 	now     func() time.Time
+}
+
+func (f *fakeRooms) LastSeq(context.Context, string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return int64(len(f.events)), nil
 }
 
 type answer struct {
@@ -70,10 +78,11 @@ func (f *fakeRooms) EventsSince(_ context.Context, _ string, after int64, keep f
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []envelope.Event
-	cursor := after
+	cursor, read := after, 0
 	for _, e := range f.events {
-		if e.Seq > after {
+		if e.Seq > after && (f.page == 0 || read < f.page) {
 			cursor = e.Seq
+			read++
 			if keep == nil || keep(e) {
 				out = append(out, e)
 			}
@@ -172,6 +181,7 @@ func newRig(t *testing.T, issue int, mutate ...func(*Applier)) *rig {
 	r.rooms = &fakeRooms{now: func() time.Time { return r.now }}
 	r.pub, r.fac = forgetest.NewFake(), forgetest.NewFake()
 	r.pub.Author = agents
+	r.pub.Now, r.fac.Now = func() time.Time { return r.now }, func() time.Time { return r.now }
 	started := metav1.NewTime(r.now.Add(-time.Hour))
 	task := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: taskID, Namespace: ns},
 		Spec: v1alpha1.TaskSpec{Repository: repo, Issue: issue, Text: "fix it"},
@@ -525,40 +535,199 @@ func TestApplierT5Audit(t *testing.T) {
 	}
 }
 
-// A run ended longer than AnswerWait ago is no longer read, and nothing is applied under the stop.
-func TestApplierWindowAndStop(t *testing.T) {
-	r := newRig(t, 7)
-	id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
-	if err := r.c.Create(t.Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: ns}}); err != nil {
-		t.Fatal(err)
-	}
-	r.tick(t)
-	if len(r.rooms.got()) != 0 {
-		t.Fatal("answered under the stop")
-	}
-	if err := r.c.Delete(t.Context(), &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: ns}}); err != nil {
-		t.Fatal(err)
-	}
+func (r *rig) finish(t *testing.T, ago time.Duration) {
+	t.Helper()
 	var task v1alpha1.Task
 	if err := r.c.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: taskID}, &task); err != nil {
 		t.Fatal(err)
 	}
-	ended := metav1.NewTime(r.now.Add(-DefaultAnswerWait - time.Second))
+	ended := metav1.NewTime(r.now.Add(-ago))
 	task.Status.Runs[0].Finished = &ended
 	if err := r.c.Status().Update(t.Context(), &task); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func (r *rig) stop(t *testing.T, on bool) {
+	t.Helper()
+	cm := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: ns}}
+	var err error
+	if on {
+		err = r.c.Create(t.Context(), cm)
+	} else {
+		err = r.c.Delete(t.Context(), cm)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Nothing is applied under the stop. A run ended within AnswerWait is still answered; one past it
+// gets output_expired for whatever is still unanswered, stop or not, and is then no longer read.
+func TestApplierWindowAndStop(t *testing.T) {
+	r := newRig(t, 7)
+	id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	r.stop(t, true)
 	r.tick(t)
 	if len(r.rooms.got()) != 0 {
-		t.Fatal("answered a run past its answer wait")
+		t.Fatal("answered under the stop")
 	}
-	ended = metav1.NewTime(r.now.Add(-time.Minute))
-	task.Status.Runs[0].Finished = &ended
-	if err := r.c.Status().Update(t.Context(), &task); err != nil {
-		t.Fatal(err)
+	r.finish(t, time.Minute)
+	r.tick(t)
+	if len(r.rooms.got()) != 0 {
+		t.Fatal("answered under the stop within the answer wait")
 	}
+	r.finish(t, DefaultAnswerWait+time.Second)
+	r.tick(t)
+	if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseExpired) {
+		t.Fatalf("a request past the answer wait under the stop: %+v", a)
+	}
+	if len(r.pub.Comments(7)) != 0 {
+		t.Error("written under the stop")
+	}
+
+	r = newRig(t, 7)
+	id = r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	r.finish(t, time.Minute)
 	r.tick(t)
 	if a := r.only(t, id); a.kind != envelope.KindOutputApplied {
 		t.Fatalf("a run ended a minute ago is still answered: %+v", a)
+	}
+	r.finish(t, 3*DefaultAnswerWait)
+	late := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "late"})
+	r.tick(t)
+	for _, a := range r.rooms.got() {
+		if a.rec.ID == late {
+			t.Errorf("a run long ended is still read: %+v", a)
+		}
+	}
+}
+
+// stopAfter is a Reader whose kill switch engages after its first read: a stop that lands between
+// the tick's start and the write.
+type stopAfter struct {
+	client.Client
+	mu    sync.Mutex
+	reads int
+}
+
+func (s *stopAfter) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*corev1.ConfigMap); ok && key.Name == killswitch.ConfigMap {
+		s.mu.Lock()
+		s.reads++
+		n := s.reads
+		s.mu.Unlock()
+		if n > 1 {
+			return nil // found: engaged
+		}
+	}
+	return s.Client.Get(ctx, key, obj, opts...)
+}
+
+// The kill switch is read again before each write, not once per tick.
+func TestApplierStopBeforeTheWrite(t *testing.T) {
+	r := newRig(t, 7)
+	r.a.Reader = &stopAfter{Client: r.c}
+	r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	_ = r.a.Tick(t.Context())
+	if len(r.pub.Comments(7)) != 0 || len(r.rooms.got()) != 0 {
+		t.Fatalf("written after the stop engaged: %q", r.pub.Comments(7))
+	}
+}
+
+// The catch-up read pages to the room's last seq before answering anything: a request whose answer
+// lies past the first page is never applied again (HR16).
+func TestApplierCatchesUpBeforeAnswering(t *testing.T) {
+	r := newRig(t, 7)
+	r.rooms.page = 3
+	id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	for range 5 {
+		r.rooms.add(envelope.Event{RunID: runID, Type: envelope.Message, Origin: envelope.OriginHarness,
+			Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + runID}, TS: r.now, Payload: json.RawMessage(`{"kind":"chat","text":"x"}`)})
+	}
+	// An earlier leader applied it and answered: the answer sits past the first page.
+	if err := r.rooms.Output(t.Context(), room, runID, envelope.KindOutputApplied, envelope.OutputRecord{ID: id, Type: "comment",
+		Digest: strings.Repeat("a", 64), Object: "https://github.com/owner/repo/issues/7#issuecomment-1"}); err != nil {
+		t.Fatal(err)
+	}
+	r.tick(t)
+	if len(r.pub.Comments(7)) != 0 {
+		t.Fatalf("a request answered past the first page was applied again: %q", r.pub.Comments(7))
+	}
+	if n := len(r.rooms.got()); n != 1 {
+		t.Errorf("%d answers, want the earlier leader's one", n)
+	}
+	// And a new request after the catch-up is answered.
+	next := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "again"})
+	r.tick(t)
+	r.tick(t)
+	if a := r.only(t, next); a.kind != envelope.KindOutputApplied {
+		t.Fatalf("after the catch-up: %+v", a)
+	}
+}
+
+// A refusal no retry changes is answered output_unavailable instead of blocking the run's queue,
+// and the next request is still answered.
+func TestApplierRefusesUnappliable(t *testing.T) {
+	r := newRig(t, 7, func(a *Applier) { a.Factory = func(string) Filer { return nil } })
+	issue := r.request(t, runID, hardening.Issue, hardening.IssuePayload{Title: "docs: a follow-up", Body: issueMD})
+	r.pub.FailCreates(&forge.PermanentError{Status: 422, Err: errors.New("validation failed")})
+	pr := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+	comment := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	r.tick(t)
+	for _, id := range []string{issue, pr} {
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseUnavailable) {
+			t.Errorf("answer %+v, want output_unavailable", a)
+		}
+	}
+	if a := r.only(t, comment); a.kind != envelope.KindOutputApplied {
+		t.Errorf("the queue after them: %+v", a)
+	}
+}
+
+// A request whose own write is already on GitHub is answered applied without being checked again,
+// so it can never get both answers.
+func TestApplierFoundWriteIsApplied(t *testing.T) {
+	r := newRig(t, 7, func(a *Applier) {
+		a.Checker = func(string) hardening.Checker { return hardening.Checker{} } // no scanner: T3 would refuse everything
+	})
+	id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	if _, err := r.pub.CommentWithID(t.Context(), 7, "done\n\n"+hardening.Marker(id)); err != nil {
+		t.Fatal(err)
+	}
+	r.tick(t)
+	if a := r.only(t, id); a.kind != envelope.KindOutputApplied || !strings.Contains(a.rec.Object, "#issuecomment-") {
+		t.Fatalf("answer %+v", a)
+	}
+	if len(r.pub.Comments(7)) != 1 {
+		t.Errorf("written again: %q", r.pub.Comments(7))
+	}
+}
+
+// One open and five edits per run: a closed pull request on the branch is not replaced, and a
+// pull request someone else opened on it is not edited.
+func TestApplierPRCapAndAuthor(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pr   forge.PR
+		want hardening.Refusal
+	}{
+		"the branch's pull request was closed": {forge.PR{Number: 40, State: "CLOSED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseCap},
+		"the branch's pull request was merged": {forge.PR{Number: 40, State: "MERGED", Author: agents, HeadRef: "agent/" + taskID}, hardening.RefuseCap},
+		"someone else's pull request is open":  {forge.PR{Number: 40, State: "OPEN", Author: "mallory", HeadRef: "agent/" + taskID}, hardening.RefuseTarget},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, 7)
+			tc.pr.URL = "https://github.com/owner/repo/pull/40"
+			r.pub.SetPR(tc.pr)
+			r.pub.SetBranch("agent/"+taskID, 40)
+			id := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+			r.tick(t)
+			if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(tc.want) {
+				t.Fatalf("answer %+v, want %s", a, tc.want)
+			}
+			if calls := strings.Join(r.pub.Calls(), ";"); strings.Contains(calls, "-pr ") {
+				t.Errorf("written: %s", calls)
+			}
+		})
 	}
 }
