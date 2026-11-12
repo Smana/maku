@@ -113,6 +113,17 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = io.WriteString(w, `{"seq":10}`)
 	})
+	mux.HandleFunc("POST /v1/rooms/{id}/outputs", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		b.mu.Lock()
+		b.bodies = append(b.bodies, string(raw))
+		b.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"seq":11}`)
+	})
 	mux.HandleFunc("POST /v1/rooms/{id}/queue", func(w http.ResponseWriter, r *http.Request) {
 		if b.refuse(w, r) {
 			return
@@ -645,6 +656,40 @@ func TestTaskFactsRefusesBeforeARequest(t *testing.T) {
 	}
 	if len(r.b.auth) != 0 {
 		t.Fatalf("%d requests reached the broker", len(r.b.auth))
+	}
+}
+
+// HR2: the factory's output answers go to the outputs route as {runId, kind, record}; a body the
+// broker refuses is ErrBadMessage, and what the broker would refuse is never sent.
+func TestClientOutput(t *testing.T) {
+	r := newRig(t, 0)
+	rec := envelope.OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: strings.Repeat("a", 64),
+		Object: "https://github.com/o/r/pull/7", Reason: "would_wait"}
+	if err := r.c.Output(t.Context(), "3buqdlot", "cf4ato2x", envelope.KindOutputShadowed, rec); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"runId":"cf4ato2x","kind":"output_shadowed","record":{"id":"0123456789abcdef","type":"pr","digest":"` +
+		strings.Repeat("a", 64) + `","object":"https://github.com/o/r/pull/7","reason":"would_wait"}}`
+	if body := r.b.bodies[len(r.b.bodies)-1]; body != want {
+		t.Fatalf("body %s", body)
+	}
+	r.b.fail["/v1/rooms/3buqdlot/outputs"], r.b.reason = http.StatusBadRequest, wire.ReasonBadMessage
+	if err := r.c.Output(t.Context(), "3buqdlot", "cf4ato2x", envelope.KindOutputShadowed, rec); !errors.Is(err, ErrBadMessage) {
+		t.Fatalf("a refused body: %v", err)
+	}
+	sent := len(r.b.auth)
+	for name, err := range map[string]error{
+		"a bad room":        r.c.Output(t.Context(), "3BUQDLOT", "cf4ato2x", envelope.KindOutputShadowed, rec),
+		"a bad run":         r.c.Output(t.Context(), "3buqdlot", "run-1", envelope.KindOutputShadowed, rec),
+		"a request":         r.c.Output(t.Context(), "3buqdlot", "cf4ato2x", envelope.KindOutputRequested, rec),
+		"an invalid record": r.c.Output(t.Context(), "3buqdlot", "cf4ato2x", envelope.KindOutputRefused, rec),
+	} {
+		if err == nil {
+			t.Errorf("%s: sent", name)
+		}
+	}
+	if len(r.b.auth) != sent {
+		t.Fatalf("%d requests reached the broker", len(r.b.auth)-sent)
 	}
 }
 

@@ -1,164 +1,18 @@
-# STAGE 2 PRECONDITION: the defaults below ARE the demo. Before production values are added they move
-# to a values-demo.yaml, because Helm deep-merges maps: a production file would otherwise inherit
-# demo: true, factoryInsecure, allowUnsandboxed and the rest of the demo's settings.
-# One value selects what the chart is for: `demo` is the laptop install (kind or k3d, no Cilium, no
-# cert-manager, no CNPG, no OIDC). Left unset the chart fails: production values arrive with stage 2.
-# A subchart's values cannot depend on a parent value, so the demo's values are the ones below and
-# `profile` is the gate: an unset profile renders nothing and says why.
+# The production-safe skeleton. These defaults render nothing on their own: `profile` must be set,
+# and values.schema.json rejects unknown or malformed values.
+#   - The demo is `-f values-demo.yaml` (profile: demo, with every demo default).
+#   - `profile: production` fails closed until its seams arrive (v4 rollout steps 2 to 6).
+# Install the agent-factory-crds chart first. Values may still change in 0.x minors until v4.0.0.
 profile: ""
 
-# The two Secrets the demo needs, rendered by this chart unless an existing Secret is named. Their
-# names are the subcharts' (agent-model, agent-factory-github): existingSecret must equal that name.
-demo:
-  # agent-model in the runs namespace: keys base_url, model, api_key.
-  model:
-    existingSecret: ""
-    baseURL: ""
-    name: ""
-    apiKey: ""
-  # agent-factory-github in the release namespace: keys app_id, private_key. ONE GitHub App backs
-  # the factory, the merger and the run token (docs/factory.md#demo).
-  githubApp:
-    existingSecret: ""
-    id: ""
-    privateKey: ""
-
-maku:
-  enabled: true
-  # The cluster has no Cilium: nothing confines the network.
-  networkPolicies:
-    enabled: false
-  runs:
-    group: maku.ogenki.io
-    namespace: agents
-    namePrefix: run-
-  broker:
-    # One loopback user behind a port-forward, no identity provider.
-    human: {mode: local}
-    # The :8090 room tools, where a reviewer records its verdict. No gateway stands in front, so the
-    # broker verifies each run's own token (audience room-tools) through the apiserver, and the run
-    # controller hands the harness http://room-broker.<ns>.svc.<clusterDomain>:8090/mcp: plain HTTP,
-    # in-cluster only, acceptable for the demo; production keeps a gateway and its key (auth: key).
-    roomTools: {enabled: true, auth: tokenreview}
-    # The apiserver vouches for the runs and for the factory (kind's issuer is not reachable).
-    runIssuer: {mode: tokenreview}
-    systemIssuer: {mode: tokenreview}
-    # `{{ .Release.Namespace }}` is rendered by the maku chart.
-    systemPrincipals:
-      "system:serviceaccount:{{ .Release.Namespace }}:agent-factory": system:factory
-    # The factory's API has no TLS in the demo, and nothing reaches it but the broker.
-    factoryURL: http://agent-factory:8082
-    factoryInsecure: true
-    database:
-      brokerSecret: rooms-broker-dsn
-      ownerSecret: rooms-owner-dsn
-    # The certificate is the umbrella's (tls.yaml), not cert-manager's.
-    tls:
-      issuerRef: {name: ""}
-  runController:
-    runtimeClassName: ""
-    allowUnsandboxed: true
-    createRuntimeClass: false
-maku-factory:
-  enabled: true
-  demo: true
-  replicas: 1
-  # The demo's config, passed through `tpl`: `{{ .Release.Namespace }}` and the cluster domain are
-  # the release's. Name the repository, the maintainers and the App's three bot logins (the slug of
-  # the one App, as `<slug>[bot]`) to match yours, and the check names its CI reports.
-  config:
-    demo: true
-    factory: demo
-    factoryLogin: maku-demo[bot]
-    agentsLogin: maku-demo[bot]
-    roomsURL: http://localhost:8080
-    broker:
-      url: https://room-broker.{{ .Release.Namespace }}.svc.{{ .Values.clusterDomain }}:8443
-      caFile: /etc/agent-factory/openbao-ca/ca.crt
-      tokenFile: /var/run/secrets/agents/rooms/token
-    # The same portable kind as maku.runs.
-    runs:
-      group: maku.ogenki.io
-      namespace: agents
-      namePrefix: run-
-    # One App: the merger signs with the factory's own files.
-    github:
-      appIDFile: /etc/agent-factory-github/app_id
-      privateKeyFile: /etc/agent-factory-github/private_key
-      mergerAppIDFile: /etc/agent-factory-github/app_id
-      mergerKeyFile: /etc/agent-factory-github/private_key
-    poll: {issues: 60s, tasks: 30s, meter: 30s}
-    defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
-    # The loop is scoper, implementer, completion judge, reviewer, gate. Without a row a class has no
-    # scope and no judge. `revert` gets none: it is mechanical.
-    loops:
-      review: {scope: scoper, judge: tier-light}
-      docs-links: {scope: scoper, judge: tier-light}
-    # A values file replaces this list whole: restate the entire entry (see values-mine.example.yaml)
-    # with the name, maintainers, mergerLogin and the three check names changed.
-    repositories:
-      - name: owner/repo
-        maintainers: [owner]
-        triggerLabel: factory/ready
-        # Shadow: the factory judges and posts the gate's status, and merges nothing on its own. Every
-        # class carries allowedFiles, which is what bounds a merge with no policy-bot.
-        classes:
-          docs-links: {shadow: true, allowedFiles: ['^.+\.(md|mdx|adoc|rst)$']}
-          revert: {shadow: true, allowedFiles: ['^.+$']}
-        merge:
-          requiredChecks: [ci]
-          verifyChecks: [ci]
-          leakScanCheck: ci
-          gateStatus: true
-          policyBot: false
-          # Approve-to-merge: a maintainer's approval of the current head is the merge, shadow class
-          # or not. The merger merges that head as a human merge (factory/approved-merge, no
-          # automatic revert); off, the room shows the approval and a maintainer merges on GitHub.
-          approveToMerge: true
-          mergerLogin: maku-demo[bot]
-          autoMergesPerDay: 5
-          fixRuns: 2
-          checkReruns: 1
-          verifyFor: 30m
-          revertWindow: 168h
-          breaker: {window: 10, maxReverts: 1}
-    tiers:
-      light: {model: agent-default, runTokens: 300000, taskTokens: 600000, runMinutes: 20}
-      standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45}
-      frontier: {model: agent-default, runTokens: 4000000, taskTokens: 8000000, runMinutes: 90}
-    templates:
-      solo: {roles: [implementer, reviewer], maxReviewRounds: 2}
-      pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-      # Triage picks the template by class and tier (its matrix), and `defaults.template` is ignored,
-      # so every template triage can choose must exist. `solo` carries the reviewer so the demo loop
-      # has one; the tester role is deprecated, so `trio` is a pair here.
-      trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
-      investigate: {roles: [triager]}
-    caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
-    api:
-      listen: ":8082"
-
-# Must equal `maku.clusterDomain`: the broker certificate's SANs are built from it.
+# Must equal `maku.clusterDomain` and `maku-factory.clusterDomain`: the broker certificate's SANs
+# are built from it.
 clusterDomain: cluster.local
 
-tls:
-  # Validity of the generated CA and broker certificate, in days. Both are kept across upgrades.
-  days: 3650
-  caName: maku-demo-ca
-
-postgres:
-  # postgres:17, pinned by digest.
-  image: docker.io/library/postgres:17@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
-  storage: 1Gi
-  # Empty: the cluster's default StorageClass (kind and k3d both provide one).
-  storageClassName: ""
-  resources:
-    requests: {cpu: 100m, memory: 256Mi}
-    limits: {cpu: "1", memory: 512Mi}
-
-networkPolicies:
-  # Plain Kubernetes NetworkPolicies (no Cilium in the demo): ingress to rooms-db only from the
-  # broker, and to the factory's API port only from the broker (its ops/probe port stays open to all, its
-  # intake port is closed). Runs keep their egress. Needs a CNI that
-  # enforces NetworkPolicy (k3s does; kind from v0.24 with kindnet).
-  plain: true
+# Off in the skeleton: only the umbrella's own templates render, each behind the profile gate, so an
+# unset or unready profile fails with the gate's message rather than a subchart's. values-demo.yaml
+# turns both on.
+maku:
+  enabled: false
+maku-factory:
+  enabled: false

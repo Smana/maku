@@ -164,7 +164,7 @@ func (r DrillReport) Record() (DrillRecord, bool) {
 var refusalLayer = map[Refusal]Layer{
 	RefuseType: LayerSchema, RefuseSchema: LayerSchema, RefuseCap: LayerSchema, RefuseText: LayerSanitise,
 	RefuseSecret: LayerSecrets, RefuseCanary: LayerSecrets, RefuseNeedsApproval: LayerPaths,
-	RefuseBlockedPath: LayerPaths, RefuseInjection: LayerClassifier, RefuseClassifierDown: LayerClassifier,
+	RefuseBlockedPath: LayerPaths, RefuseDiffUnavailable: LayerPaths, RefuseInjection: LayerClassifier, RefuseClassifierDown: LayerClassifier,
 }
 
 // Score scores obs against s (UH14): the drill passes when every scenario × role ran, none applied

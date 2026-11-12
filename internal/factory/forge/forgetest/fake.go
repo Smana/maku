@@ -209,7 +209,26 @@ func (f *Fake) LabelEvents(_ context.Context, n int, label string) ([]forge.Labe
 	return out, nil
 }
 
-// SetEventsTruncated makes issue n's LabelEvents report the page cap, as GitHub does past it.
+// LabelEventsBy implements the forge's LabelEventsBy: n's stored events by actor at or after
+// since, oldest first, truncated as LabelEvents is.
+func (f *Fake) LabelEventsBy(_ context.Context, n int, actor string, since time.Time) ([]forge.LabelEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []forge.LabelEvent
+	for _, e := range f.events[n] {
+		if e.Actor == actor && !e.At.Before(since) {
+			out = append(out, e)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b forge.LabelEvent) int { return a.At.Compare(b.At) })
+	if f.cut[n] {
+		return out, forge.ErrEventsTruncated
+	}
+	return out, nil
+}
+
+// SetEventsTruncated makes issue n's LabelEvents and LabelEventsBy report the page cap, as GitHub
+// does past it.
 func (f *Fake) SetEventsTruncated(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -382,7 +401,30 @@ func (f *Fake) IssuesLabelledSince(ctx context.Context, label string, _ time.Tim
 	return f.IssuesLabelled(ctx, label)
 }
 
-// FailLists makes every IssuesLabelledSince fail with err.
+// IssuesByAuthorSince implements the forge's IssuesByAuthorSince: the stored issues login opened
+// at or after since (by CreatedAt), oldest first, unless FailLists made it fail.
+func (f *Fake) IssuesByAuthorSince(_ context.Context, login string, since time.Time) ([]forge.Issue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	var out []forge.Issue
+	for _, i := range f.issues {
+		if i.Author == login && !i.CreatedAt.Before(since) {
+			out = append(out, i)
+		}
+	}
+	slices.SortFunc(out, func(a, b forge.Issue) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return a.Number - b.Number
+	})
+	return out, nil
+}
+
+// FailLists makes every IssuesLabelledSince and IssuesByAuthorSince fail with err.
 func (f *Fake) FailLists(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

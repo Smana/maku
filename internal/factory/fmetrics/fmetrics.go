@@ -149,6 +149,7 @@ var (
 
 // Set is the factory's instruments. Record through its methods, which fix each label set.
 type Set struct {
+	hardeningShadow      metric.Int64Counter
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -329,6 +330,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	var errs []error
 	check := func(err error) { errs = append(errs, err) }
 	var err error
+	s.hardeningShadow, err = meter.Int64Counter("agent_factory_hardening_shadow_total",
+		metric.WithDescription("Agent writes the hardening shadow pass checked under audit (H1, HR3), by repository, output type, verdict (would_apply, would_refuse, would_wait), and the deciding layer and reason."))
+	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
 	check(err)
@@ -880,6 +884,33 @@ func (s *Set) LabelEventsTruncated(ctx context.Context, label string) {
 // Revoked counts a run the factory revoked, by reason: the run meter's OnRevoke.
 func (s *Set) Revoked(ctx context.Context, reason string) {
 	s.revocations.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", oneOf(reason, revocations())), principalOf(ctx)))
+}
+
+// The hardening shadow counter's closed label sets: hardening's vocabulary, as the record writes it.
+var (
+	shadowTypes = []string{"none", "push", "pr", "comment", "labels", "issue"}
+	// incomplete: a run whose pass failed maxShadowAttempts times, given up on (type none).
+	shadowVerdicts = []string{"would_apply", "would_refuse", "would_wait", "incomplete"}
+	shadowLayers   = []string{"none", "t1_schema", "t2_sanitise", "t3_secrets", "t4_paths", "t5_classifier"}
+	shadowReasons  = []string{"none", "output_type", "output_schema", "output_cap", "output_text", "secret_found", "canary_leaked",
+		"protected_path_needs_approval", "protected_path_blocked", "diff_unavailable", "injection_suspected",
+		"classifier_unavailable", "shadow_incomplete"}
+)
+
+// HardeningShadow counts one output_shadowed record (H1, HR3), or a run given up on, under the
+// repository ctx names. An empty type, layer or reason reads none; any value outside the
+// vocabulary reads other.
+func (s *Set) HardeningShadow(ctx context.Context, typ, verdict, layer, reason string) {
+	none := func(v string) string {
+		if v == "" {
+			return "none"
+		}
+		return v
+	}
+	typ, layer, reason = none(typ), none(layer), none(reason)
+	s.hardeningShadow.Add(ctx, 1, metric.WithAttributes(attribute.String("type", oneOf(typ, shadowTypes)),
+		attribute.String("verdict", oneOf(verdict, shadowVerdicts)), attribute.String("layer", oneOf(layer, shadowLayers)),
+		attribute.String("reason", oneOf(reason, shadowReasons)), s.repoOf(ctx)))
 }
 
 // PrincipalShadow counts a run admitted past a day's cap while budgets.enforcePrincipal is off

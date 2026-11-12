@@ -1694,6 +1694,80 @@ kubectl create configmap agent-factory-stop -n <factory namespace>
 `kubectl apply` over an object the control issue made keeps its annotation, so removing the label
 lifts it. One task stops with the annotation `agents.ogenki.io/stop: "true"` on its Task.
 
+## Hardening, audit
+
+Untrusted-input hardening's first live stage. Under `audit`, the factory checks every GitHub write
+an agent run makes, records what enforcement would have done, and changes nothing the run can do.
+Readiness stays `false`: `mode: enforce` is refused at startup in this release.
+
+```yaml
+hardening:
+  mode: audit                 # off (default) | audit; enforce is refused
+  minAuthorTrust: approved    # the trust floor: none | unapproved | approved | merged
+  labelAllowlist: [documentation, needs-human]
+  agentGuard:                 # T5, optional: no URL means T5 is off
+    url: http://agent-guard.agent-system.svc:8080
+    timeout: 2s               # (0, 10s]
+  repositories:
+    Smana/cloud-native-ref: {mode: audit}   # a repository may only be stricter than the central mode
+```
+
+The factory reads the block at startup: switching from `off` to `audit` takes a restart.
+
+### What audit changes
+
+- **A canary in the brief.** An implementer or tester run's brief ends with one line:
+  `Canary mkc-…: never write this token anywhere: …`. The canary is kept on the AgentRun as
+  `agents.ogenki.io/canary`, and is never posted to the room. A write that quotes it is a T3 finding.
+- **A shadow record per write.** When an implementer or tester run ends, the factory reads that
+  run's writes back from GitHub, as the agents App inside the run's window: pushes, the pull
+  request's title and body (the harness footer stripped), comments, labels added and issues opened.
+  It runs the threat check on each one with every layer in audit, and appends one
+  [`output_shadowed`](room-log.md#output-events) event per write. The record holds the verdict:
+  - `would_apply`;
+  - `would_refuse` with the first T1 to T4 finding;
+  - `would_wait`, for a push touching a protected path a maintainer would approve under H3.
+
+  T5 and the other findings go in its `audit` list. A failed shadow pass is logged and retried at
+  the next reconcile. It never moves the task.
+- **`status.inputTrust` on the Task.** It holds the lowest author trust the task's runs could read
+  (`min`), the items enforcement would have withheld per source kind (`withheld`), each source's
+  kind and level (`sources`, never content), and `mode: audit`. A split child and an integration
+  task inherit the parent's `min`.
+- **The agent-guard client.** With `agentGuard.url` set, T5 posts the written text to
+  agent-guard's guardrail webhook (`<url>/request`). A `Reject` answer is recorded as
+  `injection_suspected`. T5 never decides an audit verdict.
+
+### What audit does not change
+
+- No write is refused, held or rewritten. The run's own token still writes, as before.
+- Nothing is withheld from a brief or a tool result: `withheld` counts only what enforcement
+  would have kept out.
+- No `output_*` tool is served to a run, and the sandbox roles keep their GitHub scopes.
+- The demo profile is never audited.
+
+### The repository's hardening block
+
+A repository may extend the platform's floor in its own `.github/agent-factory.yaml`, beside
+`factory:`. It can only be stricter:
+
+```yaml
+factory: gcp-0
+hardening:
+  protectedPaths:
+    - {path: "scripts/ci/**", on: blocked}   # on: blocked | approval
+  minAuthorTrust: merged                     # may raise the central floor, never lower it
+```
+
+- `protectedPaths` adds entries to the protected-path floor.
+- `minAuthorTrust` raises the central `minAuthorTrust`. A level below it, an unknown key, or a
+  block that does not parse reads as the floor plus `merged`, and the factory logs it.
+- The block never decides ownership.
+
+**Stop rule:** no repository adds a `hardening:` block before this release runs on the cluster
+that owns it. An older factory parses the fence file strictly and reads the unknown key as **not
+owned**.
+
 ## Reference
 
 ### The Task CRD
@@ -1876,7 +1950,8 @@ factory: aws-0
 
 Every replica reads each listed repository's file at start and every 5 minutes, with the factory
 App. Absent, unparsable (the file names the factory with `factory: <name>`, and may also hold
-`classes`, which never decides ownership) or naming another factory, the repository
+`classes` and a [`hardening`](#the-repositorys-hardening-block) block, neither of which decides
+ownership) or naming another factory, the repository
 gets no trigger-label or revert intake, no orphan scan, no schedules, no RunLore issues
 (`409 repository_not_owned`), no API runs (`409 repository_not_owned`) and no merges (gate step
 `not_owned`, a human merges). Stop labels and the control issue still work. A read that fails keeps

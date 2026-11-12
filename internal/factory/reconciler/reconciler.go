@@ -64,6 +64,8 @@ type RoomLog interface {
 	Consume(ctx context.Context, room string, refs []int64, runID string) error
 	TaskState(ctx context.Context, room, text string, clientSeq int64) error
 	TaskFacts(ctx context.Context, room string, f envelope.TaskFacts, clientSeq int64) error
+	// Output posts the factory's answer to, or shadow of, one of a run's outputs (hardening HR2).
+	Output(ctx context.Context, room, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error
 }
 
 // TaskForge is the part of the forge the reconciler uses, as the factory App.
@@ -88,6 +90,10 @@ type TaskForge interface {
 	Issue(ctx context.Context, number int) (forge.Issue, error)
 	// LabelEvents verifies who added factory/drill to a revert PR (AM6), as intake verifies factory/revert.
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
+	// LabelEventsBy and IssuesByAuthorSince read back the labels and issues an agent run wrote
+	// (hardening HR1's shadow pass).
+	LabelEventsBy(ctx context.Context, number int, actor string, since time.Time) ([]forge.LabelEvent, error)
+	IssuesByAuthorSince(ctx context.Context, login string, since time.Time) ([]forge.Issue, error)
 	CreateIssue(ctx context.Context, title, body string, labels []string) (forge.Issue, error)
 	IssuesLabelled(ctx context.Context, label string) ([]forge.Issue, error)
 	IssuesLabelledSince(ctx context.Context, label string, since time.Time) ([]forge.Issue, error)
@@ -235,6 +241,9 @@ type Reconciler struct {
 	// Coordination is the multi-repository coordination service (v4 MR2): a parent files through
 	// it and a child's authority is re-read through it. nil files nothing and holds every child.
 	Coordination coordinationPort
+	// Hardening is the untrusted-input hardening track's ports (H1): with a repository in audit,
+	// a writer run's brief gets a canary and the task records its input trust. nil is off.
+	Hardening *HardeningPorts
 
 	oldBroker sync.Once // the broker serves no task route: said once per process
 	notServed onceSet   // tasks whose repository is not served, said once each
@@ -473,6 +482,8 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 			return r.stop(ctx, cfg, t, why)
 		}
 	}
+	// H1: a writer run whose shadow pass failed is retried here, on any later pass (audit only).
+	r.shadowPending(ctx, cfg, t)
 	switch t.Status.Phase {
 	case v1alpha1.PhaseReceived:
 		return r.received(ctx, cfg, t)
@@ -718,20 +729,27 @@ func (r *Reconciler) stop(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 	if len(t.Status.Runs) > 0 {
 		absorb(t, all)
 	}
+	// Every live run is revoked first, so none keeps its token while the shadow pass reads GitHub.
+	for _, run := range all {
+		if run.TaskID != t.Name || runs.Terminal(run.Phase) {
+			continue
+		}
+		if err := r.Runs.Annotate(ctx, run.ID, map[string]string{runs.AnnRevoked: "manual"}); err != nil {
+			return err
+		}
+		// Counted now, not with the status write: a replay finds the claim gone or already
+		// revoked, so a deferred count would be lost. A run that carried a revoke was counted
+		// by whoever wrote it, the kill switch's sweeper included (F30).
+		if run.Revoked == "" {
+			r.Metrics.Revoked(fmetrics.WithPrincipal(ctx, run.Payer()), "manual") // as the ledger charged it
+		}
+	}
+	// H1: shadowed after the revoke and before the deletes, while the claims and their canaries
+	// still exist; the window runs to the revoke plus runEndGrace (audit only).
+	r.shadowBeforeStop(ctx, cfg, t)
 	for _, run := range all {
 		if run.TaskID != t.Name {
 			continue
-		}
-		if !runs.Terminal(run.Phase) {
-			if err := r.Runs.Annotate(ctx, run.ID, map[string]string{runs.AnnRevoked: "manual"}); err != nil {
-				return err
-			}
-			// Counted now, not with the status write: a replay finds the claim gone or already
-			// revoked, so a deferred count would be lost. A run that carried a revoke was counted
-			// by whoever wrote it, the kill switch's sweeper included (F30).
-			if run.Revoked == "" {
-				r.Metrics.Revoked(fmetrics.WithPrincipal(ctx, run.Payer()), "manual") // as the ledger charged it
-			}
 		}
 		if err := r.deleteRun(ctx, run.ID); err != nil {
 			return err

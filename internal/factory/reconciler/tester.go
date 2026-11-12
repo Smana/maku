@@ -108,6 +108,7 @@ var testerEnds = []string{"contract_ready", "not_testable", "contract_not_red", 
 // testerEnded (R14, F3-R3..R5): a person or a budget stopping it escalates as any run; otherwise GitHub
 // says whether the tester's harness pushed a contract.
 func (r *Reconciler) testerEnded(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) error {
+	r.shadowPending(ctx, cfg, t) // H1: the contract push and any other write, before the outcome (audit only)
 	if slices.Contains(escalatesScoper, reason) {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reason)
 	}

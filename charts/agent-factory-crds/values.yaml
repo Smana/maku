@@ -1,0 +1,4 @@
+# Annotate every CRD with helm.sh/resource-policy: keep, so uninstalling this chart leaves the CRDs,
+# and with them every Room and Task, in place.
+# false drops the keep annotation, so uninstalling deletes every Room and Task.
+keep: true

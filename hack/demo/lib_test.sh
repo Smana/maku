@@ -142,7 +142,7 @@ yq -e '.maku-factory.config.repositories[0].classes.docs-links.shadow == false a
 norm() { yq -o=json -I0 'del(.name, .maintainers, .merge.mergerLogin) | sort_keys(..)' - ; }
 [[ "$(yq '.maku-factory.config.repositories[0]' "$tmp/values.yaml" | norm)" == "$(yq '.maku-factory.config.repositories[0]' charts/agent-factory/values-mine.example.yaml | norm)" ]] || { echo "FAIL: the rendered repositories[0] drifted from values-mine.example.yaml" >&2; fail=1; }
 helm dependency build charts/agent-factory >/dev/null
-if out="$(helm template af charts/agent-factory -n maku -f "$tmp/values.yaml")"; then
+if out="$(helm template af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml -f "$tmp/values.yaml")"; then
   yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/factory-config.yaml"
   eq "$(yq '.repositories[0].name' "$tmp/factory-config.yaml")" octocat/it "rendered chart config names the repository"
   CHART_DEMO_FACTORY_CONFIG="$tmp/factory-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse.log" 2>&1 || { echo "FAIL: the rendered config does not parse:" >&2; cat "$tmp/parse.log" >&2; fail=1; }

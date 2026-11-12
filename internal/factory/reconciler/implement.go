@@ -137,7 +137,8 @@ func (r *Reconciler) recordExisting(cfg *config.Config, t *v1alpha1.Task, x runs
 	}
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
-		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)}})
+		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)},
+		Audited: x.Canary != "" && r.auditsRun(cfg, t, x.Role)}) // the claim says whether it started under audit
 	if overlapPending(t) && x.Role == "triager" {
 		t.Status.Overlap.ScoperRun = x.ID
 	}
@@ -272,6 +273,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	// keys only when its loop is on.
 	s.Search = t.Spec.Search && s.Role == "implementer"
 	source := r.pinModel(cfg, t, &s)
+	r.plantCanary(cfg, t, &s) // hardening audit or enforce only (HR7)
 	err = r.Runs.Create(ctx, s)
 	unbriefed := false
 	if refusedSchema(err) && s.Role == "reviewer" && s.TaskText != "" && s.TaskURL != "" {
@@ -306,8 +308,9 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	now := metav1.NewTime(r.Now())
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, StartSeq: last, HeadSHA: s.Head, Started: &now, ChargedTo: s.ChargedTo,
-		Provenance: v1alpha1.RunProvenance{ModelSource: source}})
+		Provenance: v1alpha1.RunProvenance{ModelSource: source}, Audited: r.auditsRun(cfg, t, s.Role)})
 	t.Status.NextTrigger = ""
+	r.recordInputTrust(ctx, cfg, t, trigger) // hardening audit or enforce only (UH7)
 	r.to(t, phaseFor(s.Role), "")
 	narrateLater(t, narrate.Started(t, s, cfg.RoomsURL))
 	if unbriefed {
@@ -630,6 +633,8 @@ func (r *Reconciler) finished(ctx context.Context, t *v1alpha1.Task, run runs.Ru
 	if cur.Finished == nil {
 		now := metav1.NewTime(r.Now())
 		cur.Finished = &now
+		// What the run could read up to its end (UH7): comments posted while it ran count too.
+		r.recordInputTrust(ctx, r.Cfg.Current(), t, cur.Trigger)
 	}
 	if reason, ok := r.roomReason(ctx, t); ok {
 		return reason
@@ -688,6 +693,9 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	reason := r.finished(ctx, t, run)
 	if reason == "" {
 		return nil
+	}
+	if run.Role == "implementer" {
+		r.shadowPending(ctx, cfg, t) // H1: the run's writes, before its outcome (audit only)
 	}
 	if reason == "pod_lost" {
 		switch run.Reason {

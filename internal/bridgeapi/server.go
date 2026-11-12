@@ -128,6 +128,9 @@ type Server struct {
 	// system:factory); either unset refuses them.
 	Grants      Grants
 	GrantClient string
+	// OutputClient is the one system principal the outputs route serves (the factory,
+	// system:factory, hardening HR2); unset refuses it.
+	OutputClient string
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.
@@ -151,6 +154,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/rooms/{id}/events", s.bounded(0, s.roomEvents))
 	mux.HandleFunc("POST /v1/rooms/{id}/messages", s.bounded(maxMessageBytes, s.roomMessage))
 	mux.HandleFunc("POST /v1/rooms/{id}/task", s.bounded(maxMessageBytes, s.roomTask))
+	mux.HandleFunc("POST /v1/rooms/{id}/outputs", s.bounded(maxMessageBytes, s.roomOutputs))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue", s.bounded(maxMessageBytes, s.queueRoute(s.enqueue)))
 	mux.HandleFunc("GET /v1/rooms/{id}/queue", s.bounded(0, s.queueRoute(s.listQueue)))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue/consume", s.bounded(maxConsumeBytes, s.queueRoute(s.consume)))

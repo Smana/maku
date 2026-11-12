@@ -375,6 +375,18 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			authority = w.Authority
 		}
 	}
+	// The api intake and factory/publish scan what they publish, and both fail closed without it;
+	// the hardening shadow pass scans with it too (T3).
+	redactor, err := redact.New()
+	if err != nil {
+		return err
+	}
+	// Hardening H1: under audit, the shadow pass's checker, and each repository's fence-file
+	// hardening block, fed beside the merge policy's watch. nil under off.
+	hardened := hardeningPorts(cfg, redactor)
+	if hardened != nil {
+		fenced.OnFile = chainOnFile(fenced.OnFile, hardened.Policies.Observe)
+	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	for name, usd := range meter.RunUSD(cfg) {
 		m.RunBudgetUSD(ctx, name, usd)
@@ -398,7 +410,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		Triage: triage.Classify{C: c7,
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
-		Trace: sink, Costs: costs, Decisions: recorder}
+		Trace: sink, Costs: costs, Decisions: recorder, Hardening: hardened}
 	if cfg.PolicyManagement.ApprovalMemory { // stage 5: grants read from the broker, never cached
 		rec.Grants = broker
 	}
@@ -521,11 +533,6 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			}
 			return commentReader(c.gh), true
 		}}}
-	}
-	// The api intake and factory/publish scan what they publish, and both fail closed without it.
-	redactor, err := redact.New()
-	if err != nil {
-		return err
 	}
 	apiSrv.Redact = redactor
 	proposal := func(ctx context.Context, t *factoryv1.Task) (string, error) {

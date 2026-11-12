@@ -117,6 +117,35 @@ type fakeLog struct {
 	noPermit   bool    // the broker does not allow system:factory yet (FR-1)
 	failEvents error   // EventsSince's answer while set
 	read       int     // events EventsSince returned, all calls
+	// outputs are the output answers the broker stored, stamped as it stamps them, one per kind and
+	// output id; outputCalls counts every Output call, refused or replayed ones included.
+	outputs     []envelope.Event
+	outputCalls int
+	failOutput  error // Output's answer while set
+}
+
+func (l *fakeLog) Output(_ context.Context, _, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error {
+	l.outputCalls++
+	switch {
+	case l.failOutput != nil:
+		return l.failOutput
+	case l.noRoom:
+		return &rooms.APIError{Status: 404, Reason: "no_room"}
+	case l.noPermit:
+		return &rooms.APIError{Status: 403, Reason: "not_permitted"}
+	}
+	if err := rec.Validate(kind); err != nil { // rooms.Client refuses an invalid record before sending it
+		return err
+	}
+	for _, e := range l.outputs {
+		if k, r, _ := envelope.ReadOutput(e, e.RunID); k == kind && r.ID == rec.ID {
+			return nil // the broker's replay key: (kind, output id)
+		}
+	}
+	l.outputs = append(l.outputs, envelope.Event{Seq: int64(len(l.outputs) + 1), RunID: runID, Type: envelope.Message,
+		Origin: envelope.OriginClient, Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"},
+		Payload: envelope.Must(envelope.MessagePayload{Kind: kind, Delivery: envelope.DeliveryNone, Output: &rec})})
+	return nil
 }
 
 func (l *fakeLog) TaskFacts(_ context.Context, _ string, f envelope.TaskFacts, clientSeq int64) error {

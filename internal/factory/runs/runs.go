@@ -66,7 +66,13 @@ const (
 	// labels the run's cost with them. CREATE only; absent on a task without a profile.
 	AnnCohort  = "agents.ogenki.io/cohort"
 	AnnProfile = "agents.ogenki.io/profile"
+	// The run's canary (hardening T3, HR7), planted in its brief under hardening audit or
+	// enforce: the shadow pass and the applier check the run's outputs against it. CREATE only.
+	AnnCanary = "agents.ogenki.io/canary"
 )
+
+// canaryRE is hardening.NewCanary's shape.
+var canaryRE = regexp.MustCompile(`^mkc-[0-9a-f]{20}$`)
 
 // ScoperMarkerPrefix opens a scoping run's brief (harness roles HR2): its first line is this prefix,
 // then "nudgeAt=N maxToolCalls=M -->". The harness reads the bounds from it, and a reader of a
@@ -126,6 +132,8 @@ type Spec struct {
 	// CoordinationManifestHash the SHA-256 of its exact bytes (v4 MR10), written as
 	// AnnCoordinationManifest and its hash at CREATE only, on a triager claim with no branch.
 	CoordinationManifest, CoordinationManifestHash string
+	// Canary is the run's canary, written as AnnCanary at CREATE only; "" plants none.
+	Canary string
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -177,6 +185,9 @@ func (s Spec) Validate() error {
 	}
 	if s.DataClass != "public" && (config.PublicOnly(s.Model) || config.PublicOnly(judge)) {
 		errs = append(errs, fmt.Errorf("a provider alias (model %q, judge %q) is for public runs only, not a %q one", s.Model, judge, s.DataClass))
+	}
+	if s.Canary != "" && !canaryRE.MatchString(s.Canary) {
+		errs = append(errs, errors.New("the canary is not mkc- and 20 hex digits"))
 	}
 	if err := s.validArtifacts(); err != nil {
 		errs = append(errs, err)
@@ -278,6 +289,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	if s.Profile != "" {
 		ann[AnnProfile] = s.Profile
 	}
+	if s.Canary != "" {
+		ann[AnnCanary] = s.Canary
+	}
 	if b, h := artifactsJSON(s.CoordinationArtifacts); h != "" {
 		ann[AnnCoordinationArtifacts], ann[AnnCoordinationArtifactsHash] = string(b), h
 	}
@@ -294,7 +308,7 @@ func Terminal(phase string) bool { return runwatch.Terminal(phase) }
 // Run is the part of a claim the factory reads back.
 type Run struct {
 	ID, TaskID, Role, Principal, Phase, Reason, PullRequest, Revoked, Branch, RoomRef, Repository string
-	Head, TaskText, RequestHash, Tier, Model, ChargedTo, Cohort, Profile                          string
+	Head, TaskText, RequestHash, Tier, Model, ChargedTo, Cohort, Profile, Canary                  string
 	// What the run ran on (R10): the factory build that created the claim, the
 	// CompositionRevision Crossplane bound it to, and the harness image the composition read
 	// from its pod. Empty until known.
@@ -320,7 +334,7 @@ func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool)
 		PullRequest: str("status", "pullRequest"), Revoked: u.GetAnnotations()[AnnRevoked], Head: u.GetAnnotations()[AnnHead],
 		RequestHash: u.GetAnnotations()[AnnRequestHash], Tier: u.GetLabels()[LabelTier], Model: str("spec", "model"),
 		TaskText: str("spec", "task", "text"), ChargedTo: u.GetAnnotations()[AnnChargedTo],
-		Cohort: u.GetAnnotations()[AnnCohort], Profile: u.GetAnnotations()[AnnProfile],
+		Cohort: u.GetAnnotations()[AnnCohort], Profile: u.GetAnnotations()[AnnProfile], Canary: u.GetAnnotations()[AnnCanary],
 		FactoryVersion: u.GetAnnotations()[AnnFactoryVersion], CompositionRevision: str("spec", "crossplane", "compositionRevisionRef", "name"),
 		HarnessImage: str("status", "harnessImage")}
 	// The CREATE-only start seq (R48): absent means the room was empty when the run was created.
@@ -480,7 +494,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

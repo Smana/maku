@@ -1,0 +1,5 @@
+{{- /* files/ is written by `task crd:gen` from config/crd; never edit it by hand. */}}
+{{- range $path, $_ := .Files.Glob "files/*.yaml" }}
+---
+{{ include "afcrds.crd" (dict "crd" ($.Files.Get $path | fromYaml) "root" $) }}
+{{- end }}

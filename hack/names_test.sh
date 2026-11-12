@@ -21,14 +21,14 @@ printf 'image: ghcr.io/smana/room-broker:v0.29.9\n' > "$tmp/docs/bad-image.md"
 printf 'run roomctl status\n' > "$tmp/docs/bad-cli.md"
 printf 'import "github.com/Smana/agent-platform/internal/store"\n' > "$tmp/bad.go"
 printf 'see cmd/agent-factory/main.go\n' > "$tmp/docs/bad-path.md"
-printf 'helm pull oci://ghcr.io/smana/charts/agent-factory\n' > "$tmp/docs/bad-chart.md"
-printf 'the umbrella chart is charts/agent-factory\n' > "$tmp/docs/ok-umbrella.md"
+printf 'helm pull oci://ghcr.io/smana/charts/agent-platform\n' > "$tmp/docs/bad-chart.md"
+printf 'the umbrella chart is charts/agent-factory, at oci://ghcr.io/smana/charts/agent-factory and agent-factory-crds\n' > "$tmp/docs/ok-umbrella.md"
 out=$(bash "$here/names.sh" "$tmp" 2>&1 || true)
 for f in docs/bad-image.md docs/bad-cli.md bad.go docs/bad-path.md docs/bad-chart.md; do
   grep -q "^$f:1:" <<<"$out" || { echo "names.sh missed $f"; exit 1; }
 done
 grep -q 'FAIL: an old name' <<<"$out"
-if grep -qE 'superpowers|humanapi|ok(-oidc)?\.md|history\.md' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+if grep -qE 'superpowers|humanapi|ok(-oidc|-umbrella)?\.md|history\.md' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
 # Phase 2: the group as a group fails; a label or annotation key and the lease pass (plan D1, D12).
 printf 'apiVersion: agents.ogenki.io/v1alpha1\n' > "$tmp/docs/bad-group.md"
 printf '  - apiGroups: [agents.ogenki.io]\n' > "$tmp/bad-rbac.yaml"
