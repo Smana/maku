@@ -30,7 +30,9 @@ demo:
 
 maku:
   enabled: true
-  # The cluster has no Cilium: nothing confines the network.
+  # The cluster has no Cilium: nothing confines the network. On a CNI that enforces NetworkPolicy
+  # (k3s, kind from v0.24), --set maku.networkPolicies.mode=kubernetes confines the runs with plain
+  # NetworkPolicies and the egress proxy (v4 D6).
   networkPolicies:
     enabled: false
   runs:
@@ -57,6 +59,8 @@ maku:
     database:
       brokerSecret: rooms-broker-dsn
       ownerSecret: rooms-owner-dsn
+      # The umbrella's Postgres, for the broker's NetworkPolicy in mode kubernetes.
+      podLabels: {app.kubernetes.io/name: rooms-db}
     # The certificate is the umbrella's (tls.yaml), not cert-manager's.
     tls:
       issuerRef: {name: ""}

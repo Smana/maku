@@ -59,8 +59,12 @@ spec:
     {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}
     - to:
         - podSelector:
+            {{- with .Values.broker.database.podLabels }}
+            matchLabels: {{- toYaml . | nindent 14 }}
+            {{- else }}
             matchExpressions:
               - {key: {{ .Values.broker.database.podLabel }}, operator: Exists}
+            {{- end }}
       ports: [{port: 5432, protocol: TCP}]
     {{- with $factory }}
     # start_run: POST /v1/runs to factoryURL.

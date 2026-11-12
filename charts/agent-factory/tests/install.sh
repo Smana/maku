@@ -9,12 +9,25 @@
 # bridge are the latest release's, by digest (no run starts here). A dummy GitHub App means the
 # factory cannot pass start-up: the assertion is that it parses its config, mounts everything and
 # logs the App lookup failure. The cluster is always deleted, with its own kubeconfig.
+# NETPOL (k3d only) picks the network leg (v4 D6):
+#   none        the demo as shipped: networkPolicies.mode none (default);
+#   kubernetes  mode kubernetes on k3s's kube-router, which enforces NetworkPolicy: the run-controller's
+#               preflight passes within 3 minutes, its probe went through the egress proxy;
+#   unenforced  mode kubernetes on a k3s started with --disable-network-policy: the preflight refuses
+#               runs (`preflight failed: network:`, gauge network 0).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
 # shellcheck source=hack/quickstart/versions.env
 . hack/quickstart/versions.env
+NETPOL="${NETPOL:-none}"
+case "$NETPOL" in
+  none) ;;
+  kubernetes | unenforced) [[ $CLUSTER_KIND == k3d ]] || { echo "FAIL: NETPOL=$NETPOL runs on k3d only" >&2; exit 2; } ;;
+  *) echo "FAIL: NETPOL=$NETPOL is not none, kubernetes or unenforced" >&2; exit 2 ;;
+esac
 NAME="maku-chart-$CLUSTER_KIND"
+[[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 TAG=e2e
 NS=maku
@@ -29,7 +42,8 @@ dump() {
   kubectl get pods,pvc,svc -A -o wide >&2 || true
   kubectl -n "$NS" describe pods >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp >&2 || true
-  for d in room-broker run-controller agent-factory; do kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 || true; done
+  for d in room-broker run-controller agent-factory egress-proxy; do kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 || true; done
+  kubectl get networkpolicy -A >&2 || true
   kubectl -n "$NS" logs sts/rooms-db --tail=40 >&2 || true
 }
 delete_cluster() {
@@ -63,8 +77,10 @@ step "create the $CLUSTER_KIND cluster $NAME"
 case "$CLUSTER_KIND" in
   k3d)
     ! k3d cluster get "$NAME" >/dev/null 2>&1 || { trap - EXIT; die "cluster $NAME exists"; }
-    k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait \
-      --k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0' \
+    k3s_args=(--k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0')
+    # the unenforced leg: k3s without its NetworkPolicy controller, a CNI that does not enforce
+    [[ $NETPOL != unenforced ]] || k3s_args+=(--k3s-arg '--disable-network-policy@server:0')
+    k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait "${k3s_args[@]}" \
       --kubeconfig-update-default=false --kubeconfig-switch-context=false
     k3d kubeconfig get "$NAME" >"$KUBECONFIG"
     for i in maku-broker maku-run-controller maku-factory; do k3d image import -c "$NAME" "ghcr.io/smana/$i:$TAG"; done ;;
@@ -87,6 +103,7 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set maku-factory.replicas=1
   # the NetworkPolicy probe below runs PROBE_IMAGE in agents: the run-pod policy must allow it
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
+[[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
   helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m &&
@@ -128,6 +145,14 @@ else
   step "the CRD chart first, then the umbrella"
   install_crds
   install_umbrella
+fi
+
+if [[ $NETPOL != none ]]; then
+  # The preflight checks the git Secrets before the network: the dummy App never fills them, so the
+  # network legs fill both with a dummy token right away, before the run-controller's first tick.
+  for s in agent-git agent-git-read; do
+    kubectl -n agents create secret generic "$s" --from-literal=token=dummy-not-a-token >/dev/null
+  done
 fi
 
 step "readiness"
@@ -226,15 +251,60 @@ done
 echo "ok: a broker-labelled pod reaches rooms-db:5432"
 # a run in the runs namespace, labelled as the run controller labels it
 if probe agents agents.ogenki.io/run-id=np-probe,agents.ogenki.io/role=implementer,app.kubernetes.io/managed-by=run-controller; then
-  case "$CLUSTER_KIND" in
+  case "$CLUSTER_KIND/$NETPOL" in
+    # the unenforced leg's point: nothing enforces, and the preflight must say so (below)
+    */unenforced) echo "ok: unenforced: a run-labelled pod reaches rooms-db:5432, as expected without enforcement" ;;
     # kindnet enforces NetworkPolicy from kind v0.24; if this node does not, say so rather than fail
-    kind) echo "NOTE: kind did not enforce the NetworkPolicy here: enforcement is asserted on k3d only" ;;
+    kind/*) echo "NOTE: kind did not enforce the NetworkPolicy here: enforcement is asserted on k3d only" ;;
     *) die "a run-labelled pod reached rooms-db:5432 although the policy admits only the broker" ;;
   esac
 else
   echo "ok: a run-labelled pod in agents cannot reach rooms-db:5432 ($CLUSTER_KIND enforces NetworkPolicy)"
 fi
 kubectl get pods -A -o name | grep -F np-probe- && die "a probe pod was left behind"
+
+if [[ $NETPOL != none ]]; then
+  step "networkPolicies.mode kubernetes ($NETPOL): the egress proxy, the policies and the run-controller's network preflight"
+  kubectl -n "$NS" rollout status deploy/egress-proxy --timeout=180s
+  kubectl -n agents get networkpolicy default-deny >/dev/null || die "no default-deny NetworkPolicy in agents"
+  for np in room-broker run-controller egress-proxy; do kubectl -n "$NS" get networkpolicy "$np" >/dev/null || die "no NetworkPolicy $np"; done
+  # The first tick runs once the Secrets above exist; a probe pod takes up to a minute (pull, start, its
+  # two denied attempts 3 s apart), so 3 minutes is the bound.
+  want="preflight passed"
+  [[ $NETPOL == kubernetes ]] || want="preflight failed: network:"
+  found=0
+  for _ in $(seq 90); do
+    kubectl -n "$NS" logs deploy/run-controller >"$work/rc.log" 2>&1 || true
+    if grep -qF "$want" "$work/rc.log"; then found=1; break; fi
+    sleep 2
+  done
+  ((found)) || { tail -40 "$work/rc.log" >&2; die "the run-controller did not log '$want' within 3 minutes"; }
+  grep -F "$want" "$work/rc.log" | head -1
+  if [[ $NETPOL == kubernetes ]]; then
+    kubectl -n "$NS" logs deploy/egress-proxy --all-containers --prefix >"$work/proxy.log" 2>&1 || true
+    grep -qF "allow run=preflight github.com:443" "$work/proxy.log" ||
+      { cat "$work/proxy.log" >&2; die "the egress proxy did not log the probe's CONNECT (allow run=preflight github.com:443)"; }
+    echo "ok: the preflight passed, and its probe went through the egress proxy"
+  else
+    grep -F "preflight failed: network:" "$work/rc.log" | grep -qF "the CNI does not enforce NetworkPolicy" ||
+      die "the network refusal does not say the CNI does not enforce NetworkPolicy"
+    kubectl -n "$NS" port-forward deploy/run-controller 19090:9090 >/dev/null 2>&1 &
+    pf=$!
+    gauge=""
+    for _ in $(seq 20); do
+      gauge=$(curl -fsS http://127.0.0.1:19090/metrics 2>/dev/null | grep -F 'maku_run_controller_preflight_passed{check="network"}') && break
+      sleep 1
+    done
+    kill "$pf" 2>/dev/null || true
+    [[ $gauge == 'maku_run_controller_preflight_passed{check="network"} 0' ]] || die "the gauge is not network 0: '$gauge'"
+    echo "ok: unenforced: the preflight refuses runs, and the gauge says $gauge"
+  fi
+  kubectl -n agents get pods -l agents.ogenki.io/run-id=preflight -o name | grep -q . && {
+    sleep 10
+    kubectl -n agents get pods -l agents.ogenki.io/run-id=preflight -o name | grep -q . && die "a probe pod was left behind"
+  }
+  true
+fi
 
 step "the runs namespace: its ResourceQuota, and the run-pod policy refuses a pod nobody but the run-controller made"
 kubectl -n agents get resourcequota runs >/dev/null || die "the ResourceQuota runs is missing from agents"

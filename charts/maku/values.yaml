@@ -112,6 +112,9 @@ broker:
     ownerSecret: ""
     # Pod label that selects the PostgreSQL pods in the release namespace (CNPG's by default).
     podLabel: cnpg.io/cluster
+    # networkPolicies.mode kubernetes only: exact labels that select the PostgreSQL pods instead of
+    # podLabel's key (e.g. {app.kubernetes.io/name: rooms-db}, the demo's).
+    podLabels: {}
   tls:
     # The Secret mounted at /etc/room-broker/tls (tls.crt, tls.key). A Certificate is rendered
     # for it only when issuerRef.name is set; otherwise bring the Secret yourself.

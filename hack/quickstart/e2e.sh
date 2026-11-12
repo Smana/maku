@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # quickstart-e2e: this checkout's images and maku in kind, a stub model, one run to Succeeded through maku run.
 # Env: GITHUB_TOKEN REPO (the throwaway repo the harness clones). `.github/workflows/quickstart-e2e.yaml`.
+# E2E_NETPOL=kubernetes installs networkPolicies.mode kubernetes (plain NetworkPolicies and the egress
+# proxy, v4 D6) on the same Cilium, which enforces standard policies, and asserts the run went through
+# the proxy; unset or cilium is the default mode.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 # shellcheck source=hack/quickstart/versions.env
@@ -21,6 +24,8 @@ dump() {
   kubectl -n agents describe agentrun >&2 || true
   kubectl -n maku logs deploy/run-controller --tail=200 >&2 || true
   kubectl -n maku logs deploy/room-broker --tail=200 >&2 || true
+  kubectl -n maku logs -l app.kubernetes.io/name=egress-proxy --prefix --tail=100 >&2 || true
+  kubectl get networkpolicy -A >&2 || true
   for p in $(kubectl -n agents get pods -o name 2>/dev/null); do
     kubectl -n agents logs "$p" --all-containers --prefix --tail=200 >&2 || true
   done
@@ -61,6 +66,12 @@ export MODEL_API_KEY=stub MODEL=stub MODEL_BASE_URL="$STUB_URL" CHART_REF=charts
 # A non-default port exercises the publicURL/port agreement.
 export ROOMCTL="$PWD/.quickstart/e2e/maku" LOCAL_PORT=18080
 export UP_HELM_ARGS="--set e2e.unpinnedImages=true --set broker.image.tag=$TAG --set runController.image.tag=$TAG --set runController.images.harness.tag=$TAG --set runController.images.bridge.tag=$TAG"
+E2E_NETPOL="${E2E_NETPOL:-cilium}"
+case "$E2E_NETPOL" in
+  cilium) ;;
+  kubernetes) UP_HELM_ARGS="$UP_HELM_ARGS --set networkPolicies.mode=kubernetes" ;;
+  *) echo "E2E_NETPOL=$E2E_NETPOL is not cilium or kubernetes" >&2; exit 2 ;;
+esac
 hack/quickstart/up.sh
 
 step "local mode through a real port-forward"
@@ -104,4 +115,17 @@ phase=$(kubectl -n agents get agentrun "$claim" -o jsonpath='{.status.phase}')
 n=$(kubectl -n maku exec rooms-1 -c postgres -- psql -d rooms -tAc \
   "select count(*) from events where room_id='$room' and origin='harness'")
 ((${n:-0} > 0)) || { echo "room $room has no harness-origin event" >&2; exit 1; }
-echo "quickstart-e2e OK: maku run took $claim to Succeeded; room $room has $n harness events"
+
+if [[ $E2E_NETPOL == kubernetes ]]; then
+  step "networkPolicies.mode kubernetes: the run went through the egress proxy, under its own NetworkPolicy"
+  id=${claim#run-}
+  kubectl -n maku logs -l app.kubernetes.io/name=egress-proxy --prefix --tail=-1 >.quickstart/e2e/proxy.log
+  grep -qF "allow run=$id github.com:443" .quickstart/e2e/proxy.log ||
+    { cat .quickstart/e2e/proxy.log >&2; echo "the egress proxy has no 'allow run=$id github.com:443'" >&2; exit 1; }
+  kubectl -n agents get networkpolicy "$claim" >/dev/null || { echo "the run has no NetworkPolicy $claim" >&2; exit 1; }
+  [[ -z $(kubectl -n agents get cnp -o name) ]] || { echo "a CiliumNetworkPolicy exists in agents in mode kubernetes" >&2; exit 1; }
+  kubectl -n maku logs deploy/run-controller --tail=-1 | grep -qF "preflight passed" ||
+    { echo "the run-controller never logged 'preflight passed'" >&2; exit 1; }
+  echo "ok: the proxy allowed run $id github.com:443, its NetworkPolicy exists, no CNP, and the preflight passed"
+fi
+echo "quickstart-e2e OK ($E2E_NETPOL): maku run took $claim to Succeeded; room $room has $n harness events"
