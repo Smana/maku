@@ -185,7 +185,7 @@ func revisionMaterialChanged(base, candidate Plan) string {
 	}
 	for i := range base.Issues {
 		before, after := base.Issues[i], candidate.Issues[i]
-		if after.Index != before.Index || after.Title != before.Title || after.Class != before.Class ||
+		if after.Index != before.Index || after.Title != before.Title || after.Class != before.Class || after.Profile != before.Profile ||
 			!slices.Equal(after.Roles, before.Roles) || !slices.Equal(after.DependsOn, before.DependsOn) {
 			return fmt.Sprintf("candidate issue %d changed protected material", i+1)
 		}
