@@ -137,6 +137,10 @@ func (s *Server) checkPlan(ctx context.Context, a runCreateArgs, p authn.Princip
 	if ref := intake.CheckFinal(plan, candidates, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository)); ref != nil {
 		return ref
 	}
+	// The pin, against the catalogue as the Slack user reads it (P5, P6); the factory checks it again.
+	if ref := s.checkPins(ctx, p, a.OnBehalfOf, plan, intake.SurfaceSlack); ref != nil {
+		return ref
+	}
 	return nil
 }
 
@@ -199,7 +203,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 			return runrequest.TaskResult{}, toolError(err.Error())
 		}
 	}
-	class, suggested := s.plannedClass(ctx, p, a)
+	planned := s.plannedIssue(ctx, p, a)
 	if a.Title != "" {
 		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
@@ -219,10 +223,14 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	}
 	res, err := s.Tasks.CreateTask(ctx, runrequest.TaskRequest{Repository: a.Repo, Title: a.Title, Text: a.Text,
 		DataClass: a.DataClass, MaxCostUSD: a.MaxCost, OnBehalfOf: a.OnBehalfOf, Ref: a.Ref,
-		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key, Class: class, Suggested: suggested})
+		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key,
+		Class: planned.Class, Suggested: planned.suggested(), Profile: planned.Profile})
 	var refused runrequest.ErrRefused
 	if errors.As(err, &refused) {
 		return runrequest.TaskResult{}, toolError("rejected: " + refused.Reason)
+	}
+	if err == nil && planned.Class != "" && !res.Duplicate {
+		s.countChoices(ctx, intake.Plan{Issues: []intake.Issue{intake.Issue(planned)}}, intake.SurfaceSlack)
 	}
 	return res, err
 }
@@ -252,19 +260,26 @@ func (s *Server) runCreated(r runrequest.TaskResult) map[string]any {
 	return out
 }
 
-// plannedClass is the class and the suggested profile of the one issue a checked plan files (P7).
-// The class is bound by the plan's hash; the suggestion is display and the client's copy, so it is
-// rebuilt from the plan repository's catalogue first (review B2): a profile the class does not offer,
-// or any on the config fallback, is never stored. Empty without a plan.
-func (s *Server) plannedClass(ctx context.Context, p authn.Principal, a runCreateArgs) (class, suggested string) {
+// plannedIssue is the one issue a checked plan files (P5, P7): its class and pin are bound by the
+// plan's hash; its suggestion is display and the client's copy, so it is rebuilt from the plan
+// repository's catalogue first (review B2): a profile the class does not offer, or any on the config
+// fallback, is never stored. The zero issue without a plan.
+func (s *Server) plannedIssue(ctx context.Context, p authn.Principal, a runCreateArgs) plannedTask {
 	var plan intake.Plan
 	if !planPresent(a.Plan) || json.Unmarshal(a.Plan, &plan) != nil || len(plan.Issues) != slackFiles {
-		return "", ""
+		return plannedTask{}
 	}
 	plan = intake.Resuggest(plan, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository))
-	is := plan.Issues[0]
-	if is.Suggestion != nil {
-		suggested = is.Suggestion.Profile
+	return plannedTask(plan.Issues[0])
+}
+
+// plannedTask is a planned issue as run_create passes it on.
+type plannedTask intake.Issue
+
+// suggested is the broker's suggested profile, "" for none or the factory's choice.
+func (t plannedTask) suggested() string {
+	if t.Suggestion == nil {
+		return ""
 	}
-	return is.Class, suggested
+	return t.Suggestion.Profile
 }

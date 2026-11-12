@@ -100,7 +100,7 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 	}
 	if p := t.Status.Profile; p != nil {
 		f.Profile = &envelope.ProfileFact{Name: p.Name, Source: p.Source, Cohort: p.Cohort,
-			Recommended: p.Recommended, Reason: p.Reason, Why: p.Why}
+			Recommended: p.Recommended, Reason: p.Reason, Why: p.Why, Requested: p.Requested, Refused: p.Refused}
 	}
 	return f
 }

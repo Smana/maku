@@ -64,7 +64,8 @@ func TestTaskFactsValidateNamesThePolicy(t *testing.T) {
 
 func validProfileFact() ProfileFact {
 	return ProfileFact{Name: "review-frontier", Source: "scoper", Cohort: "treatment",
-		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files."}
+		Recommended: "review-frontier", Reason: "observe", Why: "The change spans several files.",
+		Requested: "review-pair", Refused: "profile_not_allowed"}
 }
 
 func TestProfileFactValidate(t *testing.T) {
@@ -74,7 +75,10 @@ func TestProfileFactValidate(t *testing.T) {
 		ok   bool
 	}{
 		{"every field is valid", func(*ProfileFact) {}, true},
-		{"only the required fields are valid", func(p *ProfileFact) { p.Recommended, p.Reason, p.Why = "", "", "" }, true},
+		{"only the required fields are valid", func(p *ProfileFact) { p.Recommended, p.Reason, p.Why, p.Requested, p.Refused = "", "", "", "", "" }, true},
+		{"the requested profile is bounded", func(p *ProfileFact) { p.Requested = strings.Repeat("r", 64) }, false},
+		{"refused is a known code", func(p *ProfileFact) { p.Refused = "because" }, false},
+		{"refused names a request", func(p *ProfileFact) { p.Requested = "" }, false},
 		{"a name is required", func(p *ProfileFact) { p.Name = "" }, false},
 		{"the name is bounded", func(p *ProfileFact) { p.Name = strings.Repeat("n", 64) }, false},
 		{"the source is an enum", func(p *ProfileFact) { p.Source = "model" }, false},

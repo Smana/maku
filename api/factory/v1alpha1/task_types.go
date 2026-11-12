@@ -428,6 +428,14 @@ type ProfileStatus struct {
 	Resolved bool `json:"resolved,omitempty"`
 	// +optional
 	Counted bool `json:"counted,omitempty"`
+	// Requested is the profile a person pinned (a profile: label or the intake's), honoured or not.
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Requested string `json:"requested,omitempty"`
+	// Refused is why the pin was not applied, a code of intake's closed list; empty when honoured.
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Refused string `json:"refused,omitempty"`
 }
 
 // TaskStatus is the task's audit record: the whole §4 record, including the fields later
@@ -1032,8 +1040,8 @@ type ConfigGenerations struct {
 	MergePolicy int64 `json:"mergePolicy,omitempty"`
 }
 
-// TaskIntake is a planned task's intake record (P7, P13). Class is a declared class only when Login
-// maintains the repository at triage; Suggested is read by the agreement metric alone, never by a
+// TaskIntake is a planned task's intake record (P5, P7, P13). Class is a declared class and Profile
+// a pin only when Login maintains the repository at triage; Suggested is read by the agreement metric alone, never by a
 // brief; Login is the sponsor the factory resolved, never a value from the request.
 type TaskIntake struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-]{0,62}$`
@@ -1044,6 +1052,12 @@ type TaskIntake struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +optional
 	Suggested string `json:"suggested,omitempty"`
+	// Profile is the profile the plan pinned (P5): a pin only when Login maintains the repository at
+	// triage, which checks it again (P6).
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9-]{0,62}$`
+	// +kubebuilder:validation:MaxLength=63
+	// +optional
+	Profile string `json:"profile,omitempty"`
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	Login string `json:"login,omitempty"`

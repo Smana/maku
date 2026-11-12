@@ -54,6 +54,9 @@ type TaskRequest struct {
 	// declares the class only when that login maintains the repository.
 	Class     string `json:"class,omitempty"`
 	Suggested string `json:"suggested,omitempty"`
+	// Profile is the profile the plan pinned (P5): a pin only when the sponsor's login maintains the
+	// repository, which triage checks again with the rest of the pin rule (P6).
+	Profile string `json:"profile,omitempty"`
 	// Incident is an internal principal's finding (RA3); a sponsored principal's request refuses it.
 	Incident *Incident `json:"incident,omitempty"`
 }
@@ -131,7 +134,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	case in.Incident != nil: // an internal principal's field: a sponsored request has no use for it
 		out(http.StatusBadRequest, "bad_json")
 		return
-	case !intakeName(in.Class) || !intakeName(in.Suggested):
+	case !intakeName(in.Class) || !intakeName(in.Suggested) || !intakeName(in.Profile):
 		out(http.StatusBadRequest, "bad_json")
 		return
 	case key == "" || len(key) > maxKeyLen:
@@ -413,8 +416,8 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 			Source: factoryv1.Source{Kind: "api", Ref: ref, Key: "api:" + sp.Name + ":" + key, RequestedBy: sp.Principal(),
 				Sponsor: factoryv1.Person(login), OnBehalfOf: in.OnBehalfOf, Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
 			Repository: in.Repository, Text: clean, DataClass: in.DataClass, MaxMicroUSD: maxUSD, IssueAuthor: login}}
-	if in.Class != "" || in.Suggested != "" {
-		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Login: login}
+	if in.Class != "" || in.Suggested != "" || in.Profile != "" {
+		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login}
 	}
 	if err := s.Rooms.Create(ctx, t); apierrors.IsAlreadyExists(err) {
 		got, _, err := s.existing(ctx, name)

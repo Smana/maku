@@ -40,8 +40,9 @@ func TestCreateTask(t *testing.T) {
 		t.Fatalf("an unplanned request sends no class: %s", rawBody)
 	}
 	planned := req
-	planned.Class, planned.Suggested = "docs-links", "links-solo"
-	if _, err := f.CreateTask(t.Context(), planned); err != nil || body["class"] != "docs-links" || body["suggested"] != "links-solo" {
+	planned.Class, planned.Suggested, planned.Profile = "docs-links", "links-solo", "links-solo"
+	if _, err := f.CreateTask(t.Context(), planned); err != nil || body["class"] != "docs-links" || body["suggested"] != "links-solo" ||
+		body["profile"] != "links-solo" {
 		t.Fatalf("a planned request carries its class and suggestion: %v %s", err, rawBody)
 	}
 	status, answer = http.StatusOK, `{"task":"abcd2345","room":"abcd2345","issue":42,"duplicate":true,"sponsor":"<@U1> x"}`

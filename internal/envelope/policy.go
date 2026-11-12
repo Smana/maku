@@ -54,7 +54,16 @@ type ProfileFact struct {
 	Recommended string `json:"recommended,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 	Why         string `json:"why,omitempty"`
+	// Requested is the profile a person pinned, and Refused why the pin was not applied: a code of
+	// ProfileRefusalCodes, empty when honoured.
+	Requested string `json:"requested,omitempty"`
+	Refused   string `json:"refused,omitempty"`
 }
+
+// ProfileRefusalCodes is intake's closed list of profile refusals (intake.ProfileRefusals, held equal
+// by its test): envelope sits below intake, so the facts' validator keeps its own copy.
+var ProfileRefusalCodes = []string{"profile_unknown", "profile_not_allowed", "profile_not_offered", "class_profile_fixed",
+	"class_no_profiles", "not_maintainer", "profile_conflict", "profile_internal", "profile_no_tests_paths", "catalogue_unavailable"}
 
 func (p ProfileFact) validate() error {
 	switch {
@@ -70,6 +79,10 @@ func (p ProfileFact) validate() error {
 		return errors.New("reason is at most 32 characters")
 	case utf8.RuneCountInString(p.Why) > 200:
 		return errors.New("why is at most 200 characters")
+	case utf8.RuneCountInString(p.Requested) > 63:
+		return errors.New("requested is at most 63 characters")
+	case p.Refused != "" && (p.Requested == "" || !slices.Contains(ProfileRefusalCodes, p.Refused)):
+		return errors.New("refused is a code of the closed profile refusals, beside the profile requested")
 	}
 	return nil
 }

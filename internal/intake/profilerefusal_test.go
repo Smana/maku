@@ -3,9 +3,11 @@
 package intake_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/intake"
 )
 
@@ -44,6 +46,11 @@ func TestProfileRefusalSentences(t *testing.T) {
 		}
 	}
 
+	t.Run("the task facts' validator holds the same list", func(t *testing.T) {
+		if !slices.Equal(envelope.ProfileRefusalCodes, intake.ProfileRefusals) {
+			t.Fatalf("envelope %v, intake %v", envelope.ProfileRefusalCodes, intake.ProfileRefusals)
+		}
+	})
 	t.Run("a class with only a floor names the floor alone", func(t *testing.T) {
 		r := intake.ProfileRefusal{Code: intake.ProfileNotAllowed, Class: "docs", Profile: "x", Floor: "docs-solo"}
 		if got := r.Sentence(); got != "Class `docs` runs under `docs-solo`; `x` is not one of them." {
