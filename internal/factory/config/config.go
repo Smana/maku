@@ -29,6 +29,7 @@ import (
 	yamlv3 "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/yaml"
 
+	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
 )
@@ -2280,11 +2281,6 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		default:
 			bad("loops.%s.scope %q is off, steering or scoper", name, m)
 		}
-		if m := row.Scope; m == ScopeScoper && c.Runs.Group != runwatch.DefaultKind.Group && !c.Demo { // demo: the read-only claim is waived
-			// The scoper is read-only because cloud-native-ref maps the triager role to an octo-sts
-			// token with contents: read; this runtime gives every role the same token.
-			bad("loops.%s: scope: scoper needs cloud-native-ref's AgentRun (runs.group %s): this runtime gives every role one token, so a scoper would not be read-only", name, runwatch.DefaultKind.Group)
-		}
 		if s := row.Split; s != nil {
 			tier := cmp.Or(s.ChildTier, DefaultChildTier)
 			switch {
@@ -2304,13 +2300,11 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 				bad("loops.%s.split.familyUSD %.2f is below the %s tier's taskUSD %.2f: no part would fit", name, s.FamilyUSD, tier, c.Tiers[tier].TaskUSD)
 			}
 		}
-		if row.On() && c.Runs.Group != runwatch.DefaultKind.Group {
-			if c.Demo {
-				// demo: the portable AgentRun's spec.loop carries the whole loop policy (the run-controller
-				// passes AGENT_LOOP, and the judge calls the run's own model).
-				continue
-			}
-			bad("loops.%s: the loop policy needs cloud-native-ref's AgentRun (runs.group %s): this runtime's has no spec.loop", name, runwatch.DefaultKind.Group)
+		// D5: the scoper and the loop policy run on the run-controller too, which enforces the
+		// scoper's read-only token and its room_handoff path where the token is chosen. Its runs carry
+		// no model alias: every role runs on modelSecret's model until agentgateway (rollout step 4).
+		if len(row.Models) > 0 && c.Runs.Group == v1alpha1.GroupVersion.Group {
+			bad("loops.%s.models needs a model gateway (rollout step 4): this runtime runs every role on modelSecret's model", name)
 		}
 	}
 }

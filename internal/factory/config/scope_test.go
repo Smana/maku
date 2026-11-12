@@ -91,14 +91,20 @@ func TestScopesAreRefused(t *testing.T) {
 	}
 }
 
-// The scoper's read-only guarantee is cloud-native-ref's octo-sts mapping of the triager role: the
-// portable runtime gives every role the same token, so scope: scoper is refused there. steering is not.
-func TestScoperIsRefusedOnThePortableRuntime(t *testing.T) {
-	_, err := Parse([]byte(good + "loops: {docs: {scope: scoper}}\nruns: {group: maku.ogenki.io}\n"))
-	if err == nil || !strings.Contains(err.Error(), "scope: scoper needs cloud-native-ref's AgentRun") {
-		t.Fatalf("err = %v", err)
+// D5: the run-controller enforces the scoper's read-only token and its room_handoff path itself
+// (runctl's Invalid: gitReadSecret, roomToolsURL), where the token is chosen; the factory no longer
+// refuses the scoper, or its split, on the portable runtime, demo or not.
+func TestScoperParsesOnThePortableRuntime(t *testing.T) {
+	for _, loops := range []string{
+		"{docs: {scope: scoper}}",
+		"{docs: {scope: steering}}",
+		"{docs: {scope: scoper, split: {maxChildren: 3}}}",
+	} {
+		if _, err := Parse([]byte(priced + "loops: " + loops + "\nruns: {group: maku.ogenki.io}\n")); err != nil {
+			t.Errorf("%s on the portable runtime: %v", loops, err)
+		}
 	}
-	if _, err := Parse([]byte(good + "loops: {docs: {scope: steering}}\nruns: {group: maku.ogenki.io}\n")); err != nil {
-		t.Fatalf("steering is fine on the portable runtime: %v", err)
+	if _, err := Parse([]byte(demoGood)); err != nil {
+		t.Errorf("the demo's scoper: %v", err)
 	}
 }
