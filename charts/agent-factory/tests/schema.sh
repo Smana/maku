@@ -39,5 +39,13 @@ helm template af . -n maku "${demo[@]}" >/dev/null || { echo "FAIL: -f values-de
 helm template af . -n maku "${demo[@]}" --set tls.days=30 --set postgres.storage=2Gi --set networkPolicies.plain=false \
   --set postgres.storageClassName=standard >/dev/null || { echo "FAIL: valid overrides do not render" >&2; fail=1; }
 
+# the support floor (D26): kubeVersion >=1.30 in the umbrella and both subcharts
+rejects 'Kubernetes 1.29' 'kubeVersion' "${demo[@]}" --kube-version 1.29.0
+helm template af . -n maku "${demo[@]}" --kube-version 1.30.0 >/dev/null || { echo "FAIL: Kubernetes 1.30 does not render" >&2; fail=1; }
+for c in maku maku-factory agent-factory-crds; do
+  msg="$(helm template x "../$c" --kube-version 1.29.0 2>&1 >/dev/null || true)"
+  grep -qF 'kubeVersion' <<<"$msg" || { echo "FAIL: the $c chart does not refuse Kubernetes 1.29 (got: $msg)" >&2; fail=1; }
+done
+
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory schema checks passed"
