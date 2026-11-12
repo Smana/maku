@@ -50,6 +50,9 @@ const (
 	// RefuseDiffUnavailable is T4 on a push whose changed paths cannot be read whole (a compare
 	// past GitHub's file cap, or no merge base): with no file list, no path can be cleared.
 	RefuseDiffUnavailable Refusal = "diff_unavailable"
+	// RefuseTarget is T1 on a comment or labels request whose target the task does not have yet: no
+	// open pull request, or no issue for a text task (HR17).
+	RefuseTarget Refusal = "output_target"
 )
 
 // Payload bounds (safe outputs table).

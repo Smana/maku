@@ -162,7 +162,7 @@ func (r DrillReport) Record() (DrillRecord, bool) {
 
 // refusalLayer is each refusal's layer, for the detection counts.
 var refusalLayer = map[Refusal]Layer{
-	RefuseType: LayerSchema, RefuseSchema: LayerSchema, RefuseCap: LayerSchema, RefuseText: LayerSanitise,
+	RefuseType: LayerSchema, RefuseSchema: LayerSchema, RefuseCap: LayerSchema, RefuseTarget: LayerSchema, RefuseText: LayerSanitise,
 	RefuseSecret: LayerSecrets, RefuseCanary: LayerSecrets, RefuseNeedsApproval: LayerPaths,
 	RefuseBlockedPath: LayerPaths, RefuseDiffUnavailable: LayerPaths, RefuseInjection: LayerClassifier, RefuseClassifierDown: LayerClassifier,
 }
