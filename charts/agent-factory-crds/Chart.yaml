@@ -1,0 +1,9 @@
+apiVersion: v2
+name: agent-factory-crds
+description: "The agent factory's CustomResourceDefinitions (Rooms, AgentRuns, Tasks, Factories, Repositories, MergePolicies), as templates every tool upgrades: install before agent-factory."
+type: application
+# Set by `helm package --version` from the tag (release) or the PR pre-release (R20).
+version: 0.0.0
+appVersion: "0.0.0"
+# The support floor (D26): the ValidatingAdmissionPolicies need 1.30.
+kubeVersion: ">=1.30.0-0"
