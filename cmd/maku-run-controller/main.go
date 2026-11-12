@@ -25,8 +25,19 @@ func run() int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	if err := app.RunController(ctx, log, os.Getenv); err != nil {
-		log.Error("maku-run-controller stopped", "err", err)
+	// No argument runs the controller; the same image serves the kubernetes network mode's egress proxy.
+	cmd, name := app.RunController, "maku-run-controller"
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "egress-proxy":
+			cmd, name = app.EgressProxy, "egress-proxy"
+		default:
+			_, _ = fmt.Fprintf(os.Stderr, "maku-run-controller: unknown subcommand %q (egress-proxy)\n", os.Args[1])
+			return 2
+		}
+	}
+	if err := cmd(ctx, log, os.Getenv); err != nil {
+		log.Error(name+" stopped", "err", err)
 		return 1
 	}
 	return 0

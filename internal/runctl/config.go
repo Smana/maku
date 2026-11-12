@@ -49,9 +49,9 @@ type Config struct {
 	// EgressProxy is the in-cluster CONNECT proxy, required in kubernetes mode.
 	EgressProxy EgressProxy `json:"egressProxy,omitempty"`
 	// DNS selects the cluster DNS pods a kubernetes-mode run's NetworkPolicy opens on 53.
-	DNS DNS `json:"dns,omitempty"`
-	ModelSecret   string `json:"modelSecret"`
-	GitSecret     string `json:"gitSecret"`
+	DNS         DNS    `json:"dns,omitempty"`
+	ModelSecret string `json:"modelSecret"`
+	GitSecret   string `json:"gitSecret"`
 	// GitReadSecret is the read-only token reviewer and triager runs mount (PR2); gitSecret is the
 	// write token implementer and tester runs mount. Unset, those roles are refused unless
 	// UnsafeSharedGitToken lets them share gitSecret, as a laptop's one PAT does.
