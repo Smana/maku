@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -156,6 +157,18 @@ func (g *GitHub) Labeled(ctx context.Context, label string) ([]Item, error) {
 // Past them it returns what it read and ErrEventsTruncated: GitHub lists events oldest first, so
 // the unread ones are the newest.
 func (g *GitHub) LabelEvents(ctx context.Context, number int, label string) ([]LabelEvent, error) {
+	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Label == label })
+}
+
+// LabelEventsBy are every label actor added to an issue or pull request at or after since,
+// whatever the label, oldest first (hardening HR1: the labels a run added); capped as LabelEvents.
+func (g *GitHub) LabelEventsBy(ctx context.Context, number int, actor string, since time.Time) ([]LabelEvent, error) {
+	return g.labelEvents(ctx, number, func(e LabelEvent) bool { return e.Actor == actor && !e.At.Before(since) })
+}
+
+// labelEvents are the labeled events of an issue that keep accepts, oldest first; at most ten
+// pages of 100, then ErrEventsTruncated with what was read.
+func (g *GitHub) labelEvents(ctx context.Context, number int, keep func(LabelEvent) bool) ([]LabelEvent, error) {
 	var out []LabelEvent
 	opt := &github.ListOptions{PerPage: 100}
 	truncated := true
@@ -166,8 +179,11 @@ func (g *GitHub) LabelEvents(ctx context.Context, number int, label string) ([]L
 			return nil, wrap("list issue events", err)
 		}
 		for _, e := range evs {
-			if e.GetEvent() == "labeled" && e.GetLabel().GetName() == label {
-				out = append(out, LabelEvent{Actor: e.GetActor().GetLogin(), Label: label, At: e.GetCreatedAt().Time})
+			if e.GetEvent() != "labeled" {
+				continue
+			}
+			if le := (LabelEvent{Actor: e.GetActor().GetLogin(), Label: e.GetLabel().GetName(), At: e.GetCreatedAt().Time}); keep(le) {
+				out = append(out, le)
 			}
 		}
 		if resp.NextPage == 0 {
@@ -273,8 +289,8 @@ func (g *GitHub) AllComments(ctx context.Context, number int) ([]Comment, error)
 
 // restComment is a REST issue comment as the forge reads one.
 func restComment(c *github.IssueComment) Comment {
-	return Comment{ID: c.GetID(), Author: c.GetUser().GetLogin(), Body: c.GetBody(), At: c.GetCreatedAt().Time,
-		Edited: c.GetUpdatedAt().After(c.GetCreatedAt().Time)}
+	return Comment{ID: c.GetID(), Author: c.GetUser().GetLogin(), Association: c.GetAuthorAssociation(), Body: c.GetBody(),
+		At: c.GetCreatedAt().Time, Edited: c.GetUpdatedAt().After(c.GetCreatedAt().Time)}
 }
 
 // AddLabels adds labels to an issue or pull request.
@@ -368,7 +384,8 @@ func (g *GitHub) RenderMarkdown(ctx context.Context, text string) (string, error
 // restIssue is a REST issue as the forge reads one.
 func restIssue(i *github.Issue) Issue {
 	out := Issue{Number: i.GetNumber(), ID: i.GetID(), URL: i.GetHTMLURL(), Title: i.GetTitle(), Body: i.GetBody(),
-		State: strings.ToUpper(i.GetState()), Author: i.GetUser().GetLogin()}
+		State: strings.ToUpper(i.GetState()), Author: i.GetUser().GetLogin(), Association: i.GetAuthorAssociation(),
+		CreatedAt: i.GetCreatedAt().Time}
 	for _, l := range i.Labels {
 		out.Labels = append(out.Labels, l.GetName())
 	}
@@ -424,6 +441,50 @@ func (g *GitHub) IssuesLabelledSince(ctx context.Context, label string, since ti
 		opts.ListOptions.Page = resp.NextPage
 	}
 	return nil, fmt.Errorf("forge: more than %d issues carry %q since %s", issuesSincePages*100, label, since.Format(time.RFC3339))
+}
+
+// issuesByAuthorPages bounds IssuesByAuthorSince: 200 issues opened by one login inside one run's
+// window is far past any run's cap of one.
+const issuesByAuthorPages = 2
+
+// IssuesByAuthorSince are the issues login opened at or after since, open or closed, oldest first
+// (hardening HR1: the issues a run filed). Pull requests are left out. It reads newest-created
+// first and stops at the first one opened before since; past issuesByAuthorPages pages it returns
+// what it read and ErrIssuesTruncated.
+func (g *GitHub) IssuesByAuthorSince(ctx context.Context, login string, since time.Time) ([]Issue, error) {
+	if !githubLogin.MatchString(strings.TrimSuffix(login, "[bot]")) {
+		return nil, errors.New("forge: not a GitHub login")
+	}
+	var out []Issue
+	opts := &github.IssueListByRepoOptions{State: "all", Creator: login, Sort: "created", Direction: "desc", Since: since,
+		ListOptions: github.ListOptions{PerPage: 100}}
+	done := false
+	for range issuesByAuthorPages {
+		iss, resp, err := g.rest.Issues.ListByRepo(ctx, g.owner, g.name, opts)
+		g.mark(err)
+		if err != nil {
+			return nil, wrap("list an author's issues", err)
+		}
+		for _, i := range iss {
+			if i.GetCreatedAt().Before(since) {
+				done = true
+				break
+			}
+			if !i.IsPullRequest() {
+				out = append(out, restIssue(i))
+			}
+		}
+		if done || resp.NextPage == 0 {
+			done = true
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+	slices.Reverse(out)
+	if !done {
+		return out, ErrIssuesTruncated
+	}
+	return out, nil
 }
 
 // AddSubIssue shows child under parent as a GitHub sub-issue, by the child's numeric id: a view for
@@ -744,15 +805,16 @@ func (g *GitHub) Issue(ctx context.Context, number int) (Issue, error) {
 	var q struct {
 		Repository struct {
 			Issue struct {
-				Number       int
-				URL          string `graphql:"url"`
-				Title        string
-				Body         string
-				State        string
-				Author       *actor
-				LastEditedAt *githubv4.DateTime
-				Labels       struct{ Nodes []struct{ Name string } } `graphql:"labels(first: 50)"`
-				Renames      struct {
+				Number            int
+				URL               string `graphql:"url"`
+				Title             string
+				Body              string
+				State             string
+				Author            *actor
+				AuthorAssociation string `graphql:"authorAssociation"`
+				LastEditedAt      *githubv4.DateTime
+				Labels            struct{ Nodes []struct{ Name string } } `graphql:"labels(first: 50)"`
+				Renames           struct {
 					Nodes []struct {
 						RenamedTitleEvent struct{ CreatedAt githubv4.DateTime } `graphql:"... on RenamedTitleEvent"`
 					}
@@ -770,7 +832,8 @@ func (g *GitHub) Issue(ctx context.Context, number int) (Issue, error) {
 		return Issue{}, wrap("read an issue", err)
 	}
 	i := q.Repository.Issue
-	out := Issue{Number: i.Number, URL: i.URL, Title: i.Title, Body: i.Body, State: i.State, Author: i.Author.login()}
+	out := Issue{Number: i.Number, URL: i.URL, Title: i.Title, Body: i.Body, State: i.State, Author: i.Author.login(),
+		Association: i.AuthorAssociation}
 	if i.LastEditedAt != nil {
 		out.LastEditedAt = i.LastEditedAt.Time
 	}

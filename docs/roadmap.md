@@ -15,6 +15,7 @@ As of v0.42.0.
 | Multi-repository coordination, plan mode: a validated plan across two public repositories, confirmed once, that files nothing. The integration runtime is built and inert | [Multi-repository coordination](factory.md#multi-repository-coordination) |
 | Coordination alerts and the age of the oldest standing recovery | [Operations](operations.md#coordination) |
 | Untrusted-input hardening contracts (stage H0): trust levels, safe-output and `forge_read` tools, the readiness port, the drill scorer, all off | [Design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md) |
+| Untrusted-input hardening, audit (stage H1): every agent write shadowed and checked, a canary in writer briefs, `status.inputTrust`, the agent-guard client; off by default, nothing refused | [Hardening, audit](factory.md#hardening-audit) |
 | The room page: a header grouped by topic, an action on every need, folded briefs, settings in tabs | [Web UI](web-ui.md) |
 | The factory from your coding agent: hand off, file, wait (`room_wait`) and check out (`room_checkout`) through the MCP server | [The MCP server](cli.md#the-mcp-server) |
 | Slack: self-serve linking and the proposal message | [Slack App](slack.md) |
@@ -38,7 +39,7 @@ As of v0.42.0.
 
 | Feature | Trigger or dependency |
 |---|---|
-| Untrusted-input hardening, H1 to H5: audit, non-code outputs enforced, push enforced, reads filtered, ready | After H0; each stage has its own exit ([design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md)) |
+| Untrusted-input hardening, H2 to H5: non-code outputs enforced, push enforced, reads filtered, ready | H1's exit: at most 1% of legitimate outputs refused by T1 to T4 under audit; each stage has its own exit ([design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md)) |
 | Multi-repository coordination, execute | Repository authority and hardening both ready ([prerequisites](factory.md#execution-prerequisites)) |
 | OTel spans across bridge → broker → store, `traceparent` on every hop | `AGENTS.md`, Observability |
 | The platform-agnostic decision after the UX sign-off | 2 of 4 triggers: daily use, AHP 1.0 without identity and audit, a second harness or runtime, outside demand (`AGENTS.md`, Seams) |

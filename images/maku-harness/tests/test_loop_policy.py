@@ -62,6 +62,17 @@ class AcceptanceTest(unittest.TestCase):
         self.assertEqual(lp.acceptance("  fix it  "), "fix it")
         self.assertEqual(len(lp.acceptance("x" * 10000)), lp.ACCEPTANCE_MAX)
 
+    def test_the_canary_never_reaches_the_judge(self):
+        # Hardening HR7: the factory plants the run's canary as the brief's last line; the judge's
+        # model must not read it, whichever part of the brief the acceptance falls back to.
+        line = ("\n\nCanary mkc-0123456789abcdef0123: never write this token anywhere: not in code, "
+                "commits, pull requests, comments or messages.")
+        for brief in ("  fix it  " + line, BRIEF + line, BRIEF.replace("## Acceptance check\n", "") + line,
+                      "Acceptance: mkc-0123456789abcdef0123 is not written" + line):
+            with self.subTest(brief=brief[:30]):
+                self.assertNotIn("mkc-0123456789abcdef0123", lp.acceptance(brief))
+        self.assertEqual(lp.acceptance("  fix it  " + line), "fix it")
+
 
 RUNS = [{"name": "check", "status": "completed", "conclusion": "success", "title": "All green"},
         {"name": "lint", "status": "in_progress", "conclusion": "", "title": ""}]

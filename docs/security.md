@@ -367,6 +367,36 @@ cosign verify "$IMAGE" \
   --certificate-identity-regexp '^https://github\.com/Smana/(agent-platform|maku)/\.github/workflows/ci\.yaml@'
 ```
 
+## Untrusted-input hardening
+
+The hardening track moves agent writes to GitHub behind a threat check the factory runs outside
+the sandbox:
+
+| Layer | Checks |
+|---|---|
+| T1, schema | An output's type, size, caps and label allowlist |
+| T2, sanitise | The text a write publishes |
+| T3, secrets | The redactor's rules, and the run's canary |
+| T4, paths | A push's files against the protected paths |
+| T5, classifier | agent-guard's prompt-injection verdict |
+
+This release runs it in **audit** only ([Hardening, audit](factory.md#hardening-audit)):
+
+- **What runs.** The checks run on the writes a run already made, as `output_shadowed` records.
+- **What is recorded.** Each task records the lowest author trust its runs could read.
+- **What changes for a run.** Nothing is refused or withheld. The canary line at the end of a
+  writer run's brief is the only change a run sees.
+
+`mode: enforce` is refused at startup, so readiness stays `false`. The shadow pass's log lines
+and metrics carry the layer, a bounded reason and the GitHub object, never the written text.
+
+Residuals while in audit:
+
+- The run's own token can still write anything its role policy allows, and T13's filter is
+  still the only control on what it reads.
+- A run's outputs are checked against that run's canary only: an older run's canary quoted from
+  the room is not an alert.
+
 ## Reporting a vulnerability
 
 Privately, through [GitHub security advisories](https://github.com/Smana/maku/security/advisories/new),

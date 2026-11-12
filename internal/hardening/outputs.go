@@ -47,6 +47,9 @@ const (
 	RefuseBlockedPath    Refusal = "protected_path_blocked"
 	RefuseInjection      Refusal = "injection_suspected"
 	RefuseClassifierDown Refusal = "classifier_unavailable"
+	// RefuseDiffUnavailable is T4 on a push whose changed paths cannot be read whole (a compare
+	// past GitHub's file cap, or no merge base): with no file list, no path can be cleared.
+	RefuseDiffUnavailable Refusal = "diff_unavailable"
 )
 
 // Payload bounds (safe outputs table).

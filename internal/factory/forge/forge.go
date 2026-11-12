@@ -19,8 +19,13 @@ import (
 	"time"
 )
 
-// ErrEventsTruncated is LabelEvents reaching its page cap: the newest events are unread.
+// ErrEventsTruncated is LabelEvents or LabelEventsBy reaching its page cap: the newest events are
+// unread.
 var ErrEventsTruncated = errors.New("forge: label events past the page cap are unread")
+
+// ErrIssuesTruncated is IssuesByAuthorSince reaching its page cap with every issue read still
+// inside the window: the oldest ones are unread.
+var ErrIssuesTruncated = errors.New("forge: issues past the page cap are unread")
 
 // ErrCommitsTruncated is PullRequestCommits reaching GitHub's 250-commit cap: commits past it are
 // never listed, so the list read is not known to be the whole pull request.
@@ -105,9 +110,12 @@ type LabelEvent struct {
 type Comment struct {
 	ID     int64
 	Author string
-	Body   string
-	At     time.Time
-	Edited bool
+	// Association is the author's relation to the repository, as Review.Association (hardening
+	// UH6: author trust reads it).
+	Association string
+	Body        string
+	At          time.Time
+	Edited      bool
 }
 
 // Issue is the snapshot's source (§1, R5).
@@ -115,12 +123,16 @@ type Issue struct {
 	Number int
 	// ID is REST's numeric id, which the sub-issues API takes (splitter SL8); 0 when read through
 	// GraphQL (Issue).
-	ID           int64
-	URL          string
-	Title        string
-	Body         string
-	State        string // OPEN | CLOSED
-	Author       string // a bot's with "[bot]", as REST writes it
+	ID     int64
+	URL    string
+	Title  string
+	Body   string
+	State  string // OPEN | CLOSED
+	Author string // a bot's with "[bot]", as REST writes it
+	// Association is the author's relation to the repository, as Review.Association (UH6).
+	Association string
+	// CreatedAt is when the issue was opened; zero when read through GraphQL (Issue).
+	CreatedAt    time.Time
 	Labels       []string
 	LastEditedAt time.Time // the body's last edit; zero when never edited
 	// The last title rename (a RenamedTitleEvent): lastEditedAt does not cover the title,

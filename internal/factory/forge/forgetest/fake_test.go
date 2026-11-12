@@ -286,3 +286,36 @@ func TestFakeIsAncestor(t *testing.T) {
 		}
 	}
 }
+
+// The shadow pass's reads (HR1) answer as GitHub's: one actor's label additions and one login's
+// issues inside a window, oldest first.
+func TestFakeReadsAnAgentsWrites(t *testing.T) {
+	ctx := t.Context()
+	at := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	f := NewFake()
+	f.SetEvents(7,
+		forge.LabelEvent{Actor: "agents[bot]", Label: "late", At: at.Add(2 * time.Minute)},
+		forge.LabelEvent{Actor: "agents[bot]", Label: "before", At: at.Add(-time.Minute)},
+		forge.LabelEvent{Actor: "Smana", Label: "human", At: at.Add(time.Minute)},
+		forge.LabelEvent{Actor: "agents[bot]", Label: "first", At: at})
+	evs, err := f.LabelEventsBy(ctx, 7, "agents[bot]", at)
+	if err != nil || len(evs) != 2 || evs[0].Label != "first" || evs[1].Label != "late" {
+		t.Fatalf("%+v %v", evs, err)
+	}
+	f.SetEventsTruncated(7)
+	if _, err := f.LabelEventsBy(ctx, 7, "agents[bot]", at); !errors.Is(err, forge.ErrEventsTruncated) {
+		t.Fatalf("truncation: %v", err)
+	}
+	f.SetIssue(forge.Issue{Number: 9, Author: "agents[bot]", CreatedAt: at.Add(time.Minute)})
+	f.SetIssue(forge.Issue{Number: 8, Author: "agents[bot]", CreatedAt: at})
+	f.SetIssue(forge.Issue{Number: 7, Author: "agents[bot]", CreatedAt: at.Add(-time.Minute)})
+	f.SetIssue(forge.Issue{Number: 6, Author: "Smana", CreatedAt: at})
+	iss, err := f.IssuesByAuthorSince(ctx, "agents[bot]", at)
+	if err != nil || len(iss) != 2 || iss[0].Number != 8 || iss[1].Number != 9 {
+		t.Fatalf("%+v %v", iss, err)
+	}
+	f.FailLists(errors.New("down"))
+	if _, err := f.IssuesByAuthorSince(ctx, "agents[bot]", at); err == nil {
+		t.Fatal("FailLists ignored")
+	}
+}
