@@ -58,3 +58,30 @@ func TestReadOutput(t *testing.T) {
 		})
 	}
 }
+
+// output_waiting counts only from the factory, as an answer does (HR27).
+func TestReadOutputWaiting(t *testing.T) {
+	const run = "run-1"
+	rec := OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: strings.Repeat("a", 64),
+		Reason: "protected_path_needs_approval", ApprovalID: "01JC0000000000000000000000"}
+	ev := func(a Actor) Event {
+		return Event{Type: Message, RunID: run, Actor: a, Origin: OriginClient,
+			Payload: Must(MessagePayload{Kind: KindOutputWaiting, Delivery: DeliveryNone, Output: &rec})}
+	}
+	for _, tc := range []struct {
+		name string
+		a    Actor
+		ok   bool
+	}{
+		{"the factory's", Actor{Kind: ActorSystem, ID: FactoryActor}, true},
+		{"the run's own agent", Actor{Kind: ActorAgent, ID: "agent:" + run}, false},
+		{"another system", Actor{Kind: ActorSystem, ID: "system:broker"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k, r, ok := ReadOutput(ev(tc.a), run)
+			if ok != tc.ok || (ok && (k != KindOutputWaiting || r.ApprovalID != rec.ApprovalID)) {
+				t.Fatalf("ReadOutput = %q, %+v, %v", k, r, ok)
+			}
+		})
+	}
+}

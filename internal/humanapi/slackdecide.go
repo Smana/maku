@@ -337,11 +337,17 @@ func (d *SlackDecider) resolve(ctx context.Context, p authn.Principal, in SlackD
 	// 11. The binding (D5, D6): the row recorded the run's branch when it was requested, and the
 	// run is re-read now. The hint must be both, so a card that outlived the state it was drawn from
 	// decides nothing, and an approval that binds no branch at all decides nothing.
-	expected := ""
+	expected, watched := "", false
 	for _, run := range d.Runs.InRoom(ap.RoomID) {
 		if run.ID == ap.RunID {
-			expected = run.Branch
+			expected, watched = run.Branch, true
 		}
+	}
+	if ap.DigestBound() && !watched {
+		// HR28: a digest-bound row outlives its run, and the broker checked its branch against the
+		// run's claim when the factory requested it. With the run gone from the watch, the row's
+		// binding is the branch; while the watch still holds the run, the run's must agree.
+		expected = ap.BindingBranch
 	}
 	if ap.BindingBranch == "" || expected == "" || in.Branch != expected || ap.BindingBranch != expected {
 		return slackBindingMismatch, ""

@@ -3,14 +3,17 @@
 package bridgeapi
 
 import (
+	"context"
 	"errors"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/wire"
 )
 
@@ -124,8 +127,8 @@ func (s *Server) roomTask(w http.ResponseWriter, r *http.Request) {
 
 // roomOutputs: POST /v1/rooms/{id}/outputs, system:* only (hardening HR2). The factory's answer
 // to a run's output request, or its shadow of a write the run made itself: {runId, kind, record}
-// with kind output_applied, output_refused or output_shadowed, never output_requested, which is
-// the run's own. Stored as a message stamped with the caller and the run, Delivery none and no
+// with kind output_applied, output_refused, output_shadowed or a held push's output_waiting
+// (HR27), never output_requested, which is the run's own. Stored as a message stamped with the caller and the run, Delivery none and no
 // text. Replays are keyed on <principal>:output:<kind> and a clientSeq derived from the output
 // id, so a retry never writes a second answer of a kind, whatever its body now says. Only
 // OutputClient may call it, and only for a run of the room (runOfRoom).
@@ -154,7 +157,8 @@ func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 		Record envelope.OutputRecord `json:"record"`
 	}
 	if err := decodeStrict(r.Body, &in); err != nil || !envelope.ValidID(in.RunID) ||
-		(in.Kind != envelope.KindOutputApplied && in.Kind != envelope.KindOutputRefused && in.Kind != envelope.KindOutputShadowed) ||
+		(in.Kind != envelope.KindOutputApplied && in.Kind != envelope.KindOutputRefused && in.Kind != envelope.KindOutputShadowed &&
+			in.Kind != envelope.KindOutputWaiting) ||
 		in.Record.Validate(in.Kind) != nil {
 		fail(w, http.StatusBadRequest, wire.ReasonBadMessage)
 		return
@@ -191,6 +195,65 @@ func (s *Server) roomOutputs(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusCreated
 	}
 	reply(w, code, map[string]int64{"seq": ev.Seq})
+}
+
+// Bundles is the store's push bundles, as the factory reads them (hardening HR22); *store.Store
+// implements it.
+type Bundles interface {
+	Bundle(ctx context.Context, room, run, digest string) ([]byte, error)
+}
+
+var bundleDigestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// outputCaller admits OutputClient alone (the factory, system:factory) to a hardening route that
+// ready is true for, under its limits, and returns it. release is called once the request is
+// served.
+func (s *Server) outputCaller(w http.ResponseWriter, r *http.Request, ready bool) (p authn.Principal, release func(), ok bool) {
+	p, ok = s.systemAuth(w, r)
+	if !ok {
+		return p, nil, false
+	}
+	if !ready || s.OutputClient == "" || p.ID != s.OutputClient {
+		fail(w, http.StatusForbidden, wire.ReasonNotPermitted)
+		return p, nil, false
+	}
+	release, ok = s.admit(w, p.ID)
+	return p, release, ok
+}
+
+// roomBundle: GET /v1/rooms/{id}/bundles/{digest}?run=<id>, OutputClient only (hardening HR22).
+// The bundle a run's output_push stored, as application/x-git-bundle, for the factory to inspect
+// and push. Another room's or run's bundle is 404, as a missing one is.
+func (s *Server) roomBundle(w http.ResponseWriter, r *http.Request) {
+	_, release, ok := s.outputCaller(w, r, s.Bundles != nil)
+	if !ok {
+		return
+	}
+	defer release()
+	id, digest, run := r.PathValue("id"), r.PathValue("digest"), r.URL.Query().Get("run")
+	switch {
+	case !envelope.ValidID(id):
+		fail(w, http.StatusBadRequest, wire.ReasonBadRoom)
+		return
+	case !bundleDigestRE.MatchString(digest) || !envelope.ValidID(run):
+		fail(w, http.StatusBadRequest, wire.ReasonBadBundle)
+		return
+	}
+	b, err := s.Bundles.Bundle(r.Context(), id, run, digest)
+	switch {
+	case errors.Is(err, store.ErrNoBundle):
+		fail(w, http.StatusNotFound, wire.ReasonNoBundle)
+		return
+	case err != nil:
+		s.logFailure(w, err, "read a bundle", "room", id, "run", run)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-git-bundle")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b) //nolint:gosec // G705: a git bundle for the factory's git, served nosniff as a bundle, never a page
+
 }
 
 // runOfRoom reports whether runID is a run of room: while the watch holds the run, its roomRef

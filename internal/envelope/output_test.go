@@ -84,7 +84,8 @@ func TestOutputShadowedValidate(t *testing.T) {
 		{"a finding's layer has no name", KindOutputShadowed, base(func(r *OutputRecord) { r.Audit = []OutputFinding{{Layer: "t1", Reason: "x"}} }), false},
 		{"a finding's reason is prose", KindOutputShadowed, base(func(r *OutputRecord) { r.Audit = []OutputFinding{{Layer: "t1_schema", Reason: "Too long"}} }), false},
 		{"findings on a request", KindOutputRequested, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Audit: five[:1]}, false},
-		{"findings on a refusal", KindOutputRefused, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Reason: "output_schema", Audit: five[:1]}, false},
+		// HR39: T5 runs in audit after a refusal too, so a refusal may carry its findings.
+		{"findings on a refusal", KindOutputRefused, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Reason: "output_schema", Audit: five[:1]}, true},
 		// An answer or a shadow carries no payload: the text stays in the request alone.
 		{"shadowed with its size", KindOutputShadowed, base(func(r *OutputRecord) { r.Bytes = 40 }), true},
 		{"a payload on a shadow", KindOutputShadowed, base(func(r *OutputRecord) { r.Payload = json.RawMessage(`{"body":"x"}`) }), false},
@@ -103,5 +104,81 @@ func TestOutputShadowedValidate(t *testing.T) {
 	b, _ := json.Marshal(OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Audit: five[:1]})
 	if !strings.Contains(string(b), `"audit":[{"layer":"t2_text","reason":"rewritten"}]`) {
 		t.Fatalf("%s", b)
+	}
+}
+
+// output_waiting is the applier's one non-answer (HR27): a push held for a maintainer's approval
+// of its digest, naming the approval, with no object and no payload.
+func TestOutputWaitingValidate(t *testing.T) {
+	d := strings.Repeat("a", 64)
+	const ulid = "01JC0000000000000000000000"
+	base := func(mut func(*OutputRecord)) OutputRecord {
+		r := OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d, Reason: "protected_path_needs_approval", ApprovalID: ulid}
+		mut(&r)
+		return r
+	}
+	for _, tc := range []struct {
+		name  string
+		k     MessageKind
+		r     OutputRecord
+		valid bool
+	}{
+		{"a waiting push", KindOutputWaiting, base(func(*OutputRecord) {}), true},
+		{"waiting with its size", KindOutputWaiting, base(func(r *OutputRecord) { r.Bytes = 4096 }), true},
+		{"waiting with an object", KindOutputWaiting, base(func(r *OutputRecord) { r.Object = "https://github.com/o/r/commit/a" }), false},
+		{"waiting with a payload", KindOutputWaiting, base(func(r *OutputRecord) { r.Payload = json.RawMessage(`{}`) }), false},
+		{"waiting on a pr", KindOutputWaiting, base(func(r *OutputRecord) { r.Type = "pr" }), false},
+		{"waiting with no approval", KindOutputWaiting, base(func(r *OutputRecord) { r.ApprovalID = "" }), false},
+		{"waiting on a short approval id", KindOutputWaiting, base(func(r *OutputRecord) { r.ApprovalID = "01JC" }), false},
+		{"waiting with another reason", KindOutputWaiting, base(func(r *OutputRecord) { r.Reason = "output_cap" }), false},
+		{"waiting with no reason", KindOutputWaiting, base(func(r *OutputRecord) { r.Reason = "" }), false},
+		{"waiting with findings", KindOutputWaiting, base(func(r *OutputRecord) {
+			r.Audit = []OutputFinding{{Layer: "t5_classifier", Reason: "injection_suspected"}}
+		}), false},
+		{"an approval on a request", KindOutputRequested, OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d, ApprovalID: ulid}, false},
+		{"an approval on an answer", KindOutputApplied, OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d,
+			Object: "https://github.com/o/r/commit/a", ApprovalID: ulid}, false},
+		{"an approval on a refusal", KindOutputRefused, OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d,
+			Reason: "approval_denied", ApprovalID: ulid}, false},
+		{"an approval on a shadow", KindOutputShadowed, OutputRecord{ID: "0123456789abcdef", Type: "push", Digest: d,
+			Object: "https://github.com/o/r/commit/a", ApprovalID: ulid}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.r.Validate(tc.k); (err == nil) != tc.valid {
+				t.Fatalf("Validate = %v, want valid %v", err, tc.valid)
+			}
+		})
+	}
+	b, _ := json.Marshal(base(func(*OutputRecord) {}))
+	if !strings.Contains(string(b), `"approvalId":"`+ulid+`"`) {
+		t.Fatalf("%s", b)
+	}
+}
+
+// T5 runs in audit after a refusal too (HR39): a refused record may carry findings, still capped
+// at MaxOutputFindings, and a request still may not.
+func TestAuditOnRefused(t *testing.T) {
+	d := strings.Repeat("a", 64)
+	f := OutputFinding{Layer: "t5_classifier", Reason: "injection_suspected"}
+	six := []OutputFinding{f, f, f, f, f, f}
+	refused := func(n int) OutputRecord {
+		return OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Reason: "secret_found", Audit: six[:n]}
+	}
+	for _, tc := range []struct {
+		name  string
+		k     MessageKind
+		r     OutputRecord
+		valid bool
+	}{
+		{"a refusal with a finding", KindOutputRefused, refused(1), true},
+		{"a refusal with five findings", KindOutputRefused, refused(5), true},
+		{"a refusal with six findings", KindOutputRefused, refused(6), false},
+		{"a request with a finding", KindOutputRequested, OutputRecord{ID: "0123456789abcdef", Type: "pr", Digest: d, Audit: six[:1]}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.r.Validate(tc.k); (err == nil) != tc.valid {
+				t.Fatalf("Validate = %v, want valid %v", err, tc.valid)
+			}
+		})
 	}
 }

@@ -13,10 +13,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -51,6 +53,9 @@ const (
 	// maxBody bounds a request. A 16 KiB text escaped by a client that writes
 	// every '<' as < is 96 KiB of JSON, so the cap sits above that.
 	maxBody = 128 << 10
+	// maxHarnessBody bounds a request with HarnessHeader (HR22): an 8 MiB bundle is 11.2 MiB of
+	// base64. Past maxBody, only output_push is accepted.
+	maxHarnessBody = 12 << 20
 	// callEvery is §4's room_* rate: one tool call a second per run.
 	callEvery = time.Second
 	// maxLimited bounds the limiter's memory. A run's last call over callEvery
@@ -250,7 +255,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	harness := r.Header.Get(HarnessHeader) == "1"
-	req, status, rerr := mcpwire.Decode(http.MaxBytesReader(w, r.Body, maxBody))
+	limit := int64(maxBody)
+	if harness {
+		limit = maxHarnessBody
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	req, status, rerr := mcpwire.Decode(bytes.NewReader(body))
+	var tooLarge *http.MaxBytesError
+	switch {
+	case errors.As(err, &tooLarge), err == nil && rerr == nil && len(body) > maxBody && !harnessUpload(req):
+		// HR22: past 128 KiB, only the harness's output_push; anything else as today.
+		status, rerr = http.StatusRequestEntityTooLarge, &mcpwire.Error{Code: mcpwire.InvalidRequest, Message: "request too large"}
+	case err != nil:
+		status, rerr = http.StatusOK, &mcpwire.Error{Code: mcpwire.ParseError, Message: "parse error"}
+	}
 	if rerr != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -293,6 +311,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		mcpwire.Write(w, req.ID, nil, &mcpwire.Error{Code: mcpwire.MethodNotFound, Message: "the room MCP server exposes tools only"})
 	}
+}
+
+// harnessUpload reports whether req is a tools/call of output_push, the one call a harness request
+// may make past maxBody (HR22). Only a request with HarnessHeader is read that far.
+func harnessUpload(req mcpwire.Request) bool {
+	var p struct {
+		Name string `json:"name"`
+	}
+	return req.Method == "tools/call" && json.Unmarshal(req.Params, &p) == nil && p.Name == "output_push"
 }
 
 func (s *Server) call(ctx context.Context, w http.ResponseWriter, req mcpwire.Request, run runwatch.Run, harness bool) {

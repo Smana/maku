@@ -5,7 +5,9 @@ package rooms
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -88,11 +91,27 @@ var (
 	// ErrBadMessage is 400 bad_message: the broker refused the body as malformed, such as an output
 	// record its Validate rejects. The same body is refused again: a bug, not a retry.
 	ErrBadMessage = errors.New("rooms: the broker refused the message as malformed")
+	// ErrNoBundle is 404 no_bundle: the room holds no bundle for that run and digest.
+	ErrNoBundle = errors.New("rooms: the broker holds no such bundle")
+	// ErrNoApproval is 404 no_approval: no approval has that id.
+	ErrNoApproval = errors.New("rooms: the broker holds no such approval")
+	// ErrBindingConflict is 409 binding_conflict: the output's approval already binds another
+	// digest or branch. The same request is refused again: a bug, not a retry.
+	ErrBindingConflict = errors.New("rooms: the output's approval binds another digest or branch")
+	// ErrBundleDigest is a bundle whose bytes do not hash to the digest it was read by.
+	ErrBundleDigest = errors.New("rooms: the bundle's sha256 is not its digest")
 )
 
-// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute, ErrGrantState and ErrBadMessage.
+// Is matches ErrNoRoom, ErrNotPermitted, ErrSealed, ErrNoRoute, ErrGrantState, ErrBadMessage,
+// ErrNoBundle, ErrNoApproval and ErrBindingConflict.
 func (e *APIError) Is(target error) bool {
 	switch target {
+	case ErrNoBundle:
+		return e.Reason == wire.ReasonNoBundle
+	case ErrNoApproval:
+		return e.Reason == wire.ReasonNoApproval
+	case ErrBindingConflict:
+		return e.Reason == wire.ReasonBindingConflict
 	case ErrBadMessage:
 		return e.Reason == wire.ReasonBadMessage
 	case ErrNoRoute:
@@ -267,16 +286,17 @@ func (c *Client) TaskFacts(ctx context.Context, room string, f envelope.TaskFact
 }
 
 // Output posts the factory's answer to, or shadow of, one of run runID's outputs (hardening HR2):
-// kind is output_applied, output_refused or output_shadowed, and rec must pass Validate for it.
-// The broker keys a replay on (room, principal, kind, the record's id), so a retry of the same
-// answer is never stored twice. A body the broker refuses is ErrBadMessage.
+// kind is output_applied, output_refused, output_shadowed or output_waiting (HR27), and rec must
+// pass Validate for it. The broker keys a replay on (room, principal, kind, the record's id), so a
+// retry of the same answer is never stored twice. A body the broker refuses is ErrBadMessage.
 func (c *Client) Output(ctx context.Context, room, runID string, kind envelope.MessageKind, rec envelope.OutputRecord) error {
 	switch {
 	case !envelope.ValidID(room):
 		return fmt.Errorf("rooms: %q is not a C2 room id", room)
 	case !envelope.ValidID(runID):
 		return fmt.Errorf("rooms: %q is not a C2 run id", runID)
-	case kind != envelope.KindOutputApplied && kind != envelope.KindOutputRefused && kind != envelope.KindOutputShadowed:
+	case kind != envelope.KindOutputApplied && kind != envelope.KindOutputRefused && kind != envelope.KindOutputShadowed &&
+		kind != envelope.KindOutputWaiting:
 		return fmt.Errorf("rooms: %q is not an output answer", kind)
 	}
 	if err := rec.Validate(kind); err != nil {
@@ -291,6 +311,132 @@ func (c *Client) Output(ctx context.Context, room, runID string, kind envelope.M
 		Seq int64 `json:"seq"`
 	}
 	return c.do(ctx, http.MethodPost, outputsRoute, room, "", in, maxReplyOverhead, &out)
+}
+
+// MaxBundle is a push bundle's cap, the design's 8 MiB (hardening.MaxBundle).
+const MaxBundle = 8 << 20
+
+const bundleRoute = "/v1/rooms/{id}/bundles/{digest}"
+
+var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// Bundle reads the bundle run runID's output_push stored in room under digest (hardening HR22).
+// It reads at most MaxBundle, and the bytes must hash to digest: ErrBundleDigest otherwise. A
+// bundle the broker does not hold is ErrNoBundle.
+func (c *Client) Bundle(ctx context.Context, room, runID, digest string) ([]byte, error) {
+	switch {
+	case !envelope.ValidID(room):
+		return nil, fmt.Errorf("rooms: %q is not a C2 room id", room)
+	case !envelope.ValidID(runID):
+		return nil, fmt.Errorf("rooms: %q is not a C2 run id", runID)
+	case !digestRE.MatchString(digest):
+		return nil, errors.New("rooms: a bundle's digest is 64-hex")
+	}
+	path := strings.Replace(strings.Replace(bundleRoute, "{id}", room, 1), "{digest}", digest, 1)
+	var b []byte
+	if err := c.call(ctx, http.MethodGet, bundleRoute, path, room, "?run="+runID, nil, MaxBundle, &b); err != nil {
+		return nil, err
+	}
+	if sum := sha256.Sum256(b); hex.EncodeToString(sum[:]) != digest {
+		return nil, ErrBundleDigest
+	}
+	return b, nil
+}
+
+// The digest-bound approval routes (hardening HR28).
+const (
+	approvalsRoute = "/v1/rooms/{id}/approvals"
+	approvalRoute  = "/v1/approvals/{approval}"
+	supersedeRoute = "/v1/approvals/{approval}/supersede"
+)
+
+var (
+	outputIDRE     = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	agentBranchRE  = regexp.MustCompile(`^agent/[a-z0-9][a-z0-9._/-]{0,100}$`)
+	approvalULIDRE = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+)
+
+// ApprovalRequest is the factory's request for a maintainer's approval of one push bundle: the run
+// and output that carry it, its digest, the branch it pushes, how long it waits, and Action, the
+// JSON object the card and the room page show (the output, the digest, the heads and the protected
+// paths: never commit text).
+type ApprovalRequest struct {
+	RunID, Output, Digest, Branch string
+	TTL                           time.Duration
+	Action                        any
+}
+
+// OutputApproval is a digest-bound approval as the broker reads it back.
+type OutputApproval struct {
+	ApprovalID string    `json:"approvalId"`
+	RoomID     string    `json:"roomId"`
+	RunID      string    `json:"runId"`
+	State      string    `json:"state"`
+	Branch     string    `json:"branch"`
+	Digest     string    `json:"digest"`
+	Output     string    `json:"output"`
+	DecidedBy  string    `json:"decidedBy,omitempty"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+// RequestApproval asks room's approvers to approve one push bundle (hardening HR28). The broker
+// keys it on the output, so a retry answers the first approval: its id, state and deadline.
+func (c *Client) RequestApproval(ctx context.Context, room string, req ApprovalRequest) (OutputApproval, error) {
+	switch {
+	case !envelope.ValidID(room):
+		return OutputApproval{}, fmt.Errorf("rooms: %q is not a C2 room id", room)
+	case !envelope.ValidID(req.RunID):
+		return OutputApproval{}, fmt.Errorf("rooms: %q is not a C2 run id", req.RunID)
+	case !outputIDRE.MatchString(req.Output) || !digestRE.MatchString(req.Digest) || !agentBranchRE.MatchString(req.Branch):
+		return OutputApproval{}, errors.New("rooms: an approval binds a 16-hex output, a 64-hex digest and an agent/ branch")
+	case req.TTL < time.Minute || req.TTL > 7*24*time.Hour:
+		return OutputApproval{}, errors.New("rooms: an approval waits a minute to 7 days")
+	}
+	in := struct {
+		RunID      string `json:"runId"`
+		Output     string `json:"output"`
+		Digest     string `json:"digest"`
+		Branch     string `json:"branch"`
+		TTLSeconds int64  `json:"ttlSeconds"`
+		Action     any    `json:"action"`
+	}{req.RunID, req.Output, req.Digest, req.Branch, int64(req.TTL / time.Second), req.Action}
+	var out OutputApproval
+	if err := c.do(ctx, http.MethodPost, approvalsRoute, room, "", in, maxReplyOverhead, &out); err != nil {
+		return OutputApproval{}, err
+	}
+	out.RoomID, out.RunID, out.Branch, out.Digest, out.Output = room, req.RunID, req.Branch, req.Digest, req.Output
+	return out, nil
+}
+
+// SupersedeApproval closes a pending digest-bound approval as superseded: a later push of its run
+// replaced the one it holds (HR27). It returns the approval's state, which a decision that came
+// first keeps. A missing approval is ErrNoApproval.
+func (c *Client) SupersedeApproval(ctx context.Context, id string) (string, error) {
+	if !approvalULIDRE.MatchString(id) {
+		return "", errors.New("rooms: an approval id is a ULID")
+	}
+	var out struct {
+		State string `json:"state"`
+	}
+	if err := c.call(ctx, http.MethodPost, supersedeRoute, strings.Replace(supersedeRoute, "{approval}", id, 1), "", "",
+		struct{}{}, maxReplyOverhead, &out); err != nil {
+		return "", err
+	}
+	return out.State, nil
+}
+
+// Approval reads a digest-bound approval back (HR27): the factory re-reads it before it applies the
+// push it holds. A missing approval, or one that is not digest-bound, is ErrNoApproval.
+func (c *Client) Approval(ctx context.Context, id string) (OutputApproval, error) {
+	if !approvalULIDRE.MatchString(id) {
+		return OutputApproval{}, errors.New("rooms: an approval id is a ULID")
+	}
+	var out OutputApproval
+	if err := c.call(ctx, http.MethodGet, approvalRoute, strings.Replace(approvalRoute, "{approval}", id, 1), "", "",
+		nil, maxReplyOverhead, &out); err != nil {
+		return OutputApproval{}, err
+	}
+	return out, nil
 }
 
 // Queued is one live message of the room's FIFO queue (SP2 §2); Ref is its seq in the room.
@@ -479,6 +625,10 @@ func (c *Client) call(ctx context.Context, method, route, path, room, query stri
 		var e wire.Error
 		_ = json.Unmarshal(raw, &e)
 		return &APIError{Status: status, Reason: e.Reason}
+	}
+	if b, ok := out.(*[]byte); ok { // a raw reply, such as a bundle
+		*b = raw
+		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("rooms: %s %s: the reply is not JSON", method, route)

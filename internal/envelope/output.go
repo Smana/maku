@@ -7,17 +7,26 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The safe-output kinds (hardening UH4): a run's request, then exactly one of the applier's
 // answers. Output carries the record; Text is never part of it. KindOutputShadowed is the audit
 // stage's record (HR1): what the factory would have done with a write the run made itself.
+// KindOutputWaiting is not an answer (HR27): a push held for a maintainer's approval of its
+// digest, answered later, once, applied or refused.
 const (
 	KindOutputRequested MessageKind = "output_requested"
 	KindOutputApplied   MessageKind = "output_applied"
 	KindOutputRefused   MessageKind = "output_refused"
 	KindOutputShadowed  MessageKind = "output_shadowed"
+	KindOutputWaiting   MessageKind = "output_waiting"
 )
+
+// WaitingReason is the one reason an output_waiting record carries: its push touches a protected
+// path and waits for a maintainer (hardening.RefuseNeedsApproval).
+const WaitingReason = "protected_path_needs_approval"
 
 // MaxOutputFindings caps OutputRecord.Audit.
 const MaxOutputFindings = 5
@@ -44,8 +53,10 @@ type OutputRecord struct {
 	Object  string          `json:"object,omitempty"`
 	Reason  string          `json:"reason,omitempty"`
 	// Audit holds the findings that did not decide the record, at most MaxOutputFindings, on an
-	// applied or shadowed record only.
+	// applied, refused or shadowed record only (HR39: T5 runs in audit after a refusal too).
 	Audit []OutputFinding `json:"audit,omitempty"`
+	// ApprovalID names the approval a waiting push waits for, on output_waiting only: a ULID.
+	ApprovalID string `json:"approvalId,omitempty"`
 }
 
 var (
@@ -54,18 +65,25 @@ var (
 	outputDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	outputReason = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	outputLayer  = regexp.MustCompile(`^t[1-5]_[a-z]+$`)
+	approvalULID = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 )
 
 // Validate holds r to its kind: an id, type and digest always; an object on github.com only, and
 // always, when applied or shadowed; a snake_case reason always when refused, optionally when
-// shadowed (a would-refuse or would_wait), never otherwise; audit findings only when applied or
-// shadowed; a payload on a request only, so an answer or a shadow never carries the written text;
-// a size from 0 to MaxOutputBytes.
+// shadowed (a would-refuse or would_wait), never otherwise; audit findings only when applied,
+// refused or shadowed; a payload on a request only, so an answer or a shadow never carries the
+// written text; a size from 0 to MaxOutputBytes. A waiting record is a push with WaitingReason
+// and the ULID of its approval, which no other kind carries.
 func (r OutputRecord) Validate(k MessageKind) error {
+	if k == KindOutputWaiting {
+		return r.validateWaiting()
+	}
 	written := k == KindOutputApplied || k == KindOutputShadowed
 	switch {
 	case k != KindOutputRequested && k != KindOutputApplied && k != KindOutputRefused && k != KindOutputShadowed:
 		return errors.New("output: not an output kind")
+	case r.ApprovalID != "":
+		return errors.New("output: an approval id only on output_waiting")
 	case !outputID.MatchString(r.ID) || !outputType.MatchString(r.Type) || !outputDigest.MatchString(r.Digest):
 		return errors.New("output: id is 16-hex, type lowercase, digest 64-hex")
 	case len(r.Payload) > 0 && k != KindOutputRequested:
@@ -81,8 +99,8 @@ func (r OutputRecord) Validate(k MessageKind) error {
 		return errors.New("output: a reason always when refused, optionally when shadowed, never otherwise")
 	case r.Reason != "" && !outputReason.MatchString(r.Reason):
 		return errors.New("output: the reason is at most 64 bytes of snake_case")
-	case len(r.Audit) > 0 && !written:
-		return errors.New("output: audit findings only when applied or shadowed")
+	case len(r.Audit) > 0 && k == KindOutputRequested:
+		return errors.New("output: audit findings only on an answer or a shadow")
 	case len(r.Audit) > MaxOutputFindings:
 		return errors.New("output: at most 5 audit findings")
 	}
@@ -90,6 +108,34 @@ func (r OutputRecord) Validate(k MessageKind) error {
 		if !outputLayer.MatchString(f.Layer) || !outputReason.MatchString(f.Reason) {
 			return errors.New("output: a finding is a t1 to t5 layer and a snake_case reason")
 		}
+	}
+	return nil
+}
+
+// MaxProtectedPath bounds one protected path a digest-bound approval shows, in bytes.
+const MaxProtectedPath = 256
+
+// ShowablePath reports whether p, a protected path from a digest-bound approval's action, may be
+// shown to a person: non-empty, at most MaxProtectedPath bytes of valid UTF-8, with no control
+// character (Cc) and no format character (Cf: bidi overrides, zero-width marks), which could make a
+// path read as another. Every surface that names a path filters through it.
+func ShowablePath(p string) bool {
+	return p != "" && len(p) <= MaxProtectedPath && utf8.ValidString(p) &&
+		!strings.ContainsFunc(p, func(r rune) bool { return unicode.In(r, unicode.Cc, unicode.Cf) })
+}
+
+func (r OutputRecord) validateWaiting() error {
+	switch {
+	case !outputID.MatchString(r.ID) || r.Type != "push" || !outputDigest.MatchString(r.Digest):
+		return errors.New("output: a waiting record is a push with a 16-hex id and a 64-hex digest")
+	case r.Bytes < 0 || r.Bytes > MaxOutputBytes:
+		return errors.New("output: bytes is from 0 to 8 MiB")
+	case len(r.Payload) > 0 || r.Object != "" || len(r.Audit) > 0:
+		return errors.New("output: a waiting record carries no payload, object or findings")
+	case r.Reason != WaitingReason:
+		return errors.New("output: a waiting record waits for a protected path's approval")
+	case !approvalULID.MatchString(r.ApprovalID):
+		return errors.New("output: a waiting record names its approval's ULID")
 	}
 	return nil
 }

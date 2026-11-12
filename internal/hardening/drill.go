@@ -165,6 +165,8 @@ var refusalLayer = map[Refusal]Layer{
 	RefuseType: LayerSchema, RefuseSchema: LayerSchema, RefuseCap: LayerSchema, RefuseTarget: LayerSchema, RefuseText: LayerSanitise,
 	RefuseSecret: LayerSecrets, RefuseCanary: LayerSecrets, RefuseNeedsApproval: LayerPaths,
 	RefuseBlockedPath: LayerPaths, RefuseDiffUnavailable: LayerPaths, RefuseInjection: LayerClassifier, RefuseClassifierDown: LayerClassifier,
+	RefusePushRef: LayerSchema, RefusePushHistory: LayerSchema, RefusePushTree: LayerSchema, RefusePushSize: LayerSchema,
+	RefuseSuperseded: LayerSchema, RefuseApprovalDenied: LayerPaths, RefuseApprovalExpired: LayerPaths,
 }
 
 // Score scores obs against s (UH14): the drill passes when every scenario × role ran, none applied
