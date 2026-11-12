@@ -404,7 +404,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return c.gh
 		}
 		return nil // a nil interface, never a typed-nil *forge.GitHub
-	}, m.MergeGateRequired, log))
+	}, m.MergeGateRequired, m.MergeGateRulesUnread, log))
 	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
 	// publisher's GitHub permissions, read from their octo-sts policies (R2 as evidence).
 	if cfg.Hardening.Enforcing() {

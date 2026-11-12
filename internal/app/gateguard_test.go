@@ -42,12 +42,13 @@ func TestGateRequired(t *testing.T) {
 }
 
 type gateGuardRig struct {
-	f   *forgetest.Fake
-	cfg *config.Config
-	log bytes.Buffer
-	mu  sync.Mutex
-	got map[string][]bool
-	obs fenceObserver
+	f      *forgetest.Fake
+	cfg    *config.Config
+	log    bytes.Buffer
+	mu     sync.Mutex
+	got    map[string][]bool
+	unread map[string]int
+	obs    fenceObserver
 }
 
 func newGateGuardRig(t *testing.T, gateStatus bool) *gateGuardRig {
@@ -56,7 +57,7 @@ func newGateGuardRig(t *testing.T, gateStatus bool) *gateGuardRig {
 	if err := os.WriteFile(idFile, []byte("424242\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	g := &gateGuardRig{f: forgetest.NewFake(), got: map[string][]bool{}}
+	g := &gateGuardRig{f: forgetest.NewFake(), got: map[string][]bool{}, unread: map[string]int{}}
 	g.cfg = &config.Config{Repository: "Smana/demo"}
 	g.cfg.GitHub.MergerAppIDFile = idFile
 	g.cfg.Merge.GateStatus = gateStatus
@@ -65,8 +66,18 @@ func newGateGuardRig(t *testing.T, gateStatus bool) *gateGuardRig {
 			g.mu.Lock()
 			defer g.mu.Unlock()
 			g.got[repo] = append(g.got[repo], required)
+		}, func(_ context.Context, repo string) {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			g.unread[repo]++
 		}, slog.New(slog.NewTextHandler(&g.log, nil)))
 	return g
+}
+
+func (g *gateGuardRig) unreadCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.unread["Smana/demo"]
 }
 
 func (g *gateGuardRig) recorded() []bool {
@@ -112,5 +123,8 @@ func TestGateGuardKeepsTheLastValueOnAnError(t *testing.T) {
 	}
 	if strings.Contains(g.log.String(), "not required") {
 		t.Fatalf("an error is not a missing rule:\n%s", g.log.String())
+	}
+	if n := g.unreadCount(); n != 2 {
+		t.Fatalf("%d unread passes counted, want 2", n)
 	}
 }

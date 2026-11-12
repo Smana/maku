@@ -5,6 +5,7 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
+	"github.com/Smana/maku/internal/factory/filefence"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/grant"
 	"github.com/Smana/maku/internal/factory/steering"
@@ -173,6 +175,11 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 			// with the bypass instructions, rather than asking for an approval that cannot count.
 			return human("human_commit_in_pr", "review")
 		case "approved":
+			// S9 without policy-bot: a gate path is unmergeable by the gate, approval or not. The
+			// reconciler reads the diff of an approved head whenever policy-bot is off.
+			if !rc.Merge.UsesPolicyBot() && in.DiffRead && touchesGatePath(rc, cl, in.Stats) {
+				return ArmDecision{Verdict: "human", Reason: "gate_path", Matched: "gate"}
+			}
 			return ArmDecision{Verdict: "arm", Reason: "maintainer_approved", Matched: "review", Approver: rv.Author}
 		}
 	} else {
@@ -223,6 +230,18 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 		return human("auto_merge_cap", class)
 	}
 	return ArmDecision{Verdict: "arm", Matched: class}
+}
+
+// touchesGatePath reports whether a changed file, or the file it was renamed from, matches a
+// protectedFiles pattern of the decided class or of any class of the repository. Without
+// policy-bot, those lists are the gate paths: a repository retiring it moves its .policy.yml gate
+// list there (D11).
+func touchesGatePath(rc *config.Repository, cl config.Class, stats []forge.FileStat) bool {
+	protected := slices.Clone(cl.ProtectedFiles)
+	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
+		protected = append(protected, rc.Classes[name].ProtectedFiles...)
+	}
+	return len(protected) > 0 && filefence.ProtectedFiles(config.Class{ProtectedFiles: protected}, stats) != ""
 }
 
 // recordOf is the record's start (AM8), known before any row is read: the class's caps, the

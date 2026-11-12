@@ -31,6 +31,17 @@ func TestMergeGateRequiredGauge(t *testing.T) {
 	}
 }
 
+// Review of #500: a fence pass that could not read the branch rules is counted, so a gauge kept at
+// its last value shows as stale.
+func TestMergeGateRulesUnreadIsCounted(t *testing.T) {
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/cloud-native-ref")
+	s.MergeGateRulesUnread(t.Context(), "Smana/cloud-native-ref")
+	if want := `maku_factory_merge_gate_rules_unread_total{repository="Smana/cloud-native-ref"} 1`; !strings.Contains(scrape(), want+"\n") {
+		t.Errorf("missing %s", want)
+	}
+}
+
 // PR12: a merge by the agents App is its own outcome, not folded into other.
 func TestAgentMergedIsAnOutcome(t *testing.T) {
 	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })

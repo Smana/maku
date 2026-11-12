@@ -19,14 +19,16 @@ import (
 // still human_merged.
 func TestAnAgentsMergeIsRecordedAsAgentMerged(t *testing.T) {
 	for name, c := range map[string]struct {
-		by, outcome string
-		logged      bool
+		phase, by, outcome string
+		logged             bool
 	}{
-		"the agents App": {"ogenki-agents[bot]", "agent_merged", true},
-		"a maintainer":   {"Smana", "human_merged", false},
+		"the agents App, at the gate":       {v1alpha1.PhaseAwaitingCI, "ogenki-agents[bot]", "agent_merged", true},
+		"a maintainer, at the gate":         {v1alpha1.PhaseAwaitingCI, "Smana", "human_merged", false},
+		"the agents App, handed to a human": {v1alpha1.PhaseAwaitingHuman, "ogenki-agents[bot]", "agent_merged", true},
+		"a maintainer, handed to a human":   {v1alpha1.PhaseAwaitingHuman, "Smana", "human_merged", false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+			g := mergeRig(t, c.phase)
 			var buf bytes.Buffer
 			g.r.Log = slog.New(slog.NewTextHandler(&buf, nil))
 			g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", MergedBy: c.by, MergeCommitSHA: "def",

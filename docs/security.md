@@ -76,11 +76,14 @@ Two GitHub Apps back the factory (D12). The **factory App** reads and narrates, 
 beside it or folded into it. The **agents App** is the identity runs push and open pull requests as
 (`agentsLogin`). `maku/merge-gate` is posted by the merger's connection, and the documented
 ruleset requires it from that App's `integration_id`
-([branch protection](factory.md#branch-protection-for-the-merge-gate)). It is `success` only for
-the factory's own `arm`, posted in the same pass as the merge, and a shadow decision stays
-`pending`, so a status no agent token can post is what opens the branch. The demo is the
-exception: its one App backs every run, so there the status stays advisory
-([quickstart](quickstart.md)).
+([branch protection](factory.md#branch-protection-for-the-merge-gate)) on agent pull requests: the
+human roles bypass that ruleset on their own merges, and no App does. It is `success` only for
+the factory's own `arm`, posted after every check that can still hold the arm and immediately
+before the merge call. A post that fails stops the merge, and a merge call that fails puts back
+`pending` or `failure`, so no `success` is left standing on a head the factory did not merge. A
+shadow decision stays `pending`, so a status no agent token can post is what opens the branch.
+The demo is the exception: its one App backs every run, so there the status stays advisory and no
+ruleset requires it ([quickstart](quickstart.md)).
 
 **D12's invariants, and the tests that hold them.** Every permission a run or the publisher is
 minted with comes from one role table, `minter.Roles` (`internal/factory/minter/roles.go`):
@@ -97,10 +100,10 @@ minted with comes from one role table, `minter.Roles` (`internal/factory/minter/
 **Residual: an agent's merge.** Until H3, the implementer's and the tester's tokens keep
 `contents: write`, which can merge a pull request whose required checks are green. Between the
 gate's `success` and the factory's own merge, in the same pass, that window lasts seconds. A
-pull request in `AwaitingCI` or `AutoMerging` found merged by `agentsLogin` is counted as
-`agent_merged` (`maku_factory_pr_outcomes_total`), logged at error level, and otherwise ends as a
-human merge does: it is not reverted. H3 closes it under HR12, where those tokens lose
-`contents: write`.
+pull request found merged by `agentsLogin`, at the gate, in `AutoMerging` or handed to a human, is
+counted as `agent_merged` (`maku_factory_pr_outcomes_total`, alert `FactoryAgentMerged`), logged at
+error level, and otherwise ends as a human merge does: it is not reverted. H3 closes it under
+HR12, where those tokens lose `contents: write`.
 
 ## Authorization
 

@@ -44,9 +44,9 @@ func GateRequired(rules []forge.RequiredStatus, appID int64) bool {
 // App that posts it: the merger App, whose id file names the factory App's when the merger is
 // folded into it. It records the answer, and warns once each time the requirement goes. It never
 // refuses: the factory merges by its own decision, and the rule guards against everyone else. A
-// read that fails keeps the last value.
+// read that fails keeps the last value and is counted through unread, so a value gone stale shows.
 func gateGuardObserver(live func() *config.Config, readers func(repo string) rulesReader,
-	record func(ctx context.Context, repo string, required bool), log *slog.Logger) fenceObserver {
+	record func(ctx context.Context, repo string, required bool), unread func(ctx context.Context, repo string), log *slog.Logger) fenceObserver {
 	var mu sync.Mutex
 	last := map[string]bool{} // lowercased repository → required, as last recorded
 	return func(ctx context.Context, repo string, _ []byte) {
@@ -62,16 +62,19 @@ func gateGuardObserver(live func() *config.Config, readers func(repo string) rul
 		appID, err := readAppID(cfg.GitHub.MergerAppIDFile)
 		if err != nil {
 			log.Warn("the merge gate's App id is unreadable: whether branch protection requires maku/merge-gate keeps its last value", "repository", repo, "err", err)
+			unread(ctx, repo)
 			return
 		}
 		info, err := rr.RepositoryInfo(ctx)
 		if err != nil {
 			log.Warn("the default branch is unreadable: whether branch protection requires maku/merge-gate keeps its last value", "repository", repo, "err", err)
+			unread(ctx, repo)
 			return
 		}
 		rules, err := rr.BranchRules(ctx, info.DefaultBranch)
 		if err != nil {
 			log.Warn("the branch rules are unreadable: whether branch protection requires maku/merge-gate keeps its last value", "repository", repo, "err", err)
+			unread(ctx, repo)
 			return
 		}
 		required := GateRequired(rules, appID)

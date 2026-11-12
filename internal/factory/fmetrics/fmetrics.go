@@ -157,6 +157,7 @@ type Set struct {
 	hardeningUntraced    metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
+	mergeGateUnread      metric.Int64Counter
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
 	monitorVerdicts      metric.Int64Counter
@@ -358,6 +359,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
+	check(err)
+	s.mergeGateUnread, err = meter.Int64Counter("agent_factory_merge_gate_rules_unread_total",
+		metric.WithDescription("Fence passes over a repository with merge.gateStatus that could not read whether its default branch requires maku/merge-gate: agent_factory_merge_gate_required keeps its last value meanwhile (D11)."))
 	check(err)
 	s.timeToPR, err = meter.Float64Histogram("agent_factory_time_to_pr_seconds",
 		metric.WithDescription("From intake to the PR opening (§7, SC-1)."), metric.WithExplicitBucketBoundaries(timeToPRBuckets...))
@@ -969,6 +973,11 @@ func (s *Set) MergeGateRequired(ctx context.Context, repository string, required
 		v = 1
 	}
 	s.mergeGateRequired.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+// MergeGateRulesUnread counts a fence pass that could not read repository's branch rules.
+func (s *Set) MergeGateRulesUnread(ctx context.Context, repository string) {
+	s.mergeGateUnread.Add(ctx, 1, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
 }
 
 // SandboxPermissions sets the permission gauge for repository from one fence pass: grants maps a

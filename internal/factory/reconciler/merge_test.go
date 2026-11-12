@@ -1307,13 +1307,12 @@ func TestTheGateStatusIsPostedBeforeTheMerge(t *testing.T) {
 func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Merge.GateStatus = true
-	g.f.SetChecks(12, green("SUCCESS"))
-	g.f.RefuseMerge("PR_12", forge.ErrHeadMoved) // stays at the gate: the same head is read again
+	g.f.SetChecks(12, forge.Checks{Runs: green("SUCCESS").Runs[:1]}) // a required check unreported: it waits at the gate
 	g.reconcile(t, "3buqdlot", 1)
 	g.reconcile(t, "3buqdlot", 1)
 	got := g.f.Statuses("abc")
-	if len(got) != 1 || got[0].Context != GateStatusContext || got[0].State != "success" || got[0].Description != "docs-links: merging" {
-		t.Fatalf("one success per head, got %+v", got)
+	if len(got) != 1 || got[0].Context != GateStatusContext || got[0].State != "pending" || got[0].Description != "docs-links: waiting, ci_pending" {
+		t.Fatalf("one status per head and verdict, got %+v", got)
 	}
 }
 
@@ -1363,15 +1362,15 @@ func TestTheGatePostsNothingWithoutGateStatus(t *testing.T) {
 	}
 }
 
+// A failed post of a decision that does not merge changes nothing: the task is handed off as
+// decided. An arm's failed post is TestAFailedArmStatusAbortsTheMerge's.
 func TestAFailedStatusPostDoesNotChangeTheDecision(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Merge.GateStatus = true
-	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetChecks(12, green("PENDING"))
 	g.f.SetStatusError(errors.New("403: statuses: write"))
-	g.reconcile(t, "3buqdlot", 1)
-	pr, _ := g.f.PullRequest(t.Context(), 12)
-	if pr.State != "MERGED" {
-		t.Fatalf("the merge went on regardless: %s", pr.State)
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "policy_pending" {
+		t.Fatalf("the hand-off went on regardless: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 }
 
