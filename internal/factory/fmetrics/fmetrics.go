@@ -136,6 +136,12 @@ func oneOf(v string, set []string) string {
 // outputBuckets sit on AC7's 2 s p95, and the applier's 2 s poll that bounds it from below.
 var outputBuckets = []float64{0.5, 1, 2, 3, 5, 10, 30, 60, 300}
 
+// approvalWaitBuckets span a maintainer's answer, from a minute to the 7-day cap on approvalTTL.
+var approvalWaitBuckets = []float64{60, 300, 900, 3600, 4 * 3600, 12 * 3600, 24 * 3600, 3 * 24 * 3600, 7 * 24 * 3600}
+
+// approvalDecisions are how a digest-bound approval closes (store approvals).
+var approvalDecisions = []string{"approved", "denied", "expired", "superseded"}
+
 var (
 	timeToPRBuckets   = []float64{60, 300, 600, 900, 1800, 3600, 7200}
 	taskTokensBuckets = []float64{50_000, 100_000, 200_000, 400_000, 600_000, 1_000_000, 2_000_000, 3_000_000, 5_000_000, 8_000_000, 12_000_000}
@@ -154,6 +160,7 @@ var (
 type Set struct {
 	hardeningShadow      metric.Int64Counter
 	hardeningOutput      metric.Float64Histogram
+	hardeningApproval    metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	timeToPR             metric.Float64Histogram
@@ -348,6 +355,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.hardeningOutput, err = meter.Float64Histogram("agent_factory_hardening_output_seconds",
 		metric.WithDescription("From a run's output_requested to the factory's answer, by repository and output type (hardening H2, AC7: p95 at most 2 s per non-push output)."),
 		metric.WithExplicitBucketBoundaries(outputBuckets...))
+	check(err)
+	s.hardeningApproval, err = meter.Float64Histogram("agent_factory_hardening_approval_wait_seconds",
+		metric.WithDescription("From a protected-path push's output_waiting to its approval closing, by repository and decision (hardening H3, HR27)."),
+		metric.WithExplicitBucketBoundaries(approvalWaitBuckets...))
 	check(err)
 	s.hardeningUntraced, err = meter.Int64Counter("agent_factory_hardening_untraced_total",
 		metric.WithDescription("Agent writes of an enforced output type that no output_applied explains (hardening H2's tracer, H2-2's gate: stays 0), by repository and output type."))
@@ -1007,6 +1018,13 @@ func (s *Set) HardeningUntraced(ctx context.Context, typ string) {
 func (s *Set) HardeningOutput(ctx context.Context, typ string, d time.Duration) {
 	s.hardeningOutput.Record(ctx, max(d.Seconds(), 0), metric.WithAttributes(
 		attribute.String("type", oneOf(typ, shadowTypes[1:])), s.repoOf(ctx)))
+}
+
+// HardeningApprovalWait records how long a protected-path push waited for its approval (H3, HR27),
+// under the repository ctx names. A decision outside the closed set reads other.
+func (s *Set) HardeningApprovalWait(ctx context.Context, decision string, d time.Duration) {
+	s.hardeningApproval.Record(ctx, max(d.Seconds(), 0), metric.WithAttributes(
+		attribute.String("decision", oneOf(decision, approvalDecisions)), s.repoOf(ctx)))
 }
 
 // RunRevoked counts a revocation by the run meter, by reason and the limit that fired.
