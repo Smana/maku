@@ -23,7 +23,7 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "cidrs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/cidr"}}
+                "cidrs": {"type": "array", "uniqueItems": true, "items": {"description": "An IPv4 or IPv6 CIDR.", "type": "string", "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*/[0-9]{1,3})$"}}
               }
             }
           }

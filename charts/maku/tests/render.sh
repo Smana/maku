@@ -578,6 +578,13 @@ ykind NetworkPolicy 'select(.metadata.name == "room-broker" or .metadata.name ==
 ykind NetworkPolicy 'select(.metadata.name == "room-broker-retention") | ((.spec.policyTypes | join(",")) == "Ingress,Egress" and (.spec | has("ingress") | not) and (.spec.egress | length) == 2)' 'the job: no ingress, DNS and the database (kubernetes)'
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.database.retentionSecret=r --set 'broker.database.podLabels.app=db')"
 ykind NetworkPolicy 'select(.metadata.name == "room-broker-retention") | .spec.egress[1].to[0].podSelector.matchLabels.app == "db"' 'the job reaches the database by the broker'"'"'s podLabels'
+# an IPv6 CIDR renders quoted in both modes (a bare "fd00::/8" is a YAML scalar only by luck)
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.database.retentionSecret=r --set 'broker.database.egress.cidrs={fd00:db::/64}')"
+ykind CiliumNetworkPolicy 'select(.metadata.name == "room-broker-retention") | .spec.egress[1].toCIDR[0] == "fd00:db::/64"' 'egress.cidrs: an IPv6 CIDR (cilium)'
+grep -qF -- '- "fd00:db::/64"' <<<"$out" || { echo 'FAIL: the IPv6 CIDR is not quoted (cilium)' >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.database.retentionSecret=r --set 'broker.database.egress.cidrs={fd00:db::/64}')"
+ykind NetworkPolicy 'select(.metadata.name == "room-broker-retention") | .spec.egress[1].to[0].ipBlock.cidr == "fd00:db::/64"' 'egress.cidrs: an IPv6 CIDR (kubernetes)'
+grep -qF -- '{cidr: "fd00:db::/64"}' <<<"$out" || { echo 'FAIL: the IPv6 CIDR is not quoted (kubernetes)' >&2; fail=1; }
 if helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set 'broker.database.egress.cidrs={db.example.com}' >/dev/null 2>&1; then
   echo 'FAIL: a database egress CIDR that is not one must be refused' >&2; fail=1; fi
 

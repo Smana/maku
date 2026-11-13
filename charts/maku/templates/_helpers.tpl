@@ -119,7 +119,7 @@ by database.podLabels or podLabel, or database.egress.cidrs for a database outsi
 - to:
     {{- with dig "egress" "cidrs" (list) $db }}
     {{- range . }}
-    - ipBlock: {cidr: {{ . }}}
+    - ipBlock: {cidr: {{ . | quote }}}
     {{- end }}
     {{- else }}
     - podSelector:
@@ -137,7 +137,10 @@ by database.podLabels or podLabel, or database.egress.cidrs for a database outsi
 {{- define "ap.cnpDatabase" -}}
 {{- $db := .Values.broker.database -}}
 {{- with dig "egress" "cidrs" (list) $db -}}
-- toCIDR: {{- toYaml . | nindent 4 }}
+- toCIDR:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
 {{- else -}}
 - toEndpoints:
     - matchLabels:
