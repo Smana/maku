@@ -25,6 +25,20 @@ To move an install off the ZITADEL reader:
 4. Each human opens `/link/github` once. Once every active human has linked, remove
    `human.access.readerFile`, `api.access.readerFile` and `zitadelReaderSecret`.
 
+## RunLore's knowledge base for runs (v0.4x, v4 rollout step 6)
+
+New keys, off by default, so a release that does not set it renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku.broker.roomTools.knowledge.url` | `""`: no knowledge tool | the broker's `:8090` serves `kb_search` and `kb_get` to the listed roles (`triager`) and forwards them to this MCP endpoint ([RunLore](integration.md#runlore)) |
+| `maku.broker.roomTools.knowledge.networkPolicy.to` | `[]` | the peers the broker's egress opens on the URL's port; required with `url` in `networkPolicies.mode` `cilium` or `kubernetes`. In cilium mode an entry is an endpoint selector or a whole peer (`toFQDNs`, `toCIDR`, …) |
+| `maku.broker.roomTools.knowledge.networkPolicy.port` | the URL's port | the port the policies open, when the Service's `targetPort` differs |
+
+The run controller now lists `room-broker__kb_search` and `room-broker__kb_get` in every room run's
+`MCP_READ_ONLY_TOOLS`, whether or not the broker serves them. The broker decodes its config strictly,
+so a `roomTools.knowledge` block needs this release's broker image: chart and images move together.
+
 ## Run traces (v0.4x, v4 rollout step 6)
 
 One new key in the `maku` chart, off by default, so a release that does not set it renders as before:
@@ -45,7 +59,7 @@ The run controller decodes its config strictly, so a `tracing:` block needs this
 controller image: chart and images move together. Runs already started keep their pods, without
 traces, until they end.
 
-## Scrape objects and alerts (v0.4x, v4 rollout step 6)
+## Scrape objects, alerts and dashboards (v0.4x, v4 rollout step 6)
 
 New umbrella keys, all off by default, so a release that sets none of them renders as before:
 
@@ -53,6 +67,7 @@ New umbrella keys, all off by default, so a release that sets none of them rende
 |---|---|---|
 | `monitoring.serviceMonitor` | `enabled: false` | `ServiceMonitor`s for the broker and the factory, `PodMonitor`s for the run-controller, the egress proxy and the model-gateway proxies ([observability](observability.md)). The scraper must be admitted: `maku.networkPolicies.kubernetes.metricsFrom` in maku's mode kubernetes, `monitoring.serviceMonitor.cilium.fromEndpoints` in its mode cilium (the default), `maku-gateway.metrics.allowFrom` with the gateway's policy on |
 | `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)); with `maku-gateway.enabled`, the [gateway group](operations.md#gateway-alerts) and the cost cross-check |
+| `monitoring.dashboards` | `enabled: false` | A ConfigMap per product dashboard, `maku-dashboard-<uid>`, for Grafana's sidecar or a grafana-operator `configMapRef` ([dashboards](observability.md#dashboards)). An install that runs cloud-native-ref's `GrafanaDashboard`s with the same uids removes them first, or Grafana holds two dashboards with one uid |
 | `slack.enabled` | `false` | Until the Slack App's subchart ships, only the `maku-slack` alert group, for an App installed outside the chart |
 
 Both need the prometheus-operator CRDs. An install that runs its own copies of these rules (the

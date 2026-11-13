@@ -17,6 +17,8 @@ As of v0.42.0.
 | Untrusted-input hardening contracts (stage H0): trust levels, safe-output and `forge_read` tools, the readiness port, the drill scorer, all off | [Design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md) |
 | Untrusted-input hardening, audit (stage H1): every agent write shadowed and checked, a canary in writer briefs, `status.inputTrust`, the agent-guard client; off by default, nothing refused | [Hardening, audit](factory.md#hardening-audit) |
 | Untrusted-input hardening, non-code outputs (stage H2): `pr`, `comment`, `labels` and `issue` requested through `output_*` tools and applied by the factory, per repository; the tracer and the permission gauge; nothing enforced unless a repository is listed | [Hardening, non-code outputs enforced](factory.md#hardening-non-code-outputs-enforced) |
+| Untrusted-input hardening, reads filtered and the drills (stage H4): `forge_read`, no `api.github.com` egress at mode `enforce`, `maku drill plant` and the factory's drill scorer | [Hardening, reads filtered](factory.md#hardening-reads-filtered), [Injection drills](drills.md) |
+| Untrusted-input hardening, ready (stage H5): per-repository readiness reported (gauge, API, Evidence page), coordination's execute gated on class authority and readiness, T5 promoted per output type | [Hardening, ready](factory.md#hardening-ready) |
 | Untrusted-input hardening, push enforced (stage H3): `git push` becomes a bundle the factory inspects and pushes as the publisher, a protected path waits for a maintainer's approval of its digest, and the tracer traces pushes; per repository, off by default | [Hardening, push enforced](factory.md#hardening-push-enforced) |
 | The room page: a header grouped by topic, an action on every need, folded briefs, settings in tabs | [Web UI](web-ui.md) |
 | The factory from your coding agent: hand off, file, wait (`room_wait`) and check out (`room_checkout`) through the MCP server | [The MCP server](cli.md#the-mcp-server) |
@@ -43,7 +45,7 @@ As of v0.42.0.
 
 | Feature | Trigger or dependency |
 |---|---|
-| Untrusted-input hardening, H4 and H5: reads filtered, ready; H2 and H3 live on a first repository | H1's exit: at most 1% of legitimate outputs refused by T1 to T4 under audit; each stage has its own exit ([design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md)) |
+| Untrusted-input hardening live: H2 to H5 on a first repository, two consecutive passing weekly drills, then T5 promoted per type | H1's exit: at most 1% of legitimate outputs refused by T1 to T4 under audit; each stage has its own exit ([design](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-07-untrusted-input-hardening-design.md)) |
 | Multi-repository coordination, execute | Repository authority and hardening both ready ([prerequisites](factory.md#execution-prerequisites)) |
 | OTel spans across bridge → broker → store, `traceparent` on every hop | `AGENTS.md`, Observability |
 | The platform-agnostic decision after the UX sign-off | 2 of 4 triggers: daily use, AHP 1.0 without identity and audit, a second harness or runtime, outside demand (`AGENTS.md`, Seams) |

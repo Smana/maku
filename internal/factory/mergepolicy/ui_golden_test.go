@@ -50,6 +50,12 @@ func TestUIGoldenNamesEveryField(t *testing.T) {
 	var want []string
 	typePaths(reflect.TypeFor[File](), "", &want)
 	for _, p := range want {
+		// The binding shape (B15) is written by the settings pages' binding editor, which comes with
+		// its own golden (reusable merge policies, plan Task 22): full.yaml is the class shape, and
+		// a file holds one shape or the other.
+		if strings.HasPrefix(p, ".mergePolicies") {
+			continue
+		}
 		if !have[leafPath(p)] {
 			t.Errorf("testdata/ui/full.yaml lacks %s: set it in fullPolicy (web/test/policy-yaml.test.ts) and give it its place in web/src/policy-yaml.ts", p)
 		}

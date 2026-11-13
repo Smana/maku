@@ -92,9 +92,10 @@ func emptyDir(name, size string, mem bool) corev1.Volume {
 }
 
 // roomToolsReadOnly is the bridge's MCP_READ_ONLY_TOOLS for a run given the room tools: they only
-// append to the room.
+// append to the room, or read the knowledge base the broker forwards to (EX11). The knowledge tools
+// are always listed: the broker alone decides whether it serves them, and an absent tool is harmless.
 const roomToolsReadOnly = "room-broker__room_read,room-broker__room_post,room-broker__room_progress," +
-	"room-broker__room_handoff,room-broker__room_verdict"
+	"room-broker__room_handoff,room-broker__room_verdict,room-broker__kb_search,room-broker__kb_get"
 
 // Pod is the run's pod: the composition's Sandbox pod template without identity-proxy,
 // octo-sts, traces, Kueue and suspend. The model key and the PAT are files the harness reads

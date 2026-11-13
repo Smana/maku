@@ -125,6 +125,7 @@ tasks:
       - bash charts/agent-factory/tests/schema.sh
       - bash charts/agent-factory/tests/monitoring.sh
       - bash charts/agent-factory/tests/promql-only.sh
+      - bash charts/agent-factory/tests/monitoring/dashboards.sh
       - git diff --exit-code -- config/crd api
 
   chart:install:k3d:

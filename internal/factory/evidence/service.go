@@ -108,7 +108,7 @@ type Report struct {
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
 	// For a repository served from a MergePolicy object: its name, the manifest of its central
 	// classes and merge block (what a GitOps pull request changes), the file name to save it
-	// under, and its classes in the policy file's shape (mergepolicy.Export), which the editor
+	// under, and its classes in the policy file's shape (mergepolicy.ExportClasses), which the editor
 	// edits: the editor never edits spec.classes. Empty for a repository the file serves. Served
 	// is nil when a class has no file shape (Export's error).
 	MergePolicy  string            `json:"mergePolicy,omitempty"`
@@ -117,9 +117,22 @@ type Report struct {
 	Served       *mergepolicy.File `json:"served,omitempty"`
 	// MergePolicyStatus is the object's stored status, nil when there is none to read.
 	MergePolicyStatus *PolicyStatus `json:"mergePolicyStatus,omitempty"`
+	// Hardening is the repository's hardening readiness (H5, HR41), computed afresh by the API for a
+	// repository at mode audit or above; nil otherwise.
+	Hardening *Readiness `json:"hardening,omitempty"`
 	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
 	Namespace     string `json:"-"`
 	RepositoryRef string `json:"-"`
+}
+
+// Readiness is one repository's hardening readiness. The operators' route shows it whole: hardened,
+// the facts that do not hold (hardening.Missing, or error), and the passing drill it relied on. The
+// Evidence page shows a reader hardened, and error alone.
+type Readiness struct {
+	Repository string   `json:"repository"`
+	Hardened   bool     `json:"hardened"`
+	Missing    []string `json:"missing,omitempty"`
+	Drill      string   `json:"drill,omitempty"`
 }
 
 var (
@@ -468,7 +481,7 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 				r.MergePolicyStatus = &st
 			}
 		}
-		if f, err := mergepolicy.Export(rc, cfg); err == nil {
+		if f, err := mergepolicy.ExportClasses(rc, cfg); err == nil {
 			r.Served = f
 		}
 	}

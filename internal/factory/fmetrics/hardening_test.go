@@ -173,3 +173,34 @@ func TestT5Counter(t *testing.T) {
 		}
 	}
 }
+
+// H5 (HR41): each repository's readiness, 1 or 0, and each missing fact at 1; a fact that holds
+// again goes to 0, and anything outside the closed set reads other.
+func TestHardeningReadyGauge(t *testing.T) {
+	ctx := t.Context()
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/ai-native-ref")
+	s.HardeningReady(ctx, "Smana/ai-native-ref", false, []string{"mode_not_enforce", "drill_stale_or_failed", "an agent's text"})
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_ready{repository="Smana/ai-native-ref"} 0`,
+		`maku_factory_hardening_missing{missing="mode_not_enforce",repository="Smana/ai-native-ref"} 1`,
+		`maku_factory_hardening_missing{missing="drill_stale_or_failed",repository="Smana/ai-native-ref"} 1`,
+		`maku_factory_hardening_missing{missing="other",repository="Smana/ai-native-ref"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+	s.HardeningReady(ctx, "Smana/ai-native-ref", true, nil)
+	body = scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_ready{repository="Smana/ai-native-ref"} 1`,
+		`maku_factory_hardening_missing{missing="mode_not_enforce",repository="Smana/ai-native-ref"} 0`,
+		`maku_factory_hardening_missing{missing="other",repository="Smana/ai-native-ref"} 0`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
