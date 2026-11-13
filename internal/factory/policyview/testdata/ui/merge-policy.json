@@ -168,7 +168,9 @@
             "lastDecision": "would_merge:clean",
             "lastDecisionAt": "2026-11-10T00:00:00Z"
           }
-        ]
+        ],
+        "consumerCount": 0,
+        "currentCount": 0
       }
     }
   }
