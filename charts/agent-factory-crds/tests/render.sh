@@ -27,6 +27,12 @@ for f in "$crddir"/maku.ogenki.io_*.yaml; do
   cmp -s "$tmp/want.json" "$tmp/got.json" || { echo "FAIL: $name's spec differs from $f" >&2; fail=1; }
 done
 
+# Reusable merge policies, release N: the MergePolicy CRD prints its consumers and keeps the two
+# shapes apart (B8, B10).
+mp="$(yq ea 'select(.kind == "CustomResourceDefinition" and .metadata.name == "mergepolicies.maku.ogenki.io")' - <<<"$out")"
+[[ "$(yq '[.spec.versions[0].additionalPrinterColumns[].name] | contains(["Consumers", "Current"])' - <<<"$mp")" == true ]] || { echo "FAIL: the MergePolicy CRD lacks the Consumers and Current columns" >&2; fail=1; }
+[[ "$(yq '[.. | select(has("message")) | .message] | contains(["the per-repository fields (repositoryRef, classes, merge) and the class fields never together (B8)"])' - <<<"$mp")" == true ]] || { echo "FAIL: the MergePolicy CRD lacks the B8 rule" >&2; fail=1; }
+
 # keep: false drops the annotation (uninstalling then deletes every Room and Task)
 kept="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
 [[ -z $kept ]] || { echo "FAIL: keep=false still renders the keep annotation" >&2; fail=1; }

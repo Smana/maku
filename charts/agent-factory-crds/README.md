@@ -15,6 +15,18 @@ and `task crd:check` fails on any drift.
 helm install af-crds oci://ghcr.io/smana/charts/agent-factory-crds --version <version>
 ```
 
+## MergePolicy's two shapes
+
+This release's `MergePolicy` CRD admits two shapes. The per-repository shape has `spec.repositoryRef`,
+`classes` and `merge`. The class shape is one reusable class definition, named by the object, that a
+`Repository` binds under `spec.mergePolicies`. CEL keeps the two shapes apart. The next minor
+removes the per-repository fields from the schema, and the API server then prunes them on read.
+Before you upgrade to it, check that no MergePolicy still has a `repositoryRef`:
+
+```bash
+kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'
+```
+
 Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
 needs `--kube-version 1.30.0` or later.
 
