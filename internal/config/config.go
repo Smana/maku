@@ -537,6 +537,10 @@ type RoomToolsConfig struct {
 	// It mirrors the factory's enforceOutputs naming push (stage H3). Empty by default: no run is
 	// served output_push.
 	PushRepositories []string `json:"pushRepositories,omitempty"`
+	// ForgeReadTokenFile is the broker's projected ServiceAccount token for the factory's system
+	// audience (hardening H4, HR35): set, :8090 serves forge_read to a run annotated forge-api: deny,
+	// read and filtered by the factory at factoryURL. Empty by default: forge_read is not served.
+	ForgeReadTokenFile string `json:"forgeReadTokenFile,omitempty"`
 }
 
 // PushRepositories are the repositories :8090 serves output_push to: none unless roomTools names
@@ -546,6 +550,14 @@ func (c Config) PushRepositories() []string {
 		return nil
 	}
 	return c.RoomTools.PushRepositories
+}
+
+// ForgeReadTokenFile is the token forge_read posts to the factory with; "" serves no forge_read.
+func (c Config) ForgeReadTokenFile() string {
+	if c.RoomTools == nil {
+		return ""
+	}
+	return c.RoomTools.ForgeReadTokenFile
 }
 
 // How :8090 authenticates a run. An empty auth is key: the bytes a deployed broker carries need no edit.
@@ -906,6 +918,9 @@ func (c *Config) Validate() error {
 	errs = append(errs, c.Human.validate(slices.Collect(maps.Values(c.SystemPrincipals)))...)
 	if len(c.Human.MCP.Sponsored) > 0 && c.FactoryURL == "" {
 		errs = append(errs, errors.New("human.mcp.sponsored needs factoryURL: run_create posts to the factory's POST /v1/tasks"))
+	}
+	if c.ForgeReadTokenFile() != "" && c.FactoryURL == "" {
+		errs = append(errs, errors.New("roomTools.forgeReadTokenFile needs factoryURL: forge_read posts to the factory's forge-read route"))
 	}
 	errs = append(errs, checkFactoryURL(c.FactoryURL, c.FactoryInsecure)...)
 	errs = append(errs, c.Install.validate()...)

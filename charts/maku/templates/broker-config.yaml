@@ -52,6 +52,10 @@ data:
     {{- with $b.roomTools }}
     roomTools:
       {{- toYaml . | nindent 6 }}
+      {{- if dig "hardening" "forgeRead" "audience" "" $b }}
+      {{- if not $b.factoryURL }}{{ fail "broker.hardening.forgeRead.audience needs broker.factoryURL: forge_read posts to the factory" }}{{ end }}
+      forgeReadTokenFile: /var/run/secrets/maku/factory/token
+      {{- end }}
     {{- end }}
     {{- with include "ap.unsafe" . | fromJsonArray }}
     # The chart's unsafe settings: GET /api/install lists them, and every page shows a banner.

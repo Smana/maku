@@ -163,6 +163,14 @@ out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set brok
   --set 'broker.factoryPodLabels.io\.kubernetes\.pod\.namespace=agent-system')"
 ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "agent-factory") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "agent-system" and .toPorts[0].ports[0].port == "443")' 'an https factoryURL without a port is 443; factoryPodLabels may name the namespace'
 
+# forge_read (hardening H4): with an audience, the broker mounts the factory token and names it.
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.factoryURL=https://factory.example \
+  --set broker.roomTools.enabled=true --set broker.hardening.forgeRead.audience=agent-factory)"
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-token") | .projected.sources[0].serviceAccountToken.audience == "agent-factory"' 'the broker projects a token for the factory audience'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.forgeReadTokenFile == "/var/run/secrets/maku/factory/token"' 'the broker config names the forge_read token'
+out="$q"
+ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-token")' 'no factory token without forgeRead.audience'
+
 # the AgentRun admission policy (S-2, D4): the broker's updates may touch the suspend annotations only.
 # CEL is proven in charts/maku/tests/admission (envtest); here, its shape and binding.
 out="$q"

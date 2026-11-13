@@ -225,3 +225,14 @@ func TestRoomToolsServerAuth(t *testing.T) {
 		t.Fatalf("tokenreview mode, the key and a subject header: %d", got)
 	}
 }
+
+// HR35: :8090 serves forge_read only with the broker's token for the factory configured.
+func TestForgeReadServedByConfig(t *testing.T) {
+	if got := forgeReadTools(config.Config{}, &fakeToolLog{}); len(got) != 0 {
+		t.Fatalf("served with no token: %v", got)
+	}
+	cfg := config.Config{FactoryURL: "https://factory.example", RoomTools: &config.RoomToolsConfig{ForgeReadTokenFile: "/var/run/secrets/maku/factory/token"}}
+	if got := forgeReadTools(cfg, &fakeToolLog{}); len(got) != 1 || got[0].Name != "forge_read" {
+		t.Fatalf("%v", got)
+	}
+}

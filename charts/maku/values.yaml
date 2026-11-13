@@ -83,6 +83,13 @@ broker:
   # output_push to: list a repository here once the factory's config enforces push for it.
   roomTools:
     enabled: true
+  # Hardening H4 (HR35): forgeRead.audience (the factory's system audience, agent-factory) mounts a
+  # projected token for it and serves forge_read on :8090 to runs annotated forge-api: deny, read
+  # and filtered by the factory at factoryURL, whose api.systemPrincipals maps this ServiceAccount
+  # to system:broker. Empty: forge_read is not served.
+  hardening:
+    forgeRead:
+      audience: ""
   # Who may call :8443 as a run. mode jwks verifies against issuer/jwksURL; tokenreview asks the
   # apiserver (a cluster whose issuer is unreachable, e.g. kind) and binds system:auth-delegator.
   runIssuer:
