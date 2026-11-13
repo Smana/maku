@@ -39,11 +39,15 @@ func TestACutOverRepositoryConsultsItsGrants(t *testing.T) {
 			if tk.Status.Phase != tc.phase || (tc.reason != "" && tk.Status.Reason != tc.reason) {
 				t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 			}
-			if len(tc.grants.calls) == 0 || !strings.HasPrefix(tc.grants.calls[0], "lookup smana/cloud-native-ref docs-links "+rigHash+" ") {
+			if len(tc.grants.calls) == 0 || !strings.HasPrefix(tc.grants.calls[0], "lookup smana/cloud-native-ref docs-links "+rigBound+" ") {
 				t.Fatalf("%q", tc.grants.calls)
 			}
-			if c := strings.Join(g.f.Comments(12), "\n"); tc.grant != strings.Contains(c, " policy=0123456789ab grant=aaaaaaaaaaaaaaaaaaaaaaaaaa:1 reviewer=") {
+			if c := strings.Join(g.f.Comments(12), "\n"); tc.grant != recordHas(c, " policy=0123456789ab grant=aaaaaaaaaaaaaaaaaaaaaaaaaa:1") {
 				t.Fatalf("%s", c)
+			}
+			// The record's resolved= is the hash the grants bind to, so a rule made from it holds (B13).
+			if c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n"); !strings.Contains(c, " resolved="+rigBound[:12]+" ") {
+				t.Fatalf("resolved= is not the bound hash %s: %s", rigBound[:12], c)
 			}
 		})
 	}
@@ -74,7 +78,7 @@ func TestAGrantOfACutOverRepositoryIsReadAgainUnderItsAuthority(t *testing.T) {
 			if got := r.grantHolds(t.Context(), r.Cfg.Current(), tk, armed); got != tc.want {
 				t.Fatalf("got %v, calls %q", got, f.calls)
 			}
-			if tc.want && !slices.Contains(f.calls, "lookup smana/cloud-native-ref docs-links "+rigHash+" "+config.DefaultGrantLifetime.String()) {
+			if tc.want && !slices.Contains(f.calls, "lookup smana/cloud-native-ref docs-links "+rigBound+" "+config.DefaultGrantLifetime.String()) {
 				t.Fatalf("%q", f.calls)
 			}
 		})

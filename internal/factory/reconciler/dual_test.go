@@ -88,7 +88,7 @@ func TestTheGateEvaluatesTheRepositoryPolicyBesideTheCentral(t *testing.T) {
 	if !slices.Contains(g.metrics.recorded, "policy_dual docs-links explained") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policy=0123456789ab dual=explained reviewer=") {
+	if c := strings.Join(g.f.Comments(12), "\n"); !recordHas(c, " policy=0123456789ab dual=explained") {
 		t.Fatalf("%s", c)
 	}
 }

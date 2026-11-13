@@ -176,3 +176,19 @@ func TestClassesListIsListedOnlyWithACatalogue(t *testing.T) {
 		})
 	}
 }
+
+// B19: the declared output names the per-class policy generations a bound repository carries.
+func TestClassesListOutputNamesMergePolicies(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Properties map[string]map[string]any `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(classesListOutput, &schema); err != nil {
+		t.Fatal(err)
+	}
+	mp, ok := schema.Properties["generations"].Properties["mergePolicies"]
+	if !ok || mp["type"] != "object" {
+		t.Fatalf("generations.mergePolicies: %v", mp)
+	}
+}

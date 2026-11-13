@@ -122,7 +122,7 @@ func noAuthority(in ArmInputs, p gatePolicy) ArmDecision {
 // variant and the approval subset of the repository's.
 func (p gatePolicy) readsDiff(rc *config.Repository, class string) bool {
 	if !p.on {
-		return rc.Classes[class].ReadsDiff(class)
+		return rc.Classes[class].ReadsDiff(class) || len(rc.Classes[class].RequiresApproval) > 0
 	}
 	r, ok := p.snap.Classes[class]
 	return ok && readsDiff(r, class)

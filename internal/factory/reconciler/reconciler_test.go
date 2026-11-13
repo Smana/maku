@@ -1085,6 +1085,27 @@ func TestTriageRecordsConfigGenerations(t *testing.T) {
 	}
 }
 
+// B12: a bound class records its own policy's generation as mergePolicy; a class served from the
+// per-repository shape, the MergePolicy object's.
+func TestRecordConfigReadsTheClassGenerations(t *testing.T) {
+	cfg := &config.Config{Generations: config.Generations{Factory: 3, Repos: map[string]config.RepoGenerations{
+		"smana/bound":  {Repository: 7, Classes: map[string]config.ClassGeneration{"dead-links": {Policy: 4, PolicyName: "dead-links"}}},
+		"smana/legacy": {Repository: 2, MergePolicy: 5}}}}
+	for _, tc := range []struct {
+		repository string
+		want       v1alpha1.ConfigGenerations
+	}{
+		{"Smana/bound", v1alpha1.ConfigGenerations{Factory: 3, Repository: 7, MergePolicy: 4}},
+		{"Smana/legacy", v1alpha1.ConfigGenerations{Factory: 3, Repository: 2, MergePolicy: 5}},
+	} {
+		tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Repository: tc.repository, PredictedClass: "dead-links"}}
+		recordConfig(cfg, tk)
+		if tk.Status.ConfigGenerations == nil || *tk.Status.ConfigGenerations != tc.want {
+			t.Errorf("%s: %+v, want %+v", tc.repository, tk.Status.ConfigGenerations, tc.want)
+		}
+	}
+}
+
 func TestTriageLeavesConfigGenerationsNilForTheFile(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.ConfigGenerations != nil {
