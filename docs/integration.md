@@ -54,7 +54,7 @@ flowchart LR
 | Humans | ZITADEL roles `agents-admin`, `agents-member`, the `rooms-proxy` client and the CLI's ZITADEL client (formerly `roomctl`), a native app; oauth2-proxy (bearer tokens accepted for `maku`); the `HTTPRoute` on the Tailscale Gateway |
 | Agents | The `room-broker` backend on both MCPRoutes with its key and CNP; the factory App's key; egress to `api.github.com` |
 | Factory | The `agent-factory` `OCIRepository` (`flux/sources/ocirepo-agent-factory.yaml`, cosign-verified; the chart it pulls is named `maku-factory` from v0.30.0 on, so its pin moves to that name with the v0.30.0 bump) and `HelmRelease` with its values (`tooling/base/agent-factory/`) |
-| Observability | The `VMServiceScrape` and the `VMRule`s, `RoomVerdictsNotReachingGitHub` and `RoomApprovalPendingTooLong` among them |
+| Observability | Its own `VMServiceScrape`s and `VMRule`s, until it turns on the umbrella chart's `monitoring` values ([observability](observability.md)), which render the scrape objects and the product alerts; the alerts on its own platform (the CNPG volume, Karpenter, its gateway budgets) stay its own |
 | Design records | ADR-0044 (session protocol), ADR-0049 (room client and human auth) |
 
 Every child added to `clusters/aws-0-agent-platform/` has its twin in

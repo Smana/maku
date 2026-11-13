@@ -1,0 +1,18 @@
+# The rendered annotations, end to end: {{ $labels.x }} passes the chart untouched (no tpl) and
+# Prometheus expands it, and the placeholders became the release's namespace and docs.
+rule_files: [rules-annotated.yaml]
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_last_event_timestamp_seconds{room="r1"}', values: '0x40'}
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: RoomStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, room: r1}
+            exp_annotations:
+              summary: "Room r1 has a running run and no event for 30 minutes"
+              description: "The run is Running but silent, and the room shows AwaitingHuman. Find its run: kubectl get agentrun -n agents -o custom-columns=RUN:.metadata.name,ROOM:.spec.roomRef | grep r1, then read its bridge: kubectl logs -n agents <the run's pod> -c room-bridge"
+              runbook_url: "https://docs.example.test/operations.md#room-alerts"
+              dashboard: "/d/agent-room"
