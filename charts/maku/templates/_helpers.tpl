@@ -455,3 +455,52 @@ spec:
     - name: config
       configMap: {name: {{ .Release.Name }}-preflight}
 {{- end -}}
+
+{{/*
+broker.webhooks (plan v4 step 6, EX9), as JSON {"config": [...], "mounts": [...], "egress": [...]}:
+- config: each entry as the broker reads it, without the chart's keys (existingSecret, key,
+  networkPolicy), its secretFile filled from existingSecret's mount when unset (a set one wins);
+- mounts: {name, secret} per entry with existingSecret, at /etc/room-broker/webhooks/<name>;
+- egress: {name, port, to, host, internet} per entry, for the policies. A cluster entry's peers are
+  networkPolicy.to, or the Slack App's pods when its URL is factory-slack-app's; none fails the render
+  in a policy mode. An internet entry opens 443 (or its URL's port) to its host (cilium) or to public
+  addresses (kubernetes).
+*/}}
+{{- define "ap.webhooks" -}}
+{{- $config := list -}}
+{{- $mounts := list -}}
+{{- $egress := list -}}
+{{- $mode := include "ap.netMode" . -}}
+{{- range $w := .Values.broker.webhooks | default list -}}
+{{- $np := $w.networkPolicy | default dict -}}
+{{- $entry := omit $w "existingSecret" "key" "networkPolicy" -}}
+{{- if and $w.existingSecret (not $w.secretFile) -}}
+{{- $_ := set $entry "secretFile" (printf "/etc/room-broker/webhooks/%s/%s" $w.name ($w.key | default "signing-key")) -}}
+{{- end -}}
+{{- $config = append $config $entry -}}
+{{- with $w.existingSecret -}}
+{{- $mounts = append $mounts (dict "name" $w.name "secret" .) -}}
+{{- end -}}
+{{- $u := urlParse ($w.url | default "") -}}
+{{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- with $np.port }}{{ $port = toString . }}{{ end -}}
+{{- $to := $np.to | default list -}}
+{{- if eq $w.network "cluster" -}}
+{{- $parts := splitList "." $u.hostname -}}
+{{- if and (not $to) (eq (first $parts) "factory-slack-app") (gt (len $parts) 1) -}}
+{{- $ns := index $parts 1 -}}
+{{- if eq $mode "kubernetes" -}}
+{{- $to = list (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" $ns)) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "factory-slack-app"))) -}}
+{{- else -}}
+{{- $to = list (dict "matchLabels" (dict "io.kubernetes.pod.namespace" $ns "app.kubernetes.io/name" "factory-slack-app")) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (ne $mode "none") (not $to) -}}
+{{- fail (printf "broker.webhooks[%s].networkPolicy.to is empty: name the subscriber's pods; networkPolicies.mode %s denies the broker's egress to %s but to these peers" $w.name $mode $w.url) -}}
+{{- end -}}
+{{- end -}}
+{{- $egress = append $egress (dict "name" $w.name "port" $port "to" $to "host" $u.hostname "internet" (eq $w.network "internet")) -}}
+{{- end -}}
+{{- dict "config" $config "mounts" $mounts "egress" $egress | toJson -}}
+{{- end -}}

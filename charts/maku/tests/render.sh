@@ -772,6 +772,36 @@ done
 jkind NetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.ports // []) | map(.port) | any(. == 8080))] == [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "rooms-web-proxy"}}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]' 'mode kubernetes: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
 out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.webProxy=true)"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.toPorts // []) | map(.ports[].port) | any(. == "8080"))] == [{"fromEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "rooms-web-proxy"}}], "toPorts": [{"ports": [{"port": "8080", "protocol": "TCP"}]}]}]' 'mode cilium: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
+# v4 step 6 Task 13 (EX9): the broker's parity keys, rendered verbatim. Unset (every render above),
+# none appears; tests/parity-values.yaml is cloud-native-ref gcp-0's three blocks.
+ynone 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.webhooks // .suspend // .policyManagement // .coordination) // ""' 'no parity key set, yet one is in the config'
+pv=("${imgs[@]}" "${prod[@]}" -f tests/parity-values.yaml)
+for m in cilium kubernetes; do
+  out="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=$m)" || { echo "FAIL: the parity values do not render in mode $m" >&2; fail=1; out=''; }
+  [[ $m == cilium ]] && pc="$out" || pk="$out"
+done
+out="$pc"
+cfg="$(yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$out")"
+[[ $(yq -o=json -I0 '[.webhooks[] | .name + "=" + .secretFile]' <<<"$cfg") == '["slack-app=/etc/room-broker/webhooks/slack-app/signing-key","runlore=/etc/runlore-key/signing-key","pager=/etc/room-broker/webhooks/pager/hmac"]' ]] ||
+  { echo "FAIL: each webhook's secretFile: the mount's path, or the set one ($(yq -o=json -I0 '.webhooks' <<<"$cfg"))" >&2; fail=1; }
+[[ $(yq -o=json -I0 '[.webhooks[] | keys | .[]] | unique' <<<"$cfg") == '["events","generation","name","network","repositories","secretFile","url"]' ]] ||
+  { echo "FAIL: a chart-only webhook key (existingSecret, key, networkPolicy) reached the config: $(yq -o=json -I0 '[.webhooks[] | keys | .[]] | unique' <<<"$cfg")" >&2; fail=1; }
+yq -o=json -I0 '[.suspend, .policyManagement, .coordination]' <<<"$cfg" | jq -e '. == [{"enabled":true,"after":"5m"},{"promotion":true,"operators":["Smana"]},{"mode":"off","maxChildren":2}]' >/dev/null ||
+  { echo "FAIL: suspend, policyManagement and coordination are not verbatim" >&2; fail=1; }
+# defaultMode 0440: yq's JSON spells the YAML octal as 440.
+jkind Deployment 'select(.metadata.name=="room-broker") | ([.spec.template.spec.volumes[] | select(.name | startswith("webhook-")) | {(.name): .secret}] | add) == {"webhook-slack-app": {"secretName": "room-broker-webhook-slack-app", "defaultMode": 440}, "webhook-pager": {"secretName": "pager-key", "defaultMode": 440}}' 'one whole-Secret volume (0440) per webhook with existingSecret'
+jkind Deployment 'select(.metadata.name=="room-broker") | [.spec.template.spec.containers[0].volumeMounts[] | select(.name | startswith("webhook-")) | .name + ":" + .mountPath + ":" + (.readOnly | tostring)] == ["webhook-slack-app:/etc/room-broker/webhooks/slack-app:true", "webhook-pager:/etc/room-broker/webhooks/pager:true"]' 'mounted read-only at /etc/room-broker/webhooks/<name>'
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "8081")] == [{"toEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "factory-slack-app"}}], "toPorts": [{"ports": [{"port": "8081", "protocol": "TCP"}]}]}]' 'cilium: the Slack App subscriber opens :8081 on the App pods, by default'
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "8080")] == [{"toEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "runlore", "app.kubernetes.io/name": "runlore"}}], "toPorts": [{"ports": [{"port": "8080", "protocol": "TCP"}]}]}]' "cilium: a cluster subscriber opens its URL's port to its networkPolicy.to only"
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toFQDNs == [{"matchName": "hooks.example.com"}])] | length == 1 and .[0].toPorts == [{"ports": [{"port": "443", "protocol": "TCP"}]}]' 'cilium: an internet subscriber opens 443 to its host'
+out="$pk"
+jkind NetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.ports == [{"port": 8081, "protocol": "TCP"}])] == [{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "agent-system"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/name": "factory-slack-app"}}}], "ports": [{"port": 8081, "protocol": "TCP"}]}]' 'kubernetes: the Slack App subscriber opens :8081 on the App pods'
+jkind NetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.ports == [{"port": 443, "protocol": "TCP"}] and (.to[0].ipBlock.cidr // "") == "0.0.0.0/0")] | length == 1 and (.[0].to[0].ipBlock.except | index("10.0.0.0/8") != null)' 'kubernetes: an internet subscriber opens 443 to public addresses, privateCIDRs excepted'
+msg="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=kubernetes --set-json 'broker.webhooks[1].networkPolicy.to=[]' 2>&1 >/dev/null || true)"
+grep -qF 'broker.webhooks[runlore].networkPolicy.to is empty: name the subscriber' <<<"$msg" || { echo "FAIL: a cluster subscriber with no peers does not fail (got: $msg)" >&2; fail=1; }
+mkdir -p "$tmp/parity"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$pc" >"$tmp/parity/broker.yaml"
+go run ./tests/loadconfig broker-parity "$tmp/parity/broker.yaml" || fail=1
 helm template ap . -n x -f values-quickstart.yaml --set e2e.unpinnedImages=true --set broker.image.tag=e2e --set runController.image.tag=e2e \
   --set runController.images.harness.tag=e2e --set runController.images.bridge.tag=e2e \
   | grep -q 'imagePullPolicy: Never' || { echo 'FAIL: e2e.unpinnedImages renders Never' >&2; fail=1; }

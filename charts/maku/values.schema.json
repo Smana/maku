@@ -9,6 +9,32 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "suspend": {"description": "The broker's suspend block, verbatim (EX9).", "type": "object"},
+        "policyManagement": {"description": "The factory's merge-policy switches, verbatim (EX9).", "type": "object"},
+        "coordination": {"description": "The factory's coordination switch, verbatim (EX9).", "type": "object"},
+        "webhooks": {
+          "description": "Room-event subscribers (EX9): the broker's entries plus existingSecret, key and networkPolicy.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "network", "url"],
+            "properties": {
+              "name": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"},
+              "network": {"type": "string", "enum": ["cluster", "internet"]},
+              "url": {"type": "string"},
+              "existingSecret": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?)?$"},
+              "key": {"type": "string", "pattern": "^[-._a-zA-Z0-9]+$"},
+              "networkPolicy": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "to": {"type": "array", "items": {"type": "object"}},
+                  "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+                }
+              }
+            }
+          }
+        },
         "webProxy": {"description": "Open :8080 to the umbrella's web front door alone (v4 D19).", "type": "boolean"},
         "githubLink": {
           "description": "The GitHub account link's OAuth client by Secret (v4 D8, oidc mode): mounted at /etc/room-broker/github-link, filling human.githubLink's unset keys.",

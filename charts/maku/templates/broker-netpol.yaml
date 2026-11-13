@@ -105,6 +105,18 @@ spec:
     - to: {{- toYaml .to | nindent 8 }}
       ports: [{port: {{ .port }}, protocol: TCP}]
     {{- end }}
+    {{- range (include "ap.webhooks" . | fromJson).egress }}
+    # broker.webhooks[{{ .name }}] (EX9): {{ if .internet }}an internet subscriber, public addresses{{ else }}a cluster subscriber's pods{{ end }} on its port.
+    - to:
+        {{- if .internet }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $k.privateCIDRs | nindent 14 }}
+        {{- else }}
+        {{- toYaml .to | nindent 8 }}
+        {{- end }}
+      ports: [{port: {{ .port }}, protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
