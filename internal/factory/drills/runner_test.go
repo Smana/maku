@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
@@ -187,7 +188,14 @@ func newRunner(t *testing.T, objs ...client.Object) *rig {
 	s := runtime.NewScheme()
 	_ = v1alpha1.AddToScheme(s)
 	_ = corev1.AddToScheme(s)
-	g := &rig{c: fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build(), rooms: &fakeRooms{events: map[string][]envelope.Event{},
+	// The factory's Role: Tasks are patched, ConfigMaps only updated.
+	noCMPatch := interceptor.Funcs{Patch: func(ctx context.Context, c client.WithWatch, o client.Object, p client.Patch, opts ...client.PatchOption) error {
+		if _, ok := o.(*corev1.ConfigMap); ok {
+			return errors.New("configmaps: patch is forbidden")
+		}
+		return c.Patch(ctx, o, p, opts...)
+	}}
+	g := &rig{c: fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).WithInterceptorFuncs(noCMPatch).Build(), rooms: &fakeRooms{events: map[string][]envelope.Event{},
 		bundles: map[string][]byte{}}, gateway: &fakeGateway{hits: map[string]int{}}, reader: &fakeReader{}, metrics: &scored{},
 		logs: &bytes.Buffer{}, now: t0.Add(2 * time.Hour)}
 	g.r = &Runner{Client: g.c, Namespace: ns, Rooms: g.rooms, Claims: fakeClaims{"run1aaaa": "mkc-00000000000000000001"},

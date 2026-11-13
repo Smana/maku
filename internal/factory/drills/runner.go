@@ -170,9 +170,14 @@ func (r *Runner) one(ctx context.Context, cm *corev1.ConfigMap) error {
 			return err
 		}
 	}
-	result := map[bool]string{true: "pass", false: "fail"}[rep.Pass]
-	if err := r.annotate(ctx, cm, result); err != nil {
-		return err
+	// The manifest last, by update: the factory's Role grants no patch on ConfigMaps, and a failed
+	// update leaves the drill unscored, so the next tick marks the tasks again and retries it.
+	if cm.Annotations == nil {
+		cm.Annotations = map[string]string{}
+	}
+	cm.Annotations[v1alpha1.AnnotationDrillScored] = map[bool]string{true: "pass", false: "fail"}[rep.Pass]
+	if err := r.Client.Update(ctx, cm); err != nil {
+		return fmt.Errorf("mark the manifest scored: %w", err)
 	}
 	if r.Metrics != nil {
 		r.Metrics.HardeningDrillScored(ctx, rep.Pass, now)
@@ -181,7 +186,7 @@ func (r *Runner) one(ctx context.Context, cm *corev1.ConfigMap) error {
 	return nil
 }
 
-// annotate marks o scored with value.
+// annotate marks a task scored with value, by merge patch (the Role grants patch on Tasks).
 func (r *Runner) annotate(ctx context.Context, o client.Object, value string) error {
 	patch, _ := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{v1alpha1.AnnotationDrillScored: value}}})
 	if err := r.Client.Patch(ctx, o, client.RawPatch(types.MergePatchType, patch)); client.IgnoreNotFound(err) != nil {
