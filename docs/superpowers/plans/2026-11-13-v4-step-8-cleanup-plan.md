@@ -9,9 +9,11 @@
 
 The chart is then ready for v4.0.0. Cutting it waits for the owner's go, after the recorded GKE and kubeadm installs (D23, step 7 R8).
 
-This step has two halves:
-- **Signals first (PR A, its own minor).** Every deprecated path reports, while it is still served, that it is in use. It does so through a gauge, a start-up warning, the preflight and the install banner. cnref then shows, live, that it no longer uses any of them.
-- **Removals after (PR B to J, the next minor).** Each removal names the signal that must read zero on both clouds before it merges (R1, R2). A removal is a breaking change inside v0.4x, which the spec allows before v4.0.0 (D13). Each one is recorded in one consolidated migration note (PR J).
+**Owner ruling R11 (2026-11-13) supersedes R1 and R2: step 8 ships as one fast minor (S8).** There is no signals minor and no waiting period. PR A (the deprecation signals) is dropped. Each removal PR (B to J) merges as soon as:
+- ANR and cnref no longer use the path, shown by their own CI and renders on the pin that will take S8;
+- its own `task check` and k3d legs are green.
+
+A removal is a breaking change inside v0.4x, which the spec allows before v4.0.0 (D13). Each one is recorded in one consolidated migration note (PR J). The sections below that describe PR A, `maku_deprecated_in_use` and the seven-day gate are kept for reference only and are not built.
 
 **Not here (the reusable merge policies plan's PR K owns them; release N+1):**
 - the per-repository `MergePolicy` (`spec.repositoryRef`, `classes`, `merge`, its legacy status fields, `ReasonNoMergePolicy`, `ReasonDuplicatePolicy`, `MergePolicyManifest`);
@@ -63,24 +65,26 @@ This step neither signals nor deletes those. PR K's own warning (`internal/facto
 
 | PR | Branch | Tasks | Size | Order |
 |---|---|---|---|---|
-| A, the deprecation signals | `feat/v4-deprecation-signals` | 1–3 | M | first, after step 7's minor; **its own minor (S8.1)** |
-| B, the run path's old keys and Kueue (steps 2, D16) | `feat/v4-cleanup-run-keys` | 4–5 | M | after S8.1 and the gate for its ids |
-| C, the XR run kind and octo-sts (D5, D10, R3) | `feat/v4-cleanup-xr` | 6–8 | L | after S8.1 and the gate; before D |
+| ~~A, the deprecation signals~~ | — | 1–3 | — | **dropped by R11** |
+| B, the run path's old keys and Kueue (steps 2, D16) | `feat/v4-cleanup-run-keys` | 4–5 | M | when ANR/cnref are off the path (the gate) |
+| C, the XR run kind and octo-sts (D5, D10, R3) | `feat/v4-cleanup-xr` | 6–8 | L | the gate; before D |
 | D, the GitHub seams' old shapes and the merge defaults (D10–D12) | `feat/v4-cleanup-github` | 9–10 | M | after C (both edit `internal/app/factory.go`'s token wiring) and **after the reusable merge policies PR K** (CL6) |
-| E, the gateway's old modes (D7, R4) | `feat/v4-cleanup-gateway` | 11 | S | after S8.1 and the gate |
-| F, identity's old reader (D8) | `feat/v4-cleanup-identity` | 12–13 | M | after S8.1 and the gate (every human linked) |
+| E, the gateway's old modes (D7, R4) | `feat/v4-cleanup-gateway` | 11 | S | the gate |
+| F, identity's old reader (D8) | `feat/v4-cleanup-identity` | 12–13 | M | the gate (every human linked) |
 | G, the chart contract: `profile`, `plain`, the subcharts' `crds/`, `preflight` on (D13) | `feat/v4-cleanup-chart` | 14–16 | M | after B and E (they edit the same values and the demo file) |
-| H, warnings become refusals (D3, D9) | `feat/v4-cleanup-refusals` | 17–18 | S | after S8.1 and the gate |
-| I, older deprecations (R5–R7) | `feat/v4-cleanup-older` | 19–21 | M | after S8.1 and the gate for its ids |
+| H, warnings become refusals (D3, D9) | `feat/v4-cleanup-refusals` | 17–18 | S | the gate |
+| I, older deprecations (R5–R7) | `feat/v4-cleanup-older` | 19–21 | M | the gate |
 | J, the values contract and the migration note (D13) | `docs/v4-cleanup-contract` | 22–23 | M | last |
 
-S8.1 is cut after PR A. S8.2, the step's last v0.4x minor, is cut after PR J. Step 7's recorded GKE and kubeadm installs then run on S8.2 (step 7 R8). The owner's v4.0 decision follows. This step cuts no v4 tag, release or chart.
+S8, the step's single v0.4x minor, is cut after PR J (R11). Step 7's recorded GKE and kubeadm installs then run on S8 (step 7 R8). The owner's v4.0 decision follows. This step cuts no v4 tag, release or chart.
 
 ## The precondition gate
 
-A removal PR merges only when both are true:
-1. Its ids read `maku_deprecated_in_use == 0` on gcp-0 and on aws-0 (R2) for seven consecutive days on S8.1, recorded in the session ledger as a query and its result.
-2. The ANR follow-ups that retire the path are merged and live-checked.
+A removal PR merges when (R11):
+1. The ANR and cnref follow-ups that retire the path are merged, and their own CI and renders pass with the removal (no live gauge, no waiting period).
+2. Its own `task check` and k3d legs are green.
+
+Where the table below names a gauge reading 0, read it as "ANR/cnref no longer set or use that path", checked in their repositories.
 
 | ANR follow-up (plan) | Retires | Gates |
 |---|---|---|
@@ -101,8 +105,9 @@ The owner answered yes to each, as the plan recommended (2026-11-13). The spec r
 
 | # | Ruling | Answer and reason | Used by |
 |---|---|---|---|
-| R1 | Should step 8 ship as two minors, signals (S8.1) and then removals (S8.2), with each removal gated on its signal reading zero for seven days? | **Yes.** A removal inside v0.4x breaks whoever still uses the path. The signals turn "cnref runs only the product path" (the spec's precondition) into a query instead of a belief, and cost one extra minor | every PR |
-| R2 | Must both clouds read zero before a removal merges, unless the owner has decommissioned aws-0? | **Yes.** aws-0 runs the same ANR tree a session later. A removal that only gcp-0 has proved breaks aws-0 at its next pin bump | B to I |
+| R11 | (2026-11-13, supersedes R1 and R2) Drop the signals minor and the seven-day, both-clouds gate: merge each removal as soon as ANR and cnref no longer use the path, checked by their own CI and renders, all in one minor? | **Yes (owner).** The project's install base is small enough that the speed is worth more than the staged safety. | every PR |
+| R1 | *(superseded by R11)* Should step 8 ship as two minors, signals (S8.1) and then removals (S8.2), with each removal gated on its signal reading zero for seven days? | **Yes.** A removal inside v0.4x breaks whoever still uses the path. The signals turn "cnref runs only the product path" (the spec's precondition) into a query instead of a belief, and cost one extra minor | every PR |
+| R2 | *(superseded by R11)* Must both clouds read zero before a removal merges, unless the owner has decommissioned aws-0? | **Yes.** aws-0 runs the same ANR tree a session later. A removal that only gcp-0 has proved breaks aws-0 at its next pin bump | B to I |
 | R3 | Should step 8 delete octo-sts support entirely (in `forge`, the applier, the harness exchange and readiness's policy-file path), reading D10's "octo-sts becomes optional" as met once the XR, its only user, is gone? | **Yes.** octo-sts was never wired to the run-controller path. Keeping it "optional" would keep an unexercised token source. D10's guarantee (per-run, per-repository tokens) is the minter's, and that stays | C |
 | R4 | Should `model.mode: secret` stay as a demo-only mode, refused without `demoValues` and flagged on the banner as `model_key_in_sandbox`, rather than be deleted? | **Yes**, given step 7 R4 (the demo's default became `gateway`). A laptop without agentgateway is still a useful first run, and the banner states what it costs. | E |
 | R5 | Should step 8 rename `factory_slack_*` to `maku_slack_app_*` (step 6's "before v4.0.0 or never"), in one PR with the chart's rules and dashboards and no dual export? | **Yes.** After step 6's follow-up 5 the rules and dashboards ship in the chart, so they move in the same commit. Only queries ANR keeps by hand need edits, which `hack/names.sh` can list. Dual export doubles series for one minor and changes nothing for the chart's users | Task 21 |
@@ -114,7 +119,7 @@ The owner answered yes to each, as the plan recommended (2026-11-13). The spec r
 
 ## Global Constraints
 
-- **No v4.** S8.1 and S8.2 are v0.4x minors. There is no v4 tag, release or chart version, and the schema-diff gate is not armed (R8).
+- **No v4.** S8 is a v0.4x minor (R11; S8.1 and S8.2 below read as S8). There is no v4 tag, release or chart version, and the schema-diff gate is not armed (R8).
 - **Breaking, but announced.**
   - Each removal commit is `feat(<area>)!:` or `refactor(<area>)!:`, naming what is removed and its replacement.
   - S8.1 announces every removal (CL3).
