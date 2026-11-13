@@ -20,7 +20,7 @@ const room = "3kq7x2ma"
 func open(t *testing.T) (*Store, string, string, string) {
 	t.Helper()
 	_, broker, retention, super := testDB(t)
-	s, err := Open(context.Background(), broker)
+	s, err := Open(context.Background(), broker, RoleBroker)
 	if err != nil {
 		t.Fatal(err)
 	}

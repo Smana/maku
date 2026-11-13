@@ -35,6 +35,34 @@
             }
           }
         },
+        "database": {
+          "description": "Bring your own Postgres 16 or later (v4 D9): one DSN Secret per role, their key, the database's CA, and the egress to a database outside the cluster.",
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "brokerSecret": {"$ref": "#/definitions/secretName"},
+            "ownerSecret": {"$ref": "#/definitions/secretName"},
+            "retentionSecret": {"$ref": "#/definitions/secretName"},
+            "secretKey": {"type": "string", "pattern": "^[-._a-zA-Z0-9]+$"},
+            "caSecret": {"$ref": "#/definitions/secretName"},
+            "egress": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cidrs": {"type": "array", "uniqueItems": true, "items": {"description": "An IPv4 or IPv6 CIDR.", "type": "string", "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*/[0-9]{1,3})$"}}
+              }
+            }
+          }
+        },
+        "retention": {
+          "description": "The retention CronJob (database.retentionSecret): its schedule and resources.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schedule": {"type": "string", "minLength": 1},
+            "resources": {"type": "object"}
+          }
+        },
         "modelGateway": {
           "description": "The model gateway's clients listener (plan v4 step 4, GW8): one projected token per client, the planner's and the classifier's routes filled where human leaves them unset.",
           "type": "object",
@@ -220,6 +248,11 @@
     }
   },
   "definitions": {
+    "secretName": {
+      "description": "A Secret's name, or empty for none.",
+      "type": "string",
+      "pattern": "^([a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?)?$"
+    },
     "alias": {
       "description": "A model alias an AgentRun's spec.model or spec.loop.judgeModel may name.",
       "type": "string",

@@ -136,17 +136,39 @@ broker:
   # oidc mode: the https URL humans reach the broker at. local mode: http://localhost:<the port you
   # forward>, default http://localhost:8080; the broker answers that port only.
   publicURL: ""
+  # Bring your own Postgres 16 or later (v4 D9, docs/database.md): one DSN Secret per fixed role.
   database:
-    # Secret with key `uri`: the broker's DSN (rooms_broker). Empty omits ROOMS_DATABASE_URL:
+    # Secret with key `secretKey`: the broker's DSN (rooms_broker). Empty omits ROOMS_DATABASE_URL:
     # then supply it through extraEnv.
     brokerSecret: ""
-    # Secret with key `uri`: the migrate DSN (rooms_owner). Empty = no migrate init container.
+    # Secret with key `secretKey`: the migrate DSN (rooms_owner). Empty = no migrate init container;
+    # the broker then refuses a schema older than its binary.
     ownerSecret: ""
+    # Secret with key `secretKey`: the retention job's DSN (rooms_retention). Set, it renders the
+    # CronJob room-broker-retention (broker.retention). Empty = no CronJob: run the purge yourself.
+    retentionSecret: ""
+    # The key holding the DSN in each of the three Secrets.
+    secretKey: uri
+    # Secret with key ca.crt: the database's CA, mounted at /etc/room-broker/db-ca/ca.crt in the
+    # migrate init container, the broker and the retention job. Point the DSNs at it with
+    # sslmode=verify-full&sslrootcert=/etc/room-broker/db-ca/ca.crt.
+    caSecret: ""
     # Pod label that selects the PostgreSQL pods in the release namespace (CNPG's by default).
     podLabel: cnpg.io/cluster
     # networkPolicies.mode kubernetes only: exact labels that select the PostgreSQL pods instead of
     # podLabel's key (e.g. {app.kubernetes.io/name: rooms-db}, the demo's).
     podLabels: {}
+    # A database outside the cluster (a managed service): the broker's and the retention job's
+    # egress on 5432 goes to these CIDRs instead of podLabel(s).
+    egress:
+      cidrs: []
+  # The daily purge of expired rooms, intent samples and push bundles, as rooms_retention (rendered
+  # with database.retentionSecret). DELETE-only: its row-level security exposes nothing else.
+  retention:
+    schedule: "17 3 * * *"
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {cpu: 200m, memory: 64Mi}
   tls:
     # The Secret mounted at /etc/room-broker/tls (tls.crt, tls.key). A Certificate is rendered
     # for it only when issuerRef.name is set; otherwise bring the Secret yourself.

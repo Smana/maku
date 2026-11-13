@@ -219,6 +219,8 @@ type Set struct {
 	bridgeStubs       metric.Int64Counter
 	webhookDeliveries metric.Int64Counter
 	webhookDisabled   metric.Int64Gauge
+	dbTLS             metric.Int64Gauge
+	schemaUnverified  metric.Int64Gauge
 
 	// The planner's three series (IntakePlan and its two siblings): intake_* in Go, maku_intake_* on
 	// scrape. They are unexported because every label vocabulary is closed, and the methods below are
@@ -379,6 +381,12 @@ func New(meter metric.Meter) (*Set, error) {
 	check(err)
 	s.webhookDisabled, err = meter.Int64Gauge("rooms_webhook_disabled",
 		metric.WithDescription("1 while a webhook subscriber is disabled."))
+	check(err)
+	s.dbTLS, err = meter.Int64Gauge("rooms_db_tls",
+		metric.WithDescription("1 while the database connection of a role is encrypted, 0 while it is plain."))
+	check(err)
+	s.schemaUnverified, err = meter.Int64Gauge("rooms_schema_unverified",
+		metric.WithDescription("1 while the broker serves a schema whose version it could not read (a bridge until ownerSecret is set)."))
 	check(err)
 	check(s.registerRoomGauges())
 	s.runInfoDropped, err = meter.Int64Counter("rooms_run_info_dropped_total",
@@ -849,6 +857,26 @@ func (s *Set) WatchJWKS(lastRefresh map[string]func() time.Time) error {
 func (s *Set) WebhookDelivery(ctx context.Context, subscriber, outcome string) {
 	s.webhookDeliveries.Add(ctx, 1, metric.WithAttributes(attribute.String("subscriber", subscriber),
 		attribute.String("outcome", outcome)))
+}
+
+// DBTLS sets rooms_db_tls for the database role the binary connected as (store.Check): a plain
+// connection is reported, not refused, since the demo's in-cluster hop is plain.
+func (s *Set) DBTLS(role string, tls bool) {
+	var v int64
+	if tls {
+		v = 1
+	}
+	s.dbTLS.Record(context.Background(), v, metric.WithAttributes(attribute.String("role", role)))
+}
+
+// SchemaUnverified sets rooms_schema_unverified: 1 when the broker started on a migration ledger its
+// role cannot read, served as a bridge until broker.database.ownerSecret is set (docs/database.md).
+func (s *Set) SchemaUnverified(unverified bool) {
+	var v int64
+	if unverified {
+		v = 1
+	}
+	s.schemaUnverified.Record(context.Background(), v)
 }
 
 // WebhookDisabled sets the subscriber's disabled gauge (RoomWebhookDisabled reads it).

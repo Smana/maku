@@ -112,6 +112,46 @@ apiServerPorts, at apiServerCIDRs or any address. */}}
     {{- end }}
 {{- end -}}
 
+{{/* The database egress of the broker and the retention job, in kubernetes mode: the PostgreSQL pods
+by database.podLabels or podLabel, or database.egress.cidrs for a database outside the cluster. */}}
+{{- define "ap.npDatabase" -}}
+{{- $db := .Values.broker.database -}}
+- to:
+    {{- with dig "egress" "cidrs" (list) $db }}
+    {{- range . }}
+    - ipBlock: {cidr: {{ . | quote }}}
+    {{- end }}
+    {{- else }}
+    - podSelector:
+        {{- with $db.podLabels }}
+        matchLabels: {{- toYaml . | nindent 10 }}
+        {{- else }}
+        matchExpressions:
+          - {key: {{ $db.podLabel }}, operator: Exists}
+        {{- end }}
+    {{- end }}
+  ports: [{port: 5432, protocol: TCP}]
+{{- end -}}
+
+{{/* The same, in cilium mode. */}}
+{{- define "ap.cnpDatabase" -}}
+{{- $db := .Values.broker.database -}}
+{{- with dig "egress" "cidrs" (list) $db -}}
+- toCIDR:
+    {{- range . }}
+    - {{ . | quote }}
+    {{- end }}
+{{- else -}}
+- toEndpoints:
+    - matchLabels:
+        io.kubernetes.pod.namespace: {{ $.Release.Namespace }}
+      matchExpressions:
+        - {key: {{ $db.podLabel }}, operator: Exists}
+{{- end }}
+  toPorts:
+    - ports: [{port: "5432", protocol: TCP}]
+{{- end -}}
+
 {{/* The egress proxy's in-cluster URL, in kubernetes mode. */}}
 {{- define "ap.egressProxyURL" -}}
 {{- printf "http://egress-proxy.%s.svc.%s:3128" .Release.Namespace .Values.clusterDomain -}}

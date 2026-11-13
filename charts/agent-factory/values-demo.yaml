@@ -59,6 +59,8 @@ maku:
     database:
       brokerSecret: rooms-broker-dsn
       ownerSecret: rooms-owner-dsn
+      # The daily purge, as rooms_retention (the CronJob room-broker-retention).
+      retentionSecret: rooms-retention-dsn
       # The umbrella's Postgres, for the broker's NetworkPolicy in mode kubernetes.
       podLabels: {app.kubernetes.io/name: rooms-db}
     # The certificate is the umbrella's (tls.yaml), not cert-manager's.
@@ -169,6 +171,9 @@ tls:
   caName: maku-demo-ca
 
 postgres:
+  # The bundled Postgres, demo-only (v4 D9). Set false to bring your own: the broker then reads the
+  # three DSN Secrets above, which you create (docs/database.md).
+  enabled: true
   # postgres:17, pinned by digest.
   image: docker.io/library/postgres:17@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
   storage: 1Gi

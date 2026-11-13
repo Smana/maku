@@ -1,0 +1,56 @@
+{{- $b := .Values.broker -}}
+{{- with $b.database.retentionSecret }}
+{{- $img := include "ap.image" (dict "root" $ "image" $b.image) -}}
+# The daily purge of rooms closed longer ago than their retention, expired intent samples and old
+# push bundles (v4 D9). DELETE-only: it connects as rooms_retention, whose row-level security
+# exposes nothing else, and the binary refuses any other role.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: room-broker-retention
+  labels: {{- include "ap.labelsFor" (dict "root" $ "name" "room-broker-retention") | nindent 4 }}
+spec:
+  schedule: {{ $b.retention.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # Above one room's 10 min purge statement_timeout, or a slow purge is killed by Kubernetes
+      # before Postgres can report it.
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels: {{- include "ap.labelsFor" (dict "root" $ "name" "room-broker-retention") | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          # No Kubernetes API: the job talks to Postgres only.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: retention
+              image: {{ $img }}
+              {{- include "ap.pullPolicy" $ | nindent 14 }}
+              args: [retention]
+              env:
+                - name: ROOMS_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: {name: {{ . }}, key: {{ $b.database.secretKey | default "uri" }}}
+              securityContext: {{- include "ap.containerSecurityContext" $ | nindent 16 }}
+              resources: {{- toYaml $b.retention.resources | nindent 16 }}
+              {{- if $b.database.caSecret }}
+              volumeMounts:
+                - {name: db-ca, mountPath: /etc/room-broker/db-ca, readOnly: true}
+              {{- end }}
+          {{- with $b.database.caSecret }}
+          volumes:
+            - name: db-ca
+              secret: {secretName: {{ . }}, items: [{key: ca.crt, path: ca.crt}]}
+          {{- end }}
+{{- end }}

@@ -57,15 +57,7 @@ spec:
     {{- end }}
   egress:
     {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}
-    - to:
-        - podSelector:
-            {{- with .Values.broker.database.podLabels }}
-            matchLabels: {{- toYaml . | nindent 14 }}
-            {{- else }}
-            matchExpressions:
-              - {key: {{ .Values.broker.database.podLabel }}, operator: Exists}
-            {{- end }}
-      ports: [{port: 5432, protocol: TCP}]
+    {{- include "ap.npDatabase" . | nindent 4 }}
     {{- with $factory }}
     # start_run: POST /v1/runs to factoryURL.
     - to:
@@ -92,4 +84,26 @@ spec:
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if .Values.broker.database.retentionSecret }}
+---
+# The retention job (retention-cronjob.yaml): no ingress, and egress to DNS and the database only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: room-broker-retention
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "room-broker-retention") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker-retention
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $k.dns.namespace }}}
+          podSelector:
+            matchLabels: {{- toYaml $k.dns.labels | nindent 14 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    {{- include "ap.npDatabase" . | nindent 4 }}
+{{- end }}
 {{- end }}

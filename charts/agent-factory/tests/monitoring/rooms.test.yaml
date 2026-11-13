@@ -142,3 +142,18 @@ tests:
       - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_get", outcome="timeout"}', values: '0+1x60'}
     alert_rule_test:
       - {eval_time: 45m, alertname: RoomKnowledgeFailing, exp_alerts: []}
+  # RoomBrokerSchemaUnverified: a broker on an unreadable ledger, held 15 minutes; a broker that
+  # reads its ledger (0), or one in another namespace, never fires it.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_schema_unverified{namespace="maku", pod="a"}', values: '1x30'}
+      - {series: 'maku_rooms_schema_unverified{namespace="maku", pod="b"}', values: '0x30'}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: RoomBrokerSchemaUnverified, exp_alerts: []}
+      - {eval_time: 16m, alertname: RoomBrokerSchemaUnverified, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_schema_unverified{namespace="maku", pod="a"}', values: '0x30'}
+      - {series: 'maku_rooms_schema_unverified{namespace="other", pod="b"}', values: '1x30'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: RoomBrokerSchemaUnverified, exp_alerts: []}
