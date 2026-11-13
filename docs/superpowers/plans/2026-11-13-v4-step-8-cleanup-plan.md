@@ -71,7 +71,7 @@ This step neither signals nor deletes those. PR K's own warning (`internal/facto
 | F, identity's old reader (D8) | `feat/v4-cleanup-identity` | 12–13 | M | after S8.1 and the gate (every human linked) |
 | G, the chart contract: `profile`, `plain`, the subcharts' `crds/`, `preflight` on (D13) | `feat/v4-cleanup-chart` | 14–16 | M | after B and E (they edit the same values and the demo file) |
 | H, warnings become refusals (D3, D9) | `feat/v4-cleanup-refusals` | 17–18 | S | after S8.1 and the gate |
-| I, older deprecations (R5–R7) | `feat/v4-cleanup-older` | 19–21 | M | after S8.1; each task only with its ruling |
+| I, older deprecations (R5–R7) | `feat/v4-cleanup-older` | 19–21 | M | after S8.1 and the gate for its ids |
 | J, the values contract and the migration note (D13) | `docs/v4-cleanup-contract` | 22–23 | M | last |
 
 S8.1 is cut after PR A. S8.2, the step's last v0.4x minor, is cut after PR J. Step 7's recorded GKE and kubeadm installs then run on S8.2 (step 7 R8). The owner's v4.0 decision follows. This step cuts no v4 tag, release or chart.
@@ -95,14 +95,16 @@ A removal PR merges only when both are true:
 
 **If a path cannot reach zero** (a live dependency nobody planned for), its removal PR waits. The rest proceed. The decision pack (step 7 PR I) lists it as owed before v4.0.
 
-## Rulings needed (owner)
+## Owner rulings (settled 2026-11-13)
 
-| # | Question (yes/no) | Recommendation | Blocks |
+The owner answered yes to each, as the plan recommended (2026-11-13). The spec records them in its owner rulings table, prefixed "Step 8".
+
+| # | Ruling | Answer and reason | Used by |
 |---|---|---|---|
 | R1 | Should step 8 ship as two minors, signals (S8.1) and then removals (S8.2), with each removal gated on its signal reading zero for seven days? | **Yes.** A removal inside v0.4x breaks whoever still uses the path. The signals turn "cnref runs only the product path" (the spec's precondition) into a query instead of a belief, and cost one extra minor | every PR |
 | R2 | Must both clouds read zero before a removal merges, unless the owner has decommissioned aws-0? | **Yes.** aws-0 runs the same ANR tree a session later. A removal that only gcp-0 has proved breaks aws-0 at its next pin bump | B to I |
 | R3 | Should step 8 delete octo-sts support entirely (in `forge`, the applier, the harness exchange and readiness's policy-file path), reading D10's "octo-sts becomes optional" as met once the XR, its only user, is gone? | **Yes.** octo-sts was never wired to the run-controller path. Keeping it "optional" would keep an unexercised token source. D10's guarantee (per-run, per-repository tokens) is the minter's, and that stays | C |
-| R4 | Should `model.mode: secret` stay as a demo-only mode, refused without `demoValues` and flagged on the banner as `model_key_in_sandbox`, rather than be deleted? | **Yes**, given step 7 R4 (the demo's default became `gateway`). A laptop without agentgateway is still a useful first run, and the banner states what it costs. If step 7 R4 was refused, the demo keeps `secret` as its default under the same banner | E |
+| R4 | Should `model.mode: secret` stay as a demo-only mode, refused without `demoValues` and flagged on the banner as `model_key_in_sandbox`, rather than be deleted? | **Yes**, given step 7 R4 (the demo's default became `gateway`). A laptop without agentgateway is still a useful first run, and the banner states what it costs. | E |
 | R5 | Should step 8 rename `factory_slack_*` to `maku_slack_app_*` (step 6's "before v4.0.0 or never"), in one PR with the chart's rules and dashboards and no dual export? | **Yes.** After step 6's follow-up 5 the rules and dashboards ship in the chart, so they move in the same commit. Only queries ANR keeps by hand need edits, which `hack/names.sh` can list. Dual export doubles series for one minor and changes nothing for the chart's users | Task 21 |
 | R6 | Should step 8 delete `maku-broker migrate-group`, `internal/migrategroup` and the v0.30.0 upgrade e2e, so that an install older than v0.31 upgrades through a v0.4x release first? | **Yes.** cnref migrated long ago. A new v4 user starts on `maku.ogenki.io`, and the migration costs a CI job and a code path nobody runs | Task 20 |
 | R7 | Should step 8 delete the factory config's legacy single-repository shape (v2 D1: `repository`, `maintainers`, `triggerLabel`, `controlIssue` at the top level), documented as read "for one minor release"? | **Yes.** It is long overdue, and the Factory and Repository objects (Maku v0.41) replaced the file's repositories altogether. The factory resources cutover leaves no live user | Task 19 |
@@ -594,7 +596,7 @@ A removal PR merges only when both are true:
 
 ## PR I: older deprecations (CL1 rows 21–23)
 
-Each task lands only with its ruling. A refused ruling drops its task, and its row moves to CL2.
+R5, R6 and R7 are settled yes, so all three tasks land.
 
 ### Task 19: the legacy single-repository config (R7) (S)
 
@@ -683,7 +685,7 @@ Each task lands only with its ruling. A refused ruling drops its task, and its r
 ## After this step (not in these PRs)
 
 - **Owner decisions:**
-  - the rulings R1 to R10 above;
+  - R1 to R10 are settled (above);
   - step 7's R8 and R9: the recorded GKE and kubeadm installs, on S8.2;
   - **the v4.0.0 go:** the tag, the release, the 4.0 chart version and arming CL7's gate. Nothing in this step does any of these.
 - **ANR follow-ups** (each its own PR after the matching minor, each recorded with a gcp-0 live check in the session ledger, aws-0 after):

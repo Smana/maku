@@ -105,7 +105,7 @@ Every existing install keeps working (D25):
 | C, `maku preflight` and the outside checks (D24) | `feat/v4-preflight-cli` | 7–8 | M | after B and step 6 PR D (exposure) |
 | D, private code by opt-in (D3) | `feat/v4-private-code` | 9–10 | M | any time; it touches `RepositorySpec`, so rebase across reusable merge policies PR E to K |
 | E1, the two Apps through the manifest flow (D24, D12) | `feat/v4-install-apps` | 11–12 | M | any time |
-| E2, `maku install --print` (D24) | `feat/v4-install-print` | 13–15 | L | after E1, D, step 5 PR E (the registry), step 6 PR G (`profile: production`), and rulings R3 to R5 |
+| E2, `maku install --print` (D24) | `feat/v4-install-print` | 13–15 | L | after E1, D, step 5 PR E (the registry) and step 6 PR G (`profile: production`) |
 | F, the install jobs on every chart PR (D23, D2) | `feat/v4-install-e2e` | 16–18 | L | after C and E2 |
 | G, the nightly upgrade and GitOps legs (D23, D26) | `feat/v4-install-nightly` | 19–20 | M | after F |
 | H, "Install on your cluster" (D24, D3, D18, D26) | `docs/v4-install-page` | 21 | M | after C and E2 |
@@ -113,11 +113,11 @@ Every existing install keeps working (D25):
 
 The step's v0.4x minor is cut after PR H. A to E2 may also ship in interim minors. PR I is documentation for the owner's decision and needs no release.
 
-## Rulings needed (owner)
+## Owner rulings (settled 2026-11-13)
 
-Each one blocks the tasks named. The recommendation is what the plan builds if the owner says yes.
+The owner answered yes to each, as the plan recommended (2026-11-13). The spec records them in its owner rulings table, prefixed "Step 7".
 
-| # | Question (yes/no) | Recommendation | Blocks |
+| # | Ruling | Answer and reason | Used by |
 |---|---|---|---|
 | R1 | Should a private repository without `privateCode.acknowledged` get a warning in step 7 (the condition, the gauge, the banner) and be refused only from step 8? | **Yes.** D3's refusal is the decision, and D25 makes each step additive. A refusal in a v0.4x minor would stop cnref's private repositories, if any, with no notice. A warning first lets ANR add the field and prove it live before step 8 flips it | Task 9 |
 | R2 | May D14's "the preflight fails the install when one is missing" be met by two things, with no pre-install hook? <ul><li>The components refuse to start, naming the Secret and key (step 5 Task 19).</li><li>The preflight's test hook fails.</li></ul> And may Argo CD users, whose tool does not run Helm test hooks, run `maku preflight` by hand or through the suspended CronJob? | **Yes.** A pre-install hook runs before the release's ServiceAccounts and policies exist, so it would need its own copies of them. Flux and Argo CD each handle hook failures differently, and a pre-install hook would block a GitOps reconcile on a check that is only advisory. The start-up refusal already makes the install fail in the sense that matters: nothing becomes ready | Tasks 2, 7 |
@@ -814,7 +814,7 @@ What shipped differs from the earlier plans in ways step 7 must respect. Each li
 
 ## After this step (not in these PRs)
 
-- **Owner decisions:** the rulings R1 to R11 above. Also step 6's open one: renaming `factory_slack_*` to `maku_slack_app_*`, before v4.0.0 or never. Step 8 asks it again.
+- **Owner decisions:** R1 to R11 are settled (above). Step 6's open one, renaming `factory_slack_*` to `maku_slack_app_*`, is settled by step 8's R5 (yes, in step 8).
 - **ANR follow-ups** (each its own PR after the step's Maku minor, each recorded with a gcp-0 live check in the session ledger, aws-0 after):
   1. **`privateCode` on each private repository**, if cnref serves any. Live check: the gauge reads 0 on both clouds before step 8.
   2. **`preflight.enabled: true`** in the umbrella values once step 6's follow-up 1 runs the umbrella. Flux's `test.enable: true` on the HelmRelease. Live check: `flux get helmreleases` shows the test passed, and the report has no `fail`.
