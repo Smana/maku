@@ -59,3 +59,33 @@ func TestProposeRefusesWhatIsNotAShadowClass(t *testing.T) {
 		})
 	}
 }
+
+const boundFile = `# the canary's policy, in the binding shape
+factory: aws-0
+mergePolicies:
+  - {name: docs-links, mode: shadow, holdoutChecks: ['Check the documentation links 🔗']}
+  - name: revert
+    mode: shadow   # with docs-links
+    holdoutChecks: ['Check the documentation links 🔗']
+  - {name: docs, mode: "off"}
+`
+
+// B5, follow-up of #538: in the binding shape, promotion edits the binding's mode, one token.
+func TestProposeEditsABindingsMode(t *testing.T) {
+	got, line, err := Propose([]byte(boundFile), "revert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := strings.Replace(boundFile, "    mode: shadow   # with", "    mode: live   # with", 1); string(got) != want || line != 6 {
+		t.Fatalf("line %d:\n%s", line, got)
+	}
+	got, line, err = Propose([]byte(boundFile), "docs-links")
+	if err != nil || line != 4 || !strings.Contains(string(got), "{name: docs-links, mode: live, holdoutChecks") {
+		t.Fatalf("flow binding: line %d, %v:\n%s", line, err, got)
+	}
+	for class, want := range map[string]error{"docs": ErrNotShadow, "dead-links": ErrNoClass} {
+		if _, _, err := Propose([]byte(boundFile), class); !errors.Is(err, want) {
+			t.Errorf("%s: %v, want %v", class, err, want)
+		}
+	}
+}

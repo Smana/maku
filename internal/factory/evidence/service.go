@@ -522,6 +522,23 @@ const (
 func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepolicy.File) []class {
 	agents := []string{searchLogin(cfg.AgentsLogin)}
 	var out []class
+	if f != nil && f.Bound() {
+		// B5, B15: a binding's mode is promoted in the file; what it adopts and how long its merges
+		// are watched are the policy's, as the factory serves it.
+		for _, b := range slices.SortedFunc(slices.Values(f.MergePolicies), func(a, b config.Binding) int { return cmp.Compare(a.Name, b.Name) }) {
+			c := class{name: b.Name, source: sourceRepository, mode: b.Mode, authors: agents, window: defaultWindow}
+			if p, ok := cfg.Policies[b.Name]; ok {
+				if p.Spec.Adopted() {
+					c.authors = adopters(p.Spec.Author.Adopt.Logins)
+				}
+				if m := p.Spec.Monitor; m != nil && m.FollowUpWindow.Duration > 0 {
+					c.window = m.FollowUpWindow.Duration
+				}
+			}
+			out = append(out, c)
+		}
+		return out
+	}
 	if f != nil && len(f.Classes) > 0 {
 		for _, name := range slices.Sorted(maps.Keys(f.Classes)) {
 			p := f.Classes[name]

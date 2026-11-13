@@ -155,6 +155,36 @@ func TestServiceReportsAndProposes(t *testing.T) {
 	}
 }
 
+// B5, follow-up of #538: a repository file in the binding shape reports its bindings, each with
+// its binding's mode, and proposes the one-token change of a shadow binding.
+func TestServiceProposesABindingsMode(t *testing.T) {
+	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
+	src := &fakeSource{file: boundFile, found: true}
+	s := service(src, func() time.Time { return now })
+	if err := s.Refresh(t.Context(), "smana/cloud-native-ref"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Report(t.Context(), "smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, c := range r.Classes {
+		names = append(names, c.Class+":"+c.Source+":"+c.Mode)
+	}
+	if strings.Join(names, " ") != "docs:repository:off docs-links:repository:shadow revert:repository:shadow" {
+		t.Fatalf("classes %v", names)
+	}
+	for _, c := range r.Classes {
+		switch {
+		case c.Mode == "shadow" && (c.Proposal == nil || !strings.Contains(c.Proposal.File, "mode: live")):
+			t.Fatalf("%s: %+v", c.Class, c.Proposal)
+		case c.Mode != "shadow" && c.Unproposed != "not_shadow":
+			t.Fatalf("%s: %+v", c.Class, c)
+		}
+	}
+}
+
 // Without classes in the file, the central classes are reported with no proposal: a promotion
 // edits the repository's file (MP1), never the central config.
 func TestServiceFallsBackToTheCentralClasses(t *testing.T) {
