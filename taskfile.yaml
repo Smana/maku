@@ -141,6 +141,11 @@ tasks:
     cmds:
       - GATEWAY=1 bash charts/agent-factory/tests/install.sh k3d
 
+  chart:metering:k3d:
+    desc: The gateway demo with a meter on k3d (tests/metering-values.yaml, a test-only VictoriaMetrics); a run's tokens are read under agentgateway's names and priced
+    cmds:
+      - GATEWAY=1 METERING=1 bash charts/agent-factory/tests/install.sh k3d
+
   chart:gateway:probe:
     desc: Assert what maku-gateway relies on against agentgateway on a throwaway k3d (docker, k3d; not part of check)
     cmds:

@@ -22,6 +22,11 @@
 # tier-frontier's, and no token gets 401; the proxy's NetworkPolicy is enforced by k3s.
 # The leg layers values-demo-gateway.yaml: the run-controller runs in model.mode gateway, agents holds no
 # provider key, and a run the leg creates reaches its model through the gateway as its own ServiceAccount.
+# METERING=1 (with GATEWAY=1; task chart:metering:k3d) adds the metering proof (plan v4 step 4, Task 17):
+# tests/metering-values.yaml gives the factory a meter on a test-only VictoriaMetrics (tests/metrics-stub.yaml),
+# a PromQL throttle, runs.gatewayIdentity and a split on review, and the config loads. The run's tokens
+# reach VictoriaMetrics under agentgateway's own names, labelled with its subject, and the meter's
+# parser prices that reply above zero (internal/factory/meter TestRecordedAgentgatewayReply).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -35,12 +40,15 @@ case "$NETPOL" in
 esac
 GATEWAY="${GATEWAY:-}"
 [[ -z $GATEWAY || $CLUSTER_KIND == k3d ]] || { echo "FAIL: GATEWAY=1 runs on k3d only" >&2; exit 2; }
+METERING="${METERING:-}"
+[[ -z $METERING || -n $GATEWAY ]] || { echo "FAIL: METERING=1 needs GATEWAY=1" >&2; exit 2; }
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
 ECHO_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
 NAME="maku-chart-$CLUSTER_KIND"
 [[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
 [[ -z $GATEWAY ]] || NAME="$NAME-gateway"
+[[ -z $METERING ]] || NAME="$NAME-metering"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
 TAG="${TAG:-e2e}"
@@ -187,6 +195,7 @@ EOF
   # the gateway's caller below runs the echo image in agents: the run-pod policy must allow it
   values+=(-f charts/agent-factory/values-demo-gateway.yaml -f "$work/gateway.yaml" --set demo.model.apiKey=not-a-key
     --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
+  [[ -z $METERING ]] || values+=(-f charts/agent-factory/tests/metering-values.yaml)
 fi
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
@@ -269,6 +278,10 @@ spec:
   selector: {app.kubernetes.io/name: echo-llm}
   ports: [{name: http, port: 8080, targetPort: http}]
 EOF
+    if [[ -n $METERING ]]; then
+      step "the metering stub: a single-binary VictoriaMetrics scraping the gateway's pods"
+      kubectl apply -f charts/agent-factory/tests/metrics-stub.yaml >/dev/null
+    fi
   fi
   install_umbrella
 fi
@@ -613,6 +626,30 @@ EOF
   kubectl -n "$NS" logs deploy/model-gateway --tail=400 | grep -F "$sub" | head -1 | cut -c1-400
   phase=$(kubectl -n agents get agentrun "$run" -o jsonpath='{.status.phase}')
   echo "ok: the run reached its model through the gateway as $sub (run phase now '$phase'); agents holds no provider key"
+  if [[ -n $METERING ]]; then
+    step "metering: the run's tokens reach the meter's query, under agentgateway's names, and are priced"
+    kubectl -n metrics rollout status deploy/vmsingle --timeout=120s >/dev/null
+    # the factory's own meter.query, as the release set it, run where the meter runs it
+    query=$(helm -n "$NS" get values af -o json | jq -r '."maku-factory".config.meter.query')
+    [[ $query == *agentgateway_gen_ai_client_token_usage_sum* ]] || die "the factory's meter.query is not the documented agentgateway query: $query"
+    vmq() { kubectl get --raw "/api/v1/namespaces/metrics/services/vmsingle:8428/proxy/api/v1/query?query=$(jq -rn --arg q "$1" '$q|@uri')"; }
+    got=0
+    for _ in $(seq 40); do
+      reply=$(vmq "$query" 2>/dev/null || true)
+      if jq -e --arg sub "$sub" '[.data.result[] | select(.metric.ar_agent == $sub) | .metric.gen_ai_token_type] | (index("input") != null and index("output") != null)' <<<"$reply" >/dev/null 2>&1; then got=1; break; fi
+      sleep 5
+    done
+    ((got)) || { echo "$reply" >&2; die "VictoriaMetrics has no input and output series for $sub under the meter's query"; }
+    jq -c --arg sub "$sub" '.data.result[] | select(.metric.ar_agent == $sub) | [.metric.gen_ai_request_model, .metric.gen_ai_token_type, .value[1]]' <<<"$reply"
+    printf '%s\n' "$reply" >"$work/meter-reply.json"
+    METER_REPLY="$work/meter-reply.json" METER_RUN="${run#run-}" go test -count=1 -v -run TestRecordedAgentgatewayReply ./internal/factory/meter >"$work/meter-test.log" 2>&1 ||
+      { cat "$work/meter-test.log" >&2; die "the meter does not price the gateway's reply for $sub"; }
+    grep -F 'micro-USD at' "$work/meter-test.log" || true
+    # the throttle source answers (a vector, empty unless a run was 429'd)
+    tq=$(helm -n "$NS" get values af -o json | jq -r '."maku-factory".config.meter.throttle.promQuery')
+    vmq "$tq" | jq -e '.status == "success" and .data.resultType == "vector"' >/dev/null || die "meter.throttle.promQuery is not a vector on VictoriaMetrics"
+    echo "ok: the run's tokens are in VictoriaMetrics as $sub, the meter prices them, and the PromQL throttle answers"
+  fi
   kubectl -n agents delete agentrun "$run" --wait=false >/dev/null 2>&1 || true
 fi
 
@@ -633,4 +670,4 @@ if [[ ${ADOPT:-} == 1 ]]; then
   [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the adopted Room did not survive the umbrella's upgrade"
   echo "ok: the adopted Room survived the umbrella's upgrade"
 fi
-echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}${GATEWAY:+ (gateway)}"
+echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}${GATEWAY:+ (gateway)}${METERING:+ (metering)}"

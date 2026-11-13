@@ -291,6 +291,16 @@ ykind ConfigMap 'select(.metadata.name=="agent-factory-config") | .data."config.
 yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/gw-factory-config.yaml"
 (cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/gw-factory-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-gw.log" 2>&1) ||
   { echo "FAIL: the gateway demo's factory config does not parse:" >&2; cat "$tmp/parse-gw.log" >&2; fail=1; }
+# Task 17: the metering leg's values (install.sh METERING=1): a meter with a PromQL throttle and a split
+# on the portable kind, which the factory accepts with runs.gatewayIdentity.
+mout="$(helm template af . -n maku "${gwd[@]}" -f tests/metering-values.yaml)" || { echo "FAIL: the metering values do not render" >&2; fail=1; mout=''; }
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$mout" >"$tmp/metering-config.yaml"
+yq -e '.loops.review.split.maxChildren == 3 and .meter.throttle.promQuery != null and .runs.gatewayIdentity' "$tmp/metering-config.yaml" >/dev/null 2>&1 ||
+  { echo "FAIL: the metering config lacks its split, throttle or identity" >&2; fail=1; }
+(cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/metering-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-m.log" 2>&1) ||
+  { echo "FAIL: the metering leg's factory config does not parse:" >&2; cat "$tmp/parse-m.log" >&2; fail=1; }
+grep -qE 'name: metrics' <<<"$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway") | .spec.ingress[] | select(.ports[0].port == 15020)' - <<<"$mout")" ||
+  { echo "FAIL: the metering values do not admit the metrics namespace to the gateway's 15020" >&2; fail=1; }
 # GW12: the gateway's prices default to the factory's meter.prices (one source); the gateway's own win.
 catalogs() { yq ea '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' - <<<"$out"; }
 [[ "$(catalogs)" == 1 ]] || { echo "FAIL: the gateway demo renders $(catalogs) model catalogs, want 1" >&2; fail=1; }

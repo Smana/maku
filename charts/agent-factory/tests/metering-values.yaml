@@ -1,0 +1,27 @@
+# The gateway demo's meter (plan v4 step 4, Task 17; GW10, GW12), layered on values-demo.yaml and
+# values-demo-gateway.yaml by install.sh's METERING leg and checked offline by render.sh. The meter
+# reads agentgateway's own series from the test-only VictoriaMetrics (metrics-stub.yaml), with no
+# relabel, and the gateway's 429s from the same place; the gateway's catalog takes these prices
+# (GW12). The echo provider serves echo-default, echo-light and echo-frontier.
+maku-factory:
+  config:
+    meter:
+      url: http://vmsingle.metrics.svc.cluster.local:8428
+      query: 'sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (agentgateway_gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+"})'
+      throttle:
+        promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status="429", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m])) > 0'
+      prices:
+        agent-default: {input: 1.00, cacheRead: 0.10, output: 2.00}
+        echo-default: {input: 1.00, cacheRead: 0.10, output: 2.00}
+        echo-light: {input: 1.00, cacheRead: 0.10, output: 2.00}
+        echo-frontier: {input: 3.00, cacheRead: 0.30, output: 9.00}
+    # Restated whole (a values file replaces the map): review offers a split, which a portable runtime
+    # accepts only with runs.gatewayIdentity and a meter.
+    loops:
+      review: {scope: scoper, judge: tier-light, split: {maxChildren: 3}}
+      docs-links: {scope: scoper, judge: tier-light}
+maku-gateway:
+  # The VictoriaMetrics stub scrapes the gateway's pods on 15020 from its own namespace.
+  metrics:
+    allowFrom:
+      - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: metrics}}

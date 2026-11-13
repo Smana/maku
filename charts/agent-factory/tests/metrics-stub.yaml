@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: Apache-2.0
+# Test only (install.sh METERING=1; plan v4 step 4, Task 17): a single-binary VictoriaMetrics, pinned by
+# digest, that scrapes the model gateway's pods (gateway.networking.k8s.io/gateway-name=model-gateway in
+# maku) on 15020 every 5 s, with no relabel of agentgateway's own names: the factory's meter reads it
+# at http://vmsingle.metrics.svc.cluster.local:8428 (tests/metering-values.yaml). Not a product object.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: metrics
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: vmsingle, namespace: metrics}
+---
+# Pod discovery in maku only: the gateway's replicas.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: vmsingle-discovery, namespace: maku}
+rules:
+  - {apiGroups: [""], resources: [pods], verbs: [get, list, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: vmsingle-discovery, namespace: maku}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: vmsingle-discovery}
+subjects: [{kind: ServiceAccount, name: vmsingle, namespace: metrics}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: vmsingle-scrape, namespace: metrics}
+data:
+  scrape.yaml: |
+    global: {scrape_interval: 5s}
+    scrape_configs:
+      - job_name: model-gateway
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces: {names: [maku]}
+            selectors: [{role: pod, label: gateway.networking.k8s.io/gateway-name=model-gateway}]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: "$1:15020"
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: vmsingle, namespace: metrics}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: vmsingle}}
+  template:
+    metadata: {labels: {app: vmsingle}}
+    spec:
+      serviceAccountName: vmsingle
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, fsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: vmsingle
+          image: docker.io/victoriametrics/victoria-metrics:v1.131.0@sha256:97448e1cc7751c27d068dd8d1a1a2a3e0c1bd50c4a160d444eb0566716b20eb4
+          args: [-promscrape.config=/etc/vm/scrape.yaml, -storageDataPath=/storage, -retentionPeriod=1d, -httpListenAddr=:8428]
+          ports: [{name: http, containerPort: 8428}]
+          readinessProbe: {httpGet: {path: /health, port: 8428}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health, port: 8428}, periodSeconds: 10}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: scrape, mountPath: /etc/vm}
+            - {name: storage, mountPath: /storage}
+      volumes:
+        - {name: scrape, configMap: {name: vmsingle-scrape}}
+        - {name: storage, emptyDir: {sizeLimit: 512Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vmsingle, namespace: metrics}
+spec:
+  selector: {app: vmsingle}
+  ports: [{name: http, port: 8428, targetPort: 8428}]
