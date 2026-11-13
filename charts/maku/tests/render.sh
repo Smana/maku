@@ -658,7 +658,9 @@ pfq="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set pref
 out="$pfq"
 ykind ConfigMap 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .data."config.json" | from_json | (.components | map(.name + "=" + .url) | join(" ")) == "broker=http://room-broker.x.svc.cluster.local:9090 run-controller=http://run-controller.x.svc.cluster.local:9090 factory=http://agent-factory.x.svc.cluster.local:9090"' 'the preflight collects the broker, the run-controller and the factory on :9090'
 ykind Service 'select(.metadata.name == "run-controller") | (.spec.ports[0].port == 9090 and .spec.selector."app.kubernetes.io/name" == "run-controller")' 'the run-controller ops Service, for the preflight'
+ykind Deployment 'select(.metadata.name == "room-broker" or .metadata.name == "run-controller") | (.spec.template.spec.containers[0].env | map(select(.name == "MAKU_PREFLIGHT") | .value) | join(",")) == "true"' 'preflight.enabled serves /preflight on the broker'"'"'s and the run-controller'"'"'s ops ports'
 out="$q"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(.name == "MAKU_PREFLIGHT")' 'no preflight, no /preflight on any ops port'
 ynone 'select(.kind == "Service" and .metadata.name == "run-controller")' 'no preflight, no run-controller Service'
 cnp="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set preflight.enabled=true)"
 out="$cnp"

@@ -67,6 +67,10 @@ spec:
           env:
             - name: ROOMS_CONFIG
               value: /etc/room-broker/config/config.yaml
+            {{- if .Values.preflight.enabled }}
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
+            {{- end }}
             {{- if $b.database.brokerSecret }}
             - name: ROOMS_DATABASE_URL
               valueFrom:

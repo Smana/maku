@@ -383,13 +383,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	down := newDrainFlag(ctx)
 	// GET /preflight (v4 D24) answers from the start, undecided until the checks are built below.
 	var pfSource atomic.Pointer[preflight.Source]
-	pf := preflight.Handler("factory", version.Version, func(ctx context.Context) []preflight.Result {
-		if src := pfSource.Load(); src != nil {
-			return (*src)(ctx)
-		}
-		return []preflight.Result{{Check: "apps", Outcome: preflight.Fail, Code: preflight.Undecided, Message: "the factory is still starting"}}
-	}, nil)
-	ops, err := startOps(ctx, log, withPreflight(gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())), pf))
+	pfOn := preflightOn(getenv)
+	ops, err := startOps(ctx, log, withPreflight(gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())), pfOn, func() http.Handler {
+		return preflight.Handler("factory", version.Version, func(ctx context.Context) []preflight.Result {
+			if src := pfSource.Load(); src != nil {
+				return (*src)(ctx)
+			}
+			return []preflight.Result{{Check: "apps", Outcome: preflight.Fail, Code: preflight.Undecided, Message: "the factory is still starting"}}
+		}, nil)
+	}))
 	if err != nil {
 		return err
 	}
@@ -819,15 +821,17 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		runnables = append(runnables, appGrantChecks(cfg, mergerFolded, agentsMinter(cfg, m, log), conns.names, m.GitHubAppPermissionMissing, log))
 	}
 	// v4 D24: the factory's own checks, now that every part they read exists.
-	apps := []appGrants{{Name: "factory", Checker: factoryMinter(cfg, preflightAppNeed(cfg, mergerFolded), log)}}
-	if perRun != nil && !cfg.Demo {
-		if am := agentsMinter(cfg, m, log); am != nil {
-			apps = append(apps, appGrants{Name: "agents", Checker: am})
+	if pfOn {
+		apps := []appGrants{{Name: "factory", Checker: factoryMinter(cfg, preflightAppNeed(cfg, mergerFolded), log)}}
+		if perRun != nil && !cfg.Demo {
+			if am := agentsMinter(cfg, m, log); am != nil {
+				apps = append(apps, appGrants{Name: "agents", Checker: am})
+			}
 		}
+		pfChecks := factoryChecks{Live: live.Current, Repos: conns.names, Apps: apps, Gate: gateRead, Private: privateCode,
+			Kube: mgr.GetAPIReader(), Namespace: ns, HC: httpx.New(preflight.CheckTimeout, nil)}.source()
+		pfSource.Store(&pfChecks)
 	}
-	pfChecks := factoryChecks{Live: live.Current, Repos: conns.names, Apps: apps, Gate: gateRead, Private: privateCode,
-		Kube: mgr.GetAPIReader(), Namespace: ns, HC: httpx.New(preflight.CheckTimeout, nil)}.source()
-	pfSource.Store(&pfChecks)
 	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
 		if _, ok := conns.get(cfg.RunLoreRepository()); !ok {
 			return fmt.Errorf("runlore.repository %s has no GitHub connection", cfg.RunLoreRepository())

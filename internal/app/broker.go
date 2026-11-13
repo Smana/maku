@@ -411,7 +411,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	down := newDrainFlag(ctx)
 	ops := withPreflight(opsHandler(st.Ping, st.SchemaReady, boundedSync(rw.synced), down.Draining, exp.Handler()),
-		preflight.Handler("broker", version.Version, brokerPreflight(cfg, st).source(), nil))
+		preflightOn(getenv), func() http.Handler {
+			return preflight.Handler("broker", version.Version, brokerPreflight(cfg, st).source(), nil)
+		})
 
 	var lc net.ListenConfig
 	// The config decides :8090 (I8), so a broker that serves no room tool never binds the port.

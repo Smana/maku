@@ -35,7 +35,10 @@ broker and the run-controller admit it there.
 Each component then answers for itself, on its ops port (`:9090`, beside `/metrics`, never exposed
 publicly): `GET /preflight` runs its own checks through its own network path and credentials, each
 bounded to 10 s and all within 30 s, and caches the answer for 30 s. The answer holds codes and fixed
-messages only: no DSN, key, token or upstream error body.
+messages only: no DSN, key, token or upstream error body. A refusal's detail stays in the
+component's own log. The components serve `/preflight` only when the preflight is enabled
+(`MAKU_PREFLIGHT=true`, which the charts set), so on a default install no pod can make them spend
+their credentials.
 
 | Component | Its checks |
 |---|---|
@@ -45,7 +48,7 @@ messages only: no DSN, key, token or upstream error body.
 
 | New key | Default | What it does |
 |---|---|---|
-| `maku-factory.preflight.enabled` | `false` | Grants the factory `get` and `list` on HTTPRoutes and Ingresses in its namespace, for `exposure`: a route to the broker's `human` port around the proxy fails. The umbrella refuses `maku.preflight.enabled` without it |
+| `maku-factory.preflight.enabled` | `false` | Serves the factory's `/preflight`, and grants the factory `get` and `list` on HTTPRoutes, GRPCRoutes, TLSRoutes and Ingresses in its namespace, for `exposure`: a route to the broker's Service, on any port, fails. The umbrella refuses `maku.preflight.enabled` without it |
 | broker config `preflight.timeout` | `10s` | One broker check's bound, between 1 s and 30 s |
 
 With `maku.preflight.enabled`, the chart adds a `run-controller` Service on `:9090` for the

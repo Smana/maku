@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -56,11 +55,11 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	drain := 30 * time.Second
 	// GET /preflight (v4 D24) on the metrics port: the preflight's last result, once it exists.
 	var pfRef atomic.Pointer[runctl.Preflight]
-	pfHandler := preflight.Handler("run-controller", version.Version, runControllerSource(pfRef.Load, cfg.NetworkPolicy), nil)
+	pfHandler := preflight.Handler("run-controller", version.Version, runControllerSource(pfRef.Load, cfg.NetworkPolicy, logger), nil)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: s, LeaderElection: true, LeaderElectionID: "run-controller", LeaderElectionNamespace: cfg.Namespace,
 		LeaderElectionReleaseOnCancel: true, GracefulShutdownTimeout: &drain,
-		Metrics: metricsserver.Options{BindAddress: ":9090", ExtraHandlers: map[string]http.Handler{"/preflight": pfHandler}}, HealthProbeBindAddress: ":9091",
+		Metrics: metricsserver.Options{BindAddress: ":9090", ExtraHandlers: runControllerExtraHandlers(preflightOn(getenv), pfHandler)}, HealthProbeBindAddress: ":9091",
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
 			&v1alpha1.AgentRun{}: {Namespaces: ns}, &corev1.Pod{}: {Namespaces: ns},
 		}},

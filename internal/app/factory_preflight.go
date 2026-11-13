@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -23,10 +25,9 @@ import (
 	"github.com/Smana/maku/internal/preflight"
 )
 
-// The broker's Service and its human port: a route to them reaches the broker around the proxy (F5).
-const (
-	brokerService = "room-broker"
-)
+// brokerService is the broker's Service when broker.url names none: a route to it reaches the
+// broker around the proxy (F5).
+const brokerService = "room-broker"
 
 // appGrants is one App's installations, checked against its required set.
 type appGrants struct {
@@ -205,35 +206,111 @@ func (f factoryChecks) privateCode(context.Context) preflight.Result {
 	return pass("every private repository is acknowledged")
 }
 
-var httpRouteList = schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: "v1", Kind: "HTTPRouteList"}
+// routeKinds are the Gateway API route kinds that can carry traffic to a Service, each with the
+// versions to try in order: a cluster serves the newest it has.
+var routeKinds = []struct {
+	kind     string
+	versions []string
+}{
+	{"HTTPRoute", []string{"v1", "v1beta1"}},
+	{"GRPCRoute", []string{"v1", "v1alpha2"}},
+	{"TLSRoute", []string{"v1", "v1alpha3", "v1alpha2"}},
+}
 
-// exposure (F5): no HTTPRoute or Ingress in the namespace targets the broker's Service, on any port:
-// its human port would reach it around oauth2-proxy (rooms-web-proxy), and its bridge and ops ports
-// are never public. A kind the cluster does not serve has no route of that kind.
+// brokerTarget is the broker's Service and namespace, read from broker.url's host: a cluster Service
+// name (name, name.ns, name.ns.svc[.domain]). ok is false for a host outside the cluster.
+func brokerTarget(live func() *config.Config, ns string) (name, namespace string, ok bool) {
+	if live == nil || live() == nil || live().Broker.URL == "" {
+		return brokerService, ns, true
+	}
+	u, err := url.Parse(live().Broker.URL)
+	if err != nil || u.Hostname() == "" || net.ParseIP(u.Hostname()) != nil {
+		return "", "", false
+	}
+	labels := strings.Split(u.Hostname(), ".")
+	switch {
+	case len(labels) == 1:
+		return labels[0], ns, true
+	case len(labels) == 2 || labels[2] == "svc":
+		return labels[0], labels[1], true
+	}
+	return "", "", false
+}
+
+// refTargets reports whether a Gateway API backendRef (or a mirror's) names the Service name in
+// namespace: kind Service in the core group, its namespace the route's when unset.
+func refTargets(ref map[string]any, routeNS, name, namespace string) bool {
+	group, _ := ref["group"].(string)
+	kind, _ := ref["kind"].(string)
+	n, _ := ref["name"].(string)
+	refNS, _ := ref["namespace"].(string)
+	if refNS == "" {
+		refNS = routeNS
+	}
+	return group == "" && (kind == "" || kind == "Service") && n == name && refNS == namespace
+}
+
+// routeRefs is every backendRef a route's rules send to: the rules', and their mirrors', at rule and
+// at backendRef level.
+func routeRefs(obj map[string]any) []map[string]any {
+	var out []map[string]any
+	mirrors := func(filters []any) {
+		for _, f := range filters {
+			fm, _ := f.(map[string]any)
+			if ref, ok, _ := unstructured.NestedMap(fm, "requestMirror", "backendRef"); ok {
+				out = append(out, ref)
+			}
+		}
+	}
+	rules, _, _ := unstructured.NestedSlice(obj, "spec", "rules")
+	for _, rule := range rules {
+		rm, _ := rule.(map[string]any)
+		fs, _, _ := unstructured.NestedSlice(rm, "filters")
+		mirrors(fs)
+		refs, _, _ := unstructured.NestedSlice(rm, "backendRefs")
+		for _, ref := range refs {
+			m, _ := ref.(map[string]any)
+			out = append(out, m)
+			bfs, _, _ := unstructured.NestedSlice(m, "filters")
+			mirrors(bfs)
+		}
+	}
+	return out
+}
+
+// exposure (F5): no route or Ingress in the namespace targets the broker's Service, on any port: its
+// human port would reach it around oauth2-proxy (rooms-web-proxy), and its bridge and ops ports are
+// never public. The factory reads its own namespace only (its Role is namespaced), so a broker in
+// another namespace, or outside the cluster, is undecided, never a pass. A route kind the cluster
+// serves at none of its versions has no route of that kind.
 func (f factoryChecks) exposure(ctx context.Context) preflight.Result {
 	if f.Kube == nil {
 		return skip("no cluster client")
 	}
+	name, ns, ok := brokerTarget(f.Live, f.Namespace)
+	if !ok {
+		return failed(preflight.Undecided, "broker.url is not a Service in this cluster: the routes that could reach the broker are not the factory's to read")
+	}
 	var found []string
-	routes := &unstructured.UnstructuredList{}
-	routes.SetGroupVersionKind(httpRouteList)
-	switch err := f.Kube.List(ctx, routes, client.InNamespace(f.Namespace)); {
-	case meta.IsNoMatchError(err):
-	case err != nil:
-		return failed(preflight.Undecided, "the namespace's HTTPRoutes are unreadable: the factory's Role needs get and list on them (preflight.enabled)")
-	default:
-		for _, r := range routes.Items {
-			rules, _, _ := unstructured.NestedSlice(r.Object, "spec", "rules")
-			for _, rule := range rules {
-				refs, _, _ := unstructured.NestedSlice(rule.(map[string]any), "backendRefs")
-				for _, ref := range refs {
-					m, _ := ref.(map[string]any)
-					name, _ := m["name"].(string)
-					if name == brokerService {
-						found = append(found, "HTTPRoute "+r.GetName())
+	for _, rk := range routeKinds {
+		for _, v := range rk.versions {
+			routes := &unstructured.UnstructuredList{}
+			routes.SetGroupVersionKind(schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: v, Kind: rk.kind + "List"})
+			err := f.Kube.List(ctx, routes, client.InNamespace(f.Namespace))
+			if meta.IsNoMatchError(err) {
+				continue // not served at this version: try the next
+			}
+			if err != nil {
+				return failed(preflight.Undecided, fmt.Sprintf("the namespace's %ss are unreadable: the factory's Role needs get and list on them (preflight.enabled)", rk.kind))
+			}
+			for _, r := range routes.Items {
+				for _, ref := range routeRefs(r.Object) {
+					if refTargets(ref, r.GetNamespace(), name, ns) {
+						found = append(found, rk.kind+" "+r.GetName())
 					}
 				}
 			}
+			break
 		}
 	}
 	var ingresses networkingv1.IngressList
@@ -252,7 +329,7 @@ func (f factoryChecks) exposure(ctx context.Context) preflight.Result {
 				}
 			}
 			for _, b := range backends {
-				if b != nil && b.Service != nil && b.Service.Name == brokerService {
+				if b != nil && b.Service != nil && b.Service.Name == name && ing.Namespace == ns {
 					found = append(found, "Ingress "+ing.Name)
 				}
 			}
@@ -262,6 +339,9 @@ func (f factoryChecks) exposure(ctx context.Context) preflight.Result {
 		slices.Sort(found)
 		return failed("broker_exposed_around_proxy", strings.Join(slices.Compact(found), ", ")+
 			" targets the broker directly, around oauth2-proxy: route the web host to rooms-web-proxy (docs/exposure.md)")
+	}
+	if ns != f.Namespace {
+		return failed(preflight.Undecided, fmt.Sprintf("the broker runs in namespace %s and the factory reads routes in %s only: check %s's routes yourself (docs/exposure.md)", ns, f.Namespace, ns))
 	}
 	return pass("no route reaches the broker around the proxy")
 }

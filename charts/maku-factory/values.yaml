@@ -115,8 +115,9 @@ config: {}
 e2e:
   unpinnedImages: false
 
-# The install's preflight (v4 D24): the factory serves its checks at GET /preflight on :9090 (always
-# on, like /metrics); enabled grants its Role get and list on the namespace's HTTPRoutes and
-# Ingresses, which the exposure check reads. Set it with maku.preflight.enabled.
+# The install's preflight (v4 D24): enabled serves the factory's checks at GET /preflight on :9090,
+# and grants its Role get and list on the namespace's HTTPRoutes, GRPCRoutes, TLSRoutes and
+# Ingresses, which the exposure check reads. Off, there is no /preflight. Set it with
+# maku.preflight.enabled.
 preflight:
   enabled: false

@@ -42,7 +42,7 @@ rules:
   # The install's preflight (v4 D24): the factory's exposure check reads the namespace's routes, to
   # refuse one that reaches the broker around oauth2-proxy (F5). Read only.
   - apiGroups: [gateway.networking.k8s.io]
-    resources: [httproutes]
+    resources: [httproutes, grpcroutes, tlsroutes]
     verbs: [get, list]
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]

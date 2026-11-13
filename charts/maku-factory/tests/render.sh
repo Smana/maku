@@ -294,8 +294,10 @@ ykind Deployment "$(vol oidc).secret.secretName == \"agent-factory-oidc\"" "the 
 # v4 D24: the exposure check's read of the namespace's routes, granted only with preflight.enabled.
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000)
 ynone 'select(.kind == "Role" and .metadata.name == "agent-factory") | .rules[] | select(.resources[0] == "httproutes" or .resources[0] == "ingresses")' "no preflight, no route grant"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(.name == "MAKU_PREFLIGHT")' "no preflight, no /preflight on the factory's ops port"
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000 --set preflight.enabled=true)
-ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == null) | (.rules | map(select(.resources[0] == "httproutes" or .resources[0] == "ingresses") | .verbs | join(",")) | join(" ")) == "get,list get,list"' "preflight.enabled grants get and list on HTTPRoutes and Ingresses, nothing more"
+ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == null) | (.rules | map(select(.resources[0] == "httproutes" or .resources[0] == "ingresses") | (.resources | join(",")) + "=" + (.verbs | join(","))) | join(" ")) == "httproutes,grpcroutes,tlsroutes=get,list ingresses=get,list"' "preflight.enabled grants get and list on the routes and Ingresses, nothing more"
+ykind Deployment '(.spec.template.spec.containers[0].env | map(select(.name == "MAKU_PREFLIGHT") | .value) | join(",")) == "true"' "preflight.enabled serves /preflight on the factory's ops port"
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)
 ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:e2e\"" "e2e.unpinnedImages: a bare tag renders"
 ykind Deployment "$ctr.imagePullPolicy == \"Never\"" "e2e.unpinnedImages: imagePullPolicy Never"

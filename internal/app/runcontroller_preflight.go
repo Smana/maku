@@ -4,7 +4,10 @@ package app
 
 import (
 	"context"
+	"log/slog"
+	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Smana/maku/internal/preflight"
 	"github.com/Smana/maku/internal/runctl"
@@ -15,6 +18,17 @@ var runPathCodes = map[string]string{ //nolint:gosec // catalog codes, not crede
 	"runtimeClass": "run_path_runtimeclass",
 	"gitSecrets":   "run_path_git_secrets",
 	"network":      "run_path_network",
+}
+
+// runPathMessages is run-path's one fixed message per code: runctl's own messages carry API server
+// errors, a probe pod's output and event text, so none crosses /preflight. The detail stays in the
+// run-controller's log, and on each refused run's Ready condition.
+var runPathMessages = map[string]string{
+	"run_path_runtimeclass": "the runs' RuntimeClass is missing or unusable: see the run-controller's log",
+	"run_path_git_secrets":  "a git Secret the runs need is missing or not filled: see the run-controller's log",
+	"run_path_network":      "the CNI does not enforce the runs' NetworkPolicy: see the run-controller's log",
+	"run_path_gateway":      "the model gateway's identity, aliases or token TTL refused the runs: see the run-controller's log",
+	preflight.Undecided:     "a run-controller preflight check refused the runs: see the run-controller's log",
 }
 
 // runControllerResults is the run-controller's /preflight (v4 D24): its own preflight's last result
@@ -37,7 +51,7 @@ func runControllerResults(res runctl.Result, mode string) []preflight.Result {
 		if !ok {
 			code = preflight.Undecided
 		}
-		run.Outcome, run.Code, run.Message = preflight.Fail, code, res.Check+": "+res.Message
+		run.Outcome, run.Code, run.Message = preflight.Fail, code, runPathMessages[code]
 	default:
 		run.Outcome, run.Code, run.Message = preflight.Fail, preflight.Undecided,
 			"the run-controller's preflight has not finished, or this replica does not lead"
@@ -47,13 +61,34 @@ func runControllerResults(res runctl.Result, mode string) []preflight.Result {
 		{Check: "models", Outcome: preflight.Skip, Message: "the run aliases' probe through the gateway is not built yet"}}
 }
 
-// runControllerSource serves pf's latest result; nil before the preflight exists.
-func runControllerSource(pf func() *runctl.Preflight, mode string) preflight.Source {
+// runControllerSource serves pf's latest result; nil before the preflight exists. A refusal's own
+// text is logged, once per change, and never served.
+func runControllerSource(pf func() *runctl.Preflight, mode string, log *slog.Logger) preflight.Source {
+	var (
+		mu   sync.Mutex
+		last runctl.Result
+	)
 	return func(context.Context) []preflight.Result {
-		p := pf()
-		if p == nil {
-			return runControllerResults(runctl.Result{State: runctl.PreflightUnknown}, mode)
+		res := runctl.Result{State: runctl.PreflightUnknown}
+		if p := pf(); p != nil {
+			res = p.Result()
 		}
-		return runControllerResults(p.Result(), mode)
+		if log != nil && (res.State == runctl.PreflightFailed || res.State == runctl.PreflightWaiting) {
+			mu.Lock()
+			if res.State != last.State || res.Check != last.Check || res.Message != last.Message {
+				log.Warn("preflight: run-path refused", "check", res.Check, "state", res.State, "detail", res.Message)
+			}
+			last = res
+			mu.Unlock()
+		}
+		return runControllerResults(res, mode)
 	}
+}
+
+// runControllerExtraHandlers mounts /preflight on the metrics server only when on (MAKU_PREFLIGHT).
+func runControllerExtraHandlers(on bool, pf http.Handler) map[string]http.Handler {
+	if !on {
+		return nil
+	}
+	return map[string]http.Handler{"/preflight": pf}
 }

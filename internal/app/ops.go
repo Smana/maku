@@ -94,11 +94,19 @@ func boundedSync(synced func(context.Context) bool) func(context.Context) bool {
 	}
 }
 
-// withPreflight adds GET /preflight (v4 D24) to an ops handler: the component's own checks, served
-// beside /metrics on the same unexposed port, unauthenticated like it.
-func withPreflight(ops, pf http.Handler) http.Handler {
+// preflightOn reports whether the chart's preflight.enabled turned /preflight on (MAKU_PREFLIGHT=true).
+// Off, the component serves no /preflight: a default install's pods cannot make it spend its
+// credentials (a GitHub App call, a model completion, the OAuth client) on demand.
+func preflightOn(getenv func(string) string) bool { return getenv("MAKU_PREFLIGHT") == "true" }
+
+// withPreflight adds GET /preflight (v4 D24) to an ops handler when on: the component's own checks,
+// served beside /metrics on the same unexposed port, unauthenticated like it. pf is built only when on.
+func withPreflight(ops http.Handler, on bool, pf func() http.Handler) http.Handler {
+	if !on {
+		return ops
+	}
 	mux := http.NewServeMux()
-	mux.Handle("GET /preflight", pf)
+	mux.Handle("GET /preflight", pf())
 	mux.Handle("/", ops)
 	return mux
 }

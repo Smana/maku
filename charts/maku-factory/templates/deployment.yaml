@@ -41,6 +41,10 @@ spec:
             - name: POD_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - {name: FACTORY_CONFIG, value: /etc/agent-factory/config/config.yaml}
+            {{- if .Values.preflight.enabled }}
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
+            {{- end }}
             {{- if .Values.hardening.gitCache.sizeLimit }}
             - {name: MAKU_GIT_CACHE, value: /var/cache/maku/git}
             {{- end }}
