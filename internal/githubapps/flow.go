@@ -27,6 +27,9 @@ import (
 const (
 	defaultTimeout = 5 * time.Minute
 	maxBody        = 1 << 20
+	// convertTimeout bounds one code's conversion and Save. They run on Run's context without its
+	// cancellation: once GitHub has consumed the one-time code, the key must reach Save.
+	convertTimeout = time.Minute
 	redacted       = "[redacted]"
 )
 
@@ -103,7 +106,8 @@ type Flow struct {
 	Timeout time.Duration                       // the wait for each App's callback; zero is 5 min
 	Rand    io.Reader                           // the states; nil is crypto/rand
 	// Save persists the i-th App's credentials before the browser is told it exists. An error stops the
-	// flow: the next App is not offered.
+	// flow: the next App is not offered. A rerun after a failure passes only the manifests of the Apps
+	// not yet saved: the error names those that exist.
 	Save func(i int, c Credentials) error
 }
 
@@ -134,6 +138,12 @@ func (f Flow) Run(ctx context.Context, ms ...AppManifest) ([]App, error) {
 	}
 	if u, err := url.Parse(web); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return nil, fmt.Errorf("%s: the GitHub base is not an http(s) URL", cmd)
+	}
+	if f.API == "" {
+		f.API = "https://api.github.com"
+	}
+	if err := checkAPI(f.API); err != nil {
+		return nil, fmt.Errorf("%s: %w", cmd, err)
 	}
 	action := strings.TrimRight(web, "/") + "/settings/apps/new"
 	if f.Owner != "" {
@@ -175,8 +185,11 @@ func (f Flow) Run(ctx context.Context, ms ...AppManifest) ([]App, error) {
 		mu       sync.Mutex
 		cur      int  // the App whose callback is awaited
 		inflight bool // its conversion is running: a second callback is refused
+		closing  bool // Run is returning: no conversion starts
+		running  sync.WaitGroup
 		apps     = make([]App, 0, len(ms))
 	)
+	convCtx := context.WithoutCancel(ctx)
 	progress := make(chan int, len(ms)) // the index of each App created
 	failed := make(chan error, 1)
 	var failOnce sync.Once
@@ -210,17 +223,24 @@ func (f Flow) Run(ctx context.Context, ms ...AppManifest) ([]App, error) {
 			http.Error(w, "no code", http.StatusBadRequest)
 			return
 		}
-		if inflight {
+		if inflight || closing {
 			mu.Unlock()
 			http.Error(w, "this callback was already used", http.StatusBadRequest)
 			return
 		}
 		inflight = true
+		running.Add(1)
 		mu.Unlock()
+		defer running.Done()
 
-		c, err := f.convert(req.Context(), code, steps[i].oauth)
+		// Not the request's context: a closed tab must not cancel a conversion GitHub has begun.
+		cctx, cancel := context.WithTimeout(convCtx, convertTimeout)
+		defer cancel()
+		c, err := f.convert(cctx, code, steps[i].oauth)
 		if err == nil {
-			err = f.Save(i, c)
+			if serr := f.Save(i, c); serr != nil {
+				err = fmt.Errorf("%s: the GitHub App %s was created, but its credentials could not be saved: %w; delete it at %s and run again", cmd, c.Slug, serr, c.HTMLURL)
+			}
 		}
 		if err != nil {
 			http.Error(w, "the App could not be created: see the terminal", http.StatusBadGateway)
@@ -269,6 +289,26 @@ func (f Flow) Run(ctx context.Context, ms ...AppManifest) ([]App, error) {
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
+	// stop lets no conversion start, waits for the one running, and names the Apps that exist.
+	stop := func(err error) ([]App, error) {
+		mu.Lock()
+		closing = true
+		mu.Unlock()
+		running.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		if len(apps) == 0 {
+			return nil, err
+		}
+		names := make([]string, len(apps))
+		for i, a := range apps {
+			names[i] = a.Slug + " (" + a.HTMLURL + ")"
+		}
+		if len(names) == 1 {
+			return nil, fmt.Errorf("%w; the GitHub App %s exists and its credentials are saved: a rerun creates only the others", err, names[0])
+		}
+		return nil, fmt.Errorf("%w; the GitHub Apps %s exist and their credentials are saved: a rerun creates only the others", err, strings.Join(names, ", "))
+	}
 	for done := 0; done < len(steps); {
 		timer := time.NewTimer(timeout)
 		select {
@@ -280,12 +320,12 @@ func (f Flow) Run(ctx context.Context, ms ...AppManifest) ([]App, error) {
 			}
 		case err := <-failed:
 			timer.Stop()
-			return nil, err
+			return stop(err)
 		case <-timer.C:
-			return nil, fmt.Errorf("%s: no GitHub callback within %s: run maku %s again", cmd, timeout, cmd)
+			return stop(fmt.Errorf("%s: no GitHub callback within %s: run maku %s again", cmd, timeout, cmd))
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return stop(ctx.Err())
 		}
 	}
 	mu.Lock()
@@ -293,15 +333,29 @@ func (f Flow) Run(ctx context.Context, ms ...AppManifest) ([]App, error) {
 	return apps, nil
 }
 
+// checkAPI refuses an API base the code should not be sent to: https, or plain http on loopback only.
+func checkAPI(api string) error {
+	u, err := url.Parse(api)
+	if err != nil || u.Host == "" || u.User != nil {
+		return errors.New("the GitHub API base is not a URL")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		h := u.Hostname()
+		if ip := net.ParseIP(h); h == "localhost" || (ip != nil && ip.IsLoopback()) {
+			return nil
+		}
+	}
+	return errors.New("the GitHub API base must be https (plain http on loopback only)")
+}
+
 // convert trades a callback's code for the App's credentials. An error names the status only: the
 // code and the answer are credentials.
 func (f Flow) convert(ctx context.Context, code string, oauth bool) (Credentials, error) {
 	cmd := f.Command
-	api := f.API
-	if api == "" {
-		api = "https://api.github.com"
-	}
-	endpoint := strings.TrimRight(api, "/") + "/app-manifests/" + url.PathEscape(code) + "/conversions"
+	endpoint := strings.TrimRight(f.API, "/") + "/app-manifests/" + url.PathEscape(code) + "/conversions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil) //nolint:gosec // the API base is the developer's or a test's
 	if err != nil {
 		return Credentials{}, fmt.Errorf("%s: building the manifest code's conversion", cmd)

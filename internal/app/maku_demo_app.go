@@ -111,24 +111,55 @@ func writeDemoApp(dir string, c githubapps.Credentials) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return err
 	}
-	// html_url goes last: it is the marker that the set is complete.
-	for _, f := range []struct{ name, val string }{
-		{"private_key", c.PEM.Reveal()}, {"app_id", strconv.FormatInt(c.ID, 10)},
-		{"slug", c.Slug}, {"html_url", c.HTMLURL},
-	} {
-		if err := writeOwnerOnly(filepath.Join(dir, f.name), []byte(f.val)); err != nil {
+	// The set is staged whole, then renamed into place with html_url last: it is the marker that the set
+	// is complete, and a failure while staging leaves no key without it.
+	return writeOwnerOnlyAll([]ownerFile{
+		{filepath.Join(dir, "private_key"), []byte(c.PEM.Reveal())},
+		{filepath.Join(dir, "app_id"), []byte(strconv.FormatInt(c.ID, 10))},
+		{filepath.Join(dir, "slug"), []byte(c.Slug)},
+		{filepath.Join(dir, "html_url"), []byte(c.HTMLURL)},
+	})
+}
+
+// ownerFile is one file of a set writeOwnerOnlyAll writes.
+type ownerFile struct {
+	path string
+	data []byte
+}
+
+// writeOwnerOnlyAll stages every file 0600 next to its path, then renames each into place in order: a
+// rename replaces a symlink at a path rather than following it, and a reader never sees half a file.
+// A failure while staging removes what it staged and writes nothing.
+func writeOwnerOnlyAll(files []ownerFile) (err error) {
+	staged := make([]string, 0, len(files))
+	defer func() {
+		if err != nil {
+			for _, tmp := range staged {
+				_ = os.Remove(tmp)
+			}
+		}
+	}()
+	for _, f := range files {
+		tmp, err := stageOwnerOnly(f.path, f.data)
+		if err != nil {
+			return err
+		}
+		staged = append(staged, tmp)
+	}
+	for i, f := range files {
+		if err := os.Rename(staged[i], f.path); err != nil {
+			staged = staged[i:]
 			return err
 		}
 	}
 	return nil
 }
 
-// writeOwnerOnly writes path with mode 0600 through a temporary file renamed over it: a rename replaces a
-// symlink at path rather than following it, and a reader never sees half a file.
-func writeOwnerOnly(path string, b []byte) (err error) {
+// stageOwnerOnly writes b to a new 0600 temporary file in path's directory, synced, and names it.
+func stageOwnerOnly(path string, b []byte) (name string, err error) {
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer func() {
 		if err != nil {
@@ -137,16 +168,16 @@ func writeOwnerOnly(path string, b []byte) (err error) {
 	}()
 	if _, err = f.Write(b); err != nil {
 		_ = f.Close()
-		return err
+		return "", err
 	}
 	if err = f.Sync(); err != nil {
 		_ = f.Close()
-		return err
+		return "", err
 	}
 	if err = f.Close(); err != nil {
-		return err
+		return "", err
 	}
-	return os.Rename(f.Name(), path)
+	return f.Name(), nil
 }
 
 func randHex(n int) (string, error) {

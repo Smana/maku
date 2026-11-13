@@ -441,7 +441,8 @@ func TestFlowStopsWhenSaveFails(t *testing.T) {
 	gh := newFakeGitHub(t, defaultAnswers())
 	r := startFlow(t, Flow{Command: "install", Save: func(int, Credentials) error { return errors.New("disk full") }}, gh, twoManifests(t)...)
 	code, _ := get(t, r.page(t)+"/callback?code=a1&state="+state1)
-	if err := <-r.err; err == nil || !strings.Contains(err.Error(), "disk full") || code != http.StatusBadGateway {
+	if err := <-r.err; err == nil || !strings.Contains(err.Error(), "disk full") || code != http.StatusBadGateway ||
+		!strings.Contains(err.Error(), "https://github.com/apps/acme-agents") {
 		t.Fatalf("status %d, err %v", code, err)
 	}
 }
@@ -493,5 +494,131 @@ func TestFlowRefusesAForeignHost(t *testing.T) {
 	get(t, base+"/callback?code=a1&state="+state1)
 	if err := <-r.err; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// heldGitHub is a fake GitHub whose conversions wait for release once they have begun.
+type heldGitHub struct {
+	*fakeGitHub
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newHeldGitHub(t *testing.T) *heldGitHub {
+	t.Helper()
+	h := &heldGitHub{fakeGitHub: &fakeGitHub{}, entered: make(chan struct{}, 4), release: make(chan struct{})}
+	answers := defaultAnswers()
+	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.entered <- struct{}{}
+		<-h.release
+		_, rest, _ := strings.Cut(r.URL.Path, "/app-manifests/")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(answers[strings.TrimSuffix(rest, "/conversions")])
+	}))
+	t.Cleanup(h.srv.Close)
+	return h
+}
+
+func (h *heldGitHub) waitEntered(t *testing.T) {
+	t.Helper()
+	select {
+	case <-h.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the conversion never started")
+	}
+}
+
+// The code works once: a browser that gives up mid-conversion must not cost the App its key.
+func TestFlowSavesWhenTheBrowserGoesAway(t *testing.T) {
+	h := newHeldGitHub(t)
+	r := startFlow(t, Flow{Command: "install"}, h.fakeGitHub, twoManifests(t)[0])
+	base := r.page(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+"/callback?code=a1&state="+state1, nil)
+		if resp, err := plain.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	h.waitEntered(t)
+	cancel()                          // the tab is closed while GitHub converts the code
+	time.Sleep(50 * time.Millisecond) // let the cancellation reach the server
+	close(h.release)
+	if err := <-r.err; err != nil {
+		t.Fatal(err)
+	}
+	if saved := *r.saved; len(saved) != 1 || saved[0].PEM.Reveal() != agentsPEM {
+		t.Fatalf("saved = %v", saved)
+	}
+}
+
+// Run never returns while a conversion it started is still running: when it gives up, the App the
+// conversion created is saved, and the error says it exists.
+func TestFlowWaitsForAConversionInFlight(t *testing.T) {
+	h := newHeldGitHub(t)
+	var mu sync.Mutex
+	var saved []string
+	f := Flow{Command: "install", Timeout: 200 * time.Millisecond, Save: func(_ int, c Credentials) error {
+		mu.Lock()
+		defer mu.Unlock()
+		saved = append(saved, c.Slug)
+		return nil
+	}}
+	r := startFlow(t, f, h.fakeGitHub, twoManifests(t)...)
+	base := r.page(t)
+	go func() {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/callback?code=a1&state="+state1, nil)
+		if resp, err := plain.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	h.waitEntered(t)
+	time.AfterFunc(400*time.Millisecond, func() { close(h.release) }) // past the timeout
+	err := <-r.err
+	mu.Lock()
+	defer mu.Unlock()
+	if len(saved) != 1 {
+		t.Fatalf("Run returned before the conversion's Save: saved %v, err %v", saved, err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "acme-agents") || !strings.Contains(err.Error(), "https://github.com/apps/acme-agents") ||
+		!strings.Contains(err.Error(), "exists") {
+		t.Fatalf("err = %v, want it to name the App that exists", err)
+	}
+}
+
+// When the second App fails, the first one exists and is saved: the error says so, by slug and URL.
+func TestFlowFailureNamesTheAppsCreated(t *testing.T) {
+	answers := defaultAnswers()
+	delete(answers, "f1") // GitHub refuses the factory App's code
+	gh := newFakeGitHub(t, answers)
+	r := startFlow(t, Flow{Command: "install"}, gh, twoManifests(t)...)
+	base := r.page(t)
+	get(t, base+"/callback?code=a1&state="+state1)
+	get(t, base+"/callback?code=f1&state="+state2)
+	err := <-r.err
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") || !strings.Contains(err.Error(), "acme-agents") ||
+		!strings.Contains(err.Error(), "https://github.com/apps/acme-agents") || !strings.Contains(err.Error(), "exists") {
+		t.Fatalf("err = %v", err)
+	}
+	if leaks(err.Error()) != "" {
+		t.Fatalf("err leaks: %v", err)
+	}
+}
+
+// The API base comes from the user's answers (GHES): the code goes to it, so it is https, or plain
+// http on loopback only.
+func TestFlowRefusesAPlainHTTPAPI(t *testing.T) {
+	save := func(int, Credentials) error { return nil }
+	ms := twoManifests(t)
+	for _, api := range []string{"http://ghe.example.com/api/v3", "javascript:alert(1)", "https://", "ftp://ghe.example.com"} {
+		_, err := Flow{Command: "install", Save: save, API: api}.Run(context.Background(), ms...)
+		if err == nil || !strings.Contains(err.Error(), "API") {
+			t.Errorf("API %q: err = %v", api, err)
+		}
+	}
+	for _, api := range []string{"https://ghe.example.com/api/v3", "http://127.0.0.1:1", "http://[::1]:1", "http://localhost:1"} {
+		if err := checkAPI(api); err != nil {
+			t.Errorf("API %q refused: %v", api, err)
+		}
 	}
 }

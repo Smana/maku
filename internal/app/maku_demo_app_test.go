@@ -464,3 +464,18 @@ func plainGet(t *testing.T, u string) (*http.Response, error) {
 	}
 	return (&http.Client{Timeout: 5 * time.Second}).Do(req)
 }
+
+// A set is written whole or not at all: a failure while staging leaves no key without its marker.
+func TestWriteOwnerOnlyAllIsAllOrNothing(t *testing.T) {
+	dir := t.TempDir()
+	err := writeOwnerOnlyAll([]ownerFile{
+		{filepath.Join(dir, "private_key"), []byte(demoTestKey)},
+		{filepath.Join(dir, "missing", "html_url"), []byte("u")}, // its directory does not exist
+	})
+	if err == nil {
+		t.Fatal("the write succeeded")
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatalf("left behind: %v", ents)
+	}
+}
