@@ -107,8 +107,10 @@ func RunBroker(ctx context.Context, log *slog.Logger, args []string, getenv func
 		return runIntentSamples(ctx, os.Stdout, args[1:], getenv)
 	case "migrate-group":
 		return runMigrateGroup(ctx, log, args[1:], getenv, kubeClient(log))
+	case "github-unlink":
+		return runGitHubUnlink(ctx, log, args[1:], getenv)
 	}
-	return fmt.Errorf("room-broker: unknown subcommand %q (serve, retention, migrate, migrate-group, intent-samples)", cmd)
+	return fmt.Errorf("room-broker: unknown subcommand %q (serve, retention, migrate, migrate-group, intent-samples, github-unlink)", cmd)
 }
 
 // runRetention is the daily DELETE-only job (§4, OD-17), connected as
@@ -349,6 +351,12 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if l := cfg.Human.SlackLink; l != nil { // the self-serve link: the App mints, a human confirms, the factory reads
 		humans.SlackLink = &humanapi.SlackLinker{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID, Repository: l.Repository}
 		api.SlackLinks, api.SlackLinkReader = st, fconfig.PrincipalFactory
+	}
+	if l := cfg.Human.GitHubLink; l != nil { // the GitHub account link (v4 D8): a human links, the factory reads
+		if humans.GitHubLink, err = githubLinker(l, st, humans.Identity); err != nil {
+			return fmt.Errorf("room-broker: %w", err)
+		}
+		api.GitHubLinks, api.LinkReader, api.GitHubActiveWindow = st, fconfig.PrincipalFactory, l.ActiveWindow.Duration
 	}
 	if cfg.Human.ApprovalMemory { // merge policy stage 5: the grants' human door, and the factory's routes
 		humans.Grants = st

@@ -68,6 +68,16 @@ GitHub cannot answer fails closed. A member with no link sees no room. `agents-a
 The same reader also reads the user's state on every human path, `agents-admin` included, since
 tokens verify offline and ZITADEL's live 12 h: a user deactivated, locked or deleted is refused
 (`user_inactive`) within the same 5 minutes, and an open WebSocket is cut on its next ping.
+**The GitHub account link** (`human.githubLink`, [GitHub account link](github-link.md)) is the
+second source of that login, and the one that needs no IdP admin API. The broker keeps each human's
+numeric GitHub id, proved by an OAuth authorization the person made at GitHub, and never a token:
+the user token is revoked as soon as `GET /user` answers. The flow is bound to the browser that
+started it (a cookie nonce, a PKCE verifier derived from it) and to the `sub` whose web session
+confirms it, so neither a link CSRF nor a stolen callback URL links one account to another's GitHub
+id. One GitHub id belongs to one account. "Active" is the link's own `last_seen_at`, refreshed by the
+human's requests: the residual is a deactivated person's Slack link acting until `activeWindow` after
+their last sign-in, ended at once by an admin unlink.
+
 When the broker asks the factory for a run on a human's behalf, it forwards that human's access
 token, never an asserted `sub`, so the factory proves the principal itself.
 

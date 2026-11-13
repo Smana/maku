@@ -16,6 +16,7 @@ on:
       - go.mod
       - go.sum
       - mise.toml
+      - .dockerignore
       - .github/workflows/quickstart-e2e.yaml
   push:
     tags: ["v*"]

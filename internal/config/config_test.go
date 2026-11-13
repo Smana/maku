@@ -1218,3 +1218,63 @@ const sponsoredMCP = `  roomctlClientIDFile: /etc/room-broker/oidc/cli-client-id
       - name: slack-app
         clientIDFile: /etc/room-broker/sponsored/slack-app
 `
+
+// githubLink is human.githubLink with its two files.
+const githubLink = "  githubLink:\n    clientIDFile: /etc/room-broker/github-link/client_id\n    clientSecretFile: /etc/room-broker/github-link/client_secret\n"
+
+// The GitHub account link (v4 D8): off by default; on, its client's two files, github.com unless
+// webURL names a GHES, and an activeWindow of 168h unless set, at most 720h. Mode local refuses it.
+func TestLoadGitHubLink(t *testing.T) {
+	if c, err := Load(write(t, valid)); err != nil || c.Human.GitHubLink != nil {
+		t.Fatalf("off by default: %+v %v", c.Human.GitHubLink, err)
+	}
+	c, err := Load(write(t, valid+githubLink))
+	if err != nil || c.Human.GitHubLink == nil || c.Human.GitHubLink.WebURL != "https://github.com" ||
+		c.Human.GitHubLink.ActiveWindow.Duration != 168*time.Hour || c.Human.GitHubLink.ClientSecretFile != "/etc/room-broker/github-link/client_secret" {
+		t.Fatalf("the defaults: %+v %v", c.Human.GitHubLink, err)
+	}
+	c, err = Load(write(t, valid+githubLink+"    webURL: https://ghes.example.test\n    activeWindow: 720h\n"))
+	if err != nil || c.Human.GitHubLink.WebURL != "https://ghes.example.test" || c.Human.GitHubLink.ActiveWindow.Duration != 720*time.Hour {
+		t.Fatalf("a GHES and the longest window: %+v %v", c.Human.GitHubLink, err)
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"no client id":       {strings.Replace(githubLink, "    clientIDFile: /etc/room-broker/github-link/client_id\n", "", 1), "human.githubLink.clientIDFile"},
+		"no client secret":   {strings.Replace(githubLink, "    clientSecretFile: /etc/room-broker/github-link/client_secret\n", "", 1), "human.githubLink.clientSecretFile"},
+		"plain http":         {githubLink + "    webURL: http://ghes.example.test\n", "human.githubLink.webURL"},
+		"credentials":        {githubLink + "    webURL: https://u:p@ghes.example.test\n", "human.githubLink.webURL"},
+		"a path":             {githubLink + "    webURL: https://ghes.example.test/x\n", "human.githubLink.webURL"},
+		"a window over 720h": {githubLink + "    activeWindow: 721h\n", "human.githubLink.activeWindow"},
+		"a negative window":  {githubLink + "    activeWindow: -1h\n", "human.githubLink.activeWindow"},
+		"an unknown key":     {githubLink + "    token: x\n", "token"},
+		"an http publicURL":  {githubLink + "", "publicURL"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := valid + tc.body
+			if name == "an http publicURL" {
+				body = strings.Replace(body, "publicURL: https://rooms.priv.aws.ogenki.io", "publicURL: http://rooms.priv.aws.ogenki.io", 1)
+			}
+			_, err := Load(write(t, body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if _, err := Load(write(t, localBare+githubLink)); err == nil || !strings.Contains(err.Error(), "human.githubLink: mode local takes no githubLink") {
+		t.Fatalf("mode local: %v", err)
+	}
+}
+
+// With the GitHub account link, human.access needs no ZITADEL reader, and the https issuer rule (the
+// reader's PAT goes to the issuer) holds only while a reader is set.
+func TestLoadAccessFromTheGitHubLink(t *testing.T) {
+	c, err := Load(write(t, valid+"  access:\n    ttl: 2m\n"+githubLink))
+	if err != nil || c.Human.Access.ReaderFile != "" || c.Human.GitHubLink == nil {
+		t.Fatalf("access from the link alone: %+v %v", c.Human.Access, err)
+	}
+	if _, err := Load(write(t, valid+access+githubLink)); err != nil {
+		t.Fatalf("both sources, the reader behind the link: %v", err)
+	}
+	if _, err := Load(write(t, valid+"  access:\n    ttl: 2m\n")); err == nil || !strings.Contains(err.Error(), "human.access.readerFile: is required unless human.githubLink is set") {
+		t.Fatalf("neither source: %v", err)
+	}
+}
