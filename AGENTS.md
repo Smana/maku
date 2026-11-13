@@ -150,7 +150,7 @@ flowchart LR
 
 | Stage | Package | Contract |
 |---|---|---|
-| Entry | `cmd/maku-broker` | `serve`, `retention`, `migrate` (the schema, the chart's init container) and `migrate-group` (the maku rebrand's group move) subcommands |
+| Entry | `cmd/maku-broker` | `serve`, `retention` and `migrate` (the schema, the chart's init container) subcommands |
 | Entry | `cmd/maku-bridge` | the sidecar binary |
 | Entry | `cmd/maku-slack`, `internal/slackapp` | the factory's Slack App: intake from a thread, webhooks to the thread (docs/slack.md) |
 | Entry | `cmd/maku`, `internal/maku` | the human CLI and its client; `maku mcp`, the stdio relay to `/mcp` |
@@ -189,7 +189,6 @@ flowchart LR
 | Viewers | `internal/humanapi` + `ui/dist/` | `:8080` WebSocket, room list, actions, embedded UI; `POST /mcp`, the humans' MCP server |
 | Viewers | `web/` | TypeScript UI and its vitest suite |
 | Ops | `internal/metrics` | the §9 metric set and the Prometheus exporter maku-broker serves |
-| Ops | `internal/migrategroup` | `maku-broker migrate-group`: copies Rooms and Tasks from one API group to another, behind a guard annotation, the maku rebrand's one-shot |
 
 The factory (SP3), by the same stages. Its wiring is `internal/app/factory.go`; its chart,
 `charts/maku-factory`, ships the `Task` CRD.
@@ -233,7 +232,6 @@ Packages that do touch the platform name their seam:
 | `internal/runwatch` | the run kind (`runwatch.Kind`: group, namespace, claim-name prefix) is config, the broker's and the factory's `runs:`, built in `internal/app` and passed to each consumer; unset, `runwatch.DefaultKind`, cloud-native-ref's `cloud.ogenki.io`, `agents`, `xplane-run-`. The `agents.ogenki.io/revoked` annotation and the three suspend annotations are constants; a `RunSource` interface would replace them in a spin-out |
 | `internal/runrequest` | the rendered claim reuses runwatch's seam plus the claim's spec fields; the factory is SP3's `POST /v1/runs`, at the configured `factoryURL` |
 | `internal/runctl` | the `maku.ogenki.io` `AgentRun` CRD (typed, `api/v1alpha1`), Cilium's `CiliumNetworkPolicy` and the run pod's layout (the bridge as a native sidecar, the broker CA at `/etc/room-broker-ca`); the runs namespace, name prefix, RuntimeClass, images, Secrets, broker URL, labels and CA Secret are config, and the egress profiles have built-in defaults (github, pypi, npm, golang, crates) |
-| `internal/migrategroup` | the kinds it moves (`Room`, `Task`), the version `v1alpha1` and the guard annotation `v1alpha1.AnnotationMigrating`; the two groups come from `--from` and `--to`. Removed once every cluster has migrated |
 | `internal/roomctrl` | the `Room` CRD group |
 | `internal/bridgeapi` | principal allowlists come from config |
 | `internal/bridge` | the OpenHands agent-server loopback API and its event kinds; a harness adapter interface would replace them for another harness |

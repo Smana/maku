@@ -27,9 +27,8 @@ old='room-broker|room-bridge|agent-factory|agent-harness|run-controller|factory-
 artifacts="Smana/agent-platform|ghcr\\.io/smana/($old)([^a-z-]|\$)|charts/agent-platform([^a-z-]|\$)|ghcr\\.io/smana/charts/agent-platform|(cmd|images)/(roomctl|$old)([^a-z-]|\$)"
 # Phase 2: agents.ogenki.io as an API group, never as a key prefix (agents.ogenki.io/<key> stays, plan D1).
 group='(^|[^.a-z-])agents\.ogenki\.io(/v1alpha1|_[a-z]+\.yaml|`)|(rooms|tasks|agentruns)\.agents\.ogenki\.io|groupName=agents\.ogenki\.io|apiGroups:.*agents\.ogenki\.io|group: *"?agents\.ogenki\.io|Group: "agents\.ogenki\.io"'
-# The migration must name the group it moves from.
-group_allow=(':!docs/maku-group-migration.md' ':!internal/migrategroup' ':!internal/app/migrategroup_test.go'
-  ':!hack/quickstart/migrate-e2e.sh')
+# The migration's history must name the group it moved from (its command is gone, v4 step 8 R6).
+group_allow=(':!docs/maku-group-migration.md')
 # The instruments keep their old strings in Go; the exporter serves maku_ names only (v0.31.0). The
 # list is read from the source, so a new instrument joins the gate; a histogram's series are refused too.
 metric_args=()
