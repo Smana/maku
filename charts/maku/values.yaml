@@ -9,6 +9,10 @@ runs:
 # turn this off when the namespace exists already (Helm cannot adopt an unowned one).
 createRunsNamespace: true
 
+# The demo marker (v4 step 8, R4): true admits the demo-only settings, today runController.model.mode
+# secret. values-quickstart.yaml sets it; the umbrella's values-demo.yaml sets maku.demoValues.
+demoValues: false
+
 # Render the CiliumNetworkPolicies (default-deny in the runs namespace, the broker's, the run
 # controller's) and let the run controller create one per run. Turn it off on a cluster without
 # Cilium (plain kind or k3d, no CiliumNetworkPolicy CRD): nothing then confines the network.
@@ -252,13 +256,15 @@ runController:
   # modelSecret is model.mode secret's, and not read in model.mode gateway.
   modelSecret: agent-model
   # How runs reach a model (v4 step 4, docs/gateway.md):
-  #   secret   (default) the harness calls modelSecret's base_url with its api_key, which sits in the sandbox;
-  #   gateway  the harness calls the model gateway (maku-gateway) with the run's own projected token,
-  #            audience <audiencePrefix>.<dataClass>.<spec.model>, at
+  #   gateway  (default, v4 step 8) the harness calls the model gateway (maku-gateway) with the run's own
+  #            projected token, audience <audiencePrefix>.<dataClass>.<spec.model>, at
   #            http://<service>.<namespace>.svc.<clusterDomain>:<ports.<dataClass>>/m/<spec.model>/v1.
   #            No provider key enters the runs namespace. The token lives the run's deadline plus 10 min.
+  #            gateway.aliases.public is required.
+  #   secret   demo-only (demoValues): the harness calls modelSecret's base_url with its api_key, which
+  #            sits in the sandbox. The banner shows model_key_in_sandbox.
   model:
-    mode: secret
+    mode: gateway
     gateway:
       # Empty: model-gateway (maku-gateway's default name), in the release namespace.
       service: ""

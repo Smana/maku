@@ -18,13 +18,13 @@ func TestInstallUnsafe(t *testing.T) {
 	if len(c.Install.Unsafe) != 0 {
 		t.Fatalf("unset is none: %v", c.Install.Unsafe)
 	}
-	all := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken}
-	c, err = Load(write(t, valid+"install:\n  unsafe: [unsafe_allow_runc, network_policy_none, shared_git_token]\n"))
+	all := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken, UnsafeModelKeyInSandbox}
+	c, err = Load(write(t, valid+"install:\n  unsafe: [unsafe_allow_runc, network_policy_none, shared_git_token, model_key_in_sandbox]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(c.Install.Unsafe, all) {
-		t.Fatalf("the three codes: %v", c.Install.Unsafe)
+		t.Fatalf("the four codes: %v", c.Install.Unsafe)
 	}
 	for _, body := range []string{"install:\n  unsafe: [bogus]\n",
 		"install:\n  unsafe: [unsafe_allow_runc, unsafe_allow_runc]\n",

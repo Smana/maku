@@ -204,8 +204,12 @@ The run controller reaches a model in one of two modes, `maku.runController.mode
 
 | Mode | What the harness holds | What it calls |
 |---|---|---|
-| `secret` (the default) | the provider key from `runController.modelSecret` (`agent-model`), inside the sandbox | the Secret's `base_url`, with its `model` |
-| `gateway` | its own projected ServiceAccount tokens, no provider key | `http://<service>.<namespace>.svc.<clusterDomain>:<port>/m/<alias>/v1` |
+| `gateway` (the default) | its own projected ServiceAccount tokens, no provider key | `http://<service>.<namespace>.svc.<clusterDomain>:<port>/m/<alias>/v1` |
+| `secret` (demo-only) | the provider key from `runController.modelSecret` (`agent-model`), inside the sandbox | the Secret's `base_url`, with its `model` |
+
+`secret` is a demo's mode: the chart refuses it without `demoValues: true` (the maku chart's marker,
+which `values-quickstart.yaml` and the umbrella's `values-demo.yaml` set), and the install banner shows
+`model_key_in_sandbox` while it is on ([upgrading](upgrading.md#the-gateway-is-the-model-path)).
 
 In `gateway` mode, for each run:
 

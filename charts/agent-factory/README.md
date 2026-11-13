@@ -96,8 +96,9 @@ helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo
   --set agentgateway.enabled=true -f my-gateway-values.yaml
 ```
 
-Runs call the gateway with `maku.runController.model.mode: gateway`, which then needs
-`maku-gateway.enabled` or an external `model.gateway.service`. The run controller's aliases, ports and
+Runs call the gateway with `maku.runController.model.mode: gateway`, the maku chart's default.
+`values-demo.yaml` overrides it with the demo-only `secret`, which `maku.demoValues` admits. Gateway
+mode needs `maku-gateway.enabled` or an external `model.gateway.service`. The run controller's aliases, ports and
 audience prefix must match `maku-gateway`'s, or the render fails. `values-demo-gateway.yaml`, layered on
 `values-demo.yaml`, is the demo in that mode: the demo key becomes the provider's Secret `demo-model` in
 the release namespace, and no `agent-model` exists. The planner keeps its URL until the broker's

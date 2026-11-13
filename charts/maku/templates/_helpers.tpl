@@ -64,6 +64,7 @@ settings count, so an install without it (the XR) lists none and renders as befo
 {{- if and (not $sb.class) $sb.allowUnsandboxed -}}{{- $codes = append $codes "unsafe_allow_runc" -}}{{- end -}}
 {{- if eq (include "ap.netMode" .) "none" -}}{{- $codes = append $codes "network_policy_none" -}}{{- end -}}
 {{- if .Values.runController.unsafeSharedGitToken -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
+{{- if not (include "ap.runModelGateway" . | fromJson) -}}{{- $codes = append $codes "model_key_in_sandbox" -}}{{- end -}}
 {{- end -}}
 {{- $codes | toJson -}}
 {{- end -}}
@@ -315,13 +316,13 @@ are set, and a render error naming both keys when only one is. Mutates block. */
 {{- end -}}
 {{- end -}}
 
-{{/* The run-controller's model gateway (v4 step 4, GW3; ap.modelGateway is the broker's), as JSON: {} in model.mode secret (the default),
+{{/* The run-controller's model gateway (v4 step 4, GW3; ap.modelGateway is the broker's), as JSON: {} in model.mode secret (demo-only since v4 step 8, R4),
 else the resolved gateway: url, ports, audiencePrefix, aliases. Read it with
 `include "ap.runModelGateway" . | fromJson`. An empty service is maku-gateway's default name, model-gateway,
 and an empty namespace the release's, which is where the umbrella runs it. */}}
 {{- define "ap.runModelGateway" -}}
 {{- $m := .Values.runController.model | default dict -}}
-{{- $mode := $m.mode | default "secret" -}}
+{{- $mode := $m.mode | default "gateway" -}}
 {{- if eq $mode "gateway" -}}
 {{- $g := $m.gateway | default dict -}}
 {{- $svc := $g.service | default "model-gateway" -}}
@@ -341,6 +342,9 @@ and an empty namespace the release's, which is where the umbrella runs it. */}}
   "audiencePrefix" $prefix
   "aliases" (dict "public" $aliases.public "internal" ($aliases.internal | default list)) | toJson -}}
 {{- else if eq $mode "secret" -}}
+{{- if not .Values.demoValues -}}
+{{- fail "runController.model.mode secret is demo-only (v4 D7): the provider key would sit in the sandbox. Set model.mode gateway with model.gateway.aliases, or demoValues: true for a demo (values-quickstart.yaml, the umbrella's values-demo.yaml); docs/upgrading.md#the-gateway-is-the-model-path" -}}
+{{- end -}}
 {}
 {{- else -}}
 {{- fail (printf "runController.model.mode %q must be secret or gateway" $mode) -}}

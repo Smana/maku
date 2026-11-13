@@ -419,8 +419,8 @@ The run controller hands each run one of two model credentials (`runController.m
 
 | Mode | In the sandbox | Its residual |
 |---|---|---|
-| `secret` (default) | the provider key from `agent-model`, a file the harness reads | a key with no expiry, valid at the provider for anything, readable by every command the model runs |
-| `gateway` | the run's own projected ServiceAccount tokens: one for `<prefix>.<dataClass>.<spec.model>`, and one for the judge's alias with a judge | a stolen token is valid until it expires (the run's deadline plus 10 minutes), only at the gateway, only on its alias and data class; its spend is metered to its run |
+| `secret` (demo-only: `demoValues`, on the banner as `model_key_in_sandbox`) | the provider key from `agent-model`, a file the harness reads | a key with no expiry, valid at the provider for anything, readable by every command the model runs |
+| `gateway` (default) | the run's own projected ServiceAccount tokens: one for `<prefix>.<dataClass>.<spec.model>`, and one for the judge's alias with a judge | a stolen token is valid until it expires (the run's deadline plus 10 minutes), only at the gateway, only on its alias and data class; its spend is metered to its run |
 
 In `gateway` mode no provider key enters the runs namespace. The gateway holds the keys, verifies each token offline,
 and sends the provider its own key, never the token. The token is not rotated: the harness reads it

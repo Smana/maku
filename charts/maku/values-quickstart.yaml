@@ -12,7 +12,12 @@ broker:
     ownerSecret: rooms-owner-dsn
   tls:
     issuerRef: {kind: Issuer, name: quickstart-ca}
+# A laptop without a model gateway: the provider key sits in the sandbox (model.mode secret), which only
+# a demo may do. The banner shows model_key_in_sandbox.
+demoValues: true
 runController:
+  model:
+    mode: secret
   createRuntimeClass: true
   # A laptop has one PAT (agent-git): every role shares it, so a reviewer could push. Unsafe
   # anywhere else; set runController.gitReadSecret to a read-only token instead.
