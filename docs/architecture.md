@@ -78,8 +78,9 @@ flowchart LR
 
 One boundary crosses out to a model, and only one. A broker's planner reaches an LLM: `intake_plan`
 — off unless the broker's config turns it on — makes **at most one** `chat/completions` call per attempt,
-in-cluster and straight to the AI Gateway's data-plane Service (no vendor egress from the broker, and
-the gateway sees the client `planner`), on the pinned alias `tier-frontier`, with a 20 s deadline
+in-cluster and straight to the model gateway's clients listener (agentgateway, [`maku-gateway`](gateway.md#the-planner-and-the-classifier):
+no vendor egress from the broker, and the gateway verifies the broker's own token for the client
+`planner`), on the pinned alias `tier-frontier`, with a 20 s deadline
 that stays under `/mcp`'s 25 s bound and a reply capped at 64 KiB. What it sends is public text
 only: the requester's own sentence, the context the agent read and the evidence it passed, for a
 repository GitHub reports public — a private one is refused before the call. The answer becomes a

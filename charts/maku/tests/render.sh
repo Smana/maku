@@ -281,10 +281,10 @@ ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[
 brokercfg "$mgp" >"$mgtmp/planner-gateway.yaml"
 mgo="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
   --set broker.modelGateway.service=model-gateway \
-  --set broker.human.intake.plan.url=http://ai-gateway.envoy-gateway-system.svc.cluster.local:8080/v1 \
+  --set broker.human.intake.plan.url=http://llm.other-gateway.svc.cluster.local:8080/v1 \
   --set broker.human.intake.plan.apiKeyFile=/etc/room-broker/planner/key)"
 out="$mgo"
-ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.intake.plan.url == "http://ai-gateway.envoy-gateway-system.svc.cluster.local:8080/v1" and .human.intake.plan.apiKeyFile == "/etc/room-broker/planner/key")' 'modelGateway: a block that sets its url and apiKeyFile keeps both (D25)'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.intake.plan.url == "http://llm.other-gateway.svc.cluster.local:8080/v1" and .human.intake.plan.apiKeyFile == "/etc/room-broker/planner/key")' 'modelGateway: a block that sets its url and apiKeyFile keeps both (D25)'
 mgs="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" "${mgplan[@]}" "${mgsi[@]}" \
   --set broker.modelGateway.service=model-gateway --set broker.modelGateway.namespace=gateways --set broker.modelGateway.port=9082 \
   --set broker.modelGateway.audiencePrefix=mgw --set networkPolicies.mode=kubernetes)"

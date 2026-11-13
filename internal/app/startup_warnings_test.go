@@ -108,5 +108,5 @@ meter:
   url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428
   query: 'sum by (ar_agent) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+", gen_ai_token_type=~"input|output"})'
   logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428
-  throttleQuery: '_time:2m kubernetes.pod_labels.gateway.envoyproxy.io/owning-gateway-name:"agent-router" | unpack_json | log.response_code:429 AND log.response_flags:~"RL" | stats by (log.x_ar_agent) count() hits'
+  throttleQuery: '_time:2m kubernetes.pod_namespace:"agent-gateway" AND kubernetes.pod_labels.gateway.networking.k8s.io/gateway-name:"agent-router" | unpack_json | filter log.http.status:429 AND log.reason:RateLimit | stats by (log.x_ar_agent) count() hits'
 `
