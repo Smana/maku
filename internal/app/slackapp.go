@@ -26,6 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/slackapp"
@@ -92,8 +93,8 @@ func startSlackAppOn(ctx context.Context, log *slog.Logger, args []string, geten
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	if cfg.IssuerURL == "" || cfg.ClientIDFile == "" || cfg.ClientSecretFile == "" || cfg.ProjectIDFile == "" {
-		return nil, errors.New("config: issuerURL, clientIDFile, clientSecretFile and projectIDFile are required")
+	if err := slackRequired(cfg); err != nil {
+		return nil, err
 	}
 	if err := checkSlackInputs(cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -186,12 +187,14 @@ func checkSlackInputs(cfg slackapp.Config) error {
 	for _, f := range []struct{ field, path string }{
 		{"signingSecretFile", cfg.SigningSecretFile}, {"botTokenFile", cfg.BotTokenFile},
 		{"webhookKeyFile", cfg.WebhookKeyFile}, {"clientIDFile", cfg.ClientIDFile},
-		{"clientSecretFile", cfg.ClientSecretFile}, {"projectIDFile", cfg.ProjectIDFile},
-		{"botUserIDFile", cfg.BotUserIDFile},
+		{"clientSecretFile", cfg.ClientSecretFile}, {"botUserIDFile", cfg.BotUserIDFile},
 	} {
 		if fileValue(f.path) == "" {
 			errs = append(errs, fmt.Errorf("%s is empty or unreadable", f.field))
 		}
+	}
+	if cfg.EffectivePreset() == slackapp.PresetZITADEL && fileValue(cfg.ProjectIDFile) == "" {
+		errs = append(errs, errors.New("projectIDFile is empty or unreadable"))
 	}
 	if _, err := webhook.ReadKeys(cfg.WebhookKeyFile); err != nil && fileValue(cfg.WebhookKeyFile) != "" {
 		errs = append(errs, errors.New("webhookKeyFile does not hold one or two base64 keys of at least 32 bytes"))
@@ -240,16 +243,55 @@ func fileValue(path string) string {
 	return strings.TrimSpace(string(b))
 }
 
+// slackRequired names the identity keys the App cannot start without: projectIDFile under the
+// zitadel preset only (v4 D8).
+func slackRequired(cfg slackapp.Config) error {
+	if cfg.IssuerURL == "" || cfg.ClientIDFile == "" || cfg.ClientSecretFile == "" {
+		return errors.New("config: issuerURL, clientIDFile and clientSecretFile are required")
+	}
+	if cfg.EffectivePreset() == slackapp.PresetZITADEL && cfg.ProjectIDFile == "" {
+		return errors.New("config: projectIDFile is required under the zitadel preset")
+	}
+	return nil
+}
+
+// slackToken mints the App's sponsored token by client credentials. Under the zitadel preset it is
+// today's request: ZITADEL's fixed token path and the project's audience scope. Under generic, the
+// token endpoint is tokenURL, else the issuer's discovery document's, with the configured scopes
+// and the audience as a parameter (Auth0). The ids are read at use, so a rotation applies.
+func slackToken(ctx context.Context, hc *http.Client, cfg slackapp.Config) (*oauth2.Token, error) {
+	cc := clientcredentials.Config{ClientID: fileValue(cfg.ClientIDFile), ClientSecret: fileValue(cfg.ClientSecretFile)}
+	if cfg.EffectivePreset() == slackapp.PresetZITADEL {
+		cc.TokenURL = strings.TrimSuffix(cfg.IssuerURL, "/") + "/oauth/v2/token"
+		cc.Scopes = []string{"openid", "urn:zitadel:iam:org:project:id:" + fileValue(cfg.ProjectIDFile) + ":aud"}
+	} else {
+		cc.TokenURL, cc.Scopes = cfg.TokenURL, cfg.Scopes
+		if cc.TokenURL == "" {
+			d, err := authn.Discover(ctx, hc, cfg.IssuerURL)
+			if err != nil {
+				return nil, fmt.Errorf("the issuer's discovery: %w", err)
+			}
+			if d.TokenEndpoint == "" {
+				return nil, errors.New("the issuer's discovery document names no token_endpoint")
+			}
+			cc.TokenURL = d.TokenEndpoint
+		}
+		// Checked again at use: the client secret goes there.
+		if !authn.HTTPSEndpoint(cc.TokenURL) {
+			return nil, errors.New("the token endpoint is not an https URL")
+		}
+		if cfg.Audience != "" {
+			cc.EndpointParams = url.Values{"audience": {cfg.Audience}}
+		}
+	}
+	return cc.Token(context.WithValue(ctx, oauth2.HTTPClient, hc))
+}
+
 // newSlackApp wires the App from its config. TeamID must come from the config: an empty one
 // drops every event.
 func newSlackApp(cfg slackapp.Config, cl client.Client, rec slackapp.Recorder, log *slog.Logger) *slackapp.App {
 	hc := httpx.New(slackTimeout, nil)
-	tokens := &slackapp.Tokens{Fetch: func(ctx context.Context) (*oauth2.Token, error) {
-		cc := clientcredentials.Config{ClientID: fileValue(cfg.ClientIDFile), ClientSecret: fileValue(cfg.ClientSecretFile),
-			TokenURL: strings.TrimSuffix(cfg.IssuerURL, "/") + "/oauth/v2/token",
-			Scopes:   []string{"openid", "urn:zitadel:iam:org:project:id:" + fileValue(cfg.ProjectIDFile) + ":aud"}}
-		return cc.Token(context.WithValue(ctx, oauth2.HTTPClient, hc))
-	}}
+	tokens := &slackapp.Tokens{Fetch: func(ctx context.Context) (*oauth2.Token, error) { return slackToken(ctx, hc, cfg) }}
 	return &slackapp.App{
 		Slack:    &slackapp.SlackClient{Token: func() string { return fileValue(cfg.BotTokenFile) }, HC: hc, Logger: log},
 		Broker:   slackapp.Broker{URL: cfg.BrokerURL, Tokens: tokens, HC: hc},

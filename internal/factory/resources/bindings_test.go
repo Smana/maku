@@ -477,3 +477,29 @@ func TestAPolicyBelowItsFloorIsRefusedAlone(t *testing.T) {
 		t.Fatalf("the consumer stays served: %+v", r.Refused)
 	}
 }
+
+// The floor check reads the templates as Parse validates them: Parse drops the deprecated tester
+// role only after Validate, so a floor whose template still lists tester is judged with it in both
+// places. Stripping it before the policy check would accept a policy that Parse then refuses in
+// every consumer Repository.
+func TestFloorReadsTemplatesAsParseValidates(t *testing.T) {
+	f := strings.Replace(string(file(t)), "  rich: {template: pair,", "  tested: {template: trio}\n  rich: {template: pair,", 1)
+	// Parse, on a class of the file's own repository: trio's tester counts at validation.
+	legacy := strings.Replace(f, "docs: {harness: base, harnessAllowed: [rich], escalation: {notConverged: rich}}", "docs: {harness: tested, harnessAllowed: [rich]}", 1)
+	_, perr := config.Parse([]byte(legacy))
+	if perr == nil || !strings.Contains(perr.Error(), `harnessAllowed "rich" drops roles of the floor`) {
+		t.Fatalf("Parse: %v", perr)
+	}
+	// The policy check agrees.
+	r, err := Assemble([]byte(f), append(specPolicies(t)[:3:3], classPolicy(t, "docs", 1, "harness: tested\nharnessAllowed: [rich]\n"),
+		boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := refusal(r, KindMergePolicy, "docs"); x == nil || !strings.Contains(x.Message, `harnessAllowed "rich" drops roles of the floor`) {
+		t.Fatalf("docs: %+v", x)
+	}
+	if refused(r, KindRepository, "maku") != "" {
+		t.Fatalf("the consumer stays served: %+v", r.Refused)
+	}
+}

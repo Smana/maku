@@ -174,6 +174,11 @@ tasks:
     cmds:
       - USD=1 bash charts/agent-factory/tests/intake.sh
 
+  chart:identity:k3d:
+    desc: Prove the broker in preset generic against the in-cluster stub issuer on throwaway k3d (docker, k3d; not part of check)
+    cmds:
+      - bash charts/agent-factory/tests/identity.sh
+
   chart:intake:k3d:
     desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)
     cmds:

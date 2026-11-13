@@ -86,7 +86,10 @@ type Tool struct {
 	// Gate, when set, must also accept the run for the tool to be listed or called: a safe-output
 	// tool is served only to a run whose claim names its type (hardening HR14).
 	Gate func(runwatch.Run) bool
-	Call func(ctx context.Context, c Caller, args json.RawMessage) (any, error)
+	// OnRefused, when set, hears a call of this tool the run may not make: the knowledge tools count
+	// it as refused (EX11).
+	OnRefused func(ctx context.Context)
+	Call      func(ctx context.Context, c Caller, args json.RawMessage) (any, error)
 }
 
 // servedTo reports whether run lists and may call t.
@@ -336,6 +339,9 @@ func (s *Server) call(ctx context.Context, w http.ResponseWriter, req mcpwire.Re
 	agent := policy.Subject{Kind: envelope.ActorAgent, ID: "agent:" + run.ID}
 	if i < 0 || !s.Tools[i].servedTo(run, harness) || !policy.Allowed(agent, s.Tools[i].Action) {
 		s.reject(ctx, "tool_not_permitted")
+		if i >= 0 && s.Tools[i].OnRefused != nil {
+			s.Tools[i].OnRefused(ctx)
+		}
 		mcpwire.Write(w, req.ID, mcpwire.ToolError("not_permitted: this tool is not one of the "+run.Role+" role's"), nil)
 		return
 	}
@@ -363,7 +369,11 @@ func (s *Server) call(ctx context.Context, w http.ResponseWriter, req mcpwire.Re
 func (s *Server) failure(ctx context.Context, tool string, run runwatch.Run, err error) string {
 	var bad argError
 	var slow rateError
+	var known knowledgeError
 	switch {
+	case errors.As(err, &known): // the broker's own words, the endpoint's message cut short
+		s.log().Warn("knowledge call failed", "tool", tool, "room", run.Room, "run", run.ID, "reason", known.Error())
+		return known.Error()
 	case errors.As(err, &bad):
 		s.reject(ctx, "invalid_arguments")
 		return "invalid_arguments: " + bad.Error()

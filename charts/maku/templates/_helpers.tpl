@@ -171,6 +171,9 @@ by database.podLabels or podLabel, or database.egress.cidrs for a database outsi
 {{- if and (eq ($b.human.mode | default "oidc") "local") $b.publicURL (not (regexMatch "^http://(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}$" $b.publicURL)) -}}
 {{- fail (printf "broker.publicURL %q in local mode: it is http://localhost:<the port you forward>" $b.publicURL) -}}
 {{- end -}}
+{{- if and (eq ($b.human.mode | default "oidc") "local") (dig "oidc" "existingSecret" "" $b) -}}
+{{- fail "broker.oidc.existingSecret: mode local has no IdP, so no client id to mount" -}}
+{{- end -}}
 {{- if not (has ($b.human.mode | default "oidc") (list "oidc" "local")) -}}
 {{- fail (printf "broker.human.mode %q is not oidc or local" $b.human.mode) -}}
 {{- end -}}
@@ -217,6 +220,39 @@ tokenreview): the Service, the broker CNP and the run controller then open it to
 {{- end -}}
 
 {{/*
+broker.roomTools.knowledge (EX11), as JSON: {} while url is unset, else {config, port, to}. config is
+the broker's roomTools.knowledge block (every key but networkPolicy, with the defaults filled), port
+networkPolicy.port, else the URL's (443 for https, 80 for http, unless it names one), and to the
+peers the broker's egress opens on it. A policy matches the destination pod's port, after service
+translation: a URL through a Service whose targetPort differs needs networkPolicy.port. In cilium
+mode an entry of to is an endpoint selector, grouped under one toEndpoints rule, or a whole peer
+(toFQDNs, toCIDR, toCIDRSet, toEntities, toEndpoints), rendered as its own rule: an external https
+endpoint is a toFQDNs or toCIDR peer. A default-deny mode with no peer would refuse every call, so it
+fails the render.
+*/}}
+{{- define "ap.knowledge" -}}
+{{- $k := (.Values.broker.roomTools | default dict).knowledge | default dict -}}
+{{- if $k.url -}}
+{{- $u := urlParse $k.url -}}
+{{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- with ($k.networkPolicy | default dict).port }}{{ $port = toString . }}{{ end -}}
+{{- $to := ($k.networkPolicy | default dict).to | default list -}}
+{{- range $i, $e := $to -}}
+{{- if hasKey $e "toPorts" }}{{ fail (printf "broker.roomTools.knowledge.networkPolicy.to[%d] sets toPorts: the port is the URL's, or networkPolicy.port" $i) }}{{ end -}}
+{{- end -}}
+{{- if and (ne (include "ap.netMode" .) "none") (not $to) -}}
+{{- fail (printf "broker.roomTools.knowledge.networkPolicy.to is empty: networkPolicies.mode %s denies the broker's egress to broker.roomTools.knowledge.url but to these peers" (include "ap.netMode" .)) -}}
+{{- end -}}
+{{- $cfg := dict "url" $k.url "tools" ($k.tools | default (list "kb_search" "kb_get")) "roles" ($k.roles | default (list "triager"))
+      "timeout" ($k.timeout | default "10s") "maxBytes" (int ($k.maxBytes | default 65536)) -}}
+{{- dict "config" $cfg "port" $port "to" $to | toJson -}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/*
 broker.modelGateway (plan v4 step 4, GW8), as JSON: {} when service is unset, else {service,
 namespace, port, audiencePrefix, base, tokens}. base is the clients listener's URL, to which
 /clients/<client>/v1 is appended; tokens the directory of the projected tokens, one file per client.
@@ -242,6 +278,13 @@ key to the gateway.
 */}}
 {{- define "ap.human" -}}
 {{- $h := omit (deepCopy .Values.broker.human) "mode" -}}
+{{- with .Values.broker.oidc -}}
+{{- if .existingSecret -}}
+{{- if not $h.clientIDFile }}{{ $_ := set $h "clientIDFile" (printf "/etc/room-broker/oidc/%s" .keys.web) }}{{ end -}}
+{{- if not $h.roomctlClientIDFile }}{{ $_ := set $h "roomctlClientIDFile" (printf "/etc/room-broker/oidc/%s" .keys.cli) }}{{ end -}}
+{{- if and (has ($h.preset | default "zitadel") (list "zitadel")) (not $h.projectIDFile) }}{{ $_ := set $h "projectIDFile" (printf "/etc/room-broker/oidc/%s" .keys.project) }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- $g := include "ap.modelGateway" . | fromJson -}}
 {{- if $g.service -}}
 {{- $plan := dig "intake" "plan" dict $h -}}

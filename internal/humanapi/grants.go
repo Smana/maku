@@ -52,7 +52,7 @@ var grantOutside = []string{
 	"the class's own conditions and its deny rules",
 	"the breaker and the daily caps",
 	"the class being live: in shadow or off, a grant is inactive",
-	"the policy it was made under: a policy change suspends it until a maintainer reconfirms it",
+	"the class definition it was made under (the policy and this repository's binding): a change to it suspends it until a maintainer reconfirms it",
 	"its expiry, and the operator's maximum grant lifetime",
 }
 
@@ -360,7 +360,7 @@ func matchesText(pr grant.Predicate) string {
 	if pr.DiffShape != "" {
 		shape = ", and whose diff is " + pr.DiffShape
 	}
-	return "a future pull request of " + pr.Repository + " decided in the live class " + pr.Class + " under policy " +
+	return "a future pull request of " + pr.Repository + " decided in the live class " + pr.Class + " under class definition " +
 		pr.PolicyHash + ", whose every file in the class's requiresApproval subset matches one of " +
 		strings.Join(pr.Files, " | ") + shape + ". Files outside the subset are judged by the class as before."
 }

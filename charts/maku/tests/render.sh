@@ -265,6 +265,51 @@ bad 'broker.roomTools.auth "oauth" is not key or tokenreview' --set broker.roomT
 bad 'broker.roomTools.auth tokenreview needs broker.runIssuer.mode tokenreview' --set broker.roomTools.auth=tokenreview \
   --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
 
+# roomTools.knowledge (EX11): RunLore's MCP endpoint is one broker value. Unset, the config carries no
+# knowledge key and no policy opens a flow to it; set, the config carries it (never its networkPolicy)
+# and the broker's default-deny egress opens the URL's port to the named peers only.
+for r in "$q" "$p"; do
+  out="$r"
+  ynone 'select(.kind=="ConfigMap" and .metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools | select(has("knowledge"))' 'unset: the config carries no knowledge key'
+done
+kurl=(--set broker.roomTools.knowledge.url=http://runlore.runlore.svc.cluster.local:8080/mcp)
+kc="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${kurl[@]}" \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"matchLabels":{"io.kubernetes.pod.namespace":"runlore","app.kubernetes.io/name":"runlore"}}]')"
+out="$kc"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.knowledge | (.url == "http://runlore.runlore.svc.cluster.local:8080/mcp" and (.tools | join(",")) == "kb_search,kb_get" and (.roles | join(",")) == "triager" and .timeout == "10s" and .maxBytes == 65536 and (has("networkPolicy") | not))' 'set: the config carries the knowledge block, without its networkPolicy'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.enabled == true' 'set: the room tools stay on'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "runlore") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "runlore" and .toPorts[0].ports[0].port == "8080" and (.toEndpoints | length) == 1)' 'cilium: the broker reaches the knowledge peers on the URL port'
+ktmp="$(mktemp -d)"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$kc" >"$ktmp/knowledge.yaml"
+go run ./tests/loadconfig broker-knowledge "$ktmp/knowledge.yaml" || fail=1
+rm -rf "$ktmp"
+kk="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.roomTools.enabled=true \
+  --set broker.roomTools.knowledge.url=https://kb.example.com/mcp \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"ipBlock":{"cidr":"10.0.0.0/8"}}]')"
+out="$kk"
+ykind NetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.to[0].ipBlock.cidr == "10.0.0.0/8") | ((.to | length) == 1 and (.ports | length) == 1 and .ports[0].port == 443)' 'kubernetes: the broker reaches the knowledge peers on 443 only'
+# networkPolicy.port overrides the URL's: a policy matches the pod's port, after service translation
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${kurl[@]}" --set broker.roomTools.knowledge.networkPolicy.port=9000 \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"matchLabels":{"app.kubernetes.io/name":"runlore"}}]')"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "runlore") | .toPorts[0].ports[0].port == "9000"' 'networkPolicy.port overrides the URL port'
+# cilium: an external https endpoint is a toFQDNs (or toCIDR) peer, its own rule, beside any selector
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false --set broker.roomTools.knowledge.url=https://kb.example.com/mcp \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"toFQDNs":[{"matchName":"kb.example.com"}]},{"toCIDR":["203.0.113.0/24"]}]')"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(has("toFQDNs")) | (.toFQDNs[0].matchName == "kb.example.com" and .toPorts[0].ports[0].port == "443" and (has("toEndpoints") | not))' 'cilium: a toFQDNs peer for an external endpoint, on 443'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(has("toCIDR")) | (.toCIDR[0] == "203.0.113.0/24" and .toPorts[0].ports[0].port == "443")' 'cilium: a toCIDR peer'
+ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0] | has("toFQDNs")) | .toEndpoints' 'cilium: a peer is never nested under toEndpoints'
+bad 'broker.roomTools.knowledge.networkPolicy.to[0] sets toPorts' --set broker.roomTools.enabled=true --set broker.roomTools.knowledge.url=https://kb.example.com/mcp \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"toFQDNs":[{"matchName":"kb.example.com"}],"toPorts":[]}]'
+# the schema refuses what the broker would: a timeout over 12 s, an external http URL, credentials
+bad '/broker/roomTools/knowledge/timeout' --set broker.roomTools.knowledge.url=https://kb.example.com/mcp --set broker.roomTools.knowledge.timeout=13s
+bad '/broker/roomTools/knowledge/timeout' --set broker.roomTools.knowledge.url=https://kb.example.com/mcp --set broker.roomTools.knowledge.timeout=30s
+bad '/broker/roomTools/knowledge/url' --set broker.roomTools.knowledge.url=http://kb.example.com/mcp
+bad '/broker/roomTools/knowledge/url' --set broker.roomTools.knowledge.url=https://u:p@kb.example.com/mcp
+bad 'broker.roomTools.knowledge.networkPolicy.to is empty' --set networkPolicies.mode=kubernetes --set broker.roomTools.enabled=true --set broker.roomTools.knowledge.url=https://kb.example.com/mcp
+kn0="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.roomTools.enabled=true --set networkPolicies.enabled=false "${kurl[@]}")"
+out="$kn0"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.knowledge.url == "http://runlore.runlore.svc.cluster.local:8080/mcp"' 'mode none: the endpoint needs no peers'
+
 # human.slackIntents (natural-language intents, SI3): rendered verbatim with the block, off when unset
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents == null)' 'slackIntents is off unless the values set it'
 si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false \
@@ -526,6 +571,26 @@ bad 'runController.model.gateway.aliases.public is required' --set runController
 bad "at '/runController/model/mode'" --set runController.model.mode=direct
 bad "at '/runController/model/gateway/aliases/public/0'" --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["gpt-4"]}'
 
+# v4 D8: broker.oidc.existingSecret mounts the OIDC ids and fills the file paths the human block
+# leaves unset; a path the block sets wins. projectIDFile is the zitadel preset's alone.
+oidcv=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
+       --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com
+       --set broker.human.issuer=https://idp.example.com --set broker.human.origin=https://rooms.example.com
+       --set broker.human.groups.admin=a --set broker.human.groups.member=m --set runController.enabled=false)
+ozit="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.oidc.existingSecret=room-broker-oidc)"
+out="$ozit"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and .human.roomctlClientIDFile == "/etc/room-broker/oidc/cli-client-id" and .human.projectIDFile == "/etc/room-broker/oidc/project-id")' 'broker.oidc fills the three id files under the zitadel preset'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name == "oidc") | .secret.secretName == "room-broker-oidc"' 'broker.oidc names its Secret'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "oidc") | (.mountPath == "/etc/room-broker/oidc" and .readOnly == true)' 'broker.oidc mounts at /etc/room-broker/oidc'
+ogen="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.oidc.existingSecret=room-broker-oidc \
+  --set broker.human.preset=generic --set broker.human.rolesClaim=groups --set broker.human.clientIDFile=/c --set broker.oidc.keys.cli=maku)"
+out="$ogen"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.clientIDFile == "/c" and .human.roomctlClientIDFile == "/etc/room-broker/oidc/maku" and (.human | has("projectIDFile") | not))' 'a set clientIDFile wins; generic takes no projectIDFile; a renamed key is followed'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p)"
+ynone 'select(.kind=="Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' 'no broker.oidc, no oidc volume'
+if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.oidc.existingSecret=x >/dev/null 2>&1; then
+  echo 'FAIL: broker.oidc in local mode must be refused' >&2; fail=1; fi
+
 # v4 step 6 (D21, EX15): runController.tracing hands runs the OTLP/HTTP endpoint and opens the
 # collector's port in each run's own policy; unset, the controller config carries no tracing block
 for r in "$q" "$ctl" "$kn"; do
@@ -552,6 +617,9 @@ bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpE
 
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" "$mgtmp"' EXIT
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$ozit" >"$tmp/oidc-zitadel.yaml"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$ogen" >"$tmp/oidc-generic.yaml"
+go run ./tests/loadconfig broker "$tmp/oidc-zitadel.yaml" "$tmp/oidc-generic.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$p" >"$tmp/production.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fwd" >"$tmp/forwarded.yaml"

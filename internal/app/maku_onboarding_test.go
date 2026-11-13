@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -36,7 +37,7 @@ func TestMakuConfigureDiscoversTheRest(t *testing.T) {
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil ||
-		cfg != (maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 	if got := r.Err.(*strings.Builder).String(); !strings.Contains(got, "maku login") || out.Len() != 0 {
@@ -132,7 +133,7 @@ func TestMakuConfigureFrom(t *testing.T) {
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil ||
-		cfg != (maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 	if err := r.Run(t.Context(), []string{"configure", "--from", "http://rooms.priv.example", "--yes"}); err == nil || !strings.Contains(err.Error(), "https") {
@@ -174,7 +175,7 @@ func TestMakuConfigureFromShowsAndAsks(t *testing.T) {
 	asked := 0
 	r.Ask = func(string) (bool, error) { asked++; return false, nil }
 	// The broker's issuer (auth.example) is not under the broker's host: it needs --yes whatever the terminal says.
-	if err := r.Run(t.Context(), []string{"configure", "--from", b.srv.URL}); err == nil || !strings.Contains(err.Error(), "domain") || asked != 0 || load() != stale {
+	if err := r.Run(t.Context(), []string{"configure", "--from", b.srv.URL}); err == nil || !strings.Contains(err.Error(), "domain") || asked != 0 || !reflect.DeepEqual(load(), stale) {
 		t.Fatalf("another domain: %v asked %d %+v", err, asked, load())
 	}
 	// --yes: no question, and the four values and the old ones are shown.
@@ -191,7 +192,7 @@ func TestMakuConfigureFromShowsAndAsks(t *testing.T) {
 	save()
 	r.Dir = dir
 	same := maku.Config{URL: "https://rooms.ogenki.io", Issuer: "https://auth.ogenki.io", ClientID: "cli", ProjectID: "1"}
-	if err := r.ConfirmConfig(same, stale, false); err == nil || load() != stale {
+	if err := r.ConfirmConfig(same, stale, false); err == nil || !reflect.DeepEqual(load(), stale) {
 		t.Fatalf("a refused question writes nothing: %v", err)
 	}
 	if asked != 1 {
@@ -336,7 +337,7 @@ func TestMakuConfigureLocal(t *testing.T) {
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil ||
-		cfg != (maku.Config{URL: b.srv.URL, HumanMode: maku.HumanModeLocal}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: b.srv.URL, HumanMode: maku.HumanModeLocal}) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 
@@ -368,7 +369,7 @@ func TestMakuConfigureLocal(t *testing.T) {
 	}
 	var got maku.Config
 	if err := maku.LoadJSON(filepath.Join(httpsDir, "config.json"), &got); err != nil ||
-		got != (maku.Config{URL: tls.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(got, maku.Config{URL: tls.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
@@ -466,5 +467,56 @@ func TestDoctorLocal(t *testing.T) {
 	}
 	if _, err := os.Stat(tokPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("doctor wrote a token file: %v", err)
+	}
+}
+
+// Review of #530: under the generic preset, configure --from shows every value a hostile broker
+// could plant to redirect a sign-in or the token's audience: the preset, the token use, the scopes,
+// the audience and the hosts of the two endpoints, each beside the value it replaces.
+func TestMakuConfirmConfigGeneric(t *testing.T) {
+	hints := &strings.Builder{}
+	r := Maku{Err: hints}
+	old := maku.Config{URL: "https://rooms.ogenki.io", Issuer: "https://idp.ogenki.io", ClientID: "cli", Preset: maku.PresetGeneric,
+		TokenUse: maku.TokenUseAccess, Audience: "https://api.ogenki.io", Scopes: []string{"groups"}}
+	next := old
+	next.Audience, next.Scopes = "https://api.evil.io", []string{"groups", "admin"}
+	next.DeviceAuthURL, next.TokenURL = "https://device.ogenki.io/code", "https://token.ogenki.io/token"
+	if err := r.ConfirmConfig(next, old, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"preset", "generic", "token use", "access", "scopes", "groups admin", "(was groups)",
+		"audience", "https://api.evil.io (was https://api.ogenki.io)", "device.ogenki.io", "token.ogenki.io"} {
+		if !strings.Contains(hints.String(), w) {
+			t.Errorf("the confirmation lacks %q:\n%s", w, hints)
+		}
+	}
+}
+
+// Review of #530: the issuer is kept exactly as the broker and the IdP name it: Auth0's ends in a
+// slash, and OIDC Discovery compares it byte for byte, so a --issuer flag is never trimmed.
+func TestMakuConfigureKeepsTheIssuersSlash(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/roomctl":
+			_ = json.NewEncoder(w).Encode(map[string]any{"url": srv.URL, "issuer": srv.URL + "/", "clientID": "maku-cli",
+				"preset": "generic", "tokenUse": "id"})
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]string{"issuer": srv.URL + "/", "jwks_uri": srv.URL + "/keys",
+				"device_authorization_endpoint": srv.URL + "/device", "token_endpoint": srv.URL + "/token"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	r := Maku{Dir: dir, HC: srv.Client(), Out: &strings.Builder{}, Err: &strings.Builder{}}
+	if err := r.Run(t.Context(), []string{"configure", "--url", srv.URL, "--issuer", srv.URL + "/"}); err != nil {
+		t.Fatal(err)
+	}
+	var c maku.Config
+	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &c); err != nil || c.Issuer != srv.URL+"/" || c.TokenURL != srv.URL+"/token" {
+		t.Fatalf("%+v %v", c, err)
 	}
 }

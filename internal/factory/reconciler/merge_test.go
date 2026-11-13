@@ -1578,7 +1578,27 @@ func TestADecisionIsRecordedWithItsPolicyGeneration(t *testing.T) {
 	if got.Verdict != "shadow" || got.Reason != "shadow_would_arm" || got.Generation != 6 || !got.At.Equal(g.r.Now()) {
 		t.Fatalf("%+v", got)
 	}
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=6 reviewer=") {
+	// A legacy-served class: no repogen=, and resolved= names the class decided on (B13).
+	resolved := config.ShortHash(config.ResolvedHash(g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository).Classes["docs-links"]))
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=6 resolved="+resolved+" reviewer=") || strings.Contains(c, "repogen=") {
+		t.Fatalf("%q", c)
+	}
+}
+
+// B12: a bound class's decision names its own policy's generation and the Repository's.
+func TestABoundDecisionRecordsBothGenerations(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Generations = config.Generations{Repos: map[string]config.RepoGenerations{
+		strings.ToLower(awaiting().Spec.Repository): {Repository: 7, Classes: map[string]config.ClassGeneration{"docs-links": {Policy: 4, PolicyName: "docs-links"}}}}}
+	g.r.Decisions = &decision.Recorder{}
+	g.f.SetChecks(12, green("SUCCESS"))
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if got := g.r.Decisions.Latest(tk.Spec.Repository)["docs-links"]; got.Generation != 4 {
+		t.Fatalf("%+v", got)
+	}
+	resolved := config.ShortHash(config.ResolvedHash(g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository).Classes["docs-links"]))
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=4 repogen=7 resolved="+resolved+" reviewer=") {
 		t.Fatalf("%q", c)
 	}
 }

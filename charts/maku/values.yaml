@@ -83,6 +83,26 @@ broker:
   # output_push to: list a repository here once the factory's config enforces push for it.
   roomTools:
     enabled: true
+    # RunLore's MCP endpoint (EX11, docs/integration.md): set url and :8090 forwards kb_search and
+    # kb_get to it for the listed roles, so a triager reads the knowledge base through the broker,
+    # its one MCP server; the run's egress is unchanged. One stateless call each, no run token
+    # forwarded, the answer cut at maxBytes. url is https, or http to an in-cluster
+    # <svc>.<ns>.svc[.<domain>]. Unset: no knowledge tool is served and nothing renders.
+    knowledge:
+      url: ""
+      tools: [kb_search, kb_get]  # a subset of these two
+      roles: [triager]
+      timeout: 10s                # 1s to 12s, under :8090's 15 s bound on one call
+      maxBytes: 65536             # at most 262144
+      # The peers the broker's egress opens on the URL's port, required in networkPolicies.mode
+      # cilium and kubernetes. cilium: endpoint selectors (matchLabels, matchExpressions), or whole
+      # peers (toFQDNs, toCIDR, toCIDRSet, toEntities, toEndpoints) for an endpoint outside the
+      # cluster, e.g. {toFQDNs: [{matchName: kb.example.com}]}. kubernetes: NetworkPolicy peers
+      # (namespaceSelector, podSelector, ipBlock). port overrides the URL's: a policy matches the
+      # pod's port after service translation, so a Service whose targetPort differs needs it.
+      networkPolicy:
+        to: []
+        # port: 8080
   # Hardening H4 (HR35): forgeRead.audience (the factory's system audience, agent-factory) mounts a
   # projected token for it and serves forge_read on :8090 to runs annotated forge-api: deny, read
   # and filtered by the factory at factoryURL, whose api.systemPrincipals maps this ServiceAccount
@@ -104,6 +124,15 @@ broker:
   # refused, here and at start, unless factoryInsecure is true (S-1, D6).
   factoryURL: ""
   factoryInsecure: false
+  # The OIDC client ids (v4 D8, oidc mode): a Secret mounted at /etc/room-broker/oidc. Set, it fills
+  # human.clientIDFile, human.roomctlClientIDFile and (preset zitadel) human.projectIDFile with its
+  # keys' paths, wherever the human block leaves them unset: a path the block sets wins.
+  oidc:
+    existingSecret: ""
+    keys:
+      web: web-client-id
+      cli: cli-client-id
+      project: project-id
   # The Secret (key ca.crt) of the CA that signs the factory's api certificate, mounted at
   # /etc/room-broker/factory-ca and read on every run request. Empty: the system roots.
   factoryCA:

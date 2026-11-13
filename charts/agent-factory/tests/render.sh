@@ -348,6 +348,20 @@ bad() {
   msg="$(helm template af . -n maku "$@" 2>&1 >/dev/null || true)"
   grep -qF -- "$want" <<<"$msg" || { echo "FAIL: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
 }
+# v4 D8, PR2: the broker and the factory read one identity; a disagreement names both keys.
+idv=("${args[@]}" -f tests/identity-values.yaml)
+out="$(helm template af . -n maku "${idv[@]}")"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.preset == "generic" and .human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and (.human | has("projectIDFile") | not))' 'the identity values render the generic broker with its ids by Secret'
+fapi=(--set maku-factory.config.api.humanIssuer=https://e2e-stub.e2e.svc.cluster.local --set maku-factory.config.api.preset=generic
+      --set maku-factory.config.api.rolesClaim=groups)
+helm template af . -n maku "${idv[@]}" "${fapi[@]}" >/dev/null || { echo 'FAIL: an agreeing broker and factory must render' >&2; fail=1; }
+bad 'maku.broker.human.rolesClaim "groups" and maku-factory.config.api.rolesClaim "roles" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.rolesClaim=roles
+bad 'maku.broker.human.preset "generic" and maku-factory.config.api.preset "zitadel" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.preset=zitadel
+bad 'maku.broker.human.tokenUse "id" and maku-factory.config.api.tokenUse "access" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.tokenUse=access
+bad 'maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local" and maku-factory.config.api.humanIssuer "https://other" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.humanIssuer=https://other
+bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api.groups.member "devs" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.groups.member=devs
+bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
+bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
 bad 'maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service' "${args[@]}" \
   --set maku.runController.model.mode=gateway --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
 bad "maku.runController.model.gateway.aliases.public [agent-default] must be maku-gateway.aliases.public's keys [agent-default, tier-light]" "${gwd[@]}" \
@@ -465,8 +479,8 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomStalled") |
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .expr == "absent(up{job=\"room-broker\", namespace=\"maku\"} == 1)"' 'RoomBrokerDown reads the release namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | (.annotations.runbook_url | test("^https://github.com/Smana/maku/blob/v[^/]+/docs/operations.md#room-alerts$"))' 'runbook_url defaults to the release docs'
 all="$(alerts)"
-for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending; do
-  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics)" >&2; fail=1; }
+for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending RoomKnowledgeFailing; do
+  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics, no knowledge endpoint)" >&2; fail=1; }
 done
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set-json 'monitoring.prometheusRule.disabled=["AgentFactoryClassPausedLong"]')"
 want="$(sed 's/ AgentFactoryClassPausedLong / /' <<<" $all ")"
@@ -480,6 +494,9 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomAuthnHumanI
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "EgressProxyDown") | .expr == "absent(up{job=\"egress-proxy\", namespace=\"maku\"} == 1)"' 'mode kubernetes: EgressProxyDown'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentSandboxPodPending") | (.expr | test("namespace=\"agents\""))' 'kubeStateMetrics: AgentSandboxPodPending on the runs namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .annotations.runbook_url == "https://docs.example.test/maku/operations.md#room-alerts"' 'docsURL replaces the docs base'
+# a knowledge endpoint brings RoomKnowledgeFailing (EX11)
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.roomTools.knowledge.url=http://runlore.runlore.svc.cluster.local:8080/mcp)"
+ykind PrometheusRule '.spec.groups[] | select(.name == "maku-rooms") | .rules[] | select(.alert == "RoomKnowledgeFailing") | (.expr | test("maku_rooms_knowledge_calls_total"))' 'roomTools.knowledge.url: RoomKnowledgeFailing'
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
 ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
 # slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group

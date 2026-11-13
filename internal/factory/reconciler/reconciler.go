@@ -1603,7 +1603,9 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 // resource generations its repository was served under (D5: recorded, not pinned).
 func recordConfig(cfg *config.Config, t *v1alpha1.Task) {
 	t.Status.ConfigHash = cfg.Hash
-	f, r, p := cfg.GenerationsFor(t.Spec.Repository)
+	f, _, _ := cfg.GenerationsFor(t.Spec.Repository)
+	// B12: the class is fixed at triage, so its own policy's generation is the one to record.
+	p, r, _ := cfg.ClassGenerations(t.Spec.Repository, t.Spec.PredictedClass)
 	t.Status.ConfigGenerations = nil
 	if f != 0 || r != 0 || p != 0 {
 		t.Status.ConfigGenerations = &v1alpha1.ConfigGenerations{Factory: f, Repository: r, MergePolicy: p}

@@ -252,3 +252,30 @@ func TestRoomctlSetupDashboards(t *testing.T) {
 		})
 	}
 }
+
+// v4 D8: the setup values carry the preset, the token use, the scopes and the audience, so maku
+// signs in to any OIDC issuer; under zitadel they say so, and the project id stays filled.
+func TestRoomctlSetupPreset(t *testing.T) {
+	setup := func(srv *Server) map[string]any {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.well-known/roomctl", nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("%d %v", rec.Code, err)
+		}
+		return out
+	}
+	z := setup(&Server{Humans: headerAuth{}, Groups: groups, Issuer: "https://auth.example",
+		RoomctlClient: func() string { return "3434@agents" }, ProjectID: func() string { return "29184" }})
+	if z["preset"] != "zitadel" || z["tokenUse"] != "access" || z["projectID"] != "29184" || z["scopes"] != nil || z["audience"] != nil {
+		t.Fatalf("zitadel: %v", z)
+	}
+	g := setup(&Server{Humans: headerAuth{}, Groups: groups, Issuer: "https://idp.example", Preset: "generic", TokenUse: "access",
+		Scopes: []string{"groups"}, Audience: func() string { return "https://api.rooms" },
+		RoomctlClient: func() string { return "maku-cli" }, ProjectID: func() string { return "" }})
+	if g["preset"] != "generic" || g["tokenUse"] != "access" || g["projectID"] != "" || g["audience"] != "https://api.rooms" ||
+		len(g["scopes"].([]any)) != 1 {
+		t.Fatalf("generic: %v", g)
+	}
+}
