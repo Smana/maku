@@ -121,7 +121,7 @@ disagree about [the clients](#the-planner-and-the-classifier).
 | `providers.<name>` | none | `preset`, `existingSecret` (required), `key` (`apiKey`), `dataClasses` (`[public]`), `transformations`, `egress`; `host`, `port`, `path`, `tls` for `custom` only |
 | `aliases.public`, `aliases.internal` | none | `<alias>: {provider, model}`, with aliases from the AgentRun's model names; `internal` takes the four tiers only |
 | `clients.planner`, `clients.classifier` | off | `{enabled, provider, model}`: the planner's `tier-frontier`, the classifier's `tier-light` |
-| `modelCatalog.prices` | none | The factory's `meter.prices` rows; each model must be served by an alias or a client |
+| `modelCatalog.prices` | none; in the umbrella, `maku-factory.config.meter.prices` | The factory's `meter.prices` rows; each model must be served by an alias or a client. In the umbrella (`modelCatalog.umbrellaPrices: true`), an empty `prices` takes the factory's rows, those of a model an alias or a client serves, so a price has one source; `prices` set here wins |
 | `timeouts` | `runs: 600s`, `clients: 60s` | A long completion must not be cut; the clients' own deadlines are 20 s and 5 s |
 | `networkPolicy.mode` | `""` (kubernetes) | `kubernetes`, `cilium` or `none`; see [Network](#network) |
 | `metrics.allowFrom` | none | NetworkPolicy peers allowed to scrape the proxy's `:15020` |
@@ -249,6 +249,26 @@ from `demo.model.apiKey`. Set the provider's `host` and each alias's `model` in 
 `demo.model.baseURL`, `name` and `judgeName` are refused there, since nothing would read them. No
 `agent-model` Secret exists in the runs namespace.
 
+## Metering the runs
+
+A run in `gateway` mode calls the gateway as its own ServiceAccount, named like the run, so the
+gateway's token metrics carry the run's subject in `ar_agent`: the subject the factory's meter
+matches. Set `maku-factory.config.runs.gatewayIdentity: true` to say so. The factory then:
+
+- prices the runs from `meter.query`, which reads agentgateway's own series, cache types included
+  (`input_cache_read`, `input_cache_write`), with no relabel ([the query](factory.md#budgets));
+- reads the gateway's 429s from `meter.throttle.promQuery`, PromQL on the same `meter.url`, or from
+  VictoriaLogs as before;
+- accepts `loops.<class>.models`, a provider alias per role and tier, which becomes the run's
+  `spec.model` and so its path and audience;
+- accepts `loops.<class>.split` with a meter, since a family's cap is in USD.
+
+The umbrella keeps the two sides together. It fails a render where `model.mode: gateway` and a
+portable factory (`runs.group: maku.ogenki.io`) lack `runs.gatewayIdentity: true`, or where
+`gatewayIdentity` is set without `model.mode: gateway`. The factory refuses `gatewayIdentity` on
+`cloud.ogenki.io`, whose AgentRun always carries the identity. Without the key, a configured meter
+starts with the warning `the meter prices no run of this runtime: its runs carry no gateway identity`.
+
 ## The planner and the classifier
 
 The broker makes two kinds of model call: the planner (`intake_plan`, alias `tier-frontier`) and the
@@ -359,3 +379,11 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - on a `moonshot` provider, `temperature: 1` and no `top_p`, though the broker sent 0.
 
   It also checks that a planner token gets 403 on the classifier's route, and the reverse.
+- `task chart:metering:k3d` is the gateway demo with a meter (`tests/metering-values.yaml`) and a
+  test-only VictoriaMetrics (`tests/metrics-stub.yaml`) scraping the gateway. It checks three things:
+  - the factory's config loads with `runs.gatewayIdentity`, a PromQL throttle and a `split`;
+  - the run's tokens reach VictoriaMetrics under agentgateway's own names, with `ar_agent` set to the run's subject;
+  - the meter's parser prices that reply above zero, and the throttle query answers.
+
+  The demo's dummy App keeps the factory from starting, so the leg cannot show a settled run in
+  dollars. The nightly real-model job runs the secret-mode demo.
