@@ -126,6 +126,9 @@ func (p *Preflight) checks() []check {
 	if p.Cfg.RuntimeClassName != "" {
 		cs = append(cs, check{name: "runtimeClass", run: p.runtimeClass})
 	}
+	if p.Cfg.Gateway() {
+		cs = append(cs, check{name: "gateway-token-ttl", run: p.gatewayTokenTTL})
+	}
 	cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
 	if p.Cfg.NetworkPolicy == NetworkPolicyKubernetes {
 		cs = append(cs, check{name: "network", run: p.network})

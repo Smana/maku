@@ -307,3 +307,64 @@ func TestRunPodPolicyUnsafeAllowRunc(t *testing.T) {
 		t.Fatalf("an unsandboxed run pod under unsafeAllowRunc is refused: %v", err)
 	}
 }
+
+// gatewayRunPod is the run-controller's pod in model.mode gateway: the run's own tokens for the
+// gateway's aliases, and no model Secret.
+func gatewayRunPod(t *testing.T) *corev1.Pod {
+	t.Helper()
+	c := runctl.Config{Namespace: runsNS, NamePrefix: "run-", GitSecret: "agent-git", RuntimeClassName: "gvisor",
+		Model: runctl.ModelConfig{Mode: runctl.ModelModeGateway, Gateway: runctl.Gateway{URL: "http://model-gateway." + release + ".svc.cluster.local",
+			Ports: runctl.GatewayPorts{Public: 8080, Internal: 8081}, AudiencePrefix: "maku-gateway"}},
+		Broker: runctl.Broker{URL: "https://room-broker." + release + ".svc.cluster.local:8443", Namespace: release,
+			Labels: map[string]string{"app.kubernetes.io/name": "room-broker"}, CASecret: "room-broker-ca"},
+		RoomToolsURL: "http://room-broker." + release + ".svc.cluster.local:8090/mcp",
+		Images:       runctl.Images{Harness: "ghcr.io/smana/maku-harness:" + digest, Bridge: "ghcr.io/smana/maku-bridge:" + digest}}
+	r := &v1alpha1.AgentRun{ObjectMeta: metav1.ObjectMeta{Name: runName, Namespace: runsNS, UID: "uid-1"},
+		Spec: v1alpha1.AgentRunSpec{Role: "implementer", Repository: "o/r", BaseRef: "main", Principal: "human:a", Model: "tier-light",
+			DataClass: "public", RoomRef: "roomroom", Task: v1alpha1.AgentRunTask{Text: "fix it"}, Budget: v1alpha1.AgentRunBudget{MaxMinutes: 30}, Size: "small",
+			Loop: v1alpha1.AgentRunLoop{JudgeModel: "tier-light"}}}
+	return runctl.Pod(r, c, c.GatewayModel(r), "abcdefgh")
+}
+
+// v4 step 4 (GW3): in model.mode gateway a run holds tokens for the broker, its room tools and the
+// gateway's aliases only, and never the model Secret.
+func TestRunPodPolicyGatewayTokens(t *testing.T) {
+	pe := startPodEnv(t, "runController.model.mode=gateway", "runController.model.gateway.aliases.public={tier-light}")
+	ctx := t.Context()
+	if err := pe.ctl.Create(ctx, gatewayRunPod(t), client.DryRunAll); err != nil {
+		t.Fatalf("the run-controller's gateway-mode pod is refused: %v", err)
+	}
+	token := func(aud string) func(*corev1.Pod) {
+		return func(p *corev1.Pod) {
+			ttl := int64(3600)
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "extra", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: aud, ExpirationSeconds: &ttl, Path: "t"}}}}}})
+		}
+	}
+	for _, tc := range []struct {
+		name, want string
+		mut        func(*corev1.Pod)
+	}{
+		{"the apiserver's audience", "projected ServiceAccount tokens", token("https://kubernetes.default.svc")},
+		{"no audience (the apiserver's)", "projected ServiceAccount tokens", token("")},
+		{"another prefix", "projected ServiceAccount tokens", token("maku-gatewayx.public.tier-light")},
+		{"the model Secret", "never mounts the model Secret agent-model", func(p *corev1.Pod) {
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "agent-model"}}})
+		}},
+	} {
+		p := gatewayRunPod(t)
+		tc.mut(p)
+		if err := pe.ctl.Create(ctx, p, client.DryRunAll); !deniedByPolicy(err) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want a denial naming %q", tc.name, err, tc.want)
+		}
+	}
+	allowed := gatewayRunPod(t)
+	token("maku-gateway.public.tier-light")(allowed)
+	if err := pe.ctl.Create(ctx, allowed, client.DryRunAll); err != nil {
+		t.Errorf("a maku-gateway.public.tier-light token is refused: %v", err)
+	}
+	// secret mode (the default) keeps today's policy: the same pod with the model Secret passes there.
+	if err := startPodEnv(t).ctl.Create(ctx, runPod(t, true, true), client.DryRunAll); err != nil {
+		t.Fatalf("secret mode: %v", err)
+	}
+}

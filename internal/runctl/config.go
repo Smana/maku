@@ -116,6 +116,15 @@ type Gateway struct {
 	// Aliases are the aliases each listener serves (maku-gateway aliases.<class>'s keys): a run whose
 	// alias its listener does not serve is refused before its pod exists.
 	Aliases GatewayAliases `json:"aliases,omitzero"`
+	// ServiceAccount is the run-controller's own, which the gateway-token-ttl preflight requests a
+	// token for, at the longest run's lifetime (GW9).
+	ServiceAccount ServiceAccountRef `json:"serviceAccount,omitzero"`
+}
+
+// ServiceAccountRef names a ServiceAccount.
+type ServiceAccountRef struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
 }
 
 // GatewayPorts are the listeners' ports, one per data class.
@@ -175,6 +184,9 @@ func (c Config) model() []error {
 	}
 	if !audiencePrefixRE.MatchString(g.AudiencePrefix) {
 		errs = append(errs, fmt.Errorf("model.gateway.audiencePrefix %q must be dot-separated lowercase labels", g.AudiencePrefix))
+	}
+	if g.ServiceAccount.Namespace == "" || g.ServiceAccount.Name == "" {
+		errs = append(errs, errors.New("model.gateway.serviceAccount.namespace and .name are required: the run-controller's own ServiceAccount, for the gateway-token-ttl preflight"))
 	}
 	if len(g.Aliases.Public) == 0 {
 		errs = append(errs, errors.New("model.gateway.aliases.public is required: the aliases the gateway's public listener serves"))

@@ -132,6 +132,7 @@ var gatewayConfig = strings.Replace(goodConfig, "modelSecret: agent-model\n", ""
   mode: gateway
   gateway:
     url: http://model-gateway.maku.svc.cluster.local
+    serviceAccount: {namespace: maku, name: run-controller}
     aliases:
       public: [agent-default, tier-light, tier-standard, kimi-frontier]
       internal: [tier-standard]
@@ -167,6 +168,7 @@ func TestLoadConfigModelMode(t *testing.T) {
 		"no aliases":   {strings.Replace(gatewayConfig, "      public: [agent-default, tier-light, tier-standard, kimi-frontier]\n", "", 1), "model.gateway.aliases.public"},
 		"bad alias":    {strings.Replace(gatewayConfig, "[tier-standard]", "[Tier_X]", 1), "model.gateway.aliases.internal"},
 		"bad port":     {gatewayConfig + "    ports: {public: 70000}\n", "model.gateway.ports.public"},
+		"no sa":        {strings.Replace(gatewayConfig, "    serviceAccount: {namespace: maku, name: run-controller}\n", "", 1), "model.gateway.serviceAccount"},
 		"bad prefix":   {gatewayConfig + "    audiencePrefix: \"a b\"\n", "model.gateway.audiencePrefix"},
 		"bad mode":     {goodConfig + "model: {mode: direct}\n", "model.mode"},
 		"secret, none": {strings.Replace(goodConfig, "modelSecret: agent-model\n", "", 1), "modelSecret is required"},

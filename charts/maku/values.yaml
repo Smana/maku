@@ -152,7 +152,26 @@ runController:
     harness: {repository: ghcr.io/smana/maku-harness, tag: ""}
     bridge: {repository: ghcr.io/smana/maku-bridge, tag: ""}
   # Secrets in runs.namespace the controller reads: model (api_key, model, base_url) and git.
+  # modelSecret is model.mode secret's, and not read in model.mode gateway.
   modelSecret: agent-model
+  # How runs reach a model (v4 step 4, docs/gateway.md):
+  #   secret   (default) the harness calls modelSecret's base_url with its api_key, which sits in the sandbox;
+  #   gateway  the harness calls the model gateway (maku-gateway) with the run's own projected token,
+  #            audience <audiencePrefix>.<dataClass>.<spec.model>, at
+  #            http://<service>.<namespace>.svc.<clusterDomain>:<ports.<dataClass>>/m/<spec.model>/v1.
+  #            No provider key enters the runs namespace. The token lives the run's deadline plus 10 min.
+  model:
+    mode: secret
+    gateway:
+      # Empty: model-gateway (maku-gateway's default name), in the release namespace.
+      service: ""
+      namespace: ""
+      ports: {public: 8080, internal: 8081}
+      audiencePrefix: maku-gateway
+      # The aliases each listener serves: maku-gateway aliases.<class>'s keys. A run whose spec.model
+      # or judge alias its listener does not serve is refused before its pod exists; an internal run
+      # needs internal aliases.
+      aliases: {public: [], internal: []}
   gitSecret: agent-git
   # The read-only token reviewer and triager runs mount (contents, pull_requests, issues, checks,
   # actions: read); implementer and tester runs mount gitSecret. The controller enforces it: a

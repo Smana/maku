@@ -63,6 +63,18 @@ func main() {
 		}
 	case "run-controller":
 		load = func(p string) error { _, err := runctl.LoadConfig(p); return err }
+	case "run-controller-gateway":
+		// v4 step 4: runController.model.mode gateway must decode to the gateway mode, with no model Secret.
+		load = func(p string) error {
+			c, err := runctl.LoadConfig(p)
+			if err != nil {
+				return err
+			}
+			if !c.Gateway() || c.ModelSecret != "" {
+				return fmt.Errorf("model.mode %q modelSecret %q, want gateway and none", c.Model.Mode, c.ModelSecret)
+			}
+			return nil
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown component %q\n", os.Args[1])
 		os.Exit(2)

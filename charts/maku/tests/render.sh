@@ -423,6 +423,30 @@ for r in "$q" "$nonp"; do
   ynone 'select(.metadata.name=="egress-proxy" or .kind=="NetworkPolicy" or .kind=="PodDisruptionBudget")' 'modes cilium and none: no proxy, no NetworkPolicy'
 done
 
+# runController.model.mode gateway (v4 step 4, GW3): runs call the model gateway with their own token.
+gw="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.model.mode=gateway \
+  --set-json 'runController.model.gateway.aliases={"public":["agent-default","tier-light"],"internal":["tier-standard"]}')"
+out="$gw"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | ((has("modelSecret") | not) and .model.mode == "gateway" and .model.gateway.url == "http://model-gateway.maku.svc.cluster.local" and .model.gateway.ports.public == 8080 and .model.gateway.ports.internal == 8081 and .model.gateway.audiencePrefix == "maku-gateway" and (.model.gateway.aliases.public | join(",")) == "agent-default,tier-light" and (.model.gateway.aliases.internal | join(",")) == "tier-standard" and .model.gateway.serviceAccount.namespace == "maku" and .model.gateway.serviceAccount.name == "run-controller")' 'gateway mode: no modelSecret, the gateway in the release namespace by default, its ports, prefix, aliases and the controller'"'"'s own ServiceAccount'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git"' 'gateway mode: the controller may not read the model Secret'
+ykind Role 'select(.metadata.name=="run-controller-token") | (.metadata.namespace == null and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "serviceaccounts/token" and (.rules[0].resourceNames | join(",")) == "run-controller" and (.rules[0].verbs | join(",")) == "create")' 'gateway mode: the preflight requests its own ServiceAccount token, by name, nothing else'
+ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("projected ServiceAccount tokens")) | .expression | test("startsWith\\('"'"'maku-gateway[.]'"'"'\\)")' 'gateway mode: the run-pod policy holds token audiences to the broker, the room tools and the gateway prefix'
+ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("never mounts the model Secret agent-model")) | .expression | test("agent-model")' 'gateway mode: the run-pod policy refuses the model Secret'
+gwext="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.model.mode=gateway \
+  --set runController.model.gateway.service=agentgateway --set runController.model.gateway.namespace=ai \
+  --set runController.model.gateway.ports.public=9080 --set runController.model.gateway.audiencePrefix=cnref.gw \
+  --set-json 'runController.model.gateway.aliases={"public":["tier-light"]}')"
+out="$gwext"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.gateway.url == "http://agentgateway.ai.svc.cluster.local" and .model.gateway.ports.public == 9080 and .model.gateway.audiencePrefix == "cnref.gw" and (.model.gateway.aliases.internal | length) == 0)' 'gateway mode: an external gateway by service and namespace'
+for r in "$q" "$ctl" "$nonp"; do
+  out="$r"
+  ynone 'select(.metadata.name=="run-controller-token")' 'secret mode: no token Role'
+  ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("ServiceAccount tokens|never mounts the model Secret"))' 'secret mode: the run-pod policy is unchanged'
+done
+bad 'runController.model.gateway.aliases.public is required' --set runController.model.mode=gateway
+bad "at '/runController/model/mode'" --set runController.model.mode=direct
+bad "at '/runController/model/gateway/aliases/public/0'" --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["gpt-4"]}'
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -444,6 +468,9 @@ go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenrevi
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$kn" >"$tmp/rc-kubernetes.yaml"
 go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" || fail=1
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gw" >"$tmp/rc-gateway.yaml"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gwext" >"$tmp/rc-gateway-external.yaml"
+go run ./tests/loadconfig run-controller-gateway "$tmp/rc-gateway.yaml" "$tmp/rc-gateway-external.yaml" || fail=1
 
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then

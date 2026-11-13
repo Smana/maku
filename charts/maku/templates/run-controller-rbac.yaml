@@ -44,7 +44,8 @@ rules:
   {{- end }}
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [{{ $c.modelSecret | quote }}, {{ $c.gitSecret | quote }}{{ if not $c.unsafeSharedGitToken }}, {{ $c.gitReadSecret | quote }}{{ end }}]
+    {{- /* model.mode gateway reads no model Secret: the gateway holds the keys. */}}
+    resourceNames: [{{ if not (include "ap.modelGateway" . | fromJson) }}{{ $c.modelSecret | quote }}, {{ end }}{{ $c.gitSecret | quote }}{{ if not $c.unsafeSharedGitToken }}, {{ $c.gitReadSecret | quote }}{{ end }}]
     verbs: [get]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
@@ -85,6 +86,30 @@ metadata:
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-ca}
 subjects:
   - {kind: ServiceAccount, name: run-controller, namespace: {{ .Release.Namespace }}}
+{{- if include "ap.modelGateway" . | fromJson }}
+---
+# The gateway-token-ttl preflight (v4 step 4, GW9) requests one token for this ServiceAccount at the
+# longest run's lifetime, to learn whether the apiserver caps token expiry under it. Its own name only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller-token
+  labels: {{- $l | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [run-controller]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller-token
+  labels: {{- $l | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-token}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: {{ .Release.Namespace }}}
+{{- end }}
 {{- with (include "ap.sandbox" . | fromJson).class }}
 {{- $crName := printf "maku-%s-run-controller-runtimeclass" $.Release.Namespace }}
 ---

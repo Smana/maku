@@ -67,6 +67,21 @@ spec:
     - expression: >-
         !has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.projected))
       message: "a run pod mounts only emptyDir, configMap, secret and projected volumes: no hostPath, no persistentVolumeClaim"
+    {{- with include "ap.modelGateway" . | fromJson }}
+    {{- if not (regexMatch "^[a-z0-9.-]+$" $.Values.runController.modelSecret) }}
+    {{- fail (printf "runController.modelSecret %q cannot go into the run-pod policy: a Secret name holds only a-z, 0-9, . and -" $.Values.runController.modelSecret) }}
+    {{- end }}
+    # model.mode gateway (v4 step 4, GW3): a run holds ServiceAccount tokens for the broker, its room
+    # tools and the model gateway's aliases only, never one the apiserver or another service accepts,
+    # and never the model Secret: no provider key enters the runs namespace.
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || !has(v.projected.sources) ||
+        v.projected.sources.all(s, !has(s.serviceAccountToken) || (has(s.serviceAccountToken.audience) &&
+        (s.serviceAccountToken.audience in ['room-broker', 'room-tools'] || s.serviceAccountToken.audience.startsWith('{{ .audiencePrefix }}.')))))
+      message: {{ printf "a run pod's projected ServiceAccount tokens are for room-broker, room-tools or %s.<class>.<alias> only" .audiencePrefix | quote }}
+    - expression: {{ printf "!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.secret) || v.secret.secretName != '%s')" $.Values.runController.modelSecret | quote }}
+      message: {{ printf "model.mode gateway: a run pod never mounts the model Secret %s; the gateway holds the keys" $.Values.runController.modelSecret | quote }}
+    {{- end }}
     - expression: "!has(object.spec.ephemeralContainers)"
       message: "a run pod takes no ephemeral container: no kubectl debug into a run"
     - expression: >-

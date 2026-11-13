@@ -36,7 +36,23 @@ data:
       namespace: {{ $k.dns.namespace | quote }}
       labels: {{- toYaml $k.dns.labels | nindent 8 }}
     {{- end }}
+    {{- $gw := include "ap.modelGateway" . | fromJson }}
+    {{- if $gw }}
+    # Runs call the model gateway with their own projected token (v4 step 4, GW3): no provider key
+    # enters the runs namespace, and modelSecret is not read.
+    model:
+      mode: gateway
+      gateway:
+        url: {{ $gw.url | quote }}
+        ports: {public: {{ $gw.ports.public }}, internal: {{ $gw.ports.internal }}}
+        audiencePrefix: {{ $gw.audiencePrefix | quote }}
+        serviceAccount: {namespace: {{ .Release.Namespace | quote }}, name: run-controller}
+        aliases:
+          public: {{ $gw.aliases.public | toJson }}
+          internal: {{ $gw.aliases.internal | toJson }}
+    {{- else }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
+    {{- end }}
     gitSecret: {{ required "runController.gitSecret is required" $c.gitSecret | quote }}
     {{- if $c.unsafeSharedGitToken }}
     # Every role mounts gitSecret: a reviewer or triager could push (a laptop's one PAT).
