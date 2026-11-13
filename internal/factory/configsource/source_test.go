@@ -55,7 +55,7 @@ func policyObj(t *testing.T, name, ref string, gen int64, mutate func(*v1alpha1.
 	r := c.RepositoryFor("Smana/cloud-native-ref")
 	p := &v1alpha1.MergePolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Generation: gen},
-		Spec:       v1alpha1.MergePolicySpec{RepositoryRef: ref, Classes: r.Classes, Merge: r.Merge},
+		Spec:       v1alpha1.MergePolicySpec{RepositoryRef: ref, Classes: r.Classes, Merge: &r.Merge},
 	}
 	if mutate != nil {
 		mutate(&p.Spec)
