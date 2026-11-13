@@ -154,7 +154,7 @@ func TestRequestApprovalIsIdempotentPerEvent(t *testing.T) {
 		string(p.Action) != `{"command":"gh pr create"}` || !p.ExpiresAt.Equal(first.ExpiresAt) || !slices.Equal(p.Prompters, []string{"human:own"}) {
 		t.Fatalf("payload %s, %v", ev.Payload, err)
 	}
-	restarted, err := Open(ctx, broker)
+	restarted, err := Open(ctx, broker, RoleBroker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -556,7 +556,7 @@ func TestAnEndedRunSupersedesItsApprovals(t *testing.T) {
 func TestConcurrentRequestsForOneEvent(t *testing.T) {
 	ctx := t.Context()
 	s, broker, _, _ := open(t)
-	other, err := Open(ctx, broker)
+	other, err := Open(ctx, broker, RoleBroker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -715,7 +715,7 @@ func TestADecisionPastTheDeadlineIsRefused(t *testing.T) {
 func TestALateDecisionNeverBeatsTheSweep(t *testing.T) {
 	ctx := t.Context()
 	s, broker, _, _ := open(t)
-	other, err := Open(ctx, broker)
+	other, err := Open(ctx, broker, RoleBroker)
 	if err != nil {
 		t.Fatal(err)
 	}

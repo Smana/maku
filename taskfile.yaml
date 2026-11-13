@@ -125,12 +125,18 @@ tasks:
       - bash charts/agent-factory/tests/schema.sh
       - bash charts/agent-factory/tests/monitoring.sh
       - bash charts/agent-factory/tests/promql-only.sh
+      - bash charts/agent-factory/tests/monitoring/dashboards.sh
       - git diff --exit-code -- config/crd api
 
   chart:install:k3d:
     desc: Install the demo profile on a throwaway k3d cluster and assert it (docker, k3d; not part of check)
     cmds:
       - bash charts/agent-factory/tests/install.sh k3d
+
+  chart:install:k3d:external-db:
+    desc: The demo on k3d against a plain postgres:16 outside the chart, bootstrapped with docs/database.md (v4 D9)
+    cmds:
+      - EXTERNAL_DB=1 bash charts/agent-factory/tests/install.sh k3d
 
   chart:install:k3d:netpol:
     desc: The demo on k3d in networkPolicies.mode kubernetes, enforced (the preflight passes) and unenforced (it refuses runs)

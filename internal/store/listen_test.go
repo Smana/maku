@@ -191,7 +191,7 @@ func TestPoolMaxConns(t *testing.T) {
 	if got := s.pool.Config().MaxConns; got != 8 {
 		t.Fatalf("default pool_max_conns = %d, want 8", got)
 	}
-	s2, err := Open(t.Context(), broker+"&pool_max_conns=3")
+	s2, err := Open(t.Context(), broker+"&pool_max_conns=3", RoleBroker)
 	if err != nil {
 		t.Fatal(err)
 	}

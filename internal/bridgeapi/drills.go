@@ -17,7 +17,7 @@ import (
 // Drills is the store's drill reports (hardening HR38, R6); *store.Store implements it.
 type Drills interface {
 	PutDrillReport(ctx context.Context, r store.DrillReport) error
-	LastPass(ctx context.Context, version, configHash string) (id string, at time.Time, found bool, err error)
+	LatestDrill(ctx context.Context, version, configHash string) (id string, at time.Time, pass, found bool, err error)
 	DrillPassed(ctx context.Context, id string) (pass, found bool, err error)
 }
 
@@ -69,8 +69,8 @@ func (s *Server) putDrill(w http.ResponseWriter, r *http.Request) {
 }
 
 // lastPassingDrill: GET /v1/drills/last-pass?version=&configHash=, OutputClient only (R6). The
-// newest passing drill of that Maku version and hardening configuration hash: 200 {id, at}, or 404
-// no_drill when none passed.
+// newest drill of that Maku version and hardening configuration hash, when it passed: 200 {id, at},
+// or 404 no_drill when there is none or the newest failed, even with an older pass.
 func (s *Server) lastPassingDrill(w http.ResponseWriter, r *http.Request) {
 	_, release, ok := s.outputCaller(w, r, s.Drills != nil)
 	if !ok {
@@ -82,12 +82,12 @@ func (s *Server) lastPassingDrill(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, wire.ReasonBadDrill)
 		return
 	}
-	id, at, found, err := s.Drills.LastPass(r.Context(), version, hash)
+	id, at, pass, found, err := s.Drills.LatestDrill(r.Context(), version, hash)
 	switch {
 	case err != nil:
 		s.logFailure(w, err, "read the last passing drill")
 		return
-	case !found:
+	case !found || !pass: // the newest report failed: no pass stands until a newer one (#531's review)
 		fail(w, http.StatusNotFound, wire.ReasonNoDrill)
 		return
 	}

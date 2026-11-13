@@ -97,6 +97,7 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 				d.Log.Warn("hardening block unreadable: the applier checks the floor's protected paths", "repository", repo, "err", err)
 			}
 			c.Paths, c.LabelAllowlist = p.Paths, slices.Clone(h.LabelAllowlist)
+			c.ClassifierEnforce = h.ClassifierEnforceFor(repo) // HR40: T5 promoted per output type, read live
 			return c
 		},
 		Enforced:    func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) },

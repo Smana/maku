@@ -14,11 +14,31 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 )
 
-// Export writes a repository's central classes as a policy file (MP15): behaviour preserved, so
+// ErrLegacyServed is Export's refusal of a repository still served from the per-repository shape.
+var ErrLegacyServed = errors.New("the repository is served from the per-repository shape, and the file binds central policies: " +
+	"migrate the repository first: maku config migrate")
+
+// Export writes a repository's policy file in the binding shape (B15, B16): its Repository's
+// bindings as written, so the file resolves to the classes the factory serves. A repository served
+// from the per-repository shape is refused (ErrLegacyServed); one with no class is a fence-only
+// file.
+func Export(rc *config.Repository, c *config.Config) (*File, error) {
+	f := &File{Factory: c.Factory}
+	if rc.Bindings == nil && len(rc.Classes) > 0 {
+		return nil, ErrLegacyServed
+	}
+	for i := range rc.Bindings {
+		f.MergePolicies = append(f.MergePolicies, *rc.Bindings[i].DeepCopy())
+	}
+	return f, nil
+}
+
+// ExportClasses writes a repository's central classes as a policy file in the class shape
+// (MP15), which the settings pages' editor and simulation still read: behaviour preserved, so
 // each class keeps its mode. review is written with its evaluation keys when it has a floor
 // (R30), and stays implicit without one. A class whose checks and testFirst no profile holds is
 // an error: the operator adds the profile first.
-func Export(rc *config.Repository, c *config.Config) (*File, error) {
+func ExportClasses(rc *config.Repository, c *config.Config) (*File, error) {
 	f := &File{Factory: c.Factory, Classes: map[string]ClassPolicy{}}
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
@@ -131,6 +151,9 @@ func Marshal(f *File) ([]byte, error) { return yaml.Marshal(f) }
 // path and check lists read as sets. review is compared on its evaluation keys alone (R30): a
 // central review with no floor is implicit, and the file not declaring it is no divergence.
 func Compare(rc *config.Repository, f *File, c *config.Config) []string {
+	if f.Bound() {
+		return compareBindings(rc, f, c)
+	}
 	var out []string
 	names := map[string]bool{}
 	for n := range rc.Classes {
@@ -180,4 +203,39 @@ func canonical(cl config.Class) string {
 		return err.Error()
 	}
 	return string(b)
+}
+
+// compareBindings is Compare for a binding file (B15, stages 1 and 3): each binding resolved for
+// rc, against the class the factory serves; a binding that does not resolve is a divergence.
+func compareBindings(rc *config.Repository, f *File, c *config.Config) []string {
+	classes, refused := ResolveBindings(f, rc, c)
+	names := map[string]bool{}
+	for n := range rc.Classes {
+		names[n] = true
+	}
+	for _, b := range f.MergePolicies {
+		names[b.Name] = true
+	}
+	if !declares(f, "review") && rc.Classes["review"].Harness == "" {
+		delete(names, "review")
+	}
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		central, inCentral := rc.Classes[name]
+		r, resolved := classes[name]
+		refusal, isRefused := refused[name]
+		switch {
+		case isRefused:
+			out = append(out, fmt.Sprintf("%s: refused, %s: %s", name, refusal.Reason, refusal.Message))
+		case !resolved:
+			out = append(out, name+": only in the central config")
+		case !inCentral:
+			out = append(out, name+": only in the repository")
+		default:
+			if a, b := canonical(central), canonical(r.Class); a != b {
+				out = append(out, fmt.Sprintf("%s: central %s, repository %s", name, a, b))
+			}
+		}
+	}
+	return out
 }

@@ -7,7 +7,9 @@
 #            (install.sh's GATEWAY=1), layers values-demo-gateway.yaml: a run in model.mode gateway
 #            reaches its model through agentgateway with its own token, and agents holds no provider key;
 #            with METERING=1, its tokens reach a test-only VictoriaMetrics under agentgateway's names and
-#            the meter prices them (plan v4 step 4, Task 17).
+#            the meter prices them (plan v4 step 4, Task 17). A fifth, external-db (install.sh's
+#            EXTERNAL_DB=1), brings its own postgres:16 outside the chart, bootstrapped with
+#            docs/database.md's SQL, with postgres.enabled=false (v4 D9).
 #   nightly: `task demo` headless on kind with a real, capped model and a test GitHub App, then the
 #            seeded docs-links issue is labelled and the job waits up to 30 minutes for a pull request
 #            by <slug>[bot] bearing a `maku/merge-gate` commit status. `task demo:down` always runs.
@@ -47,6 +49,8 @@ on:
       - internal/factory/**
       - internal/app/**
       - internal/broker/**
+      - internal/store/**
+      - docs/database.md
       - images/**
       - hack/quickstart/versions.env
       - examples/demo-repo/**
@@ -66,16 +70,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        netpol: [none, kubernetes, unenforced, gateway]
+        netpol: [none, kubernetes, unenforced, gateway, external-db]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }} # install.sh asks the API for the latest release
-      NETPOL: ${{ matrix.netpol == 'gateway' && 'none' || matrix.netpol }}
+      NETPOL: ${{ (matrix.netpol == 'gateway' || matrix.netpol == 'external-db') && 'none' || matrix.netpol }}
       GATEWAY: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       METERING: ${{ matrix.netpol == 'gateway' && '1' || '' }}
+      EXTERNAL_DB: ${{ matrix.netpol == 'external-db' && '1' || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

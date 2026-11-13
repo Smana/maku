@@ -352,6 +352,25 @@ out="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.git
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .model.gateway.url == "http://agentgateway.ai.svc.cluster.local"' 'an external gateway by service and namespace'
 ynone 'select(.kind == "Gateway")' 'an external gateway renders no Gateway'
 
+# v4 D9: the bundled Postgres is the demo's alone. The demo gains exactly the third DSN Secret, the
+# retention CronJob reading it, and the job's ingress to rooms-db. postgres.enabled=false with the demo
+# values renders no database and no DSN Secret, and the broker reads the Secrets it names; any other
+# profile with the bundled Postgres on fails, naming D9.
+demo="$(helm template af . -n maku "${args[@]}")"
+out="$demo"
+ykind Secret 'select(.metadata.name == "rooms-retention-dsn") | .stringData.uri | test("^postgresql://rooms_retention:[A-Za-z0-9]{32}@rooms-db[.]maku[.]svc:5432/rooms[?]sslmode=disable$")' 'demo: the retention DSN Secret, as rooms_retention'
+ykind CronJob 'select(.metadata.name == "room-broker-retention") | .spec.jobTemplate.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name == "rooms-retention-dsn"' 'demo: the retention CronJob reads rooms-retention-dsn'
+ykind NetworkPolicy 'select(.metadata.name == "rooms-db") | (.spec.ingress[0].from | map(.podSelector.matchLabels."app.kubernetes.io/name") | join(",")) == "room-broker,room-broker-retention"' 'demo: rooms-db admits the broker and the retention job'
+out="$(helm template af . -n maku "${args[@]}" --set postgres.enabled=false)"
+ynone 'select(.kind == "StatefulSet" or .kind == "Service" and .metadata.name == "rooms-db" or .kind == "ConfigMap" and .metadata.name == "rooms-db-init" or .kind == "NetworkPolicy" and .metadata.name == "rooms-db" or .kind == "Secret" and (.metadata.name | test("^rooms-")))' 'postgres.enabled=false still renders the bundled database or its Secrets'
+got=$(yq ea '[select(.kind == "Deployment" and .metadata.name == "room-broker") | .spec.template.spec | (.initContainers[0].env[0].valueFrom.secretKeyRef.name, .containers[0].env[] | select(.name == "ROOMS_DATABASE_URL") | .valueFrom.secretKeyRef.name)] + [select(.kind == "CronJob") | .spec.jobTemplate.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name] | join(",")' - <<<"$out")
+[[ $got == "rooms-owner-dsn,rooms-broker-dsn,rooms-retention-dsn" ]] || { echo "FAIL: postgres.enabled=false: the broker and the job read '$got', want the three named Secrets" >&2; fail=1; }
+for p in production ""; do
+  msg="$(helm template af . -n maku "${img[@]}" --set profile="$p" --set postgres.enabled=true 2>&1 >/dev/null || true)"
+  grep -qF 'the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets' <<<"$msg" || { echo "FAIL: profile '$p' with postgres.enabled does not fail naming D9 (got: $msg)" >&2; fail=1; }
+done
+yq -e '.postgres.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not turn the bundled Postgres off" >&2; fail=1; }
+
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"
 mine="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f "$tmp/mine.yaml")" || { echo "FAIL: values-mine.example.yaml does not render" >&2; fail=1; mine=''; }
@@ -484,6 +503,45 @@ grep -qE 'AgentCostCrossCheckMismatch|agent_cost:gateway_run_usd' <<<"$(alerts)"
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.runController.enabled=false --set maku-factory.enabled=false \
   --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms" ]] || { echo "FAIL: the broker alone: groups '$(groups)', want maku-rooms" >&2; fail=1; }
+
+# v4 step 6 (D21, EX14): the product dashboards, one ConfigMap each, rendered only when asked.
+# The files name the runs and the gateway only through placeholders.
+lit="$(grep -noE 'system:serviceaccount:[a-z0-9]|namespace=\\"(agents|agent-gateway|agent-system|maku)\\"' files/dashboards/*.json || true)"
+[[ -z $lit ]] || { echo "FAIL: a dashboard names a runs, gateway or release namespace literally (use __RUN_SUBJECT__, __RUNS_NAMESPACE__, __NAMESPACE__): $lit" >&2; fail=1; }
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .metadata.name' 'dashboards off renders a dashboard ConfigMap'
+dash=(--set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.annotations={"grafana_folder":"Agents"}')
+uids='agent-factory,agent-fleet,agent-identity,agent-room,agent-run,agents-overview'
+dashboards() { yq ea -r '[select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .metadata.name | sub("^maku-dashboard-"; "")] | sort | join(",")' - <<<"$out"; }
+dashcheck() { # dashcheck WANT_UIDS: every dashboard ConfigMap holds <uid>.json, parses, keeps its uid, and is clean
+  [[ "$(dashboards)" == "$1" ]] || { echo "FAIL: dashboards '$(dashboards)', want '$1'" >&2; fail=1; }
+  ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.grafana_dashboard == "1" and .metadata.annotations.grafana_folder == "Agents" and .metadata.namespace == "maku")' 'each dashboard ConfigMap has the sidecar label and the annotations'
+  local u body
+  for u in ${1//,/ }; do
+    body="$(yq ea -r "select(.kind == \"ConfigMap\" and .metadata.name == \"maku-dashboard-$u\") | .data.\"$u.json\"" - <<<"$out")"
+    [[ "$(jq -r .uid <<<"$body" 2>/dev/null)" == "$u" ]] || { echo "FAIL: maku-dashboard-$u does not hold $u.json with uid $u" >&2; fail=1; continue; }
+    ! grep -qE '\$\$\{|agent-system|xplane-|VictoriaLogs|VictoriaTraces|victoriametrics-logs|jaeger|cached_input|cache_creation_input|Envoy|__[A-Z_]+__|\$\{private_domain_name\}' <<<"$body" ||
+      { echo "FAIL: maku-dashboard-$u keeps a Flux escape, a cloud-native-ref name, a logs or traces panel or a placeholder: $(grep -oE '\$\$\{|agent-system|xplane-|VictoriaLogs|VictoriaTraces|victoriametrics-logs|jaeger|cached_input|cache_creation_input|Envoy|__[A-Z_]+__' <<<"$body" | sort -u | tr '\n' ' ')" >&2; fail=1; }
+    (( $(wc -c <<<"$body") < 900 * 1024 )) || { echo "FAIL: maku-dashboard-$u is 900 KiB or more" >&2; fail=1; }
+  done
+}
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}")" || { echo "FAIL: monitoring.dashboards.enabled does not render" >&2; fail=1; out=''; }
+dashcheck "$uids"
+ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | .metadata.labels.grafana_dashboard == "1"' 'monitoring.dashboards.labels empty: the sidecar label grafana_dashboard: "1"'
+grep -qF 'job=\"agent-factory\"' <<<"$out" || { echo "FAIL: the overview reads the factory's job" >&2; fail=1; }
+grep -qF 'ar_agent=\"system:serviceaccount:agents:run-${run}\"' <<<"$out" || { echo "FAIL: the run dashboard reads the run's subject (runs.namespace, runs.namePrefix)" >&2; fail=1; }
+# the runs' subject is the gateway's: maku-gateway.runs first, as the rules read it
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku-gateway.runs.namespace=xr-runs --set maku-gateway.runs.namePrefix=agt-)"
+dsub="$(yq ea -r '[select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .data[]] | join("")' - <<<"$out")"
+grep -qF 'system:serviceaccount:xr-runs:agt-' <<<"$dsub" && ! grep -qF 'system:serviceaccount:agents:run-' <<<"$dsub" ||
+  { echo "FAIL: the dashboards' run subject does not follow maku-gateway.runs" >&2; fail=1; }
+out="$(helm template af . -n maku "${gwd[@]}" "${dash[@]}")" || { echo "FAIL: dashboards with maku-gateway do not render" >&2; fail=1; out=''; }
+dashcheck "agent-factory,agent-fleet,agent-gateway,agent-identity,agent-room,agent-run,agents-overview"
+grep -qF 'job=\"model-gateway\", namespace=\"maku\"' <<<"$out" || { echo "FAIL: the gateway panels read maku-gateway's job and namespace" >&2; fail=1; }
+out="$(helm template af . -n maku "${args[@]}" --set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.labels={"team":"agents"}')"
+ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.team == "agents" and (.metadata.labels | has("grafana_dashboard") | not))' 'monitoring.dashboards.labels replace the sidecar label (grafana_dashboard: "1"), never merge with it'
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku.broker.publicURL=http://localhost:18080)" || { echo "FAIL: dashboards with a broker publicURL do not render" >&2; fail=1; out=''; }
+grep -qF 'http://localhost:18080/r/${room}' <<<"$out" || { echo "FAIL: the room links follow maku.broker.publicURL" >&2; fail=1; }
 
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

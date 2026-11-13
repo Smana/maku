@@ -72,18 +72,18 @@ func (s *Store) PutDrillReport(ctx context.Context, r DrillReport) error {
 	return nil
 }
 
-// LastPass returns the newest passing report's id and time for version and configHash (R6), and
-// whether there is one.
-func (s *Store) LastPass(ctx context.Context, version, configHash string) (id string, at time.Time, found bool, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT drill_id, at FROM drill_reports WHERE pass AND version = $1 AND config_hash = $2
-		ORDER BY at DESC, drill_id DESC LIMIT 1`, version, configHash).Scan(&id, &at)
+// LatestDrill returns the newest report for version and configHash, passing or not, and whether
+// there is one (R6, #531's review): a fail newer than a pass makes R6 false until a newer pass.
+func (s *Store) LatestDrill(ctx context.Context, version, configHash string) (id string, at time.Time, pass, found bool, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT drill_id, at, pass FROM drill_reports WHERE version = $1 AND config_hash = $2
+		ORDER BY at DESC, drill_id DESC LIMIT 1`, version, configHash).Scan(&id, &at, &pass)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return "", time.Time{}, false, nil
+		return "", time.Time{}, false, false, nil
 	case err != nil:
-		return "", time.Time{}, false, fmt.Errorf("store: last passing drill: %w", err)
+		return "", time.Time{}, false, false, fmt.Errorf("store: latest drill: %w", err)
 	}
-	return id, at.UTC(), true, nil
+	return id, at.UTC(), pass, true, nil
 }
 
 // DrillPassed is whether the stored report of drill id passed, and whether one is stored: what the

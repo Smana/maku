@@ -720,6 +720,17 @@ Residuals with reads filtered:
 - A run-controller older than the factory ignores `forge-api: deny`. The chart pins both to one
   version.
 
+A repository is **ready** when R1 to R7 hold ([Hardening, ready](factory.md#hardening-ready)), and
+only then does coordination's execute admit it. Residuals once ready:
+
+- Readiness is read at each admission and every five minutes, not continuously: a Secret swapped
+  to a write token on the run-controller is seen at the next read, not at the swap.
+- R6 proves the configuration a drill ran under. A drill scenario a role never ran fails the drill,
+  so a suite narrowed by configuration cannot pass.
+- T5 is not a readiness fact, and a promoted type's T5 is single-turn: split or encoded injections
+  pass it, as the drills measure. T5 never reads a T3 refusal, so it adds nothing where a secret
+  or the canary was already caught.
+
 ## Reporting a vulnerability
 
 Privately, through [GitHub security advisories](https://github.com/Smana/maku/security/advisories/new),

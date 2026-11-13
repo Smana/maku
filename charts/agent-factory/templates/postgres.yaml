@@ -1,4 +1,5 @@
 {{- include "afumbrella.profile" . -}}
+{{- if .Values.postgres.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -122,3 +123,4 @@ spec:
         resources:
           requests:
             storage: {{ .Values.postgres.storage }}
+{{- end }}

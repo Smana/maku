@@ -116,6 +116,10 @@ const (
 // the mode and cannot be set below it.
 type HardeningLayers struct {
 	Classifier hardening.Mode
+	// ClassifierEnforce are the output types T5 is promoted to enforce for (HR40), one at a time on
+	// its drill numbers. It applies to repositories at mode enforce only, needs agentGuard.url, and
+	// enters the hash, so a promotion needs a new passing drill (R6).
+	ClassifierEnforce []hardening.OutputType
 }
 
 // HardeningDrills bounds how recent a passing drill must be for readiness (R6), how long the drill
@@ -163,7 +167,8 @@ type hardeningFile struct {
 	BlockedUsers   []string   `json:"blockedUsers,omitempty"`
 	LabelAllowlist []string   `json:"labelAllowlist,omitempty"`
 	Layers         struct {
-		Classifier *modeField `json:"classifier,omitempty"`
+		Classifier        *modeField             `json:"classifier,omitempty"`
+		ClassifierEnforce []hardening.OutputType `json:"classifierEnforce,omitempty"`
 	} `json:"layers,omitzero"`
 	Drills struct {
 		MaxAge     *Duration `json:"maxAge,omitempty"`
@@ -250,6 +255,7 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 	if f.Layers.Classifier != nil {
 		h.Layers.Classifier = hardening.Mode(*f.Layers.Classifier)
 	}
+	h.Layers.ClassifierEnforce = f.Layers.ClassifierEnforce
 	if f.Drills.MaxAge != nil {
 		h.Drills.MaxAge = *f.Drills.MaxAge
 	}
@@ -354,6 +360,40 @@ func (h Hardening) ModeFor(repository string) hardening.Mode {
 	return h.Mode
 }
 
+// ClassifierEnforceFor are the output types T5 enforces for repository (HR40), sorted: the promoted
+// list on a repository at mode enforce with a classifier configured, else none.
+func (h Hardening) ClassifierEnforceFor(repository string) []hardening.OutputType {
+	if h.AgentGuard.URL == "" || h.ModeFor(repository) != hardening.ModeEnforce {
+		return nil
+	}
+	out := slices.Clone(h.Layers.ClassifierEnforce)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// validateClassifierEnforce holds layers.classifierEnforce to HR40: known output types, a
+// classifier to call, and at least one repository at mode enforce for it to apply to.
+func (c *Config) validateClassifierEnforce(bad func(string, ...any)) {
+	h := c.Hardening
+	if len(h.Layers.ClassifierEnforce) == 0 {
+		return
+	}
+	for _, t := range h.Layers.ClassifierEnforce {
+		if !slices.Contains(enforceable, t) {
+			bad("hardening.layers.classifierEnforce: %q is none of pr, comment, labels, issue, push", t)
+		}
+	}
+	if h.AgentGuard.URL == "" {
+		bad("hardening.layers.classifierEnforce needs agentGuard.url: a promoted T5 with no classifier refuses every output")
+	}
+	if h.Layers.Classifier == hardening.ModeOff {
+		bad("hardening.layers.classifierEnforce is set but layers.classifier is off: it would promote nothing")
+	}
+	if !slices.ContainsFunc(c.Repos(), func(r Repository) bool { return h.ModeFor(r.Name) == hardening.ModeEnforce }) {
+		bad("hardening.layers.classifierEnforce needs a repository at mode enforce: it applies to no other")
+	}
+}
+
 // EffectiveClassifier is T5's mode as it runs: the configured layer, or off when no classifier URL
 // is set, since a T5 with nothing to call could only ever answer classifier_unavailable.
 func (h Hardening) EffectiveClassifier() hardening.Mode {
@@ -439,8 +479,9 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 	if _, err := hardening.ParseMode(string(h.Layers.Classifier)); err != nil {
 		bad("hardening.layers.classifier: %v", err)
 	} else if h.Layers.Classifier == hardening.ModeEnforce {
-		bad("hardening.layers.classifier %q: the classifier's promotion to enforce arrives with stage H5", h.Layers.Classifier)
+		bad("hardening.layers.classifier %q: T5 is promoted one output type at a time, through layers.classifierEnforce (HR40)", h.Layers.Classifier)
 	}
+	c.validateClassifierEnforce(bad)
 	if l, err := hardening.ParseLevel(h.MinAuthorTrust); err != nil || l == hardening.Blocked {
 		bad("hardening.minAuthorTrust %q is none of none, unapproved, approved, merged", h.MinAuthorTrust)
 	}
@@ -599,8 +640,8 @@ func strictJSON(b []byte, v any) error {
 }
 
 // Hash is the sha256 of the effective hardening configuration: the key a drill report proves
-// (R6), so any change to the block needs a new passing drill. T5 enters as its effective mode, so
-// adding or removing the classifier moves the hash and moving it to another host does not.
+// (R6), so any change to the block needs a new passing drill. T5 enters as its effective mode and,
+// while it runs, its URL's sha256: adding, removing or moving the classifier moves the hash.
 func (h Hardening) Hash() string {
 	// The enforced lists are omitted when empty, so a file without them keeps its pre-H2 hash.
 	b, _ := json.Marshal(struct { // a struct of strings, slices and maps: Marshal cannot fail
@@ -609,10 +650,30 @@ func (h Hardening) Hash() string {
 		Repositories                             map[string]hardening.Mode
 		Enforce                                  []hardening.OutputType            `json:",omitempty"`
 		RepositoryEnforce                        map[string][]hardening.OutputType `json:",omitempty"`
+		ClassifierEnforce                        []hardening.OutputType            `json:",omitempty"`
+		ClassifierURL                            string                            `json:",omitempty"`
 	}{string(h.Mode), h.MinAuthorTrust, string(h.EffectiveClassifier()), h.Drills.MaxAge.String(),
-		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes(), h.EnforcedFor(""), h.repositoryEnforce()})
+		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes(), h.EnforcedFor(""), h.repositoryEnforce(), h.classifierEnforce(),
+		h.classifierURLHash()})
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
+}
+
+// classifierURLHash is the sha256 of the classifier's URL while T5 runs, "" otherwise: pointing T5 at
+// another classifier moves the hash, so it needs a new passing drill (#531's review).
+func (h Hardening) classifierURLHash() string {
+	if h.EffectiveClassifier() == hardening.ModeOff {
+		return ""
+	}
+	s := sha256.Sum256([]byte(h.AgentGuard.URL))
+	return hex.EncodeToString(s[:])
+}
+
+// classifierEnforce is the promoted list, sorted and once each, for the hash.
+func (h Hardening) classifierEnforce() []hardening.OutputType {
+	out := slices.Clone(h.Layers.ClassifierEnforce)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // repositoryEnforce is each listed repository's non-empty effective list.

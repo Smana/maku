@@ -676,13 +676,23 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		apiSrv.Trust = hardened.Policies
 	}
 	apiSrv.Writers = perms.CanWrite // a factory/vouch from a writer who is not a maintainer (v2 D5)
-	// Coordination (v4 MR16): Prerequisites stays nil because neither capability it must prove,
-	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
-	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and
-	// confirms only. coordination.Prerequisites composes the two once class authority has a port;
-	// hardening.Evaluator, its second half, answers false through stage H4 (hardening design).
+	// Hardening H5 (HR41): readiness, computed afresh on every read, from the live settings, each
+	// repository's policy files through its own connection, the minter's role table and the broker's
+	// drills. The API and the Evidence page show it, the leader reports it every five minutes, and
+	// coordination's execute admission asks it with class authority (v4 MR16).
+	readiness := hardeningEvaluator(live.Current, func(repo string) policyReader {
+		if c, ok := conns.get(repo); ok && c.gh != nil {
+			return c.gh
+		}
+		return nil // a nil interface, never a typed-nil *forge.GitHub
+	}, tableGrants(live.Current, minter.Roles), broker, time.Now)
+	apiSrv.Readiness = readiness
+	if err := mgr.Add(readinessReporter(live.Current, readiness, m, log)); err != nil {
+		return fmt.Errorf("manager: %w", err)
+	}
 	// Each repository's checks and filing go through that repository's own App connection.
-	coord := &coordination.Service{Client: ledgers, Namespace: ns, Cfg: live, Prerequisites: nil, Now: time.Now, Metrics: m,
+	coord := &coordination.Service{Client: ledgers, Namespace: ns, Cfg: live, Prerequisites: coordinationPrerequisites(live, readiness),
+		Now: time.Now, Metrics: m,
 		Checks: coordination.GitHubChecks{Forges: func(repo string) coordination.CheckForge {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh

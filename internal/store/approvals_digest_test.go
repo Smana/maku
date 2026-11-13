@@ -178,7 +178,7 @@ func TestSweepKeepsABoundBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	forge(t, super, `UPDATE output_bundles SET created_at = now() - interval '30 days'`)
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestSweepKeepsAnApprovedUnappliedBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	forge(t, super, `UPDATE output_bundles SET created_at = now() - interval '30 days'`)
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestSweepFloorsTheCutoff(t *testing.T) {
 	if err := s.PutBundle(ctx, room, approvalRun, digestOf(b), b); err != nil {
 		t.Fatal(err)
 	}
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestApprovalDigestUpgrade(t *testing.T) {
 	if _, err := migrate(ctx, dsn, files[:i], log); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Open(ctx, dsn)
+	s, err := Open(ctx, dsn, RoleOwner)
 	if err != nil {
 		t.Fatal(err)
 	}

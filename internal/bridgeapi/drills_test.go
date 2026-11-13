@@ -34,16 +34,16 @@ func (m *memDrills) PutDrillReport(_ context.Context, r store.DrillReport) error
 	return nil
 }
 
-func (m *memDrills) LastPass(_ context.Context, version, hash string) (string, time.Time, bool, error) {
+func (m *memDrills) LatestDrill(_ context.Context, version, hash string) (string, time.Time, bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var best store.DrillReport
 	for _, r := range m.rows {
-		if r.Pass && r.Version == version && r.ConfigHash == hash && r.At.After(best.At) {
+		if r.Version == version && r.ConfigHash == hash && r.At.After(best.At) {
 			best = r
 		}
 	}
-	return best.ID, best.At, best.ID != "", nil
+	return best.ID, best.At, best.Pass, best.ID != "", nil
 }
 
 func (m *memDrills) DrillPassed(_ context.Context, id string) (bool, bool, error) {
@@ -128,4 +128,28 @@ func TestDrillRoutes(t *testing.T) {
 			t.Fatalf("%d", rec.Code)
 		}
 	})
+}
+
+// #531's review: last-pass is the newest report of the key, and only when it passed: a fail newer
+// than a pass answers no_drill, so R6 is false until a newer pass.
+func TestLastPassIsTheNewestReport(t *testing.T) {
+	s, _, _ := outputServer(t)
+	s.Drills = &memDrills{rows: map[string]store.DrillReport{}}
+	h := s.Routes()
+	last := "/v1/drills/last-pass?version=v0.45.0&configHash=" + strings.Repeat("c", 64)
+	if rec := call(t, h, http.MethodPost, "/v1/drills", "sys:"+factory, drillBody(nil)); rec.Code != http.StatusCreated {
+		t.Fatalf("%d", rec.Code)
+	}
+	failed := drillBody(func(b map[string]any) { b["id"], b["at"], b["pass"] = "drill-2", "2026-11-14T06:00:00Z", false })
+	if rec := call(t, h, http.MethodPost, "/v1/drills", "sys:"+factory, failed); rec.Code != http.StatusCreated {
+		t.Fatalf("%d", rec.Code)
+	}
+	if rec := call(t, h, http.MethodGet, last, "sys:"+factory, nil); rec.Code != http.StatusNotFound || reason(t, rec) != wire.ReasonNoDrill {
+		t.Fatalf("a newer fail: %d %s", rec.Code, rec.Body)
+	}
+	passed := drillBody(func(b map[string]any) { b["id"], b["at"] = "drill-3", "2026-11-15T06:00:00Z" })
+	call(t, h, http.MethodPost, "/v1/drills", "sys:"+factory, passed)
+	if rec := call(t, h, http.MethodGet, last, "sys:"+factory, nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"drill-3"`) {
+		t.Fatalf("a newer pass: %d %s", rec.Code, rec.Body)
+	}
 }

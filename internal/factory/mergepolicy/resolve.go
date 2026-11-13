@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
@@ -26,8 +27,9 @@ type Resolved struct {
 	// and its in-sync central one hash alike (B13).
 	Approvals []config.ApprovalLeaf
 	Profile   config.HarnessProfile
-	// PolicyGeneration is the generation of the MergePolicy a binding resolved against, a last
-	// resolved one's when it is served (B9, B12); 0 for a class the file defines itself.
+	// PolicyGeneration is a binding's: the generation of the MergePolicy its class was resolved
+	// from, the last resolved one's when that one serves (B9, B12); 0 for a class the file defines
+	// itself.
 	PolicyGeneration int64
 }
 
@@ -189,22 +191,47 @@ func OnlyGuardrail(err error) bool {
 	return false
 }
 
-// Validate is the whole file against the central config: a file with no classes has no policy and
-// passes; one with classes declares docs-links and revert, and each class passes Resolve and the
-// gate's own class check, every variant of it. review may be declared for its evaluation keys only
-// (R30, Parse's shape): its merge authority stays implicit, in the repository's merge block
-// (approveToMerge, maintainers), which no class file holds.
+// Validate is the whole file against the central config: ValidateFile's error, without a
+// repository's merge.
 func Validate(f *File, c *config.Config) error {
-	if f.Classes == nil {
-		return nil
+	_, err := ValidateFile(f, nil, c)
+	return err
+}
+
+// Report is what a file's validation found beside its error: the resolved classes, the bindings
+// that did not resolve, kept apart so one never invalidates the file (B9, B15), and the
+// deprecations, sentences about what the next minor refuses (PR4).
+type Report struct {
+	Classes       map[string]Resolved
+	BindingErrors map[string]config.BindingRefusal
+	Deprecations  []string
+}
+
+// ValidateFile is the whole file against the central config and the repository it is read for:
+// a file with no policy has none and passes. One that declares one declares docs-links and revert
+// (OD-8). A class-shape file passes when each class passes Resolve and the gate's own class check,
+// every variant of it; review may be declared for its evaluation keys only (R30, Parse's shape):
+// its merge authority stays implicit, in the repository's merge block (approveToMerge,
+// maintainers), which no class file holds. A binding file passes whatever its bindings resolve
+// to: each goes through config.Resolve against the policy the factory serves, the guardrails and
+// rc's merge (nil: none), and one that does not resolve is reported in BindingErrors.
+func ValidateFile(f *File, rc *config.Repository, c *config.Config) (Report, error) {
+	var rep Report
+	if !f.Declares() {
+		return rep, nil
 	}
 	var errs []error
 	for _, name := range []string{"docs-links", "revert"} {
-		if _, ok := f.Classes[name]; !ok {
+		if !declares(f, name) {
 			errs = append(errs, fmt.Errorf("class %s is required in a file that declares classes (OD-8): add it, "+
-				"\"%s: {mode: off, author: agents, harness: <a profile>}\" keeps it unarmed", name, name))
+				"%s keeps it unarmed", name, unarmed(f, name)))
 		}
 	}
+	if f.Bound() {
+		rep.Classes, rep.BindingErrors = ResolveBindings(f, rc, c)
+		return rep, errors.Join(errs...)
+	}
+	rep.Classes = map[string]Resolved{}
 	for _, name := range slices.Sorted(maps.Keys(f.Classes)) {
 		r, err := Resolve(name, f.Classes[name], c)
 		if err != nil {
@@ -218,6 +245,95 @@ func Validate(f *File, c *config.Config) error {
 			errs = append(errs, fmt.Errorf("class %s: a live or shadow class needs allowedFiles, in all or in every branch of any: "+
 				"without it every path of the repository is in the class, and only policy-bot fences it", name))
 		}
+		if f.Classes[name].Conditions.Any != nil {
+			rep.Deprecations = append(rep.Deprecations, fmt.Sprintf("class %s: conditions.any is deprecated, and the next minor refuses it "+
+				"with the classes grammar: bind one MergePolicy per branch in mergePolicies (B7)", name))
+		}
+		rep.Classes[name] = r
 	}
-	return errors.Join(errs...)
+	if err := errors.Join(errs...); err != nil {
+		return Report{Deprecations: rep.Deprecations}, err
+	}
+	return rep, nil
+}
+
+// declares reports whether the file declares class name, in either shape.
+func declares(f *File, name string) bool {
+	if f.Bound() {
+		return slices.ContainsFunc(f.MergePolicies, func(b config.Binding) bool { return b.Name == name })
+	}
+	_, ok := f.Classes[name]
+	return ok
+}
+
+// unarmed is how the file declares name unarmed, in its shape.
+func unarmed(f *File, name string) string {
+	if f.Bound() {
+		return fmt.Sprintf(`"- {name: %s, mode: 'off'}"`, name)
+	}
+	return fmt.Sprintf("\"%s: {mode: off, author: agents, harness: <a profile>}\"", name)
+}
+
+// ResolveBindings resolves a binding file's bindings in list order, as resources.Assemble resolves
+// a Repository's (B4, B6, B14): each against the policy the factory serves now (cfg.Policies), under
+// the guardrails and rc's merge. A binding naming no served policy is MissingRef, and the later of
+// two ambiguous adopted bindings is AmbiguousAdoption. The refused are absent from the classes.
+func ResolveBindings(f *File, rc *config.Repository, c *config.Config) (map[string]Resolved, map[string]config.BindingRefusal) {
+	var merge config.Merge
+	if rc != nil {
+		merge = rc.Merge
+	}
+	ctx := policyContext(c)
+	classes, refused := map[string]Resolved{}, map[string]config.BindingRefusal{}
+	served := map[string]config.Class{}
+	for _, b := range f.MergePolicies {
+		p, ok := c.Policies[b.Name]
+		if !ok {
+			refused[b.Name] = config.BindingRefusal{Reason: v1alpha1.ReasonMissingRef, Message: fmt.Sprintf("the factory serves no MergePolicy %s", b.Name)}
+			continue
+		}
+		cl, refusal := config.Resolve(b.Name, p.Spec, b, ctx, merge)
+		if refusal != nil {
+			refused[b.Name] = *refusal
+			continue
+		}
+		if other := ambiguousWith(cl, f.MergePolicies, served); other != "" {
+			refused[b.Name] = config.BindingRefusal{Reason: config.ReasonAmbiguousAdoption, Message: fmt.Sprintf(
+				"class %s adopts the pull requests class %s adopts: the same diffShape %s, an overlapping login and branch prefix; bind one of them (B6)",
+				b.Name, other, cl.DiffShape)}
+			continue
+		}
+		served[b.Name] = cl
+		classes[b.Name] = resolvedOf(cl)
+		r := classes[b.Name]
+		r.PolicyGeneration = p.Generation
+		classes[b.Name] = r
+	}
+	return classes, refused
+}
+
+// ambiguousWith is the first binding, in list order, whose served class is ambiguous with cl.
+func ambiguousWith(cl config.Class, order []config.Binding, served map[string]config.Class) string {
+	for _, b := range order {
+		if other, ok := served[b.Name]; ok && config.Ambiguous(other, cl) {
+			return b.Name
+		}
+	}
+	return ""
+}
+
+// resolvedOf is a resolved binding's class as the gate reads a file's: the class, and its
+// approval subset's paths.
+func resolvedOf(cl config.Class) Resolved {
+	r := Resolved{Class: cl}
+	for _, a := range cl.RequiresApproval {
+		r.Approval = append(r.Approval, a.ChangedFiles...)
+		r.Approvals = append(r.Approvals, config.ApprovalLeaf{ChangedFiles: slices.Clone(a.ChangedFiles)})
+	}
+	return r
+}
+
+// policyContext is what resolving a binding reads from the factory (B14).
+func policyContext(c *config.Config) config.PolicyContext {
+	return config.PolicyContext{HarnessProfiles: c.HarnessProfiles, Guardrails: c.MergeGuardrails, Templates: c.Templates, Loops: c.Loops}
 }

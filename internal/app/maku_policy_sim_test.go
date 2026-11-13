@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 )
 
 // simulationConfig is policyConfig with policyManagement.simulation on.
@@ -24,14 +27,24 @@ func simulationConfig(t *testing.T) string {
 	return p
 }
 
+// exportedPolicy is cfg's central classes as a class-shape file: the shape `policy export` wrote
+// before the binding shape (B16), which simulate and diff still read.
 func exportedPolicy(t *testing.T, cfg string) string {
 	t.Helper()
-	var out bytes.Buffer
-	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), []string{"policy", "export", "--config", cfg, "--repository", policyRepo(t)}); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
+	c, err := config.Load(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := mergepolicy.ExportClasses(c.RepositoryFor(policyRepo(t)), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mergepolicy.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
 	}
 	p := filepath.Join(t.TempDir(), "agent-factory.yaml")
-	if err := os.WriteFile(p, out.Bytes(), 0o600); err != nil {
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p

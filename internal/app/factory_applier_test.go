@@ -98,10 +98,11 @@ func TestFactoryStartsApplier(t *testing.T) {
 	if r, err := e.Hardened(t.Context(), "Smana/ai-native-ref"); err != nil || r.Hardened || !slices.Contains(r.Missing, hardening.MissingEnforce) {
 		t.Fatalf("readiness %+v %v", r, err)
 	}
-	// Coordination's prerequisites stay nil: execute still refuses (v4 MR16).
+	// H5 (Task 55) wires coordination's prerequisites: execute asks class authority and readiness
+	// (v4 MR16); TestPrerequisitesWired proves each fact refuses.
 	src, err := os.ReadFile("factory.go")
-	if err != nil || !strings.Contains(string(src), "Prerequisites: nil") {
-		t.Fatalf("coordination's prerequisites are wired: %v", err)
+	if err != nil || !strings.Contains(string(src), "Prerequisites: coordinationPrerequisites(live, readiness)") {
+		t.Fatalf("coordination's prerequisites are not wired: %v", err)
 	}
 }
 

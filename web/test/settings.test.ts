@@ -3,7 +3,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { evidenceAge, blockerActions, explain, isSettings, LADDER_LEGEND, modeCounts, mountSettings, poll, settingsFrame, trackRecord, type Evidence, type Report, type RepositoryPage } from "../src/settings";
+import { evidenceAge, blockerActions, hardeningLine, explain, isSettings, LADDER_LEGEND, modeCounts, mountSettings, poll, settingsFrame, trackRecord, type Evidence, type Report, type RepositoryPage } from "../src/settings";
 import { READING } from "../src/class-card";
 import { type ClassPolicy, classForm, fileYAML, type Preview, setLeaf, templates, toYAML } from "../src/policy-editor";
 import { parsePolicy } from "../src/policy-yaml";
@@ -750,6 +750,20 @@ describe("pending evidence", () => {
     expect(app.querySelector(".policy-classes .evidence-age time")?.getAttribute("datetime")).toBe("2026-11-08T00:05:00Z");
     expect(app.querySelector("section.policy-editor")).toBe(editor);
     expect([...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live")).toHaveLength(1);
+  });
+
+  it("writes the repository's hardening readiness, ready or not, never its gaps (H5)", async () => {
+    expect(hardeningLine({ repository: "o/r", hardened: true })).toBe("Hardened: every readiness fact holds.");
+    expect(hardeningLine({ repository: "o/r", hardened: false })).toBe("Not hardened: an operator can see which readiness facts are missing.");
+    expect(hardeningLine({ repository: "o/r", hardened: false, missing: ["error"] })).toBe("Hardening readiness could not be read just now.");
+    const p = page();
+    p.report.hardening = { repository: p.report.repository, hardened: false };
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
+      fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": p, "/api/policy/repositories": { repositories: [] } }));
+    const row = app.querySelector(".hardening-readiness");
+    expect(row?.textContent).toBe("Not hardened: an operator can see which readiness facts are missing.");
+    expect((row as HTMLElement | null)?.dataset.hardened).toBe("false");
   });
 
   it("says why the evidence shown is older", () => {
