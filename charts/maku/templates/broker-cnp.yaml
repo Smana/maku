@@ -70,13 +70,7 @@ spec:
             {{- range .Values.apiServerPorts }}
             - {port: {{ . | quote }}, protocol: TCP}
             {{- end }}
-    - toEndpoints:
-        - matchLabels:
-            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
-          matchExpressions:
-            - {key: {{ .Values.broker.database.podLabel }}, operator: Exists}
-      toPorts:
-        - ports: [{port: "5432", protocol: TCP}]
+    {{- include "ap.cnpDatabase" . | nindent 4 }}
     {{- with $factory }}
     # start_run: POST /v1/runs to factoryURL.
     - toEndpoints:
@@ -106,4 +100,28 @@ spec:
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+{{- if .Values.broker.database.retentionSecret }}
+---
+# The retention job (retention-cronjob.yaml): no ingress, and egress to DNS and the database only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker-retention
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "room-broker-retention") | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker-retention
+  ingress: [{}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    {{- include "ap.cnpDatabase" . | nindent 4 }}
+{{- end }}
 {{- end }}

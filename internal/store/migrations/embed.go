@@ -16,11 +16,20 @@ import (
 //go:embed *.sql
 var FS embed.FS
 
+// sum is atlas.sum, kept out of FS: migrate reads only its per-file hashes, the ones the Atlas
+// operator records, to adopt a database the operator migrated (store.adopt).
+//
+//go:embed atlas.sum
+var sum string
+
 // File is one migration, as room-broker migrate sees it.
 type File struct {
 	Name    string
 	Version string // the timestamp before the first underscore, the key in room_broker_revisions
 	Body    string
+	// AtlasHash is the file's atlas.sum hash, without its h1: prefix: what the Atlas operator's
+	// ledger records as the revision's hash.
+	AtlasHash string
 	// NoTx is Atlas's "-- atlas:txmode none": the file runs a statement at a time, outside a
 	// transaction, because CREATE INDEX CONCURRENTLY refuses one.
 	NoTx bool
@@ -34,6 +43,7 @@ func Files() ([]File, error) {
 		return nil, err
 	}
 	sort.Strings(names)
+	hashes := atlasHashes(sum)
 	out := make([]File, 0, len(names))
 	for _, name := range names {
 		body, err := fs.ReadFile(FS, name)
@@ -41,11 +51,25 @@ func Files() ([]File, error) {
 			return nil, err
 		}
 		out = append(out, File{
-			Name:    name,
-			Version: strings.SplitN(name, "_", 2)[0],
-			Body:    string(body),
-			NoTx:    strings.HasPrefix(string(body), "-- atlas:txmode none"),
+			Name:      name,
+			Version:   strings.SplitN(name, "_", 2)[0],
+			Body:      string(body),
+			NoTx:      strings.HasPrefix(string(body), "-- atlas:txmode none"),
+			AtlasHash: hashes[name],
 		})
 	}
 	return out, nil
+}
+
+// atlasHashes reads atlas.sum's "<file> h1:<hash>" lines; its first line, the directory's own
+// hash, names no file.
+func atlasHashes(sum string) map[string]string {
+	out := map[string]string{}
+	for line := range strings.Lines(sum) {
+		name, hash, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if ok {
+			out[name] = strings.TrimPrefix(hash, "h1:")
+		}
+	}
+	return out
 }

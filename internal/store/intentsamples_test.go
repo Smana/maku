@@ -95,7 +95,7 @@ func TestIntentSamplesRetention(t *testing.T) {
 	if got, _ := s.IntentSamplesSince(ctx, 60); len(got) != 3 {
 		t.Fatalf("the broker role purged: %d samples left, want 3", len(got))
 	}
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}

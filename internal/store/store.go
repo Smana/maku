@@ -35,7 +35,10 @@ var (
 
 // Store is the room log over a PostgreSQL pool, connected as rooms_broker.
 type Store struct {
-	pool      *pgxpool.Pool
+	pool *pgxpool.Pool
+	// Server is what Open's Check read: the server's version, the role and whether the
+	// connection is encrypted.
+	Server    Server
 	MaxEvents int64
 	MaxBytes  int64
 	// MaxForkEvents and MaxForkBytes cap a fork's prefix. The copy is one
@@ -56,10 +59,11 @@ type Store struct {
 // The deployment's connection budget is in docs/architecture.md.
 const defaultMaxConns = 8
 
-// Open connects with every session bounded, so no statement, lock queue or
+// Open connects as role with every session bounded, so no statement, lock queue or
 // abandoned transaction holds a room's row lock for long, and the pool capped at
-// 8 connections. A value set in the URL wins.
-func Open(ctx context.Context, url string) (*Store, error) {
+// 8 connections. A value set in the URL wins. It refuses what Check refuses: a server
+// below 16, another role, or a role that bypasses row-level security.
+func Open(ctx context.Context, url string, role Role) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("store: parse database url: %w", err)
@@ -80,7 +84,12 @@ func Open(ctx context.Context, url string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: connect: %w", err)
 	}
-	return &Store{pool: pool, MaxEvents: 100_000, MaxBytes: 256 << 20, MaxForkEvents: 5_000, MaxForkBytes: 32 << 20, Now: time.Now, ListenPing: 30 * time.Second}, nil
+	server, err := Check(ctx, pool, role)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	return &Store{pool: pool, Server: server, MaxEvents: 100_000, MaxBytes: 256 << 20, MaxForkEvents: 5_000, MaxForkBytes: 32 << 20, Now: time.Now, ListenPing: 30 * time.Second}, nil
 }
 
 // Close releases the pool.

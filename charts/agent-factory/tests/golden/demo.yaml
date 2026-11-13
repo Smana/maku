@@ -32,6 +32,10 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: room-broker
+        # The retention CronJob (maku.broker.database.retentionSecret).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker-retention
       ports:
         - {protocol: TCP, port: 5432}
 
@@ -185,6 +189,23 @@ type: Opaque
 stringData:
   # In-cluster only, no TLS on the database hop: this chart is for a throwaway kind or k3d cluster.
   uri: "postgresql://rooms_owner:<generated>@rooms-db.maku.svc:5432/rooms?sslmode=disable"
+
+---
+# Source: agent-factory/templates/db-secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rooms-retention-dsn
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  # In-cluster only, no TLS on the database hop: this chart is for a throwaway kind or k3d cluster.
+  uri: "postgresql://rooms_retention:<generated>@rooms-db.maku.svc:5432/rooms?sslmode=disable"
 
 ---
 # Source: agent-factory/templates/secrets.yaml
@@ -1233,6 +1254,67 @@ spec:
         resources:
           requests:
             storage: 1Gi
+
+---
+# Source: agent-factory/charts/maku/templates/retention-cronjob.yaml
+# The daily purge of rooms closed longer ago than their retention, expired intent samples and old
+# push bundles (v4 D9). DELETE-only: it connects as rooms_retention, whose row-level security
+# exposes nothing else, and the binary refuses any other role.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: room-broker-retention
+  labels:
+    app.kubernetes.io/name: room-broker-retention
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # Above one room's 10 min purge statement_timeout, or a slow purge is killed by Kubernetes
+      # before Postgres can report it.
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: room-broker-retention
+            app.kubernetes.io/part-of: maku
+            app.kubernetes.io/version: "0.0.0"
+        spec:
+          restartPolicy: Never
+          # No Kubernetes API: the job talks to Postgres only.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: retention
+              image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+              
+              args: [retention]
+              env:
+                - name: ROOMS_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: {name: rooms-retention-dsn, key: uri}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              resources:
+                limits:
+                  cpu: 200m
+                  memory: 64Mi
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
 
 ---
 # Source: agent-factory/charts/maku-factory/templates/run-token-policy.yaml

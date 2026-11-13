@@ -613,6 +613,40 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gwext" >"$tmp/rc-gateway-external.yaml"
 go run ./tests/loadconfig run-controller-gateway "$tmp/rc-gateway.yaml" "$tmp/rc-gateway-external.yaml" || fail=1
 
+# v4 D9: bring your own Postgres. The quickstart renders no retention job; retentionSecret renders the
+# CronJob reading that Secret's key as ROOMS_DATABASE_URL and nothing else, secretKey moves all three
+# refs, caSecret mounts in the migrate init container, the broker and the job, and egress.cidrs points
+# the broker's and the job's database egress at an external database in both network modes.
+out="$q"
+ynone 'select(.kind == "CronJob")' 'the quickstart renders no retention CronJob'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.database.retentionSecret=r)"
+ykind CronJob 'select(.metadata.name == "room-broker-retention") | .spec.jobTemplate.spec.template.spec | ((.containers | length) == 1 and (.containers[0].args | join(",")) == "retention" and (.containers[0].env | ((length == 1) and .[0].name == "ROOMS_DATABASE_URL" and .[0].valueFrom.secretKeyRef.name == "r" and .[0].valueFrom.secretKeyRef.key == "uri")))' 'retentionSecret: the CronJob reads its uri as ROOMS_DATABASE_URL and nothing else'
+ykind CronJob 'select(.metadata.name == "room-broker-retention") | (.spec.schedule == "17 3 * * *" and .spec.concurrencyPolicy == "Forbid" and .spec.jobTemplate.spec.activeDeadlineSeconds == 900 and .spec.jobTemplate.spec.template.spec.automountServiceAccountToken == false and (.spec.jobTemplate.spec.template.spec.containers[0].image | test("^ghcr[.]io/smana/maku-broker:")) and .spec.jobTemplate.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true and .spec.jobTemplate.spec.template.spec.containers[0].resources.limits.memory == "64Mi")' 'the CronJob: ANR schedule, Forbid, 900 s, the broker image, no token, restricted, limited'
+ykind CiliumNetworkPolicy 'select(.metadata.name == "room-broker-retention") | ((.spec.ingress | length) == 1 and (.spec.ingress[0] | length) == 0 and (.spec.egress | length) == 2 and .spec.egress[1].toPorts[0].ports[0].port == "5432")' 'the CronJob has its own CNP: no ingress, DNS and the database'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.database.retentionSecret=r --set broker.database.secretKey=dsn --set broker.database.caSecret=db-ca)"
+got=$(yq ea '[.. | select(has("secretKeyRef")) | .secretKeyRef | select(.name == "rooms-owner-dsn" or .name == "rooms-broker-dsn" or .name == "r") | .key] | join(",")' - <<<"$out")
+[[ $got == "dsn,dsn,dsn" ]] || { echo "FAIL: secretKey dsn: the three DSN refs read '$got', want dsn,dsn,dsn" >&2; fail=1; }
+got=$(yq ea '[.. | select(has("volumeMounts")) | .volumeMounts[] | select(.name == "db-ca") | .mountPath] | join(",")' - <<<"$out")
+[[ $got == "/etc/room-broker/db-ca,/etc/room-broker/db-ca,/etc/room-broker/db-ca" ]] || { echo "FAIL: caSecret mounts in '$got', want the init container, the broker and the CronJob" >&2; fail=1; }
+got=$(yq ea '[.. | select(has("volumes")) | .volumes[] | select(.name == "db-ca") | .secret.secretName + ":" + .secret.items[0].key] | join(",")' - <<<"$out")
+[[ $got == "db-ca:ca.crt,db-ca:ca.crt" ]] || { echo "FAIL: caSecret volumes '$got', want db-ca's ca.crt in the broker and the CronJob" >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.database.retentionSecret=r --set 'broker.database.egress.cidrs={10.20.0.0/16}')"
+ykind CiliumNetworkPolicy 'select(.metadata.name == "room-broker" or .metadata.name == "room-broker-retention") | (.spec.egress | map(select(.toPorts[0].ports[0].port == "5432")) | ((length == 1) and (.[0].toCIDR | join(",")) == "10.20.0.0/16"))' 'egress.cidrs: the broker and the job reach the database at the CIDR (cilium)'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.database.retentionSecret=r --set 'broker.database.egress.cidrs={10.20.0.0/16}')"
+ykind NetworkPolicy 'select(.metadata.name == "room-broker" or .metadata.name == "room-broker-retention") | (.spec.egress | map(select(.ports[0].port == 5432)) | ((length == 1) and .[0].to[0].ipBlock.cidr == "10.20.0.0/16"))' 'egress.cidrs: the broker and the job reach the database at the CIDR (kubernetes)'
+ykind NetworkPolicy 'select(.metadata.name == "room-broker-retention") | ((.spec.policyTypes | join(",")) == "Ingress,Egress" and (.spec | has("ingress") | not) and (.spec.egress | length) == 2)' 'the job: no ingress, DNS and the database (kubernetes)'
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.database.retentionSecret=r --set 'broker.database.podLabels.app=db')"
+ykind NetworkPolicy 'select(.metadata.name == "room-broker-retention") | .spec.egress[1].to[0].podSelector.matchLabels.app == "db"' 'the job reaches the database by the broker'"'"'s podLabels'
+# an IPv6 CIDR renders quoted in both modes (a bare "fd00::/8" is a YAML scalar only by luck)
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.database.retentionSecret=r --set 'broker.database.egress.cidrs={fd00:db::/64}')"
+ykind CiliumNetworkPolicy 'select(.metadata.name == "room-broker-retention") | .spec.egress[1].toCIDR[0] == "fd00:db::/64"' 'egress.cidrs: an IPv6 CIDR (cilium)'
+grep -qF -- '- "fd00:db::/64"' <<<"$out" || { echo 'FAIL: the IPv6 CIDR is not quoted (cilium)' >&2; fail=1; }
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.database.retentionSecret=r --set 'broker.database.egress.cidrs={fd00:db::/64}')"
+ykind NetworkPolicy 'select(.metadata.name == "room-broker-retention") | .spec.egress[1].to[0].ipBlock.cidr == "fd00:db::/64"' 'egress.cidrs: an IPv6 CIDR (kubernetes)'
+grep -qF -- '{cidr: "fd00:db::/64"}' <<<"$out" || { echo 'FAIL: the IPv6 CIDR is not quoted (kubernetes)' >&2; fail=1; }
+if helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set 'broker.database.egress.cidrs={db.example.com}' >/dev/null 2>&1; then
+  echo 'FAIL: a database egress CIDR that is not one must be refused' >&2; fail=1; fi
+
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then
   echo 'FAIL: a bare image tag must be refused' >&2; fail=1; fi

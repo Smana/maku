@@ -120,11 +120,12 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	if dsn == "" {
 		return errors.New("room-broker retention: ROOMS_DATABASE_URL is not set")
 	}
-	st, err := store.Open(ctx, dsn)
+	st, err := openRetrying(ctx, log, dsn, store.RoleRetention, retentionConnectWait)
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
 	defer st.Close()
+	warnPlainDB(log, st.Server, nil)
 	rooms, events, err := st.PurgeExpired(ctx)
 	log.Info("purged expired rooms", "rooms", rooms, "events", events)
 	if err != nil {
@@ -143,6 +144,29 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
 	return nil
+}
+
+// retentionConnectWait bounds how long the retention job retries a database it cannot reach. A
+// CNI that enforces NetworkPolicy (kube-router) admits a new pod's address a few seconds after it
+// starts, so a one-shot job's first connections can be refused.
+var retentionConnectWait = 2 * time.Minute
+
+// openRetrying is store.Open, retried every 5 s while the database is unavailable, up to wait. A
+// refusal (the version, the role, row-level security) is returned at once.
+func openRetrying(ctx context.Context, log *slog.Logger, dsn string, role store.Role, wait time.Duration) (*store.Store, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		st, err := store.Open(ctx, dsn, role)
+		if err == nil || !errors.Is(err, store.ErrUnavailable) || time.Now().After(deadline) {
+			return st, err
+		}
+		log.Info("database unavailable, retrying", "role", string(role))
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 // runIntentSamples is `maku-broker intent-samples [--days N]`: the last N days (default 7) of an
@@ -166,7 +190,7 @@ func runIntentSamples(ctx context.Context, w io.Writer, args []string, getenv fu
 	if dsn == "" {
 		return errors.New("room-broker intent-samples: ROOMS_DATABASE_URL is not set")
 	}
-	st, err := store.Open(ctx, dsn)
+	st, err := store.Open(ctx, dsn, store.RoleBroker)
 	if err != nil {
 		return fmt.Errorf("room-broker intent-samples: %w", err)
 	}
@@ -182,6 +206,42 @@ func runIntentSamples(ctx context.Context, w io.Writer, args []string, getenv fu
 		}
 	}
 	return nil
+}
+
+// schemaCurrent refuses to serve a schema older or newer than this binary's. A ledger the broker's
+// role cannot read is a bridge: served, with a warning and maku_rooms_schema_unverified at 1. It
+// exists for one install, cnref's broker, whose schema the Atlas operator applies into a ledger only
+// its owner reads, until ANR follow-up 4 gives the broker broker.database.ownerSecret: its first
+// migrate then adopts that ledger into public.room_broker_revisions, which the broker reads.
+// gauge reports which of the two the broker started with.
+//
+// TODO(v4 D9): once ANR sets ownerSecret, a minor release turns an unreadable ledger into a
+// refusal, as docs/database.md announces. It is a release decision, never a date in the binary.
+func schemaCurrent(ctx context.Context, st interface{ SchemaCurrent(context.Context) error }, log *slog.Logger,
+	gauge func(unverified bool)) error {
+	err := st.SchemaCurrent(ctx)
+	switch {
+	case errors.Is(err, store.ErrSchemaUnverified):
+		gauge(true)
+		log.Warn("schema version unverified: the broker's role cannot read the migration ledger; " +
+			"set broker.database.ownerSecret, a future release refuses this (docs/database.md)")
+		return nil
+	case err != nil:
+		return err
+	}
+	gauge(false)
+	return nil
+}
+
+// warnPlainDB says once that the database connection is not encrypted, and sets rooms_db_tls for
+// the role. It is not refused: the demo's in-cluster hop is plain (docs/database.md).
+func warnPlainDB(log *slog.Logger, s store.Server, gauge func(role string, tls bool)) {
+	if gauge != nil {
+		gauge(s.User, s.TLS)
+	}
+	if !s.TLS {
+		log.Warn("the database connection is not encrypted: set sslmode=verify-full and broker.database.caSecret (docs/database.md)", "role", s.User)
+	}
 }
 
 func brokerEnv(getenv func(string) string) (cfgPath, dsn, ns string, err error) {
@@ -224,11 +284,15 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
-	st, err := store.Open(ctx, dsn)
+	st, err := store.Open(ctx, dsn, store.RoleBroker)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
 	defer st.Close()
+	if err := schemaCurrent(ctx, st, log, m.SchemaUnverified); err != nil {
+		return fmt.Errorf("room-broker: %w", err)
+	}
+	warnPlainDB(log, st.Server, m.DBTLS)
 	logStore := &meteredLog{Store: st, appends: st, drivers: st, m: m, now: time.Now}
 	red, err := redact.New()
 	if err != nil {

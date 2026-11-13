@@ -24,6 +24,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, moving off the ZITADEL reader |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |
 | [Event envelope](event-envelope.md) | The C4 envelope, its payloads and limits |
+| [The database](database.md) | Bring your own Postgres 16 or later: the three roles and their DSN Secrets, the bootstrap, the start-up checks, managed services, CNPG and Atlas adoption |
 | [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |
 | [API](api.md) | The broker's four listeners, their errors and limits |
 | [Injection drills](drills.md) | The drill repository and accounts, `maku drill plant`, how the factory scores a drill, reading a report, the stop rule |
