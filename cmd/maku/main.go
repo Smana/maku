@@ -7,12 +7,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/Smana/maku/internal/app"
+	"github.com/Smana/maku/internal/maku"
 )
 
 func main() { os.Exit(run()) }
@@ -22,6 +24,10 @@ func run() int {
 	defer stop()
 	if err := app.RunMaku(ctx, os.Args[1:], os.Stdout); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, "maku:", err)
+		var exit *maku.ExitError
+		if errors.As(err, &exit) {
+			return exit.Code
+		}
 		return 1
 	}
 	return 0

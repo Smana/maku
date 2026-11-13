@@ -136,3 +136,40 @@ func TestHardeningApprovalWait(t *testing.T) {
 		}
 	}
 }
+
+// HR38: the last scored drill's time, by result.
+func TestHardeningDrillLast(t *testing.T) {
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	at := time.Unix(1_794_000_000, 0)
+	s.HardeningDrillScored(t.Context(), true, at)
+	s.HardeningDrillScored(t.Context(), false, at.Add(time.Hour))
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_drill_last{result="pass"} 1.794e+09`,
+		`maku_factory_hardening_drill_last{result="fail"} 1.7940036e+09`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
+// HR39: every T5 call counted by type, result and drill, each a closed set.
+func TestT5Counter(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/cloud-native-ref")
+	s.HardeningT5(ctx, "pr", "hit", true)
+	s.HardeningT5(ctx, "comment", "pass", false)
+	s.HardeningT5(ctx, "an agent's text", "maybe", false)
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_t5_total{drill="true",repository="Smana/cloud-native-ref",result="hit",type="pr"} 1`,
+		`maku_factory_hardening_t5_total{drill="false",repository="Smana/cloud-native-ref",result="pass",type="comment"} 1`,
+		`maku_factory_hardening_t5_total{drill="false",repository="Smana/cloud-native-ref",result="other",type="other"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}

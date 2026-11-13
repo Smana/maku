@@ -86,6 +86,10 @@ const makuUsage = `usage: maku <command>
   policy export|check|simulate|diff
                                   write, check, simulate or diff a repository's merge policy file, offline;
                                   simulate and diff need policyManagement.simulation
+  drill plant --repo owner/name --factory URL --stranger-token-file F --maintainer-token-file F
+              --factory-token-file F [--id ID] [--runlore-hook X --tool-result-hook X --room-hook X]
+                                  plant an injection drill in the drill repository and hand its manifest to the
+                                  factory, which scores it (docs/drills.md); a missing hook exits 2
   mcp                             the factory's MCP tools on stdio, for a local coding agent:
                                   claude mcp add factory -- maku mcp
   setup <claude|opencode|codex|gemini|cursor|copilot> [--project] [--print] [--restart-service]
@@ -190,6 +194,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.setup(ctx, args)
 	case "demo":
 		return r.demo(ctx, args)
+	case "drill":
+		return r.drill(ctx, args)
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err

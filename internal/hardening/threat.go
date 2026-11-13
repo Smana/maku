@@ -105,6 +105,26 @@ type Verdict struct {
 	Audit   []Finding
 	Payload any
 	Report  TextReport
+	// T5 is the classifier's answer when it ran: hit, pass or unavailable; "" when it did not
+	// (HR39's counter).
+	T5 string
+}
+
+// The T5 answers Verdict.T5 holds.
+const (
+	T5Hit         = "hit"
+	T5Pass        = "pass"
+	T5Unavailable = "unavailable"
+)
+
+func t5Result(r Refusal) string {
+	switch r {
+	case "":
+		return T5Pass
+	case RefuseInjection:
+		return T5Hit
+	}
+	return T5Unavailable
 }
 
 // Checker is the layered threat check (UH8), the port other writers reuse (RunLore RK16,
@@ -147,7 +167,46 @@ func (c Checker) Check(ctx context.Context, n *Counts, req Request) Verdict {
 		return v
 	}
 	if c.Layers.Classifier != ModeOff {
-		refuse(LayerClassifier, c.Layers.Classifier, c.classify(ctx, texts))
+		r := c.classify(ctx, texts)
+		v.T5 = t5Result(r)
+		refuse(LayerClassifier, c.Layers.Classifier, r)
+	}
+	return v
+}
+
+// measured are the refusals whose output T5 may still read (HR39, #520's review): a T1 target
+// refusal, whose text is otherwise well formed, and a push's T4 refusals, whose added lines already
+// passed T3. A T3 refusal is never measured (the text holds a secret or the canary, and T5 would send
+// it out of the factory), nor a cap refusal (a run could drive the classifier's load with it), nor a
+// T2 withholding (only its placeholder is left).
+var measured = []Refusal{RefuseTarget, RefuseBlockedPath, RefuseDiffUnavailable}
+
+// Measure runs T5 in audit on an output another layer refused (HR39), so T5's detection on the
+// drills can be set against the pattern layers'. Only a refusal in measured is read, and only once
+// T3's scan of the very texts T5 would read finds neither a secret nor the canary: with no scanner,
+// nothing is sent. The finding joins v.Audit and its answer v.T5; v's refusal is unchanged.
+func (c Checker) Measure(ctx context.Context, req Request, v Verdict) Verdict {
+	if v.T5 != "" || c.Layers.Classifier == ModeOff || !slices.Contains(measured, v.Refusal) {
+		return v
+	}
+	p, _ := DecodeOutput(req.Type, req.Payload, c.LabelAllowlist)
+	if p == nil {
+		return v
+	}
+	if c.Layers.Sanitise != ModeOff {
+		var rep TextReport
+		if p, rep = sanitiseOutput(p, req.OwnIssue); rep.Withheld {
+			return v
+		}
+	}
+	texts := slices.DeleteFunc(published(p, req), func(s string) bool { return s == "" })
+	if len(texts) == 0 || c.secrets(texts, req.Canary) != "" {
+		return v
+	}
+	r := c.classify(ctx, texts)
+	v.T5 = t5Result(r)
+	if r != "" {
+		v.Audit = append(v.Audit, Finding{LayerClassifier, r})
 	}
 	return v
 }
@@ -185,7 +244,9 @@ func (c Checker) CheckText(ctx context.Context, texts []string, canary string) V
 		return v
 	}
 	if c.Layers.Classifier != ModeOff && len(out) > 0 {
-		v.refuse(LayerClassifier, c.Layers.Classifier, c.classify(ctx, out))
+		r := c.classify(ctx, out)
+		v.T5 = t5Result(r)
+		v.refuse(LayerClassifier, c.Layers.Classifier, r)
 	}
 	return v
 }

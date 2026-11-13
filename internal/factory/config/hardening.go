@@ -20,6 +20,15 @@ import (
 // defaultDrillMaxAge is how recent a passing drill must be for readiness (R6): one weekly cadence.
 const defaultDrillMaxAge = 168 * time.Hour
 
+// The drill runner's waits (HR38): a drill's tasks get 6 hours, at most 48, and one gateway-log
+// query 10 seconds, at most a minute.
+const (
+	defaultDrillTimeout      = 6 * time.Hour
+	maxDrillTimeout          = 48 * time.Hour
+	defaultGatewayLogTimeout = 10 * time.Second
+	maxGatewayLogTimeout     = time.Minute
+)
+
 // defaultAgentGuardTimeout bounds one T5 call when the file sets no timeout.
 const defaultAgentGuardTimeout = 2 * time.Second
 
@@ -109,9 +118,28 @@ type HardeningLayers struct {
 	Classifier hardening.Mode
 }
 
-// HardeningDrills bounds how recent a passing drill must be for readiness (R6).
+// HardeningDrills bounds how recent a passing drill must be for readiness (R6), how long the drill
+// runner waits for a drill's tasks before it scores them anyway (HR38), and where it reads the
+// gateway's audit log.
 type HardeningDrills struct {
 	MaxAge Duration
+	// Timeout is how long after its manifest a drill is scored even with a task still open: 6h by
+	// default, at most 48h. A scenario whose role never ran then fails not_run.
+	Timeout Duration
+	// GatewayLog is the VictoriaLogs instance holding the model gateway's audit log: marker hits and
+	// guardrail verdicts (AC5). With no URL the drill runner is off, since withheld text reaching a
+	// model could not be checked.
+	GatewayLog GatewayLog
+	// Repository is the drill repository, owner/name: when set, only its tasks are drill tasks. Empty,
+	// any repository's issue labelled factory/drill-injection makes one while the drills are on.
+	Repository string
+}
+
+// GatewayLog is a VictoriaLogs base URL and how long one query may take (10s by default, at most
+// a minute).
+type GatewayLog struct {
+	URL     string
+	Timeout Duration
 }
 
 // AgentGuard is T5's classifier, agent-guard, called over agentgateway's guardrail webhook (HR9).
@@ -138,7 +166,13 @@ type hardeningFile struct {
 		Classifier *modeField `json:"classifier,omitempty"`
 	} `json:"layers,omitzero"`
 	Drills struct {
-		MaxAge *Duration `json:"maxAge,omitempty"`
+		MaxAge     *Duration `json:"maxAge,omitempty"`
+		Timeout    *Duration `json:"timeout,omitempty"`
+		GatewayLog struct {
+			URL     string    `json:"url,omitempty"`
+			Timeout *Duration `json:"timeout,omitempty"`
+		} `json:"gatewayLog,omitzero"`
+		Repository string `json:"repository,omitempty"`
 	} `json:"drills,omitzero"`
 	AgentGuard struct {
 		URL     string    `json:"url,omitempty"`
@@ -184,6 +218,13 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 	*h = Hardening{Mode: hardening.ModeOff, MinAuthorTrust: f.MinAuthorTrust, BlockedUsers: f.BlockedUsers,
 		LabelAllowlist: f.LabelAllowlist, AgentGuard: AgentGuard{URL: f.AgentGuard.URL}, EnforceOutputs: f.EnforceOutputs,
 		Publisher: Publisher{OctoSTS: PublisherOctoSTS(f.Publisher.OctoSTS), Minter: f.Publisher.Minter}}
+	h.Drills.GatewayLog.URL, h.Drills.Repository = f.Drills.GatewayLog.URL, f.Drills.Repository
+	if f.Drills.Timeout != nil {
+		h.Drills.Timeout = explicitZero(f.Drills.Timeout)
+	}
+	if f.Drills.GatewayLog.Timeout != nil {
+		h.Drills.GatewayLog.Timeout = explicitZero(f.Drills.GatewayLog.Timeout)
+	}
 	if f.AgentGuard.Timeout != nil {
 		h.AgentGuard.Timeout = explicitZero(f.AgentGuard.Timeout)
 	}
@@ -245,6 +286,12 @@ func (h *Hardening) ApplyDefaults() {
 	}
 	if h.AgentGuard.Timeout.Duration == 0 {
 		h.AgentGuard.Timeout.Duration = defaultAgentGuardTimeout
+	}
+	if h.Drills.Timeout.Duration == 0 {
+		h.Drills.Timeout.Duration = defaultDrillTimeout
+	}
+	if h.Drills.GatewayLog.Timeout.Duration == 0 {
+		h.Drills.GatewayLog.Timeout.Duration = defaultGatewayLogTimeout
 	}
 	if h.Publisher.OctoSTS.TokenFile == "" {
 		h.Publisher.OctoSTS.TokenFile = defaultPublisherTokenFile
@@ -341,6 +388,22 @@ func (c *Config) TrustPolicy(repository string, floor hardening.Level) hardening
 	return pol
 }
 
+// DrillsOn reports whether injection drills run (HR38): a gateway log to score them from, outside
+// the demo. The drill runner, the manifest route and every effect of a drill label hang on it.
+func (c *Config) DrillsOn() bool { return !c.Demo && c.Hardening.Drills.GatewayLog.URL != "" }
+
+// DrillTask reports whether a drill-labelled task of repository is a drill task: the drills are on,
+// and repository is the drill repository when one is configured. Otherwise the label is ignored: it
+// neither holds a room nor marks a T5 call as a drill's, which would hide a false positive (AC6).
+func (c *Config) DrillTask(repository string) bool {
+	r := c.Hardening.Drills.Repository
+	return c.DrillsOn() && (r == "" || strings.EqualFold(r, repository))
+}
+
+// DrillPrincipal is the drill planter's system principal on the factory API: the
+// api.systemPrincipals value the drill manifest route admits (HR38).
+const DrillPrincipal = "system:drill"
+
 // BrokerPrincipal is the room broker's system principal on the factory API: the api.systemPrincipals
 // value forge_read's route admits (HR35).
 const BrokerPrincipal = "system:broker"
@@ -383,6 +446,10 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 	}
 	if h.Drills.MaxAge.Duration <= 0 {
 		bad("hardening.drills.maxAge must be positive")
+	}
+	h.Drills.validate(bad)
+	if r := h.Drills.Repository; r != "" && c.RepositoryFor(r) == nil {
+		bad("hardening.drills.repository %q is not a configured repository", r)
 	}
 	h.AgentGuard.validate(bad)
 	repos := c.Repos()
@@ -488,6 +555,21 @@ func (h Hardening) validateEnforce(bad func(string, ...any)) {
 
 // validate refuses a classifier URL that is not plain http(s) with a host, or carries credentials,
 // and a timeout outside (0, 10s].
+func (d HardeningDrills) validate(bad func(string, ...any)) {
+	if d.Timeout.Duration <= 0 || d.Timeout.Duration > maxDrillTimeout {
+		bad("hardening.drills.timeout must be positive and at most %s", maxDrillTimeout)
+	}
+	if g := d.GatewayLog; g.URL != "" {
+		if u, err := url.Parse(g.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+			u.RawQuery != "" || u.Fragment != "" {
+			bad("hardening.drills.gatewayLog.url must be an http or https URL with a host, and no credentials or query")
+		}
+	}
+	if t := d.GatewayLog.Timeout.Duration; t <= 0 || t > maxGatewayLogTimeout {
+		bad("hardening.drills.gatewayLog.timeout must be positive and at most %s", maxGatewayLogTimeout)
+	}
+}
+
 func (g AgentGuard) validate(bad func(string, ...any)) {
 	if g.URL != "" {
 		if u, err := url.Parse(g.URL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
