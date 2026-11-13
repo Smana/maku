@@ -152,17 +152,17 @@ func TestMintResults(t *testing.T) {
 		role   string
 		err    error
 		result string
-		evicts int // a not-installed answer is evicted and retried once
+		evicts int // a not-installed answer is evicted; one at the mint is retried once
 	}{
 		{"ok", "o/r", Implementer, nil, "ok", 0},
-		{"not installed at lookup", "o/missing", Implementer, nil, "not_installed", 2},
+		{"not installed at lookup", "o/missing", Implementer, nil, "not_installed", 1}, // a lookup 404 is fresh: no retry
 		{"not installed at mint", "o/r", Implementer, fmt.Errorf("mint: %w", forge.ErrNotInstalled), "not_installed", 2},
 		{"permission not granted", "o/r", Tester, fmt.Errorf("mint: %w", forge.ErrPermissionNotGranted), "permission_not_granted", 0},
 		{"scope mismatch", "o/r", Reviewer, fmt.Errorf("mint: %w", forge.ErrScopeMismatch), "scope_mismatch", 0},
 		{"any other failure", "o/r", Triager, errors.New("mint: status 500"), "error", 0},
 		{"an unknown role", "o/r", "scoper", nil, "error", 0},
 		{"not a repository", "nope", Implementer, nil, "error", 0},
-		{"a name that climbs the path", "o/a..b", Implementer, nil, "error", 0},
+		{"a name that climbs the path", "o/..", Implementer, nil, "error", 0},
 		{"an owner that is not a name", "o w/r", Implementer, nil, "error", 0},
 	}
 	for _, c := range cases {
@@ -200,6 +200,19 @@ func TestReinstallRetriesOnce(t *testing.T) {
 	}
 	if !slices.Equal(met.mints, []string{"implementer ok"}) {
 		t.Fatalf("metrics %v: one mint, one count", met.mints)
+	}
+}
+
+// A 404 from the lookup itself is the App not installed there: a second lookup would only ask the
+// same question again, so there is no retry.
+func TestLookup404IsNotRetried(t *testing.T) {
+	app := &fakeApp{installations: map[string]int64{}}
+	_, err := (&Minter{Client: app}).Mint(t.Context(), "o/r", Implementer, nil)
+	if !errors.Is(err, forge.ErrNotInstalled) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(app.lookups) != 1 || len(app.mints) != 0 || !slices.Equal(app.evicted, []string{"o/r"}) {
+		t.Fatalf("lookups %v mints %d evicted %v: one lookup, evicted, no retry", app.lookups, len(app.mints), app.evicted)
 	}
 }
 

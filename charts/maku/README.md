@@ -10,6 +10,7 @@ CRDs (`crds/`), and the runs namespace with its default-deny policy. It has no f
 |---|---|
 | `runs.{group,namespace,namePrefix}` | The only source of the run kind: the broker's `runs:` and its run-issuer `subPattern` both render from it |
 | `runController.enabled` | On by default. Refused at render with any `runs.group` but `maku.ogenki.io`, the only group the controller reconciles: turn it off where another controller runs the AgentRuns (cloud-native-ref's `cloud.ogenki.io` composition) |
+| `runController.gitTokens` | `shared` (default): runs mount `gitSecret`, or `gitReadSecret` for a reviewer or triager. `perRun` (v4 D10): each run mounts its own `<run>-git`, which maku-factory's `runTokens.perRun` mints; the Role then gets Secrets by `get` without `resourceNames`, and `gitSecret`/`gitReadSecret` are not read ([docs/factory.md](../../docs/factory.md#run-tokens-the-role-table)) |
 | `broker.image.tag` | `<version>@sha256:<digest>`; a bare tag is refused unless `e2e.unpinnedImages` |
 | `broker.publicURL` | `oidc`: the https URL humans use. `local`: `http://localhost:<forwarded port>` (default `:8080`); the broker answers that port only, under `localhost`, `127.0.0.1` or `[::1]` |
 | `broker.human.mode` | `oidc` (block passed through verbatim) or `local` (one loopback user; `:8080` is not exposed, use a port-forward) |

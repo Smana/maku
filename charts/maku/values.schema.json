@@ -5,6 +5,17 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "runController": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "gitTokens": {
+          "description": "Where a run's git token comes from (D10): shared (gitSecret and gitReadSecret) or perRun (each run's own Secret, minted by the factory).",
+          "type": "string",
+          "enum": ["shared", "perRun"]
+        }
+      }
+    },
     "networkPolicies": {
       "description": "The network mode (D6). enabled is the old key; mode wins when set.",
       "type": "object",

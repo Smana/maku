@@ -126,7 +126,9 @@ func (p *Preflight) checks() []check {
 	if p.Cfg.RuntimeClassName != "" {
 		cs = append(cs, check{name: "runtimeClass", run: p.runtimeClass})
 	}
-	cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
+	if !p.Cfg.PerRun() { // no shared Secret: each run's own is checked before its pod (Reconciler.inputs)
+		cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
+	}
 	if p.Cfg.NetworkPolicy == NetworkPolicyKubernetes {
 		cs = append(cs, check{name: "network", run: p.network})
 	}

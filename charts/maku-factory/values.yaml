@@ -36,6 +36,13 @@ demo: false
 runTokens:
   enabled: false
   appSecret: ""
+  # perRun (v4 D10): one token per run instead of the two shared Secrets, minted from the same App
+  # for the run's repository and role, written as the run's own Secret <run name>-git. The
+  # factory's Role in the runs namespace then holds create, patch and delete on Secrets, never get,
+  # and an admission policy (always rendered with it) bounds those verbs to run token Secrets it
+  # labels and the run owns. Needs enabled (or demo), maku's runController.gitTokens: perRun, and
+  # config.runs.group maku.ogenki.io.
+  perRun: false
 oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake
 # v2 D4: the ZITADEL reader ({"pat", "githubIdpId"}) that resolves an API caller to their GitHub

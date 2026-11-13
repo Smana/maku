@@ -199,6 +199,15 @@ bad 'broker.tls.caSecretName must not be broker.tls.secretName' --set broker.tls
 bad 'runs.namespace "x" is the release namespace' --set runs.namespace=x
 bad 'broker.tls.secretName is required' --set broker.tls.secretName=
 bad 'runController.gitReadSecret is empty and runController.unsafeSharedGitToken is false' --set runController.gitReadSecret= --set runController.unsafeSharedGitToken=false
+bad 'runController.gitTokens perRun and runController.unsafeSharedGitToken: choose one' --set runController.gitTokens=perRun --set runController.unsafeSharedGitToken=true
+bad 'gitTokens' --set runController.gitTokens=mine
+bad 'runController.gitTokens perRun and runController.gitReadSecret: choose one' --set runController.gitTokens=perRun --set runController.unsafeSharedGitToken=false
+
+# v4 step 3 (D10): gitTokens perRun mounts each run's own Secret; the Role reads Secrets by get alone
+pr="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.gitTokens=perRun --set runController.gitReadSecret=)"
+out="$pr"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitTokens == "perRun" and (has("gitSecret") | not) and (has("gitReadSecret") | not))' 'perRun: the controller config says gitTokens perRun and names no shared Secret'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | (.rules | map(select(.resources | contains(["secrets"])))) | ((length == 1) and ((.[0].verbs | join(",")) == "get") and (.[0] | has("resourceNames") | not))' 'perRun: the run-controller Role gets Secrets with no resourceNames, and nothing else'
 
 # S-1, D6: the factory's CA and the insecure opt-out reach the broker's config; http alone is refused
 fca="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" \
@@ -432,6 +441,7 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$f
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fins" >"$tmp/factory-insecure.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$q" >"$tmp/rc-quickstart.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$pr" >"$tmp/rc-perrun.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$uns" >"$tmp/unsafe.yaml"
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" "$tmp/unsafe.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
@@ -443,7 +453,7 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenreview.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$kn" >"$tmp/rc-kubernetes.yaml"
-go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" || fail=1
+go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" "$tmp/rc-perrun.yaml" || fail=1
 
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then

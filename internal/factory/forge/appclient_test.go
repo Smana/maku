@@ -181,7 +181,7 @@ func TestAppClientRefusesBadNames(t *testing.T) {
 	calls := 0
 	r.mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { calls++; http.Error(w, "no", http.StatusTeapot) })
 	c := r.client("/")
-	for _, n := range [][2]string{{"o", "../x"}, {"o", "a..b"}, {"..", "r"}, {"o", "r/s"}, {"", "r"}, {"o", ""}, {"o", "r?x"}, {"o w", "r"}, {"o", "."}} {
+	for _, n := range [][2]string{{"o", "../x"}, {"o", ".."}, {"..", "r"}, {"o", "r/s"}, {"", "r"}, {"o", ""}, {"o", "r?x"}, {"o w", "r"}, {"o", "."}} {
 		if _, err := c.Installation(t.Context(), n[0], n[1]); err == nil {
 			t.Fatalf("Installation(%q, %q) is refused", n[0], n[1])
 		}
@@ -194,6 +194,10 @@ func TestAppClientRefusesBadNames(t *testing.T) {
 	}
 	if _, err := c.Installation(t.Context(), "Smana-x", "my_repo.v2"); err == nil || calls != 1 {
 		t.Fatalf("a valid name reaches GitHub: calls %d err %v", calls, err)
+	}
+	// Only a whole "." or ".." segment walks a path: a name holding two dots is a name.
+	if _, err := c.Installation(t.Context(), "o", "a..b"); err == nil || calls != 2 {
+		t.Fatalf("a..b reaches GitHub: calls %d err %v", calls, err)
 	}
 }
 

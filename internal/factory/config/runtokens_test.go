@@ -39,6 +39,34 @@ func TestRunTokens(t *testing.T) {
 	}
 }
 
+// v4 D10: runTokens.perRun mints one token per run. It needs the agents App (runTokens.enabled, or
+// the demo's factory App), the run-controller's runs, and, outside the demo, two Apps (D12, PR9).
+func TestRunTokensPerRun(t *testing.T) {
+	const on = "runTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
+	c, err := Parse([]byte(good + portable + on))
+	if err != nil || !c.RunTokens.PerRun {
+		t.Fatalf("%v", err)
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"without enabled": {good + portable + "runTokens: {perRun: true}\n", "runTokens.perRun needs runTokens.enabled"},
+		"on the XR":       {good + "runs: {group: cloud.ogenki.io}\n" + on, "runs.group must be maku.ogenki.io"},
+		"one App": {strings.Replace(good, "agentsLogin: ogenki-agents[bot]", "agentsLogin: ogenki-agent-factory[bot]", 1) + portable + on,
+			"runTokens.perRun: agentsLogin and factoryLogin name one App; D12 needs two"},
+	} {
+		if _, err := Parse([]byte(tc.body)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want %q", name, err, tc.want)
+		}
+	}
+	// The demo serves one App for both: perRun mints from the factory's own.
+	d, err := Parse([]byte(demoGood + "runTokens: {perRun: true}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, _, ok := d.RunTokenApp(); !ok || !d.RunTokens.PerRun || id != d.GitHub.AppIDFile {
+		t.Fatalf("demo perRun: %q %v", id, ok)
+	}
+}
+
 // The demo implies the writer, from the factory's own App unless runTokens names another.
 func TestRunTokensInTheDemo(t *testing.T) {
 	c, err := Parse([]byte(demoGood))

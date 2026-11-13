@@ -26,4 +26,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if or (ne $d (.Values.maku.clusterDomain | default "cluster.local")) (ne $d (index .Values "maku-factory" "clusterDomain" | default "cluster.local")) -}}
 {{- fail (printf "clusterDomain, maku.clusterDomain and maku-factory.clusterDomain must be equal (got %q, %q, %q): the broker certificate's names and the factory's broker URL are built from them" $d .Values.maku.clusterDomain (index .Values "maku-factory" "clusterDomain")) -}}
 {{- end -}}
+{{- /* v4 D10: per-run tokens are two halves. The factory mints and writes <run>-git, the run-controller mounts it: one without the other leaves every run Pending. */ -}}
+{{- $perRun := dig "runTokens" "perRun" false (index .Values "maku-factory") -}}
+{{- $gitTokens := dig "runController" "gitTokens" "shared" .Values.maku -}}
+{{- if ne (toString $perRun) (toString (eq $gitTokens "perRun")) -}}
+{{- fail (printf "maku-factory.runTokens.perRun (%v) and maku.runController.gitTokens (%q) go together: the factory writes each run's token Secret, the run-controller mounts it; set both (perRun) or neither" $perRun $gitTokens) -}}
+{{- end -}}
+{{- if $perRun -}}
+{{- $creators := dig "agentRunPolicies" "creators" list .Values.maku -}}
+{{- if not $creators -}}
+{{- fail "maku-factory.runTokens.perRun needs maku.agentRunPolicies.creators: the factory mints a token for every run it can account for, so only the factory may create AgentRuns (plan PR4)" -}}
+{{- end -}}
+{{- $factory := printf "system:serviceaccount:%s:agent-factory" .Release.Namespace -}}
+{{- if not (has $factory $creators) -}}
+{{- fail (printf "maku.agentRunPolicies.creators %v does not name this release's factory, %s: it could not create a run" $creators $factory) -}}
+{{- end -}}
+{{- end -}}
 {{- end }}

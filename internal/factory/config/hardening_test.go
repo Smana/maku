@@ -389,6 +389,8 @@ func TestUnscopedTokenRefused(t *testing.T) {
 		"the XR":                 {good + block, false},
 		"the run controller":     {good + runs + block, true},
 		"nothing enforced there": {good + runs + "hardening: {mode: audit}\n", false},
+		"per-run tokens":         {good + runs + "runTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n" + block, false},
+		"the shared writer":      {good + runs + "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n" + block, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.file))
