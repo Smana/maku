@@ -39,7 +39,7 @@ func TestACutOverRepositoryConsultsItsGrants(t *testing.T) {
 			if tk.Status.Phase != tc.phase || (tc.reason != "" && tk.Status.Reason != tc.reason) {
 				t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 			}
-			if len(tc.grants.calls) == 0 || !strings.HasPrefix(tc.grants.calls[0], "lookup smana/cloud-native-ref docs-links "+rigHash+" ") {
+			if len(tc.grants.calls) == 0 || !strings.HasPrefix(tc.grants.calls[0], "lookup smana/cloud-native-ref docs-links "+rigBound+" ") {
 				t.Fatalf("%q", tc.grants.calls)
 			}
 			if c := strings.Join(g.f.Comments(12), "\n"); tc.grant != recordHas(c, " policy=0123456789ab grant=aaaaaaaaaaaaaaaaaaaaaaaaaa:1") {
@@ -74,7 +74,7 @@ func TestAGrantOfACutOverRepositoryIsReadAgainUnderItsAuthority(t *testing.T) {
 			if got := r.grantHolds(t.Context(), r.Cfg.Current(), tk, armed); got != tc.want {
 				t.Fatalf("got %v, calls %q", got, f.calls)
 			}
-			if tc.want && !slices.Contains(f.calls, "lookup smana/cloud-native-ref docs-links "+rigHash+" "+config.DefaultGrantLifetime.String()) {
+			if tc.want && !slices.Contains(f.calls, "lookup smana/cloud-native-ref docs-links "+rigBound+" "+config.DefaultGrantLifetime.String()) {
 				t.Fatalf("%q", f.calls)
 			}
 		})

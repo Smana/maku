@@ -141,7 +141,17 @@ func DecideArm(in ArmInputs) ArmDecision {
 		return notServedDecision(in)
 	}
 	cl := gateOf(rc, in.Task.Spec.PredictedClass)
-	return withGatePath(decide(in, cfg, rc, cl), in, rc, cl.ProtectedFiles)
+	// B13, PR12: a central class's requiresApproval asks as a repository policy's does.
+	return withGatePath(withApproval(decide(in, cfg, rc, cl), in, approvalPaths(cl)), in, rc, cl.ProtectedFiles)
+}
+
+// approvalPaths flattens a class's requiresApproval into the subset withApproval reads.
+func approvalPaths(cl config.Class) []string {
+	var out []string
+	for _, a := range cl.RequiresApproval {
+		out = append(out, a.ChangedFiles...)
+	}
+	return out
 }
 
 // decide is DecideArm's rule on the class cl, wherever it was read: the central config, or a

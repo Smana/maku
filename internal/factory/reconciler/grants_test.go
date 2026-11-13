@@ -78,10 +78,13 @@ func approvalSnapshot() (mergepolicy.Snapshot, bool) {
 		Classes: map[string]mergepolicy.Resolved{"docs-links": {Class: live, Approval: []string{"."}}}}, true
 }
 
-// rigGrant covers every file of the rig's diff, in its repository and class, under rigHash.
+// rigBound is the resolved hash of approvalSnapshot's docs-links: what its grants bind to (B13).
+var rigBound = func() string { s, _ := approvalSnapshot(); return snapshotHash(s.Classes["docs-links"]) }()
+
+// rigGrant covers every file of the rig's diff, in its repository and class, bound to rigBound.
 func rigGrant() grant.Grant {
 	return grant.Grant{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaa", Version: 1, Repository: "smana/cloud-native-ref", Class: "docs-links",
-		Files: []string{".+"}, PolicyHash: rigHash[:12], Status: grant.StatusActive, ExpiresAt: now.Add(time.Hour)}
+		Files: []string{".+"}, PolicyHash: rigBound[:12], Status: grant.StatusActive, ExpiresAt: now.Add(time.Hour)}
 }
 
 // Stage 5 off: the gate reads no grant, whatever the repository's policy asks, and its record is
@@ -124,7 +127,7 @@ func TestDualEvaluationConsultsAGrantReadImmediatelyBefore(t *testing.T) {
 			if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging {
 				t.Fatalf("the central decision stands: %s %s", tk.Status.Phase, tk.Status.Reason)
 			}
-			if want := "lookup smana/cloud-native-ref docs-links " + rigHash + " 720h0m0s"; !slices.Equal(tc.grants.calls, []string{want}) {
+			if want := "lookup smana/cloud-native-ref docs-links " + rigBound + " 720h0m0s"; !slices.Equal(tc.grants.calls, []string{want}) {
 				t.Fatalf("%q", tc.grants.calls)
 			}
 			if !slices.Contains(g.metrics.recorded, "policy_dual docs-links "+tc.want) {
@@ -163,7 +166,10 @@ func TestNoLookupWithoutAnApprovalSubset(t *testing.T) {
 func TestAGrantIsReadAgainBeforeTheMergeCall(t *testing.T) {
 	tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Repository: "Smana/cloud-native-ref", PredictedClass: "docs-links"}}
 	armed := ArmDecision{Verdict: "arm", Rows: rigDecisionRows("aaaaaaaaaaaaaaaaaaaaaaaaaa:1")}
-	moved := rigGrant()
+	// Central authority (B13): the grant binds to the central class's resolved hash.
+	central := config.Class{Live: true, RequiresApproval: []config.ApprovalLeaf{{ChangedFiles: []string{"."}}}}
+	centralGrant := func() grant.Grant { g := rigGrant(); g.PolicyHash = config.ResolvedHash(central)[:12]; return g }
+	moved := centralGrant()
 	moved.Version = 2
 	for name, tc := range map[string]struct {
 		d      ArmDecision
@@ -172,15 +178,16 @@ func TestAGrantIsReadAgainBeforeTheMergeCall(t *testing.T) {
 		want   bool
 	}{
 		"no grant used":        {ArmDecision{Verdict: "arm"}, false, &fakeGrants{}, true},
-		"still active":         {armed, true, &fakeGrants{list: []grant.Grant{rigGrant()}}, true},
+		"still active":         {armed, true, &fakeGrants{list: []grant.Grant{centralGrant()}}, true},
 		"moved on a version":   {armed, true, &fakeGrants{list: []grant.Grant{moved}}, false},
 		"gone since":           {armed, true, &fakeGrants{}, false},
-		"the lookup failed":    {armed, true, &fakeGrants{list: []grant.Grant{rigGrant()}, err: errors.New("down")}, false},
-		"approval memory off":  {armed, false, &fakeGrants{list: []grant.Grant{rigGrant()}}, false},
-		"a malformed grant id": {ArmDecision{Verdict: "arm", Rows: rigDecisionRows("x:1")}, true, &fakeGrants{list: []grant.Grant{rigGrant()}}, false},
+		"the lookup failed":    {armed, true, &fakeGrants{list: []grant.Grant{centralGrant()}, err: errors.New("down")}, false},
+		"approval memory off":  {armed, false, &fakeGrants{list: []grant.Grant{centralGrant()}}, false},
+		"a malformed grant id": {ArmDecision{Verdict: "arm", Rows: rigDecisionRows("x:1")}, true, &fakeGrants{list: []grant.Grant{centralGrant()}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Read: true, ApprovalMemory: tc.on}},
+			r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Read: true, ApprovalMemory: tc.on},
+				Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Classes: map[string]config.Class{"docs-links": central}}}},
 				Grants: tc.grants, Metrics: &fakeMetrics{}, Now: func() time.Time { return now },
 				Policy: func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }}
 			if got := r.grantHolds(t.Context(), r.Cfg.Current(), tk, tc.d); got != tc.want {
