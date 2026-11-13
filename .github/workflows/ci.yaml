@@ -132,6 +132,17 @@ jobs:
           echo "check-static: $STATIC, check-test: $TEST"
           [[ $STATIC == success && $TEST == success ]]
 
+  # Once a main push has saved its Go caches, drop the older go-* entries (go-cache-cleanup.yaml).
+  # It waits for both saves and runs whatever they did, so a failed slice still prunes; never its own sha.
+  go-cache-cleanup:
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    needs: [check-static, check-test]
+    permissions:
+      actions: write
+    uses: ./.github/workflows/go-cache-cleanup.yaml
+    with:
+      keep-sha: ${{ github.sha }}
+
   # The harness's suites live in its Dockerfile's test stage; `task check` needs no docker.
   # They run on amd64 only: the arm64 image is published untested, as it was in cloud-native-ref.
   # Required, so the job always runs and reports: on a pull request that leaves images/maku-harness/

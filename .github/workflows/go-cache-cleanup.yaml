@@ -1,0 +1,66 @@
+name: go-cache-cleanup
+
+# Each of main's pushes saves the Go caches under a new key (ci.yaml: go-<job>-<os>-<deps hash>-<sha>),
+# about 2 GB a push against the repository's 10 GB, and every restore takes the newest entry of its
+# go-<job>-<os>- prefix. So only that newest entry is worth keeping: this deletes the older go-*
+# entries on main, one prefix at a time. Keys of any other shape (mise's, a cache added later) are
+# never touched, nor is the entry the calling run saved (keep-sha). Deleting what is already gone is
+# not an error, so a rerun, or two runs racing, ends in the same state.
+#
+# Called by ci.yaml after a main push's saves, and weekly for whatever a failed run left behind.
+on:
+  workflow_call:
+    inputs:
+      keep-sha:
+        description: The commit whose go-* entries are never deleted (the calling run's saves)
+        type: string
+        required: true
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    concurrency:
+      group: go-cache-cleanup
+      cancel-in-progress: false
+    steps:
+      - name: Delete all but the newest go-* cache of each prefix
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          KEEP_SHA: ${{ inputs.keep-sha || github.sha }}
+        run: |
+          set -euo pipefail
+          stale=$(
+            gh api --paginate "repos/$REPO/actions/caches?key=go-&ref=refs/heads/main&per_page=100" \
+              --jq '.actions_caches[]' |
+              jq -s -r --arg keep "$KEEP_SHA" '
+                [ .[]
+                  | select(.key | test("^go-[a-z]+-[A-Za-z0-9]+-[0-9a-f]{64}-[0-9a-f]{40}$"))
+                  | . + {prefix: (.key | sub("-[0-9a-f]{64}-[0-9a-f]{40}$"; ""))} ]
+                | group_by(.prefix)[]
+                | sort_by(.created_at) | reverse | .[1:][]
+                | select(.key | endswith("-" + $keep) | not)
+                | "\(.id)\t\(.key)"'
+          )
+          if [[ -z $stale ]]; then
+            echo "Nothing to delete."
+            exit 0
+          fi
+          while IFS=$'\t' read -r id key; do
+            if out=$(gh api -X DELETE "repos/$REPO/actions/caches/$id" 2>&1); then
+              echo "deleted $key"
+            elif [[ $out == *"HTTP 404"* ]]; then
+              echo "already gone: $key"
+            else
+              echo "::error::deleting $key: $out"
+              exit 1
+            fi
+          done <<<"$stale"
