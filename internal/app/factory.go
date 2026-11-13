@@ -228,7 +228,43 @@ func humanVerifier(ctx context.Context, cfg *config.Config) (*authn.Verifier, er
 	if cfg.Demo {
 		return nil, nil
 	}
+	if cfg.API.HumanJWKS == "" {
+		// The issuer's discovery document names jwks_uri. Fetched now, as a JWKS URL would be: the
+		// factory starts only once its humans' keys are in hand.
+		v, err := authn.NewDiscoveringVerifier(cfg.API.HumanIssuer)
+		if err != nil {
+			return nil, err
+		}
+		if err := v.Refresh(ctx); err != nil {
+			return nil, fmt.Errorf("authn: initial discovery and JWKS fetch for %s: %w", cfg.API.HumanIssuer, err)
+		}
+		return v, nil
+	}
 	return authn.NewVerifier(ctx, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+}
+
+// fileReader reads a mounted id at use: an ExternalSecret may rotate it. Unset or unreadable is "".
+func fileReader(path string) func() string {
+	return func() string {
+		if path == "" {
+			return ""
+		}
+		b, _ := os.ReadFile(filepath.Clean(path))
+		return strings.TrimSpace(string(b))
+	}
+}
+
+// apiAudience is the aud value a generic sponsored or access token must hold, and the zitadel
+// preset's project id; nil-safe readers both.
+func apiAudience(a config.API) func() string {
+	switch {
+	case a.EffectivePreset() == config.PresetZITADEL:
+		return fileReader(a.ProjectIDFile)
+	case a.AudienceFile != "":
+		return fileReader(a.AudienceFile)
+	}
+	aud := a.Audience
+	return func() string { return aud }
 }
 
 // runTokens keeps the run-controller's two git Secrets filled with tokens from the App
@@ -542,6 +578,24 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		}
 		log.Info("hardening: the safe-output applier is on", "interval", a.Interval, "answerWait", a.AnswerWait)
 	}
+	// Hardening H4 (HR38): the drill runner scores the drills planted against this factory, on the
+	// leader, while hardening.drills.gatewayLog is set; it reads applied pushes through the
+	// applier's mirror. Its reports go to the broker, which readiness's R6 reads (rooms.Client is
+	// hardening.Drills).
+	dd := drillDeps{Client: ledgers, Namespace: ns, Rooms: broker, Claims: rc, Live: live.Current, Metrics: m, Log: log}
+	if a != nil {
+		dd.Pushers = a.Pushers
+	}
+	dr, err := drillRunner(cfg, dd)
+	if err != nil {
+		return err
+	}
+	if dr != nil {
+		if err := mgr.Add(dr); err != nil {
+			return fmt.Errorf("manager: %w", err)
+		}
+		log.Info("hardening: the drill runner is on", "timeout", cfg.Hardening.Drills.Timeout)
+	}
 	// stopped is §6.1's pause: the stop object stops intake, and from phase 5 the API is intake
 	// too — it refuses 503 kill_switch exactly when the poller stands down.
 	stopped := func(ctx context.Context) bool {
@@ -571,7 +625,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	access := conns.access(log, cfg, perms)
 	people, _ := access.(api.PersonResolver) // D1: the login the write check reads is the person charged
 	auth := &api.Authenticator{Humans: humansV, Groups: groups, ClientIDs: clientIDs,
-		Systems: systemsV, SystemAllow: cfg.API.SystemPrincipals}
+		Systems: systemsV, SystemAllow: cfg.API.SystemPrincipals,
+		TokenUse: cfg.API.EffectiveTokenUse(), RolesClaim: cfg.API.RolesClaim, RolesRefused: m.HumanRolesClaimRefused}
+	if cfg.API.EffectivePreset() == config.PresetGeneric {
+		auth.Generic = true
+		auth.Audience = apiAudience(cfg.API) // the zitadel preset's human path pins the client alone, as before
+	}
 	if humansV != nil && len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4: the third branch, only while a principal is declared
 		clients := make([]authn.SponsoredClient, 0, len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals))
 		client := func(sp config.Sponsored, internal bool) authn.SponsoredClient {
@@ -587,10 +646,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			clients = append(clients, client(ip.Sponsored, true))
 		}
 		auth.Sponsored = &authn.Sponsored{V: humansV, Clients: clients, Exclude: clientIDs,
-			Audience: func() string {
-				b, _ := os.ReadFile(filepath.Clean(cfg.API.ProjectIDFile))
-				return strings.TrimSpace(string(b))
-			}}
+			Audience: apiAudience(cfg.API), ClientClaim: cfg.API.SponsoredClientClaim, Generic: auth.Generic}
 	}
 	// The self-serve link: the broker's records, and the same ZITADEL resolver api.access reads.
 	var logins api.LoginResolver
@@ -910,7 +966,7 @@ type wiring struct {
 
 // served moves the pollers, the metrics' repository list and the fence onto the served set once
 // a sync changed it. A dropped repository's repository_owned keeps its last value: a 0 would
-// fire FactoryRepositoryNotOwned for a repository nobody serves.
+// fire AgentFactoryRepositoryNotOwned for a repository nobody serves.
 func (w *wiring) served() []string {
 	w.servedMu.Lock()
 	defer w.servedMu.Unlock()

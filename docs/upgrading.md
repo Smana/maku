@@ -4,6 +4,22 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Scrape objects and alerts (v0.4x, v4 rollout step 6)
+
+New umbrella keys, all off by default, so a release that sets none of them renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `monitoring.serviceMonitor` | `enabled: false` | `ServiceMonitor`s for the broker and the factory, `PodMonitor`s for the run-controller, the egress proxy and the model-gateway proxies ([observability](observability.md)). The scraper must be admitted: `maku.networkPolicies.kubernetes.metricsFrom` in maku's mode kubernetes, `monitoring.serviceMonitor.cilium.fromEndpoints` in its mode cilium (the default), `maku-gateway.metrics.allowFrom` with the gateway's policy on |
+| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)) |
+| `slack.enabled` | `false` | Until the Slack App's subchart ships, only the `maku-slack` alert group, for an App installed outside the chart |
+
+Both need the prometheus-operator CRDs. An install that runs its own copies of these rules (the
+`VMRule`s cloud-native-ref carries) removes them when it turns `prometheusRule` on, or both fire. Two
+alerts are renamed from what this page's [factory alerts](operations.md#factory-alerts) documented:
+`FactoryRepositoryNotOwned` is `AgentFactoryRepositoryNotOwned`, as cloud-native-ref named it, and
+`AgentFactoryClassPausedLong` watches every class, not a fixed list.
+
 ## Runs through the model gateway (v0.4x, v4 rollout step 4)
 
 New keys, all off by default, so a release that sets none of them renders as before:

@@ -102,7 +102,9 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 		Enforced:    func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) },
 		AgentsLogin: cfg.AgentsLogin, FactoryLogin: cfg.FactoryLogin,
 		Interval: cfg.Hardening.Applier.Interval.Duration, AnswerWait: cfg.Hardening.Applier.AnswerWait.Duration,
-		Now: time.Now, Metrics: d.Metrics, Log: d.Log}
+		Now: time.Now, Metrics: d.Metrics, Log: d.Log,
+		// HR39, #520's review: a T5 call counts as a drill's only on a real drill task.
+		Drill: func(repo string) bool { return d.Live().DrillTask(repo) }}
 	if err := wirePush(cfg, d, tokens, a); err != nil {
 		return nil, err
 	}

@@ -5,12 +5,14 @@ package authn
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -273,5 +275,107 @@ func TestPrincipalNeverPrintsTheAccessToken(t *testing.T) {
 		if !strings.Contains(out, "human:123") {
 			t.Errorf("%s lost the principal id: %s", name, out)
 		}
+	}
+}
+
+// claimsOf decodes a claim set as the verifier does, so RoleNames reads the raw claims.
+func claimsOf(t *testing.T, raw string) *Claims {
+	t.Helper()
+	var c Claims
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatal(err)
+	}
+	return &c
+}
+
+func TestRoleNames(t *testing.T) {
+	many := make([]string, 257)
+	for i := range many {
+		many[i] = fmt.Sprintf("g%d", i)
+	}
+	tooMany, _ := json.Marshal(map[string]any{"groups": many})
+	tooLong, _ := json.Marshal(map[string]any{"groups": []string{strings.Repeat("a", 257)}})
+	cases := []struct {
+		name, claims, claim string
+		want                []string
+		reason              string // "" accepts
+	}{
+		{"an array", `{"groups":["a","b"]}`, "groups", []string{"a", "b"}, ""},
+		{"a pointer (Keycloak)", `{"realm_access":{"roles":["x"]}}`, "/realm_access/roles", []string{"x"}, ""},
+		{"a URL without a leading slash is a name (Auth0)", `{"https://ns.example/roles":["r"]}`, "https://ns.example/roles", []string{"r"}, ""},
+		{"an object's keys (ZITADEL)", `{"urn:zitadel:iam:org:project:roles":{"agents-admin":{"1":"o"}}}`,
+			"urn:zitadel:iam:org:project:roles", []string{"agents-admin"}, ""},
+		{"a single string (Authentik)", `{"groups":"agents-member"}`, "groups", []string{"agents-member"}, ""},
+		{"~1 and ~0 unescape", `{"a/b":{"c~d":["y"]}}`, "/a~1b/c~0d", []string{"y"}, ""},
+		{"a number", `{"groups":3}`, "groups", nil, RolesClaimType},
+		{"an array holding a number", `{"groups":["a",3]}`, "groups", nil, RolesClaimType},
+		{"null", `{"groups":null}`, "groups", nil, RolesClaimType},
+		{"257 names", string(tooMany), "groups", nil, RolesClaimBounds},
+		{"a name over 256 bytes", string(tooLong), "groups", nil, RolesClaimBounds},
+		{"absent", `{"sub":"2918"}`, "groups", nil, RolesClaimMissing},
+		{"a pointer through a non-object", `{"realm_access":["roles"]}`, "/realm_access/roles", nil, RolesClaimMissing},
+		{"an absent pointer", `{"realm_access":{}}`, "/realm_access/roles", nil, RolesClaimMissing},
+		{"a bad escape", `{"a~2":["y"]}`, "/a~2", nil, RolesClaimMissing},
+		// "" is today's GroupNames: groups, else the ZITADEL project roles' keys.
+		{"the zitadel rule: groups", `{"groups":["g"],"urn:zitadel:iam:org:project:roles":{"r":{}}}`, "", []string{"g"}, ""},
+		{"the zitadel rule: the project roles", `{"urn:zitadel:iam:org:project:roles":{"b":{},"a":{}}}`, "", []string{"a", "b"}, ""},
+		{"the zitadel rule: neither", `{}`, "", []string{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := claimsOf(t, c.claims).RoleNames(c.claim)
+			if c.reason == "" {
+				if err != nil || !slices.Equal(got, c.want) {
+					t.Fatalf("got %v, %v; want %v", got, err, c.want)
+				}
+				return
+			}
+			var rc *RolesClaimError
+			if !errors.Is(err, ErrRolesClaim) || !errors.As(err, &rc) || rc.Reason != c.reason || got != nil {
+				t.Fatalf("got %v, %v; want reason %s", got, err, c.reason)
+			}
+			// No claim value reaches an error string (package doc).
+			if strings.Contains(err.Error(), "agents") || strings.Contains(err.Error(), "aaaa") {
+				t.Fatalf("a claim value reached the error: %v", err)
+			}
+		})
+	}
+	// "" equals GroupNames on today's fixtures, decoded or built.
+	for _, c := range []Claims{{Groups: []string{"g"}}, {}, {ProjectRoles: map[string]json.RawMessage{"b": nil, "a": nil}}} {
+		got, err := c.RoleNames("")
+		if err != nil || !slices.Equal(got, c.GroupNames()) {
+			t.Fatalf("RoleNames(\"\") = %v, %v; GroupNames %v", got, err, c.GroupNames())
+		}
+	}
+	// The zitadel rule keeps today's behaviour: no bound on the names (review of #524).
+	if got, err := claimsOf(t, string(tooMany)).RoleNames(""); err != nil || len(got) != 257 {
+		t.Fatalf("the zitadel rule dropped %d names: %v", len(got), err)
+	}
+	// A token whose groups claim is not an array verifies under the generic preset, which reads it
+	// with RoleNames; the zitadel and machine paths refuse it whole, as before.
+	s := newSigner(t)
+	for _, groups := range []any{"agents-member", 3, map[string]any{"a": 1}} {
+		raw := sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": "web",
+			"exp": time.Now().Add(time.Hour).Unix(), "groups": groups})
+		if _, err := s.verifier().parseGeneric(t.Context(), raw); err != nil {
+			t.Fatalf("generic, groups %v: %v", groups, err)
+		}
+		if _, err := s.verifier().parseWith(t.Context(), raw); !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("strict, groups %v: %v", groups, err)
+		}
+	}
+	raw := sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": "web",
+		"exp": time.Now().Add(time.Hour).Unix(), "urn:zitadel:iam:org:project:roles": []string{"x"}})
+	if _, err := s.verifier().parseWith(t.Context(), raw); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("strict, an array of project roles: %v", err)
+	}
+	raw = sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": "web",
+		"exp": time.Now().Add(time.Hour).Unix(), "groups": "agents-member"})
+	c, err := s.verifier().parseGeneric(t.Context(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.RoleNames("groups"); err != nil || !slices.Equal(got, []string{"agents-member"}) {
+		t.Fatalf("got %v, %v", got, err)
 	}
 }

@@ -3,6 +3,7 @@
 package authn
 
 import (
+	"maps"
 	"testing"
 	"time"
 
@@ -113,5 +114,87 @@ func TestSponsoredInternalFlag(t *testing.T) {
 				t.Fatalf("%+v %v", p, err)
 			}
 		})
+	}
+}
+
+// A generic issuer's client-credentials token: the client in azp, or in a configured claim (Okta's
+// cid), and the configured audience in aud.
+func TestSponsoredGeneric(t *testing.T) {
+	sg := newSigner(t)
+	const slack, api = "0oa-slack", "api://rooms"
+	tok := func(claims jwt.MapClaims) string {
+		c := jwt.MapClaims{"iss": issuer, "sub": slack, "aud": api, "exp": time.Now().Add(time.Hour).Unix()}
+		maps.Copy(c, claims)
+		return sign(t, jwt.SigningMethodRS256, sg.key, "", c)
+	}
+	s := func(claim string) *Sponsored {
+		return &Sponsored{V: sg.verifier(), Clients: []SponsoredClient{{Name: "slack-app", ClientID: func() string { return slack }}},
+			Audience: func() string { return api }, ClientClaim: claim, Generic: true}
+	}
+	cases := []struct {
+		name, claim string
+		raw         string
+		ok          bool
+	}{
+		{"azp", "", tok(jwt.MapClaims{"azp": slack}), true},
+		{"azp, another audience", "", tok(jwt.MapClaims{"azp": slack, "aud": "other"}), false},
+		{"cid, by the configured claim (Okta)", "cid", tok(jwt.MapClaims{"cid": slack}), true},
+		{"cid without the configured claim", "", tok(jwt.MapClaims{"cid": slack}), false},
+		{"the configured claim naming another client", "cid", tok(jwt.MapClaims{"cid": "0oa-other", "azp": slack}), false},
+		{"the configured claim not a string", "cid", tok(jwt.MapClaims{"cid": 7}), false},
+		{"the configured claim, another audience", "cid", tok(jwt.MapClaims{"cid": slack, "aud": "other"}), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := s(c.claim).Authenticate(t.Context(), c.raw)
+			if c.ok != (err == nil) || c.ok && (p.ID != "system:slack-app" || p.ClientID != slack) {
+				t.Fatalf("got %+v, %v; want ok %v", p, err, c.ok)
+			}
+		})
+	}
+}
+
+// ClientClaim is one of a closed set, and never outvotes azp or client_id naming another client
+// (review of #524). Under the zitadel rules the one-element aud never names a client.
+func TestSponsoredClientClaimBounds(t *testing.T) {
+	sg := newSigner(t)
+	const slack, api = "0oa-slack", "api://rooms"
+	tok := func(claims jwt.MapClaims) string {
+		c := jwt.MapClaims{"iss": issuer, "sub": slack, "aud": api, "exp": time.Now().Add(time.Hour).Unix()}
+		maps.Copy(c, claims)
+		return sign(t, jwt.SigningMethodRS256, sg.key, "", c)
+	}
+	s := func(claim string, generic bool) *Sponsored {
+		return &Sponsored{V: sg.verifier(), Clients: []SponsoredClient{{Name: "slack-app", ClientID: func() string { return slack }}},
+			Audience: func() string { return api }, ClientClaim: claim, Generic: generic}
+	}
+	for _, c := range []struct {
+		name, claim string
+		generic     bool
+		raw         string
+		ok          bool
+	}{
+		{"sub is not a client claim", "sub", true, tok(nil), false},
+		{"appid (Entra)", "appid", true, tok(jwt.MapClaims{"appid": slack}), true},
+		{"cid, azp naming another client", "cid", true, tok(jwt.MapClaims{"cid": slack, "azp": "0oa-other"}), false},
+		{"cid, client_id naming another client", "cid", true, tok(jwt.MapClaims{"cid": slack, "client_id": "0oa-other"}), false},
+		{"cid, azp the same client", "cid", true, tok(jwt.MapClaims{"cid": slack, "azp": slack}), true},
+		{"generic: aud the client alone is not the audience", "", true, tok(jwt.MapClaims{"aud": slack}), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := s(c.claim, c.generic).Authenticate(t.Context(), c.raw); c.ok != (err == nil) {
+				t.Fatalf("got %v, want ok %v", err, c.ok)
+			}
+		})
+	}
+	for _, claim := range []string{"cid", "azp", "client_id", "appid"} {
+		if !ValidClientClaim(claim) {
+			t.Errorf("%s refused", claim)
+		}
+	}
+	for _, claim := range []string{"sub", "aud", "email", "Cid"} {
+		if ValidClientClaim(claim) {
+			t.Errorf("%s accepted", claim)
+		}
 	}
 }

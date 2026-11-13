@@ -5,8 +5,11 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
@@ -27,6 +30,20 @@ type Authenticator struct {
 	SystemAllow map[string]string // ServiceAccount sub → system:<component>; empty ships: none exists yet
 	// Sponsored is F4's third branch; nil while api.sponsored is empty.
 	Sponsored *authn.Sponsored
+	// TokenUse is what the broker forwards and maku sends (v4 D8): "" or access, a JWT access
+	// token; id, an ID token whose aud holds the client it was issued to.
+	TokenUse string
+	// RolesClaim names the claim holding the groups, or an RFC 6901 pointer; "" is the zitadel
+	// preset's groups, else the project roles' keys.
+	RolesClaim string
+	// Generic is the generic preset: a one-element aud may name the client, and the roles claim
+	// is judged by RoleNames. Unset is the zitadel preset, byte for byte.
+	Generic bool
+	// Audience is the aud value a generic access token must hold; nil or "" refuses. Unread under
+	// the zitadel preset, whose human path pins the client alone, and under token use id.
+	Audience func() string
+	// RolesRefused counts a roles claim that gave no group, by its reason. Optional.
+	RolesRefused func(ctx context.Context, reason string)
 }
 
 // Authenticate maps r to its caller's principal, from the bearer token alone.
@@ -44,11 +61,15 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 		}
 		// A refusal here is only a client mismatch until every id failed; it must
 		// not mask the system branch, so it is skipped, not returned.
-		c, err := a.Humans.VerifyAuthorizedParty(r.Context(), raw, id)
+		c, err := a.verifyHuman(r.Context(), raw, id)
 		if err != nil {
 			continue
 		}
-		p := authn.Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: c.GroupNames(),
+		groups, err := c.RoleNames(a.RolesClaim) // a refused claim holds no group: refused below, never a member
+		if rc := (*authn.RolesClaimError)(nil); errors.As(err, &rc) && a.RolesRefused != nil {
+			a.RolesRefused(r.Context(), rc.Reason)
+		}
+		p := authn.Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: groups,
 			ClientID: id, Expiry: c.ExpiresAt.Time, AccessToken: raw}
 		if !a.Groups.Admitted(p) {
 			// No claims in the message: it reaches logs (authn package rule).
@@ -74,4 +95,28 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 		return authn.Principal{}, fmt.Errorf("%w: demo_no_human_tokens", authn.ErrUnauthenticated)
 	}
 	return authn.Principal{}, fmt.Errorf("%w: no accepted issuer or client", authn.ErrUnauthenticated)
+}
+
+// verifyHuman checks raw, a human token issued to client, by the preset's and the token use's rule:
+// an ID token whose aud holds the client (token use id); a generic access token whose aud holds the
+// configured audience; or the zitadel preset's azp or client_id, aud unread, as before.
+func (a *Authenticator) verifyHuman(ctx context.Context, raw, client string) (*authn.Claims, error) {
+	switch {
+	case a.TokenUse == authn.TokenUseID:
+		return a.Humans.VerifyIDToken(ctx, raw, client)
+	case a.Generic:
+		c, err := a.Humans.VerifyClient(ctx, raw, client)
+		if err != nil {
+			return nil, err
+		}
+		var aud string
+		if a.Audience != nil {
+			aud = a.Audience()
+		}
+		if aud == "" || !slices.Contains(c.Audience, aud) {
+			return nil, fmt.Errorf("%w: aud does not hold the audience", authn.ErrWrongAudience)
+		}
+		return c, nil
+	}
+	return a.Humans.VerifyAuthorizedParty(ctx, raw, client)
 }

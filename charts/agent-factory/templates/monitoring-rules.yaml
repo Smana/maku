@@ -1,0 +1,61 @@
+{{- include "afumbrella.profile" . -}}
+{{- /* v4 step 6 (D21, EX13): the product alerts, one PrometheusRule with a group per component. The
+groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, never tpl, so
+{{ $labels.x }} reaches Prometheus as written and promtool tests what renders
+(tests/monitoring.sh). A group renders only with its component; a rule only with what it reads. */}}
+{{- $r := .Values.monitoring.prometheusRule -}}
+{{- if $r.enabled }}
+{{- $maku := .Values.maku -}}
+{{- $issuer := dig "broker" "human" "issuer" "" $maku -}}
+{{- $docs := $r.docsURL | default (printf "https://github.com/Smana/maku/blob/v%s/docs" .Chart.AppVersion) | trimSuffix "/" -}}
+{{- $runsNS := dig "runs" "namespace" "agents" $maku -}}
+{{- $files := list "rooms" "factory" "run-path" "slack" -}}
+{{- $on := list -}}
+{{- $drop := $r.disabled | default list -}}
+{{- if $maku.enabled -}}
+{{- $on = append $on "rooms" -}}
+{{- /* local mode has no identity provider: the broker never fetches a human issuer's keys. */ -}}
+{{- if or (not $issuer) (eq (dig "broker" "human" "mode" "oidc" $maku) "local") }}{{ $drop = append $drop "RoomAuthnHumanIssuerNeverFetched" }}{{ end -}}
+{{- if $maku.runController.enabled -}}
+{{- $on = append $on "run-path" -}}
+{{- if ne (dig "networkPolicies" "mode" "" $maku) "kubernetes" }}{{ $drop = append $drop "EgressProxyDown" }}{{ end -}}
+{{- if not $r.kubeStateMetrics }}{{ $drop = append $drop "AgentSandboxPodPending" }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- if (index .Values "maku-factory").enabled }}{{ $on = append $on "factory" }}{{ end -}}
+{{- if (.Values.slack | default dict).enabled }}{{ $on = append $on "slack" }}{{ end -}}
+{{- $known := list -}}
+{{- $groups := list -}}
+{{- range $f := $files -}}
+{{- $text := $.Files.Get (printf "files/rules/%s.yaml" $f)
+  | replace "__NAMESPACE__" $.Release.Namespace
+  | replace "__RUNS_NAMESPACE__" $runsNS
+  | replace "__HUMAN_ISSUER__" $issuer
+  | replace "__DOCS__" $docs -}}
+{{- $g := fromYaml $text -}}
+{{- if hasKey $g "Error" }}{{ fail (printf "files/rules/%s.yaml: %s" $f $g.Error) }}{{ end -}}
+{{- $rules := list -}}
+{{- range $g.rules -}}
+{{- $known = append $known (.alert | default .record) -}}
+{{- if not (has (.alert | default .record) $drop) }}{{ $rules = append $rules . }}{{ end -}}
+{{- end -}}
+{{- if and (has $f $on) $rules }}{{ $groups = append $groups (dict "name" $g.name "rules" $rules) }}{{ end -}}
+{{- end -}}
+{{- range $r.disabled -}}
+{{- if not (has . $known) }}{{ fail (printf "monitoring.prometheusRule.disabled names %s, which no group holds (docs/operations.md#alerts lists them)" .) }}{{ end -}}
+{{- end -}}
+{{- if $groups }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: maku
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "afumbrella.labels" . | nindent 4 }}
+    {{- with $r.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups: {{- toYaml $groups | nindent 4 }}
+{{- end }}
+{{- end }}

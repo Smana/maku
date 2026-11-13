@@ -1,0 +1,74 @@
+{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.monitoring" . -}}
+{{- /* v4 step 6 (D21, EX12): one scrape object per component, on its `metrics` port. ServiceMonitors
+where a Service already carries that port; PodMonitors elsewhere, so a default render gains no
+Service. Each sets nothing a Prometheus would guess: the job label is the component's name, which the
+PrometheusRule's `up` selectors read. */}}
+{{- $sm := .Values.monitoring.serviceMonitor -}}
+{{- if $sm.enabled }}
+{{- $maku := .Values.maku -}}
+{{- $scrapes := list -}}
+{{- if $maku.enabled -}}
+{{- $scrapes = append $scrapes (dict "kind" "ServiceMonitor" "name" "room-broker" "app" "room-broker") -}}
+{{- if $maku.runController.enabled -}}
+{{- $scrapes = append $scrapes (dict "kind" "PodMonitor" "name" "maku-run-controller" "app" "run-controller") -}}
+{{- if eq (dig "networkPolicies" "mode" "" $maku) "kubernetes" -}}
+{{- $scrapes = append $scrapes (dict "kind" "PodMonitor" "name" "maku-egress-proxy" "app" "egress-proxy") -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if (index .Values "maku-factory").enabled -}}
+{{- $scrapes = append $scrapes (dict "kind" "ServiceMonitor" "name" "agent-factory" "app" "agent-factory") -}}
+{{- end -}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- if $gw.enabled -}}
+{{- /* The proxies agentgateway provisions for the Gateway: their pod port metrics is 15020. */ -}}
+{{- $scrapes = append $scrapes (dict "kind" "PodMonitor" "name" "maku-gateway" "selector" (dict "gateway.networking.k8s.io/gateway-name" $gw.name) "job" $gw.name) -}}
+{{- end -}}
+{{- range $scrapes }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: {{ .kind }}
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "afumbrella.labels" $ | nindent 4 }}
+    {{- with $sm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels: {{- toYaml (.selector | default (dict "app.kubernetes.io/name" .app)) | nindent 6 }}
+  {{ if eq .kind "ServiceMonitor" }}endpoints{{ else }}podMetricsEndpoints{{ end }}:
+    - port: metrics
+      path: /metrics
+      interval: {{ $sm.interval }}
+      {{- if eq .kind "PodMonitor" }}
+      relabelings:
+        - {targetLabel: job, replacement: {{ .job | default .app }}}
+      {{- end }}
+{{- end }}
+{{- if and $maku.enabled (eq (include "afumbrella.makuNetMode" .) "cilium") }}
+{{- /* maku's CNPs are default-deny and admit :9090 from the host only; Cilium unions the allows of
+every CNP selecting an endpoint, so this adds the scraper and nothing else. The factory has no CNP
+of maku's: it needs none. */}}
+{{- $apps := list "room-broker" -}}
+{{- if $maku.runController.enabled }}{{ $apps = append $apps "run-controller" }}{{ end }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: maku-metrics
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: {{ toJson $apps }}}
+  ingress:
+    - fromEndpoints: {{- toYaml $sm.cilium.fromEndpoints | nindent 8 }}
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+{{- end }}
+{{- end }}

@@ -140,6 +140,14 @@ func (c classifier) Injection(context.Context, []string) (bool, error) { return 
 type latency struct {
 	mu   sync.Mutex
 	seen map[string][]time.Duration
+	t5   []string
+}
+
+// HardeningT5 records each T5 call as "type result drill" (HR39).
+func (l *latency) HardeningT5(_ context.Context, typ, result string, drill bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.t5 = append(l.t5, fmt.Sprintf("%s %s %v", typ, result, drill))
 }
 
 func (l *latency) HardeningOutput(_ context.Context, typ string, d time.Duration) {
@@ -765,4 +773,80 @@ func appliedEvent(t *testing.T, run string, rec envelope.OutputRecord) envelope.
 	}
 	return envelope.Event{RunID: run, Type: envelope.Message, Origin: envelope.OriginClient,
 		Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: envelope.FactoryActor}, Payload: raw}
+}
+
+// seenClassifier records every text T5 is sent.
+type seenClassifier struct {
+	mu   sync.Mutex
+	seen []string
+}
+
+func (c *seenClassifier) Injection(_ context.Context, texts []string) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seen = append(c.seen, texts...)
+	return true, nil
+}
+
+// HR39 and #520's review: a secret or canary refusal, a cap refusal and a payload the broker
+// redacted never reach T5, so a refusal never sends what it protects out of the factory; a target
+// refusal is still measured. Every T5 call is counted by type, result and drill.
+func TestT5CounterOnRefusals(t *testing.T) {
+	cl := &seenClassifier{}
+	r := newRig(t, 7, func(a *Applier) {
+		a.Checker = func(string) hardening.Checker {
+			return hardening.Checker{Secrets: scanner{}, Classifier: cl, Layers: hardening.Layers{Classifier: hardening.ModeAudit}}
+		}
+		a.Drill = func(string) bool { return true }
+	})
+	var task v1alpha1.Task
+	if err := r.c.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: taskID}, &task); err != nil {
+		t.Fatal(err)
+	}
+	task.Labels = map[string]string{v1alpha1.LabelDrillInjection: "true"}
+	if err := r.c.Update(t.Context(), &task); err != nil {
+		t.Fatal(err)
+	}
+	leaked := r.request(t, runID, hardening.PR, hardening.PRPayload{Title: "docs: x", Body: "here: " + canary})
+	secret := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "key AKIAABCDEFGHIJKLMNOP"})
+	targeted := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetPR, Body: "a review note"})
+	redacted := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetPR, Body: "key [REDACTED]"})
+	r.rooms.mu.Lock()
+	r.rooms.events[len(r.rooms.events)-1].Redactions = []string{"aws-access-token"}
+	r.rooms.mu.Unlock()
+	applied := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+	r.tick(t)
+	for id, want := range map[string]hardening.Refusal{leaked: hardening.RefuseCanary, secret: hardening.RefuseSecret,
+		targeted: hardening.RefuseTarget, redacted: hardening.RefuseSecret} {
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(want) {
+			t.Fatalf("%s: %+v", want, a)
+		}
+	}
+	if a := r.only(t, targeted); len(a.rec.Audit) != 1 || a.rec.Audit[0] != (envelope.OutputFinding{Layer: "t5_classifier", Reason: "injection_suspected"}) {
+		t.Fatalf("the target refusal %+v", a)
+	}
+	if b := r.only(t, applied); b.kind != envelope.KindOutputApplied {
+		t.Fatalf("the pr %+v", b)
+	}
+	cl.mu.Lock()
+	seen := strings.Join(cl.seen, "|")
+	cl.mu.Unlock()
+	if strings.Contains(seen, canary) || strings.Contains(seen, "AKIA") || strings.Contains(seen, "REDACTED") {
+		t.Fatalf("T5 was sent a refused secret: %q", seen)
+	}
+	r.metrics.mu.Lock()
+	got := strings.Join(r.metrics.t5, ",")
+	r.metrics.mu.Unlock()
+	if got != "comment hit true,pr hit true" {
+		t.Fatalf("t5 %q", got)
+	}
+	// With the drills off for the repository, the same hit is not a drill's.
+	r.a.Drill = func(string) bool { return false }
+	r.request(t, runID, hardening.PR, prPayload("docs: another"))
+	r.tick(t)
+	r.metrics.mu.Lock()
+	defer r.metrics.mu.Unlock()
+	if r.metrics.t5[len(r.metrics.t5)-1] != "pr hit false" {
+		t.Fatalf("t5 %q", r.metrics.t5)
+	}
 }
