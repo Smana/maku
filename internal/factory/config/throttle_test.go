@@ -15,8 +15,12 @@ func TestMeterThrottleSource(t *testing.T) {
 		logsURL  = "  logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428\n"
 		promLine = "  throttle: {promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status=\"429\"}[2m])) > 0'}\n"
 	)
-	throttleQuery := good[strings.Index(good, "  throttleQuery:"):]
-	throttleQuery = throttleQuery[:strings.Index(throttleQuery, "\n")+1]
+	_, rest, ok := strings.Cut(good, "  throttleQuery:")
+	if !ok {
+		t.Fatal("good has no throttleQuery")
+	}
+	line, _, _ := strings.Cut(rest, "\n")
+	throttleQuery := "  throttleQuery:" + line + "\n"
 	noLogs := strings.Replace(strings.Replace(good, logsURL, "", 1), throttleQuery, "", 1)
 	for name, c := range map[string]struct {
 		raw, err string
