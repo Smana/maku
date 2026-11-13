@@ -293,7 +293,7 @@ func newSlackApp(cfg slackapp.Config, cl client.Client, rec slackapp.Recorder, l
 	hc := httpx.New(slackTimeout, nil)
 	tokens := &slackapp.Tokens{Fetch: func(ctx context.Context) (*oauth2.Token, error) { return slackToken(ctx, hc, cfg) }}
 	return &slackapp.App{
-		Slack:    &slackapp.SlackClient{Token: func() string { return fileValue(cfg.BotTokenFile) }, HC: hc, Logger: log},
+		Slack:    &slackapp.SlackClient{BaseURL: cfg.APIBaseURL, Token: func() string { return fileValue(cfg.BotTokenFile) }, HC: hc, Logger: log},
 		Broker:   slackapp.Broker{URL: cfg.BrokerURL, Tokens: tokens, HC: hc},
 		Threads:  slackapp.ConfigMapThreads{C: cl, Namespace: cfg.Namespace, Now: time.Now, Logger: log},
 		Verifier: slackapp.Verifier{Secret: func() string { return fileValue(cfg.SigningSecretFile) }, Now: time.Now},
