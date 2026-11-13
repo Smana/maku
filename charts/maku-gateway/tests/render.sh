@@ -141,12 +141,16 @@ yeq "[select(.kind == \"AgentgatewayBackend\") | .metadata.name] | sort | join(\
   'anthropic-agent-default,anthropic-tier-frontier,anthropic-tier-light,anthropic-tier-standard,mistral-mistral-light,mistral-mistral-standard,moonshot-kimi-frontier,zai-agent-default,zai-planner,zai-tier-frontier,zai-tier-light,zai-tier-standard' \
   'one backend per alias row and per client'
 r='maku-models-public-kimi-frontier'
-yeq "$(route $r) | .spec.parentRefs[0].name + \"/\" + .spec.parentRefs[0].sectionName + \" \" + .spec.rules[0].matches[0].path.type + \" \" + .spec.rules[0].matches[0].path.value" \
-  'model-gateway/public PathPrefix /m/kimi-frontier/' 'the alias route matches /m/kimi-frontier/ on public'
-yeq "$(route $r) | .spec.rules[0].filters[0].urlRewrite.path.type + \" \" + .spec.rules[0].filters[0].urlRewrite.path.replacePrefixMatch + \" \" + .spec.rules[0].backendRefs[0].name" \
-  'ReplacePrefixMatch / moonshot-kimi-frontier' 'rewritten to / and sent to its backend'
+# Exact paths only: with the gateway's key, a caller reaches the provider's chat endpoint and nothing else.
+yeq "$(route $r) | .spec.parentRefs[0].name + \"/\" + .spec.parentRefs[0].sectionName + \" \" + ([.spec.rules[] | .matches[0].path.type + \" \" + .matches[0].path.value + \">\" + .filters[0].urlRewrite.path.type + \" \" + .filters[0].urlRewrite.path.replaceFullPath + \">\" + .backendRefs[0].name] | join(\",\"))" \
+  'model-gateway/public Exact /m/kimi-frontier/v1/chat/completions>ReplaceFullPath /v1/chat/completions>moonshot-kimi-frontier' \
+  'the alias route matches its chat path exactly, rewritten to the backend route'
+yeq "$(route maku-models-internal-tier-light) | [.spec.rules[] | .matches[0].path.value + \">\" + .filters[0].urlRewrite.path.replaceFullPath] | join(\",\")" \
+  '/m/tier-light/v1/chat/completions>/v1/chat/completions,/m/tier-light/v1/messages>/v1/messages' 'an anthropic alias also serves Messages, exactly'
+yeq "[select(.kind == \"HTTPRoute\") | .spec.rules[].matches[].path.type] | unique | join(\",\")" 'Exact' 'no route matches a prefix'
 yeq "$(rpol $r) | .spec.traffic.authorization.action + \" \" + (.spec.traffic.authorization.policy.matchExpressions | join(\",\"))" \
-  'Require "maku-gateway.public.kimi-frontier" in jwt.aud' "the route requires the alias's audience"
+  'Require "maku-gateway.public.kimi-frontier" in jwt.aud,jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")' \
+  "the route requires the alias's audience and, again, a run's subject"
 yeq "[select(.kind == \"HTTPRoute\") | .metadata.name] | sort | join(\",\")" \
   'maku-clients-planner,maku-models-internal-agent-default,maku-models-internal-list,maku-models-internal-tier-frontier,maku-models-internal-tier-light,maku-models-internal-tier-standard,maku-models-public-agent-default,maku-models-public-kimi-frontier,maku-models-public-list,maku-models-public-mistral-light,maku-models-public-mistral-standard,maku-models-public-tier-frontier,maku-models-public-tier-light,maku-models-public-tier-standard' \
   "a route per listener's alias rows, none for an alias the listener does not serve"
@@ -157,11 +161,11 @@ yeq "$(route maku-models-public-list) | [.spec.rules[0].matches[] | .path.type +
 yeq "$(rpol maku-models-public-list) | (.spec.traffic.directResponse.status | tostring) + \" \" + .spec.traffic.directResponse.body" \
   '404 {"error":"model listing is not served on the model gateway"}' 'and answered 404'
 yeq "$(route maku-clients-planner) | .spec.parentRefs[0].sectionName + \" \" + .spec.rules[0].matches[0].path.value + \" \" + .spec.rules[0].backendRefs[0].name" \
-  'clients /clients/planner/ zai-planner' "the planner's route on the clients listener"
+  'clients /clients/planner/v1/chat/completions zai-planner' "the planner's route on the clients listener"
 yeq "$(be zai-planner) | ([.spec.policies.ai.transformations[] | .field + \"=\" + .expression] | join(\",\")) + \" \" + .spec.policies.ai.modelAliases.\"tier-frontier\"" \
   'model="tier-frontier" glm-5.3' 'the planner forced to tier-frontier, mapped to glm-5.3'
 yeq "$(rpol maku-clients-planner) | .spec.traffic.authorization.policy.matchExpressions | join(\",\")" \
-  '"maku-gateway.client.planner" in jwt.aud' "the planner's route requires its audience"
+  '"maku-gateway.client.planner" in jwt.aud,jwt.sub == "system:serviceaccount:maku:room-broker"' "the planner's route requires its audience and the broker's subject"
 cat="$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .data."catalog.json"' - <<<"$out")"
 want="$(yq '.data."catalog.json"' tests/golden/anr-model-catalog.yaml)"
 [[ "$(jq -S . <<<"$cat")" == "$(jq -S . <<<"$want")" ]] || { echo "FAIL: the catalog differs from ANR's model-catalog.yaml:" >&2; diff <(jq -S . <<<"$want") <(jq -S . <<<"$cat") >&2; fail=1; }
