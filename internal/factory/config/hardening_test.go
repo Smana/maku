@@ -583,3 +583,51 @@ func TestReadFilterFact(t *testing.T) {
 
 // withAPI adds lines under the config's api block.
 func withAPI(cfg, lines string) string { return strings.Replace(cfg, "api:\n", "api:\n"+lines, 1) }
+
+// HR38: the drill runner's wait and its gateway log: defaults, bounds, and a URL with no
+// credentials. Neither enters the hash a drill proves: they are how it is scored, not what.
+func TestGatewayLogConfig(t *testing.T) {
+	for name, tc := range map[string]struct {
+		block            string
+		ok               bool
+		wait, query      time.Duration
+		url              string
+		sameHashAsBefore bool
+	}{
+		"defaults": {"", true, 6 * time.Hour, 10 * time.Second, "", true},
+		"in-cluster": {"hardening: {drills: {timeout: 3h, gatewayLog: {url: \"http://victoria-logs.observability.svc:9428\", timeout: 20s}}}\n",
+			true, 3 * time.Hour, 20 * time.Second, "http://victoria-logs.observability.svc:9428", true},
+		"ftp":               {"hardening: {drills: {gatewayLog: {url: \"ftp://logs:21\"}}}\n", false, 0, 0, "", false},
+		"userinfo":          {"hardening: {drills: {gatewayLog: {url: \"http://u:p@logs:9428\"}}}\n", false, 0, 0, "", false},
+		"a query":           {"hardening: {drills: {gatewayLog: {url: \"http://logs:9428?x=1\"}}}\n", false, 0, 0, "", false},
+		"a zero wait":       {"hardening: {drills: {timeout: 0s}}\n", false, 0, 0, "", false},
+		"over 48 hours":     {"hardening: {drills: {timeout: 49h}}\n", false, 0, 0, "", false},
+		"a minute's query":  {"hardening: {drills: {gatewayLog: {timeout: 61s}}}\n", false, 0, 0, "", false},
+		"a zero query time": {"hardening: {drills: {gatewayLog: {timeout: 0s}}}\n", false, 0, 0, "", false},
+		"an unknown key":    {"hardening: {drills: {gatewayLog: {token: x}}}\n", false, 0, 0, "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(good + tc.block))
+			if (err == nil) != tc.ok {
+				t.Fatalf("err %v, want ok %v", err, tc.ok)
+			}
+			if !tc.ok {
+				if !strings.Contains(err.Error(), "hardening") {
+					t.Fatalf("the error names the block: %v", err)
+				}
+				return
+			}
+			d := c.Hardening.Drills
+			if d.Timeout.Duration != tc.wait || d.GatewayLog.Timeout.Duration != tc.query || d.GatewayLog.URL != tc.url {
+				t.Fatalf("%+v", d)
+			}
+			base, err := Parse([]byte(good))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (c.Hardening.Hash() == base.Hardening.Hash()) != tc.sameHashAsBefore {
+				t.Fatal("the gateway log moved the hash")
+			}
+		})
+	}
+}
