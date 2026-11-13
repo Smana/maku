@@ -63,3 +63,21 @@ monitoring:
     enabled: false
     interval: 30s
     labels: {}
+  # One PrometheusRule, maku, with a group per component, each rendered only with it: maku-rooms
+  # (maku), maku-run-path (maku.runController), maku-factory (maku-factory), maku-slack
+  # (slack.enabled). docs/operations.md#alerts lists every alert. In PromQL, tested by promtool.
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # Alert names to leave out, e.g. one an install keeps its own variant of. A name no group holds
+    # fails the render.
+    disabled: []
+    # The rules that read kube-state-metrics' kube_* series (AgentSandboxPodPending).
+    kubeStateMetrics: false
+    # Each alert's runbook_url base. Empty: https://github.com/Smana/maku/blob/v<appVersion>/docs.
+    docsURL: ""
+
+# The Slack App (D20). Its subchart arrives in a later v4 step 6 PR; until then, true only adds the
+# maku-slack alert group, for a Slack App installed outside this chart.
+slack:
+  enabled: false

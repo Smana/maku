@@ -91,7 +91,27 @@
             "interval": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"},
             "labels": {"description": "Added to every scrape object.", "type": "object", "additionalProperties": {"type": "string"}}
           }
+        },
+        "prometheusRule": {
+          "description": "The PrometheusRule maku: the product alerts, a group per enabled component.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+            "disabled": {"description": "Alert names to leave out; each must name a chart alert.", "type": "array", "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$"}, "uniqueItems": true},
+            "kubeStateMetrics": {"description": "Render the rules that read kube-state-metrics' kube_* series.", "type": "boolean"},
+            "docsURL": {"description": "The runbook_url base. Empty: the release's docs on GitHub.", "type": "string", "pattern": "^(https?://\\S+)?$"}
+          }
         }
+      }
+    },
+    "slack": {
+      "description": "The Slack App (D20). Until its subchart lands (v4 step 6 PR E), enabled only adds the maku-slack alert group.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"}
       }
     },
     "maku": {"type": "object"},
