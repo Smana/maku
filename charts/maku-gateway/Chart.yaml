@@ -1,0 +1,9 @@
+apiVersion: v2
+name: maku-gateway
+description: "The agent factory's model gateway on agentgateway: one Gateway whose listeners verify each caller's projected token, a backend and a route per model alias, provider keys read from Secrets by name."
+type: application
+# Set by `helm package --version` from the tag (release) or the PR pre-release (R20).
+version: 0.0.0
+appVersion: "0.0.0"
+# The support floor (D26).
+kubeVersion: ">=1.30.0-0"

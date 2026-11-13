@@ -25,6 +25,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |
 | [API](api.md) | The broker's four listeners, their errors and limits |
 | [Security](security.md) | Threat model, identities, TLS, redaction, database roles, network, supply chain |
+| [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
 | [Upgrading](upgrading.md) | What changes in the install steps, release by release: the CRD chart and its adoption, `values-demo.yaml` |

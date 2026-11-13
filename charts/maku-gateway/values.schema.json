@@ -1,0 +1,227 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "maku-gateway values",
+  "description": "Strict: every object refuses a key it does not name (docs/gateway.md).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {"type": "object"},
+    "enabled": {"type": "boolean"},
+    "gatewayClassName": {"type": "string", "minLength": 1},
+    "name": {"$ref": "#/definitions/dnsLabel"},
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "registry": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$"}
+      }
+    },
+    "replicas": {"type": "integer", "minimum": 1},
+    "resources": {"type": "object"},
+    "listeners": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public", "internal", "clients"],
+      "properties": {
+        "public": {"$ref": "#/definitions/port"},
+        "internal": {"$ref": "#/definitions/port"},
+        "clients": {"$ref": "#/definitions/port"}
+      }
+    },
+    "audiencePrefix": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"},
+    "clusterDomain": {"type": "string", "minLength": 1},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {"type": "string"},
+        "jwks": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {"type": "string", "enum": ["url", "apiserver", "inline"]},
+            "url": {"type": "string"},
+            "inline": {"description": "source inline: the issuer's public JWKS (JSON), refreshed on key rotation.", "type": "string"},
+            "allowAnonymousDiscovery": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace", "namePrefix"],
+      "properties": {
+        "namespace": {"$ref": "#/definitions/dnsLabel"},
+        "namePrefix": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}
+      }
+    },
+    "broker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serviceAccount": {"$ref": "#/definitions/dnsLabel"},
+        "namespace": {"type": "string"},
+        "podLabels": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}
+      }
+    },
+    "providers": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/definitions/dnsLabel"},
+      "additionalProperties": {"$ref": "#/definitions/provider"}
+    },
+    "aliases": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "public": {
+          "type": "object",
+          "propertyNames": {"enum": ["agent-default", "tier-light", "tier-standard", "tier-frontier", "kimi-frontier", "mistral-standard", "mistral-light"]},
+          "additionalProperties": {"$ref": "#/definitions/target"}
+        },
+        "internal": {
+          "description": "An internal run never names a provider alias (the AgentRun's CEL rule).",
+          "type": "object",
+          "propertyNames": {"enum": ["agent-default", "tier-light", "tier-standard", "tier-frontier"]},
+          "additionalProperties": {"$ref": "#/definitions/target"}
+        }
+      }
+    },
+    "clients": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "planner": {"$ref": "#/definitions/client"},
+        "classifier": {"$ref": "#/definitions/client"}
+      }
+    },
+    "modelCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "prices": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z0-9][a-z0-9.-]*$"},
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["input", "cacheRead", "output"],
+            "properties": {
+              "input": {"$ref": "#/definitions/usd"},
+              "cacheRead": {"$ref": "#/definitions/usd"},
+              "cacheWrite": {"$ref": "#/definitions/usd"},
+              "output": {"$ref": "#/definitions/usd"},
+              "source": {"type": "string"},
+              "checkedAt": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runs": {"$ref": "#/definitions/duration"},
+        "clients": {"$ref": "#/definitions/duration"}
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["", "kubernetes", "cilium", "none"]},
+        "dns": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["namespace", "labels"],
+          "properties": {
+            "namespace": {"type": "string", "minLength": 1},
+            "labels": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}
+          }
+        },
+        "controller": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "namespace": {"type": "string"},
+            "labels": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}},
+            "port": {"$ref": "#/definitions/port"}
+          }
+        },
+        "exceptCIDRs": {"type": "array", "items": {"$ref": "#/definitions/cidr"}}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowFrom": {"description": "NetworkPolicy peers allowed to scrape :15020.", "type": "array", "items": {"type": "object"}}
+      }
+    }
+  },
+  "definitions": {
+    "dnsLabel": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"},
+    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "cidr": {"type": "string", "pattern": "^[0-9a-fA-F.:]+/[0-9]{1,3}$"},
+    "duration": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"},
+    "usd": {"type": "number", "exclusiveMinimum": 0},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model"],
+      "properties": {
+        "provider": {"$ref": "#/definitions/dnsLabel"},
+        "model": {"type": "string", "minLength": 1}
+      }
+    },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "provider": {"type": "string"},
+        "model": {"type": "string"}
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preset"],
+      "properties": {
+        "preset": {"type": "string", "enum": ["openai", "anthropic", "zai", "mistral", "moonshot", "custom"]},
+        "existingSecret": {"type": "string"},
+        "key": {"type": "string", "minLength": 1},
+        "dataClasses": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["public", "internal"]}},
+        "host": {"type": "string", "minLength": 1},
+        "port": {"$ref": "#/definitions/port"},
+        "path": {"type": "string", "pattern": "^/"},
+        "tls": {"type": "boolean"},
+        "transformations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "expression"],
+            "properties": {
+              "field": {"type": "string", "minLength": 1},
+              "expression": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cidrs": {"type": "array", "items": {"$ref": "#/definitions/cidr"}},
+            "peers": {"description": "NetworkPolicy peers, for an in-cluster provider.", "type": "array", "items": {"type": "object"}}
+          }
+        }
+      }
+    }
+  }
+}

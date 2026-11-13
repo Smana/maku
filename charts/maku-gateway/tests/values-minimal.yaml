@@ -1,0 +1,19 @@
+# The smallest useful gateway: one custom provider serving tier-light to public runs.
+enabled: true
+identity:
+  issuer: https://kubernetes.default.svc.cluster.local
+  jwks: {url: https://issuer.example.test/openid/v1/jwks}
+providers:
+  stub:
+    preset: custom
+    existingSecret: stub-api-key
+    host: stub.models.svc.cluster.local
+    port: 8080
+    path: /v1/chat/completions
+    tls: false
+    egress:
+      peers:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: models}}
+aliases:
+  public:
+    tier-light: {provider: stub, model: stub-light}

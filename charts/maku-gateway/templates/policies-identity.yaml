@@ -1,0 +1,125 @@
+{{- if .Values.enabled }}
+{{- $v := .Values }}
+{{- $gw := dict "group" "gateway.networking.k8s.io" "kind" "Gateway" "name" $v.name }}
+{{- $jwks := $v.identity.jwks }}
+{{- /* What each listener admits (GW3, GW8): the subject and the audience prefix. */}}
+{{- $listeners := list
+  (dict "name" "public" "sub" (printf "jwt.sub.matches(\"%s\")" (include "mgw.celString" (include "mgw.runSubPattern" .))) "timeout" $v.timeouts.runs)
+  (dict "name" "internal" "sub" (printf "jwt.sub.matches(\"%s\")" (include "mgw.celString" (include "mgw.runSubPattern" .))) "timeout" $v.timeouts.runs)
+  (dict "name" "clients" "sub" (printf "jwt.sub == \"%s\"" (include "mgw.celString" (include "mgw.brokerSub" .))) "timeout" $v.timeouts.clients "class" "client") }}
+# The identity headers are dropped before routing, so no route or backend sees a forged one, even
+# where a listener's `set` does not run.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ $v.name }}-strip-identity-headers
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - {{- toYaml $gw | nindent 6 }}
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        remove:
+          - x-ar-agent
+          - x-ar-human
+          - x-ai-gateway-client-id
+          - agent-session-id
+{{- range $l := $listeners }}
+---
+# Listener {{ $l.name }}: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "{{ $v.audiencePrefix }}.{{ $l.class | default $l.name }}."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ $v.name }}-listener-{{ $l.name }}
+  labels: {{- include "mgw.labels" $ | nindent 4 }}
+spec:
+  targetRefs:
+    - {{- toYaml (merge (dict "sectionName" $l.name) $gw) | nindent 6 }}
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: {{ $v.identity.issuer }}
+          jwks:
+            {{- if eq $jwks.source "inline" }}
+            # source inline: nothing is fetched; re-render when the issuer rotates its keys.
+            inline: {{ $jwks.inline | toJson }}
+            {{- else }}
+            remote:
+              {{- if eq $jwks.source "apiserver" }}
+              backendRef:
+                group: agentgateway.dev
+                kind: AgentgatewayBackend
+                name: {{ $v.name }}-jwks
+              jwksPath: openid/v1/jwks
+              {{- else }}
+              url: {{ $jwks.url }}
+              {{- end }}
+            {{- end }}
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - {{ $l.sub | squote }}
+          - {{ printf "jwt.aud.exists(a, a.startsWith(\"%s.%s.\"))" $v.audiencePrefix ($l.class | default $l.name) | squote }}
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # {{ if eq $l.name "clients" }}The callers' own deadlines (20 s planner, 5 s classifier) are shorter.{{ else }}A long completion must not time out.{{ end }}
+    timeouts:
+      request: {{ $l.timeout }}
+{{- end }}
+---
+# One frontend policy per Gateway: two would leave the merge to the controller.
+# Buffer: 8Mi, as cnref's agent-router (agentgateway's 2 MiB default cuts long agent contexts).
+# Telemetry: every identity label is the verified sub, under the names the factory's meter and the
+# dashboards read (ar_agent on metrics, x_ar_agent on the access log), with the priced cost.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ $v.name }}-frontend
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - {{- toYaml $gw | nindent 6 }}
+  frontend:
+    http:
+      maxBufferSize: 8Mi
+    accessLog:
+      attributes:
+        add:
+          - name: x_ar_agent
+            expression: jwt.sub
+          # The request's priced cost in USD (empty when the catalog has no exact row).
+          - name: cost
+            expression: flatten(llm.cost)
+    metrics:
+      attributes:
+        add:
+          - name: ar_agent
+            expression: jwt.sub
+{{- end }}

@@ -1,0 +1,73 @@
+{{- if .Values.enabled }}
+{{- $sel := dict "gateway.networking.k8s.io/gateway-name" .Values.name }}
+# The generated proxy has no pod seccomp profile, no liveness probe, no limits and a LoadBalancer
+# Service by default; these fields are strategic-merge overlays on what the controller renders (its
+# container is already non-root, read-only, capabilities dropped). As cnref's parameters.yaml.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: {{ .Values.name }}
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+spec:
+  # A controller pin change does not re-render the proxy until the Gateway is touched: bump this with
+  # the controller, then check the pod's digest.
+  image:
+    registry: {{ .Values.image.registry }}
+    repository: {{ .Values.image.repository }}
+    tag: {{ .Values.image.tag | quote }}
+    digest: {{ .Values.image.digest }}
+  logging:
+    format: json
+  {{- if .Values.modelCatalog.enabled }}
+  # The overlay that prices each response (the access log's `cost`), merged over the built-in catalog.
+  modelCatalog:
+    sources:
+      - configMap:
+          name: {{ .Values.name }}-model-catalog
+  {{- end }}
+  # The default (10s/60s) cut a 200s stream; min 10 / max 660 held it through the deletion of every
+  # proxy pod (cnref PoC N1). 660 = the 600s request timeout + 60s; the controller sets
+  # terminationGracePeriodSeconds from max.
+  shutdown:
+    min: 10
+    max: 660
+  resources: {{- toYaml .Values.resources | nindent 4 }}
+  deployment:
+    spec:
+      replicas: {{ .Values.replicas }}
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          topologySpreadConstraints:
+            {{- range $key := list "topology.kubernetes.io/zone" "kubernetes.io/hostname" }}
+            - maxSkew: 1
+              topologyKey: {{ $key }}
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels: {{- toYaml $sel | nindent 18 }}
+            {{- end }}
+          containers:
+            - name: agentgateway
+              securityContext:
+                seccompProfile:
+                  type: RuntimeDefault
+              livenessProbe:
+                httpGet:
+                  path: /healthz/ready
+                  port: 15021
+                periodSeconds: 10
+                failureThreshold: 6
+  service:
+    spec:
+      # Runs and the broker reach it in-cluster; a LoadBalancer would give their boundary a cloud address.
+      type: ClusterIP
+  {{- if gt (int .Values.replicas) 1 }}
+  # A drain never takes every in-flight completion. One replica gets no PDB: it would block every drain.
+  podDisruptionBudget:
+    spec:
+      minAvailable: 1
+  {{- end }}
+{{- end }}

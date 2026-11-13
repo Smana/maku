@@ -60,6 +60,36 @@ on: the factory merges nothing on its own, and a maintainer's approval of the cu
 merge (the merger merges that head, as a human merge with no automatic revert). With it off, the room
 shows the approval (`maintainer_approved`) and a maintainer merges on GitHub.
 
+## The model gateway
+
+Two optional subcharts, both off by default, put agentgateway in front of the models
+([docs/gateway.md](../../docs/gateway.md)):
+
+- `maku-gateway.enabled: true` renders the Gateway `model-gateway`, its identity policies, one backend
+  and one route per model alias, the price catalog and the proxy's NetworkPolicy. Its `runs` must equal
+  `maku.runs`, and its `broker.serviceAccount` must be `room-broker`: the render fails otherwise.
+- `agentgateway.enabled: true` installs the upstream controller, v1.6.0 by digest, restricted, with
+  limits. Leave it off where the cluster already runs one.
+
+The CRDs come first. agentgateway's are applied apart from any Helm release: the four of them hold
+2.3 MB of schema, and Helm stores a release's chart and manifest in one Secret capped at 1 MiB, which
+they would nearly fill. They outlive an uninstall only while nothing prunes them. The Flux and Argo CD
+forms, and the upstream `agentgateway-crds` chart as an alternative, are in
+[docs/gateway.md](../../docs/gateway.md#agentgateways-crds). Gateway API's standard CRDs (v1.2 or
+later) are a cluster prerequisite:
+
+```bash
+helm install af-crds charts/agent-factory-crds -n maku --create-namespace
+kubectl apply --server-side -f config/agentgateway   # agentgateway v1.6.0's CRDs, apart from any release
+helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml -f values-mine.yaml \
+  --set agentgateway.enabled=true -f my-gateway-values.yaml
+```
+
+Nothing calls the gateway yet: runs keep `agent-model` and the planner keeps its URL until the
+run-controller's and the broker's gateway modes arrive. `task chart:gateway:k3d` proves the gateway on
+k3d. agentgateway is vendored (the controller chart under `vendor/`, its CRDs in `config/agentgateway`) and
+pinned in `hack/agentgateway.sha256`, which `task chart:deps` checks: no install needs the network for it.
+
 ## Spec-intake k3d test
 
 `task chart:intake:k3d` (Docker with buildx, k3d, Helm, kubectl, Go, OpenSSL, curl and jq) builds the

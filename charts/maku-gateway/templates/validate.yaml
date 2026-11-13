@@ -1,0 +1,2 @@
+{{- /* Every rule of mgw.validate runs once, before any object: a misconfiguration fails the render. */ -}}
+{{- if .Values.enabled }}{{ include "mgw.validate" . }}{{ end -}}

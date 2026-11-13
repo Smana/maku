@@ -229,6 +229,26 @@ grep -qF 'demo.model.baseURL' <<<"$msg" || { echo "FAIL: no model values and no 
 msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.model.existingSecret=other --set demo.githubApp.existingSecret=agent-factory-github 2>&1 >/dev/null || true)"
 grep -qF 'must have that name' <<<"$msg" || { echo "FAIL: an existingSecret the controller does not read does not fail" >&2; fail=1; }
 
+# The model gateway (plan v4 step 4, Task 5; D25): off by default, so the demo golden above is the
+# byte-identical proof. On, with cnref-like values, its objects render in the release namespace.
+yq -e '.maku-gateway.enabled == false and .agentgateway.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku-gateway and agentgateway" >&2; fail=1; }
+yq '{"maku-gateway": .}' ../maku-gateway/tests/values-cnref-like.yaml >"$tmp/gateway.yaml"
+gw="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml")" || { echo "FAIL: the demo with the gateway does not render" >&2; fail=1; gw=''; }
+# objects < RENDER: every object of a render as kind/namespace/name, the release namespace when unset.
+objects() { yq e 'select(.kind != null) | .kind + "/" + (.metadata.namespace // "maku") + "/" + .metadata.name' - | grep -vx -- '---' | sort; }
+gwobjs='^(Gateway|HTTPRoute|AgentgatewayParameters|AgentgatewayBackend|AgentgatewayPolicy)/|^(NetworkPolicy|ConfigMap)/maku/model-gateway'
+got="$(objects <<<"$gw" | grep -E "$gwobjs" | cut -d/ -f1,2 | sort -u | paste -sd, -)"
+[[ $got == "AgentgatewayBackend/maku,AgentgatewayParameters/maku,AgentgatewayPolicy/maku,ConfigMap/maku,Gateway/maku,HTTPRoute/maku,NetworkPolicy/maku" ]] ||
+  { echo "FAIL: the gateway's objects are not all in the release namespace (got '$got')" >&2; fail=1; }
+demo="$(helm template af . -n maku "${args[@]}")"
+diff <(objects <<<"$demo") <(objects <<<"$gw" | grep -vE "$gwobjs") >&2 || { echo "FAIL: turning the gateway on adds or drops another object" >&2; fail=1; }
+ctl="$(helm template af . -n maku "${args[@]}" --set agentgateway.enabled=true | yq e 'select(.kind == "Deployment" and .spec.template.metadata.labels."app.kubernetes.io/name" == "agentgateway") | .spec.template.spec.containers[0].image' -)"
+[[ $ctl == *"controller:v1.6.0@sha256:d84259a7e2d87f8f39bae385d4b032d823c0a4450aecb32e0e31e2258449645b" ]] || { echo "FAIL: agentgateway.enabled does not render the pinned controller (got '$ctl')" >&2; fail=1; }
+msg="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gateway.runs.namespace=other 2>&1 >/dev/null || true)"
+grep -qF 'maku-gateway.runs (namespace "other", namePrefix "run-") must equal maku.runs (namespace "agents", namePrefix "run-")' <<<"$msg" || { echo "FAIL: a runs mismatch does not fail naming both keys (got: $msg)" >&2; fail=1; }
+msg="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gateway.broker.serviceAccount=other 2>&1 >/dev/null || true)"
+grep -qF 'maku-gateway.broker.serviceAccount "other" must be the broker' <<<"$msg" || { echo "FAIL: a broker ServiceAccount mismatch does not fail (got: $msg)" >&2; fail=1; }
+
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"
 mine="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f "$tmp/mine.yaml")" || { echo "FAIL: values-mine.example.yaml does not render" >&2; fail=1; mine=''; }

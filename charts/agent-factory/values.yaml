@@ -16,3 +16,33 @@ maku:
   enabled: false
 maku-factory:
   enabled: false
+
+# The model gateway (D7; docs/gateway.md), off by default. maku-gateway renders the Gateway, its
+# policies, a backend and a route per model alias; its `runs` must equal maku's, and its broker
+# ServiceAccount the broker's (room-broker). agentgateway is the upstream controller (v1.6.0): leave
+# it off where the cluster already runs one. Its CRDs are applied first, apart from any Helm release
+# (`kubectl apply --server-side -f config/agentgateway`, docs/gateway.md); Gateway API's standard CRDs
+# (v1.2 or later) are a cluster prerequisite.
+maku-gateway:
+  enabled: false
+agentgateway:
+  enabled: false
+  # As cnref runs it (ANR infrastructure/base/agentgateway): the controller by digest, no Istio
+  # permissions, restricted, with limits. The chart has no liveness-probe value.
+  controller:
+    image:
+      tag: "v1.6.0@sha256:d84259a7e2d87f8f39bae385d4b032d823c0a4450aecb32e0e31e2258449645b"
+  istio:
+    enabled: false
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile: {type: RuntimeDefault}
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    capabilities: {drop: [ALL]}
+    seccompProfile: {type: RuntimeDefault}
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
