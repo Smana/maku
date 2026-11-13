@@ -293,9 +293,11 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # prerelease's matrix: an image with no digests here was not built and is skipped.
+      # prerelease's matrix. An image with no digests here is an error, unless the builds failed
+      # (BUILDS): then it is the one that failed, and the others are still published.
       - env:
           VERSION: ${{ needs.prerelease-version.outputs.version }}
+          BUILDS: ${{ needs.prerelease.result }}
         run: >-
           bash hack/prerelease-publish.sh "$RUNNER_TEMP/digests" "$VERSION"
           maku-broker maku-bridge maku-factory maku-harness maku-run-controller maku-slack
@@ -303,9 +305,9 @@ jobs:
   # One signed chart per PR push, <next-patch>-pr<N>.g<sha8>, whose appVersion is the image
   # pre-release of the same push. The `g` keeps a digits-only sha a valid semver identifier
   # (R20). Only the factory has a chart here: the broker's lives in cloud-native-ref.
-  # Published once the pull request is green, as the images are.
+  # Published once every image it names is: after prerelease-publish, and only when all six built.
   chart-prerelease:
-    needs: [changes, check, harness-test]
+    needs: [changes, check, harness-test, prerelease, prerelease-publish]
     if: >-
       needs.changes.outputs.deployable == 'true' &&
       github.event_name == 'pull_request' &&

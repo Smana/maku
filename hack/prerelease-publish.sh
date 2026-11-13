@@ -4,9 +4,10 @@
 # hack/prerelease-publish.sh DIGESTS VERSION IMAGE...: ci.yaml's prerelease-publish. For each IMAGE
 # whose two platform digests image.yaml left in DIGESTS/digest-IMAGE-*/, joins them under
 # ghcr.io/smana/IMAGE:VERSION and signs the index by digest (keyless cosign: the caller's identity).
-#   - an image with no digest was not built: skipped, with a notice;
-#   - one with a single digest is half-pushed: an error;
-#   - no image built at all: nothing to publish, and success.
+#   - an image with no digest: an error, unless BUILDS=failure (the prerelease builds' result), when
+#     it is the image whose build failed: skipped, with a notice;
+#   - an image with a single digest is half-pushed: an error.
+# Every image is tried; the errors are collected, and the script fails at the end if there was one.
 # ghcr can answer "not found" for a tag it has just accepted, and Sigstore can answer a 5xx: both
 # are retried (RETRY_SLEEP seconds times the attempt, 5 by default).
 set -euo pipefail
@@ -39,26 +40,38 @@ index_digest() {
   printf '%s\n' "$d"
 }
 
-published=0
-for image in "$@"; do
-  ref="ghcr.io/smana/${image}"
+# publish IMAGE: join and sign one image; 1 on any error (set -e does not reach into an `if`).
+publish() {
+  local image=$1 ref="ghcr.io/smana/$1" files f d digest sources=()
   files=("$dir/digest-${image}-"*/*)
   if ((${#files[@]} == 0)); then
-    echo "::notice title=prerelease-publish::$image was not built: nothing to publish"
-    continue
+    if [[ $builds == failure ]]; then
+      echo "::notice title=prerelease-publish::$image has no digest: its build failed; not published"
+      return 0
+    fi
+    echo "prerelease-publish: $image has no digest, yet the builds succeeded" >&2
+    return 1
   fi
-  ((${#files[@]} == 2)) || { echo "prerelease-publish: want 2 platform digests for $image, got ${#files[@]}" >&2; exit 1; }
-  sources=()
+  ((${#files[@]} == 2)) || { echo "prerelease-publish: want 2 platform digests for $image, got ${#files[@]}" >&2; return 1; }
   for f in "${files[@]}"; do
     d="$(<"$f")"
-    [[ $d =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "prerelease-publish: bad digest '$d' in $f" >&2; exit 1; }
+    [[ $d =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "prerelease-publish: bad digest '$d' in $f" >&2; return 1; }
     sources+=("${ref}@${d}")
   done
-  retry "join $image" docker buildx imagetools create -t "${ref}:${version}" "${sources[@]}"
-  digest="$(retry "read ${ref}:${version} back" index_digest "${ref}:${version}")"
-  retry "sign ${ref}@${digest}" cosign sign --yes "${ref}@${digest}"
+  retry "join $image" docker buildx imagetools create -t "${ref}:${version}" "${sources[@]}" || return 1
+  digest="$(retry "read ${ref}:${version} back" index_digest "${ref}:${version}")" || return 1
+  retry "sign ${ref}@${digest}" cosign sign --yes "${ref}@${digest}" || return 1
   [[ -z ${GITHUB_STEP_SUMMARY:-} ]] || printf '### %s\n%s:%s@%s\n' "$image" "$ref" "$version" "$digest" >>"$GITHUB_STEP_SUMMARY"
-  published=$((published + 1))
+  published+=("$image")
+}
+
+builds="${BUILDS:-success}"
+published=() failed=()
+for image in "$@"; do
+  publish "$image" || failed+=("$image")
 done
-((published)) || echo "::notice title=prerelease-publish::no image was built: nothing published"
-echo "prerelease-publish: $published image(s) published at $version"
+echo "prerelease-publish: published at $version: ${published[*]:-none}"
+if ((${#failed[@]})); then
+  echo "prerelease-publish: not published: ${failed[*]}" >&2
+  exit 1
+fi

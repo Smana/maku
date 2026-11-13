@@ -20,18 +20,24 @@ printf '#!/usr/bin/env bash\necho "cosign $*" >>"%s/log"\n' "$tmp" >"$tmp/bin/co
 chmod +x "$tmp/bin/docker" "$tmp/bin/cosign"
 export PATH="$tmp/bin:$PATH" RETRY_SLEEP=0 GITHUB_STEP_SUMMARY=''
 d1="sha256:$(printf '%064d' 1)" d2="sha256:$(printf '%064d' 2)"
-digests() { local i; for i in 0 1; do mkdir -p "$tmp/d/digest-$1-$i"; echo "$([[ $i == 0 ]] && echo "$d1" || echo "$d2")" >"$tmp/d/digest-$1-$i/linux-$i"; done; }
+digests() {
+  mkdir -p "$tmp/d/digest-$1-0" "$tmp/d/digest-$1-1"
+  echo "$d1" >"$tmp/d/digest-$1-0/linux-0"
+  echo "$d2" >"$tmp/d/digest-$1-1/linux-1"
+}
 run() { rm -f "$tmp/log"; touch "$tmp/log"; bash "$here/prerelease-publish.sh" "$tmp/d" v1.0.1-pr1.abcdef12 "$@"; }
 fail() { echo "prerelease-publish_test: $*"; cat "$tmp/log"; exit 1; }
 
-# Nothing built (the prerelease builds skipped): success, nothing joined or signed.
+# Nothing built while the builds failed: success, nothing joined or signed.
 mkdir -p "$tmp/d"
-run maku-broker maku-bridge >/dev/null || fail "no digests: want success"
+BUILDS=failure run maku-broker maku-bridge >/dev/null || fail "no digests, builds failed: want success"
 [[ ! -s $tmp/log ]] || fail "no digests: want no docker or cosign call"
+# No digest although the builds succeeded: an error.
+if run maku-broker >/dev/null 2>&1; then fail "no digests, builds succeeded: want a failure"; fi
 
-# Some built: only those are joined and signed.
+# Some built (another build failed): only those are joined and signed.
 digests maku-broker
-run maku-broker maku-bridge >/dev/null || fail "one image built: want success"
+BUILDS=failure run maku-broker maku-bridge >/dev/null || fail "one image built, the other's build failed: want success"
 grep -q "imagetools create -t ghcr.io/smana/maku-broker:v1.0.1-pr1.abcdef12 ghcr.io/smana/maku-broker@$d1 ghcr.io/smana/maku-broker@$d2" "$tmp/log" || fail "maku-broker not joined"
 grep -q "cosign sign --yes ghcr.io/smana/maku-broker@sha256:0*9$" "$tmp/log" || fail "maku-broker's index not signed by digest"
 ! grep -q maku-bridge "$tmp/log" || fail "maku-bridge was not built, yet touched"
@@ -42,7 +48,9 @@ run maku-broker >/dev/null 2>&1 || fail "inspect not found twice: want a retry a
 [[ $(grep -c "imagetools inspect" "$tmp/log") == 3 ]] || fail "want three inspects"
 grep -q "cosign sign" "$tmp/log" || fail "not signed after the retry"
 
-# A half-pushed image (one platform digest): an error.
+# A half-pushed image (one platform digest) fails the run, after the images behind it are published.
 mkdir -p "$tmp/d/digest-maku-slack-0" && echo "$d1" >"$tmp/d/digest-maku-slack-0/linux-0"
-if run maku-slack >/dev/null 2>&1; then fail "one platform digest: want a failure"; fi
+if run maku-slack maku-broker >/dev/null 2>&1; then fail "one platform digest: want a failure"; fi
+grep -q "cosign sign --yes ghcr.io/smana/maku-broker@" "$tmp/log" || fail "maku-broker, after the half-pushed maku-slack, not published"
+! grep -q maku-slack "$tmp/log" || fail "the half-pushed maku-slack was joined"
 echo "==> prerelease-publish_test: ok"
