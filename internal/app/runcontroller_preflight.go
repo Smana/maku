@@ -11,7 +11,7 @@ import (
 )
 
 // runPathCodes maps each of the run-controller's preflight checks to its catalog code, one to one.
-var runPathCodes = map[string]string{
+var runPathCodes = map[string]string{ //nolint:gosec // catalog codes, not credentials
 	"runtimeClass": "run_path_runtimeclass",
 	"gitSecrets":   "run_path_git_secrets",
 	"network":      "run_path_network",
