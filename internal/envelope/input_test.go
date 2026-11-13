@@ -31,12 +31,20 @@ func TestInputRead(t *testing.T) {
 		t.Fatalf("%+v %v", got, ok)
 	}
 	for name, e := range map[string]Event{
-		"another run":    func() Event { e := ev; e.RunID = "r2"; return e }(),
-		"client origin":  func() Event { e := ev; e.Origin = OriginClient; return e }(),
-		"agent actor":    func() Event { e := ev; e.Actor = Actor{Kind: ActorAgent, ID: "agent:r1"}; return e }(),
-		"factory actor":  func() Event { e := ev; e.Actor = Actor{Kind: ActorSystem, ID: FactoryActor}; return e }(),
-		"another kind":   func() Event { e := ev; e.Payload, _ = json.Marshal(MessagePayload{Kind: KindChat, Input: &good}); return e }(),
-		"invalid record": func() Event { e := ev; e.Payload, _ = json.Marshal(MessagePayload{Kind: KindInputRead, Input: &InputReadRecord{}}); return e }(),
+		"another run":   func() Event { e := ev; e.RunID = "r2"; return e }(),
+		"client origin": func() Event { e := ev; e.Origin = OriginClient; return e }(),
+		"agent actor":   func() Event { e := ev; e.Actor = Actor{Kind: ActorAgent, ID: "agent:r1"}; return e }(),
+		"factory actor": func() Event { e := ev; e.Actor = Actor{Kind: ActorSystem, ID: FactoryActor}; return e }(),
+		"another kind": func() Event {
+			e := ev
+			e.Payload, _ = json.Marshal(MessagePayload{Kind: KindChat, Input: &good})
+			return e
+		}(),
+		"invalid record": func() Event {
+			e := ev
+			e.Payload, _ = json.Marshal(MessagePayload{Kind: KindInputRead, Input: &InputReadRecord{}})
+			return e
+		}(),
 	} {
 		if _, ok := ReadInput(e, "r1"); ok {
 			t.Errorf("%s counted", name)

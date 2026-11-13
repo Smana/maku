@@ -24,7 +24,7 @@ import (
 
 // BrokerPrincipal is the room broker's system principal on this API (HR35): the api.systemPrincipals
 // value its ServiceAccount maps to, the one caller the forge-read route admits.
-const BrokerPrincipal = "system:broker"
+const BrokerPrincipal = config.BrokerPrincipal
 
 // ForgeReadRoute is the route the broker's forge_read forwards to.
 const ForgeReadRoute = "POST /v1/runs/{run}/forge-read"

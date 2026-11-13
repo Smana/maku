@@ -341,16 +341,37 @@ func (c *Config) TrustPolicy(repository string, min hardening.Level) hardening.P
 	return pol
 }
 
-// enforceRefused is why this release refuses mode enforce: it means every output type enforced and
-// reads filtered, which stage H4 brings (HR34). H3 enforces push under mode audit.
-const enforceRefused = "enforce arrives with stage H4; this release offers off and audit, with enforceOutputs"
+// BrokerPrincipal is the room broker's system principal on the factory API: the api.systemPrincipals
+// value forge_read's route admits (HR35).
+const BrokerPrincipal = "system:broker"
+
+// validateModeEnforce holds every repository whose effective mode is enforce to what enforce means
+// (HR34, HR36): all five output types enforced, runs on the run-controller (on the XR the factory
+// cannot see the sandbox's egress, so R5 cannot hold), and a system:broker in api.systemPrincipals,
+// the one caller of the forge-read route.
+func (c *Config) validateModeEnforce(bad func(string, ...any)) {
+	h := c.Hardening
+	broker := slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
+	for _, r := range c.Repos() {
+		if h.ModeFor(r.Name) != hardening.ModeEnforce {
+			continue
+		}
+		key := "hardening mode enforce on " + r.Name
+		switch {
+		case c.Runs.XR():
+			bad("%s: R5 cannot hold on the XR: forge_read needs the run-controller's egress (HR36)", key)
+		case !slices.Equal(h.EnforcedFor(r.Name), slices.Sorted(slices.Values(enforceable))):
+			bad("%s needs all five output types in enforceOutputs: pr, comment, labels, issue, push", key)
+		case !broker:
+			bad("%s needs api.systemPrincipals to map the broker's ServiceAccount to %s: forge_read reads through the factory", key, BrokerPrincipal)
+		}
+	}
+}
 
 func (c *Config) validateHardening(bad func(string, ...any)) {
 	h := c.Hardening
 	if _, err := hardening.ParseMode(string(h.Mode)); err != nil {
 		bad("hardening.mode: %v", err)
-	} else if h.Mode == hardening.ModeEnforce {
-		bad("hardening.mode %q: %s", h.Mode, enforceRefused)
 	}
 	if _, err := hardening.ParseMode(string(h.Layers.Classifier)); err != nil {
 		bad("hardening.layers.classifier: %v", err)
@@ -391,12 +412,11 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 			bad("hardening.repositories: %q is not a configured repository", name)
 		case func() bool { _, err := hardening.ParseMode(string(r.Mode)); return err != nil }():
 			bad("hardening.repositories.%s.mode %q is none of off, audit, enforce", name, r.Mode)
-		case r.Mode == hardening.ModeEnforce:
-			bad("hardening.repositories.%s.mode %q: %s", name, r.Mode, enforceRefused)
 		}
 	}
 	h.validateStricter(bad)
 	h.validateEnforce(bad)
+	c.validateModeEnforce(bad)
 	if h.Publisher.Minter && !c.RunTokens.Enabled {
 		bad("hardening.publisher.minter needs runTokens.enabled: the publisher's token is minted from the agents App it names")
 	}

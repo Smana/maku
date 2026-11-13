@@ -276,6 +276,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	source := r.pinModel(cfg, t, &s)
 	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
 	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
+	r.markForgeAPI(cfg, t, &s)    // mode enforce only (HR36)
 	err = r.Runs.Create(ctx, s)
 	unbriefed := false
 	if refusedSchema(err) && s.Role == "reviewer" && s.TaskText != "" && s.TaskURL != "" {
