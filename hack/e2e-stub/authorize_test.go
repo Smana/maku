@@ -89,7 +89,7 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 // The minted ID token can carry an email, and its groups under a nested claim (Task 9's X5).
 func TestTestIDTokenEmailAndNestedGroups(t *testing.T) {
 	_, ts := newStubServer(t)
-	_, raw := request(t, ts, http.MethodGet, "/test/id-token?sub=alice&aud=roomctl&groups=agents-member&email=alice@e2e.test&groupsClaim=realm_access.roles", nil)
+	_, raw := request(t, ts, http.MethodGet, "/test/id-token?sub=alice&aud=maku-cli&groups=agents-member&email=alice@e2e.test&groupsClaim=realm_access.roles", nil)
 	_, c := claimsOf(t, decodeResponse[map[string]string](t, raw)["id_token"])
 	if c["email"] != "alice@e2e.test" || c["email_verified"] != true || c["groups"] != nil ||
 		!reflect.DeepEqual(c["realm_access"], map[string]any{"roles": []any{"agents-member"}}) {
