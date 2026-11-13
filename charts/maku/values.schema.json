@@ -9,6 +9,29 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "roomTools": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "knowledge": {
+              "description": "RunLore's MCP endpoint (EX11): :8090 forwards kb_search and kb_get to url for the listed roles. An empty url serves and renders nothing.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "url": {"type": "string", "pattern": "^(https?://.+)?$"},
+                "tools": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["kb_search", "kb_get"]}},
+                "roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["implementer", "reviewer", "tester", "triager"]}},
+                "timeout": {"type": "string", "pattern": "^[0-9]+(ms|s)$"},
+                "maxBytes": {"type": "integer", "minimum": 1, "maximum": 262144},
+                "networkPolicy": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {"to": {"type": "array", "items": {"type": "object"}}}
+                }
+              }
+            }
+          }
+        },
         "modelGateway": {
           "description": "The model gateway's clients listener (plan v4 step 4, GW8): one projected token per client, the planner's and the classifier's routes filled where human leaves them unset.",
           "type": "object",

@@ -4,6 +4,19 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## RunLore's knowledge base for runs (v0.4x, v4 rollout step 6)
+
+One new key, off by default, so a release that does not set it renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku.broker.roomTools.knowledge.url` | `""`: no knowledge tool | the broker's `:8090` serves `kb_search` and `kb_get` to the listed roles (`triager`) and forwards them to this MCP endpoint ([RunLore](integration.md#runlore)) |
+| `maku.broker.roomTools.knowledge.networkPolicy.to` | `[]` | the peers the broker's egress opens on the URL's port; required with `url` in `networkPolicies.mode` `cilium` or `kubernetes` |
+
+The run controller now lists `room-broker__kb_search` and `room-broker__kb_get` in every room run's
+`MCP_READ_ONLY_TOOLS`, whether or not the broker serves them. The broker decodes its config strictly,
+so a `roomTools.knowledge` block needs this release's broker image: chart and images move together.
+
 ## Runs through the model gateway (v0.4x, v4 rollout step 4)
 
 New keys, all off by default, so a release that sets none of them renders as before:

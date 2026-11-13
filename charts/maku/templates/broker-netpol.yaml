@@ -84,6 +84,11 @@ spec:
             matchLabels: {gateway.networking.k8s.io/gateway-name: {{ .service }}}
       ports: [{port: {{ .port }}, protocol: TCP}]
     {{- end }}
+    {{- with include "ap.knowledge" . | fromJson }}
+    # The knowledge MCP endpoint (broker.roomTools.knowledge): its port, to the named peers only.
+    - to: {{- toYaml .to | nindent 8 }}
+      ports: [{port: {{ .port }}, protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

@@ -50,6 +50,18 @@ func main() {
 			}
 			return nil
 		}
+	case "broker-knowledge":
+		// roomTools.knowledge (EX11): the rendered block decodes strictly and serves both tools to triagers.
+		load = func(p string) error {
+			c, err := config.Load(p)
+			if err != nil {
+				return err
+			}
+			if k := c.Knowledge(); k.URL == "" || len(k.Tools) != 2 || len(k.Roles) != 1 || k.Roles[0] != "triager" {
+				return fmt.Errorf("knowledge %+v, want the URL, both tools and the triager", k)
+			}
+			return nil
+		}
 	case "broker-slackintents":
 		// human.slackIntents is the classifier's switch: the rendered block must decode to an on switch.
 		load = func(p string) error {

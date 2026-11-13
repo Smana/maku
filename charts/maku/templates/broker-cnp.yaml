@@ -93,6 +93,12 @@ spec:
       toPorts:
         - ports: [{port: {{ .port | quote }}, protocol: TCP}]
     {{- end }}
+    {{- with include "ap.knowledge" . | fromJson }}
+    # The knowledge MCP endpoint (broker.roomTools.knowledge): its port, to the named endpoints only.
+    - toEndpoints: {{- toYaml .to | nindent 8 }}
+      toPorts:
+        - ports: [{port: {{ .port | quote }}, protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

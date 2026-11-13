@@ -51,10 +51,16 @@ data:
     {{- end }}
     {{- with $b.roomTools }}
     roomTools:
+      {{- with omit . "knowledge" }}
       {{- toYaml . | nindent 6 }}
+      {{- end }}
       {{- if dig "hardening" "forgeRead" "audience" "" $b }}
       {{- if not $b.factoryURL }}{{ fail "broker.hardening.forgeRead.audience needs broker.factoryURL: forge_read posts to the factory" }}{{ end }}
       forgeReadTokenFile: /var/run/secrets/maku/factory/token
+      {{- end }}
+      {{- with (include "ap.knowledge" $ | fromJson).config }}
+      # RunLore's MCP endpoint (EX11): :8090 forwards kb_search and kb_get to it.
+      knowledge: {{- toYaml . | nindent 8 }}
       {{- end }}
     {{- end }}
     {{- with include "ap.unsafe" . | fromJsonArray }}

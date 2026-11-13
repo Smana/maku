@@ -117,6 +117,7 @@ fetch at start fails the rollout too; the `human` issuer does not: until it answ
 | `human.mode` | `oidc` (default): the block below. `local`: one `human:local` user in the admin and member groups, `:8080` bound to loopback (reach it by port-forward), `publicURL` exactly `http://localhost:<port>` (or a loopback address); the broker answers that port under `localhost`, `127.0.0.1` and `[::1]` and refuses any other Host or Origin. It takes no issuer, files, `origin`, `groups` or `access`; the config is refused otherwise ([quickstart](quickstart.md)) |
 | `human` | `{issuer, jwksURL, clientIDFile, roomctlClientIDFile, projectIDFile, origin, groups: {admin, member}}`. The ids are files read at use, because ZITADEL mints new ones on every build; the group names are literals |
 | `human.access` | `{readerFile, ttl}`: room visibility follows GitHub ([room access](security.md#identities)). `readerFile` is the ZITADEL link reader's mounted secret, JSON `{"pat", "tokenId", "githubIdpId"}`, read at use; the PAT goes to `human.issuer`, which must then be `https://`. `ttl` caches each answer, default and maximum `5m`. Needs `ROOMS_GITHUB_APP_DIR`, or the broker refuses to start. Unset: only `agents-admin` sees rooms |
+| `roomTools.knowledge` | `{url, tools, roles, timeout, maxBytes}`: a knowledge MCP endpoint, RunLore's, which `:8090` forwards [`kb_search` and `kb_get`](api.md#8090--room-tools) to. `url` is https, or http to an in-cluster `<svc>.<ns>.svc[.<domain>]`, with no credentials; `tools` a subset of `kb_search` and `kb_get` (both by default); `roles` AgentRun roles (`triager` by default); `timeout` 1 s to 12 s (10 s), under `:8090`'s 15 s bound on one call; `maxBytes` at most 256 KiB (64 KiB). Unset: no knowledge tool is served. The maku chart's `broker.roomTools.knowledge` renders it, and opens the broker's egress to `networkPolicy.to` on the URL's port |
 | `human.mcp` | `{enabled}`: serve [`POST /mcp`](api.md#post-mcp), the MCP server `maku mcp` relays. Off by default. On, it needs `human.roomctlClientIDFile`, since `/mcp` takes the CLI's tokens only, or the broker refuses to start |
 | `human.mcp.sessionStart[]` | `owner/name` repositories whose `issue_draft` answers `canStart` (the caller writes to them on GitHub), so the `handoff` prompt may start the factory there. Empty by default: none does. Needs `human.mcp.enabled` and `human.access` (without the GitHub check `canStart` is always off); each entry is `owner/name`, matched case-insensitively, and listed once |
 | `human.mcp.sponsored[]` | `{name, clientIDFile}`: the service accounts that may call `run_create` ([sponsored principals](factory.md#sponsored-principals)); each is also declared in the factory's `api.sponsored`, which decides everything else. Needs `human.mcp.enabled` and `factoryURL`. The name is a DNS label, not reserved (`factory`, `runlore`, `scheduler`, `room-broker`, `policy`) and unique |
@@ -162,7 +163,7 @@ Set by the `AgentRun` composition.
 | `GOMEMLIMIT` | Unset: the binary sets `48MiB`, the soft heap limit its buffer budget is sized for inside the 64 Mi limit. A pod spec may set its own |
 | `BRANCH` | The run's branch: the one push that is `forge.push`. Unset, every push is `forge.other` |
 | `MCP_READ_ONLY_TOOLS` | The MCP tools that only read, comma-separated `<server>__<tool>` names (a tool the gateway calls `<server>_<tool>`, as agentgateway does, matches the same entry); the classifier lets them through as plain, and every other MCP tool is `mcp.write`. Unset, every MCP tool is `mcp.write`, the room tools included (fail closed), and the bridge logs a `WARN` at start. Set it in the composition before a bridge that reads it rolls out: an older bridge ignores it, a newer one without it classes every room tool call `mcp.write`, which an attended room sends to an approver and an unattended one denies |
-| `MCP_BARE_SERVER` | A server name (no underscore): a tool name with no `__` that is not a builtin is read as `<server>__<tool>` and looked up in `MCP_READ_ONLY_TOOLS`. For a harness that calls the server directly, as the demo's runs call the broker's room tools; the run controller sets it to `room-broker`, with the five room tools in `MCP_READ_ONLY_TOOLS`, when `roomToolsURL` is set. Unset, a bare name is `mcp.write` |
+| `MCP_BARE_SERVER` | A server name (no underscore): a tool name with no `__` that is not a builtin is read as `<server>__<tool>` and looked up in `MCP_READ_ONLY_TOOLS`. For a harness that calls the server directly, as the demo's runs call the broker's room tools; the run controller sets it to `room-broker`, with the five room tools and `kb_search` and `kb_get` in `MCP_READ_ONLY_TOOLS`, when `roomToolsURL` is set. The knowledge tools are always listed: the broker alone decides whether it serves them. Unset, a bare name is `mcp.write` |
 | `AGENT_SUSPENDABLE` | `true` on a run whose `AgentRun` has `spec.suspendable: true`, the harness's variable of the same name. Its new pod's conversation reloads paused, and the bridge alone continues it: a pending step is answered from the room's decision, as a waiting one is; with none, one `/run`. Only a pause this bridge found at its first status counts, so a human's interrupt stays one. Unset, a paused conversation is left paused |
 
 The list the bridge carried built in before `MCP_READ_ONLY_TOOLS` existed, which the composition sets:
@@ -259,3 +260,37 @@ one run (`internal/runrequest`).
 `task agent:run -- --room <roomId>` (cloud-native-ref) sets `spec.roomRef` and defaults
 `spec.branch` to `agent/<roomId>`, since a human room's runs share one branch. An explicit
 `--branch` wins; a room id that is not a valid room id is refused.
+
+## RunLore
+
+[RunLore](https://github.com/Smana/runlore) stays its own product, outside the chart. It integrates
+with Maku in three ways, each optional and independent of the others:
+
+| Integration | Direction | Where it is set |
+|---|---|---|
+| Findings become `investigate` tasks | RunLore → the factory | the factory's `runlore` block (`POST /intake/runlore`), or RunLore as an [internal principal](factory.md#internal-principals) |
+| Room events | the broker → RunLore | a `webhooks[]` subscriber named `runlore` in the broker's config |
+| The knowledge base for runs | a run → the broker → RunLore | `roomTools.knowledge` in the broker's config, `maku.broker.roomTools.knowledge` in the chart |
+
+The third gives a run `kb_search` and `kb_get` (the `triager` role by default, the role of an
+`investigate` task) as two more of the broker's [room tools on `:8090`](api.md#8090--room-tools).
+The broker forwards each call to RunLore's MCP endpoint. A run still has one MCP server, the broker,
+and its egress is unchanged: only the broker reaches RunLore. With `networkPolicies.mode` `cilium` or
+`kubernetes`, set `broker.roomTools.knowledge.networkPolicy.to` to RunLore's pods, and the broker's
+egress opens the URL's port to them alone:
+
+```yaml
+maku:
+  broker:
+    roomTools:
+      knowledge:
+        url: http://runlore.runlore.svc.cluster.local:8080/mcp
+        networkPolicy:
+          to:   # cilium: endpoint selectors; kubernetes: NetworkPolicy peers
+            - matchLabels:
+                io.kubernetes.pod.namespace: runlore
+                app.kubernetes.io/name: runlore
+```
+
+Without it, a run's harness and its investigate prompt work as before: the prompt names the tools
+only "if they are available".

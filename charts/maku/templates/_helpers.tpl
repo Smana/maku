@@ -177,6 +177,30 @@ tokenreview): the Service, the broker CNP and the run controller then open it to
 {{- end -}}
 
 {{/*
+broker.roomTools.knowledge (EX11), as JSON: {} while url is unset, else {config, port, to}. config is
+the broker's roomTools.knowledge block (every key but networkPolicy, with the defaults filled), port
+the URL's (443 for https, 80 for http, unless it names one), and to the peers the broker's egress
+opens on it. A default-deny mode with no peer would refuse every call, so it fails the render.
+*/}}
+{{- define "ap.knowledge" -}}
+{{- $k := (.Values.broker.roomTools | default dict).knowledge | default dict -}}
+{{- if $k.url -}}
+{{- $u := urlParse $k.url -}}
+{{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- $to := ($k.networkPolicy | default dict).to | default list -}}
+{{- if and (ne (include "ap.netMode" .) "none") (not $to) -}}
+{{- fail (printf "broker.roomTools.knowledge.networkPolicy.to is empty: networkPolicies.mode %s denies the broker's egress to broker.roomTools.knowledge.url but to these peers" (include "ap.netMode" .)) -}}
+{{- end -}}
+{{- $cfg := dict "url" $k.url "tools" ($k.tools | default (list "kb_search" "kb_get")) "roles" ($k.roles | default (list "triager"))
+      "timeout" ($k.timeout | default "10s") "maxBytes" (int ($k.maxBytes | default 65536)) -}}
+{{- dict "config" $cfg "port" $port "to" $to | toJson -}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/*
 broker.modelGateway (plan v4 step 4, GW8), as JSON: {} when service is unset, else {service,
 namespace, port, audiencePrefix, base, tokens}. base is the clients listener's URL, to which
 /clients/<client>/v1 is appended; tokens the directory of the projected tokens, one file per client.

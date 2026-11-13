@@ -265,6 +265,34 @@ bad 'broker.roomTools.auth "oauth" is not key or tokenreview' --set broker.roomT
 bad 'broker.roomTools.auth tokenreview needs broker.runIssuer.mode tokenreview' --set broker.roomTools.auth=tokenreview \
   --set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
 
+# roomTools.knowledge (EX11): RunLore's MCP endpoint is one broker value. Unset, the config carries no
+# knowledge key and no policy opens a flow to it; set, the config carries it (never its networkPolicy)
+# and the broker's default-deny egress opens the URL's port to the named peers only.
+for r in "$q" "$p"; do
+  out="$r"
+  ynone 'select(.kind=="ConfigMap" and .metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools | select(has("knowledge"))' 'unset: the config carries no knowledge key'
+done
+kurl=(--set broker.roomTools.knowledge.url=http://runlore.runlore.svc.cluster.local:8080/mcp)
+kc="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${kurl[@]}" \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"matchLabels":{"io.kubernetes.pod.namespace":"runlore","app.kubernetes.io/name":"runlore"}}]')"
+out="$kc"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.knowledge | (.url == "http://runlore.runlore.svc.cluster.local:8080/mcp" and (.tools | join(",")) == "kb_search,kb_get" and (.roles | join(",")) == "triager" and .timeout == "10s" and .maxBytes == 65536 and (has("networkPolicy") | not))' 'set: the config carries the knowledge block, without its networkPolicy'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.enabled == true' 'set: the room tools stay on'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "runlore") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "runlore" and .toPorts[0].ports[0].port == "8080" and (.toEndpoints | length) == 1)' 'cilium: the broker reaches the knowledge peers on the URL port'
+ktmp="$(mktemp -d)"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$kc" >"$ktmp/knowledge.yaml"
+go run ./tests/loadconfig broker-knowledge "$ktmp/knowledge.yaml" || fail=1
+rm -rf "$ktmp"
+kk="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set broker.roomTools.enabled=true \
+  --set broker.roomTools.knowledge.url=https://kb.example.com/mcp \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"ipBlock":{"cidr":"10.0.0.0/8"}}]')"
+out="$kk"
+ykind NetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.to[0].ipBlock.cidr == "10.0.0.0/8") | ((.to | length) == 1 and (.ports | length) == 1 and .ports[0].port == 443)' 'kubernetes: the broker reaches the knowledge peers on 443 only'
+bad 'broker.roomTools.knowledge.networkPolicy.to is empty' --set networkPolicies.mode=kubernetes --set broker.roomTools.enabled=true --set broker.roomTools.knowledge.url=https://kb.example.com/mcp
+kn0="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.roomTools.enabled=true --set networkPolicies.enabled=false "${kurl[@]}")"
+out="$kn0"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.knowledge.url == "http://runlore.runlore.svc.cluster.local:8080/mcp"' 'mode none: the endpoint needs no peers'
+
 # human.slackIntents (natural-language intents, SI3): rendered verbatim with the block, off when unset
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents == null)' 'slackIntents is off unless the values set it'
 si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false \
