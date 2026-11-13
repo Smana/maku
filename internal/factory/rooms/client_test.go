@@ -173,6 +173,22 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 		}
 		_, _ = io.WriteString(w, `{"sub":"zsub1"}`)
 	})
+	mux.HandleFunc("GET /v1/links/github", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		switch r.URL.Query().Get("sub") {
+		case "zsub1":
+			_, _ = io.WriteString(w, `{"githubId":4242,"lastSeenAt":"2026-11-13T11:00:00Z","active":true}`)
+		case "stale":
+			_, _ = io.WriteString(w, `{"githubId":7,"lastSeenAt":"2026-11-01T11:00:00Z","active":false}`)
+		case "zero":
+			_, _ = io.WriteString(w, `{"githubId":0,"active":true}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(wire.Error{Reason: wire.ReasonNotLinked})
+		}
+	})
 	mux.HandleFunc("GET /v1/rooms/{id}/bundles/{digest}", func(w http.ResponseWriter, r *http.Request) {
 		if b.refuse(w, r) {
 			return
@@ -879,5 +895,34 @@ func TestSlackLink(t *testing.T) {
 	r.b.fail["/v1/links/slack"], r.b.reason = http.StatusForbidden, wire.ReasonNotPermitted
 	if _, _, err := r.c.SlackLink(t.Context(), "T01ABC", "U02DEF"); !errors.Is(err, ErrNotPermitted) {
 		t.Fatalf("not permitted: %v", err)
+	}
+}
+
+// The GitHub link read: a linked sub's numeric id and the broker's activity verdict, an unlinked sub
+// as not found, a reply without an id an error, any other refusal an error; a malformed sub never
+// reaches the broker.
+func TestGitHubLink(t *testing.T) {
+	r := newRig(t, 1)
+	ctx := t.Context()
+	if l, found, err := r.c.GitHubLink(ctx, "zsub1"); err != nil || !found || l.GitHubID != 4242 || !l.Active {
+		t.Fatalf("%+v %v %v", l, found, err)
+	}
+	if l, found, err := r.c.GitHubLink(ctx, "stale"); err != nil || !found || l.Active {
+		t.Fatalf("an inactive link: %+v %v %v", l, found, err)
+	}
+	if _, found, err := r.c.GitHubLink(ctx, "nobody"); err != nil || found {
+		t.Fatalf("an unlinked sub: %v %v", found, err)
+	}
+	if _, _, err := r.c.GitHubLink(ctx, "zero"); err == nil {
+		t.Fatal("a reply with no id was accepted")
+	}
+	for _, sub := range []string{"", strings.Repeat("a", 129)} {
+		if _, _, err := r.c.GitHubLink(ctx, sub); err == nil {
+			t.Fatalf("a malformed sub (%d bytes) reached the broker", len(sub))
+		}
+	}
+	r.b.fail["/v1/links/github"], r.b.reason = http.StatusServiceUnavailable, wire.ReasonLogUnavailable
+	if _, _, err := r.c.GitHubLink(ctx, "zsub1"); err == nil {
+		t.Fatal("a broker 503 is not an error")
 	}
 }

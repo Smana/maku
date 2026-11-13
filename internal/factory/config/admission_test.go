@@ -23,7 +23,10 @@ func TestAdmissionSettings(t *testing.T) {
 		add, err string
 	}{
 		"access with its reader and a TTL":          {"  access: {readerFile: /etc/r/reader.json, ttl: 5m}\n", ""},
-		"access without a reader":                   {"  access: {ttl: 5m}\n", "api.access.readerFile is required"},
+		"access without a reader":                   {"  access: {ttl: 5m}\n", "api.access.readerFile is required unless api.access.links is broker"},
+		"access from the broker's links":            {"  access: {links: broker, ttl: 5m}\n", ""},
+		"the broker's links and the reader behind":  {"  access: {links: broker, readerFile: /r, ttl: 5m}\n", ""},
+		"an unknown link source":                    {"  access: {links: zitadel, ttl: 5m}\n", `api.access.links "zitadel" is not "" or broker`},
 		"access trusted past five minutes":          {"  access: {readerFile: /r, ttl: 6m}\n", "api.access.ttl must be above 0 and at most 5m0s (v2 D4)"},
 		"a system principal scoped to a repository": {"  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:runlore}\n  systemRepositories: {system:runlore: [Smana/ai-native-ref]}\n", ""},
 		"a scope for an unknown principal":          {"  systemRepositories: {system:nobody: [Smana/ai-native-ref]}\n", `api.systemRepositories: "system:nobody" is not a systemPrincipals value`},

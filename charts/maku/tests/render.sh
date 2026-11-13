@@ -637,6 +637,38 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$ctl" >"$tmp/rc-production.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$pr" >"$tmp/rc-perrun.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$uns" >"$tmp/unsafe.yaml"
+# v4 step 5 PR C (D8): the GitHub account link by Secret. broker.githubLink.existingSecret mounts the
+# client at /etc/room-broker/github-link and fills human.githubLink where the human block leaves it
+# unset; the broker's egress reaches GitHub's site and API on 443.
+ghl=(--set broker.githubLink.existingSecret=gh-link)
+gl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" "${ghl[@]}")" || { echo "FAIL: broker.githubLink does not render" >&2; fail=1; gl=''; }
+out="$gl"
+ykind Deployment 'select(.metadata.name=="room-broker") | ((.spec.template.spec.volumes[] | select(.name == "github-link") | .secret.secretName == "gh-link") and (.spec.template.spec.containers[0].volumeMounts[] | select(.name == "github-link") | (.mountPath == "/etc/room-broker/github-link" and .readOnly)))' 'broker.githubLink.existingSecret is mounted read-only at /etc/room-broker/github-link'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .human.githubLink | (.clientIDFile == "/etc/room-broker/github-link/client_id" and .clientSecretFile == "/etc/room-broker/github-link/client_secret" and .activeWindow == "168h" and (has("webURL") | not))' 'the chart fills human.githubLink from the Secret'
+# fqdns: the GitHub hosts the broker's CNP names, comma-joined
+fqdns() { yq ea 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "room-broker")' - <<<"$out" | yq '[.spec.egress[] | select(.toFQDNs != null) | .toFQDNs[].matchName] | join(",")' -; }
+[[ "$(fqdns)" == "github.com,api.github.com" ]] || { echo "FAIL: mode cilium: the broker may reach github.com and api.github.com, got '$(fqdns)'" >&2; fail=1; }
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toFQDNs != null) | .toPorts[0].ports[0].port == "443"' 'only on 443'
+gl2="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" "${ghl[@]}" --set broker.human.githubLink.clientIDFile=/mine \
+  --set broker.githubLink.webURL=https://ghes.example.test --set broker.githubLink.activeWindow=24h)"
+out="$gl2"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .human.githubLink | (.clientIDFile == "/mine" and .clientSecretFile == "/etc/room-broker/github-link/client_secret" and .webURL == "https://ghes.example.test" and .activeWindow == "24h")' 'a set human.githubLink.clientIDFile wins; webURL and activeWindow reach the config'
+[[ "$(fqdns)" == "ghes.example.test" ]] || { echo "FAIL: a GHES: its one host, got '$(fqdns)'" >&2; fail=1; }
+gk="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" "${ghl[@]}" --set networkPolicies.mode=kubernetes)" || { echo "FAIL: broker.githubLink in mode kubernetes does not render" >&2; fail=1; gk=''; }
+out="$gk"
+n443="$(yq ea 'select(.kind == "NetworkPolicy" and .metadata.name == "room-broker")' - <<<"$out" | yq '[.spec.egress[] | select(.ports[0].port == 443 and .to[0].ipBlock.cidr == "0.0.0.0/0")] | length' -)"
+[[ $n443 == 1 ]] || { echo "FAIL: mode kubernetes: 443 to public addresses (NetworkPolicy names no host), got $n443 rules" >&2; fail=1; }
+ykind NetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.ports[0].port == 443 and .to[0].ipBlock.cidr == "0.0.0.0/0") | (.to[0].ipBlock.except | contains(["10.0.0.0/8", "169.254.0.0/16"]))' 'the private ranges excluded'
+# human.githubLink set directly, with no Secret: the link is on, so the egress is too
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.human.githubLink.clientIDFile=/a --set broker.human.githubLink.clientSecretFile=/b)"
+[[ "$(fqdns)" == "github.com,api.github.com" ]] || { echo "FAIL: human.githubLink set directly renders no GitHub egress, got '$(fqdns)'" >&2; fail=1; }
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "github-link") | .name' 'human.githubLink set directly mounts no Secret'
+out="$p"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "github-link") | .name' 'no githubLink, no mount'
+ynone 'select(.kind == "CiliumNetworkPolicy") | .spec.egress[] | select(.toFQDNs != null) | .toPorts' 'no githubLink, no GitHub egress'
+bad 'broker.githubLink.existingSecret: mode local has no GitHub account to link' --set broker.githubLink.existingSecret=gh-link
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$gl" >"$tmp/githublink.yaml"
+go run ./tests/loadconfig broker "$tmp/githublink.yaml" || fail=1
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" "$tmp/unsafe.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
 go run ./tests/loadconfig broker-slackintents "$tmp/slackintents.yaml" || fail=1

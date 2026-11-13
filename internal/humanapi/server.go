@@ -171,6 +171,9 @@ type Server struct {
 	// SlackLink is the Slack self-serve link (human.slackLink): its two tools for the Slack App and
 	// the /link/slack page. Nil serves neither.
 	SlackLink *SlackLinker
+	// GitHubLink is the GitHub account link (human.githubLink, v4 D8): /link/github and the admin's
+	// DELETE /api/links/github/{sub}. Nil serves neither.
+	GitHubLink *GitHubLinker
 	// Grants is human.approvalMemory: the saved approval grants' page and API (merge policy stage
 	// 5). Nil serves neither.
 	Grants GrantStore
@@ -226,6 +229,9 @@ type Server struct {
 	readLimits map[string]*rate.Limiter // room list and summary reads per principal, per replica
 
 	folds foldCache // each recently read room's summary fold (audit S-9)
+
+	touchMu sync.Mutex
+	touched map[string]time.Time // each sub's last GitHub link touch, per replica
 }
 
 // Routes is the :8080 handler.
@@ -275,6 +281,9 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)
+	}
+	if s.GitHubLink != nil {
+		s.githubLinkRoutes(mux)
 	}
 	if s.Grants != nil { // human.approvalMemory (merge policy stage 5): off, every path is a 404
 		s.grantRoutes(mux, index)
@@ -421,6 +430,7 @@ func (s *Server) principal(w http.ResponseWriter, r *http.Request) (authn.Princi
 		http.Error(w, "not in an agents group", http.StatusForbidden)
 		return p, false
 	}
+	s.touchGitHub(r.Context(), p)
 	switch err := s.active(r.Context(), p); {
 	case errors.Is(err, ghidentity.ErrInactive):
 		s.rejected(r.Context(), reasonUserInactive)

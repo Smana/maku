@@ -5,7 +5,8 @@ COPY go.mod go.sum ./
 COPY hack/e2e-stub ./hack/e2e-stub
 ARG TARGETOS
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/e2e-stub ./hack/e2e-stub
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/e2e-stub ./hack/e2e-stub
 
 FROM --platform=$TARGETPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf
 RUN apk add --no-cache git git-daemon ca-certificates

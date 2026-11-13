@@ -97,6 +97,16 @@ spec:
       toPorts:
         - ports: [{port: {{ .port | quote }}, protocol: TCP}]
     {{- end }}
+    {{- with include "ap.githubLinkHosts" . | fromJsonArray }}
+    # The GitHub account link (v4 D8): the code exchange on GitHub's site, GET /user and the token's
+    # revocation on its API.
+    - toFQDNs:
+        {{- range . }}
+        - matchName: {{ . }}
+        {{- end }}
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    {{- end }}
     {{- with include "ap.knowledge" . | fromJson }}
     {{- $kport := .port }}
     {{- $selectors := list }}

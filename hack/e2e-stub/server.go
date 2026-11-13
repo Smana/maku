@@ -34,6 +34,8 @@ type Stub struct {
 	traces []string
 	// codes are the authorization codes issued and not yet redeemed (plan v4 step 6, Task 9).
 	codes codeStore
+	// oauth is GitHub's OAuth web flow, for the broker's GitHub account link (v4 D8).
+	oauth *oauthFlow
 }
 
 // New builds a stub with one throwaway signing key. It never contacts an external service.
@@ -42,8 +44,9 @@ func New() *Stub {
 	if err != nil {
 		panic("e2e-stub: generate throwaway RSA key: " + err.Error())
 	}
-	s := &Stub{key: key, issues: NewIssueStore()}
+	s := &Stub{key: key, issues: NewIssueStore(), oauth: newOAuthFlow()}
 	mux := http.NewServeMux()
+	s.oauth.routes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("GET /__counts", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]int{
