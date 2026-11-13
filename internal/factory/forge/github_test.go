@@ -413,6 +413,10 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 				_, _ = io.WriteString(w, strings.Replace(prJSON, `"isCrossRepository":false`, `"isCrossRepository":true`, 1))
 				return
 			}
+			if strings.Contains(string(b), `"number":15`) { // forge_read: a description edited after a vouch
+				_, _ = io.WriteString(w, strings.Replace(prJSON, `"state":"OPEN",`, `"state":"OPEN","lastEditedAt":"2026-09-27T11:00:00Z",`, 1))
+				return
+			}
 			if strings.Contains(string(b), `"number":14`) {
 				_, _ = io.WriteString(w, strings.Replace(prJSON, `"reviews":{"nodes"`, `"reviews":{"pageInfo":{"hasPreviousPage":true},"nodes"`, 1))
 				return
@@ -1053,6 +1057,19 @@ func newRig(t *testing.T) *rig {
 		t.Fatal(err)
 	}
 	return &rig{g: g, gh: gh, clk: clk, opts: o, keyTo: keyFile}
+}
+
+// forge_read (UH6): the description's last edit is read, so a vouch given before it does not cover
+// it; a description never edited reads zero.
+func TestPullRequestBodyEditedAt(t *testing.T) {
+	r := newRig(t)
+	if pr, err := r.g.PullRequest(t.Context(), 12); err != nil || !pr.BodyEditedAt.IsZero() {
+		t.Fatalf("never edited: %v %v", pr.BodyEditedAt, err)
+	}
+	pr, err := r.g.PullRequest(t.Context(), 15)
+	if err != nil || !pr.BodyEditedAt.Equal(time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC)) {
+		t.Fatalf("edited: %v %v", pr.BodyEditedAt, err)
+	}
 }
 
 // A pull request from a fork says so: the adopted author mode refuses it by this field.

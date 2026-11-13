@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/intake"
 	"github.com/Smana/maku/internal/hardening"
 )
 
@@ -47,6 +51,44 @@ type ForgeThreads interface {
 	PullRequest(ctx context.Context, number int) (forge.PR, error)
 	PullRequestChecks(ctx context.Context, number int) (forge.Checks, error)
 	FailedJobLog(ctx context.Context, jobID int64) (string, error)
+	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
+}
+
+// forgeReadTTL is how long one run's read of one target is served again without reading GitHub:
+// a run that loops on forge_read cannot spend the App's rate limit.
+const forgeReadTTL = 15 * time.Second
+
+// forgeReadCache holds each (run, target)'s last answer for forgeReadTTL. Safe for concurrent use.
+type forgeReadCache struct {
+	mu sync.Mutex
+	m  map[string]cachedRead
+}
+
+type cachedRead struct {
+	at  time.Time
+	res hardening.ForgeReadResult
+}
+
+// get is key's answer while it is fresh at now; it drops every stale entry on the way.
+func (c *forgeReadCache) get(key string, now time.Time) (hardening.ForgeReadResult, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, v := range c.m {
+		if now.Sub(v.at) >= forgeReadTTL {
+			delete(c.m, k)
+		}
+	}
+	v, ok := c.m[key]
+	return v.res, ok
+}
+
+func (c *forgeReadCache) put(key string, now time.Time, res hardening.ForgeReadResult) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.m == nil {
+		c.m = map[string]cachedRead{}
+	}
+	c.m[key] = cachedRead{at: now, res: res}
 }
 
 // forgeReadRequest is the route's body: the target alone. The run is the path's, which the broker
@@ -104,13 +146,21 @@ func (s *Server) forgeRead(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusServiceUnavailable, "forge_unavailable")
 		return
 	}
-	res, err := s.readForge(r.Context(), cfg, gh, task, in.Target)
-	if err != nil {
-		s.log().Warn("forge read failed", "run.id", run, "task.id", task.Name, "target", in.Target, "err", err)
-		refuse(w, http.StatusBadGateway, "forge_error")
-		return
+	now := time.Now()
+	if s.Now != nil {
+		now = s.Now()
 	}
-	s.log().Info("forge read", "run.id", run, "task.id", task.Name, "target", in.Target,
+	key := run + "/" + in.Target
+	res, cached := s.forgeReads.get(key, now)
+	if !cached {
+		if res, err = s.readForge(r.Context(), cfg, gh, task, in.Target); err != nil {
+			s.log().Warn("forge read failed", "run.id", run, "task.id", task.Name, "target", in.Target, "err", err)
+			refuse(w, http.StatusBadGateway, "forge_error")
+			return
+		}
+		s.forgeReads.put(key, now, res)
+	}
+	s.log().Info("forge read", "run.id", run, "task.id", task.Name, "target", in.Target, "cached", cached,
 		"items", len(res.Items), "withheld", res.WithheldCount(), "min", res.InputTrust.Min.String())
 	reply(w, http.StatusOK, res)
 }
@@ -169,11 +219,14 @@ func (s *Server) readForge(ctx context.Context, cfg *config.Config, gh ForgeThre
 			if err != nil {
 				return hardening.ForgeReadResult{}, err
 			}
-			if !own(iss.Author) {
-				// The trigger label, or an api task's accountable sponsor, vouches for the task's issue (UH6).
-				vouched := t.Spec.Source.Kind == "issue" || t.Spec.Source.Kind == "api" || slices.Contains(iss.Labels, VouchLabel)
-				ts = append(ts, hardening.ForgeText{Kind: "issue", Author: hardening.Author{Login: iss.Author, Association: iss.Association},
-					Body: iss.Title + "\n\n" + iss.Body, Vouched: vouched})
+			if !own(iss.Author) { // an api task's issue is the factory's own, filed from the request
+				vouched, err := s.issueVouched(ctx, cfg, gh, t, iss)
+				if err != nil {
+					return hardening.ForgeReadResult{}, err
+				}
+				ts = append(ts, hardening.ForgeText{Kind: "issue", Source: hardening.SourceIssue,
+					Author: hardening.Author{Login: iss.Author, Association: iss.Association},
+					Body:   iss.Title + "\n\n" + iss.Body, Vouched: vouched})
 			}
 			cs, err := comments(ctx, gh, n, own)
 			if err != nil {
@@ -190,8 +243,12 @@ func (s *Server) readForge(ctx context.Context, cfg *config.Config, gh ForgeThre
 			return hardening.ForgeReadResult{}, err
 		}
 		if !own(p.Author) && p.Body != "" {
+			at, ok, err := s.vouchedAt(ctx, cfg, gh, t.Spec.Repository, pr, p.Labels)
+			if err != nil {
+				return hardening.ForgeReadResult{}, err
+			}
 			ts = append(ts, hardening.ForgeText{Kind: "pull_request", Author: hardening.Author{Login: p.Author},
-				Body: p.Body, Vouched: slices.Contains(p.Labels, VouchLabel)})
+				Body: p.Body, Vouched: ok && !p.BodyEditedAt.After(at)})
 		}
 		for _, rv := range p.Reviews {
 			if own(rv.Author) {
@@ -213,6 +270,45 @@ func (s *Server) readForge(ctx context.Context, cfg *config.Config, gh ForgeThre
 		ts = append(ts, cs...)
 	}
 	return hardening.FilterThread(s.trustPolicy(cfg, t.Spec.Repository), ts), nil
+}
+
+// issueVouched is whether the task's issue reads approved (UH6): the trigger label vouched for it
+// as it was labelled (its title and body hash to the task's snapshot, or neither changed after the
+// task was created), or a maintainer's or writer's factory/vouch covers it (no edit after the
+// vouch). Otherwise it is levelled by its author's association: a stranger's edit of a labelled
+// issue is not vouched for.
+func (s *Server) issueVouched(ctx context.Context, cfg *config.Config, gh ForgeThreads, t *factoryv1.Task, iss forge.Issue) (bool, error) {
+	editedAfter := func(at time.Time) bool { return iss.LastEditedAt.After(at) || iss.TitleEditedAt.After(at) }
+	if t.Spec.Source.Kind == "issue" {
+		if _, sum, _ := intake.Snapshot(iss); sum == t.Spec.Source.ContentSHA256 || !editedAfter(t.CreationTimestamp.Time) {
+			return true, nil
+		}
+	}
+	at, ok, err := s.vouchedAt(ctx, cfg, gh, t.Spec.Repository, iss.Number, iss.Labels)
+	return ok && !editedAfter(at), err
+}
+
+// vouchedAt is when thread n's factory/vouch label was last applied, ok only when it is on the
+// thread now and its last labeller is one of the repository's maintainers or has write on it
+// (as intake reads the trigger label: Generation, IsMaintainer, then v2 D5's write check).
+func (s *Server) vouchedAt(ctx context.Context, cfg *config.Config, gh ForgeThreads, repo string, n int, labels []string) (time.Time, bool, error) {
+	if !slices.Contains(labels, VouchLabel) {
+		return time.Time{}, false, nil
+	}
+	evs, err := gh.LabelEvents(ctx, n, VouchLabel)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("read the vouch on %d: %w", n, err)
+	}
+	_, last, ok := intake.Generation(evs, cfg.RepositoryFor(repo).IsMaintainer)
+	switch {
+	case last.Actor == "":
+		return time.Time{}, false, nil
+	case !ok && s.Writers != nil:
+		if ok, err = s.Writers(ctx, repo, last.Actor); err != nil {
+			return time.Time{}, false, fmt.Errorf("write check of the vouch on %d: %w", n, err)
+		}
+	}
+	return last.At, ok, nil
 }
 
 // comments are thread n's comments but the factory's and the agents' own, which are not human text.

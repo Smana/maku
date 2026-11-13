@@ -601,6 +601,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if hardened != nil {
 		apiSrv.Trust = hardened.Policies
 	}
+	apiSrv.Writers = perms.CanWrite // a factory/vouch from a writer who is not a maintainer (v2 D5)
 	// Coordination (v4 MR16): Prerequisites stays nil because neither capability it must prove,
 	// repository-declared class authority (v4 item 3) nor hardened safe outputs (v4 item 4), has
 	// shipped, so execute refuses coordination_prerequisites and files nothing; plan drafts and

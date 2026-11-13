@@ -599,7 +599,10 @@ output types, on the run-controller.
 5. **The mode.** `hardening.repositories.<repo>.mode: enforce`, and restart the factory.
 
 Check on the first run: its pod's CNP and egress annotation have no `api.github.com`,
-`gh issue view` exits 3, and `status.inputTrust.mode` reads `enforce`.
+`gh issue view` exits 3, and `status.inputTrust.mode` reads `enforce`. Probe the egress by IP
+too: from the sandbox, `curl --resolve api.github.com:443:<a github.com IP> https://api.github.com`
+(a request with `Host: api.github.com` to a `github.com` address) must fail, while `git fetch`
+works.
 
 **Rollback** is `mode: audit` and a restart: the next run is created without
 `forge-api: deny`, and gets its API egress back. Runs already started keep theirs: let them end.

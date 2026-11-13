@@ -23,6 +23,9 @@ type ForgeText struct {
 	Author  Author
 	Body    string
 	Vouched bool // factory/vouch on the object, or the issue the trigger label vouched for
+	// Source is the kind the item is recorded as: SourceIssue for the task's issue, SourceComment
+	// when unset.
+	Source SourceKind
 }
 
 // CheckText is one check run of the run's branch with its log excerpt. Foreign is a branch another
@@ -59,10 +62,12 @@ type ForgeReads interface {
 	ForgeRead(ctx context.Context, run, target string) (ForgeReadResult, error)
 }
 
-// MaxForgeBody bounds one item's body as the room's reads are bounded; TruncatedMark ends a cut one.
+// MaxForgeBody bounds one item's body as the room's reads are bounded. TruncatedMark ends a thread
+// item cut at its head; TruncatedHead starts a check log cut to its tail, where the failure is.
 const (
 	MaxForgeBody  = 16 << 10
 	TruncatedMark = "\n[truncated]"
+	TruncatedHead = "[truncated]\n"
 )
 
 // FilterThread is the read filter (UH6, UH11), one pure function: text below p.Min, and a blocked
@@ -72,13 +77,17 @@ func FilterThread(p Policy, ts []ForgeText) ForgeReadResult {
 	res := ForgeReadResult{Items: []ForgeItem{}, InputTrust: NewInputTrust()}
 	withheld := 0
 	for _, t := range ts {
+		kind := t.Source
+		if kind == "" {
+			kind = SourceComment
+		}
 		l := p.LevelOf(t.Author, t.Vouched)
 		if p.Withholds(l) {
 			withheld++
-			res.InputTrust.Withhold(SourceComment)
+			res.InputTrust.Withhold(kind)
 			continue
 		}
-		res.add(ForgeItem{ID: t.ID, Kind: t.Kind, Author: t.Author.Login}, SourceComment, l, t.Body)
+		res.add(ForgeItem{ID: t.ID, Kind: t.Kind, Author: t.Author.Login}, kind, l, t.Body, false)
 	}
 	res.Withheld = Placeholder(withheld, "item")
 	return res
@@ -93,15 +102,22 @@ func FilterChecks(cs []CheckText) ForgeReadResult {
 		if ch.Foreign {
 			kind = SourceForeignCI
 		}
-		res.add(ForgeItem{Kind: "check", Name: ch.Name, Conclusion: ch.Conclusion}, kind, kind.Level(), ch.Log)
+		res.add(ForgeItem{Kind: "check", Name: ch.Name, Conclusion: ch.Conclusion}, kind, kind.Level(), ch.Log, true)
 	}
 	return res
 }
 
-// add sanitises and bounds body, then records the item and its provenance.
-func (r *ForgeReadResult) add(it ForgeItem, kind SourceKind, l Level, body string) {
+// add sanitises and bounds body, keeping its head, or its tail for a log, then records the item and
+// its provenance.
+func (r *ForgeReadResult) add(it ForgeItem, kind SourceKind, l Level, body string, tail bool) {
 	body, _ = sanitize.Text(body)
-	if len(body) > MaxForgeBody {
+	if len(body) > MaxForgeBody && tail {
+		cut := len(body) - MaxForgeBody
+		for cut < len(body) && !utf8.RuneStart(body[cut]) {
+			cut++
+		}
+		body, it.Truncated = TruncatedHead+body[cut:], true
+	} else if len(body) > MaxForgeBody {
 		cut := MaxForgeBody
 		for cut > 0 && !utf8.RuneStart(body[cut]) {
 			cut--

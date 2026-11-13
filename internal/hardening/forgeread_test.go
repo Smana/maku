@@ -4,8 +4,10 @@ package hardening
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // UH6, UH11: forge text below minAuthorTrust is withheld before any model reads it; the run reads
@@ -48,6 +50,26 @@ func TestFilterThread(t *testing.T) {
 		res := FilterChecks([]CheckText{{Name: "lint", Conclusion: "failure", Log: "line 3: x"}, {Name: "e2e", Conclusion: "success", Log: "ok", Foreign: true}})
 		if len(res.Items) != 2 || res.Items[0].Trust != Approved || res.Items[1].Trust != None || res.InputTrust.Min != None {
 			t.Fatalf("%+v", res)
+		}
+	})
+	t.Run("a check log keeps its tail", func(t *testing.T) {
+		log := strings.Repeat("é", MaxForgeBody) + "\nFAIL: TestX"
+		res := FilterChecks([]CheckText{{Name: "test", Conclusion: "failure", Log: log}})
+		it := res.Items[0]
+		if !it.Truncated || len(it.Body) > MaxForgeBody+len(TruncatedHead) || !strings.HasPrefix(it.Body, TruncatedHead) ||
+			!strings.HasSuffix(it.Body, "FAIL: TestX") || !utf8.ValidString(it.Body) {
+			t.Fatalf("%d bytes: %q…%q", len(it.Body), it.Body[:20], it.Body[len(it.Body)-20:])
+		}
+	})
+	t.Run("each item records its source kind", func(t *testing.T) {
+		res := FilterThread(p, []ForgeText{
+			{Kind: "issue", Source: SourceIssue, Author: Author{Login: "x", Association: "NONE"}, Body: "b", Vouched: true},
+			{Kind: "issue", Source: SourceIssue, Author: Author{Login: "y", Association: "NONE"}, Body: "b"},
+			{Kind: "comment", Author: Author{Login: "smana"}, Body: "c"},
+		})
+		if res.InputTrust.Withheld[SourceIssue] != 1 || res.InputTrust.Withheld[SourceComment] != 0 ||
+			!slices.Contains(res.InputTrust.Sources, Source{SourceIssue, Approved}) || !slices.Contains(res.InputTrust.Sources, Source{SourceComment, Approved}) {
+			t.Fatalf("%+v", res.InputTrust)
 		}
 	})
 	for _, tc := range []struct {

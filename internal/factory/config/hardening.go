@@ -358,7 +358,7 @@ func (c *Config) validateModeEnforce(bad func(string, ...any)) {
 		}
 		key := "hardening mode enforce on " + r.Name
 		switch {
-		case c.Runs.XR():
+		case !c.onRunController():
 			bad("%s: R5 cannot hold on the XR: forge_read needs the run-controller's egress (HR36)", key)
 		case !slices.Equal(h.EnforcedFor(r.Name), slices.Sorted(slices.Values(enforceable))):
 			bad("%s needs all five output types in enforceOutputs: pr, comment, labels, issue, push", key)
@@ -565,9 +565,14 @@ func (c *Config) HardeningSettings(repository, makuVersion string) hardening.Set
 // run-controller older than the factory would ignore the annotation: the chart pins both to one
 // version, and runbook H4-1 probes it.
 func (c *Config) readFilter(repository string) bool {
-	return !c.Demo && c.Hardening.ModeFor(repository) == hardening.ModeEnforce && c.Runs.Group != "" && !c.Runs.XR() &&
+	return !c.Demo && c.Hardening.ModeFor(repository) == hardening.ModeEnforce && c.onRunController() &&
 		slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
 }
+
+// onRunController reports whether runs are the run-controller's: a runs group that is set and is
+// not cloud-native-ref's XR (omitted is the XR, as TokenSource reads it). Mode enforce's check and
+// R5 read the same answer.
+func (c *Config) onRunController() bool { return c.Runs.Group != "" && !c.Runs.XR() }
 
 // TokenSource is where the runs' sandbox tokens come from (plan PR8): octo-sts on the XR, the
 // minter's role table under runTokens.perRun, and otherwise a shared token that grants writes.

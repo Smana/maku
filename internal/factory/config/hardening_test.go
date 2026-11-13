@@ -533,6 +533,9 @@ func TestModeEnforce(t *testing.T) {
 		"four types":      {withAPI(good+perRunTokens+strings.Replace(enforceAll, "pr, push", "pr", 1), broker), "all five output types"},
 		"no broker":       {good + perRunTokens + enforceAll, "system:broker"},
 		"central enforce": {withAPI(good+perRunTokens+"hardening: {mode: enforce}\n", broker), "all five output types"},
+		// The factory's run-token ticker revokes each per-run token at the run's end, from outside
+		// the sandbox: under forge-api: deny the harness cannot. A shared token is refused (HR13).
+		"a shared token": {withAPI(good+"runs: {group: maku.ogenki.io}\n"+enforceAll, broker), "runTokens.perRun"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.cfg)); err == nil || !strings.Contains(err.Error(), tc.want) {

@@ -2163,9 +2163,17 @@ flowchart LR
 - **`forge_read`.** `target` is `issue`, `pr` or `checks`, always the run's own task: the broker
   sends the verified caller's run, never an argument. `issue` reads the issue and its comments,
   `pr` the pull request's description, reviews and comments, and `checks` the head's check runs
-  with each failed GitHub Actions job's log tail. The factory's and the agents' own comments are
+  with the tail of each failed GitHub Actions job's log, where the error is: a log over 16 KiB keeps
+  its last 16 KiB, marked `[truncated]` at the top. The factory's and the agents' own comments are
   left out. Each item carries its author's trust level. Withheld items are a count:
-  `[2 items withheld: author trust]`.
+  `[2 items withheld: author trust]`. One run's read of one target is served again for 15 s without
+  reading GitHub, so a run that loops on `forge_read` cannot spend the App's rate limit.
+- **What counts as vouched.** The trigger label vouches for the task's issue as it was labelled:
+  its title and body hash to the task's snapshot, or neither was edited after the task was
+  created. A later edit, by anyone, voids it, and the issue is levelled by its author's
+  association. A `factory/vouch` label vouches for an issue or a pull request's description only
+  when its last labeller is a maintainer or has write on the repository, and only if the text was
+  not edited after it. Comments and reviews are never vouched for.
 - **Its egress.** The factory writes `agents.ogenki.io/forge-api: deny` on every run of the
   repository, the reviewer and the triager included. The run-controller drops `api.github.com`
   from the run's CNP and from the egress proxy's allow-list, and sets `FORGE_READ=1`.
@@ -2173,7 +2181,9 @@ flowchart LR
   `gh run view|list` and `gh api` exit 3 and name `forge_read`. The rules say to read the pull
   request's diff with `git diff origin/<base>...HEAD`, and a CI repair names `forge_read`
   (target checks). The judge's triage reads checks through `forge_read`. The credential agent
-  skips its token revoke, which needs the API: the token is read-only and expires within the hour.
+  skips its token revoke, which needs the API. The factory revokes the run's token when the run
+  ends instead: mode enforce needs `runTokens.perRun` there (HR13), whose ticker revokes each
+  run's token at its terminal phase, from outside the sandbox.
 
 ### What the factory records
 
@@ -2184,7 +2194,10 @@ and `min` counts only what was delivered. A withheld comment does not lower it. 
 each read's counts, never a body.
 
 Readiness R5 holds for the repository: enforce, the run-controller, and `system:broker` mapped.
-Enabling and rolling back are in [Operations](operations.md#hardening-reads-filtered).
+The `hardening` block lives in the factory's config file, which the factory reads at start, and
+the `maku-factory` chart's `checksum/config` annotation restarts it on any change. So the run
+annotation, the forge-read route and R5 always read the same mode. Enabling and rolling back are
+in [Operations](operations.md#hardening-reads-filtered).
 
 ## Reference
 

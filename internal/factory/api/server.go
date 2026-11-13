@@ -124,6 +124,11 @@ type Server struct {
 	// Trust is each repository's fence-file hardening block, its trust floor; nil reads the floor
 	// and the central minAuthorTrust.
 	Trust *hardening.RepositoryPolicies
+	// Writers is v2 D5's write check on a login, read for a factory/vouch label whose labeller is
+	// not a maintainer; nil vouches for maintainers' labels only.
+	Writers func(ctx context.Context, repository, login string) (bool, error)
+	// forgeReads is forge_read's per-(run, target) answer cache (forgeReadTTL).
+	forgeReads *forgeReadCache
 }
 
 // SlackLinkReader is the broker's self-serve link records: the ZITADEL sub a Slack user linked;
@@ -165,6 +170,9 @@ func (s *Server) NeedLeaderElection() bool { return false }
 // sponsored principal is declared, and the coordination routes while the switch is on.
 func (s *Server) Handler() http.Handler {
 	cfg := s.Cfg.Current()
+	if s.forgeReads == nil {
+		s.forgeReads = &forgeReadCache{}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
 	// HR35: the broker's forge_read; it admits system:broker alone and refuses a repository that is
