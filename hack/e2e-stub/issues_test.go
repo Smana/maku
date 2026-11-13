@@ -23,7 +23,7 @@ import (
 const factoryAuthor = "maku-demo[bot]"
 
 // issueSnapshotQuery is the serialization of the Issue query struct in internal/factory/forge/github.go.
-const issueSnapshotQuery = `query($name:String!$number:Int!$owner:String!){repository(owner: $owner, name: $name){issue(number: $number){number,url,title,body,state,author{__typename,login},lastEditedAt,labels(first: 50){nodes{name}},timelineItems(itemTypes: [RENAMED_TITLE_EVENT], last: 1){nodes{... on RenamedTitleEvent{createdAt}}}}}}`
+const issueSnapshotQuery = `query($name:String!$number:Int!$owner:String!){repository(owner: $owner, name: $name){issue(number: $number){number,url,title,body,state,author{__typename,login},authorAssociation,lastEditedAt,labels(first: 50){nodes{name}},timelineItems(itemTypes: [RENAMED_TITLE_EVENT], last: 1){nodes{... on RenamedTitleEvent{createdAt}}}}}}`
 
 type restIssue struct {
 	ID        int64     `json:"id"`

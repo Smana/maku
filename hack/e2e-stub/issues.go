@@ -278,6 +278,15 @@ func issueNumber(w http.ResponseWriter, r *http.Request) (int, bool) {
 	return number, true
 }
 
+// association is the author's relation to the repository, as GitHub's GraphQL reports it: the
+// scenario repository is the developer's own, and a bot has none.
+func association(author string) string {
+	if strings.HasSuffix(author, "[bot]") {
+		return "NONE"
+	}
+	return "OWNER"
+}
+
 func gitHubIssue(issue Issue) map[string]any {
 	labels := make([]map[string]string, 0, len(issue.Labels))
 	for _, label := range issue.Labels {
@@ -580,7 +589,7 @@ func (s *Stub) editComment(w http.ResponseWriter, r *http.Request) {
 }
 
 const issueSnapshotSelection = "repository(owner:$owner,name:$name){issue(number:$number){" +
-	"number,url,title,body,state,author{__typename,login},lastEditedAt,labels(first:50){nodes{name}}," +
+	"number,url,title,body,state,author{__typename,login},authorAssociation,lastEditedAt,labels(first:50){nodes{name}}," +
 	"timelineItems(itemTypes:[RENAMED_TITLE_EVENT],last:1){nodes{... on RenamedTitleEvent{createdAt}}}}}}"
 
 var graphQLPunctuation = regexp.MustCompile(`\s*([{}():])\s*`)
@@ -661,7 +670,7 @@ func (s *Stub) graphQL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{
 		"number": issue.Number, "url": fmt.Sprintf("https://example.invalid/owner/repo/issues/%d", issue.Number),
 		"title": issue.Title, "body": issue.Body, "state": strings.ToUpper(issue.State),
-		"author": map[string]any{"__typename": typename, "login": login}, "lastEditedAt": issue.LastEditedAt,
-		"labels": map[string]any{"nodes": labels}, "timelineItems": map[string]any{"nodes": []any{}},
+		"author": map[string]any{"__typename": typename, "login": login}, "authorAssociation": association(issue.Author),
+		"lastEditedAt": issue.LastEditedAt, "labels": map[string]any{"nodes": labels}, "timelineItems": map[string]any{"nodes": []any{}},
 	}}}})
 }
