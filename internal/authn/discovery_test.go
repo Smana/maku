@@ -47,6 +47,12 @@ func TestDiscover(t *testing.T) {
 			t.Fatalf("%+v %v", d, err)
 		}
 	})
+	t.Run("no device endpoint is no error: the caller decides", func(t *testing.T) {
+		srv := discoveryServer(t, s, map[string]any{"device_authorization_endpoint": ""})
+		if _, err := Discover(t.Context(), srv.Client(), srv.URL); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("a trailing slash on the issuer", func(t *testing.T) {
 		srv := discoveryServer(t, s, nil)
 		if _, err := Discover(t.Context(), srv.Client(), srv.URL+"/"); err == nil {
@@ -54,11 +60,14 @@ func TestDiscover(t *testing.T) {
 		}
 	})
 	for name, doc := range map[string]map[string]any{
-		"another issuer":         {"issuer": "https://elsewhere.example"},
-		"a jwks_uri over http":   {"jwks_uri": "http://idp.example/keys"},
-		"no jwks_uri":            {"jwks_uri": ""},
-		"a relative jwks_uri":    {"jwks_uri": "/keys"},
-		"an issuer with a slash": {"issuer": "x/"},
+		"another issuer":              {"issuer": "https://elsewhere.example"},
+		"a jwks_uri over http":        {"jwks_uri": "http://idp.example/keys"},
+		"no jwks_uri":                 {"jwks_uri": ""},
+		"a relative jwks_uri":         {"jwks_uri": "/keys"},
+		"a token endpoint over http":  {"token_endpoint": "http://idp.example/token"},
+		"a relative token endpoint":   {"token_endpoint": "/token"},
+		"a device endpoint over http": {"device_authorization_endpoint": "http://idp.example/device"},
+		"an issuer with a slash":      {"issuer": "x/"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := discoveryServer(t, s, doc)

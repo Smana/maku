@@ -47,8 +47,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/* The humans' identity agreement (v4 D8, PR2): the broker forwards each human's token to the
-factory, which verifies it again, so both must read the same issuer, preset, token use, roles claim
-and group names. Checked once the factory takes human tokens (config.api.humanIssuer set) and the
+factory, which verifies it again, so both must read the same issuer, preset, token use, roles claim,
+group names, audience and sponsored client claim. The client ids and an audienceFile are files,
+read at use, so a render cannot compare them. Checked once the factory takes human tokens (config.api.humanIssuer set) and the
 broker is in oidc mode; each refusal names both keys. Empty values compare as their defaults. */}}
 {{- define "afumbrella.identity" -}}
 {{- $h := .Values.maku.broker.human | default dict -}}
@@ -65,7 +66,9 @@ broker is in oidc mode; each refusal names both keys. Empty values compare as th
   (list "tokenUse" "tokenUse" ($h.tokenUse | default (get $use $hp) | default "") ($a.tokenUse | default (get $use $ap) | default ""))
   (list "rolesClaim" "rolesClaim" ($h.rolesClaim | default "") ($a.rolesClaim | default ""))
   (list "groups.admin" "groups.admin" ($hg.admin | default "") ($ag.admin | default "agents-admin"))
-  (list "groups.member" "groups.member" ($hg.member | default "") ($ag.member | default "agents-member")) -}}
+  (list "groups.member" "groups.member" ($hg.member | default "") ($ag.member | default "agents-member"))
+  (list "audience" "audience" ($h.audience | default "") ($a.audience | default ""))
+  (list "mcp.sponsoredClientClaim" "sponsoredClientClaim" (dig "mcp" "sponsoredClientClaim" "" $h) ($a.sponsoredClientClaim | default "")) -}}
 {{- if ne (index $pair 2) (index $pair 3) -}}
 {{- fail (printf "maku.broker.human.%s %q and maku-factory.config.api.%s %q must be equal: the factory verifies the token the broker forwards" (index $pair 0) (index $pair 2) (index $pair 1) (index $pair 3)) -}}
 {{- end -}}

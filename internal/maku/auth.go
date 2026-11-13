@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,10 @@ const idTokenSkew = 30 * time.Second
 // without it the session has no credential.
 var errNoIDToken = errors.New("the IdP returned no ID token on refresh: run maku login")
 
+// errIDTokenChanged is a refreshed ID token for another person or client (OIDC Core 12.2: its iss,
+// sub and aud must be the original's).
+var errIDTokenChanged = errors.New("the refreshed ID token names another issuer, subject or audience: run maku login")
+
 // oauthConfig is the device grant's client: under the zitadel preset ZITADEL's fixed paths and the
 // project's audience scope, as before; otherwise the issuer's discovered endpoints (cached by
 // configure, else read from its discovery document now) and the configured scopes.
@@ -39,7 +44,8 @@ func oauthConfig(ctx context.Context, hc *http.Client, c Config) (*oauth2.Config
 		// offline_access brings the refresh token.
 		scopes = append(scopes, "urn:zitadel:iam:org:project:id:"+c.ProjectID+":aud")
 		if ep.DeviceAuthURL == "" || ep.TokenURL == "" {
-			ep.DeviceAuthURL, ep.TokenURL = c.Issuer+"/oauth/v2/device_authorization", c.Issuer+"/oauth/v2/token"
+			iss := strings.TrimSuffix(c.Issuer, "/")
+			ep.DeviceAuthURL, ep.TokenURL = iss+"/oauth/v2/device_authorization", iss+"/oauth/v2/token"
 		}
 	} else {
 		scopes = append(scopes, c.Scopes...)
@@ -52,6 +58,10 @@ func oauthConfig(ctx context.Context, hc *http.Client, c Config) (*oauth2.Config
 				return nil, fmt.Errorf("the issuer %s serves no device authorization endpoint: maku cannot sign in to it", c.Issuer)
 			}
 			ep.DeviceAuthURL, ep.TokenURL = d.DeviceAuthorizationEndpoint, d.TokenEndpoint
+		}
+		// Checked again at use, cached or discovered: the refresh token and the device code go there.
+		if !authn.HTTPSEndpoint(ep.DeviceAuthURL) || !authn.HTTPSEndpoint(ep.TokenURL) {
+			return nil, fmt.Errorf("the issuer %s: its device or token endpoint is not an https URL: run maku configure again", c.Issuer)
 		}
 	}
 	return &oauth2.Config{ClientID: c.ClientID, Scopes: scopes, Endpoint: ep}, nil
@@ -108,21 +118,59 @@ func idTokenOf(tok *oauth2.Token) string {
 	return s
 }
 
-// idTokenFresh reports whether raw's exp is more than idTokenSkew away. maku never verifies a
-// token, the broker does; it only reads when to refresh.
-func idTokenFresh(raw string, now time.Time) bool {
+// idClaims is what maku reads from an ID token it never verifies (the broker does): when to refresh
+// it, and whom it names.
+type idClaims struct {
+	Iss string          `json:"iss"`
+	Sub string          `json:"sub"`
+	Aud json.RawMessage `json:"aud"`
+	Exp int64           `json:"exp"`
+}
+
+func parseIDClaims(raw string) (idClaims, bool) {
 	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
-		return false
+		return idClaims{}, false
 	}
 	b, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
+		return idClaims{}, false
 	}
-	var c struct {
-		Exp int64 `json:"exp"`
+	var c idClaims
+	if json.Unmarshal(b, &c) != nil {
+		return idClaims{}, false
 	}
-	if json.Unmarshal(b, &c) != nil || c.Exp == 0 {
+	return c, true
+}
+
+// audience is aud as a sorted list, whether the token wrote a string or an array.
+func (c idClaims) audience() []string {
+	var one string
+	if json.Unmarshal(c.Aud, &one) == nil {
+		return []string{one}
+	}
+	var many []string
+	_ = json.Unmarshal(c.Aud, &many)
+	slices.Sort(many)
+	return many
+}
+
+// sameIdentity reports whether next names the issuer, subject and audience old does (OIDC Core
+// 12.2). An old token maku cannot read has nothing to compare.
+func sameIdentity(old, next string) bool {
+	o, ok := parseIDClaims(old)
+	if !ok {
+		return true
+	}
+	n, ok := parseIDClaims(next)
+	return ok && o.Iss == n.Iss && o.Sub == n.Sub && slices.Equal(o.audience(), n.audience())
+}
+
+// idTokenFresh reports whether raw's exp is more than idTokenSkew away. maku never verifies a
+// token, the broker does; it only reads when to refresh.
+func idTokenFresh(raw string, now time.Time) bool {
+	c, ok := parseIDClaims(raw)
+	if !ok || c.Exp == 0 {
 		return false
 	}
 	return now.Add(idTokenSkew).Before(time.Unix(c.Exp, 0))
@@ -168,6 +216,9 @@ func Token(ctx context.Context, hc *http.Client, c Config, path string) (string,
 		next := StoredToken{Token: *fresh, IDToken: idTokenOf(fresh)}
 		if idUse && next.IDToken == "" {
 			return "", errNoIDToken
+		}
+		if next.IDToken != "" && st.IDToken != "" && !sameIdentity(st.IDToken, next.IDToken) {
+			return "", errIDTokenChanged
 		}
 		if next.IDToken == "" {
 			next.IDToken = st.IDToken

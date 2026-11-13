@@ -339,7 +339,8 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		}
 		cfg.URL = base
 	}
-	cfg.URL, cfg.Issuer = strings.TrimRight(cfg.URL, "/"), strings.TrimRight(cfg.Issuer, "/")
+	// The issuer is kept as given: OIDC Discovery compares it byte for byte, and Auth0's ends in "/".
+	cfg.URL = strings.TrimRight(cfg.URL, "/")
 	// A plain-http broker is a local install's loopback listener: refused before any request unless it
 	// is on this machine, whatever the answer would say (Discover enforces it too, for its callers).
 	u, err := url.Parse(cfg.URL)
@@ -373,6 +374,9 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		}
 		if d.DeviceAuthorizationEndpoint == "" || d.TokenEndpoint == "" {
 			return fmt.Errorf("configure: the issuer %s serves no device authorization endpoint: maku cannot sign in to it", maku.SafeText(cfg.Issuer))
+		}
+		if !authn.HTTPSEndpoint(d.DeviceAuthorizationEndpoint) || !authn.HTTPSEndpoint(d.TokenEndpoint) {
+			return fmt.Errorf("configure: the issuer %s names a device or token endpoint that is not https", maku.SafeText(cfg.Issuer))
 		}
 		cfg.DeviceAuthURL, cfg.TokenURL = d.DeviceAuthorizationEndpoint, d.TokenEndpoint
 	}
@@ -421,7 +425,24 @@ func (r Maku) ConfirmConfig(next, old maku.Config, yes bool) error {
 	line("url", next.URL, old.URL)
 	line("issuer", next.Issuer, old.Issuer)
 	line("client id", next.ClientID, old.ClientID)
-	line("project id", next.ProjectID, old.ProjectID)
+	if next.EffectivePreset() == maku.PresetGeneric || old.EffectivePreset() == maku.PresetGeneric {
+		// Any OIDC issuer (v4 D8): every value that steers the sign-in or the token's audience is
+		// shown, so a broker cannot change one unseen.
+		host := func(raw string) string {
+			if u, err := url.Parse(raw); err == nil && u.Host != "" {
+				return u.Host
+			}
+			return raw
+		}
+		line("preset", next.EffectivePreset(), old.Preset)
+		line("token use", next.EffectiveTokenUse(), old.TokenUse)
+		line("scopes", strings.Join(next.Scopes, " "), strings.Join(old.Scopes, " "))
+		line("audience", next.Audience, old.Audience)
+		line("device at", host(next.DeviceAuthURL), host(old.DeviceAuthURL))
+		line("tokens at", host(next.TokenURL), host(old.TokenURL))
+	} else {
+		line("project id", next.ProjectID, old.ProjectID)
+	}
 	if !sameRegistrableDomain(next.URL, next.Issuer) {
 		_, _ = fmt.Fprintf(hints, "warning: the issuer %s is not under the same domain as %s: a broker could point you at an identity provider of its own\n",
 			maku.SafeText(next.Issuer), maku.SafeText(next.URL))

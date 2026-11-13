@@ -104,19 +104,27 @@ agree. The umbrella chart fails a render where the following differ, naming both
 | `maku.broker.human.tokenUse` | `maku-factory.config.api.tokenUse` |
 | `maku.broker.human.rolesClaim` | `maku-factory.config.api.rolesClaim` |
 | `maku.broker.human.groups` | `maku-factory.config.api.groups` |
+| `maku.broker.human.audience` | `maku-factory.config.api.audience` |
+| `maku.broker.human.mcp.sponsoredClientClaim` | `maku-factory.config.api.sponsoredClientClaim` |
 
-The check applies once the factory takes human tokens, that is when `humanIssuer` is set.
+The check applies once the factory takes human tokens, that is when `humanIssuer` is set. It
+cannot cover the client ids, nor an `audienceFile`: they are files mounted from Secrets and read
+at use, so the render never sees their content. Keep the two sides' Secrets in step yourself.
 
 ### `maku`
 
 `maku configure` reads `preset`, `tokenUse`, `scopes` and `audience` from the broker's
-`/.well-known/roomctl`. Under `generic` it also reads the issuer's device and token endpoints from
+`/.well-known/roomctl`. With `--from`, it shows each of them before it writes, beside the value it
+replaces, with the hosts of the two endpoints: a broker cannot redirect a sign-in or change the
+token's audience unseen. The issuer is kept exactly as given, a trailing `/` included (Auth0's). Under `generic` it also reads the issuer's device and token endpoints from
 its discovery document, and stores them. `maku login` then runs the device grant there.
 
 Under `tokenUse: id`, `maku` stores the ID token and sends it, refreshing it on its own `exp`. A
 refresh that returns no `id_token` (OIDC Core makes it optional) fails with
-`the IdP returned no ID token on refresh: run maku login`. `maku doctor` names an issuer whose
-discovery document cannot be read.
+`the IdP returned no ID token on refresh: run maku login`. A refreshed ID token naming another
+issuer, subject or audience than the stored one is refused (OIDC Core 12.2). Every endpoint maku
+sends a token request to must be `https`, as discovered and again at use. `maku doctor` names an
+issuer whose discovery document cannot be read.
 
 ### The Slack App
 

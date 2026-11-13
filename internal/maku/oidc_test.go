@@ -183,3 +183,79 @@ func TestDiscoverGeneric(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
+// Review of #530: an endpoint maku sends a token request to is https, whether discovered now or
+// cached by configure, and a cached one that is not fails Validate.
+func TestEndpointsAreHTTPS(t *testing.T) {
+	c := Config{URL: "https://rooms.example", Issuer: "https://idp.example", ClientID: "maku-cli", Preset: PresetGeneric,
+		DeviceAuthURL: "http://idp.example/device", TokenURL: "https://idp.example/token"}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "deviceAuthorizationEndpoint") {
+		t.Fatalf("Validate: %v", err)
+	}
+	if _, err := oauthConfig(t.Context(), &http.Client{}, c); err == nil {
+		t.Fatal("oauthConfig used a cached http endpoint")
+	}
+	c.DeviceAuthURL, c.TokenURL = "https://idp.example/device", "http://idp.example/token"
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "tokenEndpoint") {
+		t.Fatalf("Validate: %v", err)
+	}
+	c.TokenURL = "https://idp.example/token"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Review of #530 (OIDC Core 12.2): a refreshed ID token naming another issuer, subject or audience
+// than the stored one is refused, never stored.
+func TestTokenRefreshKeepsTheIdentity(t *testing.T) {
+	for name, claims := range map[string]map[string]any{
+		"another subject":  {"sub": "mallory"},
+		"another audience": {"aud": "other-client"},
+		"another issuer":   {"iss": "https://evil.example"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, _ := idIssuer(t, claims)
+			c := Config{Issuer: srv.URL, ClientID: "maku-cli", Preset: PresetGeneric, TokenUse: TokenUseID,
+				DeviceAuthURL: srv.URL + "/device/code", TokenURL: srv.URL + "/token"}
+			path := filepath.Join(t.TempDir(), "token.json")
+			old := idJWT(map[string]any{"iss": srv.URL, "sub": "alice", "aud": "maku-cli", "exp": time.Now().Add(-time.Minute).Unix()})
+			if err := SaveJSON(path, StoredToken{Token: oauth2.Token{AccessToken: "at", RefreshToken: "rt",
+				Expiry: time.Now().Add(time.Hour)}, IDToken: old}); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Token(t.Context(), srv.Client(), c, path)
+			if err == nil || !strings.Contains(err.Error(), "another issuer, subject or audience") {
+				t.Fatalf("got %v", err)
+			}
+			var saved StoredToken
+			if err := LoadJSON(path, &saved); err != nil || saved.IDToken != old {
+				t.Fatalf("the refused token was stored: %v", err)
+			}
+		})
+	}
+}
+
+func idJWT(claims map[string]any) string {
+	enc := func(v any) string {
+		b, _ := json.Marshal(v)
+		return base64.RawURLEncoding.EncodeToString(b)
+	}
+	return enc(map[string]string{"alg": "none"}) + "." + enc(claims) + ".sig"
+}
+
+// idIssuer refreshes with an ID token for alice at maku-cli, with over applied on top.
+func idIssuer(t *testing.T, over map[string]any) (*httptest.Server, *[]string) {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		c := map[string]any{"iss": srv.URL, "sub": "alice", "aud": "maku-cli", "exp": time.Now().Add(time.Hour).Unix()}
+		for k, v := range over {
+			c[k] = v
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "at2", "token_type": "Bearer", "expires_in": 3600,
+			"refresh_token": "rt", "id_token": idJWT(c)})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, nil
+}

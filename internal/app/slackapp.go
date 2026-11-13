@@ -276,6 +276,10 @@ func slackToken(ctx context.Context, hc *http.Client, cfg slackapp.Config) (*oau
 			}
 			cc.TokenURL = d.TokenEndpoint
 		}
+		// Checked again at use: the client secret goes there.
+		if !authn.HTTPSEndpoint(cc.TokenURL) {
+			return nil, errors.New("the token endpoint is not an https URL")
+		}
 		if cfg.Audience != "" {
 			cc.EndpointParams = url.Values{"audience": {cfg.Audience}}
 		}

@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Smana/maku/internal/authn"
 )
 
 // The human listener's modes, as the broker reports one at /.well-known/roomctl: the same two values
@@ -108,6 +110,11 @@ func (c Config) Validate() error {
 			}
 		default:
 			return fmt.Errorf("preset %q is not zitadel or generic: upgrade maku", c.Preset)
+		}
+		for name, ep := range map[string]string{"deviceAuthorizationEndpoint": c.DeviceAuthURL, "tokenEndpoint": c.TokenURL} {
+			if ep != "" && !authn.HTTPSEndpoint(ep) {
+				return fmt.Errorf("%s %q is not an https URL: run maku configure again", name, ep)
+			}
 		}
 		if u := c.EffectiveTokenUse(); u != TokenUseID && u != TokenUseAccess {
 			return fmt.Errorf("tokenUse %q is not id or access: upgrade maku", c.TokenUse)

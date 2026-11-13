@@ -469,3 +469,54 @@ func TestDoctorLocal(t *testing.T) {
 		t.Fatalf("doctor wrote a token file: %v", err)
 	}
 }
+
+// Review of #530: under the generic preset, configure --from shows every value a hostile broker
+// could plant to redirect a sign-in or the token's audience: the preset, the token use, the scopes,
+// the audience and the hosts of the two endpoints, each beside the value it replaces.
+func TestMakuConfirmConfigGeneric(t *testing.T) {
+	hints := &strings.Builder{}
+	r := Maku{Err: hints}
+	old := maku.Config{URL: "https://rooms.ogenki.io", Issuer: "https://idp.ogenki.io", ClientID: "cli", Preset: maku.PresetGeneric,
+		TokenUse: maku.TokenUseAccess, Audience: "https://api.ogenki.io", Scopes: []string{"groups"}}
+	next := old
+	next.Audience, next.Scopes = "https://api.evil.io", []string{"groups", "admin"}
+	next.DeviceAuthURL, next.TokenURL = "https://device.ogenki.io/code", "https://token.ogenki.io/token"
+	if err := r.ConfirmConfig(next, old, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{"preset", "generic", "token use", "access", "scopes", "groups admin", "(was groups)",
+		"audience", "https://api.evil.io (was https://api.ogenki.io)", "device.ogenki.io", "token.ogenki.io"} {
+		if !strings.Contains(hints.String(), w) {
+			t.Errorf("the confirmation lacks %q:\n%s", w, hints)
+		}
+	}
+}
+
+// Review of #530: the issuer is kept exactly as the broker and the IdP name it: Auth0's ends in a
+// slash, and OIDC Discovery compares it byte for byte, so a --issuer flag is never trimmed.
+func TestMakuConfigureKeepsTheIssuersSlash(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/roomctl":
+			_ = json.NewEncoder(w).Encode(map[string]any{"url": srv.URL, "issuer": srv.URL + "/", "clientID": "maku-cli",
+				"preset": "generic", "tokenUse": "id"})
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]string{"issuer": srv.URL + "/", "jwks_uri": srv.URL + "/keys",
+				"device_authorization_endpoint": srv.URL + "/device", "token_endpoint": srv.URL + "/token"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	r := Maku{Dir: dir, HC: srv.Client(), Out: &strings.Builder{}, Err: &strings.Builder{}}
+	if err := r.Run(t.Context(), []string{"configure", "--url", srv.URL, "--issuer", srv.URL + "/"}); err != nil {
+		t.Fatal(err)
+	}
+	var c maku.Config
+	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &c); err != nil || c.Issuer != srv.URL+"/" || c.TokenURL != srv.URL+"/token" {
+		t.Fatalf("%+v %v", c, err)
+	}
+}

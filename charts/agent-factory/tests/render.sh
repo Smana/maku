@@ -346,6 +346,8 @@ bad 'maku.broker.human.preset "generic" and maku-factory.config.api.preset "zita
 bad 'maku.broker.human.tokenUse "id" and maku-factory.config.api.tokenUse "access" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.tokenUse=access
 bad 'maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local" and maku-factory.config.api.humanIssuer "https://other" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.humanIssuer=https://other
 bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api.groups.member "devs" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.groups.member=devs
+bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
+bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
 bad 'maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service' "${args[@]}" \
   --set maku.runController.model.mode=gateway --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
 bad "maku.runController.model.gateway.aliases.public [agent-default] must be maku-gateway.aliases.public's keys [agent-default, tier-light]" "${gwd[@]}" \
