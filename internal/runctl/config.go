@@ -487,13 +487,27 @@ func (c Config) GitSecretFor(r *v1alpha1.AgentRun) string {
 	}
 }
 
-// FQDNs are the hosts the run may reach on 443: github, then its profiles, deduplicated.
+// ForgeAPIHost is GitHub's API, which a run annotated forge-api: deny never reaches (HR36): it reads
+// forge text through forge_read, and git keeps github.com.
+const ForgeAPIHost = "api.github.com"
+
+// forgeAPIDenied reports whether the factory annotated r forge-api: deny (hardening mode enforce).
+func forgeAPIDenied(r *v1alpha1.AgentRun) bool {
+	return r.Annotations[runwatch.ForgeAPIAnnotation] == runwatch.ForgeAPIDeny
+}
+
+// FQDNs are the hosts the run may reach on 443: github, then its profiles, deduplicated, without
+// ForgeAPIHost for a run annotated forge-api: deny. Both the CNP and the egress proxy's
+// allow-list derive from it.
 func (c Config) FQDNs(r *v1alpha1.AgentRun) []string {
 	out := slices.Clone(c.EgressProfiles["github"])
 	for _, p := range r.Spec.Egress.Profiles {
 		for _, h := range c.EgressProfiles[string(p)] {
 			out = addUnique(out, h)
 		}
+	}
+	if forgeAPIDenied(r) {
+		out = slices.DeleteFunc(out, func(h string) bool { return strings.EqualFold(h, ForgeAPIHost) })
 	}
 	return out
 }
