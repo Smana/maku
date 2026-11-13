@@ -348,6 +348,29 @@ bad 'maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local" and maku-
 bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api.groups.member "devs" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.groups.member=devs
 bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
 bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
+# v4 D14, PR10: ExternalSecrets for the seams the values list, against the store they name; off, nothing.
+esv=("${args[@]}" -f tests/externalsecrets-values.yaml)
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind=="ExternalSecret")' 'externalSecrets off renders no ExternalSecret'
+out="$(helm template af . -n maku "${esv[@]}")"
+es="$(yq ea 'select(.kind=="ExternalSecret")' - <<<"$out")"
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then printf '%s\n' "$es" >tests/golden/externalsecrets.yaml; fi
+printf '%s\n' "$es" | diff -u tests/golden/externalsecrets.yaml - >&2 || { echo 'FAIL: the ExternalSecrets differ from tests/golden/externalsecrets.yaml' >&2; fail=1; }
+ykind ExternalSecret 'select(.metadata.name=="db-broker") | (.spec.target.name == "db-broker" and .spec.target.creationPolicy == "Owner" and .spec.target.deletionPolicy == "Retain" and .spec.secretStoreRef.kind == "SecretStore" and .spec.secretStoreRef.name == "agents-secrets" and (.spec.target.template.data.uri | test("^postgresql://")))' 'databaseBroker: its resolved name, Owner and Retain, the named store, the template passed through'
+ykind ExternalSecret 'select(.metadata.name=="db-owner") | .spec.dataFrom[0].extract.key == "maku/rooms-owner"' 'a dataFrom.extract is trusted and passed through'
+ykind ExternalSecret 'select(.metadata.name=="db-ca") | .spec.refreshInterval == "24h"' 'a seam may set its own refreshInterval'
+ykind ExternalSecret 'select(.metadata.name=="agent-factory-intake") | (.metadata.namespace == "maku" and .spec.refreshInterval == "1h" and .apiVersion == "external-secrets.io/v1")' 'a default name, the release namespace, the default refresh, ESO v1'
+ynone 'select(.kind=="Secret" and (.metadata.name=="db-broker" or .metadata.name=="agent-factory-intake"))' 'never a Secret beside an ExternalSecret of the same name'
+bad 'externalSecrets.enabled needs externalSecrets.storeRef.name' "${esv[@]}" --set externalSecrets.storeRef.name=
+bad 'externalSecrets.secrets.databaseBroker: key uri is required (docs/install-secrets.md)' "${esv[@]}" --set 'externalSecrets.secrets.databaseBroker.template=null'
+bad 'externalSecrets.secrets.nope: not a seam id (docs/install-secrets.md)' "${esv[@]}" --set-json 'externalSecrets.secrets.nope={"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.factoryApp: the demo writes agent-factory-github from demo.githubApp' "${esv[@]}" --set-json 'externalSecrets.secrets.factoryApp={"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.databaseBroker: the bundled Postgres (postgres.enabled) writes rooms-broker-dsn' "${args[@]}" -f tests/externalsecrets-values.yaml \
+  --set postgres.enabled=true --set maku.broker.database.brokerSecret=rooms-broker-dsn
+bad 'externalSecrets.secrets.runGit: the factory writes agent-git' "${esv[@]}" --set-json 'externalSecrets.secrets.runGit={"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.databaseCA: data or dataFrom is required' "${esv[@]}" --set 'externalSecrets.secrets.databaseCA.data=null'
+out="$(helm template af . -n maku "${esv[@]}" --set externalSecrets.storeRef.kind=ClusterSecretStore)"
+ykind ExternalSecret '.spec.secretStoreRef.kind == "ClusterSecretStore"' 'a ClusterSecretStore is accepted'
 bad 'maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service' "${args[@]}" \
   --set maku.runController.model.mode=gateway --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
 bad "maku.runController.model.gateway.aliases.public [agent-default] must be maku-gateway.aliases.public's keys [agent-default, tier-light]" "${gwd[@]}" \
