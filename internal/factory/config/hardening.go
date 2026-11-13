@@ -549,14 +549,24 @@ func (h Hardening) repositoryModes() map[string]hardening.Mode {
 	return m
 }
 
-// HardeningSettings are the facts readiness reads from this configuration for repository. The read
-// filter is off until forge_read is wired (stage H4).
+// HardeningSettings are the facts readiness reads from this configuration for repository.
 func (c *Config) HardeningSettings(repository, makuVersion string) hardening.Settings {
 	h := c.Hardening
 	mode := h.ModeFor(repository)
 	return hardening.Settings{Mode: mode, Layers: hardening.LayersFor(mode, h.EffectiveClassifier()),
 		Demo: c.Demo, DrillMaxAge: h.Drills.MaxAge.Duration, ConfigHash: h.Hash(), Version: makuVersion,
-		TokenSource: c.TokenSource(), PublisherMinter: h.Publisher.Minter}
+		TokenSource: c.TokenSource(), PublisherMinter: h.Publisher.Minter, ReadFilter: c.readFilter(repository)}
+}
+
+// readFilter is R5 as this configuration states it (HR43): the repository is at mode enforce, its
+// runs are on the run-controller (on the XR the factory cannot see the sandbox's egress), a
+// ServiceAccount maps to system:broker, the forge-read route's one caller, and the factory writes
+// forge-api: deny on every run of it, which it does at mode enforce outside the demo. A
+// run-controller older than the factory would ignore the annotation: the chart pins both to one
+// version, and runbook H4-1 probes it.
+func (c *Config) readFilter(repository string) bool {
+	return !c.Demo && c.Hardening.ModeFor(repository) == hardening.ModeEnforce && c.Runs.Group != "" && !c.Runs.XR() &&
+		slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
 }
 
 // TokenSource is where the runs' sandbox tokens come from (plan PR8): octo-sts on the XR, the

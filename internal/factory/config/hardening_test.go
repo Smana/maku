@@ -542,5 +542,41 @@ func TestModeEnforce(t *testing.T) {
 	}
 }
 
+// HR43: R5 holds only at mode enforce, on the run-controller, with system:broker mapped; on the XR
+// never, and a demo never.
+func TestReadFilterFact(t *testing.T) {
+	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
+	parse := func() *Config {
+		c, err := Parse([]byte(withAPI(good+perRunTokens+enforceAll, broker)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if !parse().HardeningSettings("Smana/cloud-native-ref", "v9.9.9").ReadFilter {
+		t.Fatal("enforce on the run-controller with the broker: R5 holds")
+	}
+	for name, edit := range map[string]func(*Config) string{
+		"mode audit": func(c *Config) string {
+			c.Hardening.Repositories["Smana/cloud-native-ref"] = HardeningRepository{Mode: hardening.ModeAudit}
+			return "Smana/cloud-native-ref"
+		},
+		"the XR": func(c *Config) string { c.Runs.Group = "cloud.ogenki.io"; return "Smana/cloud-native-ref" },
+		"no broker": func(c *Config) string {
+			c.API.SystemPrincipals = map[string]string{"sa": "system:runlore"}
+			return "Smana/cloud-native-ref"
+		},
+		"the demo":     func(c *Config) string { c.Demo = true; return "Smana/cloud-native-ref" },
+		"another repo": func(*Config) string { return "Smana/other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := parse()
+			if c.HardeningSettings(edit(c), "v9.9.9").ReadFilter {
+				t.Fatal("R5 held")
+			}
+		})
+	}
+}
+
 // withAPI adds lines under the config's api block.
 func withAPI(cfg, lines string) string { return strings.Replace(cfg, "api:\n", "api:\n"+lines, 1) }

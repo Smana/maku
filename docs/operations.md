@@ -583,6 +583,35 @@ the run supersedes the approval.
 - **Until step 5, the sandbox can still push.** The token is the boundary: the `git` shim is
   advisory, and the tracer reports a direct push as `untraced_write` but does not stop it.
 
+### Hardening, reads filtered
+
+[Stage H4](factory.md#hardening-reads-filtered) for a repository that already enforces all five
+output types, on the run-controller.
+
+1. **The Maku release** on the factory, the broker and the run-controller, one version for all
+   three: a run-controller older than the factory ignores `forge-api: deny` and leaves the API
+   open. With no repository at `mode: enforce` nothing changes.
+2. **The broker's token.** The `maku` chart's `broker.hardening.forgeRead.audience: agent-factory`
+   (it needs `broker.factoryURL`), and a NetworkPolicy from the broker to the factory API.
+3. **The factory's principal.** `api.systemIssuer`, `api.systemJWKS`, and `api.systemPrincipals`
+   mapping the broker's ServiceAccount to `system:broker`.
+4. **The capability profiles.** `forge_read` in every role's profile.
+5. **The mode.** `hardening.repositories.<repo>.mode: enforce`, and restart the factory.
+
+Check on the first run: its pod's CNP and egress annotation have no `api.github.com`,
+`gh issue view` exits 3, and `status.inputTrust.mode` reads `enforce`.
+
+**Rollback** is `mode: audit` and a restart: the next run is created without
+`forge-api: deny`, and gets its API egress back. Runs already started keep theirs: let them end.
+
+**Residuals.**
+
+- **HTML on `github.com`.** `git` keeps `github.com`, which also serves the issue's HTML page. A
+  run that fetches it reads the unfiltered text. The token and egress hold the API, not the web
+  page.
+- **An approved author's injection.** Text at or above `minAuthorTrust` is delivered, sanitised and
+  levelled, but not checked for instructions.
+
 ### Factory alerts
 
 | Alert | Fires when | For | First step |
