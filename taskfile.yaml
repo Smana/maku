@@ -123,6 +123,7 @@ tasks:
       - helm lint --strict charts/agent-factory --set maku.broker.image.tag='v0.0.0@sha256:0000' --set maku.runController.image.tag='v0.0.0@sha256:0000' --set maku.runController.images.harness.tag='v0.0.0@sha256:0000' --set maku.runController.images.bridge.tag='v0.0.0@sha256:0000' --set maku-factory.image.tag='v0.0.0@sha256:0000' -f charts/agent-factory/values-demo.yaml --set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m --set demo.model.apiKey=k --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem
       - bash charts/agent-factory/tests/render.sh
       - bash charts/agent-factory/tests/schema.sh
+      - bash charts/agent-factory/tests/expose.sh
       - bash charts/agent-factory/tests/monitoring.sh
       - bash charts/agent-factory/tests/promql-only.sh
       - bash charts/agent-factory/tests/monitoring/dashboards.sh
@@ -173,6 +174,17 @@ tasks:
     desc: Prove the broker in preset generic against the in-cluster stub issuer on throwaway k3d (docker, k3d; not part of check)
     cmds:
       - bash charts/agent-factory/tests/identity.sh
+
+  chart:expose:probe:
+    desc: Assert what expose.mode and the web front door rely on (Traefik, agentgateway, oauth2-proxy) on a throwaway k3d (docker, k3d; not part of check)
+    cmds:
+      - bash charts/agent-factory/tests/expose-probe/probe.sh
+
+  chart:expose:k3d:
+    desc: The web exposed through the web front door on throwaway k3d, by HTTPRoute (agentgateway) then Ingress (Traefik), against the stub issuer (docker, k3d; not part of check)
+    cmds:
+      - EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
+      - EXPOSE=ingress bash charts/agent-factory/tests/identity.sh
 
   chart:intake:k3d:
     desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)

@@ -1,0 +1,111 @@
+{{- include "afumbrella.profile" . -}}
+{{- /* v4 step 6 (D19, EX6): the web front door's policies, in maku.networkPolicies' mode. Ingress:
+the gateway's or ingress controller's pods on :4180, the scraper on the metrics port. Egress: DNS,
+the broker's :8080, and the IdP on the issuer's port. The broker's own policy admits :8080 from these
+pods alone (maku.broker.webProxy). */ -}}
+{{- $w := .Values.webProxy -}}
+{{- if $w.enabled }}
+{{- $mode := include "afumbrella.makuNetMode" . -}}
+{{- $x := .Values.expose -}}
+{{- $maku := .Values.maku -}}
+{{- $u := urlParse $maku.broker.human.issuer -}}
+{{- $idpPort := $w.networkPolicy.idp.port | default 0 | int -}}
+{{- if not $idpPort -}}
+{{- $idpPort = ternary 443 80 (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $idpPort = regexFind "[0-9]+$" $u.host | int }}{{ end -}}
+{{- end -}}
+{{- $sm := .Values.monitoring.serviceMonitor -}}
+{{- if eq $mode "kubernetes" }}
+{{- $k := $maku.networkPolicies.kubernetes | default dict }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rooms-web-proxy
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.webProxyLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- with $x.networkPolicy.from }}
+    # The gateway's or ingress controller's pods (expose.networkPolicy.from).
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 4180, protocol: TCP}]
+    {{- end }}
+    {{- with $k.metricsFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: {{ $w.metrics.port }}, protocol: TCP}]
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ dig "dns" "namespace" "kube-system" $k }}}
+          podSelector:
+            matchLabels: {{- toYaml (dig "dns" "labels" (dict "k8s-app" "kube-dns") $k) | nindent 14 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    # The broker's human listener, the upstream.
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: room-broker}
+      ports: [{port: 8080, protocol: TCP}]
+    # The IdP: discovery, its keys, the code exchange.
+    - to:
+        {{- with $w.networkPolicy.idp.to }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml ($k.privateCIDRs | default list) | nindent 14 }}
+        {{- end }}
+      ports: [{port: {{ $idpPort }}, protocol: TCP}]
+{{- else if eq $mode "cilium" }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: rooms-web-proxy
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.webProxyLabels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+  ingress:
+    # The gateway or ingress (expose.networkPolicy.cilium.fromEntities).
+    - fromEntities: {{- toYaml $x.networkPolicy.cilium.fromEntities | nindent 8 }}
+      toPorts:
+        - ports: [{port: "4180", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "4180", protocol: TCP}]
+    {{- if and $sm.enabled $sm.cilium.fromEndpoints }}
+    - fromEndpoints: {{- toYaml $sm.cilium.fromEndpoints | nindent 8 }}
+      toPorts:
+        - ports: [{port: {{ $w.metrics.port | quote }}, protocol: TCP}]
+    {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # The broker's human listener, the upstream.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    # The IdP: discovery, its keys, the code exchange.
+    {{- range ($w.networkPolicy.idp.to | default (list (dict "toFQDNs" (list (dict "matchName" $u.hostname))))) }}
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: {{ $idpPort | quote }}, protocol: TCP}]
+    {{- end }}
+{{- end }}
+{{- end }}

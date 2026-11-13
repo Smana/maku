@@ -49,6 +49,16 @@ spec:
       toPorts:
         - ports: [{port: "8443", protocol: TCP}]
     {{- end }}
+    {{- if .Values.broker.webProxy }}
+    # The human listener, from the web front door alone (the umbrella's rooms-web-proxy): it sets
+    # the identity headers the broker reads, so nothing may reach :8080 around it.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: rooms-web-proxy
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraIngress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

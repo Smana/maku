@@ -11,6 +11,18 @@
 #   - a token in no agents group is refused 403;
 #   - the CLI client's ID token as a bearer reads, and is never the web UI, so it cannot decide (P18).
 #
+# EXPOSE=httproute|ingress (task chart:expose:k3d; plan v4 step 6, Task 12) installs the web exposed
+# through the web front door (tests/expose-values.yaml) in networkPolicies.mode kubernetes, behind
+# agentgateway (Gateway API) or k3s's Traefik (Ingress), and plays the browser from a client pod:
+#   - GET / redirects to the stub issuer, and its code flow signs in; that session lists the rooms
+#     as the web UI;
+#   - GET /.well-known/roomctl answers without a session, and so does GET /link/github/callback when
+#     the GitHub account link is on, while POST to it and GET /link/github still need a session;
+#   - a CLI bearer reads /api/rooms, and the same bearer with a forged X-Forwarded-Access-Token is
+#     still not the web UI (P18);
+#   - the broker's :8080 refuses a pod that is not the front door;
+#   - /v1/ws stays open EXPOSE_WS_SECONDS (360).
+#
 # The cluster, its kubeconfig and the images' tag are this run's own: the current kubectl context
 # is never read or changed.
 set -euo pipefail
@@ -22,6 +34,14 @@ NS=maku
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 VALUES=charts/agent-factory/tests/identity-values.yaml
 STUB=charts/agent-factory/tests/e2e-stub.yaml
+EXPOSE="${EXPOSE:-}"
+case "$EXPOSE" in
+  "" | httproute | ingress) ;;
+  *) echo "FAIL: EXPOSE=$EXPOSE is not httproute or ingress" >&2; exit 2 ;;
+esac
+EXPOSE_WS_SECONDS="${EXPOSE_WS_SECONDS:-360}"
+GATEWAY_API=v1.2.1
+PY_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
 
@@ -57,8 +77,9 @@ docker build -q -f hack/e2e-stub/Dockerfile -t "ghcr.io/smana/maku-e2e-stub:$TAG
 step "create the k3d cluster $NAME"
 ! k3d cluster get "$NAME" >/dev/null 2>&1 || die "cluster $NAME already exists; refusing to adopt or delete it"
 created=true
-k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait \
-  --k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0' \
+k3s_args=(--k3s-arg '--disable=servicelb@server:0')
+[[ $EXPOSE == ingress ]] || k3s_args+=(--k3s-arg '--disable=traefik@server:0')
+k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait "${k3s_args[@]}" \
   --kubeconfig-update-default=false --kubeconfig-switch-context=false >/dev/null
 k3d kubeconfig get "$NAME" >"$KUBECONFIG"
 # k3d reports success even when the node fails to ingest the tarball: the image counts once containerd lists it.
@@ -77,7 +98,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=maku-identity-e2e-c
   -keyout "$work/ca.key" -out "$work/ca.crt" >/dev/null 2>&1
 openssl req -newkey rsa:2048 -nodes -subj '/CN=e2e-stub.e2e.svc.cluster.local' \
   -keyout "$work/stub.key" -out "$work/stub.csr" >/dev/null 2>&1
-printf 'subjectAltName=DNS:e2e-stub.e2e.svc.cluster.local,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' >"$work/stub.ext"
+printf 'subjectAltName=DNS:e2e-stub.e2e.svc.cluster.local,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nauthorityKeyIdentifier=keyid,issuer\n' >"$work/stub.ext"
 openssl x509 -req -days 1 -in "$work/stub.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" \
   -CAcreateserial -extfile "$work/stub.ext" -out "$work/stub.crt" >/dev/null 2>&1
 k create namespace e2e >/dev/null
@@ -88,11 +109,65 @@ k -n "$NS" create secret generic e2e-broker-oidc --from-literal=web-client-id=ro
 sed "s|ghcr.io/smana/maku-e2e-stub:e2e|ghcr.io/smana/maku-e2e-stub:$TAG|" "$STUB" | k apply -f - >/dev/null
 k -n e2e rollout status deploy/e2e-stub --timeout=180s
 
+expose=()
+if [[ -n $EXPOSE ]]; then
+  step "expose ($EXPOSE): the front door's Secret, the client pod, the gateway"
+  k -n "$NS" create secret generic e2e-rooms-proxy --from-literal=client-id=rooms-web --from-literal=client-secret=e2e-throwaway \
+    --from-literal=cookie-secret="$(openssl rand -base64 32 | tr -- '+/' '-_')" >/dev/null
+  k -n e2e create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
+  k -n e2e create configmap e2e-client --from-file=charts/agent-factory/tests/expose-probe/client.py >/dev/null
+  k apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Pod
+metadata: {name: e2e-client, namespace: e2e, labels: {app.kubernetes.io/name: e2e-client}}
+spec:
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: client
+      image: $PY_IMAGE
+      command: [sleep, infinity]
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts: [{name: app, mountPath: /app}, {name: ca, mountPath: /etc/e2e/ca}]
+  volumes:
+    - {name: app, configMap: {name: e2e-client}}
+    - {name: ca, secret: {secretName: e2e-stub-ca, defaultMode: 0440}}
+YAML
+  expose=(-f charts/agent-factory/tests/expose-values.yaml --set "expose.mode=$EXPOSE")
+  if [[ $EXPOSE == httproute ]]; then
+    curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
+      k apply --server-side -f - >/dev/null
+    k apply --server-side -f config/agentgateway >/dev/null
+    k wait --for=condition=Established crd --all --timeout=120s >/dev/null 2>&1
+    helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install agentgateway charts/agent-factory/vendor/agentgateway \
+      -n agentgateway-system --create-namespace --set istio.enabled=false \
+      --set controller.image.tag="$(yq '.agentgateway.controller.image.tag' charts/agent-factory/values.yaml)" >/dev/null
+    k -n agentgateway-system rollout status deploy/agentgateway --timeout=180s >/dev/null
+    k create namespace edge >/dev/null
+    k apply -f - >/dev/null <<'YAML'
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: edge, namespace: edge}
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - {name: http, protocol: HTTP, port: 8080, allowedRoutes: {namespaces: {from: All}}}
+YAML
+    expose+=(--set-json 'expose.httproute.parentRefs=[{"name":"edge","namespace":"edge","sectionName":"http"}]'
+      --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]')
+    front=http://edge.edge.svc.cluster.local:8080
+  else
+    expose+=(--set expose.ingress.className=traefik
+      --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"app.kubernetes.io/name":"traefik"}}}]')
+    front=http://traefik.kube-system.svc.cluster.local
+  fi
+fi
+
 step "install the umbrella: the broker in preset generic, its ids by Secret"
 helm dependency build charts/agent-factory >/dev/null
 helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity-crds charts/agent-factory-crds -n "$NS" --timeout 2m >/dev/null
 helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity charts/agent-factory -n "$NS" \
-  -f charts/agent-factory/values-demo.yaml -f "$VALUES" \
+  -f charts/agent-factory/values-demo.yaml -f "$VALUES" "${expose[@]}" \
   --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
   --set maku.runController.enabled=false --set maku-factory.enabled=false \
   --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \
@@ -153,4 +228,64 @@ code="$(rooms GET "$cli" "$cli")"
 [[ $(jq -r '[.[] | .you.webUI] | any' "$work/body") == false ]] || die "the CLI bearer passed as the web UI: $(cat "$work/body")"
 echo "ok   the CLI client's ID token reads the room, and is not the web UI, which alone may decide"
 
-echo 'identity k3d OK'
+if [[ -n $EXPOSE ]]; then
+  step "expose ($EXPOSE): the web through $front and the web front door"
+  k -n "$NS" rollout status deploy/rooms-web-proxy --timeout=180s
+  k -n e2e wait --for=condition=Ready pod/e2e-client --timeout=180s >/dev/null
+  if [[ $EXPOSE == httproute ]]; then
+    k -n edge wait --for=condition=Programmed gateway/edge --timeout=180s >/dev/null
+    k -n edge rollout status deploy/edge --timeout=180s >/dev/null
+  else
+    for _ in $(seq 100); do k -n kube-system get deploy/traefik >/dev/null 2>&1 && break; sleep 3; done
+    k -n kube-system rollout status deploy/traefik --timeout=300s >/dev/null
+  fi
+  web=http://rooms.e2e.test
+  # c ARGS...: the client's JSON answer (tests/expose-probe/client.py), through the front
+  c() { k -n e2e exec e2e-client -- python3 /app/client.py --cacert /etc/e2e/ca/ca.crt --via "$front" "$@"; }
+  status() { jq -r .status <<<"$1"; }
+  out=''
+  for _ in $(seq 40); do out="$(c http GET "$web/")"; [[ $(status "$out") == 302 ]] && break; sleep 3; done
+  [[ $(status "$out") == 302 && $(jq -r .location <<<"$out") == https://e2e-stub.e2e.svc.cluster.local/oauth/v2/authorize?* ]] ||
+    die "GET / without a session does not redirect to the stub issuer: $out"
+  echo "ok   GET / without a session redirects to the issuer"
+  login="$(c login "$web/oauth2/start?rd=/")"
+  cookie="$(jq -r .cookie <<<"$login")"
+  [[ -n $cookie ]] || die "the code flow did not sign in: $login"
+  echo "ok   the code flow signs in: $(jq -r '.hops | join(" -> ")' <<<"$login")"
+  out="$(c http GET "$web/api/rooms" -H "Cookie: $cookie" -H 'X-Forwarded-Access-Token: forged')"
+  [[ $(status "$out") == 200 && $(jq '.body | length' <<<"$out") -ge 1 && $(jq -r '[.body[] | .you.webUI] | all' <<<"$out") == true ]] ||
+    die "the session through the front door: $out"
+  echo "ok   the session lists the rooms as the web UI (a client's X-Forwarded-Access-Token dropped)"
+  room="$(jq -r '.body[0].id' <<<"$out")"
+  out="$(c http GET "$web/.well-known/roomctl")"
+  [[ $(status "$out") == 200 && $(jq -r '.body | type' <<<"$out") == object ]] || die "GET /.well-known/roomctl without a session: $out"
+  echo "ok   GET /.well-known/roomctl answers without a session"
+  if [[ -n $(yq '.maku.broker.githubLink.existingSecret // ""' charts/agent-factory/tests/expose-values.yaml) ]]; then
+    out="$(c http GET "$web/link/github/callback?code=x&state=y")"
+    [[ $(status "$out") != 302 && $(status "$out") -lt 500 ]] || die "GET /link/github/callback did not reach the broker: $out"
+    echo "ok   GET /link/github/callback reaches the broker without a session ($(status "$out"), the broker's own refusal)"
+    for probe in "POST /link/github/callback" "GET /link/github"; do
+      out="$(c http "${probe%% *}" "$web${probe#* }")"
+      [[ $(status "$out") == 302 || $(status "$out") == 401 || $(status "$out") == 403 ]] || die "$probe without a session: $out"
+    done
+    echo "ok   POST /link/github/callback and GET /link/github still need a session"
+  fi
+  cli="$(id_token admin maku-cli agents-admin)"
+  out="$(c http GET "$web/api/rooms" -H "Authorization: Bearer $cli")"
+  [[ $(status "$out") == 200 && $(jq '.body | length' <<<"$out") -ge 1 ]] || die "a CLI bearer through the front door: $out"
+  echo "ok   a CLI bearer reads /api/rooms through the front door"
+  out="$(c http GET "$web/api/rooms" -H "Authorization: Bearer $cli" -H "X-Forwarded-Access-Token: forged-$RANDOM")"
+  [[ $(status "$out") == 200 && $(jq -r '[.body[] | .you.webUI] | any' <<<"$out") == false ]] ||
+    die "a CLI bearer with a forged X-Forwarded-Access-Token passed as the web UI: $out"
+  echo "ok   the same bearer with a forged X-Forwarded-Access-Token is still not the web UI, so it cannot decide (P18)"
+  out="$(k -n e2e exec e2e-client -- python3 /app/client.py http GET http://room-broker.maku.svc.cluster.local:8080/api/rooms \
+    -H "Authorization: Bearer $cli" 2>&1 || true)"
+  [[ $(jq -r .status <<<"$out" 2>/dev/null) != 200 ]] || die "a pod that is not the front door reached the broker's :8080: $out"
+  echo "ok   the broker's :8080 refuses a pod that is not the front door"
+  out="$(c ws "ws://rooms.e2e.test/v1/ws?room=$room" "$EXPOSE_WS_SECONDS" -H "Cookie: $cookie" -H 'Origin: https://rooms.e2e.test' \
+    --hello "{\"type\":\"hello\",\"roomId\":\"$room\"}")"
+  [[ $(jq -r .ok <<<"$out") == true ]] || die "/v1/ws through the front door: $out"
+  echo "ok   /v1/ws stays open ${EXPOSE_WS_SECONDS}s through $EXPOSE and the front door ($(jq -r .pings <<<"$out") pings)"
+fi
+
+echo "identity k3d OK${EXPOSE:+ (expose $EXPOSE)}"
