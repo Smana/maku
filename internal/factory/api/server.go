@@ -207,7 +207,8 @@ func (s *Server) Handler() http.Handler {
 	}
 	// P17: the catalogue is mounted whenever the API is, not behind policyManagement.promotion.
 	mux.HandleFunc(catalogueRoute, s.catalogue)
-	mux.HandleFunc(InstallRoute, s.install) // v4 D3: the banner's factory codes
+	// v4 D3: the banner's factory codes, for any signed-in human.
+	mux.HandleFunc(InstallRoute, s.install)
 	if s.promotionOn(cfg) { // stage 6: off lists no policy route, so each is a 404
 		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
 		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
