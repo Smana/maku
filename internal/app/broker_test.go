@@ -124,28 +124,25 @@ func (f schemaFunc) SchemaCurrent(ctx context.Context) error { return f(ctx) }
 
 // serve refuses a schema it was not built for. One it cannot read (the Atlas operator's ledger,
 // before ANR sets ownerSecret) is a bridge: served with a warning and maku_rooms_schema_unverified
-// at 1 until schemaUnverifiedUntil, refused from then on.
+// at 1, which RoomBrokerSchemaUnverified alerts on.
 func TestServeSchemaCurrent(t *testing.T) {
 	behind := errors.New("the schema is at 1, this broker needs 2: run migrate (broker.database.ownerSecret)")
-	before, after := schemaUnverifiedUntil.Add(-time.Hour), schemaUnverifiedUntil
 	for _, c := range []struct {
 		name    string
 		err     error
-		now     time.Time
 		refused string
 		warn    bool
 		gauge   string
 	}{
-		{"current", nil, before, "", false, "false"},
-		{"behind", behind, before, "run migrate", false, ""},
-		{"unverified, inside the bridge", store.ErrSchemaUnverified, before, "", true, "true"},
-		{"unverified, past the bridge", store.ErrSchemaUnverified, after, "set broker.database.ownerSecret", false, "true"},
+		{"current", nil, "", false, "false"},
+		{"behind", behind, "run migrate", false, ""},
+		{"unverified", store.ErrSchemaUnverified, "", true, "true"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var buf strings.Builder
 			gauge := ""
 			err := schemaCurrent(t.Context(), schemaFunc(func(context.Context) error { return c.err }),
-				slog.New(slog.NewTextHandler(&buf, nil)), c.now, func(on bool) { gauge = fmt.Sprint(on) })
+				slog.New(slog.NewTextHandler(&buf, nil)), func(on bool) { gauge = fmt.Sprint(on) })
 			if (c.refused == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.refused)) {
 				t.Fatalf("schemaCurrent = %v, want refused %q", err, c.refused)
 			}

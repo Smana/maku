@@ -67,7 +67,7 @@ events.
 | `maku_rooms_approvals_pending` | gauge | — | Undecided approvals in open rooms: the sum of the Rooms' `status.pendingApprovals` |
 | `maku_rooms_approvals_oldest_pending_seconds` | gauge | — | Age of the oldest undecided approval in an open room, set by the leader's approval sweep every 30 s; 0 on a replica that stopped leading |
 | `maku_rooms_approval_decision_seconds` | histogram | — | Request to decision |
-| `maku_rooms_schema_unverified` | gauge | — | 1 while the broker serves a schema whose migration ledger its role cannot read: a bridge that ends on 2027-03-01, or as soon as `broker.database.ownerSecret` is set ([the database](database.md#three-roles-one-dsn-secret-each)). Alert on `max(maku_rooms_schema_unverified) == 1` |
+| `maku_rooms_schema_unverified` | gauge | — | 1 while the broker serves a schema whose migration ledger its role cannot read: a bridge until `broker.database.ownerSecret` is set ([the database](database.md#a-ledger-the-broker-cannot-read)). `RoomBrokerSchemaUnverified` fires on it |
 | `maku_rooms_db_tls` | gauge | `role` (`rooms_broker`) | 1 while the broker's database connection is encrypted, 0 while it is plain: a plain connection is logged once at start and served (the demo's in-cluster hop is plain). See [the database](database.md) |
 
 Two more count what bridges tell their rooms. Nothing dials into a sandbox, so the bridge serves
@@ -117,6 +117,7 @@ sets, `room-broker`, in the release namespace.
 | `RoomVerdictsNotReachingGitHub` | Posting errors, and no successful post in 30 min | 30 min | The factory App's key; egress to `api.github.com` |
 | `RoomApprovalPendingTooLong` | An approval has waited over 15 min | — | Decide it; undecided, it is denied at 30 min (attended) or `approvals.ttl` (unattended) |
 | `RoomWebhookDisabled` | A webhook subscriber was disabled after three given-up deliveries | 1 min | [Webhooks](#webhooks) |
+| `RoomBrokerSchemaUnverified` | The broker serves a schema whose migration ledger its role cannot read | 15 min | Set `broker.database.ownerSecret`: [a ledger the broker cannot read](database.md#a-ledger-the-broker-cannot-read) |
 
 Bridge logs:
 

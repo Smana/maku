@@ -38,16 +38,17 @@ A database the command cannot reach is not a refusal. The retention job retries 
 minutes: a CNI that enforces NetworkPolicy admits a new pod's address a few seconds after it starts.
 A wrong password, a missing database or a certificate the client cannot verify fails at once.
 
-**A ledger the broker cannot read** is a time-boxed bridge, for a database the Atlas operator
-migrated (cloud-native-ref's, before its broker has `ownerSecret`): `rooms_broker` cannot read the
-operator's ledger. Until 2027-03-01 the broker serves, logs `schema version unverified` and sets
-`maku_rooms_schema_unverified` to 1. Alert on it: `max(maku_rooms_schema_unverified) == 1`.
-From that date the broker refuses it. Setting `ownerSecret` ends it at once: the first `migrate`
-adopts the operator's ledger into `public.room_broker_revisions`, which the broker reads.
+### A ledger the broker cannot read
 
-The room log is append-only because of these grants and policies, so none of these is a warning. A
-connection without TLS is only reported: the broker logs it once at start, and sets
-`maku_rooms_db_tls{role}` to 0.
+This is a bridge for a database the Atlas operator migrated: cloud-native-ref's, before its broker
+has `ownerSecret`. `rooms_broker` cannot read the operator's ledger, so it cannot tell the schema's
+version. The broker serves anyway, logs `schema version unverified`, and sets
+`maku_rooms_schema_unverified` to 1, which the alert `RoomBrokerSchemaUnverified` fires on.
+
+Set `ownerSecret` to end it: the first `migrate` adopts the operator's ledger into
+`public.room_broker_revisions`, which the broker reads, and the gauge drops to 0. Once
+cloud-native-ref has done so, a future minor release turns an unreadable ledger into a refusal, and
+its release notes say so.
 
 ## Bootstrap
 
