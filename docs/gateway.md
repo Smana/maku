@@ -423,5 +423,22 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - the run's tokens reach VictoriaMetrics under agentgateway's own names, with `ar_agent` set to the run's subject;
   - the meter's parser prices that reply above zero, and the throttle query answers.
 
-  The demo's dummy App keeps the factory from starting, so the leg cannot show a settled run in
-  dollars. The nightly real-model job runs the secret-mode demo.
+  The demo's dummy App keeps the factory from starting, so this leg cannot show a settled run in
+  dollars. The next one does.
+- `task chart:usd:k3d` is the factory-level USD proof, and the demo-e2e workflow runs it every night
+  (job `usd`). It is the intake leg with `tests/usd-values.yaml` on top: the e2e stub stands in for
+  GitHub, the identity provider and the model provider, so the factory starts and runs a task. The
+  runs use `model.mode: gateway` with `runs.gatewayIdentity`, the gateway prices each call from its
+  catalog (`meter.prices`), and the meter reads the gateway's series from the test-only
+  VictoriaMetrics. The first scoper run of an issue must:
+  - be metered by the gateway (`spec.meteredBy: gateway`);
+  - settle in the factory's ledger (`run_settled_usd{run}`) above zero, within 1 % of the gateway's
+    own cost counter for it, read with `max_over_time`, since the run's series is born at its first
+    priced call;
+  - leave nothing unpriced: no catalog lookup other than `Exact`, and no
+    `meter_unpriced_model_runs_total` above 0.
+
+  It also checks two labels the [dashboards](observability.md#dashboards) select on: the cost counter
+  carries `gen_ai_request_model`, which they split spend by, and a failed provider call (the stub
+  answers 500 to a marker prompt) carries `error_type`, which their error ratios read. The secret-mode demo with a real model
+  is the separate nightly job.

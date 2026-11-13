@@ -11,6 +11,8 @@
 #            the meter prices them (plan v4 step 4, Task 17). A fifth, external-db (install.sh's
 #            EXTERNAL_DB=1), brings its own postgres:16 outside the chart, bootstrapped with
 #            docs/database.md's SQL, with postgres.enabled=false (v4 D9).
+#   usd:     on the nightly schedule, `task chart:usd:k3d`: the factory-level USD proof, a gateway-mode
+#            run that must settle in the factory's ledger at agentgateway's own cost for it. No secret.
 #   nightly: `task demo` headless on kind with a real, capped model and a test GitHub App, then the
 #            seeded docs-links issue is labelled and the job waits up to 30 minutes for a pull request
 #            by <slug>[bot] bearing a `maku/merge-gate` commit status. `task demo:down` always runs.
@@ -141,6 +143,27 @@ jobs:
           path: ${{ runner.temp }}
       - run: docker load -i "$RUNNER_TEMP/images.tar" && rm "$RUNNER_TEMP/images.tar"
       - run: task chart:install:k3d
+
+  # The factory-level USD proof (step 4 PR D's follow-up, GW10): on k3d with the e2e stub as GitHub,
+  # the identity provider and the model provider, a gateway-mode scoper run is priced by agentgateway's
+  # catalog and must settle in the factory's ledger at the gateway's own cost counter for it, with
+  # nothing unpriced (intake.sh USD=1). It needs no secret, so it always runs.
+  usd:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install_args: aqua:go-task/task go kubectl helm aqua:k3d-io/k3d@5.9.0
+      - run: mise use -g aqua:k3d-io/k3d@5.9.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - run: task chart:usd:k3d
 
   nightly:
     if: github.event_name != 'pull_request'
