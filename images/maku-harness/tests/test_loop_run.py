@@ -253,6 +253,24 @@ class AskJudgeTest(FakeProxy, unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Bearer sk-real")
         self.assertEqual(body["model"], "glm-5.3", "JUDGE_MODEL, not the loop's alias")
 
+    def test_judge_api_key_file_is_the_judges_own_bearer(self):
+        # The run-controller's gateway mode: the judge's alias has its own audience, so its own token,
+        # read at the judge's call; the run's own calls keep LLM_API_KEY_FILE's.
+        with tempfile.TemporaryDirectory() as d:
+            run_key, judge_key = os.path.join(d, "token"), os.path.join(d, "judge-token")
+            for path, value in ((run_key, "run-token\n"), (judge_key, "judge-token-1\n")):
+                with open(path, "w") as f:
+                    f.write(value)
+            env = {"JUDGE_BASE_URL": self.url + "/m/tier-light/v1", "JUDGE_MODEL": "tier-light",
+                   "LLM_API_KEY_FILE": run_key, "JUDGE_API_KEY_FILE": judge_key}
+            self.assertIsNotNone(agent_run.ask_judge(env, "tier-light", "evidence"))
+            with open(judge_key, "w") as f:  # read at each call, never cached
+                f.write("judge-token-2")
+            self.assertIsNotNone(agent_run.ask_judge(env, "tier-light", "evidence"))
+            self.assertEqual(agent_run._api_key(env), "run-token", "the run's own calls keep LLM_API_KEY_FILE")
+        self.assertEqual([h["Authorization"] for _, h, _ in FakeLLM.requests], ["Bearer judge-token-1", "Bearer judge-token-2"])
+        self.assertEqual(FakeLLM.requests[0][0], "/m/tier-light/v1/chat/completions")
+
     def test_judge_base_url_without_judge_model_is_no_answer(self):
         with mock.patch("sys.stderr", new=io.StringIO()) as err:
             self.assertIsNone(agent_run.ask_judge({"JUDGE_BASE_URL": self.url + "/v1"}, "tier-light", "e"))
