@@ -30,6 +30,8 @@ demo:
 
 maku:
   enabled: true
+  # The maku chart's own demo marker (v4 step 8, R4): it admits model.mode secret below.
+  demoValues: true
   # The cluster has no Cilium: nothing confines the network. On a CNI that enforces NetworkPolicy
   # (k3s, kind from v0.24), --set maku.networkPolicies.mode=kubernetes confines the runs with plain
   # NetworkPolicies and the egress proxy (v4 D6).
@@ -67,6 +69,11 @@ maku:
     tls:
       issuerRef: {name: ""}
   runController:
+    # A laptop without a model gateway: the provider key (agent-model, from demo.model) sits in the
+    # sandbox, which only a demo may do; the banner says so (model_key_in_sandbox).
+    # values-demo-gateway.yaml switches the demo to the gateway.
+    model:
+      mode: secret
     runtimeClassName: ""
     allowUnsandboxed: true
     createRuntimeClass: false

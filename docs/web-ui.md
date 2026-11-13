@@ -30,9 +30,11 @@ install for demos only.":
 | `unsafe_allow_runc` | `sandbox.unsafeAllowRunc`, or `runController.allowUnsandboxed` with no RuntimeClass | Runs are not sandboxed |
 | `network_policy_none` | `networkPolicies.enabled: false` | Nothing confines a run's network |
 | `shared_git_token` | `runController.unsafeSharedGitToken` | Every role shares one write token |
+| `model_key_in_sandbox` | `runController.model.mode: secret` (demo-only, `demoValues`) | The model provider's key sits in every run's sandbox |
 
-The chart computes the list into the broker's `install.unsafe`; the demo shows the first two. A
-room page keeps its own per-run `Not sandboxed` banner.
+The chart computes the list into the broker's `install.unsafe`; the demo shows `unsafe_allow_runc`,
+`network_policy_none` and `model_key_in_sandbox`. A room page keeps its own per-run `Not sandboxed`
+banner.
 
 A table, one row per room you can read. Rooms that need you come first, then the most recently
 active, then by id. The whole row opens the room page: the task cell's link covers the row, so it

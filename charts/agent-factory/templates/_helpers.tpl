@@ -144,7 +144,7 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- define "afumbrella.runsGateway" -}}
 {{- $gw := index .Values "maku-gateway" -}}
 {{- $m := dig "runController" "model" dict .Values.maku -}}
-{{- $mode := $m.mode | default "secret" -}}
+{{- $mode := $m.mode | default "gateway" -}}
 {{- $g := $m.gateway | default dict -}}
 {{- $identity := dig "config" "runs" "gatewayIdentity" false (index .Values "maku-factory") -}}
 {{- if and $identity (ne $mode "gateway") -}}
