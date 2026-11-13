@@ -351,15 +351,16 @@ func (m *memDrills) PutDrillReport(_ context.Context, r store.DrillReport) error
 	return nil
 }
 
-func (m *memDrills) LastPass(_ context.Context, version, hash string) (string, time.Time, bool, error) {
+func (m *memDrills) LatestDrill(_ context.Context, version, hash string) (string, time.Time, bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var best store.DrillReport
 	for _, r := range m.rows {
-		if r.Pass && r.Version == version && r.ConfigHash == hash {
-			return r.ID, r.At, true, nil
+		if r.Version == version && r.ConfigHash == hash && r.At.After(best.At) {
+			best = r
 		}
 	}
-	return "", time.Time{}, false, nil
+	return best.ID, best.At, best.Pass, best.ID != "", nil
 }
 
 func (m *memDrills) DrillPassed(_ context.Context, id string) (bool, bool, error) {
