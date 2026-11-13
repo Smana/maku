@@ -401,8 +401,10 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 	if bound { // PR13: repogen= marks a decision of a bound class
 		d.Rows.RepoGeneration = repo
 	}
-	if cl, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
-		d.Rows.Resolved = config.ShortHash(config.ResolvedHash(cl))
+	// B13: the hash grants of this class bind to, the deciding class's, so a rule made from the
+	// record holds: the central class's, or a cut-over repository's snapshot class's.
+	if h, ok := r.decidingHash(cfg, t); ok {
+		d.Rows.Resolved = config.ShortHash(h)
 	}
 	reason := cmp.Or(d.Reason, "armed")
 	ev.Body += "\n\n" + decision.Marker(head, t.Spec.PredictedClass, d.Verdict, reason, d.Rows)

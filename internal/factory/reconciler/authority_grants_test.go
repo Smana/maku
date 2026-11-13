@@ -45,6 +45,10 @@ func TestACutOverRepositoryConsultsItsGrants(t *testing.T) {
 			if c := strings.Join(g.f.Comments(12), "\n"); tc.grant != recordHas(c, " policy=0123456789ab grant=aaaaaaaaaaaaaaaaaaaaaaaaaa:1") {
 				t.Fatalf("%s", c)
 			}
+			// The record's resolved= is the hash the grants bind to, so a rule made from it holds (B13).
+			if c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n"); !strings.Contains(c, " resolved="+rigBound[:12]+" ") {
+				t.Fatalf("resolved= is not the bound hash %s: %s", rigBound[:12], c)
+			}
 		})
 	}
 }
