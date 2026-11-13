@@ -23,15 +23,81 @@ flowchart LR
 | Piece | Who brings it | How |
 |---|---|---|
 | Gateway API standard CRDs, v1.2 or later | the cluster | the [Gateway API release](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) |
-| agentgateway's CRDs, v1.6.0 | `config/agentgateway` (vendored), or yours | `kubectl apply --server-side -f config/agentgateway` before the umbrella, apart from any Helm release (see below) |
+| agentgateway's CRDs, v1.6.0 | `config/agentgateway` (vendored), or yours | applied server-side before the umbrella, apart from any Helm release ([below](#agentgateways-crds)) |
 | agentgateway's controller, v1.6.0 | the umbrella with `agentgateway.enabled: true`, or yours | its GatewayClass `agentgateway` |
 | The Gateway, its policies, backends, routes, catalog and NetworkPolicy | `maku-gateway` (standalone, or the umbrella with `maku-gateway.enabled: true`) | these values |
 | One Secret per provider | you | `kubectl create secret`, ESO, Sealed Secrets: the chart only names it (D14) |
 
+### agentgateway's CRDs
+
 agentgateway's four CRDs hold 2.3 MB of schema. Helm stores a release's chart and rendered manifest
-in one Secret, which the API caps at 1 MiB, and these CRDs alone take it to about 1 MB. So they are
-not in any chart: apply them with `kubectl apply --server-side` (Flux: a Kustomization over the
-directory; Argo CD: `ServerSideApply=true`). Outside a release, an uninstall never deletes them.
+in one Secret, which the API caps at 1 MiB, and these CRDs alone take it to about 1 MB. So no Maku
+chart carries them: `config/agentgateway` holds them, vendored from the upstream chart and pinned
+(`hack/agentgateway.sha256`), to apply server-side before the umbrella. This is an exception to D13,
+which has every CRD upgraded through a chart.
+
+With kubectl, from a checkout of the release tag:
+
+```bash
+kubectl apply --server-side -f config/agentgateway
+```
+
+With Flux, a Kustomization over the directory, and the umbrella's HelmRelease depending on it:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata: {name: maku, namespace: flux-system}
+spec:
+  interval: 1h
+  url: https://github.com/Smana/maku
+  ref: {tag: v0.4x.y}            # the release whose charts you install
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: agentgateway-crds, namespace: flux-system}
+spec:
+  interval: 1h
+  sourceRef: {kind: GitRepository, name: maku}
+  path: ./config/agentgateway
+  prune: false                   # removing this Kustomization must never delete the CRDs
+  wait: true
+---
+# on the umbrella's HelmRelease
+spec:
+  dependsOn:
+    - {name: agentgateway-crds, namespace: flux-system}
+```
+
+With Argo CD, an Application synced before the umbrella's:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agentgateway-crds
+  namespace: argocd
+  annotations: {argocd.argoproj.io/sync-wave: "-1"}   # lower than the umbrella's Application
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Smana/maku
+    targetRevision: v0.4x.y      # the release whose charts you install
+    path: config/agentgateway
+  destination: {server: https://kubernetes.default.svc}
+  syncPolicy:
+    automated: {prune: false}
+    syncOptions: [ServerSideApply=true, Prune=false]
+```
+
+These CRDs outlive an uninstall only while pruning is off: a Flux Kustomization with `prune: true`, or
+an Argo CD Application that prunes or is deleted with its resources, deletes them, and every Gateway
+object with them. `kubectl delete -f` does too.
+
+The alternative is the upstream chart, `oci://cr.agentgateway.dev/charts/agentgateway-crds` v1.6.0,
+pinned by digest `sha256:dd7f965d43e54dffa9c95af089b6f762397a23c963a159ad6d4992f6c582292a`. This is how
+cnref installs these CRDs today. Its release Secret is about 912 KB, under the 1 MiB cap with little
+headroom for a larger upstream schema. It sets no keep annotation, so uninstalling it deletes the CRDs.
 
 Both switches are off by default, so a release that sets none of them renders exactly what it did
 before. The umbrella fails the render when `maku-gateway.runs` differs from `maku.runs`, or when the
