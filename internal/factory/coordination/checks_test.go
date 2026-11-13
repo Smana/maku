@@ -90,6 +90,18 @@ func TestRepositoryChecks(t *testing.T) {
 		{name: "a class the fence no longer declares", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
 			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"classes:\n  revert:\n    mode: off\n    author: agents\n    harness: x\n")
 		}, want: ErrClassNotAllowed},
+		// Follow-up of #538: a fence in the binding shape is read too (B15).
+		{name: "a fence that binds the class", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			checkCfg.Policies = map[string]config.ServedPolicy{"scripts": {Generation: 2}}
+			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: scripts, mode: \"off\"}\n")
+		}},
+		{name: "a fence that binds other classes only", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			checkCfg.Policies = map[string]config.ServedPolicy{"scripts": {Generation: 2}, "revert": {}}
+			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: revert, mode: \"off\"}\n")
+		}, want: ErrClassNotAllowed},
+		{name: "a fence binding a policy the factory does not serve", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: scripts, mode: \"off\"}\n")
+		}, want: ErrClassNotAllowed},
 		{name: "a fence changed since authorization", actor: maintainer, auth: func(GitHubChecks) *v1alpha1.ChildAuthorization {
 			return &v1alpha1.ChildAuthorization{Repository: repoB, FenceSHA: "0000000000000000000000000000000000000000"}
 		}, want: ErrPolicyChanged},

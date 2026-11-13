@@ -135,12 +135,22 @@ func (g GitHubChecks) Check(ctx context.Context, cfg *config.Config, actor Actor
 }
 
 // class resolves class at repo: the fence's own class when it declares classes, under the central
-// guardrails (mergepolicy.Resolve), else the central config's; an adopted class authors nothing,
-// so no child runs under one. Roles are the class harness's template, the tier's ceilings its run
-// and task caps.
+// guardrails (mergepolicy.Resolve), or binds policies (mergepolicy.ResolveBindings, B15), else the
+// central config's; an adopted class authors nothing, so no child runs under one. Roles are the
+// class harness's template, the tier's ceilings its run and task caps.
 func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier string) (RepositoryPolicy, error) {
 	template := cfg.Defaults.Template
-	if f, err := mergepolicy.Parse([]byte(fenceText)); err == nil && f.Classes != nil {
+	f, perr := mergepolicy.Parse([]byte(fenceText))
+	if perr == nil && f.Bound() {
+		classes, _ := mergepolicy.ResolveBindings(f, cfg.RepositoryFor(repo), cfg)
+		r, ok := classes[class]
+		if !ok || r.Class.Author != nil {
+			return RepositoryPolicy{}, fmt.Errorf("%w: %s is not bound, or its binding does not resolve", ErrClassNotAllowed, class)
+		}
+		if p, ok := cfg.HarnessProfiles[r.Class.Harness]; ok && p.Template != "" {
+			template = p.Template
+		}
+	} else if perr == nil && f.Classes != nil {
 		cp, ok := f.Classes[class]
 		if !ok {
 			return RepositoryPolicy{}, fmt.Errorf("%w: %s is not declared", ErrClassNotAllowed, class)
