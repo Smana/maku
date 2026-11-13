@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/intake"
 	"github.com/Smana/maku/internal/factory/reconciler"
+	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/triage"
 	"github.com/Smana/maku/internal/ghidentity"
 	"github.com/Smana/maku/internal/httpx"
@@ -264,19 +266,20 @@ func (c *repoConns) permissions(access *config.Access) *repoaccess.Checker {
 		}}
 }
 
-// access is v2 D4's check for the run-request API: the caller's GitHub login from their ZITADEL
-// link (the broker's reader secret), then write on the repository. Without api.access it is nil,
-// and the API refuses every human run.
-func (c *repoConns) access(log *slog.Logger, cfg *config.Config, perms *repoaccess.Checker) api.WriteChecker {
+// access is v2 D4's check for the run-request API: the caller's GitHub login, then write on the
+// repository. The login comes from the broker's GitHub account links (api.access.links: broker,
+// through links) and, while the install moves off ZITADEL, from the reader secret for an account
+// with no link (v4 step 5 PR5). Without api.access it is nil, and the API refuses every human run.
+func (c *repoConns) access(log *slog.Logger, cfg *config.Config, perms *repoaccess.Checker, links brokerGitHubLinks) api.WriteChecker {
 	a := cfg.API.Access
 	if a == nil {
 		log.Warn("api.access is not set: the run-request API refuses every human run (repository_permission, v2 D4)")
 		return nil
 	}
-	zitadel := httpx.New(zitadelTimeout, nil)
+	if a.Links == config.LinksBroker && a.ReaderFile != "" {
+		log.Warn("api.access.readerFile is deprecated: the broker's GitHub account links are read first, and the ZITADEL reader only for an account with no link; remove readerFile once every human has linked (v4 step 8 deletes it)")
+	}
 	id := &ghidentity.Resolver{IDPID: githubIDP, TTL: a.TTL.Duration, Now: time.Now,
-		Active: readerActive(zitadel, cfg.API.HumanIssuer, a.ReaderFile),
-		Links:  readerLinks(zitadel, cfg.API.HumanIssuer, a.ReaderFile),
 		LoginOf: func(ctx context.Context, repo string, gid int64) (string, error) {
 			rc, ok := c.get(repo)
 			if !ok {
@@ -284,5 +287,47 @@ func (c *repoConns) access(log *slog.Logger, cfg *config.Config, perms *repoacce
 			}
 			return rc.gh.UserLogin(ctx, gid)
 		}}
+	id.Links, id.Active = factoryLinks(a, cfg.API.HumanIssuer, links)
 	return api.GitHubAccess{Identity: id, Perms: perms}
+}
+
+// brokerGitHubLinks is the broker's GET /v1/links/github; *rooms.Client has it.
+type brokerGitHubLinks interface {
+	GitHubLink(ctx context.Context, sub string) (rooms.GitHubLink, bool, error)
+}
+
+// factoryLinks is the resolver's two sources from api.access: the broker's links, the ZITADEL reader,
+// or both, the reader then behind the link. The broker answers whether a link is active (its
+// activeWindow), so one window rules the broker and the factory; a sub with no link asks the reader
+// for its state, or is active without one: it has no GitHub identity to act with.
+func factoryLinks(a *config.Access, issuer string, links brokerGitHubLinks) (func(context.Context, string) ([]ghidentity.Link, error), func(context.Context, string) (bool, error)) {
+	var rLinks func(context.Context, string) ([]ghidentity.Link, error)
+	var rActive func(context.Context, string) (bool, error)
+	if a.ReaderFile != "" {
+		zitadel := httpx.New(zitadelTimeout, nil)
+		rLinks, rActive = readerLinks(zitadel, issuer, a.ReaderFile), readerActive(zitadel, issuer, a.ReaderFile)
+	}
+	if a.Links != config.LinksBroker || links == nil {
+		return rLinks, rActive
+	}
+	brokerLinks := func(ctx context.Context, sub string) ([]ghidentity.Link, error) {
+		l, found, err := links.GitHubLink(ctx, sub)
+		if err != nil || !found {
+			return nil, err
+		}
+		return []ghidentity.Link{{IDPID: githubIDP, UserID: strconv.FormatInt(l.GitHubID, 10)}}, nil
+	}
+	active := func(ctx context.Context, sub string) (bool, error) {
+		l, found, err := links.GitHubLink(ctx, sub)
+		switch {
+		case err != nil:
+			return false, err
+		case found:
+			return l.Active, nil
+		case rActive != nil:
+			return rActive(ctx, sub)
+		}
+		return true, nil
+	}
+	return ghidentity.Chain(brokerLinks, rLinks), active
 }

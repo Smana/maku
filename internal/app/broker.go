@@ -285,10 +285,11 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		humans.SlackLink = &humanapi.SlackLinker{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID, Repository: l.Repository}
 		api.SlackLinks, api.SlackLinkReader = st, fconfig.PrincipalFactory
 	}
-	if l := cfg.Human.GitHubLink; l != nil { // the GitHub account link (v4 D8)
+	if l := cfg.Human.GitHubLink; l != nil { // the GitHub account link (v4 D8): a human links, the factory reads
 		if humans.GitHubLink, err = githubLinker(l, st, humans.Identity); err != nil {
 			return fmt.Errorf("room-broker: %w", err)
 		}
+		api.GitHubLinks, api.LinkReader, api.GitHubActiveWindow = st, fconfig.PrincipalFactory, l.ActiveWindow.Duration
 	}
 	if cfg.Human.ApprovalMemory { // merge policy stage 5: the grants' human door, and the factory's routes
 		humans.Grants = st

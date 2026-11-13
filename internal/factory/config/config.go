@@ -1221,11 +1221,17 @@ type ServerTLS struct {
 	KeyFile  string `json:"keyFile"`
 }
 
-// Access is api.access (v2 D4).
+// Access is api.access (v2 D4). The caller's GitHub login comes from the broker's GitHub account
+// links (Links: broker, GET /v1/links/github), the ZITADEL reader (ReaderFile), or both: the reader
+// then only for an account with no link, while the install moves off it (v4 step 5 PR5).
 type Access struct {
 	ReaderFile string   `json:"readerFile"`
+	Links      string   `json:"links,omitempty"`
 	TTL        Duration `json:"ttl"`
 }
+
+// LinksBroker is api.access.links' one value: the broker's GitHub account links.
+const LinksBroker = "broker"
 
 // Sponsored is one sponsored principal (F4, R1): a ZITADEL service account, recognised by its
 // client id, whose tasks are charged to system:<name> and bounded by a day, a per-request ceiling
@@ -2145,15 +2151,21 @@ func (c *Config) Validate() error {
 		bad("api.systemIssuer and api.systemJWKS are both set or both empty (R23)")
 	}
 	if a := c.API.Access; a != nil {
-		if a.ReaderFile == "" {
-			bad("api.access.readerFile is required")
+		if a.Links != "" && a.Links != LinksBroker {
+			bad("api.access.links %q is not \"\" or broker", a.Links)
+		}
+		if a.Links == LinksBroker && c.Broker.URL == "" {
+			bad("api.access.links broker needs broker.url: the links are read from the broker's system API")
+		}
+		if a.ReaderFile == "" && a.Links == "" {
+			bad("api.access.readerFile is required unless api.access.links is broker")
 		}
 		if a.TTL.Duration <= 0 || a.TTL.Duration > MaxAccessTTL {
 			bad("api.access.ttl must be above 0 and at most %s (v2 D4)", MaxAccessTTL)
 		}
 		// The reader's PAT is sent to the issuer: never in clear, never with userinfo.
-		if u, err := url.Parse(c.API.HumanIssuer); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-			bad("api.humanIssuer must be https://host when api.access is set")
+		if u, err := url.Parse(c.API.HumanIssuer); a.ReaderFile != "" && (err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil) {
+			bad("api.humanIssuer must be https://host when api.access.readerFile is set")
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(c.API.SystemRepositories)) {
