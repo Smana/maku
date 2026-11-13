@@ -325,6 +325,22 @@ func (h Hardening) MinTrust() hardening.Level {
 	return l
 }
 
+// TrustPolicy is the author-trust policy repository's text is levelled by (UH6), at min, the
+// repository's own floor: its maintainers, its merger and policy-bot logins as trusted bots, and
+// hardening.blockedUsers. The reconciler's input record and forge_read's filter read the same one.
+func (c *Config) TrustPolicy(repository string, min hardening.Level) hardening.Policy {
+	pol := hardening.Policy{Min: min, Blocked: c.Hardening.BlockedUsers}
+	if repo := c.RepositoryFor(repository); repo != nil {
+		pol.Maintainers = repo.Maintainers
+		for _, b := range []string{repo.Merge.MergerLogin, repo.Merge.PolicyBotLogin} {
+			if b != "" {
+				pol.TrustedBots = append(pol.TrustedBots, b)
+			}
+		}
+	}
+	return pol
+}
+
 // enforceRefused is why this release refuses mode enforce: it means every output type enforced and
 // reads filtered, which stage H4 brings (HR34). H3 enforces push under mode audit.
 const enforceRefused = "enforce arrives with stage H4; this release offers off and audit, with enforceOutputs"

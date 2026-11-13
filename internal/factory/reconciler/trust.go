@@ -141,17 +141,7 @@ var revisionTriggers = []string{"review", "ci", "human"}
 //     still lowers the minimum, since the run can read it;
 //   - a split child's or coordination child's parent, at the parent's recorded minimum.
 func (r *Reconciler) inputTrust(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, trigger string) (hardening.InputTrust, error) {
-	rp := r.repositoryPolicy(cfg, t)
-	repo := r.repo(cfg, t)
-	pol := hardening.Policy{Min: rp.MinTrust, Blocked: cfg.Hardening.BlockedUsers}
-	if repo != nil {
-		pol.Maintainers = repo.Maintainers
-		for _, b := range []string{repo.Merge.MergerLogin, repo.Merge.PolicyBotLogin} {
-			if b != "" {
-				pol.TrustedBots = append(pol.TrustedBots, b)
-			}
-		}
-	}
+	pol := cfg.TrustPolicy(t.Spec.Repository, r.repositoryPolicy(cfg, t).MinTrust)
 	it := hardening.NewInputTrust()
 	it.Record(hardening.SourceDefaultBranch, hardening.Merged)
 	if t.Spec.Steering != nil {

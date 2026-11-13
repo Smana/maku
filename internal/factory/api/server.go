@@ -32,6 +32,7 @@ import (
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/tlsreload"
 )
@@ -117,6 +118,12 @@ type Server struct {
 	Evidence EvidenceSource
 	// Editor is the settings editor's check and the decision timeline, served beside Evidence.
 	Editor PolicyEditor
+	// Readers reads a repository's issues, pull requests and checks with the factory App for the
+	// broker's forge_read (HR35); nil, or nil for a repository, answers forge_unavailable.
+	Readers func(repository string) ForgeThreads
+	// Trust is each repository's fence-file hardening block, its trust floor; nil reads the floor
+	// and the central minAuthorTrust.
+	Trust *hardening.RepositoryPolicies
 }
 
 // SlackLinkReader is the broker's self-serve link records: the ZITADEL sub a Slack user linked;
@@ -160,6 +167,9 @@ func (s *Server) Handler() http.Handler {
 	cfg := s.Cfg.Current()
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
+	// HR35: the broker's forge_read; it admits system:broker alone and refuses a repository that is
+	// not in hardening mode enforce, so it reads nothing while H4 is off.
+	mux.HandleFunc(ForgeReadRoute, s.forgeRead)
 	if len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4, D4: off until a principal is declared
 		mux.HandleFunc("POST /v1/tasks", s.createTask)
 	}
