@@ -108,6 +108,18 @@ func TestResolve(t *testing.T) {
 			want(t, len(c.RequiresApproval) == 2 && c.RequiresApproval[1].ChangedFiles[0] == "^docs/adr/", "requiresApproval")
 		}},
 		"holdoutChecks missing": {bind: func(b *Binding) { b.HoldoutChecks = nil }, reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires holdoutChecks"},
+		// A-L2: a binding that only repeats the policy's holdouts adds none.
+		"holdoutChecks only the policy's": {policy: func(p *PolicySpec) { p.HoldoutChecks = []string{"lint"} }, bind: func(b *Binding) { b.HoldoutChecks = []string{"lint"} },
+			reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires holdoutChecks: the binding adds none of its own"},
+		"a binding of another policy": {bind: func(b *Binding) { b.Name = "docs-links" }, reason: ReasonInvalid, msg: `class dead-links: the binding names MergePolicy "docs-links"`},
+		"review bound with a parameter": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff, MaxPerDay: 1} },
+			reason: ReasonInvalid, msg: "review is bound with mode off and no parameter"},
+		// R17: review keeps checks and testFirst.
+		"review with checks and testFirst": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} },
+			bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} }, merge: Merge{ContractCheck: "contract"},
+			check: func(t *testing.T, c Class) {
+				want(t, c.Checks && c.TestFirst && !c.Live && !c.Shadow, "review keeps checks and testFirst")
+			}},
 		// Caps.
 		"a cap under the policy's": {bind: func(b *Binding) { b.MaxPerDay = 0; b.MaxModifiedLines = 20 }, check: func(t *testing.T, c Class) { want(t, c.MaxModifiedLines == 20 && c.MaxPerDay == 1, "caps") }},
 		"a cap lowered":            {policy: func(p *PolicySpec) { p.MaxPatchFiles = 10 }, bind: func(b *Binding) { b.MaxPatchFiles = 5 }, check: func(t *testing.T, c Class) { want(t, c.MaxPatchFiles == 5, "5 under 10") }},
@@ -212,7 +224,15 @@ func TestValidatePolicy(t *testing.T) {
 			msg: "an oracle needs holdoutChecks"},
 		"review with allowedFiles": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{AllowedFiles: []string{"^docs/.+$"}}} },
 			msg: "review takes checks and testFirst only"},
-		"a flux monitor": {policy: func(p *PolicySpec) { p.Monitor.Flux = &FluxWatch{Within: Duration{30 * time.Minute}} }},
+		// A-L1: the fields of review's CEL rule validateClass does not read.
+		"review with requires": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Requires: []string{"holdoutChecks"}} },
+			msg: "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"},
+		"review with companionFiles": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{CompanionFiles: []string{"^x$"}}} },
+			msg: "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"},
+		"review with requiredLabel": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{RequiredLabel: "x"}} },
+			msg: "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"},
+		"review with checks and testFirst": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }},
+		"a flux monitor":                   {policy: func(p *PolicySpec) { p.Monitor.Flux = &FluxWatch{Within: Duration{30 * time.Minute}} }},
 		"requires an unknown field": {policy: func(p *PolicySpec) { p.Requires = append(p.Requires, "maxPerDay") },
 			msg: `requires "maxPerDay" is not one of [allowedFiles companionFiles requiredLabel oracleWorkflow holdoutChecks]`},
 		"requires a field twice": {policy: func(p *PolicySpec) { p.Requires = append(p.Requires, "allowedFiles") }, msg: `requires names "allowedFiles" twice`},

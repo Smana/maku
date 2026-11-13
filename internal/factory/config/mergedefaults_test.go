@@ -29,6 +29,12 @@ func TestApplyMergeDefaults(t *testing.T) {
 	if !reflect.DeepEqual(merge, before) {
 		t.Fatalf("merge was mutated: %v", merge)
 	}
+	// A deep copy: writing into the result reaches neither input.
+	got["breaker"].(map[string]any)["window"] = 99
+	got["requiredChecks"].([]any)[0] = "changed"
+	if merge["breaker"].(map[string]any)["window"] != 5 || defaults["requiredChecks"].([]any)[0] != "lint" {
+		t.Fatal("the result shares a map or a list with an input")
+	}
 
 	got, keys = ApplyMergeDefaults(nil, merge)
 	if !reflect.DeepEqual(got, before) || len(keys) != 0 {

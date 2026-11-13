@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -69,9 +70,12 @@ type Binding struct {
 	// +kubebuilder:validation:MaxItems=16
 	RequiresApproval []ApprovalLeaf `json:"requiresApproval,omitempty"`
 	// MaxPatchFiles, MaxModifiedLines and MaxPerDay lower the policy's caps, never raise them.
-	MaxPatchFiles    int `json:"maxPatchFiles,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	MaxPatchFiles int `json:"maxPatchFiles,omitempty"`
+	// +kubebuilder:validation:Minimum=0
 	MaxModifiedLines int `json:"maxModifiedLines,omitempty"`
-	MaxPerDay        int `json:"maxPerDay,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	MaxPerDay int `json:"maxPerDay,omitempty"`
 }
 
 // PolicySpec is a MergePolicy's class definition (B7, D16): a Class, less the mode, which is the
@@ -151,6 +155,12 @@ func policyShapeProblems(name string, p PolicySpec) []string {
 	if p.Monitor != nil && p.Monitor.Flux != nil && p.Monitor.Flux.Source != "" {
 		bad("the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)")
 	}
+	// review's CEL rule, mirrored so offline validation and admission agree (R17): review merges
+	// nothing, so it takes description, harness, harnessAllowed, escalation, checks and testFirst
+	// only. validateClass refuses the rest of its fields; these three it does not read.
+	if name == "review" && (len(p.CompanionFiles) > 0 || p.RequiredLabel != "" || len(p.Requires) > 0) {
+		bad("review takes only description, harness, harnessAllowed, escalation, checks and testFirst")
+	}
 	set := map[string]bool{"allowedFiles": len(p.AllowedFiles) > 0, "companionFiles": len(p.CompanionFiles) > 0, "requiredLabel": p.RequiredLabel != ""}
 	for i, f := range p.Requires {
 		switch {
@@ -171,10 +181,14 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 		return Class{}, reason, []string{fmt.Sprintf(f, a...)}
 	}
 	switch {
+	case b.Name != name:
+		return refuse(ReasonInvalid, "class %s: the binding names MergePolicy %q", name, b.Name)
 	case b.Mode != ModeLive && b.Mode != ModeShadow && b.Mode != ModeOff:
 		return refuse(ReasonInvalid, "class %s: mode %q is live, shadow or off", name, b.Mode)
 	case name == "review" && b.Mode != ModeOff:
 		return refuse(ReasonInvalid, "class review: review takes only mode off")
+	case name == "review" && !reflect.DeepEqual(b, Binding{Name: b.Name, Mode: b.Mode}):
+		return refuse(ReasonInvalid, "class review: review is bound with mode off and no parameter")
 	}
 	if problems := policyShapeProblems(name, p); len(problems) > 0 {
 		return Class{}, ReasonInvalid, problems
@@ -210,11 +224,12 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 		return refuse(ReasonInvalid, "class %s: oracleWorkflow needs an oracle on MergePolicy %s", name, name)
 	}
 
-	// Additive: the policy's, then the binding's new entries, as written.
-	if slices.Contains(p.Requires, "holdoutChecks") && len(b.HoldoutChecks) == 0 {
-		return refuse(ReasonMissingParameter, "MergePolicy %s requires holdoutChecks", name)
-	}
+	// Additive: the policy's, then the binding's new entries, as written. A required holdoutChecks
+	// is met only by a check the policy does not already name (PR3, A-L2).
 	cl.HoldoutChecks = union(cl.HoldoutChecks, b.HoldoutChecks)
+	if slices.Contains(p.Requires, "holdoutChecks") && len(cl.HoldoutChecks) == len(p.HoldoutChecks) {
+		return refuse(ReasonMissingParameter, "MergePolicy %s requires holdoutChecks: the binding adds none of its own", name)
+	}
 	cl.ProtectedFiles = union(cl.ProtectedFiles, b.ProtectedFiles)
 	for _, a := range b.RequiresApproval {
 		if !slices.ContainsFunc(cl.RequiresApproval, func(x ApprovalLeaf) bool { return slices.Equal(x.ChangedFiles, a.ChangedFiles) }) {
