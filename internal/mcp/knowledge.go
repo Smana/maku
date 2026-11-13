@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"slices"
@@ -29,6 +30,8 @@ const (
 	KnowledgeTimeout       = "timeout"
 	KnowledgeUpstreamError = "upstream_error"
 	KnowledgeBadAnswer     = "bad_answer"
+	// KnowledgeInvalidArguments is a call the broker refused on its arguments: it never left the broker.
+	KnowledgeInvalidArguments = "invalid_arguments"
 )
 
 const (
@@ -39,8 +42,11 @@ const (
 	// knowledgeProtocol is the MCP revision the broker asks the endpoint for.
 	knowledgeProtocol = "2025-06-18"
 	// minKnowledgeRead is the least of a response the broker reads before it gives up on it: an
-	// answer's JSON framing and escaping make it larger than the text it carries.
+	// answer's JSON framing and escaping make it larger than the text it carries. A response over
+	// the bound, max(8 × maxBytes, 1 MiB), is bad_answer, never clipped: it is not yet parsed.
 	minKnowledgeRead = 1 << 20
+	// knowledgeEndTimeout bounds the DELETE that closes a session, after the call's own deadline.
+	knowledgeEndTimeout = 2 * time.Second
 )
 
 // KnowledgeConfig is roomTools.knowledge as the broker serves it: the endpoint, the tools it
@@ -92,7 +98,13 @@ func KnowledgeTools(cfg KnowledgeConfig, hc *http.Client, rec KnowledgeRecorder)
 	if rec == nil {
 		rec = func(context.Context, string, string) {}
 	}
-	c := knowledgeClient{url: cfg.URL, hc: hc, limit: max(int64(cfg.MaxBytes)*8, minKnowledgeRead)}
+	if hc == nil {
+		hc = httpx.New(cfg.Timeout, nil)
+	}
+	// A redirect is the endpoint's answer, never followed: the call goes to the configured URL only.
+	noRedirect := *hc
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	c := knowledgeClient{url: cfg.URL, hc: &noRedirect, limit: max(int64(cfg.MaxBytes)*8, minKnowledgeRead)}
 	var out []Tool
 	for _, name := range []string{"kb_search", "kb_get"} {
 		if !slices.Contains(cfg.Tools, name) {
@@ -105,6 +117,7 @@ func KnowledgeTools(cfg KnowledgeConfig, hc *http.Client, rec KnowledgeRecorder)
 			Call: func(ctx context.Context, _ Caller, args json.RawMessage) (any, error) {
 				fwd, err := knowledgeArgs(name, args)
 				if err != nil {
+					rec(ctx, name, KnowledgeInvalidArguments)
 					return nil, err
 				}
 				ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
@@ -133,9 +146,9 @@ func knowledgeArgs(name string, args json.RawMessage) (json.RawMessage, error) {
 	case "kb_search":
 		var a struct {
 			Query string `json:"query"`
-			K     int    `json:"k,omitempty"`
+			K     *int   `json:"k,omitempty"`
 		}
-		if mcpwire.DecodeArgs(args, &a) != nil || !text(a.Query, 1024) || a.K < 0 || a.K > 20 {
+		if mcpwire.DecodeArgs(args, &a) != nil || !text(a.Query, 1024) || a.K != nil && (*a.K < 1 || *a.K > 20) {
 			return nil, argError("query: 1 to 1024 bytes, no control characters but tab and newline; k: 1 to 20")
 		}
 		return json.Marshal(a)
@@ -209,17 +222,20 @@ func (c knowledgeClient) call(ctx context.Context, tool string, args json.RawMes
 	init, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
 		"protocolVersion": knowledgeProtocol, "capabilities": map[string]any{},
 		"clientInfo": map[string]string{"name": "maku-broker", "version": "1"}}})
-	_, session, err := c.post(ctx, "", init, json.RawMessage("1"))
+	_, session, err := c.post(ctx, "", false, init, json.RawMessage("1"))
 	if err != nil {
 		return "", classify(ctx, err), err
 	}
+	if session != "" {
+		defer c.end(ctx, session)
+	}
 	note := []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if _, _, err := c.post(ctx, session, note, nil); err != nil {
+	if _, _, err := c.post(ctx, session, true, note, nil); err != nil {
 		return "", classify(ctx, err), err
 	}
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
 		"params": map[string]any{"name": tool, "arguments": args}})
-	result, _, err := c.post(ctx, session, body, json.RawMessage("2"))
+	result, _, err := c.post(ctx, session, true, body, json.RawMessage("2"))
 	if err != nil {
 		return "", classify(ctx, err), err
 	}
@@ -263,31 +279,43 @@ func classify(ctx context.Context, err error) string {
 	return KnowledgeUpstreamError
 }
 
-// post sends one JSON-RPC message. With want set it returns the result of the response whose id
-// is want, from a JSON body or an event stream; a notification needs only a 2xx.
-func (c knowledgeClient) post(ctx context.Context, session string, body []byte, want json.RawMessage) (json.RawMessage, string, error) {
+// end closes the session the endpoint handed out, so no session outlives the call. It runs past the
+// call's own deadline, bounded by knowledgeEndTimeout; its outcome changes nothing.
+func (c knowledgeClient) end(ctx context.Context, session string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), knowledgeEndTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.url, http.NoBody)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Mcp-Session-Id", session)
+	req.Header.Set("MCP-Protocol-Version", knowledgeProtocol)
+	if resp, err := c.hc.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
+}
+
+// post sends one JSON-RPC message; initialized names the protocol version, as every request after
+// initialize must. With want set it returns the result of the response whose id is want, from a
+// JSON body or an event stream read up to that message; a notification needs only a 2xx.
+func (c knowledgeClient) post(ctx context.Context, session string, initialized bool, body []byte, want json.RawMessage) (json.RawMessage, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	if initialized {
+		req.Header.Set("MCP-Protocol-Version", knowledgeProtocol)
+	}
 	if session != "" {
 		req.Header.Set("Mcp-Session-Id", session)
-		req.Header.Set("MCP-Protocol-Version", knowledgeProtocol)
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := httpx.ReadBody(resp.Body, c.limit)
-	if err != nil {
-		if errors.Is(err, httpx.ErrBodyTooLarge) {
-			return nil, "", errBadAnswer
-		}
-		return nil, "", err
-	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, "", upstreamError(fmt.Sprintf("the knowledge base answered %d", resp.StatusCode))
 	}
@@ -295,56 +323,78 @@ func (c knowledgeClient) post(ctx context.Context, session string, body []byte, 
 	if want == nil {
 		return nil, sid, nil
 	}
-	msgs := [][]byte{raw}
 	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		msgs = events(raw)
+		res, err := c.stream(resp.Body, want)
+		return res, sid, err
 	}
-	for _, m := range msgs {
-		var r struct {
-			ID     json.RawMessage `json:"id"`
-			Result json.RawMessage `json:"result"`
-			Error  *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(m, &r) != nil || !bytes.Equal(bytes.TrimSpace(r.ID), want) {
-			continue
-		}
-		if r.Error != nil {
-			return nil, sid, upstreamError(r.Error.Message)
-		}
-		if len(r.Result) == 0 || string(r.Result) == "null" {
+	raw, err := httpx.ReadBody(resp.Body, c.limit)
+	if err != nil {
+		if errors.Is(err, httpx.ErrBodyTooLarge) {
 			return nil, sid, errBadAnswer
 		}
-		return r.Result, sid, nil
+		return nil, sid, err
+	}
+	if res, ok, err := answerOf(raw, want); ok {
+		return res, sid, err
 	}
 	return nil, sid, errBadAnswer
 }
 
-// events are an event stream's data payloads, one per event.
-func events(raw []byte) [][]byte {
-	var out [][]byte
+// stream reads an event stream up to the event that answers want, never to its end: a server may
+// keep the stream open. Past c.limit bytes it gives up with errBadAnswer.
+func (c knowledgeClient) stream(body io.Reader, want json.RawMessage) (json.RawMessage, error) {
+	lr := &io.LimitedReader{R: body, N: c.limit + 1}
+	br := bufio.NewReader(lr)
 	var cur []byte
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	sc.Buffer(make([]byte, 0, 64<<10), len(raw)+1)
-	for sc.Scan() {
-		line := sc.Bytes()
+	for {
+		line, err := br.ReadBytes('\n')
+		if lr.N <= 0 {
+			return nil, errBadAnswer
+		}
+		line = bytes.TrimRight(line, "\r\n")
 		switch {
-		case len(line) == 0:
-			if cur != nil {
-				out = append(out, cur)
-				cur = nil
-			}
 		case bytes.HasPrefix(line, []byte("data:")):
-			d := bytes.TrimPrefix(bytes.TrimPrefix(line, []byte("data:")), []byte(" "))
 			if cur != nil {
 				cur = append(cur, '\n')
 			}
-			cur = append(cur, d...)
+			cur = append(cur, bytes.TrimPrefix(bytes.TrimPrefix(line, []byte("data:")), []byte(" "))...)
+		case len(line) == 0 && cur != nil: // an event ends
+			if res, ok, aerr := answerOf(cur, want); ok {
+				return res, aerr
+			}
+			cur = nil
+		}
+		if err != nil {
+			if cur != nil {
+				if res, ok, aerr := answerOf(cur, want); ok {
+					return res, aerr
+				}
+			}
+			if errors.Is(err, io.EOF) {
+				return nil, errBadAnswer
+			}
+			return nil, err
 		}
 	}
-	if cur != nil {
-		out = append(out, cur)
+}
+
+// answerOf reads one JSON-RPC message: ok when it is the response whose id is want.
+func answerOf(m []byte, want json.RawMessage) (json.RawMessage, bool, error) {
+	var r struct {
+		ID     json.RawMessage `json:"id"`
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
-	return out
+	if json.Unmarshal(m, &r) != nil || !bytes.Equal(bytes.TrimSpace(r.ID), want) {
+		return nil, false, nil
+	}
+	if r.Error != nil {
+		return nil, true, upstreamError(r.Error.Message)
+	}
+	if len(r.Result) == 0 || string(r.Result) == "null" {
+		return nil, true, errBadAnswer
+	}
+	return r.Result, true, nil
 }

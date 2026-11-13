@@ -26,8 +26,12 @@ type upstream struct {
 	args    []json.RawMessage
 	session string
 	sse     bool
-	delay   time.Duration
-	answer  func(id json.RawMessage) string
+	// hang keeps an event stream open after its answer, as a server that streams more would.
+	hang     bool
+	delay    time.Duration
+	redirect string
+	versions []string // MCP-Protocol-Version, by request after initialize
+	answer   func(id json.RawMessage) string
 }
 
 func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -39,11 +43,21 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Arguments json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
+	if u.redirect != "" {
+		http.Redirect(w, r, u.redirect, http.StatusTemporaryRedirect)
+		return
+	}
 	body, _ := io.ReadAll(r.Body)
 	_ = json.Unmarshal(body, &req)
+	if r.Method == http.MethodDelete {
+		req.Method = "DELETE"
+	}
 	u.mu.Lock()
 	u.auth = append(u.auth, r.Header.Get("Authorization"))
 	u.methods = append(u.methods, req.Method)
+	if req.Method != "initialize" {
+		u.versions = append(u.versions, r.Header.Get("MCP-Protocol-Version"))
+	}
 	if req.Method == "tools/call" {
 		u.args = append(u.args, req.Params.Arguments)
 	}
@@ -59,7 +73,7 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Mcp-Session-Id", u.session)
 		}
 		out = `{"jsonrpc":"2.0","id":` + string(req.ID) + `,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"runlore","version":"1"}}}`
-	case "notifications/initialized":
+	case "notifications/initialized", "DELETE":
 		w.WriteHeader(http.StatusAccepted)
 		return
 	case "tools/call":
@@ -77,6 +91,13 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if u.sse {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "event: message\ndata: "+out+"\n\n")
+		if u.hang {
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		}
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -164,7 +185,7 @@ func TestKnowledgeSearchForwardsToTheEndpoint(t *testing.T) {
 		u.mu.Lock()
 		methods, auth, args := u.methods, u.auth, u.args
 		u.mu.Unlock()
-		if strings.Join(methods, ",") != "initialize,notifications/initialized,tools/call" {
+		if strings.Join(methods, ",") != "initialize,notifications/initialized,tools/call,DELETE" {
 			t.Fatalf("sse=%v: methods %v", sse, methods)
 		}
 		for _, a := range auth {
@@ -295,6 +316,7 @@ func TestKnowledgeArgumentsAreChecked(t *testing.T) {
 	}{
 		"empty query":     {"kb_search", map[string]any{"query": ""}},
 		"k over 20":       {"kb_search", map[string]any{"query": "x", "k": 21}},
+		"k zero":          {"kb_search", map[string]any{"query": "x", "k": 0}},
 		"unknown field":   {"kb_search", map[string]any{"query": "x", "room": "other"}},
 		"no path":         {"kb_get", map[string]any{}},
 		"path with a NUL": {"kb_get", map[string]any{"path": "a\x00b"}},
@@ -304,8 +326,17 @@ func TestKnowledgeArgumentsAreChecked(t *testing.T) {
 			t.Fatalf("%s: result %v", name, res)
 		}
 	}
-	if len(u.methods) != 0 || len(o.list()) != 0 {
-		t.Fatalf("a refused argument reached the endpoint: %v %v", u.methods, o.list())
+	if len(u.methods) != 0 {
+		t.Fatalf("a refused argument reached the endpoint: %v", u.methods)
+	}
+	got := o.list()
+	if len(got) != 6 {
+		t.Fatalf("outcomes %v", got)
+	}
+	for _, g := range got {
+		if !strings.HasSuffix(g, ":invalid_arguments") {
+			t.Fatalf("outcomes %v", got)
+		}
 	}
 }
 
@@ -330,5 +361,85 @@ func TestKnowledgeUnreachableNamesNoAddress(t *testing.T) {
 	}
 	if got := o.list(); len(got) != 1 || got[0] != "kb_search:upstream_error" {
 		t.Fatalf("outcomes %v", got)
+	}
+}
+
+// Every request after initialize names the protocol version, and a session the endpoint handed out
+// is closed with DELETE at the end of the call; with none, nothing is deleted.
+func TestKnowledgeProtocolVersionAndSessionEnd(t *testing.T) {
+	for _, session := range []string{"s-1", ""} {
+		u := &upstream{session: session, answer: textAnswer("x")}
+		s, _ := knowledgeServer(t, "triager", u, KnowledgeConfig{})
+		if res, _ := callArgs(t, s, "kb_search", map[string]any{"query": "x"}); res["isError"] == true {
+			t.Fatalf("session %q: %v", session, res)
+		}
+		u.mu.Lock()
+		methods, versions := strings.Join(u.methods, ","), u.versions
+		u.mu.Unlock()
+		want := "initialize,notifications/initialized,tools/call"
+		if session != "" {
+			want += ",DELETE"
+		}
+		if methods != want {
+			t.Fatalf("session %q: methods %s, want %s", session, methods, want)
+		}
+		for _, v := range versions {
+			if v != knowledgeProtocol {
+				t.Fatalf("session %q: versions %v", session, versions)
+			}
+		}
+	}
+}
+
+// A redirect is the endpoint's answer, never followed: the run's call goes nowhere else.
+func TestKnowledgeDoesNotFollowRedirects(t *testing.T) {
+	var hits int
+	var mu sync.Mutex
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { mu.Lock(); hits++; mu.Unlock() }))
+	t.Cleanup(other.Close)
+	s, o := knowledgeServer(t, "triager", &upstream{redirect: other.URL + "/mcp", answer: textAnswer("x")}, KnowledgeConfig{})
+	res, text := callArgs(t, s, "kb_search", map[string]any{"query": "x"})
+	if res["isError"] != true || !strings.HasPrefix(text, "knowledge_unavailable") {
+		t.Fatalf("result %v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 0 {
+		t.Fatalf("the redirect was followed %d times", hits)
+	}
+	if got := o.list(); len(got) != 1 || got[0] != "kb_search:upstream_error" {
+		t.Fatalf("outcomes %v", got)
+	}
+}
+
+// An event stream is read up to the answer with the call's id, not to its end.
+func TestKnowledgeSSEStopsAtItsAnswer(t *testing.T) {
+	u := &upstream{sse: true, hang: true, answer: textAnswer("found")}
+	s, o := knowledgeServer(t, "triager", u, KnowledgeConfig{Timeout: 3 * time.Second})
+	start := time.Now()
+	res, _ := callArgs(t, s, "kb_search", map[string]any{"query": "x"})
+	if res["isError"] == true {
+		t.Fatalf("result %v", res)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("the call waited %s for the stream to end", d)
+	}
+	if got := o.list(); len(got) != 1 || got[0] != "kb_search:ok" {
+		t.Fatalf("outcomes %v", got)
+	}
+}
+
+// A response over max(8 × maxBytes, 1 MiB) is not read to its end and not clipped: it is bad_answer.
+func TestKnowledgeOversizeIsABadAnswer(t *testing.T) {
+	for _, sse := range []bool{false, true} {
+		u := &upstream{sse: sse, answer: textAnswer(strings.Repeat("a", 2<<20))}
+		s, o := knowledgeServer(t, "triager", u, KnowledgeConfig{MaxBytes: 1 << 10})
+		res, text := callArgs(t, s, "kb_get", map[string]any{"path": "a.md"})
+		if res["isError"] != true || !strings.HasPrefix(text, "knowledge_bad_answer") {
+			t.Fatalf("sse=%v: result %v", sse, text)
+		}
+		if got := o.list(); len(got) != 1 || got[0] != "kb_get:bad_answer" {
+			t.Fatalf("sse=%v: outcomes %v", sse, got)
+		}
 	}
 }

@@ -1027,6 +1027,11 @@ func TestRoomToolsKnowledge(t *testing.T) {
 			t.Errorf("%s: want a %s refusal, got %v", tc.body, tc.key, err)
 		}
 	}
+	// A refused URL is never quoted: it may carry credentials or a query token.
+	if _, err := Load(write(t, valid+"roomTools:\n  knowledge:\n    url: http://kb:s3cr3t@kb.example.com/mcp?token=t0k3n\n")); err == nil ||
+		strings.Contains(err.Error(), "s3cr3t") || strings.Contains(err.Error(), "t0k3n") {
+		t.Fatalf("want a refusal that quotes no credential, got %v", err)
+	}
 	if _, err := Load(write(t, valid+"roomTools:\n  knowledge:\n    url: https://kb.example.com/mcp\n    token: x\n")); err == nil {
 		t.Fatal("an unknown knowledge key decoded")
 	}

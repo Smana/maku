@@ -749,11 +749,13 @@ func TestKnowledgeCallsCounter(t *testing.T) {
 	}
 	s.KnowledgeCall(ctx, "kb_search", "ok")
 	s.KnowledgeCall(ctx, "kb_get", "timeout")
+	s.KnowledgeCall(ctx, "kb_get", "invalid_arguments")
 	s.KnowledgeCall(ctx, "kb_delete", "no entry at incidents/secret.md")
 	body := scrape(t, exp.Handler())
 	for _, want := range []string{
 		`maku_rooms_knowledge_calls_total{outcome="ok",tool="kb_search"} 1`,
 		`maku_rooms_knowledge_calls_total{outcome="timeout",tool="kb_get"} 1`,
+		`maku_rooms_knowledge_calls_total{outcome="invalid_arguments",tool="kb_get"} 1`,
 		`maku_rooms_knowledge_calls_total{outcome="other",tool="other"} 1`,
 	} {
 		if !strings.Contains(body, want+"\n") {

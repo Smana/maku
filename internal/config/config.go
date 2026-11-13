@@ -612,7 +612,8 @@ func (k KnowledgeConfig) validate() []error {
 	case k.URL == "":
 		errs = append(errs, errors.New("roomTools.knowledge.url is required: it is the knowledge MCP endpoint"))
 	case err != nil || u.Host == "" || u.User != nil || !knowledgeScheme(u):
-		errs = append(errs, fmt.Errorf("roomTools.knowledge.url %q must be https, or http to an in-cluster <svc>.<ns>.svc[.<domain>], with no credentials", k.URL))
+		// The value is never quoted: a refused URL may carry credentials or a query token.
+		errs = append(errs, errors.New("roomTools.knowledge.url must be https, or http to an in-cluster <svc>.<ns>.svc[.<domain>], with no credentials"))
 	}
 	if len(k.Tools) == 0 {
 		errs = append(errs, errors.New("roomTools.knowledge.tools is empty: name kb_search, kb_get or both"))

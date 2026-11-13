@@ -481,11 +481,11 @@ var (
 	coordCheckoutOutcomes = map[string]bool{"served": true, "restricted": true, "not_ready": true, "unavailable": true}
 	knowledgeToolNames    = map[string]bool{"kb_search": true, "kb_get": true}
 	knowledgeOutcomes     = map[string]bool{"ok": true, "clipped": true, "refused": true, "timeout": true,
-		"upstream_error": true, "bad_answer": true}
+		"upstream_error": true, "bad_answer": true, "invalid_arguments": true}
 )
 
 // KnowledgeCall counts one knowledge tool call: kb_search or kb_get, and ok, clipped, refused,
-// timeout, upstream_error or bad_answer.
+// timeout, upstream_error, bad_answer or invalid_arguments.
 func (s *Set) KnowledgeCall(ctx context.Context, tool, outcome string) {
 	s.knowledgeCalls.Add(ctx, 1, metric.WithAttributes(attribute.String("tool", closed(knowledgeToolNames, tool)),
 		attribute.String("outcome", closed(knowledgeOutcomes, outcome))))
