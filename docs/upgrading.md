@@ -47,6 +47,14 @@ cannot read the run-controller's mode: set both, or an `enforceOutputs` reposito
 admits (HR13) would run on the shared write token. API runs reserved before the upgrade carry no
 repository in their reservation and get no per-run token: let them end before enabling `perRun`.
 
+**The publisher from the minter.** `config.hardening.publisher.minter: true` (opt-in, needs
+`runTokens.enabled`) mints the safe-output publisher's token from the agents App instead of
+exchanging it at octo-sts; it is refused together with `hardening.publisher.octoSTS.url`. Without
+it nothing changes. Readiness and the permission gauge now read the token source the runs get: the
+octo-sts policy files on the XR as before, the role table under `runTokens.perRun`. Moving an
+enforced repository off the XR is a runbook in
+[Operations](operations.md#leaving-the-xr-with-an-enforced-repository-hr13).
+
 ## The run path (v0.4x, v4 rollout step 2)
 
 New keys in the `maku` chart, each rendered only with `runController.enabled`, so an install without

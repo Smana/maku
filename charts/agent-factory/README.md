@@ -73,8 +73,10 @@ Two optional subcharts, both off by default, put agentgateway in front of the mo
 
 The CRDs come first. agentgateway's are applied apart from any Helm release: the four of them hold
 2.3 MB of schema, and Helm stores a release's chart and manifest in one Secret capped at 1 MiB, which
-they would nearly fill. Being outside a release, they also outlive any uninstall. Gateway API's
-standard CRDs (v1.2 or later) are a cluster prerequisite:
+they would nearly fill. They outlive an uninstall only while nothing prunes them. The Flux and Argo CD
+forms, and the upstream `agentgateway-crds` chart as an alternative, are in
+[docs/gateway.md](../../docs/gateway.md#agentgateways-crds). Gateway API's standard CRDs (v1.2 or
+later) are a cluster prerequisite:
 
 ```bash
 helm install af-crds charts/agent-factory-crds -n maku --create-namespace
