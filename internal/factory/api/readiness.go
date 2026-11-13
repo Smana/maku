@@ -33,6 +33,9 @@ type readinessCache struct {
 	mu sync.Mutex
 	m  map[string]cachedReadiness
 	g  singleflight.Group
+	// afterMiss, when set, is called after a caller missed the cache, before singleflight: a test's
+	// gate. Unset in production.
+	afterMiss func()
 }
 
 type cachedReadiness struct {
@@ -53,8 +56,20 @@ func (s *Server) readinessOf(ctx context.Context, repository string) evidence.Re
 		c.mu.Unlock()
 		return e.v
 	}
+	miss := c.afterMiss
 	c.mu.Unlock()
+	if miss != nil {
+		miss()
+	}
 	v, _, _ := c.g.Do(repository, func() (any, error) {
+		// A caller that missed the cache before an earlier read finished reaches here after that read
+		// released its key: the cache, read again under the lock, answers it, never a second read.
+		c.mu.Lock()
+		if e, ok := c.m[repository]; ok && now.Sub(e.at) < readinessTTL {
+			c.mu.Unlock()
+			return e.v, nil
+		}
+		c.mu.Unlock()
 		v := s.readinessFresh(context.WithoutCancel(ctx), repository)
 		c.mu.Lock()
 		if c.m == nil {
