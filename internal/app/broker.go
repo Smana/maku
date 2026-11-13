@@ -44,6 +44,7 @@ import (
 	"github.com/Smana/maku/internal/intent"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
+	"github.com/Smana/maku/internal/preflight"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/roomctrl"
 	"github.com/Smana/maku/internal/runrequest"
@@ -409,7 +410,8 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		}
 	}
 	down := newDrainFlag(ctx)
-	ops := opsHandler(st.Ping, st.SchemaReady, boundedSync(rw.synced), down.Draining, exp.Handler())
+	ops := withPreflight(opsHandler(st.Ping, st.SchemaReady, boundedSync(rw.synced), down.Draining, exp.Handler()),
+		preflight.Handler("broker", version.Version, brokerPreflight(cfg, st).source(), nil))
 
 	var lc net.ListenConfig
 	// The config decides :8090 (I8), so a broker that serves no room tool never binds the port.

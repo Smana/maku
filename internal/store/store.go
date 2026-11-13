@@ -36,6 +36,7 @@ var (
 // Store is the room log over a PostgreSQL pool, connected as rooms_broker.
 type Store struct {
 	pool *pgxpool.Pool
+	role Role // the role Open checked, which Recheck checks again
 	// Server is what Open's Check read: the server's version, the role and whether the
 	// connection is encrypted.
 	Server    Server
@@ -89,7 +90,14 @@ func Open(ctx context.Context, url string, role Role) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("store: %w", err)
 	}
-	return &Store{pool: pool, Server: server, MaxEvents: 100_000, MaxBytes: 256 << 20, MaxForkEvents: 5_000, MaxForkBytes: 32 << 20, Now: time.Now, ListenPing: 30 * time.Second}, nil
+	return &Store{pool: pool, role: role, Server: server, MaxEvents: 100_000, MaxBytes: 256 << 20, MaxForkEvents: 5_000, MaxForkBytes: 32 << 20, Now: time.Now, ListenPing: 30 * time.Second}, nil
+}
+
+// Recheck runs Open's Check again on the pool, for the preflight's database check: the server
+// may have been downgraded or the role altered since the broker started.
+func (s *Store) Recheck(ctx context.Context) error {
+	_, err := Check(ctx, s.pool, s.role)
+	return err
 }
 
 // Close releases the pool.

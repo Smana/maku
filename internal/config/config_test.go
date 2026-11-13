@@ -1278,3 +1278,16 @@ func TestLoadAccessFromTheGitHubLink(t *testing.T) {
 		t.Fatalf("neither source: %v", err)
 	}
 }
+
+// v4 D24: the broker's preflight bound, decoded strictly and bounded.
+func TestPreflightConfig(t *testing.T) {
+	c, err := Load(write(t, valid+"preflight: {timeout: 5s}\n"))
+	if err != nil || c.Preflight.Timeout.Duration != 5*time.Second {
+		t.Fatalf("%v %+v", err, c.Preflight)
+	}
+	for _, bad := range []string{"preflight: {timeout: 31s}\n", "preflight: {timeout: 100ms}\n", "preflight: {checks: 1}\n"} {
+		if _, err := Load(write(t, valid+bad)); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
