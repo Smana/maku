@@ -5,6 +5,7 @@ package statuswriter
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -196,5 +198,104 @@ func TestEnvtestWriteOnceWithoutCRDs(t *testing.T) {
 	}
 	if logs.Len() != 0 {
 		t.Fatalf("logged at Warn: %s", logs.String())
+	}
+}
+
+// B10: the binding status of Task 11's objects, written to a real API server, and the printer
+// cells kubectl reads from it (a meta.k8s.io Table).
+func TestWriterBindings(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
+	}
+	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd")}, ErrorIfCRDPathMissing: true}
+	restCfg, err := env.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = env.Stop() }()
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = v1alpha1.AddToScheme(s)
+	c, err := client.New(restCfg, client.Options{Scheme: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: envNS}}); err != nil {
+		t.Fatal(err)
+	}
+	in, repos, policies := bindingsWorld()
+	for i := range repos {
+		r := repos[i].DeepCopy()
+		r.Namespace, r.Generation = envNS, 0
+		r.Spec.FactoryRef, r.Spec.Maintainers, r.Spec.TriggerLabel = "aws-0", []string{"Smana"}, "factory/ready"
+		if r.Spec.MergePolicies != nil { // OD-8 in CEL: revert is bound beside docs-links
+			r.Spec.MergePolicies = append(r.Spec.MergePolicies, config.Binding{Name: "revert", Mode: "shadow"})
+		}
+		if err := c.Create(ctx, r); err != nil {
+			t.Fatalf("create Repository %s: %v", r.Name, err)
+		}
+	}
+	for i := range policies {
+		p := policies[i].DeepCopy()
+		p.Namespace, p.Generation = envNS, 0
+		if p.Spec.RepositoryRef == "" {
+			p.Spec.Description = "a class definition"
+		}
+		if err := c.Create(ctx, p); err != nil {
+			t.Fatalf("create MergePolicy %s: %v", p.Name, err)
+		}
+	}
+	w := &Writer{Client: c, Reader: c, Namespace: envNS, Log: slog.New(slog.DiscardHandler),
+		Inputs: func(context.Context) Inputs { return in }}
+	if err := w.WriteOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var r v1alpha1.Repository
+	if err := c.Get(ctx, client.ObjectKey{Namespace: envNS, Name: "ai-native-ref"}, &r); err != nil {
+		t.Fatal(err)
+	}
+	if b := apimeta.FindStatusCondition(r.Status.Conditions, v1alpha1.ConditionBindingsValid); b == nil || b.Status != metav1.ConditionFalse || len(r.Status.Classes) != 2 ||
+		r.Status.Merge == nil || r.Status.Merge.AutoMergesPerDay != 2 {
+		t.Fatalf("ai-native-ref status %+v", r.Status)
+	}
+
+	kc, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := func(resource, name string) map[string]any {
+		t.Helper()
+		body, err := kc.Discovery().RESTClient().Get().
+			AbsPath("/apis/maku.ogenki.io/v1alpha1/namespaces", envNS, resource, name).
+			SetHeader("Accept", "application/json;as=Table;g=meta.k8s.io;v=v1").DoRaw(ctx)
+		if err != nil {
+			t.Fatalf("%s/%s: %v: %s", resource, name, err, body)
+		}
+		var tbl metav1.Table
+		if err := json.Unmarshal(body, &tbl); err != nil || len(tbl.Rows) != 1 {
+			t.Fatalf("%s/%s table: %v: %s", resource, name, err, body)
+		}
+		out := map[string]any{}
+		for i, col := range tbl.ColumnDefinitions {
+			out[col.Name] = tbl.Rows[0].Cells[i]
+		}
+		return out
+	}
+	// JSON numbers decode as float64.
+	if got := cells("mergepolicies", "dead-links"); got["Consumers"] != 2.0 || got["Current"] != 1.0 || got["Live"] != 0.0 || got["Accepted"] != "True" {
+		t.Fatalf("mergepolicy/dead-links %v, want Consumers 2, Current 1, Live 0, Accepted True", got)
+	}
+	if got := cells("repositories", "cloud-native-ref"); got["Classes"] != 2.0 || got["Live"] != 1.0 {
+		t.Fatalf("repository/cloud-native-ref %v, want Classes 2, Live 1", got)
+	}
+
+	// A second pass writes nothing: the stored status round-trips.
+	before := r.ResourceVersion
+	if err := w.WriteOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: envNS, Name: "ai-native-ref"}, &r); err != nil || r.ResourceVersion != before {
+		t.Fatalf("a second pass wrote: %s -> %s (%v)", before, r.ResourceVersion, err)
 	}
 }
