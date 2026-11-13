@@ -151,7 +151,7 @@ type hardeningFile struct {
 		} `json:"octoSTS,omitzero"`
 	} `json:"publisher,omitzero"`
 	Applier struct {
-		Interval   *Duration `json:"interval,omitempty"`
+		Interval       *Duration `json:"interval,omitempty"`
 		AnswerWait     *Duration `json:"answerWait,omitempty"`
 		ApprovalTTL    *Duration `json:"approvalTTL,omitempty"`
 		MirrorMaxBytes *int64    `json:"mirrorMaxBytes,omitempty"`
