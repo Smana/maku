@@ -611,10 +611,13 @@ unknown fields refused (`400 bad_json`).
 
 | Method and path | Who | Does |
 |---|---|---|
-| `GET /settings`, `/settings/merge-policies`, `/settings/merge-policies/{owner}/{name}`, `/settings/merge-policies/{owner}/{name}/decisions/{pr}`, `/settings/evidence` | Any member | The UI, on a direct load |
+| `GET /settings`, `/settings/merge-policies`, `/settings/merge-policies/{owner}/{name}`, `/settings/merge-policies/{owner}/{name}/decisions/{pr}`, `/settings/merge-policies/policies/{name}`, `/settings/evidence` | Any member | The UI, on a direct load. `policies/{name}` is matched before `{owner}/{name}` |
 | `GET /api/policy/repositories` | Any member | `{repositories}`: the configured repositories the caller reads on GitHub |
 | `GET /api/policy/repositories/{owner}/{name}` | A reader of it | `{report, promotions, exceptions, you, catalogue}`: each class's mode, source, evidence (absent while the factory reads it: `report.evidenceAt` is the last good read, `evidenceError` why a newer one failed) and proposal; the newest 100 records of each kind; the caller's `login`, `maintainer` and `operator`; and the repository's [catalogue](#get-v1catalogueownername) as the factory answers it for the caller, `null` when none is wired or the factory does not answer (the page still reads). `404` for a repository the caller cannot read or the factory does not list |
-| `POST /api/policy/repositories/{owner}/{name}/preview` | A maintainer (write) | `{file}` (at most 256 KiB) → the factory's check of a proposed policy file: `{valid, errors?, structural, simulation: {enabled, rows, counts}, strictness, proposal}`. Nothing is written |
+| `POST /api/policy/repositories/{owner}/{name}/preview` | A maintainer (write) | `{file}` (at most 256 KiB) → the factory's check of a proposed policy file: `{valid, errors?, structural, simulation: {enabled, rows, counts}, strictness, proposal}`. `{kind: "binding", bindings}` checks a bound repository's proposed `spec.mergePolicies` instead: `{valid, errors?, bindings: [{name, mode, resolves, reason?, message?, change?, why?}], manifest, manifestPath}`, the `repository-<name>.yaml` to commit. `400 kind_unknown` for another kind. Nothing is written |
+| `GET /api/policy/policies` | Any member | `{policies}`: each class-shape [`MergePolicy`](merge-policies.md#factory-resources) the caller reads a consumer of, with its `generation`, `spec`, `manifest`, `manifestPath` and `status`. Its consumers, and the counts, cover only the repositories the caller reads |
+| `GET /api/policy/policies/{name}` | A reader of one of its consumers | One policy as above. `404` for an unknown policy and for one the caller reads no consumer of, alike |
+| `POST /api/policy/policies/{name}/preview` | Any member | `{spec}` → `{valid, errors?, consumers: [{repository, mode, change, why?, resolves, reason?}], manifest, manifestPath}`: the `mergepolicy-<name>.yaml` to commit and each consumer's change, for the consumers the caller reads, live ones first. Nothing is written |
 | `GET /api/policy/repositories/{owner}/{name}/decisions/{pr}` | A reader of it | The pull request's [decision timeline](factory.md#promotion): each record's stages, conditions, verdict and revisions, with the comment and policy links |
 | `POST /api/policy/promotions` | A maintainer (write) | `{repository, class, exceptionId?}` → `201 {promotion, proposal}`. `409 not_promotable` (not a shadow class of the repository's file), `evidence_pending` (the factory is still reading it), `not_eligible`, `promotion_open`, `exception_unusable`; `404 no_such_class` |
 | `POST /api/policy/promotions/{id}` | A maintainer | `{state: pr_opened \| merged \| abandoned, pullRequest?}`: `pr_opened` names the pull request; `409 already_moved` |
@@ -1306,8 +1309,16 @@ for a caller who writes the repository (`403 not_a_maintainer` otherwise), check
 file: `mergepolicy.Parse`, `factory:` unchanged, `Validate` and `Resolve` against the guardrails and
 profiles, `Structural` against the current policy (the file's classes, else the central ones as
 exported), and, with `policyManagement.simulation`, `reconciler.Simulate` on the embedded
-conformance fixtures. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
-decision timeline from the factory's own comments, for a reader.
+conformance fixtures. The same route takes `kind`: `binding` with `{repository, bindings}` checks a
+bound repository's `spec.mergePolicies` (a maintainer's, as above), and `policy` with `{policy,
+spec}` checks a class-shape `MergePolicy` against every consumer the caller reads; any other kind is
+`400 kind_unknown`. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
+decision timeline from the factory's own comments, for a reader. `GET /v1/policy/policies` and `GET
+/v1/policy/policies/{name}` answer the class-shape `MergePolicy` objects the caller reads a consumer
+of (`404 not_found` otherwise, alike), each cut to those consumers. For a repository served from its
+`Repository`'s bindings, the evidence report adds `repositoryObject`, `repositoryManifest`,
+`repositoryManifestPath`, `repositoryStatus` and `bindings`, and leaves the per-repository
+`mergePolicy` fields empty.
 
 ### `GET /v1/catalogue/{owner}/{name}`
 
