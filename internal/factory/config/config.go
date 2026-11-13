@@ -431,6 +431,8 @@ type Repository struct {
 	// ClassAuthority is central (the default) or repository: its classes are then its
 	// .github/agent-factory.yaml's, with policyManagement.repositoryAuthority on (stage 4, MP15).
 	ClassAuthority string `json:"classAuthority,omitempty"`
+	// PrivateCode is v4 D3's opt-in for a private or internal repository: nil acknowledges nothing.
+	PrivateCode *PrivateCode `json:"privateCode,omitempty"`
 	// Bound and Bindings are a Repository object's mergePolicies, written by resources.Assemble
 	// alone (a config file setting them is refused): every binding's name, resolved or not, and the
 	// bindings as written. Classes holds the ones that resolved (B9), so the rules that name a class
@@ -2230,6 +2232,9 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		bad("triggerLabel is required")
 	}
 	c.validateAuthority(r, bad)
+	if r.PrivateCode != nil && !r.PrivateCode.Acknowledged {
+		bad("privateCode.acknowledged: false says nothing: set it to true, or remove privateCode (D3)")
+	}
 	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range []string{"docs-links", "revert"} {
 		if !r.declares(name) && !cutOver {

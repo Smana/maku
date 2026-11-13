@@ -23,6 +23,18 @@ describe("the install banner", () => {
     expect(b.textContent).toContain("runController.unsafeSharedGitToken");
     expect(b.textContent!.endsWith("Use this install for demos only.")).toBe(true);
   });
+  it("says private code is served without its acknowledgement (D3), not demos only", () => {
+    const b = renderInstallBanner(["private_code_unacknowledged"])!;
+    expect(b.getAttribute("role")).toBe("alert");
+    expect(b.textContent).toBe("A private repository is served without spec.privateCode.acknowledged: true. " +
+      "That field states the code is sent to the configured models, which are usually SaaS. " +
+      "Set it on the Repository: the next release refuses private code without it.");
+  });
+  it("keeps demos only for an isolation setting beside private code", () => {
+    const b = renderInstallBanner(["private_code_unacknowledged", "unsafe_allow_runc"])!;
+    expect(b.textContent).toContain("spec.privateCode.acknowledged");
+    expect(b.textContent!.endsWith("Use this install for demos only.")).toBe(true);
+  });
   it("is mounted above the page from GET /api/install", async () => {
     document.body.innerHTML = `<div id="app"></div>`;
     const app = document.getElementById("app")!;

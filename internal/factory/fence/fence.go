@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -79,7 +80,10 @@ type Fence struct {
 	OnState func(ctx context.Context, repository string, owned bool)
 	// OnFile hears the fence file of a repository this factory owns, after each successful read.
 	OnFile func(ctx context.Context, repository string, body []byte)
-	Log    *slog.Logger
+	// OnForget hears, once and lowercased, each repository a pass finds no longer listed: its
+	// per-repository series and state go with it.
+	OnForget func(ctx context.Context, repository string)
+	Log      *slog.Logger
 
 	mu    sync.RWMutex
 	state map[string]entry
@@ -121,7 +125,11 @@ func (f *Fence) Owned(repository string) bool {
 // repository no longer listed is forgotten: it is not owned.
 func (f *Fence) Refresh(ctx context.Context) error {
 	repos := f.Repositories()
-	f.forget(repos)
+	for _, gone := range f.forget(repos) {
+		if f.OnForget != nil {
+			f.OnForget(ctx, gone)
+		}
+	}
 	var errs []error
 	for _, repo := range repos {
 		body, found, err := f.Read(ctx, repo)
@@ -151,8 +159,8 @@ func (f *Fence) Refresh(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// forget drops the state of every repository repos does not list.
-func (f *Fence) forget(repos []string) {
+// forget drops the state of every repository repos does not list, and returns their keys.
+func (f *Fence) forget(repos []string) (gone []string) {
 	listed := make(map[string]bool, len(repos))
 	for _, r := range repos {
 		listed[strings.ToLower(r)] = true
@@ -162,8 +170,11 @@ func (f *Fence) forget(repos []string) {
 	for k := range f.state {
 		if !listed[k] {
 			delete(f.state, k)
+			gone = append(gone, k)
 		}
 	}
+	slices.Sort(gone)
+	return gone
 }
 
 // NeedLeaderElection is false: every replica's API asks it.

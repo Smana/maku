@@ -2472,13 +2472,37 @@ func TestMergerPermissionsAskForStatusesWriteOnlyForTheGateStatus(t *testing.T) 
 func TestRepositoryInfoReadsTheRepositoryDocument(t *testing.T) {
 	r := newRig(t)
 	r.gh.setRepoReply(`{"full_name":"Smana/demo","default_branch":"main","private":true}`)
-	if got, err := r.g.RepositoryInfo(t.Context()); err != nil || got != (RepositoryInfo{FullName: "Smana/demo", DefaultBranch: "main", Private: true}) {
+	if got, err := r.g.RepositoryInfo(t.Context()); err != nil || got != (RepositoryInfo{FullName: "Smana/demo", DefaultBranch: "main", Private: true, Visibility: "private"}) {
 		t.Fatalf("%+v %v", got, err)
 	}
 	for _, reply := range []string{"500", `{"full_name":"Smana/demo"}`, `{"private":false}`} {
 		r.gh.setRepoReply(reply)
 		if _, err := r.g.RepositoryInfo(t.Context()); err == nil {
 			t.Errorf("%s: no error", reply)
+		}
+	}
+}
+
+// v4 D3: the visibility as GitHub states it, from the private flag when the reply has none (an
+// older GHES); internal is private code, as private is.
+func TestRepositoryInfoVisibility(t *testing.T) {
+	r := newRig(t)
+	for reply, want := range map[string]struct {
+		visibility string
+		private    bool
+	}{
+		`{"full_name":"o/r","private":false,"visibility":"public"}`:   {"public", false},
+		`{"full_name":"o/r","private":true,"visibility":"private"}`:   {"private", true},
+		`{"full_name":"o/r","private":true,"visibility":"internal"}`:  {"internal", true},
+		`{"full_name":"o/r","private":false,"visibility":"internal"}`: {"internal", true},
+		`{"full_name":"o/r","private":true}`:                          {"private", true},
+		`{"full_name":"o/r","private":false}`:                         {"public", false},
+		`{"full_name":"o/r","private":false,"visibility":"Public"}`:   {"public", false},
+	} {
+		r.gh.setRepoReply(reply)
+		got, err := r.g.RepositoryInfo(t.Context())
+		if err != nil || got.Visibility != want.visibility || got.PrivateCode() != want.private {
+			t.Errorf("%s: %+v %v, want %+v", reply, got, err, want)
 		}
 	}
 }

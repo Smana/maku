@@ -217,6 +217,16 @@ rules:
       description: "The default branch no longer requires maku/merge-gate from the App that posts it, so a merge can bypass the factory's gate. Restore the rule: docs/factory.md, branch protection for the merge gate."
       runbook_url: "__DOCS__/operations.md#factory-alerts"
       dashboard: "/d/agent-factory"
+  - alert: AgentFactoryPrivateCodeUnacknowledged
+    expr: max by (repository) (maku_factory_private_code_unacknowledged) == 1
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "{{ $labels.repository }} is private code served without spec.privateCode.acknowledged"
+      description: "A Repository serving private code needs spec.privateCode.acknowledged: true, which states the code is sent to the configured models. This release warns; the next refuses it. Set the field on the Repository, or stop serving it."
+      runbook_url: "__DOCS__/factory.md#private-code"
+      dashboard: "/d/agent-factory"
   - alert: FactoryMergeGateRulesUnread
     expr: sum by (repository) (increase(maku_factory_merge_gate_rules_unread_total[30m])) > 0
     for: 30m

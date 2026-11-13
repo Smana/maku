@@ -94,3 +94,12 @@ func (f Factory) PolicyDecisions(ctx context.Context, accessToken, repository st
 	err := f.call(ctx, http.MethodGet, accessToken, "/v1/policy/decisions?"+q.Encode(), http.NoBody, &out)
 	return out, err
 }
+
+// Install is GET /v1/install with the caller's own token: the factory's banner codes (v4 D3).
+func (f Factory) Install(ctx context.Context, accessToken string) ([]string, error) {
+	var out struct {
+		Unsafe []string `json:"unsafe"`
+	}
+	err := f.call(ctx, http.MethodGet, accessToken, "/v1/install", http.NoBody, &out)
+	return out.Unsafe, err
+}
