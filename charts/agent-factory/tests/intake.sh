@@ -24,6 +24,15 @@ GATEWAY_API=v1.2.1
 PROVIDER_KEY=e2e-gateway-key
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
+# wait_established CRD...: just after a server-side apply, `kubectl wait` can fail before the CRDs
+# are served (once: an accessor error), so it is retried a few times before the last, failing try.
+wait_established() {
+  for _ in 1 2 3 4; do
+    kubectl wait --for=condition=Established "$@" --timeout=120s >/dev/null && return
+    sleep 3
+  done
+  kubectl wait --for=condition=Established "$@" --timeout=120s >/dev/null
+}
 assert_eq() { [[ $1 == "$2" ]] || die "$3: got '$1', want '$2'"; }
 field() { sed -n "s/^$1=//p" "$2" | head -1; }
 
@@ -299,8 +308,8 @@ values+=(-f "$VALUES" --set "maku-gateway.identity.issuer=$(kubectl get --raw /.
 kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
 # agentgateway's CRDs, vendored and applied apart from any Helm release (too big for one, docs/gateway.md)
 kubectl apply --server-side -f config/agentgateway >/dev/null
-kubectl wait --for=condition=Established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
-  crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev --timeout=120s
+wait_established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
+  crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev
 helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m
 kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
 helm install intake charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m
