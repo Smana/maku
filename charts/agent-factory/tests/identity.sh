@@ -11,6 +11,14 @@
 #   - a token in no agents group is refused 403;
 #   - the CLI client's ID token as a bearer reads, and is never the web UI, so it cannot decide (P18).
 #
+# Then the GitHub account link (v4 D8, step 5 PR C), with the stub as GitHub's OAuth web flow and the
+# factory App's API, and no ZITADEL reader at all:
+#   - a member with no link sees no room (X-Rooms-Access: unlinked);
+#   - they start a link, follow GitHub's redirect, confirm, and /link/github shows @dev;
+#   - the user token was revoked, and no ZITADEL endpoint was ever called;
+#   - the room is now theirs to read, through the link;
+#   - an admin's unlink makes them unlinked again.
+#
 # The cluster, its kubeconfig and the images' tag are this run's own: the current kubectl context
 # is never read or changed.
 set -euo pipefail
@@ -21,6 +29,7 @@ NAME="maku-${TAG}"
 NS=maku
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 VALUES=charts/agent-factory/tests/identity-values.yaml
+LINK_VALUES=charts/agent-factory/tests/identity-link-values.yaml
 STUB=charts/agent-factory/tests/e2e-stub.yaml
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -85,6 +94,9 @@ k -n e2e create secret generic e2e-stub-tls --from-file=tls.crt="$work/stub.crt"
 k create namespace "$NS" >/dev/null
 k -n "$NS" create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
 k -n "$NS" create secret generic e2e-broker-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli >/dev/null
+k -n "$NS" create secret generic e2e-github-link --from-literal=client_id=Iv1.e2e-link --from-literal=client_secret=e2e-throwaway-secret >/dev/null
+# The factory App the broker resolves a GitHub id through (D7): a throwaway key; the stub never checks it.
+openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
 sed "s|ghcr.io/smana/maku-e2e-stub:e2e|ghcr.io/smana/maku-e2e-stub:$TAG|" "$STUB" | k apply -f - >/dev/null
 k -n e2e rollout status deploy/e2e-stub --timeout=180s
 
@@ -92,11 +104,11 @@ step "install the umbrella: the broker in preset generic, its ids by Secret"
 helm dependency build charts/agent-factory >/dev/null
 helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity-crds charts/agent-factory-crds -n "$NS" --timeout 2m >/dev/null
 helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity charts/agent-factory -n "$NS" \
-  -f charts/agent-factory/values-demo.yaml -f "$VALUES" \
+  -f charts/agent-factory/values-demo.yaml -f "$VALUES" -f "$LINK_VALUES" \
   --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
   --set maku.runController.enabled=false --set maku-factory.enabled=false \
   --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \
-  --set demo.githubApp.id=1 --set demo.githubApp.privateKey=e2e-throwaway --timeout 5m >/dev/null
+  --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem" --timeout 5m >/dev/null
 k -n "$NS" rollout status sts/rooms-db --timeout=180s
 k -n "$NS" rollout status deploy/room-broker --timeout=180s
 
@@ -152,5 +164,59 @@ code="$(rooms GET "$cli" "$cli")"
 [[ $code == 200 && $(jq length "$work/body") -ge 1 ]] || die "the CLI bearer reading: $code $(cat "$work/body")"
 [[ $(jq -r '[.[] | .you.webUI] | any' "$work/body") == false ]] || die "the CLI bearer passed as the web UI: $(cat "$work/body")"
 echo "ok   the CLI client's ID token reads the room, and is not the web UI, which alone may decide"
+
+step "the GitHub account link: a member links GitHub once, through the stub's OAuth flow"
+origin=https://rooms.e2e.test
+# link METHOD PATH BEARER [COOKIE] [FORM]: the broker's /link/github routes, as the web UI's session
+# (oauth2-proxy's two headers, the broker's own Origin); headers to $work/headers, body to $work/body.
+link() {
+  local args=(-sS -o "$work/body" -D "$work/headers" -w '%{http_code}' -X "$1" -H "Origin: $origin")
+  [[ -n ${3:-} ]] && args+=(-H "Authorization: Bearer $3" -H 'X-Forwarded-Access-Token: opaque-access-token')
+  [[ -n ${4:-} ]] && args+=(-H "Cookie: __Host-maku-ghlink=$4")
+  [[ -n ${5:-} ]] && args+=(-H 'Content-Type: application/x-www-form-urlencoded' --data "$5")
+  curl "${args[@]}" "http://127.0.0.1:$broker$2"
+}
+page_has() { [[ $code == 200 ]] && grep -qF -- "$1" "$work/body"; } # the last answer is 200 and holds $1
+header() { sed -n "s/^$1: //Ip" "$work/headers" | tr -d '\r' | head -1; }
+access() { # access BEARER: the X-Rooms-Access of the member's room list, and its row count
+  curl -sS -o "$work/body" -D "$work/headers" -H "Authorization: Bearer $1" -H 'X-Forwarded-Access-Token: opaque-access-token' \
+    "http://127.0.0.1:$broker/api/rooms" >/dev/null
+  echo "$(header X-Rooms-Access) $(jq length "$work/body")"
+}
+[[ "$(access "$member_web")" == "unlinked 0" ]] || die "a member with no link: $(access "$member_web"), want 'unlinked 0'"
+echo "ok   a member with no GitHub link sees no room (X-Rooms-Access: unlinked)"
+code="$(link GET /link/github "$member_web")"
+page_has 'None yet.' || die "the link page: $code $(cat "$work/body")"
+code="$(link POST /link/github/start "$member_web" '' 'x=1')"
+location="$(header Location)"
+nonce="$(header Set-Cookie | sed -n 's/^__Host-maku-ghlink=\([^;]*\);.*/\1/p')"
+[[ $code == 303 && $location == https://e2e-stub.e2e.svc.cluster.local/login/oauth/authorize\?* && -n $nonce ]] ||
+  die "the start: $code '$location' '$(header Set-Cookie)'"
+# The browser at GitHub: the stub authorizes at once and redirects back with a code.
+back="$(curl -sS -o /dev/null -w '%{redirect_url}' --cacert "$work/ca.crt" \
+  --resolve "e2e-stub.e2e.svc.cluster.local:$stub:127.0.0.1" "${location/e2e-stub.e2e.svc.cluster.local/e2e-stub.e2e.svc.cluster.local:$stub}")"
+[[ $back == "$origin/link/github/callback?"* ]] || die "the stub's authorize redirects to '$back'"
+callback="${back#"$origin"}"
+state="$(sed -n 's/.*[?&]state=\([^&]*\).*/\1/p' <<<"$callback")"
+code="$(link GET "$callback" '' "$nonce")" # no session: the front door lets the callback through
+page_has 'GitHub says you are <strong>@dev</strong> (id 123)' ||
+  die "the callback: $code $(cat "$work/body")"
+code="$(link POST /link/github/confirm "$member_web" "$nonce" "state=$state")"
+page_has 'Linked: rooms and the factory now know you as @dev.' || die "the confirm: $code $(cat "$work/body")"
+code="$(link GET /link/github "$member_web")"
+page_has 'Linked to @dev (id 123)' || die "the link page after: $code $(cat "$work/body")"
+echo "ok   start, GitHub's redirect and the confirm link the member to @dev; /link/github shows it"
+counts="$(curl -fsS --cacert "$work/ca.crt" --resolve "e2e-stub.e2e.svc.cluster.local:$stub:127.0.0.1" \
+  "https://e2e-stub.e2e.svc.cluster.local:$stub/__oauth")"
+[[ $(jq -r '.revoked, .liveTokens, .zitadel' <<<"$counts" | paste -sd' ') == "1 0 0" ]] || die "the stub's OAuth counts: $counts"
+echo "ok   the user token was revoked at once, and no ZITADEL endpoint was called"
+[[ "$(access "$member_web")" == "ok 1" ]] || die "the linked member: $(access "$member_web"), want 'ok 1'"
+echo "ok   the member reads the room through the link (X-Rooms-Access: ok)"
+
+step "an admin unlinks the member"
+code="$(link DELETE /api/links/github/alice "$admin_web")"
+[[ $code == 200 && $(jq -r .unlinked "$work/body") == true ]] || die "the admin's unlink: $code $(cat "$work/body")"
+[[ "$(access "$member_web")" == "unlinked 0" ]] || die "after the unlink: $(access "$member_web"), want 'unlinked 0'"
+echo "ok   after an admin's unlink the member is unlinked again and sees no room"
 
 echo 'identity k3d OK'

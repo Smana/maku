@@ -338,6 +338,11 @@ bad() {
 idv=("${args[@]}" -f tests/identity-values.yaml)
 out="$(helm template af . -n maku "${idv[@]}")"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.preset == "generic" and .human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and (.human | has("projectIDFile") | not))' 'the identity values render the generic broker with its ids by Secret'
+# step 5 PR C: the identity leg's GitHub account link renders, its broker config filled from the Secret
+out="$(helm template af . -n maku "${idv[@]}" -f tests/identity-link-values.yaml)" || { echo 'FAIL: the identity link values do not render' >&2; fail=1; out=''; }
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.githubLink.clientIDFile == "/etc/room-broker/github-link/client_id" and .human.githubLink.webURL == "https://e2e-stub.e2e.svc.cluster.local" and .human.access.ttl == "1m" and (.human.access | has("readerFile") | not))' 'the identity link values: the link, and room access without a reader'
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/identity-link.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/identity-link.yaml") || fail=1
 fapi=(--set maku-factory.config.api.humanIssuer=https://e2e-stub.e2e.svc.cluster.local --set maku-factory.config.api.preset=generic
       --set maku-factory.config.api.rolesClaim=groups)
 helm template af . -n maku "${idv[@]}" "${fapi[@]}" >/dev/null || { echo 'FAIL: an agreeing broker and factory must render' >&2; fail=1; }
