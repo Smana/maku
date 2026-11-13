@@ -26,7 +26,8 @@ over 60 s; it never depends on the broker.
 ## Metrics
 
 Served on `:9090/metrics`, scraped by the umbrella chart's `ServiceMonitor` `room-broker` when
-`monitoring.serviceMonitor.enabled` ([observability](observability.md)). The broker records them through the
+`monitoring.serviceMonitor.enabled` ([observability](observability.md)). Traces, from the factory and
+from each run, are in [Observability](observability.md#traces). The broker records them through the
 OpenTelemetry metric API with a Prometheus exporter that adds no suffix, so the names below are
 exposed byte for byte.
 `rooms`, `maku_rooms_approvals_pending` and `maku_rooms_last_event_timestamp_seconds` come from the Room
