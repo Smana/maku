@@ -1994,14 +1994,28 @@ flowchart LR
   Pushes are shadowed as in H1 unless the repository enforces `push`
   ([below](#hardening-push-enforced)). What the tracer does not observe is listed in
   [Security](security.md#untrusted-input-hardening).
-- **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
-  sandbox role's and the publisher's octo-sts policy and reports their permissions.
+- **The permission gauge.** On each fence pass over an enforced repository, the factory reports
+  each sandbox role's and the publisher's permissions from the token source they get: their
+  octo-sts policies on the XR, or the [role table](#run-tokens-the-role-table) under
+  `runTokens.perRun`.
+- **The publisher's token** comes from octo-sts (`hardening.publisher.octoSTS.url`), or, with
+  `hardening.publisher.minter: true`, from the factory's own minter: the agents App
+  (`runTokens.enabled`), the role table's publisher row, cached until ten minutes before it
+  expires or until the repository's enforced set changes. The agents App's installation on each
+  enforced repository must then grant `pull_requests: write` and `issues: write`. The two sources
+  are refused together. Either way the publisher is the agents App, so its login
+  is `agentsLogin`.
 
 With `runs` not cloud-native-ref's XR, the factory refuses to start while `enforceOutputs` is set
 (HR13): that path's sandbox token is not scoped by a role policy, so a run could still write
 directly. `runTokens.perRun` lifts this: each run's token then comes from the
-[role table](#run-tokens-the-role-table), where an enforced output takes its write away.
-Readiness stays `false`: `mode: enforce` is still refused. Enabling, rolling back and the stop
+[role table](#run-tokens-the-role-table), where an enforced output takes its write away. Should the
+table leave the implementer `pull_requests: write` under enforcement (the spec's D10 as written),
+the factory warns at start-up, naming the repositories that must stay on the XR. The way out of
+the XR is a runbook in [Operations](operations.md#leaving-the-xr-with-an-enforced-repository-hr13).
+Readiness reads the same source (HR42): R2 and R3 read the octo-sts policies on the XR, the role
+table under `runTokens.perRun`, and a shared token always misses R2. Readiness stays `false`:
+`mode: enforce` is still refused. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 
 ## Hardening, push enforced

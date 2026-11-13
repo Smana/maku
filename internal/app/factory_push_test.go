@@ -16,8 +16,10 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/applier"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/minter"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/hardening"
+	"github.com/Smana/maku/internal/runwatch"
 )
 
 // Task 39: a repository that enforces push gets an applier with a pusher under MAKU_GIT_CACHE,
@@ -79,4 +81,46 @@ func TestFactoryPushWiring(t *testing.T) {
 		t.Fatalf("a mirror was created before any push: %v", err)
 	}
 	var _ applier.PushRooms = broker
+}
+
+// #509's note for H3: under runTokens.perRun, the D10 warning also names a repository that enforces
+// push while the role table leaves the implementer or the tester contents: write.
+func TestRoleTableWarningPush(t *testing.T) {
+	const repo = "Smana/ai-native-ref"
+	noPushWrite := minter.Table{}
+	for k, v := range minter.TableHR12 {
+		noPushWrite[k] = v
+	}
+	testerWrites := minter.Table{}
+	for k, v := range minter.TableHR12 {
+		testerWrites[k] = v
+	}
+	testerWrites[minter.Tester] = minter.Rule{Base: minter.Permissions{"contents": "write", "pull_requests": "read"}}
+	for name, tc := range map[string]struct {
+		enforced []hardening.OutputType
+		table    minter.Table
+		want     []string
+	}{
+		"HR12, push":                 {[]hardening.OutputType{hardening.Push}, noPushWrite, nil},
+		"D10, push alone":            {[]hardening.OutputType{hardening.Push}, minter.TableD10, []string{"contents: write", "implementer", "tester"}},
+		"D10, all five":              {hardening.Types(), minter.TableD10, []string{"pull_requests: write", "contents: write"}},
+		"a tester keeping its write": {[]hardening.OutputType{hardening.Push}, testerWrites, []string{"contents: write", "tester"}},
+		"D10, no push, no pr":        {[]hardening.OutputType{hardening.Issue}, minter.TableD10, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit, EnforceOutputs: tc.enforced}})
+			cfg.Repositories = []config.Repository{{Name: repo}, {Name: "Smana/cloud-native-ref"}}
+			cfg.Runs = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
+			cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true}
+			w := roleTableWarning(cfg, tc.table)
+			if (w != "") != (tc.want != nil) {
+				t.Fatalf("warning %q, want %v", w, tc.want)
+			}
+			for _, s := range tc.want {
+				if !strings.Contains(w, s) || !strings.Contains(w, repo) || strings.Contains(w, "cloud-native-ref") {
+					t.Fatalf("warning %q lacks %q", w, s)
+				}
+			}
+		})
+	}
 }

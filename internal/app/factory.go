@@ -144,6 +144,9 @@ func warnConfig(log *slog.Logger, cfg *config.Config, m holdoutGauge) {
 	for _, w := range cfg.Warnings {
 		log.Warn("config warning", "warning", w)
 	}
+	if w := roleTableWarning(cfg, minter.Roles); w != "" {
+		log.Warn("config warning", "warning", w)
+	}
 	if m == nil {
 		return
 	}
@@ -241,21 +244,37 @@ func runTokens(cfg *config.Config, served func() []string, c client.Client, log 
 	return ws, nil
 }
 
-// perRunTokens is the per-run minter (v4 D10, runTokens.perRun): one token per run, for its
-// repository and role, from the App cfg.RunTokenApp names, written as the run's own Secret. nil
-// when runTokens.perRun is off: the shared writer, if any, stays (D25). Installations are looked up
-// per repository, so the shared writer's one-owner limit does not apply.
-func perRunTokens(cfg *config.Config, current func() *config.Config, c client.Client, runsCache, ledgers client.Reader, ns string, met *fmetrics.Set, log *slog.Logger) *minter.RunTokens {
+// agentsMinter mints from the App cfg.RunTokenApp names, the agents App (the factory's own in the
+// demo), with its own installation cache: nil when the config names none.
+func agentsMinter(cfg *config.Config, met *fmetrics.Set, log *slog.Logger) *minter.Minter {
 	appIDFile, keyFile, ok := cfg.RunTokenApp()
-	if !ok || !cfg.RunTokens.PerRun {
+	if !ok {
 		return nil
 	}
 	app := &forge.AppClient{API: githubAPIURL(), HTTP: httpx.New(githubTimeout, nil), IDFile: appIDFile, KeyFile: keyFile,
 		Installations: &forge.Installations{}}
 	mt := &minter.Minter{Client: app, Log: log}
+	if met != nil {
+		mt.Metrics = met
+	}
+	return mt
+}
+
+// perRunTokens is the per-run minter (v4 D10, runTokens.perRun): one token per run, for its
+// repository and role, from the App cfg.RunTokenApp names, written as the run's own Secret. nil
+// when runTokens.perRun is off: the shared writer, if any, stays (D25). Installations are looked up
+// per repository, so the shared writer's one-owner limit does not apply.
+func perRunTokens(cfg *config.Config, current func() *config.Config, c client.Client, runsCache, ledgers client.Reader, ns string, met *fmetrics.Set, log *slog.Logger) *minter.RunTokens {
+	if !cfg.RunTokens.PerRun {
+		return nil
+	}
+	mt := agentsMinter(cfg, met, log)
+	if mt == nil {
+		return nil
+	}
 	var rm minter.RefusalMetrics
 	if met != nil {
-		mt.Metrics, rm = met, met
+		rm = met
 	}
 	return &minter.RunTokens{Minter: mt, Client: c, Runs: runsCache, Tasks: c, Kind: cfg.Runs, TaskNamespace: ns,
 		Reserved: func(ctx context.Context, id string) (string, string, bool, error) {
@@ -433,14 +452,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return nil // a nil interface, never a typed-nil *forge.GitHub
 	}, m.MergeGateRequired, m.MergeGateRulesUnread, log))
 	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
-	// publisher's GitHub permissions, read from their octo-sts policies (R2 as evidence).
+	// publisher's GitHub permissions, read from the token source they get: the octo-sts policies, or
+	// the minter's role table (R2 as evidence, plan PR8).
 	if cfg.Hardening.Enforcing() {
 		fenced.OnFile = chainOnFile(fenced.OnFile, sandboxPermissionObserver(live.Current, func(repo string) policyReader {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh
 			}
 			return nil // a nil interface, never a typed-nil *forge.GitHub
-		}, m.SandboxPermissions, log))
+		}, tableGrants(live.Current, minter.Roles), m.SandboxPermissions, log))
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	for name, usd := range meter.RunUSD(cfg) {
@@ -487,7 +507,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return c.gh
 			}
 			return nil // a nil interface, never a typed-nil *forge.GitHub
-		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log,
+		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log, Minter: agentsMinter(cfg, m, log),
 		PushRooms: broker, Tasks: mgr.GetClient(), Getenv: os.Getenv})
 	if err != nil {
 		return err

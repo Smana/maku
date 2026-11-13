@@ -121,6 +121,34 @@ func TestHardeningSettings(t *testing.T) {
 	}
 }
 
+// Plan PR8: R2 and R3 read the token source the runs get: the XR's policies, the minter's table
+// under runTokens.perRun, and a shared token otherwise; the publisher's from the minter when set.
+func TestHardeningSettingsTokenSource(t *testing.T) {
+	runs := "runs: {group: maku.ogenki.io}\n"
+	shared := "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
+	for name, tc := range map[string]struct {
+		file      string
+		src       hardening.TokenSource
+		pubMinter bool
+	}{
+		"the XR":               {good, hardening.TokenSourceXR, false},
+		"per-run tokens":       {good + perRunTokens, hardening.TokenSourceMinter, false},
+		"the minter publishes": {good + perRunTokens + "hardening: {publisher: {minter: true}}\n", hardening.TokenSourceMinter, true},
+		"the shared writer":    {good + runs + shared, hardening.TokenSourceShared, false},
+		"no run token":         {good + runs, hardening.TokenSourceShared, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s := c.HardeningSettings("Smana/cloud-native-ref", ""); s.TokenSource != tc.src || s.PublisherMinter != tc.pubMinter {
+				t.Fatalf("source %q, publisher minter %v; want %q, %v", s.TokenSource, s.PublisherMinter, tc.src, tc.pubMinter)
+			}
+		})
+	}
+}
+
 // Stage H1: audit is accepted centrally and per repository.
 func TestHardeningAuditAccepted(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -275,6 +303,9 @@ func TestReadinessStaysFalseUnderAudit(t *testing.T) {
 // enforcePublisher is the octo-sts publisher an enforceOutputs list needs (HR11).
 const enforcePublisher = "  publisher: {octoSTS: {url: \"https://octo-sts.dev\"}}\n"
 
+// perRunTokens puts runs on the run-controller, each with its own token from the agents App (v4 D10).
+const perRunTokens = "runs: {group: maku.ogenki.io}\nrunTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
+
 // H2 enforces the non-code outputs per repository (HR10): a repository's list is a superset of the
 // central one, push is enforceable from H3, and a list needs audit at least and a publisher.
 func TestEnforceOutputs(t *testing.T) {
@@ -294,10 +325,14 @@ func TestEnforceOutputs(t *testing.T) {
 		"central, mode off": {"hardening:\n  enforceOutputs: [pr]\n" + enforcePublisher, "audit"},
 		"a repository, mode off": {"hardening:\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [pr]}}\n", "audit"},
-		"no publisher":            {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n", "hardening.publisher.octoSTS"},
-		"a plain-http publisher":  {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {octoSTS: {url: \"http://octo-sts.dev\"}}\n", "hardening.publisher.octoSTS.url"},
-		"a zero applier interval": {"hardening:\n  mode: audit\n  applier: {interval: 0s}\n", "hardening.applier.interval"},
-		"a zero answer wait":      {"hardening:\n  mode: audit\n  applier: {answerWait: 0s}\n", "hardening.applier.answerWait"},
+		"no publisher":           {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n", "hardening.publisher.octoSTS"},
+		"a plain-http publisher": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {octoSTS: {url: \"http://octo-sts.dev\"}}\n", "hardening.publisher.octoSTS.url"},
+		"the minter's publisher": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {minter: true}\n", ""},
+		"the minter and octo-sts": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {minter: true, octoSTS: {url: \"https://octo-sts.dev\"}}\n",
+			"hardening.publisher.minter and hardening.publisher.octoSTS.url"},
+		"the minter without run tokens": {"hardening:\n  mode: audit\n  publisher: {minter: true}\n", "hardening.publisher.minter needs runTokens.enabled"},
+		"a zero applier interval":       {"hardening:\n  mode: audit\n  applier: {interval: 0s}\n", "hardening.applier.interval"},
+		"a zero answer wait":            {"hardening:\n  mode: audit\n  applier: {answerWait: 0s}\n", "hardening.applier.answerWait"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(good + tc.block))
