@@ -7,10 +7,11 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 ## Secrets by name (v0.4x, v4 rollout step 5)
 
 Every Secret an install reads is listed in [install Secrets](install-secrets.md), with its keys.
-One new key, off by default, so a release that does not set it renders as before:
+Two new keys, off by default, so a release that sets neither renders as before:
 
 | New key | Default | What it does |
 |---|---|---|
+| `maku.broker.reloader` | `false` | Annotates the broker's Deployment for Stakater Reloader, so a rotated DSN Secret rolls it ([rotation](install-secrets.md#rotation)) |
 | `externalSecrets` | `enabled: false` | The umbrella renders an `ExternalSecret` for each seam listed under `externalSecrets.secrets`, against `storeRef`, a store you run ([ExternalSecrets](install-secrets.md#externalsecrets)) |
 
 The broker and the factory now check the files of the chart's mounted Secrets at start. A missing or

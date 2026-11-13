@@ -368,7 +368,23 @@ bad 'externalSecrets.secrets.nope: not a seam id (docs/install-secrets.md)' "${e
 bad 'externalSecrets.secrets.factoryApp: the demo writes agent-factory-github from demo.githubApp' "${esv[@]}" --set-json 'externalSecrets.secrets.factoryApp={"dataFrom":[{"extract":{"key":"x"}}]}'
 bad 'externalSecrets.secrets.databaseBroker: the bundled Postgres (postgres.enabled) writes rooms-broker-dsn' "${args[@]}" -f tests/externalsecrets-values.yaml \
   --set postgres.enabled=true --set maku.broker.database.brokerSecret=rooms-broker-dsn
-bad 'externalSecrets.secrets.runGit: the factory writes agent-git' "${esv[@]}" --set-json 'externalSecrets.secrets.runGit={"dataFrom":[{"extract":{"key":"x"}}]}'
+# Review of #544: a runtime writer refuses its Secret only while it runs; one writer per Secret name.
+xf='{"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.runGit: the factory writes agent-git' "${esv[@]}" --set-json "externalSecrets.secrets.runGit=$xf"
+bad 'externalSecrets.secrets.runGitRead: the factory writes agent-git-read' "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.enabled=true --set maku-factory.runTokens.appSecret=run-token-app \
+  --set-json "externalSecrets.secrets.runGitRead=$xf"
+out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.perRun=false \
+  --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read --set-json "externalSecrets.secrets.runGit=$xf")"
+ykind ExternalSecret 'select(.metadata.name=="agent-git") | .metadata.namespace == "agents"' 'agent-git is the operator'"'"'s while the factory writes no run token: its ExternalSecret, in the runs namespace'
+bad 'externalSecrets.secrets.factoryAPITLS: cert-manager (maku-factory.api.tls.issuerRef) writes factory-api-tls' "${esv[@]}" \
+  --set maku-factory.api.tls.secretName=factory-api-tls --set maku-factory.api.tls.issuerRef.name=ca --set-json "externalSecrets.secrets.factoryAPITLS=$xf"
+out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.api.tls.secretName=factory-api-tls --set-json "externalSecrets.secrets.factoryAPITLS=$xf")"
+ykind ExternalSecret 'select(.metadata.name=="factory-api-tls") | .spec.dataFrom[0].extract.key == "x"' 'without issuerRef the API pair is the operator'"'"'s'
+bad 'externalSecrets.secrets.gatewayProvider.demo: the umbrella writes demo-model' "${gwd[@]}" -f tests/externalsecrets-values.yaml \
+  --set-json "externalSecrets.secrets.gatewayProvider\.demo=$xf"
+bad 'externalSecrets.secrets.runModel: the umbrella writes agent-model' "${esv[@]}" --set-json "externalSecrets.secrets.runModel=$xf"
+bad 'externalSecrets.secrets.databaseOwner and externalSecrets.secrets.databaseBroker both target db-broker' "${esv[@]}" --set maku.broker.database.ownerSecret=db-broker
+bad 'externalSecrets.secrets.intake: maku-factory.enabled is false' "${esv[@]}" --set maku-factory.enabled=false
 bad 'externalSecrets.secrets.databaseCA: data or dataFrom is required' "${esv[@]}" --set 'externalSecrets.secrets.databaseCA.data=null'
 out="$(helm template af . -n maku "${esv[@]}" --set externalSecrets.storeRef.kind=ClusterSecretStore)"
 ykind ExternalSecret '.spec.secretStoreRef.kind == "ClusterSecretStore"' 'a ClusterSecretStore is accepted'

@@ -36,7 +36,7 @@ const (
 
 // Generated names what writes a seam's Secret in some installs, where an ExternalSecret of the same
 // name would fight it: the umbrella's bundled Postgres, the umbrella itself (its TLS), the demo's
-// model or App values, or the factory at run time. "" is the operator's alone.
+// model or App values, the factory's run-token writer, or cert-manager. "" is the operator's alone.
 type Generated string
 
 // The writers.
@@ -46,6 +46,8 @@ const (
 	GeneratedDemoModel Generated = "demo-model"
 	GeneratedDemoApp   Generated = "demo-app"
 	GeneratedFactory   Generated = "factory"
+	// GeneratedCertManager: cert-manager's Certificate writes it when the chart's issuerRef is set.
+	GeneratedCertManager Generated = "cert-manager"
 )
 
 // Key is one key of a seam's Secret.
@@ -154,7 +156,7 @@ var Seams = []Seam{
 	{ID: "factoryBrokerCA", Component: "agent-factory", Chart: "maku-factory", Value: "brokerCASecret", Default: "openbao-ca", Namespace: Release,
 		Keys: caCrt, ReadAs: File, MountPath: "/etc/agent-factory/openbao-ca", Generated: GeneratedUmbrella, Doc: "The CA of the broker's pair (`config.broker.caFile`)"},
 	{ID: "factoryAPITLS", Component: "agent-factory", Chart: "maku-factory", Value: "api.tls.secretName", Namespace: Release, Keys: tlsPair,
-		ReadAs: File, MountPath: "/etc/agent-factory-api-tls", Optional: true, Doc: "The run API's serving pair (`api.tls`), cert-manager's when `issuerRef` is set"},
+		ReadAs: File, MountPath: "/etc/agent-factory-api-tls", Optional: true, Generated: GeneratedCertManager, Doc: "The run API's serving pair (`api.tls`), cert-manager's when `issuerRef` is set"},
 	{ID: "gatewayProvider", Component: "maku-gateway", Chart: "maku-gateway", Value: "providers", Namespace: Release,
 		Keys: []Key{{Name: "apiKey", Required: true, Doc: "renamed by the provider's `key`"}}, ReadAs: API, Optional: true, Instances: true,
 		Doc: "Each model provider's key: `providers.<name>.existingSecret`; its ExternalSecret id is `gatewayProvider.<name>`"},

@@ -86,16 +86,45 @@ default. The subcharts therefore read the same name as without ESO. The target h
 `creationPolicy: Owner` and `deletionPolicy: Retain`. A model provider of the gateway is listed as
 `gatewayProvider.<name>`, and its Secret is `maku-gateway.providers.<name>.existingSecret`.
 
+With `storeRef.kind: SecretStore`, the store is namespaced. Every `ExternalSecret` reads from the
+store of that name in its own namespace. `runModel`, `runGit` and `runGitRead` live in the runs'
+namespace (`maku.runs.namespace`), so they need a `SecretStore` of the same name there too. A
+`ClusterSecretStore` serves both namespaces.
+
 The render fails, naming the seam, in these cases:
 
 - `enabled` is set with no `storeRef.name`;
 - an id is not in the table;
+- the seam's chart is off (`maku-factory.enabled: false` for a factory seam): nothing would read it;
+- two ids resolve to the same Secret;
 - an entry has neither `data` nor `dataFrom`;
 - a required key is produced by no `data` entry and by no `template.data` key. A `dataFrom` is
   trusted as it is: check its keys yourself;
-- the install already writes that Secret: the bundled Postgres (`postgres.enabled`), the
-  umbrella's TLS, the demo's `demo.model` or `demo.githubApp`, or the factory's git tokens. Two
-  writers of one Secret would fight over it.
+- the install already writes that Secret. One writer per Secret name: two writers of one Secret
+  would fight over it. The writers are:
+  - the umbrella, for the bundled Postgres's (`postgres.enabled`), its TLS, and the demo's
+    `demo.model` (as `agent-model`, or as `demo-model` for `gatewayProvider.demo`) and
+    `demo.githubApp`;
+  - the factory, for the runs' git tokens, while it writes them (`maku-factory.runTokens.enabled`,
+    or the demo);
+  - cert-manager, for the API's pair, when `maku-factory.api.tls.issuerRef.name` is set.
+
+### Rotation
+
+ESO refreshes a Secret every `refreshInterval`. What a component then sees depends on how it reads
+the Secret:
+
+- **Files** (the OIDC ids, the GitHub link's client, the CAs, the Apps' keys) are read at each use.
+  The kubelet updates the mounted file within a minute or two, and no restart is needed.
+- **Environment variables** are read once, at start: the broker's DSNs (`databaseBroker`,
+  `databaseOwner`) and the runs' model (`runModel`).
+  - **The DSNs.** A rotated password reaches the broker only through a restart:
+    `kubectl rollout restart deployment/room-broker`. Set `maku.broker.reloader: true`, and
+    [Stakater Reloader](https://github.com/stakater/Reloader) rolls the broker when either DSN
+    Secret changes. Keep the old password valid until the new pods are ready.
+  - **The runs' model.** Each run reads it when its pod starts, so the next run takes the new key.
+  - **The retention job.** `databaseRetention` is read by each scheduled run of the CronJob, and
+    needs no restart.
 
 ### OpenBao (KV v2)
 

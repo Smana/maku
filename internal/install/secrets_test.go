@@ -96,7 +96,7 @@ func TestSeamsAreWellFormed(t *testing.T) {
 			t.Errorf("%s: readAs %q", s.ID, s.ReadAs)
 		case s.ReadAs == File && s.MountPath == "":
 			t.Errorf("%s: a file seam needs its mount path", s.ID)
-		case !slices.Contains([]Generated{"", GeneratedPostgres, GeneratedUmbrella, GeneratedDemoModel, GeneratedDemoApp, GeneratedFactory}, s.Generated):
+		case !slices.Contains([]Generated{"", GeneratedPostgres, GeneratedUmbrella, GeneratedDemoModel, GeneratedDemoApp, GeneratedFactory, GeneratedCertManager}, s.Generated):
 			t.Errorf("%s: generated %q", s.ID, s.Generated)
 		}
 		ids[s.ID] = true
@@ -117,20 +117,33 @@ func TestRenderedRefs(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm is not on PATH")
 	}
+	// The umbrella's subcharts are file:// dependencies a fresh checkout has not built (CI's test
+	// shards): build them in a copy of charts/, never in the working tree.
+	charts := t.TempDir()
+	if err := os.CopyFS(charts, os.DirFS(filepath.Join(root, "charts"))); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.CommandContext(t.Context(), "helm", "dependency", "build", filepath.Join(charts, "agent-factory"))
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("helm dependency build: %v\n%s", err, out)
+	}
+	prod, err := filepath.Abs(filepath.Join(root, "internal/install/testdata/production-values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	const d = "v0.0.0@sha256:0000"
-	common := []string{"template", "af", "charts/agent-factory", "-n", "maku", "-f", "charts/agent-factory/values-demo.yaml",
+	common := []string{"template", "af", filepath.Join(charts, "agent-factory"), "-n", "maku",
+		"-f", filepath.Join(charts, "agent-factory/values-demo.yaml"),
 		"--set", "maku.broker.image.tag=" + d, "--set", "maku.runController.image.tag=" + d,
 		"--set", "maku.runController.images.harness.tag=" + d, "--set", "maku.runController.images.bridge.tag=" + d,
 		"--set", "maku-factory.image.tag=" + d, "--set", "demo.model.baseURL=http://m/v1", "--set", "demo.model.name=m",
 		"--set", "demo.model.apiKey=k", "--set", "demo.githubApp.id=1", "--set", "demo.githubApp.privateKey=pem"}
 	for name, extra := range map[string][]string{
 		"demo":       nil,
-		"production": {"-f", "internal/install/testdata/production-values.yaml"},
+		"production": {"-f", prod},
 	} {
 		t.Run(name, func(t *testing.T) {
-			cmd := exec.CommandContext(t.Context(), "helm", append(common, extra...)...)
-			cmd.Dir = root
-			out, err := cmd.Output()
+			out, err := exec.CommandContext(t.Context(), "helm", append(common, extra...)...).Output()
 			if err != nil {
 				var stderr string
 				if ee, ok := err.(*exec.ExitError); ok { //nolint:errorlint // the stderr of this one command
@@ -139,12 +152,12 @@ func TestRenderedRefs(t *testing.T) {
 				t.Fatalf("helm template: %v\n%s", err, stderr)
 			}
 			vals := map[string]any{}
-			files := []string{"charts/agent-factory/values-demo.yaml"}
+			files := []string{filepath.Join(charts, "agent-factory/values-demo.yaml")}
 			for i := 0; i+1 < len(extra); i += 2 {
 				files = append(files, extra[i+1])
 			}
 			for _, f := range files {
-				raw, err := os.ReadFile(filepath.Join(root, f))
+				raw, err := os.ReadFile(f) //nolint:gosec // the test's own values files
 				if err != nil {
 					t.Fatal(err)
 				}
