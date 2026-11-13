@@ -74,6 +74,28 @@ func TestStartRunSafeOutputs(t *testing.T) {
 	}
 }
 
+// H3 (#513's review): on a repository that enforces push, the implementer's claim names push among
+// its safe outputs, validates, and is annotated with it.
+func TestStartRunSafeOutputsPush(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
+	g.f.SetIssue(forge.Issue{Number: 7, Author: "smana", Association: "OWNER"})
+	g.enforcing(hardening.PR, hardening.Push)
+	tk := g.reconcile(t, "3buqdlot", 3)
+	if tk.Status.Phase != v1alpha1.PhaseImplementing {
+		t.Fatal(tk.Status.Phase)
+	}
+	s := g.runs.specs[rid(0)]
+	if !slices.Equal(s.SafeOutputs, []string{"pr", "push"}) {
+		t.Fatalf("safe outputs %v", s.SafeOutputs)
+	}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if ann := runs.Build(runwatch.DefaultKind, s).GetAnnotations(); ann[runs.AnnSafeOutputs] != "pr,push" {
+		t.Fatalf("annotations %v", ann)
+	}
+}
+
 // The implementer brief asks a run with output_pr to request its pull request; a brief without the
 // factory's line, or a task text that quotes it inside the data fence, is left as written.
 func TestImplementerBriefSafeOutputs(t *testing.T) {
