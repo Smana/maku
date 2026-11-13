@@ -120,6 +120,56 @@ fetches `https://kubernetes.default.svc.<clusterDomain>/openid/v1/jwks`, verifie
 - An apiserver that admits anonymous requests. kubeadm and kind do. k3s does not:
   start it with `--kube-apiserver-arg=anonymous-auth=true`.
 
+## Runs through the gateway
+
+The run controller reaches a model in one of two modes, `maku.runController.model.mode`:
+
+| Mode | What the harness holds | What it calls |
+|---|---|---|
+| `secret` (the default) | the provider key from `runController.modelSecret` (`agent-model`), inside the sandbox | the Secret's `base_url`, with its `model` |
+| `gateway` | its own projected ServiceAccount tokens, no provider key | `http://<service>.<namespace>.svc.<clusterDomain>:<port>/m/<alias>/v1` |
+
+In `gateway` mode, for each run:
+
+- **The data class picks the listener.** A `public` run calls `ports.public` (8080), an `internal` run
+  `ports.internal` (8081). The token's audience carries the same class, so neither can call the other's listener.
+- **The claim picks the alias.** `spec.model` (default `agent-default`) is the path and the audience:
+  `MODEL=<alias>`, `LLM_BASE_URL=…/m/<alias>/v1`, `LLM_API_KEY_FILE=/run/agent/model/token`.
+- **The judge has its own token.** With `spec.loop.judgeModel`, the pod gets a second token for that
+  alias, and `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_FILE=/run/agent/model/judge-token`.
+- **The token lives the pod's deadline plus 10 minutes.** The harness reads it once, and gVisor raises no
+  inotify event for a rotated token, so it is never rotated. The run controller's preflight check
+  `gateway-token-ttl` requests one token for its own ServiceAccount at the longest run's lifetime
+  (`budget.maxMinutes` 480, plus 10 minutes). An apiserver whose `--service-account-max-token-expiration`
+  is shorter fails the check, and gateway runs are refused with the cap named.
+- **A run its listener does not serve is refused before its pod exists.** `model.gateway.aliases.<class>`
+  lists what each listener serves, and must equal `maku-gateway.aliases.<class>`'s keys. A run
+  whose `spec.model` or judge alias is missing is refused with `spec.model <alias> is not served on the
+  <class> listener`. An `internal` run needs `aliases.internal`. The run controller refused every internal run before this mode.
+
+The values, under `maku.runController.model`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `secret` | `secret` or `gateway` |
+| `gateway.service`, `gateway.namespace` | `""` | the gateway's Service. Empty means `model-gateway` in the release namespace, the umbrella's `maku-gateway` |
+| `gateway.ports` | `{public: 8080, internal: 8081}` | the listeners, which must equal `maku-gateway.listeners` |
+| `gateway.audiencePrefix` | `maku-gateway` | must equal `maku-gateway.audiencePrefix` |
+| `gateway.aliases` | `{public: [], internal: []}` | the aliases each listener serves. `public` is required in `gateway` mode |
+
+In `gateway` mode, the run-pod policy holds every projected token's audience to `room-broker`, `room-tools`
+or `<prefix>.`, and refuses a pod that mounts `modelSecret`. The run controller's Role no longer reads
+it. The umbrella fails the render when `model.mode: gateway` has neither `maku-gateway.enabled` nor
+`model.gateway.service` (an external gateway, as on cloud-native-ref), or when the ports, the prefix or
+the aliases disagree with `maku-gateway`'s.
+
+**The gateway demo.** `values-demo-gateway.yaml`, layered on `values-demo.yaml`, turns on the controller,
+`maku-gateway` (`source: apiserver`) and `model.mode: gateway`. Its one `custom` provider, `demo`,
+reads its key from the Secret `demo-model`, which the umbrella renders in the release namespace
+from `demo.model.apiKey`. Set the provider's `host` and each alias's `model` in the gateway values.
+`demo.model.baseURL`, `name` and `judgeName` are refused there, since nothing would read them. No
+`agent-model` Secret exists in the runs namespace.
+
 ## Network
 
 `networkPolicy.mode` `kubernetes` (the default) renders a default-deny NetworkPolicy on the proxy pods:
@@ -146,5 +196,10 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - the presets on the wire;
   - the metrics labels;
   - the Gateway API floor (v1.2.1, one HTTPRoute per alias).
-- `task chart:gateway:k3d` installs the demo with the gateway on, and checks three calls from a run-like
-  pod: 200 on its alias, 403 on another alias, 401 with no token.
+- `task chart:gateway:k3d` installs the gateway demo (`values-demo-gateway.yaml`) with the probe's echo
+  provider. It checks three calls from a run-like pod: 200 on its alias, 403 on another alias, 401 with
+  no token. Then it starts a run in `model.mode: gateway` and checks three things:
+  - the pod holds only its own token, for `maku-gateway.public.agent-default`;
+  - the runs namespace holds no provider key;
+  - the harness's model call reaches the provider with `x-ar-agent` set to the run's ServiceAccount, and
+    the gateway's access log carries the same subject in `x_ar_agent`.

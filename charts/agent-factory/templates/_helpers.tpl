@@ -45,4 +45,52 @@ the broker maku runs, so both must name the same ones. */}}
 {{- fail (printf "maku-gateway.broker.namespace %q must be the release namespace %q, where the umbrella runs the broker" $gw.broker.namespace .Release.Namespace) -}}
 {{- end -}}
 {{- end -}}
+{{- include "afumbrella.runsGateway" . -}}
+{{- end }}
+
+{{/* The run-controller's model.mode gateway (plan v4 step 4, Task 10): runs call either this release's
+maku-gateway, which must then serve exactly the aliases, ports and prefix the run-controller's config
+names, or an external gateway named by maku.runController.model.gateway.service (ANR's form). */}}
+{{- define "afumbrella.runsGateway" -}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- $m := dig "runController" "model" dict .Values.maku -}}
+{{- $mode := $m.mode | default "secret" -}}
+{{- $g := $m.gateway | default dict -}}
+{{- $identity := dig "config" "runs" "gatewayIdentity" false (index .Values "maku-factory") -}}
+{{- if and $identity (ne $mode "gateway") -}}
+{{- fail (printf "maku-factory.config.runs.gatewayIdentity is true but maku.runController.model.mode is %q: the runs carry a gateway identity only in model.mode gateway" $mode) -}}
+{{- end -}}
+{{- if eq $mode "gateway" -}}
+{{- if and (not $gw.enabled) (not $g.service) -}}
+{{- fail "maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service naming an external gateway" -}}
+{{- end -}}
+{{- if $gw.enabled -}}
+{{- if and $g.service (ne $g.service $gw.name) -}}
+{{- fail (printf "maku.runController.model.gateway.service %q must be empty or maku-gateway.name %q: maku-gateway is enabled" $g.service $gw.name) -}}
+{{- end -}}
+{{- if and $g.namespace (ne $g.namespace .Release.Namespace) -}}
+{{- fail (printf "maku.runController.model.gateway.namespace %q must be empty or the release namespace %q, where maku-gateway runs" $g.namespace .Release.Namespace) -}}
+{{- end -}}
+{{- if not $g.service -}}
+{{- if ne $gw.name "model-gateway" -}}
+{{- fail (printf "maku.runController.model.gateway.service is empty, which means model-gateway, but maku-gateway.name is %q: set the service to it" $gw.name) -}}
+{{- end -}}
+{{- end -}}
+{{- $ports := $g.ports | default dict -}}
+{{- if or (ne (int ($ports.public | default 8080)) (int $gw.listeners.public)) (ne (int ($ports.internal | default 8081)) (int $gw.listeners.internal)) -}}
+{{- fail (printf "maku.runController.model.gateway.ports (%v, %v) must equal maku-gateway.listeners public and internal (%v, %v)" ($ports.public | default 8080) ($ports.internal | default 8081) $gw.listeners.public $gw.listeners.internal) -}}
+{{- end -}}
+{{- if ne ($g.audiencePrefix | default "maku-gateway") $gw.audiencePrefix -}}
+{{- fail (printf "maku.runController.model.gateway.audiencePrefix %q must equal maku-gateway.audiencePrefix %q: the run's token audience is what the gateway checks" ($g.audiencePrefix | default "maku-gateway") $gw.audiencePrefix) -}}
+{{- end -}}
+{{- $aliases := $g.aliases | default dict -}}
+{{- range $class := list "public" "internal" -}}
+{{- $want := keys (index $gw.aliases $class | default dict) | sortAlpha -}}
+{{- $got := index $aliases $class | default list | sortAlpha -}}
+{{- if ne (join "," $got) (join "," $want) -}}
+{{- fail (printf "maku.runController.model.gateway.aliases.%s [%s] must be maku-gateway.aliases.%s's keys [%s]: a run is refused unless its listener serves its alias" $class (join ", " $got) $class (join ", " $want)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end }}

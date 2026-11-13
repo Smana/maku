@@ -4,6 +4,26 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Runs through the model gateway (v0.4x, v4 rollout step 4)
+
+New keys, all off by default, so a release that sets none of them renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku.runController.model.mode` | `secret`: `runController.modelSecret`, as before | `gateway`: runs call the model gateway with their own token, and `modelSecret` is not read ([the model gateway](gateway.md#runs-through-the-gateway)) |
+| `maku.runController.model.gateway` | `model-gateway` in the release namespace, ports 8080 and 8081, prefix `maku-gateway`, no aliases | the gateway and the aliases each listener serves |
+| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered |
+
+To move an install to `gateway` mode:
+
+1. Run the gateway, with `maku-gateway` and its providers' Secrets.
+2. Set `model.mode: gateway` and `model.gateway.aliases` to the gateway's aliases.
+3. Upgrade.
+4. Delete `agent-model` from the runs namespace: nothing reads it any more.
+
+Runs already started keep their pods and their key until they end. The run controller decodes its
+config strictly, so a `model:` block needs this release's run controller: chart and image move together.
+
 ## The run path (v0.4x, v4 rollout step 2)
 
 New keys in the `maku` chart, each rendered only with `runController.enabled`, so an install without
