@@ -113,6 +113,8 @@ series = [
     charge("aaaaaaaa", "github:alice", "room1"), charge("dddddddd", "github:bob", "room2"), charge("ffffffff", "github:alice", "room4"),
     tok("ffffffff", "m1", "input", "1000000x30"), tok("ffffffff", "m2", "input", "500000x30"), tok("ffffffff", "m2", "output", "100000x30"),
     cost("ffffffff", "m1", "2x30"), cost("ffffffff", "m2", "4x30"),
+    # gggggggg made one model call, which failed: its series is born holding it
+    {"series": f'agentgateway_gen_ai_server_request_duration_count{{{GW}, ar_agent="{SUBJECT}gggggggg", gen_ai_request_model="m1", error_type="timeout"}}', "values": "_x20 1x9"},
     {"series": 'maku_factory_pr_outcomes_total{outcome="auto_merged", class="deps"}', "values": "0 4x30"},
     {"series": 'maku_factory_pr_outcomes_total{outcome="human_merged", class="review"}', "values": "0 2x30"},
     {"series": 'maku_factory_pr_outcomes_total{outcome="approved_merged", class="review"}', "values": "0 1x30"},
@@ -169,6 +171,8 @@ tests = [{"interval": "1m", "input_series": series, "promql_expr_test": [
          [{"labels": '{gen_ai_request_model="m1", principal="github:alice"}', "value": 5}, {"labels": '{gen_ai_request_model="m2", principal="github:alice"}', "value": 4},
           {"labels": '{gen_ai_request_model="m1", principal="github:bob"}', "value": 1}]),
     rows(prep(expr("agents-overview", "PRs merged")), [{"value": 7}]),
+    # a run's error ratio counts the call its series was born with: one call, one error, 1
+    rows(prep(expr("agent-run", "Error rate"), run="gggggggg"), [{"value": 1}]),
     # a run's tokens per interval count the call its series was born with: 1.1M in the first window
     rows(prep(expr("agent-run", "Tokens in / out"), run="aaaaaaaa"),
          [{"labels": '{gen_ai_token_type="input"}', "value": 1000000}, {"labels": '{gen_ai_token_type="output"}', "value": 100000}], "2m"),
@@ -180,6 +184,15 @@ tests = [{"interval": "1m", "input_series": series, "promql_expr_test": [
 ]}, {"interval": "1m", "input_series": [{"series": 'maku_factory_pr_outcomes_total{outcome="human_merged"}', "values": "0 1x30"}], "promql_expr_test": [
     rows(prep(expr("agent-factory", "Reverted after auto-merge (SC-11: ≤ 5 %)")), [{"value": 0}]),
 ]}]
+
+# The fleet's day against the gateway: a run born inside the day counts from its first priced call;
+# an older run counts only the day's increase, here none: its 5 USD were spent the day before.
+tests.append({"interval": "1h", "input_series": [
+    cost("newrun01", "m1", "_x30 2 3x10"),
+    cost("oldrun01", "m1", "5x45"),
+], "promql_expr_test": [
+    rows(prep(expr("agent-factory", "Spend per UTC day: ledger vs gateway", "B")), [{"value": 3}], "40h"),
+]})
 
 # The identity page (cloud-native-ref's test-agent-identity-queries.sh), two principals at once.
 A, B, F = "github:alice", "github:bob", "system:factory"
@@ -325,13 +338,14 @@ fleet_runs = json.dumps(next((p for p in flat(boards["agent-fleet"]["panels"]) i
 if "/d/agent-identity/agent-identity?var-principal=${__value.text}" not in fleet_runs:
     errors.append("agent-fleet Runs: a payer opens its Spend per identity page")
 
-# No dashboard reads a run's gateway series with increase(): it would drop the first call.
+# No dashboard reads a run's gateway series with a bare increase(): it would drop the first call.
+BORN = PER_RUN + ("agentgateway_gen_ai_server_request_duration_count",)
 for uid, bd in boards.items():
     for p in flat(bd.get("panels", [])):
         for t in p.get("targets", []):
-            for s in PER_RUN:
+            for s in BORN:
                 e = t.get("expr", "")
-                if re.search(r"increase\(\s*" + s + r"\{[^}]*ar_agent", e) and not re.search(r"unless\s+" + s + r"\{(?:[^{}]|\$\{[^}]*\})*\}\s+offset", e):
+                if re.search(r"increase\(\s*" + s + r"\{", e) and not re.search(r"unless\s+" + s + r"\{(?:[^{}]|\$\{[^}]*\})*\}\s+offset", e):
                     errors.append(f"{uid} {p.get('title')} {t['refId']}: {s} per run read with increase(), which drops its first sample")
 
 if errors:

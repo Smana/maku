@@ -476,7 +476,7 @@
         },
         {
           "refId": "B",
-          "expr": "sum(increase(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[1d]))",
+          "expr": "sum(((max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[1d]) unless agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"} offset 1d) or increase(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[1d])))",
           "legendFormat": "gateway counter"
         }
       ]

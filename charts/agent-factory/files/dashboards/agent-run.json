@@ -924,7 +924,7 @@
           "targets": [
             {
               "refId": "A",
-              "expr": "sum by (gen_ai_token_type) ((agentgateway_gen_ai_client_token_usage_sum{ar_agent=\"__RUN_SUBJECT__${run}\", gen_ai_token_type=~\"input|output\"} unless agentgateway_gen_ai_client_token_usage_sum{ar_agent=\"__RUN_SUBJECT__${run}\", gen_ai_token_type=~\"input|output\"} offset $__rate_interval) or increase(agentgateway_gen_ai_client_token_usage_sum{ar_agent=\"__RUN_SUBJECT__${run}\", gen_ai_token_type=~\"input|output\"}[$__rate_interval]))",
+              "expr": "sum by (gen_ai_token_type) (((max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=\"__RUN_SUBJECT__${run}\", gen_ai_token_type=~\"input|output\"}[$__rate_interval]) unless agentgateway_gen_ai_client_token_usage_sum{ar_agent=\"__RUN_SUBJECT__${run}\", gen_ai_token_type=~\"input|output\"} offset $__rate_interval) or increase(agentgateway_gen_ai_client_token_usage_sum{ar_agent=\"__RUN_SUBJECT__${run}\", gen_ai_token_type=~\"input|output\"}[$__rate_interval])))",
               "legendFormat": "{{gen_ai_token_type}}"
             }
           ]
@@ -1012,7 +1012,7 @@
           "targets": [
             {
               "refId": "A",
-              "expr": "(sum(increase(agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\", error_type=~\".+\"}[$__range])) or vector(0)) / sum(increase(agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\"}[$__range]))",
+              "expr": "(sum(((max_over_time(agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\", error_type=~\".+\"}[$__range]) unless agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\", error_type=~\".+\"} offset $__range) or increase(agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\", error_type=~\".+\"}[$__range]))) or vector(0)) / sum(((max_over_time(agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\"}[$__range]) unless agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\"} offset $__range) or increase(agentgateway_gen_ai_server_request_duration_count{ar_agent=\"__RUN_SUBJECT__${run}\"}[$__range])))",
               "instant": true
             }
           ]
