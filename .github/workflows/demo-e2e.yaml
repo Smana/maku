@@ -11,6 +11,7 @@
 #            the meter prices them (plan v4 step 4, Task 17). A fifth, external-db (install.sh's
 #            EXTERNAL_DB=1), brings its own postgres:16 outside the chart, bootstrapped with
 #            docs/database.md's SQL, with postgres.enabled=false (v4 D9).
+#            The kubernetes and unenforced legs also run the install's preflight (PREFLIGHT=1, v4 D24).
 #   usd:     on the nightly schedule, `task chart:usd:k3d`: the factory-level USD proof, a gateway-mode
 #            run that must settle in the factory's ledger at agentgateway's own cost for it. No secret.
 #   nightly: `task demo` headless on kind with a real, capped model and a test GitHub App, then the
@@ -117,6 +118,7 @@ jobs:
       GATEWAY: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       METERING: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       EXTERNAL_DB: ${{ matrix.netpol == 'external-db' && '1' || '' }}
+      PREFLIGHT: ${{ (matrix.netpol == 'kubernetes' || matrix.netpol == 'unenforced') && '1' || '' }}
       PREBUILT: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

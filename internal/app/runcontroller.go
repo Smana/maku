@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -22,7 +24,9 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/metrics"
+	"github.com/Smana/maku/internal/preflight"
 	"github.com/Smana/maku/internal/runctl"
+	"github.com/Smana/maku/internal/version"
 )
 
 const defaultRunControllerConfig = "/etc/run-controller/config.yaml"
@@ -50,10 +54,13 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	}
 	ns := map[string]cache.Config{cfg.Namespace: {}}
 	drain := 30 * time.Second
+	// GET /preflight (v4 D24) on the metrics port: the preflight's last result, once it exists.
+	var pfRef atomic.Pointer[runctl.Preflight]
+	pfHandler := preflight.Handler("run-controller", version.Version, runControllerSource(pfRef.Load, cfg.NetworkPolicy), nil)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: s, LeaderElection: true, LeaderElectionID: "run-controller", LeaderElectionNamespace: cfg.Namespace,
 		LeaderElectionReleaseOnCancel: true, GracefulShutdownTimeout: &drain,
-		Metrics: metricsserver.Options{BindAddress: ":9090"}, HealthProbeBindAddress: ":9091",
+		Metrics: metricsserver.Options{BindAddress: ":9090", ExtraHandlers: map[string]http.Handler{"/preflight": pfHandler}}, HealthProbeBindAddress: ":9091",
 		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
 			&v1alpha1.AgentRun{}: {Namespaces: ns}, &corev1.Pod{}: {Namespaces: ns},
 		}},
@@ -79,6 +86,7 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	if err := mgr.Add(pf); err != nil {
 		return err
 	}
+	pfRef.Store(pf)
 	r := &runctl.Reconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(), Cfg: cfg, Now: time.Now, Log: logger, Preflight: pf}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return err
