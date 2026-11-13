@@ -30,9 +30,20 @@ each refuse to start, with one message per failure, when:
 |---|---|
 | The server is below 16 | `PostgreSQL <version>: Maku needs 16 or later (D26)` |
 | The DSN is another role's | `connected as "<role>": the broker runs as rooms_broker` (likewise for the others) |
-| The role bypasses row-level security: a superuser, `BYPASSRLS`, or, for the broker and the retention job, a member of `rooms_owner` | `<role> bypasses row-level security: the room log would be writable` |
+| The role bypasses row-level security: a superuser, `BYPASSRLS`, a member of a role that is either, or, for the broker and the retention job, a member of `rooms_owner` or the owner of a table with row-level security and no `FORCE ROW LEVEL SECURITY` | `<role> bypasses row-level security (<why>): the room log would be writable` |
 | `migrate` only: `rooms_broker` or `rooms_retention` does not exist | `create the login roles rooms_broker and rooms_retention first (docs/database.md)` |
 | The broker only: the schema is behind its binary | `the schema is at <version>, this broker needs <version>: run migrate (broker.database.ownerSecret)` |
+
+A database the command cannot reach is not a refusal. The retention job retries it every 5 s for two
+minutes: a CNI that enforces NetworkPolicy admits a new pod's address a few seconds after it starts.
+A wrong password, a missing database or a certificate the client cannot verify fails at once.
+
+**A ledger the broker cannot read** is a time-boxed bridge, for a database the Atlas operator
+migrated (cloud-native-ref's, before its broker has `ownerSecret`): `rooms_broker` cannot read the
+operator's ledger. Until 2027-03-01 the broker serves, logs `schema version unverified` and sets
+`maku_rooms_schema_unverified` to 1. Alert on it: `max(maku_rooms_schema_unverified) == 1`.
+From that date the broker refuses it. Setting `ownerSecret` ends it at once: the first `migrate`
+adopts the operator's ledger into `public.room_broker_revisions`, which the broker reads.
 
 The room log is append-only because of these grants and policies, so none of these is a warning. A
 connection without TLS is only reported: the broker logs it once at start, and sets
@@ -93,7 +104,7 @@ maku:
 |---|---|
 | Amazon RDS, Google Cloud SQL, Azure Database for PostgreSQL flexible server | The admin user is not a superuser. On Postgres 16 it holds `ADMIN` on the roles it creates but cannot yet act as them: run `GRANT rooms_owner TO CURRENT_USER;` between the `CREATE ROLE` lines and `CREATE DATABASE`. Never grant `rds_superuser`, `cloudsqlsuperuser` or `azure_pg_admin` to the three roles. Use the provider's CA bundle as `caSecret` |
 | CloudNativePG | Declare the three roles under `spec.managed.roles` (`login: true`, a `passwordSecret` each, nothing else), and the database with a `Database` resource owned by `rooms_owner`. Build each DSN Secret from the role's password Secret, with an ExternalSecret template or by hand. The cluster's CA Secret (`<cluster>-ca`, key `ca.crt`) is the `caSecret` |
-| A database the Atlas operator migrated (cloud-native-ref's `SQLInstance` with `atlasSchema`) | Give the broker `ownerSecret`. Its first `migrate` adopts the operator's ledger, `atlas_schema_revisions`, when its revisions are exactly the first shipped files with their `atlas.sum` hashes, and logs `adopted <n> revisions from the Atlas operator`. Nothing is applied twice; any other ledger is refused with nothing written. `rooms_owner` must be able to read that ledger. Then drop `atlasSchema` from the claim |
+| A database the Atlas operator migrated (cloud-native-ref's `SQLInstance` with `atlasSchema`) | Give the broker `ownerSecret`. Its first `migrate` adopts the operator's ledger, the table `atlas_schema_revisions` in the schema of the same name, in `public` or in the connection's current schema, when its revisions are exactly the first shipped files with their `atlas.sum` hashes, and logs `adopted <n> revisions from the Atlas operator`. Nothing is applied twice; any other ledger, two of them, or an operator ledger that later runs past `migrate`'s own, is refused with nothing written. `rooms_owner` must be able to read that ledger. Then drop `atlasSchema` from the claim |
 
 ## Backups and high availability
 
