@@ -65,11 +65,21 @@ const (
 	AuthorAdopt  = "adopt"
 )
 
-// File is .github/agent-factory.yaml.
+// File is .github/agent-factory.yaml. It declares its classes in one of two shapes, never both:
+// Classes, the old shape, each class defined inline; or MergePolicies, the binding shape (B15),
+// the same list as a Repository's spec.mergePolicies, each naming a MergePolicy the factory serves.
 type File struct {
-	Factory string                 `json:"factory"`
-	Classes map[string]ClassPolicy `json:"classes,omitempty"`
+	Factory       string                 `json:"factory"`
+	Classes       map[string]ClassPolicy `json:"classes,omitempty"`
+	MergePolicies []config.Binding       `json:"mergePolicies,omitempty"`
 }
+
+// Declares reports whether the file declares a policy, in either shape: a file naming only the
+// factory has none.
+func (f *File) Declares() bool { return f.Classes != nil || f.MergePolicies != nil }
+
+// Bound reports whether the file is in the binding shape.
+func (f *File) Bound() bool { return f.MergePolicies != nil }
 
 // ClassPolicy is one class as a repository declares it. review declares harness, harnessAllowed
 // and escalation only (R30): its merge authority is implicit, so mode and author are absent there
@@ -167,6 +177,14 @@ func Parse(raw []byte) (*File, error) {
 	if err := reviewKeys(tree); err != nil {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
 	}
+	root, _ := tree.(map[string]any)
+	_, classes := root["classes"]
+	if _, bound := root["mergePolicies"]; bound && classes {
+		return nil, errors.New("mergepolicy: the file declares classes (the old shape) or mergePolicies, never both")
+	}
+	if j, err = bareOff(root, j); err != nil {
+		return nil, fmt.Errorf("mergepolicy: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(j))
 	dec.DisallowUnknownFields()
 	var f File
@@ -179,8 +197,27 @@ func Parse(raw []byte) (*File, error) {
 	if len(f.Classes) > MaxClasses {
 		return nil, fmt.Errorf("mergepolicy: at most %d classes", MaxClasses)
 	}
+	if len(f.MergePolicies) > MaxClasses {
+		return nil, fmt.Errorf("mergepolicy: at most %d bindings in mergePolicies", MaxClasses)
+	}
 	var errs []error
 	total := 0
+	for i, b := range f.MergePolicies {
+		for _, list := range bindingPatterns(b) {
+			total += len(list)
+		}
+		if slices.IndexFunc(f.MergePolicies, func(o config.Binding) bool { return o.Name == b.Name }) != i {
+			errs = append(errs, fmt.Errorf("%s is bound twice: a policy is bound once", b.Name))
+		}
+		if err := bindingShape(b); err != nil {
+			for line := range strings.SplitSeq(err.Error(), "\n") {
+				errs = append(errs, fmt.Errorf("binding %s: %s", b.Name, line))
+			}
+		}
+		if !classRE.MatchString(b.Name) {
+			errs = append(errs, fmt.Errorf("%q is not a class name", b.Name))
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(f.Classes)) {
 		for _, list := range f.Classes[name].patterns() {
 			total += len(list)
@@ -202,6 +239,84 @@ func Parse(raw []byte) (*File, error) {
 		return nil, fmt.Errorf("mergepolicy: %w", err)
 	}
 	return &f, nil
+}
+
+// bareOff reads a binding's bare off, which YAML reads as false, as the mode off: the class
+// shape's Mode does the same. j is re-encoded only when one is found.
+func bareOff(root map[string]any, j []byte) ([]byte, error) {
+	list, _ := root["mergePolicies"].([]any)
+	found := false
+	for _, e := range list {
+		if m, ok := e.(map[string]any); ok && m["mode"] == false {
+			m["mode"], found = config.ModeOff, true
+		}
+	}
+	if !found {
+		return j, nil
+	}
+	return json.Marshal(root)
+}
+
+// bindingShape is what a binding may not say whatever it binds: the mode, the bounds of its lists,
+// and a negative cap. Whether it resolves is Validate's (config.Resolve).
+func bindingShape(b config.Binding) error {
+	var errs []error
+	if !slices.Contains([]string{config.ModeLive, config.ModeShadow, config.ModeOff}, b.Mode) {
+		errs = append(errs, fmt.Errorf("mode %q is not live, shadow or off", b.Mode))
+	}
+	for _, c := range []struct {
+		key string
+		v   int
+	}{{"maxPatchFiles", b.MaxPatchFiles}, {"maxModifiedLines", b.MaxModifiedLines}, {"maxPerDay", b.MaxPerDay}} {
+		if c.v < 0 {
+			errs = append(errs, fmt.Errorf("%s is 0 (the policy's) or more", c.key))
+		}
+	}
+	if len(b.RequiresApproval) > maxApprovals {
+		errs = append(errs, fmt.Errorf("requiresApproval holds at most %d entries", maxApprovals))
+	}
+	for _, a := range b.RequiresApproval {
+		if len(a.ChangedFiles) == 0 {
+			errs = append(errs, errors.New("a requiresApproval's changedFiles is empty: it asks about nothing"))
+		}
+	}
+	if len(b.HoldoutChecks) > MaxPatterns {
+		errs = append(errs, fmt.Errorf("holdoutChecks holds at most %d checks", MaxPatterns))
+	}
+	errs = append(errs, patternErrors(bindingPatterns(b))...)
+	return errors.Join(errs...)
+}
+
+// maxApprovals is Binding.RequiresApproval's schema bound.
+const maxApprovals = 16
+
+// bindingPatterns are a binding's path lists, compiled when the class is resolved.
+func bindingPatterns(b config.Binding) [][]string {
+	out := [][]string{b.AllowedFiles, b.CompanionFiles, b.ProtectedFiles}
+	for _, a := range b.RequiresApproval {
+		out = append(out, a.ChangedFiles)
+	}
+	return out
+}
+
+// patternErrors bounds path lists: each at most MaxPatterns, no pattern empty or over
+// MaxPatternBytes.
+func patternErrors(lists [][]string) []error {
+	var errs []error
+	for _, list := range lists {
+		if len(list) > MaxPatterns {
+			errs = append(errs, fmt.Errorf("a list holds at most %d patterns", MaxPatterns))
+		}
+		for _, pat := range list {
+			switch {
+			case pat == "":
+				errs = append(errs, errors.New("an empty pattern matches every path"))
+			case len(pat) > MaxPatternBytes:
+				errs = append(errs, fmt.Errorf("a pattern is at most %d bytes", MaxPatternBytes))
+			}
+		}
+	}
+	return errs
 }
 
 func (p ClassPolicy) shape(name string) error {
@@ -256,19 +371,7 @@ func (p ClassPolicy) shape(name string) error {
 			errs = append(errs, errors.New("a requiresApproval's changedFiles is empty: it asks about nothing"))
 		}
 	}
-	for _, list := range p.patterns() {
-		if len(list) > MaxPatterns {
-			errs = append(errs, fmt.Errorf("a list holds at most %d patterns", MaxPatterns))
-		}
-		for _, pat := range list {
-			switch {
-			case pat == "":
-				errs = append(errs, errors.New("an empty pattern matches every path"))
-			case len(pat) > MaxPatternBytes:
-				errs = append(errs, fmt.Errorf("a pattern is at most %d bytes", MaxPatternBytes))
-			}
-		}
-	}
+	errs = append(errs, patternErrors(p.patterns())...)
 	return errors.Join(errs...)
 }
 
